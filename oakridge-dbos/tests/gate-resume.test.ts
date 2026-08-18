@@ -137,6 +137,7 @@ test("an assessment decision is also correlated to its exact upstream handoff ar
   subject.dependencies.artifacts.find_by_id = async (id) => id === sourceId ? source : artifact;
   const dependencies: GateResumeDependencies = {
     ...subject.dependencies,
+    artifacts: { ...subject.dependencies.artifacts, find_current: async (coordinate) => coordinate.output_name === "build_result" ? source : artifact },
     get_handoff_state: async () => ({ status: "awaiting_downstream", artifact_id: sourceId, downstream_role: "assessment" }),
     send_handoff_command: async (workflow_id, command) => { handoffMessages.push({ workflow_id, command }); },
   };
@@ -223,39 +224,54 @@ test("an artifact from a different execution is still refused", async () => {
 });
 
 /**
- * The revision loop behind `revision_target: "upstream_handoff"` does not
- * exist yet, and accepting the decision anyway strands the run: the workflow
- * layer never reads the field, so it wakes both the upstream unit and this one,
- * and the approval of the revised artifact is then refused against a superseded
- * handoff. Refusing here is what the operator can act on.
+ * The upstream handoff carries the rejection as well as the approval. Both
+ * decisions are the downstream role's to make; only the action differs.
  */
-test("gate resume refuses a revision request that would be routed upstream", async () => {
+test("gate resume routes a revision request to the upstream handoff", async () => {
   const subject = fixture();
-  subject.dependencies.contexts.find_for_emit = async () => ({
-    run_id: artifact.run_id, stage_key: "assessor", operator_role: "assessment", stage_instance_id: stageId,
-    execution_id: executionId, unit_id: unitId, executor_type: "delegated_session", execution_workflow_id: "execution-workflow-1",
-    inputs: [], outputs: [{ name: "result", artifact_type: "dev.result", release: { kind: "gate",
-      steps: [{ type: "artifact_approval", actions: [{ name: "approve", disposition: "release" as const }, { name: "request_revision", disposition: "revise" as const }] }],
-      requires_zero_open_review_items: false, revision_target: "upstream_handoff" } }],
-  });
-  const response = await decide(createGateResumeApp(subject.dependencies), { ...body, action: "request_revision" });
-  expect(response.status).toBe(409);
-  expect((await response.json() as { code: string }).code).toBe("upstream_revision_unsupported");
-  expect(subject.sent).toEqual([]);
+  const sourceId = "build-artifact-2" as ArtifactId;
+  const source: ArtifactRevision = { ...artifact, id: sourceId, chain_id: sourceId, stage_instance_id: "build-stage" as StageInstanceId, execution_id: "build-execution" as ExecutionId, output_name: "build_result", artifact_type: "dev.build_result" };
+  subject.dependencies.contexts.find_for_emit = async (requestedStage) => requestedStage === stageId
+    ? { run_id: artifact.run_id, stage_key: "assessment", operator_role: "assessment", stage_instance_id: stageId, execution_id: executionId, unit_id: unitId, executor_type: "delegated_session", execution_workflow_id: "assessment-workflow", inputs: [{ artifact_id: sourceId, artifact_type: "dev.build_result", output_name: "build_result", unit_id: unitId, body: source.body }], outputs: [{ name: "result", artifact_type: "dev.result", release: { kind: "gate", steps: [{ type: "artifact_approval", actions: [{ name: "approve", disposition: "release" as const }, { name: "request_revision", disposition: "revise" as const }] }], requires_zero_open_review_items: false, revision_target: "upstream_handoff" } }] }
+    : { run_id: artifact.run_id, stage_key: "build", operator_role: null, stage_instance_id: source.stage_instance_id, execution_id: source.execution_id, unit_id: unitId, executor_type: "delegated_session", execution_workflow_id: "build-workflow", inputs: [], outputs: [{ name: "build_result", artifact_type: "dev.build_result", release: { kind: "handoff", downstream_role: "assessment", external_wait_kind: "github_review" } }] };
+  const handoffMessages: Array<{ workflow_id: string; command: unknown }> = [];
+  const dependencies: GateResumeDependencies = {
+    ...subject.dependencies,
+    artifacts: { ...subject.dependencies.artifacts, find_by_id: async (id) => id === sourceId ? source : artifact, find_current: async (coordinate) => coordinate.output_name === "build_result" ? source : artifact },
+    get_handoff_state: async () => ({ status: "awaiting_downstream", artifact_id: sourceId, downstream_role: "assessment" }),
+    send_handoff_command: async (workflow_id, command) => { handoffMessages.push({ workflow_id, command }); },
+  };
+  const response = await decide(createGateResumeApp(dependencies), { ...body, action: "request_revision" });
+  expect(response.status).toBe(202);
+  expect(handoffMessages).toEqual([{ workflow_id: "build-workflow:handoff:build-artifact-2", command: { kind: "downstream_decision", action: "request_revision", decision_artifact_id: artifactId, feedback: "looks good" } }]);
 });
 
-test("gate resume still approves through an upstream handoff gate", async () => {
+/**
+ * The second round of a revision loop.
+ *
+ * The assessor's recorded input still names the revision it was launched with,
+ * but the handoff waiting on a decision belongs to the revision the build
+ * emitted after the rejection. Provenance follows the chain, not the recorded
+ * id — without this the reassessment is refused as unrelated to any pending
+ * handoff, and the run stops with a revised build nobody can accept.
+ */
+test("gate resume resolves the upstream handoff to the current revision of the input", async () => {
   const subject = fixture();
-  subject.dependencies.contexts.find_for_emit = async () => ({
-    run_id: artifact.run_id, stage_key: "assessor", operator_role: "assessment", stage_instance_id: stageId,
-    execution_id: executionId, unit_id: unitId, executor_type: "delegated_session", execution_workflow_id: "execution-workflow-1",
-    inputs: [], outputs: [{ name: "result", artifact_type: "dev.result", release: { kind: "gate",
-      steps: [{ type: "artifact_approval", actions: [{ name: "approve", disposition: "release" as const }, { name: "request_revision", disposition: "revise" as const }] }],
-      requires_zero_open_review_items: false, revision_target: "upstream_handoff" } }],
-  });
-  // No upstream handoff is resolvable from an execution with no inputs, so the
-  // route refuses for that reason rather than the guard's — which is the point:
-  // the guard does not stand between an approval and its handoff.
-  const response = await decide(createGateResumeApp(subject.dependencies));
-  expect((await response.json() as { error: string }).error).toBe("artifact provenance does not match a pending upstream handoff");
+  const recordedId = "build-artifact-v1" as ArtifactId;
+  const currentId = "build-artifact-v2" as ArtifactId;
+  const recorded: ArtifactRevision = { ...artifact, id: recordedId, chain_id: recordedId, stage_instance_id: "build-stage" as StageInstanceId, execution_id: "build-execution" as ExecutionId, output_name: "build_result", artifact_type: "dev.build_result", lifecycle: { kind: "superseded", superseded_by_artifact_id: currentId } };
+  const current: ArtifactRevision = { ...recorded, id: currentId, version: 2, lifecycle: { kind: "current" } };
+  subject.dependencies.contexts.find_for_emit = async (requestedStage) => requestedStage === stageId
+    ? { run_id: artifact.run_id, stage_key: "assessment", operator_role: "assessment", stage_instance_id: stageId, execution_id: executionId, unit_id: unitId, executor_type: "delegated_session", execution_workflow_id: "assessment-workflow", inputs: [{ artifact_id: recordedId, artifact_type: "dev.build_result", output_name: "build_result", unit_id: unitId, body: recorded.body }], outputs: [{ name: "result", artifact_type: "dev.result", release: { kind: "gate", steps: [{ type: "artifact_approval", actions: [{ name: "approve", disposition: "release" as const }, { name: "request_revision", disposition: "revise" as const }] }], requires_zero_open_review_items: false, revision_target: "upstream_handoff" } }] }
+    : { run_id: artifact.run_id, stage_key: "build", operator_role: null, stage_instance_id: recorded.stage_instance_id, execution_id: recorded.execution_id, unit_id: unitId, executor_type: "delegated_session", execution_workflow_id: "build-workflow", inputs: [], outputs: [{ name: "build_result", artifact_type: "dev.build_result", release: { kind: "handoff", downstream_role: "assessment", external_wait_kind: "github_review" } }] };
+  const handoffMessages: string[] = [];
+  const dependencies: GateResumeDependencies = {
+    ...subject.dependencies,
+    artifacts: { ...subject.dependencies.artifacts, find_by_id: async (id) => id === recordedId ? recorded : artifact, find_current: async (coordinate) => coordinate.output_name === "build_result" ? current : artifact },
+    get_handoff_state: async (workflow_id) => workflow_id === "build-workflow:handoff:build-artifact-v2" ? { status: "awaiting_downstream", artifact_id: currentId, downstream_role: "assessment" } : null,
+    send_handoff_command: async (workflow_id) => { handoffMessages.push(workflow_id); },
+  };
+  const response = await decide(createGateResumeApp(dependencies));
+  expect(response.status).toBe(202);
+  expect(handoffMessages).toEqual(["build-workflow:handoff:build-artifact-v2"]);
 });

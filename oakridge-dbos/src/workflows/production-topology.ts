@@ -6,7 +6,7 @@ import { selectAncestorStages } from "../compiler/select-resume-stages";
 import { appendIncrementalUnit, closeIncrementalMaterialization, emptyIncrementalMaterialization, isFanOutDriverInput, selectDriverArtifacts, selectReadyUnits, type IncrementalMaterialization } from "../compiler/materialize-units";
 import { isAwaitingReplacementOf, isLiveExecution, isStageDrained, selectLaunchedUnits, selectReleasedUnits, selectRunningUnitCount, type UnitRuntime } from "./unit-runtime";
 import type { ArtifactRevision, ExecutionContractState } from "../domain/artifacts";
-import { withAvailableArtifact, withReplacedEnvelope, type StageOutputEvent } from "../domain/output-availability";
+import { envelopeIdentity, withAvailableArtifact, withReplacedEnvelope, type StageOutputEvent } from "../domain/output-availability";
 import type { CompiledStageContract, CompiledWorkflowDefinition, MaterializedExecutionUnit } from "../domain/compiled-workflow";
 import type { DelegatedSessionDefinitionConfig } from "../domain/delegated-session";
 import type { ArtifactEnvelope, ExecutionRequest, ExternalExecutionReference } from "../domain/execution";
@@ -324,13 +324,25 @@ export const productionStageWorkflow = DBOS.registerWorkflow(async (input: Stage
     // a unit.
     const existingInput = accumulatedInputs[command.input_name];
     const existingArtifacts = existingInput === undefined ? [] : Array.isArray(existingInput) ? existingInput : [existingInput as ArtifactEnvelope];
+    const isRevision = existingArtifacts.some((candidate) => envelopeIdentity(candidate) === envelopeIdentity(command.artifact));
     accumulatedInputs[command.input_name] = withReplacedEnvelope(existingArtifacts, command.artifact);
+    // A revision of something a unit already consumed is that unit's work
+    // again. Without this the revision lands in the accumulated inputs and
+    // nothing tells the unit it is there: the upstream agent revises, and the
+    // downstream one waits forever to be asked to look.
+    if (isRevision) {
+      // Only a fan-out stage takes incremental input, and its units are minted
+      // per driver artifact — so the unit that consumed this artifact carries
+      // the artifact's own unit id. A unit that is not running has no agent to
+      // ask; recovering that one is an operator rerun.
+      const consumer = runtime.get(command.artifact.unit_id);
+      if (consumer?.kind === "running") {
+        await DBOS.send(consumer.execution_workflow_id, { kind: "input_revised", input_name: command.input_name, artifact: command.artifact },
+          "execution-event", `revised:${command.artifact.artifact_id}`);
+      }
+      return { kind: "applied" };
+    }
     if (!isFanOutDriverInput(input.compiled_stage.materialization, command.input_name)) return { kind: "applied" };
-    // A revision of a driver artifact updates the unit it already minted; it
-    // does not mint a second one under an id the stage already has. Re-running
-    // that unit against the revision is an operator rerun, not something the
-    // coordinator does on its own.
-    if (plans.some((candidate) => candidate.unit.unit_id === command.artifact.unit_id)) return { kind: "applied" };
     const parameters = { unit_id: command.artifact.unit_id, artifact: command.artifact.body } as const;
     const appended = appendIncrementalUnit(incremental, parameters, { unit_id_path: input.compiled_stage.materialization.unit_id_path, depends_on_path: input.compiled_stage.materialization.depends_on_path });
     if (!appended.ok) return { kind: "terminal", outcome: { kind: "failed", code: "invalid_incremental_materialization", detail: appended.error.detail } };

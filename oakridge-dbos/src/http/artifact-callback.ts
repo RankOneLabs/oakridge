@@ -44,7 +44,7 @@ export const createArtifactCallbackApp = (dependencies: ArtifactCallbackDependen
     }
     if (!result.ok) return context.json({ error: result.error.detail, code: result.error.kind, artifact_id: result.error.artifact_id }, result.error.kind === "invariant_conflict" ? 500 : 409);
     const artifact = result.value.artifact;
-    const release = releaseStateForArtifact(artifact, validation.value);
+    const release = releaseStateForArtifact(artifact, validation.value.release);
     await dependencies.dispatch_notifications();
     return context.json({ artifact_id: artifact.id, chain_id: artifact.chain_id, version: artifact.version, state: artifact.lifecycle.kind, release: release.kind, replaced_artifact_id: result.value.superseded_artifact_id });
   };

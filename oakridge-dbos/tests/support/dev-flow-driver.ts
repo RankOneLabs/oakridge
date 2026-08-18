@@ -48,18 +48,36 @@ export interface EmittedArtifact {
 
 interface EmitResponse { readonly artifact_id: ArtifactId; readonly release: EmittedArtifact["release"] }
 
+/** Which of a unit's outputs an emission covers, and which round it is. */
+export interface EmissionOptions {
+  /** A later round carries the same identity and different content. */
+  readonly revision?: number;
+  /**
+   * Restricts the emission to these outputs. A revising agent re-emits only
+   * what changed: an already-released output is final, and the run refuses to
+   * revise one — which is right, and means "emit everything again" is not what
+   * a revision looks like.
+   */
+  readonly outputs?: readonly string[];
+}
+
 /**
- * The agent's side of one execution: emit every artifact the unit owes,
- * through the same route a real coding agent calls.
+ * The agent's side of one execution: emit the artifacts the unit owes, through
+ * the same route a real coding agent calls.
  */
-export const emitDeclaredArtifacts = async (baseUrl: string, request: ExecutionRequest): Promise<readonly EmittedArtifact[]> => {
+export const emitDeclaredArtifacts = async (baseUrl: string, request: ExecutionRequest, options: EmissionOptions = {}): Promise<readonly EmittedArtifact[]> => {
+  const revision = options.revision ?? 1;
   const emitted: EmittedArtifact[] = [];
   for (const expected of request.expected_artifacts) {
+    if (options.outputs && !options.outputs.includes(expected.output_name)) continue;
     const url = `${baseUrl}/executors/${EXECUTOR_TYPE}/${request.stage_instance_id}/units/${expected.unit_id}/emit/${expected.output_name}`;
     const response = await fetch(url, {
       method: "POST",
-      headers: { "content-type": "application/json", "idempotency-key": `${request.execution_id}:${expected.unit_id}:${expected.output_name}` },
-      body: JSON.stringify(artifactBody(request, expected.unit_id, expected.output_name) as JsonValue),
+      // The revision rides in the key and the body alike: an unchanged payload
+      // under a new key is still the same artifact, and an unchanged key is a
+      // replay of the first emission whatever the payload says.
+      headers: { "content-type": "application/json", "idempotency-key": `${request.execution_id}:${expected.unit_id}:${expected.output_name}:v${revision}` },
+      body: JSON.stringify(artifactBody(request, expected.unit_id, expected.output_name, revision) as JsonValue),
     });
     const result = await readJson<EmitResponse>(response, `emit ${expected.output_name} for unit ${expected.unit_id}`);
     emitted.push({ artifact_id: result.artifact_id, output_name: expected.output_name, unit_id: expected.unit_id, release: result.release });

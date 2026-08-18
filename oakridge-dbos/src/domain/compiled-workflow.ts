@@ -19,9 +19,18 @@ export interface CompiledOutputContract {
 
 export interface CompiledGateStep { readonly type: string; readonly actions: readonly GateAction[] }
 
+/**
+ * Who a rejection at this gate sends back to work.
+ *
+ * `self_stage` is the unit that produced the artifact. `upstream_handoff` is the
+ * unit whose output this stage was handed — an assessor rejecting an assessment
+ * is asking the *build* for changes, not itself.
+ */
+export type GateRevisionTarget = "self_stage" | "upstream_handoff";
+
 export type OutputReleaseContract =
   | { readonly kind: "immediate" }
-  | { readonly kind: "gate"; readonly steps: readonly CompiledGateStep[]; readonly requires_zero_open_review_items: boolean; readonly revision_target: "self_stage" | "upstream_handoff" }
+  | { readonly kind: "gate"; readonly steps: readonly CompiledGateStep[]; readonly requires_zero_open_review_items: boolean; readonly revision_target: GateRevisionTarget }
   | { readonly kind: "handoff"; readonly downstream_role: StageOperatorRole; readonly external_wait_kind: string };
 
 export type MaterializationContract =

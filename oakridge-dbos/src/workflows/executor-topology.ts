@@ -1,11 +1,11 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
-import type { ExecutionRequest, ExecutorAdapter, ExecutorObservationAttempt, ExecutorTerminalObservation, ExternalExecutionReference } from "../domain/execution";
+import type { ArtifactEnvelope, ExecutionRequest, ExecutorAdapter, ExecutorObservationAttempt, ExecutorTerminalObservation, ExternalExecutionReference } from "../domain/execution";
 import type { ExecutionAttemptId } from "../domain/primitives";
 import { gateRelayWorkflowId, gateWaitWorkflowId, gateWaitWorkflowIdFromRelay, handoffWorkflowId, terminalObserverWorkflowId } from "../domain/workflow-ids";
 import type { CollaborationPingRequest, CollaborationPingState } from "../domain/collaboration";
-import type { ArtifactReleaseState, ArtifactRevision, ExecutionContractState, ReleaseArtifactResult } from "../domain/artifacts";
-import type { CompiledOutputContract } from "../domain/compiled-workflow";
+import { selectRevisionTarget, type ArtifactReleaseState, type ArtifactRevision, type ExecutionContractState, type ReleaseArtifactResult } from "../domain/artifacts";
+import type { CompiledOutputContract, GateRevisionTarget } from "../domain/compiled-workflow";
 import { evaluateExecutionArtifactContract, shouldAwaitArtifactRelease, withoutReleaseFor, withRelease } from "../contracts/evaluate-artifacts";
 import { durableGateWorkflow, type GateCommand, type GateWaitInput } from "./gate";
 import { durableHandoffWorkflow, type HandoffCommand, type HandoffResult } from "./handoff";
@@ -126,7 +126,9 @@ type ExecutionWorkflowMessage =
   | { readonly kind: "artifact_replaced"; readonly invalidated_artifact_id: ArtifactRevision["id"]; readonly release: ArtifactReleaseState }
   | { readonly kind: "artifact_invalidated"; readonly artifact_id: ArtifactRevision["id"]; readonly output_name: string; readonly reason: "superseded" | "withdrawn"; readonly replacement_artifact_revision_id: ArtifactRevision["id"] | null }
   | { readonly kind: "artifact_released"; readonly artifact: ArtifactReleaseState["artifact"] }
-  | { readonly kind: "gate_rejected"; readonly artifact: ArtifactReleaseState["artifact"]; readonly command: Extract<GateCommand, { readonly kind: "decision" }>; readonly disposition: GateDisposition }
+  | { readonly kind: "gate_rejected"; readonly artifact: ArtifactReleaseState["artifact"]; readonly command: Extract<GateCommand, { readonly kind: "decision" }>; readonly disposition: GateDisposition; readonly revision_target?: GateRevisionTarget }
+  /** A dependency this unit already consumed has a newer revision to review. */
+  | { readonly kind: "input_revised"; readonly input_name: string; readonly artifact: ArtifactEnvelope }
   | { readonly kind: "handoff_revision_requested"; readonly result: Extract<HandoffResult, { kind: "revision_requested" }> }
   | { readonly kind: "executor_terminal"; readonly observation: ExecutorTerminalObservation };
 
@@ -149,7 +151,13 @@ const gateRelayWorkflow = DBOS.registerWorkflow(async (input: GateRelayInput): P
     lastCommand = command;
     const disposition = selectGateDisposition(command.action, gateStep.actions);
     if (disposition !== "release") {
-      await DBOS.send(input.parent_workflow_id, { kind: "gate_rejected", artifact: input.release.artifact, command, disposition } satisfies ExecutionWorkflowMessage, "execution-event", `gate:${input.release.artifact.id}:${gateStep.type}:${command.action}`);
+      // The revision target travels with the rejection. Without it the
+      // execution can only assume the revision is its own, and an assessor
+      // rejecting an assessment would be told to revise the assessment when
+      // what the operator asked for was a change to the build.
+      await DBOS.send(input.parent_workflow_id, { kind: "gate_rejected", artifact: input.release.artifact, command, disposition,
+        revision_target: selectRevisionTarget(input.release) } satisfies ExecutionWorkflowMessage,
+        "execution-event", `gate:${input.release.artifact.id}:${gateStep.type}:${command.action}`);
       return command;
     }
   }
@@ -268,10 +276,25 @@ export const artifactContractExecutionWorkflow = DBOS.registerWorkflow(async (in
       }
     } else if (message.kind === "gate_rejected") {
       if (message.disposition === "revise") {
+        // A revision aimed upstream is not this unit's work. The gate resume
+        // route carries it to the unit that owns the artifact under review, and
+        // this execution stays parked until that unit's revision comes back to
+        // it as `input_revised`. Waking its agent here would burn a session
+        // producing a document nobody asked for.
+        if (message.revision_target === "upstream_handoff") continue;
         await requestRevisionStep({ request: input.request, attempt_id: attemptId, external_reference: externalReference, delivery_key: `gate:${message.artifact.id}:${message.command.gate_step}`, feedback: `Revise '${message.artifact.output_name}' after gate '${message.command.gate_step}'.` });
         continue;
       }
       return { external_reference: externalReference, contract: { kind: "waiting_artifacts", missing_outputs: [message.artifact.output_name] }, terminal_observation: { kind: "failed", code: "gate_rejected", detail: message.command.action } };
+    } else if (message.kind === "input_revised") {
+      // The upstream unit revised something this unit already reviewed, so its
+      // own output is now stale. Asking the agent to look again is what closes
+      // the loop: it emits a new revision, that supersedes the artifact parked
+      // in this unit's gate, and a fresh gate opens on the new revision.
+      await requestRevisionStep({ request: input.request, attempt_id: attemptId, external_reference: externalReference,
+        delivery_key: `input:${message.input_name}:${message.artifact.artifact_id}`,
+        feedback: `Input '${message.input_name}' has been revised. Review it again and re-emit your output.` });
+      continue;
     } else if (message.kind === "handoff_revision_requested") {
       await requestRevisionStep({ request: input.request, attempt_id: attemptId, external_reference: externalReference, delivery_key: `handoff:${message.result.artifact.id}:${message.result.decision_artifact_id}`, feedback: message.result.feedback ?? "Assessment requested implementation revisions." });
       continue;

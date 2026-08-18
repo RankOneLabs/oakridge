@@ -15,14 +15,14 @@ test("rejects output and artifact-type mismatches before persistence", () => {
 
 test("a gate keeps a valid artifact from satisfying the execution contract", () => {
   const contract = output({ kind: "gate", steps: [{ type: "artifact_approval", actions: [{ name: "approve", disposition: "release" as const }, { name: "request_revision", disposition: "revise" as const }] }], requires_zero_open_review_items: false, revision_target: "self_stage" });
-  const release = releaseStateForArtifact(artifact, contract);
+  const release = releaseStateForArtifact(artifact, contract.release);
   expect(release.kind).toBe("waiting_gate");
   expect(evaluateExecutionArtifactContract([release], [{ unit_id: "0" as UnitId, output_name: "result", artifact_type: "dev.result" }])).toEqual({ kind: "waiting_artifacts", missing_outputs: ["0:result"] });
 });
 
 test("released required artifacts satisfy the contract independently of executor termination", () => {
   const contract = output({ kind: "immediate" });
-  expect(evaluateExecutionArtifactContract([releaseStateForArtifact(artifact, contract)], [{ unit_id: "0" as UnitId, output_name: "result", artifact_type: "dev.result" }])).toEqual({ kind: "satisfied", artifacts: [artifact] });
+  expect(evaluateExecutionArtifactContract([releaseStateForArtifact(artifact, contract.release)], [{ unit_id: "0" as UnitId, output_name: "result", artifact_type: "dev.result" }])).toEqual({ kind: "satisfied", artifacts: [artifact] });
 });
 
 test("one artifact-collection executor waits for every checkpointed runtime artifact identity", () => {

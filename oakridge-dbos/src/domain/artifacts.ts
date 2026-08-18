@@ -1,6 +1,6 @@
 import type { ArtifactId, ExecutionId, JsonValue, Result, StageInstanceId, UnitId, WorkflowRunId } from "./primitives";
 import type { ArtifactTypeId } from "./workflow";
-import type { CompiledGateStep, OutputReleaseContract } from "./compiled-workflow";
+import type { CompiledGateStep, GateRevisionTarget, OutputReleaseContract } from "./compiled-workflow";
 
 /**
  * Where an artifact sits in the run graph — the natural key of its revision
@@ -89,8 +89,23 @@ export interface ArtifactEmissionDelivery {
 
 export type ArtifactReleaseState =
   | { readonly kind: "released"; readonly artifact: ArtifactRevision }
-  | { readonly kind: "waiting_gate"; readonly artifact: ArtifactRevision; readonly gate_steps: readonly CompiledGateStep[] }
+  | {
+      readonly kind: "waiting_gate";
+      readonly artifact: ArtifactRevision;
+      readonly gate_steps: readonly CompiledGateStep[];
+      /**
+       * Optional only because this shape is persisted in the command outbox: a
+       * row written before this field existed carries no value, and a run in
+       * flight across the deploy must not fail to parse. Read it through
+       * `selectRevisionTarget`, never directly.
+       */
+      readonly revision_target?: GateRevisionTarget;
+    }
   | { readonly kind: "waiting_handoff"; readonly artifact: ArtifactRevision; readonly downstream_role: string; readonly external_wait_kind: string };
+
+/** The revision target of a gate wait, defaulting to the pre-field behaviour. */
+export const selectRevisionTarget = (release: Extract<ArtifactReleaseState, { kind: "waiting_gate" }>): GateRevisionTarget =>
+  release.revision_target ?? "self_stage";
 
 export type ArtifactLifecycleNotification =
   | { readonly kind: "artifact_emitted"; readonly release: ArtifactReleaseState }
