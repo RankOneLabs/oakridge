@@ -119,7 +119,15 @@ export const createGateResumeApp = (dependencies: GateResumeDependencies): Hono 
     if (!context) return http.json({ error: "gate unit not found" }, 404);
     const artifactId = request.artifact_revision_id as ArtifactId;
     const artifact = await dependencies.artifacts.find_by_id(artifactId);
-    if (!artifact || artifact.stage_instance_id !== stageId || artifact.execution_id !== context.execution_id || artifact.unit_id !== unitId) {
+    // A stage that fans its artifacts out inside one execution
+    // (`materialization.kind = "artifact_collection"`, e.g. one brief per
+    // cohort) puts the collection key on the artifact while the execution
+    // itself stays a single unit. The artifact's `unit_id` and the gate's are
+    // then different key spaces, and comparing them refuses every such gate.
+    // Stage plus execution already binds the artifact to this gate — an
+    // execution id is `{stage_instance}:{unit}`, so it is unit-specific — and
+    // that holds for both shapes.
+    if (!artifact || artifact.stage_instance_id !== stageId || artifact.execution_id !== context.execution_id) {
       return http.json({ error: "artifact revision does not belong to this gate unit" }, 409);
     }
     if (artifact.lifecycle.kind !== "current") return http.json({ error: "reviewed artifact revision is not current", code: artifact.lifecycle.kind }, 409);
@@ -129,7 +137,10 @@ export const createGateResumeApp = (dependencies: GateResumeDependencies): Hono 
     if (!step) return http.json({ error: "reviewed gate step is stale" }, 409);
     if (!step.actions.some((candidate) => candidate.name === request.action)) return http.json({ error: `action '${request.action}' is not allowed for the current gate step` }, 400);
     const workflowId = gateWaitWorkflowId(context.execution_workflow_id, artifact.id, request.gate_step);
-    const current = await dependencies.artifacts.find_current({ stage_instance_id: stageId, execution_id: context.execution_id, unit_id: unitId, output_name: artifact.output_name });
+    // Staleness is a question about this artifact's own coordinate, so it is
+    // keyed by the artifact's unit rather than the gate's — they diverge for an
+    // artifact collection, where the gate's unit addresses the execution.
+    const current = await dependencies.artifacts.find_current({ stage_instance_id: stageId, execution_id: context.execution_id, unit_id: artifact.unit_id, output_name: artifact.output_name });
     if (!current || current.id !== artifact.id) return http.json({ error: "reviewed artifact revision is stale" }, 409);
     if (gate.requires_zero_open_review_items && await dependencies.collaboration.count_open_review_items(artifact.id) > 0) {
       return http.json({ error: "artifact revision has open review items" }, 409);
