@@ -145,3 +145,79 @@ test("an assessment decision is also correlated to its exact upstream handoff ar
   expect(response.status).toBe(202);
   expect(handoffMessages).toEqual([{ workflow_id: "build-workflow:handoff:build-artifact-1", command: { kind: "downstream_decision", action: "approve", decision_artifact_id: artifactId, feedback: "looks good" } }]);
 });
+
+/**
+ * A stage may fan its artifacts out inside a single execution
+ * (`materialization.kind = "artifact_collection"`) — dev-flow's brief_writer
+ * emits one brief per cohort from one session. The execution stays unit "0"
+ * while each artifact carries its collection key as its `unit_id`, so the two
+ * are different key spaces. Comparing them refused every such gate with
+ * "artifact revision does not belong to this gate unit", which made every
+ * build brief unapprovable.
+ */
+const collectionFixture = () => {
+  const executionUnit = "0" as UnitId;
+  const collectionExecutionId = `${stageId}:${executionUnit}` as ExecutionId;
+  const brief: ArtifactRevision = {
+    ...artifact, id: "brief-1" as ArtifactId, chain_id: "brief-1" as ArtifactId,
+    execution_id: collectionExecutionId,
+    // The cohort id, not the execution's unit.
+    unit_id: "pipefitter-tiers-spec" as UnitId,
+    output_name: "result",
+  };
+  const base = fixture();
+  const currentCoordinates: Array<{ unit_id: string }> = [];
+  const dependencies: GateResumeDependencies = {
+    ...base.dependencies,
+    contexts: { find_for_emit: async () => ({
+      run_id: brief.run_id, stage_key: "brief_writer", operator_role: "brief", stage_instance_id: stageId,
+      execution_id: collectionExecutionId, unit_id: executionUnit, executor_type: "delegated_session",
+      execution_workflow_id: "brief-workflow-1", inputs: [],
+      outputs: [{ name: "result", artifact_type: "dev.result", release: { kind: "gate", steps: [{ type: "artifact_approval", actions: [{ name: "approve", disposition: "release" as const }, { name: "request_revision", disposition: "revise" as const }] }], requires_zero_open_review_items: false, revision_target: "self_stage" } }],
+    }) },
+    artifacts: { ...base.dependencies.artifacts, find_by_id: async () => brief,
+      find_current: async (coordinate) => { currentCoordinates.push({ unit_id: coordinate.unit_id }); return brief; } },
+    get_gate_state: async () => ({ status: "pending", stage_instance_id: stageId, execution_id: collectionExecutionId,
+      unit_id: executionUnit, artifact_revision_id: brief.id, gate_step: "artifact_approval", actions: ["approve", "request_revision"] }),
+  };
+  return { app: createGateResumeApp(dependencies), brief, executionUnit, currentCoordinates };
+};
+
+const decideCollection = (app: ReturnType<typeof createGateResumeApp>, briefId: string) =>
+  app.request("/gates/stage-1:0/resume", { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...body, artifact_revision_id: briefId }) });
+
+test("a gate approves an artifact whose unit is a collection key rather than the execution's unit", async () => {
+  const subject = collectionFixture();
+  const response = await decideCollection(subject.app, subject.brief.id);
+  expect(response.status).toBe(202);
+});
+
+/** Staleness is a question about the artifact's own coordinate, not the gate's. */
+test("the staleness check is keyed by the artifact's unit, not the gate's", async () => {
+  const subject = collectionFixture();
+  await decideCollection(subject.app, subject.brief.id);
+  expect(subject.currentCoordinates).toEqual([{ unit_id: "pipefitter-tiers-spec" }]);
+});
+
+/** The execution binding still holds: another execution's artifact is refused. */
+test("an artifact from a different execution is still refused", async () => {
+  const base = fixture();
+  const foreign: ArtifactRevision = {
+    ...artifact, id: "brief-9" as ArtifactId, chain_id: "brief-9" as ArtifactId,
+    execution_id: `${stageId}:9` as ExecutionId, unit_id: "pipefitter-tiers-spec" as UnitId,
+  };
+  const app = createGateResumeApp({
+    ...base.dependencies,
+    contexts: { find_for_emit: async () => ({
+      run_id: foreign.run_id, stage_key: "brief_writer", operator_role: "brief", stage_instance_id: stageId,
+      execution_id: `${stageId}:0` as ExecutionId, unit_id: "0" as UnitId, executor_type: "delegated_session",
+      execution_workflow_id: "brief-workflow-1", inputs: [],
+      outputs: [{ name: "result", artifact_type: "dev.result", release: { kind: "gate", steps: [{ type: "artifact_approval", actions: [{ name: "approve", disposition: "release" as const }] }], requires_zero_open_review_items: false, revision_target: "self_stage" } }],
+    }) },
+    artifacts: { ...base.dependencies.artifacts, find_by_id: async () => foreign, find_current: async () => foreign },
+  });
+  const response = await decideCollection(app, foreign.id);
+  expect(response.status).toBe(409);
+  expect(await response.json()).toEqual({ error: "artifact revision does not belong to this gate unit" });
+});
