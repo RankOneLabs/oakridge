@@ -2,7 +2,7 @@ import {
   SESSION_HELD_CODE,
   isSessionHold,
   type SessionHold,
-} from "../../server/session-hold";
+} from "../../session/session-hold";
 
 /**
  * Why a close did not happen.

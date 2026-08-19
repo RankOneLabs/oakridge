@@ -6,8 +6,9 @@
  */
 import { expect, test } from "bun:test";
 
+import type { SessionHold } from "../session/session-hold";
 import {
-  findSessionHold, isTruthyFlag, selectCloseAuthority, selectCloseRefusal, sessionHoldRefusal, type SessionHold,
+  findSessionHold, isTruthyFlag, selectCloseAuthority, selectCloseRefusal, sessionHoldRefusal,
 } from "./session-hold";
 
 const hold: SessionHold = {
