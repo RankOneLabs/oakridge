@@ -1,6 +1,7 @@
 import type { ChangeEvent } from "react";
 
-import { BRIEF_NOTES_FILE_ACCEPT, type BriefNotesSource } from "../../lib/brief-notes";
+import { TEXT_DOCUMENT_FILE_ACCEPT } from "../../../lib/text-document-accept";
+import type { BriefNotesSource } from "../../lib/brief-notes";
 import { formControlClass } from "./FormField";
 import { Button } from "../atoms/Button";
 
@@ -68,7 +69,7 @@ export function BriefNotesField({ notes, setNotes, source, setSource, onFileChan
           <input
             type="file"
             className={`${formControlClass} file:mr-3 file:rounded file:border-0 file:bg-[var(--bg-raised)] file:px-2 file:py-1 file:text-xs file:text-[var(--text-primary)]`}
-            accept={BRIEF_NOTES_FILE_ACCEPT}
+            accept={TEXT_DOCUMENT_FILE_ACCEPT}
             onChange={onFileChange}
             disabled={disabled}
             aria-label="Brief notes file"

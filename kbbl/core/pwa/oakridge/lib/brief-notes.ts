@@ -71,14 +71,6 @@ export const selectLoadedBriefNotesRefusal = (
 export const formatBytes = (bytes: number): string =>
   bytes >= 1_048_576 ? `${(bytes / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1_024))} KB`;
 
-/**
- * The file input's `accept` list. Text formats a brief is actually written in —
- * the same set the spec upload already offers, so the two file pickers do not
- * disagree about what counts as a document.
- */
-export const BRIEF_NOTES_FILE_ACCEPT =
-  ".md,.txt,.json,.yaml,.yml,.csv,.adoc,.rst,text/plain,text/markdown,application/json";
-
 /** A file's text, guarded on both sides of the read. */
 export interface LoadedBriefNotes {
   readonly text: string;
