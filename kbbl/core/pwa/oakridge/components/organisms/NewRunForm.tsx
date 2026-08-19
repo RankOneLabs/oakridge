@@ -21,6 +21,8 @@ import { initialSelectionForRole } from "../../lib/runtime-selection";
 import { buildEpicProfile, buildRunExecutionContext } from "../../lib/launch-config";
 import { selectRequestIdentity, type PendingRequestIdentity } from "../../lib/request-identity";
 import { RepositoryLaunchFields } from "../molecules/RepositoryLaunchFields";
+import { BriefNotesField } from "../molecules/BriefNotesField";
+import { readBriefNotesFile, selectMissingBriefNotesDetail, type BriefNotesSource } from "../../lib/brief-notes";
 import { Button } from "../atoms/Button";
 import { FeedbackMessage } from "../atoms/FeedbackMessage";
 import { FormField, formControlClass } from "../molecules/FormField";
@@ -53,6 +55,10 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
   const [epicTitle, setEpicTitle] = useState("");
   const [finalMergePolicy, setFinalMergePolicy] = useState<FinalMergePolicy>("guarded");
   const [briefNotes, setBriefNotes] = useState("");
+  // A brief is often already written down. Typed or loaded, what the run
+  // receives is the same string — the source only decides which control the
+  // operator gets, and is dropped at submit.
+  const [briefNotesSource, setBriefNotesSource] = useState<BriefNotesSource>({ kind: "typed" });
   const [repositories, setRepositories] = useState<RepositoryInputDraft[]>([{ key: "repo", path: "", forge_owner: "", forge_name: "", base_branch: "main" }]);
   const [projectId, setProjectId] = useState<string>("");
   const [workflowDefId, setWorkflowDefId] = useState<string>("");
@@ -108,6 +114,25 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
   const coreUrl = configQuery.data?.core_url ?? "";
   const pending = createRun.isPending;
 
+  // The input is cleared afterwards so picking the same file twice still fires
+  // a change event — otherwise a failed read cannot be retried without first
+  // choosing some other file.
+  const onBriefNotesFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setError(null);
+    const result = await readBriefNotesFile(file);
+    if (!result.ok) {
+      setBriefNotes("");
+      setBriefNotesSource({ kind: "file", file_name: "" });
+      setError(result.error.detail);
+      return;
+    }
+    setBriefNotes(result.value.text);
+    setBriefNotesSource({ kind: "file", file_name: result.value.file_name });
+  };
+
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -117,7 +142,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
     const normalizedRepositories = repositoryResult.repositories;
     const epicProfile = buildEpicProfile(epicTitle, finalMergePolicy, normalizedRepositories);
     if (!epicProfile) { setError("Epic title must include a letter or number."); return; }
-    if (!briefNotes.trim()) { setError("Brief notes are required."); return; }
+    if (!briefNotes.trim()) { setError(selectMissingBriefNotesDetail(briefNotesSource)); return; }
     if (!coreUrl) { setError("oakridge core URL is not configured."); return; }
     const contextResult = buildRunExecutionContext({
       brief_notes: briefNotes.trim(),
@@ -198,17 +223,14 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
 
         <RepositoryLaunchFields repositories={repositories} setRepositories={setRepositories} disabled={pending} />
 
-        <FormField label="Brief Notes">
-          <textarea
-            className={`${formControlClass} min-h-24 resize-y`}
-            value={briefNotes}
-            onChange={(e) => setBriefNotes(e.target.value)}
-            disabled={pending}
-            placeholder="Describe what to build…"
-            required
-            rows={4}
-          />
-        </FormField>
+        <BriefNotesField
+          notes={briefNotes}
+          setNotes={setBriefNotes}
+          source={briefNotesSource}
+          setSource={setBriefNotesSource}
+          onFileChange={(event) => { void onBriefNotesFileChange(event); }}
+          disabled={pending}
+        />
 
         <div className="or-role-grid">
           <RoleModelPicker
