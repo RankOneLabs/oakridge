@@ -111,7 +111,7 @@ OAKRIDGE_CORE_BASE_URL=http://127.0.0.1:8790 \
 ## Start and operate a run
 
 1. Open `#oakridge` and choose **New Run**.
-2. Select the seeded `dev-flow v11` definition.
+2. Select the seeded `dev-flow v12` definition.
 3. Select or create a project and confirm repository bindings.
 4. Enter the Epic brief and select planner/worker runtime configuration.
 5. Start the run.
@@ -124,7 +124,21 @@ The standard flow is:
 
 ```text
 spec → plan → build (runtime-N children) → assessment/gates → review/final integration
+provision refs ──────────────┘
 ```
+
+`provision refs` runs from the start of the run, alongside spec analysis, and
+costs no wall-clock: it only has to finish before `build`. One unit per
+repository guarantees that repository's epic branch exists on origin — seeding
+it from the base branch when it does not — and emits the refs as a
+`dev.repository_refs` artifact. `build` declares that artifact as an input and
+resolves each cohort's working copy and worktree base from it, so a cohort can
+only ever be branched from a ref a stage has established.
+
+A repository that cannot be provisioned (a path that is not a git repository, a
+base branch origin does not have, a push origin refuses) fails as an ordinary
+stage outcome, parking that repository's unit for retry. It is not checked at
+launch, and other repositories in the same run are unaffected.
 
 DBOS owns child cardinality and completion. Oakridge artifacts are immutable
 revision chains in adjacent domain tables. Only the current unreleased revision

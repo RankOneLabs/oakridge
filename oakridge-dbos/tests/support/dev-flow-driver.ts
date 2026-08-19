@@ -8,10 +8,10 @@
  * workflow, because a message a test can post but production cannot is exactly
  * how a deadlock ships green.
  */
-import type { OperatorParkedGate, OperatorRunDetail, OperatorRunSummary, OperatorReviewInbox } from "../../src/domain/operator-projections";
+import type { OperatorArtifactDetail, OperatorParkedGate, OperatorRunDetail, OperatorRunSummary, OperatorReviewInbox } from "../../src/domain/operator-projections";
 import type { ArtifactId, JsonValue, UnitId, WorkflowDefinitionId } from "../../src/domain/primitives";
 import type { ExecutionRequest } from "../../src/domain/execution";
-import { artifactBody, awaitCondition, cohortHeadBranch, cohortPullRequestUrl, runContext } from "./dev-flow-harness";
+import { artifactBody, awaitCondition, cohortHeadBranch, cohortPullRequestUrl } from "./dev-flow-harness";
 
 const EXECUTOR_TYPE = "delegated_session";
 
@@ -26,12 +26,18 @@ export interface LaunchedRun {
   readonly root_workflow_id: string;
 }
 
-/** Launches a run the way the operator surface does, and waits for it to start. */
-export const launchRun = async (baseUrl: string, definitionId: WorkflowDefinitionId): Promise<LaunchedRun> => {
+/**
+ * Launches a run the way the operator surface does, and waits for it to start.
+ *
+ * `context` is supplied rather than defaulted because a run is defined by the
+ * repositories it names — a caller proving what happens to a repository that
+ * cannot be provisioned has to be able to name that one.
+ */
+export const launchRun = async (baseUrl: string, definitionId: WorkflowDefinitionId, context: JsonValue): Promise<LaunchedRun> => {
   const response = await fetch(`${baseUrl}/workflow_runs`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ workflow_def_id: definitionId, context: runContext(baseUrl) }),
+    body: JSON.stringify({ workflow_def_id: definitionId, context }),
   });
   const summary = await readJson<OperatorRunSummary>(response, "run launch");
   return { run_id: summary.id, root_workflow_id: summary.current_attempt_root_workflow_id };
@@ -179,6 +185,10 @@ export const mergedPullRequestObservation = (unitId: UnitId, baseBranch: string)
     state: "merged", source: "poll", observed_at: new Date().toISOString(), merged_at: new Date().toISOString(),
   };
 };
+
+/** An artifact as the operator surface serves it, current revision first. */
+export const readArtifact = async (baseUrl: string, artifactId: ArtifactId): Promise<OperatorArtifactDetail> =>
+  readJson<OperatorArtifactDetail>(await fetch(`${baseUrl}/artifact_details/${artifactId}`), `read artifact ${artifactId}`);
 
 export const readRun = async (baseUrl: string, runId: OperatorRunSummary["id"]): Promise<OperatorRunDetail> =>
   readJson<OperatorRunDetail>(await fetch(`${baseUrl}/runs/${runId}`), `read run ${runId}`);

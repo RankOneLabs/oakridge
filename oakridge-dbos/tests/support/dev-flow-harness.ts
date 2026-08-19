@@ -19,7 +19,9 @@
  * Bun runs every test file in one process, so the executor adapter can be
  * registered exactly once. Tests swap behaviour behind it with `useScenario`.
  */
-import { resolve } from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
@@ -29,7 +31,7 @@ import type { WorkflowDefinition } from "../../src/domain/workflow";
 import { createOakridgeRuntime, type OakridgeRuntime } from "../../src/runtime/compose";
 import { applyMigrations } from "../../src/storage/migrate";
 import { PgPostgresExecutor } from "../../src/storage/sql-executor";
-import { loadDevFlowV11 } from "../../src/seed/dev-flow-v11";
+import { loadDevFlowV12 } from "../../src/seed/dev-flow-v12";
 
 /**
  * How an execution behaves, for the scenario currently running.
@@ -161,12 +163,108 @@ export const scriptedAgentScenario = (): ScriptedAgentScenario => {
   };
 };
 
+/** The epic branch the harness's runs provision and build against. */
+export const HARNESS_EPIC_BRANCH = "epic/harness";
+/** The base branch the harness's fixture repository publishes. */
+export const HARNESS_BASE_BRANCH = "main";
+
+/**
+ * A real git repository with a real origin, for the stage that provisions
+ * epic branches.
+ *
+ * Faking git here would fake the one thing the provisioning stage is: the
+ * sequence of commands that makes a branch exist on a remote. So the fixture is
+ * an actual bare repository and an actual working copy pointed at it, and the
+ * run pushes to it exactly as it would to GitHub.
+ */
+export interface GitRepositoryFixture {
+  readonly path: string;
+  readonly origin_path: string;
+  readonly base_branch: string;
+  readonly epic_branch: string;
+  /** Every ref origin currently holds under `refs/heads/`, read fresh. */
+  list_origin_branches(): Promise<readonly string[]>;
+  /** What origin says a branch points at, or null when it holds no such branch. */
+  origin_branch_sha(branch: string): Promise<string | null>;
+  /** Commits onto an existing origin branch, standing in for merged cohort work. Returns the new head. */
+  advance_origin_branch(branch: string, message: string): Promise<string>;
+  remove(): Promise<void>;
+}
+
+/**
+ * Fixture git, isolated from whoever is running the suite.
+ *
+ * The global and system config files are pointed at nothing on purpose. A
+ * fixture that inherited them would depend on the developer's identity, aliases
+ * and hooks, and on a machine configured to sign commits it cannot even make
+ * one — the fixture has no key and no business having one. This is not the
+ * signing policy being disabled; it is a throwaway repository having no policy
+ * at all. Product code run against the fixture is unaffected: it spawns its own
+ * git, with the environment it always has.
+ */
+const git = async (cwd: string, args: readonly string[]): Promise<string> => {
+  const child = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe",
+    env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null",
+      GIT_AUTHOR_NAME: "oakridge e2e", GIT_AUTHOR_EMAIL: "e2e@oakridge.invalid",
+      GIT_COMMITTER_NAME: "oakridge e2e", GIT_COMMITTER_EMAIL: "e2e@oakridge.invalid" } });
+  const [stdout, stderr, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+  if (exitCode !== 0) throw new Error(`git ${args.join(" ")} in ${cwd} failed (${exitCode}): ${stderr.trim() || stdout.trim()}`);
+  return stdout;
+};
+
+export const createGitRepositoryFixture = async (): Promise<GitRepositoryFixture> => {
+  const root = await mkdtemp(join(tmpdir(), "oakridge-e2e-repo-"));
+  const originPath = join(root, "origin.git");
+  const workingPath = join(root, "working");
+  await git(root, ["init", "--bare", "--initial-branch", HARNESS_BASE_BRANCH, originPath]);
+  await git(root, ["init", "--initial-branch", HARNESS_BASE_BRANCH, workingPath]);
+  await Bun.write(join(workingPath, "README.md"), "oakridge end-to-end fixture\n");
+  await git(workingPath, ["add", "README.md"]);
+  await git(workingPath, ["commit", "-m", "fixture base"]);
+  await git(workingPath, ["remote", "add", "origin", originPath]);
+  await git(workingPath, ["push", "origin", `${HARNESS_BASE_BRANCH}:refs/heads/${HARNESS_BASE_BRANCH}`]);
+  await git(workingPath, ["fetch", "origin"]);
+  return {
+    path: workingPath,
+    origin_path: originPath,
+    base_branch: HARNESS_BASE_BRANCH,
+    epic_branch: HARNESS_EPIC_BRANCH,
+    async list_origin_branches() {
+      const output = await git(workingPath, ["ls-remote", "--heads", "origin"]);
+      return output.split("\n").filter(Boolean).map((line) => line.split("refs/heads/")[1] ?? "").filter(Boolean);
+    },
+    async origin_branch_sha(branch) {
+      const output = await git(workingPath, ["ls-remote", "origin", `refs/heads/${branch}`]);
+      return output.trim().split(/\s+/)[0] ?? null;
+    },
+    // Committed from a scratch worktree so the fixture's own checkout is never
+    // moved off the base branch, which the provisioning commands read.
+    async advance_origin_branch(branch, message) {
+      const scratch = join(root, `advance-${branch.replaceAll("/", "-")}`);
+      await git(workingPath, ["fetch", "origin", branch]);
+      await git(workingPath, ["worktree", "add", "--detach", scratch, `origin/${branch}`]);
+      try {
+        await Bun.write(join(scratch, `${message.replaceAll(/[^a-z]/gi, "-")}.md`), `${message}\n`);
+        await git(scratch, ["add", "."]);
+        await git(scratch, ["commit", "-m", message]);
+        await git(scratch, ["push", "origin", `HEAD:refs/heads/${branch}`]);
+        return (await git(scratch, ["rev-parse", "HEAD"])).trim();
+      } finally {
+        await git(workingPath, ["worktree", "remove", "--force", scratch]);
+      }
+    },
+    async remove() { await rm(root, { recursive: true, force: true }); },
+  };
+};
+
 export interface IntegrationRuntime {
   readonly runtime: OakridgeRuntime;
   /** Where the real HTTP surface is listening. */
   readonly base_url: string;
   readonly definition: WorkflowDefinition;
   readonly application_version: string;
+  /** The repository the seeded flow's runs provision and build in. */
+  readonly repository: GitRepositoryFixture;
   /**
    * Root workflows this file started, cancelled on teardown.
    *
@@ -191,7 +289,7 @@ export const installIntegrationRuntime = async (databaseUrl: string): Promise<In
   const migrationSql = PgPostgresExecutor.connect(databaseUrl);
   try { await applyMigrations(migrationSql); } finally { await migrationSql.close(); }
 
-  const loaded = await loadDevFlowV11();
+  const loaded = await loadDevFlowV12();
   if (!loaded.ok) throw new Error(loaded.error.detail);
 
   const applicationVersion = `e2e-${crypto.randomUUID()}`;
@@ -205,10 +303,14 @@ export const installIntegrationRuntime = async (databaseUrl: string): Promise<In
     cancel_or_fence: (execution_id, reference) => requireScenario().cancel_or_fence(execution_id, reference),
   };
 
+  const repository = await createGitRepositoryFixture();
+  // No `git_commands` override: the provisioning stage runs real git against
+  // the fixture above, because the sequence of commands is the thing under
+  // test and a fake runner would agree with whatever it was told.
   const runtime = await createOakridgeRuntime({
     database_url: databaseUrl,
     application_version: applicationVersion,
-    executor_adapter: adapter,
+    executor_adapters: [adapter],
     prompt_template_directory: resolve(import.meta.dir, "../../../oakridge-core/prompts"),
   });
   await runtime.seed_builtins();
@@ -222,6 +324,7 @@ export const installIntegrationRuntime = async (databaseUrl: string): Promise<In
     base_url: `http://127.0.0.1:${server.port}`,
     definition: loaded.value,
     application_version: applicationVersion,
+    repository,
     started_runs: startedRuns,
     async stop() {
       for (const rootWorkflowId of startedRuns) {
@@ -230,6 +333,7 @@ export const installIntegrationRuntime = async (databaseUrl: string): Promise<In
       server.stop(true);
       await DBOS.shutdown();
       await runtime.close();
+      await repository.remove();
     },
   };
 };
@@ -266,9 +370,9 @@ export const artifactBody = (request: ExecutionRequest, unitId: UnitId, outputNa
   return { verdict: "pass", findings: [], recommended_next_actions: [], revision };
 };
 
-export const runContext = (oakridgeUrl: string) => ({
+export const runContext = (oakridgeUrl: string, repositoryPath: string) => ({
   brief_notes: "end-to-end harness",
-  repositories: [{ key: "oakridge", path: "/tmp", epic_branch: "epic/harness", base_branch: "main" }],
+  repositories: [{ key: "oakridge", path: repositoryPath, epic_branch: HARNESS_EPIC_BRANCH, base_branch: HARNESS_BASE_BRANCH }],
   oakridge_url: oakridgeUrl,
   planner_runtime: "claude-code" as const, planner_model: null, planner_effort: null,
   worker_runtime: "claude-code" as const, worker_model: null, worker_effort: null,

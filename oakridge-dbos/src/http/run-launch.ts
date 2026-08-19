@@ -7,9 +7,7 @@ import { launchCompatibleRun, type LaunchRunDependencies, type RunLaunchFailureK
 /** The HTTP reading of a launch failure — one place, exhaustive over the union. */
 const selectRunLaunchStatus = (kind: RunLaunchFailureKind): 400 | 404 | 409 | 503 => {
   if (kind === "definition_not_found" || kind === "project_not_found") return 404;
-  // A repository the run cannot work in is the request being unsatisfiable,
-  // not a conflict with existing state — and it is fixable by the caller.
-  if (kind === "invalid_context" || kind === "repository_precondition_unmet") return 400;
+  if (kind === "invalid_context") return 400;
   if (kind === "projection_unavailable") return 503;
   return 409;
 };

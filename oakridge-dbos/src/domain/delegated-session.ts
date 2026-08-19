@@ -6,7 +6,16 @@ export type SlotBinding =
   | { readonly from: "context"; readonly path: string }
   | { readonly from: "literal"; readonly value: string }
   | { readonly from: "item"; readonly path: string }
-  | { readonly from: "context_lookup"; readonly collection_path: string; readonly collection_key_path: string; readonly item_key_path: string; readonly value_path: string };
+  | { readonly from: "context_lookup"; readonly collection_path: string; readonly collection_key_path: string; readonly item_key_path: string; readonly value_path: string }
+  /**
+   * `context_lookup`'s sibling, keyed off a named input instead of the run
+   * context. A fan-out unit needs values chosen by something it carries — a
+   * cohort looking up the repository it builds in — and `input` alone cannot
+   * key off the item. The difference from `context_lookup` is only where the
+   * collection comes from: an upstream stage's typed output rather than a
+   * pointer into an untyped bag.
+   */
+  | { readonly from: "input_lookup"; readonly input_name: string; readonly collection_key_path: string; readonly item_key_path: string; readonly value_path: string };
 
 export type Bindable = string | SlotBinding;
 export interface WorktreeIdentity { readonly branchName: string; readonly worktreeSubdir: string; readonly baseRef?: string }

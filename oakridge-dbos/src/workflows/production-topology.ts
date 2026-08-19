@@ -14,6 +14,7 @@ import type { ExecutionId, JsonValue, StageCoordinatorWorkflowId, StageInstanceI
 import type { StageFailureOutcome, StageOutcome } from "../domain/workflow";
 import { stageRerunStateKey, type StageRerunState } from "../domain/rerun";
 import type { StageAdmissionState } from "../domain/runs";
+import { PROVISION_REPOSITORY_REFS_STAGE_TYPE, parseRunContextRepository, type ResolvedRepositoryProvisioningConfig } from "../domain/repository-refs";
 import { readJsonPointer } from "../domain/json-pointer";
 import { relayWorkflowId, stageCoordinatorWorkflowId, unitExecutionWorkflowId } from "../domain/workflow-ids";
 import { containAttempt } from "./cancellation";
@@ -82,12 +83,23 @@ const replaceExecutionProjectionStep = DBOS.registerStep(async (input: ReplaceEx
 const loadResumeArtifactsStep = DBOS.registerStep(async (input: { readonly run_id: WorkflowRunId; readonly stage_keys: readonly string[] }) => topologyServices().load_resume_artifacts(input.run_id, input.stage_keys), { name: "oakridgeLoadResumeArtifactsStep", retriesAllowed: true });
 
 const envelopes = (inputs: StageInputSet): readonly ArtifactEnvelope[] => Object.values(inputs).flatMap((value) => Array.isArray(value) ? value : [value as ArtifactEnvelope]);
-export const selectInputsForUnit = (inputs: StageInputSet, unit: MaterializedExecutionUnit, isFanOut: boolean): StageInputSet => {
-  if (!isFanOut) return inputs;
-  return Object.fromEntries(Object.entries(inputs).map(([name, value]) => {
-    if (!Array.isArray(value)) return [name, value];
-    return [name, value.filter((artifact) => artifact.unit_id === unit.unit_id)];
-  }));
+
+/**
+ * The slice of a stage's inputs one unit reads.
+ *
+ * Only `unit_complete` inputs are per-unit: they arrive one artifact at a time
+ * as their producer releases each unit, and each carries the unit id it belongs
+ * to — so a build sees its own brief and an assessor its own build result. A
+ * `producer_complete` input is the producing stage's whole output, and the unit
+ * ids in it belong to a different population entirely: the provisioned refs are
+ * keyed by repository while the units consuming them are cohorts, so filtering
+ * one by the other empties it and the unit resolves nothing at all.
+ */
+export const selectInputsForUnit = (stage: CompiledStageContract, inputs: StageInputSet, unit: MaterializedExecutionUnit): StageInputSet => {
+  if (stage.materialization.kind !== "fan_out") return inputs;
+  const perUnit = new Set(stage.inputs.filter((input) => input.delivery === "unit_complete").map((input) => input.name));
+  return Object.fromEntries(Object.entries(inputs).map(([name, value]) =>
+    Array.isArray(value) && perUnit.has(name) ? [name, value.filter((artifact) => artifact.unit_id === unit.unit_id)] : [name, value]));
 };
 const expectedArtifacts = (stage: CompiledStageContract, unit: MaterializedExecutionUnit) => {
   if (stage.materialization.kind !== "artifact_collection") return stage.outputs.map((output) => ({ unit_id: unit.unit_id, output_name: output.name, artifact_type: output.artifact_type }));
@@ -99,14 +111,43 @@ const expectedArtifacts = (stage: CompiledStageContract, unit: MaterializedExecu
     return stage.outputs.map((output) => ({ unit_id: id as UnitId, output_name: output.name, artifact_type: output.artifact_type }));
   });
 };
-const resolveExecutionPlans = async (input: PlanStageStepInput, units: readonly MaterializedExecutionUnit[]): Promise<readonly PlannedExecution[]> => {
+/** The request shape every executor's plan shares, whatever resolved its config. */
+const executionRequestFor = (input: PlanStageStepInput, unit: MaterializedExecutionUnit, unitInputs: StageInputSet, resolvedConfig: JsonValue): ExecutionRequest => ({
+  execution_id: `${input.stage_instance_id}:${unit.unit_id}` as ExecutionId,
+  stage_instance_id: input.stage_instance_id,
+  unit_id: unit.unit_id,
+  executor_type: input.stage.executor.executor_type,
+  resolved_config: resolvedConfig,
+  inputs: envelopes(unitInputs),
+  declared_outputs: input.stage.outputs.map((output) => ({ name: output.name, artifact_type: output.artifact_type, required: true })),
+  expected_artifacts: expectedArtifacts(input.stage, unit),
+});
+
+/**
+ * Provisioning units resolve entirely from what they were materialized over —
+ * one repository each, straight out of the run context — so there is no prompt
+ * to render and no workspace to inherit. The declared output travels with the
+ * config because the executor emits against it, and definition validation has
+ * already established that there is exactly one.
+ */
+const resolveProvisioningPlans = (input: PlanStageStepInput, units: readonly MaterializedExecutionUnit[]): readonly PlannedExecution[] => {
+  const output = input.stage.outputs[0];
+  if (!output || input.stage.outputs.length !== 1) throw new Error(`stage '${input.stage.stage_key}' must declare exactly one repository refs output`);
+  return units.map((unit) => {
+    const repository = parseRunContextRepository(unit.parameters);
+    if (!repository.ok) throw new Error(`${repository.error.operation}:${input.stage.stage_key}:${unit.unit_id}:${repository.error.detail}`);
+    const resolved: ResolvedRepositoryProvisioningConfig = { executor_type: PROVISION_REPOSITORY_REFS_STAGE_TYPE, output_name: output.name, repository: repository.value };
+    return { unit, request: executionRequestFor(input, unit, {}, resolved as unknown as JsonValue) };
+  });
+};
+
+const resolveDelegatedPlans = async (input: PlanStageStepInput, units: readonly MaterializedExecutionUnit[]): Promise<readonly PlannedExecution[]> => {
   const environment = { inputs: input.inputs, context: input.context, item: null } as const;
-  if (input.stage.executor.executor_type !== "delegated_session") throw new Error(`production resolver for executor '${input.stage.executor.executor_type}' is not registered`);
   const definition = input.stage.executor.definition_config as DelegatedSessionDefinitionConfig;
   const template = await topologyServices().load_prompt_template(definition.prompt_template_path);
   const plans: PlannedExecution[] = [];
   for (const unit of units) {
-    const unitInputs = selectInputsForUnit(input.inputs, unit, input.stage.materialization.kind === "fan_out");
+    const unitInputs = selectInputsForUnit(input.stage, input.inputs, unit);
     const resolved = resolveDelegatedExecution({ definition, environment: { ...environment, inputs: unitInputs }, unit, stage_instance_id: input.stage_instance_id, prompt_template: template });
     if (!resolved.ok) throw new Error(`${resolved.error.operation}:${resolved.error.detail}`);
     let workspaceSource: ExecutionRequest["workspace_source"];
@@ -120,12 +161,16 @@ const resolveExecutionPlans = async (input: PlanStageStepInput, units: readonly 
       if (!externalReference) throw new Error(`workspace source execution '${source.producer_execution_id}' has no external reference`);
       workspaceSource = { execution_id: source.producer_execution_id, external_reference: externalReference };
     }
-    plans.push({ unit, request: { execution_id: `${input.stage_instance_id}:${unit.unit_id}` as ExecutionId, stage_instance_id: input.stage_instance_id, unit_id: unit.unit_id,
-      executor_type: input.stage.executor.executor_type, resolved_config: resolved.value as unknown as JsonValue, inputs: envelopes(unitInputs),
-      declared_outputs: input.stage.outputs.map((output) => ({ name: output.name, artifact_type: output.artifact_type, required: true })), expected_artifacts: expectedArtifacts(input.stage, unit),
+    plans.push({ unit, request: { ...executionRequestFor(input, unit, unitInputs, resolved.value as unknown as JsonValue),
       ...(workspaceSource ? { workspace_source: workspaceSource } : {}) } });
   }
   return plans;
+};
+
+const resolveExecutionPlans = async (input: PlanStageStepInput, units: readonly MaterializedExecutionUnit[]): Promise<readonly PlannedExecution[]> => {
+  if (input.stage.executor.executor_type === PROVISION_REPOSITORY_REFS_STAGE_TYPE) return resolveProvisioningPlans(input, units);
+  if (input.stage.executor.executor_type !== "delegated_session") throw new Error(`production resolver for executor '${input.stage.executor.executor_type}' is not registered`);
+  return resolveDelegatedPlans(input, units);
 };
 const toExecutionPlan = async (input: PlanStageStepInput): Promise<readonly PlannedExecution[]> => {
   const environment = { inputs: input.inputs, context: input.context, item: null } as const;
@@ -156,10 +201,16 @@ const planUnitStep = DBOS.registerStep(async (input: PlanUnitStepInput): Promise
  * contract. Cancellation is something the system does to a finished executor;
  * a non-zero exit is the executor saying something went wrong, and that
  * deserves an operator's eyes rather than being assumed benign.
+ *
+ * The executor's own failure is reported ahead of the missing outputs it
+ * caused. Both are true when an executor dies before emitting, but only one of
+ * them says anything: `required_output_missing` names the symptom, while the
+ * observation names the reason — a repository that is not a git repository, a
+ * runtime that exited non-zero — and that is what an operator needs to act on.
  */
 export const terminalFailure = (unit: UnitId, contract: ExecutionContractState, result: ArtifactContractExecutionResult): StageOutcome | null => {
-  if (contract.kind !== "satisfied") return { kind: "failed", code: "required_output_missing", detail: `unit '${unit}' is missing: ${contract.missing_outputs.join(", ")}` };
   if (result.terminal_observation?.kind === "failed") return { kind: "failed", code: result.terminal_observation.code, detail: result.terminal_observation.detail };
+  if (contract.kind !== "satisfied") return { kind: "failed", code: "required_output_missing", detail: `unit '${unit}' is missing: ${contract.missing_outputs.join(", ")}` };
   return null;
 };
 

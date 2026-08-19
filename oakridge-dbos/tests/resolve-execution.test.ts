@@ -10,6 +10,30 @@ test("context lookup resolves repository workdir from the runtime fan-out item",
   expect(result).toEqual({ ok: true, value: "/repo/web" });
 });
 
+/**
+ * `input_lookup` is `context_lookup` keyed off a named input instead of the run
+ * context — the binding that lets a cohort find its own repository in a typed
+ * upstream output rather than in an untyped bag.
+ */
+test("input lookup resolves a value from a collected input keyed by the fan-out item", () => {
+  const result = resolveBinding({ from: "input_lookup", input_name: "repository_refs", collection_key_path: "/artifact/repository_key", item_key_path: "/artifact/repository_key", value_path: "/artifact/epic_branch" }, {
+    inputs: { repository_refs: [
+      { artifact_id: "refs-1" as never, artifact_type: "dev.repository_refs", output_name: "repository_refs", unit_id: "api" as UnitId, body: { repository_key: "api", epic_branch: "epic/api" } },
+      { artifact_id: "refs-2" as never, artifact_type: "dev.repository_refs", output_name: "repository_refs", unit_id: "web" as UnitId, body: { repository_key: "web", epic_branch: "epic/web" } },
+    ] },
+    context: {}, item: { artifact: { repository_key: "web" } },
+  });
+  expect(result).toEqual({ ok: true, value: "epic/web" });
+});
+
+test("input lookup names the input it could not find rather than resolving to nothing", () => {
+  const binding = { from: "input_lookup", input_name: "repository_refs", collection_key_path: "/artifact/repository_key", item_key_path: "/artifact/repository_key", value_path: "/artifact/epic_branch" } as const;
+  expect(resolveBinding(binding, { inputs: {}, context: {}, item: { artifact: { repository_key: "web" } } }))
+    .toEqual({ ok: false, error: expect.objectContaining({ detail: "input 'repository_refs' not found" }) });
+  expect(resolveBinding(binding, { inputs: { repository_refs: [] }, context: {}, item: null }))
+    .toEqual({ ok: false, error: expect.objectContaining({ detail: "input lookup used outside fan-out" }) });
+});
+
 test("production execution resolution retains v11 prompt and runtime semantics", () => {
   const definition: DelegatedSessionDefinitionConfig = {
     runtime: { from: "context", path: "/worker_runtime" }, prompt_template_path: "dev-flow/build_v2.md",

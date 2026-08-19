@@ -3,8 +3,10 @@ import type { DelegatedSessionDefinitionConfig } from "../domain/delegated-sessi
 import { err, ok, type JsonValue, type Result } from "../domain/primitives";
 import type { StageNodeDefinition, WorkflowDefinition } from "../domain/workflow";
 import { delegatedSessionDefinitionSchema } from "../validation/delegated-session";
+import { repositoryProvisioningDefinitionSchema } from "../validation/repository-provisioning";
 import { selectBuiltInGateDisposition } from "../domain/gates";
 import { readOwn } from "../domain/records";
+import { PROVISION_REPOSITORY_REFS_STAGE_TYPE, RUN_CONTEXT_REPOSITORY_KEY_POINTER, type RepositoryProvisioningDefinitionConfig } from "../domain/repository-refs";
 
 export interface CompileWorkflowError {
   readonly operation: "compile_workflow";
@@ -76,10 +78,35 @@ export const delegatedSessionStageTypeCompiler: StageTypeCompiler = {
   },
 };
 
+/**
+ * Repository provisioning fans out over the run's repositories, one unit each,
+ * so a repository that cannot be provisioned fails and retries on its own
+ * rather than taking its siblings with it. The unit id is the repository key —
+ * fixed by `RunContextRepository` rather than configurable, because the key is
+ * what every downstream lookup already matches on.
+ */
+export const repositoryProvisioningStageTypeCompiler: StageTypeCompiler = {
+  compile(stageKey, rawConfig) {
+    const parsed = repositoryProvisioningDefinitionSchema.safeParse(rawConfig);
+    if (!parsed.success) return err({ operation: "compile_workflow", stage_key: stageKey, detail: parsed.error.message });
+    const config = parsed.data as RepositoryProvisioningDefinitionConfig;
+    return ok({
+      definition_config: config as unknown as JsonValue,
+      materialization: { kind: "fan_out", over: config.repositories, unit_id_path: RUN_CONTEXT_REPOSITORY_KEY_POINTER,
+        depends_on_path: null, max_parallel: config.max_parallel, manual_admission: false },
+      // Nothing reviews provisioned refs: they are a fact about a repository,
+      // not a document. Gating them would park every run behind an approval of
+      // a branch name the operator already chose.
+      output_release: () => ({ kind: "immediate" }),
+    });
+  },
+};
+
 export type StageTypeCompilerRegistry = Readonly<Record<string, StageTypeCompiler>>;
 
 export const builtInStageTypeCompilers: StageTypeCompilerRegistry = {
   delegated_session: delegatedSessionStageTypeCompiler,
+  [PROVISION_REPOSITORY_REFS_STAGE_TYPE]: repositoryProvisioningStageTypeCompiler,
 };
 
 const compileStage = (stageKey: string, node: StageNodeDefinition, registry: StageTypeCompilerRegistry): Result<CompiledStageContract, CompileWorkflowError> => {

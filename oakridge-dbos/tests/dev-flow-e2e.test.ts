@@ -27,16 +27,15 @@ import { mountSessionsRoutes } from "../../kbbl/core/server/handlers/sessions";
 import type { SessionManager } from "../../kbbl/core/session/session-manager";
 import { findTestDatabaseUrl } from "./support/durable-database";
 import {
-  awaitCondition, installIntegrationRuntime, neverFinishingScenario, scriptedAgentScenario, useScenario,
-  type IntegrationRuntime, type ScriptedAgentScenario,
+  HARNESS_BASE_BRANCH, HARNESS_EPIC_BRANCH, awaitCondition, installIntegrationRuntime, neverFinishingScenario, runContext,
+  scriptedAgentScenario, useScenario, type IntegrationRuntime, type ScriptedAgentScenario,
 } from "./support/dev-flow-harness";
 import {
   confirmCohortMerged, decideGate, emitDeclaredArtifacts, launchRun, mergedPullRequestObservation,
-  observeCohortPullRequest, readReviewInbox, readRun, type EmittedArtifact,
+  observeCohortPullRequest, readArtifact, readReviewInbox, readRun, type EmittedArtifact,
 } from "./support/dev-flow-driver";
-
-/** The epic branch the harness's run context declares its cohorts target. */
-const HARNESS_EPIC_BRANCH = "epic/harness";
+import { stageRerunStateKey, type StageRerunState } from "../src/domain/rerun";
+import { stageCoordinatorWorkflowId } from "../src/domain/workflow-ids";
 
 const databaseUrl = await findTestDatabaseUrl();
 /**
@@ -151,10 +150,15 @@ class RunDriver {
 }
 
 /**
- * The whole flow: five stages, seven executions, every gate approved through
- * the operator's route and every handoff resolved by the stage that owes the
- * decision. Asserts the assessor's lineage as well as the outcome — a run that
- * finishes with the wrong inputs threaded through is not a pass.
+ * The whole flow: six stages, seven agent executions, every gate approved
+ * through the operator's route and every handoff resolved by the stage that
+ * owes the decision. Asserts the assessor's lineage as well as the outcome — a
+ * run that finishes with the wrong inputs threaded through is not a pass.
+ *
+ * The sixth stage is `provision_refs`, which no agent drives: it runs real git
+ * against the fixture repository and publishes the epic branch the cohorts cut
+ * their worktrees from. Before it existed the branch was created by nobody, and
+ * every run against a fresh epic died at its first build.
  *
  * This is also the test that would have caught the deadlock. `build_result`
  * releases through a handoff to the `assessment` role, so the assessor decides
@@ -168,7 +172,7 @@ e2e("the seeded dev flow runs to completion through gates and handoffs", async (
   const agent = scriptedAgentScenario();
   useScenario(agent);
 
-  const run = await launchRun(oakridge.base_url, oakridge.definition.id);
+  const run = await launchRun(oakridge.base_url, oakridge.definition.id, runContext(oakridge.base_url, oakridge.repository.path));
   oakridge.started_runs.push(run.root_workflow_id);
   const driver = new RunDriver(oakridge.base_url, agent, run.root_workflow_id);
 
@@ -186,9 +190,24 @@ e2e("the seeded dev flow runs to completion through gates and handoffs", async (
 
   const detail = await readRun(oakridge.base_url, run.run_id);
   expect(detail.status).toBe("complete");
-  expect(detail.stages).toHaveLength(5);
+  expect(detail.stages).toHaveLength(6);
   expect(detail.stages.every((stage) => stage.status === "complete")).toBe(true);
   expect(driver.drivenExecutions.size).toBe(7);
+
+  // The epic branch exists on origin because a stage put it there. This is the
+  // assertion the whole change is for: no operator ran a git command, and no
+  // launch gate refused the run for the branch's absence.
+  expect(await oakridge.repository.list_origin_branches()).toContain(HARNESS_EPIC_BRANCH);
+
+  // Each cohort cut its worktree from the provisioned branch, resolved through
+  // the artifact rather than a pointer into the run context.
+  const builds = [...agent.launched.entries()].filter(([id]) => id.startsWith(`${run.root_workflow_id}:`) && id.includes(":stage:build:unit:"));
+  expect(builds).toHaveLength(2);
+  for (const [, request] of builds) {
+    expect(request.inputs.map((input) => input.output_name).sort()).toEqual(["brief", "repository_refs"]);
+    expect((request.resolved_config as { readonly worktree?: { readonly baseRef?: string } }).worktree?.baseRef).toBe(HARNESS_EPIC_BRANCH);
+    expect((request.resolved_config as { readonly workdir?: string }).workdir).toBe(oakridge.repository.path);
+  }
 
   // Each assessor must see exactly its own cohort's build, in the workspace
   // that produced it — not a sibling's, and not both.
@@ -201,6 +220,80 @@ e2e("the seeded dev flow runs to completion through gates and handoffs", async (
     expect(new Set(request.inputs.map((input) => input.unit_id)).size).toBe(1);
   }
 }, 240_000);
+
+/**
+ * A second run over an epic branch that already exists, and has moved on.
+ *
+ * The branch is advanced past the base branch first, standing in for cohort
+ * work merged by an earlier run. What the second run must report is that
+ * advanced commit: reading it proves the branch was adopted where it actually
+ * is, and that the final local fetch refreshed the tracking ref rather than
+ * leaving `origin/<epic>` on whatever this working copy last saw. A stale
+ * tracking ref is not a cosmetic problem — it is the ref every cohort's
+ * worktree is cut from.
+ */
+e2e("a second run over an existing epic branch adopts it where it now is", async () => {
+  const agent = scriptedAgentScenario();
+  useScenario(agent);
+
+  const context = runContext(oakridge.base_url, oakridge.repository.path);
+  const first = await launchRun(oakridge.base_url, oakridge.definition.id, context);
+  oakridge.started_runs.push(first.root_workflow_id);
+  try {
+    await awaitCondition("the first run to provision its refs", async () =>
+      (await oakridge.repository.list_origin_branches()).includes(HARNESS_EPIC_BRANCH) ? true : null, 60_000);
+    const advanced = await oakridge.repository.advance_origin_branch(HARNESS_EPIC_BRANCH, "cohort work already merged into the epic");
+
+    const second = await launchRun(oakridge.base_url, oakridge.definition.id, { ...context, brief_notes: "second run over the same epic" });
+    oakridge.started_runs.push(second.root_workflow_id);
+    const refs = await awaitCondition(() => `the second run to provision from the existing epic branch`, async () => {
+      const state = await DBOS.getEvent<StageRerunState>(stageCoordinatorWorkflowId(second.root_workflow_id, "provision_refs"), stageRerunStateKey("oakridge" as UnitId), { timeoutSeconds: 0 });
+      if (state?.status === "waiting") throw new Error(`provisioning failed: ${state.code} ${state.detail}`);
+      const detail = await readRun(oakridge.base_url, second.run_id);
+      const stage = detail.stages.find((candidate) => candidate.name === "provision_refs");
+      return stage?.artifacts[0] ?? null;
+    }, 60_000);
+
+    const artifact = await readArtifact(oakridge.base_url, refs.id);
+    expect(artifact.revisions[0]?.body).toEqual({ repository_key: "oakridge", repository_path: oakridge.repository.path,
+      base_branch: HARNESS_BASE_BRANCH, epic_branch: HARNESS_EPIC_BRANCH, epic_head_sha: advanced });
+    expect(await oakridge.repository.origin_branch_sha(HARNESS_EPIC_BRANCH)).toBe(advanced);
+  } finally {
+    agent.releaseAll();
+  }
+}, 180_000);
+
+/**
+ * The real failure path, at the stage that owns the requirement.
+ *
+ * A repository that is not a git repository used to be refused at launch, by
+ * the one participant that could only ever say no. It is now a stage outcome:
+ * the unit parks with the reason, an operator can see it and retry it, and
+ * nothing about the rest of the graph is special-cased around it.
+ */
+e2e("a repository that is not a git repository fails at provisioning, with the reason", async () => {
+  const agent = scriptedAgentScenario();
+  useScenario(agent);
+
+  const context = runContext(oakridge.base_url, oakridge.repository.path);
+  const brokenContext = { ...context, brief_notes: "unprovisionable repository",
+    repositories: [{ ...context.repositories[0]!, path: `${oakridge.repository.path}/not-a-repository` }] };
+  const run = await launchRun(oakridge.base_url, oakridge.definition.id, brokenContext);
+  oakridge.started_runs.push(run.root_workflow_id);
+
+  try {
+    const parked = await awaitCondition("the provisioning unit to park with its reason", async () =>
+      DBOS.getEvent<StageRerunState>(stageCoordinatorWorkflowId(run.root_workflow_id, "provision_refs"), stageRerunStateKey("oakridge" as UnitId), { timeoutSeconds: 0 }), 60_000);
+    expect(parked.status).toBe("waiting");
+    expect(parked.status === "waiting" ? parked.code : null).toBe("not_a_git_repository");
+    expect(parked.status === "waiting" ? parked.detail : null).toContain("is not a git repository");
+    // The failure belongs to provisioning alone: nothing downstream of it ran.
+    expect([...agent.launched.keys()].some((id) => id.startsWith(`${run.root_workflow_id}:stage:build`))).toBe(false);
+  } finally {
+    await DBOS.cancelWorkflow(run.root_workflow_id, { cancelChildren: true });
+    agent.releaseAll();
+  }
+}, 120_000);
 
 /**
  * Availability and acceptance, held apart.
@@ -220,7 +313,7 @@ e2e("the assessor starts on a build result still parked in its handoff", async (
   const agent = scriptedAgentScenario();
   useScenario(agent);
 
-  const run = await launchRun(oakridge.base_url, oakridge.definition.id);
+  const run = await launchRun(oakridge.base_url, oakridge.definition.id, runContext(oakridge.base_url, oakridge.repository.path));
   oakridge.started_runs.push(run.root_workflow_id);
   const driver = new RunDriver(oakridge.base_url, agent, run.root_workflow_id);
   const isAssessor = (id: string): boolean => id.includes(":stage:assessor:unit:");
@@ -278,7 +371,7 @@ e2e("a rejected build revises, and the reassessment releases it", async () => {
   const agent = scriptedAgentScenario();
   useScenario(agent);
 
-  const run = await launchRun(oakridge.base_url, oakridge.definition.id);
+  const run = await launchRun(oakridge.base_url, oakridge.definition.id, runContext(oakridge.base_url, oakridge.repository.path));
   oakridge.started_runs.push(run.root_workflow_id);
   const driver = new RunDriver(oakridge.base_url, agent, run.root_workflow_id);
   const isAssessor = (id: string): boolean => id.includes(":stage:assessor:unit:");
@@ -396,7 +489,7 @@ e2e("cancelling a run fences its delegated session through the real kbbl route",
       cancel_or_fence: (id, reference) => kbblAdapter.cancel_or_fence(id, reference),
     });
 
-    const run = await launchRun(oakridge.base_url, oakridge.definition.id);
+    const run = await launchRun(oakridge.base_url, oakridge.definition.id, runContext(oakridge.base_url, oakridge.repository.path));
     oakridge.started_runs.push(run.root_workflow_id);
     // Cancel once the first stage is genuinely running an execution — and once
     // its external reference has been projected, since that projection is what
@@ -415,8 +508,14 @@ e2e("cancelling a run fences its delegated session through the real kbbl route",
 
     // The assertion: cancellation completes. Before the fix this rejected,
     // because the fence exhausted its retries against a 409.
+    //
+    // Two executions are contained, not one: the run's first stages are the
+    // spec analyzer and the repository provisioner, and containment does not
+    // special-case the deterministic one. Fencing it is a no-op — there is no
+    // process to stop — but it is reached through the same path as any other,
+    // which is what keeps cancellation free of executor-specific branches.
     const result = await cancellation.getResult();
-    expect(result.fenced_execution_count).toBe(1);
+    expect(result.fenced_execution_count).toBe(2);
     expect(closed).toEqual([SESSION_ID]);
     expect(refusals).toEqual([]);
   } finally {
