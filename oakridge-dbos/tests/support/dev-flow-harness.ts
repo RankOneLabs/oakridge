@@ -212,18 +212,34 @@ const git = async (cwd: string, args: readonly string[]): Promise<string> => {
   return stdout;
 };
 
+/**
+ * Setting a fixture up can fail, and the directory exists before it can.
+ *
+ * Every command below is a subprocess that can refuse — a git too old for
+ * `--initial-branch`, a machine whose configuration will not let this identity
+ * commit — and the temp directory is already on disk by then. Without this
+ * guard a failing setup leaves an `oakridge-e2e-repo-*` behind every time it is
+ * run, which is not hypothetical: building this fixture is how the strays that
+ * prompted the guard got there.
+ */
 export const createGitRepositoryFixture = async (): Promise<GitRepositoryFixture> => {
   const root = await mkdtemp(join(tmpdir(), "oakridge-e2e-repo-"));
+  const discardRoot = async (): Promise<void> => { await rm(root, { recursive: true, force: true }); };
   const originPath = join(root, "origin.git");
   const workingPath = join(root, "working");
-  await git(root, ["init", "--bare", "--initial-branch", HARNESS_BASE_BRANCH, originPath]);
-  await git(root, ["init", "--initial-branch", HARNESS_BASE_BRANCH, workingPath]);
-  await Bun.write(join(workingPath, "README.md"), "oakridge end-to-end fixture\n");
-  await git(workingPath, ["add", "README.md"]);
-  await git(workingPath, ["commit", "-m", "fixture base"]);
-  await git(workingPath, ["remote", "add", "origin", originPath]);
-  await git(workingPath, ["push", "origin", `${HARNESS_BASE_BRANCH}:refs/heads/${HARNESS_BASE_BRANCH}`]);
-  await git(workingPath, ["fetch", "origin"]);
+  try {
+    await git(root, ["init", "--bare", "--initial-branch", HARNESS_BASE_BRANCH, originPath]);
+    await git(root, ["init", "--initial-branch", HARNESS_BASE_BRANCH, workingPath]);
+    await Bun.write(join(workingPath, "README.md"), "oakridge end-to-end fixture\n");
+    await git(workingPath, ["add", "README.md"]);
+    await git(workingPath, ["commit", "-m", "fixture base"]);
+    await git(workingPath, ["remote", "add", "origin", originPath]);
+    await git(workingPath, ["push", "origin", `${HARNESS_BASE_BRANCH}:refs/heads/${HARNESS_BASE_BRANCH}`]);
+    await git(workingPath, ["fetch", "origin"]);
+  } catch (error) {
+    await discardRoot();
+    throw error;
+  }
   return {
     path: workingPath,
     origin_path: originPath,
@@ -235,7 +251,10 @@ export const createGitRepositoryFixture = async (): Promise<GitRepositoryFixture
     },
     async origin_branch_sha(branch) {
       const output = await git(workingPath, ["ls-remote", "origin", `refs/heads/${branch}`]);
-      return output.trim().split(/\s+/)[0] ?? null;
+      // `||`, not `??`: `ls-remote` exits 0 with empty output for a branch
+      // origin does not have, and splitting an empty string yields `[""]` — so
+      // the nullish form returned an empty string where the contract says null.
+      return output.trim().split(/\s+/)[0] || null;
     },
     // Committed from a scratch worktree so the fixture's own checkout is never
     // moved off the base branch, which the provisioning commands read.
@@ -253,7 +272,7 @@ export const createGitRepositoryFixture = async (): Promise<GitRepositoryFixture
         await git(workingPath, ["worktree", "remove", "--force", scratch]);
       }
     },
-    async remove() { await rm(root, { recursive: true, force: true }); },
+    remove: discardRoot,
   };
 };
 
@@ -304,19 +323,29 @@ export const installIntegrationRuntime = async (databaseUrl: string): Promise<In
   };
 
   const repository = await createGitRepositoryFixture();
-  // No `git_commands` override: the provisioning stage runs real git against
-  // the fixture above, because the sequence of commands is the thing under
-  // test and a fake runner would agree with whatever it was told.
-  const runtime = await createOakridgeRuntime({
-    database_url: databaseUrl,
-    application_version: applicationVersion,
-    executor_adapters: [adapter],
-    prompt_template_directory: resolve(import.meta.dir, "../../../oakridge-core/prompts"),
-  });
-  await runtime.seed_builtins();
-  await DBOS.launch();
-
-  const server = Bun.serve({ port: 0, idleTimeout: 60, fetch: runtime.app.fetch });
+  // Only `stop()` removes the fixture, and nothing calls `stop()` on a runtime
+  // that never finished being built — so from here to the return, a failure has
+  // to take the directory with it. A database that refuses a connection is
+  // enough to hit this, and it would leak once per attempt.
+  let runtime: OakridgeRuntime;
+  let server: ReturnType<typeof Bun.serve>;
+  try {
+    // No `git_commands` override: the provisioning stage runs real git against
+    // the fixture above, because the sequence of commands is the thing under
+    // test and a fake runner would agree with whatever it was told.
+    runtime = await createOakridgeRuntime({
+      database_url: databaseUrl,
+      application_version: applicationVersion,
+      executor_adapters: [adapter],
+      prompt_template_directory: resolve(import.meta.dir, "../../../oakridge-core/prompts"),
+    });
+    await runtime.seed_builtins();
+    await DBOS.launch();
+    server = Bun.serve({ port: 0, idleTimeout: 60, fetch: runtime.app.fetch });
+  } catch (error) {
+    await repository.remove();
+    throw error;
+  }
   const startedRuns: string[] = [];
 
   return {
