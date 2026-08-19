@@ -34,6 +34,10 @@ import {
   confirmCohortMerged, decideGate, emitDeclaredArtifacts, launchRun, mergedPullRequestObservation,
   observeCohortPullRequest, readArtifact, readReviewInbox, readRun, type EmittedArtifact,
 } from "./support/dev-flow-driver";
+import {
+  createProbeDefinition, realKbblScenario, startKbblFixture,
+  type KbblFixture, type StubbedRuntimeId,
+} from "./support/kbbl-fixture";
 import { stageRerunStateKey, type StageRerunState } from "../src/domain/rerun";
 import { stageCoordinatorWorkflowId } from "../src/domain/workflow-ids";
 
@@ -522,5 +526,105 @@ e2e("cancelling a run fences its delegated session through the real kbbl route",
     idle.releaseAll();
     kbblServer.stop(true);
     oakridgeServer.stop(true);
+  }
+}, 180_000);
+
+/**
+ * The seam every other test in this file still fakes.
+ *
+ * Above, the agent is a scripted scenario: `start_or_attach` resolves a promise
+ * and `observe_terminal` returns whatever the test says. Real runs do not work
+ * that way. Oakridge calls kbbl over HTTP, kbbl cuts a worktree and spawns a
+ * process, the prompt reaches that process over a transport, and the artifact
+ * comes back through the emit route. None of that was covered, and every stall
+ * this project has shipped has lived in it.
+ *
+ * These run it for real and substitute only the model. Both runtimes are
+ * exercised because they share nothing: claude-code pushes its prompt over an
+ * MCP channel to a per-session process and finishes by exiting, while codex
+ * calls `turn/start` on a shared app-server and finishes with a notification.
+ */
+const probeArtifact = async (runtime: StubbedRuntimeId, definitionName: string, kbbl: KbblFixture) => {
+  useScenario(realKbblScenario(kbbl.base_url, oakridge.application_version));
+  const definitionId = await createProbeDefinition(oakridge.base_url, runtime, definitionName);
+  const run = await launchRun(oakridge.base_url, definitionId as Parameters<typeof launchRun>[1],
+    runContext(oakridge.base_url, oakridge.repository.path) as never);
+  oakridge.started_runs.push(run.root_workflow_id);
+  return awaitCondition(
+    () => `an artifact from the ${runtime} probe`,
+    async () => {
+      const detail = await readRun(oakridge.base_url, run.run_id);
+      return detail.stages[0]?.artifacts[0] ?? null;
+    },
+    90_000,
+  );
+};
+
+e2e("a prompt reaches a real claude-code process and its artifact comes back", async () => {
+  const kbbl = await startKbblFixture({ runtimes: ["claude-code"], stub_timeout_ms: 15_000 });
+  try {
+    const artifact = await probeArtifact("claude-code", "real-transport-probe-claude-code", kbbl);
+    expect(artifact.type_id).toBe("dev.spec_analysis");
+
+    // The stub only ever PUTs to a URL the rendered template told it to, so an
+    // artifact arriving is proof the template's emit instruction and the route
+    // that serves it still agree.
+    const log = await kbbl.stub_log();
+    expect(log).toContain("notifications/initialized");
+    expect(log).toContain("emitted 1 artifact(s)");
+  } finally {
+    await kbbl.stop();
+  }
+}, 180_000);
+
+e2e("a prompt reaches a real codex app-server and its artifact comes back", async () => {
+  const kbbl = await startKbblFixture({ runtimes: ["codex"], stub_timeout_ms: 15_000 });
+  try {
+    const artifact = await probeArtifact("codex", "real-transport-probe-codex", kbbl);
+    expect(artifact.type_id).toBe("dev.spec_analysis");
+
+    const log = await kbbl.stub_log();
+    expect(log).toContain("turn/start");
+    expect(log).toContain("reporting turn complete");
+  } finally {
+    await kbbl.stop();
+  }
+}, 180_000);
+
+/**
+ * An agent that never receives its prompt parks with a reason.
+ *
+ * This is the near neighbour of the incident that motivated the harness: the
+ * channel handshake never completed, so the prompt sat buffered in the outbox
+ * while kbbl reported the session live and non-terminal.
+ *
+ * What it proves is the second half of that story — once the agent process
+ * exits non-zero, oakridge turns it into a named, parked failure an operator
+ * can rerun, rather than a run that waits forever.
+ *
+ * What it does NOT prove is the first half. The stub gives up on its own
+ * deadline; the real agent did not, and sat idle for hours. Nothing in oakridge
+ * bounds that today, and no test here can pass until something does — see the
+ * liveness bound, still to be built.
+ */
+e2e("an agent that never receives its prompt parks the unit with a reason", async () => {
+  const kbbl = await startKbblFixture({ runtimes: ["claude-code"], stub_mode: "never_initialize", stub_timeout_ms: 5_000 });
+  try {
+    useScenario(realKbblScenario(kbbl.base_url, oakridge.application_version));
+    const definitionId = await createProbeDefinition(oakridge.base_url, "claude-code", "real-transport-probe-undelivered");
+    const run = await launchRun(oakridge.base_url, definitionId as Parameters<typeof launchRun>[1],
+      runContext(oakridge.base_url, oakridge.repository.path) as never);
+    oakridge.started_runs.push(run.root_workflow_id);
+
+    // A failed unit parks for rerun rather than failing its stage, so the stage
+    // stays in flight and the rerun state is where the reason lives.
+    const parked = await awaitCondition("the probe unit to park with its reason", async () =>
+      DBOS.getEvent<StageRerunState>(stageCoordinatorWorkflowId(run.root_workflow_id, "probe"),
+        stageRerunStateKey("0" as UnitId), { timeoutSeconds: 0 }), 90_000);
+    expect(parked.status).toBe("waiting");
+    expect(parked.status === "waiting" ? parked.code : null).toBe("executor_exit_nonzero");
+    expect(await kbbl.stub_log()).toContain("no prompt arrived within");
+  } finally {
+    await kbbl.stop();
   }
 }, 180_000);
