@@ -29,7 +29,12 @@ export interface SessionHoldLookupDeps {
 
 const DEFAULT_TIMEOUT_MS = 2_000;
 
-const isSessionHold = (value: unknown): value is SessionHold => {
+/**
+ * Exported because the refusal body crosses to the PWA: kbbl's own client has
+ * to narrow the same shape before it can offer the override, and a second
+ * hand-synced copy of this guard is how the two sides drift.
+ */
+export const isSessionHold = (value: unknown): value is SessionHold => {
   if (typeof value !== "object" || value === null) return false;
   const candidate = value as Record<string, unknown>;
   return ["session_id", "execution_id", "execution_workflow_id", "run_id", "stage_instance_id", "stage_key", "unit_id"]
@@ -62,10 +67,17 @@ export const findSessionHold = async (sessionId: string, deps: SessionHoldLookup
   }
 };
 
+/**
+ * The discriminator on a refused close. The one failure of DELETE
+ * /sessions/:sid an operator can override, so the client keys the override
+ * affordance off this exact literal.
+ */
+export const SESSION_HELD_CODE = "session_held_by_execution" as const;
+
 /** The refusal an operator sees, naming the work their close would have stranded. */
 export const sessionHoldRefusal = (hold: SessionHold) => ({
   error: `session is running stage '${hold.stage_key}' (unit '${hold.unit_id}') for run ${hold.run_id}; closing it now would abandon that unit and strand any artifact waiting at a gate`,
-  code: "session_held_by_execution" as const,
+  code: SESSION_HELD_CODE,
   hold,
 });
 

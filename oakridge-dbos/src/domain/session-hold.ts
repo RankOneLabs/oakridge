@@ -22,3 +22,50 @@ export interface SessionHold {
   readonly stage_key: string;
   readonly unit_id: UnitId;
 }
+
+/**
+ * What a PENDING execution workflow's claim on a session is actually worth.
+ *
+ * PENDING is not the same as alive. DBOS recovers a workflow only when its
+ * `application_version` matches the executor's own — `getPendingWorkflows`
+ * filters on it — so a workflow left PENDING by a previous version is never
+ * resumed and never terminalizes. Its row looks identical to a running one
+ * forever.
+ *
+ * Read as a hold, such a row is a claim nobody will ever release: the session
+ * cannot be closed, this attempt, or any attempt after it. That is worse than
+ * the accident the guard exists to prevent, because abandoning a unit whose
+ * workflow is already unreachable costs nothing — there is no longer a
+ * workflow waiting to be stranded.
+ */
+export type SessionHoldClaim =
+  /** A workflow this executor can still recover. Honour the hold. */
+  | { readonly kind: "held"; readonly hold: SessionHold }
+  /**
+   * A workflow stranded at a version this executor does not serve. Nothing
+   * will resume it, so it holds nothing.
+   */
+  | {
+      readonly kind: "abandoned";
+      readonly hold: SessionHold;
+      readonly holder_application_version: string;
+    };
+
+/**
+ * Whether a found hold is one this executor can still make good on.
+ *
+ * Assumes a single executor per system database — the deployment oakridge-start
+ * produces, where every workflow row carries `executor_id = 'local'`. Running a
+ * second executor on an older version deliberately (the runbook's "keep the old
+ * executor available until those runs drain") would make its versions live too,
+ * and this comparison would need a registry of serving versions rather than
+ * just our own.
+ */
+export const selectSessionHoldClaim = (
+  hold: SessionHold,
+  holder_application_version: string,
+  executor_application_version: string,
+): SessionHoldClaim =>
+  holder_application_version === executor_application_version
+    ? { kind: "held", hold }
+    : { kind: "abandoned", hold, holder_application_version };
