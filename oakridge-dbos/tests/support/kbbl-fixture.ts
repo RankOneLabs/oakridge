@@ -17,6 +17,7 @@ import { Hono } from "hono";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { KbblExecutorAdapter } from "../../src/adapters/kbbl";
 import type { ExecutionId, ExecutionAttemptId } from "../../src/domain/primitives";
@@ -30,9 +31,16 @@ import { createCodexRuntime } from "../../../kbbl/adapters/codex/index";
 import { SessionManager } from "../../../kbbl/core/session/session-manager";
 import { mountSessionsRoutes } from "../../../kbbl/core/server/handlers/sessions";
 
-/** Absolute paths to the stubs, resolved from this module so cwd never matters. */
-export const STUB_AGENT_PATH = new URL("./stub-agent.ts", import.meta.url).pathname;
-export const STUB_CODEX_PATH = new URL("./stub-codex.ts", import.meta.url).pathname;
+/**
+ * Absolute paths to the stubs, resolved from this module so cwd never matters.
+ *
+ * `fileURLToPath`, not `.pathname`: the latter stays percent-encoded, so a
+ * checkout under a path with a space or a non-ASCII character would hand
+ * `Bun.spawn` a name no file has. kbbl resolves its own channel-server path the
+ * same way, for the same reason.
+ */
+export const STUB_AGENT_PATH = fileURLToPath(new URL("./stub-agent.ts", import.meta.url));
+export const STUB_CODEX_PATH = fileURLToPath(new URL("./stub-codex.ts", import.meta.url));
 
 /**
  * Which runtimes the fixture registers.
@@ -92,7 +100,14 @@ export interface KbblFixtureOptions {
  */
 export const startKbblFixture = async (options: KbblFixtureOptions = {}): Promise<KbblFixture> => {
   const root = await mkdtemp(join(tmpdir(), "oakridge-kbbl-fixture-"));
-  const discardRoot = async (): Promise<void> => { await rm(root, { recursive: true, force: true }); };
+  // Everything the fixture acquires is released here, including the listener:
+  // `bun test` runs every file in one process, so a boot that throws after
+  // `Bun.serve` would otherwise strand a port for the rest of the run.
+  let started: ReturnType<typeof Bun.serve> | null = null;
+  const discard = async (): Promise<void> => {
+    started?.stop(true);
+    await rm(root, { recursive: true, force: true });
+  };
 
   try {
     const dataDir = join(root, "data");
@@ -106,6 +121,7 @@ export const startKbblFixture = async (options: KbblFixtureOptions = {}): Promis
     // server exists. The stub fires no hooks, so the value only has to be
     // stable — but keep it honest by serving on it below.
     const server = Bun.serve({ port: 0, idleTimeout: 60, fetch: () => new Response("not ready", { status: 503 }) });
+    started = server;
 
     // Both stubs read this file rather than the environment. kbbl owns the argv
     // it spawns with, so there is no seam to pass options through — but each
@@ -179,17 +195,16 @@ export const startKbblFixture = async (options: KbblFixtureOptions = {}): Promis
         return (await file.exists()) ? file.text() : "";
       },
       async stop() {
-        server.stop(true);
         // The codex app-server is a process this fixture started and nothing
         // else will reap: unlike claude-code, it outlives every session by
         // design, so without this each test leaves one running.
         const stoppable = codex as (AgentRuntime & { stopAppServer?: () => Promise<void> }) | null;
         if (stoppable?.stopAppServer) await stoppable.stopAppServer();
-        await discardRoot();
+        await discard();
       },
     };
   } catch (error) {
-    await discardRoot();
+    await discard();
     throw error;
   }
 };

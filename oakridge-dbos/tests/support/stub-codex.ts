@@ -158,6 +158,21 @@ const threadStartResult = (cwd: string) => {
 };
 
 /**
+ * Reports a turn as finished.
+ *
+ * Shared with the dispatcher's rejection handler so a turn that throws is
+ * reported exactly as one that fails cleanly — the client learns the outcome
+ * from the event stream either way, and two spellings of this payload would be
+ * two chances to drift from it.
+ */
+const completeTurn = (socket: RpcSink, threadId: string, turnId: string, status: "completed" | "failed"): void => {
+  notify(socket, "turn/completed", {
+    threadId,
+    turn: { id: turnId, items: [], itemsView: "", status, error: null, startedAt: Date.now(), completedAt: Date.now(), durationMs: 1 },
+  });
+};
+
+/**
  * Runs one turn: do what the prompt says, then report completion.
  *
  * Completion is reported as a notification after the `turn/start` reply, which
@@ -165,12 +180,7 @@ const threadStartResult = (cwd: string) => {
  * `turnStart` immediately and learns the outcome from the event stream.
  */
 const runTurn = async (socket: RpcSink, threadId: string, turnId: string, prompt: string): Promise<void> => {
-  const completed = (status: "completed" | "failed") => {
-    notify(socket, "turn/completed", {
-      threadId,
-      turn: { id: turnId, items: [], itemsView: "", status, error: null, startedAt: Date.now(), completedAt: Date.now(), durationMs: 1 },
-    });
-  };
+  const completed = (status: "completed" | "failed") => completeTurn(socket, threadId, turnId, status);
 
   if (MODE === "silent") {
     log("mode=silent — turn accepted, no emit, no completion");
@@ -243,7 +253,15 @@ const handle = (socket: RpcSink, message: JsonRpcMessage): void => {
         .join("\n");
       log(`turn/start on ${threadId} (${prompt.length} chars of input)`);
       reply(socket, id, { turn: { id: turnId, items: [], itemsView: "", status: "in_progress", error: null, startedAt: Date.now(), completedAt: null, durationMs: null } });
-      void runTurn(socket, threadId, turnId, prompt);
+      // The turn runs after the reply, as the real app-server does — but its
+      // rejection has to land somewhere. `runTurn` awaits the network, and a
+      // refused emit (an oakridge already torn down, say) would otherwise be an
+      // unhandled rejection in a process every session on this socket shares.
+      // A failed turn is a normal outcome; a dead app-server is not.
+      void runTurn(socket, threadId, turnId, prompt).catch((error: unknown) => {
+        log(`turn ${turnId} threw: ${error instanceof Error ? error.message : String(error)}`);
+        completeTurn(socket, threadId, turnId, "failed");
+      });
       return;
     }
 

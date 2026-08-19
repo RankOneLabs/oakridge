@@ -603,9 +603,8 @@ e2e("a prompt reaches a real codex app-server and its artifact comes back", asyn
  * can rerun, rather than a run that waits forever.
  *
  * What it does NOT prove is the first half. The stub gives up on its own
- * deadline; the real agent did not, and sat idle for hours. Nothing in oakridge
- * bounds that today, and no test here can pass until something does — see the
- * liveness bound, still to be built.
+ * deadline; the real agent did not, and sat idle for hours. That case has its
+ * own bound and its own test — see the silent-agent test below.
  */
 e2e("an agent that never receives its prompt parks the unit with a reason", async () => {
   const kbbl = await startKbblFixture({ runtimes: ["claude-code"], stub_mode: "never_initialize", stub_timeout_ms: 5_000 });
