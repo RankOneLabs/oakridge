@@ -461,7 +461,10 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
     const waitMs = selectTerminalWaitMs(c.req.query("wait_ms"));
     const outcome = await manager.waitForResumableSessionTerminal(sid as SessionId, waitMs);
     if (outcome.kind === "not_found") return c.json({ error: "session not found" }, 404);
-    if (outcome.kind === "pending") return c.json({ pending: true }, 202);
+    // `session` rides along so an observer can tell a working session from a
+    // wedged one — `lastActivityTs` is the only thing that distinguishes them,
+    // and without it every poll of either looks identical.
+    if (outcome.kind === "pending") return c.json({ pending: true, session: outcome.session }, 202);
     return c.json(outcome.result);
   });
 

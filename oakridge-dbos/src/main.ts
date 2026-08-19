@@ -24,6 +24,16 @@ const required = (name: string): string => {
 const databaseUrl = required("DBOS_SYSTEM_DATABASE_URL");
 const applicationVersion = required("DBOS_APPLICATION_VERSION");
 const kbblBaseUrl = required("KBBL_BASE_URL");
+/**
+ * Override for how long a delegated session may report no activity before it is
+ * failed. Left unset, the adapter's own generous default applies; an operator
+ * running unusually long silent tool calls can raise it without a deploy.
+ */
+const rawMaxSilentMs = process.env.OAKRIDGE_MAX_SILENT_MS?.trim();
+const maxSilentMs = rawMaxSilentMs ? Number(rawMaxSilentMs) : null;
+if (maxSilentMs !== null && (!Number.isFinite(maxSilentMs) || maxSilentMs <= 0)) {
+  throw new Error("OAKRIDGE_MAX_SILENT_MS must be a positive number of milliseconds");
+}
 const host = process.env.OAKRIDGE_DBOS_HOST?.trim() || "127.0.0.1";
 const port = Number(process.env.PORT ?? "3001");
 if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error("PORT must be a valid TCP port");
@@ -48,7 +58,11 @@ DBOS.setConfig({ name: "oakridge", systemDatabaseUrl: databaseUrl, applicationVe
 const runtime = await createOakridgeRuntime({
   database_url: databaseUrl,
   application_version: applicationVersion,
-  executor_adapters: [new KbblExecutorAdapter({ base_url: kbblBaseUrl, executor_function_identity: applicationVersion })],
+  executor_adapters: [new KbblExecutorAdapter({
+    base_url: kbblBaseUrl,
+    executor_function_identity: applicationVersion,
+    ...(maxSilentMs !== null ? { max_silent_ms: maxSilentMs } : {}),
+  })],
   prompt_template_directory: resolve(import.meta.dir, "../../oakridge-core/prompts"),
   stall_threshold_seconds: stallThresholdSeconds,
   ...(githubToken ? { pull_request_reader: new GithubPullRequestReader({ token: githubToken }) } : {}),

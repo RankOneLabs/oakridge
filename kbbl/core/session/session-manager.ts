@@ -816,7 +816,10 @@ export class SessionManager {
     // non-blocking poll: an already-ended session answers terminal rather than
     // reporting pending because its deadline had already elapsed.
     if (current.snapshot().status !== "ended" && !(await waitWithDeadline(current.waitForEnd(), waitMs))) {
-      return { kind: "pending" };
+      // Snapshot after the wait, not before: the point of returning it is to
+      // report how recently this session did anything, and a snapshot taken
+      // before a 25-second wait is 25 seconds stale the moment it is sent.
+      return { kind: "pending", session: current.snapshot() };
     }
     const snapshot = current.snapshot();
     return { kind: "terminal", result: { session: snapshot, exit_code: snapshot.exitCode } };
