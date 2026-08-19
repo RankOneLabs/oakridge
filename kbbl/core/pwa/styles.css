@@ -1084,6 +1084,12 @@ body {
 .session-row-li {
   position: relative;
 }
+/* The positioning context for the action buttons is this wrapper, not the
+   li, so a refused-remove message rendered below the row doesn't move the
+   centre the buttons are pinned to. */
+.session-row-main {
+  position: relative;
+}
 /* Both action buttons (Resume, Remove) are absolutely positioned on the
    right so they don't sit inside the row's click target. Remove is always
    rendered; Resume only when ended. Rows reserve space for Remove always,
@@ -1151,6 +1157,46 @@ body {
   font-weight: 600;
 }
 .btn-remove:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* Why a remove didn't happen. In normal flow under the row (not absolutely
+   positioned) so the message can wrap to whatever length the server sent. */
+.session-row-remove-error {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-top: 0.4rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--danger-card-border);
+  border-radius: 6px;
+  background: var(--danger-bg);
+  color: var(--danger-fg);
+  font-size: 0.8rem;
+}
+.session-row-remove-error__message {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+.btn-remove-force {
+  flex: 0 0 auto;
+  background: transparent;
+  color: var(--danger-fg);
+  border: 1px solid var(--danger-fg);
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  min-height: 44px;
+  white-space: nowrap;
+}
+.btn-remove-force:hover:not(:disabled) {
+  filter: brightness(1.15);
+}
+.btn-remove-force:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }

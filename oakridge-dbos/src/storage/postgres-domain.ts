@@ -27,7 +27,7 @@ import { releaseStateForArtifact } from "../contracts/evaluate-artifacts";
 import type { CancellationExecutionTarget, CancellationWaitTarget, UnitRerunTarget } from "../domain/rerun";
 import type { CreateWorkflowRunResult, DeleteRunResult, PendingRunLaunch, PersistWorkflowRunLaunch, RunLaunchCommand, SetRunArchiveResult, WorkflowRunLaunchRecord, WorkflowRunListFilter } from "../domain/runs";
 import type { EpicWorkflowProfile } from "../domain/epic";
-import type { SessionHold } from "../domain/session-hold";
+import { selectSessionHoldClaim, type SessionHold } from "../domain/session-hold";
 
 interface StageRow {
   readonly id: string;
@@ -887,20 +887,30 @@ export class PostgresResumeArtifactRepository implements ResumeArtifactRepositor
 }
 
 export class PostgresSessionHoldRepository implements SessionHoldRepository {
-  constructor(private readonly sql: SqlExecutor) {}
+  constructor(
+    private readonly sql: SqlExecutor,
+    private readonly executor_application_version: string,
+  ) {}
 
   /**
    * Held while the execution workflow is still running. A workflow that has
    * returned — success, failure, or cancellation — has stopped waiting on the
    * session, so closing it can no longer strand anything.
+   *
+   * The version the holder was started under is selected rather than filtered
+   * on, so a workflow stranded by a version bump can be told apart from no
+   * workflow at all and said out loud. Silently widening the query would leave
+   * an operator with a session that became closable for no visible reason.
    */
   async find_session_hold(session_id: string): Promise<SessionHold | null> {
     const rows = await this.sql.query<{
       readonly execution_id: string; readonly execution_workflow_id: string; readonly run_id: string;
       readonly stage_instance_id: string; readonly stage_key: string; readonly unit_id: string;
+      readonly application_version: string | null;
     }>(
       `SELECT projection.execution_id, projection.execution_workflow_id, stage.run_id::text,
-              projection.stage_instance_id::text, stage.stage_key, projection.unit_id
+              projection.stage_instance_id::text, stage.stage_key, projection.unit_id,
+              execution.application_version
        FROM oakridge.executor_projection projection
        JOIN oakridge.stage_instance stage ON stage.id = projection.stage_instance_id
        JOIN dbos.workflow_status execution ON execution.workflow_uuid = projection.execution_workflow_id
@@ -911,9 +921,21 @@ export class PostgresSessionHoldRepository implements SessionHoldRepository {
       [session_id]);
     const row = rows[0];
     if (!row) return null;
-    return { session_id, execution_id: row.execution_id as ExecutionId, execution_workflow_id: row.execution_workflow_id,
+    const hold: SessionHold = { session_id, execution_id: row.execution_id as ExecutionId,
+      execution_workflow_id: row.execution_workflow_id,
       run_id: row.run_id as WorkflowRunId, stage_instance_id: row.stage_instance_id as StageInstanceId,
       stage_key: row.stage_key, unit_id: row.unit_id as UnitId };
+    // A null version predates version-tagged workflows; treat it as ours
+    // rather than declaring an unknown holder abandoned.
+    const claim = selectSessionHoldClaim(hold, row.application_version ?? this.executor_application_version,
+      this.executor_application_version);
+    if (claim.kind === "abandoned") {
+      console.warn(`oakridge: session ${session_id} is claimed by ${claim.hold.execution_workflow_id}, ` +
+        `left PENDING by application version ${claim.holder_application_version} which this executor ` +
+        `(${this.executor_application_version}) cannot recover; the claim is ignored so the session can be closed`);
+      return null;
+    }
+    return claim.hold;
   }
 }
 

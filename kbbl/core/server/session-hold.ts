@@ -1,25 +1,12 @@
 /**
- * Whether an agent session is still needed by the run that started it.
+ * Server-side session-hold policy: asking Oakridge whether a hold exists, and
+ * deciding whether a given close may proceed in spite of one.
  *
- * Closing a session mid-stage does not merely stop an agent — it abandons the
- * unit. Oakridge's execution workflow gives up the moment its session reports a
- * non-success terminal, so an artifact still parked at a gate is never
- * released, the gate stays approvable in the UI, and the operator's later
- * approval is recorded against a workflow that returned minutes earlier. The
- * run then sits on `required_output_missing` for work the agent had in fact
- * completed.
- *
- * kbbl cannot answer this itself — liveness belongs to Oakridge — so it asks.
+ * The shape that crosses the wire — `SessionHold`, its guard, and the refusal
+ * code — lives in `core/session/session-hold.ts`, because the PWA narrows the
+ * same refusal body and must not import a server module to do it.
  */
-export interface SessionHold {
-  readonly session_id: string;
-  readonly execution_id: string;
-  readonly execution_workflow_id: string;
-  readonly run_id: string;
-  readonly stage_instance_id: string;
-  readonly stage_key: string;
-  readonly unit_id: string;
-}
+import { SESSION_HELD_CODE, isSessionHold, type SessionHold } from "../session/session-hold";
 
 export interface SessionHoldLookupDeps {
   readonly baseUrl: string | undefined;
@@ -28,13 +15,6 @@ export interface SessionHoldLookupDeps {
 }
 
 const DEFAULT_TIMEOUT_MS = 2_000;
-
-const isSessionHold = (value: unknown): value is SessionHold => {
-  if (typeof value !== "object" || value === null) return false;
-  const candidate = value as Record<string, unknown>;
-  return ["session_id", "execution_id", "execution_workflow_id", "run_id", "stage_instance_id", "stage_key", "unit_id"]
-    .every((field) => typeof candidate[field] === "string");
-};
 
 /**
  * The hold on a session, or null when nothing holds it.
@@ -65,7 +45,7 @@ export const findSessionHold = async (sessionId: string, deps: SessionHoldLookup
 /** The refusal an operator sees, naming the work their close would have stranded. */
 export const sessionHoldRefusal = (hold: SessionHold) => ({
   error: `session is running stage '${hold.stage_key}' (unit '${hold.unit_id}') for run ${hold.run_id}; closing it now would abandon that unit and strand any artifact waiting at a gate`,
-  code: "session_held_by_execution" as const,
+  code: SESSION_HELD_CODE,
   hold,
 });
 
