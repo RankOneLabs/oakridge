@@ -1,6 +1,6 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
-import type { CancellationExecutionTarget, CancellationWaitTarget } from "../domain/rerun";
+import { selectCancellationWaitSplit, type CancellationExecutionTarget, type CancellationWaitTarget } from "../domain/rerun";
 import { executorFenceWorkflowId } from "../domain/workflow-ids";
 import { executorFenceWorkflow } from "./executor-topology";
 
@@ -71,8 +71,19 @@ export const containAttempt = async (input: CancellationControlInput, announce: 
   await finishCancelledStagesStep(input);
   await announce("terminalizing_waits");
   const waits = await terminalizeCancellationWaitsStep(input);
-  for (const wait of waits) await DBOS.send(wait.workflow_id, { kind: "withdraw" }, wait.kind === "gate" ? "gate-command" : "handoff-command", `${containerId}:${wait.kind}:${wait.workflow_id}:withdraw`);
-  for (const wait of waits) {
+  // The executor's own version is read here rather than carried in the input:
+  // the question is whether *this* process can recover a wait, so it has to be
+  // answered by the process that would be doing the recovering.
+  const { answerable, orphaned } = selectCancellationWaitSplit(waits, DBOS.applicationVersion);
+  for (const { wait, holder_application_version } of orphaned) {
+    // Terminalized rather than merely skipped: a PENDING row nothing will ever
+    // resume still reads as live to every other liveness check in the system.
+    // Leaving it is how one orphan goes on to hold a session hostage.
+    DBOS.logger.warn(`cancellation wait '${wait.workflow_id}' was left PENDING by application version ${holder_application_version}, which this executor (${DBOS.applicationVersion}) cannot recover; cancelling it directly rather than awaiting a withdrawal it can never acknowledge`);
+    await DBOS.cancelWorkflow(wait.workflow_id);
+  }
+  for (const wait of answerable) await DBOS.send(wait.workflow_id, { kind: "withdraw" }, wait.kind === "gate" ? "gate-command" : "handoff-command", `${containerId}:${wait.kind}:${wait.workflow_id}:withdraw`);
+  for (const wait of answerable) {
     const key = wait.kind === "gate" ? "gate-state" : "handoff-state";
     await DBOS.retrieveWorkflow(wait.workflow_id).getResult();
     const state = await DBOS.getEvent<{ readonly status?: string }>(wait.workflow_id, key, { timeoutSeconds: 0 });

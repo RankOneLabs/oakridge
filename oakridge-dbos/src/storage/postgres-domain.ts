@@ -925,10 +925,7 @@ export class PostgresSessionHoldRepository implements SessionHoldRepository {
       execution_workflow_id: row.execution_workflow_id,
       run_id: row.run_id as WorkflowRunId, stage_instance_id: row.stage_instance_id as StageInstanceId,
       stage_key: row.stage_key, unit_id: row.unit_id as UnitId };
-    // A null version predates version-tagged workflows; treat it as ours
-    // rather than declaring an unknown holder abandoned.
-    const claim = selectSessionHoldClaim(hold, row.application_version ?? this.executor_application_version,
-      this.executor_application_version);
+    const claim = selectSessionHoldClaim(hold, row.application_version, this.executor_application_version);
     if (claim.kind === "abandoned") {
       console.warn(`oakridge: session ${session_id} is claimed by ${claim.hold.execution_workflow_id}, ` +
         `left PENDING by application version ${claim.holder_application_version} which this executor ` +
@@ -959,18 +956,24 @@ export class PostgresCancellationTargetRepository implements CancellationTargetR
          JOIN oakridge.stage_instance stage ON stage.id = artifact.stage_instance_id
          WHERE stage.attempt_root_workflow_id = $1 AND artifact.lifecycle_state = 'current'`, [root_workflow_id]);
       for (const resource of resources) await transaction.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [resource.resource_key]);
-      const waits = await transaction.query<{ readonly kind: "gate" | "handoff"; readonly workflow_id: string }>(
-        `SELECT 'gate'::text AS kind, event.workflow_uuid AS workflow_id
+      // The wait's own application_version rides along: containment withdraws a
+      // wait by sending to it and awaiting its answer, and one stranded at a
+      // version this executor cannot recover never answers. Left joined so a
+      // wait with no status row is reported rather than dropped from the sweep.
+      const waits = await transaction.query<{ readonly kind: "gate" | "handoff"; readonly workflow_id: string; readonly application_version: string | null }>(
+        `SELECT 'gate'::text AS kind, event.workflow_uuid AS workflow_id, wait.application_version
          FROM dbos.workflow_events event
          JOIN oakridge.artifact artifact ON artifact.id = (${superjsonValue("event.value")}->>'artifact_revision_id')::uuid
          JOIN oakridge.stage_instance stage ON stage.id = artifact.stage_instance_id
+         LEFT JOIN dbos.workflow_status wait ON wait.workflow_uuid = event.workflow_uuid
          WHERE event.key = 'gate-state' AND ${superjsonValue("event.value")}->>'status' = 'pending'
            AND artifact.lifecycle_state = 'current' AND stage.attempt_root_workflow_id = $1
          UNION ALL
-         SELECT 'handoff'::text AS kind, event.workflow_uuid AS workflow_id
+         SELECT 'handoff'::text AS kind, event.workflow_uuid AS workflow_id, wait.application_version
          FROM dbos.workflow_events event
          JOIN oakridge.artifact artifact ON artifact.id = (${superjsonValue("event.value")}->>'artifact_id')::uuid
          JOIN oakridge.stage_instance stage ON stage.id = artifact.stage_instance_id
+         LEFT JOIN dbos.workflow_status wait ON wait.workflow_uuid = event.workflow_uuid
          WHERE event.key = 'handoff-state' AND ${superjsonValue("event.value")}->>'status' IN ('awaiting_downstream', 'awaiting_external')
            AND artifact.lifecycle_state = 'current' AND stage.attempt_root_workflow_id = $1`, [root_workflow_id]);
       const rows = await transaction.query<{ readonly id: string }>(
@@ -986,8 +989,8 @@ export class PostgresCancellationTargetRepository implements CancellationTargetR
       );
       void rows;
       return waits.map((wait): CancellationWaitTarget => wait.kind === "gate"
-        ? { kind: "gate", workflow_id: wait.workflow_id }
-        : { kind: "handoff", workflow_id: wait.workflow_id });
+        ? { kind: "gate", workflow_id: wait.workflow_id, application_version: wait.application_version }
+        : { kind: "handoff", workflow_id: wait.workflow_id, application_version: wait.application_version });
     });
   }
 
