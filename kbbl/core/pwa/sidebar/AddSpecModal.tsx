@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { SidebarProject } from "./Sidebar";
+import { TEXT_DOCUMENT_FILE_ACCEPT } from "../lib/text-document-accept";
 import type { RuntimeId } from "../../runtime-interface";
 import { defaultPlannerModelForRuntime, defaultWorkerModelForRuntime } from "../../runtime";
 import {
@@ -495,7 +496,7 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
               <>
                 <input
                   type="file"
-                  accept=".md,.txt,.json,.yaml,.yml,.csv,.adoc,.rst,text/plain,text/markdown,application/json"
+                  accept={TEXT_DOCUMENT_FILE_ACCEPT}
                   onChange={handleFileChange}
                   disabled={pending}
                   aria-label="Notes file"
