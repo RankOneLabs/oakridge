@@ -233,13 +233,15 @@ test("artifact emission rejects a stage closed by durable cancellation", async (
 test("attempt cancellation withdraws pending artifacts and returns exact active DBOS waits", async () => {
   const sql = new TransactionStubSql([
     [{ resource_key: "stage:execution:unit:result" }], [],
-    [{ kind: "gate", workflow_id: "execution:gate:artifact:wait:artifact_approval" }, { kind: "handoff", workflow_id: "execution:handoff:artifact-2" }],
+    [{ kind: "gate", workflow_id: "execution:gate:artifact:wait:artifact_approval", application_version: "v2" }, { kind: "handoff", workflow_id: "execution:handoff:artifact-2", application_version: "v1" }],
     [{ id: "artifact" }, { id: "artifact-2" }],
   ]);
   const waits = await new PostgresCancellationTargetRepository(sql).terminalize_pending_waits("root-1", "workflow_cancellation", "cancelled", "2026-08-14T00:00:00Z");
+  // The version rides along so containment can tell a wait that will answer
+  // from one stranded by a version bump, which it would otherwise await forever.
   expect(waits).toEqual([
-    { kind: "gate", workflow_id: "execution:gate:artifact:wait:artifact_approval" },
-    { kind: "handoff", workflow_id: "execution:handoff:artifact-2" },
+    { kind: "gate", workflow_id: "execution:gate:artifact:wait:artifact_approval", application_version: "v2" },
+    { kind: "handoff", workflow_id: "execution:handoff:artifact-2", application_version: "v1" },
   ]);
   expect(sql.calls[1]?.statement).toContain("pg_advisory_xact_lock");
   expect(sql.calls[2]?.statement).toContain("COALESCE((event.value::jsonb)->'json', event.value::jsonb)");

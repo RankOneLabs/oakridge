@@ -20,6 +20,7 @@ import { DEV_FLOW_ARTIFACT_TYPES, findArtifactType } from "../domain/artifact-ty
 import type { ExecutorAdapter } from "../domain/execution";
 import type { JsonValue } from "../domain/primitives";
 import type { RepositoryPreconditionChecker } from "../domain/repository-preconditions";
+import { selectOrphanedVersionRuns, type OrphanedVersionRuns } from "../domain/workflow-recovery";
 import type { CohortPullRequestDependencies } from "./cohort-pull-request";
 import { pollCohortPullRequests, type CohortPollOutcome, type PullRequestReader } from "./github-pull-requests";
 import { createApp } from "../http/app";
@@ -88,6 +89,12 @@ export interface OakridgeRuntime {
    * is configured, which is a backend where merges are confirmed by hand.
    */
   poll_pull_requests(): Promise<readonly CohortPollOutcome[] | null>;
+  /**
+   * Runs this executor has inherited from an application version it cannot
+   * recover. Empty on a healthy start; anything here will never advance on its
+   * own and has to be cancelled.
+   */
+  orphaned_version_runs(): Promise<readonly OrphanedVersionRuns[]>;
   /** Settles in-flight dispatch, then closes the SQL pool and DBOS client. */
   close(): Promise<void>;
 }
@@ -205,6 +212,9 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     seed_builtins: () => seedBuiltins(definitions),
     purge_outbox: (olderThan) => artifacts.purge_delivered_commands(olderThan),
     poll_pull_requests: pollPullRequests,
+    async orphaned_version_runs() {
+      return selectOrphanedVersionRuns(await projections.list_application_versions(), config.application_version);
+    },
     async close() {
       isDispatchClosing = true;
       await Promise.allSettled([...inFlightDispatches]);

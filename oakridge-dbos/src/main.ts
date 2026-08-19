@@ -61,6 +61,19 @@ if (!githubToken) console.warn("OAKRIDGE_GITHUB_TOKEN is unset: cohort pull requ
 await runtime.seed_builtins();
 await DBOS.launch();
 
+// DBOS recovers a workflow only when its application_version matches this
+// executor's, so a version bump between two restarts leaves every in-flight run
+// PENDING forever: never recovered, never terminalized, and indistinguishable
+// from a running one. Reported here because every symptom of it appears
+// somewhere else entirely — a session that will not close, a gate whose
+// approval lands on a workflow that returned — and none of them names the cause.
+for (const orphaned of await runtime.orphaned_version_runs()) {
+  console.warn(`oakridge: ${orphaned.pending_run_count} pending run(s) belong to application version ${orphaned.application_version}, which this executor (${applicationVersion}) cannot recover` +
+    `${orphaned.gated_run_count > 0 ? `, ${orphaned.gated_run_count} of them holding an open gate` : ""}` +
+    `${orphaned.oldest_pending_at ? `; oldest pending since ${orphaned.oldest_pending_at}` : ""}` +
+    `. They will not advance on their own — cancel them with POST /workflow_runs/:run_id/cancel.`);
+}
+
 await runtime.dispatch_notifications();
 await runtime.dispatch_launches();
 let notificationDispatch: Promise<unknown> | null = null;
