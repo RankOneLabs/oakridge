@@ -1,9 +1,10 @@
 import { DBOS, DBOSClient } from "@dbos-inc/dbos-sdk";
 
+import { RepositoryProvisioningAdapter } from "../adapters/repository-provisioning";
 import type { ArtifactRevision } from "../domain/artifacts";
 import type { ExecutionRequest, ExecutorAdapter } from "../domain/execution";
 import type { ArtifactId, ExecutionId, JsonValue, UnitId, WorkflowRunId } from "../domain/primitives";
-import { loadDevFlowV11 } from "../seed/dev-flow-v11";
+import { loadDevFlowV12 } from "../seed/dev-flow-v12";
 import { PgPostgresExecutor } from "../storage/sql-executor";
 
 const databaseUrl = process.env.DBOS_SYSTEM_DATABASE_URL;
@@ -14,9 +15,12 @@ const proofServiceSql = PgPostgresExecutor.connect(databaseUrl);
 await proofSql.query("CREATE TABLE IF NOT EXISTS public.oakridge_proof_execution (workflow_id text PRIMARY KEY, request jsonb NOT NULL)", []);
 DBOS.setConfig({ name: "oakridge-production-proof", systemDatabaseUrl: databaseUrl, applicationVersion, logLevel: "warn" });
 
-const loaded = await loadDevFlowV11();
+const loaded = await loadDevFlowV12();
 if (!loaded.ok) throw new Error(loaded.error.detail);
 const definition = loaded.value;
+
+/** Where the proof's repository pretends its epic branch already points. */
+const PROOF_EPIC_HEAD = "0000000000000000000000000000000000000000";
 
 interface ProofExecutionRow { readonly workflow_id: string; readonly request: ExecutionRequest }
 const terminalResolvers = new Map<ExecutionId, () => void>();
@@ -28,10 +32,30 @@ const adapter: ExecutorAdapter = {
   async cancel_or_fence(executionId) { terminalResolvers.get(executionId)?.(); },
 };
 
+/**
+ * The provisioning stage, with git already having done its part.
+ *
+ * This proof is about the topology — what runs when, and what it is handed —
+ * so the repository is taken as already provisioned. Emission is left to the
+ * proof loop below, which publishes every recorded execution's expected
+ * artifacts through one path; the adapter emitting as well would open a second.
+ */
+const provisioningAdapter = new RepositoryProvisioningAdapter({
+  git: {
+    async run(_path, args) {
+      if (args[0] === "ls-remote") return { exit_code: 0, stdout: `${PROOF_EPIC_HEAD}\trefs/heads/epic/proof\n`, stderr: "" };
+      if (args[0] === "rev-parse" && args[1] === "--verify") return { exit_code: 0, stdout: `${PROOF_EPIC_HEAD}\n`, stderr: "" };
+      return { exit_code: 0, stdout: "", stderr: "" };
+    },
+  },
+  async emit() { return { ok: true, value: { artifact: { id: "proof" } as never, release: { kind: "released", artifact: {} as never }, superseded_artifact_id: null } }; },
+});
+
 const { registerExecutorAdapter } = await import("../workflows/executor-topology");
 const { registerArtifactLifecycleObserver } = await import("../workflows/executor-topology");
 const { productionRunWorkflow, registerProductionTopologyServices } = await import("../workflows/production-topology");
 registerExecutorAdapter(adapter);
+registerExecutorAdapter(provisioningAdapter);
 const artifactState = new Map<ArtifactId, ArtifactRevision>();
 registerArtifactLifecycleObserver({
   async find_by_id(id) { return artifactState.get(id) ?? null; },
@@ -65,6 +89,9 @@ registerProductionTopologyServices({
 });
 
 const artifactBody = (request: ExecutionRequest, unitId: UnitId): JsonValue => {
+  if (request.executor_type === "provision_repository_refs") {
+    return { repository_key: String(unitId), repository_path: "/tmp", base_branch: "main", epic_branch: "epic/proof", epic_head_sha: PROOF_EPIC_HEAD };
+  }
   const session = (request.resolved_config as { readonly session_name?: string }).session_name ?? "";
   if (session.startsWith("spec-analyzer-")) return { requirements: [{ id: "R1", description: "proof" }] };
   if (session.startsWith("plan-writer-")) return { cohorts: [{ id: "foundation" }, { id: "web" }] };
@@ -96,7 +123,10 @@ try {
   } });
   const emitted = new Set<string>();
   const deadline = Date.now() + 30_000;
-  while (emitted.size < 7) {
+  // Eight: the five agent-driven stages' seven units, plus one provisioning
+  // unit for the run's single repository.
+  const EXPECTED_EXECUTIONS = 8;
+  while (emitted.size < EXPECTED_EXECUTIONS) {
     const pending = await proofSql.query<ProofExecutionRow>("SELECT workflow_id, request FROM public.oakridge_proof_execution WHERE workflow_id LIKE $1 ORDER BY workflow_id", [`${rootId}:%`]);
     for (const execution of pending) {
       if (emitted.has(execution.workflow_id)) continue;
@@ -137,7 +167,7 @@ try {
     return row.request.workspace_source?.execution_id === buildResult?.producer_execution_id
       && row.request.inputs.length === 2 && new Set(row.request.inputs.map((input) => input.unit_id)).size === 1;
   });
-  if (result.outcome.kind !== "succeeded" || Object.keys(result.stage_workflow_ids).length !== 5 || emitted.size !== 7 || !assessorLineageIsExact) throw new Error(`seeded dev flow proof failed: ${JSON.stringify({ result, emitted: emitted.size, assessorLineageIsExact })}`);
+  if (result.outcome.kind !== "succeeded" || Object.keys(result.stage_workflow_ids).length !== 6 || emitted.size !== EXPECTED_EXECUTIONS || !assessorLineageIsExact) throw new Error(`seeded dev flow proof failed: ${JSON.stringify({ result, emitted: emitted.size, assessorLineageIsExact })}`);
   console.log(JSON.stringify({
     outcome: result.outcome,
     stage_count: Object.keys(result.stage_workflow_ids).length,

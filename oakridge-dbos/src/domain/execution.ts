@@ -41,6 +41,18 @@ export interface ExecutionRequest {
 export type ExternalExecutionReference =
   | { readonly kind: "kbbl_session"; readonly session_id: string }
   | { readonly kind: "headless_run"; readonly run_ref: string }
+  /**
+   * A deterministic executor's finished work.
+   *
+   * Such an executor has no external process to attach to, poll or fence: by
+   * the time it returns, the work is done. What every later call still needs
+   * from it is therefore not a handle but the outcome — and the reference is
+   * the one value the execution workflow checkpoints and hands back to each of
+   * them. Carrying it here is what keeps the adapter stateless: a backend
+   * restart, a step retry and a rerun all replay through the same durable
+   * answer instead of asking an empty process what it remembers.
+   */
+  | { readonly kind: "completed"; readonly observation: ExecutorTerminalObservation }
   | { readonly kind: "none" };
 
 export type ExecutorTerminalObservation =

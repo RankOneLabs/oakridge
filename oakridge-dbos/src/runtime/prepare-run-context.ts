@@ -2,6 +2,7 @@ import type { Project } from "../domain/projects";
 import type { JsonValue, Result } from "../domain/primitives";
 import type { EpicWorkflowProfile, EpicWorkflowProfileId } from "../domain/epic";
 import type { CreateEpicProfileRequest } from "../domain/runs";
+import { selectEpicBranch } from "../domain/repository-refs";
 
 export interface PrepareRunContextInput {
   readonly caller_context: JsonValue;
@@ -32,7 +33,7 @@ export const createEpicProfile = (input: CreateEpicProfileInput): EpicWorkflowPr
     repository_key: repository.repository_key,
     repository_path: repository.repository_path,
     base_branch: repository.base_branch,
-    epic_branch: repository.epic_branch ?? `epic/${input.config.slug}`,
+    epic_branch: selectEpicBranch(repository.epic_branch, input.config.slug),
     forge_repository: repository.forge_repository,
     final_pull_request: null,
     final_merge_state: "pending",
@@ -68,7 +69,7 @@ export const prepareRunContext = (input: PrepareRunContextInput): Result<JsonVal
         key: repository.repository_key,
         path: repository.repository_path,
         base_branch: repository.base_branch,
-        epic_branch: repository.epic_branch ?? `epic/${epicProfile.slug}`,
+        epic_branch: selectEpicBranch(repository.epic_branch, epicProfile.slug),
       })),
     },
   };

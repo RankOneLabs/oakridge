@@ -12,7 +12,6 @@ import { DBOS } from "@dbos-inc/dbos-sdk";
 import { KbblExecutorAdapter } from "./adapters/kbbl";
 import { selectControlPlaneAccess } from "./http/control-auth";
 import { createOakridgeRuntime } from "./runtime/compose";
-import { GitRepositoryPreconditionChecker } from "./runtime/git-repository-preconditions";
 import { GithubPullRequestReader } from "./runtime/github-pull-requests";
 import { DEFAULT_STALL_THRESHOLD_SECONDS } from "./storage/postgres-operators";
 
@@ -49,10 +48,9 @@ DBOS.setConfig({ name: "oakridge", systemDatabaseUrl: databaseUrl, applicationVe
 const runtime = await createOakridgeRuntime({
   database_url: databaseUrl,
   application_version: applicationVersion,
-  executor_adapter: new KbblExecutorAdapter({ base_url: kbblBaseUrl, executor_function_identity: applicationVersion }),
+  executor_adapters: [new KbblExecutorAdapter({ base_url: kbblBaseUrl, executor_function_identity: applicationVersion })],
   prompt_template_directory: resolve(import.meta.dir, "../../oakridge-core/prompts"),
   stall_threshold_seconds: stallThresholdSeconds,
-  repository_preconditions: new GitRepositoryPreconditionChecker(),
   ...(githubToken ? { pull_request_reader: new GithubPullRequestReader({ token: githubToken }) } : {}),
   ...(controlAccess.kind === "token_required" ? { control_token: controlAccess.token } : {}),
 });

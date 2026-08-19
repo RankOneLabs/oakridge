@@ -1,8 +1,8 @@
 import type { WorkflowDefinitionRepository } from "../storage/repositories";
-import { loadDevFlowV11 } from "./dev-flow-v11";
+import { loadDevFlowV12 } from "./dev-flow-v12";
 
 export const seedBuiltins = async (repository: WorkflowDefinitionRepository): Promise<void> => {
-  const definition = await loadDevFlowV11();
-  if (!definition.ok) throw new Error(`built-in dev-flow v11 is invalid: ${definition.error.detail}`);
+  const definition = await loadDevFlowV12();
+  if (!definition.ok) throw new Error(`built-in dev-flow v12 is invalid: ${definition.error.detail}`);
   await repository.insert_immutable(definition.value);
 };

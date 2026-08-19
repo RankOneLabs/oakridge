@@ -5,6 +5,8 @@ import type { WorkflowDefinitionId } from "../domain/primitives";
 import type { FanOutDefinition } from "../domain/delegated-session";
 import type { InputSlot, WorkflowDefinition } from "../domain/workflow";
 import { delegatedSessionDefinitionSchema } from "./delegated-session";
+import { repositoryProvisioningDefinitionSchema } from "./repository-provisioning";
+import { PROVISION_REPOSITORY_REFS_STAGE_TYPE, REPOSITORY_REFS_ARTIFACT_TYPE } from "../domain/repository-refs";
 import { readOwn } from "../domain/records";
 
 const inputSlotSchema = z.object({
@@ -75,6 +77,19 @@ const validateGraphReferences = (definition: WorkflowDefinition): Result<Workflo
         return err({ operation: "validate_workflow_graph", detail: `stage '${stageKey}' terminal output '${terminalOutput}' is not declared` });
       }
       fanOut = config.data.fan_out ?? null;
+    }
+    if (stage.stage_type === PROVISION_REPOSITORY_REFS_STAGE_TYPE) {
+      const config = repositoryProvisioningDefinitionSchema.safeParse(stage.config);
+      if (!config.success) return err({ operation: "validate_workflow_graph", detail: `stage '${stageKey}' config invalid: ${z.prettifyError(config.error)}` });
+      // The executor emits exactly one artifact per repository, so a second
+      // declared output could never be satisfied and would strand every unit
+      // waiting on it.
+      if (stage.outputs.length !== 1) {
+        return err({ operation: "validate_workflow_graph", detail: `stage '${stageKey}' must declare exactly one output, found ${stage.outputs.length}` });
+      }
+      if (stage.outputs[0]?.artifact_type !== REPOSITORY_REFS_ARTIFACT_TYPE) {
+        return err({ operation: "validate_workflow_graph", detail: `stage '${stageKey}' output '${stage.outputs[0]?.name}' must have artifact type '${REPOSITORY_REFS_ARTIFACT_TYPE}'` });
+      }
     }
     const violation = selectIncrementalInputViolation(stageKey, stage.inputs, fanOut);
     if (violation) return err({ operation: "validate_workflow_graph", detail: violation });

@@ -1,21 +1,7 @@
 import { z } from "zod";
 import { BUILT_IN_GATE_DISPOSITIONS, isBuiltInGateAction } from "../domain/gates";
+import { bindableSchema, slotBindingSchema } from "./slot-binding";
 
-const slotBindingSchema = z.discriminatedUnion("from", [
-  z.object({ from: z.literal("input"), input_name: z.string().min(1), path: z.string().nullable().default(null) }),
-  z.object({ from: z.literal("context"), path: z.string() }),
-  z.object({ from: z.literal("literal"), value: z.string() }),
-  z.object({ from: z.literal("item"), path: z.string() }),
-  z.object({
-    from: z.literal("context_lookup"),
-    collection_path: z.string(),
-    collection_key_path: z.string(),
-    item_key_path: z.string(),
-    value_path: z.string(),
-  }),
-]);
-
-const bindableSchema = z.union([z.string(), slotBindingSchema]);
 const outputGateSchema = z.object({
   output: z.string().min(1),
   steps: z.array(z.object({

@@ -8,7 +8,7 @@ import type { CompiledStageContract, MaterializedExecutionUnit } from "../src/do
 import type { DelegatedSessionDefinitionConfig } from "../src/domain/delegated-session";
 import type { ArtifactEnvelope } from "../src/domain/execution";
 import type { ArtifactId, JsonValue, StageInstanceId, UnitId } from "../src/domain/primitives";
-import { loadDevFlowV11 } from "../src/seed/dev-flow-v11";
+import { loadDevFlowV12 } from "../src/seed/dev-flow-v12";
 import { selectInputsForUnit, type StageInputSet } from "../src/workflows/production-topology";
 
 const stageInstanceId = "stage-1" as StageInstanceId;
@@ -32,8 +32,13 @@ const envelope = (artifact_id: string, artifact_type: string, output_name: strin
   body,
 });
 
+/** What the provisioning stage guaranteed for the repository the cohorts build in. */
+const repositoryRefs = [envelope("refs-1", "dev.repository_refs", "repository_refs", "oakridge", {
+  repository_key: "oakridge", repository_path: "/repo/oakridge", base_branch: "main", epic_branch: "epic/test", epic_head_sha: "9a8b7c6",
+})];
+
 const loadCompiled = async () => {
-  const loaded = await loadDevFlowV11();
+  const loaded = await loadDevFlowV12();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const compiled = compileWorkflowDefinition(loaded.value);
   if (!compiled.ok) throw new Error(compiled.error.detail);
@@ -43,7 +48,7 @@ const loadCompiled = async () => {
 const resolveStage = async (stage: CompiledStageContract, unit: MaterializedExecutionUnit, inputs: StageInputSet) => {
   const definition = stage.executor.definition_config as DelegatedSessionDefinitionConfig;
   const template = await Bun.file(new URL(`../../oakridge-core/prompts/${definition.prompt_template_path}`, import.meta.url)).text();
-  const unitInputs = selectInputsForUnit(inputs, unit, stage.materialization.kind === "fan_out");
+  const unitInputs = selectInputsForUnit(stage, inputs, unit);
   return resolveDelegatedExecution({ definition, environment: { inputs: unitInputs, context, item: null }, unit, stage_instance_id: stageInstanceId, prompt_template: template });
 };
 
@@ -89,12 +94,56 @@ test("seeded build stage owns runtime cardinality, dependency readiness, and per
   expect(selectReadyUnits(units.value, { released: afterFoundation, admitted, launched: afterFoundation, running_count: 0, max_parallel: 4 }).map((unit) => String(unit.unit_id))).toEqual(["web"]);
 
   const web = units.value.find((unit) => unit.unit_id === "web")!;
-  const webInputs = selectInputsForUnit({ brief: briefs }, web, true);
+  const inputs = { brief: briefs, repository_refs: repositoryRefs };
+  const webInputs = selectInputsForUnit(build, inputs, web);
   expect(webInputs.brief).toEqual([briefs[1]]);
-  const execution = await resolveStage(build, web, { brief: briefs });
+  // The provisioned refs are keyed by repository, and this unit is a cohort.
+  // Filtering them by the consuming unit's id — as every array input once was —
+  // leaves the cohort with nothing to look its own repository up in.
+  expect(webInputs.repository_refs).toEqual(repositoryRefs);
+  const execution = await resolveStage(build, web, inputs);
   expect(execution).toEqual({ ok: true, value: expect.objectContaining({ workdir: "/repo/oakridge", rendered_prompt: expect.stringContaining("**ID:** web"),
     worktree: { branchName: "cohort/stage-1/web", worktreeSubdir: "stage-1/web", baseRef: "epic/test" } }) });
   expect(build.outputs.find((output) => output.name === "build_result")?.release).toEqual(expect.objectContaining({ kind: "handoff", downstream_role: "assessment", external_wait_kind: "github_review" }));
+});
+
+/**
+ * The build stage reads its repository from the provisioning stage's artifact,
+ * not from a pointer into the run context. What proves it is a context that
+ * disagrees: the refs win, because they are what a stage actually guaranteed.
+ */
+test("seeded build resolves its worktree from the provisioned refs rather than the run context", async () => {
+  const workflow = await loadCompiled();
+  const build = workflow.stages.build!;
+  const brief = envelope("brief-1", "dev.build_brief", "brief", "foundation", { cohort_id: "foundation", repository_key: "oakridge", title: "Foundation", goal: "base", files_in_scope: [], next_action: "build", decisions_made: [], acceptance_criteria: ["base works"], depends_on: [] });
+  const provisioned = [envelope("refs-1", "dev.repository_refs", "repository_refs", "oakridge", {
+    repository_key: "oakridge", repository_path: "/provisioned/oakridge", base_branch: "trunk", epic_branch: "epic/provisioned", epic_head_sha: "0f1e2d3",
+  })];
+  const units = materializeStage(build, { inputs: { brief: [brief] }, context, item: null });
+  if (!units.ok) throw new Error(units.error.detail);
+  const execution = await resolveStage(build, units.value[0]!, { brief: [brief], repository_refs: provisioned });
+  expect(execution).toEqual({ ok: true, value: expect.objectContaining({ workdir: "/provisioned/oakridge",
+    worktree: expect.objectContaining({ baseRef: "epic/provisioned" }) }) });
+  if (execution.ok) expect(execution.value.rendered_prompt).toContain("epic/provisioned");
+});
+
+/**
+ * With no refs to look itself up in, a cohort refuses rather than guessing a
+ * branch. The graph makes this unreachable — `repository_refs` is a required
+ * input, so build cannot start before provisioning finishes — and that is
+ * precisely why the failure has to be loud if it ever is reached.
+ */
+test("a build unit whose repository was never provisioned resolves to a named failure", async () => {
+  const workflow = await loadCompiled();
+  const build = workflow.stages.build!;
+  const brief = envelope("brief-1", "dev.build_brief", "brief", "foundation", { cohort_id: "foundation", repository_key: "absent", title: "Foundation", goal: "base", files_in_scope: [], next_action: "build", decisions_made: [], acceptance_criteria: [], depends_on: [] });
+  const provisioned = [envelope("refs-1", "dev.repository_refs", "repository_refs", "oakridge", {
+    repository_key: "oakridge", repository_path: "/repo/oakridge", base_branch: "main", epic_branch: "epic/test", epic_head_sha: "0f1e2d3",
+  })];
+  const units = materializeStage(build, { inputs: { brief: [brief] }, context, item: null });
+  if (!units.ok) throw new Error(units.error.detail);
+  const execution = await resolveStage(build, units.value[0]!, { brief: [brief], repository_refs: provisioned });
+  expect(execution).toEqual({ ok: false, error: expect.objectContaining({ detail: expect.stringContaining("input lookup key 'absent' matched 0 entries") }) });
 });
 
 test("seeded assessor pairs each build result with only its matching brief", async () => {
@@ -112,7 +161,7 @@ test("seeded assessor pairs each build result with only its matching brief", asy
   const units = materializeStage(assessor, { inputs, context, item: null });
   if (!units.ok) throw new Error(units.error.detail);
   const web = units.value.find((unit) => unit.unit_id === "web")!;
-  expect(selectInputsForUnit(inputs, web, true)).toEqual({ brief: [briefs[1]], build_result: [results[1]] });
+  expect(selectInputsForUnit(assessor, inputs, web)).toEqual({ brief: [briefs[1]], build_result: [results[1]] });
   const execution = await resolveStage(assessor, web, inputs);
   expect(execution).toEqual({ ok: true, value: expect.objectContaining({ rendered_prompt: expect.stringContaining("ui works") }) });
   if (execution.ok) expect(execution.value.rendered_prompt).not.toContain("base works");

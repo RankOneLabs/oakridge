@@ -16,10 +16,11 @@
 import { DBOSClient } from "@dbos-inc/dbos-sdk";
 import type { Hono } from "hono";
 
+import { RepositoryProvisioningAdapter } from "../adapters/repository-provisioning";
 import { DEV_FLOW_ARTIFACT_TYPES, findArtifactType } from "../domain/artifact-types";
 import type { ExecutorAdapter } from "../domain/execution";
 import type { JsonValue } from "../domain/primitives";
-import type { RepositoryPreconditionChecker } from "../domain/repository-preconditions";
+import type { GitCommandRunner } from "../domain/repository-provisioning";
 import { selectOrphanedVersionRuns, type OrphanedVersionRuns } from "../domain/workflow-recovery";
 import type { CohortPullRequestDependencies } from "./cohort-pull-request";
 import { pollCohortPullRequests, type CohortPollOutcome, type PullRequestReader } from "./github-pull-requests";
@@ -40,6 +41,8 @@ import { cancelAttempt } from "./cancel-run";
 import { DbosCancellationClient } from "./dbos-cancellation-client";
 import { DbosStageRerunClient } from "./dbos-stage-rerun-client";
 import { DbosCollaborationPingClient } from "./collaboration-ping";
+import { emitExecutionArtifact } from "./emit-artifact";
+import { BunGitCommandRunner } from "./git-command-runner";
 import { createProductionTopologyServices } from "./production-services";
 import { createPromptTemplateLoader } from "./prompt-template";
 import { GitProjectRepositoryIdentityResolver } from "./project-identity";
@@ -52,18 +55,24 @@ export interface OakridgeRuntimeConfig {
    * launch is only picked up by a backend of the same version.
    */
   readonly application_version: string;
-  /** How a unit's work actually gets done. The one collaborator a test replaces. */
-  readonly executor_adapter: ExecutorAdapter;
+  /**
+   * How a unit's work actually gets done, one adapter per stage type. The
+   * agent-facing one is the collaborator a test replaces; the deterministic
+   * repository provisioner is built here, because it publishes its artifact
+   * through the same transform the emit route uses and only this composition
+   * holds the repositories that transform needs.
+   */
+  readonly executor_adapters: readonly ExecutorAdapter[];
   readonly prompt_template_directory: string;
   /** Bearer token required on state-changing requests; absent on a loopback bind. */
   readonly control_token?: string;
   readonly stall_threshold_seconds?: number;
   /**
-   * Verifies the repository state a run assumes, before anything is persisted.
-   * Absent means nothing is checked — which is what a caller with no working
-   * copies wants.
+   * Runs the git commands the provisioning stage needs. Defaults to real
+   * subprocesses; a test supplies its own to drive the sequencing without a
+   * checkout, though the end-to-end suite deliberately uses the real one.
    */
-  readonly repository_preconditions?: RepositoryPreconditionChecker;
+  readonly git_commands?: GitCommandRunner;
   /**
    * Reads the pull requests cohorts are waiting on. Absent when the backend has
    * no credentials for the forge, in which case nothing polls and an operator
@@ -131,18 +140,6 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const cancellation = { attempts, targets: cancellationTargets, dbos: dbosCancellation, now };
   const promptTemplates = createPromptTemplateLoader(config.prompt_template_directory);
 
-  registerDbosTransportClient(client);
-  registerExecutorAdapter(config.executor_adapter);
-  registerExecutionProjectionObserver(executions);
-  registerArtifactLifecycleObserver(artifacts);
-  registerCancellationControlServices({
-    list_execution_targets: (root) => cancellationTargets.list_for_attempt(root),
-    terminalize_pending_waits: (root, reason, at) => cancellationTargets.terminalize_pending_waits(root, "workflow_cancellation", reason ?? "workflow cancelled", at),
-    finish_started_stages: (root, at, reason) => cancellationTargets.finish_started_stages(root, at, reason),
-  });
-  registerProductionTopologyServices(createProductionTopologyServices({ definitions, runs, attempts, stages, executions, rerun_targets: rerunTargets,
-    resume_artifacts: resumeArtifacts, load_prompt_template: (path) => promptTemplates.load(path) }));
-
   // HTTP handlers and the periodic workers share these dispatch functions. Keep
   // every invocation in the same in-flight set so shutdown cannot close the SQL
   // pool while a request-triggered dispatcher is still using it.
@@ -157,6 +154,22 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   };
   const dispatchNotifications = () => trackDispatch(() => dispatchArtifactNotifications(artifacts, { send: sendArtifactWorkflowMessage }));
   const dispatchLaunches = () => trackDispatch(() => dispatchRunLaunches(runs, dbosRuns));
+
+  registerDbosTransportClient(client);
+  for (const adapter of config.executor_adapters) registerExecutorAdapter(adapter);
+  registerExecutorAdapter(new RepositoryProvisioningAdapter({
+    git: config.git_commands ?? new BunGitCommandRunner(),
+    emit: (request) => emitExecutionArtifact({ contexts, artifacts, dispatch_notifications: dispatchNotifications }, request),
+  }));
+  registerExecutionProjectionObserver(executions);
+  registerArtifactLifecycleObserver(artifacts);
+  registerCancellationControlServices({
+    list_execution_targets: (root) => cancellationTargets.list_for_attempt(root),
+    terminalize_pending_waits: (root, reason, at) => cancellationTargets.terminalize_pending_waits(root, "workflow_cancellation", reason ?? "workflow cancelled", at),
+    finish_started_stages: (root, at, reason) => cancellationTargets.finish_started_stages(root, at, reason),
+  });
+  registerProductionTopologyServices(createProductionTopologyServices({ definitions, runs, attempts, stages, executions, rerun_targets: rerunTargets,
+    resume_artifacts: resumeArtifacts, load_prompt_template: (path) => promptTemplates.load(path) }));
 
   const cohortPullRequests: CohortPullRequestDependencies = {
     runs, epic_profiles: epicProfiles, contexts, artifacts, reconciliations: cohortReconciliations,
@@ -195,8 +208,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
       ping_thread: (input) => collaborationPings.enqueue(input), dispatch_notifications: dispatchNotifications },
     operator_projections: projections,
     artifact_detail: { artifacts, stages, audits, presentation_for_type: presentation, artifact_types: DEV_FLOW_ARTIFACT_TYPES },
-    run_launch: { definitions, projects, runs, projections, dispatch_launches: dispatchLaunches, application_version: config.application_version, now,
-      ...(config.repository_preconditions ? { repository_preconditions: config.repository_preconditions } : {}) },
+    run_launch: { definitions, projects, runs, projections, dispatch_launches: dispatchLaunches, application_version: config.application_version, now },
     rerun: {
       stages, targets: rerunTargets, dbos: client, cancellation,
       stage_rerun: { runs, attempts, definitions, dbos: dbosRuns, now,

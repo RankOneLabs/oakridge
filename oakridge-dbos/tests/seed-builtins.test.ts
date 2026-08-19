@@ -5,7 +5,7 @@ import type { WorkflowDefinition } from "../src/domain/workflow";
 import { seedBuiltins } from "../src/seed/seed-builtins";
 import type { WorkflowDefinitionRepository } from "../src/storage/repositories";
 
-test("seeds unmodified v11 through the immutable repository boundary", async () => {
+test("seeds unmodified v12 through the immutable repository boundary", async () => {
   const inserted: WorkflowDefinition[] = [];
   const repository: WorkflowDefinitionRepository = {
     async insert_immutable(definition) { inserted.push(definition); return definition; },
@@ -16,6 +16,7 @@ test("seeds unmodified v11 through the immutable repository boundary", async () 
   };
   await seedBuiltins(repository);
   expect(inserted).toHaveLength(1);
-  expect(inserted[0]?.version).toBe(11);
+  expect(inserted[0]?.version).toBe(12);
   expect(inserted[0]?.graph.stages.build?.stage_type).toBe("delegated_session");
+  expect(inserted[0]?.graph.stages.provision_refs?.stage_type).toBe("provision_repository_refs");
 });

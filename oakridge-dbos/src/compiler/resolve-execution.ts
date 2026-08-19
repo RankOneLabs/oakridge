@@ -42,15 +42,29 @@ export const resolveBindingValue = (binding: SlotBinding, environment: BindingEn
     const value = readJsonPointer(environment.item, binding.path);
     return value === undefined ? err({ operation: "resolve_execution", detail: `item pointer '${binding.path}' not found` }) : ok(value);
   }
-  if (environment.item === null) return err({ operation: "resolve_execution", detail: "context lookup used outside fan-out" });
+  // Both lookups pick one entry out of a collection using a key the fan-out item
+  // carries. They differ only in where the collection comes from — the run
+  // context, or a named input holding an upstream stage's typed output.
+  const lookup = binding.from === "context_lookup" ? "context lookup" : "input lookup";
+  if (environment.item === null) return err({ operation: "resolve_execution", detail: `${lookup} used outside fan-out` });
   const itemKey = readJsonPointer(environment.item, binding.item_key_path);
-  const collection = readJsonPointer(environment.context, binding.collection_path);
-  if (typeof itemKey !== "string" || itemKey.length === 0) return err({ operation: "resolve_execution", detail: `context lookup item key '${binding.item_key_path}' must be a non-empty string` });
-  if (!Array.isArray(collection)) return err({ operation: "resolve_execution", detail: `context lookup collection '${binding.collection_path}' must be an array` });
+  if (typeof itemKey !== "string" || itemKey.length === 0) return err({ operation: "resolve_execution", detail: `${lookup} item key '${binding.item_key_path}' must be a non-empty string` });
+  let collection: JsonValue | undefined;
+  let source: string;
+  if (binding.from === "context_lookup") {
+    collection = readJsonPointer(environment.context, binding.collection_path);
+    source = binding.collection_path;
+  } else {
+    const input = environment.inputs[binding.input_name];
+    if (!input) return err({ operation: "resolve_execution", detail: `input '${binding.input_name}' not found` });
+    collection = inputBindingValue(input);
+    source = binding.input_name;
+  }
+  if (!Array.isArray(collection)) return err({ operation: "resolve_execution", detail: `${lookup} collection '${source}' must be an array` });
   const matches = collection.filter((entry) => readJsonPointer(entry, binding.collection_key_path) === itemKey);
-  if (matches.length !== 1) return err({ operation: "resolve_execution", detail: `context lookup key '${itemKey}' matched ${matches.length} entries` });
+  if (matches.length !== 1) return err({ operation: "resolve_execution", detail: `${lookup} key '${itemKey}' matched ${matches.length} entries in '${source}'` });
   const value = readJsonPointer(matches[0] as JsonValue, binding.value_path);
-  return value === undefined ? err({ operation: "resolve_execution", detail: `context lookup value '${binding.value_path}' not found` }) : ok(value);
+  return value === undefined ? err({ operation: "resolve_execution", detail: `${lookup} value '${binding.value_path}' not found` }) : ok(value);
 };
 
 export const resolveBinding = (binding: SlotBinding, environment: BindingEnvironment): Result<string, ResolveExecutionError> => {
