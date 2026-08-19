@@ -628,3 +628,40 @@ e2e("an agent that never receives its prompt parks the unit with a reason", asyn
     await kbbl.stop();
   }
 }, 180_000);
+
+/**
+ * The incident itself: an agent that is alive, and never does anything.
+ *
+ * The real session started, was handed a prompt it never processed, and simply
+ * sat there. kbbl answered "not terminal" — truthfully — on every one of the
+ * four hundred polls oakridge made, because the session genuinely had not
+ * ended. Nothing on either side bounded that, so the run stayed "running"
+ * indefinitely and the only signal was an operator noticing.
+ *
+ * The stub reproduces it exactly: it takes the prompt and then holds, without
+ * exiting. What must happen now is that the silence itself becomes the
+ * failure, with a code naming what went wrong.
+ */
+e2e("an agent that goes silent fails the unit instead of being polled forever", async () => {
+  const kbbl = await startKbblFixture({ runtimes: ["claude-code"], stub_mode: "silent" });
+  try {
+    useScenario(realKbblScenario(kbbl.base_url, oakridge.application_version, { max_silent_ms: 2_000 }));
+    const definitionId = await createProbeDefinition(oakridge.base_url, "claude-code", "real-transport-probe-silent");
+    const run = await launchRun(oakridge.base_url, definitionId as Parameters<typeof launchRun>[1],
+      runContext(oakridge.base_url, oakridge.repository.path) as never);
+    oakridge.started_runs.push(run.root_workflow_id);
+
+    const parked = await awaitCondition("the silent unit to park with its reason", async () =>
+      DBOS.getEvent<StageRerunState>(stageCoordinatorWorkflowId(run.root_workflow_id, "probe"),
+        stageRerunStateKey("0" as UnitId), { timeoutSeconds: 0 }), 90_000);
+    expect(parked.status).toBe("waiting");
+    expect(parked.status === "waiting" ? parked.code : null).toBe("executor_silent_timeout");
+    expect(parked.status === "waiting" ? parked.detail : null).toContain("reported no activity");
+
+    // The agent really did receive its prompt — this is a silent agent, not an
+    // undelivered one. Distinguishing them is the whole point of the code.
+    expect(await kbbl.stub_log()).toContain("received the prompt, emitting nothing");
+  } finally {
+    await kbbl.stop();
+  }
+}, 180_000);

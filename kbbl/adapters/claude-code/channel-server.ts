@@ -20,18 +20,36 @@
  *   KBBL_CHANNEL_NAME   — name used in log lines (default: kbbl-channel).
  */
 
-import { openSync, readSync, closeSync } from "node:fs";
+import { openSync, readSync, closeSync, appendFileSync } from "node:fs";
 
 const OUTBOX_PATH = process.env.KBBL_CHANNEL_OUTBOX ?? "";
 const CHANNEL_NAME = process.env.KBBL_CHANNEL_NAME ?? "kbbl-channel";
 
 // ── logging ────────────────────────────────────────────────────────────────
 
+/**
+ * Where diagnostics survive the process.
+ *
+ * This server's stderr belongs to the CC subprocess that spawned it, and is
+ * discarded. That is fine until a session stalls: the prompt sits buffered here
+ * and the one record of why is gone the moment the process dies. Writing beside
+ * the outbox — the only path this server is guaranteed to know — leaves the
+ * evidence where whoever is investigating the session is already looking.
+ */
+const LOG_PATH = OUTBOX_PATH ? OUTBOX_PATH.replace(/\.jsonl$/, "") + ".log" : null;
+
 function logline(s: string): void {
+  const line = `[${CHANNEL_NAME}] ${new Date().toISOString()} ${s}\n`;
   try {
-    process.stderr.write(`[${CHANNEL_NAME}] ${s}\n`);
+    process.stderr.write(line);
   } catch {
-    // stderr may be closed; best-effort
+    // stderr may be closed; the file sink below is the durable one.
+  }
+  if (LOG_PATH === null) return;
+  try {
+    appendFileSync(LOG_PATH, line);
+  } catch {
+    // best-effort: a missing directory must not take the transport down
   }
 }
 
@@ -158,6 +176,33 @@ function processOutboxLines(lines: string[]): void {
   }
 }
 
+/**
+ * How long the client may take to finish the handshake before the wait is
+ * called out as the fault it is.
+ *
+ * Buffering until `notifications/initialized` is correct — a push sent before
+ * the client is ready is dropped. What was missing is any acknowledgement that
+ * the wait can be unbounded: a client that never initializes leaves the prompt
+ * queued here forever while the session reports itself perfectly healthy. That
+ * is precisely how a run came to sit untouched for hours.
+ *
+ * This says so rather than acting on it. Whether the unit dies is oakridge's
+ * call — it holds the silence bound, and a transport unilaterally killing a
+ * session would be a second owner for that decision.
+ */
+const HANDSHAKE_DEADLINE_MS = 60_000;
+
+function startHandshakeWatch(): void {
+  setTimeout(() => {
+    if (initialized) return;
+    logline(
+      `notifications/initialized has not arrived after ${HANDSHAKE_DEADLINE_MS}ms — ` +
+      `${pendingPushes.length} push(es) are buffered and undeliverable. The agent will ` +
+      `receive nothing until it completes the MCP handshake.`,
+    );
+  }, HANDSHAKE_DEADLINE_MS).unref();
+}
+
 /** Tail the outbox file. Polls at 200ms; each iteration is synchronous. */
 function startOutboxTail(): void {
   if (!OUTBOX_PATH) {
@@ -257,4 +302,7 @@ function handle(msg: Record<string, unknown>): void {
   reply(id, {});
 }
 
-logline(`boot — outbox=${OUTBOX_PATH || "(unset)"}`);
+logline(`boot — outbox=${OUTBOX_PATH || "(unset)"} log=${LOG_PATH || "(unset)"}`);
+// Watched from boot rather than from `initialize`: a client that never sends
+// even that is the worse case, and the one with nothing else to notice it.
+startHandshakeWatch();

@@ -204,8 +204,15 @@ export const startKbblFixture = async (options: KbblFixtureOptions = {}): Promis
  * `start_or_attach` returned is enough, and keeps every HTTP call the adapter
  * makes genuinely real.
  */
-export const realKbblScenario = (baseUrl: string, applicationVersion = "kbbl-fixture"): ExecutionScenario => {
-  const adapter = new KbblExecutorAdapter({ base_url: baseUrl, executor_function_identity: applicationVersion });
+export const realKbblScenario = (baseUrl: string, applicationVersion = "kbbl-fixture", options: { readonly max_silent_ms?: number } = {}): ExecutionScenario => {
+  const adapter = new KbblExecutorAdapter({
+    base_url: baseUrl,
+    executor_function_identity: applicationVersion,
+    // Short polls so a test that is waiting for a bound to trip does not spend
+    // most of its time inside a single long-poll.
+    observe_wait_ms: 2_000,
+    ...(options.max_silent_ms !== undefined ? { max_silent_ms: options.max_silent_ms } : {}),
+  });
   const references = new Map<ExecutionId, ExternalExecutionReference>();
   return {
     async start_or_attach(request: ExecutionRequest, attempt_id: string): Promise<ExternalExecutionReference> {

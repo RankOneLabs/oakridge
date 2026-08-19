@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { KbblExecutorAdapter } from "../src/adapters/kbbl";
+import { KbblExecutorAdapter, silentDurationMs } from "../src/adapters/kbbl";
 import type { ExecutionRequest } from "../src/domain/execution";
 import type { ExecutionAttemptId, ExecutionId, StageInstanceId, UnitId } from "../src/domain/primitives";
 
@@ -209,4 +209,44 @@ test("an operation handed a reference for another executor fails loudly rather t
   const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "v1", fetch: async () => new Response(null, { status: 204 }) });
   await expect(adapter.cancel_or_fence("execution-1" as ExecutionId, { kind: "headless_run", run_ref: "elsewhere" }))
     .rejects.toThrow("has no kbbl session reference");
+});
+
+const NOW = Date.parse("2026-08-19T12:00:00.000Z");
+const pendingSince = (lastActivityTs: string) =>
+  Response.json({ pending: true, session: { sid: "session-1", status: "live", lastActivityTs } }, { status: 202 });
+
+const silenceAdapter = (body: () => Response, maxSilentMs: number) => new KbblExecutorAdapter({
+  base_url: "http://kbbl", executor_function_identity: "v1", max_silent_ms: maxSilentMs, now: () => NOW, fetch: async () => body(),
+});
+const observe = (adapter: KbblExecutorAdapter) =>
+  adapter.observe_terminal("execution-1" as ExecutionId, { kind: "kbbl_session", session_id: "session-1" });
+
+test("silent duration is measured from the activity kbbl last reported", () => {
+  expect(silentDurationMs({ session: { lastActivityTs: "2026-08-19T11:59:00.000Z" } }, NOW)).toBe(60_000);
+});
+
+test("silent duration is unknown, not zero, when kbbl reports no activity", () => {
+  // Distinct from a session that has genuinely been silent for 0ms: an older
+  // kbbl omits the field, and reading that as "silent forever" would fail every
+  // one of its sessions on the first poll.
+  expect(silentDurationMs({ pending: true }, NOW)).toBeNull();
+  expect(silentDurationMs({ session: { lastActivityTs: "not a date" } }, NOW)).toBeNull();
+});
+
+test("a session still doing work keeps being polled", async () => {
+  const attempt = await observe(silenceAdapter(() => pendingSince("2026-08-19T11:59:00.000Z"), 5 * 60_000));
+  expect(attempt.kind).toBe("pending");
+});
+
+test("a session silent past the bound fails instead of being polled forever", async () => {
+  // The stall this exists for: kbbl answers "not terminal" truthfully and
+  // indefinitely for a session that never took its first turn.
+  const attempt = await observe(silenceAdapter(() => pendingSince("2026-08-19T11:00:00.000Z"), 5 * 60_000));
+  expect(attempt).toEqual({ kind: "terminal", observation: { kind: "failed", code: "executor_silent_timeout",
+    detail: "kbbl session session-1 reported no activity for 3600s (limit 300s)" } });
+});
+
+test("a kbbl that reports no activity at all is polled, not failed", async () => {
+  const attempt = await observe(silenceAdapter(() => Response.json({ pending: true }, { status: 202 }), 5 * 60_000));
+  expect(attempt.kind).toBe("pending");
 });

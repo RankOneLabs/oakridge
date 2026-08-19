@@ -8,6 +8,22 @@ import type { ExecutionAttemptId, ExecutionId, JsonValue } from "../domain/primi
  */
 const DEFAULT_OBSERVE_WAIT_MS = 25_000;
 
+/**
+ * How long a session may report no activity at all before it is called dead.
+ *
+ * Not a cap on how long an agent may work — `lastActivityTs` moves on every
+ * event a session produces, so a busy agent never approaches this. It bounds
+ * the case with no other bound: a session that started, never took its first
+ * turn, and will therefore never end. kbbl answers "not terminal" for such a
+ * session forever, truthfully, and before this the observer believed it
+ * forever.
+ *
+ * Generous on purpose. A tool call that runs for a long time without emitting
+ * anything — a full test suite, a slow build — is silent from the outside, and
+ * killing that would be a worse failure than the stall this prevents.
+ */
+const DEFAULT_MAX_SILENT_MS = 30 * 60_000;
+
 const terminal = (observation: ExecutorTerminalObservation): ExecutorObservationAttempt => ({ kind: "terminal", observation });
 
 interface KbblResolvedConfig {
@@ -76,8 +92,30 @@ export interface KbblExecutorAdapterOptions {
   readonly base_url: string;
   readonly executor_function_identity: string;
   readonly observe_wait_ms?: number;
+  /** Silence after which a session is failed rather than polled forever. */
+  readonly max_silent_ms?: number;
+  /** Injectable clock, so a test can prove the bound without waiting it out. */
+  readonly now?: () => number;
   readonly fetch?: FetchLike;
 }
+
+/**
+ * How long a pending session has been silent, or null when kbbl did not say.
+ *
+ * Absent or unparseable activity is deliberately *not* treated as silence: an
+ * older kbbl that omits the field would otherwise have every one of its
+ * sessions failed at the first poll.
+ */
+export const silentDurationMs = (pending: JsonValue, now: number): number | null => {
+  if (!isObject(pending)) return null;
+  const session = pending.session;
+  if (!isObject(session)) return null;
+  const lastActivity = session.lastActivityTs;
+  if (typeof lastActivity !== "string") return null;
+  const observedAt = Date.parse(lastActivity);
+  if (Number.isNaN(observedAt)) return null;
+  return Math.max(0, now - observedAt);
+};
 
 /**
  * The kbbl session one attempt owns. Keying on the attempt rather than the
@@ -144,7 +182,24 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
     const sessionId = external_reference.session_id;
     const url = `${this.options.base_url}/sessions/resumable/${encodeURIComponent(sessionId)}/terminal?wait_ms=${this.options.observe_wait_ms ?? DEFAULT_OBSERVE_WAIT_MS}`;
     const response = await this.fetch(url);
-    if (response.status === 202) return { kind: "pending" };
+    if (response.status === 202) {
+      // A session that never takes its first turn ends no other way: kbbl keeps
+      // answering "not terminal", correctly, and the unit waits on a state that
+      // cannot arrive. Bounding the silence is what turns that into a failure
+      // an operator can see and rerun, rather than a run that looks alive.
+      //
+      // Stateless by construction: `lastActivityTs` is an absolute time from
+      // kbbl, so nothing has to be carried between polls. That matters because
+      // each observation is its own checkpointed step, and a counter held in
+      // memory would reset on recovery — the case this is meant to catch.
+      const silentFor = silentDurationMs(await response.json().catch(() => null) as JsonValue, (this.options.now ?? Date.now)());
+      const limit = this.options.max_silent_ms ?? DEFAULT_MAX_SILENT_MS;
+      if (silentFor !== null && silentFor > limit) {
+        return terminal({ kind: "failed", code: "executor_silent_timeout",
+          detail: `kbbl session ${sessionId} reported no activity for ${Math.round(silentFor / 1000)}s (limit ${Math.round(limit / 1000)}s)` });
+      }
+      return { kind: "pending" };
+    }
     if (!response.ok) return terminal({ kind: "failed", code: "terminal_observation_failed", detail: `kbbl terminal observation failed (${response.status}): ${await response.text()}` });
     const raw = await response.json();
     if (typeof raw !== "object" || raw === null || !("session" in raw) || typeof raw.session !== "object" || raw.session === null || !("endReason" in raw.session)) {

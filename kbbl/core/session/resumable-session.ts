@@ -55,7 +55,16 @@ export interface ResumableSessionTerminalResult {
  */
 export type ResumableSessionTerminalOutcome =
   | { readonly kind: "terminal"; readonly result: ResumableSessionTerminalResult }
-  | { readonly kind: "pending" }
+  /**
+   * Still running — and carrying the session, so the answer says *what* it is
+   * waiting on rather than merely that it is waiting.
+   *
+   * An observer told only "not yet" cannot tell a session doing work from one
+   * wedged before its first turn: both answer identically, forever. The
+   * snapshot's `lastActivityTs` is the difference, and returning it on every
+   * poll is what lets a caller bound its own patience.
+   */
+  | { readonly kind: "pending"; readonly session: SessionSnapshot }
   | { readonly kind: "not_found" };
 
 /** Bounds for the `wait_ms` query parameter on the terminal-observation route. */
