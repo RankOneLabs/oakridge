@@ -494,7 +494,13 @@ export interface PatchReviewItemRequest {
 // Mirror the oakridge-core Rust schema so form output matches what
 // POST /workflow_defs and GET /workflow_defs/:id round-trip.
 
-export type SlotBindingSource = "input" | "context" | "literal" | "item" | "context_lookup";
+export type SlotBindingSource =
+  | "input"
+  | "context"
+  | "literal"
+  | "item"
+  | "context_lookup"
+  | "input_lookup";
 
 export type SlotBinding =
   | { from: "input"; input_name: string; path?: string | null }
@@ -507,6 +513,17 @@ export type SlotBinding =
       collection_key_path: string;
       item_key_path: string;
       value_path: string;
+    }
+  // `context_lookup`'s sibling, keyed off a named input instead of the run
+  // context. The seeded dev flow binds every cohort's expected PR base through
+  // one of these; it was missing from this union, so the authoring UI could not
+  // name the variant it was editing and replaced it on the first interaction.
+  | {
+      from: "input_lookup";
+      input_name: string;
+      collection_key_path: string;
+      item_key_path: string;
+      value_path: string;
     };
 
 // Bindable: a bare string literal OR a SlotBinding (Rust #[serde(untagged)])
@@ -515,7 +532,11 @@ export type Bindable = string | SlotBinding;
 export interface WorktreeTemplate {
   branch_name: string;
   worktree_subdir: string;
-  base_ref?: string | null;
+  // A `Bindable`, not a string: the seeded dev flow resolves a cohort's base ref
+  // through an `input_lookup` on the provisioned repository refs. Typed as a
+  // string here, it rendered as `[object Object]` in a text input and became one
+  // the moment anyone typed in it.
+  base_ref?: Bindable | null;
 }
 
 // camelCase: matches Rust #[serde(rename_all = "camelCase")] on WorktreeIdentity

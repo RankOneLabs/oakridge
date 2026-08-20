@@ -1,18 +1,14 @@
 import type { Project } from "../domain/projects";
-import type { JsonValue, Result } from "../domain/primitives";
+import type { JsonValue } from "../domain/primitives";
+import type { RunContext } from "../domain/run-context";
 import type { EpicWorkflowProfile, EpicWorkflowProfileId } from "../domain/epic";
 import type { CreateEpicProfileRequest } from "../domain/runs";
 import { selectEpicBranch } from "../domain/repository-refs";
 
 export interface PrepareRunContextInput {
-  readonly caller_context: JsonValue;
+  readonly caller_context: RunContext;
   readonly project: Project | null;
   readonly epic_profile: CreateEpicProfileRequest | null;
-}
-
-export interface PrepareRunContextError {
-  readonly operation: "prepare_run_context";
-  readonly detail: string;
 }
 
 export interface CreateEpicProfileInput {
@@ -42,15 +38,18 @@ export const createEpicProfile = (input: CreateEpicProfileInput): EpicWorkflowPr
   updated_at: input.created_at,
 });
 
-const isJsonObject = (value: JsonValue): value is { readonly [key: string]: JsonValue } =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-export const prepareRunContext = (input: PrepareRunContextInput): Result<JsonValue, PrepareRunContextError> => {
-  if (!input.project && !input.epic_profile) return { ok: true, value: input.caller_context };
-  if (!isJsonObject(input.caller_context)) {
-    return { ok: false, error: { operation: "prepare_run_context", detail: "context must be a JSON object when project or epic profile configuration is present" } };
-  }
-
+/**
+ * The context a run actually launches with: what the caller sent, plus what the
+ * project and epic profile contribute.
+ *
+ * Total, not fallible. It used to refuse a caller context that was not a JSON
+ * object — the only shape check anywhere on the path — but it could only do so
+ * when a project or epic profile happened to be configured, so the same bad
+ * context sailed through a plain launch. The check belongs to the boundary that
+ * parses the request, and now lives there; by the time a context reaches this
+ * transform it is a `RunContext` and there is nothing left to say no to.
+ */
+export const prepareRunContext = (input: PrepareRunContextInput): RunContext => {
   const projectContext: Record<string, JsonValue> = input.project
     ? {
         project: { id: input.project.id, name: input.project.name, repo_dir: input.project.repo_dir },
@@ -58,19 +57,16 @@ export const prepareRunContext = (input: PrepareRunContextInput): Result<JsonVal
       }
     : {};
   const callerWins = { ...projectContext, ...input.caller_context };
-  if (!input.epic_profile) return { ok: true, value: callerWins };
+  if (!input.epic_profile) return callerWins;
   const epicProfile = input.epic_profile;
 
   return {
-    ok: true,
-    value: {
-      ...callerWins,
-      repositories: epicProfile.repositories.map((repository) => ({
-        key: repository.repository_key,
-        path: repository.repository_path,
-        base_branch: repository.base_branch,
-        epic_branch: selectEpicBranch(repository.epic_branch, epicProfile.slug),
-      })),
-    },
+    ...callerWins,
+    repositories: epicProfile.repositories.map((repository) => ({
+      key: repository.repository_key,
+      path: repository.repository_path,
+      base_branch: repository.base_branch,
+      epic_branch: selectEpicBranch(repository.epic_branch, epicProfile.slug),
+    })),
   };
 };

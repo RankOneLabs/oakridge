@@ -4,6 +4,7 @@ import type { EpicWorkflowProfileId } from "../domain/epic";
 import type { OperatorRunSummary } from "../domain/operator-projections";
 import { err, ok, type Result, type WorkflowRunId } from "../domain/primitives";
 import type { CreateWorkflowRunRequest } from "../domain/runs";
+import { contextRequirementsOf, describeUnsatisfiedRequirements, unsatisfiedContextRequirements } from "../compiler/context-requirements";
 import { createEpicProfile, prepareRunContext } from "./prepare-run-context";
 import type { OperatorProjectionRepository } from "../storage/postgres-operators";
 import type { ProjectRepository, WorkflowDefinitionRepository, WorkflowRunRepository } from "../storage/repositories";
@@ -28,6 +29,8 @@ export type RunLaunchFailureKind =
   | "definition_archived"
   | "project_not_found"
   | "invalid_context"
+  /** The context is well-formed but this definition reads keys it does not carry. */
+  | "context_requirements_unmet"
   | "idempotency_conflict"
   | "projection_unavailable";
 
@@ -53,22 +56,31 @@ export const launchCompatibleRun = async (request: CompatibleRunLaunchRequest, d
   if (definition.archived && !existing) return launchFailure("definition_archived", `workflow definition '${request.workflow_def_id}' is archived`);
   const project = request.project_id ? await dependencies.projects.find_by_id(request.project_id) : null;
   if (request.project_id && !project) return launchFailure("project_not_found", `project '${request.project_id}' was not found`);
-  const prepared = prepareRunContext({ caller_context: request.context, project, epic_profile: request.epic_profile });
-  if (!prepared.ok) return launchFailure("invalid_context", prepared.error.detail);
+  const context = prepareRunContext({ caller_context: request.context, project, epic_profile: request.epic_profile });
 
-  // Nothing about the repositories is checked here, on purpose. The epic branch
-  // a run needs is created by the `provision_repository_refs` stage and declared
-  // as an input by the stage that consumes it, so a repository that cannot
-  // supply it fails as an ordinary stage outcome the operator can see and retry.
-  // A launch gate checking the same requirement gave it two owners, and the one
-  // that could only ever refuse was the one that ran first.
+  // The context is checked against the definition that will read it, not against
+  // a key list kept here — the definition is authored, so a second list would
+  // drift from it. What is checkable now is exactly what is knowable now: every
+  // pointer the definition dereferences resolves to something. A launch that
+  // fails this ran until the stage holding the pointer and died there, one
+  // missing key per run.
+  const unsatisfied = unsatisfiedContextRequirements(context, contextRequirementsOf(definition.graph));
+  if (unsatisfied.length > 0) {
+    return launchFailure("context_requirements_unmet",
+      `run context does not satisfy '${definition.name}' v${definition.version}: ${describeUnsatisfiedRequirements(unsatisfied)}`);
+  }
+
+  // What is *behind* a pointer stays the owning stage's business. A repository
+  // path that resolves but is not a git repository is a provisioning outcome the
+  // operator can see and retry, not a launch refusal — that requirement has one
+  // owner, and it is not the participant that can only ever say no.
 
   const createdAt = existing?.created_at ?? dependencies.now();
   const rootWorkflowId = `oakridge-run:${runId}:attempt:initial`;
   const epicProfile = request.epic_profile ? createEpicProfile({ id: runId as unknown as EpicWorkflowProfileId,
     workflow_run_id: runId, config: request.epic_profile, created_at: createdAt }) : null;
   const persisted = await dependencies.runs.create_with_initial_attempt({
-    run: { id: runId, workflow_definition_id: definition.id, project_id: request.project_id, context: prepared.value,
+    run: { id: runId, workflow_definition_id: definition.id, project_id: request.project_id, context,
       root_workflow_id: rootWorkflowId, archived: false, created_at: createdAt },
     epic_profile: epicProfile, workflow_definition_version: definition.version,
     application_version: dependencies.application_version,

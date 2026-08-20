@@ -1,5 +1,5 @@
 import type { FanOutConfig, SlotBinding } from "../../oakridge/types";
-import { BindingEditor } from "./BindingEditor";
+import { BindableEditor, BindingEditor } from "./BindingEditor";
 
 const inputClass =
   "w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-3 py-1.5 text-sm text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none";
@@ -247,21 +247,20 @@ export function FanOutEditor({ value, onChange, disabled = false }: FanOutEditor
                 placeholder="wt/{{UNIT_ID}}"
               />
             </label>
-            <label className="flex flex-col gap-1">
-              <span className={labelClass}>base_ref (optional)</span>
-              <input
-                type="text"
-                className={inputClass}
-                value={fo.worktree.base_ref ?? ""}
-                onChange={(e) =>
-                  update({
-                    worktree: { ...fo.worktree!, base_ref: e.target.value || null },
-                  })
-                }
-                disabled={disabled}
-                placeholder="main"
-              />
-            </label>
+            {/*
+              A Bindable, not a string. The seeded dev flow resolves this through
+              an `input_lookup` on the provisioned repository refs; a text input
+              showed that binding as `[object Object]` and overwrote it with a
+              branch name on the first keystroke.
+            */}
+            <BindableEditor
+              label="base_ref (optional)"
+              value={fo.worktree.base_ref ?? null}
+              onChange={(next) => update({ worktree: { ...fo.worktree!, base_ref: next } })}
+              pathPlaceholder="/base_ref"
+              allowItem
+              disabled={disabled}
+            />
           </div>
         )}
       </div>

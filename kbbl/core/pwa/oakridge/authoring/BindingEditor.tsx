@@ -27,6 +27,15 @@ function defaultForSource(source: SlotBindingSource): SlotBinding {
       value_path: "/path",
     };
   }
+  if (source === "input_lookup") {
+    return {
+      from: "input_lookup",
+      input_name: "",
+      collection_key_path: "/artifact/repository_key",
+      item_key_path: "/artifact/repository_key",
+      value_path: "/artifact/repository_path",
+    };
+  }
   return { from: "literal", value: "" };
 }
 
@@ -44,8 +53,10 @@ export function BindingEditor({
     onChange(defaultForSource(next));
   };
 
+  // Both lookups key off the fan-out item, so both belong to the same gate as
+  // `item` itself.
   const sources: SlotBindingSource[] = ["literal", "input", "context"];
-  if (allowItem) sources.push("item", "context_lookup");
+  if (allowItem) sources.push("item", "context_lookup", "input_lookup");
 
   return (
     <div className="flex flex-col gap-2 rounded-md border border-[var(--border-subtle)] p-2">
@@ -141,6 +152,29 @@ export function BindingEditor({
         </label>
       )}
 
+      {value.from === "input_lookup" && (
+        <div className="grid grid-cols-2 gap-2">
+          {([
+            ["Input name", "input_name", "repository_refs"],
+            ["Collection key path", "collection_key_path", "/artifact/repository_key"],
+            ["Item key path", "item_key_path", "/artifact/repository_key"],
+            ["Value path", "value_path", "/artifact/repository_path"],
+          ] as const).map(([fieldLabel, field, placeholder]) => (
+            <label className="flex flex-col gap-1" key={field}>
+              <span className={labelClass}>{fieldLabel}</span>
+              <input
+                type="text"
+                className={inputClass}
+                value={value[field]}
+                onChange={(event) => onChange({ ...value, [field]: event.target.value })}
+                disabled={disabled}
+                placeholder={placeholder}
+              />
+            </label>
+          ))}
+        </div>
+      )}
+
       {value.from === "context_lookup" && (
         <div className="grid grid-cols-2 gap-2">
           {([
@@ -172,7 +206,11 @@ export function BindingEditor({
 // "context binding". Runtime passes `required` — it has no runtime default, so
 // "none" is not an offerable mode there.
 
-type BindableMode = "none" | "literal" | "context";
+// `binding` covers every SlotBinding that is not a plain context path. It exists
+// because `context` used to stand for "any object", and the editor then rendered
+// nothing for the ones that were not context bindings — an `input_lookup` on a
+// `base_ref` had no visible field, so an author could only ever replace it.
+type BindableMode = "none" | "literal" | "context" | "binding";
 
 interface BindableEditorProps {
   label: string;
@@ -184,13 +222,15 @@ interface BindableEditorProps {
   // Hint for the context-path input only. The literal input hints a value, not a
   // path, so the two cannot share one placeholder.
   pathPlaceholder?: string;
+  // Passed through to the nested editor: inside a fan_out, item-keyed sources apply.
+  allowItem?: boolean;
   disabled?: boolean;
 }
 
 function detectMode(v: string | SlotBinding | null | undefined): BindableMode {
   if (v == null) return "none";
   if (typeof v === "string") return "literal";
-  return "context";
+  return v.from === "context" ? "context" : "binding";
 }
 
 export function BindableEditor({
@@ -200,6 +240,7 @@ export function BindableEditor({
   onChange,
   required = false,
   pathPlaceholder = "/planner_model",
+  allowItem = false,
   disabled = false,
 }: BindableEditorProps) {
   const mode = detectMode(value);
@@ -207,6 +248,7 @@ export function BindableEditor({
   const onModeChange = (next: BindableMode) => {
     if (next === "none") onChange(null);
     else if (next === "literal") onChange(literalOptions?.[0]?.value ?? "");
+    else if (next === "binding") onChange(defaultForSource(allowItem ? "input_lookup" : "input"));
     else onChange({ from: "context", path: "" });
   };
 
@@ -224,6 +266,7 @@ export function BindableEditor({
           {!required && <option value="none">— default —</option>}
           <option value="literal">literal</option>
           <option value="context">context binding</option>
+          <option value="binding">other binding</option>
         </select>
       </div>
 
@@ -262,6 +305,16 @@ export function BindableEditor({
           onChange={(e) => onChange({ from: "context", path: e.target.value })}
           disabled={disabled}
           placeholder={pathPlaceholder}
+        />
+      )}
+
+      {mode === "binding" && typeof value === "object" && value !== null && (
+        <BindingEditor
+          label={label}
+          value={value}
+          onChange={onChange}
+          allowItem={allowItem}
+          disabled={disabled}
         />
       )}
     </div>

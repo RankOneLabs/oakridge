@@ -1,5 +1,5 @@
 import type { MaterializedExecutionUnit } from "../domain/compiled-workflow";
-import type { Bindable, DelegatedSessionDefinitionConfig, ResolvedExecutorConfig, SlotBinding } from "../domain/delegated-session";
+import { isDelegatedRuntimeId, type Bindable, type DelegatedSessionDefinitionConfig, type ResolvedExecutorConfig, type SlotBinding } from "../domain/delegated-session";
 import type { ArtifactEnvelope } from "../domain/execution";
 import { err, ok, type JsonValue, type Result, type StageInstanceId } from "../domain/primitives";
 import { readJsonPointer } from "../domain/json-pointer";
@@ -113,7 +113,7 @@ export const resolveDelegatedExecution = (input: ResolveDelegatedExecutionInput)
   if (!model.ok) return model;
   if (!effort.ok) return effort;
   if (!workdir.ok) return workdir;
-  if (runtime.value !== "claude-code" && runtime.value !== "codex") return err({ operation: "resolve_execution", detail: `unsupported delegated runtime '${runtime.value}'` });
+  if (!isDelegatedRuntimeId(runtime.value)) return err({ operation: "resolve_execution", detail: `unsupported delegated runtime '${runtime.value}'` });
   const worktreeTemplate = input.definition.fan_out?.worktree;
   const substituteIdentity = (value: string): string => value.replaceAll("{{UNIT_ID}}", input.unit.unit_id).replaceAll("{{STAGE_INSTANCE_ID}}", input.stage_instance_id);
   let worktree: ResolvedExecutorConfig["worktree"];
