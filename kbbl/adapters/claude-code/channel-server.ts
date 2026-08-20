@@ -18,9 +18,13 @@
  * Environment:
  *   KBBL_CHANNEL_OUTBOX — absolute path to the per-session outbox JSONL.
  *   KBBL_CHANNEL_NAME   — name used in log lines (default: kbbl-channel).
+ *   KBBL_CHANNEL_CLIENT_STATE — path to the client's session-state JSON, used
+ *     to confirm a push was seen. Defaults to CC's own file for the parent pid.
+ *   KBBL_CHANNEL_RETRY_MS — how long an unacknowledged push waits before being
+ *     re-sent (default 4000).
  */
 
-import { openSync, readSync, closeSync, appendFileSync } from "node:fs";
+import { openSync, readSync, closeSync, appendFileSync, readFileSync } from "node:fs";
 
 const OUTBOX_PATH = process.env.KBBL_CHANNEL_OUTBOX ?? "";
 const CHANNEL_NAME = process.env.KBBL_CHANNEL_NAME ?? "kbbl-channel";
@@ -64,10 +68,60 @@ function reply(id: unknown, result: unknown): void {
   send({ jsonrpc: "2.0", id, result });
 }
 
-function pushChannel(content: string, meta?: Record<string, string>): void {
-  const params: Record<string, unknown> = { content };
-  if (meta !== undefined) params.meta = meta;
+// ── protocol revision ───────────────────────────────────────────────────────
+
+/**
+ * The first protocol revision with no delivery path for unsolicited
+ * notifications.
+ *
+ * Claude Code classifies a connection by the revision it negotiated: from this
+ * date on the connection is "modern", and CC declines to register a handler for
+ * any custom notification, logging that the revision "has no delivery path for
+ * unsolicited custom notifications". A channel push is exactly such a
+ * notification, so a modern connection cannot carry one at all.
+ */
+const MODERN_ERA_FLOOR = "2026-07-28";
+
+/** The newest revision known to predate that floor. */
+const NEWEST_LEGACY_REVISION = "2025-11-25";
+
+/**
+ * Which revision to negotiate, given what the client asked for.
+ *
+ * Echoing the request is what this server used to do, and it is a trap: the
+ * revision the client asks for is the one that decides whether this transport
+ * works at all, so echoing hands the client the power to silently disable the
+ * channel. It is safe today only because CC's `server/discover` probe gets an
+ * empty result here, which drops it onto its legacy handshake and makes it ask
+ * for a pre-floor revision. Nothing about that is a guarantee.
+ *
+ * So the answer is clamped rather than echoed. A client asking for a modern
+ * revision gets the newest legacy one instead: either it accepts, and the
+ * channel keeps working, or it rejects the handshake outright — which is a loud
+ * failure at connect time rather than an agent that sits idle forever holding a
+ * prompt nobody can deliver.
+ */
+function deliverableProtocolVersion(requested: string): string {
+  if (requested < MODERN_ERA_FLOOR) return requested;
+  logline(
+    `client asked for protocol revision ${requested}, which is modern-era ` +
+    `(>= ${MODERN_ERA_FLOOR}) and carries no unsolicited notifications — ` +
+    `answering ${NEWEST_LEGACY_REVISION} so channel pushes stay deliverable`,
+  );
+  return NEWEST_LEGACY_REVISION;
+}
+
+/** One outbox line, as it travels to the client. */
+interface ChannelPush {
+  readonly content: string;
+  readonly meta?: Record<string, string>;
+}
+
+function pushChannel(push: ChannelPush): void {
+  const params: Record<string, unknown> = { content: push.content };
+  if (push.meta !== undefined) params.meta = push.meta;
   send({ jsonrpc: "2.0", method: "notifications/claude/channel", params });
+  noteUnacknowledged(push);
 }
 
 // ── outbox tail ─────────────────────────────────────────────────────────────
@@ -75,7 +129,7 @@ function pushChannel(content: string, meta?: Record<string, string>): void {
 let byteOffset = 0;
 let initialized = false;
 /** Lines received before `initialized` — flushed once ready. */
-const pendingPushes: Array<{ content: string; meta?: Record<string, string> }> = [];
+const pendingPushes: ChannelPush[] = [];
 
 /**
  * Parse one outbox line.
@@ -158,7 +212,7 @@ function drainOutbox(): string[] {
 /** Flush any pending outbox lines as channel pushes (called once initialized). */
 function flushPending(): void {
   for (const push of pendingPushes) {
-    pushChannel(push.content, push.meta);
+    pushChannel(push);
   }
   pendingPushes.length = 0;
 }
@@ -171,9 +225,162 @@ function processOutboxLines(lines: string[]): void {
     if (!initialized) {
       pendingPushes.push(item);
     } else {
-      pushChannel(item.content, item.meta);
+      pushChannel(item);
     }
   }
+}
+
+// ── delivery ────────────────────────────────────────────────────────────────
+
+/**
+ * Sending a push is not delivering it.
+ *
+ * `notifications/initialized` means the client's MCP layer is up. It does not
+ * mean the client has registered a handler for `notifications/claude/channel` —
+ * Claude Code does that later, from its UI layer, once every configured server
+ * has finished connecting. A notification arriving in that window matches no
+ * handler and is discarded without a reply, an error, or a log line. The prompt
+ * is gone, the agent sits at `idle` forever, and the session reports itself
+ * perfectly healthy — a run stalled for three and a half hours exactly this way.
+ *
+ * There is no acknowledgement in the channel protocol to wait on, so delivery is
+ * confirmed from the outside: Claude Code publishes its own liveness, and any
+ * change to it after a push is proof the push was seen. Until that proof
+ * arrives, the push is re-sent. A dropped notification leaves no trace to
+ * detect, so the only safe assumption is that an unanswered push never landed.
+ */
+
+/** Pushes sent with no evidence the client reacted. Re-sent until there is. */
+let unacknowledged: ChannelPush[] = [];
+let sentAt: number | null = null;
+let deliveryTimer: ReturnType<typeof setInterval> | null = null;
+
+/** How often to look for a reaction. */
+const DELIVERY_POLL_MS = 100;
+const DEFAULT_DELIVERY_RETRY_MS = 4_000;
+
+/**
+ * How long to wait for one before re-sending.
+ *
+ * Long enough that a client which did receive the push is already reacting, so
+ * a re-send is genuinely evidence of loss rather than impatience.
+ *
+ * Parsed defensively: `Number("")` is 0 and `Number("soon")` is NaN, and both
+ * defeat the throttle — every `x < NaN` is false, so an unparseable override
+ * would re-send on every poll tick and burn all eight attempts in under a
+ * second. A bad value falls back to the default and says so.
+ */
+function configuredRetryMs(raw: string | undefined): number {
+  if (raw === undefined) return DEFAULT_DELIVERY_RETRY_MS;
+  const parsed = Number(raw);
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  logline(
+    `KBBL_CHANNEL_RETRY_MS=${JSON.stringify(raw)} is not a positive number — ` +
+    `using ${DEFAULT_DELIVERY_RETRY_MS}ms`,
+  );
+  return DEFAULT_DELIVERY_RETRY_MS;
+}
+
+const DELIVERY_RETRY_MS = configuredRetryMs(process.env.KBBL_CHANNEL_RETRY_MS);
+/** How many times to re-send before the silence is someone else's problem. */
+const DELIVERY_MAX_ATTEMPTS = 8;
+
+/**
+ * Where Claude Code publishes this session's status and when it last changed.
+ *
+ * This server runs as a child of the Claude Code process, so the parent pid
+ * names the file. `CLAUDE_CONFIG_DIR` relocates the whole config tree, so it
+ * wins over `HOME` when set.
+ */
+function parentStatePath(): string | null {
+  const override = process.env.KBBL_CHANNEL_CLIENT_STATE;
+  if (override !== undefined && override !== "") return override;
+  const configDir = process.env.CLAUDE_CONFIG_DIR
+    ?? (process.env.HOME !== undefined ? `${process.env.HOME}/.claude` : undefined);
+  if (configDir === undefined) return null;
+  return `${configDir}/sessions/${process.ppid}.json`;
+}
+
+/** When the client last changed status, or null if that cannot be read. */
+function parentStatusChangedAt(path: string): number | null {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const changedAt = (parsed as Record<string, unknown>).statusUpdatedAt;
+    return typeof changedAt === "number" ? changedAt : null;
+  } catch {
+    // The file appears when the client starts and is rewritten in place; a
+    // transient read failure is not evidence of anything.
+    return null;
+  }
+}
+
+function noteUnacknowledged(push: ChannelPush): void {
+  unacknowledged.push(push);
+  if (deliveryTimer !== null) return;
+  sentAt = Date.now();
+
+  const statePath = parentStatePath();
+  if (statePath === null) {
+    logline(
+      "cannot locate the client's session state (no CLAUDE_CONFIG_DIR or HOME) — " +
+      "pushes are sent unverified; a dropped one will not be retried",
+    );
+    // No watch will run, so nothing would ever drain this. Dropping it here
+    // keeps an unverifiable session from accumulating every push it ever sent.
+    stopDeliveryWatch();
+    return;
+  }
+
+  let attempts = 1;
+  let lastAttemptAt = sentAt;
+  deliveryTimer = setInterval(() => {
+    const changedAt = parentStatusChangedAt(statePath);
+    if (changedAt !== null && sentAt !== null && changedAt > sentAt) {
+      logline(`push acknowledged — client reacted after ${attempts} attempt(s)`);
+      // A status change proves the client saw *something*, never which push.
+      // With more than one in flight the acknowledgement is claimed by all of
+      // them, so an earlier push dropped before the handler existed is retired
+      // here without ever having landed. Nothing in the protocol can tell the
+      // two apart, so say so rather than let it disappear.
+      if (unacknowledged.length > 1) {
+        logline(
+          `WARNING: ${unacknowledged.length} pushes were in flight and one ` +
+          `acknowledgement retired all of them — an earlier push may never have ` +
+          `been delivered. Contents: ${unacknowledged
+            .map((p) => JSON.stringify(p.content.slice(0, 80)))
+            .join(", ")}`,
+        );
+      }
+      stopDeliveryWatch();
+      return;
+    }
+    if (Date.now() - lastAttemptAt < DELIVERY_RETRY_MS) return;
+    if (attempts >= DELIVERY_MAX_ATTEMPTS) {
+      logline(
+        `client has not reacted to ${unacknowledged.length} push(es) after ` +
+        `${attempts} attempts — giving up. The agent has received nothing.`,
+      );
+      stopDeliveryWatch();
+      return;
+    }
+    attempts += 1;
+    lastAttemptAt = Date.now();
+    logline(`no reaction yet — re-sending ${unacknowledged.length} push(es) (attempt ${attempts})`);
+    for (const push of unacknowledged) {
+      const params: Record<string, unknown> = { content: push.content };
+      if (push.meta !== undefined) params.meta = push.meta;
+      send({ jsonrpc: "2.0", method: "notifications/claude/channel", params });
+    }
+  }, DELIVERY_POLL_MS);
+  deliveryTimer.unref();
+}
+
+function stopDeliveryWatch(): void {
+  if (deliveryTimer !== null) clearInterval(deliveryTimer);
+  deliveryTimer = null;
+  unacknowledged = [];
+  sentAt = null;
 }
 
 /**
@@ -265,12 +472,12 @@ function handle(msg: Record<string, unknown>): void {
   // Requests (have `id`).
   if (method === "initialize") {
     const params = msg.params as Record<string, unknown> | undefined;
-    const protocolVersion =
+    const requested =
       typeof params?.protocolVersion === "string"
         ? params.protocolVersion
         : "2025-06-18";
     reply(id, {
-      protocolVersion,
+      protocolVersion: deliverableProtocolVersion(requested),
       serverInfo: { name: CHANNEL_NAME, version: "1.0.0" },
       capabilities: {
         experimental: {

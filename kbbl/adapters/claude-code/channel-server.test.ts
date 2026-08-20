@@ -34,7 +34,10 @@ interface JsonRpcMsg {
 }
 
 /** Launch the channel server subprocess and return helpers. */
-function launchServer(outboxPath: string): {
+function launchServer(
+  outboxPath: string,
+  extraEnv: Record<string, string> = {},
+): {
   send: (msg: JsonRpcMsg) => void;
   lines: () => Promise<JsonRpcMsg[]>;
   kill: () => void;
@@ -48,6 +51,7 @@ function launchServer(outboxPath: string): {
         ...process.env,
         KBBL_CHANNEL_OUTBOX: outboxPath,
         KBBL_CHANNEL_NAME: "test-channel",
+        ...extraEnv,
       },
       stdio: ["pipe", "pipe", "pipe"],
     },
@@ -166,6 +170,27 @@ describe("channel-server initialize", () => {
     };
     expect(result.capabilities?.experimental?.["claude/channel"]).toBeDefined();
     expect(result.capabilities?.experimental?.["claude/channel/permission"]).toBeDefined();
+  });
+
+  test("a modern-era protocol revision is answered with the newest legacy one", async () => {
+    // Claude Code refuses to register any custom-notification handler on a
+    // connection that negotiated 2026-07-28 or later, so echoing such a request
+    // back would disable channel pushes entirely — silently, and for the whole
+    // session. Answer with a revision that can still carry them.
+    srv = launchServer(outboxPath);
+    srv.send({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2026-07-28", clientInfo: { name: "test" } },
+    });
+    let resp: JsonRpcMsg | undefined;
+    for (let i = 0; i < 50 && resp === undefined; i++) {
+      await new Promise<void>((r) => setTimeout(r, 20));
+      resp = (await srv.lines()).find((m) => m.id === 1);
+    }
+    const result = resp?.result as { protocolVersion?: string };
+    expect(result.protocolVersion).toBe("2025-11-25");
   });
 
   test("initialize echoes protocolVersion from request", async () => {
@@ -316,5 +341,106 @@ describe("channel-server outbox tailing (after initialized)", () => {
     expect(pushes).toHaveLength(2);
     expect(pushes[0]).toBe("first");
     expect(pushes[1]).toBe("second");
+  });
+});
+
+describe("channel-server delivery", () => {
+  /**
+   * Sending a push is not delivering it. Claude Code registers its channel
+   * notification handler after `notifications/initialized`, from its UI layer,
+   * once every configured MCP server has connected. A push that arrives in that
+   * window matches no handler and is dropped with no reply and no error — the
+   * agent then sits idle forever holding a prompt it never saw.
+   *
+   * Delivery is therefore confirmed out of band, from the status file the
+   * client keeps: any change to it after a push proves the push was seen.
+   */
+  const CLIENT_STATE = "client-state.json";
+
+  /** Write the client's status file as it looks before it has reacted at all. */
+  function writeClientState(dir: string, statusUpdatedAt: number): string {
+    const path = join(dir, CLIENT_STATE);
+    writeFileSync(path, JSON.stringify({ status: "idle", statusUpdatedAt }));
+    return path;
+  }
+
+  function pushesIn(msgs: JsonRpcMsg[]): string[] {
+    return msgs
+      .filter((m) => m.method === "notifications/claude/channel")
+      .map((m) => (m.params as { content?: string }).content ?? "");
+  }
+
+  test("a push the client never reacts to is re-sent", async () => {
+    // Status frozen at launch: the client is up but has reacted to nothing.
+    const statePath = writeClientState(tmpDir, Date.now() - 60_000);
+    srv = launchServer(outboxPath, {
+      KBBL_CHANNEL_CLIENT_STATE: statePath,
+      KBBL_CHANNEL_RETRY_MS: "250",
+    });
+    await handshake(srv);
+    srv.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+    await new Promise<void>((r) => setTimeout(r, 150));
+
+    appendFileSync(outboxPath, JSON.stringify({ content: "the prompt" }) + "\n");
+    await new Promise<void>((r) => setTimeout(r, 1_200));
+
+    const pushes = pushesIn(await srv.lines());
+    // Re-sent because nothing ever indicated it landed. Before this behaviour
+    // existed the prompt was sent once into a handler that did not yet exist,
+    // and the run stalled with no error anywhere.
+    expect(pushes.length).toBeGreaterThan(1);
+    expect(new Set(pushes)).toEqual(new Set(["the prompt"]));
+  });
+
+  test("an unparseable retry interval falls back instead of spamming", async () => {
+    // `Number("soon")` is NaN, and every `x < NaN` comparison is false — so an
+    // unguarded throttle would let the retry fire on each 100ms poll and spend
+    // all eight attempts in under a second.
+    const statePath = writeClientState(tmpDir, Date.now() - 60_000);
+    srv = launchServer(outboxPath, {
+      KBBL_CHANNEL_CLIENT_STATE: statePath,
+      KBBL_CHANNEL_RETRY_MS: "soon",
+    });
+    await handshake(srv);
+    srv.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+    await new Promise<void>((r) => setTimeout(r, 150));
+
+    appendFileSync(outboxPath, JSON.stringify({ content: "the prompt" }) + "\n");
+    await new Promise<void>((r) => setTimeout(r, 1_200));
+
+    // Falling back to 4000ms, nothing has been re-sent yet.
+    expect(pushesIn(await srv.lines())).toEqual(["the prompt"]);
+  });
+
+  test("a push the client reacts to is not re-sent", async () => {
+    const statePath = writeClientState(tmpDir, Date.now() - 60_000);
+    srv = launchServer(outboxPath, {
+      KBBL_CHANNEL_CLIENT_STATE: statePath,
+      KBBL_CHANNEL_RETRY_MS: "250",
+    });
+    await handshake(srv);
+    srv.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+    await new Promise<void>((r) => setTimeout(r, 150));
+
+    appendFileSync(outboxPath, JSON.stringify({ content: "the prompt" }) + "\n");
+
+    // Wait for the push itself rather than sleeping a guessed interval. The
+    // outbox tail polls at 200ms, so a fixed sleep can advance the client's
+    // status *before* the server has sent anything and recorded when — and then
+    // the acknowledgement predates the push, the server retries, and this test
+    // fails for a reason that has nothing to do with what it is checking.
+    const pushDeadline = Date.now() + 2_000;
+    while (pushesIn(await srv.lines()).length === 0 && Date.now() < pushDeadline) {
+      await new Promise<void>((r) => setTimeout(r, 10));
+    }
+    expect(pushesIn(await srv.lines())).toEqual(["the prompt"]);
+
+    // Now the client picks it up and starts a turn, which moves its status.
+    writeFileSync(statePath, JSON.stringify({ status: "busy", statusUpdatedAt: Date.now() }));
+
+    // Long enough for several retries to have fired had it not been acknowledged.
+    await new Promise<void>((r) => setTimeout(r, 1_200));
+
+    expect(pushesIn(await srv.lines())).toEqual(["the prompt"]);
   });
 });
