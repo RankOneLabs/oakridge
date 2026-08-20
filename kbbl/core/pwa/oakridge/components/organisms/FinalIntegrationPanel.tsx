@@ -11,15 +11,15 @@ const stateLabels = {
   closed_without_merge: "Closed without merge",
 } as const;
 
-function FinalRepositoryCard({
-  runId,
-  policy,
-  repository,
-}: {
+interface FinalRepositoryCardProps {
   runId: string;
   policy: EpicWorkflowProfile["final_merge_policy"];
+  /** The epic's one base branch — the head of every final pull request. */
+  baseBranch: string;
   repository: EpicRepositoryBinding;
-}) {
+}
+
+function FinalRepositoryCard({ runId, policy, baseBranch, repository }: FinalRepositoryCardProps) {
   const confirmation = useConfirmFinalPullRequest(runId, repository.repository_key);
   const confirmationKey = useRef(crypto.randomUUID());
   const canConfirm = policy === "external_confirmation" && repository.final_merge_state === "awaiting_confirmation";
@@ -30,7 +30,7 @@ function FinalRepositoryCard({
         <div>
           <h4 className="or-final-repository__title">{repository.repository_key}</h4>
           <p className="or-final-repository__branches">
-            <code>{repository.epic_branch}</code> → <code>{repository.base_branch}</code>
+            <code>{baseBranch}</code> → <code>{repository.integration_branch}</code>
           </p>
         </div>
         <span className="or-final-repository__state">
@@ -94,6 +94,7 @@ export function FinalIntegrationPanel({ runId, profile }: { runId: string; profi
             key={repository.repository_key}
             runId={runId}
             policy={profile.final_merge_policy}
+            baseBranch={profile.base_branch}
             repository={repository}
           />
         ))}

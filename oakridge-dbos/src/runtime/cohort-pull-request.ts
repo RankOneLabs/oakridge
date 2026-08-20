@@ -20,7 +20,7 @@ import {
   type CohortPullRequestOutcome, type CohortPullRequestReconciliation, type ExpectedCohortPullRequest,
 } from "../domain/cohort-pull-request";
 import type { BuildResultBody, PrSummaryBody } from "../domain/dev-flow-artifacts";
-import type { EpicRepositoryBinding } from "../domain/epic";
+import type { EpicWorkflowProfile } from "../domain/epic";
 import { err, ok, type JsonValue, type Result, type StageInstanceId, type UnitId } from "../domain/primitives";
 import type { PullRequestObservation } from "../domain/pull-request";
 import { handoffWorkflowId } from "../domain/workflow-ids";
@@ -87,18 +87,18 @@ const readString = (body: JsonValue, key: string): string | null => {
 };
 
 /**
- * The branch a cohort's pull request should target, from whichever binding the
- * run has. An Epic profile is authoritative; a run launched without one still
- * declares its repositories in its context. Neither is guaranteed, and an
- * expectation the run never stated is not one the evidence can fail.
+ * The branch a build unit's pull request should target: the run's base branch.
+ *
+ * One value, not a per-repository lookup — an epic builds on one branch, so
+ * every unit in every repository targets the same name. An Epic profile is
+ * authoritative; a run launched without one still declares it in its context.
+ * Neither is guaranteed, and an expectation the run never stated is not one the
+ * evidence can fail.
  */
-const selectExpectedBaseBranch = (repositoryKey: string, binding: EpicRepositoryBinding | null, runContext: JsonValue): string | null => {
-  if (binding) return binding.epic_branch;
+const selectExpectedBaseBranch = (profile: EpicWorkflowProfile | null, runContext: JsonValue): string | null => {
+  if (profile) return profile.base_branch;
   if (!isObject(runContext)) return null;
-  const repositories = runContext.repositories;
-  if (!Array.isArray(repositories)) return null;
-  const declared = repositories.find((candidate) => isObject(candidate) && candidate.key === repositoryKey);
-  return declared && isObject(declared) && typeof declared.epic_branch === "string" ? declared.epic_branch : null;
+  return typeof runContext.base_branch === "string" ? runContext.base_branch : null;
 };
 
 interface CohortHandoff {
@@ -152,7 +152,7 @@ const loadCohortHandoff = async (
     expected: {
       run_id: context.run_id, stage_instance_id: context.stage_instance_id, unit_id: context.unit_id,
       repository_key: repositoryKey, url, head_branch: headBranch,
-      base_branch: selectExpectedBaseBranch(repositoryKey, binding, run?.context ?? null),
+      base_branch: selectExpectedBaseBranch(profile ?? null, run?.context ?? null),
       forge_repository: binding?.forge_repository ?? null,
     },
   });

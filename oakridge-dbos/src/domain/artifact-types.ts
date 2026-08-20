@@ -38,7 +38,7 @@ export const DEV_FLOW_ARTIFACT_TYPES: readonly ArtifactTypeDefinition[] = [
   // Nothing about it is for a person to approve or annotate — the operator
   // chose the branch names when they configured the epic — so it carries no
   // review capability and never reaches a review surface.
-  artifactType("dev.repository_refs", "dev-repository-refs-viewer", { reviewable: false, commentable: false, atom_editable: false, review_items: false }, null, "report", ["repository_key", "repository_path", "base_branch", "epic_branch", "epic_head_sha"]),
+  artifactType("dev.repository_refs", "dev-repository-refs-viewer", { reviewable: false, commentable: false, atom_editable: false, review_items: false }, null, "report", ["repository_key", "repository_path", "integration_branch", "base_branch", "base_head_sha"]),
 ];
 
 export const findArtifactType = (id: string): ArtifactTypeDefinition | null => DEV_FLOW_ARTIFACT_TYPES.find((definition) => definition.id === id) ?? null;

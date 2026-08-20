@@ -4,17 +4,31 @@ import { readJsonPointer } from "./json-pointer";
 import type { SlotBinding } from "./delegated-session";
 
 /**
- * The git refs a run works against, and how a stage comes to hold them.
+ * The branches a run works against, and how a stage comes to hold them.
  *
- * The epic branch used to travel only inside `run_context` — named by
- * `prepare-run-context`, validated at launch, and read out again by a
- * `context_lookup` pointer buried in the build stage's worktree template. No
- * slot, no artifact type, no producer: four disconnected places agreeing by
- * convention that a branch would exist, and nothing anywhere that created it.
+ * Three exist, and two of them used to be called "base":
  *
- * So the refs are a typed artifact now, produced by a stage that guarantees
- * them and declared as an input by the stage that needs them. Existence is a
- * property of graph order rather than of an operator having run a git command
+ *   | role | was | who makes it | who targets it |
+ *   |------|-----|--------------|----------------|
+ *   | integration | `base_branch` | pre-existing (`main`) | the run's final pull request |
+ *   | base        | `epic_branch` | this stage | every build unit's pull request |
+ *   | working     | `cohort/…`    | a build unit's worktree | nothing; it is the head |
+ *
+ * So `base_branch` meant `main` in the final-integration checks and meant
+ * `epic/<slug>` in the cohort ones, and the build agent was handed both under
+ * slots that both read "base". A stage that picked the wrong one opened its
+ * pull request against the wrong target.
+ *
+ * One name per role now. A run has exactly **one base branch** — everything it
+ * builds stacks on that, and every unit's pull request targets it — and each
+ * build unit gets **one working branch**. `main` is not a base from the run's
+ * point of view at all; it is where the base branch was cut from and where the
+ * finished work merges back, so it is the integration branch, and only final
+ * integration ever needs to look at it.
+ *
+ * The refs are a typed artifact, produced by a stage that guarantees them and
+ * declared as an input by every stage that needs them. Existence is a property
+ * of graph order rather than of an operator having run a git command
  * beforehand.
  */
 
@@ -29,12 +43,15 @@ export const REPOSITORY_REFS_ARTIFACT_TYPE = "dev.repository_refs";
  * `prepareRunContext` writes it. This is the source the model mirrors: change
  * the shape there and this parser is what fails, rather than a pointer
  * somewhere downstream resolving to `undefined`.
+ *
+ * It carries no base branch. There is one for the whole run, and an entry that
+ * could name its own was an entry that could disagree with its siblings.
  */
 export interface RunContextRepository {
   readonly key: string;
   readonly path: string;
-  readonly base_branch: string;
-  readonly epic_branch: string;
+  /** Where this repository's base branch is cut from, and where its work merges back. */
+  readonly integration_branch: string;
 }
 
 /** Where a repository entry carries its key — the unit id the stage fans out on. */
@@ -44,10 +61,12 @@ export const RUN_CONTEXT_REPOSITORY_KEY_POINTER = "/key";
 export interface RepositoryRefs {
   readonly repository_key: string;
   readonly repository_path: string;
+  /** `main`, or whatever this repository merges finished work back into. */
+  readonly integration_branch: string;
+  /** The run's one base branch, now known to exist on origin in this repository. */
   readonly base_branch: string;
-  readonly epic_branch: string;
-  /** The commit the epic branch points at on origin, once it is known to exist. */
-  readonly epic_head_sha: string;
+  /** The commit the base branch points at on origin, once it is known to exist. */
+  readonly base_head_sha: string;
 }
 
 export interface RunContextRepositoryError {
@@ -74,30 +93,62 @@ export const parseRunContextRepository = (value: JsonValue): Result<RunContextRe
   if (!key.ok) return key;
   const path = nonEmptyString(readJsonPointer(value, "/path"), "path");
   if (!path.ok) return path;
-  const baseBranch = nonEmptyString(readJsonPointer(value, "/base_branch"), "base_branch");
-  if (!baseBranch.ok) return baseBranch;
-  const epicBranch = nonEmptyString(readJsonPointer(value, "/epic_branch"), "epic_branch");
-  if (!epicBranch.ok) return epicBranch;
-  return ok({ key: key.value, path: path.value, base_branch: baseBranch.value, epic_branch: epicBranch.value });
+  const integrationBranch = nonEmptyString(readJsonPointer(value, "/integration_branch"), "integration_branch");
+  if (!integrationBranch.ok) return integrationBranch;
+  return ok({ key: key.value, path: path.value, integration_branch: integrationBranch.value });
 };
 
 /**
- * The epic branch a repository targets, from its configured name or the epic's
- * slug. One selector because two callers used to compute it — the epic profile
- * the operator reads and the run context the stages read — and a default that
- * drifts between them names two different branches for the same run.
+ * The one branch a run builds on, from its configured name or the epic's slug.
+ *
+ * One selector because two callers used to compute it — the epic profile the
+ * operator reads and the run context the stages read — and a default that
+ * drifts between them names two different branches for the same run. Now there
+ * is also only one *value*: it was overridable per repository, so a two-repo
+ * run could carry two different base branches and nothing in the flow could
+ * express which one a stage meant.
  */
-export const selectEpicBranch = (configured: string | null | undefined, slug: string): string =>
+export const selectBaseBranch = (configured: string | null | undefined, slug: string): string =>
   configured ?? `epic/${slug}`;
+
+export interface BaseBranchError {
+  readonly operation: "parse_base_branch";
+  readonly detail: string;
+}
+
+/**
+ * A branch name, or why the resolved value is not one.
+ *
+ * The provisioning stage's `base_branch` is a binding, and binding resolution
+ * stringifies whatever it finds — so a run context carrying `base_branch: null`
+ * resolved to the string `"null"` and this stage pushed a branch by that name.
+ * The launch gate cannot catch it: a present-but-null key satisfies the pointer
+ * that reads it, deliberately, because `planner_effort: null` means "the
+ * runtime's default". A branch name has no such reading, so it is parsed where
+ * it is used rather than assumed from where it entered.
+ */
+export const parseBaseBranch = (value: JsonValue): Result<string, BaseBranchError> => {
+  if (typeof value !== "string" || value === "") {
+    return err({ operation: "parse_base_branch", detail: `base branch must resolve to a non-empty string, got ${JSON.stringify(value)}` });
+  }
+  // Refused rather than trimmed. Repairing it silently would leave the run
+  // context naming one branch and git receiving another, which is the exact
+  // class of disagreement this whole rename removes.
+  if (value !== value.trim()) {
+    return err({ operation: "parse_base_branch", detail: `base branch must not have leading or trailing whitespace, got ${JSON.stringify(value)}` });
+  }
+  return ok(value);
+};
 
 /**
  * What the provisioning stage is configured with: where its repositories are,
- * and how many it may provision at once. Deliberately one knob and a location —
- * the entry shape is `RunContextRepository`, not a set of pointers a definition
- * gets to reinvent.
+ * which branch to guarantee in each, and how many it may do at once.
+ * Deliberately one knob and two locations — the entry shape is
+ * `RunContextRepository`, not a set of pointers a definition gets to reinvent.
  */
 export interface RepositoryProvisioningDefinitionConfig {
   readonly repositories: SlotBinding;
+  readonly base_branch: SlotBinding;
   readonly max_parallel: number;
 }
 
@@ -106,6 +157,7 @@ export interface ResolvedRepositoryProvisioningConfig {
   readonly executor_type: typeof PROVISION_REPOSITORY_REFS_STAGE_TYPE;
   readonly output_name: string;
   readonly repository: RunContextRepository;
+  readonly base_branch: string;
 }
 
 export interface ResolvedRepositoryProvisioningError {
@@ -129,9 +181,13 @@ export const parseResolvedRepositoryProvisioningConfig = (value: JsonValue): Res
   if (typeof outputName !== "string" || outputName.length === 0) {
     return err({ operation: "parse_resolved_repository_provisioning", detail: "resolved config 'output_name' must be a non-empty string" });
   }
+  const baseBranch = readJsonPointer(value, "/base_branch");
+  if (typeof baseBranch !== "string" || baseBranch.length === 0) {
+    return err({ operation: "parse_resolved_repository_provisioning", detail: "resolved config 'base_branch' must be a non-empty string" });
+  }
   const repository = readJsonPointer(value, "/repository");
   if (repository === undefined) return err({ operation: "parse_resolved_repository_provisioning", detail: "resolved config has no 'repository'" });
   const parsed = parseRunContextRepository(repository);
   if (!parsed.ok) return err({ operation: "parse_resolved_repository_provisioning", detail: parsed.error.detail });
-  return ok({ executor_type: PROVISION_REPOSITORY_REFS_STAGE_TYPE, output_name: outputName, repository: parsed.value });
+  return ok({ executor_type: PROVISION_REPOSITORY_REFS_STAGE_TYPE, output_name: outputName, repository: parsed.value, base_branch: baseBranch });
 };

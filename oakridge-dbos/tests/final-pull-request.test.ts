@@ -14,8 +14,9 @@ const profile = (policy: EpicWorkflowProfile["final_merge_policy"] = "external_c
   id: "00000000-0000-0000-0000-000000000001" as EpicWorkflowProfileId,
   workflow_run_id: "00000000-0000-0000-0000-000000000002" as WorkflowRunId,
   title: "Epic", slug: "epic", lifecycle_state: "final_integration", final_merge_policy: policy,
+  base_branch: "epic/parity",
   repositories: ["api", "web"].map((repository_key) => ({
-    repository_key, repository_path: `/repos/${repository_key}`, base_branch: "main", epic_branch: "epic/parity",
+    repository_key, repository_path: `/repos/${repository_key}`, integration_branch: "main",
     forge_repository: { provider: "github", owner: "acme", name: repository_key }, final_pull_request: null, final_merge_state: "pending",
   })),
   created_at: "2026-08-15T00:00:00Z", updated_at: "2026-08-15T00:00:00Z",
@@ -57,14 +58,14 @@ test("observation rejects mismatched identity and ignores older durable evidence
   expect(stale).toEqual({ ok: true, value: { outcome: "ignored_stale", profile: profile(), reconciliation: previous } });
 });
 
-test("base branch mismatch identifies the repository base branch", () => {
+test("a pull request against the wrong target names the repository integration branch", () => {
   const result = observeFinalPullRequest({
     profile: profile(), repository_key: "api", observation: observation({ base_branch: "release" }),
     previous: null, is_final_integration_eligible: true, updated_at: "2026-08-15T01:01:00Z",
   });
   expect(result.ok && result.value.reconciliation?.mismatch).toEqual({
     kind: "base_branch_mismatch",
-    detail: "observed pull request base branch does not match the repository base branch",
+    detail: "observed pull request base branch does not match the repository integration branch",
   });
 });
 

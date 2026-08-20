@@ -18,10 +18,15 @@ const forgeRepository = z.object({ provider: z.literal("github"), owner: z.strin
 const epicProfile = z.object({
   title: z.string().min(1), slug: z.string().min(1),
   final_merge_policy: z.enum(["guarded", "external_confirmation"]),
+  // One base branch for the epic, defaulting to `epic/<slug>`. It was declared
+  // per repository, so a two-repo epic could name two different branches for
+  // the one thing every stage calls "the base branch".
+  base_branch: z.string().min(1).nullable().optional().transform((value) => value ?? null),
   repositories: z.array(z.object({ repository_key: z.string().min(1), repository_path: z.string().min(1),
-    base_branch: z.string().min(1), epic_branch: z.string().nullable().optional().transform((value) => value ?? null),
+    integration_branch: z.string().min(1),
     forge_repository: forgeRepository.nullable().optional().transform((value) => value ?? null) })),
 });
+
 /**
  * The run context, as far as this boundary can know it.
  *
@@ -40,6 +45,12 @@ const runtimeId = z.enum(DELEGATED_RUNTIME_IDS);
 const contextSchema = z.looseObject({
   brief_notes: z.string().optional(),
   oakridge_url: z.string().min(1).optional(),
+  // The run's one base branch. `prepareRunContext` overwrites this from the epic
+  // profile when there is one, but a launch without a profile passes the
+  // caller's value straight through to a `git push` that creates the branch —
+  // so a `null` here became a branch literally named "null".
+  base_branch: z.string().min(1).refine((value) => value === value.trim(),
+    { message: "must not have leading or trailing whitespace" }).optional(),
   // A model belongs to the runtime it was chosen from, so the pair travels
   // together; a null model is "whatever the runtime defaults to", not "absent".
   planner_runtime: runtimeId.optional(),

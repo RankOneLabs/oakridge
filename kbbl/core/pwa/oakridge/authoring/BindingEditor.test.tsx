@@ -15,7 +15,7 @@ const expectedPrBase: SlotBinding = {
   input_name: "repository_refs",
   collection_key_path: "/artifact/repository_key",
   item_key_path: "/artifact/repository_key",
-  value_path: "/artifact/epic_branch",
+  value_path: "/artifact/base_branch",
 };
 
 describe("BindingEditor", () => {
@@ -24,7 +24,7 @@ describe("BindingEditor", () => {
 
     expect((screen.getByLabelText("binding binding source") as HTMLSelectElement).value).toBe("input_lookup");
     expect((screen.getByLabelText("Input name") as HTMLInputElement).value).toBe("repository_refs");
-    expect((screen.getByLabelText("Value path") as HTMLInputElement).value).toBe("/artifact/epic_branch");
+    expect((screen.getByLabelText("Value path") as HTMLInputElement).value).toBe("/artifact/base_branch");
   });
 
   /**
@@ -38,9 +38,9 @@ describe("BindingEditor", () => {
     const onChange = vi.fn();
     render(<BindingEditor label="binding" value={expectedPrBase} onChange={onChange} allowItem />);
 
-    fireEvent.change(screen.getByLabelText("Value path"), { target: { value: "/artifact/base_branch" } });
+    fireEvent.change(screen.getByLabelText("Value path"), { target: { value: "/artifact/integration_branch" } });
 
-    expect(onChange).toHaveBeenCalledWith({ ...expectedPrBase, value_path: "/artifact/base_branch" });
+    expect(onChange).toHaveBeenCalledWith({ ...expectedPrBase, value_path: "/artifact/integration_branch" });
   });
 
   test("both item-keyed lookups are offered inside a fan out, and neither outside one", () => {

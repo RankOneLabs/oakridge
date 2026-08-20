@@ -27,7 +27,7 @@ import { mountSessionsRoutes } from "../../kbbl/core/server/handlers/sessions";
 import type { SessionManager } from "../../kbbl/core/session/session-manager";
 import { findTestDatabaseUrl } from "./support/durable-database";
 import {
-  HARNESS_BASE_BRANCH, HARNESS_EPIC_BRANCH, awaitCondition, installIntegrationRuntime, neverFinishingScenario, runContext,
+  HARNESS_INTEGRATION_BRANCH, HARNESS_BASE_BRANCH, awaitCondition, installIntegrationRuntime, neverFinishingScenario, runContext,
   scriptedAgentScenario, useScenario, type IntegrationRuntime, type ScriptedAgentScenario,
 } from "./support/dev-flow-harness";
 import {
@@ -142,7 +142,7 @@ class RunDriver {
     const stillOpen: ParkedCohort[] = [];
     for (const cohort of this.awaitingReview) {
       const attempt = this.closed === 0
-        ? await observeCohortPullRequest(this.base, cohort.cohort_id, mergedPullRequestObservation(cohort.unit_id as UnitId, HARNESS_EPIC_BRANCH))
+        ? await observeCohortPullRequest(this.base, cohort.cohort_id, mergedPullRequestObservation(cohort.unit_id as UnitId, HARNESS_BASE_BRANCH))
         : await confirmCohortMerged(this.base, cohort.cohort_id);
       if (attempt.kind === "accepted" && attempt.outcome === "completed") { this.closed += 1; continue; }
       this.lastRefusal = `${cohort.cohort_id}: ${attempt.kind === "accepted" ? attempt.outcome : attempt.detail}`;
@@ -201,7 +201,7 @@ e2e("the seeded dev flow runs to completion through gates and handoffs", async (
   // The epic branch exists on origin because a stage put it there. This is the
   // assertion the whole change is for: no operator ran a git command, and no
   // launch gate refused the run for the branch's absence.
-  expect(await oakridge.repository.list_origin_branches()).toContain(HARNESS_EPIC_BRANCH);
+  expect(await oakridge.repository.list_origin_branches()).toContain(HARNESS_BASE_BRANCH);
 
   // Each cohort cut its worktree from the provisioned branch, resolved through
   // the artifact rather than a pointer into the run context.
@@ -209,7 +209,7 @@ e2e("the seeded dev flow runs to completion through gates and handoffs", async (
   expect(builds).toHaveLength(2);
   for (const [, request] of builds) {
     expect(request.inputs.map((input) => input.output_name).sort()).toEqual(["brief", "repository_refs"]);
-    expect((request.resolved_config as { readonly worktree?: { readonly baseRef?: string } }).worktree?.baseRef).toBe(HARNESS_EPIC_BRANCH);
+    expect((request.resolved_config as { readonly worktree?: { readonly baseRef?: string } }).worktree?.baseRef).toBe(HARNESS_BASE_BRANCH);
     expect((request.resolved_config as { readonly workdir?: string }).workdir).toBe(oakridge.repository.path);
   }
 
@@ -220,8 +220,13 @@ e2e("the seeded dev flow runs to completion through gates and handoffs", async (
   for (const [, request] of assessors) {
     const buildResult = request.inputs.find((input) => input.output_name === "build_result");
     expect(request.workspace_source?.execution_id).toBe(buildResult?.producer_execution_id);
-    expect(request.inputs).toHaveLength(2);
-    expect(new Set(request.inputs.map((input) => input.unit_id)).size).toBe(1);
+    // brief, build_result, and the provisioned refs the assessor now declares.
+    expect(request.inputs.map((input) => input.output_name).sort()).toEqual(["brief", "build_result", "repository_refs"]);
+    // The cohort-scoped inputs are one cohort's. The refs are the run's — keyed
+    // by repository, produced once, and seen the same way by every unit — so
+    // they are deliberately not part of that pairing.
+    const cohortScoped = request.inputs.filter((input) => input.output_name !== "repository_refs");
+    expect(new Set(cohortScoped.map((input) => input.unit_id)).size).toBe(1);
   }
 }, 240_000);
 
@@ -236,7 +241,7 @@ e2e("the seeded dev flow runs to completion through gates and handoffs", async (
  * tracking ref is not a cosmetic problem — it is the ref every cohort's
  * worktree is cut from.
  */
-e2e("a second run over an existing epic branch adopts it where it now is", async () => {
+e2e("a second run over an existing base branch adopts it where it now is", async () => {
   const agent = scriptedAgentScenario();
   useScenario(agent);
 
@@ -245,8 +250,8 @@ e2e("a second run over an existing epic branch adopts it where it now is", async
   oakridge.started_runs.push(first.root_workflow_id);
   try {
     await awaitCondition("the first run to provision its refs", async () =>
-      (await oakridge.repository.list_origin_branches()).includes(HARNESS_EPIC_BRANCH) ? true : null, 60_000);
-    const advanced = await oakridge.repository.advance_origin_branch(HARNESS_EPIC_BRANCH, "cohort work already merged into the epic");
+      (await oakridge.repository.list_origin_branches()).includes(HARNESS_BASE_BRANCH) ? true : null, 60_000);
+    const advanced = await oakridge.repository.advance_origin_branch(HARNESS_BASE_BRANCH, "cohort work already merged into the epic");
 
     const second = await launchRun(oakridge.base_url, oakridge.definition.id, { ...context, brief_notes: "second run over the same epic" });
     oakridge.started_runs.push(second.root_workflow_id);
@@ -260,8 +265,8 @@ e2e("a second run over an existing epic branch adopts it where it now is", async
 
     const artifact = await readArtifact(oakridge.base_url, refs.id);
     expect(artifact.revisions[0]?.body).toEqual({ repository_key: "oakridge", repository_path: oakridge.repository.path,
-      base_branch: HARNESS_BASE_BRANCH, epic_branch: HARNESS_EPIC_BRANCH, epic_head_sha: advanced });
-    expect(await oakridge.repository.origin_branch_sha(HARNESS_EPIC_BRANCH)).toBe(advanced);
+      integration_branch: HARNESS_INTEGRATION_BRANCH, base_branch: HARNESS_BASE_BRANCH, base_head_sha: advanced });
+    expect(await oakridge.repository.origin_branch_sha(HARNESS_BASE_BRANCH)).toBe(advanced);
   } finally {
     agent.releaseAll();
   }

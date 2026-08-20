@@ -20,12 +20,14 @@ Each cohort must operate in exactly one repository and must set
 repositories. Never invent a repository key or put an absolute path in a
 cohort.
 
-Repository topology is a run-creation invariant. Before planning begins, every
-supplied Epic branch must already have been created from the latest remote tip
-of its configured base branch (`main` when `base_branch` is `main`). Treat the
-supplied `base_branch` and `epic_branch` values as authoritative. Do not create,
-rebase, reset, or otherwise repair an Epic branch from this planner session. If
-the supplied topology does not satisfy that precondition, record a blocking risk
+Repository topology is guaranteed before planning begins: the run's one
+**base branch** has already been cut, in every repository, from the latest
+remote tip of that repository's **integration branch** (`main`, typically). The
+`provision_repository_refs` stage owns that guarantee and this stage declares
+its output as an input, so by the time you read this it has happened. Treat the
+supplied `base_branch` and `integration_branch` values as authoritative. Do not
+create, rebase, reset, or otherwise repair a branch from this planner session.
+If the supplied topology does not look like the above, record a blocking risk
 instead of planning around stale or unknown ancestry.
 
 The spec analysis may identify genuine discrepancies between requested features

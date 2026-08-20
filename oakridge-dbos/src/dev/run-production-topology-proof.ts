@@ -4,7 +4,7 @@ import { RepositoryProvisioningAdapter } from "../adapters/repository-provisioni
 import type { ArtifactRevision } from "../domain/artifacts";
 import type { ExecutionRequest, ExecutorAdapter } from "../domain/execution";
 import type { ArtifactId, ExecutionId, JsonValue, UnitId, WorkflowRunId } from "../domain/primitives";
-import { loadDevFlowV12 } from "../seed/dev-flow-v12";
+import { loadDevFlowV13 } from "../seed/dev-flow-v13";
 import { PgPostgresExecutor } from "../storage/sql-executor";
 
 const databaseUrl = process.env.DBOS_SYSTEM_DATABASE_URL;
@@ -15,7 +15,7 @@ const proofServiceSql = PgPostgresExecutor.connect(databaseUrl);
 await proofSql.query("CREATE TABLE IF NOT EXISTS public.oakridge_proof_execution (workflow_id text PRIMARY KEY, request jsonb NOT NULL)", []);
 DBOS.setConfig({ name: "oakridge-production-proof", systemDatabaseUrl: databaseUrl, applicationVersion, logLevel: "warn" });
 
-const loaded = await loadDevFlowV12();
+const loaded = await loadDevFlowV13();
 if (!loaded.ok) throw new Error(loaded.error.detail);
 const definition = loaded.value;
 
@@ -90,7 +90,7 @@ registerProductionTopologyServices({
 
 const artifactBody = (request: ExecutionRequest, unitId: UnitId): JsonValue => {
   if (request.executor_type === "provision_repository_refs") {
-    return { repository_key: String(unitId), repository_path: "/tmp", base_branch: "main", epic_branch: "epic/proof", epic_head_sha: PROOF_EPIC_HEAD };
+    return { repository_key: String(unitId), repository_path: "/tmp", integration_branch: "main", base_branch: "epic/proof", base_head_sha: PROOF_EPIC_HEAD };
   }
   const session = (request.resolved_config as { readonly session_name?: string }).session_name ?? "";
   if (session.startsWith("spec-analyzer-")) return { requirements: [{ id: "R1", description: "proof" }] };
@@ -118,7 +118,7 @@ await DBOS.launch();
 try {
   const rootId = process.env.PROOF_WORKFLOW_ID ?? `production-proof-${crypto.randomUUID()}`;
   const handle = await DBOS.startWorkflow(productionRunWorkflow, { workflowID: rootId })({ run_id: crypto.randomUUID() as WorkflowRunId, workflow_definition_id: definition.id, workflow_definition_version: definition.version, context: {
-    brief_notes: "deterministic proof", repositories: [{ key: "oakridge", path: "/tmp", epic_branch: "epic/proof", base_branch: "main" }], oakridge_url: "http://127.0.0.1:8790",
+    brief_notes: "deterministic proof", base_branch: "epic/proof", repositories: [{ key: "oakridge", path: "/tmp", integration_branch: "main" }], oakridge_url: "http://127.0.0.1:8790",
     planner_runtime: "claude-code", planner_model: null, planner_effort: null, worker_runtime: "claude-code", worker_model: null, worker_effort: null,
   } });
   const emitted = new Set<string>();

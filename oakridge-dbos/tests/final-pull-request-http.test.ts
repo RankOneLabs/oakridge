@@ -10,7 +10,7 @@ const profile: EpicWorkflowProfile = {
   id: "profile-1" as EpicWorkflowProfileId,
   workflow_run_id: "11111111-1111-4111-8111-111111111111" as WorkflowRunId,
   title: "Epic", slug: "epic", lifecycle_state: "final_integration", final_merge_policy: "external_confirmation",
-  repositories: [], created_at: "2026-08-15T00:00:00Z", updated_at: "2026-08-15T00:00:00Z",
+  base_branch: "epic/epic", repositories: [], created_at: "2026-08-15T00:00:00Z", updated_at: "2026-08-15T00:00:00Z",
 };
 
 const observation = {

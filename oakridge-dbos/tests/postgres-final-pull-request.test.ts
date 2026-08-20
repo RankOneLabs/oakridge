@@ -21,8 +21,7 @@ const profileId = "00000000-0000-4000-8000-000000000002" as EpicWorkflowProfileI
 const repository = (key: string, state: EpicWorkflowProfile["repositories"][number]["final_merge_state"]) => ({
   repository_key: key,
   repository_path: `/repos/${key}`,
-  base_branch: "main",
-  epic_branch: "epic/dbos",
+  integration_branch: "main",
   forge_repository: { provider: "github" as const, owner: "RankOneLabs", name: key },
   final_pull_request: null,
   final_merge_state: state,
@@ -34,6 +33,7 @@ const profile = (policy: EpicWorkflowProfile["final_merge_policy"]): EpicWorkflo
   slug: "dbos",
   lifecycle_state: "final_integration",
   final_merge_policy: policy,
+  base_branch: "epic/dbos",
   repositories: [repository("oakridge", policy === "guarded" ? "pending" : "awaiting_confirmation"), repository("kbbl", "merged")],
   created_at: "2026-08-15T00:00:00Z",
   updated_at: "2026-08-15T00:00:00Z",

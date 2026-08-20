@@ -12,6 +12,23 @@ const decodeDefinition = (row: DefinitionRow): WorkflowDefinition => {
   return parsed.value;
 };
 
+/**
+ * A stored definition, or nothing when it can no longer be read.
+ *
+ * Asking for one definition by id and getting a throw is right — the caller
+ * named it and cannot proceed without it. Listing them is different: a
+ * definition retired by a schema change is still a row, and mapping the strict
+ * decode across every row meant one unreadable row took down the whole list,
+ * so the launcher offered the operator nothing at all rather than everything
+ * that still works.
+ */
+const decodeListedDefinition = (row: DefinitionRow): WorkflowDefinition | null => {
+  const parsed = parseWorkflowDefinition(row.definition);
+  if (parsed.ok) return parsed.value;
+  console.warn(`oakridge: omitting a stored workflow definition that no longer parses: ${parsed.error.detail}`);
+  return null;
+};
+
 export class PostgresWorkflowDefinitionRepository implements WorkflowDefinitionRepository {
   constructor(private readonly sql: SqlExecutor) {}
 
@@ -51,7 +68,7 @@ export class PostgresWorkflowDefinitionRepository implements WorkflowDefinitionR
       "SELECT definition FROM oakridge.workflow_definition WHERE $1::boolean OR NOT archived ORDER BY name, version DESC",
       [include_archived],
     );
-    return rows.map(decodeDefinition);
+    return rows.map(decodeListedDefinition).filter((definition): definition is WorkflowDefinition => definition !== null);
   }
 
   async set_archived(id: WorkflowDefinitionId, archived: boolean): Promise<WorkflowDefinition | null> {

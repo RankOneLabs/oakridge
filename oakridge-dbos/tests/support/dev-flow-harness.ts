@@ -31,7 +31,7 @@ import type { WorkflowDefinition } from "../../src/domain/workflow";
 import { createOakridgeRuntime, type OakridgeRuntime } from "../../src/runtime/compose";
 import { applyMigrations } from "../../src/storage/migrate";
 import { PgPostgresExecutor } from "../../src/storage/sql-executor";
-import { loadDevFlowV12 } from "../../src/seed/dev-flow-v12";
+import { loadDevFlowV13 } from "../../src/seed/dev-flow-v13";
 
 /**
  * How an execution behaves, for the scenario currently running.
@@ -163,14 +163,14 @@ export const scriptedAgentScenario = (): ScriptedAgentScenario => {
   };
 };
 
-/** The epic branch the harness's runs provision and build against. */
-export const HARNESS_EPIC_BRANCH = "epic/harness";
-/** The base branch the harness's fixture repository publishes. */
-export const HARNESS_BASE_BRANCH = "main";
+/** The one branch the harness's runs provision and build on. */
+export const HARNESS_BASE_BRANCH = "epic/harness";
+/** What the base branch is cut from, and where its work would merge back. */
+export const HARNESS_INTEGRATION_BRANCH = "main";
 
 /**
  * A real git repository with a real origin, for the stage that provisions
- * epic branches.
+ * base branches.
  *
  * Faking git here would fake the one thing the provisioning stage is: the
  * sequence of commands that makes a branch exist on a remote. So the fixture is
@@ -181,7 +181,7 @@ export interface GitRepositoryFixture {
   readonly path: string;
   readonly origin_path: string;
   readonly base_branch: string;
-  readonly epic_branch: string;
+  readonly integration_branch: string;
   /** Every ref origin currently holds under `refs/heads/`, read fresh. */
   list_origin_branches(): Promise<readonly string[]>;
   /** What origin says a branch points at, or null when it holds no such branch. */
@@ -228,13 +228,13 @@ export const createGitRepositoryFixture = async (): Promise<GitRepositoryFixture
   const originPath = join(root, "origin.git");
   const workingPath = join(root, "working");
   try {
-    await git(root, ["init", "--bare", "--initial-branch", HARNESS_BASE_BRANCH, originPath]);
-    await git(root, ["init", "--initial-branch", HARNESS_BASE_BRANCH, workingPath]);
+    await git(root, ["init", "--bare", "--initial-branch", HARNESS_INTEGRATION_BRANCH, originPath]);
+    await git(root, ["init", "--initial-branch", HARNESS_INTEGRATION_BRANCH, workingPath]);
     await Bun.write(join(workingPath, "README.md"), "oakridge end-to-end fixture\n");
     await git(workingPath, ["add", "README.md"]);
     await git(workingPath, ["commit", "-m", "fixture base"]);
     await git(workingPath, ["remote", "add", "origin", originPath]);
-    await git(workingPath, ["push", "origin", `${HARNESS_BASE_BRANCH}:refs/heads/${HARNESS_BASE_BRANCH}`]);
+    await git(workingPath, ["push", "origin", `${HARNESS_INTEGRATION_BRANCH}:refs/heads/${HARNESS_INTEGRATION_BRANCH}`]);
     await git(workingPath, ["fetch", "origin"]);
   } catch (error) {
     await discardRoot();
@@ -244,7 +244,7 @@ export const createGitRepositoryFixture = async (): Promise<GitRepositoryFixture
     path: workingPath,
     origin_path: originPath,
     base_branch: HARNESS_BASE_BRANCH,
-    epic_branch: HARNESS_EPIC_BRANCH,
+    integration_branch: HARNESS_INTEGRATION_BRANCH,
     async list_origin_branches() {
       const output = await git(workingPath, ["ls-remote", "--heads", "origin"]);
       return output.split("\n").filter(Boolean).map((line) => line.split("refs/heads/")[1] ?? "").filter(Boolean);
@@ -308,7 +308,7 @@ export const installIntegrationRuntime = async (databaseUrl: string): Promise<In
   const migrationSql = PgPostgresExecutor.connect(databaseUrl);
   try { await applyMigrations(migrationSql); } finally { await migrationSql.close(); }
 
-  const loaded = await loadDevFlowV12();
+  const loaded = await loadDevFlowV13();
   if (!loaded.ok) throw new Error(loaded.error.detail);
 
   const applicationVersion = `e2e-${crypto.randomUUID()}`;
@@ -401,7 +401,10 @@ export const artifactBody = (request: ExecutionRequest, unitId: UnitId, outputNa
 
 export const runContext = (oakridgeUrl: string, repositoryPath: string) => ({
   brief_notes: "end-to-end harness",
-  repositories: [{ key: "oakridge", path: repositoryPath, epic_branch: HARNESS_EPIC_BRANCH, base_branch: HARNESS_BASE_BRANCH }],
+  // One base branch for the run, beside the repositories rather than repeated
+  // inside each of them.
+  base_branch: HARNESS_BASE_BRANCH,
+  repositories: [{ key: "oakridge", path: repositoryPath, integration_branch: HARNESS_INTEGRATION_BRANCH }],
   oakridge_url: oakridgeUrl,
   planner_runtime: "claude-code" as const, planner_model: null, planner_effort: null,
   worker_runtime: "claude-code" as const, worker_model: null, worker_effort: null,

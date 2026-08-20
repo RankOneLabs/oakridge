@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::net::{IpAddr, Ipv4Addr};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use axum::{
@@ -613,18 +613,37 @@ fn dev_flow_v11_assesses_only_the_matching_cohort_brief() {
     assert!(!prompt.contains("{{PLAN}}"));
 }
 
+/// Reads a prompt with its whitespace collapsed to single spaces.
+///
+/// These assertions are about what a prompt *says*, not how it is wrapped.
+/// Matching the raw file made them depend on line width: `Do not create,`
+/// passed only while that comma happened to fall before the wrap, so reflowing
+/// the paragraph failed a test that has nothing to do with formatting.
+fn prompt_text(path: &Path) -> String {
+    std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()))
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 #[test]
 fn v2_planning_prompts_define_topology_and_discrepancy_preconditions() {
     let prompts = manifest_dir().join("prompts/dev-flow");
-    let analyzer = std::fs::read_to_string(prompts.join("spec_analyzer_v2.md")).unwrap();
+    let analyzer = prompt_text(&prompts.join("spec_analyzer_v2.md"));
     assert!(analyzer.contains("requested changes as requirements, not discrepancies"));
     assert!(analyzer.contains("incompatible with the current"));
 
-    let planner = std::fs::read_to_string(prompts.join("plan_writer_v2.md")).unwrap();
-    assert!(planner.contains("created from the latest remote tip"));
-    assert!(planner.contains("Repository topology is a run-creation invariant"));
-    assert!(planner.contains("Do not create,"));
-    assert!(planner.contains("rebase, reset, or otherwise repair"));
+    let planner = prompt_text(&prompts.join("plan_writer_v2.md"));
+    // Topology is a precondition the planner inherits, not work it performs.
+    assert!(planner.contains("Repository topology is guaranteed before planning begins"));
+    assert!(planner.contains("from the latest remote tip"));
+    // Both branch roles are named, so the planner cannot conflate the branch it
+    // targets with the one the run eventually merges into.
+    assert!(planner.contains(
+        "Treat the supplied `base_branch` and `integration_branch` values as authoritative"
+    ));
+    assert!(planner.contains("Do not create, rebase, reset, or otherwise repair a branch"));
     assert!(planner.contains("before-to-after difference is the work"));
 }
 

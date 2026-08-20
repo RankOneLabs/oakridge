@@ -64,11 +64,12 @@ export class RepositoryProvisioningAdapter implements ExecutorAdapter {
       const config = parseResolvedRepositoryProvisioningConfig(request.resolved_config);
       if (!config.ok) return failed("invalid_resolved_config", config.error.detail);
       const repository = config.value.repository;
-      // Serialized per working copy: two runs seeding epic branches in the same
+      // Serialized per working copy: two runs seeding base branches in the same
       // repository otherwise race `git fetch`, and the loser dies on "cannot
       // lock ref ... unable to update local ref". Distinct repositories, and so
       // distinct keys, still run in parallel.
-      const provisioned = await runExclusive(repository.path, () => provisionRepositoryRefs(repository, this.dependencies.git));
+      const provisioned = await runExclusive(repository.path, () =>
+        provisionRepositoryRefs({ repository, base_branch: config.value.base_branch }, this.dependencies.git));
       if (!provisioned.ok) return failed(provisioned.error.kind, describeRepositoryProvisioningFailure(provisioned.error));
       const emitted = await this.dependencies.emit({
         stage_instance_id: request.stage_instance_id,
@@ -76,13 +77,13 @@ export class RepositoryProvisioningAdapter implements ExecutorAdapter {
         executor_type: this.executor_type,
         output_name: config.value.output_name,
         body: { ...provisioned.value },
-        // Keyed on the execution and output rather than the payload: the epic
-        // head moves as cohorts merge into it, so a replay of this unit is
-        // still one output and must not open a second revision chain for it.
+        // Keyed on the execution and output rather than the payload: the base
+        // branch head moves as build units merge into it, so a replay of this
+        // unit is still one output and must not open a second revision chain.
         idempotency_key: `${request.execution_id}:${config.value.output_name}`,
       });
       if (!emitted.ok) return failed(`emit_${emitted.error.kind}`, emitted.error.detail);
-      return { kind: "succeeded", metadata: { epic_branch: provisioned.value.epic_branch, epic_head_sha: provisioned.value.epic_head_sha } satisfies JsonValue };
+      return { kind: "succeeded", metadata: { base_branch: provisioned.value.base_branch, base_head_sha: provisioned.value.base_head_sha } satisfies JsonValue };
     } catch (error) {
       // The IO boundary. Whatever the git runner or the emitter threw becomes
       // this unit's outcome rather than the observer's death.

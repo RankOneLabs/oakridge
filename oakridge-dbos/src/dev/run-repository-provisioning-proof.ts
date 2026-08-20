@@ -14,6 +14,7 @@
  *     bun run src/dev/run-repository-provisioning-proof.ts
  */
 import { describeRepositoryProvisioningFailure, provisionRepositoryRefs } from "../domain/repository-provisioning";
+import type { RunContextRepository } from "../domain/repository-refs";
 import { BunGitCommandRunner } from "../runtime/git-command-runner";
 
 const required = (name: string): string => {
@@ -22,14 +23,16 @@ const required = (name: string): string => {
   return value;
 };
 
-const repository = {
+const repository: RunContextRepository = {
   key: process.env.REPOSITORY_KEY?.trim() || "proof",
   path: required("REPOSITORY_PATH"),
-  base_branch: process.env.BASE_BRANCH?.trim() || "main",
-  epic_branch: required("EPIC_BRANCH"),
+  integration_branch: process.env.INTEGRATION_BRANCH?.trim() || "main",
 };
 
-const provisioned = await provisionRepositoryRefs(repository, new BunGitCommandRunner());
+const provisioned = await provisionRepositoryRefs(
+  { repository, base_branch: required("BASE_BRANCH") },
+  new BunGitCommandRunner(),
+);
 if (!provisioned.ok) {
   console.log(`FAILED ${provisioned.error.kind}: ${describeRepositoryProvisioningFailure(provisioned.error)}`);
   process.exitCode = 1;
