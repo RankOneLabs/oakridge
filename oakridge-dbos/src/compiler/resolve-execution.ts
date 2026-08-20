@@ -89,9 +89,28 @@ export const renderPrompt = (template: string, slots: Readonly<Record<string, st
   return missing ? err({ operation: "resolve_execution", detail: `template slot '{{${missing}}}' has no binding` }) : ok(rendered);
 };
 
+/**
+ * Slots that name *which execution this is*. A definition may not rebind them.
+ *
+ * These are facts about the unit being launched, not choices a definition gets
+ * to make, and everything downstream addresses the execution by them — the emit
+ * URL a delegated agent is handed is `units/{{UNIT_ID}}/emit/...`. A definition
+ * that bound `UNIT_ID` to the literal `"0"` — left over from before the stage
+ * fanned out — silently overwrote the real unit id, so a build agent did its
+ * whole job and then PUT its artifacts to `units/0`, which 404s. Meanwhile the
+ * worktree and session name came out right, because those substitute the unit
+ * id directly rather than through the slot table. One execution, two identities.
+ *
+ * So identity is applied last and wins. The alternative — rejecting a
+ * definition that binds one of these — is the stricter rule, but it would hard
+ * fail every already-seeded definition carrying the stale binding, and being
+ * unable to launch is not an improvement on launching correctly.
+ */
+const IDENTITY_SLOTS = ["UNIT_ID", "STAGE_INSTANCE_ID"] as const;
+
 export const resolveDelegatedExecution = (input: ResolveDelegatedExecutionInput): Result<ResolvedExecutorConfig, ResolveExecutionError> => {
   const environment = { ...input.environment, item: input.unit.parameters };
-  const slots: Record<string, string> = { UNIT_ID: input.unit.unit_id, STAGE_INSTANCE_ID: input.stage_instance_id };
+  const slots: Record<string, string> = {};
   for (const [name, binding] of Object.entries(input.definition.slot_bindings)) {
     const value = resolveBinding(binding, environment);
     if (!value.ok) return value;
@@ -102,6 +121,11 @@ export const resolveDelegatedExecution = (input: ResolveDelegatedExecutionInput)
     if (!value.ok) return value;
     slots[name] = value.value;
   }
+  const identity = {
+    UNIT_ID: input.unit.unit_id,
+    STAGE_INSTANCE_ID: input.stage_instance_id,
+  } satisfies Record<(typeof IDENTITY_SLOTS)[number], string>;
+  Object.assign(slots, identity);
   const prompt = renderPrompt(input.prompt_template, slots);
   if (!prompt.ok) return prompt;
   const runtime = resolveBindable(input.definition.runtime, environment);
