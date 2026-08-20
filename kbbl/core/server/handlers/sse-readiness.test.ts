@@ -92,10 +92,23 @@ describe("SSE readiness", () => {
 
     const reader = res.body!.getReader();
     try {
-      // Wait for the ready comment — flush hasn't resolved yet so readJsonl
-      // must not have been called.
+      // Wait for the ready comment — it is written before any replay work, so
+      // a reconnecting client's EventSource opens without waiting on the disk.
       await readUntil(reader, (b) => b.includes(": ready"));
-      // flush is called but not yet resolved; read must not have been called
+
+      // Receiving those bytes does not mean flushTranscript has been called:
+      // the handler calls it in the continuation *after* the ready write, and
+      // nothing orders that continuation against this reader resuming. So poll
+      // for the call rather than assuming it has already landed.
+      const flushDeadline = Date.now() + 1000;
+      while (order.length === 0 && Date.now() < flushDeadline) {
+        await new Promise((r) => setTimeout(r, 5));
+      }
+
+      // The guarantee under test: readJsonl must not run while the flush is
+      // still pending, or the replay misses the tail the flush exists to
+      // capture. flushPromise is unresolved here, so waiting longer cannot turn
+      // this into ["flush", "read"] — only a broken handler can.
       expect(order).toEqual(["flush"]);
 
       // Now resolve the flush — readJsonl should be called next. Poll until
