@@ -172,6 +172,27 @@ describe("channel-server initialize", () => {
     expect(result.capabilities?.experimental?.["claude/channel/permission"]).toBeDefined();
   });
 
+  test("a modern-era protocol revision is answered with the newest legacy one", async () => {
+    // Claude Code refuses to register any custom-notification handler on a
+    // connection that negotiated 2026-07-28 or later, so echoing such a request
+    // back would disable channel pushes entirely — silently, and for the whole
+    // session. Answer with a revision that can still carry them.
+    srv = launchServer(outboxPath);
+    srv.send({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2026-07-28", clientInfo: { name: "test" } },
+    });
+    let resp: JsonRpcMsg | undefined;
+    for (let i = 0; i < 50 && resp === undefined; i++) {
+      await new Promise<void>((r) => setTimeout(r, 20));
+      resp = (await srv.lines()).find((m) => m.id === 1);
+    }
+    const result = resp?.result as { protocolVersion?: string };
+    expect(result.protocolVersion).toBe("2025-11-25");
+  });
+
   test("initialize echoes protocolVersion from request", async () => {
     srv = launchServer(outboxPath);
     const resp = await handshake(srv);

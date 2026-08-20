@@ -68,6 +68,49 @@ function reply(id: unknown, result: unknown): void {
   send({ jsonrpc: "2.0", id, result });
 }
 
+// ── protocol revision ───────────────────────────────────────────────────────
+
+/**
+ * The first protocol revision with no delivery path for unsolicited
+ * notifications.
+ *
+ * Claude Code classifies a connection by the revision it negotiated: from this
+ * date on the connection is "modern", and CC declines to register a handler for
+ * any custom notification, logging that the revision "has no delivery path for
+ * unsolicited custom notifications". A channel push is exactly such a
+ * notification, so a modern connection cannot carry one at all.
+ */
+const MODERN_ERA_FLOOR = "2026-07-28";
+
+/** The newest revision known to predate that floor. */
+const NEWEST_LEGACY_REVISION = "2025-11-25";
+
+/**
+ * Which revision to negotiate, given what the client asked for.
+ *
+ * Echoing the request is what this server used to do, and it is a trap: the
+ * revision the client asks for is the one that decides whether this transport
+ * works at all, so echoing hands the client the power to silently disable the
+ * channel. It is safe today only because CC's `server/discover` probe gets an
+ * empty result here, which drops it onto its legacy handshake and makes it ask
+ * for a pre-floor revision. Nothing about that is a guarantee.
+ *
+ * So the answer is clamped rather than echoed. A client asking for a modern
+ * revision gets the newest legacy one instead: either it accepts, and the
+ * channel keeps working, or it rejects the handshake outright — which is a loud
+ * failure at connect time rather than an agent that sits idle forever holding a
+ * prompt nobody can deliver.
+ */
+function deliverableProtocolVersion(requested: string): string {
+  if (requested < MODERN_ERA_FLOOR) return requested;
+  logline(
+    `client asked for protocol revision ${requested}, which is modern-era ` +
+    `(>= ${MODERN_ERA_FLOOR}) and carries no unsolicited notifications — ` +
+    `answering ${NEWEST_LEGACY_REVISION} so channel pushes stay deliverable`,
+  );
+  return NEWEST_LEGACY_REVISION;
+}
+
 /** One outbox line, as it travels to the client. */
 interface ChannelPush {
   readonly content: string;
@@ -394,12 +437,12 @@ function handle(msg: Record<string, unknown>): void {
   // Requests (have `id`).
   if (method === "initialize") {
     const params = msg.params as Record<string, unknown> | undefined;
-    const protocolVersion =
+    const requested =
       typeof params?.protocolVersion === "string"
         ? params.protocolVersion
         : "2025-06-18";
     reply(id, {
-      protocolVersion,
+      protocolVersion: deliverableProtocolVersion(requested),
       serverInfo: { name: CHANNEL_NAME, version: "1.0.0" },
       capabilities: {
         experimental: {
