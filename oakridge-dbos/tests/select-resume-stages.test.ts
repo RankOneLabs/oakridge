@@ -2,10 +2,10 @@ import { expect, test } from "bun:test";
 
 import { compileWorkflowDefinition } from "../src/compiler/compile-workflow";
 import { selectAncestorStages } from "../src/compiler/select-resume-stages";
-import { loadDevFlowV12 } from "../src/seed/dev-flow-v12";
+import { loadDevFlowV13 } from "../src/seed/dev-flow-v13";
 
 test("stage rerun inherits only graph ancestors and leaves the selected stage plus descendants to DBOS", async () => {
-  const loaded = await loadDevFlowV12();
+  const loaded = await loadDevFlowV13();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const compiled = compileWorkflowDefinition(loaded.value);
   if (!compiled.ok) throw new Error(compiled.error.detail);
@@ -20,7 +20,7 @@ test("stage rerun inherits only graph ancestors and leaves the selected stage pl
 });
 
 test("an unknown resume stage is reported as a value, not thrown", async () => {
-  const loaded = await loadDevFlowV12();
+  const loaded = await loadDevFlowV13();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const compiled = compileWorkflowDefinition(loaded.value);
   if (!compiled.ok) throw new Error(compiled.error.detail);

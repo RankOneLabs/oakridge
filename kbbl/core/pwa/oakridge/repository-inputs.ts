@@ -11,7 +11,7 @@ export function repositoryDraftFromProject(
     path: project.repo_dir,
     forge_owner: project.forge_repository?.owner ?? current.forge_owner,
     forge_name: project.forge_repository?.name ?? current.forge_name,
-    base_branch: project.base_branch ?? current.base_branch,
+    integration_branch: project.base_branch ?? current.integration_branch,
   };
 }
 
@@ -24,7 +24,6 @@ export interface RepositoryInputError {
 export interface ValidatedRepositoryInput extends RepositoryInput {
   forge_owner: string;
   forge_name: string;
-  base_branch: string;
 }
 
 export type RepositoryInputResult =
@@ -49,12 +48,12 @@ export function validateRepositoryInputs(inputs: RepositoryInputDraft[]): Reposi
     path: repository.path.trim(),
     forge_owner: repository.forge_owner.trim(),
     forge_name: repository.forge_name.trim(),
-    base_branch: repository.base_branch.trim(),
+    integration_branch: repository.integration_branch.trim(),
   }));
   if (repositories.length === 0) {
     return repositoryError(null, "Add at least one repository.");
   }
-  const incompleteIndex = repositories.findIndex((repository) => !repository.key || !repository.path || !repository.forge_owner || !repository.forge_name || !repository.base_branch);
+  const incompleteIndex = repositories.findIndex((repository) => !repository.key || !repository.path || !repository.forge_owner || !repository.forge_name || !repository.integration_branch);
   if (incompleteIndex !== -1) {
     return repositoryError(incompleteIndex, "Every repository needs a key, local path, GitHub owner/name, and base branch.");
   }

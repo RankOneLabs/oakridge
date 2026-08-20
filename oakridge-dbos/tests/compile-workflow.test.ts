@@ -2,17 +2,19 @@ import { expect, test } from "bun:test";
 
 import { builtInStageTypeCompilers, compileWorkflowDefinition, type StageTypeCompiler } from "../src/compiler/compile-workflow";
 import { ok } from "../src/domain/primitives";
-import { loadDevFlowV12 } from "../src/seed/dev-flow-v12";
+import { loadDevFlowV13 } from "../src/seed/dev-flow-v13";
 
-test("compiles unchanged v12 into executor-independent materialization contracts", async () => {
-  const loaded = await loadDevFlowV12();
+test("compiles unchanged v13 into executor-independent materialization contracts", async () => {
+  const loaded = await loadDevFlowV13();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const compiled = compileWorkflowDefinition(loaded.value);
   expect(compiled.ok).toBe(true);
   if (!compiled.ok) return;
-  // Provisioning has no inputs, so it starts alongside spec analysis and costs
-  // the run no wall-clock: it only has to finish before build.
-  expect(compiled.value.source_stages).toEqual(["provision_refs", "spec_analyzer"]);
+  // Provisioning is the only stage with no inputs, so it is the only source.
+  // Spec analysis used to start alongside it and index the run context for a
+  // directory; it declares the provisioned refs now, so the branch a planner
+  // reasons about is guaranteed to exist before the planner does.
+  expect(compiled.value.source_stages).toEqual(["provision_refs"]);
   expect(compiled.value.stages.brief_writer?.materialization.kind).toBe("artifact_collection");
   expect(compiled.value.stages.build?.materialization.kind).toBe("fan_out");
   expect(compiled.value.stages.build?.outputs.find((output) => output.name === "build_result")?.release.kind).toBe("handoff");
@@ -25,7 +27,7 @@ test("compiles unchanged v12 into executor-independent materialization contracts
  * which is the contract by which the registered adapter is found.
  */
 test("compiles the provisioning stage into one unreviewed unit per repository", async () => {
-  const loaded = await loadDevFlowV12();
+  const loaded = await loadDevFlowV13();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const compiled = compileWorkflowDefinition(loaded.value);
   if (!compiled.ok) throw new Error(compiled.error.detail);
@@ -41,7 +43,7 @@ test("compiles the provisioning stage into one unreviewed unit per repository", 
  * orders provisioning before it. This edge is the whole fix in one assertion.
  */
 test("build declares the provisioned refs as a required input", async () => {
-  const loaded = await loadDevFlowV12();
+  const loaded = await loadDevFlowV13();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const compiled = compileWorkflowDefinition(loaded.value);
   if (!compiled.ok) throw new Error(compiled.error.detail);
@@ -52,7 +54,7 @@ test("build declares the provisioned refs as a required input", async () => {
 });
 
 test("accepts a non-session executor through the stage-type compiler registry", async () => {
-  const loaded = await loadDevFlowV12();
+  const loaded = await loadDevFlowV13();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const headlessCompiler: StageTypeCompiler = {
     compile: (_stageKey, config) => ok({

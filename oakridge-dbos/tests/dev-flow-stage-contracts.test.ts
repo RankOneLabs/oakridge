@@ -8,13 +8,14 @@ import type { CompiledStageContract, MaterializedExecutionUnit } from "../src/do
 import type { DelegatedSessionDefinitionConfig } from "../src/domain/delegated-session";
 import type { ArtifactEnvelope } from "../src/domain/execution";
 import type { ArtifactId, JsonValue, StageInstanceId, UnitId } from "../src/domain/primitives";
-import { loadDevFlowV12 } from "../src/seed/dev-flow-v12";
+import { loadDevFlowV13 } from "../src/seed/dev-flow-v13";
 import { selectInputsForUnit, type StageInputSet } from "../src/workflows/production-topology";
 
 const stageInstanceId = "stage-1" as StageInstanceId;
 const context = {
   brief_notes: "Build the requested change",
-  repositories: [{ key: "oakridge", path: "/repo/oakridge", epic_branch: "epic/test", base_branch: "main" }],
+  base_branch: "epic/test",
+  repositories: [{ key: "oakridge", path: "/repo/oakridge", integration_branch: "main" }],
   oakridge_url: "http://127.0.0.1:8790",
   planner_runtime: "claude-code",
   planner_model: "opus",
@@ -34,11 +35,11 @@ const envelope = (artifact_id: string, artifact_type: string, output_name: strin
 
 /** What the provisioning stage guaranteed for the repository the cohorts build in. */
 const repositoryRefs = [envelope("refs-1", "dev.repository_refs", "repository_refs", "oakridge", {
-  repository_key: "oakridge", repository_path: "/repo/oakridge", base_branch: "main", epic_branch: "epic/test", epic_head_sha: "9a8b7c6",
+  repository_key: "oakridge", repository_path: "/repo/oakridge", integration_branch: "main", base_branch: "epic/test", base_head_sha: "9a8b7c6",
 })];
 
 const loadCompiled = async () => {
-  const loaded = await loadDevFlowV12();
+  const loaded = await loadDevFlowV13();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const compiled = compileWorkflowDefinition(loaded.value);
   if (!compiled.ok) throw new Error(compiled.error.detail);
@@ -55,24 +56,29 @@ const resolveStage = async (stage: CompiledStageContract, unit: MaterializedExec
 test("seeded spec, plan, and brief stages resolve their real prompts and release contracts", async () => {
   const workflow = await loadCompiled();
   const spec = workflow.stages.spec_analyzer!;
-  const specUnits = materializeStage(spec, { inputs: {}, context, item: null });
+  // Every planning stage declares `repository_refs` now: it is what guarantees
+  // the base branch exists in the directory the session will run in, and it is
+  // where the working directory itself is resolved from.
+  const specUnits = materializeStage(spec, { inputs: { repository_refs: repositoryRefs }, context, item: null });
   expect(specUnits.ok).toBe(true);
   if (!specUnits.ok) return;
-  const specExecution = await resolveStage(spec, specUnits.value[0]!, {});
-  expect(specExecution).toEqual({ ok: true, value: expect.objectContaining({ session_name: "spec-analyzer-stage-1", rendered_prompt: expect.stringContaining("Build the requested change") }) });
+  const specExecution = await resolveStage(spec, specUnits.value[0]!, { repository_refs: repositoryRefs });
+  expect(specExecution).toEqual({ ok: true, value: expect.objectContaining({ session_name: "spec-analyzer-stage-1",
+    workdir: "/repo/oakridge", rendered_prompt: expect.stringContaining("Build the requested change") }) });
   expect(spec.outputs[0]?.release).toEqual(expect.objectContaining({ kind: "gate", requires_zero_open_review_items: true }));
 
   const specArtifact = envelope("spec-1", "dev.spec_analysis", "spec_analysis", "0", { requirements: ["one"] });
   const plan = workflow.stages.plan_writer!;
-  const planUnits = materializeStage(plan, { inputs: { spec_analysis: specArtifact }, context, item: null });
+  const planInputs = { spec_analysis: specArtifact, repository_refs: repositoryRefs };
+  const planUnits = materializeStage(plan, { inputs: planInputs, context, item: null });
   if (!planUnits.ok) throw new Error(planUnits.error.detail);
-  const planExecution = await resolveStage(plan, planUnits.value[0]!, { spec_analysis: specArtifact });
+  const planExecution = await resolveStage(plan, planUnits.value[0]!, planInputs);
   expect(planExecution).toEqual({ ok: true, value: expect.objectContaining({ rendered_prompt: expect.stringContaining('"requirements":["one"]') }) });
   expect(plan.outputs[0]?.release).toEqual(expect.objectContaining({ kind: "gate", requires_zero_open_review_items: false }));
 
   const planArtifact = envelope("plan-1", "dev.plan", "plan", "0", { cohorts: [{ id: "foundation" }, { id: "web" }] });
   const brief = workflow.stages.brief_writer!;
-  const briefUnits = materializeStage(brief, { inputs: { plan: planArtifact }, context, item: null });
+  const briefUnits = materializeStage(brief, { inputs: { plan: planArtifact, repository_refs: repositoryRefs }, context, item: null });
   expect(briefUnits).toEqual({ ok: true, value: [expect.objectContaining({ unit_id: "0", parameters: [{ id: "foundation" }, { id: "web" }] })] });
   expect(brief.outputs[0]?.release.kind).toBe("gate");
 });
@@ -117,7 +123,7 @@ test("seeded build resolves its worktree from the provisioned refs rather than t
   const build = workflow.stages.build!;
   const brief = envelope("brief-1", "dev.build_brief", "brief", "foundation", { cohort_id: "foundation", repository_key: "oakridge", title: "Foundation", goal: "base", files_in_scope: [], next_action: "build", decisions_made: [], acceptance_criteria: ["base works"], depends_on: [] });
   const provisioned = [envelope("refs-1", "dev.repository_refs", "repository_refs", "oakridge", {
-    repository_key: "oakridge", repository_path: "/provisioned/oakridge", base_branch: "trunk", epic_branch: "epic/provisioned", epic_head_sha: "0f1e2d3",
+    repository_key: "oakridge", repository_path: "/provisioned/oakridge", integration_branch: "trunk", base_branch: "epic/provisioned", base_head_sha: "0f1e2d3",
   })];
   const units = materializeStage(build, { inputs: { brief: [brief] }, context, item: null });
   if (!units.ok) throw new Error(units.error.detail);
@@ -157,11 +163,13 @@ test("seeded assessor pairs each build result with only its matching brief", asy
     envelope("result-1", "dev.build_result", "build_result", "foundation", { repository_key: "oakridge", summary: "base done" }),
     envelope("result-2", "dev.build_result", "build_result", "web", { repository_key: "oakridge", summary: "web done" }),
   ];
-  const inputs = { brief: briefs, build_result: results };
+  const inputs = { brief: briefs, build_result: results, repository_refs: repositoryRefs };
   const units = materializeStage(assessor, { inputs, context, item: null });
   if (!units.ok) throw new Error(units.error.detail);
   const web = units.value.find((unit) => unit.unit_id === "web")!;
-  expect(selectInputsForUnit(assessor, inputs, web)).toEqual({ brief: [briefs[1]], build_result: [results[1]] });
+  // Pairing is per unit for the artifacts a unit owns; the refs are the run's,
+  // so every unit sees all of them.
+  expect(selectInputsForUnit(assessor, inputs, web)).toEqual({ brief: [briefs[1]], build_result: [results[1]], repository_refs: repositoryRefs });
   const execution = await resolveStage(assessor, web, inputs);
   expect(execution).toEqual({ ok: true, value: expect.objectContaining({ rendered_prompt: expect.stringContaining("ui works") }) });
   if (execution.ok) expect(execution.value.rendered_prompt).not.toContain("base works");

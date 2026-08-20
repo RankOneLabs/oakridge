@@ -13,14 +13,16 @@ export interface CreateEpicProfileRequest {
   readonly title: string;
   readonly slug: string;
   readonly final_merge_policy: EpicWorkflowProfile["final_merge_policy"];
+  /** The one branch this epic builds on; `epic/<slug>` when unset. */
+  readonly base_branch: string | null;
   readonly repositories: readonly CreateEpicRepositoryRequest[];
 }
 
 export interface CreateEpicRepositoryRequest {
   readonly repository_key: string;
   readonly repository_path: string;
-  readonly base_branch: string;
-  readonly epic_branch: string | null;
+  /** Where this repository's base branch is cut from, and where its work merges back. */
+  readonly integration_branch: string;
   readonly forge_repository: EpicWorkflowProfile["repositories"][number]["forge_repository"];
 }
 

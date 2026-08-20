@@ -3,7 +3,7 @@ import type { JsonValue } from "../domain/primitives";
 import type { RunContext } from "../domain/run-context";
 import type { EpicWorkflowProfile, EpicWorkflowProfileId } from "../domain/epic";
 import type { CreateEpicProfileRequest } from "../domain/runs";
-import { selectEpicBranch } from "../domain/repository-refs";
+import { selectBaseBranch } from "../domain/repository-refs";
 
 export interface PrepareRunContextInput {
   readonly caller_context: RunContext;
@@ -25,11 +25,14 @@ export const createEpicProfile = (input: CreateEpicProfileInput): EpicWorkflowPr
   slug: input.config.slug,
   lifecycle_state: "active",
   final_merge_policy: input.config.final_merge_policy,
+  // One branch for the whole epic. It used to be per repository, so a two-repo
+  // epic could carry two different names for the one thing every stage calls
+  // "the base branch".
+  base_branch: selectBaseBranch(input.config.base_branch, input.config.slug),
   repositories: input.config.repositories.map((repository) => ({
     repository_key: repository.repository_key,
     repository_path: repository.repository_path,
-    base_branch: repository.base_branch,
-    epic_branch: selectEpicBranch(repository.epic_branch, input.config.slug),
+    integration_branch: repository.integration_branch,
     forge_repository: repository.forge_repository,
     final_pull_request: null,
     final_merge_state: "pending",
@@ -62,11 +65,14 @@ export const prepareRunContext = (input: PrepareRunContextInput): RunContext => 
 
   return {
     ...callerWins,
+    // The run's one base branch, beside the repositories rather than repeated
+    // inside each of them: the provisioning stage guarantees this branch in
+    // every repository, and every build unit targets it.
+    base_branch: selectBaseBranch(epicProfile.base_branch, epicProfile.slug),
     repositories: epicProfile.repositories.map((repository) => ({
       key: repository.repository_key,
       path: repository.repository_path,
-      base_branch: repository.base_branch,
-      epic_branch: selectEpicBranch(repository.epic_branch, epicProfile.slug),
+      integration_branch: repository.integration_branch,
     })),
   };
 };

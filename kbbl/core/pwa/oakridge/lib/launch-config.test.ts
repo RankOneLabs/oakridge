@@ -10,7 +10,7 @@ describe("buildEpicProfile", () => {
       path: "/code/oakridge",
       forge_owner: "acme",
       forge_name: "oakridge",
-      base_branch: "main",
+      integration_branch: "main",
     }])).toEqual({
       title: "Full parity!",
       slug: "full-parity",
@@ -18,7 +18,7 @@ describe("buildEpicProfile", () => {
       repositories: [{
         repository_key: "oakridge",
         repository_path: "/code/oakridge",
-        base_branch: "main",
+        integration_branch: "main",
         forge_repository: { provider: "github", owner: "acme", name: "oakridge" },
       }],
     });
@@ -34,7 +34,7 @@ describe("buildEpicProfile", () => {
       path: "/code/oakridge",
       forge_owner: "acme",
       forge_name: "oakridge",
-      base_branch: "main",
+      integration_branch: "main",
     }]);
     expect(profile?.final_merge_policy).toBe("external_confirmation");
   });
@@ -44,7 +44,8 @@ describe("buildRunExecutionContext", () => {
   it("preserves default runtime effort as explicit null context bindings", () => {
     expect(buildRunExecutionContext({
       brief_notes: "Build it",
-      repositories: [{ key: "oakridge" as RepositoryKey, path: "/code/oakridge" }],
+      base_branch: "epic/build-it",
+      repositories: [{ key: "oakridge" as RepositoryKey, path: "/code/oakridge", integration_branch: "main" }],
       oakridge_url: "http://oakridge",
       planner: { runtime: "claude-code", model: "opus" },
       worker: { runtime: "claude-code", model: "sonnet" },
@@ -54,6 +55,7 @@ describe("buildRunExecutionContext", () => {
   it("rejects an empty repository list instead of creating an empty worktree path", () => {
     expect(buildRunExecutionContext({
       brief_notes: "Build it",
+      base_branch: "epic/build-it",
       repositories: [],
       oakridge_url: "http://oakridge",
       planner: { runtime: "claude-code", model: "opus" },

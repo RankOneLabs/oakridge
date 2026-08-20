@@ -114,11 +114,13 @@ export const observeFinalPullRequest = (
     return ok({ outcome: "ignored_stale", profile: input.profile, reconciliation: input.previous });
   }
 
+  // The final pull request carries the epic's work home: its head is the run's
+  // base branch, and its base is where that branch was cut from.
   const reference = repository.final_pull_request ?? {
     number: urlIdentity.number,
     url: input.observation.url,
-    head_branch: repository.epic_branch,
-    base_branch: repository.base_branch,
+    head_branch: input.profile.base_branch,
+    base_branch: repository.integration_branch,
   };
   let finding: PullRequestMismatch | null = null;
   if (!repositoriesMatch(urlIdentity.owner, urlIdentity.name, repository.forge_repository.owner, repository.forge_repository.name)) {
@@ -127,12 +129,12 @@ export const observeFinalPullRequest = (
     finding = pullRequestMismatch("repository_mismatch", "observed pull request belongs to another repository");
   } else if (!pullRequestReferencesMatch(reference, input.observation)) {
     finding = pullRequestMismatch("pull_request_mismatch", "observed pull request does not match the build's durable PR identity");
-  } else if (input.observation.head_branch !== repository.epic_branch) {
-    finding = pullRequestMismatch("head_branch_mismatch", "observed pull request head branch does not match the cohort branch");
-  } else if (input.observation.base_branch !== repository.base_branch) {
-    finding = pullRequestMismatch("base_branch_mismatch", "observed pull request base branch does not match the repository base branch");
+  } else if (input.observation.head_branch !== input.profile.base_branch) {
+    finding = pullRequestMismatch("head_branch_mismatch", "observed pull request head branch does not match the epic's base branch");
+  } else if (input.observation.base_branch !== repository.integration_branch) {
+    finding = pullRequestMismatch("base_branch_mismatch", "observed pull request base branch does not match the repository integration branch");
   } else if (input.observation.state === "closed_unmerged") {
-    finding = pullRequestMismatch("closed_without_merge", "pull request closed without merging into the epic branch");
+    finding = pullRequestMismatch("closed_without_merge", "pull request closed without merging into the integration branch");
   } else if (input.observation.state === "merged" && input.observation.merged_at === null) {
     finding = pullRequestMismatch("pull_request_mismatch", "merged observation is missing merged_at evidence");
   }

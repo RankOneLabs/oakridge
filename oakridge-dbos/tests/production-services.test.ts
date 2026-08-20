@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
 import { createProductionTopologyServices } from "../src/runtime/production-services";
-import { loadDevFlowV12 } from "../src/seed/dev-flow-v12";
+import { loadDevFlowV13 } from "../src/seed/dev-flow-v13";
 import type { StageInstanceRepository, ExecutionProjectionRepository, WorkflowAttemptRepository, WorkflowDefinitionRepository, WorkflowRunRepository } from "../src/storage/repositories";
 
 test("production services load and compile the immutable requested definition version", async () => {
-  const loaded = await loadDevFlowV12();
+  const loaded = await loadDevFlowV13();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const definition = loaded.value;
   const definitions = { find_by_id: async () => definition } as unknown as WorkflowDefinitionRepository;
@@ -12,7 +12,7 @@ test("production services load and compile the immutable requested definition ve
     stages: {} as StageInstanceRepository, executions: {} as ExecutionProjectionRepository,
     rerun_targets: { async replace_execution_workflow() {}, async find_unit_target() { return null; } },
     resume_artifacts: { async list_latest_for_stages() { return []; } }, load_prompt_template: async () => "template" });
-  const compiled = await services.load_compiled_definition(definition.id, 12);
+  const compiled = await services.load_compiled_definition(definition.id, 13);
   expect(compiled.stages.build?.materialization).toEqual(expect.objectContaining({ kind: "fan_out", max_parallel: 4 }));
   expect(services.load_compiled_definition(definition.id, 11)).rejects.toThrow("expected version 11");
 });

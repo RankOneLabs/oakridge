@@ -65,9 +65,9 @@ export class PostgresEpicWorkflowProfileRepository implements EpicWorkflowProfil
   async insert(profile: EpicWorkflowProfile): Promise<void> {
     await this.sql.query(
       `INSERT INTO oakridge.epic_workflow_profile
-       (id, workflow_run_id, title, slug, lifecycle_state, final_merge_policy, repositories, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::timestamptz,$9::timestamptz)`,
-      [profile.id, profile.workflow_run_id, profile.title, profile.slug, profile.lifecycle_state, profile.final_merge_policy, JSON.stringify(profile.repositories), profile.created_at, profile.updated_at],
+       (id, workflow_run_id, title, slug, lifecycle_state, final_merge_policy, base_branch, repositories, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::timestamptz,$10::timestamptz)`,
+      [profile.id, profile.workflow_run_id, profile.title, profile.slug, profile.lifecycle_state, profile.final_merge_policy, profile.base_branch, JSON.stringify(profile.repositories), profile.created_at, profile.updated_at],
     );
   }
   async find_by_id(id: EpicWorkflowProfileId): Promise<EpicWorkflowProfile | null> {
@@ -76,7 +76,7 @@ export class PostgresEpicWorkflowProfileRepository implements EpicWorkflowProfil
   }
   async find_by_run_id(run_id: WorkflowRunId): Promise<EpicWorkflowProfile | null> {
     const rows = await this.sql.query<EpicProfileRow>(
-      `SELECT id::text, workflow_run_id::text, title, slug, lifecycle_state, final_merge_policy, repositories,
+      `SELECT id::text, workflow_run_id::text, title, slug, lifecycle_state, final_merge_policy, base_branch, repositories,
               created_at::text, updated_at::text
        FROM oakridge.epic_workflow_profile WHERE workflow_run_id = $1`, [run_id]);
     return rows[0] ? decodeEpicProfile(rows[0]) : null;
@@ -260,7 +260,7 @@ export class PostgresFinalPullRequestRepository implements FinalPullRequestRepos
   private async lockProfile(transaction: SqlExecutor, run_id: WorkflowRunId): Promise<EpicWorkflowProfile | null> {
     const rows = await transaction.query<EpicProfileRow>(
       `SELECT id::text, workflow_run_id::text, title, slug, lifecycle_state, final_merge_policy,
-              repositories, created_at::text, updated_at::text
+              base_branch, repositories, created_at::text, updated_at::text
        FROM oakridge.epic_workflow_profile WHERE workflow_run_id = $1 FOR UPDATE`, [run_id]);
     return rows[0] ? decodeEpicProfile(rows[0]) : null;
   }

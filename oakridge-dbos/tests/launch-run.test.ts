@@ -105,7 +105,7 @@ const epicBody = {
   ...body,
   epic_profile: {
     title: "Tiers page", slug: "tiers-page", final_merge_policy: "guarded" as const,
-    repositories: [{ repository_key: "pipefitter", repository_path: "/repos/pipefitter", base_branch: "main", epic_branch: "epic/tiers-page" }],
+    repositories: [{ repository_key: "pipefitter", repository_path: "/repos/pipefitter", integration_branch: "main" }],
   },
 };
 
@@ -124,7 +124,10 @@ test("a launch declaring repositories proceeds without checking their branches",
   const response = await request(subject.app, epicBody);
   expect(response.status).toBe(201);
   expect(subject.stored()?.run.context).toEqual(expect.objectContaining({
-    repositories: [{ key: "pipefitter", path: "/repos/pipefitter", base_branch: "main", epic_branch: "epic/tiers-page" }],
+    // One base branch for the epic, defaulted from its slug, beside the
+    // repositories rather than repeated inside each of them.
+    base_branch: "epic/tiers-page",
+    repositories: [{ key: "pipefitter", path: "/repos/pipefitter", integration_branch: "main" }],
   }));
   expect(subject.dispatches()).toBe(1);
 });

@@ -33,8 +33,8 @@ describe("Rust v2 workflow definition compatibility", () => {
     expect(result.value.archived).toBe(false);
   });
 
-  test("loads unmodified dev_flow_v12.json, provisioning stage included", async () => {
-    const source = await Bun.file(new URL("../../oakridge-core/examples/dev_flow_v12.json", import.meta.url)).json();
+  test("loads unmodified dev_flow_v13.json, provisioning stage included", async () => {
+    const source = await Bun.file(new URL("../../oakridge-core/examples/dev_flow_v13.json", import.meta.url)).json();
     const result = parseWorkflowDefinition(source);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -48,7 +48,7 @@ describe("Rust v2 workflow definition compatibility", () => {
       id: "ef2b47a4-d1bd-44ee-840a-e4f7b27570db", name: "bad-provisioning", version: 1, created_at: "2026-08-14T00:00:00Z",
       graph: {
         stages: {
-          provision: { stage_type: "provision_repository_refs", config: { repositories: { from: "context", path: "/repositories" } },
+          provision: { stage_type: "provision_repository_refs", config: { repositories: { from: "context", path: "/repositories" }, base_branch: { from: "context", path: "/base_branch" } },
             inputs: [], outputs: [{ name: "repository_refs", artifact_type: "dev.plan" }] },
         },
         edges: [],
@@ -62,7 +62,7 @@ describe("Rust v2 workflow definition compatibility", () => {
       id: "ef2b47a4-d1bd-44ee-840a-e4f7b27570db", name: "bad-provisioning", version: 1, created_at: "2026-08-14T00:00:00Z",
       graph: {
         stages: {
-          provision: { stage_type: "provision_repository_refs", config: { repositories: { from: "context", path: "/repositories" } },
+          provision: { stage_type: "provision_repository_refs", config: { repositories: { from: "context", path: "/repositories" }, base_branch: { from: "context", path: "/base_branch" } },
             inputs: [], outputs: [{ name: "repository_refs", artifact_type: "dev.repository_refs" }, { name: "extra", artifact_type: "dev.repository_refs" }] },
         },
         edges: [],

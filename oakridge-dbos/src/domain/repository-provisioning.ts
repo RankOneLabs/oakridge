@@ -35,8 +35,8 @@ export interface GitCommandRunner {
 
 export type RepositoryProvisioningFailure =
   | { readonly kind: "not_a_git_repository"; readonly repository_key: string; readonly repository_path: string }
-  | { readonly kind: "missing_base_branch"; readonly repository_key: string; readonly repository_path: string; readonly base_branch: string; readonly detail: string }
-  | { readonly kind: "epic_branch_unavailable"; readonly repository_key: string; readonly repository_path: string; readonly epic_branch: string; readonly detail: string }
+  | { readonly kind: "missing_integration_branch"; readonly repository_key: string; readonly repository_path: string; readonly integration_branch: string; readonly detail: string }
+  | { readonly kind: "base_branch_unavailable"; readonly repository_key: string; readonly repository_path: string; readonly base_branch: string; readonly detail: string }
   | { readonly kind: "git_command_failed"; readonly repository_key: string; readonly repository_path: string; readonly command: string; readonly detail: string };
 
 /** One actionable sentence per failure, naming the thing that is wrong rather than the symptom. */
@@ -44,11 +44,11 @@ export const describeRepositoryProvisioningFailure = (failure: RepositoryProvisi
   if (failure.kind === "not_a_git_repository") {
     return `repository '${failure.repository_key}' is not a git repository at ${failure.repository_path}`;
   }
-  if (failure.kind === "missing_base_branch") {
-    return `repository '${failure.repository_key}' has no base branch '${failure.base_branch}' on origin at ${failure.repository_path}: ${failure.detail}`;
+  if (failure.kind === "missing_integration_branch") {
+    return `repository '${failure.repository_key}' has no integration branch '${failure.integration_branch}' on origin at ${failure.repository_path}: ${failure.detail}`;
   }
-  if (failure.kind === "epic_branch_unavailable") {
-    return `repository '${failure.repository_key}' could not publish epic branch '${failure.epic_branch}' to origin at ${failure.repository_path}: ${failure.detail}`;
+  if (failure.kind === "base_branch_unavailable") {
+    return `repository '${failure.repository_key}' could not publish base branch '${failure.base_branch}' to origin at ${failure.repository_path}: ${failure.detail}`;
   }
   return `repository '${failure.repository_key}' failed '${failure.command}' at ${failure.repository_path}: ${failure.detail}`;
 };
@@ -59,11 +59,23 @@ const describeCommand = (args: readonly string[]): string => `git ${args.join(" 
 const outcomeDetail = (outcome: GitCommandOutcome): string =>
   outcome.stderr.trim() || outcome.stdout.trim() || `exited with code ${outcome.exit_code}`;
 
+/**
+ * What one unit provisions: a repository, and the run's base branch to
+ * guarantee inside it. The branch is not part of the repository entry because
+ * every unit in the stage is given the same one — a per-repository copy is a
+ * per-repository chance to disagree.
+ */
+export interface ProvisionRepositoryRefsInput {
+  readonly repository: RunContextRepository;
+  readonly base_branch: string;
+}
+
 export const provisionRepositoryRefs = async (
-  repository: RunContextRepository,
+  input: ProvisionRepositoryRefsInput,
   git: GitCommandRunner,
 ): Promise<Result<RepositoryRefs, RepositoryProvisioningFailure>> => {
-  const { key: repository_key, path: repository_path, base_branch, epic_branch } = repository;
+  const { key: repository_key, path: repository_path, integration_branch } = input.repository;
+  const base_branch = input.base_branch;
   const commandFailure = (args: readonly string[], outcome: GitCommandOutcome): Result<never, RepositoryProvisioningFailure> =>
     err({ kind: "git_command_failed", repository_key, repository_path, command: describeCommand(args), detail: outcomeDetail(outcome) });
 
@@ -74,39 +86,39 @@ export const provisionRepositoryRefs = async (
     return err({ kind: "not_a_git_repository", repository_key, repository_path });
   }
 
-  const epicRef = `refs/heads/${epic_branch}`;
-  const lsRemoteArgs = ["ls-remote", "origin", epicRef] as const;
+  const baseRef = `refs/heads/${base_branch}`;
+  const lsRemoteArgs = ["ls-remote", "origin", baseRef] as const;
   const published = await git.run(repository_path, lsRemoteArgs);
   if (published.exit_code !== 0) return commandFailure(lsRemoteArgs, published);
 
   if (published.stdout.trim() === "") {
-    // Seeded from the remote head under an explicit refspec. Anything that
-    // reads a local branch here bases the whole epic on whatever happened to be
-    // checked out, which is how an epic silently starts behind main.
-    const fetchBaseArgs = ["fetch", "origin", `+refs/heads/${base_branch}:refs/remotes/origin/${base_branch}`] as const;
-    const fetchedBase = await git.run(repository_path, fetchBaseArgs);
-    if (fetchedBase.exit_code !== 0) {
-      return err({ kind: "missing_base_branch", repository_key, repository_path, base_branch, detail: outcomeDetail(fetchedBase) });
+    // Cut from the remote integration branch under an explicit refspec. Anything
+    // that reads a local branch here bases the whole run on whatever happened to
+    // be checked out, which is how a run silently starts behind main.
+    const fetchIntegrationArgs = ["fetch", "origin", `+refs/heads/${integration_branch}:refs/remotes/origin/${integration_branch}`] as const;
+    const fetchedIntegration = await git.run(repository_path, fetchIntegrationArgs);
+    if (fetchedIntegration.exit_code !== 0) {
+      return err({ kind: "missing_integration_branch", repository_key, repository_path, integration_branch, detail: outcomeDetail(fetchedIntegration) });
     }
-    const pushArgs = ["push", "origin", `origin/${base_branch}:${epicRef}`] as const;
+    const pushArgs = ["push", "origin", `origin/${integration_branch}:${baseRef}`] as const;
     const pushed = await git.run(repository_path, pushArgs);
     if (pushed.exit_code !== 0) {
       // A concurrent seeder is benign: re-check before reporting, because the
       // branch it published is exactly the one this unit was going to create.
       const recheck = await git.run(repository_path, lsRemoteArgs);
       if (recheck.exit_code !== 0 || recheck.stdout.trim() === "") {
-        return err({ kind: "epic_branch_unavailable", repository_key, repository_path, epic_branch, detail: outcomeDetail(pushed) });
+        return err({ kind: "base_branch_unavailable", repository_key, repository_path, base_branch, detail: outcomeDetail(pushed) });
       }
     }
   }
 
-  const fetchEpicArgs = ["fetch", "origin", epic_branch] as const;
-  const fetchedEpic = await git.run(repository_path, fetchEpicArgs);
-  if (fetchedEpic.exit_code !== 0) return commandFailure(fetchEpicArgs, fetchedEpic);
+  const fetchBaseArgs = ["fetch", "origin", base_branch] as const;
+  const fetchedBase = await git.run(repository_path, fetchBaseArgs);
+  if (fetchedBase.exit_code !== 0) return commandFailure(fetchBaseArgs, fetchedBase);
 
-  const revParseArgs = ["rev-parse", "--verify", `origin/${epic_branch}^{commit}`] as const;
+  const revParseArgs = ["rev-parse", "--verify", `origin/${base_branch}^{commit}`] as const;
   const head = await git.run(repository_path, revParseArgs);
   if (head.exit_code !== 0 || head.stdout.trim() === "") return commandFailure(revParseArgs, head);
 
-  return ok({ repository_key, repository_path, base_branch, epic_branch, epic_head_sha: head.stdout.trim() });
+  return ok({ repository_key, repository_path, integration_branch, base_branch, base_head_sha: head.stdout.trim() });
 };

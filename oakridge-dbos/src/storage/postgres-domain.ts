@@ -269,7 +269,7 @@ export class PostgresWorkflowRunRepository implements WorkflowRunRepository {
   private async findProfile(transaction: SqlExecutor, runId: WorkflowRunId): Promise<EpicWorkflowProfile | null> {
     const rows = await transaction.query<EpicWorkflowProfile>(
       `SELECT id::text, workflow_run_id::text, title, slug, lifecycle_state, final_merge_policy,
-              repositories, created_at::text, updated_at::text
+              base_branch, repositories, created_at::text, updated_at::text
        FROM oakridge.epic_workflow_profile WHERE workflow_run_id = $1`, [runId]);
     return rows[0] ?? null;
   }
@@ -286,10 +286,10 @@ export class PostgresWorkflowRunRepository implements WorkflowRunRepository {
     // between two identical requests would otherwise read as a conflict.
     const rows = await transaction.query<{ readonly matches: boolean }>(
       `SELECT id = $2::uuid AND title = $3 AND slug = $4 AND lifecycle_state = $5
-              AND final_merge_policy = $6 AND repositories = $7::jsonb AS matches
+              AND final_merge_policy = $6 AND base_branch = $7 AND repositories = $8::jsonb AS matches
        FROM oakridge.epic_workflow_profile WHERE workflow_run_id = $1`,
       [input.run.id, profile.id, profile.title, profile.slug, profile.lifecycle_state, profile.final_merge_policy,
-        JSON.stringify(profile.repositories)]);
+        profile.base_branch, JSON.stringify(profile.repositories)]);
     return rows[0]?.matches === true;
   }
 
@@ -317,10 +317,10 @@ export class PostgresWorkflowRunRepository implements WorkflowRunRepository {
   private async insertProfile(transaction: SqlExecutor, profile: EpicWorkflowProfile): Promise<void> {
     await transaction.query(
       `INSERT INTO oakridge.epic_workflow_profile
-         (id, workflow_run_id, title, slug, lifecycle_state, final_merge_policy, repositories, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::timestamptz,$9::timestamptz)`,
+         (id, workflow_run_id, title, slug, lifecycle_state, final_merge_policy, base_branch, repositories, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::timestamptz,$10::timestamptz)`,
       [profile.id, profile.workflow_run_id, profile.title, profile.slug, profile.lifecycle_state,
-        profile.final_merge_policy, JSON.stringify(profile.repositories), profile.created_at, profile.updated_at]);
+        profile.final_merge_policy, profile.base_branch, JSON.stringify(profile.repositories), profile.created_at, profile.updated_at]);
   }
 
   async insert_launch(launch: WorkflowRunLaunch): Promise<void> {

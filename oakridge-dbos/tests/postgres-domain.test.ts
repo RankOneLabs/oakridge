@@ -74,13 +74,14 @@ test("workflow run creation atomically includes an optional Epic profile", async
     id: launch.run.id as unknown as import("../src/domain/epic").EpicWorkflowProfileId,
     workflow_run_id: launch.run.id,
     title: "DBOS replacement", slug: "dbos-replacement", lifecycle_state: "active" as const,
-    final_merge_policy: "guarded" as const, repositories: [], created_at: launch.run.created_at, updated_at: launch.run.created_at,
+    final_merge_policy: "guarded" as const, base_branch: "epic/dbos-replacement", repositories: [], created_at: launch.run.created_at, updated_at: launch.run.created_at,
   };
   const sql = new TransactionStubSql([[], [{ archived: false, version: 2 }], [], [{ id: launch.run.project_id }], [], [], [], []]);
   const result = await new PostgresWorkflowRunRepository(sql).create_with_initial_attempt({ ...launch, epic_profile: epic });
   expect(result.ok && result.value.epic_profile).toEqual(epic);
   expect(sql.calls[5]?.statement).toContain("INSERT INTO oakridge.epic_workflow_profile");
-  expect(sql.calls[5]?.parameters[6]).toBe(JSON.stringify(epic.repositories));
+  expect(sql.calls[5]?.parameters[6]).toBe(epic.base_branch);
+  expect(sql.calls[5]?.parameters[7]).toBe(JSON.stringify(epic.repositories));
   expect(sql.calls[6]?.statement).toContain("INSERT INTO oakridge.workflow_attempt");
 });
 
@@ -122,7 +123,7 @@ test("an epic profile replays on its request fields, not on the timestamps it in
   const profile = {
     id: launch.run.id as unknown as import("../src/domain/epic").EpicWorkflowProfileId,
     workflow_run_id: launch.run.id, title: "DBOS replacement", slug: "dbos-replacement",
-    lifecycle_state: "active" as const, final_merge_policy: "guarded" as const, repositories: [],
+    lifecycle_state: "active" as const, final_merge_policy: "guarded" as const, base_branch: "epic/dbos-replacement", repositories: [],
     created_at: "2026-08-15T12:00:09Z", updated_at: "2026-08-15T12:00:09Z",
   };
   await new PostgresWorkflowRunRepository(sql).create_with_initial_attempt({ ...launch, epic_profile: profile });

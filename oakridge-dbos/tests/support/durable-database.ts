@@ -77,6 +77,49 @@ const ensureTestDatabase = async (adminUrl: string): Promise<string | null> => {
   }
 };
 
+/** A throwaway database, and the way to get rid of it. */
+export interface ScratchDatabase {
+  readonly url: string;
+  drop(): Promise<void>;
+}
+
+/**
+ * A database of its own, for a test that needs to control what schema it starts
+ * from.
+ *
+ * The shared `oakridge_e2e` database records which migrations it has applied,
+ * so a test that wants to run one *against data written before it* cannot use
+ * it — the migration is already applied there. This gives such a test an empty
+ * database it owns and destroys.
+ */
+export const createScratchDatabase = async (name: string): Promise<ScratchDatabase | null> => {
+  const adminUrl = process.env.OAKRIDGE_TEST_DATABASE_URL ?? DEV_STACK_ADMIN_URL;
+  if (!(await isReachable(adminUrl))) return null;
+  const url = new URL(adminUrl);
+  url.pathname = `/${name}`;
+  const admin = PgPostgresExecutor.connect(adminUrl);
+  try {
+    await admin.query(`DROP DATABASE IF EXISTS ${name}`, []);
+    await admin.query(`CREATE DATABASE ${name}`, []);
+  } catch (error) {
+    console.warn(`scratch database '${name}' unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    await admin.close();
+    return null;
+  }
+  await admin.close();
+  return {
+    url: url.toString(),
+    async drop() {
+      const cleanup = PgPostgresExecutor.connect(adminUrl);
+      try {
+        await cleanup.query(`DROP DATABASE IF EXISTS ${name}`, []);
+      } finally {
+        await cleanup.close();
+      }
+    },
+  };
+};
+
 /**
  * Whether a server is actually accepting connections, rather than merely
  * configured. An unreachable URL from the environment should skip like an

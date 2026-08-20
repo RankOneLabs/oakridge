@@ -18,10 +18,15 @@ const forgeRepository = z.object({ provider: z.literal("github"), owner: z.strin
 const epicProfile = z.object({
   title: z.string().min(1), slug: z.string().min(1),
   final_merge_policy: z.enum(["guarded", "external_confirmation"]),
+  // One base branch for the epic, defaulting to `epic/<slug>`. It was declared
+  // per repository, so a two-repo epic could name two different branches for
+  // the one thing every stage calls "the base branch".
+  base_branch: z.string().min(1).nullable().optional().transform((value) => value ?? null),
   repositories: z.array(z.object({ repository_key: z.string().min(1), repository_path: z.string().min(1),
-    base_branch: z.string().min(1), epic_branch: z.string().nullable().optional().transform((value) => value ?? null),
+    integration_branch: z.string().min(1),
     forge_repository: forgeRepository.nullable().optional().transform((value) => value ?? null) })),
 });
+
 /**
  * The run context, as far as this boundary can know it.
  *

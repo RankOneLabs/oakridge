@@ -384,11 +384,11 @@ describe("RunDetailView", () => {
         slug: "v2-parity",
         lifecycle_state: "final_integration",
         final_merge_policy: "external_confirmation",
+        base_branch: "epic/v2-parity",
         repositories: [{
           repository_key: repositoryKey,
           repository_path: "/code/oakridge",
-          base_branch: "main",
-          epic_branch: "epic/v2-parity",
+          integration_branch: "main",
           forge_repository: { provider: "github", owner: "RankOneLabs", name: "oakridge" },
           final_pull_request: {
             number: 402,
@@ -400,8 +400,7 @@ describe("RunDetailView", () => {
         }, {
           repository_key: "docs" as RepositoryKey,
           repository_path: "/code/docs",
-          base_branch: "main",
-          epic_branch: "epic/v2-parity",
+          integration_branch: "main",
           forge_repository: { provider: "github", owner: "RankOneLabs", name: "docs" },
           final_pull_request: {
             number: 17,

@@ -59,7 +59,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
   // receives is the same string — the source only decides which control the
   // operator gets, and is dropped at submit.
   const [briefNotesSource, setBriefNotesSource] = useState<BriefNotesSource>({ kind: "typed" });
-  const [repositories, setRepositories] = useState<RepositoryInputDraft[]>([{ key: "repo", path: "", forge_owner: "", forge_name: "", base_branch: "main" }]);
+  const [repositories, setRepositories] = useState<RepositoryInputDraft[]>([{ key: "repo", path: "", forge_owner: "", forge_name: "", integration_branch: "main" }]);
   const [projectId, setProjectId] = useState<string>("");
   const [workflowDefId, setWorkflowDefId] = useState<string>("");
   const [plannerSelection, setPlannerSelection] = useState<RuntimeModelSelection>(() =>
@@ -146,7 +146,8 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
     if (!coreUrl) { setError("oakridge core URL is not configured."); return; }
     const contextResult = buildRunExecutionContext({
       brief_notes: briefNotes.trim(),
-      repositories: normalizedRepositories.map(({ key, path }) => ({ key, path })),
+      base_branch: epicProfile.base_branch ?? `epic/${epicProfile.slug}`,
+      repositories: normalizedRepositories.map(({ key, path, integration_branch }) => ({ key, path, integration_branch })),
       oakridge_url: coreUrl,
       planner: plannerSelection,
       worker: workerSelection,

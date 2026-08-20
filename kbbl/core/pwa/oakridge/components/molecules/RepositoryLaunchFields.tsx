@@ -21,7 +21,7 @@ export function RepositoryLaunchFields({ repositories, setRepositories, disabled
       <legend className="or-repository-launch__legend">
         <span className="or-repository-launch__heading">
           <span>Repositories</span>
-        <button type="button" className={secondaryButtonClass} disabled={disabled} onClick={() => setRepositories((current) => [...current, { key: "", path: "", forge_owner: "", forge_name: "", base_branch: "main" }])}>+ Repository</button>
+        <button type="button" className={secondaryButtonClass} disabled={disabled} onClick={() => setRepositories((current) => [...current, { key: "", path: "", forge_owner: "", forge_name: "", integration_branch: "main" }])}>+ Repository</button>
         </span>
       </legend>
       {repositories.map((repository, index) => (
@@ -29,7 +29,7 @@ export function RepositoryLaunchFields({ repositories, setRepositories, disabled
           <input type="text" className={inputClass} value={repository.key} onChange={(event) => update(index, { key: event.target.value })} disabled={disabled} placeholder="Key (api)" aria-label={`Repository ${index + 1} key`} required />
           <input type="text" className={inputClass} value={repository.forge_owner} onChange={(event) => update(index, { forge_owner: event.target.value })} disabled={disabled} placeholder="GitHub owner" aria-label={`Repository ${index + 1} GitHub owner`} required />
           <input type="text" className={inputClass} value={repository.forge_name} onChange={(event) => update(index, { forge_name: event.target.value })} disabled={disabled} placeholder="GitHub repository" aria-label={`Repository ${index + 1} GitHub name`} required />
-          <input type="text" className={inputClass} value={repository.base_branch} onChange={(event) => update(index, { base_branch: event.target.value })} disabled={disabled} placeholder="Base branch (main)" aria-label={`Repository ${index + 1} base branch`} required />
+          <input type="text" className={inputClass} value={repository.integration_branch} onChange={(event) => update(index, { integration_branch: event.target.value })} disabled={disabled} placeholder="Integration branch (main)" aria-label={`Repository ${index + 1} integration branch`} required />
           <input type="text" className={inputClass} value={repository.path} onChange={(event) => update(index, { path: event.target.value })} disabled={disabled} placeholder="/absolute/path/to/repo" aria-label={`Repository ${index + 1} path`} required />
           <button type="button" className={secondaryButtonClass} disabled={disabled || repositories.length === 1} onClick={() => setRepositories((current) => current.filter((_, itemIndex) => itemIndex !== index))} aria-label={`Remove repository ${index + 1}`}>Remove</button>
         </div>

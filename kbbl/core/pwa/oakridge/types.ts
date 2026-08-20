@@ -33,6 +33,8 @@ export interface WorkflowDefSummary {
 // is what let a codex planner model reach a claude-code-pinned stage.
 export interface CreateRunContext {
   brief_notes: string;
+  /** The one branch this run builds on. Every build unit's PR targets it. */
+  base_branch: string;
   repositories: RepositoryInput[];
   // Compatibility input for workflow definitions older than dev-flow v2.
   worktree_path: string;
@@ -55,12 +57,14 @@ export interface RepositoryInputDraft {
   path: string;
   forge_owner: string;
   forge_name: string;
-  base_branch: string;
+  integration_branch: string;
 }
 
 export interface RepositoryInput {
   key: RepositoryKey;
   path: string;
+  /** Where this repository's base branch is cut from — `main`, typically. */
+  integration_branch: string;
 }
 
 export interface ForgeRepositoryIdentity {
@@ -72,8 +76,10 @@ export interface ForgeRepositoryIdentity {
 export interface EpicRepositoryConfig {
   repository_key: RepositoryKey;
   repository_path: string;
-  base_branch: string;
-  epic_branch?: string | null;
+  // Where this repository's base branch is cut from, and where its work merges
+  // back — `main`, typically. The branch the run *builds on* is the epic's, one
+  // for the whole run, and lives on EpicProfileConfig.
+  integration_branch: string;
   forge_repository: ForgeRepositoryIdentity;
 }
 
@@ -83,6 +89,8 @@ export interface EpicProfileConfig {
   title: string;
   slug: string;
   final_merge_policy: FinalMergePolicy;
+  /** The one branch this epic builds on; the server defaults it to `epic/<slug>`. */
+  base_branch?: string | null;
   repositories: EpicRepositoryConfig[];
 }
 
@@ -99,8 +107,7 @@ export interface PullRequestReference {
 export interface EpicRepositoryBinding {
   repository_key: RepositoryKey;
   repository_path: string;
-  base_branch: string;
-  epic_branch: string;
+  integration_branch: string;
   forge_repository: ForgeRepositoryIdentity | null;
   final_pull_request: PullRequestReference | null;
   final_merge_state: FinalMergeState;
@@ -113,6 +120,8 @@ export interface EpicWorkflowProfile {
   slug: string;
   lifecycle_state: EpicLifecycleState;
   final_merge_policy: FinalMergePolicy;
+  /** The one branch this epic builds on, and the head of every final PR. */
+  base_branch: string;
   repositories: EpicRepositoryBinding[];
   created_at: string;
   updated_at: string;

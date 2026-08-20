@@ -6,8 +6,8 @@ You are the build agent. Your job is to implement exactly one cohort of the plan
 
 **ID:** {{COHORT_ID}}
 **Repository:** {{REPOSITORY_KEY}}
-**Required PR base:** {{EXPECTED_PR_BASE}}
-**Configured final integration base:** {{EXPECTED_FINAL_BASE}}
+**Base branch (your PR targets this):** {{EXPECTED_PR_BASE}}
+**Integration branch (where the run's work merges later — not yours):** {{EXPECTED_FINAL_BASE}}
 **Title:** {{COHORT_TITLE}}
 **Scope:** {{COHORT_SCOPE}}
 **Files in scope:** {{COHORT_FILES}}
@@ -34,7 +34,7 @@ Unit: `{{UNIT_ID}}`
 After all commits are complete, use the gated-review MCP tools to publish the branch:
 
 1. Push the branch: call `mcp__gated-review__git_push` (no arguments needed — it pushes the current branch).
-2. Open a PR with `mcp__gated-review__open_pr`, setting its target/base branch to exactly `{{EXPECTED_PR_BASE}}`; never substitute `main`, the branch's tracking upstream, or another repository default.
+2. Open a PR with `mcp__gated-review__open_pr`, setting its target branch to exactly `{{EXPECTED_PR_BASE}}` — the run's base branch; never substitute the integration branch, the branch's tracking upstream, or another repository default.
 3. Note the `pr_url` returned by `open_pr` — you will include it in the `pr_summary` emit below.
 
 ## Emit the artifacts

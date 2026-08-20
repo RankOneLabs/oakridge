@@ -22,9 +22,10 @@ test("project context is injected before caller keys override it", () => {
 test("epic configuration derives repository context without coupling it to execution", () => {
   const result = prepareRunContext({ caller_context: {}, project: null, epic_profile: {
     title: "Epic", slug: "safe-artifacts", final_merge_policy: "guarded",
-    repositories: [{ repository_key: "oakridge", repository_path: "/codes/oakridge", base_branch: "main", epic_branch: null, forge_repository: null }],
+    base_branch: null,
+    repositories: [{ repository_key: "oakridge", repository_path: "/codes/oakridge", integration_branch: "main", forge_repository: null }],
   } });
-  expect(result).toEqual({ repositories: [{ key: "oakridge", path: "/codes/oakridge", base_branch: "main", epic_branch: "epic/safe-artifacts" }] });
+  expect(result).toEqual({ base_branch: "epic/safe-artifacts", repositories: [{ key: "oakridge", path: "/codes/oakridge", integration_branch: "main" }] });
 });
 
 // A non-object caller context used to be refused here, and only when a project
@@ -40,9 +41,10 @@ test("Epic profile construction owns domain defaults independently of execution"
     id: "00000000-0000-0000-0000-000000000002" as EpicWorkflowProfileId,
     workflow_run_id: "00000000-0000-0000-0000-000000000003" as WorkflowRunId,
     created_at: "2026-08-15T01:00:00Z",
-    config: { title: "Epic", slug: "safe-artifacts", final_merge_policy: "guarded", repositories: [
-      { repository_key: "oakridge", repository_path: "/codes/oakridge", base_branch: "main", epic_branch: null, forge_repository: null },
+    config: { title: "Epic", slug: "safe-artifacts", final_merge_policy: "guarded", base_branch: null, repositories: [
+      { repository_key: "oakridge", repository_path: "/codes/oakridge", integration_branch: "main", forge_repository: null },
     ] },
   });
-  expect(profile).toEqual(expect.objectContaining({ lifecycle_state: "active", repositories: [expect.objectContaining({ epic_branch: "epic/safe-artifacts", final_pull_request: null, final_merge_state: "pending" })] }));
+  expect(profile).toEqual(expect.objectContaining({ lifecycle_state: "active", base_branch: "epic/safe-artifacts",
+    repositories: [expect.objectContaining({ integration_branch: "main", final_pull_request: null, final_merge_state: "pending" })] }));
 });

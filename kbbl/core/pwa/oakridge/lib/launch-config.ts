@@ -5,6 +5,8 @@ import type { ValidatedRepositoryInput } from "../repository-inputs";
 
 export interface BuildRunExecutionContextInput {
   readonly brief_notes: string;
+  /** The one branch this run builds on. */
+  readonly base_branch: string;
   readonly repositories: RepositoryInput[];
   readonly oakridge_url: string;
   readonly planner: RuntimeModelSelection;
@@ -25,6 +27,7 @@ export function buildRunExecutionContext(input: BuildRunExecutionContextInput): 
     ok: true,
     value: {
       brief_notes: input.brief_notes,
+      base_branch: input.base_branch,
       repositories: input.repositories,
       worktree_path: worktreePath,
       oakridge_url: input.oakridge_url,
@@ -54,7 +57,7 @@ export function buildEpicProfile(title: string, finalMergePolicy: FinalMergePoli
     repositories: repositories.map((repository) => ({
       repository_key: repository.key,
       repository_path: repository.path,
-      base_branch: repository.base_branch,
+      integration_branch: repository.integration_branch,
       forge_repository: {
         provider: "github",
         owner: repository.forge_owner,

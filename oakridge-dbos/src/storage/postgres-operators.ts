@@ -269,7 +269,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
        ORDER BY artifact.stage_instance_id, artifact.execution_id, artifact.unit_id, artifact.output_name, artifact.version DESC`, [id]);
     const profileRows = await this.sql.query<EpicProfileRow>(
       `SELECT id::text, workflow_run_id::text, title, slug, lifecycle_state, final_merge_policy,
-              repositories, created_at::text, updated_at::text
+              base_branch, repositories, created_at::text, updated_at::text
        FROM oakridge.epic_workflow_profile WHERE workflow_run_id = $1`, [id]);
     const stages: OperatorStageDetail[] = stageRows.map((stage) => {
       const units: OperatorStageUnit[] = unitRows.filter((unit) => unit.stage_instance_id === stage.stage_instance_id).map((unit) => ({
