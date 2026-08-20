@@ -13,9 +13,34 @@
 ALTER TABLE oakridge.epic_workflow_profile
   ADD COLUMN base_branch text;
 
--- Existing epics agree with themselves in practice — `epic_branch` defaulted to
--- `epic/<slug>` for every repository — so the first binding is the epic's
--- branch. The slug fallback covers a profile with no repositories at all.
+-- An epic whose bindings named *different* epic branches cannot be collapsed
+-- into one, and the whole point of this migration is that nothing downstream
+-- could express which of them a stage meant. Picking the first and dropping the
+-- rest would lose branches silently and unrecoverably, so this refuses instead.
+--
+-- It should never fire: `epic_branch` was optional and defaulted to
+-- `epic/<slug>` for every repository, and the launcher never sent it. A launch
+-- that set it per repository by hand is the case this catches, and the operator
+-- has to say which branch the epic is on before the column can exist.
+DO $$
+DECLARE divergent text;
+BEGIN
+  SELECT string_agg(DISTINCT profile.id::text, ', ') INTO divergent
+  FROM oakridge.epic_workflow_profile profile
+  WHERE (
+    SELECT count(DISTINCT entry->>'epic_branch')
+    FROM jsonb_array_elements(profile.repositories) AS entry
+    WHERE entry ? 'epic_branch'
+  ) > 1;
+  IF divergent IS NOT NULL THEN
+    RAISE EXCEPTION
+      'epic_workflow_profile rows carry more than one epic_branch and cannot be migrated to a single base branch: %', divergent
+      USING HINT = 'Reconcile these epics to one epic_branch per profile, then re-run the migration.';
+  END IF;
+END $$;
+
+-- With divergence ruled out, any binding's value is the epic's. The slug
+-- fallback covers a profile with no repositories at all.
 UPDATE oakridge.epic_workflow_profile
 SET base_branch = COALESCE(repositories->0->>'epic_branch', 'epic/' || slug);
 

@@ -14,6 +14,10 @@ test("stage rerun inherits only graph ancestors and leaves the selected stage pl
   const ancestors = selected.value;
   expect(ancestors).toContain("spec_analyzer");
   expect(ancestors).toContain("plan_writer");
+  // v13's planning stages consume the provisioned refs, so provisioning is an
+  // ancestor of everything. Without this, the assertions above pass even if
+  // traversal drops it.
+  expect(ancestors).toContain("provision_refs");
   expect(ancestors).not.toContain("build");
   expect(ancestors).not.toContain("assess");
   expect(ancestors).not.toContain("final_integration");

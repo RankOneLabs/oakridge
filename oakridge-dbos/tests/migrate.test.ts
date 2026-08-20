@@ -26,8 +26,33 @@ const migrationsBefore = async (excluded: string): Promise<string> => {
   return directory;
 };
 
-let scratch: ScratchDatabase | null = null;
-afterAll(async () => { await scratch?.drop(); });
+const scratches: ScratchDatabase[] = [];
+afterAll(async () => { for (const scratch of scratches) await scratch.drop(); });
+
+/** A database with every migration before the branch-roles one applied. */
+const databaseBeforeBranchRoles = async (name: string) => {
+  const scratch = await createScratchDatabase(name);
+  if (!scratch.ok) {
+    // A missing PostgreSQL is a skip; a refused CREATE DATABASE is not, and a
+    // caller that treated them alike would report a broken environment green.
+    if (scratch.error.operation !== "reach_admin_endpoint") throw new Error(`${scratch.error.operation}: ${scratch.error.detail}`);
+    return null;
+  }
+  scratches.push(scratch.value);
+  const sql = PgPostgresExecutor.connect(scratch.value.url);
+  const before = await migrationsBefore(BEFORE_BRANCH_ROLES);
+  await applyMigrations(sql, before);
+  await rm(before, { recursive: true, force: true });
+  return sql;
+};
+
+/** A run, so an epic profile has something to hang off. */
+const seedRun = async (sql: PgPostgresExecutor): Promise<void> => {
+  await sql.query(`INSERT INTO oakridge.workflow_definition (id, name, version, definition, archived, created_at)
+    VALUES ('00000000-0000-4000-8000-000000000001', 'dev-flow', 12, '{}'::jsonb, false, now())`, []);
+  await sql.query(`INSERT INTO oakridge.workflow_run (id, workflow_definition_id, context)
+    VALUES ('00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000001', '{}'::jsonb)`, []);
+};
 
 /**
  * The branch-roles migration, run against rows written before it.
@@ -38,23 +63,16 @@ afterAll(async () => { await scratch?.drop(); });
  * branch every build unit's pull request will target.
  */
 test("the branch-roles migration promotes the epic branch and renames the integration one", async () => {
-  scratch = await createScratchDatabase("oakridge_migration_test");
-  if (!scratch) {
+  const sql = await databaseBeforeBranchRoles("oakridge_migration_test");
+  if (!sql) {
     console.warn("migration backfill SKIPPED: no PostgreSQL reachable");
     return;
   }
-  const sql = PgPostgresExecutor.connect(scratch.url);
-  const before = await migrationsBefore(BEFORE_BRANCH_ROLES);
   try {
-    await applyMigrations(sql, before);
-
     // A run and an epic profile exactly as the pre-rename code wrote them: the
     // epic's branch repeated inside every repository binding, and `base_branch`
     // meaning `main`.
-    await sql.query(`INSERT INTO oakridge.workflow_definition (id, name, version, definition, archived, created_at)
-      VALUES ('00000000-0000-4000-8000-000000000001', 'dev-flow', 12, '{}'::jsonb, false, now())`, []);
-    await sql.query(`INSERT INTO oakridge.workflow_run (id, workflow_definition_id, context)
-      VALUES ('00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000001', '{}'::jsonb)`, []);
+    await seedRun(sql);
     await sql.query(`INSERT INTO oakridge.epic_workflow_profile
         (id, workflow_run_id, title, slug, lifecycle_state, final_merge_policy, repositories, created_at, updated_at)
       VALUES ('00000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000002',
@@ -84,6 +102,40 @@ test("the branch-roles migration promotes the epic branch and renames the integr
     }
   } finally {
     await sql.close();
-    await rm(before, { recursive: true, force: true });
+  }
+}, 60_000);
+
+/**
+ * An epic whose bindings named different epic branches cannot become one base
+ * branch, and picking the first would drop the others silently and
+ * unrecoverably. It should never occur — `epic_branch` defaulted to
+ * `epic/<slug>` for every repository and the launcher never sent it — but a
+ * migration that guesses on data it cannot convert is worse than one that
+ * stops.
+ */
+test("the branch-roles migration refuses an epic that carries more than one epic branch", async () => {
+  const sql = await databaseBeforeBranchRoles("oakridge_migration_divergent_test");
+  if (!sql) {
+    console.warn("divergent-migration check SKIPPED: no PostgreSQL reachable");
+    return;
+  }
+  try {
+    await seedRun(sql);
+    await sql.query(`INSERT INTO oakridge.epic_workflow_profile
+        (id, workflow_run_id, title, slug, lifecycle_state, final_merge_policy, repositories, created_at, updated_at)
+      VALUES ('00000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000002',
+        'Split epic', 'split-epic', 'active', 'guarded',
+        '[{"repository_key":"api","base_branch":"main","epic_branch":"epic/api"},
+          {"repository_key":"web","base_branch":"main","epic_branch":"epic/web"}]'::jsonb,
+        now(), now())`, []);
+
+    await expect(applyMigrations(sql, MIGRATIONS)).rejects.toThrow(/more than one epic_branch/);
+
+    // And it stopped before touching anything: the bindings are as they were.
+    const rows = await sql.query<{ readonly repositories: readonly { readonly epic_branch?: string }[] }>(
+      "SELECT repositories FROM oakridge.epic_workflow_profile", []);
+    expect(rows[0]?.repositories.map((repository) => repository.epic_branch)).toEqual(["epic/api", "epic/web"]);
+  } finally {
+    await sql.close();
   }
 }, 60_000);

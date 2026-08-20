@@ -24,7 +24,18 @@ import type { WorkflowDefinition } from "../domain/workflow";
  * database that already holds it — and runs still in flight against v12 must
  * keep compiling the graph they were launched with.
  */
+const SOURCE = new URL("../../../oakridge-core/examples/dev_flow_v13.json", import.meta.url);
+
 export const loadDevFlowV13 = async (): Promise<Result<WorkflowDefinition, DefinitionValidationError>> => {
-  const source = await Bun.file(new URL("../../../oakridge-core/examples/dev_flow_v13.json", import.meta.url)).json();
+  // The IO boundary. A missing or unparseable file is the same kind of answer as
+  // an invalid definition — the seed cannot produce one — and the signature
+  // already promises a `Result`, so it should not also throw.
+  let source: unknown;
+  try {
+    source = await Bun.file(SOURCE).json();
+  } catch (error) {
+    return { ok: false, error: { operation: "parse_workflow_definition",
+      detail: `built-in dev-flow v13 could not be read from ${SOURCE.pathname}: ${error instanceof Error ? error.message : String(error)}` } };
+  }
   return parseWorkflowDefinition(source);
 };

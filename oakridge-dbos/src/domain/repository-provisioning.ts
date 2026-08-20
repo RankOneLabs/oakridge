@@ -112,7 +112,12 @@ export const provisionRepositoryRefs = async (
     }
   }
 
-  const fetchBaseArgs = ["fetch", "origin", base_branch] as const;
+  // The same explicit refspec the integration fetch uses, and for the same
+  // reason: `git fetch origin <branch>` updates only FETCH_HEAD unless the
+  // remote has a matching fetch refspec, and the rev-parse below reads
+  // `origin/<branch>`. A single-branch clone, or one whose refspec someone
+  // unset, would fetch successfully and then fail to resolve what it fetched.
+  const fetchBaseArgs = ["fetch", "origin", `+refs/heads/${base_branch}:refs/remotes/origin/${base_branch}`] as const;
   const fetchedBase = await git.run(repository_path, fetchBaseArgs);
   if (fetchedBase.exit_code !== 0) return commandFailure(fetchBaseArgs, fetchedBase);
 

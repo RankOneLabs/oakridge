@@ -18,6 +18,7 @@
  * actual work — which is exactly what happened once. The server is shared; the
  * database is not.
  */
+import type { Result } from "../../src/domain/primitives";
 import { PgPostgresExecutor } from "../../src/storage/sql-executor";
 
 /**
@@ -80,10 +81,30 @@ const ensureTestDatabase = async (adminUrl: string): Promise<string | null> => {
 /** An unquoted PostgreSQL identifier, which is all a scratch database needs. */
 const SAFE_DATABASE_NAME = /^[a-z_][a-z0-9_]{0,62}$/;
 
+/**
+ * A database name, safe to interpolate.
+ *
+ * Validated *and* quoted. Validation is the real guard — a name outside this
+ * shape is a caller bug, not something to escape around — but the quoting is
+ * what a SAST rule reading the template literal can see, and a suppressed
+ * warning nobody can verify is worse than two lines.
+ */
+const quotedDatabaseName = (name: string): string => {
+  if (!SAFE_DATABASE_NAME.test(name)) throw new Error(`unsafe scratch database name '${name}'`);
+  return `"${name}"`;
+};
+
 /** A throwaway database, and the way to get rid of it. */
 export interface ScratchDatabase {
   readonly url: string;
   drop(): Promise<void>;
+}
+
+/** Why a scratch database could not be prepared, and at which step. */
+export interface ScratchDatabaseError {
+  readonly operation: "reach_admin_endpoint" | "create_scratch_database";
+  readonly database_name: string;
+  readonly detail: string;
 }
 
 /**
@@ -94,36 +115,45 @@ export interface ScratchDatabase {
  * so a test that wants to run one *against data written before it* cannot use
  * it — the migration is already applied there. This gives such a test an empty
  * database it owns and destroys.
+ *
+ * A `Result` rather than a nullable: "no PostgreSQL here" is a skip and
+ * "CREATE DATABASE was refused" is a failure, and a caller that cannot tell
+ * them apart reports a broken environment as a clean skip.
  */
-export const createScratchDatabase = async (name: string): Promise<ScratchDatabase | null> => {
+export const createScratchDatabase = async (name: string): Promise<Result<ScratchDatabase, ScratchDatabaseError>> => {
   // `CREATE DATABASE` and `DROP DATABASE` take no bound parameters, so the name
   // is interpolated. It is checked rather than trusted: this is the one place in
   // the suite that issues a `DROP DATABASE`, and "it is only test code" is not a
   // property of the statement that runs.
-  if (!SAFE_DATABASE_NAME.test(name)) throw new Error(`unsafe scratch database name '${name}'`);
+  const quoted = quotedDatabaseName(name);
   const adminUrl = process.env.OAKRIDGE_TEST_DATABASE_URL ?? DEV_STACK_ADMIN_URL;
-  if (!(await isReachable(adminUrl))) return null;
+  if (!(await isReachable(adminUrl))) {
+    return { ok: false, error: { operation: "reach_admin_endpoint", database_name: name, detail: `no PostgreSQL accepting connections at ${adminUrl}` } };
+  }
   const url = new URL(adminUrl);
   url.pathname = `/${name}`;
   const admin = PgPostgresExecutor.connect(adminUrl);
   try {
-    await admin.query(`DROP DATABASE IF EXISTS ${name}`, []);
-    await admin.query(`CREATE DATABASE ${name}`, []);
+    await admin.query(`DROP DATABASE IF EXISTS ${quoted}`, []);
+    await admin.query(`CREATE DATABASE ${quoted}`, []);
   } catch (error) {
-    console.warn(`scratch database '${name}' unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    return { ok: false, error: { operation: "create_scratch_database", database_name: name,
+      detail: error instanceof Error ? error.message : String(error) } };
+  } finally {
     await admin.close();
-    return null;
   }
-  await admin.close();
   return {
-    url: url.toString(),
-    async drop() {
-      const cleanup = PgPostgresExecutor.connect(adminUrl);
-      try {
-        await cleanup.query(`DROP DATABASE IF EXISTS ${name}`, []);
-      } finally {
-        await cleanup.close();
-      }
+    ok: true,
+    value: {
+      url: url.toString(),
+      async drop() {
+        const cleanup = PgPostgresExecutor.connect(adminUrl);
+        try {
+          await cleanup.query(`DROP DATABASE IF EXISTS ${quoted}`, []);
+        } finally {
+          await cleanup.close();
+        }
+      },
     },
   };
 };

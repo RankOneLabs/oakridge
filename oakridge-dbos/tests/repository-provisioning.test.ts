@@ -4,11 +4,11 @@ import { RepositoryProvisioningAdapter } from "../src/adapters/repository-provis
 import type { ExecutionRequest } from "../src/domain/execution";
 import type { ExecutionId, JsonValue, StageInstanceId, UnitId } from "../src/domain/primitives";
 import { describeRepositoryProvisioningFailure, provisionRepositoryRefs, type GitCommandOutcome, type GitCommandRunner } from "../src/domain/repository-provisioning";
-import { parseResolvedRepositoryProvisioningConfig, parseBaseBranch, parseRunContextRepository, selectBaseBranch } from "../src/domain/repository-refs";
+import { parseResolvedRepositoryProvisioningConfig, parseBaseBranch, parseRunContextRepository, selectBaseBranch, type RunContextRepository } from "../src/domain/repository-refs";
 import type { EmitExecutionArtifactRequest } from "../src/runtime/emit-artifact";
 import { runExclusive } from "../src/runtime/keyed-mutex";
 
-const repository = { key: "scout", path: "/repos/scout", integration_branch: "main" };
+const repository: RunContextRepository = { key: "scout", path: "/repos/scout", integration_branch: "main" };
 const BASE_BRANCH = "epic/response-edits";
 const provision = (git: GitCommandRunner, overrides: { readonly integration_branch?: string } = {}) =>
   provisionRepositoryRefs({ repository: { ...repository, ...overrides }, base_branch: BASE_BRANCH }, git);
@@ -45,7 +45,7 @@ test("an epic branch already on origin is fetched, never reseeded from the base 
   expect(git.commands()).toEqual([
     "rev-parse --git-dir",
     "ls-remote origin refs/heads/epic/response-edits",
-    "fetch origin epic/response-edits",
+    "fetch origin +refs/heads/epic/response-edits:refs/remotes/origin/epic/response-edits",
     "rev-parse --verify origin/epic/response-edits^{commit}",
   ]);
 });
@@ -66,7 +66,7 @@ test("an absent epic branch is seeded from origin's base branch under an explici
     "ls-remote origin refs/heads/epic/response-edits",
     "fetch origin +refs/heads/main:refs/remotes/origin/main",
     "push origin origin/main:refs/heads/epic/response-edits",
-    "fetch origin epic/response-edits",
+    "fetch origin +refs/heads/epic/response-edits:refs/remotes/origin/epic/response-edits",
     "rev-parse --verify origin/epic/response-edits^{commit}",
   ]);
 });
