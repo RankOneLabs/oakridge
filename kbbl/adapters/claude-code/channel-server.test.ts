@@ -392,6 +392,26 @@ describe("channel-server delivery", () => {
     expect(new Set(pushes)).toEqual(new Set(["the prompt"]));
   });
 
+  test("an unparseable retry interval falls back instead of spamming", async () => {
+    // `Number("soon")` is NaN, and every `x < NaN` comparison is false — so an
+    // unguarded throttle would let the retry fire on each 100ms poll and spend
+    // all eight attempts in under a second.
+    const statePath = writeClientState(tmpDir, Date.now() - 60_000);
+    srv = launchServer(outboxPath, {
+      KBBL_CHANNEL_CLIENT_STATE: statePath,
+      KBBL_CHANNEL_RETRY_MS: "soon",
+    });
+    await handshake(srv);
+    srv.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+    await new Promise<void>((r) => setTimeout(r, 150));
+
+    appendFileSync(outboxPath, JSON.stringify({ content: "the prompt" }) + "\n");
+    await new Promise<void>((r) => setTimeout(r, 1_200));
+
+    // Falling back to 4000ms, nothing has been re-sent yet.
+    expect(pushesIn(await srv.lines())).toEqual(["the prompt"]);
+  });
+
   test("a push the client reacts to is not re-sent", async () => {
     const statePath = writeClientState(tmpDir, Date.now() - 60_000);
     srv = launchServer(outboxPath, {
@@ -403,10 +423,22 @@ describe("channel-server delivery", () => {
     await new Promise<void>((r) => setTimeout(r, 150));
 
     appendFileSync(outboxPath, JSON.stringify({ content: "the prompt" }) + "\n");
-    // The client picks it up and starts a turn, which moves its status.
-    await new Promise<void>((r) => setTimeout(r, 100));
+
+    // Wait for the push itself rather than sleeping a guessed interval. The
+    // outbox tail polls at 200ms, so a fixed sleep can advance the client's
+    // status *before* the server has sent anything and recorded when — and then
+    // the acknowledgement predates the push, the server retries, and this test
+    // fails for a reason that has nothing to do with what it is checking.
+    const pushDeadline = Date.now() + 2_000;
+    while (pushesIn(await srv.lines()).length === 0 && Date.now() < pushDeadline) {
+      await new Promise<void>((r) => setTimeout(r, 10));
+    }
+    expect(pushesIn(await srv.lines())).toEqual(["the prompt"]);
+
+    // Now the client picks it up and starts a turn, which moves its status.
     writeFileSync(statePath, JSON.stringify({ status: "busy", statusUpdatedAt: Date.now() }));
 
+    // Long enough for several retries to have fired had it not been acknowledged.
     await new Promise<void>((r) => setTimeout(r, 1_200));
 
     expect(pushesIn(await srv.lines())).toEqual(["the prompt"]);

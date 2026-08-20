@@ -257,13 +257,31 @@ let deliveryTimer: ReturnType<typeof setInterval> | null = null;
 
 /** How often to look for a reaction. */
 const DELIVERY_POLL_MS = 100;
+const DEFAULT_DELIVERY_RETRY_MS = 4_000;
+
 /**
  * How long to wait for one before re-sending.
  *
  * Long enough that a client which did receive the push is already reacting, so
  * a re-send is genuinely evidence of loss rather than impatience.
+ *
+ * Parsed defensively: `Number("")` is 0 and `Number("soon")` is NaN, and both
+ * defeat the throttle — every `x < NaN` is false, so an unparseable override
+ * would re-send on every poll tick and burn all eight attempts in under a
+ * second. A bad value falls back to the default and says so.
  */
-const DELIVERY_RETRY_MS = Number(process.env.KBBL_CHANNEL_RETRY_MS ?? 4_000);
+function configuredRetryMs(raw: string | undefined): number {
+  if (raw === undefined) return DEFAULT_DELIVERY_RETRY_MS;
+  const parsed = Number(raw);
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  logline(
+    `KBBL_CHANNEL_RETRY_MS=${JSON.stringify(raw)} is not a positive number — ` +
+    `using ${DEFAULT_DELIVERY_RETRY_MS}ms`,
+  );
+  return DEFAULT_DELIVERY_RETRY_MS;
+}
+
+const DELIVERY_RETRY_MS = configuredRetryMs(process.env.KBBL_CHANNEL_RETRY_MS);
 /** How many times to re-send before the silence is someone else's problem. */
 const DELIVERY_MAX_ATTEMPTS = 8;
 
@@ -308,6 +326,9 @@ function noteUnacknowledged(push: ChannelPush): void {
       "cannot locate the client's session state (no CLAUDE_CONFIG_DIR or HOME) — " +
       "pushes are sent unverified; a dropped one will not be retried",
     );
+    // No watch will run, so nothing would ever drain this. Dropping it here
+    // keeps an unverifiable session from accumulating every push it ever sent.
+    stopDeliveryWatch();
     return;
   }
 
@@ -317,6 +338,20 @@ function noteUnacknowledged(push: ChannelPush): void {
     const changedAt = parentStatusChangedAt(statePath);
     if (changedAt !== null && sentAt !== null && changedAt > sentAt) {
       logline(`push acknowledged — client reacted after ${attempts} attempt(s)`);
+      // A status change proves the client saw *something*, never which push.
+      // With more than one in flight the acknowledgement is claimed by all of
+      // them, so an earlier push dropped before the handler existed is retired
+      // here without ever having landed. Nothing in the protocol can tell the
+      // two apart, so say so rather than let it disappear.
+      if (unacknowledged.length > 1) {
+        logline(
+          `WARNING: ${unacknowledged.length} pushes were in flight and one ` +
+          `acknowledgement retired all of them — an earlier push may never have ` +
+          `been delivered. Contents: ${unacknowledged
+            .map((p) => JSON.stringify(p.content.slice(0, 80)))
+            .join(", ")}`,
+        );
+      }
       stopDeliveryWatch();
       return;
     }
