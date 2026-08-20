@@ -257,9 +257,24 @@ test("a failing exclusive operation does not poison the next waiter on the same 
  * where one spelling of it enters.
  */
 test("a resolved base branch that is not a branch name is refused rather than pushed", () => {
-  for (const notABranch of [null, 42, { name: "epic/x" }, "", "   "]) {
+  // Whitespace-only is refused too, but for its own reason — see the padded test below.
+  for (const notABranch of [null, 42, { name: "epic/x" }, ""]) {
     expect(parseBaseBranch(notABranch as never)).toEqual({ ok: false,
       error: expect.objectContaining({ operation: "parse_base_branch", detail: expect.stringContaining("must resolve to a non-empty string") }) });
   }
   expect(parseBaseBranch("epic/tiers-page")).toEqual({ ok: true, value: "epic/tiers-page" });
+});
+
+/**
+ * Refused rather than trimmed. Repairing it would leave the run context naming
+ * one branch and git receiving another — the exact disagreement this rename
+ * exists to remove.
+ */
+test("a padded base branch is refused rather than quietly repaired", () => {
+  for (const padded of [" epic/tiers-page", "epic/tiers-page ", "  epic/tiers-page  ", "   "]) {
+    expect(parseBaseBranch(padded)).toEqual({ ok: false,
+      error: expect.objectContaining({ operation: "parse_base_branch" }) });
+  }
+  expect(parseBaseBranch(" epic/x ")).toEqual({ ok: false,
+    error: expect.objectContaining({ detail: expect.stringContaining("leading or trailing whitespace") }) });
 });

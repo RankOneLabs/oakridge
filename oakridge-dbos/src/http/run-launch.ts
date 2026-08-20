@@ -49,7 +49,8 @@ const contextSchema = z.looseObject({
   // profile when there is one, but a launch without a profile passes the
   // caller's value straight through to a `git push` that creates the branch —
   // so a `null` here became a branch literally named "null".
-  base_branch: z.string().min(1).optional(),
+  base_branch: z.string().min(1).refine((value) => value === value.trim(),
+    { message: "must not have leading or trailing whitespace" }).optional(),
   // A model belongs to the runtime it was chosen from, so the pair travels
   // together; a null model is "whatever the runtime defaults to", not "absent".
   planner_runtime: runtimeId.optional(),

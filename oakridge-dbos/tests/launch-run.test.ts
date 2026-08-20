@@ -225,3 +225,10 @@ test("a base branch that is a branch name is launched", async () => {
   expect(response.status).toBe(201);
   expect(subject.stored()?.run.context).toEqual(expect.objectContaining({ base_branch: "epic/tiers-page" }));
 });
+
+test("a padded base branch is refused at the request too, not only at the stage", async () => {
+  const subject = mountedFixture();
+  const response = await request(subject.app, { ...body, context: { ...context, base_branch: " epic/tiers-page " } });
+  expect(response.status).toBe(400);
+  expect((await response.json() as { readonly error: string }).error).toContain("leading or trailing whitespace");
+});

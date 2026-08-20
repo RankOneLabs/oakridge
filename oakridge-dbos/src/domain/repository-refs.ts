@@ -127,10 +127,18 @@ export interface BaseBranchError {
  * runtime's default". A branch name has no such reading, so it is parsed where
  * it is used rather than assumed from where it entered.
  */
-export const parseBaseBranch = (value: JsonValue): Result<string, BaseBranchError> =>
-  typeof value === "string" && value.trim() !== ""
-    ? ok(value)
-    : err({ operation: "parse_base_branch", detail: `base branch must resolve to a non-empty string, got ${JSON.stringify(value)}` });
+export const parseBaseBranch = (value: JsonValue): Result<string, BaseBranchError> => {
+  if (typeof value !== "string" || value === "") {
+    return err({ operation: "parse_base_branch", detail: `base branch must resolve to a non-empty string, got ${JSON.stringify(value)}` });
+  }
+  // Refused rather than trimmed. Repairing it silently would leave the run
+  // context naming one branch and git receiving another, which is the exact
+  // class of disagreement this whole rename removes.
+  if (value !== value.trim()) {
+    return err({ operation: "parse_base_branch", detail: `base branch must not have leading or trailing whitespace, got ${JSON.stringify(value)}` });
+  }
+  return ok(value);
+};
 
 /**
  * What the provisioning stage is configured with: where its repositories are,

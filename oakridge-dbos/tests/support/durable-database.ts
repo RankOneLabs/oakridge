@@ -89,10 +89,11 @@ const SAFE_DATABASE_NAME = /^[a-z_][a-z0-9_]{0,62}$/;
  * what a SAST rule reading the template literal can see, and a suppressed
  * warning nobody can verify is worse than two lines.
  */
-const quotedDatabaseName = (name: string): string => {
-  if (!SAFE_DATABASE_NAME.test(name)) throw new Error(`unsafe scratch database name '${name}'`);
-  return `"${name}"`;
-};
+const quotedDatabaseName = (name: string): Result<string, ScratchDatabaseError> =>
+  SAFE_DATABASE_NAME.test(name)
+    ? { ok: true, value: `"${name}"` }
+    : { ok: false, error: { operation: "validate_scratch_database_name", database_name: name,
+        detail: `a scratch database name must match ${String(SAFE_DATABASE_NAME)}` } };
 
 /** A throwaway database, and the way to get rid of it. */
 export interface ScratchDatabase {
@@ -102,7 +103,7 @@ export interface ScratchDatabase {
 
 /** Why a scratch database could not be prepared, and at which step. */
 export interface ScratchDatabaseError {
-  readonly operation: "reach_admin_endpoint" | "create_scratch_database";
+  readonly operation: "validate_scratch_database_name" | "reach_admin_endpoint" | "create_scratch_database";
   readonly database_name: string;
   readonly detail: string;
 }
@@ -126,6 +127,7 @@ export const createScratchDatabase = async (name: string): Promise<Result<Scratc
   // the suite that issues a `DROP DATABASE`, and "it is only test code" is not a
   // property of the statement that runs.
   const quoted = quotedDatabaseName(name);
+  if (!quoted.ok) return quoted;
   const adminUrl = process.env.OAKRIDGE_TEST_DATABASE_URL ?? DEV_STACK_ADMIN_URL;
   if (!(await isReachable(adminUrl))) {
     return { ok: false, error: { operation: "reach_admin_endpoint", database_name: name, detail: `no PostgreSQL accepting connections at ${adminUrl}` } };
@@ -134,8 +136,8 @@ export const createScratchDatabase = async (name: string): Promise<Result<Scratc
   url.pathname = `/${name}`;
   const admin = PgPostgresExecutor.connect(adminUrl);
   try {
-    await admin.query(`DROP DATABASE IF EXISTS ${quoted}`, []);
-    await admin.query(`CREATE DATABASE ${quoted}`, []);
+    await admin.query(`DROP DATABASE IF EXISTS ${quoted.value}`, []);
+    await admin.query(`CREATE DATABASE ${quoted.value}`, []);
   } catch (error) {
     return { ok: false, error: { operation: "create_scratch_database", database_name: name,
       detail: error instanceof Error ? error.message : String(error) } };
@@ -149,7 +151,7 @@ export const createScratchDatabase = async (name: string): Promise<Result<Scratc
       async drop() {
         const cleanup = PgPostgresExecutor.connect(adminUrl);
         try {
-          await cleanup.query(`DROP DATABASE IF EXISTS ${quoted}`, []);
+          await cleanup.query(`DROP DATABASE IF EXISTS ${quoted.value}`, []);
         } finally {
           await cleanup.close();
         }

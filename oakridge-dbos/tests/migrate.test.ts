@@ -139,3 +139,75 @@ test("the branch-roles migration refuses an epic that carries more than one epic
     await sql.close();
   }
 }, 60_000);
+
+/**
+ * The case the divergence check first missed: one binding with no `epic_branch`
+ * and one with an explicit non-default value.
+ *
+ * An absent `epic_branch` was not "no opinion" — it *meant* `epic/<slug>`, the
+ * same default `selectEpicBranch` applied. Counting only the explicit values
+ * saw one distinct branch here and let the row through, and the promotion then
+ * took `repositories->0`, which is the absent one, and dropped `epic/custom`.
+ */
+test("the branch-roles migration refuses an implicit default beside an explicit branch", async () => {
+  const sql = await databaseBeforeBranchRoles("oakridge_migration_mixed_test");
+  if (!sql) {
+    console.warn("mixed-migration check SKIPPED: no PostgreSQL reachable");
+    return;
+  }
+  try {
+    await seedRun(sql);
+    await sql.query(`INSERT INTO oakridge.epic_workflow_profile
+        (id, workflow_run_id, title, slug, lifecycle_state, final_merge_policy, repositories, created_at, updated_at)
+      VALUES ('00000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000002',
+        'Mixed epic', 'mixed-epic', 'active', 'guarded',
+        '[{"repository_key":"api","base_branch":"main"},
+          {"repository_key":"web","base_branch":"main","epic_branch":"epic/custom"}]'::jsonb,
+        now(), now())`, []);
+
+    await expect(applyMigrations(sql, MIGRATIONS)).rejects.toThrow(/more than one epic_branch/);
+
+    const rows = await sql.query<{ readonly repositories: readonly { readonly epic_branch?: string }[] }>(
+      "SELECT repositories FROM oakridge.epic_workflow_profile", []);
+    expect(rows[0]?.repositories.map((repository) => repository.epic_branch)).toEqual([undefined, "epic/custom"]);
+  } finally {
+    await sql.close();
+  }
+}, 60_000);
+
+/** Every binding leaving `epic_branch` unset agrees on `epic/<slug>`, so it migrates. */
+test("the branch-roles migration accepts bindings that all take the implicit default", async () => {
+  const sql = await databaseBeforeBranchRoles("oakridge_migration_implicit_test");
+  if (!sql) {
+    console.warn("implicit-migration check SKIPPED: no PostgreSQL reachable");
+    return;
+  }
+  try {
+    await seedRun(sql);
+    await sql.query(`INSERT INTO oakridge.epic_workflow_profile
+        (id, workflow_run_id, title, slug, lifecycle_state, final_merge_policy, repositories, created_at, updated_at)
+      VALUES ('00000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000002',
+        'Implicit epic', 'implicit-epic', 'active', 'guarded',
+        '[{"repository_key":"api","base_branch":"main"},
+          {"repository_key":"web","base_branch":"main"}]'::jsonb,
+        now(), now())`, []);
+
+    expect(await applyMigrations(sql, MIGRATIONS)).toContain(BEFORE_BRANCH_ROLES);
+    const rows = await sql.query<{ readonly base_branch: string }>(
+      "SELECT base_branch FROM oakridge.epic_workflow_profile", []);
+    expect(rows[0]?.base_branch).toBe("epic/implicit-epic");
+  } finally {
+    await sql.close();
+  }
+}, 60_000);
+
+/**
+ * The validator sits before any DDL, so its refusal has to travel the same way
+ * every other setup failure does. It threw past the `Result` its caller
+ * declares — the one thing an early guard should not do.
+ */
+test("a scratch database name that is not a safe identifier is an Err, not a throw", async () => {
+  const refused = await createScratchDatabase('evil"; DROP DATABASE oakridge; --');
+  expect(refused).toEqual({ ok: false, error: expect.objectContaining({
+    operation: "validate_scratch_database_name", database_name: 'evil"; DROP DATABASE oakridge; --' }) });
+});

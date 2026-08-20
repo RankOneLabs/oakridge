@@ -22,15 +22,20 @@ ALTER TABLE oakridge.epic_workflow_profile
 -- `epic/<slug>` for every repository, and the launcher never sent it. A launch
 -- that set it per repository by hand is the case this catches, and the operator
 -- has to say which branch the epic is on before the column can exist.
+--
+-- An absent `epic_branch` is not "no opinion" — it *meant* `epic/<slug>`, the
+-- same default `selectEpicBranch` applied. So it is normalised to that value
+-- rather than skipped: a profile holding one absent entry and one explicit
+-- non-default entry names two branches, and counting only the explicit ones
+-- would let exactly that case through the check it exists for.
 DO $$
 DECLARE divergent text;
 BEGIN
   SELECT string_agg(DISTINCT profile.id::text, ', ') INTO divergent
   FROM oakridge.epic_workflow_profile profile
   WHERE (
-    SELECT count(DISTINCT entry->>'epic_branch')
+    SELECT count(DISTINCT COALESCE(entry->>'epic_branch', 'epic/' || profile.slug))
     FROM jsonb_array_elements(profile.repositories) AS entry
-    WHERE entry ? 'epic_branch'
   ) > 1;
   IF divergent IS NOT NULL THEN
     RAISE EXCEPTION
