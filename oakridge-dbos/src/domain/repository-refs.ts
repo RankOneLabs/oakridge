@@ -111,6 +111,27 @@ export const parseRunContextRepository = (value: JsonValue): Result<RunContextRe
 export const selectBaseBranch = (configured: string | null | undefined, slug: string): string =>
   configured ?? `epic/${slug}`;
 
+export interface BaseBranchError {
+  readonly operation: "parse_base_branch";
+  readonly detail: string;
+}
+
+/**
+ * A branch name, or why the resolved value is not one.
+ *
+ * The provisioning stage's `base_branch` is a binding, and binding resolution
+ * stringifies whatever it finds — so a run context carrying `base_branch: null`
+ * resolved to the string `"null"` and this stage pushed a branch by that name.
+ * The launch gate cannot catch it: a present-but-null key satisfies the pointer
+ * that reads it, deliberately, because `planner_effort: null` means "the
+ * runtime's default". A branch name has no such reading, so it is parsed where
+ * it is used rather than assumed from where it entered.
+ */
+export const parseBaseBranch = (value: JsonValue): Result<string, BaseBranchError> =>
+  typeof value === "string" && value.trim() !== ""
+    ? ok(value)
+    : err({ operation: "parse_base_branch", detail: `base branch must resolve to a non-empty string, got ${JSON.stringify(value)}` });
+
 /**
  * What the provisioning stage is configured with: where its repositories are,
  * which branch to guarantee in each, and how many it may do at once.

@@ -1,7 +1,7 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
 import { materializeStage } from "../compiler/materialize-stage";
-import { resolveBinding, resolveDelegatedExecution } from "../compiler/resolve-execution";
+import { resolveBindingValue, resolveDelegatedExecution } from "../compiler/resolve-execution";
 import { selectAncestorStages } from "../compiler/select-resume-stages";
 import { appendIncrementalUnit, closeIncrementalMaterialization, emptyIncrementalMaterialization, isFanOutDriverInput, selectDriverArtifacts, selectReadyUnits, type IncrementalMaterialization } from "../compiler/materialize-units";
 import { isAwaitingReplacementOf, isLiveExecution, isStageDrained, selectLaunchedUnits, selectReleasedUnits, selectRunningUnitCount, type UnitRuntime } from "./unit-runtime";
@@ -14,7 +14,7 @@ import type { ExecutionId, JsonValue, StageCoordinatorWorkflowId, StageInstanceI
 import type { StageFailureOutcome, StageOutcome } from "../domain/workflow";
 import { stageRerunStateKey, type StageRerunState } from "../domain/rerun";
 import type { StageAdmissionState } from "../domain/runs";
-import { PROVISION_REPOSITORY_REFS_STAGE_TYPE, parseRunContextRepository, type RepositoryProvisioningDefinitionConfig, type ResolvedRepositoryProvisioningConfig } from "../domain/repository-refs";
+import { PROVISION_REPOSITORY_REFS_STAGE_TYPE, parseBaseBranch, parseRunContextRepository, type RepositoryProvisioningDefinitionConfig, type ResolvedRepositoryProvisioningConfig } from "../domain/repository-refs";
 import { readJsonPointer } from "../domain/json-pointer";
 import { relayWorkflowId, stageCoordinatorWorkflowId, unitExecutionWorkflowId } from "../domain/workflow-ids";
 import { containAttempt } from "./cancellation";
@@ -135,14 +135,22 @@ const resolveProvisioningPlans = (input: PlanStageStepInput, units: readonly Mat
   if (!output || input.stage.outputs.length !== 1) throw new Error(`stage '${input.stage.stage_key}' must declare exactly one repository refs output`);
   // Resolved once, outside the loop: every unit guarantees the same branch, and
   // resolving it per unit is how they would come to differ.
+  //
+  // `resolveBindingValue`, not `resolveBinding`: the latter stringifies whatever
+  // it finds, so a context carrying `base_branch: null` resolved to the string
+  // "null" and this stage pushed a branch by that name. The launch gate cannot
+  // catch it either — a present-but-null key satisfies the pointer that reads
+  // it, deliberately, because `planner_effort` means the runtime's default. A
+  // branch name has no such reading, so it is checked where it is used.
   const definition = input.stage.executor.definition_config as unknown as RepositoryProvisioningDefinitionConfig;
-  const resolvedBaseBranch = resolveBinding(definition.base_branch, { inputs: input.inputs, context: input.context, item: null });
+  const resolvedBaseBranch = resolveBindingValue(definition.base_branch, { inputs: input.inputs, context: input.context, item: null });
   if (!resolvedBaseBranch.ok) throw new Error(`${resolvedBaseBranch.error.operation}:${input.stage.stage_key}:${resolvedBaseBranch.error.detail}`);
-  const baseBranch = resolvedBaseBranch.value;
+  const baseBranch = parseBaseBranch(resolvedBaseBranch.value);
+  if (!baseBranch.ok) throw new Error(`${baseBranch.error.operation}:${input.stage.stage_key}:${baseBranch.error.detail}`);
   return units.map((unit) => {
     const repository = parseRunContextRepository(unit.parameters);
     if (!repository.ok) throw new Error(`${repository.error.operation}:${input.stage.stage_key}:${unit.unit_id}:${repository.error.detail}`);
-    const resolved: ResolvedRepositoryProvisioningConfig = { executor_type: PROVISION_REPOSITORY_REFS_STAGE_TYPE, output_name: output.name, repository: repository.value, base_branch: baseBranch };
+    const resolved: ResolvedRepositoryProvisioningConfig = { executor_type: PROVISION_REPOSITORY_REFS_STAGE_TYPE, output_name: output.name, repository: repository.value, base_branch: baseBranch.value };
     return { unit, request: executionRequestFor(input, unit, {}, resolved as unknown as JsonValue) };
   });
 };

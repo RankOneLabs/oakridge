@@ -45,6 +45,11 @@ const runtimeId = z.enum(DELEGATED_RUNTIME_IDS);
 const contextSchema = z.looseObject({
   brief_notes: z.string().optional(),
   oakridge_url: z.string().min(1).optional(),
+  // The run's one base branch. `prepareRunContext` overwrites this from the epic
+  // profile when there is one, but a launch without a profile passes the
+  // caller's value straight through to a `git push` that creates the branch —
+  // so a `null` here became a branch literally named "null".
+  base_branch: z.string().min(1).optional(),
   // A model belongs to the runtime it was chosen from, so the pair travels
   // together; a null model is "whatever the runtime defaults to", not "absent".
   planner_runtime: runtimeId.optional(),

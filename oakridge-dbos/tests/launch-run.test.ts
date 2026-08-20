@@ -201,3 +201,27 @@ test("dropping that null key entirely is a different thing, and is refused", asy
   expect(response.status).toBe(400);
   expect((await response.json() as { readonly error: string }).error).toContain("/planner_effort (analyze)");
 });
+
+/**
+ * The launch gate checks that a pointer *resolves*, and `null` resolves — that
+ * is deliberate, because `planner_effort: null` means the runtime's default.
+ * A branch name has no such reading: `base_branch: null` satisfied the gate and
+ * reached the `git push` that creates the branch, which then made one literally
+ * named "null". So the key is named at the boundary and typed there.
+ */
+test("a base branch that is not a branch name is refused at the request", async () => {
+  const subject = mountedFixture();
+  for (const notABranch of [null, 42, { name: "epic/x" }, ""]) {
+    const response = await request(subject.app, { ...body, context: { ...context, base_branch: notABranch } });
+    expect(response.status).toBe(400);
+    expect((await response.json() as { readonly error: string }).error).toContain("context.base_branch");
+  }
+  expect(subject.stored()).toBeNull();
+});
+
+test("a base branch that is a branch name is launched", async () => {
+  const subject = mountedFixture();
+  const response = await request(subject.app, { ...body, context: { ...context, base_branch: "epic/tiers-page" } });
+  expect(response.status).toBe(201);
+  expect(subject.stored()?.run.context).toEqual(expect.objectContaining({ base_branch: "epic/tiers-page" }));
+});

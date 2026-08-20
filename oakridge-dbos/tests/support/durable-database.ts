@@ -77,6 +77,9 @@ const ensureTestDatabase = async (adminUrl: string): Promise<string | null> => {
   }
 };
 
+/** An unquoted PostgreSQL identifier, which is all a scratch database needs. */
+const SAFE_DATABASE_NAME = /^[a-z_][a-z0-9_]{0,62}$/;
+
 /** A throwaway database, and the way to get rid of it. */
 export interface ScratchDatabase {
   readonly url: string;
@@ -93,6 +96,11 @@ export interface ScratchDatabase {
  * database it owns and destroys.
  */
 export const createScratchDatabase = async (name: string): Promise<ScratchDatabase | null> => {
+  // `CREATE DATABASE` and `DROP DATABASE` take no bound parameters, so the name
+  // is interpolated. It is checked rather than trusted: this is the one place in
+  // the suite that issues a `DROP DATABASE`, and "it is only test code" is not a
+  // property of the statement that runs.
+  if (!SAFE_DATABASE_NAME.test(name)) throw new Error(`unsafe scratch database name '${name}'`);
   const adminUrl = process.env.OAKRIDGE_TEST_DATABASE_URL ?? DEV_STACK_ADMIN_URL;
   if (!(await isReachable(adminUrl))) return null;
   const url = new URL(adminUrl);

@@ -61,7 +61,7 @@ describe("validateRepositoryInputs", () => {
     });
   });
 
-  it("requires durable GitHub identity and base branch", () => {
+  it("requires durable GitHub identity and an integration branch", () => {
     expect(validateRepositoryInputs([{
       key: "api",
       path: "/repos/api",
@@ -73,7 +73,7 @@ describe("validateRepositoryInputs", () => {
       error: {
         operation: "validate_repository_inputs",
         repository: 0,
-        detail: "Every repository needs a key, local path, GitHub owner/name, and base branch.",
+        detail: "Every repository needs a key, local path, GitHub owner/name, and integration branch.",
       },
     });
   });

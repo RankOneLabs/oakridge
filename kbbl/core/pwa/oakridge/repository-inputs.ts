@@ -55,7 +55,7 @@ export function validateRepositoryInputs(inputs: RepositoryInputDraft[]): Reposi
   }
   const incompleteIndex = repositories.findIndex((repository) => !repository.key || !repository.path || !repository.forge_owner || !repository.forge_name || !repository.integration_branch);
   if (incompleteIndex !== -1) {
-    return repositoryError(incompleteIndex, "Every repository needs a key, local path, GitHub owner/name, and base branch.");
+    return repositoryError(incompleteIndex, "Every repository needs a key, local path, GitHub owner/name, and integration branch.");
   }
   const relativeIndex = repositories.findIndex((repository) => !repository.path.startsWith("/"));
   if (relativeIndex !== -1) {

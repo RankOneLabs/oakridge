@@ -4,7 +4,7 @@ import { RepositoryProvisioningAdapter } from "../src/adapters/repository-provis
 import type { ExecutionRequest } from "../src/domain/execution";
 import type { ExecutionId, JsonValue, StageInstanceId, UnitId } from "../src/domain/primitives";
 import { describeRepositoryProvisioningFailure, provisionRepositoryRefs, type GitCommandOutcome, type GitCommandRunner } from "../src/domain/repository-provisioning";
-import { parseResolvedRepositoryProvisioningConfig, parseRunContextRepository, selectBaseBranch } from "../src/domain/repository-refs";
+import { parseResolvedRepositoryProvisioningConfig, parseBaseBranch, parseRunContextRepository, selectBaseBranch } from "../src/domain/repository-refs";
 import type { EmitExecutionArtifactRequest } from "../src/runtime/emit-artifact";
 import { runExclusive } from "../src/runtime/keyed-mutex";
 
@@ -247,4 +247,19 @@ test("provisioning serializes per working copy and leaves other repositories par
 test("a failing exclusive operation does not poison the next waiter on the same key", async () => {
   await expect(runExclusive("/repos/scout", async () => { throw new Error("git exploded"); })).rejects.toThrow("git exploded");
   expect(await runExclusive("/repos/scout", async () => "next runs")).toBe("next runs");
+});
+
+/**
+ * The launch boundary types `base_branch` when a launch names that key, but a
+ * definition may bind the provisioning stage's branch to anything — another
+ * context pointer, an upstream input — and binding resolution stringifies
+ * whatever it finds. So the check belongs where the value is used, not only
+ * where one spelling of it enters.
+ */
+test("a resolved base branch that is not a branch name is refused rather than pushed", () => {
+  for (const notABranch of [null, 42, { name: "epic/x" }, "", "   "]) {
+    expect(parseBaseBranch(notABranch as never)).toEqual({ ok: false,
+      error: expect.objectContaining({ operation: "parse_base_branch", detail: expect.stringContaining("must resolve to a non-empty string") }) });
+  }
+  expect(parseBaseBranch("epic/tiers-page")).toEqual({ ok: true, value: "epic/tiers-page" });
 });
