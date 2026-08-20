@@ -27,6 +27,7 @@ import { releaseStateForArtifact } from "../contracts/evaluate-artifacts";
 import type { CancellationExecutionTarget, CancellationWaitTarget, UnitRerunTarget } from "../domain/rerun";
 import type { CreateWorkflowRunResult, DeleteRunResult, PendingRunLaunch, PersistWorkflowRunLaunch, RunLaunchCommand, SetRunArchiveResult, WorkflowRunLaunchRecord, WorkflowRunListFilter } from "../domain/runs";
 import type { EpicWorkflowProfile } from "../domain/epic";
+import { isRunContext } from "../domain/run-context";
 import { selectSessionHoldClaim, type SessionHold } from "../domain/session-hold";
 
 interface StageRow {
@@ -89,7 +90,11 @@ export class PostgresWorkflowRunRepository implements WorkflowRunRepository {
     readonly context: JsonValue; readonly root_workflow_id: string; readonly archived: boolean; readonly created_at: string;
   }): WorkflowRunLaunchRecord {
     return { id: row.id as WorkflowRunId, workflow_definition_id: row.workflow_definition_id as WorkflowRunLaunchRecord["workflow_definition_id"],
-      project_id: row.project_id as WorkflowRunLaunchRecord["project_id"], context: row.context,
+      project_id: row.project_id as WorkflowRunLaunchRecord["project_id"],
+      // `context jsonb NOT NULL` admits a scalar; every write path produces an
+      // object. A row that is not one carries nothing, and says so at the first
+      // binding that reads it — the same refusal a launch missing that key gets.
+      context: isRunContext(row.context) ? row.context : {},
       root_workflow_id: row.root_workflow_id, archived: row.archived, created_at: row.created_at };
   }
 

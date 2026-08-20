@@ -1,6 +1,18 @@
 import type { JsonValue } from "./primitives";
 import type { StageOperatorRole } from "./workflow";
 
+/**
+ * The agent runtimes a delegated session can run on.
+ *
+ * Named because the pair was spelled out inline everywhere it was checked — the
+ * execution resolver, the kbbl adapter, the launch boundary — and a set that
+ * has to be re-typed at every check is a set that grows in some of them.
+ */
+export const DELEGATED_RUNTIME_IDS = ["claude-code", "codex"] as const;
+export type DelegatedRuntimeId = (typeof DELEGATED_RUNTIME_IDS)[number];
+export const isDelegatedRuntimeId = (value: unknown): value is DelegatedRuntimeId =>
+  DELEGATED_RUNTIME_IDS.includes(value as DelegatedRuntimeId);
+
 export type SlotBinding =
   | { readonly from: "input"; readonly input_name: string; readonly path?: string | null }
   | { readonly from: "context"; readonly path: string }
@@ -69,7 +81,7 @@ export interface DelegatedSessionDefinitionConfig {
 
 export interface ResolvedExecutorConfig {
   readonly executor_type: "delegated_session";
-  readonly runtime: "claude-code" | "codex";
+  readonly runtime: DelegatedRuntimeId;
   readonly rendered_prompt: string;
   readonly workdir: string;
   readonly session_name: string;

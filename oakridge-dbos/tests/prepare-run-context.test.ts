@@ -14,10 +14,9 @@ const project = {
 };
 
 test("project context is injected before caller keys override it", () => {
-  expect(prepareRunContext({ caller_context: { workdir: "/override", brief_notes: "ship it" }, project, epic_profile: null })).toEqual({
-    ok: true,
-    value: { project: { id: project.id, name: project.name, repo_dir: project.repo_dir }, workdir: "/override", brief_notes: "ship it" },
-  });
+  expect(prepareRunContext({ caller_context: { workdir: "/override", brief_notes: "ship it" }, project, epic_profile: null })).toEqual(
+    { project: { id: project.id, name: project.name, repo_dir: project.repo_dir }, workdir: "/override", brief_notes: "ship it" },
+  );
 });
 
 test("epic configuration derives repository context without coupling it to execution", () => {
@@ -25,14 +24,15 @@ test("epic configuration derives repository context without coupling it to execu
     title: "Epic", slug: "safe-artifacts", final_merge_policy: "guarded",
     repositories: [{ repository_key: "oakridge", repository_path: "/codes/oakridge", base_branch: "main", epic_branch: null, forge_repository: null }],
   } });
-  expect(result).toEqual({ ok: true, value: { repositories: [{ key: "oakridge", path: "/codes/oakridge", base_branch: "main", epic_branch: "epic/safe-artifacts" }] } });
+  expect(result).toEqual({ repositories: [{ key: "oakridge", path: "/codes/oakridge", base_branch: "main", epic_branch: "epic/safe-artifacts" }] });
 });
 
-test("project or Epic enrichment rejects a non-object caller context", () => {
-  expect(prepareRunContext({ caller_context: [], project, epic_profile: null })).toEqual({
-    ok: false,
-    error: { operation: "prepare_run_context", detail: "context must be a JSON object when project or epic profile configuration is present" },
-  });
+// A non-object caller context used to be refused here, and only when a project
+// or epic profile happened to be configured. It is refused by the request schema
+// now, for every launch — see launch-run.test.ts.
+test("a context with no project and no epic profile passes through untouched", () => {
+  const caller = { brief_notes: "ship it", oakridge_url: "http://oakridge" };
+  expect(prepareRunContext({ caller_context: caller, project: null, epic_profile: null })).toEqual(caller);
 });
 
 test("Epic profile construction owns domain defaults independently of execution", () => {

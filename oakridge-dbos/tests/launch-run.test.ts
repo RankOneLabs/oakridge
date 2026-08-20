@@ -8,11 +8,18 @@ import { deterministicRunId, type LaunchRunDependencies } from "../src/runtime/l
 import { dispatchRunLaunches } from "../src/runtime/run-launch-notifications";
 import type { WorkflowRunRepository } from "../src/storage/repositories";
 
+// A definition that reads the context, because a definition that reads nothing
+// cannot show whether the launch gate checks anything.
+const graph = { stages: { analyze: { stage_type: "delegated_session", operator_role: null, inputs: [], outputs: [],
+  config: { runtime: { from: "context", path: "/planner_runtime" }, effort: { from: "context", path: "/planner_effort" },
+    slot_bindings: { NOTES: { from: "context", path: "/brief_notes" }, URL: { from: "context", path: "/oakridge_url" } } } } }, edges: [] };
 const definition = { id: "ef2b47a4-d1bd-44ee-840a-e4f7b27570db" as WorkflowDefinitionId, name: "flow", version: 11,
-  graph: { stages: {}, edges: [] }, archived: false, created_at: "2026-08-15T00:00:00Z" } as WorkflowDefinition;
+  graph, archived: false, created_at: "2026-08-15T00:00:00Z" } as unknown as WorkflowDefinition;
 const project = { id: "af2b47a4-d1bd-44ee-840a-e4f7b27570db" as ProjectId, name: "Oakridge", repo_dir: "/workspace/oakridge",
   forge_repository: null, base_branch: null, created_at: "2026-08-15T00:00:00Z" };
-const body = { workflow_def_id: definition.id, project_id: project.id, context: { brief_notes: "Replace orchestration" }, epic_profile: null };
+// `planner_effort: null` is what the launcher sends for "the runtime's default".
+const context = { brief_notes: "Replace orchestration", oakridge_url: "http://oakridge", planner_runtime: "claude-code", planner_effort: null };
+const body = { workflow_def_id: definition.id, project_id: project.id, context, epic_profile: null };
 
 const mountedFixture = (options: { readonly archived?: boolean } = {}) => {
   let stored: PersistWorkflowRunLaunch | null = null;
@@ -66,7 +73,7 @@ test("compatible workflow run POST replays the same idempotent launch without a 
 test("compatible workflow run POST reports an immutable replay conflict", async () => {
   const subject = mountedFixture();
   expect((await request(subject.app)).status).toBe(201);
-  const conflict = await request(subject.app, { ...body, context: { brief_notes: "different" } });
+  const conflict = await request(subject.app, { ...body, context: { ...context, brief_notes: "different" } });
   expect(conflict.status).toBe(409);
   expect(await conflict.json()).toEqual({ error: "conflicting replay", code: "idempotency_conflict" });
 });
@@ -120,4 +127,74 @@ test("a launch declaring repositories proceeds without checking their branches",
     repositories: [{ key: "pipefitter", path: "/repos/pipefitter", base_branch: "main", epic_branch: "epic/tiers-page" }],
   }));
   expect(subject.dispatches()).toBe(1);
+});
+
+/**
+ * The launch gate, which is the whole point of naming what a definition reads.
+ *
+ * A context missing a key the definition dereferences used to be accepted: the
+ * run started, stages ran, and the one holding the pointer failed with
+ * `context pointer '/oakridge_url' not found` — one missing key per run,
+ * discovered in flight. The refusal names all of them at once, before anything
+ * has started.
+ */
+test("a launch whose context the definition cannot read is refused, naming every missing pointer", async () => {
+  const subject = mountedFixture();
+  const response = await request(subject.app, { ...body, context: { brief_notes: "only the notes" } });
+  expect(response.status).toBe(400);
+  const failure = await response.json() as { readonly error: string; readonly code: string };
+  expect(failure.code).toBe("context_requirements_unmet");
+  expect(failure.error).toContain("/planner_runtime (analyze)");
+  expect(failure.error).toContain("/oakridge_url (analyze)");
+  expect(failure.error).toContain("'flow' v11");
+  // Refused means refused: nothing was persisted and nothing was dispatched.
+  expect(subject.stored()).toBeNull();
+  expect(subject.dispatches()).toBe(0);
+});
+
+test("a context carrying keys no stage reads is still launched", async () => {
+  const subject = mountedFixture();
+  const response = await request(subject.app, { ...body, context: { ...context, some_authored_key: { nested: true } } });
+  expect(response.status).toBe(201);
+  expect(subject.stored()?.run.context).toEqual(expect.objectContaining({ some_authored_key: { nested: true } }));
+});
+
+/**
+ * Moved here from `prepareRunContext`, which could only refuse a non-object when
+ * a project or epic profile happened to be configured — so the same bad context
+ * sailed through a plain launch.
+ */
+test("a context that is not a JSON object is refused before anything reads it", async () => {
+  const subject = mountedFixture();
+  for (const notAnObject of [[], "context", 42, null]) {
+    const response = await request(subject.app, { ...body, context: notAnObject });
+    expect(response.status).toBe(400);
+  }
+  expect(subject.stored()).toBeNull();
+});
+
+test("a runtime the executor could never run is refused at the request, naming the field", async () => {
+  const subject = mountedFixture();
+  const response = await request(subject.app, { ...body, context: { ...context, planner_runtime: "gpt-5" } });
+  expect(response.status).toBe(400);
+  expect((await response.json() as { readonly error: string }).error).toContain("context.planner_runtime");
+});
+
+/**
+ * `planner_effort: null` means "the runtime's default" and the binding resolver
+ * accepts it, so the launch gate must too — a presence test, not a truthiness
+ * one.
+ */
+test("a null value satisfies the pointer that reads it", async () => {
+  const subject = mountedFixture();
+  expect((await request(subject.app)).status).toBe(201);
+  expect(subject.stored()?.run.context).toEqual(expect.objectContaining({ planner_effort: null }));
+});
+
+test("dropping that null key entirely is a different thing, and is refused", async () => {
+  const subject = mountedFixture();
+  const { planner_effort: _omitted, ...withoutEffort } = context;
+  const response = await request(subject.app, { ...body, context: withoutEffort });
+  expect(response.status).toBe(400);
+  expect((await response.json() as { readonly error: string }).error).toContain("/planner_effort (analyze)");
 });

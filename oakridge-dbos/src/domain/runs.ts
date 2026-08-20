@@ -1,10 +1,11 @@
 import type { EpicWorkflowProfile } from "./epic";
 import type { JsonValue, ProjectId, Result, StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId } from "./primitives";
+import type { RunContext } from "./run-context";
 
 export interface CreateWorkflowRunRequest {
   readonly workflow_def_id: WorkflowDefinitionId;
   readonly project_id: ProjectId | null;
-  readonly context: JsonValue;
+  readonly context: RunContext;
   readonly epic_profile: CreateEpicProfileRequest | null;
 }
 
@@ -27,7 +28,7 @@ export interface WorkflowRunLaunchRecord {
   readonly id: WorkflowRunId;
   readonly workflow_definition_id: WorkflowDefinitionId;
   readonly project_id: ProjectId | null;
-  readonly context: JsonValue;
+  readonly context: RunContext;
   readonly root_workflow_id: string;
   readonly archived: boolean;
   readonly created_at: string;
@@ -46,7 +47,7 @@ export interface RunLaunchCommand {
   readonly workflow_definition_id: WorkflowDefinitionId;
   readonly workflow_definition_version: number;
   readonly root_workflow_id: string;
-  readonly context: JsonValue;
+  readonly context: RunContext;
   readonly created_at: string;
   readonly application_version: string | null;
 }
