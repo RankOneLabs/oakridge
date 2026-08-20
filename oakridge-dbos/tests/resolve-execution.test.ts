@@ -3,6 +3,7 @@ import { resolveBinding, resolveDelegatedExecution } from "../src/compiler/resol
 import type { DelegatedSessionDefinitionConfig } from "../src/domain/delegated-session";
 import type { StageInstanceId, UnitId } from "../src/domain/primitives";
 import { loadDevFlowV13 } from "../src/seed/dev-flow-v13";
+import { delegatedSessionDefinitionSchema } from "../src/validation/delegated-session";
 
 test("context lookup resolves repository workdir from the runtime fan-out item", () => {
   const result = resolveBinding({ from: "context_lookup", collection_path: "/repositories", collection_key_path: "/key", item_key_path: "/artifact/repository_key", value_path: "/path" }, {
@@ -93,8 +94,18 @@ test("a definition cannot rebind the slots that identify the execution", () => {
 test("the seeded build stage addresses the unit it is running, not its stale binding", async () => {
   const seeded = await loadDevFlowV13();
   if (!seeded.ok) throw new Error(`seed did not load: ${seeded.error.detail}`);
+
   const build = seeded.value.graph.stages.build;
-  const definition = build?.config as unknown as DelegatedSessionDefinitionConfig;
+  expect(build?.stage_type).toBe("delegated_session");
+
+  // Parsed with the schema the compiler itself uses, rather than asserted with
+  // a cast. A cast would let this test claim the seeded stage has a shape it
+  // never checked — in the one file whose job is to prove what the shipped
+  // definition actually does — and a seed that drifted would surface three
+  // stages into a run instead of here.
+  const parsed = delegatedSessionDefinitionSchema.safeParse(build?.config);
+  if (!parsed.success) throw new Error(`seeded build stage does not parse: ${parsed.error.message}`);
+  const definition = parsed.data as DelegatedSessionDefinitionConfig;
 
   // The binding this fix defends against is still there — that is the point.
   expect(definition.slot_bindings.UNIT_ID).toEqual({ from: "literal", value: "0" });
