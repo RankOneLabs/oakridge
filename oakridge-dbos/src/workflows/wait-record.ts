@@ -13,7 +13,7 @@
  */
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
-import type { OpenGateWaitInput, OpenHandoffDownstreamWaitInput, WaitClosesOn, WaitKind, WaitOutcome } from "../domain/wait";
+import type { CloseWaitRequest, OpenGateWaitInput, OpenHandoffDownstreamWaitInput, WaitClosesOn, WaitOutcome } from "../domain/wait";
 import type { WaitRepository } from "../storage/repositories";
 
 let repository: WaitRepository | null = null;
@@ -31,13 +31,9 @@ export const openHandoffDownstreamWaitStep = DBOS.registerStep(async (input: Ope
   waitRepository().open_handoff_downstream(input),
 { name: "oakridgeOpenHandoffDownstreamWaitStep", retriesAllowed: true });
 
-export interface CloseWaitInput {
-  readonly command_workflow_id: string;
-  readonly kind: WaitKind;
-  readonly outcome: WaitOutcome;
-}
+export type CloseWaitInput = CloseWaitRequest & { readonly command_workflow_id: string };
 export const closeWaitStep = DBOS.registerStep(async (input: CloseWaitInput): Promise<void> =>
-  waitRepository().close(input.command_workflow_id, input.kind, input.outcome),
+  waitRepository().close(input.command_workflow_id, input),
 { name: "oakridgeCloseWaitStep", retriesAllowed: true });
 
 export interface ReleaseDownstreamWaitInput {

@@ -13,15 +13,15 @@ export interface HandoffWaitInput {
 }
 
 export type HandoffCommand =
-  | { readonly kind: "downstream_decision"; readonly action: string; readonly decision_artifact_id: string; readonly feedback: string | null }
+  | { readonly kind: "downstream_decision"; readonly action: string; readonly decision_artifact_id: ArtifactId; readonly feedback: string | null }
   | { readonly kind: "external_completed"; readonly external_kind: string; readonly correlation_id: string }
-  | { readonly kind: "supersede"; readonly replacement_artifact_revision_id: string }
+  | { readonly kind: "supersede"; readonly replacement_artifact_revision_id: ArtifactId }
   | { readonly kind: "withdraw" };
 
 export type HandoffResult =
-  | { readonly kind: "released"; readonly artifact: ArtifactRevision; readonly decision_artifact_id: string; readonly correlation_id: string }
-  | { readonly kind: "revision_requested"; readonly artifact: ArtifactRevision; readonly decision_artifact_id: string; readonly feedback: string | null }
-  | { readonly kind: "superseded"; readonly artifact: ArtifactRevision; readonly replacement_artifact_revision_id: string }
+  | { readonly kind: "released"; readonly artifact: ArtifactRevision; readonly decision_artifact_id: ArtifactId; readonly correlation_id: string }
+  | { readonly kind: "revision_requested"; readonly artifact: ArtifactRevision; readonly decision_artifact_id: ArtifactId; readonly feedback: string | null }
+  | { readonly kind: "superseded"; readonly artifact: ArtifactRevision; readonly replacement_artifact_revision_id: ArtifactId }
   | { readonly kind: "withdrawn"; readonly artifact: ArtifactRevision };
 
 export const durableHandoffWorkflow = DBOS.registerWorkflow(async (input: HandoffWaitInput): Promise<HandoffResult> => {
@@ -42,7 +42,7 @@ export const durableHandoffWorkflow = DBOS.registerWorkflow(async (input: Handof
       await closeWaitStep({
         command_workflow_id: commandWorkflowId, kind: "handoff_downstream",
         outcome: decision.kind === "supersede"
-          ? { kind: "superseded", replacement_artifact_revision_id: decision.replacement_artifact_revision_id as ArtifactId }
+          ? { kind: "superseded", replacement_artifact_revision_id: decision.replacement_artifact_revision_id }
           : { kind: "withdrawn" },
       });
       return result;
@@ -54,15 +54,15 @@ export const durableHandoffWorkflow = DBOS.registerWorkflow(async (input: Handof
       const result: HandoffResult = { kind: "revision_requested", artifact: input.artifact, decision_artifact_id: decision.decision_artifact_id, feedback: decision.feedback };
       await closeWaitStep({
         command_workflow_id: commandWorkflowId, kind: "handoff_downstream",
-        outcome: { kind: "decided", action: decision.action, decision_artifact_id: decision.decision_artifact_id as ArtifactId, feedback: decision.feedback ?? null },
+        outcome: { kind: "decided", action: decision.action, decision_artifact_id: decision.decision_artifact_id, feedback: decision.feedback ?? null },
       });
       await DBOS.send(input.parent_workflow_id, { kind: "handoff_revision_requested", result }, "execution-event", `handoff:${input.artifact.id}:revision:${decision.decision_artifact_id}`);
       return result;
     }
     await releaseDownstreamWaitStep({
       command_workflow_id: commandWorkflowId,
-      decided_outcome: { kind: "decided", action: decision.action, decision_artifact_id: decision.decision_artifact_id as ArtifactId, feedback: decision.feedback ?? null },
-      external_closes_on: { kind: "handoff_external", external_wait_kind: input.external_wait_kind, decision_artifact_id: decision.decision_artifact_id as ArtifactId },
+      decided_outcome: { kind: "decided", action: decision.action, decision_artifact_id: decision.decision_artifact_id, feedback: decision.feedback ?? null },
+      external_closes_on: { kind: "handoff_external", external_wait_kind: input.external_wait_kind, decision_artifact_id: decision.decision_artifact_id },
     });
     for (;;) {
       const external = await DBOS.recv<HandoffCommand>("handoff-command", { timeoutSeconds: 86_400 });
@@ -74,7 +74,7 @@ export const durableHandoffWorkflow = DBOS.registerWorkflow(async (input: Handof
         await closeWaitStep({
           command_workflow_id: commandWorkflowId, kind: "handoff_external",
           outcome: external.kind === "supersede"
-            ? { kind: "superseded", replacement_artifact_revision_id: external.replacement_artifact_revision_id as ArtifactId }
+            ? { kind: "superseded", replacement_artifact_revision_id: external.replacement_artifact_revision_id }
             : { kind: "withdrawn" },
         });
         return result;

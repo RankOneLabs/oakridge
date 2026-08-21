@@ -10,7 +10,7 @@ import { createScratchDatabase, type ScratchDatabase } from "./support/durable-d
 const STAGE = "00000000-0000-4000-8000-000000000002" as StageInstanceId;
 /** One seeded artifact per test, so the open-identity index never couples them. */
 const artifactId = (index: number): ArtifactId => `00000000-0000-4000-8000-0000000000a${index}` as ArtifactId;
-const SEEDED_ARTIFACTS = 8;
+const SEEDED_ARTIFACTS = 9;
 
 const seed = async (sql: PgPostgresExecutor): Promise<void> => {
   await sql.query(`INSERT INTO oakridge.workflow_definition (id, name, version, definition, created_at)
@@ -104,7 +104,7 @@ test("a closed wait keeps its outcome on the same row", async () => {
   if (!subject) return;
   const input = gateOpen(artifactId(4), "execution-1");
   await subject.waits.open_gate(input);
-  await subject.waits.close(input.command_workflow_id, "gate", { kind: "decided", action: "approve", decision_artifact_id: null, feedback: null });
+  await subject.waits.close(input.command_workflow_id, { kind: "gate", outcome: { kind: "decided", action: "approve", decision_artifact_id: null, feedback: null } });
   expect(await subject.waits.find_gate_wait(artifactId(4), "artifact_approval", "execution-1")).toEqual(expect.objectContaining({
     status: expect.objectContaining({ kind: "closed", outcome: { kind: "decided", action: "approve", decision_artifact_id: null, feedback: null } }),
   }));
@@ -116,9 +116,9 @@ test("a retried close is absorbed, keeping the first outcome and timestamp", asy
   const input = gateOpen(artifactId(7), "execution-1");
   await subject.waits.open_gate(input);
   const outcome = { kind: "decided", action: "approve", decision_artifact_id: null, feedback: null } as const;
-  await subject.waits.close(input.command_workflow_id, "gate", outcome);
+  await subject.waits.close(input.command_workflow_id, { kind: "gate", outcome });
   const first = await subject.waits.find_gate_wait(artifactId(7), "artifact_approval", "execution-1");
-  await subject.waits.close(input.command_workflow_id, "gate", outcome);
+  await subject.waits.close(input.command_workflow_id, { kind: "gate", outcome });
   expect(await subject.waits.find_gate_wait(artifactId(7), "artifact_approval", "execution-1")).toEqual(first);
 });
 
@@ -127,8 +127,8 @@ test("a close under a different outcome fails loudly", async () => {
   if (!subject) return;
   const input = gateOpen(artifactId(8), "execution-1");
   await subject.waits.open_gate(input);
-  await subject.waits.close(input.command_workflow_id, "gate", { kind: "decided", action: "approve", decision_artifact_id: null, feedback: null });
-  await expect(subject.waits.close(input.command_workflow_id, "gate", { kind: "withdrawn" }))
+  await subject.waits.close(input.command_workflow_id, { kind: "gate", outcome: { kind: "decided", action: "approve", decision_artifact_id: null, feedback: null } });
+  await expect(subject.waits.close(input.command_workflow_id, { kind: "gate", outcome: { kind: "withdrawn" } }))
     .rejects.toThrow("already closed under a different outcome");
 });
 
@@ -150,6 +150,16 @@ test("release_downstream closes the downstream row and opens the external one in
     // same execution binding the commands will be matched against.
     external_execution: external?.execution_workflow_id,
   }).toEqual({ downstream_status: "decided", external_status: "open", external_execution: "execution-1" });
+});
+
+test("the schema refuses an outcome foreign to the wait's kind", async () => {
+  const subject = await fixture();
+  if (!subject) return;
+  await subject.waits.open_gate(gateOpen(artifactId(9), "execution-1"));
+  await expect(subject.sql.query(
+    `UPDATE oakridge.wait SET status = 'closed', outcome = '{"kind":"external_completed","correlation_id":"x"}', closed_at = now()
+     WHERE artifact_revision_id = $1 AND kind = 'gate'`, [artifactId(9)],
+  )).rejects.toThrow(/check constraint/);
 });
 
 test("close_orphaned closes every open row as withdrawn", async () => {

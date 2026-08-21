@@ -463,8 +463,12 @@ e2e("a cohort stays reachable when a sibling output outranks its handoff", async
     const attempt = await confirmCohortMerged(oakridge.base_url, `${owed.stage_instance_id}:${owed.unit_id}`);
     expect(attempt).toEqual({ kind: "accepted", outcome: "completed" });
   } finally {
-    await DBOS.cancelWorkflow(run.root_workflow_id, { cancelChildren: true });
-    agent.releaseAll();
+    try {
+      await DBOS.cancelWorkflow(run.root_workflow_id, { cancelChildren: true });
+    } finally {
+      agent.releaseAll();
+      await sql.close();
+    }
   }
 }, 240_000);
 

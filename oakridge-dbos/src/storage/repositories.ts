@@ -13,7 +13,7 @@ import type { CreateProject, Project } from "../domain/projects";
 import type { CreateWorkflowRunResult, DeleteRunResult, PendingRunLaunch, PersistWorkflowRunLaunch, SetRunArchiveResult, WorkflowRunLaunchRecord, WorkflowRunListFilter } from "../domain/runs";
 import type { ConfirmFinalPullRequestRequest, FinalPullRequestDomainError, FinalPullRequestProjection, PullRequestObservation } from "../domain/final-pull-request";
 import type { CohortPullRequestReconciliation } from "../domain/cohort-pull-request";
-import type { OpenGateWaitInput, OpenHandoffDownstreamWaitInput, Wait, WaitClosesOn, WaitKind, WaitOutcome } from "../domain/wait";
+import type { CloseWaitRequest, OpenGateWaitInput, OpenHandoffDownstreamWaitInput, Wait, WaitClosesOn, WaitOutcome } from "../domain/wait";
 import type { Result } from "../domain/primitives";
 
 export interface WorkflowDefinitionRepository {
@@ -98,7 +98,7 @@ export interface StageAdmissionTargetRepository {
 export interface WaitRepository {
   open_gate(input: OpenGateWaitInput): Promise<void>;
   open_handoff_downstream(input: OpenHandoffDownstreamWaitInput): Promise<void>;
-  close(command_workflow_id: string, kind: WaitKind, outcome: WaitOutcome): Promise<void>;
+  close(command_workflow_id: string, request: CloseWaitRequest): Promise<void>;
   /** Closes the downstream row as decided and opens the external row, in one transaction. */
   release_downstream(
     command_workflow_id: string,

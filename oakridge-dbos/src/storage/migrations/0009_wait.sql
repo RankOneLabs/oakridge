@@ -13,10 +13,21 @@ CREATE TABLE oakridge.wait (
   closed_at             timestamptz,
   CHECK ((status = 'closed') = (outcome IS NOT NULL)),
   CHECK ((status = 'closed') = (closed_at IS NOT NULL)),
-  CHECK (closes_on->>'kind' = kind),
+  -- `IS TRUE` collapses NULL to a refusal: a CHECK that evaluates to NULL
+  -- passes, so a malformed closes_on like '{}' would otherwise slip through.
+  CHECK (jsonb_typeof(closes_on) = 'object' AND (closes_on->>'kind' = kind) IS TRUE),
   -- Backs wait_open_identity's coalesce: a gate row without a gate_step would
   -- key as '' and collide with nothing meaningful — refuse it at write time.
-  CHECK (kind <> 'gate' OR closes_on->>'gate_step' IS NOT NULL)
+  CHECK (kind <> 'gate' OR coalesce(closes_on->>'gate_step', '') <> ''),
+  -- Mirrors CloseWaitRequest: a gate never completes externally, and an
+  -- external wait is never decided.
+  CHECK (
+    outcome IS NULL
+    OR (CASE WHEN kind = 'handoff_external'
+          THEN outcome->>'kind' IN ('external_completed', 'superseded', 'withdrawn')
+          ELSE outcome->>'kind' IN ('decided', 'superseded', 'withdrawn')
+        END) IS TRUE
+  )
 );
 
 -- One row per (answering workflow, kind). Open/close key on this — that is

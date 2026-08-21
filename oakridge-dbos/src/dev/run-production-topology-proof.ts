@@ -93,7 +93,7 @@ registerWaitRepository({
   async open_handoff_downstream(input) {
     openWait(input, "handoff_downstream", { kind: "handoff_downstream", downstream_role: input.downstream_role });
   },
-  async close(command_workflow_id, kind, outcome) { closeWait(command_workflow_id, kind, outcome); },
+  async close(command_workflow_id, request) { closeWait(command_workflow_id, request.kind, request.outcome); },
   async release_downstream(command_workflow_id, decided_outcome, external_closes_on) {
     closeWait(command_workflow_id, "handoff_downstream", decided_outcome);
     const downstream = waitState.get(waitKey(command_workflow_id, "handoff_downstream"))!;

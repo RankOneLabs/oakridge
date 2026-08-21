@@ -22,6 +22,20 @@ export type WaitOutcome =
   | { readonly kind: "superseded"; readonly replacement_artifact_revision_id: ArtifactId }
   | { readonly kind: "withdrawn" }; // actor/reason already live on the artifact row — not duplicated here
 
+export type GateWaitOutcome = Extract<WaitOutcome, { kind: "decided" | "superseded" | "withdrawn" }>;
+export type HandoffDownstreamWaitOutcome = Extract<WaitOutcome, { kind: "decided" | "superseded" | "withdrawn" }>;
+export type HandoffExternalWaitOutcome = Extract<WaitOutcome, { kind: "external_completed" | "superseded" | "withdrawn" }>;
+
+/**
+ * A close names its kind and only that kind's outcomes: a gate never completes
+ * externally, and an external wait is never decided — the pairing is the type,
+ * so an invalid combination fails the compiler, not the state-view selector.
+ */
+export type CloseWaitRequest =
+  | { readonly kind: "gate"; readonly outcome: GateWaitOutcome }
+  | { readonly kind: "handoff_downstream"; readonly outcome: HandoffDownstreamWaitOutcome }
+  | { readonly kind: "handoff_external"; readonly outcome: HandoffExternalWaitOutcome };
+
 export interface Wait {
   readonly id: WaitId;
   readonly stage_instance_id: StageInstanceId;
@@ -82,7 +96,7 @@ export interface HandoffWorkflowState {
   readonly status: "awaiting_downstream" | "awaiting_external" | "revision_requested" | "released" | "superseded" | "withdrawn";
   readonly artifact_id: ArtifactId;
   readonly downstream_role?: string;
-  readonly decision_artifact_id?: string;
+  readonly decision_artifact_id?: ArtifactId;
   readonly command_workflow_id: string;
 }
 

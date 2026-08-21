@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type { ArtifactId, StageInstanceId, UnitId, WaitId } from "../domain/primitives";
-import type { OpenGateWaitInput, OpenHandoffDownstreamWaitInput, Wait, WaitClosesOn, WaitKind, WaitOutcome } from "../domain/wait";
+import type { CloseWaitRequest, OpenGateWaitInput, OpenHandoffDownstreamWaitInput, Wait, WaitClosesOn, WaitKind, WaitOutcome } from "../domain/wait";
 import type { WaitRepository } from "./repositories";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 
@@ -59,14 +59,14 @@ export class PostgresWaitRepository implements WaitRepository {
     await this.insertOpen(this.sql, input, "handoff_downstream", { kind: "handoff_downstream", downstream_role: input.downstream_role });
   }
 
-  async close(command_workflow_id: string, kind: WaitKind, outcome: WaitOutcome): Promise<void> {
+  async close(command_workflow_id: string, request: CloseWaitRequest): Promise<void> {
     const rows = await this.sql.query<{ readonly id: string }>(
       `UPDATE oakridge.wait SET status = 'closed', outcome = $3::jsonb, closed_at = $4::timestamptz
        WHERE command_workflow_id = $1 AND kind = $2 AND status = 'open'
        RETURNING id::text`,
-      [command_workflow_id, kind, JSON.stringify(outcome), new Date().toISOString()],
+      [command_workflow_id, request.kind, JSON.stringify(request.outcome), new Date().toISOString()],
     );
-    if (rows.length === 0) await this.requireCloseAbsorbed(this.sql, command_workflow_id, kind, outcome);
+    if (rows.length === 0) await this.requireCloseAbsorbed(this.sql, command_workflow_id, request.kind, request.outcome);
   }
 
   async release_downstream(
