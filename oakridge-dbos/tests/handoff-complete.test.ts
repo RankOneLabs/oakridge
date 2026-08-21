@@ -15,7 +15,7 @@ const fixture = (state: "awaiting_external" | "awaiting_downstream" = "awaiting_
   const dependencies: HandoffCompleteDependencies = {
     artifacts: { emit_revision: async () => ({ ok: true, value: { kind: "unchanged", artifact, superseded_artifact_id: null } }), withdraw: async () => ({ kind: "not_found", artifact_id: artifact.id }), mark_released: async () => ({ kind: "released", artifact }), find_by_id: async () => artifact, find_tip: async () => artifact, find_current: async () => artifact, list_chain: async () => [artifact] },
     contexts: { find_for_emit: async () => ({ run_id: artifact.run_id, stage_key: "build", operator_role: null, stage_instance_id: artifact.stage_instance_id, execution_id: artifact.execution_id, unit_id: artifact.unit_id, executor_type: "delegated_session", execution_workflow_id: "build-workflow", inputs: [], outputs: [{ name: "build_result", artifact_type: "dev.build_result", release: { kind: "handoff", downstream_role: "assessment", external_wait_kind: "github_review" } }] }) },
-    get_handoff_state: async () => ({ status: state, artifact_id: artifact.id }),
+    get_handoff_state: async () => ({ status: state, artifact_id: artifact.id, command_workflow_id: "build-workflow:handoff:11111111-1111-4111-8111-111111111111" }),
     send_handoff_command: async (workflow_id, command, key) => { sent.push({ workflow_id, command, key }); },
   };
   return { app: createHandoffCompleteApp(dependencies), sent };

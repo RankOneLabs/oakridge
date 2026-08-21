@@ -1,5 +1,4 @@
 import type { ArtifactWorkflowMessage } from "./artifact-callback";
-import type { GateWorkflowState, HandoffWorkflowState } from "./gate-resume";
 import type { GateCommand } from "../workflows/gate";
 import type { HandoffCommand } from "../workflows/handoff";
 import type { StageAdmissionState } from "../domain/runs";
@@ -21,15 +20,9 @@ export const sendArtifactWorkflowMessage = async (workflow_id: string, message: 
   await client().send(workflow_id, message, "execution-event", idempotency_key);
 };
 
-export const getGateWorkflowState = async (workflow_id: string): Promise<GateWorkflowState | null> =>
-  client().getEvent<GateWorkflowState>(workflow_id, "gate-state", { timeoutSeconds: 0 });
-
 export const sendGateWorkflowCommand = async (workflow_id: string, command: GateCommand, idempotency_key: string): Promise<void> => {
   await client().send(workflow_id, command, "gate-command", idempotency_key);
 };
-
-export const getHandoffWorkflowState = async (workflow_id: string): Promise<HandoffWorkflowState | null> =>
-  client().getEvent<HandoffWorkflowState>(workflow_id, "handoff-state", { timeoutSeconds: 0 });
 
 export const sendHandoffWorkflowCommand = async (workflow_id: string, command: HandoffCommand, idempotency_key: string): Promise<void> => {
   await client().send(workflow_id, command, "handoff-command", idempotency_key);

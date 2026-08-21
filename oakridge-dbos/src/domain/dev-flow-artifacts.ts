@@ -20,3 +20,14 @@ export interface AssessmentFinding { readonly criterion: string | null; readonly
 export interface AssessmentBody { readonly verdict: AssessmentVerdict; readonly findings: readonly AssessmentFinding[]; readonly test_evidence: TestEvidence | null; readonly recommended_next_actions: readonly string[] }
 export type PrReviewStatus = "draft" | "ready" | "changes_requested" | "approved" | "merged" | "closed";
 export interface PrSummaryBody { readonly pr_url: string; readonly branch: string; readonly summary: string; readonly review_status: PrReviewStatus | null }
+/**
+ * The artifact type whose body reports the pull request a cohort opened.
+ *
+ * Named once because two readers depend on it: the reconciler, which takes the
+ * URL and branch it checks the forge against, and the operator projection,
+ * which shows the operator which pull request they are being asked to confirm.
+ * A `github_review` wait is satisfied by a pull request, so both are coupled to
+ * this type by the same deliberate design; a wait of another kind would be
+ * closed by other evidence and would not read this at all.
+ */
+export const PR_SUMMARY_ARTIFACT_TYPE = "dev.pr_summary";

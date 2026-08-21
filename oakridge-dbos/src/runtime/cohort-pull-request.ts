@@ -19,17 +19,14 @@ import {
   operatorMergedObservation, reconcileCohortPullRequest, withCompletion,
   type CohortPullRequestOutcome, type CohortPullRequestReconciliation, type ExpectedCohortPullRequest,
 } from "../domain/cohort-pull-request";
-import type { BuildResultBody, PrSummaryBody } from "../domain/dev-flow-artifacts";
+import { PR_SUMMARY_ARTIFACT_TYPE, type BuildResultBody, type PrSummaryBody } from "../domain/dev-flow-artifacts";
 import type { EpicWorkflowProfile } from "../domain/epic";
-import { err, ok, type JsonValue, type Result, type StageInstanceId, type UnitId } from "../domain/primitives";
+import { err, ok, type ArtifactId, type JsonValue, type Result, type StageInstanceId, type UnitId } from "../domain/primitives";
 import type { PullRequestObservation } from "../domain/pull-request";
-import { handoffWorkflowId } from "../domain/workflow-ids";
-import type { HandoffWorkflowState } from "../http/gate-resume";
+import type { HandoffWorkflowState } from "../domain/wait";
 import type { HandoffCommand } from "../workflows/handoff";
 import type { ArtifactRevisionRepository, CohortPullRequestRepository, EpicWorkflowProfileRepository, ExecutionArtifactContext, ExecutionArtifactContextRepository, WorkflowRunRepository } from "../storage/repositories";
 
-/** The artifact type whose body reports the pull request a cohort opened. */
-const PR_SUMMARY_ARTIFACT_TYPE = "dev.pr_summary";
 const GITHUB_REVIEW_WAIT = "github_review";
 
 export interface CohortPullRequestDependencies {
@@ -38,7 +35,7 @@ export interface CohortPullRequestDependencies {
   readonly contexts: ExecutionArtifactContextRepository;
   readonly artifacts: ArtifactRevisionRepository;
   readonly reconciliations: CohortPullRequestRepository;
-  readonly get_handoff_state: (workflow_id: string) => Promise<HandoffWorkflowState | null>;
+  readonly get_handoff_state: (artifact_id: ArtifactId, execution_workflow_id: string) => Promise<HandoffWorkflowState | null>;
   readonly send_handoff_command: (workflow_id: string, command: HandoffCommand, idempotency_key: string) => Promise<void>;
   readonly now: () => string;
 }
@@ -104,7 +101,7 @@ const selectExpectedBaseBranch = (profile: EpicWorkflowProfile | null, runContex
 interface CohortHandoff {
   readonly context: ExecutionArtifactContext;
   readonly expected: ExpectedCohortPullRequest;
-  readonly handoff_workflow_id: string;
+  readonly handoff_artifact_id: ArtifactId;
 }
 
 /** Everything the run already knows about this cohort's pull request. */
@@ -148,7 +145,7 @@ const loadCohortHandoff = async (
 
   return ok({
     context,
-    handoff_workflow_id: handoffWorkflowId(context.execution_workflow_id, handoffArtifact.id),
+    handoff_artifact_id: handoffArtifact.id,
     expected: {
       run_id: context.run_id, stage_instance_id: context.stage_instance_id, unit_id: context.unit_id,
       repository_key: repositoryKey, url, head_branch: headBranch,
@@ -176,7 +173,7 @@ export const reconcileCohortEvidence = async (
 ): Promise<Result<ResolvedCohortPullRequest, CohortPullRequestError>> => {
   const loaded = await loadCohortHandoff(dependencies, stageInstanceId, unitId);
   if (!loaded.ok) return loaded;
-  const { expected, handoff_workflow_id: handoffWorkflow } = loaded.value;
+  const { expected, handoff_artifact_id: handoffArtifactId } = loaded.value;
 
   const now = dependencies.now();
   const observation = evidence.kind === "observation" ? evidence.observation : operatorMergedObservation(expected, now);
@@ -197,7 +194,7 @@ export const reconcileCohortEvidence = async (
     return ok({ resolution: { kind: "waiting" }, reconciliation: reconciled.reconciliation });
   }
 
-  const state = await dependencies.get_handoff_state(handoffWorkflow);
+  const state = await dependencies.get_handoff_state(handoffArtifactId, loaded.value.context.execution_workflow_id);
   if (state?.status !== "awaiting_external") {
     // Merged, but there is no wait open to close — the assessor has not
     // approved yet, or something already closed it. Recorded either way; the
@@ -209,7 +206,7 @@ export const reconcileCohortEvidence = async (
   const idempotencyKey = evidence.kind === "operator_confirmation"
     ? evidence.idempotency_key
     : `github_review:${expected.stage_instance_id}:${expected.unit_id}:${observation.url}`;
-  await dependencies.send_handoff_command(handoffWorkflow,
+  await dependencies.send_handoff_command(state.command_workflow_id,
     { kind: "external_completed", external_kind: GITHUB_REVIEW_WAIT, correlation_id: observation.url }, idempotencyKey);
   const completed = withCompletion(reconciled.reconciliation, now);
   await dependencies.reconciliations.upsert(completed);

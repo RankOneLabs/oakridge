@@ -36,7 +36,7 @@ const fixture = (options: { readonly open_items?: number; readonly tip?: Artifac
       insert_idempotent: async (audit) => { inserted = audit; return audit.id; },
       mark_applied: async (id) => { applied = id; },
     },
-    get_gate_state: async () => ({ status: "pending", stage_instance_id: stageId, execution_id: executionId, unit_id: unitId, artifact_revision_id: artifactId, execution_workflow_id: "execution-workflow-1", gate_step: "artifact_approval", actions: ["approve", "request_revision"] }),
+    get_gate_state: async () => ({ status: "pending", artifact_revision_id: artifactId, gate_step: "artifact_approval", command_workflow_id: "execution-workflow-1:gate:artifact-1:wait:artifact_approval" }),
     get_handoff_state: async () => null,
     send_gate_command: async (workflow_id, _command, idempotency_key) => { sent.push({ workflow_id, idempotency_key }); },
     send_handoff_command: async () => {},
@@ -103,7 +103,7 @@ test("a pending audit reconciles the crash after DBOS consumed the command", asy
     operator_comment: "looks good", feedback: null, idempotency_key: "decision-1", created_at: artifact.created_at, applied_at: null,
   };
   const subject = fixture({ existing });
-  const app = createGateResumeApp({ ...subject.dependencies, get_gate_state: async () => ({ status: "closed", action: "approve", stage_instance_id: stageId, execution_id: executionId, unit_id: unitId, artifact_revision_id: artifactId, execution_workflow_id: "execution-workflow-1", gate_step: "artifact_approval", actions: ["approve", "request_revision"] }) });
+  const app = createGateResumeApp({ ...subject.dependencies, get_gate_state: async () => ({ status: "closed", action: "approve", artifact_revision_id: artifactId, gate_step: "artifact_approval", command_workflow_id: "execution-workflow-1:gate:artifact-1:wait:artifact_approval" }) });
   const response = await decide(app);
   expect(response.status).toBe(202);
   expect(subject.sent).toHaveLength(0);
@@ -138,7 +138,7 @@ test("an assessment decision is also correlated to its exact upstream handoff ar
   const dependencies: GateResumeDependencies = {
     ...subject.dependencies,
     artifacts: { ...subject.dependencies.artifacts, find_current: async (coordinate) => coordinate.output_name === "build_result" ? source : artifact },
-    get_handoff_state: async () => ({ status: "awaiting_downstream", artifact_id: sourceId, downstream_role: "assessment" }),
+    get_handoff_state: async () => ({ status: "awaiting_downstream", artifact_id: sourceId, downstream_role: "assessment", command_workflow_id: "build-workflow:handoff:build-artifact-1" }),
     send_handoff_command: async (workflow_id, command) => { handoffMessages.push({ workflow_id, command }); },
   };
   const app = createGateResumeApp(dependencies);
@@ -178,8 +178,7 @@ const collectionFixture = () => {
     }) },
     artifacts: { ...base.dependencies.artifacts, find_by_id: async () => brief,
       find_current: async (coordinate) => { currentCoordinates.push({ unit_id: coordinate.unit_id }); return brief; } },
-    get_gate_state: async () => ({ status: "pending", stage_instance_id: stageId, execution_id: collectionExecutionId,
-      unit_id: executionUnit, artifact_revision_id: brief.id, execution_workflow_id: "brief-workflow-1", gate_step: "artifact_approval", actions: ["approve", "request_revision"] }),
+    get_gate_state: async () => ({ status: "pending", artifact_revision_id: brief.id, gate_step: "artifact_approval", command_workflow_id: "brief-workflow-1" }),
   };
   return { app: createGateResumeApp(dependencies), brief, executionUnit, currentCoordinates };
 };
@@ -238,7 +237,7 @@ test("gate resume routes a revision request to the upstream handoff", async () =
   const dependencies: GateResumeDependencies = {
     ...subject.dependencies,
     artifacts: { ...subject.dependencies.artifacts, find_by_id: async (id) => id === sourceId ? source : artifact, find_current: async (coordinate) => coordinate.output_name === "build_result" ? source : artifact },
-    get_handoff_state: async () => ({ status: "awaiting_downstream", artifact_id: sourceId, downstream_role: "assessment" }),
+    get_handoff_state: async () => ({ status: "awaiting_downstream", artifact_id: sourceId, downstream_role: "assessment", command_workflow_id: "build-workflow:handoff:build-artifact-2" }),
     send_handoff_command: async (workflow_id, command) => { handoffMessages.push({ workflow_id, command }); },
   };
   const response = await decide(createGateResumeApp(dependencies), { ...body, action: "request_revision" });
@@ -268,7 +267,9 @@ test("gate resume resolves the upstream handoff to the current revision of the i
   const dependencies: GateResumeDependencies = {
     ...subject.dependencies,
     artifacts: { ...subject.dependencies.artifacts, find_by_id: async (id) => id === recordedId ? recorded : artifact, find_current: async (coordinate) => coordinate.output_name === "build_result" ? current : artifact },
-    get_handoff_state: async (workflow_id) => workflow_id === "build-workflow:handoff:build-artifact-v2" ? { status: "awaiting_downstream", artifact_id: currentId, downstream_role: "assessment" } : null,
+    // Round two of a revision loop resolves the handoff by the CURRENT
+    // revision — the fake matches on that id, exactly what this test proves.
+    get_handoff_state: async (artifact_id) => artifact_id === currentId ? { status: "awaiting_downstream", artifact_id: currentId, downstream_role: "assessment", command_workflow_id: "build-workflow:handoff:build-artifact-v2" } : null,
     send_handoff_command: async (workflow_id) => { handoffMessages.push(workflow_id); },
   };
   const response = await decide(createGateResumeApp(dependencies));
