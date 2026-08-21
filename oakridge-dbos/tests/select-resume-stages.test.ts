@@ -2,10 +2,10 @@ import { expect, test } from "bun:test";
 
 import { compileWorkflowDefinition } from "../src/compiler/compile-workflow";
 import { selectAncestorStages } from "../src/compiler/select-resume-stages";
-import { loadDevFlowV13 } from "../src/seed/dev-flow-v13";
+import { loadDevFlowV14 } from "../src/seed/dev-flow-v14";
 
 test("stage rerun inherits only graph ancestors and leaves the selected stage plus descendants to DBOS", async () => {
-  const loaded = await loadDevFlowV13();
+  const loaded = await loadDevFlowV14();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const compiled = compileWorkflowDefinition(loaded.value);
   if (!compiled.ok) throw new Error(compiled.error.detail);
@@ -14,7 +14,7 @@ test("stage rerun inherits only graph ancestors and leaves the selected stage pl
   const ancestors = selected.value;
   expect(ancestors).toContain("spec_analyzer");
   expect(ancestors).toContain("plan_writer");
-  // v13's planning stages consume the provisioned refs, so provisioning is an
+  // v14's planning stages consume the provisioned refs, so provisioning is an
   // ancestor of everything. Without this, the assertions above pass even if
   // traversal drops it.
   expect(ancestors).toContain("provision_refs");
@@ -24,7 +24,7 @@ test("stage rerun inherits only graph ancestors and leaves the selected stage pl
 });
 
 test("an unknown resume stage is reported as a value, not thrown", async () => {
-  const loaded = await loadDevFlowV13();
+  const loaded = await loadDevFlowV14();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const compiled = compileWorkflowDefinition(loaded.value);
   if (!compiled.ok) throw new Error(compiled.error.detail);

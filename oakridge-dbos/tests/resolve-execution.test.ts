@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { resolveBinding, resolveDelegatedExecution } from "../src/compiler/resolve-execution";
 import type { DelegatedSessionDefinitionConfig } from "../src/domain/delegated-session";
 import type { StageInstanceId, UnitId } from "../src/domain/primitives";
-import { loadDevFlowV13 } from "../src/seed/dev-flow-v13";
+import { loadDevFlowV14 } from "../src/seed/dev-flow-v14";
 import { delegatedSessionDefinitionSchema } from "../src/validation/delegated-session";
 
 test("context lookup resolves repository workdir from the runtime fan-out item", () => {
@@ -82,17 +82,15 @@ test("a definition cannot rebind the slots that identify the execution", () => {
 });
 
 /**
- * The shipped definition is the one that had the stale binding, and it cannot be
- * edited to remove it: workflow definitions are immutable, so changing
- * `dev-flow@13` in place makes `insert_immutable` reject it against any database
- * that already stored v13 — the seed would throw on boot. The binding stays
- * until a version bump retires it, which makes "the resolver ignores it" the
- * guarantee that actually protects a live run.
- *
- * So this resolves the real seeded build stage rather than a fixture.
+ * v14 retired the bindings that never took effect, so the seeded definition no
+ * longer carries `UNIT_ID: {literal "0"}` — but v13 is still in every database
+ * that ever seeded it, and runs launched against it still compile its graph.
+ * The resolver's defence is what protects those, so this resolves the real
+ * seeded stage rather than a fixture, and pins both halves: the shipped
+ * definition binds no identity slot, and the address it renders is the unit.
  */
-test("the seeded build stage addresses the unit it is running, not its stale binding", async () => {
-  const seeded = await loadDevFlowV13();
+test("the seeded build stage addresses the unit it is running", async () => {
+  const seeded = await loadDevFlowV14();
   if (!seeded.ok) throw new Error(`seed did not load: ${seeded.error.detail}`);
 
   const build = seeded.value.graph.stages.build;
@@ -107,8 +105,10 @@ test("the seeded build stage addresses the unit it is running, not its stale bin
   if (!parsed.success) throw new Error(`seeded build stage does not parse: ${parsed.error.message}`);
   const definition = parsed.data as DelegatedSessionDefinitionConfig;
 
-  // The binding this fix defends against is still there — that is the point.
-  expect(definition.slot_bindings.UNIT_ID).toEqual({ from: "literal", value: "0" });
+  // Retired in v14. A definition that binds identity is stating something it
+  // does not get to decide, and this is what keeps one from coming back.
+  expect(Object.keys(definition.slot_bindings)).not.toContain("UNIT_ID");
+  expect(Object.keys(definition.slot_bindings)).not.toContain("STAGE_INSTANCE_ID");
 
   // The real stage resolves its workdir and both base branches by looking the
   // cohort's repository up in `repository_refs`, so a faithful environment is

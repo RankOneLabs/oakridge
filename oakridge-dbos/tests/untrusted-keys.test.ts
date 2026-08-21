@@ -19,7 +19,7 @@ import type { OperatorProjectionRepository } from "../src/storage/postgres-opera
 import { rerunStage, type StageRerunDependencies } from "../src/runtime/stage-rerun";
 import { parseWorkflowDefinition } from "../src/validation/workflow-definition";
 import { delegatedSessionDefinitionSchema } from "../src/validation/delegated-session";
-import { loadDevFlowV13 } from "../src/seed/dev-flow-v13";
+import { loadDevFlowV14 } from "../src/seed/dev-flow-v14";
 
 const INHERITED = ["constructor", "toString", "__proto__"] as const;
 
@@ -34,7 +34,7 @@ test("a plain lookup answers for inherited names and an own-property lookup does
 });
 
 test("an inherited name is not a resumable stage", async () => {
-  const loaded = await loadDevFlowV13();
+  const loaded = await loadDevFlowV14();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const compiled = compileWorkflowDefinition(loaded.value);
   if (!compiled.ok) throw new Error(compiled.error.detail);
