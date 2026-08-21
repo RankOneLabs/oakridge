@@ -31,9 +31,11 @@ import { PostgresArtifactRevisionRepository, PostgresCancellationTargetRepositor
 import { DEFAULT_STALL_THRESHOLD_SECONDS, PostgresOperatorProjectionRepository } from "../storage/postgres-operators";
 import { PostgresCohortPullRequestRepository, PostgresCollaborationRepository, PostgresEpicWorkflowProfileRepository, PostgresFinalPullRequestRepository, PostgresGateDecisionAuditRepository } from "../storage/postgres-policy";
 import { PostgresProjectRepository } from "../storage/postgres-projects";
+import { PostgresWaitRepository } from "../storage/postgres-wait";
 import { PostgresWorkflowDefinitionRepository } from "../storage/postgres-workflow-definitions";
 import { PgPostgresExecutor } from "../storage/sql-executor";
 import { registerCancellationControlServices } from "../workflows/cancellation";
+import { registerWaitRepository } from "../workflows/wait-record";
 import { registerArtifactLifecycleObserver, registerExecutionProjectionObserver, registerExecutorAdapter } from "../workflows/executor-topology";
 import { registerProductionTopologyServices } from "../workflows/production-topology";
 import { dispatchArtifactNotifications } from "./artifact-notifications";
@@ -126,6 +128,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const resumeArtifacts = new PostgresResumeArtifactRepository(sql);
   const rerunTargets = new PostgresRerunTargetRepository(sql);
   const cancellationTargets = new PostgresCancellationTargetRepository(sql);
+  const waits = new PostgresWaitRepository(sql);
   const sessionHolds = new PostgresSessionHoldRepository(sql, config.application_version);
   const audits = new PostgresGateDecisionAuditRepository(sql);
   const collaboration = new PostgresCollaborationRepository(sql);
@@ -163,6 +166,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   }));
   registerExecutionProjectionObserver(executions);
   registerArtifactLifecycleObserver(artifacts);
+  registerWaitRepository(waits);
   registerCancellationControlServices({
     list_execution_targets: (root) => cancellationTargets.list_for_attempt(root),
     terminalize_pending_waits: (root, reason, at) => cancellationTargets.terminalize_pending_waits(root, "workflow_cancellation", reason ?? "workflow cancelled", at),

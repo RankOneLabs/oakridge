@@ -13,6 +13,7 @@ import type { CreateProject, Project } from "../domain/projects";
 import type { CreateWorkflowRunResult, DeleteRunResult, PendingRunLaunch, PersistWorkflowRunLaunch, SetRunArchiveResult, WorkflowRunLaunchRecord, WorkflowRunListFilter } from "../domain/runs";
 import type { ConfirmFinalPullRequestRequest, FinalPullRequestDomainError, FinalPullRequestProjection, PullRequestObservation } from "../domain/final-pull-request";
 import type { CohortPullRequestReconciliation } from "../domain/cohort-pull-request";
+import type { OpenGateWaitInput, OpenHandoffDownstreamWaitInput, Wait, WaitClosesOn, WaitKind, WaitOutcome } from "../domain/wait";
 import type { Result } from "../domain/primitives";
 
 export interface WorkflowDefinitionRepository {
@@ -86,6 +87,29 @@ export interface StageInstanceRepository {
 
 export interface StageAdmissionTargetRepository {
   find_coordinator_workflow_id(stage_instance_id: StageInstanceId): Promise<string | null>;
+}
+
+/**
+ * The record of gate and handoff waits — one table, written by the two
+ * workflows that own them, read by everyone else. Opens are absorbed on
+ * (command_workflow_id, kind) so a retried step never double-records; a close
+ * with no row to close throws, because that is record corruption, not a miss.
+ */
+export interface WaitRepository {
+  open_gate(input: OpenGateWaitInput): Promise<void>;
+  open_handoff_downstream(input: OpenHandoffDownstreamWaitInput): Promise<void>;
+  close(command_workflow_id: string, kind: WaitKind, outcome: WaitOutcome): Promise<void>;
+  /** Closes the downstream row as decided and opens the external row, in one transaction. */
+  release_downstream(
+    command_workflow_id: string,
+    decided_outcome: Extract<WaitOutcome, { kind: "decided" }>,
+    external_closes_on: Extract<WaitClosesOn, { kind: "handoff_external" }>,
+  ): Promise<void>;
+  find_gate_wait(artifact_revision_id: ArtifactId, gate_step: string, execution_workflow_id: string): Promise<Wait | null>;
+  find_handoff_waits(artifact_revision_id: ArtifactId, execution_workflow_id: string): Promise<readonly Wait[]>;
+  count_open_waits(command_workflow_id: string): Promise<number>;
+  /** Cancellation closing a provably dead owner's open rows as withdrawn — the single exception to owner-closes. */
+  close_orphaned(command_workflow_id: string, at: string): Promise<void>;
 }
 
 export interface ArtifactRevisionRepository {

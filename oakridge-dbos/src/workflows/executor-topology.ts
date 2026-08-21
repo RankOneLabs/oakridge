@@ -144,7 +144,7 @@ const gateRelayWorkflow = DBOS.registerWorkflow(async (input: GateRelayInput): P
   for (const gateStep of input.release.gate_steps) {
     // The wire shape stays a list of names; the disposition is decided here,
     // where the compiled step that declared it is in hand.
-    const gateInput: GateWaitInput = { stage_instance_id: input.request.stage_instance_id, execution_id: input.request.execution_id, unit_id: input.request.unit_id, artifact_revision_id: input.release.artifact.id, gate_step: gateStep.type, actions: gateStep.actions.map((action) => action.name) };
+    const gateInput: GateWaitInput = { stage_instance_id: input.request.stage_instance_id, execution_id: input.request.execution_id, unit_id: input.request.unit_id, artifact_revision_id: input.release.artifact.id, execution_workflow_id: input.parent_workflow_id, gate_step: gateStep.type, actions: gateStep.actions.map((action) => action.name) };
     const gate = await DBOS.startWorkflow(durableGateWorkflow, { workflowID: gateWaitWorkflowIdFromRelay(relayId, gateStep.type) })(gateInput);
     const command = await gate.getResult();
     if (command.kind !== "decision") return command;

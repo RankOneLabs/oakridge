@@ -36,7 +36,7 @@ const fixture = (options: { readonly open_items?: number; readonly tip?: Artifac
       insert_idempotent: async (audit) => { inserted = audit; return audit.id; },
       mark_applied: async (id) => { applied = id; },
     },
-    get_gate_state: async () => ({ status: "pending", stage_instance_id: stageId, execution_id: executionId, unit_id: unitId, artifact_revision_id: artifactId, gate_step: "artifact_approval", actions: ["approve", "request_revision"] }),
+    get_gate_state: async () => ({ status: "pending", stage_instance_id: stageId, execution_id: executionId, unit_id: unitId, artifact_revision_id: artifactId, execution_workflow_id: "execution-workflow-1", gate_step: "artifact_approval", actions: ["approve", "request_revision"] }),
     get_handoff_state: async () => null,
     send_gate_command: async (workflow_id, _command, idempotency_key) => { sent.push({ workflow_id, idempotency_key }); },
     send_handoff_command: async () => {},
@@ -103,7 +103,7 @@ test("a pending audit reconciles the crash after DBOS consumed the command", asy
     operator_comment: "looks good", feedback: null, idempotency_key: "decision-1", created_at: artifact.created_at, applied_at: null,
   };
   const subject = fixture({ existing });
-  const app = createGateResumeApp({ ...subject.dependencies, get_gate_state: async () => ({ status: "closed", action: "approve", stage_instance_id: stageId, execution_id: executionId, unit_id: unitId, artifact_revision_id: artifactId, gate_step: "artifact_approval", actions: ["approve", "request_revision"] }) });
+  const app = createGateResumeApp({ ...subject.dependencies, get_gate_state: async () => ({ status: "closed", action: "approve", stage_instance_id: stageId, execution_id: executionId, unit_id: unitId, artifact_revision_id: artifactId, execution_workflow_id: "execution-workflow-1", gate_step: "artifact_approval", actions: ["approve", "request_revision"] }) });
   const response = await decide(app);
   expect(response.status).toBe(202);
   expect(subject.sent).toHaveLength(0);
@@ -179,7 +179,7 @@ const collectionFixture = () => {
     artifacts: { ...base.dependencies.artifacts, find_by_id: async () => brief,
       find_current: async (coordinate) => { currentCoordinates.push({ unit_id: coordinate.unit_id }); return brief; } },
     get_gate_state: async () => ({ status: "pending", stage_instance_id: stageId, execution_id: collectionExecutionId,
-      unit_id: executionUnit, artifact_revision_id: brief.id, gate_step: "artifact_approval", actions: ["approve", "request_revision"] }),
+      unit_id: executionUnit, artifact_revision_id: brief.id, execution_workflow_id: "brief-workflow-1", gate_step: "artifact_approval", actions: ["approve", "request_revision"] }),
   };
   return { app: createGateResumeApp(dependencies), brief, executionUnit, currentCoordinates };
 };

@@ -26,6 +26,7 @@ export type ExecutionId = Brand<string, "ExecutionId">;
 export type RootWorkflowId = Brand<string, "RootWorkflowId">;
 export type StageCoordinatorWorkflowId = Brand<string, "StageCoordinatorWorkflowId">;
 export type UnitId = Brand<string, "UnitId">;
+export type WaitId = Brand<string, "WaitId">;
 
 /**
  * One attempt at an execution — the ID of the workflow running it. A rerun
