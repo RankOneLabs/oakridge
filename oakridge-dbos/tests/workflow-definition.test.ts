@@ -33,8 +33,8 @@ describe("Rust v2 workflow definition compatibility", () => {
     expect(result.value.archived).toBe(false);
   });
 
-  test("loads unmodified dev_flow_v13.json, provisioning stage included", async () => {
-    const source = await Bun.file(new URL("../../oakridge-core/examples/dev_flow_v13.json", import.meta.url)).json();
+  test("loads unmodified dev_flow_v14.json, provisioning stage included", async () => {
+    const source = await Bun.file(new URL("../../oakridge-core/examples/dev_flow_v14.json", import.meta.url)).json();
     const result = parseWorkflowDefinition(source);
     expect(result.ok).toBe(true);
     if (!result.ok) return;

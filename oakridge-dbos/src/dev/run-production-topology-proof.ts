@@ -4,7 +4,7 @@ import { RepositoryProvisioningAdapter } from "../adapters/repository-provisioni
 import type { ArtifactRevision } from "../domain/artifacts";
 import type { ExecutionRequest, ExecutorAdapter } from "../domain/execution";
 import type { ArtifactId, ExecutionId, JsonValue, UnitId, WorkflowRunId } from "../domain/primitives";
-import { loadDevFlowV13 } from "../seed/dev-flow-v13";
+import { loadDevFlowV14 } from "../seed/dev-flow-v14";
 import { PgPostgresExecutor } from "../storage/sql-executor";
 
 const databaseUrl = process.env.DBOS_SYSTEM_DATABASE_URL;
@@ -15,7 +15,7 @@ const proofServiceSql = PgPostgresExecutor.connect(databaseUrl);
 await proofSql.query("CREATE TABLE IF NOT EXISTS public.oakridge_proof_execution (workflow_id text PRIMARY KEY, request jsonb NOT NULL)", []);
 DBOS.setConfig({ name: "oakridge-production-proof", systemDatabaseUrl: databaseUrl, applicationVersion, logLevel: "warn" });
 
-const loaded = await loadDevFlowV13();
+const loaded = await loadDevFlowV14();
 if (!loaded.ok) throw new Error(loaded.error.detail);
 const definition = loaded.value;
 

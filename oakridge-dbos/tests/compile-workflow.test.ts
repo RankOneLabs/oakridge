@@ -2,10 +2,10 @@ import { expect, test } from "bun:test";
 
 import { builtInStageTypeCompilers, compileWorkflowDefinition, type StageTypeCompiler } from "../src/compiler/compile-workflow";
 import { ok } from "../src/domain/primitives";
-import { loadDevFlowV13 } from "../src/seed/dev-flow-v13";
+import { loadDevFlowV14 } from "../src/seed/dev-flow-v14";
 
-test("compiles unchanged v13 into executor-independent materialization contracts", async () => {
-  const loaded = await loadDevFlowV13();
+test("compiles unchanged v14 into executor-independent materialization contracts", async () => {
+  const loaded = await loadDevFlowV14();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const compiled = compileWorkflowDefinition(loaded.value);
   expect(compiled.ok).toBe(true);
@@ -27,7 +27,7 @@ test("compiles unchanged v13 into executor-independent materialization contracts
  * which is the contract by which the registered adapter is found.
  */
 test("compiles the provisioning stage into one unreviewed unit per repository", async () => {
-  const loaded = await loadDevFlowV13();
+  const loaded = await loadDevFlowV14();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const compiled = compileWorkflowDefinition(loaded.value);
   if (!compiled.ok) throw new Error(compiled.error.detail);
@@ -43,7 +43,7 @@ test("compiles the provisioning stage into one unreviewed unit per repository", 
  * orders provisioning before it. This edge is the whole fix in one assertion.
  */
 test("build declares the provisioned refs as a required input", async () => {
-  const loaded = await loadDevFlowV13();
+  const loaded = await loadDevFlowV14();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const compiled = compileWorkflowDefinition(loaded.value);
   if (!compiled.ok) throw new Error(compiled.error.detail);
@@ -54,7 +54,7 @@ test("build declares the provisioned refs as a required input", async () => {
 });
 
 test("accepts a non-session executor through the stage-type compiler registry", async () => {
-  const loaded = await loadDevFlowV13();
+  const loaded = await loadDevFlowV14();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const headlessCompiler: StageTypeCompiler = {
     compile: (_stageKey, config) => ok({

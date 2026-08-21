@@ -113,7 +113,7 @@ test("a refusal names every unmet pointer and the stage that wanted it", () => {
  * pointer here was a stage failing mid-run when the context did not carry it.
  */
 test("the shipped dev-flow definition demands exactly the keys the launcher sends", async () => {
-  const definition = await Bun.file(new URL("../../oakridge-core/examples/dev_flow_v13.json", import.meta.url)).json() as { readonly graph: WorkflowGraph };
+  const definition = await Bun.file(new URL("../../oakridge-core/examples/dev_flow_v14.json", import.meta.url)).json() as { readonly graph: WorkflowGraph };
   expect([...pointers(definition.graph)].sort()).toEqual([
     // The run's one base branch. Its predecessor was `/repositories/0/path` —
     // an index into the context standing in for a branch nobody had named.
