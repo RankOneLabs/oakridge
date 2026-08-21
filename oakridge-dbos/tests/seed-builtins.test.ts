@@ -50,29 +50,43 @@ function archivingRepository(existing: readonly WorkflowDefinition[]): {
   return { repository, archived };
 }
 
-test("seeding retires the older versions of the built-in it supersedes", async () => {
+// The ids this seed has actually shipped, as stored rows would carry them.
+const SHIPPED_V11 = "ef2b47a4-d1bd-44ee-840a-e4f7b27570db";
+const SHIPPED_V13 = "7c4a1f38-9b52-4d6e-8a17-3e0c5b9d24f1";
+
+test("seeding retires the shipped versions it supersedes", async () => {
   // v11 predates the provisioning stage; v13 carries the UNIT_ID binding that
   // addressed every cohort's emit at a unit that does not exist. Offering them
   // beside the current one in the launch form is the trap this closes.
   const { repository, archived } = archivingRepository([
-    storedDefinition("id-v11", "dev-flow", 11),
-    storedDefinition("id-v13", "dev-flow", 13),
+    storedDefinition(SHIPPED_V11, "dev-flow", 11),
+    storedDefinition(SHIPPED_V13, "dev-flow", 13),
   ]);
 
   await seedBuiltins(repository);
 
-  expect(archived.sort()).toEqual(["id-v11", "id-v13"]);
+  expect(archived.sort()).toEqual([SHIPPED_V13, SHIPPED_V11].sort());
 });
 
-test("seeding leaves definitions it does not own alone", async () => {
+test("seeding leaves a definition it did not ship alone, whatever it is called", async () => {
+  // `POST /workflow_defs` reserves no name and a definition records no author,
+  // so an operator can author one called `dev-flow` at an unused version. It is
+  // theirs. Matching on name and version could not tell it from a built-in.
   const { repository, archived } = archivingRepository([
-    // Another workflow entirely — not this seed's to retire, whatever its version.
-    storedDefinition("id-other", "release-flow", 2),
-    // A newer version of the same name: authored deliberately, and ahead of the
-    // built-in rather than behind it.
-    storedDefinition("id-v15", "dev-flow", 15),
-    // Already archived — re-archiving it every boot would be pointless writes.
-    storedDefinition("id-v12", "dev-flow", 12, true),
+    storedDefinition("11111111-2222-4333-8444-555555555555", "dev-flow", 10),
+    storedDefinition("99999999-8888-4777-8666-555555555555", "release-flow", 2),
+  ]);
+
+  await seedBuiltins(repository);
+
+  expect(archived).toEqual([]);
+});
+
+test("seeding does not retire a shipped version ahead of the one it seeds", async () => {
+  // Rolling the seed back to an older build must not retire the newer version
+  // still on offer — the operator downgraded the binary, not the workflow.
+  const { repository, archived } = archivingRepository([
+    storedDefinition(SHIPPED_V13, "dev-flow", 99),
   ]);
 
   await seedBuiltins(repository);
