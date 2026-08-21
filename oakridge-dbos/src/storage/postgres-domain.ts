@@ -22,7 +22,6 @@ import type {
 import { err, ok, type ExecutionId, type JsonValue } from "../domain/primitives";
 import type { ExecutionRequest, ExecutorTerminalObservation, ExternalExecutionReference } from "../domain/execution";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
-import { superjsonValue } from "./sql-fragments";
 import { releaseStateForArtifact } from "../contracts/evaluate-artifacts";
 import type { CancellationExecutionTarget, CancellationWaitTarget, UnitRerunTarget } from "../domain/rerun";
 import type { CreateWorkflowRunResult, DeleteRunResult, PendingRunLaunch, PersistWorkflowRunLaunch, RunLaunchCommand, SetRunArchiveResult, WorkflowRunLaunchRecord, WorkflowRunListFilter } from "../domain/runs";
@@ -965,22 +964,17 @@ export class PostgresCancellationTargetRepository implements CancellationTargetR
       // wait by sending to it and awaiting its answer, and one stranded at a
       // version this executor cannot recover never answers. Left joined so a
       // wait with no status row is reported rather than dropped from the sweep.
+      // Read BEFORE the withdraw below, in the same transaction: after it no
+      // artifact is current and this returns nothing.
       const waits = await transaction.query<{ readonly kind: "gate" | "handoff"; readonly workflow_id: string; readonly application_version: string | null }>(
-        `SELECT 'gate'::text AS kind, event.workflow_uuid AS workflow_id, wait.application_version
-         FROM dbos.workflow_events event
-         JOIN oakridge.artifact artifact ON artifact.id = (${superjsonValue("event.value")}->>'artifact_revision_id')::uuid
-         JOIN oakridge.stage_instance stage ON stage.id = artifact.stage_instance_id
-         LEFT JOIN dbos.workflow_status wait ON wait.workflow_uuid = event.workflow_uuid
-         WHERE event.key = 'gate-state' AND ${superjsonValue("event.value")}->>'status' = 'pending'
-           AND artifact.lifecycle_state = 'current' AND stage.attempt_root_workflow_id = $1
-         UNION ALL
-         SELECT 'handoff'::text AS kind, event.workflow_uuid AS workflow_id, wait.application_version
-         FROM dbos.workflow_events event
-         JOIN oakridge.artifact artifact ON artifact.id = (${superjsonValue("event.value")}->>'artifact_id')::uuid
-         JOIN oakridge.stage_instance stage ON stage.id = artifact.stage_instance_id
-         LEFT JOIN dbos.workflow_status wait ON wait.workflow_uuid = event.workflow_uuid
-         WHERE event.key = 'handoff-state' AND ${superjsonValue("event.value")}->>'status' IN ('awaiting_downstream', 'awaiting_external')
-           AND artifact.lifecycle_state = 'current' AND stage.attempt_root_workflow_id = $1`, [root_workflow_id]);
+        `SELECT CASE WHEN wait.kind = 'gate' THEN 'gate' ELSE 'handoff' END AS kind,
+                wait.command_workflow_id AS workflow_id, status_row.application_version
+         FROM oakridge.wait wait
+         JOIN oakridge.artifact artifact ON artifact.id = wait.artifact_revision_id
+         JOIN oakridge.stage_instance stage ON stage.id = wait.stage_instance_id
+         LEFT JOIN dbos.workflow_status status_row ON status_row.workflow_uuid = wait.command_workflow_id
+         WHERE wait.status = 'open' AND artifact.lifecycle_state = 'current'
+           AND stage.attempt_root_workflow_id = $1`, [root_workflow_id]);
       const rows = await transaction.query<{ readonly id: string }>(
         `UPDATE oakridge.artifact artifact
        SET lifecycle_state = 'withdrawn', withdrawn_actor = $2, withdrawn_reason = $3,

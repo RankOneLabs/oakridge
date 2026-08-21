@@ -34,7 +34,6 @@ export const durableGateWorkflow = DBOS.registerWorkflow(async (input: GateWaitI
     artifact_revision_id: input.artifact_revision_id, execution_workflow_id: input.execution_workflow_id,
     gate_step: input.gate_step, actions: input.actions,
   });
-  await DBOS.setEvent("gate-state", { status: "pending", ...input });
   for (;;) {
     const command = await DBOS.recv<GateCommand>("gate-command", { timeoutSeconds: 86_400 });
     if (!command) continue;
@@ -45,7 +44,6 @@ export const durableGateWorkflow = DBOS.registerWorkflow(async (input: GateWaitI
           ? { kind: "superseded", replacement_artifact_revision_id: command.replacement_artifact_revision_id }
           : { kind: "withdrawn" },
       });
-      await DBOS.setEvent("gate-state", { status: command.kind === "supersede" ? "superseded" : "withdrawn", ...input, ...command });
       return command;
     }
     if (command.artifact_revision_id !== input.artifact_revision_id || command.gate_step !== input.gate_step) continue;
@@ -53,7 +51,6 @@ export const durableGateWorkflow = DBOS.registerWorkflow(async (input: GateWaitI
       command_workflow_id: commandWorkflowId, kind: "gate",
       outcome: { kind: "decided", action: command.action, decision_artifact_id: null, feedback: null },
     });
-    await DBOS.setEvent("gate-state", { status: "closed", action: command.action, ...input });
     return command;
   }
 }, { name: "oakridgeDurableGateWorkflow" });

@@ -153,14 +153,14 @@ const sendProofMessage = async (destinationId: string, message: unknown, idempot
   try { await client.send(destinationId, message, topic, idempotencyKey); }
   finally { await client.destroy(); }
 };
-const awaitEventStatus = async (workflowId: string, key: string, expectedStatus: string): Promise<void> => {
+// The workflows run in-process, so the fake wait store is visible to the loop.
+const awaitOpenWait = async (commandWorkflowId: string, kind: WaitKind): Promise<void> => {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
-    const event = await DBOS.getEvent<{ readonly status?: string }>(workflowId, key, { timeoutSeconds: 1 });
-    if (event?.status === expectedStatus) return;
+    if (waitState.get(waitKey(commandWorkflowId, kind))?.status.kind === "open") return;
     await Bun.sleep(25);
   }
-  throw new Error(`workflow '${workflowId}' event '${key}' did not reach '${expectedStatus}'`);
+  throw new Error(`workflow '${commandWorkflowId}' never opened its '${kind}' wait`);
 };
 
 await DBOS.launch();
@@ -189,14 +189,14 @@ try {
         if (["spec_analysis", "plan", "brief", "assessment"].includes(expected.output_name)) {
           await sendProofMessage(execution.workflow_id, { kind: "artifact_emitted", release: { kind: "waiting_gate", artifact, gate_steps: [{ type: "artifact_approval", actions: [{ name: "approve", disposition: "release" as const }, { name: "request_revision", disposition: "revise" as const }] }] } }, `proof:${artifact.id}`);
           const gateId = `${execution.workflow_id}:gate:${artifact.id}:wait:artifact_approval`;
-          await awaitEventStatus(gateId, "gate-state", "pending");
+          await awaitOpenWait(gateId, "gate");
           await sendProofMessage(gateId, { kind: "decision", action: "approve", artifact_revision_id: artifact.id, gate_step: "artifact_approval" }, `approve:${artifact.id}`, "gate-command");
         } else if (expected.output_name === "build_result") {
           await sendProofMessage(execution.workflow_id, { kind: "artifact_emitted", release: { kind: "waiting_handoff", artifact, downstream_role: "assessment", external_wait_kind: "github_review" } }, `proof:${artifact.id}`);
           const handoffId = `${execution.workflow_id}:handoff:${artifact.id}`;
-          await awaitEventStatus(handoffId, "handoff-state", "awaiting_downstream");
+          await awaitOpenWait(handoffId, "handoff_downstream");
           await sendProofMessage(handoffId, { kind: "downstream_decision", action: "approve", decision_artifact_id: crypto.randomUUID() as ArtifactId }, `handoff-approve:${artifact.id}`, "handoff-command");
-          await awaitEventStatus(handoffId, "handoff-state", "awaiting_external");
+          await awaitOpenWait(handoffId, "handoff_external");
           await sendProofMessage(handoffId, { kind: "external_completed", external_kind: "github_review", correlation_id: `github:${artifact.id}` }, `handoff-complete:${artifact.id}`, "handoff-command");
         } else {
           await sendProofMessage(execution.workflow_id, { kind: "artifact_emitted", release: { kind: "released", artifact } }, `proof:${artifact.id}`);

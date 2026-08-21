@@ -10,6 +10,8 @@ export interface CancellationControlServices {
   list_execution_targets(root_workflow_id: string): Promise<readonly CancellationExecutionTarget[]>;
   terminalize_pending_waits(root_workflow_id: string, reason: string | null, at: string): Promise<readonly CancellationWaitTarget[]>;
   finish_started_stages(root_workflow_id: string, at: string, reason: string | null): Promise<void>;
+  count_open_waits(command_workflow_id: string): Promise<number>;
+  close_orphaned_waits(command_workflow_id: string, at: string): Promise<void>;
 }
 
 let services: CancellationControlServices | null = null;
@@ -27,6 +29,12 @@ const terminalizeCancellationWaitsStep = DBOS.registerStep(async (input: Cancell
 const finishCancelledStagesStep = DBOS.registerStep(async (input: CancellationControlInput) =>
   controlServices().finish_started_stages(input.root_workflow_id, input.requested_at, input.reason),
 { name: "oakridgeFinishCancelledStagesStep", retriesAllowed: true });
+const countOpenWaitsStep = DBOS.registerStep(async (command_workflow_id: string) =>
+  controlServices().count_open_waits(command_workflow_id),
+{ name: "oakridgeCountOpenWaitsStep", retriesAllowed: true });
+const closeOrphanedWaitsStep = DBOS.registerStep(async (input: { readonly command_workflow_id: string; readonly at: string }) =>
+  controlServices().close_orphaned_waits(input.command_workflow_id, input.at),
+{ name: "oakridgeCloseOrphanedWaitsStep", retriesAllowed: true });
 
 /** Progress notification, so a caller can publish its own state event. */
 export type AttemptContainmentPhase = "fencing" | "closing_domain" | "terminalizing_waits";
@@ -81,14 +89,16 @@ export const containAttempt = async (input: CancellationControlInput, announce: 
     // Leaving it is how one orphan goes on to hold a session hostage.
     DBOS.logger.warn(`cancellation wait '${wait.workflow_id}' was left PENDING by application version ${holder_application_version}, which this executor (${DBOS.applicationVersion}) cannot recover; cancelling it directly rather than awaiting a withdrawal it can never acknowledge`);
     await DBOS.cancelWorkflow(wait.workflow_id);
+    // The single exception to owner-closes: the owner is provably dead, so its
+    // open rows are closed on its behalf — as withdrawn, with cancellation's
+    // own timestamp — instead of sitting open forever behind lifecycle joins.
+    await closeOrphanedWaitsStep({ command_workflow_id: wait.workflow_id, at: input.requested_at });
   }
   for (const wait of answerable) await DBOS.send(wait.workflow_id, { kind: "withdraw" }, wait.kind === "gate" ? "gate-command" : "handoff-command", `${containerId}:${wait.kind}:${wait.workflow_id}:withdraw`);
   for (const wait of answerable) {
-    const key = wait.kind === "gate" ? "gate-state" : "handoff-state";
     await DBOS.retrieveWorkflow(wait.workflow_id).getResult();
-    const state = await DBOS.getEvent<{ readonly status?: string }>(wait.workflow_id, key, { timeoutSeconds: 0 });
-    if (state?.status !== "withdrawn" && state?.status !== "superseded" && state?.status !== "closed" && state?.status !== "released" && state?.status !== "revision_requested") {
-      throw new Error(`cancellation wait '${wait.workflow_id}' completed without a terminal event`);
+    if (await countOpenWaitsStep(wait.workflow_id) > 0) {
+      throw new Error(`cancellation wait '${wait.workflow_id}' completed without closing its wait row`);
     }
   }
   return targets.length;

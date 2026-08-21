@@ -32,7 +32,6 @@ export const durableHandoffWorkflow = DBOS.registerWorkflow(async (input: Handof
     unit_id: input.artifact.unit_id, artifact_revision_id: input.artifact.id,
     execution_workflow_id: input.parent_workflow_id, downstream_role: input.downstream_role,
   });
-  await DBOS.setEvent("handoff-state", { status: "awaiting_downstream", artifact_id: input.artifact.id, downstream_role: input.downstream_role });
   for (;;) {
     const decision = await DBOS.recv<HandoffCommand>("handoff-command", { timeoutSeconds: 86_400 });
     if (!decision) continue;
@@ -46,7 +45,6 @@ export const durableHandoffWorkflow = DBOS.registerWorkflow(async (input: Handof
           ? { kind: "superseded", replacement_artifact_revision_id: decision.replacement_artifact_revision_id as ArtifactId }
           : { kind: "withdrawn" },
       });
-      await DBOS.setEvent("handoff-state", { status: result.kind, artifact_id: input.artifact.id, ...decision });
       return result;
     }
     if (decision.kind !== "downstream_decision") continue;
@@ -58,7 +56,6 @@ export const durableHandoffWorkflow = DBOS.registerWorkflow(async (input: Handof
         command_workflow_id: commandWorkflowId, kind: "handoff_downstream",
         outcome: { kind: "decided", action: decision.action, decision_artifact_id: decision.decision_artifact_id as ArtifactId, feedback: decision.feedback ?? null },
       });
-      await DBOS.setEvent("handoff-state", { status: "revision_requested", artifact_id: input.artifact.id, decision_artifact_id: decision.decision_artifact_id });
       await DBOS.send(input.parent_workflow_id, { kind: "handoff_revision_requested", result }, "execution-event", `handoff:${input.artifact.id}:revision:${decision.decision_artifact_id}`);
       return result;
     }
@@ -67,7 +64,6 @@ export const durableHandoffWorkflow = DBOS.registerWorkflow(async (input: Handof
       decided_outcome: { kind: "decided", action: decision.action, decision_artifact_id: decision.decision_artifact_id as ArtifactId, feedback: decision.feedback ?? null },
       external_closes_on: { kind: "handoff_external", external_wait_kind: input.external_wait_kind, decision_artifact_id: decision.decision_artifact_id as ArtifactId },
     });
-    await DBOS.setEvent("handoff-state", { status: "awaiting_external", artifact_id: input.artifact.id, external_kind: input.external_wait_kind, decision_artifact_id: decision.decision_artifact_id });
     for (;;) {
       const external = await DBOS.recv<HandoffCommand>("handoff-command", { timeoutSeconds: 86_400 });
       if (!external) continue;
@@ -81,7 +77,6 @@ export const durableHandoffWorkflow = DBOS.registerWorkflow(async (input: Handof
             ? { kind: "superseded", replacement_artifact_revision_id: external.replacement_artifact_revision_id as ArtifactId }
             : { kind: "withdrawn" },
         });
-        await DBOS.setEvent("handoff-state", { status: result.kind, artifact_id: input.artifact.id, ...external });
         return result;
       }
       if (external.kind !== "external_completed" || external.external_kind !== input.external_wait_kind) continue;
@@ -90,7 +85,6 @@ export const durableHandoffWorkflow = DBOS.registerWorkflow(async (input: Handof
         command_workflow_id: commandWorkflowId, kind: "handoff_external",
         outcome: { kind: "external_completed", correlation_id: external.correlation_id },
       });
-      await DBOS.setEvent("handoff-state", { status: "released", artifact_id: input.artifact.id, external_kind: input.external_wait_kind, decision_artifact_id: decision.decision_artifact_id, correlation_id: external.correlation_id });
       await DBOS.send(input.parent_workflow_id, { kind: "artifact_released", artifact: input.artifact }, "execution-event", `handoff:${input.artifact.id}:released:${external.correlation_id}`);
       return result;
     }
