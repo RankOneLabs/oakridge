@@ -62,13 +62,11 @@ export class PostgresWaitRepository implements WaitRepository {
   async close(command_workflow_id: string, kind: WaitKind, outcome: WaitOutcome): Promise<void> {
     const rows = await this.sql.query<{ readonly id: string }>(
       `UPDATE oakridge.wait SET status = 'closed', outcome = $3::jsonb, closed_at = $4::timestamptz
-       WHERE command_workflow_id = $1 AND kind = $2
+       WHERE command_workflow_id = $1 AND kind = $2 AND status = 'open'
        RETURNING id::text`,
       [command_workflow_id, kind, JSON.stringify(outcome), new Date().toISOString()],
     );
-    // A close with no open row is record corruption, surfaced loudly. A
-    // retried close re-writes the same values — idempotent.
-    if (rows.length === 0) throw new Error(`no '${kind}' wait is recorded for workflow '${command_workflow_id}'`);
+    if (rows.length === 0) await this.requireCloseAbsorbed(this.sql, command_workflow_id, kind, outcome);
   }
 
   async release_downstream(
@@ -81,12 +79,11 @@ export class PostgresWaitRepository implements WaitRepository {
     await this.sql.transaction(async (transaction) => {
       const closed = await transaction.query<{ readonly stage_instance_id: string; readonly unit_id: string; readonly artifact_revision_id: string; readonly execution_workflow_id: string }>(
         `UPDATE oakridge.wait SET status = 'closed', outcome = $2::jsonb, closed_at = $3::timestamptz
-         WHERE command_workflow_id = $1 AND kind = 'handoff_downstream'
+         WHERE command_workflow_id = $1 AND kind = 'handoff_downstream' AND status = 'open'
          RETURNING stage_instance_id::text, unit_id, artifact_revision_id::text, execution_workflow_id`,
         [command_workflow_id, JSON.stringify(decided_outcome), new Date().toISOString()],
       );
-      const downstream = closed[0];
-      if (!downstream) throw new Error(`no 'handoff_downstream' wait is recorded for workflow '${command_workflow_id}'`);
+      const downstream = closed[0] ?? await this.requireCloseAbsorbed(transaction, command_workflow_id, "handoff_downstream", decided_outcome);
       await this.insertOpen(transaction, {
         command_workflow_id,
         stage_instance_id: downstream.stage_instance_id as StageInstanceId,
@@ -135,6 +132,31 @@ export class PostgresWaitRepository implements WaitRepository {
        WHERE command_workflow_id = $1 AND status = 'open'`,
       [command_workflow_id, at],
     );
+  }
+
+  /**
+   * A close that matched no open row is one of three things: a crash-retry
+   * replaying a close that already committed — absorbed, preserving the row's
+   * original `outcome` and `closed_at` — or a close of a row another path
+   * already closed under a different outcome, or a close with no row at all.
+   * The latter two are record corruption, surfaced loudly.
+   */
+  private async requireCloseAbsorbed(
+    sql: SqlExecutor,
+    command_workflow_id: string,
+    kind: WaitKind,
+    outcome: WaitOutcome,
+  ): Promise<{ readonly stage_instance_id: string; readonly unit_id: string; readonly artifact_revision_id: string; readonly execution_workflow_id: string }> {
+    const rows = await sql.query<{ readonly outcome_matches: boolean; readonly stage_instance_id: string; readonly unit_id: string; readonly artifact_revision_id: string; readonly execution_workflow_id: string }>(
+      `SELECT outcome IS NOT DISTINCT FROM $3::jsonb AS outcome_matches,
+              stage_instance_id::text, unit_id, artifact_revision_id::text, execution_workflow_id
+       FROM oakridge.wait WHERE command_workflow_id = $1 AND kind = $2`,
+      [command_workflow_id, kind, JSON.stringify(outcome)],
+    );
+    const row = rows[0];
+    if (!row) throw new Error(`no '${kind}' wait is recorded for workflow '${command_workflow_id}'`);
+    if (!row.outcome_matches) throw new Error(`'${kind}' wait for workflow '${command_workflow_id}' is already closed under a different outcome`);
+    return row;
   }
 
   /**
