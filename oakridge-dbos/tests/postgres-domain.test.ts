@@ -245,7 +245,8 @@ test("attempt cancellation withdraws pending artifacts and returns exact active 
     { kind: "handoff", workflow_id: "execution:handoff:artifact-2", application_version: "v1" },
   ]);
   expect(sql.calls[1]?.statement).toContain("pg_advisory_xact_lock");
-  expect(sql.calls[2]?.statement).toContain("COALESCE((event.value::jsonb)->'json', event.value::jsonb)");
+  expect(sql.calls[2]?.statement).toContain("FROM oakridge.wait");
+  expect(sql.calls[2]?.statement).toContain("artifact.lifecycle_state = 'current'");
   expect(sql.calls[3]?.statement).toContain("lifecycle_state = 'withdrawn'");
   expect(sql.calls[3]?.statement).toContain("lifecycle_updated_at");
   expect(sql.calls[3]?.statement).not.toContain("jsonb_array_elements");

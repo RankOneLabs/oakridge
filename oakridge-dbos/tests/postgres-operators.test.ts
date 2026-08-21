@@ -3,12 +3,12 @@ import type { SqlExecutor } from "../src/storage/sql-executor";
 import { PostgresOperatorProjectionRepository } from "../src/storage/postgres-operators";
 import type { WorkflowRunId } from "../src/domain/primitives";
 
-test("pending gates are projected directly from published DBOS events", async () => {
+test("pending gates are projected directly from recorded wait rows", async () => {
   let sql = "";
   const executor: SqlExecutor = { query: async <Row>(statement: string) => { sql = statement; return [{ run_id: "run-1", stage_name: "build", stage_instance_id: "stage-1", unit_id: "web", artifact_revision_id: "artifact-1", gate_step: "artifact_approval", actions: ["approve", "request_revision"] }] as Row[]; } };
   const gates = await new PostgresOperatorProjectionRepository(executor).list_pending_gates();
-  expect(sql).toContain("FROM dbos.workflow_events");
-  expect(sql).toContain("COALESCE((event.value::jsonb)->'json', event.value::jsonb)");
+  expect(sql).toContain("FROM oakridge.wait");
+  expect(sql).toContain("wait.kind = 'gate'");
   expect(sql).toContain("artifact.lifecycle_state = 'current'");
   expect(gates).toEqual([expect.objectContaining({ id: "stage-1:web", gate_step: "artifact_approval", resume_actions: ["approve", "request_revision"] })]);
 });
@@ -86,8 +86,8 @@ test("run detail derives stages and units from DBOS child workflows", async () =
 
 test("review inbox maps pending DBOS gates to existing operator actions", async () => {
   const executor: SqlExecutor = { query: async <Row>(sql: string) => {
-    if (sql.includes("handoff-state")) return [{ run_id: "run-1", workflow_name: "dev-flow", stage_instance_id: "stage-1", stage_name: "build", unit_id: "web", params: { repository_key: "web", title: "Web" }, dbos_status: "PENDING", artifact_revision_id: "artifact-1", handoff_status: "awaiting_downstream", admission_required: true, admitted: true, admission_eligible: true, admission_blocked_by: [], updated_at_epoch_ms: "1786737600000" }] as Row[];
-    if (sql.includes("FROM dbos.workflow_events event") && !sql.includes("FROM oakridge.workflow_run run")) return [{ run_id: "run-1", stage_name: "build", stage_instance_id: "stage-1", unit_id: "web", artifact_revision_id: "artifact-1", gate_step: "artifact_approval", actions: ["approve", "request_revision"] }] as Row[];
+    if (sql.includes("handoff_output")) return [{ run_id: "run-1", workflow_name: "dev-flow", stage_instance_id: "stage-1", stage_name: "build", unit_id: "web", params: { artifact: { repository_key: "web", title: "Web" } }, dbos_status: "PENDING", artifact_revision_id: "artifact-1", handoff_wait_kind: "handoff_downstream", handoff_wait_status: "open", handoff_outcome_kind: null, admission_required: true, admitted: true, admission_eligible: true, admission_blocked_by: [], updated_at_epoch_ms: "1786737600000" }] as Row[];
+    if (sql.includes("closes_on->>'gate_step'")) return [{ run_id: "run-1", stage_name: "build", stage_instance_id: "stage-1", unit_id: "web", artifact_revision_id: "artifact-1", gate_step: "artifact_approval", actions: ["approve", "request_revision"] }] as Row[];
     return [{ id: "run-1", workflow_name: "dev-flow", dbos_status: "PENDING", current_stage: "build", parked_count: "1", updated_at_epoch_ms: "1786737600000", archived: false }] as Row[];
   } };
   const inbox = await new PostgresOperatorProjectionRepository(executor).get_review_inbox();
@@ -98,8 +98,8 @@ test("review inbox maps pending DBOS gates to existing operator actions", async 
 test("cohort projection surfaces validated pull request mismatches as blocked inbox state", async () => {
   const reconciliation = { repository_key: "web", observation: { owner: "rol", name: "web", number: 7, url: "https://github.test/rol/web/pull/7", head_branch: "wrong", base_branch: "main", state: "open", observed_at: "2026-08-14T12:00:00Z" }, mismatch: { kind: "head_branch_mismatch", detail: "expected cohort branch" }, completed_at: null, updated_at: "2026-08-14T12:00:00Z" };
   const executor: SqlExecutor = { query: async <Row>(sql: string) => {
-    if (sql.includes("handoff-state")) return [{ run_id: "run-1", workflow_name: "dev-flow", stage_instance_id: "stage-1", stage_name: "build", unit_id: "web", params: { repository_key: "web" }, dbos_status: "PENDING", artifact_revision_id: "artifact-1", handoff_status: "awaiting_external", reconciliation, admission_required: false, admitted: true, admission_eligible: true, admission_blocked_by: [], updated_at_epoch_ms: "1786737600000" }] as Row[];
-    if (sql.includes("FROM dbos.workflow_events event") && !sql.includes("FROM oakridge.workflow_run run")) return [] as Row[];
+    if (sql.includes("handoff_output")) return [{ run_id: "run-1", workflow_name: "dev-flow", stage_instance_id: "stage-1", stage_name: "build", unit_id: "web", params: { artifact: { repository_key: "web" } }, dbos_status: "PENDING", artifact_revision_id: "artifact-1", handoff_wait_kind: "handoff_external", handoff_wait_status: "open", handoff_outcome_kind: null, reconciliation, admission_required: false, admitted: true, admission_eligible: true, admission_blocked_by: [], updated_at_epoch_ms: "1786737600000" }] as Row[];
+    if (sql.includes("closes_on->>'gate_step'")) return [] as Row[];
     return [{ id: "run-1", workflow_name: "dev-flow", dbos_status: "PENDING", current_stage: "build", parked_count: "0", updated_at_epoch_ms: "1786737600000", archived: false }] as Row[];
   } };
   const inbox = await new PostgresOperatorProjectionRepository(executor).get_review_inbox();

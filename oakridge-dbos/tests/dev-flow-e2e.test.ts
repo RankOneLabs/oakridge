@@ -27,9 +27,10 @@ import { mountSessionsRoutes } from "../../kbbl/core/server/handlers/sessions";
 import type { SessionManager } from "../../kbbl/core/session/session-manager";
 import { findTestDatabaseUrl } from "./support/durable-database";
 import {
-  HARNESS_INTEGRATION_BRANCH, HARNESS_BASE_BRANCH, awaitCondition, installIntegrationRuntime, neverFinishingScenario, runContext,
-  scriptedAgentScenario, useScenario, type IntegrationRuntime, type ScriptedAgentScenario,
+  HARNESS_INTEGRATION_BRANCH, HARNESS_BASE_BRANCH, awaitCondition, cohortPullRequestUrl, installIntegrationRuntime,
+  neverFinishingScenario, runContext, scriptedAgentScenario, useScenario, type IntegrationRuntime, type ScriptedAgentScenario,
 } from "./support/dev-flow-harness";
+import type { OperatorRunSummary } from "../src/domain/operator-projections";
 import {
   confirmCohortMerged, decideGate, emitDeclaredArtifacts, launchRun, mergedPullRequestObservation,
   observeCohortPullRequest, readArtifact, readReviewInbox, readRun, type EmittedArtifact,
@@ -38,6 +39,7 @@ import {
   createProbeDefinition, realKbblScenario, startKbblFixture,
   type KbblFixture, type StubbedRuntimeId,
 } from "./support/kbbl-fixture";
+import { PgPostgresExecutor } from "../src/storage/sql-executor";
 import { stageRerunStateKey, type StageRerunState } from "../src/domain/rerun";
 import { stageCoordinatorWorkflowId } from "../src/domain/workflow-ids";
 
@@ -82,14 +84,20 @@ class RunDriver {
   private lastRefusal = "nothing refused yet";
   /** How many external reviews have been closed, which picks the next one's path. */
   private closed = 0;
+  /** Cohorts the inbox offered a merge confirmation for, on the last pass. */
+  private offered = 0;
+  /** Cohort ids whose merge this driver confirmed through the operator surface. */
+  private readonly confirmed = new Set<string>();
 
-  constructor(private readonly base: string, private readonly agent: ScriptedAgentScenario, private readonly rootId: string) {}
+  constructor(private readonly base: string, private readonly agent: ScriptedAgentScenario, private readonly rootId: string, private readonly runId?: OperatorRunSummary["id"]) {}
 
   /** Execution workflow ids this driver has already run the agent for. */
   get drivenExecutions(): ReadonlySet<string> { return this.driven; }
   /** Every output that went into a handoff, whether or not it has come out. */
   get parkedHandoffs(): readonly EmittedArtifact[] { return this.parked; }
-  get diagnosis(): string { return `driven ${this.driven.size}, gates pending ${this.gated.length}, handoffs open ${this.awaitingReview.length}, last refusal: ${this.lastRefusal}`; }
+  /** Cohort ids this driver closed through the operator's merge confirmation. */
+  get confirmedMerges(): ReadonlySet<string> { return this.confirmed; }
+  get diagnosis(): string { return `driven ${this.driven.size}, gates pending ${this.gated.length}, handoffs parked ${this.awaitingReview.length}, merges offered ${this.offered}, merges confirmed ${this.confirmed.size}, last refusal: ${this.lastRefusal}`; }
 
   /**
    * Runs the agent for every execution launched since the last call.
@@ -128,28 +136,43 @@ class RunDriver {
   /**
    * Closing each cohort's `github_review` wait, once there is a wait to close.
    *
+   * The cohorts come from the review inbox rather than from this driver's own
+   * record of what it parked, because the inbox is the only place a real
+   * operator can learn that a merge is owed — and the poller reads the same
+   * projection to decide which pull requests to ask GitHub about. A cohort the
+   * inbox does not offer is one that neither participant can close, so driving
+   * from private bookkeeping would prove a path nobody can walk. The one that
+   * shipped picked an arbitrary output per unit and lost the handoff whenever
+   * the pick was not the output holding it, and this loop, reading its own
+   * notes, sailed past that.
+   *
    * The first cohort is closed by a polled observation and the rest by the
    * operator's confirm-merged button. Both are the same route and the same
    * checks — running one of each proves the fallback is not a second, weaker
    * path that only the tests exercise.
    *
-   * Tries once per open handoff. A handoff only becomes completable after the
+   * Tries once per offered cohort. A handoff only becomes completable after the
    * downstream stage has approved it, and that stage is driven by this same
    * loop — so a refusal here means "not yet", and the attempt is retried on the
    * next pass rather than blocking the work that unblocks it.
    */
   async closeReadyReviews(): Promise<void> {
-    const stillOpen: ParkedCohort[] = [];
-    for (const cohort of this.awaitingReview) {
+    const inbox = await readReviewInbox(this.base);
+    const owed = inbox.items.filter((item) => item.kind === "pull_request_merge" && (this.runId === undefined || item.run_id === this.runId));
+    this.offered = owed.length;
+    for (const item of owed) {
+      const cohortId = `${item.stage_instance_id}:${item.unit_id}`;
+      // The operator is told which pull request they are confirming. A button
+      // that cannot name its pull request is not one a person can act on when
+      // an epic has several of them open at once.
+      expect(item.pr_url).toBe(cohortPullRequestUrl(item.unit_id as UnitId));
+      expect(item.resume_actions).toEqual(["confirm_merged"]);
       const attempt = this.closed === 0
-        ? await observeCohortPullRequest(this.base, cohort.cohort_id, mergedPullRequestObservation(cohort.unit_id as UnitId, HARNESS_BASE_BRANCH))
-        : await confirmCohortMerged(this.base, cohort.cohort_id);
-      if (attempt.kind === "accepted" && attempt.outcome === "completed") { this.closed += 1; continue; }
-      this.lastRefusal = `${cohort.cohort_id}: ${attempt.kind === "accepted" ? attempt.outcome : attempt.detail}`;
-      stillOpen.push(cohort);
+        ? await observeCohortPullRequest(this.base, cohortId, mergedPullRequestObservation(item.unit_id as UnitId, HARNESS_BASE_BRANCH))
+        : await confirmCohortMerged(this.base, cohortId);
+      if (attempt.kind === "accepted" && attempt.outcome === "completed") { this.closed += 1; this.confirmed.add(cohortId); continue; }
+      this.lastRefusal = `${cohortId}: ${attempt.kind === "accepted" ? attempt.outcome : attempt.detail}`;
     }
-    this.awaitingReview.length = 0;
-    this.awaitingReview.push(...stillOpen);
   }
 }
 
@@ -178,7 +201,7 @@ e2e("the seeded dev flow runs to completion through gates and handoffs", async (
 
   const run = await launchRun(oakridge.base_url, oakridge.definition.id, runContext(oakridge.base_url, oakridge.repository.path));
   oakridge.started_runs.push(run.root_workflow_id);
-  const driver = new RunDriver(oakridge.base_url, agent, run.root_workflow_id);
+  const driver = new RunDriver(oakridge.base_url, agent, run.root_workflow_id, run.run_id);
 
   try {
     await awaitCondition(() => `the dev flow to finish (${driver.diagnosis})`, async () => {
@@ -197,6 +220,22 @@ e2e("the seeded dev flow runs to completion through gates and handoffs", async (
   expect(detail.stages).toHaveLength(6);
   expect(detail.stages.every((stage) => stage.status === "complete")).toBe(true);
   expect(driver.drivenExecutions.size).toBe(7);
+
+  // Both cohorts' merges were confirmed through the operator surface, not from
+  // the driver's own notes. An epic opens one pull request per cohort, and the
+  // projection that offers them resolves each unit's handoff independently — so
+  // a defect there does not fail the run, it silently drops a subset of the
+  // cohorts out of the inbox and out of the poller's sweep at once. Asserting
+  // the count is what makes "some of them appeared" a failure.
+  expect(driver.confirmedMerges.size).toBe(2);
+  const cohorts = (await readReviewInbox(oakridge.base_url)).cohorts.filter((cohort) => cohort.run_id === run.run_id);
+  expect(cohorts).toHaveLength(2);
+  expect(cohorts.every((cohort) => cohort.lifecycle === "complete")).toBe(true);
+  // Every cohort names itself. Two rows reading `null / null / null` are two
+  // rows an operator cannot tell apart, which is the state the inbox was in.
+  expect(cohorts.map((cohort) => cohort.repository_key).sort()).toEqual(["oakridge", "oakridge"]);
+  expect(cohorts.every((cohort) => cohort.title !== null && cohort.pr_url !== null)).toBe(true);
+  expect(new Set(cohorts.map((cohort) => cohort.pr_url)).size).toBe(2);
 
   // The epic branch exists on origin because a stage put it there. This is the
   // assertion the whole change is for: no operator ran a git command, and no
@@ -360,6 +399,78 @@ e2e("the assessor starts on a build result still parked in its handoff", async (
     agent.releaseAll();
   }
 }, 180_000);
+
+/**
+ * A cohort is read through the output that declares the handoff.
+ *
+ * A build unit emits more than one artifact and only one of them is released
+ * through a handoff, whose workflow is named after that artifact. The
+ * projection used to take whichever of the unit's revisions sorted first by
+ * version, with no filter on the output name — so which artifact a cohort was
+ * read through came down to where two rows happened to land in the heap. When
+ * it came down wrong the handoff workflow named after the other artifact did
+ * not exist, `handoff_status` read NULL, and the cohort reported `building`
+ * forever.
+ *
+ * That single field is what *both* participants who can close the wait read:
+ * the inbox offers `confirm_merged` only for a cohort in `github_review`, and
+ * the poller's sweep selects the cohorts it asks GitHub about the same way. A
+ * cohort that loses the coin flip is therefore not slow, it is unreachable —
+ * and it takes the whole run's completion with it, because the build unit is
+ * never accepted.
+ *
+ * Emission order does not pin this. The suite passed for months on those two
+ * rows landing in the order that happened to work, and a run against the
+ * operator's own database landed them the other way and stalled. So the losing
+ * side is forced: `pr_summary` is given the higher version — the key the old
+ * ordering sorted on — and the cohort has to still be reachable through it.
+ */
+e2e("a cohort stays reachable when a sibling output outranks its handoff", async () => {
+  const agent = scriptedAgentScenario();
+  useScenario(agent);
+
+  const run = await launchRun(oakridge.base_url, oakridge.definition.id, runContext(oakridge.base_url, oakridge.repository.path));
+  oakridge.started_runs.push(run.root_workflow_id);
+  const driver = new RunDriver(oakridge.base_url, agent, run.root_workflow_id, run.run_id);
+  const sql = PgPostgresExecutor.connect(databaseUrl!);
+
+  try {
+    // Driven only as far as the first cohort's merge being owed. Reviews are
+    // deliberately not closed here: this test is about the offer surviving.
+    const owed = await awaitCondition(() => `a merge to be owed (${driver.diagnosis})`, async () => {
+      await driver.driveNewExecutions();
+      await driver.approvePendingGates();
+      const inbox = await readReviewInbox(oakridge.base_url);
+      return inbox.items.find((item) => item.kind === "pull_request_merge" && item.run_id === run.run_id) ?? null;
+    }, 180_000);
+
+    // The sibling output is promoted above the handoff's on the key the broken
+    // ordering used. Nothing else about the run changes.
+    const promoted = await sql.query<{ readonly id: string }>(
+      `UPDATE oakridge.artifact SET version = 9
+       WHERE stage_instance_id = $1 AND unit_id = $2 AND artifact_type = $3 RETURNING id::text`,
+      [owed.stage_instance_id, owed.unit_id, "dev.pr_summary"]);
+    expect(promoted).toHaveLength(1);
+    expect(promoted[0]!.id).not.toBe(owed.artifact_revision_id);
+
+    const after = (await readReviewInbox(oakridge.base_url)).items
+      .filter((item) => item.kind === "pull_request_merge" && item.run_id === run.run_id);
+    expect(after).toHaveLength(1);
+    expect(after[0]!.artifact_revision_id).toBe(owed.artifact_revision_id);
+    expect(after[0]!.pr_url).toBe(cohortPullRequestUrl(owed.unit_id as UnitId));
+
+    // Still reachable is the claim, so it is closed through the offer.
+    const attempt = await confirmCohortMerged(oakridge.base_url, `${owed.stage_instance_id}:${owed.unit_id}`);
+    expect(attempt).toEqual({ kind: "accepted", outcome: "completed" });
+  } finally {
+    try {
+      await DBOS.cancelWorkflow(run.root_workflow_id, { cancelChildren: true });
+    } finally {
+      agent.releaseAll();
+      await sql.close();
+    }
+  }
+}, 240_000);
 
 /**
  * A rejected build revises, and its assessment is decided again.

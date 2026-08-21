@@ -3,7 +3,8 @@ import { DBOS, DBOSClient } from "@dbos-inc/dbos-sdk";
 import { RepositoryProvisioningAdapter } from "../adapters/repository-provisioning";
 import type { ArtifactRevision } from "../domain/artifacts";
 import type { ExecutionRequest, ExecutorAdapter } from "../domain/execution";
-import type { ArtifactId, ExecutionId, JsonValue, UnitId, WorkflowRunId } from "../domain/primitives";
+import type { ArtifactId, ExecutionId, JsonValue, UnitId, WaitId, WorkflowRunId } from "../domain/primitives";
+import type { Wait, WaitClosesOn, WaitKind, WaitOutcome } from "../domain/wait";
 import { loadDevFlowV14 } from "../seed/dev-flow-v14";
 import { PgPostgresExecutor } from "../storage/sql-executor";
 
@@ -53,6 +54,7 @@ const provisioningAdapter = new RepositoryProvisioningAdapter({
 
 const { registerExecutorAdapter } = await import("../workflows/executor-topology");
 const { registerArtifactLifecycleObserver } = await import("../workflows/executor-topology");
+const { registerWaitRepository } = await import("../workflows/wait-record");
 const { productionRunWorkflow, registerProductionTopologyServices } = await import("../workflows/production-topology");
 registerExecutorAdapter(adapter);
 registerExecutorAdapter(provisioningAdapter);
@@ -67,6 +69,53 @@ registerArtifactLifecycleObserver({
     const released = { ...artifact, lifecycle: { kind: "released" as const, released_at } };
     artifactState.set(id, released);
     return { kind: "released", artifact: released };
+  },
+});
+// In-memory wait rows, keyed like the table's replay-idempotency index. Every
+// §1 column arrives in the open input, so there is nothing to resolve.
+const waitKey = (command_workflow_id: string, kind: WaitKind): string => `${command_workflow_id}|${kind}`;
+const waitState = new Map<string, Wait>();
+const openWait = (row: Omit<Wait, "id" | "closes_on" | "status" | "opened_at">, kind: WaitKind, closes_on: WaitClosesOn): void => {
+  const key = waitKey(row.command_workflow_id, kind);
+  if (waitState.has(key)) return;
+  waitState.set(key, { ...row, id: crypto.randomUUID() as WaitId, closes_on, status: { kind: "open" }, opened_at: new Date().toISOString() });
+};
+const closeWait = (command_workflow_id: string, kind: WaitKind, outcome: WaitOutcome): void => {
+  const key = waitKey(command_workflow_id, kind);
+  const existing = waitState.get(key);
+  if (!existing) throw new Error(`no '${kind}' wait is recorded for workflow '${command_workflow_id}'`);
+  waitState.set(key, { ...existing, status: { kind: "closed", outcome, closed_at: new Date().toISOString() } });
+};
+registerWaitRepository({
+  async open_gate(input) {
+    openWait(input, "gate", { kind: "gate", gate_step: input.gate_step, actions: input.actions });
+  },
+  async open_handoff_downstream(input) {
+    openWait(input, "handoff_downstream", { kind: "handoff_downstream", downstream_role: input.downstream_role });
+  },
+  async close(command_workflow_id, request) { closeWait(command_workflow_id, request.kind, request.outcome); },
+  async release_downstream(command_workflow_id, decided_outcome, external_closes_on) {
+    closeWait(command_workflow_id, "handoff_downstream", decided_outcome);
+    const downstream = waitState.get(waitKey(command_workflow_id, "handoff_downstream"))!;
+    openWait(downstream, "handoff_external", external_closes_on);
+  },
+  async find_gate_wait(artifact_revision_id, gate_step, execution_workflow_id) {
+    return [...waitState.values()].find((wait) => wait.artifact_revision_id === artifact_revision_id
+      && wait.closes_on.kind === "gate" && wait.closes_on.gate_step === gate_step
+      && wait.execution_workflow_id === execution_workflow_id) ?? null;
+  },
+  async find_handoff_waits(artifact_revision_id, execution_workflow_id) {
+    return [...waitState.values()].filter((wait) => wait.artifact_revision_id === artifact_revision_id
+      && wait.closes_on.kind !== "gate" && wait.execution_workflow_id === execution_workflow_id);
+  },
+  async count_open_waits(command_workflow_id) {
+    return [...waitState.values()].filter((wait) => wait.command_workflow_id === command_workflow_id && wait.status.kind === "open").length;
+  },
+  async close_orphaned(command_workflow_id, at) {
+    for (const [key, wait] of waitState) {
+      if (wait.command_workflow_id !== command_workflow_id || wait.status.kind !== "open") continue;
+      waitState.set(key, { ...wait, status: { kind: "closed", outcome: { kind: "withdrawn" }, closed_at: at } });
+    }
   },
 });
 registerProductionTopologyServices({
@@ -104,14 +153,14 @@ const sendProofMessage = async (destinationId: string, message: unknown, idempot
   try { await client.send(destinationId, message, topic, idempotencyKey); }
   finally { await client.destroy(); }
 };
-const awaitEventStatus = async (workflowId: string, key: string, expectedStatus: string): Promise<void> => {
+// The workflows run in-process, so the fake wait store is visible to the loop.
+const awaitOpenWait = async (commandWorkflowId: string, kind: WaitKind): Promise<void> => {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
-    const event = await DBOS.getEvent<{ readonly status?: string }>(workflowId, key, { timeoutSeconds: 1 });
-    if (event?.status === expectedStatus) return;
+    if (waitState.get(waitKey(commandWorkflowId, kind))?.status.kind === "open") return;
     await Bun.sleep(25);
   }
-  throw new Error(`workflow '${workflowId}' event '${key}' did not reach '${expectedStatus}'`);
+  throw new Error(`workflow '${commandWorkflowId}' never opened its '${kind}' wait`);
 };
 
 await DBOS.launch();
@@ -140,14 +189,14 @@ try {
         if (["spec_analysis", "plan", "brief", "assessment"].includes(expected.output_name)) {
           await sendProofMessage(execution.workflow_id, { kind: "artifact_emitted", release: { kind: "waiting_gate", artifact, gate_steps: [{ type: "artifact_approval", actions: [{ name: "approve", disposition: "release" as const }, { name: "request_revision", disposition: "revise" as const }] }] } }, `proof:${artifact.id}`);
           const gateId = `${execution.workflow_id}:gate:${artifact.id}:wait:artifact_approval`;
-          await awaitEventStatus(gateId, "gate-state", "pending");
+          await awaitOpenWait(gateId, "gate");
           await sendProofMessage(gateId, { kind: "decision", action: "approve", artifact_revision_id: artifact.id, gate_step: "artifact_approval" }, `approve:${artifact.id}`, "gate-command");
         } else if (expected.output_name === "build_result") {
           await sendProofMessage(execution.workflow_id, { kind: "artifact_emitted", release: { kind: "waiting_handoff", artifact, downstream_role: "assessment", external_wait_kind: "github_review" } }, `proof:${artifact.id}`);
           const handoffId = `${execution.workflow_id}:handoff:${artifact.id}`;
-          await awaitEventStatus(handoffId, "handoff-state", "awaiting_downstream");
+          await awaitOpenWait(handoffId, "handoff_downstream");
           await sendProofMessage(handoffId, { kind: "downstream_decision", action: "approve", decision_artifact_id: crypto.randomUUID() as ArtifactId }, `handoff-approve:${artifact.id}`, "handoff-command");
-          await awaitEventStatus(handoffId, "handoff-state", "awaiting_external");
+          await awaitOpenWait(handoffId, "handoff_external");
           await sendProofMessage(handoffId, { kind: "external_completed", external_kind: "github_review", correlation_id: `github:${artifact.id}` }, `handoff-complete:${artifact.id}`, "handoff-command");
         } else {
           await sendProofMessage(execution.workflow_id, { kind: "artifact_emitted", release: { kind: "released", artifact } }, `proof:${artifact.id}`);

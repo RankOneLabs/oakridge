@@ -4,8 +4,10 @@ import type { SqlExecutor } from "./sql-executor";
 import { selectRunStatus, selectStageStatus } from "../operators/select-status";
 import type { EpicWorkflowProfile } from "../domain/epic";
 import { STAGE_RERUN_STATE_KEY_PREFIX } from "../domain/rerun";
-import { superjsonValue, superjsonValueLateral } from "./sql-fragments";
-import { HANDOFF_INFIX, TERMINAL_OBSERVER_SUFFIX } from "../domain/workflow-ids";
+import { superjsonValueLateral } from "./sql-fragments";
+import { TERMINAL_OBSERVER_SUFFIX } from "../domain/workflow-ids";
+import { PR_SUMMARY_ARTIFACT_TYPE } from "../domain/dev-flow-artifacts";
+import { selectHandoffStatusFromWait, type HandoffWaitKind, type Wait, type WaitOutcome } from "../domain/wait";
 import type { StageOutcome } from "../domain/workflow";
 
 interface GateProjectionRow {
@@ -40,7 +42,17 @@ interface StageProjectionRow { readonly stage_instance_id: string; readonly name
 interface UnitProjectionRow { readonly stage_instance_id: string; readonly unit_id: string; readonly params: OperatorStageUnit["params"]; readonly external_reference: { readonly kind?: string; readonly session_id?: string } | null; readonly dbos_status: string; readonly has_pending_gate: boolean; readonly admission_required: boolean; readonly admitted: boolean; readonly admission_eligible: boolean; readonly admission_blocked_by: readonly string[] }
 interface StageArtifactRow { readonly stage_instance_id: string; readonly id: string; readonly type_id: string; readonly version: number; readonly label: string | null }
 interface EpicProfileRow extends Omit<EpicWorkflowProfile, "id" | "workflow_run_id"> { readonly id: string; readonly workflow_run_id: string }
-interface CohortProjectionRow { readonly run_id: string; readonly workflow_name: string; readonly stage_instance_id: string; readonly stage_name: string; readonly unit_id: string; readonly params: { readonly repository_key?: string; readonly title?: string } | null; readonly dbos_status: string; readonly artifact_revision_id: string | null; readonly handoff_status: string | null; readonly reconciliation: OperatorCohortSummary["pull_request_reconciliation"]; readonly updated_at_epoch_ms: string; readonly admission_required: boolean; readonly admitted: boolean; readonly admission_eligible: boolean; readonly admission_blocked_by: readonly string[] }
+/**
+ * A fan-out unit's parameters are the item the stage fanned out over, wrapped.
+ *
+ * `materializeUnits` stores the whole envelope — `{unit_id, artifact}` for an
+ * artifact-driven fan-out — so a cohort's own fields sit under `artifact`, not
+ * at the top. This row type used to claim they were top-level, and the fake
+ * executor in the projection tests supplied them that way, so the type and its
+ * test agreed with each other and both disagreed with every real row.
+ */
+interface CohortUnitParameters { readonly artifact?: { readonly repository_key?: string; readonly title?: string } | null }
+interface CohortProjectionRow { readonly run_id: string; readonly workflow_name: string; readonly stage_instance_id: string; readonly stage_name: string; readonly unit_id: string; readonly params: CohortUnitParameters | null; readonly dbos_status: string; readonly artifact_revision_id: string | null; readonly handoff_wait_kind: HandoffWaitKind | null; readonly handoff_wait_status: Wait["status"]["kind"] | null; readonly handoff_outcome_kind: WaitOutcome["kind"] | null; readonly summary_pr_url: string | null; readonly reconciliation: OperatorCohortSummary["pull_request_reconciliation"]; readonly updated_at_epoch_ms: string; readonly admission_required: boolean; readonly admitted: boolean; readonly admission_eligible: boolean; readonly admission_blocked_by: readonly string[] }
 
 const decodeGate = (row: GateProjectionRow): OperatorParkedGate => ({
   id: `${row.stage_instance_id}:${row.unit_id}`,
@@ -78,18 +90,17 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     const rows = await this.sql.query<GateProjectionRow>(
       `SELECT stage.run_id::text,
               stage.stage_key AS stage_name,
-              state.value->>'stage_instance_id' AS stage_instance_id,
-              state.value->>'unit_id' AS unit_id,
-              state.value->>'artifact_revision_id' AS artifact_revision_id,
-              state.value->>'gate_step' AS gate_step,
-              COALESCE(ARRAY(SELECT jsonb_array_elements_text(state.value->'actions')), ARRAY[]::text[]) AS actions
-       FROM dbos.workflow_events event
-       ${superjsonValueLateral("event.value", "state")}
-       JOIN oakridge.stage_instance stage ON stage.id = (state.value->>'stage_instance_id')::uuid
+              wait.stage_instance_id::text,
+              wait.unit_id,
+              wait.artifact_revision_id::text,
+              wait.closes_on->>'gate_step' AS gate_step,
+              COALESCE(ARRAY(SELECT jsonb_array_elements_text(wait.closes_on->'actions')), ARRAY[]::text[]) AS actions
+       FROM oakridge.wait wait
+       JOIN oakridge.stage_instance stage ON stage.id = wait.stage_instance_id
        JOIN oakridge.workflow_run run ON run.id = stage.run_id
-       JOIN oakridge.artifact artifact ON artifact.id = (state.value->>'artifact_revision_id')::uuid
-       WHERE event.key = 'gate-state'
-         AND state.value->>'status' = 'pending'
+       JOIN oakridge.artifact artifact ON artifact.id = wait.artifact_revision_id
+       WHERE wait.kind = 'gate'
+         AND wait.status = 'open'
          -- Archiving a run is the operator saying they are done with it. A gate
          -- it left pending is not work they still owe, and listing it anyway is
          -- how an inbox fills with decisions nobody intends to make.
@@ -99,7 +110,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
            SELECT attempt.root_workflow_id FROM oakridge.workflow_attempt attempt
            WHERE attempt.run_id = stage.run_id ORDER BY attempt.created_at DESC LIMIT 1)
          AND ($1::uuid IS NULL OR stage.run_id = $1::uuid)
-       ORDER BY stage.started_at, state.value->>'unit_id'`,
+       ORDER BY stage.started_at, wait.unit_id`,
       [run_id ?? null],
     );
     return rows.map(decodeGate);
@@ -173,11 +184,10 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
        ) stuck ON true
        LEFT JOIN LATERAL (
          SELECT count(*) AS parked_count
-         FROM dbos.workflow_events event
-         ${superjsonValueLateral("event.value", "state")}
-         JOIN oakridge.stage_instance stage ON stage.id = (state.value->>'stage_instance_id')::uuid
-         JOIN oakridge.artifact artifact ON artifact.id = (state.value->>'artifact_revision_id')::uuid
-         WHERE event.key = 'gate-state' AND state.value->>'status' = 'pending' AND artifact.lifecycle_state = 'current' AND stage.run_id = run.id
+         FROM oakridge.wait wait
+         JOIN oakridge.stage_instance stage ON stage.id = wait.stage_instance_id
+         JOIN oakridge.artifact artifact ON artifact.id = wait.artifact_revision_id
+         WHERE wait.kind = 'gate' AND wait.status = 'open' AND artifact.lifecycle_state = 'current' AND stage.run_id = run.id
            AND stage.attempt_root_workflow_id = root.root_workflow_id
        ) gates ON true
        WHERE ($1::boolean IS NULL OR run.archived = $1::boolean)
@@ -224,11 +234,10 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
        JOIN dbos.workflow_status status ON status.workflow_uuid = attempt.root_workflow_id
        LEFT JOIN LATERAL (
          SELECT EXISTS (
-           SELECT 1 FROM dbos.workflow_events event
-           ${superjsonValueLateral("event.value", "state")}
-           JOIN oakridge.stage_instance stage ON stage.id = (state.value->>'stage_instance_id')::uuid
-           JOIN oakridge.artifact artifact ON artifact.id = (state.value->>'artifact_revision_id')::uuid
-           WHERE event.key = 'gate-state' AND state.value->>'status' = 'pending' AND artifact.lifecycle_state = 'current'
+           SELECT 1 FROM oakridge.wait wait
+           JOIN oakridge.stage_instance stage ON stage.id = wait.stage_instance_id
+           JOIN oakridge.artifact artifact ON artifact.id = wait.artifact_revision_id
+           WHERE wait.kind = 'gate' AND wait.status = 'open' AND artifact.lifecycle_state = 'current'
              AND stage.attempt_root_workflow_id = attempt.root_workflow_id
          ) AS has_pending_gate
        ) gates ON true
@@ -243,7 +252,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     const stageRows = await this.sql.query<StageProjectionRow>(
       `SELECT stage.id::text AS stage_instance_id, stage.stage_key AS name, stage.stage_type,
               stage.stage_contract->>'operator_role' AS operator_role, status.status AS dbos_status, stage.outcome,
-              EXISTS (SELECT 1 FROM dbos.workflow_events event ${superjsonValueLateral("event.value", "state")} JOIN oakridge.artifact artifact ON artifact.id = (state.value->>'artifact_revision_id')::uuid WHERE event.key = 'gate-state' AND state.value->>'status' = 'pending' AND artifact.lifecycle_state = 'current' AND state.value->>'stage_instance_id' = stage.id::text) AS has_pending_gate
+              EXISTS (SELECT 1 FROM oakridge.wait wait JOIN oakridge.artifact artifact ON artifact.id = wait.artifact_revision_id WHERE wait.kind = 'gate' AND wait.status = 'open' AND artifact.lifecycle_state = 'current' AND wait.stage_instance_id = stage.id) AS has_pending_gate
        FROM oakridge.stage_instance stage JOIN dbos.workflow_status status ON status.workflow_uuid = stage.coordinator_workflow_id
        WHERE stage.run_id = $1 AND stage.attempt_root_workflow_id = $2 ORDER BY stage.started_at`, [id, summary.current_attempt_root_workflow_id]);
     const unitRows = await this.sql.query<UnitProjectionRow>(
@@ -254,7 +263,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
               COALESCE((unit.value->>'admitted')::boolean, true) AS admitted,
               COALESCE((unit.value->>'eligible')::boolean, true) AS admission_eligible,
               COALESCE(ARRAY(SELECT jsonb_array_elements_text(unit.value->'blocked_by')), ARRAY[]::text[]) AS admission_blocked_by,
-              EXISTS (SELECT 1 FROM dbos.workflow_events event ${superjsonValueLateral("event.value", "state")} JOIN oakridge.artifact artifact ON artifact.id = (state.value->>'artifact_revision_id')::uuid WHERE event.key = 'gate-state' AND state.value->>'status' = 'pending' AND artifact.lifecycle_state = 'current' AND state.value->>'stage_instance_id' = stage.id::text AND state.value->>'unit_id' = unit.value->>'unit_id') AS has_pending_gate
+              EXISTS (SELECT 1 FROM oakridge.wait wait JOIN oakridge.artifact artifact ON artifact.id = wait.artifact_revision_id WHERE wait.kind = 'gate' AND wait.status = 'open' AND artifact.lifecycle_state = 'current' AND wait.stage_instance_id = stage.id AND wait.unit_id = unit.value->>'unit_id') AS has_pending_gate
        FROM oakridge.stage_instance stage
        JOIN dbos.workflow_events admission_event ON admission_event.workflow_uuid = stage.coordinator_workflow_id AND admission_event.key = 'stage-admission-state'
        ${superjsonValueLateral("admission_event.value", "admission")}
@@ -285,13 +294,12 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     const attemptRows = await this.sql.query<AttemptProjectionRow>(
       `SELECT attempt.root_workflow_id, attempt.forked_from_root_workflow_id,
               status.status AS dbos_status, attempt.created_at::text, attempt.outcome,
-              count(event.workflow_uuid) FILTER (WHERE ${superjsonValue("event.value")}->>'status' = 'pending' AND gate_artifact.lifecycle_state = 'current')::text AS parked_count
+              count(wait.id) FILTER (WHERE gate_artifact.lifecycle_state = 'current')::text AS parked_count
        FROM oakridge.workflow_attempt attempt
        JOIN dbos.workflow_status status ON status.workflow_uuid = attempt.root_workflow_id
        LEFT JOIN oakridge.stage_instance stage ON stage.attempt_root_workflow_id = attempt.root_workflow_id
-       LEFT JOIN dbos.workflow_events event ON event.key = 'gate-state'
-         AND ${superjsonValue("event.value")}->>'stage_instance_id' = stage.id::text
-       LEFT JOIN oakridge.artifact gate_artifact ON gate_artifact.id = (${superjsonValue("event.value")}->>'artifact_revision_id')::uuid
+       LEFT JOIN oakridge.wait wait ON wait.stage_instance_id = stage.id AND wait.kind = 'gate' AND wait.status = 'open'
+       LEFT JOIN oakridge.artifact gate_artifact ON gate_artifact.id = wait.artifact_revision_id
        WHERE attempt.run_id = $1
        GROUP BY attempt.root_workflow_id, attempt.forked_from_root_workflow_id, status.status, attempt.created_at, attempt.outcome
        ORDER BY attempt.created_at`, [id]);
@@ -365,7 +373,10 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
               COALESCE((unit.value->>'admitted')::boolean, true) AS admitted,
               COALESCE((unit.value->>'eligible')::boolean, true) AS admission_eligible,
               COALESCE(ARRAY(SELECT jsonb_array_elements_text(unit.value->'blocked_by')), ARRAY[]::text[]) AS admission_blocked_by,
-              handoff.value->>'status' AS handoff_status,
+              handoff.kind AS handoff_wait_kind,
+              handoff.status AS handoff_wait_status,
+              handoff.outcome_kind AS handoff_outcome_kind,
+              summary.pr_url AS summary_pr_url,
               CASE WHEN reconciliation.stage_instance_id IS NULL THEN NULL ELSE jsonb_build_object(
                 'repository_key', reconciliation.repository_key, 'observation', reconciliation.observation,
                 'mismatch', reconciliation.mismatch, 'completed_at', reconciliation.completed_at,
@@ -380,27 +391,61 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
        CROSS JOIN LATERAL jsonb_array_elements(admission.value->'units') unit(value)
        LEFT JOIN oakridge.executor_projection projection ON projection.stage_instance_id = stage.id AND projection.unit_id = unit.value->>'unit_id'
        LEFT JOIN dbos.workflow_status execution ON execution.workflow_uuid = projection.execution_workflow_id
+       -- Which of the stage's outputs carries the handoff. A unit emits one
+       -- artifact per output, and only this one has a handoff workflow named
+       -- after it, so picking any other loses the cohort's entire state.
+       CROSS JOIN LATERAL (
+         SELECT output.value->>'name' AS output_name
+         FROM jsonb_array_elements(stage.stage_contract->'outputs') AS output(value)
+         WHERE output.value->'release'->>'kind' = 'handoff'
+         ORDER BY output.value->>'name' LIMIT 1
+       ) handoff_output
        LEFT JOIN LATERAL (
          SELECT candidate.* FROM oakridge.artifact candidate
          WHERE candidate.stage_instance_id = stage.id AND candidate.execution_id = projection.execution_id AND candidate.unit_id = projection.unit_id
+           AND candidate.output_name = handoff_output.output_name
            AND candidate.lifecycle_state IN ('current', 'released')
-         ORDER BY candidate.version DESC LIMIT 1
+         ORDER BY candidate.version DESC, candidate.id LIMIT 1
        ) artifact ON true
+       -- Artifact-keyed, deliberately WITHOUT the execution predicate the
+       -- command paths take: this lateral displays and sends nothing, and
+       -- keying it to the projection's execution workflow id is exactly what
+       -- lost a cohort — after a unit rerun the projection names the
+       -- replacement, the lookup misses, and the cohort reads 'building'
+       -- forever. External preferred when both handoff rows exist.
        LEFT JOIN LATERAL (
-         SELECT ${superjsonValue("event.value")} AS value FROM dbos.workflow_events event
-         WHERE event.key = 'handoff-state' AND event.workflow_uuid = projection.execution_workflow_id || '${HANDOFF_INFIX}' || artifact.id::text
+         SELECT wait.kind, wait.status, wait.outcome->>'kind' AS outcome_kind
+         FROM oakridge.wait wait
+         WHERE wait.artifact_revision_id = artifact.id
+           AND wait.kind IN ('handoff_downstream', 'handoff_external')
+         ORDER BY (wait.kind = 'handoff_external') DESC LIMIT 1
        ) handoff ON true
+       -- The pull request the cohort opened, for an operator who has to be told
+       -- *which* pull request to confirm. The reconciliation record is
+       -- authoritative once one exists; before that the build's own summary is
+       -- the only place the URL is written, which is where the reconciler reads
+       -- it from too.
+       LEFT JOIN LATERAL (
+         SELECT candidate.body->>'pr_url' AS pr_url FROM oakridge.artifact candidate
+         WHERE candidate.stage_instance_id = stage.id AND candidate.execution_id = projection.execution_id AND candidate.unit_id = projection.unit_id
+           AND candidate.artifact_type = '${PR_SUMMARY_ARTIFACT_TYPE}'
+           AND candidate.lifecycle_state IN ('current', 'released')
+         ORDER BY candidate.version DESC, candidate.id LIMIT 1
+       ) summary ON true
        LEFT JOIN oakridge.cohort_pull_request_reconciliation reconciliation
          ON reconciliation.stage_instance_id = stage.id AND reconciliation.unit_id = projection.unit_id
+       -- A stage with no handoff output is not a cohort stage; the CROSS JOIN
+       -- above drops it, which is the same filter the EXISTS used to apply.
        WHERE run.archived = false
-         AND EXISTS (
-           SELECT 1 FROM jsonb_array_elements(stage.stage_contract->'outputs') AS output(value)
-           WHERE output.value->'release'->>'kind' = 'handoff')
        ORDER BY COALESCE(execution.updated_at, extract(epoch FROM stage.started_at) * 1000) DESC`, []);
     return rows.map((row) => {
-      const lifecycle: OperatorCohortLifecycle = row.dbos_status === "ERROR" ? "failed" : row.reconciliation?.mismatch ? "pull_request_mismatch" : row.handoff_status === "released" ? "complete" : row.handoff_status === "awaiting_external" ? "github_review" : row.handoff_status === "revision_requested" ? "revision_requested" : row.handoff_status === "awaiting_downstream" ? "assessing" : "building";
+      const handoff_status = row.handoff_wait_kind === null || row.handoff_wait_status === null
+        ? null
+        : selectHandoffStatusFromWait(row.handoff_wait_kind, row.handoff_wait_status, row.handoff_outcome_kind);
+      const lifecycle: OperatorCohortLifecycle = row.dbos_status === "ERROR" ? "failed" : row.reconciliation?.mismatch ? "pull_request_mismatch" : handoff_status === "released" ? "complete" : handoff_status === "awaiting_external" ? "github_review" : handoff_status === "revision_requested" ? "revision_requested" : handoff_status === "awaiting_downstream" ? "assessing" : "building";
       const artifact = row.artifact_revision_id as ArtifactId | null;
-      return { id: `${row.stage_instance_id}:${row.unit_id}`, run_id: row.run_id as WorkflowRunId, workflow_name: row.workflow_name, stage_instance_id: row.stage_instance_id as import("../domain/primitives").StageInstanceId, stage_name: row.stage_name, unit_id: row.unit_id as UnitId, repository_key: row.params?.repository_key ?? null, title: row.params?.title ?? null, lifecycle, completion: { build_complete: artifact !== null, assessment_complete: lifecycle === "complete" }, admission: { required: row.admission_required, admitted: row.admitted, eligible: row.admission_eligible, blocked_by: row.admission_blocked_by }, artifact_revision_id: artifact, artifact_url: artifact ? `/artifact_details/${artifact}` : null, gate_id: null, gate_url: null, pr_url: row.reconciliation?.observation.url ?? null, pull_request_reconciliation: row.reconciliation, updated_at: new Date(Number(row.updated_at_epoch_ms)).toISOString() };
+      const cohort = row.params?.artifact ?? null;
+      return { id: `${row.stage_instance_id}:${row.unit_id}`, run_id: row.run_id as WorkflowRunId, workflow_name: row.workflow_name, stage_instance_id: row.stage_instance_id as import("../domain/primitives").StageInstanceId, stage_name: row.stage_name, unit_id: row.unit_id as UnitId, repository_key: cohort?.repository_key ?? null, title: cohort?.title ?? null, lifecycle, completion: { build_complete: artifact !== null, assessment_complete: lifecycle === "complete" }, admission: { required: row.admission_required, admitted: row.admitted, eligible: row.admission_eligible, blocked_by: row.admission_blocked_by }, artifact_revision_id: artifact, artifact_url: artifact ? `/artifact_details/${artifact}` : null, gate_id: null, gate_url: null, pr_url: row.reconciliation?.observation.url ?? row.summary_pr_url ?? null, pull_request_reconciliation: row.reconciliation, updated_at: new Date(Number(row.updated_at_epoch_ms)).toISOString() };
     });
   }
 }
