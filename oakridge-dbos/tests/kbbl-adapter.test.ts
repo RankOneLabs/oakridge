@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { KbblExecutorAdapter, silentDurationMs } from "../src/adapters/kbbl";
+import { KbblExecutorAdapter, selectRemoteWorktreeBase, silentDurationMs } from "../src/adapters/kbbl";
 import type { ExecutionRequest } from "../src/domain/execution";
 import type { ExecutionAttemptId, ExecutionId, StageInstanceId, UnitId } from "../src/domain/primitives";
 
@@ -13,7 +13,7 @@ test("kbbl adapter derives a stable session key from the attempt and function id
     executor_function_identity: "executor-step-v1",
     fetch: async (input, init) => {
       calls.push({ url: String(input), body: JSON.parse(String(init?.body)) });
-      return Response.json({ kind: "started", session: { sid: "session-1", status: "live", endReason: null } }, { status: 201 });
+      return Response.json({ kind: "started", session: { sid: "session-1", status: "live", endReason: null, worktreeBaseRef: "a".repeat(40) } }, { status: 201 });
     },
   });
   const request: ExecutionRequest = {
@@ -26,10 +26,16 @@ test("kbbl adapter derives a stable session key from the attempt and function id
     inputs: [],
     declared_outputs: [], expected_artifacts: [],
   };
-  expect(await adapter.start_or_attach(request, attempt("run:1:stage:build:unit:web"))).toEqual({ kind: "kbbl_session", session_id: "session-1" });
+  expect(await adapter.start_or_attach(request, attempt("run:1:stage:build:unit:web"))).toEqual({ kind: "kbbl_session", session_id: "session-1", worktree_base_sha: "a".repeat(40) });
   expect(calls[0]?.url).toEndWith("/sessions/resumable/run%3A1%3Astage%3Abuild%3Aunit%3Aweb%3Aexecutor-step-v1");
   expect(calls[0]?.body).toEqual({ initial_prompt: "Build", workdir: "/repo", name: "builder", runtime: "claude-code",
-    worktree: { branch_name: "cohort/stage-1/unit-1", worktree_subdir: "stage-1/unit-1", base_ref: "epic/test" } });
+    worktree: { branch_name: "cohort/stage-1/unit-1", worktree_subdir: "stage-1/unit-1", base_ref: "origin/epic/test" } });
+});
+
+test("worktree branch bases select the remote-tracking ref while immutable SHAs stay unchanged", () => {
+  expect(selectRemoteWorktreeBase("epic/test")).toBe("origin/epic/test");
+  expect(selectRemoteWorktreeBase("origin/epic/test")).toBe("origin/epic/test");
+  expect(selectRemoteWorktreeBase("a".repeat(40))).toBe("a".repeat(40));
 });
 
 test("kbbl adapter observes terminal mechanism state without completing an Oakridge stage", async () => {

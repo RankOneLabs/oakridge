@@ -29,6 +29,11 @@ test("a recorded success stays complete", () => {
 
 test("outcome does not override liveness for a workflow that is still running", () => {
   expect(selectRunStatus("PENDING", 0, null)).toBe("running");
+  expect(selectStageStatus("PENDING", false, null)).toBe("running");
+});
+
+test("enqueued workflows remain pending at every operator projection level", () => {
+  expect(selectRunStatus("ENQUEUED", 0, null)).toBe("pending");
   expect(selectStageStatus("ENQUEUED", false, null)).toBe("pending");
 });
 

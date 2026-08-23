@@ -248,6 +248,37 @@ describe("createWorktree — identity and baseRef opts", () => {
     expect((await git(created.worktreePath, "rev-parse", "HEAD")).trim()).toBe(expectedSha);
   });
 
+  test("origin baseRef refreshes a stale tracking ref before creating the worktree", async () => {
+    const bareDir = join(tmpRoot, "refresh-remote.git");
+    const publisherDir = join(tmpRoot, "publisher");
+    await git(tmpRoot, "init", "--bare", bareDir);
+    await git(repoDir, "remote", "add", "origin", bareDir);
+    await git(repoDir, "push", "origin", "HEAD:refs/heads/epic/fresh");
+    await git(repoDir, "fetch", "origin", "+refs/heads/epic/fresh:refs/remotes/origin/epic/fresh");
+    const staleSha = (await git(repoDir, "rev-parse", "origin/epic/fresh")).trim();
+
+    await git(tmpRoot, "clone", bareDir, publisherDir);
+    await git(publisherDir, "config", "user.email", "test@example.com");
+    await git(publisherDir, "config", "user.name", "test");
+    await git(publisherDir, "config", "commit.gpgsign", "false");
+    await git(publisherDir, "checkout", "-b", "epic/fresh", "origin/epic/fresh");
+    await git(publisherDir, "commit", "--allow-empty", "-m", "merged cohort");
+    await git(publisherDir, "push", "origin", "epic/fresh");
+    const freshSha = (await git(publisherDir, "rev-parse", "HEAD")).trim();
+    expect(freshSha).not.toBe(staleSha);
+
+    const created = await createWorktree({
+      workdir: repoDir,
+      worktreesRoot,
+      oakridgeSid: "refreshedbase123",
+      identity: { branchName: "cohort/fresh", worktreeSubdir: "fresh" },
+      baseRef: "origin/epic/fresh",
+    });
+
+    expect(created.worktreeBaseRef).toBe(freshSha);
+    expect((await git(created.worktreePath, "rev-parse", "HEAD")).trim()).toBe(freshSha);
+  });
+
   test("resumeDepth > 0 with identity: -r<n> appended to slug branch, dir unchanged", async () => {
     const sid = "resumeid123456789";
     const created = await createWorktree({
