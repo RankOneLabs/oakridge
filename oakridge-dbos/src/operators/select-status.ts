@@ -19,7 +19,8 @@ export const selectStageStatus = (dbos_status: string, has_pending_gate: boolean
   if (has_pending_gate) return "parked";
   if (dbos_status === "SUCCESS") return outcome === null || outcome.kind === "succeeded" ? "complete" : "failed";
   if (dbos_status === "ERROR" || dbos_status === "CANCELLED" || dbos_status === "MAX_RECOVERY_ATTEMPTS_EXCEEDED") return "failed";
-  if (dbos_status === "ENQUEUED" || dbos_status === "PENDING") return "pending";
+  if (dbos_status === "ENQUEUED") return "pending";
+  if (dbos_status === "PENDING") return "running";
   return "running";
 };
 
@@ -31,5 +32,6 @@ export const selectRunStatus = (dbos_status: string, parked_count: number, outco
   }
   if (dbos_status === "CANCELLED") return "cancelled";
   if (dbos_status === "ERROR" || dbos_status === "MAX_RECOVERY_ATTEMPTS_EXCEEDED") return "failed";
+  if (dbos_status === "ENQUEUED") return "pending";
   return "running";
 };

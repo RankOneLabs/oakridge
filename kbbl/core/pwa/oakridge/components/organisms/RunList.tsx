@@ -12,7 +12,7 @@ type FilterTab = "all" | "active" | "parked" | "complete" | "archived";
 
 function applyTabFilter(runs: RunSummary[], tab: FilterTab): RunSummary[] {
   switch (tab) {
-    case "active": return runs.filter((r) => r.status === "running" || r.status === "parked");
+    case "active": return runs.filter((r) => r.status === "pending" || r.status === "running" || r.status === "parked");
     case "parked": return runs.filter((r) => r.status === "parked");
     case "complete": return runs.filter((r) => r.status === "complete" || r.status === "failed" || r.status === "cancelled");
     default: return runs;

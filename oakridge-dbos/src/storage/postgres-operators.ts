@@ -39,7 +39,7 @@ export interface OperatorProjectionRepository {
 interface RunProjectionRow { readonly id: string; readonly workflow_name: string; readonly root_workflow_id: string; readonly dbos_status: string; readonly current_stage: string | null; readonly parked_count: string; readonly updated_at_epoch_ms: string; readonly outcome: StageOutcome | null; readonly is_stuck: boolean; readonly archived: boolean }
 interface AttemptProjectionRow { readonly root_workflow_id: string; readonly forked_from_root_workflow_id: string | null; readonly dbos_status: string; readonly created_at: string; readonly parked_count: string; readonly outcome: StageOutcome | null }
 interface StageProjectionRow { readonly stage_instance_id: string; readonly name: string; readonly stage_type: string; readonly operator_role: string | null; readonly dbos_status: string; readonly has_pending_gate: boolean; readonly outcome: StageOutcome | null }
-interface UnitProjectionRow { readonly stage_instance_id: string; readonly unit_id: string; readonly params: OperatorStageUnit["params"]; readonly external_reference: { readonly kind?: string; readonly session_id?: string } | null; readonly dbos_status: string; readonly has_pending_gate: boolean; readonly admission_required: boolean; readonly admitted: boolean; readonly admission_eligible: boolean; readonly admission_blocked_by: readonly string[] }
+interface UnitProjectionRow { readonly stage_instance_id: string; readonly unit_id: string; readonly params: OperatorStageUnit["params"]; readonly external_reference: { readonly kind?: string; readonly session_id?: string; readonly worktree_base_sha?: string } | null; readonly dbos_status: string; readonly has_pending_gate: boolean; readonly admission_required: boolean; readonly admitted: boolean; readonly admission_eligible: boolean; readonly admission_blocked_by: readonly string[] }
 interface StageArtifactRow { readonly stage_instance_id: string; readonly id: string; readonly type_id: string; readonly version: number; readonly label: string | null }
 interface EpicProfileRow extends Omit<EpicWorkflowProfile, "id" | "workflow_run_id"> { readonly id: string; readonly workflow_run_id: string }
 /**
@@ -283,7 +283,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     const stages: OperatorStageDetail[] = stageRows.map((stage) => {
       const units: OperatorStageUnit[] = unitRows.filter((unit) => unit.stage_instance_id === stage.stage_instance_id).map((unit) => ({
         unit_id: unit.unit_id as UnitId, repository_key: null, params: unit.params, sid: unit.external_reference?.kind === "kbbl_session" ? unit.external_reference.session_id ?? null : null,
-        worktree: null, status: selectStageStatus(unit.dbos_status, unit.has_pending_gate), gate: unit.has_pending_gate ? "artifact_approval" : null,
+        worktree: null, base_sha: unit.external_reference?.worktree_base_sha ?? null, status: selectStageStatus(unit.dbos_status, unit.has_pending_gate), gate: unit.has_pending_gate ? "artifact_approval" : null,
         admission_required: unit.admission_required, admitted: unit.admitted, admission_eligible: unit.admission_eligible, admission_blocked_by: unit.admission_blocked_by,
       }));
       const artifacts: OperatorStageArtifact[] = artifactRows.filter((artifact) => artifact.stage_instance_id === stage.stage_instance_id).map((artifact) => ({ id: artifact.id as ArtifactId, type_id: artifact.type_id, version: artifact.version, label: artifact.label }));

@@ -41,6 +41,7 @@ interface KbblSessionSummary {
   readonly sid: string;
   readonly status: "starting" | "live" | "compacting" | "ended";
   readonly endReason: "user_closed" | "subprocess_exited" | "compacted" | null;
+  readonly worktreeBaseRef: string | null;
 }
 
 interface EnsureSessionResponse {
@@ -85,7 +86,14 @@ const parseEnsureResponse = (value: unknown): EnsureSessionResponse => {
   const status = session.status;
   if (status !== "starting" && status !== "live" && status !== "compacting" && status !== "ended") throw new Error("invalid kbbl session status");
   const endReason = "endReason" in session && (session.endReason === "user_closed" || session.endReason === "subprocess_exited" || session.endReason === "compacted") ? session.endReason : null;
-  return { kind, session: { sid: session.sid, status, endReason } };
+  const worktreeBaseRef = "worktreeBaseRef" in session && typeof session.worktreeBaseRef === "string" ? session.worktreeBaseRef : null;
+  return { kind, session: { sid: session.sid, status, endReason, worktreeBaseRef } };
+};
+
+/** Oakridge branch bases always mean the freshly observed remote branch. */
+export const selectRemoteWorktreeBase = (baseRef: string): string => {
+  if (baseRef.startsWith("origin/") || /^[0-9a-f]{40}$/.test(baseRef)) return baseRef;
+  return `origin/${baseRef}`;
 };
 
 export interface KbblExecutorAdapterOptions {
@@ -162,13 +170,14 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
         ...(config.effort ? { effort: config.effort } : {}),
         ...(config.artifact_id ? { artifact_id: config.artifact_id } : {}),
         ...(config.worktree ? { worktree: { branch_name: config.worktree.branchName, worktree_subdir: config.worktree.worktreeSubdir,
-          ...(config.worktree.baseRef ? { base_ref: config.worktree.baseRef } : {}) } } : {}),
+          ...(config.worktree.baseRef ? { base_ref: selectRemoteWorktreeBase(config.worktree.baseRef) } : {}) } } : {}),
         ...(inheritedSessionId ? { inherit_worktree_from: inheritedSessionId } : {}),
       }),
     });
     if (!response.ok) throw new Error(`kbbl ensure-session failed (${response.status}): ${await response.text()}`);
     const ensured = parseEnsureResponse(await response.json());
-    return { kind: "kbbl_session", session_id: ensured.session.sid };
+    return { kind: "kbbl_session", session_id: ensured.session.sid,
+      ...(ensured.session.worktreeBaseRef ? { worktree_base_sha: ensured.session.worktreeBaseRef } : {}) };
   }
 
   async observe_terminal(execution_id: ExecutionId, external_reference: ExternalExecutionReference): Promise<ExecutorObservationAttempt> {

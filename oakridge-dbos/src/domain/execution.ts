@@ -39,7 +39,7 @@ export interface ExecutionRequest {
 }
 
 export type ExternalExecutionReference =
-  | { readonly kind: "kbbl_session"; readonly session_id: string }
+  | { readonly kind: "kbbl_session"; readonly session_id: string; readonly worktree_base_sha?: string }
   | { readonly kind: "headless_run"; readonly run_ref: string }
   /**
    * A deterministic executor's finished work.

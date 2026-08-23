@@ -160,7 +160,7 @@ export interface CreateRunRequest {
   epic_profile: EpicProfileConfig;
 }
 
-export type RunStatus = "running" | "parked" | "failed" | "complete" | "cancelled";
+export type RunStatus = "pending" | "running" | "parked" | "failed" | "complete" | "cancelled";
 
 export interface RunSummary {
   id: string;
@@ -195,6 +195,7 @@ export interface StageUnit {
   params?: CohortBriefParams | null;
   sid: string | null;
   worktree: WorktreeMetadata | null;
+  base_sha?: string | null;
   status: StageStatus;
   gate: string | null;
   admission_required?: boolean;

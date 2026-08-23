@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { serializeByKey } from "./serialize-by-key";
 
 /**
  * Per-session git worktree creation. kbbl runs many parallel CC sessions over
@@ -63,6 +64,16 @@ export class WorktreeCreateError extends Error {
   }
 }
 
+/** A remote-tracking worktree base could not be refreshed from its source. */
+export class WorktreeBaseRefreshError extends WorktreeCreateError {
+  readonly baseRef: string;
+  constructor(baseRef: string, stderr: string) {
+    super(`git could not refresh worktree base ${baseRef}`, stderr);
+    this.name = "WorktreeBaseRefreshError";
+    this.baseRef = baseRef;
+  }
+}
+
 /**
  * An absolute path, quoted or bare, as git writes them into its diagnostics.
  *
@@ -106,6 +117,8 @@ interface ResolvedBaseRef {
   sha: string;
 }
 
+const remoteBaseRefreshChains = new Map<string, Promise<unknown>>();
+
 async function tryResolveBaseRef(workdir: string, ref: string): Promise<ResolvedBaseRef | null> {
   const proc = Bun.spawn({
     cmd: ["git", "-C", workdir, "rev-parse", "--verify", `${ref}^{commit}`],
@@ -118,6 +131,31 @@ async function tryResolveBaseRef(workdir: string, ref: string): Promise<Resolved
     proc.exited,
   ]);
   return exitCode === 0 ? { ref, sha: stdout.trim() } : null;
+}
+
+/**
+ * Refresh an explicitly remote-tracking base immediately before it is used.
+ *
+ * A plain SHA or local ref is already immutable/local and is left alone. An
+ * `origin/<branch>` ref is a promise that the caller wants the remote branch,
+ * so using whatever happens to be cached locally would violate that promise.
+ */
+async function refreshRemoteBaseRef(workdir: string, requestedRef: string): Promise<void> {
+  if (!requestedRef.startsWith("origin/")) return;
+  const remoteBranch = requestedRef.slice("origin/".length);
+  await serializeByKey(remoteBaseRefreshChains, `${workdir}\0${requestedRef}`, async () => {
+    const proc = Bun.spawn({
+      cmd: ["git", "-C", workdir, "fetch", "origin", `+refs/heads/${remoteBranch}:refs/remotes/origin/${remoteBranch}`],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    if (exitCode !== 0) throw new WorktreeBaseRefreshError(requestedRef, stderr.trim() || stdout.trim() || `exited with code ${exitCode}`);
+  });
 }
 
 /** Resolve an explicit base locally, accepting its fetched origin-tracking ref. */
@@ -254,9 +292,13 @@ export async function createWorktree(
   let worktreeBaseRef: string;
   let gitBase: string;
   if (opts.baseRef) {
+    await refreshRemoteBaseRef(opts.workdir, opts.baseRef);
     const resolved = await resolveBaseRef(opts.workdir, opts.baseRef);
     worktreeBaseRef = resolved.sha;
-    gitBase = resolved.ref;
+    // The ref can move after resolution if another session fetches it. Cut the
+    // worktree from the resolved object id so the persisted base and checkout
+    // are necessarily the same commit.
+    gitBase = resolved.sha;
   } else {
     worktreeBaseRef = await resolveHead(opts.workdir);
     gitBase = worktreeBaseRef;
@@ -292,10 +334,7 @@ export async function createWorktree(
       stderr.trim(),
     );
   }
-  // Re-read HEAD from the new worktree rather than relying on the pre-add
-  // rev-parse result. If opts.baseRef moved between rev-parse and worktree add
-  // (concurrent fetch), the pre-add sha would differ from what was actually
-  // checked out. Reading post-add is authoritative for both paths.
+  // Re-read HEAD from the new worktree as the authoritative persisted value.
   worktreeBaseRef = await resolveHead(worktreePath);
   return { worktreePath, worktreeBranch: branch, worktreeBaseRef };
 }
