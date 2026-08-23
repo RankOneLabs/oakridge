@@ -41,53 +41,62 @@ export function useSessionStream(
   }, [sid]);
 
   useEffect(() => {
-    const ingest = (evt: EnvelopeEvent) => {
-      // pty_output is the raw, high-volume terminal byte stream (PTY mode's
-      // break-glass surface). Handle it before the seenIds dedupe: it is never
-      // replayed (not persisted to JSONL; the server honors Last-Event-Id), so
-      // tracking each chunk's id would grow seenIds without bound. The bytes
-      // bypass React state entirely and go straight to the terminal sink (if
-      // mounted) — keeping them out of the events array, where they would both
-      // trigger a re-render per chunk and render as junk UnknownRows.
-      if (evt.type === "pty_output") {
-        const p = evt.payload as { content?: unknown };
-        if (typeof p.content === "string") onPtyOutputRef.current?.(p.content);
-        return;
-      }
-      if (seenIds.current.has(evt.id)) return;
-      seenIds.current.add(evt.id);
-      setEvents((prev) => [...prev, evt]);
-      if (evt.type === "permission_resolved") {
-        const p = evt.payload as {
-          request_id?: string;
-          decision?: "allow" | "deny";
-        };
-        if (p.request_id && p.decision) {
-          const requestId = p.request_id;
-          const decision = p.decision;
-          setResolutions((prev) => {
-            if (prev.get(requestId) === decision) return prev;
-            const next = new Map(prev);
-            next.set(requestId, decision);
-            return next;
-          });
+    const ingestBatch = (incoming: readonly EnvelopeEvent[]) => {
+      const accepted: EnvelopeEvent[] = [];
+      const resolutionChanges: [string, "allow" | "deny"][] = [];
+      const allowedToolChanges: string[] = [];
+      let nextYoloMode: boolean | null = null;
+      for (const evt of incoming) {
+        // pty_output is the raw, high-volume terminal byte stream (PTY mode's
+        // break-glass surface). Handle it before the seenIds dedupe: it is never
+        // replayed (not persisted to JSONL; the server honors Last-Event-Id), so
+        // tracking each chunk's id would grow seenIds without bound. The bytes
+        // bypass React state entirely and go straight to the terminal sink (if
+        // mounted) — keeping them out of the events array, where they would both
+        // trigger a re-render per chunk and render as junk UnknownRows.
+        if (evt.type === "pty_output") {
+          const p = evt.payload as { content?: unknown };
+          if (typeof p.content === "string") onPtyOutputRef.current?.(p.content);
+          continue;
+        }
+        if (seenIds.current.has(evt.id)) continue;
+        seenIds.current.add(evt.id);
+        accepted.push(evt);
+        if (evt.type === "permission_resolved") {
+          const p = evt.payload as {
+            request_id?: string;
+            decision?: "allow" | "deny";
+          };
+          if (p.request_id && p.decision) {
+            resolutionChanges.push([p.request_id, p.decision]);
+          }
+        }
+        if (evt.type === "yolo_mode_changed") {
+          const p = evt.payload as { enabled?: unknown };
+          if (typeof p.enabled === "boolean") nextYoloMode = p.enabled;
+        }
+        if (evt.type === "tool_allowlisted") {
+          const p = evt.payload as { tool_name?: unknown };
+          if (typeof p.tool_name === "string") {
+            allowedToolChanges.push(p.tool_name);
+          }
         }
       }
-      if (evt.type === "yolo_mode_changed") {
-        const p = evt.payload as { enabled?: unknown };
-        if (typeof p.enabled === "boolean") setYoloMode(p.enabled);
+      if (accepted.length > 0) setEvents((prev) => [...prev, ...accepted]);
+      if (resolutionChanges.length > 0) {
+        setResolutions((prev) => {
+          const next = new Map(prev);
+          for (const [requestId, decision] of resolutionChanges) next.set(requestId, decision);
+          return next;
+        });
       }
-      if (evt.type === "tool_allowlisted") {
-        const p = evt.payload as { tool_name?: unknown };
-        if (typeof p.tool_name === "string") {
-          const name = p.tool_name;
-          setAllowedTools((prev) => {
-            if (prev.has(name)) return prev;
-            const next = new Set(prev);
-            next.add(name);
-            return next;
-          });
-        }
+      if (nextYoloMode !== null) setYoloMode(nextYoloMode);
+      if (allowedToolChanges.length > 0) {
+        setAllowedTools((prev) => {
+          const next = new Set(prev);
+          for (const toolName of allowedToolChanges) next.add(toolName);
+          return next;
+        });
       }
     };
 
@@ -105,7 +114,7 @@ export function useSessionStream(
         })
         .then((data) => {
           if (cancelled) return;
-          for (const evt of data.events) ingest(evt);
+          ingestBatch(data.events);
           setStreamStatus("disconnected");
         })
         .catch(() => {
@@ -131,6 +140,27 @@ export function useSessionStream(
     // stream was dead. That self-heals a frozen page without a manual reload.
     let current: EventSource | null = null;
     let stopped = false;
+    let pending: EnvelopeEvent[] = [];
+    let pendingFrame: number | null = null;
+
+    // EventSource dispatches a replay as one message task per persisted event.
+    // Appending each task separately made React rebuild an increasingly large
+    // transcript hundreds of times. One update per paint keeps live messages
+    // responsive while collapsing a fast replay into a handful of renders.
+    const flushPending = () => {
+      pendingFrame = null;
+      const batch = pending;
+      pending = [];
+      ingestBatch(batch);
+    };
+    const enqueue = (event: EnvelopeEvent) => {
+      if (event.type === "pty_output") {
+        ingestBatch([event]);
+        return;
+      }
+      pending.push(event);
+      if (pendingFrame === null) pendingFrame = requestAnimationFrame(flushPending);
+    };
 
     const connect = () => {
       if (stopped) return;
@@ -142,7 +172,7 @@ export function useSessionStream(
       es.onerror = () => setStreamStatus("disconnected");
       es.onmessage = (e) => {
         try {
-          ingest(JSON.parse(e.data) as EnvelopeEvent);
+          enqueue(JSON.parse(e.data) as EnvelopeEvent);
         } catch {
           // malformed frame; ignore
         }
@@ -167,6 +197,7 @@ export function useSessionStream(
       stopped = true;
       document.removeEventListener("visibilitychange", reviveIfStale);
       window.removeEventListener("focus", reviveIfStale);
+      if (pendingFrame !== null) cancelAnimationFrame(pendingFrame);
       current?.close();
     };
   }, [sid, inMemory]);

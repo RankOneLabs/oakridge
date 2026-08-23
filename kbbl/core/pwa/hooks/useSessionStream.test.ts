@@ -33,6 +33,16 @@ class MockEventSource {
   }
 }
 
+let animationFrames: FrameRequestCallback[] = [];
+
+function flushAnimationFrames() {
+  act(() => {
+    const callbacks = animationFrames;
+    animationFrames = [];
+    for (const callback of callbacks) callback(0);
+  });
+}
+
 function emit(evt: EnvelopeEvent) {
   act(() => {
     MockEventSource.last?.onmessage?.({ data: JSON.stringify(evt) });
@@ -44,6 +54,12 @@ describe("useSessionStream pty_output routing", () => {
     MockEventSource.last = null;
     MockEventSource.instances = [];
     vi.stubGlobal("EventSource", MockEventSource);
+    animationFrames = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      animationFrames.push(callback);
+      return animationFrames.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
   });
 
   afterEach(() => {
@@ -77,10 +93,34 @@ describe("useSessionStream pty_output routing", () => {
     const { result } = renderHook(() => useSessionStream("sid-1", true, sink));
 
     emit({ id: 1, type: "user", ts: "t", payload: { message: { content: "hi" } } });
+    flushAnimationFrames();
 
     expect(sink).not.toHaveBeenCalled();
     expect(result.current.events).toHaveLength(1);
     expect(result.current.events[0].type).toBe("user");
+  });
+
+  it("batches a large EventSource replay into one transcript update", () => {
+    let renderCount = 0;
+    const { result } = renderHook(() => {
+      renderCount += 1;
+      return useSessionStream("sid-1", true);
+    });
+    const baselineRenderCount = renderCount;
+
+    act(() => {
+      for (let id = 1; id <= 441; id += 1) {
+        MockEventSource.last?.onmessage?.({
+          data: JSON.stringify({ id, type: "assistant", ts: "t", payload: { content: `event ${id}` } }),
+        });
+      }
+    });
+
+    expect(result.current.events).toHaveLength(0);
+    expect(animationFrames).toHaveLength(1);
+    flushAnimationFrames();
+    expect(result.current.events).toHaveLength(441);
+    expect(renderCount).toBe(baselineRenderCount + 1);
   });
 
   it("rebuilds a dead stream when the page returns to the foreground", () => {
