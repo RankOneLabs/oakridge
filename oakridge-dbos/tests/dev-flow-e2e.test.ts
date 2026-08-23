@@ -685,7 +685,14 @@ e2e("a prompt reaches a real claude-code process and its artifact comes back", a
     // The stub only ever PUTs to a URL the rendered template told it to, so an
     // artifact arriving is proof the template's emit instruction and the route
     // that serves it still agree.
-    const log = await kbbl.stub_log();
+    const log = await awaitCondition(
+      () => "the claude-code stub to finish its artifact emission",
+      async () => {
+        const contents = await kbbl.stub_log();
+        return contents.includes("emitted 1 artifact(s)") ? contents : null;
+      },
+      5_000,
+    );
     expect(log).toContain("notifications/initialized");
     expect(log).toContain("emitted 1 artifact(s)");
   } finally {
