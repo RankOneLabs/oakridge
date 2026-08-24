@@ -85,17 +85,25 @@ export function useSessionStream(
       if (accepted.length > 0) setEvents((prev) => [...prev, ...accepted]);
       if (resolutionChanges.length > 0) {
         setResolutions((prev) => {
-          const next = new Map(prev);
-          for (const [requestId, decision] of resolutionChanges) next.set(requestId, decision);
-          return next;
+          let next: ResolutionMap | null = null;
+          for (const [requestId, decision] of resolutionChanges) {
+            if ((next ?? prev).get(requestId) === decision) continue;
+            if (next === null) next = new Map(prev);
+            next.set(requestId, decision);
+          }
+          return next ?? prev;
         });
       }
       if (nextYoloMode !== null) setYoloMode(nextYoloMode);
       if (allowedToolChanges.length > 0) {
         setAllowedTools((prev) => {
-          const next = new Set(prev);
-          for (const toolName of allowedToolChanges) next.add(toolName);
-          return next;
+          let next: Set<string> | null = null;
+          for (const toolName of allowedToolChanges) {
+            if ((next ?? prev).has(toolName)) continue;
+            if (next === null) next = new Set(prev);
+            next.add(toolName);
+          }
+          return next ?? prev;
         });
       }
     };

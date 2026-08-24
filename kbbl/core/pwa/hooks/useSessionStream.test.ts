@@ -123,6 +123,23 @@ describe("useSessionStream pty_output routing", () => {
     expect(renderCount).toBe(baselineRenderCount + 1);
   });
 
+  it("preserves derived collection identities when a replay repeats known values", () => {
+    const { result } = renderHook(() => useSessionStream("sid-1", true));
+
+    emit({ id: 1, type: "permission_resolved", ts: "t", payload: { request_id: "request-1", decision: "allow" } });
+    emit({ id: 2, type: "tool_allowlisted", ts: "t", payload: { tool_name: "Read" } });
+    flushAnimationFrames();
+    const resolutions = result.current.resolutions;
+    const allowedTools = result.current.allowedTools;
+
+    emit({ id: 3, type: "permission_resolved", ts: "t", payload: { request_id: "request-1", decision: "allow" } });
+    emit({ id: 4, type: "tool_allowlisted", ts: "t", payload: { tool_name: "Read" } });
+    flushAnimationFrames();
+
+    expect(result.current.resolutions).toBe(resolutions);
+    expect(result.current.allowedTools).toBe(allowedTools);
+  });
+
   it("rebuilds a dead stream when the page returns to the foreground", () => {
     renderHook(() => useSessionStream("sid-1", true));
     expect(MockEventSource.instances).toHaveLength(1);
