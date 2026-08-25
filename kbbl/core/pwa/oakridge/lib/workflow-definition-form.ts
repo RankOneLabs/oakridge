@@ -1,6 +1,7 @@
 import { stageFormEntryToNodeDef, type StageFormEntry } from "../authoring/stage-form";
 import type { EdgeDef, WorkflowDefFull, WorkflowGraph } from "../types";
 import type { Result } from "../../lib/result";
+import { randomUuid } from "../../lib/random-uuid";
 
 export interface WorkflowDefinitionFormState {
   stages: StageFormEntry[];
@@ -61,7 +62,7 @@ export function buildWorkflowGraph(stages: StageFormEntry[], edges: EdgeDef[]): 
 
 export function workflowDefinitionToFormState(definition: WorkflowDefFull): WorkflowDefinitionFormState {
   const stages = Object.entries(definition.graph.stages).map(([stageKey, node]) => ({
-    _uid: crypto.randomUUID(), stageKey, inputs: node.inputs, outputs: node.outputs,
+    _uid: randomUuid(), stageKey, inputs: node.inputs, outputs: node.outputs,
     config: {
       runtime: node.config.runtime ?? "claude-code",
       prompt_template_path: node.config.prompt_template_path ?? "",

@@ -20,6 +20,7 @@ import { RoleModelPicker } from "../molecules/RoleModelPicker";
 import { initialSelectionForRole } from "../../lib/runtime-selection";
 import { buildEpicProfile, buildRunExecutionContext } from "../../lib/launch-config";
 import { selectRequestIdentity, type PendingRequestIdentity } from "../../lib/request-identity";
+import { randomUuid } from "../../../lib/random-uuid";
 import { RepositoryLaunchFields } from "../molecules/RepositoryLaunchFields";
 import { BriefNotesField } from "../molecules/BriefNotesField";
 import { readBriefNotesFile, selectMissingBriefNotesDetail, type BriefNotesSource } from "../../lib/brief-notes";
@@ -160,7 +161,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
         context: contextResult.value,
         epic_profile: epicProfile,
       };
-      pendingLaunch.current = selectRequestIdentity(pendingLaunch.current, JSON.stringify(request), () => crypto.randomUUID());
+      pendingLaunch.current = selectRequestIdentity(pendingLaunch.current, JSON.stringify(request), randomUuid);
       const result = await createRun.mutateAsync({ request, idempotency_key: pendingLaunch.current.idempotency_key });
       pendingLaunch.current = null;
       onCreated(result.id);

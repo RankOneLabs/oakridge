@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { confirmCohortMerged } from "../client";
 import { selectRequestIdentity, type PendingRequestIdentity } from "../lib/request-identity";
+import { randomUuid } from "../../lib/random-uuid";
 
 interface ConfirmCohortMergedInput {
   cohortId: string;
@@ -21,7 +22,7 @@ export function useConfirmCohortMerged(runId: string) {
   const requestKeys = useRef(new Map<string, PendingRequestIdentity>());
   return useMutation({
     mutationFn: ({ cohortId, operatorComment }: ConfirmCohortMergedInput) => {
-      const pending = selectRequestIdentity(requestKeys.current.get(cohortId) ?? null, cohortId, () => crypto.randomUUID());
+      const pending = selectRequestIdentity(requestKeys.current.get(cohortId) ?? null, cohortId, randomUuid);
       requestKeys.current.set(cohortId, pending);
       return confirmCohortMerged(cohortId, { idempotency_key: pending.idempotency_key, operator_comment: operatorComment });
     },

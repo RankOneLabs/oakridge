@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { admitStageUnit } from "../client";
 import { selectRequestIdentity, type PendingRequestIdentity } from "../lib/request-identity";
+import { randomUuid } from "../../lib/random-uuid";
 
 interface AdmitStageUnitRequest {
   stageId: string;
@@ -15,7 +16,7 @@ export function useAdmitStageUnit(runId: string) {
   return useMutation({
     mutationFn: ({ stageId, unitId }: AdmitStageUnitRequest) => {
       const identity = `${stageId}:${unitId}`;
-      const pending = selectRequestIdentity(requestKeys.current.get(identity) ?? null, identity, () => crypto.randomUUID());
+      const pending = selectRequestIdentity(requestKeys.current.get(identity) ?? null, identity, randomUuid);
       requestKeys.current.set(identity, pending);
       return admitStageUnit(stageId, unitId, pending.idempotency_key);
     },

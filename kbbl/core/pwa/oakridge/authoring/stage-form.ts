@@ -1,4 +1,5 @@
 import type { DelegatedSessionStageConfig, InputSlotDef, OutputSlotDef, StageNodeDef } from "../types";
+import { randomUuid } from "../../lib/random-uuid";
 
 export interface StageFormEntry {
   readonly _uid: string;
@@ -18,7 +19,7 @@ function defaultStageConfig(): DelegatedSessionStageConfig {
 }
 
 export function defaultStageEntry(stageKey: string): StageFormEntry {
-  return { _uid: crypto.randomUUID(), stageKey, inputs: [], outputs: [], config: defaultStageConfig() };
+  return { _uid: randomUuid(), stageKey, inputs: [], outputs: [], config: defaultStageConfig() };
 }
 
 export function stageFormEntryToNodeDef(entry: StageFormEntry): StageNodeDef {

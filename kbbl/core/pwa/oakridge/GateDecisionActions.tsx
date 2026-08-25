@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { useResumeGate } from "./hooks/useResumeGate";
 import type { ParkedGate } from "./types";
+import { randomUuid } from "../lib/random-uuid";
 
 interface GateDecisionActionsProps {
   gate: ParkedGate;
@@ -59,7 +60,7 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
     });
     let key = requestKeys.current.get(requestIdentity);
     if (!key) {
-      key = crypto.randomUUID();
+      key = randomUuid();
       requestKeys.current.set(requestIdentity, key);
     }
     mutation.mutate({
