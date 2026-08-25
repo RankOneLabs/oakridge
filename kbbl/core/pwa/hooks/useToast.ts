@@ -1,5 +1,7 @@
 import { create } from "zustand";
 
+import { randomUuid } from "../lib/random-uuid";
+
 export type ToastKind = "success" | "error" | "info";
 
 export interface Toast {
@@ -19,7 +21,7 @@ export const useToastStore = create<ToastState>()((set, get) => ({
   toasts: [],
 
   pushToast: ({ kind, message, ttlMs = 4000 }) => {
-    const id = crypto.randomUUID();
+    const id = randomUuid();
     const expiresAt = Date.now() + ttlMs;
     set((state) => ({ toasts: [...state.toasts, { id, kind, message, expiresAt }] }));
     setTimeout(() => get().dismissToast(id), ttlMs);

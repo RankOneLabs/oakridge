@@ -2,6 +2,7 @@ import { useRef } from "react";
 
 import { useConfirmFinalPullRequest } from "../../hooks/useConfirmFinalPullRequest";
 import type { EpicRepositoryBinding, EpicWorkflowProfile } from "../../types";
+import { randomUuid } from "../../../lib/random-uuid";
 
 const stateLabels = {
   pending: "Waiting for final PR",
@@ -21,7 +22,7 @@ interface FinalRepositoryCardProps {
 
 function FinalRepositoryCard({ runId, policy, baseBranch, repository }: FinalRepositoryCardProps) {
   const confirmation = useConfirmFinalPullRequest(runId, repository.repository_key);
-  const confirmationKey = useRef(crypto.randomUUID());
+  const confirmationKey = useRef(randomUuid());
   const canConfirm = policy === "external_confirmation" && repository.final_merge_state === "awaiting_confirmation";
 
   return (
