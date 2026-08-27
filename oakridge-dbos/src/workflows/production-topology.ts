@@ -4,19 +4,20 @@ import { materializeStage } from "../compiler/materialize-stage";
 import { resolveBindingValue, resolveDelegatedExecution } from "../compiler/resolve-execution";
 import { selectAncestorStages } from "../compiler/select-resume-stages";
 import { appendIncrementalUnit, closeIncrementalMaterialization, emptyIncrementalMaterialization, isFanOutDriverInput, selectDriverArtifacts, selectReadyUnits, type IncrementalMaterialization } from "../compiler/materialize-units";
-import { isAwaitingReplacementOf, isLiveExecution, isStageDrained, selectLaunchedUnits, selectReleasedUnits, selectRunningUnitCount, type UnitRuntime } from "./unit-runtime";
+import { isAwaitingReplacementOf, isLiveExecution, isRevisionUndecided, isStageDrained, selectLaunchedUnits, selectReleasedUnits, selectRevisionDelivery, selectRunningUnitCount, type UnitRuntime } from "./unit-runtime";
 import type { ArtifactRevision, ExecutionContractState } from "../domain/artifacts";
 import { envelopeIdentity, withAvailableArtifact, withReplacedEnvelope, type StageOutputEvent } from "../domain/output-availability";
 import type { CompiledStageContract, CompiledWorkflowDefinition, MaterializedExecutionUnit } from "../domain/compiled-workflow";
 import type { DelegatedSessionDefinitionConfig } from "../domain/delegated-session";
 import type { ArtifactEnvelope, ExecutionRequest, ExternalExecutionReference } from "../domain/execution";
-import type { ExecutionId, JsonValue, StageCoordinatorWorkflowId, StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId } from "../domain/primitives";
+import type { ArtifactId, ExecutionId, JsonValue, StageCoordinatorWorkflowId, StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId } from "../domain/primitives";
+import type { HandoffWorkflowState } from "../domain/wait";
 import type { StageFailureOutcome, StageOutcome } from "../domain/workflow";
 import { stageRerunStateKey, type StageRerunState } from "../domain/rerun";
 import type { StageAdmissionState } from "../domain/runs";
 import { PROVISION_REPOSITORY_REFS_STAGE_TYPE, parseBaseBranch, parseRunContextRepository, type RepositoryProvisioningDefinitionConfig, type ResolvedRepositoryProvisioningConfig } from "../domain/repository-refs";
 import { readJsonPointer } from "../domain/json-pointer";
-import { relayWorkflowId, stageCoordinatorWorkflowId, unitExecutionWorkflowId } from "../domain/workflow-ids";
+import { relayWorkflowId, stageCoordinatorWorkflowId, unitExecutionWorkflowId, unitRevisionExecutionWorkflowId } from "../domain/workflow-ids";
 import { containAttempt } from "./cancellation";
 import { artifactContractExecutionWorkflow, type ArtifactContractExecutionResult } from "./executor-topology";
 
@@ -64,6 +65,8 @@ export interface ProductionTopologyServices {
   record_execution(input: RecordExecutionInput): Promise<void>;
   replace_execution_projection(input: ReplaceExecutionProjectionInput): Promise<void>;
   load_resume_artifacts(run_id: WorkflowRunId, stage_keys: readonly string[]): Promise<readonly (ArtifactRevision & { readonly stage_key: string })[]>;
+  /** Where a revised input's handoff stands — the record of whether its consumer ever acted on it. */
+  find_revision_handoff_state(artifact_revision_id: ArtifactId): Promise<HandoffWorkflowState | null>;
 }
 
 let services: ProductionTopologyServices | null = null;
@@ -80,6 +83,7 @@ const finishStageStep = DBOS.registerStep(async (input: FinishStageInput): Promi
 const finishRunStep = DBOS.registerStep(async (input: FinishRunInput): Promise<void> => topologyServices().finish_run(input), { name: "oakridgeFinishRunAttemptStep", retriesAllowed: true });
 const recordExecutionStep = DBOS.registerStep(async (input: RecordExecutionInput): Promise<void> => topologyServices().record_execution(input), { name: "oakridgeRecordExecutionProjectionStep", retriesAllowed: true });
 const replaceExecutionProjectionStep = DBOS.registerStep(async (input: ReplaceExecutionProjectionInput): Promise<void> => topologyServices().replace_execution_projection(input), { name: "oakridgeReplaceExecutionProjectionStep", retriesAllowed: true });
+const revisionHandoffStateStep = DBOS.registerStep(async (input: { readonly artifact_revision_id: ArtifactId }): Promise<HandoffWorkflowState | null> => topologyServices().find_revision_handoff_state(input.artifact_revision_id), { name: "oakridgeRevisionHandoffStateStep", retriesAllowed: true });
 const loadResumeArtifactsStep = DBOS.registerStep(async (input: { readonly run_id: WorkflowRunId; readonly stage_keys: readonly string[] }) => topologyServices().load_resume_artifacts(input.run_id, input.stage_keys), { name: "oakridgeLoadResumeArtifactsStep", retriesAllowed: true });
 
 const envelopes = (inputs: StageInputSet): readonly ArtifactEnvelope[] => Object.values(inputs).flatMap((value) => Array.isArray(value) ? value : [value as ArtifactEnvelope]);
@@ -329,7 +333,13 @@ export const productionStageWorkflow = DBOS.registerWorkflow(async (input: Stage
   const isManualAdmission = input.compiled_stage.materialization.kind === "fan_out" && input.compiled_stage.materialization.manual_admission;
   const admitted = new Set<UnitId>(isManualAdmission ? [] : plans.map((plan) => plan.unit.unit_id));
   const executionWorkflowIds: Record<string, string> = {};
-  const artifacts: ArtifactRevision[] = [];
+  // Chain-keyed, not appended: a unit relaunched onto a revised input settles
+  // twice, and its second artifact replaces the first in this record rather
+  // than standing beside it as a second artifact in a slot that holds one.
+  let artifacts: readonly ArtifactRevision[] = [];
+  // Revisions handed to a unit's live execution, until that execution returns
+  // and the coordinator can check whether it acted on them.
+  const notifiedRevisions = new Map<UnitId, readonly ArtifactEnvelope[]>();
   const complete = async (outcome: StageOutcome): Promise<StageWorkflowResult> => {
     await DBOS.setEvent("stage-admission-state", selectStageAdmissionState(input.stage_instance_id, plans.map((plan) => plan.unit), admitted, selectReleasedUnits(runtime), isManualAdmission, "closed"));
     await DBOS.closeStream("stage-output");
@@ -342,6 +352,38 @@ export const productionStageWorkflow = DBOS.registerWorkflow(async (input: Stage
       { coordinator_workflow_id: coordinatorId, unit_id: unitId, execution_workflow_id: executionWorkflowId });
     executionWorkflowIds[unitId] = executionWorkflowId;
     runtime.set(unitId, { kind: "running", execution_workflow_id: executionWorkflowId });
+  };
+
+  /**
+   * Put a released unit back to work on an input that has since been revised.
+   *
+   * Its own output was derived from the revision's predecessor, so it is stale
+   * — and for a handoff input, the producer is holding an open wait that only
+   * this unit's next decision can close. Leaving the revision undelivered
+   * parked the cohort with nothing able to advance it and no gate for an
+   * operator to answer, because the inbox is built from open gates and a unit
+   * that never reruns never opens one.
+   *
+   * Re-planned rather than forked: the plan is what carries the unit's inputs,
+   * and a fork would replay the execution against the artifact it has just been
+   * told is out of date.
+   */
+  const relaunchForRevision = async (unitId: UnitId, artifact: ArtifactEnvelope): Promise<void> => {
+    notifiedRevisions.delete(unitId);
+    const superseded = plans.find((candidate) => candidate.unit.unit_id === unitId);
+    if (!superseded) throw new Error(`execution plan '${unitId}' disappeared before its revision`);
+    const replanned = await planUnitStep({ stage: input.compiled_stage, stage_instance_id: input.stage_instance_id,
+      inputs: accumulatedInputs, context: input.context, unit: superseded.unit });
+    plans[plans.indexOf(superseded)] = replanned;
+    const executionWorkflowId = unitRevisionExecutionWorkflowId(coordinatorId, unitId, artifact.artifact_id);
+    // The projection is what the emit route and the operator surface read: it
+    // must name the new attempt and carry the inputs that attempt was given,
+    // with the previous attempt's session and terminal observation cleared.
+    await recordExecutionStep({ request: replanned.request, execution_workflow_id: executionWorkflowId, parameters: replanned.unit.parameters });
+    await replaceExecutionProjectionStep({ execution_id: replanned.request.execution_id, replacement_workflow_id: executionWorkflowId });
+    await DBOS.startWorkflow(artifactContractExecutionWorkflow, { workflowID: executionWorkflowId })(
+      { request: replanned.request, outputs: input.compiled_stage.outputs, coordinator_workflow_id: coordinatorId });
+    await watchExecution(unitId, executionWorkflowId);
   };
 
   /** Park a failed unit where an operator can find it, and free its slot. */
@@ -363,8 +405,18 @@ export const productionStageWorkflow = DBOS.registerWorkflow(async (input: Stage
     if (result.contract.kind !== "satisfied") throw new Error("satisfied execution contract disappeared");
     // Acceptance only. What the run may consume was published by the execution
     // as each output became visible, which for a handoff is long before this.
-    artifacts.push(...result.contract.artifacts);
+    for (const artifact of result.contract.artifacts) artifacts = withAvailableArtifact(artifacts, artifact);
     runtime.set(signal.unit_id, { kind: "released" });
+    // A revision sent to this execution while it was already returning was
+    // never read, and nothing in its result says so. The wait table does: a
+    // handoff still awaiting its downstream decision is one this unit owes.
+    const notified = notifiedRevisions.get(signal.unit_id) ?? [];
+    notifiedRevisions.delete(signal.unit_id);
+    for (const revision of notified) {
+      if (!isRevisionUndecided(await revisionHandoffStateStep({ artifact_revision_id: revision.artifact_id }))) continue;
+      await relaunchForRevision(signal.unit_id, revision);
+      return;
+    }
   };
 
   const applyStageCommand = async (command: StageSignal): Promise<StageCommandEffect> => {
@@ -419,13 +471,13 @@ export const productionStageWorkflow = DBOS.registerWorkflow(async (input: Stage
     // nothing tells the unit it is there: the upstream agent revises, and the
     // downstream one waits forever to be asked to look.
     if (isRevision) {
-      const consumerUnitId = selectRevisionConsumer(plans, command.artifact);
-      // A unit that is not running has no agent to ask; recovering that one is
-      // an operator rerun.
-      const consumer = consumerUnitId === null ? undefined : runtime.get(consumerUnitId);
-      if (consumer?.kind === "running") {
-        await DBOS.send(consumer.execution_workflow_id, { kind: "input_revised", input_name: command.input_name, artifact: command.artifact },
+      const delivery = selectRevisionDelivery(runtime, selectRevisionConsumer(plans, command.artifact));
+      if (delivery.kind === "notify") {
+        await DBOS.send(delivery.execution_workflow_id, { kind: "input_revised", input_name: command.input_name, artifact: command.artifact },
           "execution-event", `revised:${command.artifact.artifact_id}`);
+        notifiedRevisions.set(delivery.unit_id, withReplacedEnvelope(notifiedRevisions.get(delivery.unit_id) ?? [], command.artifact));
+      } else if (delivery.kind === "relaunch") {
+        await relaunchForRevision(delivery.unit_id, command.artifact);
       }
       return { kind: "applied" };
     }

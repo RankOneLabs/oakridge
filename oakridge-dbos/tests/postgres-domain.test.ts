@@ -331,3 +331,34 @@ test("workflow attempts persist DBOS fork lineage separately from the logical ru
   expect(sql.calls[0]?.statement).toContain("INSERT INTO oakridge.workflow_attempt");
   expect(sql.calls[0]?.parameters).toEqual(["root-2", "run-1", "root-1", "2026-08-14T01:00:00Z"]);
 });
+
+// A unit relaunched onto a revised input is a later attempt of the same
+// execution. Its output supersedes what the earlier attempt released, where the
+// earlier attempt's own re-emission is refused.
+const releasedByFirstAttempt = { id: "revision-1", chain_id: "revision-1", run_id: "run", stage_instance_id: "stage", execution_id: "execution", unit_id: "0", output_name: "result", artifact_type: "dev.result", label: null, body: { done: true }, version: 1, parent_artifact_id: null, emission_payload_hash: "old", lifecycle_state: "released", superseded_by_artifact_id: null, withdrawn_actor: null, withdrawn_reason: null, withdrawn_at: null, released_at: "2026-08-14T00:00:00Z", created_at: "2026-08-14T00:00:00Z", attempt_workflow_id: "attempt-1" };
+const emitAgain = (sql: TransactionStubSql, attempt: string) => new PostgresArtifactRevisionRepository(sql).emit_revision("revision-2" as ArtifactId,
+  { run_id: "run" as WorkflowRunId, stage_instance_id: "stage" as StageInstanceId, execution_id: "execution" as ExecutionId, unit_id: "0" as UnitId, output_name: "result", artifact_type: "dev.result", label: null, body: { done: "again" }, idempotency_key: "emit-2", payload_hash: "new" },
+  "2026-08-14T00:00:01Z", { target_workflow_id: attempt, release: { kind: "immediate" } });
+
+test("a later attempt supersedes the artifact an earlier attempt released", async () => {
+  const inserted = { ...releasedByFirstAttempt, id: "revision-2", version: 2, parent_artifact_id: "revision-1", emission_payload_hash: "new", lifecycle_state: "current", released_at: null, attempt_workflow_id: "attempt-2" };
+  const sql = new TransactionStubSql([[], [{ ended_at: null }], [], [releasedByFirstAttempt], [releasedByFirstAttempt], [inserted]]);
+  const result = await emitAgain(sql, "attempt-2");
+  expect(result).toEqual({ ok: true, value: expect.objectContaining({ kind: "emitted", superseded_artifact_id: "revision-1" }) });
+  const supersede = sql.calls.find((call) => call.statement.includes("lifecycle_state = 'superseded'"));
+  expect(supersede?.statement).toContain("IN ('current', 'released')");
+  expect(supersede?.parameters).toEqual(["revision-1", "revision-2", "2026-08-14T00:00:01Z"]);
+  expect(sql.calls[5]?.parameters).toContain("attempt-2");
+});
+
+test("the attempt that released an artifact cannot revise it", async () => {
+  const sql = new TransactionStubSql([[], [{ ended_at: null }], [], [releasedByFirstAttempt]]);
+  const result = await emitAgain(sql, "attempt-1");
+  expect(result).toEqual({ ok: false, error: expect.objectContaining({ kind: "release_conflict", artifact_id: "revision-1" }) });
+});
+
+test("a released artifact from before attempts were recorded stays final", async () => {
+  const sql = new TransactionStubSql([[], [{ ended_at: null }], [], [{ ...releasedByFirstAttempt, attempt_workflow_id: null }]]);
+  const result = await emitAgain(sql, "attempt-2");
+  expect(result).toEqual({ ok: false, error: expect.objectContaining({ kind: "release_conflict" }) });
+});

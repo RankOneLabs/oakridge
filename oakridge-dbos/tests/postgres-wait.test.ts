@@ -152,6 +152,16 @@ test("release_downstream closes the downstream row and opens the external one in
   }).toEqual({ downstream_status: "decided", external_status: "open", external_execution: "execution-1" });
 });
 
+test("handoff rows are found by artifact revision alone, for a reader that knows no execution", async () => {
+  const subject = await fixture();
+  if (!subject) return;
+  const input = downstreamOpen(artifactId(9), "execution-1");
+  await subject.waits.open_handoff_downstream(input);
+  const waits = await subject.waits.find_handoff_waits_for_artifact(artifactId(9));
+  expect(waits.map((wait) => [wait.closes_on.kind, wait.status.kind, wait.execution_workflow_id])).toEqual([["handoff_downstream", "open", "execution-1"]]);
+  expect(await subject.waits.find_handoff_waits_for_artifact(artifactId(3))).toEqual([]);
+});
+
 test("the schema refuses an outcome foreign to the wait's kind", async () => {
   const subject = await fixture();
   if (!subject) return;

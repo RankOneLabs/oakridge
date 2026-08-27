@@ -548,6 +548,90 @@ e2e("a rejected build revises, and the reassessment releases it", async () => {
 }, 240_000);
 
 /**
+ * A build revised after its assessment was already approved.
+ *
+ * This is the operator's review-round flow, and it is ordinary: the pull
+ * request picks up comments after the assessment is approved, the build agent
+ * applies them, and emits again. That revision supersedes an artifact the
+ * assessor has *already accepted*, and the assessor's execution returned at the
+ * moment it accepted it.
+ *
+ * The coordinator delivered a revision only to a consumer still running, so
+ * this one went nowhere. The build's replacement opened a fresh handoff wait
+ * with no decider, no gate opened, and the review inbox — which is built from
+ * open gates — offered nothing. The cohort read `assessing` with no participant
+ * able to advance it, and every cohort admitted behind it stayed blocked.
+ */
+e2e("a build revised after its assessment was approved is reassessed, not stranded", async () => {
+  const agent = scriptedAgentScenario();
+  useScenario(agent);
+
+  const run = await launchRun(oakridge.base_url, oakridge.definition.id, runContext(oakridge.base_url, oakridge.repository.path));
+  oakridge.started_runs.push(run.root_workflow_id);
+  const driver = new RunDriver(oakridge.base_url, agent, run.root_workflow_id, run.run_id);
+  const isAssessor = (id: string): boolean => id.includes(":stage:assessor:unit:");
+
+  try {
+    const assessorId = await awaitCondition(() => `an assessor to start (${driver.diagnosis})`, async () => {
+      await driver.driveNewExecutions((id) => !isAssessor(id));
+      await driver.approvePendingGates();
+      return [...agent.launched.keys()].find((id) => id.startsWith(`${run.root_workflow_id}:`) && isAssessor(id)) ?? null;
+    }, 120_000);
+
+    const assessorRequest = agent.launched.get(assessorId);
+    if (!assessorRequest) throw new Error("the assessor request disappeared");
+    const buildInput = assessorRequest.inputs.find((input) => input.output_name === "build_result");
+    const buildExecutionWorkflowId = [...driver.drivenExecutions].find((id) => id.includes(":stage:build:unit:"));
+    const buildRequest = buildExecutionWorkflowId ? agent.launched.get(buildExecutionWorkflowId) : undefined;
+    if (!buildRequest || !buildInput) throw new Error("the build under assessment disappeared");
+
+    // Approved, not rejected: the build result is accepted and the cohort is
+    // waiting on nothing but its pull request. This is the state the revision
+    // has to arrive into.
+    const [assessment] = await emitDeclaredArtifacts(oakridge.base_url, assessorRequest);
+    if (!assessment) throw new Error("the assessor emitted nothing");
+    agent.succeed(assessorRequest.execution_id);
+    await decideGate(oakridge.base_url, assessment.artifact_id, "approve");
+
+    const cohortId = `${buildRequest.stage_instance_id}:${buildInput.unit_id}`;
+    await awaitCondition(() => `the cohort to be offered a merge (${driver.diagnosis})`, async () => {
+      const inbox = await readReviewInbox(oakridge.base_url);
+      return inbox.items.find((item) => item.kind === "pull_request_merge" && item.unit_id === buildInput.unit_id) ?? null;
+    }, 60_000);
+
+    // The review-round fix. The accepted revision is superseded and the cohort
+    // owes an assessment again — of an assessor that has already finished.
+    const revised = await emitDeclaredArtifacts(oakridge.base_url, buildRequest, { revision: 2, outputs: ["build_result"] });
+    const revisedResult = revised.find((artifact) => artifact.output_name === "build_result");
+    expect(revisedResult?.release).toBe("waiting_handoff");
+    expect(revisedResult?.artifact_id).not.toBe(buildInput.artifact_id);
+
+    // The assessor is put back to work under an execution named off the
+    // revising artifact — its ordinary id would be deduplicated onto the run
+    // that already returned.
+    const relaunchedId = await awaitCondition(() => `the assessor to be relaunched (launched ${agent.launched.size})`,
+      async () => [...agent.launched.keys()].find((id) => id.includes(`:revision:${revisedResult?.artifact_id}`)) ?? null, 60_000);
+    const relaunched = agent.launched.get(relaunchedId);
+    if (!relaunched) throw new Error("the relaunched assessor disappeared");
+    expect(relaunched.inputs.some((input) => input.artifact_id === revisedResult?.artifact_id)).toBe(true);
+
+    // And it carries the cohort the rest of the way, through the same routes.
+    const [reassessment] = await emitDeclaredArtifacts(oakridge.base_url, relaunched, { revision: 2 });
+    expect(reassessment?.artifact_id).not.toBe(assessment.artifact_id);
+    agent.succeed(relaunched.execution_id);
+    await decideGate(oakridge.base_url, reassessment!.artifact_id, "approve");
+
+    await awaitCondition(`the revised build result to reach its external review`, async () => {
+      const attempt = await confirmCohortMerged(oakridge.base_url, cohortId);
+      return attempt.kind === "accepted" && attempt.outcome === "completed" ? true : null;
+    }, 60_000);
+  } finally {
+    await DBOS.cancelWorkflow(run.root_workflow_id, { cancelChildren: true });
+    agent.releaseAll();
+  }
+}, 240_000);
+
+/**
  * The regression this harness was built for.
  *
  * Cancelling a run fences its executions, and for a delegated session that
@@ -706,9 +790,19 @@ e2e("a prompt reaches a real codex app-server and its artifact comes back", asyn
     const artifact = await probeArtifact("codex", "real-transport-probe-codex", kbbl);
     expect(artifact.type_id).toBe("dev.spec_analysis");
 
-    const log = await kbbl.stub_log();
+    // The artifact reaches the run before the stub has written its last log
+    // line: it emits, then reports the turn complete. Reading the log the
+    // instant the artifact shows up races that final append — and lost, on a
+    // slow runner — so wait for it the way the claude-code probe does.
+    const log = await awaitCondition(
+      () => "the codex stub to report its turn complete",
+      async () => {
+        const contents = await kbbl.stub_log();
+        return contents.includes("reporting turn complete") ? contents : null;
+      },
+      5_000,
+    );
     expect(log).toContain("turn/start");
-    expect(log).toContain("reporting turn complete");
   } finally {
     await kbbl.stop();
   }

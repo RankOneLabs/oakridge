@@ -183,7 +183,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const getHandoffState = async (artifact_id: ArtifactId, execution_workflow_id: string): Promise<HandoffWorkflowState | null> =>
     selectHandoffStateView(await waits.find_handoff_waits(artifact_id, execution_workflow_id));
   registerProductionTopologyServices(createProductionTopologyServices({ definitions, runs, attempts, stages, executions, rerun_targets: rerunTargets,
-    resume_artifacts: resumeArtifacts, load_prompt_template: (path) => promptTemplates.load(path) }));
+    resume_artifacts: resumeArtifacts, waits, load_prompt_template: (path) => promptTemplates.load(path) }));
 
   const cohortPullRequests: CohortPullRequestDependencies = {
     runs, epic_profiles: epicProfiles, contexts, artifacts, reconciliations: cohortReconciliations,

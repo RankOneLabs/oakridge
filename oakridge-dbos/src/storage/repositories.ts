@@ -107,6 +107,8 @@ export interface WaitRepository {
   ): Promise<void>;
   find_gate_wait(artifact_revision_id: ArtifactId, gate_step: string, execution_workflow_id: string): Promise<Wait | null>;
   find_handoff_waits(artifact_revision_id: ArtifactId, execution_workflow_id: string): Promise<readonly Wait[]>;
+  /** Every handoff row on one artifact revision, whichever execution produced it — a revision id is unique. */
+  find_handoff_waits_for_artifact(artifact_revision_id: ArtifactId): Promise<readonly Wait[]>;
   count_open_waits(command_workflow_id: string): Promise<number>;
   /** Cancellation closing a provably dead owner's open rows as withdrawn — the single exception to owner-closes. */
   close_orphaned(command_workflow_id: string, at: string): Promise<void>;
