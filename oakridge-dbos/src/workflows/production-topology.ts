@@ -379,7 +379,7 @@ export const productionStageWorkflow = DBOS.registerWorkflow(async (input: Stage
     // The projection is what the emit route and the operator surface read: it
     // must name the new attempt and carry the inputs that attempt was given,
     // with the previous attempt's session and terminal observation cleared.
-    await recordExecutionStep({ request: replanned.request, execution_workflow_id: executionWorkflowId, parameters: superseded.unit.parameters });
+    await recordExecutionStep({ request: replanned.request, execution_workflow_id: executionWorkflowId, parameters: replanned.unit.parameters });
     await replaceExecutionProjectionStep({ execution_id: replanned.request.execution_id, replacement_workflow_id: executionWorkflowId });
     await DBOS.startWorkflow(artifactContractExecutionWorkflow, { workflowID: executionWorkflowId })(
       { request: replanned.request, outputs: input.compiled_stage.outputs, coordinator_workflow_id: coordinatorId });

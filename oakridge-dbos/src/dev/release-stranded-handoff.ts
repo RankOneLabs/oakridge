@@ -26,6 +26,7 @@
  */
 import { DBOSClient } from "@dbos-inc/dbos-sdk";
 
+import { BUILT_IN_GATE_DISPOSITIONS, isBuiltInGateAction, selectBuiltInGateDisposition } from "../domain/gates";
 import type { ArtifactId } from "../domain/primitives";
 import type { HandoffCommand } from "../workflows/handoff";
 import { PgPostgresExecutor } from "../storage/sql-executor";
@@ -56,8 +57,15 @@ const parseOptions = (argv: readonly string[]): Options => {
   const decisionArtifactId = flags.get("decision-artifact");
   if (!artifactId || !UUID_PATTERN.test(artifactId)) throw new Error("--artifact must be an artifact revision UUID");
   if (!decisionArtifactId || !UUID_PATTERN.test(decisionArtifactId)) throw new Error("--decision-artifact must be an artifact revision UUID");
+  // The handoff reads the action through the built-in vocabulary: anything it
+  // does not recognise is a non-release, which would send the producer back
+  // for a revision instead of releasing it. Refuse the typo up front.
+  const action = flags.get("action") ?? "approve";
+  if (!isBuiltInGateAction(action)) {
+    throw new Error(`--action '${action}' is not a gate action; expected one of ${Object.keys(BUILT_IN_GATE_DISPOSITIONS).join(", ")}`);
+  }
   return { artifact_id: artifactId, decision_artifact_id: decisionArtifactId,
-    action: flags.get("action") ?? "approve", feedback: flags.get("feedback") ?? null, confirmed };
+    action, feedback: flags.get("feedback") ?? null, confirmed };
 };
 
 interface ArtifactRow {
@@ -76,6 +84,9 @@ interface OpenWaitRow {
   readonly command_workflow_id: string;
   readonly downstream_role: string | null;
 }
+
+/** DBOS statuses under which an execution can still decide the wait itself. */
+const LIVE_DBOS_STATUSES: ReadonlySet<string> = new Set(["PENDING", "ENQUEUED", "DELAYED"]);
 
 const databaseUrl = process.env.DBOS_SYSTEM_DATABASE_URL?.trim();
 if (!databaseUrl) throw new Error("DBOS_SYSTEM_DATABASE_URL is required");
@@ -127,10 +138,10 @@ console.log(`handoff artifact ${handoff.artifact_type} v${handoff.version} (${ha
 console.log(`decision stands  ${decision.artifact_type} v${decision.version} ${decision.id}`);
 console.log(`open wait        ${wait.id} -> ${wait.command_workflow_id}`);
 console.log(`downstream role  ${wait.downstream_role ?? "(none)"}${consumer ? ` — execution ${consumer.status ?? "unknown"}` : " — no execution recorded"}`);
-console.log(`command          downstream_decision action='${options.action}' feedback=${options.feedback === null ? "null" : `'${options.feedback}'`}`);
+console.log(`command          downstream_decision action='${options.action}' (${selectBuiltInGateDisposition(options.action)}) feedback=${options.feedback === null ? "null" : `'${options.feedback}'`}`);
 
-if (consumer?.status === "PENDING") {
-  throw new Error(`the '${wait.downstream_role}' execution for this cohort is still PENDING; it can still decide this wait itself`);
+if (consumer && consumer.status !== null && LIVE_DBOS_STATUSES.has(consumer.status)) {
+  throw new Error(`the '${wait.downstream_role}' execution for this cohort is still ${consumer.status}; it can still decide this wait itself`);
 }
 if (!options.confirmed) {
   console.log("\ndry run — pass --confirm to send");
