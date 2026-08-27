@@ -790,9 +790,19 @@ e2e("a prompt reaches a real codex app-server and its artifact comes back", asyn
     const artifact = await probeArtifact("codex", "real-transport-probe-codex", kbbl);
     expect(artifact.type_id).toBe("dev.spec_analysis");
 
-    const log = await kbbl.stub_log();
+    // The artifact reaches the run before the stub has written its last log
+    // line: it emits, then reports the turn complete. Reading the log the
+    // instant the artifact shows up races that final append — and lost, on a
+    // slow runner — so wait for it the way the claude-code probe does.
+    const log = await awaitCondition(
+      () => "the codex stub to report its turn complete",
+      async () => {
+        const contents = await kbbl.stub_log();
+        return contents.includes("reporting turn complete") ? contents : null;
+      },
+      5_000,
+    );
     expect(log).toContain("turn/start");
-    expect(log).toContain("reporting turn complete");
   } finally {
     await kbbl.stop();
   }
