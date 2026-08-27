@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { selectReadyUnits } from "../src/compiler/materialize-units";
 import type { MaterializedExecutionUnit } from "../src/domain/compiled-workflow";
 import type { UnitId } from "../src/domain/primitives";
-import { isAwaitingReplacementOf, isLiveExecution, isStageDrained, selectLaunchedUnits, selectReleasedUnits, selectRunningUnitCount, type UnitRuntime } from "../src/workflows/unit-runtime";
+import { isAwaitingReplacementOf, isLiveExecution, isRevisionUndecided, isStageDrained, selectLaunchedUnits, selectReleasedUnits, selectRevisionDelivery, selectRunningUnitCount, type UnitRuntime } from "../src/workflows/unit-runtime";
 
 const unit = (id: string, depends_on: readonly string[] = []): MaterializedExecutionUnit =>
   ({ unit_id: id as UnitId, parameters: { id }, depends_on: depends_on as readonly UnitId[] });
@@ -77,4 +77,44 @@ test("a stage drains only once no further units can arrive and every one is rele
 test("an incremental stage with no units yet is not drained until its inputs close", () => {
   expect(isStageDrained(runtimeOf([]), 0, false)).toBe(false);
   expect(isStageDrained(runtimeOf([]), 0, true)).toBe(true);
+});
+
+test("a revision reaches a running consumer as a message to its live execution", () => {
+  const runtime = runtimeOf([["a", { kind: "running", execution_workflow_id: "execution-a" }]]);
+  expect(selectRevisionDelivery(runtime, "a" as UnitId)).toEqual({ kind: "notify", unit_id: "a" as UnitId, execution_workflow_id: "execution-a" });
+});
+
+// The case that stranded a cohort: the consumer had already released, the
+// revision was dropped, and the producer's handoff stayed open with nothing
+// able to decide it and no gate for an operator to answer.
+test("a revision relaunches a consumer that has already released", () => {
+  const runtime = runtimeOf([["a", { kind: "released" }]]);
+  expect(selectRevisionDelivery(runtime, "a" as UnitId)).toEqual({ kind: "relaunch", unit_id: "a" as UnitId });
+});
+
+test("a revision leaves a consumer parked for rerun to its operator", () => {
+  const runtime = runtimeOf([["a", { kind: "awaiting_rerun", execution_workflow_id: "execution-a" }]]);
+  expect(selectRevisionDelivery(runtime, "a" as UnitId)).toEqual({ kind: "none" });
+});
+
+test("a revision with no resolvable consumer is delivered nowhere", () => {
+  const runtime = runtimeOf([["a", { kind: "released" }]]);
+  expect(selectRevisionDelivery(runtime, null)).toEqual({ kind: "none" });
+  expect(selectRevisionDelivery(runtime, "absent" as UnitId)).toEqual({ kind: "none" });
+});
+
+// The window the e2e hit: the revision was sent to an execution that was
+// already returning, so nobody read it. The wait table, not the execution's
+// result, records whether the revision was ever decided.
+test("a revision whose handoff still awaits its downstream is owed a look after the consumer returns", () => {
+  const base = { artifact_id: "artifact-2" as never, command_workflow_id: "handoff-2" } as const;
+  expect(isRevisionUndecided({ status: "awaiting_downstream", downstream_role: "assessment", ...base })).toBe(true);
+  expect(isRevisionUndecided(null)).toBe(true);
+});
+
+test("a revision already decided, superseded, or withdrawn is not relaunched for", () => {
+  const base = { artifact_id: "artifact-2" as never, command_workflow_id: "handoff-2" } as const;
+  for (const status of ["awaiting_external", "revision_requested", "released", "superseded", "withdrawn"] as const) {
+    expect(isRevisionUndecided({ status, ...base })).toBe(false);
+  }
 });

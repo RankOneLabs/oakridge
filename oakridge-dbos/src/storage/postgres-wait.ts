@@ -117,6 +117,16 @@ export class PostgresWaitRepository implements WaitRepository {
     return rows.map(decodeWait);
   }
 
+  async find_handoff_waits_for_artifact(artifact_revision_id: ArtifactId): Promise<readonly Wait[]> {
+    const rows = await this.sql.query<WaitRow>(
+      `SELECT ${waitColumns} FROM oakridge.wait wait
+       WHERE wait.artifact_revision_id = $1 AND wait.kind IN ('handoff_downstream', 'handoff_external')
+       ORDER BY wait.opened_at DESC`,
+      [artifact_revision_id],
+    );
+    return rows.map(decodeWait);
+  }
+
   async count_open_waits(command_workflow_id: string): Promise<number> {
     const rows = await this.sql.query<{ readonly open_count: string }>(
       `SELECT count(*)::text AS open_count FROM oakridge.wait

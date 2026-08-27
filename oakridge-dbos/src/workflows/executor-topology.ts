@@ -191,7 +191,13 @@ export const artifactContractExecutionWorkflow = DBOS.registerWorkflow(async (in
   let releases: readonly ArtifactReleaseState[] = [];
   let terminalObservation: ExecutorTerminalObservation | null = null;
   const closeReleaseWaits = async (artifactId: ArtifactRevision["id"], outputName: string, reason: "superseded" | "withdrawn", replacementId: ArtifactRevision["id"] | null): Promise<void> => {
+    // Only waits this attempt opened are its to close. An artifact a previous
+    // attempt released — superseded now by this attempt deriving the output
+    // again — has no wait under this workflow's name, and a send to a workflow
+    // that never existed is an error, not a no-op.
+    const isOwned = releases.some((candidate: ArtifactReleaseState) => candidate.artifact.id === artifactId);
     releases = releases.filter((candidate: ArtifactReleaseState) => candidate.artifact.id !== artifactId);
+    if (!isOwned) return;
     const gateControl: GateCommand = reason === "superseded" && replacementId
       ? { kind: "supersede", replacement_artifact_revision_id: replacementId }
       : { kind: "withdraw" };

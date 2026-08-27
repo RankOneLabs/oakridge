@@ -462,6 +462,8 @@ interface ArtifactRow {
   readonly withdrawn_at: string | null;
   readonly released_at: string | null;
   readonly created_at: string;
+  /** The execution attempt that emitted this revision; null on rows from before it was recorded. */
+  readonly attempt_workflow_id: string | null;
 }
 
 // `chain_id` is a stored column: it is fixed when a revision is inserted, and
@@ -471,7 +473,7 @@ const artifactColumns = `id, chain_id,
   run_id, stage_instance_id, execution_id, unit_id, output_name, artifact_type,
   label, body, version, parent_artifact_id, emission_payload_hash, lifecycle_state,
   superseded_by_artifact_id, withdrawn_actor, withdrawn_reason,
-  withdrawn_at::text, released_at::text, created_at::text`;
+  withdrawn_at::text, released_at::text, created_at::text, attempt_workflow_id`;
 
 /** Bind order for the four coordinate columns, in one place so it cannot drift. */
 const artifactCoordinateParameters = (coordinate: ArtifactCoordinate): readonly unknown[] =>
@@ -529,7 +531,13 @@ export class PostgresArtifactRevisionRepository implements ArtifactRevisionRepos
         [emission.stage_instance_id, emission.execution_id, emission.unit_id, emission.output_name],
       );
       const effective = effectiveRows[0];
-      if (effective?.lifecycle_state === "released") return err({ operation: "emit_artifact_revision", kind: "release_conflict", artifact_id: effective.id as ArtifactId, detail: "released artifact cannot be revised; rerun the execution" });
+      // A released artifact is final for the attempt that released it. A later
+      // attempt of the same execution — a unit relaunched onto a revised input —
+      // is deriving the output again, and its emission supersedes what the
+      // earlier attempt released. Rows written before attempts were recorded
+      // carry none and keep the stricter rule.
+      const isLaterAttempt = effective?.lifecycle_state === "released" && effective.attempt_workflow_id !== null && effective.attempt_workflow_id !== delivery.target_workflow_id;
+      if (effective?.lifecycle_state === "released" && !isLaterAttempt) return err({ operation: "emit_artifact_revision", kind: "release_conflict", artifact_id: effective.id as ArtifactId, detail: "released artifact cannot be revised; rerun the execution" });
       const tips = await transaction.query<ArtifactRow>(
         `SELECT ${artifactColumns} FROM oakridge.artifact artifact
          WHERE stage_instance_id = $1 AND execution_id = $2 AND unit_id = $3 AND output_name = $4
@@ -537,7 +545,7 @@ export class PostgresArtifactRevisionRepository implements ArtifactRevisionRepos
         [emission.stage_instance_id, emission.execution_id, emission.unit_id, emission.output_name],
       );
       const tip = tips[0];
-      if (effective?.lifecycle_state === "current" && tip?.id !== effective.id) {
+      if (effective && tip?.id !== effective.id) {
         return err({ operation: "emit_artifact_revision", kind: "invariant_conflict", artifact_id: effective.id as ArtifactId, detail: "effective artifact is not the latest chain revision" });
       }
       if (effective?.lifecycle_state === "current" && effective.emission_payload_hash === emission.payload_hash) {
@@ -548,26 +556,27 @@ export class PostgresArtifactRevisionRepository implements ArtifactRevisionRepos
       const rows = await transaction.query<ArtifactRow>(
         `INSERT INTO oakridge.artifact
            (id, chain_id, run_id, stage_instance_id, execution_id, unit_id, output_name, artifact_type,
-            body, label, version, parent_artifact_id, emission_idempotency_key, emission_payload_hash, created_at)
-         VALUES ($1, $15, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13, $14::timestamptz)
+            body, label, version, parent_artifact_id, emission_idempotency_key, emission_payload_hash, created_at, attempt_workflow_id)
+         VALUES ($1, $15, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13, $14::timestamptz, $16)
          RETURNING ${artifactColumns}`,
         // A first revision roots its own chain; every later one inherits the root
         // its parent already carries, so the walk never has to be repeated.
-        [id, emission.run_id, emission.stage_instance_id, emission.execution_id, emission.unit_id, emission.output_name, emission.artifact_type, emission.body, emission.label, version, tip?.id ?? null, emission.idempotency_key, emission.payload_hash, created_at, tip?.chain_id ?? id],
+        [id, emission.run_id, emission.stage_instance_id, emission.execution_id, emission.unit_id, emission.output_name, emission.artifact_type, emission.body, emission.label, version, tip?.id ?? null, emission.idempotency_key, emission.payload_hash, created_at, tip?.chain_id ?? id, delivery.target_workflow_id],
       );
       if (!rows[0]) throw new Error("artifact revision insert returned no row");
       await this.recordEmissionKey(transaction, emission, id, created_at);
-      if (effective?.lifecycle_state === "current") {
+      const superseded = effective !== undefined && (effective.lifecycle_state === "current" || isLaterAttempt) ? effective : null;
+      if (superseded) {
         await transaction.query(
           `UPDATE oakridge.artifact
            SET lifecycle_state = 'superseded', superseded_by_artifact_id = $2, superseded_at = $3::timestamptz,
                lifecycle_updated_at = $3::timestamptz
-           WHERE id = $1 AND lifecycle_state = 'current'`,
-          [effective.id, id, created_at],
+           WHERE id = $1 AND lifecycle_state IN ('current', 'released')`,
+          [superseded.id, id, created_at],
         );
       }
       const artifact = decodeArtifact(rows[0]);
-      const supersededArtifactId = effective?.lifecycle_state === "current" ? effective.id as ArtifactId : null;
+      const supersededArtifactId = superseded ? superseded.id as ArtifactId : null;
       const release = releaseStateForArtifact(artifact, delivery.release);
       const notification: ArtifactLifecycleNotification = supersededArtifactId
         ? { kind: "artifact_replaced", invalidated_artifact_id: supersededArtifactId, release }

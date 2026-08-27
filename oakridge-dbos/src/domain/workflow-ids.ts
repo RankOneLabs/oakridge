@@ -19,6 +19,19 @@ export const UNIT_INFIX = ":unit:";
 export const unitExecutionWorkflowId = (coordinator_workflow_id: string, unit_id: UnitId): string =>
   `${coordinator_workflow_id}${UNIT_INFIX}${unit_id}`;
 
+/**
+ * `<coordinator>:unit:<unit_id>:revision:<artifact_id>` — the replacement
+ * execution for a unit put back to work on a revised input.
+ *
+ * A unit's ordinary execution ID carries no revision, so restarting one under
+ * it is deduplicated by DBOS onto the run that already finished — the unit
+ * would look relaunched and never move. Keyed by the revising artifact rather
+ * than a counter, so the same revision always resolves to the same ID and a
+ * redelivered `input_released` cannot launch a second agent on the same work.
+ */
+export const unitRevisionExecutionWorkflowId = (coordinator_workflow_id: string, unit_id: UnitId, artifact_id: ArtifactId): string =>
+  `${unitExecutionWorkflowId(coordinator_workflow_id, unit_id)}:revision:${artifact_id}`;
+
 /** `<subject>:relay` — a relay watches its subject and reports to its starter. */
 export const relayWorkflowId = (subject_workflow_id: string): string => `${subject_workflow_id}:relay`;
 

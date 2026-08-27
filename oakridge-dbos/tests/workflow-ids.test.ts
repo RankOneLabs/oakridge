@@ -5,6 +5,7 @@ import {
   executorFenceWorkflowId, gateRelayWorkflowId, gateWaitWorkflowId, gateWaitWorkflowIdFromRelay,
   handoffWorkflowId, HANDOFF_INFIX, relayWorkflowId, stageCoordinatorWorkflowId,
   terminalObserverWorkflowId, TERMINAL_OBSERVER_SUFFIX, unitExecutionWorkflowId,
+  unitRevisionExecutionWorkflowId,
 } from "../src/domain/workflow-ids";
 
 const root = "oakridge-run:run-1:attempt:initial";
@@ -46,4 +47,22 @@ test("the affixes the SQL concatenates are the ones the builders use", () => {
   const execution = "coordinator:unit:web";
   expect(`${execution}${TERMINAL_OBSERVER_SUFFIX}`).toBe(terminalObserverWorkflowId(execution));
   expect(`${execution}${HANDOFF_INFIX}${artifact}`).toBe(handoffWorkflowId(execution, artifact));
+});
+
+// Not revision-scoped, the replacement would be deduplicated by DBOS onto the
+// execution that already finished, and the relaunched unit would never move.
+test("a unit relaunched onto a revised input is named off the revising artifact", () => {
+  const coordinator = stageCoordinatorWorkflowId(root, "assessor");
+  expect(unitRevisionExecutionWorkflowId(coordinator, "web" as UnitId, artifact))
+    .toBe("oakridge-run:run-1:attempt:initial:stage:assessor:unit:web:revision:artifact-1");
+  expect(unitRevisionExecutionWorkflowId(coordinator, "web" as UnitId, artifact))
+    .not.toBe(unitExecutionWorkflowId(coordinator, "web" as UnitId));
+});
+
+test("each revision of the same unit gets its own execution, and the same revision does not get two", () => {
+  const coordinator = stageCoordinatorWorkflowId(root, "assessor");
+  const first = unitRevisionExecutionWorkflowId(coordinator, "web" as UnitId, "artifact-2" as ArtifactId);
+  const second = unitRevisionExecutionWorkflowId(coordinator, "web" as UnitId, "artifact-3" as ArtifactId);
+  expect(first).not.toBe(second);
+  expect(unitRevisionExecutionWorkflowId(coordinator, "web" as UnitId, "artifact-2" as ArtifactId)).toBe(first);
 });

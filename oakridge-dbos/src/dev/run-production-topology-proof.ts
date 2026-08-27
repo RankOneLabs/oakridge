@@ -108,6 +108,9 @@ registerWaitRepository({
     return [...waitState.values()].filter((wait) => wait.artifact_revision_id === artifact_revision_id
       && wait.closes_on.kind !== "gate" && wait.execution_workflow_id === execution_workflow_id);
   },
+  async find_handoff_waits_for_artifact(artifact_revision_id) {
+    return [...waitState.values()].filter((wait) => wait.artifact_revision_id === artifact_revision_id && wait.closes_on.kind !== "gate");
+  },
   async count_open_waits(command_workflow_id) {
     return [...waitState.values()].filter((wait) => wait.command_workflow_id === command_workflow_id && wait.status.kind === "open").length;
   },
@@ -135,6 +138,7 @@ registerProductionTopologyServices({
   },
   async replace_execution_projection() {},
   async load_resume_artifacts() { return []; },
+  async find_revision_handoff_state() { return null; },
 });
 
 const artifactBody = (request: ExecutionRequest, unitId: UnitId): JsonValue => {
