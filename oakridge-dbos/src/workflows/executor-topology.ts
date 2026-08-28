@@ -1,6 +1,6 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
-import type { ArtifactEnvelope, ExecutionRequest, ExecutorAdapter, ExecutorObservationAttempt, ExecutorTerminalObservation, ExternalExecutionReference } from "../domain/execution";
+import { isExecutorEnded, type ArtifactEnvelope, type ExecutionRequest, type ExecutorAdapter, type ExecutorObservationAttempt, type ExecutorTerminalObservation, type ExternalExecutionReference } from "../domain/execution";
 import type { ExecutionAttemptId } from "../domain/primitives";
 import { gateRelayWorkflowId, gateWaitWorkflowId, gateWaitWorkflowIdFromRelay, handoffWorkflowId, terminalObserverWorkflowId } from "../domain/workflow-ids";
 import type { CollaborationPingRequest, CollaborationPingState } from "../domain/collaboration";
@@ -314,7 +314,12 @@ export const artifactContractExecutionWorkflow = DBOS.registerWorkflow(async (in
     }
     const contract = evaluateExecutionArtifactContract(releases, input.request.expected_artifacts);
     if (contract.kind === "satisfied") {
-      if (!terminalObservation) await fenceExecutorStep({ execution_id: input.request.execution_id, executor_type: input.request.executor_type, external_reference: externalReference });
+      // Closed on acceptance unless the observer has seen the session end. A
+      // `failed` observation is not that: the watchdog reports a session that
+      // went quiet, and one whose output sat in a wait for an hour is quiet,
+      // alive, and billing. Skipping the fence on that reading left it open
+      // for good.
+      if (!isExecutorEnded(terminalObservation)) await fenceExecutorStep({ execution_id: input.request.execution_id, executor_type: input.request.executor_type, external_reference: externalReference });
       return { external_reference: externalReference, contract, terminal_observation: terminalObservation };
     }
   }

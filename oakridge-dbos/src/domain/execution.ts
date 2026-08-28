@@ -61,6 +61,18 @@ export type ExecutorTerminalObservation =
   | { readonly kind: "cancelled"; readonly detail: string | null };
 
 /**
+ * Whether an observation establishes that the executor has actually ended.
+ *
+ * `succeeded` and `cancelled` are only ever reported from a session that has
+ * ended. `failed` is not: the watchdog reports a session that has gone quiet,
+ * and a session whose output is sitting in a gate waiting on a human is quiet,
+ * alive, and billing. Anything that acts on "the executor is gone" — closing
+ * it, or not bothering to — must not read `failed` that way.
+ */
+export const isExecutorEnded = (observation: ExecutorTerminalObservation | null): boolean =>
+  observation !== null && observation.kind !== "failed";
+
+/**
  * One bounded attempt to observe an execution's terminal state. Adapters wait
  * only as long as their transport safely allows and report `pending` when the
  * executor is still running, so the observer workflow — not a single long-lived

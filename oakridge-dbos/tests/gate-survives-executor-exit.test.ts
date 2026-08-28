@@ -64,37 +64,6 @@ test("a partially released collection does not wait on the outputs that were nev
 });
 
 /**
- * The second half of the same defect, on the happy path. The execution fences
- * its own executor as soon as the contract is satisfied; that fence closes the
- * agent session, which the terminal observer reports as `cancelled`. Whether
- * the unit passed therefore depended on which of the two landed first — in run
- * 13931230's spec_analyzer the gap was 15ms.
- */
-import { terminalFailure } from "../src/workflows/production-topology";
-import type { ArtifactContractExecutionResult } from "../src/workflows/executor-topology";
-
-const satisfied = { kind: "satisfied", artifacts: [artifact("plan")] } as const;
-const resultWith = (terminal_observation: ArtifactContractExecutionResult["terminal_observation"]): ArtifactContractExecutionResult =>
-  ({ external_reference: { kind: "kbbl_session", session_id: "session-1" }, contract: satisfied, terminal_observation });
-
-test("a unit that produced everything it owed is not failed by our own fence", () => {
-  expect(terminalFailure("0" as UnitId, satisfied, resultWith({ kind: "cancelled", detail: "kbbl session was closed" }))).toBeNull();
-  expect(terminalFailure("0" as UnitId, satisfied, resultWith(null))).toBeNull();
-  expect(terminalFailure("0" as UnitId, satisfied, resultWith({ kind: "succeeded", metadata: {} }))).toBeNull();
-});
-
-test("a non-zero exit still fails a unit, satisfied contract or not", () => {
-  expect(terminalFailure("0" as UnitId, satisfied, resultWith({ kind: "failed", code: "executor_exit_nonzero", detail: "exit 1" })))
-    .toEqual({ kind: "failed", code: "executor_exit_nonzero", detail: "exit 1" });
-});
-
-test("an unsatisfied contract still names what the unit is missing", () => {
-  const waiting = { kind: "waiting_artifacts", missing_outputs: ["0:plan"] } as const;
-  expect(terminalFailure("0" as UnitId, waiting, { ...resultWith(null), contract: waiting }))
-    .toEqual({ kind: "failed", code: "required_output_missing", detail: "unit '0' is missing: 0:plan" });
-});
-
-/**
  * Contract evaluation used to key `missing_outputs` two different ways — by
  * `unit:output` when given an expected list, by bare output name when not — so
  * a caller comparing against the wrong space matched nothing and silently did

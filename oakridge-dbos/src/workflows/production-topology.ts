@@ -4,12 +4,13 @@ import { materializeStage } from "../compiler/materialize-stage";
 import { resolveBindingValue, resolveDelegatedExecution } from "../compiler/resolve-execution";
 import { selectAncestorStages } from "../compiler/select-resume-stages";
 import { appendIncrementalUnit, closeIncrementalMaterialization, emptyIncrementalMaterialization, isFanOutDriverInput, selectDriverArtifacts, selectReadyUnits, type IncrementalMaterialization } from "../compiler/materialize-units";
-import { isAwaitingReplacementOf, isLiveExecution, isRevisionUndecided, isStageDrained, selectLaunchedUnits, selectReleasedUnits, selectRevisionDelivery, selectRunningUnitCount, type UnitRuntime } from "./unit-runtime";
-import type { ArtifactRevision, ExecutionContractState } from "../domain/artifacts";
+import { isAwaitingReplacementOf, isLiveExecution, isRevisionUndecided, isStageDrained, selectLaunchedUnits, selectReleasedUnits, selectRevisionDelivery, selectRunningUnitCount, selectUnitSettlement, type UnitRuntime } from "./unit-runtime";
+import { evaluateExecutionArtifactContract } from "../contracts/evaluate-artifacts";
+import type { ArtifactRevision } from "../domain/artifacts";
 import { envelopeIdentity, withAvailableArtifact, withReplacedEnvelope, type StageOutputEvent } from "../domain/output-availability";
 import type { CompiledStageContract, CompiledWorkflowDefinition, MaterializedExecutionUnit } from "../domain/compiled-workflow";
 import type { DelegatedSessionDefinitionConfig } from "../domain/delegated-session";
-import type { ArtifactEnvelope, ExecutionRequest, ExternalExecutionReference } from "../domain/execution";
+import type { ArtifactEnvelope, ExecutionRequest, ExecutorTerminalObservation, ExternalExecutionReference } from "../domain/execution";
 import type { ArtifactId, ExecutionId, JsonValue, StageCoordinatorWorkflowId, StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId } from "../domain/primitives";
 import type { HandoffWorkflowState } from "../domain/wait";
 import type { StageFailureOutcome, StageOutcome } from "../domain/workflow";
@@ -53,6 +54,8 @@ export interface StartStageInput { readonly run_id: WorkflowRunId; readonly atte
 export interface FinishStageInput { readonly stage_instance_id: StageInstanceId; readonly outcome: StageOutcome; readonly ended_at: string }
 export interface FinishRunInput { readonly attempt_root_workflow_id: string; readonly outcome: StageOutcome; readonly ended_at: string }
 export interface ReplaceExecutionProjectionInput { readonly execution_id: ExecutionId; readonly replacement_workflow_id: string }
+/** What the record holds about one execution: the outputs it released, and what its observer last saw. */
+export interface UnitRecord { readonly released_artifacts: readonly ArtifactRevision[]; readonly terminal_observation: ExecutorTerminalObservation | null }
 
 export interface ProductionTopologyServices {
   ensure_run(input: RunWorkflowInput & { readonly root_workflow_id: string }): Promise<void>;
@@ -67,6 +70,8 @@ export interface ProductionTopologyServices {
   load_resume_artifacts(run_id: WorkflowRunId, stage_keys: readonly string[]): Promise<readonly (ArtifactRevision & { readonly stage_key: string })[]>;
   /** Where a revised input's handoff stands — the record of whether its consumer ever acted on it. */
   find_revision_handoff_state(artifact_revision_id: ArtifactId): Promise<HandoffWorkflowState | null>;
+  /** What an execution has released and what was observed of it — the record a unit is settled from. */
+  find_unit_record(execution_id: ExecutionId): Promise<UnitRecord>;
 }
 
 let services: ProductionTopologyServices | null = null;
@@ -83,6 +88,7 @@ const finishStageStep = DBOS.registerStep(async (input: FinishStageInput): Promi
 const finishRunStep = DBOS.registerStep(async (input: FinishRunInput): Promise<void> => topologyServices().finish_run(input), { name: "oakridgeFinishRunAttemptStep", retriesAllowed: true });
 const recordExecutionStep = DBOS.registerStep(async (input: RecordExecutionInput): Promise<void> => topologyServices().record_execution(input), { name: "oakridgeRecordExecutionProjectionStep", retriesAllowed: true });
 const replaceExecutionProjectionStep = DBOS.registerStep(async (input: ReplaceExecutionProjectionInput): Promise<void> => topologyServices().replace_execution_projection(input), { name: "oakridgeReplaceExecutionProjectionStep", retriesAllowed: true });
+const unitRecordStep = DBOS.registerStep(async (input: { readonly execution_id: ExecutionId }): Promise<UnitRecord> => topologyServices().find_unit_record(input.execution_id), { name: "oakridgeUnitRecordStep", retriesAllowed: true });
 const revisionHandoffStateStep = DBOS.registerStep(async (input: { readonly artifact_revision_id: ArtifactId }): Promise<HandoffWorkflowState | null> => topologyServices().find_revision_handoff_state(input.artifact_revision_id), { name: "oakridgeRevisionHandoffStateStep", retriesAllowed: true });
 const loadResumeArtifactsStep = DBOS.registerStep(async (input: { readonly run_id: WorkflowRunId; readonly stage_keys: readonly string[] }) => topologyServices().load_resume_artifacts(input.run_id, input.stage_keys), { name: "oakridgeLoadResumeArtifactsStep", retriesAllowed: true });
 
@@ -203,34 +209,6 @@ const planUnitStep = DBOS.registerStep(async (input: PlanUnitStepInput): Promise
   if (!plan) throw new Error(`incremental unit '${input.unit.unit_id}' produced no execution plan`);
   return plan;
 }, { name: "oakridgePlanIncrementalExecutionStep", retriesAllowed: true });
-
-/**
- * Whether a finished execution failed its unit.
- *
- * A satisfied contract is not undone by the executor having been cancelled
- * afterwards. The execution fences its own executor the moment the contract is
- * satisfied, and that fence closes the agent session, which the terminal
- * observer then reports as `cancelled` — so this branch was a race with our own
- * cleanup. It only ever passed because the workflow usually returned in the
- * milliseconds before the observation landed; when the order flipped, a unit
- * that had produced everything it owed was reported cancelled.
- *
- * A `failed` observation is deliberately still honoured on a satisfied
- * contract. Cancellation is something the system does to a finished executor;
- * a non-zero exit is the executor saying something went wrong, and that
- * deserves an operator's eyes rather than being assumed benign.
- *
- * The executor's own failure is reported ahead of the missing outputs it
- * caused. Both are true when an executor dies before emitting, but only one of
- * them says anything: `required_output_missing` names the symptom, while the
- * observation names the reason — a repository that is not a git repository, a
- * runtime that exited non-zero — and that is what an operator needs to act on.
- */
-export const terminalFailure = (unit: UnitId, contract: ExecutionContractState, result: ArtifactContractExecutionResult): StageOutcome | null => {
-  if (result.terminal_observation?.kind === "failed") return { kind: "failed", code: result.terminal_observation.code, detail: result.terminal_observation.detail };
-  if (contract.kind !== "satisfied") return { kind: "failed", code: "required_output_missing", detail: `unit '${unit}' is missing: ${contract.missing_outputs.join(", ")}` };
-  return null;
-};
 
 export const selectStageAdmissionState = (
   stageInstanceId: StageInstanceId,
@@ -395,17 +373,22 @@ export const productionStageWorkflow = DBOS.registerWorkflow(async (input: Stage
   };
 
   const settleUnit = async (signal: UnitCompletionSignal): Promise<void> => {
-    // A thrown execution workflow is a failure like any other. Parking it keeps
-    // the operator's rerun path open rather than taking the coordinator — and
-    // with it every sibling unit still running — down alongside it.
-    if (signal.error !== null) return parkForRerun(signal.unit_id, signal.execution_workflow_id, { kind: "failed", code: "execution_workflow_error", detail: signal.error });
-    const result = await DBOS.retrieveWorkflow<ArtifactContractExecutionResult>(signal.execution_workflow_id).getResult();
-    const failure = terminalFailure(signal.unit_id, result.contract, result);
-    if (failure) return parkForRerun(signal.unit_id, signal.execution_workflow_id, failure);
-    if (result.contract.kind !== "satisfied") throw new Error("satisfied execution contract disappeared");
+    const plan = plans.find((candidate) => candidate.unit.unit_id === signal.unit_id);
+    if (!plan) throw new Error(`execution plan '${signal.unit_id}' disappeared before it settled`);
+    // Settled from the record, not from the execution. What the unit released
+    // is in the artifact table, and whether that meets the contract it was
+    // launched with is the whole question. The execution's return value and
+    // the session observations it carries are evidence for a failure's reason,
+    // never for whether there is one.
+    const record = await unitRecordStep({ execution_id: plan.request.execution_id });
+    const contract = evaluateExecutionArtifactContract(record.released_artifacts.map((artifact) => ({ kind: "released", artifact } as const)), plan.request.expected_artifacts);
+    const settlement = selectUnitSettlement(signal.unit_id, contract, { execution_error: signal.error, terminal_observation: record.terminal_observation });
+    // Parking keeps the operator's rerun path open rather than taking the
+    // coordinator — and with it every sibling unit still running — down.
+    if (settlement.kind === "failed") return parkForRerun(signal.unit_id, signal.execution_workflow_id, { kind: "failed", code: settlement.code, detail: settlement.detail });
     // Acceptance only. What the run may consume was published by the execution
     // as each output became visible, which for a handoff is long before this.
-    for (const artifact of result.contract.artifacts) artifacts = withAvailableArtifact(artifacts, artifact);
+    for (const artifact of settlement.artifacts) artifacts = withAvailableArtifact(artifacts, artifact);
     runtime.set(signal.unit_id, { kind: "released" });
     // A revision sent to this execution while it was already returning was
     // never read, and nothing in its result says so. The wait table does: a

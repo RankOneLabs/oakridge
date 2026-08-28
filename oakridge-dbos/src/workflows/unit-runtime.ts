@@ -1,3 +1,5 @@
+import type { ArtifactRevision, ExecutionContractState } from "../domain/artifacts";
+import type { ExecutorTerminalObservation } from "../domain/execution";
 import type { UnitId } from "../domain/primitives";
 import type { HandoffWorkflowState } from "../domain/wait";
 
@@ -81,3 +83,40 @@ export const selectRevisionDelivery = (runtime: UnitRuntimeState, unit_id: UnitI
  */
 export const isRevisionUndecided = (state: HandoffWorkflowState | null): boolean =>
   state === null || state.status === "awaiting_downstream";
+
+/** What a finished unit turned out to be, decided from the record alone. */
+export type UnitSettlement =
+  | { readonly kind: "released"; readonly artifacts: readonly ArtifactRevision[] }
+  | { readonly kind: "failed"; readonly code: string; readonly detail: string };
+
+/** Recorded facts that explain a failure. Never inputs to whether there is one. */
+export interface UnitSettlementEvidence {
+  /** The error the execution workflow threw, if it threw. */
+  readonly execution_error: string | null;
+  /** What the executor's observer last recorded about the session. */
+  readonly terminal_observation: ExecutorTerminalObservation | null;
+}
+
+/**
+ * Whether a unit whose execution has returned is done.
+ *
+ * Decided from the contract and nothing else: a unit is done when every output
+ * it owes has been released, and the record of what was released is the
+ * artifact table. The session that produced them is not consulted. It may have
+ * exited non-zero after emitting, been closed by our own fence, or been
+ * declared silent by the watchdog while its output sat in a gate for an hour
+ * waiting on a human — each of those is recorded on the projection, and none
+ * of them changes what was released. Reading them here is what parked
+ * accepted units for rerun in runs 4f4a159a and 9cd69a4a, one of them a merged
+ * pull request, with nothing that depended on them able to launch.
+ *
+ * The evidence only names why an unsatisfied contract went unsatisfied, so the
+ * operator holding the rerun can tell an agent that crashed from one that went
+ * quiet from one that simply never emitted.
+ */
+export const selectUnitSettlement = (unit_id: UnitId, contract: ExecutionContractState, evidence: UnitSettlementEvidence): UnitSettlement => {
+  if (contract.kind === "satisfied") return { kind: "released", artifacts: contract.artifacts };
+  if (evidence.execution_error !== null) return { kind: "failed", code: "execution_workflow_error", detail: evidence.execution_error };
+  if (evidence.terminal_observation?.kind === "failed") return { kind: "failed", code: evidence.terminal_observation.code, detail: evidence.terminal_observation.detail };
+  return { kind: "failed", code: "required_output_missing", detail: `unit '${unit_id}' is missing: ${contract.missing_outputs.join(", ")}` };
+};

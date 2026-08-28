@@ -140,6 +140,8 @@ export interface ArtifactNotificationRepository {
 
 export interface ResumeArtifactRepository {
   list_latest_for_stages(run_id: WorkflowRunId, stage_keys: readonly string[]): Promise<readonly (ArtifactRevision & { readonly stage_key: string })[]>;
+  /** Every output an execution has released — the record a unit's settlement is decided from. */
+  list_released_for_execution(execution_id: ExecutionId): Promise<readonly ArtifactRevision[]>;
 }
 
 export interface ExecutionArtifactContext {
@@ -164,6 +166,8 @@ export interface ExecutionProjectionRepository {
   attach_external(execution_id: ExecutionId, reference: ExternalExecutionReference): Promise<void>;
   record_terminal(execution_id: ExecutionId, observation: ExecutorTerminalObservation): Promise<void>;
   find_external(execution_id: ExecutionId): Promise<{ readonly executor_type: string; readonly external_reference: ExternalExecutionReference } | null>;
+  /** What the observer last recorded about this execution's executor, if anything. */
+  find_terminal_observation(execution_id: ExecutionId): Promise<ExecutorTerminalObservation | null>;
 }
 
 export interface RerunTargetRepository {

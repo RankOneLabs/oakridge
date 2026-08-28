@@ -42,4 +42,8 @@ export const createProductionTopologyServices = (dependencies: ProductionService
   async replace_execution_projection(input) { await dependencies.rerun_targets.replace_execution_workflow(input.execution_id, input.replacement_workflow_id); },
   load_resume_artifacts(run_id, stage_keys) { return dependencies.resume_artifacts.list_latest_for_stages(run_id, stage_keys); },
   async find_revision_handoff_state(artifact_revision_id) { return selectHandoffStateView(await dependencies.waits.find_handoff_waits_for_artifact(artifact_revision_id)); },
+  async find_unit_record(execution_id) {
+    return { released_artifacts: await dependencies.resume_artifacts.list_released_for_execution(execution_id),
+      terminal_observation: await dependencies.executions.find_terminal_observation(execution_id) };
+  },
 });

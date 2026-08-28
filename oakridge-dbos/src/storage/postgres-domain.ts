@@ -837,6 +837,14 @@ export class PostgresExecutionProjectionRepository implements ExecutionProjectio
     const row = rows[0];
     return row?.external_reference ? { executor_type: row.executor_type, external_reference: row.external_reference } : null;
   }
+
+  async find_terminal_observation(execution_id: ExecutionId): Promise<ExecutorTerminalObservation | null> {
+    const rows = await this.sql.query<{ readonly terminal_observation: ExecutorTerminalObservation | null }>(
+      "SELECT terminal_observation FROM oakridge.executor_projection WHERE execution_id = $1",
+      [execution_id],
+    );
+    return rows[0]?.terminal_observation ?? null;
+  }
 }
 
 export class PostgresRerunTargetRepository implements RerunTargetRepository {
@@ -869,13 +877,8 @@ export class PostgresRerunTargetRepository implements RerunTargetRepository {
   }
 }
 
-export class PostgresResumeArtifactRepository implements ResumeArtifactRepository {
-  constructor(private readonly sql: SqlExecutor) {}
-
-  async list_latest_for_stages(run_id: WorkflowRunId, stage_keys: readonly string[]): Promise<readonly (ArtifactRevision & { readonly stage_key: string })[]> {
-    const rows = await this.sql.query<ArtifactRow & { readonly stage_key: string }>(
-      `SELECT DISTINCT ON (stage.stage_key, artifact.unit_id, artifact.output_name)
-              artifact.id::text,
+/** The columns `decodeArtifact` reads, for every query that returns an artifact revision. */
+const ARTIFACT_REVISION_COLUMNS = `artifact.id::text,
               COALESCE((WITH RECURSIVE ancestors AS (
                 SELECT root.id, root.parent_artifact_id FROM oakridge.artifact root WHERE root.id = artifact.id
                 UNION ALL SELECT parent.id, parent.parent_artifact_id FROM oakridge.artifact parent JOIN ancestors child ON parent.id = child.parent_artifact_id
@@ -887,7 +890,27 @@ export class PostgresResumeArtifactRepository implements ResumeArtifactRepositor
               artifact.lifecycle_state, artifact.superseded_by_artifact_id::text,
               artifact.withdrawn_actor, artifact.withdrawn_reason,
               artifact.withdrawn_at::text, artifact.released_at::text,
-              artifact.created_at::text, stage.stage_key
+              artifact.created_at::text`;
+
+export class PostgresResumeArtifactRepository implements ResumeArtifactRepository {
+  constructor(private readonly sql: SqlExecutor) {}
+
+  async list_released_for_execution(execution_id: ExecutionId): Promise<readonly ArtifactRevision[]> {
+    const rows = await this.sql.query<ArtifactRow>(
+      `SELECT DISTINCT ON (artifact.unit_id, artifact.output_name)
+              ${ARTIFACT_REVISION_COLUMNS}
+       FROM oakridge.artifact artifact
+       WHERE artifact.execution_id = $1 AND artifact.lifecycle_state = 'released'
+       ORDER BY artifact.unit_id, artifact.output_name, artifact.released_at DESC, artifact.version DESC`,
+      [execution_id],
+    );
+    return rows.map(decodeArtifact);
+  }
+
+  async list_latest_for_stages(run_id: WorkflowRunId, stage_keys: readonly string[]): Promise<readonly (ArtifactRevision & { readonly stage_key: string })[]> {
+    const rows = await this.sql.query<ArtifactRow & { readonly stage_key: string }>(
+      `SELECT DISTINCT ON (stage.stage_key, artifact.unit_id, artifact.output_name)
+              ${ARTIFACT_REVISION_COLUMNS}, stage.stage_key
        FROM oakridge.artifact artifact
        JOIN oakridge.stage_instance stage ON stage.id = artifact.stage_instance_id
        WHERE artifact.run_id = $1 AND stage.stage_key = ANY($2::text[])

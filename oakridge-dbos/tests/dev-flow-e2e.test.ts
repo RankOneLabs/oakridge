@@ -41,7 +41,7 @@ import {
 } from "./support/kbbl-fixture";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
 import { stageRerunStateKey, type StageRerunState } from "../src/domain/rerun";
-import { stageCoordinatorWorkflowId } from "../src/domain/workflow-ids";
+import { stageCoordinatorWorkflowId, terminalObserverWorkflowId } from "../src/domain/workflow-ids";
 
 const databaseUrl = await findTestDatabaseUrl();
 /**
@@ -630,6 +630,105 @@ e2e("a build revised after its assessment was approved is reassessed, not strand
     agent.releaseAll();
   }
 }, 240_000);
+
+/**
+ * Run 9cd69a4a, replayed.
+ *
+ * Both sessions did their work and then sat in waits — the build's result in
+ * its handoff, the assessment in its gate — for an hour, while an operator got
+ * round to approving. The watchdog reported each session as silent. When the
+ * approval finally released everything, the coordinator read that observation
+ * ahead of the contract and parked both units for rerun: one of them a merged
+ * pull request. Nothing depending on them could launch, and the only
+ * affordance left was to rebuild what had already shipped.
+ *
+ * A unit is done when what it owes has been released. What the watchdog saw is
+ * recorded on the projection and decides nothing.
+ */
+e2e("a unit whose session went quiet in a wait is accepted from the record, not parked", async () => {
+  const agent = scriptedAgentScenario();
+  useScenario(agent);
+
+  const run = await launchRun(oakridge.base_url, oakridge.definition.id, runContext(oakridge.base_url, oakridge.repository.path));
+  oakridge.started_runs.push(run.root_workflow_id);
+  const driver = new RunDriver(oakridge.base_url, agent, run.root_workflow_id, run.run_id);
+  const ownedBy = (stage: string) => (id: string): boolean => id.startsWith(`${run.root_workflow_id}:`) && id.includes(`:stage:${stage}:unit:`);
+  const isBuild = ownedBy("build");
+  const isAssessor = ownedBy("assessor");
+  const silent = (session: string) => ({ kind: "failed", code: "executor_silent_timeout", detail: `kbbl session ${session} reported no activity for 1826s (limit 1800s)` } as const);
+  const observerFinished = async (executionWorkflowId: string): Promise<boolean> =>
+    (await DBOS.retrieveWorkflow(terminalObserverWorkflowId(executionWorkflowId)).getStatus())?.status === "SUCCESS";
+
+  let buildId = "";
+  let assessorId = "";
+  let buildUnit: UnitId | null = null;
+  try {
+    // One cohort is driven by hand so that neither of its sessions is ever
+    // reported as having exited; the driver reports every agent it drives as
+    // exiting cleanly, which is the case this test is not about.
+    buildId = await awaitCondition(() => `a build to start (${driver.diagnosis})`, async () => {
+      await driver.driveNewExecutions((id) => !isBuild(id) && !isAssessor(id));
+      await driver.approvePendingGates();
+      return [...agent.launched.keys()].find(isBuild) ?? null;
+    }, 120_000);
+    const buildRequest = agent.launched.get(buildId);
+    if (!buildRequest) throw new Error("the build request disappeared");
+    buildUnit = buildRequest.unit_id;
+
+    // The build emits, its result parks in the handoff, and its assessor starts.
+    const emitted = await emitDeclaredArtifacts(oakridge.base_url, buildRequest);
+    expect(emitted.find((artifact) => artifact.output_name === "build_result")?.release).toBe("waiting_handoff");
+    assessorId = await awaitCondition(() => `the assessor for '${buildUnit}' to start (launched ${agent.launched.size})`,
+      async () => [...agent.launched.keys()].find((id) => isAssessor(id) && id.endsWith(`:unit:${buildUnit}`)) ?? null, 60_000);
+    const assessorRequest = agent.launched.get(assessorId);
+    if (!assessorRequest) throw new Error("the assessor request disappeared");
+
+    // The assessment parks in its gate. Now the hour passes: the watchdog gives
+    // up on both sessions before anyone has approved anything, and the record
+    // of that lands on each projection before the approval does.
+    const [assessment] = await emitDeclaredArtifacts(oakridge.base_url, assessorRequest);
+    if (!assessment) throw new Error("the assessor emitted nothing");
+    expect(assessment.release).toBe("waiting_gate");
+    agent.observe(buildRequest.execution_id, silent("build"));
+    agent.observe(assessorRequest.execution_id, silent("assessor"));
+    await awaitCondition("both watchdog verdicts to be recorded", async () =>
+      (await observerFinished(buildId)) && (await observerFinished(assessorId)) ? true : null, 30_000);
+
+    // The approval releases the assessment, which decides the build's handoff,
+    // which sends the cohort to review; confirming the merge releases the build.
+    await decideGate(oakridge.base_url, assessment.artifact_id, "approve");
+    const cohortId = `${buildRequest.stage_instance_id}:${buildUnit}`;
+    await awaitCondition(() => `the cohort to be offered a merge (${driver.diagnosis})`, async () => {
+      const inbox = await readReviewInbox(oakridge.base_url);
+      return inbox.items.find((item) => item.kind === "pull_request_merge" && item.unit_id === buildUnit) ?? null;
+    }, 60_000);
+    await awaitCondition("the merge to be confirmed", async () => {
+      const attempt = await confirmCohortMerged(oakridge.base_url, cohortId);
+      return attempt.kind === "accepted" && attempt.outcome === "completed" ? true : null;
+    }, 60_000);
+
+    // The other cohort goes the ordinary way, and the run must complete: the
+    // assessor stage only drains once every unit it has is released, which is
+    // the fact the watchdog's verdict used to override.
+    await awaitCondition(() => `the dev flow to finish (${driver.diagnosis})`, async () => {
+      await driver.driveNewExecutions((id) => id !== buildId && id !== assessorId);
+      await driver.approvePendingGates();
+      await driver.closeReadyReviews();
+      const detail = await readRun(oakridge.base_url, run.run_id);
+      return detail.status === "complete" || detail.status === "failed" ? detail : null;
+    }, 180_000);
+  } finally {
+    agent.releaseAll();
+  }
+
+  const detail = await readRun(oakridge.base_url, run.run_id);
+  expect(detail.status).toBe("complete");
+  expect(detail.stages.every((stage) => stage.status === "complete")).toBe(true);
+  // Neither unit was ever parked: the record said released, and the record decides.
+  for (const stage of ["build", "assessor"]) {
+    expect(await DBOS.getEvent<StageRerunState>(stageCoordinatorWorkflowId(run.root_workflow_id, stage), stageRerunStateKey(buildUnit as UnitId), { timeoutSeconds: 0 })).toBeNull();
+  }
+}, 300_000);
 
 /**
  * The regression this harness was built for.

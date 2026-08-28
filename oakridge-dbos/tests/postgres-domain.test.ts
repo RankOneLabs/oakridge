@@ -270,6 +270,22 @@ test("resume artifacts decode nonempty lifecycle rows and exclude historical rev
   expect(sql.calls[0]?.statement).toContain("artifact.lifecycle_state IN ('current', 'released')");
 });
 
+test("an execution's released outputs are read from the artifact table, latest revision per output", async () => {
+  const sql = new StubSql([{ id: "revision-2", chain_id: "revision-1", run_id: "run", stage_instance_id: "stage", execution_id: "stage:web", unit_id: "web", output_name: "build_result", artifact_type: "dev.build_result", label: null, body: { done: true }, version: 2, parent_artifact_id: "revision-1", emission_payload_hash: "same", lifecycle_state: "released", superseded_by_artifact_id: null, withdrawn_actor: null, withdrawn_reason: null, withdrawn_at: null, released_at: "2026-08-28T18:50:02Z", created_at: "2026-08-28T17:08:04Z" }]);
+  const artifacts = await new PostgresResumeArtifactRepository(sql).list_released_for_execution("stage:web" as ExecutionId);
+  expect(artifacts).toEqual([expect.objectContaining({ id: "revision-2", unit_id: "web", output_name: "build_result", lifecycle: { kind: "released", released_at: "2026-08-28T18:50:02Z" } })]);
+  expect(sql.calls[0]?.statement).toContain("artifact.lifecycle_state = 'released'");
+  expect(sql.calls[0]?.statement).toContain("DISTINCT ON (artifact.unit_id, artifact.output_name)");
+  expect(sql.calls[0]?.parameters).toEqual(["stage:web"]);
+});
+
+test("an execution's last observation is read from its projection, absent until one lands", async () => {
+  const observed = { kind: "failed", code: "executor_silent_timeout", detail: "quiet" };
+  expect(await new PostgresExecutionProjectionRepository(new StubSql([{ terminal_observation: observed }])).find_terminal_observation("stage:web" as ExecutionId)).toEqual(observed as never);
+  expect(await new PostgresExecutionProjectionRepository(new StubSql([{ terminal_observation: null }])).find_terminal_observation("stage:web" as ExecutionId)).toBeNull();
+  expect(await new PostgresExecutionProjectionRepository(new StubSql([])).find_terminal_observation("stage:web" as ExecutionId)).toBeNull();
+});
+
 test("artifact notification claims are leased and preserve per-workflow ordering", async () => {
   const sql = new StubSql([]);
   await new PostgresArtifactRevisionRepository(sql as unknown as TransactionalSqlExecutor).claim_pending_notifications("worker-1", "2026-08-14T00:00:00Z", "2026-08-14T00:00:30Z", 100);

@@ -139,6 +139,9 @@ registerProductionTopologyServices({
   async replace_execution_projection() {},
   async load_resume_artifacts() { return []; },
   async find_revision_handoff_state() { return null; },
+  async find_unit_record(execution_id) {
+    return { released_artifacts: [...artifactState.values()].filter((artifact) => artifact.execution_id === execution_id && artifact.lifecycle.kind === "released"), terminal_observation: null };
+  },
 });
 
 const artifactBody = (request: ExecutionRequest, unitId: UnitId): JsonValue => {

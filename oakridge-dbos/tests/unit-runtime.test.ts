@@ -3,7 +3,8 @@ import { expect, test } from "bun:test";
 import { selectReadyUnits } from "../src/compiler/materialize-units";
 import type { MaterializedExecutionUnit } from "../src/domain/compiled-workflow";
 import type { UnitId } from "../src/domain/primitives";
-import { isAwaitingReplacementOf, isLiveExecution, isRevisionUndecided, isStageDrained, selectLaunchedUnits, selectReleasedUnits, selectRevisionDelivery, selectRunningUnitCount, type UnitRuntime } from "../src/workflows/unit-runtime";
+import type { ArtifactRevision, ExecutionContractState } from "../src/domain/artifacts";
+import { isAwaitingReplacementOf, isLiveExecution, isRevisionUndecided, isStageDrained, selectLaunchedUnits, selectReleasedUnits, selectRevisionDelivery, selectRunningUnitCount, selectUnitSettlement, type UnitRuntime } from "../src/workflows/unit-runtime";
 
 const unit = (id: string, depends_on: readonly string[] = []): MaterializedExecutionUnit =>
   ({ unit_id: id as UnitId, parameters: { id }, depends_on: depends_on as readonly UnitId[] });
@@ -117,4 +118,36 @@ test("a revision already decided, superseded, or withdrawn is not relaunched for
   for (const status of ["awaiting_external", "revision_requested", "released", "superseded", "withdrawn"] as const) {
     expect(isRevisionUndecided({ status, ...base })).toBe(false);
   }
+});
+
+/**
+ * Run 9cd69a4a. The build's pull request was merged and the assessment was
+ * approved — every output both units owed had been released — but each had
+ * sat in its wait for an hour while an operator got round to approving, and
+ * the watchdog had recorded both sessions as silent. The coordinator read the
+ * observation ahead of the contract and parked both units for rerun. Nothing
+ * that depended on them could launch, and the one affordance on offer was to
+ * rebuild a pull request that had already shipped.
+ */
+const releasedArtifact = { id: "artifact-1", unit_id: "a", output_name: "build_result" } as unknown as ArtifactRevision;
+const satisfied: ExecutionContractState = { kind: "satisfied", artifacts: [releasedArtifact] };
+const unsatisfied: ExecutionContractState = { kind: "waiting_artifacts", missing_outputs: ["a:build_result"] };
+const silent = { kind: "failed", code: "executor_silent_timeout", detail: "kbbl session s reported no activity for 1820s (limit 1800s)" } as const;
+
+test("a unit whose outputs were all released is done, whatever its session looked like", () => {
+  expect(selectUnitSettlement("a" as UnitId, satisfied, { execution_error: null, terminal_observation: silent })).toEqual({ kind: "released", artifacts: [releasedArtifact] });
+  expect(selectUnitSettlement("a" as UnitId, satisfied, { execution_error: null, terminal_observation: { kind: "failed", code: "executor_exit_nonzero", detail: "exit 1" } })).toEqual({ kind: "released", artifacts: [releasedArtifact] });
+  expect(selectUnitSettlement("a" as UnitId, satisfied, { execution_error: null, terminal_observation: { kind: "cancelled", detail: "kbbl session was closed" } })).toEqual({ kind: "released", artifacts: [releasedArtifact] });
+  expect(selectUnitSettlement("a" as UnitId, satisfied, { execution_error: "workflow threw after releasing", terminal_observation: null })).toEqual({ kind: "released", artifacts: [releasedArtifact] });
+});
+
+test("a unit still owing an output fails, and the record says why", () => {
+  expect(selectUnitSettlement("a" as UnitId, unsatisfied, { execution_error: null, terminal_observation: silent }))
+    .toEqual({ kind: "failed", code: "executor_silent_timeout", detail: silent.detail });
+  expect(selectUnitSettlement("a" as UnitId, unsatisfied, { execution_error: "boom", terminal_observation: silent }))
+    .toEqual({ kind: "failed", code: "execution_workflow_error", detail: "boom" });
+  expect(selectUnitSettlement("a" as UnitId, unsatisfied, { execution_error: null, terminal_observation: { kind: "cancelled", detail: null } }))
+    .toEqual({ kind: "failed", code: "required_output_missing", detail: "unit 'a' is missing: a:build_result" });
+  expect(selectUnitSettlement("a" as UnitId, unsatisfied, { execution_error: null, terminal_observation: null }))
+    .toEqual({ kind: "failed", code: "required_output_missing", detail: "unit 'a' is missing: a:build_result" });
 });

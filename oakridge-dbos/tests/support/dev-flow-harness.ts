@@ -25,7 +25,7 @@ import { join, resolve } from "node:path";
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
-import type { ExecutionRequest, ExecutorAdapter, ExecutorObservationAttempt, ExternalExecutionReference } from "../../src/domain/execution";
+import type {ExecutionRequest, ExecutorAdapter, ExecutorObservationAttempt, ExternalExecutionReference, ExecutorTerminalObservation } from "../../src/domain/execution";
 import type { ExecutionId, JsonValue, UnitId } from "../../src/domain/primitives";
 import type { WorkflowDefinition } from "../../src/domain/workflow";
 import { createOakridgeRuntime, type OakridgeRuntime } from "../../src/runtime/compose";
@@ -118,13 +118,15 @@ export interface ScriptedAgentScenario extends ExecutionScenario {
   readonly deliveries: AgentDelivery[];
   /** Report this execution's agent as having exited cleanly. */
   succeed(execution_id: ExecutionId | string): void;
+  /** Report whatever the observer should see of this execution's agent — a watchdog verdict, say. */
+  observe(execution_id: ExecutionId | string, observation: ExecutorTerminalObservation): void;
   releaseAll(): void;
 }
 
 export const scriptedAgentScenario = (): ScriptedAgentScenario => {
   const launched = new Map<string, ExecutionRequest>();
   const deliveries: AgentDelivery[] = [];
-  const succeeded = new Set<string>();
+  const observed = new Map<string, ExecutorObservationAttempt>();
   const waiters = new Map<string, (attempt: ExecutorObservationAttempt) => void>();
   const success: ExecutorObservationAttempt = { kind: "terminal", observation: { kind: "succeeded", metadata: {} } };
   let released = false;
@@ -144,15 +146,18 @@ export const scriptedAgentScenario = (): ScriptedAgentScenario => {
       const id = String(execution_id);
       // The observation can be requested either side of the agent finishing;
       // both orders must terminate.
-      if (succeeded.has(id)) return Promise.resolve(success);
+      const recorded = observed.get(id);
+      if (recorded) return Promise.resolve(recorded);
       if (released) return Promise.resolve(RELEASED_AT_TEARDOWN);
       return new Promise((resolve) => waiters.set(id, resolve));
     },
     async cancel_or_fence() {},
-    succeed(execution_id) {
+    succeed(execution_id) { this.observe(execution_id, success.observation); },
+    observe(execution_id, observation) {
       const id = String(execution_id);
-      succeeded.add(id);
-      waiters.get(id)?.(success);
+      const attempt: ExecutorObservationAttempt = { kind: "terminal", observation };
+      observed.set(id, attempt);
+      waiters.get(id)?.(attempt);
       waiters.delete(id);
     },
     releaseAll() {
@@ -346,6 +351,17 @@ export const installIntegrationRuntime = async (databaseUrl: string): Promise<In
     await repository.remove();
     throw error;
   }
+  // The outbox is polled every second in production (`main.ts`), and the
+  // backend here must be the same backend. Without the poll, an emission that
+  // lands while the previous one is still being dispatched is skipped by the
+  // per-target ordering guard and is never delivered: the artifact_collection
+  // stage emits two briefs 15ms apart, and the second one's gate never opened.
+  const runtimeForPoll = runtime;
+  let notificationDispatch: Promise<unknown> | null = null;
+  const notificationTimer = setInterval(() => {
+    if (notificationDispatch) return;
+    notificationDispatch = runtimeForPoll.dispatch_notifications().catch(() => undefined).finally(() => { notificationDispatch = null; });
+  }, 1_000);
   const startedRuns: string[] = [];
 
   return {
@@ -359,6 +375,7 @@ export const installIntegrationRuntime = async (databaseUrl: string): Promise<In
       for (const rootWorkflowId of startedRuns) {
         await DBOS.cancelWorkflow(rootWorkflowId, { cancelChildren: true }).catch(() => undefined);
       }
+      clearInterval(notificationTimer);
       server.stop(true);
       await DBOS.shutdown();
       await runtime.close();
