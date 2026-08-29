@@ -204,6 +204,20 @@ test("retrying the same attempt resolves to the one session it already owns", as
   expect(new Set(keys).size).toBe(1);
 });
 
+test("recovering one v2 work order reuses its external operation for free", async () => {
+  const keys: string[] = [];
+  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "v2-build", fetch: async (input) => {
+    keys.push(String(input));
+    return Response.json({ kind: keys.length === 1 ? "started" : "attached", session: { sid: "session-work-1", status: "live", endReason: null } });
+  } });
+  const workOrderId = attempt("11111111-1111-4111-8111-111111111111");
+  await adapter.start_or_attach(buildRequest, workOrderId);
+  // This is the call DBOS repeats after a worker/process failure. No domain
+  // attempt is replaced; the external idempotency identity is unchanged.
+  await adapter.start_or_attach(buildRequest, workOrderId);
+  expect(new Set(keys).size).toBe(1);
+});
+
 test("fencing an execution that never reached an executor is a no-op, not a lost session", async () => {
   let called = false;
   const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "v1", fetch: async () => { called = true; return new Response(null, { status: 204 }); } });

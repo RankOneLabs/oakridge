@@ -39,6 +39,9 @@ import { PgPostgresExecutor } from "../storage/sql-executor";
 import { registerCancellationControlServices } from "../workflows/cancellation";
 import { registerWaitRepository } from "../workflows/wait-record";
 import { registerArtifactLifecycleObserver, registerExecutionProjectionObserver, registerExecutorAdapter } from "../workflows/executor-topology";
+import { findExecutorAdapter } from "../workflows/executor-topology";
+import { registerRunRecordWorkflowServices } from "../workflows/run-record-topology";
+import { PostgresRunRecordRepository } from "../storage/postgres-run-record";
 import { registerProductionTopologyServices } from "../workflows/production-topology";
 import { dispatchArtifactNotifications } from "./artifact-notifications";
 import { cancelAttempt } from "./cancel-run";
@@ -121,6 +124,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const projects = new PostgresProjectRepository(sql);
   const projectIdentity = new GitProjectRepositoryIdentityResolver();
   const runs = new PostgresWorkflowRunRepository(sql);
+  const runRecords = new PostgresRunRecordRepository(sql);
   const attempts = new PostgresWorkflowAttemptRepository(sql);
   const stages = new PostgresStageInstanceRepository(sql);
   const admissionTargets = new PostgresStageAdmissionTargetRepository(sql);
@@ -184,6 +188,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     selectHandoffStateView(await waits.find_handoff_waits(artifact_id, execution_workflow_id));
   registerProductionTopologyServices(createProductionTopologyServices({ definitions, runs, attempts, stages, executions, rerun_targets: rerunTargets,
     resume_artifacts: resumeArtifacts, waits, load_prompt_template: (path) => promptTemplates.load(path) }));
+  registerRunRecordWorkflowServices({ records: runRecords, find_executor: findExecutorAdapter, now });
 
   const cohortPullRequests: CohortPullRequestDependencies = {
     runs, epic_profiles: epicProfiles, contexts, artifacts, reconciliations: cohortReconciliations,
@@ -213,6 +218,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     domain_reads: { stages, artifacts, session_holds: sessionHolds },
     final_pull_requests: { final_pull_requests: finalPullRequests, now },
     artifact_callback: { contexts, artifacts, dispatch_notifications: dispatchNotifications },
+    work_order_artifact_callback: { records: runRecords, now },
     artifact_withdraw: { contexts, artifacts, dispatch_notifications: dispatchNotifications },
     gate_resume: { contexts, artifacts, collaboration, audits, get_gate_state: getGateState, send_gate_command: sendGateWorkflowCommand,
       get_handoff_state: getHandoffState, send_handoff_command: sendHandoffWorkflowCommand },
