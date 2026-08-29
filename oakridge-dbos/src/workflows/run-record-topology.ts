@@ -100,7 +100,23 @@ export const runRecordWorkOrderWorkflow = DBOS.registerWorkflow(async (work_orde
 
 export interface RunRecordWorkflowResult { readonly run_id: WorkflowRunId; readonly outcome: Extract<RunDecision, { kind: "complete" }>["outcome"] }
 
-/** A bounded recheck makes notifications an optimization rather than correctness. */
+/**
+ * Every commit that can change `decide_run`'s answer for this run — a
+ * publication, a wait close, the run's own state transitions — sends one of
+ * these to wake the root sooner than the bounded timeout. The topic carries
+ * no payload the workflow trusts: a lost, duplicated, or out-of-order
+ * delivery only ever means "ask again", and asking again is always safe.
+ */
+export const RUN_RECORD_WAKE_TOPIC = "oakridge-v2-run-record-wake";
+/** The bound on how long a lost or never-sent wake can delay a recheck. */
+export const RUN_RECORD_WAKE_TIMEOUT_SECONDS = 5;
+
+/**
+ * A bounded recheck makes notifications an optimization rather than
+ * correctness: `DBOS.recv` either returns a wake hint or times out, and
+ * either way the very next line re-reads the authoritative record. No
+ * decision here is ever taken from the hint's payload or its absence.
+ */
 export const runRecordWorkflow = DBOS.registerWorkflow(async (run_id: WorkflowRunId): Promise<RunRecordWorkflowResult> => {
   for (;;) {
     const result = await decideRunStep(run_id);
@@ -114,6 +130,6 @@ export const runRecordWorkflow = DBOS.registerWorkflow(async (run_id: WorkflowRu
       }
       continue;
     }
-    await DBOS.sleepSeconds(5);
+    await DBOS.recv(RUN_RECORD_WAKE_TOPIC, { timeoutSeconds: RUN_RECORD_WAKE_TIMEOUT_SECONDS });
   }
 }, { name: "oakridgeV2RunWorkflow" });

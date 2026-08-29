@@ -8,6 +8,8 @@ import type { RunRecordRepository } from "../storage/repositories";
 export interface WorkOrderArtifactCallbackDependencies {
   readonly records: Pick<RunRecordRepository, "publish_artifact">;
   now(): string;
+  /** Wakes the run's root workflow sooner than its bounded recheck; absent is fine — the recheck still happens. */
+  readonly send_run_wake?: (run_id: string, idempotency_key: string) => Promise<void>;
 }
 
 const statusOf = (result: PublishWorkOrderArtifactResult): 200 | 201 | 202 | 401 | 404 | 409 => {
@@ -34,6 +36,12 @@ export const createWorkOrderArtifactCallbackApp = (dependencies: WorkOrderArtifa
       capability_hash: createHash("sha256").update(capability).digest("hex"), output_name: context.req.param("outputName") ?? "", body,
       idempotency_key: context.req.header("idempotency-key")?.trim() || payloadHash, payload_hash: payloadHash, published_at: dependencies.now() });
     const status = statusOf(result);
+    if (result.kind === "published" || result.kind === "already_applied" || result.kind === "pending") {
+      // A hint only ever tells the root "ask again" — sent fire-and-forget,
+      // never on the response's critical path, and never required for the
+      // publication itself to be correct.
+      await dependencies.send_run_wake?.(result.run_id, `${result.kind}:${result.run_id}:${result.record_version}`).catch(() => undefined);
+    }
     if (result.kind === "published" || result.kind === "already_applied") return context.json({ artifact_id: result.artifact_id, state: "released", record_version: result.record_version }, status);
     if (result.kind === "pending") return context.json({ artifact_id: result.artifact_id, state: "pending", wait_id: result.wait_id, record_version: result.record_version }, status);
     const failure = result;

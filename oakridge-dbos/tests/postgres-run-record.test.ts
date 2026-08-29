@@ -156,7 +156,7 @@ test("the owning gate command releases the wait and the slot atomically; the run
   if (published.kind !== "pending") throw new Error(`expected pending, got ${published.kind}`);
 
   const closed = await records.close_output_wait({ wait_id: published.wait_id, disposition: "release", actor: "operator:sam", detail: "looks good", decided_at: now });
-  expect(closed).toEqual({ kind: "released", artifact_id: artifactId, record_version: expect.any(Number) });
+  expect(closed).toEqual({ kind: "released", artifact_id: artifactId, run_id: runId, record_version: expect.any(Number) });
 
   const slot = await sql!.query<{ readonly state: string; readonly release_wait_id: string | null }>(
     "SELECT state, release_wait_id::text FROM oakridge.run_output_slot WHERE run_unit_id = (SELECT run_unit_id FROM oakridge.work_order WHERE id = $1) AND output_name = 'result'", [workOrderId]);
@@ -166,7 +166,7 @@ test("the owning gate command releases the wait and the slot atomically; the run
 
   // Retrying the same disposition is absorbed, not reapplied.
   expect(await records.close_output_wait({ wait_id: published.wait_id, disposition: "release", actor: "operator:sam", detail: "looks good", decided_at: now }))
-    .toEqual({ kind: "already_applied", record_version: expect.any(Number) });
+    .toEqual({ kind: "already_applied", run_id: runId, record_version: expect.any(Number) });
   // A conflicting disposition on an already-closed wait is refused, not silently absorbed.
   const conflicting = await records.close_output_wait({ wait_id: published.wait_id, disposition: "invalidate", actor: "operator:sam", detail: null, decided_at: now });
   expect(conflicting.kind).toBe("wait_conflict");
@@ -186,7 +186,7 @@ test("a rejected gate invalidates the slot and abandons the work order that prod
   if (published.kind !== "pending") throw new Error(`expected pending, got ${published.kind}`);
 
   const closed = await records.close_output_wait({ wait_id: published.wait_id, disposition: "invalidate", actor: "operator:sam", detail: "wrong approach", decided_at: now });
-  expect(closed).toEqual({ kind: "invalidated", record_version: expect.any(Number) });
+  expect(closed).toEqual({ kind: "invalidated", run_id: runId, record_version: expect.any(Number) });
 
   const slot = await sql!.query<{ readonly state: string; readonly invalidation_reason: unknown }>(
     "SELECT state, invalidation_reason FROM oakridge.run_output_slot WHERE run_unit_id = (SELECT run_unit_id FROM oakridge.work_order WHERE id = $1) AND output_name = 'result'", [workOrderId]);

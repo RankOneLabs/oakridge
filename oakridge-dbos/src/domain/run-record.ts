@@ -156,10 +156,10 @@ export interface PublishWorkOrderArtifact {
 }
 
 export type PublishWorkOrderArtifactResult =
-  | { readonly kind: "published"; readonly artifact_id: ArtifactId; readonly record_version: RunRecordVersion }
+  | { readonly kind: "published"; readonly artifact_id: ArtifactId; readonly run_id: WorkflowRunId; readonly record_version: RunRecordVersion }
   /** A gated or handoff release policy: the artifact is recorded and its slot parked pending the opened wait's decision. */
-  | { readonly kind: "pending"; readonly artifact_id: ArtifactId; readonly wait_id: WaitId; readonly record_version: RunRecordVersion }
-  | { readonly kind: "already_applied"; readonly artifact_id: ArtifactId; readonly record_version: RunRecordVersion }
+  | { readonly kind: "pending"; readonly artifact_id: ArtifactId; readonly wait_id: WaitId; readonly run_id: WorkflowRunId; readonly record_version: RunRecordVersion }
+  | { readonly kind: "already_applied"; readonly artifact_id: ArtifactId; readonly run_id: WorkflowRunId; readonly record_version: RunRecordVersion }
   | { readonly kind: "work_not_found" | "invalid_capability" | "work_abandoned" | "slot_not_found" | "slot_invalidated"; readonly detail: string }
   | { readonly kind: "slot_already_released"; readonly artifact_id: ArtifactId; readonly detail: string }
   | { readonly kind: "idempotency_conflict"; readonly artifact_id: ArtifactId; readonly detail: string };
@@ -177,9 +177,9 @@ export interface CloseRunOutputWait {
 }
 
 export type CloseRunOutputWaitResult =
-  | { readonly kind: "released"; readonly artifact_id: ArtifactId; readonly record_version: RunRecordVersion }
-  | { readonly kind: "invalidated"; readonly record_version: RunRecordVersion }
-  | { readonly kind: "already_applied"; readonly record_version: RunRecordVersion }
+  | { readonly kind: "released"; readonly artifact_id: ArtifactId; readonly run_id: WorkflowRunId; readonly record_version: RunRecordVersion }
+  | { readonly kind: "invalidated"; readonly run_id: WorkflowRunId; readonly record_version: RunRecordVersion }
+  | { readonly kind: "already_applied"; readonly run_id: WorkflowRunId; readonly record_version: RunRecordVersion }
   | { readonly kind: "wait_not_found"; readonly detail: string }
   | { readonly kind: "wait_conflict"; readonly detail: string };
 

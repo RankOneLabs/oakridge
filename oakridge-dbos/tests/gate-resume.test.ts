@@ -284,6 +284,7 @@ test("gate resume resolves the upstream handoff to the current revision of the i
  * directly. These tests never touch `send_gate_command`.
  */
 const waitId = "99999999-9999-4999-8999-999999999999" as WaitId;
+const v2RunId = "88888888-8888-4888-8888-888888888888" as WorkflowRunId;
 
 const v2Fixture = (close_output_wait: (request: CloseRunOutputWait) => Promise<CloseRunOutputWaitResult>) =>
   createGateResumeApp({ ...fixture().dependencies, records: { close_output_wait } });
@@ -295,7 +296,7 @@ test("v2 gate resume releases the wait and reports the released artifact", async
   let received: CloseRunOutputWait | null = null;
   const app = v2Fixture(async (request) => {
     received = request;
-    return { kind: "released", artifact_id: "artifact-9" as ArtifactId, record_version: 6 as RunRecordVersion };
+    return { kind: "released", artifact_id: "artifact-9" as ArtifactId, run_id: v2RunId, record_version: 6 as RunRecordVersion };
   });
   const response = await resumeV2(app, { disposition: "release", actor: "operator:sam", detail: "looks good" });
   expect(response.status).toBe(202);
@@ -304,14 +305,14 @@ test("v2 gate resume releases the wait and reports the released artifact", async
 });
 
 test("v2 gate resume invalidates on request", async () => {
-  const app = v2Fixture(async () => ({ kind: "invalidated", record_version: 7 as RunRecordVersion }));
+  const app = v2Fixture(async () => ({ kind: "invalidated", run_id: v2RunId, record_version: 7 as RunRecordVersion }));
   const response = await resumeV2(app, { disposition: "invalidate", actor: "operator:sam" });
   expect(response.status).toBe(202);
   expect(await response.json()).toEqual({ wait_id: waitId, state: "invalidated", record_version: 7 });
 });
 
 test("v2 gate resume absorbs a retried decision", async () => {
-  const app = v2Fixture(async () => ({ kind: "already_applied", record_version: 6 as RunRecordVersion }));
+  const app = v2Fixture(async () => ({ kind: "already_applied", run_id: v2RunId, record_version: 6 as RunRecordVersion }));
   const response = await resumeV2(app, { disposition: "release", actor: "operator:sam" });
   expect(response.status).toBe(202);
   expect(await response.json()).toEqual({ wait_id: waitId, state: "already_applied", record_version: 6 });
@@ -331,7 +332,7 @@ test("v2 gate resume refuses a conflicting disposition", async () => {
 
 test("v2 gate resume rejects a malformed disposition without calling the domain command", async () => {
   let calls = 0;
-  const app = v2Fixture(async () => { calls += 1; return { kind: "released", artifact_id: "artifact-9" as ArtifactId, record_version: 1 as RunRecordVersion }; });
+  const app = v2Fixture(async () => { calls += 1; return { kind: "released", artifact_id: "artifact-9" as ArtifactId, run_id: v2RunId, record_version: 1 as RunRecordVersion }; });
   const response = await resumeV2(app, { disposition: "approve", actor: "operator:sam" });
   expect(response.status).toBe(400);
   expect(calls).toBe(0);

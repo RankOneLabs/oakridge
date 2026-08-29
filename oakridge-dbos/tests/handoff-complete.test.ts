@@ -47,6 +47,7 @@ test("external completion cannot arrive before downstream approval", async () =>
  * fact, called directly. These tests never touch `send_handoff_command`.
  */
 const waitId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" as WaitId;
+const v2RunId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" as WorkflowRunId;
 
 const v2Fixture = (close_output_wait: (request: CloseRunOutputWait) => Promise<CloseRunOutputWaitResult>) =>
   createHandoffCompleteApp({ ...fixture().dependencies, records: { close_output_wait } });
@@ -58,7 +59,7 @@ test("v2 external completion releases the wait and reports the released artifact
   let received: CloseRunOutputWait | null = null;
   const app = v2Fixture(async (request) => {
     received = request;
-    return { kind: "released", artifact_id: "artifact-9" as ArtifactId, record_version: 3 as RunRecordVersion };
+    return { kind: "released", artifact_id: "artifact-9" as ArtifactId, run_id: v2RunId, record_version: 3 as RunRecordVersion };
   });
   const response = await completeV2(app);
   expect(response.status).toBe(202);
@@ -67,7 +68,7 @@ test("v2 external completion releases the wait and reports the released artifact
 });
 
 test("v2 external completion absorbs a retried confirmation", async () => {
-  const app = v2Fixture(async () => ({ kind: "already_applied", record_version: 3 as RunRecordVersion }));
+  const app = v2Fixture(async () => ({ kind: "already_applied", run_id: v2RunId, record_version: 3 as RunRecordVersion }));
   const response = await completeV2(app);
   expect(response.status).toBe(202);
   expect(await response.json()).toEqual({ wait_id: waitId, state: "already_applied", record_version: 3 });

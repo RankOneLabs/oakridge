@@ -13,6 +13,8 @@ export interface HandoffCompleteDependencies {
   /** Present only where a v2 handoff wait may need resolving; see `records` on `GateResumeDependencies`. */
   readonly records?: Pick<RunRecordRepository, "close_output_wait">;
   readonly now?: () => string;
+  /** Wakes the run's root workflow sooner than its bounded recheck; absent is fine — the recheck still happens. */
+  readonly send_run_wake?: (run_id: string, idempotency_key: string) => Promise<void>;
 }
 
 interface V2ExternalCompletionRequest { readonly correlation_id: string; readonly actor: string }
@@ -76,6 +78,9 @@ export const createHandoffCompleteApp = (dependencies: HandoffCompleteDependenci
     const result = await dependencies.records.close_output_wait({ wait_id: waitId, disposition: "release", actor: request.actor, detail: request.correlation_id, decided_at });
     if (result.kind === "wait_not_found") return http.json({ error: result.detail }, 404);
     if (result.kind === "wait_conflict") return http.json({ error: result.detail }, 409);
+    // A hint only ever tells the root "ask again" — sent fire-and-forget,
+    // never on the response's critical path.
+    await dependencies.send_run_wake?.(result.run_id, `${result.kind}:${result.run_id}:${result.record_version}`).catch(() => undefined);
     if (result.kind === "released") return http.json({ wait_id: waitId, state: "released", artifact_id: result.artifact_id, record_version: result.record_version }, 202);
     return http.json({ wait_id: waitId, state: "already_applied", record_version: result.record_version }, 202);
   });

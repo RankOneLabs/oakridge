@@ -38,6 +38,8 @@ export interface GateResumeDependencies {
    * route above is unaffected either way.
    */
   readonly records?: Pick<RunRecordRepository, "close_output_wait">;
+  /** Wakes the run's root workflow sooner than its bounded recheck; absent is fine — the recheck still happens. */
+  readonly send_run_wake?: (run_id: string, idempotency_key: string) => Promise<void>;
 }
 
 interface V2WaitResumeRequest { readonly disposition: RunOutputWaitDisposition; readonly actor: string; readonly detail: string | null }
@@ -209,6 +211,9 @@ export const createGateResumeApp = (dependencies: GateResumeDependencies): Hono 
     const result = await dependencies.records.close_output_wait({ wait_id: waitId, disposition: request.disposition, actor: request.actor, detail: request.detail, decided_at });
     if (result.kind === "wait_not_found") return http.json({ error: result.detail }, 404);
     if (result.kind === "wait_conflict") return http.json({ error: result.detail }, 409);
+    // A hint only ever tells the root "ask again" — sent fire-and-forget,
+    // never on the response's critical path.
+    await dependencies.send_run_wake?.(result.run_id, `${result.kind}:${result.run_id}:${result.record_version}`).catch(() => undefined);
     if (result.kind === "released") return http.json({ wait_id: waitId, state: "released", artifact_id: result.artifact_id, record_version: result.record_version }, 202);
     if (result.kind === "invalidated") return http.json({ wait_id: waitId, state: "invalidated", record_version: result.record_version }, 202);
     return http.json({ wait_id: waitId, state: "already_applied", record_version: result.record_version }, 202);

@@ -231,7 +231,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       if (replay[0]) {
         if (replay[0].emission_payload_hash !== request.payload_hash) return { kind: "idempotency_conflict", artifact_id: replay[0].artifact_id as ArtifactId, detail: "idempotency key was already used with a different payload" };
         const version = await currentVersion(transaction, row.run_id as WorkflowRunId);
-        return { kind: "already_applied", artifact_id: replay[0].artifact_id as ArtifactId, record_version: version };
+        return { kind: "already_applied", artifact_id: replay[0].artifact_id as ArtifactId, run_id: row.run_id as WorkflowRunId, record_version: version };
       }
       if (row.work_state === "abandoned") return { kind: "work_abandoned", detail: `work order '${request.work_order_id}' is abandoned` };
       if (row.slot_state === "invalidated") return { kind: "slot_invalidated", detail: `output slot '${request.output_name}' is invalidated` };
@@ -254,7 +254,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         const resultingVersion = Number(versions[0]?.record_version ?? 0) as RunRecordVersion;
         await insertTransition(transaction, { run_id: row.run_id as WorkflowRunId, run_unit_id: row.run_unit_id as RunUnitId, work_order_id: request.work_order_id, wait_id: null, output_name: request.output_name,
           operation: "slot_released", actor: `work_order:${request.work_order_id}`, prior_record_version: (resultingVersion - 1) as RunRecordVersion, resulting_record_version: resultingVersion, detail: { artifact_id: request.artifact_id }, created_at: request.published_at });
-        return { kind: "published", artifact_id: request.artifact_id, record_version: resultingVersion };
+        return { kind: "published", artifact_id: request.artifact_id, run_id: row.run_id as WorkflowRunId, record_version: resultingVersion };
       }
 
       const waitId = randomUUID() as WaitId;
@@ -274,7 +274,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       const resultingVersion = Number(versions[0]?.record_version ?? 0) as RunRecordVersion;
       await insertTransition(transaction, { run_id: row.run_id as WorkflowRunId, run_unit_id: row.run_unit_id as RunUnitId, work_order_id: request.work_order_id, wait_id: waitId, output_name: request.output_name,
         operation: "slot_pending", actor: `work_order:${request.work_order_id}`, prior_record_version: (resultingVersion - 1) as RunRecordVersion, resulting_record_version: resultingVersion, detail: { artifact_id: request.artifact_id, release_kind: release.kind }, created_at: request.published_at });
-      return { kind: "pending", artifact_id: request.artifact_id, wait_id: waitId, record_version: resultingVersion };
+      return { kind: "pending", artifact_id: request.artifact_id, wait_id: waitId, run_id: row.run_id as WorkflowRunId, record_version: resultingVersion };
     });
   }
 
@@ -299,7 +299,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       const sameOutcome = (existing: WaitOutcome, requested: WaitOutcome): boolean =>
         existing.kind === requested.kind && (existing.kind !== "decided" || requested.kind !== "decided" || existing.action === requested.action);
       if (wait.status === "closed") {
-        if (wait.outcome && sameOutcome(wait.outcome, requestedOutcome)) return { kind: "already_applied", record_version: await currentVersion(transaction, wait.run_id as WorkflowRunId) };
+        if (wait.outcome && sameOutcome(wait.outcome, requestedOutcome)) return { kind: "already_applied", run_id: wait.run_id as WorkflowRunId, record_version: await currentVersion(transaction, wait.run_id as WorkflowRunId) };
         return { kind: "wait_conflict", detail: `wait '${request.wait_id}' is already closed under a different disposition` };
       }
       const slotRows = await transaction.query<{ readonly slot_state: SlotRow["state"]; readonly artifact_revision_id: string | null; readonly updated_by_work_order_id: string | null }>(
@@ -329,8 +329,8 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         operation: request.disposition === "release" ? "slot_released" : "slot_invalidated", actor: request.actor,
         prior_record_version: (resultingVersion - 1) as RunRecordVersion, resulting_record_version: resultingVersion, detail: { via: "wait_close" }, created_at: request.decided_at });
       return request.disposition === "release"
-        ? { kind: "released", artifact_id: slot.artifact_revision_id as ArtifactId, record_version: resultingVersion }
-        : { kind: "invalidated", record_version: resultingVersion };
+        ? { kind: "released", artifact_id: slot.artifact_revision_id as ArtifactId, run_id: wait.run_id as WorkflowRunId, record_version: resultingVersion }
+        : { kind: "invalidated", run_id: wait.run_id as WorkflowRunId, record_version: resultingVersion };
     });
   }
 
