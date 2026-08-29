@@ -28,7 +28,7 @@ import { createApp } from "../http/app";
 import { registerDbosTransportClient, sendArtifactWorkflowMessage, sendRunWakeHint } from "../http/dbos-transport";
 import { seedBuiltins } from "../seed/seed-builtins";
 import { PostgresArtifactRevisionRepository, PostgresExecutionArtifactContextRepository, PostgresExecutionProjectionRepository, PostgresSessionHoldRepository, PostgresStageInstanceRepository, PostgresWorkflowRunRepository } from "../storage/postgres-domain";
-import { DEFAULT_STALL_THRESHOLD_SECONDS, PostgresOperatorProjectionRepository } from "../storage/postgres-operators";
+import { PostgresOperatorProjectionRepository } from "../storage/postgres-operators";
 import { PostgresCohortPullRequestRepository, PostgresCollaborationRepository, PostgresEpicWorkflowProfileRepository, PostgresFinalPullRequestRepository, PostgresGateDecisionAuditRepository } from "../storage/postgres-policy";
 import { PostgresProjectRepository } from "../storage/postgres-projects";
 import { PostgresWorkflowDefinitionRepository } from "../storage/postgres-workflow-definitions";
@@ -67,7 +67,6 @@ export interface OakridgeRuntimeConfig {
   readonly prompt_template_directory: string;
   /** Bearer token required on state-changing requests; absent on a loopback bind. */
   readonly control_token?: string;
-  readonly stall_threshold_seconds?: number;
   /**
    * Runs the git commands the provisioning stage needs. Defaults to real
    * subprocesses; a test supplies its own to drive the sequencing without a
@@ -134,7 +133,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const finalPullRequests = new PostgresFinalPullRequestRepository(sql);
   const epicProfiles = new PostgresEpicWorkflowProfileRepository(sql);
   const cohortReconciliations = new PostgresCohortPullRequestRepository(sql);
-  const projections = new PostgresOperatorProjectionRepository(sql, { stall_threshold_seconds: config.stall_threshold_seconds ?? DEFAULT_STALL_THRESHOLD_SECONDS });
+  const projections = new PostgresOperatorProjectionRepository(sql);
 
   const dbosRuns = new DbosRunLaunchClient(client);
   const collaborationPings = new DbosCollaborationPingClient(client, config.application_version);

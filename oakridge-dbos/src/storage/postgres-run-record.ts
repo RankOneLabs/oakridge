@@ -135,7 +135,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
        FROM oakridge.run_unit unit
        JOIN oakridge.run_output_slot slot ON slot.run_unit_id=unit.id AND slot.release_policy->>'kind'='handoff'
        JOIN oakridge.artifact handoff ON handoff.id=slot.artifact_revision_id
-       JOIN LATERAL (SELECT candidate.body FROM oakridge.artifact candidate
+       LEFT JOIN LATERAL (SELECT candidate.body FROM oakridge.artifact candidate
          WHERE candidate.stage_instance_id=unit.stage_instance_id AND candidate.unit_id=unit.unit_id
            AND candidate.artifact_type='dev.pr_summary' AND candidate.lifecycle_state IN ('current','released')
          ORDER BY candidate.version DESC,candidate.id LIMIT 1) summary ON true
