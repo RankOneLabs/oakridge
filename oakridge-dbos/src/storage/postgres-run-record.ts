@@ -304,11 +304,12 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
 
   async admit_unit(request: AdmitStageUnitRequest, admitted_at: string): Promise<AdmitStageUnitResult> {
     return this.sql.transaction(async (transaction) => {
-      const stageRows = await transaction.query<{ readonly run_id: string; readonly manual_admission: boolean; readonly record_version: string }>(`SELECT stage.run_id::text, policy.manual_admission, run.record_version::text
+      const stageRows = await transaction.query<{ readonly run_id: string; readonly stage_state: string; readonly run_state: string; readonly manual_admission: boolean; readonly record_version: string }>(`SELECT stage.run_id::text, stage.state AS stage_state, run.state AS run_state, policy.manual_admission, run.record_version::text
         FROM oakridge.stage_instance stage JOIN oakridge.run_stage_scheduling_policy policy ON policy.stage_instance_id=stage.id
         JOIN oakridge.workflow_run run ON run.id=stage.run_id WHERE stage.id=$1 FOR UPDATE OF stage, policy, run`, [request.stage_instance_id]);
       const stage = stageRows[0];
       if (!stage) return { kind: "stage_not_found", stage_instance_id: request.stage_instance_id, unit_id: request.unit_id };
+      if (stage.stage_state !== "active" || stage.run_state !== "active") return { kind: "not_pending", stage_instance_id: request.stage_instance_id, unit_id: request.unit_id };
       if (!stage.manual_admission) return { kind: "not_manual", stage_instance_id: request.stage_instance_id, unit_id: request.unit_id };
       const unitRows = await transaction.query<{ readonly id: string; readonly admitted: boolean }>("SELECT id::text,admitted FROM oakridge.run_unit WHERE stage_instance_id=$1 AND unit_id=$2 FOR UPDATE", [request.stage_instance_id, request.unit_id]);
       const unit = unitRows[0];

@@ -413,6 +413,26 @@ test("manual admission is repository-owned, dependency-aware, and idempotent", a
   expect(decision.ok && decision.value.kind === "start_work" ? decision.value.work_orders.map((order) => order.run_unit_id) : []).toEqual([foundation.id]);
 });
 
+test("manual admission cannot mutate a terminal stage or run", async () => {
+  if (!sql) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  for (const terminalOwner of ["stage", "run"] as const) {
+    const setup = await setupMaterializedRun(1, true, true);
+    if (!setup) throw new Error("materialized run setup unexpectedly unavailable");
+    const unit = setup.input.units[0]!;
+    const before = await sql.query<{ readonly record_version: string }>("SELECT record_version::text FROM oakridge.workflow_run WHERE id=$1", [setup.input.run_id]);
+    if (terminalOwner === "stage") {
+      await sql.query("UPDATE oakridge.stage_instance SET state='succeeded',outcome='{\"kind\":\"succeeded\"}'::jsonb,ended_at=$2::timestamptz WHERE id=$1", [setup.input.stage_instance_id, setup.input.materialized_at]);
+    } else {
+      await sql.query("UPDATE oakridge.workflow_run SET state='succeeded',outcome='{\"kind\":\"succeeded\"}'::jsonb,ended_at=$2::timestamptz WHERE id=$1", [setup.input.run_id, setup.input.materialized_at]);
+    }
+    expect(await setup.records.admit_unit({ stage_instance_id: setup.input.stage_instance_id, unit_id: unit.unit_id, idempotency_key: `terminal-${terminalOwner}` }, setup.input.materialized_at))
+      .toEqual({ kind: "not_pending", stage_instance_id: setup.input.stage_instance_id, unit_id: unit.unit_id });
+    expect((await sql.query<{ readonly admitted: boolean }>("SELECT admitted FROM oakridge.run_unit WHERE id=$1", [unit.id]))[0]?.admitted).toBe(false);
+    expect((await sql.query<{ readonly record_version: string }>("SELECT record_version::text FROM oakridge.workflow_run WHERE id=$1", [setup.input.run_id]))[0]?.record_version).toBe(before[0]?.record_version);
+    expect((await sql.query<{ readonly count: string }>("SELECT count(*)::text AS count FROM oakridge.run_admission_command WHERE stage_instance_id=$1", [setup.input.stage_instance_id]))[0]?.count).toBe("0");
+  }
+});
+
 test("collection members publish independently and one revision invalidates every effective output", async () => {
   const setup = await setupMaterializedRun();
   if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
