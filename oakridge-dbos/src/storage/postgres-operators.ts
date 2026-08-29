@@ -257,29 +257,45 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
 
     const unitRows = await this.sql.query<{ readonly id: string; readonly unit_id: string; readonly state: OperatorRunRecordUnitFacts["unit_state"] }>(
       "SELECT id::text, unit_id, state FROM oakridge.run_unit WHERE run_id = $1 ORDER BY unit_id", [run_id]);
+    const runUnitIds = unitRows.map((row) => row.id);
 
-    const units: OperatorRunRecordUnit[] = [];
-    for (const unitRow of unitRows) {
+    // One query per related table for the whole run, not per unit — a run
+    // with many units would otherwise pay 3 queries each for slots, waits,
+    // and work orders.
+    const groupByRunUnit = <Row extends { readonly run_unit_id: string }>(rows: readonly Row[]): Map<string, Row[]> => {
+      const grouped = new Map<string, Row[]>();
+      for (const row of rows) {
+        const existing = grouped.get(row.run_unit_id);
+        if (existing) existing.push(row); else grouped.set(row.run_unit_id, [row]);
+      }
+      return grouped;
+    };
+
+    const slotRows = await this.sql.query<{ readonly run_unit_id: string; readonly output_name: string; readonly artifact_type: string; readonly required: boolean; readonly state: RunOutputSlotState["kind"]; readonly artifact_revision_id: string | null; readonly version: string }>(
+      "SELECT run_unit_id::text, output_name, artifact_type, required, state, artifact_revision_id::text, version::text FROM oakridge.run_output_slot WHERE run_unit_id = ANY($1::uuid[]) ORDER BY output_name", [runUnitIds]);
+    const slotsByUnit = groupByRunUnit(slotRows);
+
+    const waitRows = await this.sql.query<{ readonly id: string; readonly run_unit_id: string; readonly output_name: string | null; readonly kind: OperatorRunRecordWait["kind"]; readonly status: OperatorRunRecordWait["status"]; readonly opened_at: string }>(
+      "SELECT id::text, run_unit_id::text, output_name, kind, status, opened_at::text FROM oakridge.wait WHERE run_unit_id = ANY($1::uuid[]) ORDER BY opened_at", [runUnitIds]);
+    const waitsByUnit = groupByRunUnit(waitRows);
+
+    const orderRows = await this.sql.query<{ readonly id: string; readonly run_unit_id: string; readonly reason: string; readonly state: OperatorRunRecordWorkOrder["state"]; readonly workflow_id: string; readonly health: OperatorRunRecordWorkOrder["executor_health"]; readonly cleanup_state: string | null; readonly dbos_status: string | null }>(
+      `SELECT work.id::text, work.run_unit_id::text, work.reason, work.state, work.workflow_id, attachment.health, attachment.cleanup_state,
+              status.status AS dbos_status
+       FROM oakridge.work_order work
+       LEFT JOIN oakridge.executor_attachment attachment ON attachment.work_order_id = work.id
+       LEFT JOIN dbos.workflow_status status ON status.workflow_uuid = work.workflow_id
+       WHERE work.run_unit_id = ANY($1::uuid[]) ORDER BY work.created_at`, [runUnitIds]);
+    const ordersByUnit = groupByRunUnit(orderRows);
+
+    const units: OperatorRunRecordUnit[] = unitRows.map((unitRow) => {
       const runUnitId = unitRow.id as RunUnitId;
-      const slotRows = await this.sql.query<{ readonly output_name: string; readonly artifact_type: string; readonly required: boolean; readonly state: RunOutputSlotState["kind"]; readonly artifact_revision_id: string | null; readonly version: string }>(
-        "SELECT output_name, artifact_type, required, state, artifact_revision_id::text, version::text FROM oakridge.run_output_slot WHERE run_unit_id = $1 ORDER BY output_name", [runUnitId]);
-      const slots: OperatorRunRecordSlot[] = slotRows.map((slot) => ({
+      const slots: OperatorRunRecordSlot[] = (slotsByUnit.get(unitRow.id) ?? []).map((slot) => ({
         output_name: slot.output_name, artifact_type: slot.artifact_type, required: slot.required, state: slot.state,
         artifact_revision_id: slot.artifact_revision_id as ArtifactId | null, version: Number(slot.version),
       }));
-
-      const waitRows = await this.sql.query<{ readonly id: string; readonly output_name: string | null; readonly kind: OperatorRunRecordWait["kind"]; readonly status: OperatorRunRecordWait["status"]; readonly opened_at: string }>(
-        "SELECT id::text, output_name, kind, status, opened_at::text FROM oakridge.wait WHERE run_unit_id = $1 ORDER BY opened_at", [runUnitId]);
-      const waits: readonly OperatorRunRecordWait[] = waitRows;
-
-      const orderRows = await this.sql.query<{ readonly id: string; readonly reason: string; readonly state: OperatorRunRecordWorkOrder["state"]; readonly workflow_id: string; readonly health: OperatorRunRecordWorkOrder["executor_health"]; readonly cleanup_state: string | null; readonly dbos_status: string | null }>(
-        `SELECT work.id::text, work.reason, work.state, work.workflow_id, attachment.health, attachment.cleanup_state,
-                status.status AS dbos_status
-         FROM oakridge.work_order work
-         LEFT JOIN oakridge.executor_attachment attachment ON attachment.work_order_id = work.id
-         LEFT JOIN dbos.workflow_status status ON status.workflow_uuid = work.workflow_id
-         WHERE work.run_unit_id = $1 ORDER BY work.created_at`, [runUnitId]);
-      const work_orders: OperatorRunRecordWorkOrder[] = orderRows.map((order) => ({
+      const waits: readonly OperatorRunRecordWait[] = waitsByUnit.get(unitRow.id) ?? [];
+      const work_orders: OperatorRunRecordWorkOrder[] = (ordersByUnit.get(unitRow.id) ?? []).map((order) => ({
         id: order.id as WorkOrderId, reason: order.reason, state: order.state, workflow_id: order.workflow_id,
         executor_health: order.health, cleanup_state: order.cleanup_state, dbos_liveness: order.dbos_status,
       }));
@@ -292,8 +308,8 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
         has_started_work_order: work_orders.some((order) => order.state === "started"),
       });
 
-      units.push({ run_unit_id: runUnitId, unit_id: unitRow.unit_id as UnitId, decision, slots, waits, work_orders });
-    }
+      return { run_unit_id: runUnitId, unit_id: unitRow.unit_id as UnitId, decision, slots, waits, work_orders };
+    });
 
     const transitionRows = await this.sql.query<{ readonly operation: string; readonly actor: string; readonly prior_record_version: string; readonly resulting_record_version: string; readonly created_at: string }>(
       `SELECT operation, actor, prior_record_version::text, resulting_record_version::text, created_at::text
