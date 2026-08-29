@@ -22,8 +22,10 @@
  *
  * A literal killed-process crash — interrupting a step or a durable sleep by
  * force, mid-execution, rather than by the workflow returning — is not
- * exercised here; see the last test in this file for why, and the cohort's PR
- * for the resulting known issue.
+ * exercised in this file; the same in-process `DBOS.shutdown()` limitation
+ * the last test below works around could not simulate it either. See
+ * `run-record-process-crash.test.ts` for that: a real OS-process kill/restart
+ * harness covering the boundaries a repository-level replay cannot reach.
  */
 import { afterAll, expect, test } from "bun:test";
 import { createHash, randomUUID } from "node:crypto";
@@ -258,12 +260,12 @@ test("crash matrix: duplicate start of the same work-order workflow id reuses th
 // earlier attempt already finished, calling start again actually relies on.
 //
 // A literal killed-process crash — interrupting a step or a durable sleep by
-// force rather than by the workflow returning — was attempted here and
-// dropped: `DBOS.shutdown()` drains to every registered workflow's natural
-// completion before resolving, and `oakridgeV2WorkOrderWorkflow` is designed
-// to keep observing until its executor reports terminal, so an in-process
-// shutdown cannot interrupt it short of an actual OS-level process kill. That
-// remains the one item this PR does not cover — see the PR's known issues.
+// force rather than by the workflow returning — cannot be simulated
+// in-process: `DBOS.shutdown()` drains every registered workflow to its own
+// natural completion first, and `oakridgeV2WorkOrderWorkflow` is designed to
+// keep observing until its executor reports terminal, so it never reaches
+// one on command. `run-record-process-crash.test.ts` covers that boundary
+// with a real OS-process kill/restart harness instead.
 // ---------------------------------------------------------------------------
 
 const DBOS_APP_NAME = "oakridge-crash-matrix";
