@@ -27,6 +27,11 @@ export type RootWorkflowId = Brand<string, "RootWorkflowId">;
 export type StageCoordinatorWorkflowId = Brand<string, "StageCoordinatorWorkflowId">;
 export type UnitId = Brand<string, "UnitId">;
 export type WaitId = Brand<string, "WaitId">;
+export type RunUnitId = Brand<string, "RunUnitId">;
+export type WorkOrderId = Brand<string, "WorkOrderId">;
+export type RunRecordVersion = Brand<number, "RunRecordVersion">;
+export type OutputSlotVersion = Brand<number, "OutputSlotVersion">;
+export type InputFingerprint = Brand<string, "InputFingerprint">;
 
 /**
  * One attempt at an execution — the ID of the workflow running it. A rerun
