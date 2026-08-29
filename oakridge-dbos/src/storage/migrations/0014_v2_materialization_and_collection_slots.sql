@@ -18,6 +18,8 @@ ALTER TABLE oakridge.artifact
   ADD COLUMN collection_key text,
   ADD CONSTRAINT artifact_collection_key_nonempty
     CHECK (collection_key IS NULL OR length(collection_key) > 0);
+ALTER TABLE oakridge.artifact
+  DROP CONSTRAINT artifact_stage_instance_id_execution_id_unit_id_output_name_key;
 DROP INDEX oakridge.artifact_resource_version;
 CREATE UNIQUE INDEX artifact_scalar_resource_version
   ON oakridge.artifact (stage_instance_id, execution_id, unit_id, output_name, version)

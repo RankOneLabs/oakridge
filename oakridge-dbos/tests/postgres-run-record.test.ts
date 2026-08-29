@@ -375,8 +375,12 @@ test("incremental materialization persists forward edges and validates them when
   };
   const foundation = rebind(setup.input.units[0]!, []);
   const web = rebind(setup.input.units[1]!, [foundation.unit_id]);
-  const base = { ...setup.input, stage_instance_id: stageId, stage_key: "incremental", units: [web], close_materialization: false } satisfies PersistMaterializedStage;
+  const base = { ...setup.input, stage_instance_id: stageId, stage_key: "incremental", policy: { ...setup.input.policy, manual_admission: true }, units: [web], close_materialization: false } satisfies PersistMaterializedStage;
   await setup.records.persist_materialized_stage(base);
+  expect(await setup.records.admit_unit({ stage_instance_id: stageId, unit_id: web.unit_id, idempotency_key: "forward-edge" }, base.materialized_at))
+    .toEqual({ kind: "dependency_blocked", stage_instance_id: stageId, unit_id: web.unit_id, blocked_by: [foundation.unit_id] });
+  await setup.records.decide_run(base.run_id, base.materialized_at);
+  expect((await sql!.query<{ readonly state: string }>("SELECT state FROM oakridge.work_order WHERE id=$1", [web.initial_work_order.id]))[0]?.state).toBe("available");
   await setup.records.persist_materialized_stage({ ...base, units: [foundation], close_materialization: true });
   const closed = await sql!.query<{ readonly materialization_closed: boolean }>("SELECT materialization_closed FROM oakridge.stage_instance WHERE id=$1", [stageId]);
   expect(closed[0]?.materialization_closed).toBe(true);
@@ -452,7 +456,7 @@ test("collection members publish independently and one revision invalidates ever
   for (const key of ["a", "b"] as const) {
     const body = { key };
     const result = await setup.records.publish_artifact({ artifact_id: randomUUID() as ArtifactId, work_order_id: order.id, capability_hash: order.capability_hash,
-      output_name: "files", collection_key: key as OutputCollectionKey, body, idempotency_key: key, payload_hash: createHash("sha256").update(JSON.stringify(body)).digest("hex"), published_at: second.materialized_at });
+      output_name: "files", collection_key: key as OutputCollectionKey, body, idempotency_key: "same-key-distinct-member", payload_hash: createHash("sha256").update(JSON.stringify(body)).digest("hex"), published_at: second.materialized_at });
     expect(result.kind).toBe("published");
   }
   const replacementWorkOrderId = randomUUID() as WorkOrderId;

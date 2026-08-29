@@ -321,13 +321,13 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         return { kind: "already_admitted", stage_instance_id: request.stage_instance_id, unit_id: request.unit_id };
       }
       if (unit.admitted) return { kind: "already_admitted", stage_instance_id: request.stage_instance_id, unit_id: request.unit_id };
-      const blocked = await transaction.query<{ readonly unit_id: string }>(`SELECT dependency.unit_id FROM oakridge.run_unit_dependency edge
-        JOIN oakridge.run_unit dependency ON dependency.stage_instance_id=edge.stage_instance_id AND dependency.unit_id=edge.depends_on_unit_id
-        WHERE edge.stage_instance_id=$1 AND edge.unit_id=$2 AND NOT (
-          dependency.state='satisfied' AND NOT EXISTS (
+      const blocked = await transaction.query<{ readonly unit_id: string }>(`SELECT edge.depends_on_unit_id AS unit_id FROM oakridge.run_unit_dependency edge
+        LEFT JOIN oakridge.run_unit dependency ON dependency.stage_instance_id=edge.stage_instance_id AND dependency.unit_id=edge.depends_on_unit_id
+        WHERE edge.stage_instance_id=$1 AND edge.unit_id=$2 AND (
+          dependency.id IS NULL OR NOT (dependency.state='satisfied' AND NOT EXISTS (
             SELECT 1 FROM oakridge.run_output_slot slot WHERE slot.run_unit_id=dependency.id AND slot.required AND slot.state <> 'released'
-          )
-        ) ORDER BY dependency.unit_id`, [request.stage_instance_id, request.unit_id]);
+          ))
+        ) ORDER BY edge.depends_on_unit_id`, [request.stage_instance_id, request.unit_id]);
       if (blocked.length > 0) return { kind: "dependency_blocked", stage_instance_id: request.stage_instance_id, unit_id: request.unit_id, blocked_by: blocked.map((row) => row.unit_id as UnitId) };
       await transaction.query("INSERT INTO oakridge.run_admission_command (stage_instance_id,unit_id,idempotency_key,request_hash,applied_at) VALUES ($1,$2,$3,$4,$5::timestamptz)",
         [request.stage_instance_id, request.unit_id, request.idempotency_key, requestHash, admitted_at]);
@@ -382,13 +382,13 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
             }
             decidedUnits.push({ unit, decision });
           }
-          const dependencyRows = await transaction.query<{ readonly run_unit_id: string; readonly depends_on_run_unit_id: string }>(`SELECT unit.id::text AS run_unit_id,dependency.id::text AS depends_on_run_unit_id
+          const dependencyRows = await transaction.query<{ readonly run_unit_id: string; readonly depends_on_run_unit_id: string | null; readonly depends_on_unit_id: string }>(`SELECT unit.id::text AS run_unit_id,dependency.id::text AS depends_on_run_unit_id,edge.depends_on_unit_id
             FROM oakridge.run_unit_dependency edge JOIN oakridge.run_unit unit ON unit.stage_instance_id=edge.stage_instance_id AND unit.unit_id=edge.unit_id
-            JOIN oakridge.run_unit dependency ON dependency.stage_instance_id=edge.stage_instance_id AND dependency.unit_id=edge.depends_on_unit_id
-            WHERE edge.stage_instance_id=$1 ORDER BY unit.unit_id,dependency.unit_id FOR UPDATE OF edge`, [stage.id]);
+            LEFT JOIN oakridge.run_unit dependency ON dependency.stage_instance_id=edge.stage_instance_id AND dependency.unit_id=edge.depends_on_unit_id
+            WHERE edge.stage_instance_id=$1 ORDER BY unit.unit_id,edge.depends_on_unit_id FOR UPDATE OF edge`, [stage.id]);
           const satisfied = new Set(decidedUnits.filter(({ decision }) => decision.kind === "satisfied").map(({ unit }) => String(unit.id)));
           const dependencies = new Map<string, string[]>();
-          for (const edge of dependencyRows) dependencies.set(edge.run_unit_id, [...(dependencies.get(edge.run_unit_id) ?? []), edge.depends_on_run_unit_id]);
+          for (const edge of dependencyRows) dependencies.set(edge.run_unit_id, [...(dependencies.get(edge.run_unit_id) ?? []), edge.depends_on_run_unit_id ?? `unmaterialized:${edge.depends_on_unit_id}`]);
           const policyRows = await transaction.query<{ readonly max_parallel: number }>("SELECT max_parallel FROM oakridge.run_stage_scheduling_policy WHERE stage_instance_id = $1 FOR UPDATE", [stage.id]);
           const maxParallel = policyRows[0]?.max_parallel ?? Number.MAX_SAFE_INTEGER;
           const runningRows = await transaction.query<{ readonly count: string }>(`SELECT count(*)::text AS count FROM oakridge.work_order work
