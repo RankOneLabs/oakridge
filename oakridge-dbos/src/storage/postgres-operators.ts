@@ -372,8 +372,13 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
       id: profile.id as EpicWorkflowProfile["id"],
       workflow_run_id: profile.workflow_run_id as WorkflowRunId,
     } : null;
+    // A run with no v2 run_unit rows is still running entirely under the old
+    // topology — an empty projection object would read as "this run has a v2
+    // side with nothing on it" rather than "this run has no v2 side at all".
+    const runRecordDetail = await this.get_run_record_detail(id);
+    const run_record = runRecordDetail && runRecordDetail.units.length > 0 ? runRecordDetail : null;
     return { id: summary.id, workflow_name: summary.workflow_name, current_attempt_root_workflow_id: summary.current_attempt_root_workflow_id,
-      attempts, status: summary.status, stages, parked_count: summary.parked_count, updated_at: summary.updated_at, is_stuck: summary.is_stuck, epic_profile };
+      attempts, status: summary.status, stages, parked_count: summary.parked_count, updated_at: summary.updated_at, is_stuck: summary.is_stuck, epic_profile, run_record };
   }
 
   async get_review_inbox(): Promise<OperatorReviewInbox> {
