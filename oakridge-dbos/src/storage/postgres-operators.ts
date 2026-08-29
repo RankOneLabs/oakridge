@@ -1,5 +1,6 @@
-import type { ArtifactId, UnitId, WorkflowRunId } from "../domain/primitives";
-import type { OperatorApplicationVersionInventory, OperatorCohortLifecycle, OperatorCohortSummary, OperatorParkedGate, OperatorReviewInbox, OperatorReviewInboxItem, OperatorRunDetail, OperatorRunSummary, OperatorStageArtifact, OperatorStageDetail, OperatorStageUnit, OperatorWorkflowAttempt } from "../domain/operator-projections";
+import type { ArtifactId, RunUnitId, UnitId, WorkflowRunId, WorkOrderId } from "../domain/primitives";
+import { selectRunRecordUnitDecision, type OperatorApplicationVersionInventory, type OperatorCohortLifecycle, type OperatorCohortSummary, type OperatorParkedGate, type OperatorReviewInbox, type OperatorReviewInboxItem, type OperatorRunDetail, type OperatorRunRecordDetail, type OperatorRunRecordSlot, type OperatorRunRecordTransition, type OperatorRunRecordUnit, type OperatorRunRecordUnitFacts, type OperatorRunRecordWait, type OperatorRunRecordWorkOrder, type OperatorRunSummary, type OperatorStageArtifact, type OperatorStageDetail, type OperatorStageUnit, type OperatorWorkflowAttempt } from "../domain/operator-projections";
+import type { RunOutputSlotState } from "../domain/run-record";
 import type { SqlExecutor } from "./sql-executor";
 import { selectRunStatus, selectStageStatus } from "../operators/select-status";
 import type { EpicWorkflowProfile } from "../domain/epic";
@@ -34,6 +35,8 @@ export interface OperatorProjectionRepository {
   set_run_archived(id: WorkflowRunId, archived: boolean): Promise<boolean>;
   get_invalidation_cursor(): Promise<string>;
   list_application_versions(): Promise<readonly OperatorApplicationVersionInventory[]>;
+  /** The v2 run-record projection — null when the run itself does not exist; a v2-empty run (nothing materialized under it yet) is an empty `units` array, not null. */
+  get_run_record_detail(run_id: WorkflowRunId): Promise<OperatorRunRecordDetail | null>;
 }
 
 interface RunProjectionRow { readonly id: string; readonly workflow_name: string; readonly root_workflow_id: string; readonly dbos_status: string; readonly current_stage: string | null; readonly parked_count: string; readonly updated_at_epoch_ms: string; readonly outcome: StageOutcome | null; readonly is_stuck: boolean; readonly archived: boolean }
@@ -246,6 +249,80 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     return rows.map((row) => ({ application_version: row.application_version, run_count: Number(row.run_count), pending_run_count: Number(row.pending_run_count), gated_run_count: Number(row.gated_run_count), oldest_pending_at: row.oldest_pending_epoch_ms === null ? null : new Date(Number(row.oldest_pending_epoch_ms)).toISOString() }));
   }
 
+  async get_run_record_detail(run_id: WorkflowRunId): Promise<OperatorRunRecordDetail | null> {
+    const runRows = await this.sql.query<{ readonly state: string; readonly record_version: string }>(
+      "SELECT state, record_version::text FROM oakridge.workflow_run WHERE id = $1", [run_id]);
+    const run = runRows[0];
+    if (!run) return null;
+
+    const unitRows = await this.sql.query<{ readonly id: string; readonly unit_id: string; readonly state: OperatorRunRecordUnitFacts["unit_state"] }>(
+      "SELECT id::text, unit_id, state FROM oakridge.run_unit WHERE run_id = $1 ORDER BY unit_id", [run_id]);
+    const runUnitIds = unitRows.map((row) => row.id);
+
+    // One query per related table for the whole run, not per unit — a run
+    // with many units would otherwise pay 3 queries each for slots, waits,
+    // and work orders.
+    const groupByRunUnit = <Row extends { readonly run_unit_id: string }>(rows: readonly Row[]): Map<string, Row[]> => {
+      const grouped = new Map<string, Row[]>();
+      for (const row of rows) {
+        const existing = grouped.get(row.run_unit_id);
+        if (existing) existing.push(row); else grouped.set(row.run_unit_id, [row]);
+      }
+      return grouped;
+    };
+
+    const slotRows = await this.sql.query<{ readonly run_unit_id: string; readonly output_name: string; readonly artifact_type: string; readonly required: boolean; readonly state: RunOutputSlotState["kind"]; readonly artifact_revision_id: string | null; readonly version: string }>(
+      "SELECT run_unit_id::text, output_name, artifact_type, required, state, artifact_revision_id::text, version::text FROM oakridge.run_output_slot WHERE run_unit_id = ANY($1::uuid[]) ORDER BY output_name", [runUnitIds]);
+    const slotsByUnit = groupByRunUnit(slotRows);
+
+    const waitRows = await this.sql.query<{ readonly id: string; readonly run_unit_id: string; readonly output_name: string | null; readonly kind: OperatorRunRecordWait["kind"]; readonly status: OperatorRunRecordWait["status"]; readonly opened_at: string }>(
+      "SELECT id::text, run_unit_id::text, output_name, kind, status, opened_at::text FROM oakridge.wait WHERE run_unit_id = ANY($1::uuid[]) ORDER BY opened_at", [runUnitIds]);
+    const waitsByUnit = groupByRunUnit(waitRows);
+
+    const orderRows = await this.sql.query<{ readonly id: string; readonly run_unit_id: string; readonly reason: string; readonly state: OperatorRunRecordWorkOrder["state"]; readonly workflow_id: string; readonly health: OperatorRunRecordWorkOrder["executor_health"]; readonly cleanup_state: string | null; readonly dbos_status: string | null }>(
+      `SELECT work.id::text, work.run_unit_id::text, work.reason, work.state, work.workflow_id, attachment.health, attachment.cleanup_state,
+              status.status AS dbos_status
+       FROM oakridge.work_order work
+       LEFT JOIN oakridge.executor_attachment attachment ON attachment.work_order_id = work.id
+       LEFT JOIN dbos.workflow_status status ON status.workflow_uuid = work.workflow_id
+       WHERE work.run_unit_id = ANY($1::uuid[]) ORDER BY work.created_at`, [runUnitIds]);
+    const ordersByUnit = groupByRunUnit(orderRows);
+
+    const units: OperatorRunRecordUnit[] = unitRows.map((unitRow) => {
+      const runUnitId = unitRow.id as RunUnitId;
+      const slots: OperatorRunRecordSlot[] = (slotsByUnit.get(unitRow.id) ?? []).map((slot) => ({
+        output_name: slot.output_name, artifact_type: slot.artifact_type, required: slot.required, state: slot.state,
+        artifact_revision_id: slot.artifact_revision_id as ArtifactId | null, version: Number(slot.version),
+      }));
+      const waits: readonly OperatorRunRecordWait[] = waitsByUnit.get(unitRow.id) ?? [];
+      const work_orders: OperatorRunRecordWorkOrder[] = (ordersByUnit.get(unitRow.id) ?? []).map((order) => ({
+        id: order.id as WorkOrderId, reason: order.reason, state: order.state, workflow_id: order.workflow_id,
+        executor_health: order.health, cleanup_state: order.cleanup_state, dbos_liveness: order.dbos_status,
+      }));
+
+      const decision = selectRunRecordUnitDecision({
+        unit_state: unitRow.state,
+        all_required_released: slots.filter((slot) => slot.required).every((slot) => slot.state === "released"),
+        has_open_wait: waits.some((wait) => wait.status === "open"),
+        has_available_work_order: work_orders.some((order) => order.state === "available"),
+        has_started_work_order: work_orders.some((order) => order.state === "started"),
+      });
+
+      return { run_unit_id: runUnitId, unit_id: unitRow.unit_id as UnitId, decision, slots, waits, work_orders };
+    });
+
+    const transitionRows = await this.sql.query<{ readonly operation: string; readonly actor: string; readonly prior_record_version: string; readonly resulting_record_version: string; readonly created_at: string }>(
+      `SELECT operation, actor, prior_record_version::text, resulting_record_version::text, created_at::text
+       FROM oakridge.run_transition WHERE run_id = $1 ORDER BY resulting_record_version DESC, created_at DESC LIMIT 20`, [run_id]);
+    const recent_transitions: OperatorRunRecordTransition[] = transitionRows.map((transition) => ({
+      operation: transition.operation, actor: transition.actor,
+      prior_record_version: Number(transition.prior_record_version), resulting_record_version: Number(transition.resulting_record_version),
+      created_at: transition.created_at,
+    }));
+
+    return { run_id, state: run.state, record_version: Number(run.record_version), units, recent_transitions };
+  }
+
   async get_run(id: WorkflowRunId): Promise<OperatorRunDetail | null> {
     const summary = (await this.listRunSummaries("all", id))[0];
     if (!summary) return null;
@@ -311,8 +388,13 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
       id: profile.id as EpicWorkflowProfile["id"],
       workflow_run_id: profile.workflow_run_id as WorkflowRunId,
     } : null;
+    // A run with no v2 run_unit rows is still running entirely under the old
+    // topology — an empty projection object would read as "this run has a v2
+    // side with nothing on it" rather than "this run has no v2 side at all".
+    const runRecordDetail = await this.get_run_record_detail(id);
+    const run_record = runRecordDetail && runRecordDetail.units.length > 0 ? runRecordDetail : null;
     return { id: summary.id, workflow_name: summary.workflow_name, current_attempt_root_workflow_id: summary.current_attempt_root_workflow_id,
-      attempts, status: summary.status, stages, parked_count: summary.parked_count, updated_at: summary.updated_at, is_stuck: summary.is_stuck, epic_profile };
+      attempts, status: summary.status, stages, parked_count: summary.parked_count, updated_at: summary.updated_at, is_stuck: summary.is_stuck, epic_profile, run_record };
   }
 
   async get_review_inbox(): Promise<OperatorReviewInbox> {

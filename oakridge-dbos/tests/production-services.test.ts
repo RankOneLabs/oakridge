@@ -42,7 +42,7 @@ test("production stage service owns rerun projection replacement", async () => {
 
 test("production stage service reads a revision's handoff standing from its wait rows", async () => {
   const open = { id: "wait-1" as never, stage_instance_id: "stage-1" as never, unit_id: "web" as never, artifact_revision_id: "artifact-2" as never,
-    closes_on: { kind: "handoff_downstream", downstream_role: "assessment" }, status: { kind: "open" },
+    closes_on: { kind: "handoff_downstream", downstream_role: "assessment" }, status: { kind: "open" }, run_unit_id: null, output_name: null,
     execution_workflow_id: "execution-1", command_workflow_id: "handoff-2", opened_at: "2026-08-27T00:00:00Z" } as const;
   const services = createProductionTopologyServices({ definitions: {} as WorkflowDefinitionRepository, runs: {} as WorkflowRunRepository,
     attempts: {} as WorkflowAttemptRepository, stages: {} as StageInstanceRepository, executions: {} as ExecutionProjectionRepository,

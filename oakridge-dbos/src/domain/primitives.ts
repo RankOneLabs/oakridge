@@ -33,6 +33,7 @@ export type ExecutorOperationId = Brand<string, "ExecutorOperationId">;
 export type RunRecordVersion = Brand<number, "RunRecordVersion">;
 export type OutputSlotVersion = Brand<number, "OutputSlotVersion">;
 export type InputFingerprint = Brand<string, "InputFingerprint">;
+export type RunTransitionId = Brand<string, "RunTransitionId">;
 
 /**
  * One attempt at an execution — the ID of the workflow running it. A rerun

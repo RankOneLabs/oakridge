@@ -75,10 +75,10 @@ registerArtifactLifecycleObserver({
 // §1 column arrives in the open input, so there is nothing to resolve.
 const waitKey = (command_workflow_id: string, kind: WaitKind): string => `${command_workflow_id}|${kind}`;
 const waitState = new Map<string, Wait>();
-const openWait = (row: Omit<Wait, "id" | "closes_on" | "status" | "opened_at">, kind: WaitKind, closes_on: WaitClosesOn): void => {
+const openWait = (row: Omit<Wait, "id" | "closes_on" | "status" | "opened_at" | "run_unit_id" | "output_name">, kind: WaitKind, closes_on: WaitClosesOn): void => {
   const key = waitKey(row.command_workflow_id, kind);
   if (waitState.has(key)) return;
-  waitState.set(key, { ...row, id: crypto.randomUUID() as WaitId, closes_on, status: { kind: "open" }, opened_at: new Date().toISOString() });
+  waitState.set(key, { ...row, id: crypto.randomUUID() as WaitId, closes_on, status: { kind: "open" }, opened_at: new Date().toISOString(), run_unit_id: null, output_name: null });
 };
 const closeWait = (command_workflow_id: string, kind: WaitKind, outcome: WaitOutcome): void => {
   const key = waitKey(command_workflow_id, kind);

@@ -15,7 +15,7 @@ import type { ConfirmFinalPullRequestRequest, FinalPullRequestDomainError, Final
 import type { CohortPullRequestReconciliation } from "../domain/cohort-pull-request";
 import type { CloseWaitRequest, OpenGateWaitInput, OpenHandoffDownstreamWaitInput, Wait, WaitClosesOn, WaitOutcome } from "../domain/wait";
 import type { Result } from "../domain/primitives";
-import type { ExecutorAttachment, ExecutorHealthObservation, InitializeStraightThroughRun, PublishWorkOrderArtifact, PublishWorkOrderArtifactResult, RunDecision, WorkOrderExecution } from "../domain/run-record";
+import type { CloseRunOutputWait, CloseRunOutputWaitResult, ExecutorAttachment, ExecutorHealthObservation, InitializeStraightThroughRun, PublishWorkOrderArtifact, PublishWorkOrderArtifactResult, RunDecision, WorkOrderExecution } from "../domain/run-record";
 import type { WorkOrderId, WorkflowRunId as RunRecordWorkflowRunId } from "../domain/primitives";
 
 export interface WorkflowDefinitionRepository {
@@ -61,7 +61,15 @@ export interface RunRecordRepository {
   initialize_straight_through(input: InitializeStraightThroughRun): Promise<void>;
   decide_run(run_id: RunRecordWorkflowRunId, decided_at: string): Promise<Result<RunDecision, RunRecordRepositoryError>>;
   find_work_order_execution(work_order_id: WorkOrderId): Promise<WorkOrderExecution | null>;
-  publish_immediate(request: PublishWorkOrderArtifact): Promise<PublishWorkOrderArtifactResult>;
+  /**
+   * Records an artifact fact under a work order's capability, atomically with
+   * the effect its declared release policy has on the slot: an `immediate`
+   * output releases directly; a `gate` or `handoff` output parks the slot
+   * `pending` and opens the wait that will decide it.
+   */
+  publish_artifact(request: PublishWorkOrderArtifact): Promise<PublishWorkOrderArtifactResult>;
+  /** The gate/handoff command that owns a pending slot's wait, closing it and applying the matching release/invalidation atomically. */
+  close_output_wait(request: CloseRunOutputWait): Promise<CloseRunOutputWaitResult>;
   ensure_executor_attachment(work_order_id: WorkOrderId, executor_type: string, updated_at: string): Promise<ExecutorAttachment>;
   attach_external(work_order_id: WorkOrderId, reference: ExternalExecutionReference, updated_at: string): Promise<void>;
   observe_executor(work_order_id: WorkOrderId, health: ExecutorHealthObservation, updated_at: string): Promise<void>;

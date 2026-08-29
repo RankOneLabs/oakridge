@@ -3,6 +3,7 @@ import type { GateCommand } from "../workflows/gate";
 import type { HandoffCommand } from "../workflows/handoff";
 import type { StageAdmissionState } from "../domain/runs";
 import type { StageCommand } from "../workflows/production-topology";
+import { RUN_RECORD_WAKE_TOPIC } from "../workflows/run-record-topology";
 
 export interface DbosTransportClient {
   send(destination_id: string, message: unknown, topic?: string, idempotency_key?: string): Promise<void>;
@@ -33,4 +34,15 @@ export const getStageAdmissionState = async (workflow_id: string): Promise<Stage
 
 export const sendStageCommand = async (workflow_id: string, command: StageCommand, idempotency_key: string): Promise<void> => {
   await client().send(workflow_id, command, "stage-command", idempotency_key);
+};
+
+/**
+ * Wakes a v2 root run workflow sooner than its bounded recheck. The payload
+ * is empty on purpose — `runRecordWorkflow` never reads it, only that a send
+ * arrived, so a lost, duplicated, or reordered delivery cannot change what it
+ * decides. `idempotency_key` only makes a retried *send* itself idempotent;
+ * it plays no part in the run's own idempotency.
+ */
+export const sendRunWakeHint = async (run_id: string, idempotency_key: string): Promise<void> => {
+  await client().send(run_id, {}, RUN_RECORD_WAKE_TOPIC, idempotency_key);
 };

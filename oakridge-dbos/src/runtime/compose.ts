@@ -27,7 +27,7 @@ import { pollCohortPullRequests, type CohortPollOutcome, type PullRequestReader 
 import type { ArtifactId } from "../domain/primitives";
 import { selectGateStateView, selectHandoffStateView, type GateWorkflowState, type HandoffWorkflowState } from "../domain/wait";
 import { createApp } from "../http/app";
-import { getStageAdmissionState, registerDbosTransportClient, sendArtifactWorkflowMessage, sendGateWorkflowCommand, sendHandoffWorkflowCommand, sendStageCommand } from "../http/dbos-transport";
+import { getStageAdmissionState, registerDbosTransportClient, sendArtifactWorkflowMessage, sendGateWorkflowCommand, sendHandoffWorkflowCommand, sendRunWakeHint, sendStageCommand } from "../http/dbos-transport";
 import { seedBuiltins } from "../seed/seed-builtins";
 import { PostgresArtifactRevisionRepository, PostgresCancellationTargetRepository, PostgresExecutionArtifactContextRepository, PostgresExecutionProjectionRepository, PostgresResumeArtifactRepository, PostgresRerunTargetRepository, PostgresSessionHoldRepository, PostgresStageAdmissionTargetRepository, PostgresStageInstanceRepository, PostgresWorkflowAttemptRepository, PostgresWorkflowRunRepository } from "../storage/postgres-domain";
 import { DEFAULT_STALL_THRESHOLD_SECONDS, PostgresOperatorProjectionRepository } from "../storage/postgres-operators";
@@ -218,11 +218,11 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     domain_reads: { stages, artifacts, session_holds: sessionHolds },
     final_pull_requests: { final_pull_requests: finalPullRequests, now },
     artifact_callback: { contexts, artifacts, dispatch_notifications: dispatchNotifications },
-    work_order_artifact_callback: { records: runRecords, now },
+    work_order_artifact_callback: { records: runRecords, now, send_run_wake: sendRunWakeHint },
     artifact_withdraw: { contexts, artifacts, dispatch_notifications: dispatchNotifications },
     gate_resume: { contexts, artifacts, collaboration, audits, get_gate_state: getGateState, send_gate_command: sendGateWorkflowCommand,
-      get_handoff_state: getHandoffState, send_handoff_command: sendHandoffWorkflowCommand },
-    handoff_complete: { artifacts, contexts, get_handoff_state: getHandoffState, send_handoff_command: sendHandoffWorkflowCommand },
+      get_handoff_state: getHandoffState, send_handoff_command: sendHandoffWorkflowCommand, records: runRecords, now, send_run_wake: sendRunWakeHint },
+    handoff_complete: { artifacts, contexts, get_handoff_state: getHandoffState, send_handoff_command: sendHandoffWorkflowCommand, records: runRecords, now, send_run_wake: sendRunWakeHint },
     cohort_pull_requests: cohortPullRequests,
     collaboration: { artifacts, contexts, executions, collaboration, policy_for_artifact_type: collaborationPolicy,
       ping_thread: (input) => collaborationPings.enqueue(input), dispatch_notifications: dispatchNotifications },

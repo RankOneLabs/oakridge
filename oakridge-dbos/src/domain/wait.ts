@@ -7,7 +7,7 @@
  * closing a provably dead owner's row on its behalf), and always about one
  * artifact revision. The row is the record; DBOS `recv` remains the mechanism.
  */
-import type { ArtifactId, StageInstanceId, UnitId, WaitId } from "./primitives";
+import type { ArtifactId, RunUnitId, StageInstanceId, UnitId, WaitId } from "./primitives";
 
 export type WaitKind = "gate" | "handoff_downstream" | "handoff_external";
 
@@ -43,6 +43,14 @@ export interface Wait {
   readonly artifact_revision_id: ArtifactId;
   readonly closes_on: WaitClosesOn; // closes_on.kind duplicates the kind column; a CHECK keeps them equal
   readonly status: { readonly kind: "open" } | { readonly kind: "closed"; readonly outcome: WaitOutcome; readonly closed_at: string };
+  /**
+   * The v2 run-owned slot this wait guards, present exactly when a v2
+   * publication opened the row — null for a legacy (stage/unit-scoped) wait.
+   * Ownership and settlement follow these fields, not `stage_instance_id` /
+   * `unit_id`, which stay purely descriptive for a v2 row.
+   */
+  readonly run_unit_id: RunUnitId | null;
+  readonly output_name: string | null;
   /** The execution attempt this wait belongs to. Written at open from the
    *  opener's input, never reconstructed; both lookups take it as a predicate
    *  so a command can only reach the live attempt — a parked prior attempt's
