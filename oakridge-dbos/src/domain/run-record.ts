@@ -162,6 +162,8 @@ export type PublishWorkOrderArtifactResult =
   | { readonly kind: "already_applied"; readonly artifact_id: ArtifactId; readonly run_id: WorkflowRunId; readonly record_version: RunRecordVersion }
   | { readonly kind: "work_not_found" | "invalid_capability" | "work_abandoned" | "slot_not_found" | "slot_invalidated"; readonly detail: string }
   | { readonly kind: "slot_already_released"; readonly artifact_id: ArtifactId; readonly detail: string }
+  /** A different, non-replay publish arrived while the slot is already parked pending an earlier one's wait. */
+  | { readonly kind: "slot_pending"; readonly wait_id: WaitId; readonly detail: string }
   | { readonly kind: "idempotency_conflict"; readonly artifact_id: ArtifactId; readonly detail: string };
 
 /** What the gate/handoff command that owns a pending slot's wait decided. */

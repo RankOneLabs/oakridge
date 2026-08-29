@@ -33,6 +33,17 @@ test("a gated output reports its pending wait rather than a release", async () =
   expect(await response.json()).toEqual(expect.objectContaining({ state: "pending", wait_id: waitId, record_version: 5 }));
 });
 
+test("a second publish while the slot is already pending is reported as a 409 with the existing wait id", async () => {
+  const waitId = "99999999-9999-4999-8999-999999999999" as WaitId;
+  const app = createWorkOrderArtifactCallbackApp({ records: { publish_artifact: async () =>
+    ({ kind: "slot_pending", wait_id: waitId, detail: "output slot 'plan' is already pending a decision" }) }, now: () => "2026-08-28T12:00:00.000Z" });
+  const response = await app.request(`/work-orders/${workOrderId}/emit/plan`, { method: "PUT", headers: {
+    "content-type": "application/json", "work-order-capability": "secret", "idempotency-key": "emit-3",
+  }, body: JSON.stringify({ draft: true }) });
+  expect(response.status).toBe(409);
+  expect(await response.json()).toEqual({ error: "output slot 'plan' is already pending a decision", code: "slot_pending", wait_id: waitId });
+});
+
 test("publication without its work-order capability never reaches the domain command", async () => {
   let calls = 0;
   const app = createWorkOrderArtifactCallbackApp({ records: { publish_artifact: async () => {

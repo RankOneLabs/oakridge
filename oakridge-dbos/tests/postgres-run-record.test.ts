@@ -84,7 +84,7 @@ test("one released run-owned slot completes a straight-through run after reposit
 
 /** One straight-through run with a single gated output, for the pending/close tests below. */
 const setupGatedRun = async (): Promise<{
-  readonly records: PostgresRunRecordRepository; readonly runId: WorkflowRunId; readonly workOrderId: WorkOrderId;
+  readonly records: PostgresRunRecordRepository; readonly runId: WorkflowRunId; readonly runUnitId: RunUnitId; readonly workOrderId: WorkOrderId;
   readonly capabilityHash: string; readonly now: string;
 } | null> => {
   if (!sql) return null;
@@ -110,7 +110,7 @@ const setupGatedRun = async (): Promise<{
     created_at: now,
   });
   await records.decide_run(runId, now); // moves the work order available -> started
-  return { records, runId, workOrderId, capabilityHash, now };
+  return { records, runId, runUnitId, workOrderId, capabilityHash, now };
 };
 
 test("a gated publication parks the slot pending and opens its wait, atomically with the artifact fact", async () => {
@@ -249,4 +249,75 @@ test("an executor reporting terminal success does not settle a unit whose requir
   const unit = await sql!.query<{ readonly state: string }>(
     "SELECT state FROM oakridge.run_unit WHERE id = (SELECT run_unit_id FROM oakridge.work_order WHERE id = $1)", [workOrderId]);
   expect(unit[0]?.state).not.toBe("satisfied");
+});
+
+test("a second, non-replay publish while the slot is already pending is refused with the existing wait id, unmutated", async () => {
+  const setup = await setupGatedRun();
+  if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  const { records, workOrderId, capabilityHash, now } = setup;
+  const bodyA = { plan: "a" };
+  const payloadHashA = createHash("sha256").update(JSON.stringify(bodyA)).digest("hex");
+  const first = await records.publish_artifact({ artifact_id: randomUUID() as ArtifactId, work_order_id: workOrderId, output_name: "result", body: bodyA,
+    capability_hash: capabilityHash, idempotency_key: "plan-pending-a", payload_hash: payloadHashA, published_at: now });
+  if (first.kind !== "pending") throw new Error(`expected pending, got ${first.kind}`);
+
+  // A different idempotency key and a different body: not a replay of the
+  // first publish, so without the pending check this would try to open a
+  // second wait on the same slot and hit `wait_v2_open_slot` as a raw
+  // constraint violation instead of a typed refusal.
+  const bodyB = { plan: "b" };
+  const payloadHashB = createHash("sha256").update(JSON.stringify(bodyB)).digest("hex");
+  const second = await records.publish_artifact({ artifact_id: randomUUID() as ArtifactId, work_order_id: workOrderId, output_name: "result", body: bodyB,
+    capability_hash: capabilityHash, idempotency_key: "plan-pending-b", payload_hash: payloadHashB, published_at: now });
+  expect(second).toEqual(expect.objectContaining({ kind: "slot_pending", wait_id: first.wait_id }));
+
+  const waits = await sql!.query<{ readonly count: string }>("SELECT count(*)::text AS count FROM oakridge.wait WHERE id = $1", [first.wait_id]);
+  expect(waits[0]?.count).toBe("1");
+  const artifacts = await sql!.query<{ readonly count: string }>("SELECT count(*)::text AS count FROM oakridge.artifact WHERE work_order_id = $1 AND output_name = 'result'", [workOrderId]);
+  expect(artifacts[0]?.count).toBe("1");
+});
+
+/**
+ * The fix for a bug review flagged: the old command-address scheme was
+ * deterministic per *slot*, so a second wait ever opened on the same slot —
+ * which cannot happen through this slice's own code today (an invalidated or
+ * released slot permanently refuses further publication) but will once a
+ * later slice resets an invalidated slot for a fresh work order — would have
+ * collided with the first wait's row on `(command_workflow_id, kind)`. This
+ * proves the fix directly: reset the slot the way that future revision path
+ * will, and confirm a second wait opens cleanly with its own address.
+ */
+test("a second wait opened after a slot is reset does not collide on its command address", async () => {
+  const setup = await setupGatedRun();
+  if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  const { records, runUnitId, workOrderId, capabilityHash, now } = setup;
+  const bodyA = { plan: "a" };
+  const payloadHashA = createHash("sha256").update(JSON.stringify(bodyA)).digest("hex");
+  const first = await records.publish_artifact({ artifact_id: randomUUID() as ArtifactId, work_order_id: workOrderId, output_name: "result", body: bodyA,
+    capability_hash: capabilityHash, idempotency_key: "plan-reset-a", payload_hash: payloadHashA, published_at: now });
+  if (first.kind !== "pending") throw new Error(`expected pending, got ${first.kind}`);
+  await records.close_output_wait({ wait_id: first.wait_id, disposition: "invalidate", actor: "operator:sam", detail: null, decided_at: now });
+
+  await sql!.query("UPDATE oakridge.run_output_slot SET state = 'empty', artifact_revision_id = NULL, invalidation_reason = NULL, state_changed_at = NULL WHERE run_unit_id = $1 AND output_name = 'result'", [runUnitId]);
+  // Invalidation abandons the work order that produced the rejected output
+  // (see the dedicated test for that above); a real Slice 4/5 revision or
+  // retry issues a genuinely new one — reusing the abandoned id would also
+  // collide on the artifact table's own (coordinate, version) uniqueness,
+  // which is a separate, pre-existing constraint this test has no business
+  // exercising.
+  const secondWorkOrderId = randomUUID() as WorkOrderId;
+  const secondCapabilityHash = createHash("sha256").update(`gate-secret-reset-${secondWorkOrderId}`).digest("hex");
+  await sql!.query(`INSERT INTO oakridge.work_order (id, run_unit_id, reason, input_snapshot, input_fingerprint, state, workflow_id, request_idempotency_key, capability_hash, created_at)
+    VALUES ($1,$2,'operator_retry','[]'::jsonb,'empty','started',$3,'retry-1',$4,$5::timestamptz)`,
+    [secondWorkOrderId, runUnitId, `v2-work:${secondWorkOrderId}`, secondCapabilityHash, now]);
+
+  const bodyB = { plan: "b" };
+  const payloadHashB = createHash("sha256").update(JSON.stringify(bodyB)).digest("hex");
+  const second = await records.publish_artifact({ artifact_id: randomUUID() as ArtifactId, work_order_id: secondWorkOrderId, output_name: "result", body: bodyB,
+    capability_hash: secondCapabilityHash, idempotency_key: "plan-reset-b", payload_hash: payloadHashB, published_at: now });
+  expect(second.kind).toBe("pending");
+  if (second.kind !== "pending") return;
+
+  const addresses = await sql!.query<{ readonly command_workflow_id: string }>("SELECT command_workflow_id FROM oakridge.wait WHERE id = ANY($1::uuid[])", [[first.wait_id, second.wait_id]]);
+  expect(new Set(addresses.map((row) => row.command_workflow_id)).size).toBe(2);
 });

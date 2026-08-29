@@ -45,7 +45,9 @@ export const createWorkOrderArtifactCallbackApp = (dependencies: WorkOrderArtifa
     if (result.kind === "published" || result.kind === "already_applied") return context.json({ artifact_id: result.artifact_id, state: "released", record_version: result.record_version }, status);
     if (result.kind === "pending") return context.json({ artifact_id: result.artifact_id, state: "pending", wait_id: result.wait_id, record_version: result.record_version }, status);
     const failure = result;
-    return context.json({ error: failure.detail, code: failure.kind, ...(failure.kind === "slot_already_released" || failure.kind === "idempotency_conflict" ? { artifact_id: failure.artifact_id } : {}) }, status);
+    return context.json({ error: failure.detail, code: failure.kind,
+      ...(failure.kind === "slot_already_released" || failure.kind === "idempotency_conflict" ? { artifact_id: failure.artifact_id } : {}),
+      ...(failure.kind === "slot_pending" ? { wait_id: failure.wait_id } : {}) }, status);
   };
   app.put("/work-orders/:workOrderId/emit/:outputName", publish);
   return app;

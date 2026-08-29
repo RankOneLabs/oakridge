@@ -66,8 +66,15 @@ const insertTransition = async (transaction: SqlExecutor, input: TransitionInput
   );
 };
 
-/** Deterministic per-slot address: nothing ever sends a DBOS command to a v2 wait, but the column is `NOT NULL` and its `(command_workflow_id, kind)` pair must stay unique. */
-const v2WaitCommandAddress = (run_unit_id: RunUnitId, output_name: string): string => `v2-wait:${run_unit_id}:${output_name}`;
+/**
+ * Nothing ever sends a DBOS command to a v2 wait, but the column is
+ * `NOT NULL` and `(command_workflow_id, kind)` must stay unique across every
+ * wait row — including a second wait later opened on the same slot after the
+ * first closed (invalidate, then a fresh publish). Keyed to the wait's own
+ * generated id, not the slot, so it is unique per wait instance rather than
+ * colliding on a slot a second wait can legitimately reuse.
+ */
+const v2WaitCommandAddress = (waitId: WaitId): string => `v2-wait:${waitId}`;
 
 export class PostgresRunRecordRepository implements RunRecordRepository {
   constructor(private readonly sql: TransactionalSqlExecutor) {}
@@ -221,8 +228,8 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       const work = workRows[0];
       if (!work) return { kind: "work_not_found", detail: `work order '${request.work_order_id}' was not found` };
       if (work.capability_hash !== request.capability_hash) return { kind: "invalid_capability", detail: "work-order capability was not accepted" };
-      const slotRows = await transaction.query<{ readonly artifact_type: string; readonly slot_state: SlotRow["state"]; readonly artifact_revision_id: string | null; readonly release_policy: OutputReleaseContract }>(
-        "SELECT artifact_type, state AS slot_state, artifact_revision_id::text, release_policy FROM oakridge.run_output_slot WHERE run_unit_id = $1 AND output_name = $2 FOR UPDATE",
+      const slotRows = await transaction.query<{ readonly artifact_type: string; readonly slot_state: SlotRow["state"]; readonly artifact_revision_id: string | null; readonly release_wait_id: string | null; readonly release_policy: OutputReleaseContract }>(
+        "SELECT artifact_type, state AS slot_state, artifact_revision_id::text, release_wait_id::text, release_policy FROM oakridge.run_output_slot WHERE run_unit_id = $1 AND output_name = $2 FOR UPDATE",
         [work.run_unit_id, request.output_name]);
       const slot = slotRows[0];
       if (!slot) return { kind: "slot_not_found", detail: `output slot '${request.output_name}' was not declared` };
@@ -236,6 +243,11 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       if (row.work_state === "abandoned") return { kind: "work_abandoned", detail: `work order '${request.work_order_id}' is abandoned` };
       if (row.slot_state === "invalidated") return { kind: "slot_invalidated", detail: `output slot '${request.output_name}' is invalidated` };
       if (row.slot_state === "released" && row.artifact_revision_id) return { kind: "slot_already_released", artifact_id: row.artifact_revision_id as ArtifactId, detail: `output slot '${request.output_name}' is already released` };
+      // A different (non-replay) publish while the slot already has an open
+      // wait: proceeding would try to open a second wait on the same slot,
+      // which `wait_v2_open_slot` refuses — return the existing wait instead
+      // of letting that surface as an unhandled constraint violation.
+      if (row.slot_state === "pending" && row.release_wait_id) return { kind: "slot_pending", wait_id: row.release_wait_id as WaitId, detail: `output slot '${request.output_name}' is already pending a decision` };
       const release = row.release_policy;
       const immediate = release.kind === "immediate";
       await transaction.query(`INSERT INTO oakridge.artifact
@@ -267,7 +279,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
            (id, stage_instance_id, unit_id, kind, artifact_revision_id, closes_on, status, run_unit_id, output_name, execution_workflow_id, command_workflow_id, opened_at)
          VALUES ($1,$2,$3,$4,$5,$6::jsonb,'open',$7,$8,$9,$10,$11::timestamptz)`,
         [waitId, row.stage_instance_id, row.unit_id, waitKind, request.artifact_id, closesOn, row.run_unit_id, request.output_name, row.workflow_id,
-          v2WaitCommandAddress(row.run_unit_id as RunUnitId, request.output_name), request.published_at],
+          v2WaitCommandAddress(waitId), request.published_at],
       );
       await transaction.query("UPDATE oakridge.run_output_slot SET state = 'pending', artifact_revision_id = $3, release_wait_id = $6, invalidation_reason = NULL, state_changed_at = $4::timestamptz, updated_by_work_order_id = $2, version = version + 1 WHERE run_unit_id = $1 AND output_name = $5", [row.run_unit_id, request.work_order_id, request.artifact_id, request.published_at, request.output_name, waitId]);
       const versions = await transaction.query<{ readonly record_version: string }>("UPDATE oakridge.workflow_run SET record_version = record_version + 1 WHERE id = $1 RETURNING record_version::text", [row.run_id]);
