@@ -1,6 +1,17 @@
 import { expect, test } from "bun:test";
 import { selectRunRecordUnitDecision, type OperatorRunRecordUnitFacts } from "../src/domain/operator-projections";
-import { selectRunStatus, selectStageStatus } from "../src/operators/select-status";
+import { selectRunStatus, selectStageStatus, selectV2RunStatus, selectV2StageStatus, selectV2UnitStatus } from "../src/operators/select-status";
+
+test("v2 operator status is selected only from persisted run-owned state", () => {
+  expect(selectV2RunStatus({ state: "active", parked_count: 0, has_materialized_stage: false })).toBe("pending");
+  expect(selectV2RunStatus({ state: "active", parked_count: 0, has_materialized_stage: true })).toBe("running");
+  expect(selectV2RunStatus({ state: "active", parked_count: 1, has_materialized_stage: true })).toBe("parked");
+  expect(selectV2RunStatus({ state: "failed", parked_count: 1, has_materialized_stage: true })).toBe("failed");
+  expect(selectV2StageStatus("active", true)).toBe("parked");
+  expect(selectV2StageStatus("succeeded", false)).toBe("complete");
+  expect(selectV2UnitStatus("ready", false)).toBe("pending");
+  expect(selectV2UnitStatus("waiting", true)).toBe("parked");
+});
 
 test("pending gate dominates engine running status for operator projections", () => {
   expect(selectStageStatus("PENDING", true)).toBe("parked");

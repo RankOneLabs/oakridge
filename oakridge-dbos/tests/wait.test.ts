@@ -49,6 +49,11 @@ test("a withdrawn gate wait views as withdrawn", () => {
   expect(selectGateStateView(wait(gateClosesOn, closed({ kind: "withdrawn" })))?.status).toBe("withdrawn");
 });
 
+test("cancelled gate and handoff waits remain readable terminal states", () => {
+  expect(selectGateStateView(wait(gateClosesOn, closed({ kind: "cancelled", reason: "run cancelled" })))?.status).toBe("cancelled");
+  expect(selectHandoffStatusFromWait("handoff_external", "closed", "cancelled")).toBe("cancelled");
+});
+
 test("an open external wait maps to awaiting_external", () => {
   expect(selectHandoffStatusFromWait("handoff_external", "open", null)).toBe("awaiting_external");
 });

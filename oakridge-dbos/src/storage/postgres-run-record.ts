@@ -5,10 +5,11 @@ import type { OutputReleaseContract } from "../domain/compiled-workflow";
 import type { ArtifactEnvelope, ExecutionRequest, ExternalExecutionReference } from "../domain/execution";
 import { err, ok, type ArtifactId, type InputFingerprint, type JsonValue, type OutputCollectionKey, type OutputSlotVersion, type Result, type RunRecordVersion, type RunTransitionId, type RunUnitId, type StageInstanceId, type UnitId, type WaitId, type WorkflowDefinitionId, type WorkflowRunId, type WorkOrderId } from "../domain/primitives";
 import { selectRunDecision, selectStageDecision, selectUnitDecision } from "../domain/run-decisions";
-import type { CloseRunOutputWait, CloseRunOutputWaitResult, ExecutorAttachment, ExecutorHealthObservation, FailRunMaterialization, InitializeStraightThroughRun, PersistMaterializedStage, PublishWorkOrderArtifact, PublishWorkOrderArtifactResult, RetryRunUnit, RetryRunUnitResult, ReviseRunUnitInput, ReviseRunUnitInputResult, RunDecision, RunMaterializationRecord, RunOutputSlot, RunStage, RunTransitionOperation, RunUnit, UnitDecision, WorkflowRun, WorkOrder, WorkOrderExecution } from "../domain/run-record";
+import type { CancelRunRecord, CancelRunRecordResult, CloseRunOutputWait, CloseRunOutputWaitResult, CompleteHandoffArtifact, DecideGateWait, ExecutorAttachment, ExecutorHealthObservation, FailRunMaterialization, InitializeStraightThroughRun, PersistMaterializedStage, PublishWorkOrderArtifact, PublishWorkOrderArtifactResult, RetryRunUnit, RetryRunUnitResult, ReviseRunUnitInput, ReviseRunUnitInputResult, RunDecision, RunMaterializationRecord, RunOutputSlot, RunOutputWaitDisposition, RunStage, RunTransitionOperation, RunUnit, UnitDecision, WorkflowRun, WorkOrder, WorkOrderExecution } from "../domain/run-record";
 import type { WaitClosesOn, WaitOutcome } from "../domain/wait";
 import type { StageOutcome } from "../domain/workflow";
 import type { AdmitStageUnitRequest, AdmitStageUnitResult } from "../domain/runs";
+import type { DeleteRunResult } from "../domain/runs";
 import { decodeWait, waitColumns, type WaitRow } from "./postgres-wait";
 import type { RunRecordRepository, RunRecordRepositoryError } from "./repositories";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
@@ -20,6 +21,7 @@ interface SlotRow { readonly run_unit_id: string; readonly output_name: string; 
 interface WorkOrderRow { readonly id: string; readonly run_unit_id: string; readonly reason: WorkOrder["reason"]; readonly input_snapshot: readonly ArtifactEnvelope[]; readonly input_fingerprint: string; readonly state: WorkOrder["state"]; readonly workflow_id: string; readonly request_idempotency_key: string; readonly execution_request?: ExecutionRequest | null; readonly created_at: string; readonly completed_at: string | null }
 interface ArtifactRow { readonly id: string; readonly run_id: string; readonly stage_instance_id: string; readonly execution_id: string; readonly unit_id: string; readonly output_name: string; readonly collection_key: string | null; readonly artifact_type: string; readonly label: string | null; readonly body: JsonValue; readonly version: number; readonly parent_artifact_id: string | null; readonly released_at: string; readonly created_at: string }
 interface ExecutorAttachmentRow { readonly work_order_id: string; readonly executor_type: string; readonly external_reference: ExternalExecutionReference | null; readonly health: ExecutorHealthObservation | null; readonly cleanup_state: ExecutorAttachment["cleanup_state"]; readonly updated_at: string }
+class GateCoordinationConflict extends Error { constructor(readonly result: CloseRunOutputWaitResult) { super("gate coordination conflict"); } }
 interface StoredOutputContracts { readonly [output_name: string]: { readonly artifact_type: string; readonly required: boolean; readonly release: OutputReleaseContract } }
 
 const decodeRun = (row: RunRow): WorkflowRun => ({ ...row, id: row.id as WorkflowRunId, workflow_definition_id: row.workflow_definition_id as WorkflowDefinitionId, record_version: Number(row.record_version) as RunRecordVersion });
@@ -160,7 +162,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         JOIN oakridge.work_order work ON work.run_unit_id = unit.id AND work.request_idempotency_key = 'initial'
         WHERE stage.run_id = $1 AND stage.stage_key = $2 AND stage.attempt_root_workflow_id IS NULL`, [input.run_id, input.stage_key, input.stage_instance_id,
         stageContract, input.run_unit_id, input.unit_id,
-        input.parameters, input.input_snapshot, input.input_fingerprint, input.work_order_id, input.work_order_workflow_id,
+        input.parameters, JSON.stringify(input.input_snapshot), input.input_fingerprint, input.work_order_id, input.work_order_workflow_id,
         input.work_order_capability_hash, outputContracts]);
       if (existing[0]) {
         if (!existing[0].immutable_matches) throw new Error(`straight-through run '${input.run_id}' conflicts with its stored initialization`);
@@ -174,14 +176,14 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       await transaction.query(`INSERT INTO oakridge.run_unit
         (id, run_id, stage_instance_id, unit_id, parameters, input_snapshot, input_fingerprint, state, created_at)
         VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,'ready',$8::timestamptz)
-        ON CONFLICT (stage_instance_id, unit_id) DO NOTHING`, [input.run_unit_id, input.run_id, input.stage_instance_id, input.unit_id, input.parameters, input.input_snapshot, input.input_fingerprint, input.created_at]);
+        ON CONFLICT (stage_instance_id, unit_id) DO NOTHING`, [input.run_unit_id, input.run_id, input.stage_instance_id, input.unit_id, input.parameters, JSON.stringify(input.input_snapshot), input.input_fingerprint, input.created_at]);
       for (const output of input.outputs) await transaction.query(`INSERT INTO oakridge.run_output_slot
         (run_unit_id, output_name, artifact_type, required, release_policy, state)
         VALUES ($1,$2,$3,$4,$5::jsonb,'empty') ON CONFLICT (run_unit_id, output_name) WHERE collection_key IS NULL DO NOTHING`, [input.run_unit_id, output.name, output.artifact_type, output.required, output.release]);
       await transaction.query(`INSERT INTO oakridge.work_order
         (id, run_unit_id, reason, input_snapshot, input_fingerprint, state, workflow_id, request_idempotency_key, capability_hash, created_at)
         VALUES ($1,$2,'initial',$3::jsonb,$4,'available',$5,'initial',$6,$7::timestamptz)
-        ON CONFLICT (run_unit_id, request_idempotency_key) DO NOTHING`, [input.work_order_id, input.run_unit_id, input.input_snapshot, input.input_fingerprint, input.work_order_workflow_id, input.work_order_capability_hash, input.created_at]);
+        ON CONFLICT (run_unit_id, request_idempotency_key) DO NOTHING`, [input.work_order_id, input.run_unit_id, JSON.stringify(input.input_snapshot), input.input_fingerprint, input.work_order_workflow_id, input.work_order_capability_hash, input.created_at]);
       await transaction.query("UPDATE oakridge.workflow_run SET record_version = record_version + 1 WHERE id = $1", [input.run_id]);
     });
   }
@@ -243,6 +245,53 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
     });
   }
 
+  async cancel_run(input: CancelRunRecord): Promise<CancelRunRecordResult> {
+    return this.sql.transaction(async (transaction) => {
+      const rows = await transaction.query<{ readonly state: WorkflowRun["state"]; readonly record_version: string }>(
+        "SELECT state,record_version::text FROM oakridge.workflow_run WHERE id=$1 FOR UPDATE", [input.run_id]);
+      const run = rows[0];
+      if (!run) return { kind: "run_not_found", detail: `workflow run '${input.run_id}' was not found` };
+      if (run.state !== "active") return { kind: "already_terminal", run_id: input.run_id, state: run.state };
+      const fenceRows = await transaction.query<{ readonly work_order_id: string; readonly executor_type: string; readonly external_reference: ExternalExecutionReference }>(
+        `SELECT work.id::text AS work_order_id,attachment.executor_type,attachment.external_reference
+         FROM oakridge.work_order work JOIN oakridge.run_unit unit ON unit.id=work.run_unit_id
+         JOIN oakridge.executor_attachment attachment ON attachment.work_order_id=work.id
+         WHERE unit.run_id=$1 AND work.state IN ('available','started') AND attachment.external_reference IS NOT NULL
+         ORDER BY work.id FOR UPDATE OF work,unit,attachment`, [input.run_id]);
+      const outcome = { kind: "cancelled" as const, reason: input.reason };
+      await transaction.query("UPDATE oakridge.wait SET status='closed',outcome=$2::jsonb,closed_at=$3::timestamptz WHERE run_unit_id IN (SELECT id FROM oakridge.run_unit WHERE run_id=$1) AND status='open'",
+        [input.run_id, outcome, input.cancelled_at]);
+      await transaction.query(`UPDATE oakridge.run_output_slot SET state='invalidated',release_wait_id=NULL,
+        invalidation_reason=jsonb_build_object('kind','operator','detail','run cancelled'),state_changed_at=$2::timestamptz,version=version+1
+        WHERE run_unit_id IN (SELECT id FROM oakridge.run_unit WHERE run_id=$1) AND state='pending'`, [input.run_id, input.cancelled_at]);
+      await transaction.query("UPDATE oakridge.work_order SET state='abandoned',completed_at=$2::timestamptz WHERE run_unit_id IN (SELECT id FROM oakridge.run_unit WHERE run_id=$1) AND state IN ('available','started')", [input.run_id, input.cancelled_at]);
+      await transaction.query("UPDATE oakridge.run_unit SET state='cancelled',outcome=$2::jsonb,ended_at=$3::timestamptz WHERE run_id=$1 AND state NOT IN ('satisfied','failed','cancelled')", [input.run_id, outcome, input.cancelled_at]);
+      await transaction.query("UPDATE oakridge.stage_instance SET state='cancelled',outcome=$2::jsonb,ended_at=$3::timestamptz WHERE run_id=$1 AND attempt_root_workflow_id IS NULL AND state='active'", [input.run_id, outcome, input.cancelled_at]);
+      const versions = await transaction.query<{ readonly record_version: string }>(`UPDATE oakridge.workflow_run SET state='cancelled',outcome=$2::jsonb,
+        ended_at=$3::timestamptz,record_version=record_version+1 WHERE id=$1 RETURNING record_version::text`, [input.run_id, outcome, input.cancelled_at]);
+      const resulting = Number(versions[0]?.record_version ?? Number(run.record_version) + 1) as RunRecordVersion;
+      await insertTransition(transaction, { run_id: input.run_id, run_unit_id: null, work_order_id: null, wait_id: null, output_name: null,
+        operation: "run_cancelled", actor: input.actor, prior_record_version: Number(run.record_version) as RunRecordVersion,
+        resulting_record_version: resulting, detail: { reason: input.reason }, created_at: input.cancelled_at });
+      return { kind: "cancelled", run_id: input.run_id, record_version: resulting,
+        work_orders_to_fence: fenceRows.map((row) => ({ work_order_id: row.work_order_id as WorkOrderId,
+          executor_type: row.executor_type, external_reference: row.external_reference })) };
+    });
+  }
+
+  async delete_run(run_id: WorkflowRunId): Promise<DeleteRunResult> {
+    return this.sql.transaction(async (transaction) => {
+      const rows = await transaction.query<{ readonly state: WorkflowRun["state"] }>("SELECT state FROM oakridge.workflow_run WHERE id=$1 FOR UPDATE", [run_id]);
+      const run = rows[0];
+      if (!run) return { kind: "already_deleted", run_id };
+      if (run.state === "active") return { kind: "active_conflict", run_id, detail: "run is active; cancel it before deletion" };
+      await transaction.query(`DELETE FROM oakridge.command_outbox command WHERE command.payload->>'run_id'=$1::text OR command.target_workflow_id IN (
+        SELECT work.workflow_id FROM oakridge.work_order work JOIN oakridge.run_unit unit ON unit.id=work.run_unit_id WHERE unit.run_id=$1::uuid)`, [run_id]);
+      await transaction.query("DELETE FROM oakridge.workflow_run WHERE id=$1", [run_id]);
+      return { kind: "deleted", run_id };
+    });
+  }
+
   async persist_materialized_stage(input: PersistMaterializedStage): Promise<void> {
     assertIncomingUnits(input);
     await this.sql.transaction(async (transaction) => {
@@ -289,7 +338,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         await transaction.query(`INSERT INTO oakridge.run_unit
           (id,run_id,stage_instance_id,unit_id,parameters,input_snapshot,input_fingerprint,state,admitted,admitted_at,materialization_fingerprint,created_at)
           VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,'ready',$8,$9::timestamptz,$10,$11::timestamptz)`,
-        [unit.id, input.run_id, input.stage_instance_id, unit.unit_id, unit.parameters, unit.input_snapshot, unit.input_fingerprint,
+        [unit.id, input.run_id, input.stage_instance_id, unit.unit_id, unit.parameters, JSON.stringify(unit.input_snapshot), unit.input_fingerprint,
           admitted, admitted ? input.materialized_at : null, unitFingerprint, input.materialized_at]);
         for (const output of unit.outputs) await transaction.query(`INSERT INTO oakridge.run_output_slot
           (run_unit_id,output_name,collection_key,artifact_type,required,release_policy,state)
@@ -298,7 +347,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         await transaction.query(`INSERT INTO oakridge.work_order
           (id,run_unit_id,reason,input_snapshot,input_fingerprint,state,workflow_id,request_idempotency_key,capability_hash,execution_request,created_at)
           VALUES ($1,$2,'initial',$3::jsonb,$4,'available',$5,'initial',$6,$7::jsonb,$8::timestamptz)`,
-        [unit.initial_work_order.id, unit.id, unit.input_snapshot, unit.input_fingerprint, unit.initial_work_order.workflow_id, unit.initial_work_order.capability_hash, unit.initial_work_order.request, input.materialized_at]);
+        [unit.initial_work_order.id, unit.id, JSON.stringify(unit.input_snapshot), unit.input_fingerprint, unit.initial_work_order.workflow_id, unit.initial_work_order.capability_hash, unit.initial_work_order.request, input.materialized_at]);
       }
       for (const unit of input.units) for (const dependency of unit.depends_on) await transaction.query(`INSERT INTO oakridge.run_unit_dependency
         (stage_instance_id,unit_id,depends_on_unit_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, [input.stage_instance_id, unit.unit_id, dependency]);
@@ -338,7 +387,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         throw new Error(`replacement work order for '${input.run_unit_id}' has a mismatched execution request`);
       }
       await transaction.query(`UPDATE oakridge.run_unit SET input_snapshot=$2::jsonb,input_fingerprint=$3,state='ready',outcome=NULL,ended_at=NULL WHERE id=$1`,
-        [input.run_unit_id, input.input_snapshot, input.input_fingerprint]);
+        [input.run_unit_id, JSON.stringify(input.input_snapshot), input.input_fingerprint]);
       await transaction.query(`UPDATE oakridge.work_order SET state='abandoned',completed_at=$2::timestamptz WHERE run_unit_id=$1 AND state IN ('available','started')`, [input.run_unit_id, input.revised_at]);
       await transaction.query(`UPDATE oakridge.wait SET status='closed',outcome='{"kind":"withdrawn"}'::jsonb,closed_at=$2::timestamptz WHERE run_unit_id=$1 AND status='open'`, [input.run_unit_id, input.revised_at]);
       await transaction.query(`UPDATE oakridge.run_output_slot SET state='invalidated',release_wait_id=NULL,
@@ -347,7 +396,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       await transaction.query(`INSERT INTO oakridge.work_order
         (id,run_unit_id,reason,input_snapshot,input_fingerprint,state,workflow_id,request_idempotency_key,capability_hash,execution_request,created_at)
         VALUES ($1,$2,'input_revision',$3::jsonb,$4,'available',$5,$6,$7,$8::jsonb,$9::timestamptz)`,
-      [replacement.id, input.run_unit_id, input.input_snapshot, input.input_fingerprint, replacement.workflow_id,
+      [replacement.id, input.run_unit_id, JSON.stringify(input.input_snapshot), input.input_fingerprint, replacement.workflow_id,
         `input_revision:${input.input_fingerprint}`, replacement.capability_hash, replacement.request, input.revised_at]);
       const prior = Number(row.record_version) as RunRecordVersion;
       const resulting = (Number(row.record_version) + 1) as RunRecordVersion;
@@ -395,7 +444,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         (id,run_unit_id,reason,input_snapshot,input_fingerprint,state,workflow_id,request_idempotency_key,capability_hash,execution_request,created_at)
         VALUES ($1,$2,'operator_retry',$3::jsonb,$4,'available',$5,$6,$7,$8::jsonb,$9::timestamptz)
         RETURNING id::text,run_unit_id::text,reason,input_snapshot,input_fingerprint,state,workflow_id,request_idempotency_key,execution_request,created_at::text,completed_at::text`,
-      [workOrderId, input.run_unit_id, unit.input_snapshot, unit.input_fingerprint, workflowId, requestKey, basis.capability_hash, executionRequest, retried_at]);
+      [workOrderId, input.run_unit_id, JSON.stringify(unit.input_snapshot), unit.input_fingerprint, workflowId, requestKey, basis.capability_hash, executionRequest, retried_at]);
       const order = rows[0];
       if (!order) throw new Error("operator retry work order insert returned no row");
       await transaction.query("UPDATE oakridge.run_unit SET state='ready',outcome=NULL,ended_at=NULL WHERE id=$1", [input.run_unit_id]);
@@ -642,7 +691,14 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
   }
 
   async close_output_wait(request: CloseRunOutputWait): Promise<CloseRunOutputWaitResult> {
-    return this.sql.transaction(async (transaction) => {
+    return this.sql.transaction((transaction) => this.closeOutputWaitTransaction(transaction, request));
+  }
+
+  private async closeOutputWaitTransaction(transaction: SqlExecutor, request: CloseRunOutputWait): Promise<CloseRunOutputWaitResult> {
+      const ownerRows = await transaction.query<{ readonly run_id: string }>(`SELECT unit.run_id::text FROM oakridge.wait wait
+        JOIN oakridge.run_unit unit ON unit.id=wait.run_unit_id WHERE wait.id=$1 AND wait.run_unit_id IS NOT NULL`, [request.wait_id]);
+      if (!ownerRows[0]) return { kind: "wait_not_found", detail: `v2 wait '${request.wait_id}' was not found` };
+      await transaction.query("SELECT id FROM oakridge.workflow_run WHERE id=$1 FOR UPDATE", [ownerRows[0].run_id]);
       const waitRows = await transaction.query<{ readonly status: "open" | "closed"; readonly kind: WaitClosesOn["kind"]; readonly outcome: WaitOutcome | null; readonly run_unit_id: string | null; readonly output_name: string | null; readonly collection_key: string | null; readonly run_id: string }>(
         `SELECT wait.status, wait.kind, wait.outcome, wait.run_unit_id::text, wait.output_name, wait.collection_key, unit.run_id::text
          FROM oakridge.wait wait JOIN oakridge.run_unit unit ON unit.id = wait.run_unit_id
@@ -651,10 +707,10 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       if (!wait || !wait.run_unit_id || !wait.output_name) return { kind: "wait_not_found", detail: `v2 wait '${request.wait_id}' was not found` };
       const releaseOutcome: WaitOutcome = wait.kind === "handoff_external"
         ? { kind: "external_completed", correlation_id: request.detail ?? request.actor }
-        : { kind: "decided", action: "release", decision_artifact_id: null, feedback: request.detail };
+        : { kind: "decided", action: request.action ?? "release", decision_artifact_id: null, feedback: request.detail };
       const invalidateOutcome: WaitOutcome = wait.kind === "handoff_external"
         ? { kind: "withdrawn" }
-        : { kind: "decided", action: "invalidate", decision_artifact_id: null, feedback: request.detail };
+        : { kind: "decided", action: request.action ?? (request.disposition === "fail" ? "fail" : "invalidate"), decision_artifact_id: null, feedback: request.detail };
       const requestedOutcome = request.disposition === "release" ? releaseOutcome : invalidateOutcome;
       // `decided` is shared by both dispositions on a gate wait, so a match
       // must also agree on `action` — comparing `kind` alone would absorb a
@@ -685,6 +741,10 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         if (slot.updated_by_work_order_id) {
           await transaction.query("UPDATE oakridge.work_order SET state = 'abandoned', completed_at = $2::timestamptz WHERE id = $1 AND state IN ('available','started')", [slot.updated_by_work_order_id, request.decided_at]);
         }
+        if (request.disposition === "fail") {
+          const failure = { kind: "failed" as const, code: "gate_rejected", detail: request.detail ?? `gate action '${request.action ?? "fail"}' rejected the unit` };
+          await transaction.query("UPDATE oakridge.run_unit SET state='failed',outcome=$2::jsonb,ended_at=$3::timestamptz WHERE id=$1 AND state NOT IN ('satisfied','failed','cancelled')", [wait.run_unit_id, failure, request.decided_at]);
+        }
       }
       const versions = await transaction.query<{ readonly record_version: string }>("UPDATE oakridge.workflow_run SET record_version = record_version + 1 WHERE id = $1 RETURNING record_version::text", [wait.run_id]);
       const resultingVersion = Number(versions[0]?.record_version ?? 0) as RunRecordVersion;
@@ -694,7 +754,55 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       return request.disposition === "release"
         ? { kind: "released", artifact_id: slot.artifact_revision_id as ArtifactId, run_id: wait.run_id as WorkflowRunId, record_version: resultingVersion }
         : { kind: "invalidated", run_id: wait.run_id as WorkflowRunId, record_version: resultingVersion };
-    });
+  }
+
+  async decide_gate_wait(request: DecideGateWait): Promise<CloseRunOutputWaitResult> {
+    try {
+      return await this.sql.transaction(async (transaction) => {
+        const rows = await transaction.query<{ readonly run_unit_id: string; readonly release_policy: OutputReleaseContract; readonly closes_on: WaitClosesOn }>(`SELECT wait.run_unit_id::text,slot.release_policy,wait.closes_on
+          FROM oakridge.wait wait JOIN oakridge.run_output_slot slot ON slot.run_unit_id=wait.run_unit_id
+            AND slot.output_name=wait.output_name AND slot.collection_key IS NOT DISTINCT FROM wait.collection_key
+          WHERE wait.id=$1 AND wait.kind='gate' AND wait.run_unit_id IS NOT NULL`, [request.wait_id]);
+        const subject = rows[0]; const release = subject?.release_policy;
+        if (!subject || !release || release.kind !== "gate") return { kind: "wait_not_found", detail: `v2 gate wait '${request.wait_id}' was not found` };
+        const gateClose = subject.closes_on.kind === "gate" ? subject.closes_on : null;
+        const pendingStep = gateClose ? release.steps.find((step) => step.type === gateClose.gate_step) : undefined;
+        const action = pendingStep?.actions.find((candidate) => gateClose?.actions.includes(candidate.name) && candidate.name === request.action);
+        if (!action) return { kind: "wait_conflict", detail: `action '${request.action}' is not allowed for wait '${request.wait_id}'` };
+        const disposition: RunOutputWaitDisposition = action.disposition === "release" ? "release" : action.disposition === "revise" ? "invalidate" : "fail";
+        const own = await this.closeOutputWaitTransaction(transaction, { ...request, disposition });
+        if (own.kind === "wait_conflict" || own.kind === "wait_not_found") throw new GateCoordinationConflict(own);
+        if (disposition !== "release" && release.revision_target === "upstream_handoff") {
+          const upstreamRows = await transaction.query<{ readonly wait_id: string }>(`SELECT wait.id::text AS wait_id
+            FROM oakridge.run_unit unit CROSS JOIN LATERAL jsonb_array_elements(unit.input_snapshot) input(value)
+            JOIN oakridge.wait wait ON wait.artifact_revision_id=(input.value->>'artifact_id')::uuid
+            WHERE unit.id=$1 AND wait.kind='handoff_external' AND wait.run_unit_id IS NOT NULL AND wait.status='open' ORDER BY wait.id FOR UPDATE OF wait`, [subject.run_unit_id]);
+          if (upstreamRows.length === 0) throw new GateCoordinationConflict({ kind: "wait_conflict", detail: "gate revision target has no run-owned upstream handoff" });
+          for (const upstream of upstreamRows) {
+            const result = await this.closeOutputWaitTransaction(transaction, { wait_id: upstream.wait_id as WaitId,
+              disposition: "invalidate", action: request.action, actor: request.actor, detail: request.detail, decided_at: request.decided_at });
+            if (result.kind === "wait_conflict" || result.kind === "wait_not_found") throw new GateCoordinationConflict(result);
+          }
+        }
+        return own;
+      });
+    } catch (cause) {
+      if (cause instanceof GateCoordinationConflict) return cause.result;
+      throw cause;
+    }
+  }
+
+  async complete_handoff_artifact(request: CompleteHandoffArtifact): Promise<CloseRunOutputWaitResult> {
+    const rows = await this.sql.query<{ readonly wait_id: string; readonly release_policy: OutputReleaseContract }>(`SELECT wait.id::text AS wait_id,slot.release_policy
+      FROM oakridge.wait wait JOIN oakridge.run_output_slot slot ON slot.run_unit_id=wait.run_unit_id
+        AND slot.output_name=wait.output_name AND slot.collection_key IS NOT DISTINCT FROM wait.collection_key
+      WHERE wait.artifact_revision_id=$1 AND wait.kind='handoff_external' AND wait.run_unit_id IS NOT NULL
+      ORDER BY wait.opened_at DESC LIMIT 1`, [request.artifact_id]);
+    const row = rows[0];
+    if (!row || row.release_policy.kind !== "handoff") return { kind: "wait_not_found", detail: `v2 handoff for artifact '${request.artifact_id}' was not found` };
+    if (row.release_policy.external_wait_kind !== request.external_kind) return { kind: "wait_conflict", detail: "external completion kind does not match the handoff policy" };
+    return this.close_output_wait({ wait_id: row.wait_id as WaitId, disposition: "release", actor: request.actor,
+      detail: request.correlation_id, decided_at: request.decided_at });
   }
 
   async ensure_executor_attachment(work_order_id: WorkOrderId, executor_type: string, updated_at: string): Promise<ExecutorAttachment> {

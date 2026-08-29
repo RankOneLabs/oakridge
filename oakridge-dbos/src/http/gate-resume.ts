@@ -37,7 +37,7 @@ export interface GateResumeDependencies {
    * Absent for a backend that has not cut any run over to v2 yet — the legacy
    * route above is unaffected either way.
    */
-  readonly records?: Pick<RunRecordRepository, "close_output_wait">;
+  readonly records?: Pick<RunRecordRepository, "close_output_wait"> & Partial<Pick<RunRecordRepository, "decide_gate_wait">>;
   /** Wakes the run's root workflow sooner than its bounded recheck; absent is fine — the recheck still happens. */
   readonly send_run_wake?: (run_id: string, idempotency_key: string) => Promise<void>;
 }
@@ -123,6 +123,19 @@ export const createGateResumeApp = (dependencies: GateResumeDependencies): Hono 
   const app = new Hono();
   app.post("/gates/:id/resume", async (http) => {
     const compositeId = http.req.param("id");
+    const v2WaitId = parseUuidId<WaitId>(compositeId);
+    if (v2WaitId && dependencies.records?.decide_gate_wait) {
+      let rawBody: unknown;
+      try { rawBody = await http.req.json(); } catch { return http.json({ error: "request body must be JSON" }, 400); }
+      const request = parseRequest(rawBody);
+      if (!request) return http.json({ error: "idempotency_key, artifact_revision_id, gate_step, action, and operator_comment are required strings" }, 400);
+      const result = await dependencies.records.decide_gate_wait({ wait_id: v2WaitId, action: request.action,
+        actor: "operator", detail: request.feedback ?? request.operator_comment, decided_at: (dependencies.now ?? (() => new Date().toISOString()))() });
+      if (result.kind === "wait_not_found") return http.json({ error: result.detail }, 404);
+      if (result.kind === "wait_conflict") return http.json({ error: result.detail }, 409);
+      await dependencies.send_run_wake?.(result.run_id, `${result.kind}:${result.run_id}:${result.record_version}`).catch(() => undefined);
+      return http.json({ gate_id: compositeId, resumed: true }, 202);
+    }
     const separator = compositeId.indexOf(":");
     if (separator < 1 || separator === compositeId.length - 1) return http.json({ error: "invalid gate id: expected '{stage_id}:{unit_id}'" }, 400);
     const stageId = compositeId.slice(0, separator) as StageInstanceId;

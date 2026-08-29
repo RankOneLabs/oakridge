@@ -304,6 +304,15 @@ test("v2 gate resume releases the wait and reports the released artifact", async
   expect(received).toEqual(expect.objectContaining({ wait_id: waitId, disposition: "release", actor: "operator:sam", detail: "looks good" }));
 });
 
+test("the public gate route dispatches a v2 wait id directly to its run-owned policy command", async () => {
+  const actions: string[] = [];
+  const app = createGateResumeApp({ ...fixture().dependencies, records: { close_output_wait: async () => ({ kind: "wait_not_found", detail: "unused" }),
+    decide_gate_wait: async (request) => { actions.push(request.action); return { kind: "released", artifact_id: artifact.id, run_id: v2RunId, record_version: 8 as RunRecordVersion }; } } });
+  const response = await app.request(`/gates/${waitId}/resume`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  expect(response.status).toBe(202);
+  expect(actions).toEqual(["approve"]);
+});
+
 test("v2 gate resume invalidates on request", async () => {
   const app = v2Fixture(async () => ({ kind: "invalidated", run_id: v2RunId, record_version: 7 as RunRecordVersion }));
   const response = await resumeV2(app, { disposition: "invalidate", actor: "operator:sam" });

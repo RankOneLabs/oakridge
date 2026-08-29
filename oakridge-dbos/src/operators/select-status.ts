@@ -1,4 +1,5 @@
 import type { OperatorRunStatus, OperatorStageStatus } from "../domain/operator-projections";
+import type { RunState, UnitState } from "../domain/run-record";
 import type { StageOutcome } from "../domain/workflow";
 
 /**
@@ -34,4 +35,30 @@ export const selectRunStatus = (dbos_status: string, parked_count: number, outco
   if (dbos_status === "ERROR" || dbos_status === "MAX_RECOVERY_ATTEMPTS_EXCEEDED") return "failed";
   if (dbos_status === "ENQUEUED") return "pending";
   return "running";
+};
+
+/** V2 display status is selected exclusively from the run-owned record. */
+export interface V2RunStatusFacts { readonly state: RunState; readonly parked_count: number; readonly has_materialized_stage: boolean }
+
+export const selectV2RunStatus = ({ state, parked_count, has_materialized_stage }: V2RunStatusFacts): OperatorRunStatus => {
+  if (state === "succeeded") return "complete";
+  if (state === "failed") return "failed";
+  if (state === "cancelled") return "cancelled";
+  if (parked_count > 0) return "parked";
+  return has_materialized_stage ? "running" : "pending";
+};
+
+/** A stage's persisted lifecycle and open waits are its complete status input. */
+export const selectV2StageStatus = (state: RunState, has_open_wait: boolean): OperatorStageStatus => {
+  if (state === "succeeded") return "complete";
+  if (state === "failed" || state === "cancelled") return "failed";
+  return has_open_wait ? "parked" : "running";
+};
+
+/** Unit rows share the existing stage-status vocabulary on the operator API. */
+export const selectV2UnitStatus = (state: UnitState, has_open_wait: boolean): OperatorStageStatus => {
+  if (state === "satisfied") return "complete";
+  if (state === "failed" || state === "cancelled") return "failed";
+  if (has_open_wait) return "parked";
+  return state === "ready" ? "pending" : "running";
 };

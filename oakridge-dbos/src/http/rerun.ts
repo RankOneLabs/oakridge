@@ -9,8 +9,9 @@ import { describeStageRerunError, isMissingStageRerunTarget, rerunStage, type St
 import type { WorkflowRunId } from "../domain/primitives";
 import { cancelRun, type CancelRunDependencies } from "../runtime/cancel-run";
 import { retryStuck } from "../runtime/retry-stuck";
+import { cancelV2Run, type CancelV2RunDependencies } from "../runtime/cancel-v2-run";
 
-export interface RerunHttpDependencies { readonly stages: StageInstanceRepository; readonly targets: RerunTargetRepository; readonly dbos: RerunDbosClient; readonly stage_rerun: StageRerunDependencies; readonly cancellation: CancelRunDependencies }
+export interface RerunHttpDependencies { readonly stages: StageInstanceRepository; readonly targets: RerunTargetRepository; readonly dbos: RerunDbosClient; readonly stage_rerun: StageRerunDependencies; readonly cancellation: CancelRunDependencies; readonly v2_cancellation?: CancelV2RunDependencies }
 const bodySchema = z.object({ rerun_id: z.string().min(1), application_version: z.string().min(1).optional() });
 
 export const createRerunApp = (dependencies: RerunHttpDependencies): Hono => {
@@ -54,6 +55,10 @@ export const createRerunApp = (dependencies: RerunHttpDependencies): Hono => {
     try {
       const runId = parseUuidId<WorkflowRunId>(context.req.param("run_id"));
       if (!runId) return context.json({ error: "workflow run was not found" }, 404);
+      if (dependencies.v2_cancellation) {
+        const result = await cancelV2Run(runId, dependencies.v2_cancellation);
+        return result.kind === "run_not_found" ? context.json({ error: result.detail }, 404) : context.json(result, 202);
+      }
       return context.json(await cancelRun(runId, dependencies.cancellation), 202);
     } catch (error) {
       return context.json({ error: error instanceof Error ? error.message : "cancellation failed" }, 409);
