@@ -318,6 +318,22 @@ export interface CloseRunOutputWait {
   readonly decided_at: string;
 }
 
+export interface DecideGateWait {
+  readonly wait_id: WaitId;
+  readonly action: string;
+  readonly actor: string;
+  readonly detail: string | null;
+  readonly decided_at: string;
+}
+
+export interface CompleteHandoffArtifact {
+  readonly artifact_id: ArtifactId;
+  readonly external_kind: string;
+  readonly actor: string;
+  readonly correlation_id: string;
+  readonly decided_at: string;
+}
+
 export type CloseRunOutputWaitResult =
   | { readonly kind: "released"; readonly artifact_id: ArtifactId; readonly run_id: WorkflowRunId; readonly record_version: RunRecordVersion }
   | { readonly kind: "invalidated"; readonly run_id: WorkflowRunId; readonly record_version: RunRecordVersion }

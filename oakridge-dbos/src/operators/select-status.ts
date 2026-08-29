@@ -38,7 +38,9 @@ export const selectRunStatus = (dbos_status: string, parked_count: number, outco
 };
 
 /** V2 display status is selected exclusively from the run-owned record. */
-export const selectV2RunStatus = (state: RunState, parked_count: number, has_materialized_stage: boolean): OperatorRunStatus => {
+export interface V2RunStatusFacts { readonly state: RunState; readonly parked_count: number; readonly has_materialized_stage: boolean }
+
+export const selectV2RunStatus = ({ state, parked_count, has_materialized_stage }: V2RunStatusFacts): OperatorRunStatus => {
   if (state === "succeeded") return "complete";
   if (state === "failed") return "failed";
   if (state === "cancelled") return "cancelled";

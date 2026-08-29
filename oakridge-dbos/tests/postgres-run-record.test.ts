@@ -185,6 +185,8 @@ test("an authored v2 gate action selects its persisted disposition, including te
   if (published.kind !== "pending") throw new Error(`expected pending, got ${published.kind}`);
   const release = { kind: "gate", steps: [{ type: "artifact_approval", actions: [{ name: "reject", disposition: "terminal" }] }], requires_zero_open_review_items: false, revision_target: "self_stage" };
   await sql!.query("UPDATE oakridge.run_output_slot SET release_policy=$2::jsonb WHERE run_unit_id=$1", [setup.runUnitId, release]);
+  await sql!.query("UPDATE oakridge.wait SET closes_on=$2::jsonb WHERE id=$1", [published.wait_id,
+    { kind: "gate", gate_step: "artifact_approval", actions: ["reject"] }]);
   expect(await setup.records.decide_gate_wait({ wait_id: published.wait_id, action: "unknown", actor: "operator:test", detail: null, decided_at: setup.now }))
     .toEqual(expect.objectContaining({ kind: "wait_conflict" }));
   expect(await setup.records.decide_gate_wait({ wait_id: published.wait_id, action: "reject", actor: "operator:test", detail: "not acceptable", decided_at: setup.now }))
@@ -620,7 +622,7 @@ test("cancellation serializes with a concurrent artifact publication and cancell
      JOIN oakridge.work_order work ON work.run_unit_id=unit.id JOIN oakridge.run_output_slot slot ON slot.run_unit_id=unit.id
      WHERE run.id=$1 AND work.id=$2`, [setup.input.run_id, unit.initial_work_order.id]);
   expect(state[0]).toEqual({ run_state: "cancelled", unit_state: "cancelled", work_state: "abandoned",
-    slot_state: published.kind === "published" ? "invalidated" : "empty" });
+    slot_state: published.kind === "published" ? "released" : "empty" });
 });
 
 test("v2 deletion refuses active work and deletes a terminal ownership graph without consulting DBOS", async () => {

@@ -49,9 +49,10 @@ interface RunProjectionRow { readonly id: string; readonly workflow_name: string
 interface V2RunProjectionRow { readonly id: string; readonly workflow_name: string; readonly root_workflow_id: string; readonly state: RunState; readonly current_stage: string | null; readonly parked_count: string; readonly updated_at: string; readonly is_stuck: boolean; readonly archived: boolean; readonly has_materialized_stage: boolean }
 interface AttemptProjectionRow { readonly root_workflow_id: string; readonly forked_from_root_workflow_id: string | null; readonly dbos_status: string; readonly created_at: string; readonly parked_count: string; readonly outcome: StageOutcome | null }
 interface StageProjectionRow { readonly stage_instance_id: string; readonly name: string; readonly stage_type: string; readonly operator_role: string | null; readonly dbos_status: string; readonly has_pending_gate: boolean; readonly outcome: StageOutcome | null }
-interface UnitProjectionRow { readonly stage_instance_id: string; readonly unit_id: string; readonly params: OperatorStageUnit["params"]; readonly external_reference: { readonly kind?: string; readonly session_id?: string; readonly worktree_base_sha?: string } | null; readonly dbos_status: string; readonly has_pending_gate: boolean; readonly admission_required: boolean; readonly admitted: boolean; readonly admission_eligible: boolean; readonly admission_blocked_by: readonly string[] }
+interface OperatorExecutorReference { readonly kind?: string; readonly session_id?: string; readonly worktree_base_sha?: string }
+interface UnitProjectionRow { readonly stage_instance_id: string; readonly unit_id: string; readonly params: OperatorStageUnit["params"]; readonly external_reference: OperatorExecutorReference | null; readonly dbos_status: string; readonly has_pending_gate: boolean; readonly admission_required: boolean; readonly admitted: boolean; readonly admission_eligible: boolean; readonly admission_blocked_by: readonly string[] }
 interface V2StageProjectionRow { readonly stage_instance_id: string; readonly name: string; readonly stage_type: string; readonly operator_role: string | null; readonly state: RunState; readonly has_open_wait: boolean }
-interface V2UnitProjectionRow { readonly stage_instance_id: string; readonly unit_id: string; readonly params: OperatorStageUnit["params"]; readonly state: UnitState; readonly external_reference: { readonly kind?: string; readonly session_id?: string; readonly worktree_base_sha?: string } | null; readonly gate_step: string | null; readonly admission_required: boolean; readonly admitted: boolean; readonly admission_blocked_by: readonly string[] }
+interface V2UnitProjectionRow { readonly stage_instance_id: string; readonly unit_id: string; readonly params: OperatorStageUnit["params"]; readonly state: UnitState; readonly external_reference: OperatorExecutorReference | null; readonly gate_step: string | null; readonly has_open_wait: boolean; readonly admission_required: boolean; readonly admitted: boolean; readonly admission_blocked_by: readonly string[] }
 interface StageArtifactRow { readonly stage_instance_id: string; readonly id: string; readonly type_id: string; readonly version: number; readonly label: string | null }
 interface EpicProfileRow extends Omit<EpicWorkflowProfile, "id" | "workflow_run_id"> { readonly id: string; readonly workflow_run_id: string }
 /**
@@ -182,7 +183,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
        ORDER BY updated_at DESC`, [filter === "all" ? null : filter === "archived", run_id]);
     return rows.map((row) => {
       const parked_count = Number(row.parked_count);
-      const status = selectV2RunStatus(row.state, parked_count, row.has_materialized_stage);
+      const status = selectV2RunStatus({ state: row.state, parked_count, has_materialized_stage: row.has_materialized_stage });
       return { id: row.id as WorkflowRunId, workflow_name: row.workflow_name,
         current_attempt_root_workflow_id: row.root_workflow_id, status, current_stage: row.current_stage,
         parked_count, updated_at: row.updated_at, is_stuck: row.is_stuck, is_failed: status === "failed", archived: row.archived };
@@ -483,7 +484,8 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
        FROM oakridge.stage_instance stage WHERE stage.run_id=$1 AND stage.attempt_root_workflow_id IS NULL ORDER BY stage.started_at,stage.stage_key`, [id]);
     const unitRows = await this.sql.query<V2UnitProjectionRow>(
       `SELECT unit.stage_instance_id::text,unit.unit_id,unit.parameters AS params,unit.state,attachment.external_reference,
-              gate.gate_step,policy.manual_admission AS admission_required,unit.admitted,
+              gate.gate_step,EXISTS (SELECT 1 FROM oakridge.wait wait WHERE wait.run_unit_id=unit.id AND wait.status='open') AS has_open_wait,
+              policy.manual_admission AS admission_required,unit.admitted,
               COALESCE(ARRAY(SELECT edge.depends_on_unit_id FROM oakridge.run_unit_dependency edge
                 LEFT JOIN oakridge.run_unit dependency ON dependency.stage_instance_id=edge.stage_instance_id AND dependency.unit_id=edge.depends_on_unit_id
                 WHERE edge.stage_instance_id=unit.stage_instance_id AND edge.unit_id=unit.unit_id AND (dependency.id IS NULL OR dependency.state<>'satisfied') ORDER BY edge.depends_on_unit_id),ARRAY[]::text[]) AS admission_blocked_by
@@ -502,7 +504,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
         unit_id: unit.unit_id as UnitId, repository_key: null, params: unit.params,
         sid: unit.external_reference?.kind === "kbbl_session" ? unit.external_reference.session_id ?? null : null,
         worktree: null, base_sha: unit.external_reference?.worktree_base_sha ?? null,
-        status: selectV2UnitStatus(unit.state, unit.gate_step !== null), gate: unit.gate_step,
+        status: selectV2UnitStatus(unit.state, unit.has_open_wait), gate: unit.gate_step,
         admission_required: unit.admission_required, admitted: unit.admitted,
         admission_eligible: unit.admission_blocked_by.length === 0, admission_blocked_by: unit.admission_blocked_by,
       }));

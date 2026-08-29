@@ -3,10 +3,10 @@ import { selectRunRecordUnitDecision, type OperatorRunRecordUnitFacts } from "..
 import { selectRunStatus, selectStageStatus, selectV2RunStatus, selectV2StageStatus, selectV2UnitStatus } from "../src/operators/select-status";
 
 test("v2 operator status is selected only from persisted run-owned state", () => {
-  expect(selectV2RunStatus("active", 0, false)).toBe("pending");
-  expect(selectV2RunStatus("active", 0, true)).toBe("running");
-  expect(selectV2RunStatus("active", 1, true)).toBe("parked");
-  expect(selectV2RunStatus("failed", 1, true)).toBe("failed");
+  expect(selectV2RunStatus({ state: "active", parked_count: 0, has_materialized_stage: false })).toBe("pending");
+  expect(selectV2RunStatus({ state: "active", parked_count: 0, has_materialized_stage: true })).toBe("running");
+  expect(selectV2RunStatus({ state: "active", parked_count: 1, has_materialized_stage: true })).toBe("parked");
+  expect(selectV2RunStatus({ state: "failed", parked_count: 1, has_materialized_stage: true })).toBe("failed");
   expect(selectV2StageStatus("active", true)).toBe("parked");
   expect(selectV2StageStatus("succeeded", false)).toBe("complete");
   expect(selectV2UnitStatus("ready", false)).toBe("pending");

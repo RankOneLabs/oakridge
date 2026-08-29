@@ -49,7 +49,6 @@ export const createHandoffCompleteApp = (dependencies: HandoffCompleteDependenci
     if (!artifactId) return http.json({ error: "artifact not found" }, 404);
     const artifact = await dependencies.artifacts.find_by_id(artifactId);
     if (!artifact) return http.json({ error: "handoff artifact not found" }, 404);
-    if (artifact.lifecycle.kind !== "current") return http.json({ error: "handoff artifact is not current", code: artifact.lifecycle.kind }, 409);
     if (dependencies.records?.complete_handoff_artifact) {
       const result = await dependencies.records.complete_handoff_artifact({ artifact_id: artifactId, external_kind: request.external_kind,
         actor: `external:${request.external_kind}`, correlation_id: request.correlation_id,
@@ -60,6 +59,7 @@ export const createHandoffCompleteApp = (dependencies: HandoffCompleteDependenci
         return http.json({ artifact_id: artifact.id, completed: true }, 202);
       }
     }
+    if (artifact.lifecycle.kind !== "current") return http.json({ error: "handoff artifact is not current", code: artifact.lifecycle.kind }, 409);
     const producer = await dependencies.contexts.find_for_emit(artifact.stage_instance_id, artifact.unit_id);
     const release = producer?.outputs.find((output) => output.name === artifact.output_name)?.release;
     if (!producer || release?.kind !== "handoff") return http.json({ error: "artifact is not a configured output handoff" }, 409);

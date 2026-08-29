@@ -5,7 +5,7 @@ import type { OutputReleaseContract } from "../domain/compiled-workflow";
 import type { ArtifactEnvelope, ExecutionRequest, ExternalExecutionReference } from "../domain/execution";
 import { err, ok, type ArtifactId, type InputFingerprint, type JsonValue, type OutputCollectionKey, type OutputSlotVersion, type Result, type RunRecordVersion, type RunTransitionId, type RunUnitId, type StageInstanceId, type UnitId, type WaitId, type WorkflowDefinitionId, type WorkflowRunId, type WorkOrderId } from "../domain/primitives";
 import { selectRunDecision, selectStageDecision, selectUnitDecision } from "../domain/run-decisions";
-import type { CancelRunRecord, CancelRunRecordResult, CloseRunOutputWait, CloseRunOutputWaitResult, ExecutorAttachment, ExecutorHealthObservation, FailRunMaterialization, InitializeStraightThroughRun, PersistMaterializedStage, PublishWorkOrderArtifact, PublishWorkOrderArtifactResult, RetryRunUnit, RetryRunUnitResult, ReviseRunUnitInput, ReviseRunUnitInputResult, RunDecision, RunMaterializationRecord, RunOutputSlot, RunOutputWaitDisposition, RunStage, RunTransitionOperation, RunUnit, UnitDecision, WorkflowRun, WorkOrder, WorkOrderExecution } from "../domain/run-record";
+import type { CancelRunRecord, CancelRunRecordResult, CloseRunOutputWait, CloseRunOutputWaitResult, CompleteHandoffArtifact, DecideGateWait, ExecutorAttachment, ExecutorHealthObservation, FailRunMaterialization, InitializeStraightThroughRun, PersistMaterializedStage, PublishWorkOrderArtifact, PublishWorkOrderArtifactResult, RetryRunUnit, RetryRunUnitResult, ReviseRunUnitInput, ReviseRunUnitInputResult, RunDecision, RunMaterializationRecord, RunOutputSlot, RunOutputWaitDisposition, RunStage, RunTransitionOperation, RunUnit, UnitDecision, WorkflowRun, WorkOrder, WorkOrderExecution } from "../domain/run-record";
 import type { WaitClosesOn, WaitOutcome } from "../domain/wait";
 import type { StageOutcome } from "../domain/workflow";
 import type { AdmitStageUnitRequest, AdmitStageUnitResult } from "../domain/runs";
@@ -756,16 +756,18 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         : { kind: "invalidated", run_id: wait.run_id as WorkflowRunId, record_version: resultingVersion };
   }
 
-  async decide_gate_wait(request: { readonly wait_id: WaitId; readonly action: string; readonly actor: string; readonly detail: string | null; readonly decided_at: string }): Promise<CloseRunOutputWaitResult> {
+  async decide_gate_wait(request: DecideGateWait): Promise<CloseRunOutputWaitResult> {
     try {
       return await this.sql.transaction(async (transaction) => {
-        const rows = await transaction.query<{ readonly run_unit_id: string; readonly release_policy: OutputReleaseContract }>(`SELECT wait.run_unit_id::text,slot.release_policy
+        const rows = await transaction.query<{ readonly run_unit_id: string; readonly release_policy: OutputReleaseContract; readonly closes_on: WaitClosesOn }>(`SELECT wait.run_unit_id::text,slot.release_policy,wait.closes_on
           FROM oakridge.wait wait JOIN oakridge.run_output_slot slot ON slot.run_unit_id=wait.run_unit_id
             AND slot.output_name=wait.output_name AND slot.collection_key IS NOT DISTINCT FROM wait.collection_key
           WHERE wait.id=$1 AND wait.kind='gate' AND wait.run_unit_id IS NOT NULL`, [request.wait_id]);
         const subject = rows[0]; const release = subject?.release_policy;
         if (!subject || !release || release.kind !== "gate") return { kind: "wait_not_found", detail: `v2 gate wait '${request.wait_id}' was not found` };
-        const action = release.steps.flatMap((step) => step.actions).find((candidate) => candidate.name === request.action);
+        const gateClose = subject.closes_on.kind === "gate" ? subject.closes_on : null;
+        const pendingStep = gateClose ? release.steps.find((step) => step.type === gateClose.gate_step) : undefined;
+        const action = pendingStep?.actions.find((candidate) => gateClose?.actions.includes(candidate.name) && candidate.name === request.action);
         if (!action) return { kind: "wait_conflict", detail: `action '${request.action}' is not allowed for wait '${request.wait_id}'` };
         const disposition: RunOutputWaitDisposition = action.disposition === "release" ? "release" : action.disposition === "revise" ? "invalidate" : "fail";
         const own = await this.closeOutputWaitTransaction(transaction, { ...request, disposition });
@@ -774,7 +776,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
           const upstreamRows = await transaction.query<{ readonly wait_id: string }>(`SELECT wait.id::text AS wait_id
             FROM oakridge.run_unit unit CROSS JOIN LATERAL jsonb_array_elements(unit.input_snapshot) input(value)
             JOIN oakridge.wait wait ON wait.artifact_revision_id=(input.value->>'artifact_id')::uuid
-            WHERE unit.id=$1 AND wait.kind='handoff_external' AND wait.run_unit_id IS NOT NULL ORDER BY wait.id FOR UPDATE OF wait`, [subject.run_unit_id]);
+            WHERE unit.id=$1 AND wait.kind='handoff_external' AND wait.run_unit_id IS NOT NULL AND wait.status='open' ORDER BY wait.id FOR UPDATE OF wait`, [subject.run_unit_id]);
           if (upstreamRows.length === 0) throw new GateCoordinationConflict({ kind: "wait_conflict", detail: "gate revision target has no run-owned upstream handoff" });
           for (const upstream of upstreamRows) {
             const result = await this.closeOutputWaitTransaction(transaction, { wait_id: upstream.wait_id as WaitId,
@@ -790,7 +792,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
     }
   }
 
-  async complete_handoff_artifact(request: { readonly artifact_id: ArtifactId; readonly external_kind: string; readonly actor: string; readonly correlation_id: string; readonly decided_at: string }): Promise<CloseRunOutputWaitResult> {
+  async complete_handoff_artifact(request: CompleteHandoffArtifact): Promise<CloseRunOutputWaitResult> {
     const rows = await this.sql.query<{ readonly wait_id: string; readonly release_policy: OutputReleaseContract }>(`SELECT wait.id::text AS wait_id,slot.release_policy
       FROM oakridge.wait wait JOIN oakridge.run_output_slot slot ON slot.run_unit_id=wait.run_unit_id
         AND slot.output_name=wait.output_name AND slot.collection_key IS NOT DISTINCT FROM wait.collection_key

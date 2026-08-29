@@ -23,9 +23,9 @@ export type WaitOutcome =
   | { readonly kind: "withdrawn" } // actor/reason already live on the artifact row — not duplicated here
   | { readonly kind: "cancelled"; readonly reason: string | null };
 
-export type GateWaitOutcome = Extract<WaitOutcome, { kind: "decided" | "superseded" | "withdrawn" }>;
-export type HandoffDownstreamWaitOutcome = Extract<WaitOutcome, { kind: "decided" | "superseded" | "withdrawn" }>;
-export type HandoffExternalWaitOutcome = Extract<WaitOutcome, { kind: "external_completed" | "superseded" | "withdrawn" }>;
+export type GateWaitOutcome = Extract<WaitOutcome, { kind: "decided" | "superseded" | "withdrawn" | "cancelled" }>;
+export type HandoffDownstreamWaitOutcome = Extract<WaitOutcome, { kind: "decided" | "superseded" | "withdrawn" | "cancelled" }>;
+export type HandoffExternalWaitOutcome = Extract<WaitOutcome, { kind: "external_completed" | "superseded" | "withdrawn" | "cancelled" }>;
 
 /**
  * A close names its kind and only that kind's outcomes: a gate never completes
@@ -94,7 +94,7 @@ export interface OpenHandoffDownstreamWaitInput {
  * it diverges.
  */
 export interface GateWorkflowState {
-  readonly status: "pending" | "closed" | "superseded" | "withdrawn";
+  readonly status: "pending" | "closed" | "superseded" | "withdrawn" | "cancelled";
   readonly action?: string;
   readonly artifact_revision_id: ArtifactId;
   readonly gate_step: string;
@@ -102,7 +102,7 @@ export interface GateWorkflowState {
 }
 
 export interface HandoffWorkflowState {
-  readonly status: "awaiting_downstream" | "awaiting_external" | "revision_requested" | "released" | "superseded" | "withdrawn";
+  readonly status: "awaiting_downstream" | "awaiting_external" | "revision_requested" | "released" | "superseded" | "withdrawn" | "cancelled";
   readonly artifact_id: ArtifactId;
   readonly downstream_role?: string;
   readonly decision_artifact_id?: ArtifactId;
@@ -118,6 +118,7 @@ export const selectGateStateView = (wait: Wait | null): GateWorkflowState | null
   if (outcome.kind === "decided") return { status: "closed", action: outcome.action, ...base };
   if (outcome.kind === "superseded") return { status: "superseded", ...base };
   if (outcome.kind === "withdrawn") return { status: "withdrawn", ...base };
+  if (outcome.kind === "cancelled") return { status: "cancelled", ...base };
   throw new Error(`gate wait '${wait.id}' closed with outcome '${outcome.kind}'`);
 };
 
@@ -141,6 +142,7 @@ export const selectHandoffStatusFromWait = (
   if (status === "open") return kind === "handoff_external" ? "awaiting_external" : "awaiting_downstream";
   if (outcome === "superseded") return "superseded";
   if (outcome === "withdrawn") return "withdrawn";
+  if (outcome === "cancelled") return "cancelled";
   if (outcome === "external_completed") return "released";
   if (outcome === "decided") return "revision_requested";
   throw new Error(`a closed handoff wait carries no outcome (kind '${kind}')`);

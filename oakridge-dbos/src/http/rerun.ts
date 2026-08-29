@@ -55,9 +55,11 @@ export const createRerunApp = (dependencies: RerunHttpDependencies): Hono => {
     try {
       const runId = parseUuidId<WorkflowRunId>(context.req.param("run_id"));
       if (!runId) return context.json({ error: "workflow run was not found" }, 404);
-      return context.json(dependencies.v2_cancellation
-        ? await cancelV2Run(runId, dependencies.v2_cancellation)
-        : await cancelRun(runId, dependencies.cancellation), 202);
+      if (dependencies.v2_cancellation) {
+        const result = await cancelV2Run(runId, dependencies.v2_cancellation);
+        return result.kind === "run_not_found" ? context.json({ error: result.detail }, 404) : context.json(result, 202);
+      }
+      return context.json(await cancelRun(runId, dependencies.cancellation), 202);
     } catch (error) {
       return context.json({ error: error instanceof Error ? error.message : "cancellation failed" }, 409);
     }
