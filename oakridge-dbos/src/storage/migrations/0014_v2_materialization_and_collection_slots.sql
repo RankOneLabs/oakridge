@@ -26,12 +26,14 @@ CREATE UNIQUE INDEX artifact_collection_resource_version
   ON oakridge.artifact (stage_instance_id, execution_id, unit_id, output_name, collection_key, version)
   WHERE collection_key IS NOT NULL;
 ALTER TABLE oakridge.artifact DROP CONSTRAINT artifact_one_effective_revision;
-CREATE UNIQUE INDEX artifact_one_effective_scalar_revision
-  ON oakridge.artifact (stage_instance_id, execution_id, unit_id, output_name)
-  WHERE effective_slot AND collection_key IS NULL;
-CREATE UNIQUE INDEX artifact_one_effective_collection_revision
-  ON oakridge.artifact (stage_instance_id, execution_id, unit_id, output_name, collection_key)
-  WHERE effective_slot AND collection_key IS NOT NULL;
+-- Revision insertion deliberately precedes superseding the prior tip in the
+-- same transaction. Preserve the original deferred check while making NULL a
+-- first-class scalar identity beside independently-addressed collection keys.
+ALTER TABLE oakridge.artifact
+  ADD CONSTRAINT artifact_one_effective_revision
+  UNIQUE NULLS NOT DISTINCT
+    (stage_instance_id, execution_id, unit_id, output_name, collection_key, effective_slot)
+  DEFERRABLE INITIALLY DEFERRED;
 DROP INDEX oakridge.artifact_work_order_effect;
 CREATE UNIQUE INDEX artifact_work_order_scalar_effect
   ON oakridge.artifact (work_order_id, output_name, emission_idempotency_key)
