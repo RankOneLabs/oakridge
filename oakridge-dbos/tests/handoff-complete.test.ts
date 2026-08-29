@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 
 import type { ArtifactRevision } from "../src/domain/artifacts";
-import type { ArtifactId, ExecutionId, StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
+import type { ArtifactId, ExecutionId, RunRecordVersion, StageInstanceId, UnitId, WaitId, WorkflowRunId } from "../src/domain/primitives";
+import type { CloseRunOutputWait, CloseRunOutputWaitResult } from "../src/domain/run-record";
 import { createHandoffCompleteApp, type HandoffCompleteDependencies } from "../src/http/handoff-complete";
 
 const artifact: ArtifactRevision = {
@@ -18,7 +19,7 @@ const fixture = (state: "awaiting_external" | "awaiting_downstream" = "awaiting_
     get_handoff_state: async () => ({ status: state, artifact_id: artifact.id, command_workflow_id: "build-workflow:handoff:11111111-1111-4111-8111-111111111111" }),
     send_handoff_command: async (workflow_id, command, key) => { sent.push({ workflow_id, command, key }); },
   };
-  return { app: createHandoffCompleteApp(dependencies), sent };
+  return { app: createHandoffCompleteApp(dependencies), sent, dependencies };
 };
 
 const complete = (app: ReturnType<typeof createHandoffCompleteApp>, external_kind = "github_review") => app.request("/handoffs/11111111-1111-4111-8111-111111111111/external-complete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ external_kind, correlation_id: "pr-review-42", idempotency_key: "github-review-42" }) });
@@ -38,4 +39,48 @@ test("external completion rejects the wrong configured kind", async () => {
 test("external completion cannot arrive before downstream approval", async () => {
   const response = await complete(fixture("awaiting_downstream").app);
   expect(response.status).toBe(409);
+});
+
+/**
+ * The v2 external-completion command. As with the v2 gate route, there is no
+ * DBOS handoff workflow — `RunRecordRepository.close_output_wait` is the whole
+ * fact, called directly. These tests never touch `send_handoff_command`.
+ */
+const waitId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" as WaitId;
+
+const v2Fixture = (close_output_wait: (request: CloseRunOutputWait) => Promise<CloseRunOutputWaitResult>) =>
+  createHandoffCompleteApp({ ...fixture().dependencies, records: { close_output_wait } });
+
+const completeV2 = (app: ReturnType<typeof createHandoffCompleteApp>, id = waitId) =>
+  app.request(`/v2/waits/${id}/external-complete`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ correlation_id: "pr-review-42", actor: "poller:github" }) });
+
+test("v2 external completion releases the wait and reports the released artifact", async () => {
+  let received: CloseRunOutputWait | null = null;
+  const app = v2Fixture(async (request) => {
+    received = request;
+    return { kind: "released", artifact_id: "artifact-9" as ArtifactId, record_version: 3 as RunRecordVersion };
+  });
+  const response = await completeV2(app);
+  expect(response.status).toBe(202);
+  expect(await response.json()).toEqual({ wait_id: waitId, state: "released", artifact_id: "artifact-9", record_version: 3 });
+  expect(received).toEqual(expect.objectContaining({ wait_id: waitId, disposition: "release", actor: "poller:github", detail: "pr-review-42" }));
+});
+
+test("v2 external completion absorbs a retried confirmation", async () => {
+  const app = v2Fixture(async () => ({ kind: "already_applied", record_version: 3 as RunRecordVersion }));
+  const response = await completeV2(app);
+  expect(response.status).toBe(202);
+  expect(await response.json()).toEqual({ wait_id: waitId, state: "already_applied", record_version: 3 });
+});
+
+test("v2 external completion reports an unknown wait as 404", async () => {
+  const app = v2Fixture(async () => ({ kind: "wait_not_found", detail: "v2 wait was not found" }));
+  const response = await completeV2(app);
+  expect(response.status).toBe(404);
+});
+
+test("v2 external completion is inert without a wired run record", async () => {
+  const app = createHandoffCompleteApp(fixture().dependencies);
+  const response = await completeV2(app);
+  expect(response.status).toBe(501);
 });

@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 
-import { parseUuidId, type ArtifactId } from "../domain/primitives";
-import type { ArtifactRevisionRepository, ExecutionArtifactContextRepository } from "../storage/repositories";
+import { parseUuidId, type ArtifactId, type WaitId } from "../domain/primitives";
+import type { ArtifactRevisionRepository, ExecutionArtifactContextRepository, RunRecordRepository } from "../storage/repositories";
 import type { HandoffWorkflowState } from "../domain/wait";
 import type { HandoffCommand } from "../workflows/handoff";
 
@@ -10,7 +10,20 @@ export interface HandoffCompleteDependencies {
   readonly contexts: ExecutionArtifactContextRepository;
   readonly get_handoff_state: (artifact_id: ArtifactId, execution_workflow_id: string) => Promise<HandoffWorkflowState | null>;
   readonly send_handoff_command: (workflow_id: string, command: HandoffCommand, idempotency_key: string) => Promise<void>;
+  /** Present only where a v2 handoff wait may need resolving; see `records` on `GateResumeDependencies`. */
+  readonly records?: Pick<RunRecordRepository, "close_output_wait">;
+  readonly now?: () => string;
 }
+
+interface V2ExternalCompletionRequest { readonly correlation_id: string; readonly actor: string }
+
+const parseV2Request = (value: unknown): V2ExternalCompletionRequest | null => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const body = value as { readonly [key: string]: unknown };
+  if (typeof body.correlation_id !== "string" || body.correlation_id.trim() === "") return null;
+  if (typeof body.actor !== "string" || body.actor.trim() === "") return null;
+  return { correlation_id: body.correlation_id.trim(), actor: body.actor.trim() };
+};
 
 interface ExternalCompletionRequest { readonly external_kind: string; readonly correlation_id: string; readonly idempotency_key: string }
 
@@ -44,5 +57,28 @@ export const createHandoffCompleteApp = (dependencies: HandoffCompleteDependenci
     await dependencies.send_handoff_command(state.command_workflow_id, { kind: "external_completed", external_kind: request.external_kind, correlation_id: request.correlation_id }, request.idempotency_key);
     return http.json({ artifact_id: artifact.id, completed: true }, 202);
   });
+
+  /**
+   * The v2 external-completion command: releases the run-owned slot a
+   * `handoff` output parked, atomically with closing its wait. As with the v2
+   * gate route, there is no DBOS handoff workflow in the loop — the wait row
+   * and the slot transition are the whole fact.
+   */
+  app.post("/v2/waits/:waitId/external-complete", async (http) => {
+    if (!dependencies.records) return http.json({ error: "v2 handoff completion is not configured" }, 501);
+    const waitId = parseUuidId<WaitId>(http.req.param("waitId"));
+    if (!waitId) return http.json({ error: "wait not found" }, 404);
+    let raw: unknown;
+    try { raw = await http.req.json(); } catch { return http.json({ error: "request body must be JSON" }, 400); }
+    const request = parseV2Request(raw);
+    if (!request) return http.json({ error: "correlation_id and actor are required strings" }, 400);
+    const decided_at = (dependencies.now ?? (() => new Date().toISOString()))();
+    const result = await dependencies.records.close_output_wait({ wait_id: waitId, disposition: "release", actor: request.actor, detail: request.correlation_id, decided_at });
+    if (result.kind === "wait_not_found") return http.json({ error: result.detail }, 404);
+    if (result.kind === "wait_conflict") return http.json({ error: result.detail }, 409);
+    if (result.kind === "released") return http.json({ wait_id: waitId, state: "released", artifact_id: result.artifact_id, record_version: result.record_version }, 202);
+    return http.json({ wait_id: waitId, state: "already_applied", record_version: result.record_version }, 202);
+  });
+
   return app;
 };

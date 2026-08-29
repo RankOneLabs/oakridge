@@ -2,7 +2,8 @@ import { expect, test } from "bun:test";
 
 import type { ArtifactRevision } from "../src/domain/artifacts";
 import type { GateDecisionAudit, GateDecisionAuditId } from "../src/domain/gates";
-import type { ArtifactId, ExecutionId, StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
+import type { ArtifactId, ExecutionId, RunRecordVersion, StageInstanceId, UnitId, WaitId, WorkflowRunId } from "../src/domain/primitives";
+import type { CloseRunOutputWait, CloseRunOutputWaitResult } from "../src/domain/run-record";
 import { createGateResumeApp, type GateResumeDependencies } from "../src/http/gate-resume";
 
 const stageId = "stage-1" as StageInstanceId;
@@ -275,4 +276,69 @@ test("gate resume resolves the upstream handoff to the current revision of the i
   const response = await decide(createGateResumeApp(dependencies));
   expect(response.status).toBe(202);
   expect(handoffMessages).toEqual(["build-workflow:handoff:build-artifact-v2"]);
+});
+
+/**
+ * The v2 gate command. Unlike the legacy route above, there is no DBOS gate
+ * workflow — the whole fact is `RunRecordRepository.close_output_wait`, called
+ * directly. These tests never touch `send_gate_command`.
+ */
+const waitId = "99999999-9999-4999-8999-999999999999" as WaitId;
+
+const v2Fixture = (close_output_wait: (request: CloseRunOutputWait) => Promise<CloseRunOutputWaitResult>) =>
+  createGateResumeApp({ ...fixture().dependencies, records: { close_output_wait } });
+
+const resumeV2 = (app: ReturnType<typeof createGateResumeApp>, body: unknown, id = waitId) =>
+  app.request(`/v2/waits/${id}/resume`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+test("v2 gate resume releases the wait and reports the released artifact", async () => {
+  let received: CloseRunOutputWait | null = null;
+  const app = v2Fixture(async (request) => {
+    received = request;
+    return { kind: "released", artifact_id: "artifact-9" as ArtifactId, record_version: 6 as RunRecordVersion };
+  });
+  const response = await resumeV2(app, { disposition: "release", actor: "operator:sam", detail: "looks good" });
+  expect(response.status).toBe(202);
+  expect(await response.json()).toEqual({ wait_id: waitId, state: "released", artifact_id: "artifact-9", record_version: 6 });
+  expect(received).toEqual(expect.objectContaining({ wait_id: waitId, disposition: "release", actor: "operator:sam", detail: "looks good" }));
+});
+
+test("v2 gate resume invalidates on request", async () => {
+  const app = v2Fixture(async () => ({ kind: "invalidated", record_version: 7 as RunRecordVersion }));
+  const response = await resumeV2(app, { disposition: "invalidate", actor: "operator:sam" });
+  expect(response.status).toBe(202);
+  expect(await response.json()).toEqual({ wait_id: waitId, state: "invalidated", record_version: 7 });
+});
+
+test("v2 gate resume absorbs a retried decision", async () => {
+  const app = v2Fixture(async () => ({ kind: "already_applied", record_version: 6 as RunRecordVersion }));
+  const response = await resumeV2(app, { disposition: "release", actor: "operator:sam" });
+  expect(response.status).toBe(202);
+  expect(await response.json()).toEqual({ wait_id: waitId, state: "already_applied", record_version: 6 });
+});
+
+test("v2 gate resume reports an unknown wait as 404", async () => {
+  const app = v2Fixture(async () => ({ kind: "wait_not_found", detail: "v2 wait was not found" }));
+  const response = await resumeV2(app, { disposition: "release", actor: "operator:sam" });
+  expect(response.status).toBe(404);
+});
+
+test("v2 gate resume refuses a conflicting disposition", async () => {
+  const app = v2Fixture(async () => ({ kind: "wait_conflict", detail: "already closed under a different disposition" }));
+  const response = await resumeV2(app, { disposition: "invalidate", actor: "operator:sam" });
+  expect(response.status).toBe(409);
+});
+
+test("v2 gate resume rejects a malformed disposition without calling the domain command", async () => {
+  let calls = 0;
+  const app = v2Fixture(async () => { calls += 1; return { kind: "released", artifact_id: "artifact-9" as ArtifactId, record_version: 1 as RunRecordVersion }; });
+  const response = await resumeV2(app, { disposition: "approve", actor: "operator:sam" });
+  expect(response.status).toBe(400);
+  expect(calls).toBe(0);
+});
+
+test("v2 gate resume is inert without a wired run record", async () => {
+  const app = createGateResumeApp(fixture().dependencies);
+  const response = await resumeV2(app, { disposition: "release", actor: "operator:sam" });
+  expect(response.status).toBe(501);
 });

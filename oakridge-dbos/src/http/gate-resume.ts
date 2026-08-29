@@ -4,13 +4,15 @@ import { Hono } from "hono";
 
 import type { CompiledOutputContract } from "../domain/compiled-workflow";
 import type { GateDecisionAudit, GateDecisionAuditId } from "../domain/gates";
-import type { ArtifactId, StageInstanceId, UnitId } from "../domain/primitives";
+import { parseUuidId, type ArtifactId, type StageInstanceId, type UnitId, type WaitId } from "../domain/primitives";
+import type { RunOutputWaitDisposition } from "../domain/run-record";
 import type {
   ArtifactRevisionRepository,
   CollaborationRepository,
   ExecutionArtifactContext,
   ExecutionArtifactContextRepository,
   GateDecisionAuditRepository,
+  RunRecordRepository,
 } from "../storage/repositories";
 import type { GateWorkflowState, HandoffWorkflowState } from "../domain/wait";
 import type { GateCommand } from "../workflows/gate";
@@ -30,7 +32,24 @@ export interface GateResumeDependencies {
   readonly send_handoff_command: (workflow_id: string, command: HandoffCommand, idempotency_key: string) => Promise<void>;
   readonly now?: () => string;
   readonly new_audit_id?: () => GateDecisionAuditId;
+  /**
+   * The v2 run record, present only where a v2 gate wait may need resolving.
+   * Absent for a backend that has not cut any run over to v2 yet — the legacy
+   * route above is unaffected either way.
+   */
+  readonly records?: Pick<RunRecordRepository, "close_output_wait">;
 }
+
+interface V2WaitResumeRequest { readonly disposition: RunOutputWaitDisposition; readonly actor: string; readonly detail: string | null }
+
+const parseV2WaitResumeRequest = (value: unknown): V2WaitResumeRequest | null => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const body = value as { readonly [key: string]: unknown };
+  if (body.disposition !== "release" && body.disposition !== "invalidate") return null;
+  if (typeof body.actor !== "string" || body.actor.trim() === "") return null;
+  if (body.detail !== undefined && body.detail !== null && typeof body.detail !== "string") return null;
+  return { disposition: body.disposition, actor: body.actor.trim(), detail: typeof body.detail === "string" ? body.detail : null };
+};
 
 interface GateResumeRequest {
   readonly idempotency_key: string;
@@ -171,5 +190,29 @@ export const createGateResumeApp = (dependencies: GateResumeDependencies): Hono 
     await dependencies.audits.mark_applied(auditId, (dependencies.now ?? (() => new Date().toISOString()))());
     return http.json({ gate_id: compositeId, resumed: true }, 202);
   });
+
+  /**
+   * The v2 gate command: closes the run-owned wait and applies the matching
+   * slot release/invalidation atomically, entirely inside `RunRecordRepository`.
+   * Unlike the legacy route above, there is no DBOS gate workflow to send a
+   * command to — the wait row and the slot transition are the whole fact.
+   */
+  app.post("/v2/waits/:waitId/resume", async (http) => {
+    if (!dependencies.records) return http.json({ error: "v2 wait resume is not configured" }, 501);
+    const waitId = parseUuidId<WaitId>(http.req.param("waitId"));
+    if (!waitId) return http.json({ error: "wait not found" }, 404);
+    let rawBody: unknown;
+    try { rawBody = await http.req.json(); } catch { return http.json({ error: "request body must be JSON" }, 400); }
+    const request = parseV2WaitResumeRequest(rawBody);
+    if (!request) return http.json({ error: "disposition ('release' or 'invalidate') and actor are required" }, 400);
+    const decided_at = (dependencies.now ?? (() => new Date().toISOString()))();
+    const result = await dependencies.records.close_output_wait({ wait_id: waitId, disposition: request.disposition, actor: request.actor, detail: request.detail, decided_at });
+    if (result.kind === "wait_not_found") return http.json({ error: result.detail }, 404);
+    if (result.kind === "wait_conflict") return http.json({ error: result.detail }, 409);
+    if (result.kind === "released") return http.json({ wait_id: waitId, state: "released", artifact_id: result.artifact_id, record_version: result.record_version }, 202);
+    if (result.kind === "invalidated") return http.json({ wait_id: waitId, state: "invalidated", record_version: result.record_version }, 202);
+    return http.json({ wait_id: waitId, state: "already_applied", record_version: result.record_version }, 202);
+  });
+
   return app;
 };
