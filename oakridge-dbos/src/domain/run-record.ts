@@ -230,6 +230,40 @@ export interface WorkOrderExecution {
   readonly request: import("./execution").ExecutionRequest;
 }
 
+/** The persisted facts the compiler asks when reconciling a run's materialized graph. */
+export interface RunMaterializationUnitRecord {
+  readonly id: RunUnitId;
+  readonly unit_id: UnitId;
+  readonly input_fingerprint: InputFingerprint;
+  readonly state: UnitState;
+}
+
+export interface RunMaterializationStageRecord {
+  readonly id: StageInstanceId;
+  readonly stage_key: StageKey;
+  readonly state: RunState;
+  readonly materialization_closed: boolean;
+  readonly units: readonly RunMaterializationUnitRecord[];
+}
+
+export interface RunMaterializationArtifact extends ArtifactEnvelope {
+  readonly producer_stage_key: StageKey;
+}
+
+export interface RunMaterializationRecord {
+  readonly run: WorkflowRun;
+  readonly stages: readonly RunMaterializationStageRecord[];
+  /** Released slots, plus pending handoffs whose policy makes them available downstream before external settlement. */
+  readonly available_artifacts: readonly RunMaterializationArtifact[];
+}
+
+export interface FailRunMaterialization {
+  readonly run_id: WorkflowRunId;
+  readonly stage_key: StageKey | null;
+  readonly detail: string;
+  readonly failed_at: string;
+}
+
 export interface PublishWorkOrderArtifact {
   readonly artifact_id: ArtifactId;
   readonly work_order_id: WorkOrderId;
@@ -281,6 +315,7 @@ export type CloseRunOutputWaitResult =
 export type RunTransitionOperation =
   | "stage_materialized"
   | "materialization_closed"
+  | "materialization_failed"
   | "unit_admitted"
   | "operator_retry_created"
   | "input_revised"

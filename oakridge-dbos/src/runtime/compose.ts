@@ -53,7 +53,9 @@ import { BunGitCommandRunner } from "./git-command-runner";
 import { createProductionTopologyServices } from "./production-services";
 import { createPromptTemplateLoader } from "./prompt-template";
 import { GitProjectRepositoryIdentityResolver } from "./project-identity";
-import { dispatchRunLaunches } from "./run-launch-notifications";
+import { dispatchRunLaunches, dispatchV2RunLaunches } from "./run-launch-notifications";
+import { reconcileRunMaterialization } from "./run-materialization";
+import { publishWorkOrderArtifact } from "./publish-work-order-artifact";
 
 export interface OakridgeRuntimeConfig {
   readonly database_url: string;
@@ -62,6 +64,8 @@ export interface OakridgeRuntimeConfig {
    * launch is only picked up by a backend of the same version.
    */
   readonly application_version: string;
+  /** Temporary Slice 6 switch; v2 becomes the only value at clean cutover. */
+  readonly launch_topology?: "legacy" | "v2";
   /**
    * How a unit's work actually gets done, one adapter per stage type. The
    * agent-facing one is the collaborator a test replaces; the deterministic
@@ -161,13 +165,22 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     return pending;
   };
   const dispatchNotifications = () => trackDispatch(() => dispatchArtifactNotifications(artifacts, { send: sendArtifactWorkflowMessage }));
-  const dispatchLaunches = () => trackDispatch(() => dispatchRunLaunches(runs, dbosRuns));
+  const dispatchLaunches = () => trackDispatch(() => config.launch_topology === "v2"
+    ? dispatchV2RunLaunches(runs, dbosRuns)
+    : dispatchRunLaunches(runs, dbosRuns));
 
   registerDbosTransportClient(client);
   for (const adapter of config.executor_adapters) registerExecutorAdapter(adapter);
   registerExecutorAdapter(new RepositoryProvisioningAdapter({
     git: config.git_commands ?? new BunGitCommandRunner(),
     emit: (request) => emitExecutionArtifact({ contexts, artifacts, dispatch_notifications: dispatchNotifications }, request),
+    publish_work_order: async (request) => {
+      const result = await publishWorkOrderArtifact({ ...request, collection_key: null }, { records: runRecords, now });
+      if (result.kind === "published" || result.kind === "pending" || result.kind === "already_applied") {
+        await sendRunWakeHint(result.run_id, `provision:${result.run_id}:${result.record_version}`).catch(() => undefined);
+      }
+      return result;
+    },
   }));
   registerExecutionProjectionObserver(executions);
   registerArtifactLifecycleObserver(artifacts);
@@ -187,7 +200,12 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     selectHandoffStateView(await waits.find_handoff_waits(artifact_id, execution_workflow_id));
   registerProductionTopologyServices(createProductionTopologyServices({ definitions, runs, attempts, stages, executions, rerun_targets: rerunTargets,
     resume_artifacts: resumeArtifacts, waits, load_prompt_template: (path) => promptTemplates.load(path) }));
-  registerRunRecordWorkflowServices({ records: runRecords, find_executor: findExecutorAdapter, now });
+  registerRunRecordWorkflowServices({ records: runRecords, find_executor: findExecutorAdapter,
+    reconcile_materialization: async (run_id, materialized_at) => {
+      const result = await reconcileRunMaterialization(run_id, materialized_at,
+        { definitions, records: runRecords, load_prompt_template: (path) => promptTemplates.load(path) });
+      if (!result.ok) await runRecords.fail_materialization({ run_id, stage_key: result.error.stage_key, detail: result.error.detail, failed_at: materialized_at });
+    }, now });
 
   const cohortPullRequests: CohortPullRequestDependencies = {
     runs, epic_profiles: epicProfiles, contexts, artifacts, reconciliations: cohortReconciliations,
@@ -228,7 +246,8 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
       ping_thread: (input) => collaborationPings.enqueue(input), dispatch_notifications: dispatchNotifications },
     operator_projections: projections,
     artifact_detail: { artifacts, stages, audits, presentation_for_type: presentation, artifact_types: DEV_FLOW_ARTIFACT_TYPES },
-    run_launch: { definitions, projects, runs, projections, dispatch_launches: dispatchLaunches, application_version: config.application_version, now },
+    run_launch: { definitions, projects, runs, projections, dispatch_launches: dispatchLaunches, application_version: config.application_version,
+      launch_topology: config.launch_topology ?? "legacy", now },
     rerun: {
       stages, targets: rerunTargets, dbos: client, cancellation,
       stage_rerun: { runs, attempts, definitions, dbos: dbosRuns, now,

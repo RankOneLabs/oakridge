@@ -15,7 +15,7 @@ import type { ConfirmFinalPullRequestRequest, FinalPullRequestDomainError, Final
 import type { CohortPullRequestReconciliation } from "../domain/cohort-pull-request";
 import type { CloseWaitRequest, OpenGateWaitInput, OpenHandoffDownstreamWaitInput, Wait, WaitClosesOn, WaitOutcome } from "../domain/wait";
 import type { Result } from "../domain/primitives";
-import type { CloseRunOutputWait, CloseRunOutputWaitResult, ExecutorAttachment, ExecutorHealthObservation, InitializeStraightThroughRun, PersistMaterializedStage, PublishWorkOrderArtifact, PublishWorkOrderArtifactResult, RetryRunUnit, RetryRunUnitResult, ReviseRunUnitInput, ReviseRunUnitInputResult, RunDecision, WorkOrderExecution } from "../domain/run-record";
+import type { CloseRunOutputWait, CloseRunOutputWaitResult, ExecutorAttachment, ExecutorHealthObservation, FailRunMaterialization, InitializeStraightThroughRun, PersistMaterializedStage, PublishWorkOrderArtifact, PublishWorkOrderArtifactResult, RetryRunUnit, RetryRunUnitResult, ReviseRunUnitInput, ReviseRunUnitInputResult, RunDecision, RunMaterializationRecord, WorkOrderExecution } from "../domain/run-record";
 import type { WorkOrderId, WorkflowRunId as RunRecordWorkflowRunId } from "../domain/primitives";
 
 export interface WorkflowDefinitionRepository {
@@ -64,7 +64,11 @@ export interface RunRecordRepository {
   retry_unit(input: RetryRunUnit, retried_at: string): Promise<RetryRunUnitResult>;
   admit_unit(request: AdmitStageUnitRequest, admitted_at: string): Promise<AdmitStageUnitResult>;
   decide_run(run_id: RunRecordWorkflowRunId, decided_at: string): Promise<Result<RunDecision, RunRecordRepositoryError>>;
+  load_materialization_record(run_id: RunRecordWorkflowRunId): Promise<RunMaterializationRecord | null>;
+  load_work_order_capability_seed(): Promise<string>;
+  fail_materialization(input: FailRunMaterialization): Promise<void>;
   find_work_order_execution(work_order_id: WorkOrderId): Promise<WorkOrderExecution | null>;
+  find_work_order_attachment(work_order_id: WorkOrderId): Promise<ExecutorAttachment | null>;
   /**
    * Records an artifact fact under a work order's capability, atomically with
    * the effect its declared release policy has on the slot: an `immediate`

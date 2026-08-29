@@ -1,8 +1,8 @@
-import { createHash, randomUUID } from "node:crypto";
 import { Hono, type Context } from "hono";
 
-import { isJsonValue, parseUuidId, type ArtifactId, type OutputCollectionKey, type WorkOrderId } from "../domain/primitives";
+import { isJsonValue, parseUuidId, type OutputCollectionKey, type WorkOrderId } from "../domain/primitives";
 import type { PublishWorkOrderArtifactResult } from "../domain/run-record";
+import { publishWorkOrderArtifact } from "../runtime/publish-work-order-artifact";
 import type { RunRecordRepository } from "../storage/repositories";
 
 export interface WorkOrderArtifactCallbackDependencies {
@@ -31,11 +31,9 @@ export const createWorkOrderArtifactCallbackApp = (dependencies: WorkOrderArtifa
     let body: unknown;
     try { body = await context.req.json(); } catch { return context.json({ error: "invalid json body" }, 400); }
     if (!isJsonValue(body)) return context.json({ error: "body is not JSON-compatible" }, 400);
-    const payloadHash = createHash("sha256").update(JSON.stringify(body)).digest("hex");
     const collectionKey = context.req.header("output-collection-key")?.trim() || null;
-    const result = await dependencies.records.publish_artifact({ artifact_id: randomUUID() as ArtifactId, work_order_id: workOrderId,
-      capability_hash: createHash("sha256").update(capability).digest("hex"), output_name: context.req.param("outputName") ?? "", collection_key: collectionKey as OutputCollectionKey | null, body,
-      idempotency_key: context.req.header("idempotency-key")?.trim() || payloadHash, payload_hash: payloadHash, published_at: dependencies.now() });
+    const result = await publishWorkOrderArtifact({ work_order_id: workOrderId, capability, output_name: context.req.param("outputName") ?? "",
+      collection_key: collectionKey as OutputCollectionKey | null, body, idempotency_key: context.req.header("idempotency-key")?.trim() || null }, dependencies);
     const status = statusOf(result);
     if (result.kind === "published" || result.kind === "already_applied" || result.kind === "pending") {
       // A hint only ever tells the root "ask again" — sent fire-and-forget,
