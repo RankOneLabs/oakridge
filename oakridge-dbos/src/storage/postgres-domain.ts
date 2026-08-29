@@ -449,6 +449,7 @@ interface ArtifactRow {
   readonly execution_id: string;
   readonly unit_id: string;
   readonly output_name: string;
+  readonly collection_key: string | null;
   readonly artifact_type: string;
   readonly label: string | null;
   readonly body: ArtifactRevision["body"];
@@ -471,13 +472,13 @@ interface ArtifactRow {
 // them inside emit_revision's lock-holding transaction.
 const artifactColumns = `id, chain_id,
   run_id, stage_instance_id, execution_id, unit_id, output_name, artifact_type,
-  label, body, version, parent_artifact_id, emission_payload_hash, lifecycle_state,
+  collection_key, label, body, version, parent_artifact_id, emission_payload_hash, lifecycle_state,
   superseded_by_artifact_id, withdrawn_actor, withdrawn_reason,
   withdrawn_at::text, released_at::text, created_at::text, attempt_workflow_id`;
 
-/** Bind order for the four coordinate columns, in one place so it cannot drift. */
+/** Bind order for the complete slot coordinate, in one place so it cannot drift. */
 const artifactCoordinateParameters = (coordinate: ArtifactCoordinate): readonly unknown[] =>
-  [coordinate.stage_instance_id, coordinate.execution_id, coordinate.unit_id, coordinate.output_name];
+  [coordinate.stage_instance_id, coordinate.execution_id, coordinate.unit_id, coordinate.output_name, coordinate.collection_key ?? null];
 
 const decodeArtifactLifecycle = (row: ArtifactRow): ArtifactRevision["lifecycle"] => {
   if (row.lifecycle_state === "current") return { kind: "current" };
@@ -496,6 +497,7 @@ const decodeArtifact = (row: ArtifactRow): ArtifactRevision => ({
   run_id: row.run_id as ArtifactRevision["run_id"], stage_instance_id: row.stage_instance_id as ArtifactRevision["stage_instance_id"],
   execution_id: row.execution_id as ArtifactRevision["execution_id"], unit_id: row.unit_id as ArtifactRevision["unit_id"],
   output_name: row.output_name, artifact_type: row.artifact_type, label: row.label, body: row.body,
+  collection_key: row.collection_key as ArtifactRevision["collection_key"],
   version: row.version, parent_artifact_id: row.parent_artifact_id as ArtifactRevision["parent_artifact_id"],
   lifecycle: decodeArtifactLifecycle(row), created_at: row.created_at,
 });
@@ -505,7 +507,7 @@ export class PostgresArtifactRevisionRepository implements ArtifactRevisionRepos
 
   async emit_revision(id: ArtifactId, emission: ArtifactEmission, created_at: string, delivery: ArtifactEmissionDelivery): Promise<EmitArtifactRevisionResult> {
     return this.sql.transaction(async (transaction) => {
-      const resourceKey = `${emission.stage_instance_id}:${emission.execution_id}:${emission.unit_id}:${emission.output_name}`;
+      const resourceKey = `${emission.stage_instance_id}:${emission.execution_id}:${emission.unit_id}:${emission.output_name}:${emission.collection_key ?? "scalar"}`;
       await transaction.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [resourceKey]);
       const stages = await transaction.query<{ readonly ended_at: string | null }>(
         "SELECT ended_at::text FROM oakridge.stage_instance WHERE id = $1 FOR SHARE", [emission.stage_instance_id]);
@@ -515,9 +517,10 @@ export class PostgresArtifactRevisionRepository implements ArtifactRevisionRepos
          WHERE artifact.id = (
            SELECT replay.artifact_id FROM oakridge.artifact_emission_idempotency replay
            WHERE replay.stage_instance_id = $1 AND replay.execution_id = $2 AND replay.unit_id = $3
-             AND replay.output_name = $4 AND replay.idempotency_key = $5
+             AND replay.output_name = $4 AND replay.collection_key IS NOT DISTINCT FROM $5
+             AND replay.idempotency_key = $6
          )`,
-        [emission.stage_instance_id, emission.execution_id, emission.unit_id, emission.output_name, emission.idempotency_key],
+        [emission.stage_instance_id, emission.execution_id, emission.unit_id, emission.output_name, emission.collection_key ?? null, emission.idempotency_key],
       );
       const replay = replayRows[0];
       if (replay) {
@@ -527,8 +530,9 @@ export class PostgresArtifactRevisionRepository implements ArtifactRevisionRepos
       const effectiveRows = await transaction.query<ArtifactRow>(
         `SELECT ${artifactColumns} FROM oakridge.artifact artifact
          WHERE stage_instance_id = $1 AND execution_id = $2 AND unit_id = $3 AND output_name = $4
+           AND collection_key IS NOT DISTINCT FROM $5
            AND lifecycle_state IN ('current', 'released')`,
-        [emission.stage_instance_id, emission.execution_id, emission.unit_id, emission.output_name],
+        artifactCoordinateParameters(emission),
       );
       const effective = effectiveRows[0];
       // A released artifact is final for the attempt that released it. A later
@@ -541,8 +545,9 @@ export class PostgresArtifactRevisionRepository implements ArtifactRevisionRepos
       const tips = await transaction.query<ArtifactRow>(
         `SELECT ${artifactColumns} FROM oakridge.artifact artifact
          WHERE stage_instance_id = $1 AND execution_id = $2 AND unit_id = $3 AND output_name = $4
+           AND collection_key IS NOT DISTINCT FROM $5
          ORDER BY version DESC LIMIT 1`,
-        [emission.stage_instance_id, emission.execution_id, emission.unit_id, emission.output_name],
+        artifactCoordinateParameters(emission),
       );
       const tip = tips[0];
       if (effective && tip?.id !== effective.id) {
@@ -555,13 +560,13 @@ export class PostgresArtifactRevisionRepository implements ArtifactRevisionRepos
       const version = (tip?.version ?? 0) + 1;
       const rows = await transaction.query<ArtifactRow>(
         `INSERT INTO oakridge.artifact
-           (id, chain_id, run_id, stage_instance_id, execution_id, unit_id, output_name, artifact_type,
+           (id, chain_id, run_id, stage_instance_id, execution_id, unit_id, output_name, collection_key, artifact_type,
             body, label, version, parent_artifact_id, emission_idempotency_key, emission_payload_hash, created_at, attempt_workflow_id)
-         VALUES ($1, $15, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13, $14::timestamptz, $16)
+         VALUES ($1, $16, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15::timestamptz, $17)
          RETURNING ${artifactColumns}`,
         // A first revision roots its own chain; every later one inherits the root
         // its parent already carries, so the walk never has to be repeated.
-        [id, emission.run_id, emission.stage_instance_id, emission.execution_id, emission.unit_id, emission.output_name, emission.artifact_type, emission.body, emission.label, version, tip?.id ?? null, emission.idempotency_key, emission.payload_hash, created_at, tip?.chain_id ?? id, delivery.target_workflow_id],
+        [id, emission.run_id, emission.stage_instance_id, emission.execution_id, emission.unit_id, emission.output_name, emission.collection_key ?? null, emission.artifact_type, emission.body, emission.label, version, tip?.id ?? null, emission.idempotency_key, emission.payload_hash, created_at, tip?.chain_id ?? id, delivery.target_workflow_id],
       );
       if (!rows[0]) throw new Error("artifact revision insert returned no row");
       await this.recordEmissionKey(transaction, emission, id, created_at);
@@ -594,7 +599,7 @@ export class PostgresArtifactRevisionRepository implements ArtifactRevisionRepos
       const rows = await transaction.query<ArtifactRow>(`SELECT ${artifactColumns} FROM oakridge.artifact artifact WHERE id = $1`, [request.artifact_id]);
       const found = rows[0];
       if (!found) return { kind: "not_found", artifact_id: request.artifact_id };
-      const resourceKey = `${found.stage_instance_id}:${found.execution_id}:${found.unit_id}:${found.output_name}`;
+      const resourceKey = `${found.stage_instance_id}:${found.execution_id}:${found.unit_id}:${found.output_name}:${found.collection_key ?? "scalar"}`;
       await transaction.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [resourceKey]);
       const lockedRows = await transaction.query<ArtifactRow>(`SELECT ${artifactColumns} FROM oakridge.artifact artifact WHERE id = $1 FOR UPDATE`, [request.artifact_id]);
       const artifact = lockedRows[0];
@@ -603,8 +608,8 @@ export class PostgresArtifactRevisionRepository implements ArtifactRevisionRepos
       if (artifact.lifecycle_state === "released") return { kind: "release_conflict", artifact_id: request.artifact_id, released_at: artifact.released_at! };
       if (artifact.lifecycle_state !== "current") {
         const current = await transaction.query<{ readonly id: string }>(
-          `SELECT id::text FROM oakridge.artifact WHERE stage_instance_id = $1 AND execution_id = $2 AND unit_id = $3 AND output_name = $4 AND lifecycle_state = 'current'`,
-          [artifact.stage_instance_id, artifact.execution_id, artifact.unit_id, artifact.output_name],
+          `SELECT id::text FROM oakridge.artifact WHERE stage_instance_id = $1 AND execution_id = $2 AND unit_id = $3 AND output_name = $4 AND collection_key IS NOT DISTINCT FROM $5 AND lifecycle_state = 'current'`,
+          [artifact.stage_instance_id, artifact.execution_id, artifact.unit_id, artifact.output_name, artifact.collection_key],
         );
         return { kind: "not_current", artifact_id: request.artifact_id, current_artifact_id: current[0]?.id as ArtifactId ?? null };
       }
@@ -629,7 +634,7 @@ export class PostgresArtifactRevisionRepository implements ArtifactRevisionRepos
       const foundRows = await transaction.query<ArtifactRow>(`SELECT ${artifactColumns} FROM oakridge.artifact artifact WHERE id = $1`, [id]);
       const found = foundRows[0];
       if (!found) return { kind: "not_current", artifact_id: id };
-      const resourceKey = `${found.stage_instance_id}:${found.execution_id}:${found.unit_id}:${found.output_name}`;
+      const resourceKey = `${found.stage_instance_id}:${found.execution_id}:${found.unit_id}:${found.output_name}:${found.collection_key ?? "scalar"}`;
       await transaction.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [resourceKey]);
       const rows = await transaction.query<ArtifactRow>(`SELECT ${artifactColumns} FROM oakridge.artifact artifact WHERE id = $1 FOR UPDATE`, [id]);
       const artifact = rows[0];
@@ -646,12 +651,12 @@ export class PostgresArtifactRevisionRepository implements ArtifactRevisionRepos
   }
 
   async find_tip(coordinate: ArtifactCoordinate): Promise<ArtifactRevision | null> {
-    const rows = await this.sql.query<ArtifactRow>(`SELECT ${artifactColumns} FROM oakridge.artifact artifact WHERE stage_instance_id = $1 AND execution_id = $2 AND unit_id = $3 AND output_name = $4 ORDER BY version DESC LIMIT 1`, artifactCoordinateParameters(coordinate));
+    const rows = await this.sql.query<ArtifactRow>(`SELECT ${artifactColumns} FROM oakridge.artifact artifact WHERE stage_instance_id = $1 AND execution_id = $2 AND unit_id = $3 AND output_name = $4 AND collection_key IS NOT DISTINCT FROM $5 ORDER BY version DESC LIMIT 1`, artifactCoordinateParameters(coordinate));
     return rows[0] ? decodeArtifact(rows[0]) : null;
   }
 
   async find_current(coordinate: ArtifactCoordinate): Promise<ArtifactRevision | null> {
-    const rows = await this.sql.query<ArtifactRow>(`SELECT ${artifactColumns} FROM oakridge.artifact artifact WHERE stage_instance_id = $1 AND execution_id = $2 AND unit_id = $3 AND output_name = $4 AND lifecycle_state = 'current'`, artifactCoordinateParameters(coordinate));
+    const rows = await this.sql.query<ArtifactRow>(`SELECT ${artifactColumns} FROM oakridge.artifact artifact WHERE stage_instance_id = $1 AND execution_id = $2 AND unit_id = $3 AND output_name = $4 AND collection_key IS NOT DISTINCT FROM $5 AND lifecycle_state = 'current'`, artifactCoordinateParameters(coordinate));
     return rows[0] ? decodeArtifact(rows[0]) : null;
   }
 
@@ -749,10 +754,10 @@ export class PostgresArtifactRevisionRepository implements ArtifactRevisionRepos
   private async recordEmissionKey(transaction: SqlExecutor, emission: ArtifactEmission, artifactId: ArtifactId, createdAt: string): Promise<void> {
     await transaction.query(
       `INSERT INTO oakridge.artifact_emission_idempotency
-         (stage_instance_id, execution_id, unit_id, output_name, idempotency_key, payload_hash, artifact_id, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::timestamptz)`,
+         (stage_instance_id, execution_id, unit_id, output_name, collection_key, idempotency_key, payload_hash, artifact_id, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::timestamptz)`,
       [emission.stage_instance_id, emission.execution_id, emission.unit_id, emission.output_name,
-        emission.idempotency_key, emission.payload_hash, artifactId, createdAt],
+        emission.collection_key ?? null, emission.idempotency_key, emission.payload_hash, artifactId, createdAt],
     );
   }
 }

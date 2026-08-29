@@ -13,6 +13,7 @@ export interface ArtifactCoordinate {
   readonly execution_id: ExecutionId;
   readonly unit_id: UnitId;
   readonly output_name: string;
+  readonly collection_key?: import("./primitives").OutputCollectionKey | null;
 }
 
 export interface ArtifactRevision {
@@ -76,6 +77,7 @@ export interface ArtifactEmission {
   readonly execution_id: ExecutionId;
   readonly unit_id: UnitId;
   readonly output_name: string;
+  readonly collection_key?: import("./primitives").OutputCollectionKey | null;
   readonly artifact_type: ArtifactTypeId;
   readonly label: string | null;
   readonly body: JsonValue;

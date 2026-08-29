@@ -73,7 +73,9 @@ compatibility logic. The v2 straight-through path currently supports immediate
 output release only on the original straight-through compatibility path. The
 run-owned path now owns gates, waits, collections, fan-out materialization,
 dependency readiness, capacity, manual admission, and revision invalidation.
-Operator retry, public cutover, and the one-run rescue remain in Slices 5–6.
+Operator retry and public clean cutover remain in Slices 5–6. The last legacy
+run was cancelled and deleted before cutover; no rescue or adoption path is
+required or permitted.
 
 Before adding Slice 3 behavior, add the DBOS process-crash matrix around the
 existing v2 workflows: interruption before and after executor ensure, external
@@ -732,38 +734,31 @@ to replay through new topology code.
 - the `resettle-parked-coordinator` DBOS-history surgery utility;
 - tests whose only purpose is preserving old coordinator message choreography.
 
-## 11. Current stuck-run rescue
+## 11. Clean-cutover boundary
 
-Legacy support is limited to rescuing the one currently stuck run. This is not
-a general migration system and must not shape the new workflow architecture.
+There are no legacy runs to rescue. The last legacy run was explicitly
+cancelled and deleted and the old server was stopped before v2 cutover work
+continued.
 
-The rescue preserves the logical run ID, its artifact/review history, operator
-decisions, and externally meaningful identifiers. It does not replay the old
-coordinator under new code and does not edit DBOS history.
+Production cutover therefore starts from an empty Oakridge application
+database. Numbered migrations may still construct that fresh schema, but no
+migration may claim to convert a pre-v2 run into a valid v2 run record. In
+particular, defaults for new state, release policy, admission, or
+materialization fields are schema-construction details only; they are not a
+backfill contract.
 
-One audited rescue command will:
+The cutover procedure must:
 
-1. require the exact logical run ID and a command idempotency key;
-2. read and print the run, stages, artifacts, waits, and external executor
-   attachments it will adopt;
-3. refuse any run other than the explicitly configured rescue target;
-4. create v2 units and output slots from unambiguous current domain records;
-5. attach released artifacts to their run-owned slots;
-6. preserve open app-owned waits and their decisions;
-7. record ambiguities as a refusal rather than guessing;
-8. mark the old topology ownership retired in Oakridge domain state;
-9. launch a new v2 root workflow for the same logical run ID;
-10. request cleanup of orphaned external executors independently;
-11. write an immutable rescue audit containing before/after identities and
-    adopted artifacts;
-12. be idempotent on rerun.
+1. keep the old server and all old DBOS workers stopped;
+2. archive any operator data required outside the live service;
+3. recreate the Oakridge application database;
+4. apply the schema from zero and seed current definitions/configuration;
+5. use a new DBOS application version and only the v2 workflow names;
+6. launch no old topology workflow and run no adoption or rescue command.
 
-If the stuck run's current data predates a required app-owned fact and cannot
-be mapped unambiguously, the rescue tool stops and reports the exact missing
-fact for a human-supplied rescue decision. It never infers truth from a session
-status or deletes DBOS checkpoints.
-
-After that run is terminal, the rescue code is removed.
+An in-place deployment over a database containing legacy runs is unsupported
+and must stop before serving traffic. It must never silently reinterpret old
+terminal rows as active v2 rows.
 
 ## 12. Implementation sequence
 
@@ -828,14 +823,13 @@ reachable test database and otherwise skip.
    satisfaction.
 4. Prove infrastructure recovery needs no retry-specific domain transition.
 
-### Slice 6 — Cutover and stuck-run rescue
+### Slice 6 — Clean cutover
 
 1. Stop launching the old topology for new runs.
-2. Run the explicit rescue for the one stuck run.
-3. Verify its logical history and operator surface remain intact.
-4. Delete the old topology, projection replacement, relay settlement, and
+2. Require an empty v2 application database and seed current configuration.
+3. Delete the old topology, projection replacement, relay settlement, and
    DBOS-history surgery code.
-5. Remove the rescue command after the rescued run reaches a terminal state.
+4. Prove new workflow definitions cannot replay old topology histories.
 
 ## 13. Required tests
 
@@ -886,15 +880,13 @@ None may create a second logical work order or require projection replacement.
 - cancellation racing publication cannot produce a satisfied cancelled unit;
 - operator retry command replay returns the same work order.
 
-### 13.5 Versioning and rescue
+### 13.5 Versioning and cutover
 
 - new workflow definitions never replay old topology histories;
-- no production or rescue code mutates DBOS operation history;
-- rescue dry-run reports the complete adoption set;
-- rescue refuses an ambiguous slot;
-- rescue is idempotent;
-- rescued run keeps its logical run ID and artifact/review history;
-- the new root finishes the rescued run from its adopted run record.
+- no production or cutover code mutates DBOS operation history;
+- an in-place cutover with legacy runs is refused;
+- a fresh database migrates and seeds from zero;
+- no rescue, adoption, or legacy-run backfill code ships.
 
 ## 14. Observability
 
@@ -936,9 +928,9 @@ This update is complete when:
 - no external API call can block acceptance of an already satisfied unit;
 - all new-run end-to-end tests pass with deliberate crashes at each durable
   boundary;
-- the one stuck run has been rescued without DBOS-history mutation;
-- old coordinator/relay/projection-replacement code and the temporary rescue
-  path have been deleted.
+- the clean database cutover is documented and verified;
+- old coordinator/relay/projection-replacement and DBOS-history surgery code
+  has been deleted.
 
 ## 16. Explicit non-goals
 

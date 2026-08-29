@@ -34,6 +34,41 @@ ALTER TABLE oakridge.artifact
   UNIQUE NULLS NOT DISTINCT
     (stage_instance_id, execution_id, unit_id, output_name, collection_key, effective_slot)
   DEFERRABLE INITIALLY DEFERRED;
+-- The revision-link validator predates collection slots. A parent and child
+-- must belong to the same complete slot identity; otherwise two collection
+-- members can be spliced into one revision chain while every unique index
+-- remains satisfied.
+CREATE OR REPLACE FUNCTION oakridge.validate_artifact_revision_link()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  parent oakridge.artifact%ROWTYPE;
+  child oakridge.artifact%ROWTYPE;
+BEGIN
+  IF NEW.parent_artifact_id IS NOT NULL THEN
+    SELECT * INTO parent FROM oakridge.artifact WHERE id = NEW.parent_artifact_id;
+    IF NOT FOUND
+       OR parent.run_id <> NEW.run_id
+       OR parent.stage_instance_id <> NEW.stage_instance_id
+       OR parent.execution_id <> NEW.execution_id
+       OR parent.unit_id <> NEW.unit_id
+       OR parent.output_name <> NEW.output_name
+       OR parent.collection_key IS DISTINCT FROM NEW.collection_key
+       OR parent.artifact_type <> NEW.artifact_type
+       OR parent.version + 1 <> NEW.version THEN
+      RAISE EXCEPTION 'artifact % has an invalid parent revision link', NEW.id;
+    END IF;
+    IF parent.lifecycle_state = 'superseded' AND parent.superseded_by_artifact_id <> NEW.id THEN
+      RAISE EXCEPTION 'artifact % does not match superseded parent %', NEW.id, parent.id;
+    END IF;
+  END IF;
+  IF NEW.lifecycle_state = 'superseded' THEN
+    SELECT * INTO child FROM oakridge.artifact WHERE parent_artifact_id = NEW.id;
+    IF NOT FOUND OR NEW.superseded_by_artifact_id <> child.id THEN
+      RAISE EXCEPTION 'superseded artifact % does not identify its child revision', NEW.id;
+    END IF;
+  END IF;
+  RETURN NULL;
+END $$;
 DROP INDEX oakridge.artifact_work_order_effect;
 CREATE UNIQUE INDEX artifact_work_order_scalar_effect
   ON oakridge.artifact (work_order_id, output_name, emission_idempotency_key)
