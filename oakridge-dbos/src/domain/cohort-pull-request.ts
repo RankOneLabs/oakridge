@@ -17,11 +17,22 @@
  * recorded as skipped instead.
  */
 import type { ForgeRepositoryIdentity } from "./epic";
-import type { StageInstanceId, UnitId, WorkflowRunId } from "./primitives";
+import type { ArtifactId, JsonValue, StageInstanceId, UnitId, WorkflowRunId } from "./primitives";
 import {
   parseGithubPullRequestIdentity, pullRequestMismatch, pullRequestUrlsMatch, repositoriesMatch,
   type PullRequestMismatch, type PullRequestObservation,
 } from "./pull-request";
+
+/** The run-owned facts required to reconcile one cohort's external handoff. */
+export interface RunOwnedCohortHandoff {
+  readonly run_id: WorkflowRunId;
+  readonly stage_instance_id: StageInstanceId;
+  readonly unit_id: UnitId;
+  readonly repository_key: string;
+  readonly handoff_artifact_id: ArtifactId;
+  readonly handoff_body: JsonValue;
+  readonly summary_body: JsonValue;
+}
 
 /** What the run expects this cohort's pull request to be. */
 export interface ExpectedCohortPullRequest {

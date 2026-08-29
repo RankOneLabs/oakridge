@@ -19,24 +19,19 @@ import {
   operatorMergedObservation, reconcileCohortPullRequest, withCompletion,
   type CohortPullRequestOutcome, type CohortPullRequestReconciliation, type ExpectedCohortPullRequest,
 } from "../domain/cohort-pull-request";
-import { PR_SUMMARY_ARTIFACT_TYPE, type BuildResultBody, type PrSummaryBody } from "../domain/dev-flow-artifacts";
+import type { BuildResultBody, PrSummaryBody } from "../domain/dev-flow-artifacts";
 import type { EpicWorkflowProfile } from "../domain/epic";
 import { err, ok, type ArtifactId, type JsonValue, type Result, type StageInstanceId, type UnitId } from "../domain/primitives";
 import type { PullRequestObservation } from "../domain/pull-request";
-import type { HandoffWorkflowState } from "../domain/wait";
-import type { HandoffCommand } from "../workflows/handoff";
-import type { ArtifactRevisionRepository, CohortPullRequestRepository, EpicWorkflowProfileRepository, ExecutionArtifactContext, ExecutionArtifactContextRepository, WorkflowRunRepository } from "../storage/repositories";
+import type { CohortPullRequestRepository, EpicWorkflowProfileRepository, RunRecordRepository, WorkflowRunRepository } from "../storage/repositories";
 
 const GITHUB_REVIEW_WAIT = "github_review";
 
 export interface CohortPullRequestDependencies {
   readonly runs: WorkflowRunRepository;
   readonly epic_profiles: EpicWorkflowProfileRepository;
-  readonly contexts: ExecutionArtifactContextRepository;
-  readonly artifacts: ArtifactRevisionRepository;
   readonly reconciliations: CohortPullRequestRepository;
-  readonly get_handoff_state: (artifact_id: ArtifactId, execution_workflow_id: string) => Promise<HandoffWorkflowState | null>;
-  readonly send_handoff_command: (workflow_id: string, command: HandoffCommand, idempotency_key: string) => Promise<void>;
+  readonly records: Pick<RunRecordRepository, "find_cohort_handoff" | "complete_handoff_artifact">;
   readonly now: () => string;
 }
 
@@ -99,7 +94,6 @@ const selectExpectedBaseBranch = (profile: EpicWorkflowProfile | null, runContex
 };
 
 interface CohortHandoff {
-  readonly context: ExecutionArtifactContext;
   readonly expected: ExpectedCohortPullRequest;
   readonly handoff_artifact_id: ArtifactId;
 }
@@ -110,44 +104,25 @@ const loadCohortHandoff = async (
   stageInstanceId: StageInstanceId,
   unitId: UnitId,
 ): Promise<Result<CohortHandoff, CohortPullRequestError>> => {
-  const context = await dependencies.contexts.find_for_emit(stageInstanceId, unitId);
-  if (!context) return failure("cohort_not_found", `no execution for stage '${stageInstanceId}' unit '${unitId}'`);
-
-  const handoffOutput = context.outputs.find((output) => output.release.kind === "handoff");
-  if (!handoffOutput || handoffOutput.release.kind !== "handoff") return failure("not_a_pull_request_cohort", "this unit's stage declares no handoff output");
-  if (handoffOutput.release.external_wait_kind !== GITHUB_REVIEW_WAIT) {
-    return failure("not_a_pull_request_cohort", `this unit's handoff waits on '${handoffOutput.release.external_wait_kind}', not '${GITHUB_REVIEW_WAIT}'`);
-  }
-  const coordinate = { stage_instance_id: context.stage_instance_id, execution_id: context.execution_id, unit_id: context.unit_id } as const;
-  const handoffArtifact = await dependencies.artifacts.find_current({ ...coordinate, output_name: handoffOutput.name });
-  if (!handoffArtifact) return failure("missing_pull_request_evidence", `unit '${unitId}' has emitted no current '${handoffOutput.name}'`);
-
-  // The summary is looked up by tip rather than by `find_current`, because it
-  // has almost certainly been released: it is an immediate output, so the
-  // moment the build emits it the run marks it released and its lifecycle stops
-  // being `current`. A superseded or withdrawn revision is still refused.
-  const summaryOutput = context.outputs.find((output) => output.artifact_type === PR_SUMMARY_ARTIFACT_TYPE);
-  const summaryTip = summaryOutput ? await dependencies.artifacts.find_tip({ ...coordinate, output_name: summaryOutput.name }) : null;
-  const summaryArtifact = summaryTip && (summaryTip.lifecycle.kind === "current" || summaryTip.lifecycle.kind === "released") ? summaryTip : null;
-  if (!summaryArtifact) return failure("missing_pull_request_evidence", `unit '${unitId}' has emitted no live '${PR_SUMMARY_ARTIFACT_TYPE}' to reconcile against`);
-  const summary = summaryArtifact.body as unknown as PrSummaryBody;
-  const url = readString(summaryArtifact.body, "pr_url");
-  const headBranch = readString(summaryArtifact.body, "branch");
+  const record = await dependencies.records.find_cohort_handoff(stageInstanceId, unitId);
+  if (!record) return failure("cohort_not_found", `no run-owned handoff for stage '${stageInstanceId}' unit '${unitId}'`);
+  const summary = record.summary_body as unknown as PrSummaryBody;
+  const url = readString(record.summary_body, "pr_url");
+  const headBranch = readString(record.summary_body, "branch");
   if (!url || !headBranch) return failure("missing_pull_request_evidence", `unit '${unitId}' reported no pull request URL and branch: ${JSON.stringify(summary)}`);
 
   // The repository key rides on the build result, which is the artifact that
   // names what was built. Falling back to the unit id keeps the durable record
   // addressable for a definition that does not carry one.
-  const repositoryKey = readString(handoffArtifact.body, "repository_key" satisfies keyof BuildResultBody) ?? String(unitId);
-  const run = await dependencies.runs.find_by_id(context.run_id);
-  const profile = await dependencies.epic_profiles.find_by_run_id(context.run_id);
+  const repositoryKey = readString(record.handoff_body, "repository_key" satisfies keyof BuildResultBody) ?? record.repository_key;
+  const run = await dependencies.runs.find_by_id(record.run_id);
+  const profile = await dependencies.epic_profiles.find_by_run_id(record.run_id);
   const binding = profile?.repositories.find((candidate) => candidate.repository_key === repositoryKey) ?? null;
 
   return ok({
-    context,
-    handoff_artifact_id: handoffArtifact.id,
+    handoff_artifact_id: record.handoff_artifact_id,
     expected: {
-      run_id: context.run_id, stage_instance_id: context.stage_instance_id, unit_id: context.unit_id,
+      run_id: record.run_id, stage_instance_id: record.stage_instance_id, unit_id: record.unit_id,
       repository_key: repositoryKey, url, head_branch: headBranch,
       base_branch: selectExpectedBaseBranch(profile ?? null, run?.context ?? null),
       forge_repository: binding?.forge_repository ?? null,
@@ -194,20 +169,16 @@ export const reconcileCohortEvidence = async (
     return ok({ resolution: { kind: "waiting" }, reconciliation: reconciled.reconciliation });
   }
 
-  const state = await dependencies.get_handoff_state(handoffArtifactId, loaded.value.context.execution_workflow_id);
-  if (state?.status !== "awaiting_external") {
+  const completion = await dependencies.records.complete_handoff_artifact({ artifact_id: handoffArtifactId,
+    external_kind: GITHUB_REVIEW_WAIT, actor: evidence.kind === "operator_confirmation" ? "operator" : "poller:github",
+    correlation_id: observation.url, decided_at: now });
+  if (completion.kind === "wait_not_found" || completion.kind === "wait_conflict") {
     // Merged, but there is no wait open to close — the assessor has not
     // approved yet, or something already closed it. Recorded either way; the
     // next observation completes it once the wait exists.
     await dependencies.reconciliations.upsert(reconciled.reconciliation);
-    return ok({ resolution: { kind: "merged_not_awaiting", handoff_status: state?.status ?? null }, reconciliation: reconciled.reconciliation });
+    return ok({ resolution: { kind: "merged_not_awaiting", handoff_status: completion.kind }, reconciliation: reconciled.reconciliation });
   }
-
-  const idempotencyKey = evidence.kind === "operator_confirmation"
-    ? evidence.idempotency_key
-    : `github_review:${expected.stage_instance_id}:${expected.unit_id}:${observation.url}`;
-  await dependencies.send_handoff_command(state.command_workflow_id,
-    { kind: "external_completed", external_kind: GITHUB_REVIEW_WAIT, correlation_id: observation.url }, idempotencyKey);
   const completed = withCompletion(reconciled.reconciliation, now);
   await dependencies.reconciliations.upsert(completed);
   return ok({ resolution: { kind: "completed" }, reconciliation: completed });

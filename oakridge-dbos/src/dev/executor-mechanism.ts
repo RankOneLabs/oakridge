@@ -2,7 +2,7 @@ import { DBOS } from "@dbos-inc/dbos-sdk";
 
 import type { ExecutionRequest, ExecutorTerminalObservation, ExternalExecutionReference } from "../domain/execution";
 import { executorOperationIdForAttempt, type ExecutionAttemptId } from "../domain/primitives";
-import { findExecutorAdapter } from "../workflows/executor-topology";
+import { findExecutorAdapter } from "../runtime/executor-registry";
 
 export interface ExecutorMechanismResult {
   readonly external_reference: ExternalExecutionReference;

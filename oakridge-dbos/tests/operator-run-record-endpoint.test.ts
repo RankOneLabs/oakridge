@@ -82,7 +82,7 @@ test("GET /runs/:id exposes the v2 run-record projection with every required fie
     body, capability_hash: gatedCapability, idempotency_key: "endpoint-test-plan-1", payload_hash: payloadHash, published_at: now });
   if (published.kind !== "pending") throw new Error(`expected pending, got ${published.kind}`);
 
-  const app = createOperatorProjectionApp(new PostgresOperatorProjectionRepository(sql, { topology: "v2" }));
+  const app = createOperatorProjectionApp(new PostgresOperatorProjectionRepository(sql));
   const response = await app.request(`/runs/${runId}`);
   expect(response.status).toBe(200);
   const detail = (await response.json()) as { readonly run_record: unknown };
