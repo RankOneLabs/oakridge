@@ -20,7 +20,8 @@ export type WaitOutcome =
   | { readonly kind: "decided"; readonly action: string; readonly decision_artifact_id: ArtifactId | null; readonly feedback: string | null }
   | { readonly kind: "external_completed"; readonly correlation_id: string }
   | { readonly kind: "superseded"; readonly replacement_artifact_revision_id: ArtifactId }
-  | { readonly kind: "withdrawn" }; // actor/reason already live on the artifact row — not duplicated here
+  | { readonly kind: "withdrawn" } // actor/reason already live on the artifact row — not duplicated here
+  | { readonly kind: "cancelled"; readonly reason: string | null };
 
 export type GateWaitOutcome = Extract<WaitOutcome, { kind: "decided" | "superseded" | "withdrawn" }>;
 export type HandoffDownstreamWaitOutcome = Extract<WaitOutcome, { kind: "decided" | "superseded" | "withdrawn" }>;

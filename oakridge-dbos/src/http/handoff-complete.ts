@@ -11,7 +11,7 @@ export interface HandoffCompleteDependencies {
   readonly get_handoff_state: (artifact_id: ArtifactId, execution_workflow_id: string) => Promise<HandoffWorkflowState | null>;
   readonly send_handoff_command: (workflow_id: string, command: HandoffCommand, idempotency_key: string) => Promise<void>;
   /** Present only where a v2 handoff wait may need resolving; see `records` on `GateResumeDependencies`. */
-  readonly records?: Pick<RunRecordRepository, "close_output_wait">;
+  readonly records?: Pick<RunRecordRepository, "close_output_wait"> & Partial<Pick<RunRecordRepository, "complete_handoff_artifact">>;
   readonly now?: () => string;
   /** Wakes the run's root workflow sooner than its bounded recheck; absent is fine — the recheck still happens. */
   readonly send_run_wake?: (run_id: string, idempotency_key: string) => Promise<void>;
@@ -50,6 +50,16 @@ export const createHandoffCompleteApp = (dependencies: HandoffCompleteDependenci
     const artifact = await dependencies.artifacts.find_by_id(artifactId);
     if (!artifact) return http.json({ error: "handoff artifact not found" }, 404);
     if (artifact.lifecycle.kind !== "current") return http.json({ error: "handoff artifact is not current", code: artifact.lifecycle.kind }, 409);
+    if (dependencies.records?.complete_handoff_artifact) {
+      const result = await dependencies.records.complete_handoff_artifact({ artifact_id: artifactId, external_kind: request.external_kind,
+        actor: `external:${request.external_kind}`, correlation_id: request.correlation_id,
+        decided_at: (dependencies.now ?? (() => new Date().toISOString()))() });
+      if (result.kind !== "wait_not_found") {
+        if (result.kind === "wait_conflict") return http.json({ error: result.detail }, 409);
+        await dependencies.send_run_wake?.(result.run_id, `${result.kind}:${result.run_id}:${result.record_version}`).catch(() => undefined);
+        return http.json({ artifact_id: artifact.id, completed: true }, 202);
+      }
+    }
     const producer = await dependencies.contexts.find_for_emit(artifact.stage_instance_id, artifact.unit_id);
     const release = producer?.outputs.find((output) => output.name === artifact.output_name)?.release;
     if (!producer || release?.kind !== "handoff") return http.json({ error: "artifact is not a configured output handoff" }, 409);

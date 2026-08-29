@@ -264,6 +264,24 @@ export interface FailRunMaterialization {
   readonly failed_at: string;
 }
 
+export interface CancelRunRecord {
+  readonly run_id: WorkflowRunId;
+  readonly actor: string;
+  readonly reason: string | null;
+  readonly cancelled_at: string;
+}
+
+export interface CancelledRunWorkOrder {
+  readonly work_order_id: WorkOrderId;
+  readonly executor_type: string;
+  readonly external_reference: ExternalExecutionReference;
+}
+
+export type CancelRunRecordResult =
+  | { readonly kind: "cancelled"; readonly run_id: WorkflowRunId; readonly record_version: RunRecordVersion; readonly work_orders_to_fence: readonly CancelledRunWorkOrder[] }
+  | { readonly kind: "already_terminal"; readonly run_id: WorkflowRunId; readonly state: Exclude<RunState, "active"> }
+  | { readonly kind: "run_not_found"; readonly detail: string };
+
 export interface PublishWorkOrderArtifact {
   readonly artifact_id: ArtifactId;
   readonly work_order_id: WorkOrderId;
@@ -288,11 +306,12 @@ export type PublishWorkOrderArtifactResult =
   | { readonly kind: "idempotency_conflict"; readonly artifact_id: ArtifactId; readonly detail: string };
 
 /** What the gate/handoff command that owns a pending slot's wait decided. */
-export type RunOutputWaitDisposition = "release" | "invalidate";
+export type RunOutputWaitDisposition = "release" | "invalidate" | "fail";
 
 export interface CloseRunOutputWait {
   readonly wait_id: WaitId;
   readonly disposition: RunOutputWaitDisposition;
+  readonly action?: string;
   /** Who or what made the decision — an operator identity or an external correlation id, recorded on the transition. */
   readonly actor: string;
   readonly detail: string | null;
@@ -316,6 +335,7 @@ export type RunTransitionOperation =
   | "stage_materialized"
   | "materialization_closed"
   | "materialization_failed"
+  | "run_cancelled"
   | "unit_admitted"
   | "operator_retry_created"
   | "input_revised"

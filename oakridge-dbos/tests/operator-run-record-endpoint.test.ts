@@ -82,7 +82,7 @@ test("GET /runs/:id exposes the v2 run-record projection with every required fie
     body, capability_hash: gatedCapability, idempotency_key: "endpoint-test-plan-1", payload_hash: payloadHash, published_at: now });
   if (published.kind !== "pending") throw new Error(`expected pending, got ${published.kind}`);
 
-  const app = createOperatorProjectionApp(new PostgresOperatorProjectionRepository(sql));
+  const app = createOperatorProjectionApp(new PostgresOperatorProjectionRepository(sql, { topology: "v2" }));
   const response = await app.request(`/runs/${runId}`);
   expect(response.status).toBe(200);
   const detail = (await response.json()) as { readonly run_record: unknown };
@@ -128,6 +128,15 @@ test("GET /runs/:id exposes the v2 run-record projection with every required fie
     expect(transition.resulting_record_version).toBeGreaterThanOrEqual(transition.prior_record_version);
   }
   expect(runRecord.recent_transitions.some((transition) => transition.operation === "slot_pending")).toBe(true);
+
+  const gates = await (await app.request(`/runs/${runId}/gates`)).json() as readonly { readonly id: string; readonly stage_instance_id: string; readonly artifact_revision_id: string }[];
+  expect(gates).toEqual([expect.objectContaining({ id: published.wait_id, stage_instance_id: gatedStageId, artifact_revision_id: published.artifact_id })]);
+  const summary = (await (await app.request("/runs?filter=all")).json() as readonly { readonly id: string; readonly status: string; readonly parked_count: number }[])
+    .find((candidate) => candidate.id === runId);
+  expect(summary).toEqual(expect.objectContaining({ status: "parked", parked_count: 1 }));
+  const inbox = await (await app.request("/review_inbox")).json() as { readonly items: readonly { readonly gate_id: string; readonly stage_instance_id: string }[] };
+  expect(inbox.items.find((item) => item.gate_id === published.wait_id))
+    .toEqual(expect.objectContaining({ gate_id: published.wait_id, stage_instance_id: gatedStageId }));
 });
 
 /**

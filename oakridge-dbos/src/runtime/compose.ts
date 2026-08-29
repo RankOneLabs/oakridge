@@ -144,7 +144,8 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const finalPullRequests = new PostgresFinalPullRequestRepository(sql);
   const epicProfiles = new PostgresEpicWorkflowProfileRepository(sql);
   const cohortReconciliations = new PostgresCohortPullRequestRepository(sql);
-  const projections = new PostgresOperatorProjectionRepository(sql, { stall_threshold_seconds: config.stall_threshold_seconds ?? DEFAULT_STALL_THRESHOLD_SECONDS });
+  const projections = new PostgresOperatorProjectionRepository(sql, { stall_threshold_seconds: config.stall_threshold_seconds ?? DEFAULT_STALL_THRESHOLD_SECONDS,
+    topology: config.launch_topology ?? "legacy" });
 
   const dbosRuns = new DbosStageRerunClient(client);
   const dbosCancellation = new DbosCancellationClient(client);
@@ -232,7 +233,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     configuration: { projects, definitions, project_identity: projectIdentity, now },
     admission: { records: runRecords, now },
     operator_retry: { records: runRecords, now },
-    run_lifecycle: { runs },
+    run_lifecycle: { runs, ...(config.launch_topology === "v2" ? { v2_records: runRecords } : {}) },
     domain_reads: { stages, artifacts, session_holds: sessionHolds },
     final_pull_requests: { final_pull_requests: finalPullRequests, now },
     artifact_callback: { contexts, artifacts, dispatch_notifications: dispatchNotifications },
@@ -250,6 +251,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
       launch_topology: config.launch_topology ?? "legacy", now },
     rerun: {
       stages, targets: rerunTargets, dbos: client, cancellation,
+      ...(config.launch_topology === "v2" ? { v2_cancellation: { records: runRecords, find_executor: findExecutorAdapter, now, send_run_wake: sendRunWakeHint } } : {}),
       stage_rerun: { runs, attempts, definitions, dbos: dbosRuns, now,
         supersede_attempt: (root) => cancelAttempt(root, { dbos: dbosCancellation, now }, "superseded by stage rerun") },
     },

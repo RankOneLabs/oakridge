@@ -31,6 +31,15 @@ test("external completion releases the exact durable handoff wait idempotently",
   expect(subject.sent).toEqual([{ workflow_id: "build-workflow:handoff:11111111-1111-4111-8111-111111111111", key: "github-review-42", command: { kind: "external_completed", external_kind: "github_review", correlation_id: "pr-review-42" } }]);
 });
 
+test("the public handoff route completes a v2 artifact without sending a legacy workflow command", async () => {
+  const subject = fixture();
+  const response = await complete(createHandoffCompleteApp({ ...subject.dependencies, records: {
+    close_output_wait: async () => ({ kind: "wait_not_found", detail: "unused" }),
+    complete_handoff_artifact: async () => ({ kind: "released", artifact_id: artifact.id, run_id: artifact.run_id, record_version: 4 as RunRecordVersion }) } }));
+  expect(response.status).toBe(202);
+  expect(subject.sent).toEqual([]);
+});
+
 test("external completion rejects the wrong configured kind", async () => {
   const response = await complete(fixture().app, "deployment");
   expect(response.status).toBe(409);

@@ -175,6 +175,65 @@ test("the owning gate command releases the wait and the slot atomically; the run
   expect(await records.decide_run(runId, now)).toEqual({ ok: true, value: { kind: "complete", outcome: { kind: "succeeded" } } });
 });
 
+test("an authored v2 gate action selects its persisted disposition, including terminal failure", async () => {
+  const setup = await setupGatedRun();
+  if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  const body = { plan: "rejected" };
+  const payloadHash = createHash("sha256").update(JSON.stringify(body)).digest("hex");
+  const published = await setup.records.publish_artifact({ artifact_id: randomUUID() as ArtifactId, work_order_id: setup.workOrderId,
+    output_name: "result", body, capability_hash: setup.capabilityHash, idempotency_key: "terminal-gate", payload_hash: payloadHash, published_at: setup.now });
+  if (published.kind !== "pending") throw new Error(`expected pending, got ${published.kind}`);
+  const release = { kind: "gate", steps: [{ type: "artifact_approval", actions: [{ name: "reject", disposition: "terminal" }] }], requires_zero_open_review_items: false, revision_target: "self_stage" };
+  await sql!.query("UPDATE oakridge.run_output_slot SET release_policy=$2::jsonb WHERE run_unit_id=$1", [setup.runUnitId, release]);
+  expect(await setup.records.decide_gate_wait({ wait_id: published.wait_id, action: "unknown", actor: "operator:test", detail: null, decided_at: setup.now }))
+    .toEqual(expect.objectContaining({ kind: "wait_conflict" }));
+  expect(await setup.records.decide_gate_wait({ wait_id: published.wait_id, action: "reject", actor: "operator:test", detail: "not acceptable", decided_at: setup.now }))
+    .toEqual(expect.objectContaining({ kind: "invalidated" }));
+  const unit = await sql!.query<{ readonly state: string; readonly code: string }>("SELECT state,outcome->>'code' AS code FROM oakridge.run_unit WHERE id=$1", [setup.runUnitId]);
+  expect(unit[0]).toEqual({ state: "failed", code: "gate_rejected" });
+});
+
+test("an upstream-targeted revision closes its gate and upstream handoff in one run-owned transaction", async () => {
+  const setup = await setupGatedRun();
+  if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  const upstreamArtifactId = randomUUID() as ArtifactId;
+  const upstreamBody = { build: "candidate" };
+  const handoff = { kind: "handoff", downstream_role: "assessment", external_wait_kind: "github_review" } as const;
+  await sql!.query("UPDATE oakridge.run_output_slot SET release_policy=$2::jsonb WHERE run_unit_id=$1", [setup.runUnitId, handoff]);
+  const upstream = await setup.records.publish_artifact({ artifact_id: upstreamArtifactId, work_order_id: setup.workOrderId,
+    output_name: "result", body: upstreamBody, capability_hash: setup.capabilityHash, idempotency_key: "upstream-handoff",
+    payload_hash: createHash("sha256").update(JSON.stringify(upstreamBody)).digest("hex"), published_at: setup.now });
+  if (upstream.kind !== "pending") throw new Error(`expected pending upstream handoff, got ${upstream.kind}`);
+
+  const downstreamStageId = randomUUID() as StageInstanceId;
+  const downstreamUnitId = randomUUID() as RunUnitId;
+  const downstreamWorkId = randomUUID() as WorkOrderId;
+  const downstreamCapability = createHash("sha256").update("downstream-secret").digest("hex");
+  const input = [{ artifact_id: upstreamArtifactId, artifact_type: "dev.result", output_name: "result", unit_id: "unit-1" as UnitId, body: upstreamBody }];
+  await setup.records.initialize_straight_through({ run_id: setup.runId, stage_instance_id: downstreamStageId, run_unit_id: downstreamUnitId,
+    unit_id: "assessment" as UnitId, work_order_id: downstreamWorkId, work_order_workflow_id: `v2-work:${downstreamWorkId}`,
+    stage_key: "assessment", executor_type: "delegated_session", work_order_capability_hash: downstreamCapability,
+    resolved_config: {}, parameters: {}, input_snapshot: input, input_fingerprint: "upstream-v1" as InputFingerprint,
+    outputs: [{ name: "result", artifact_type: "dev.assessment", required: true, release: { kind: "gate",
+      steps: [{ type: "artifact_approval", actions: [{ name: "approve", disposition: "release" }, { name: "request_revision", disposition: "revise" }] }],
+      requires_zero_open_review_items: false, revision_target: "upstream_handoff" } }], created_at: setup.now });
+  await setup.records.decide_run(setup.runId, setup.now);
+  const assessmentBody = { verdict: "revise" };
+  const assessment = await setup.records.publish_artifact({ artifact_id: randomUUID() as ArtifactId, work_order_id: downstreamWorkId,
+    output_name: "result", body: assessmentBody, capability_hash: downstreamCapability, idempotency_key: "assessment-gate",
+    payload_hash: createHash("sha256").update(JSON.stringify(assessmentBody)).digest("hex"), published_at: setup.now });
+  if (assessment.kind !== "pending") throw new Error(`expected pending assessment gate, got ${assessment.kind}`);
+  expect(await setup.records.decide_gate_wait({ wait_id: assessment.wait_id, action: "request_revision", actor: "operator:test",
+    detail: "revise upstream", decided_at: setup.now })).toEqual(expect.objectContaining({ kind: "invalidated" }));
+  const waits = await sql!.query<{ readonly id: string; readonly status: string }>(
+    "SELECT id::text,status FROM oakridge.wait WHERE id=ANY($1::uuid[]) ORDER BY id", [[upstream.wait_id, assessment.wait_id]]);
+  expect(waits).toHaveLength(2);
+  expect(waits.every((wait) => wait.status === "closed")).toBe(true);
+  const slots = await sql!.query<{ readonly state: string }>(
+    "SELECT state FROM oakridge.run_output_slot WHERE run_unit_id=ANY($1::uuid[]) ORDER BY run_unit_id", [[setup.runUnitId, downstreamUnitId]]);
+  expect(slots.map((slot) => slot.state)).toEqual(["invalidated", "invalidated"]);
+});
+
 test("a rejected gate invalidates the slot and abandons the work order that produced it, instead of releasing", async () => {
   const setup = await setupGatedRun();
   if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
@@ -520,4 +579,55 @@ test("a compiler failure terminalizes the run record once instead of killing its
   expect(run[0]).toEqual(expect.objectContaining({ state: "failed", outcome: expect.objectContaining({ code: "materialization_failed" }) }));
   const transitions = await sql!.query<{ readonly count: string }>("SELECT count(*)::text AS count FROM oakridge.run_transition WHERE run_id=$1 AND operation='materialization_failed'", [setup.input.run_id]);
   expect(transitions[0]?.count).toBe("1");
+});
+
+test("run cancellation atomically terminalizes owned work, waits, units, stages, and the run", async () => {
+  const setup = await setupMaterializedRun();
+  if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  const unit = setup.input.units[0]!;
+  await setup.records.decide_run(setup.input.run_id, setup.input.materialized_at);
+  const cancelled = await setup.records.cancel_run({ run_id: setup.input.run_id, actor: "operator:test", reason: "stop", cancelled_at: setup.input.materialized_at });
+  expect(cancelled).toEqual(expect.objectContaining({ kind: "cancelled", run_id: setup.input.run_id }));
+  expect(await setup.records.cancel_run({ run_id: setup.input.run_id, actor: "operator:test", reason: "stop", cancelled_at: setup.input.materialized_at }))
+    .toEqual({ kind: "already_terminal", run_id: setup.input.run_id, state: "cancelled" });
+  const rows = await sql!.query<{ readonly run_state: string; readonly stage_state: string; readonly unit_state: string; readonly work_state: string }>(
+    `SELECT run.state AS run_state,stage.state AS stage_state,unit.state AS unit_state,work.state AS work_state
+     FROM oakridge.workflow_run run JOIN oakridge.stage_instance stage ON stage.run_id=run.id
+     JOIN oakridge.run_unit unit ON unit.stage_instance_id=stage.id JOIN oakridge.work_order work ON work.run_unit_id=unit.id
+     WHERE run.id=$1 AND work.id=$2`, [setup.input.run_id, unit.initial_work_order.id]);
+  expect(rows[0]).toEqual({ run_state: "cancelled", stage_state: "cancelled", unit_state: "cancelled", work_state: "abandoned" });
+  const transitions = await sql!.query<{ readonly count: string }>("SELECT count(*)::text AS count FROM oakridge.run_transition WHERE run_id=$1 AND operation='run_cancelled'", [setup.input.run_id]);
+  expect(transitions[0]?.count).toBe("1");
+});
+
+test("cancellation serializes with a concurrent artifact publication and cancellation always owns the final state", async () => {
+  const setup = await setupMaterializedRun(1, false);
+  if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  const unit = setup.input.units[0]!;
+  await setup.records.decide_run(setup.input.run_id, setup.input.materialized_at);
+  const body = { completed: true };
+  const [cancelled, published] = await Promise.all([
+    setup.records.cancel_run({ run_id: setup.input.run_id, actor: "operator:test", reason: "stop", cancelled_at: setup.input.materialized_at }),
+    new PostgresRunRecordRepository(sql!).publish_artifact({ artifact_id: randomUUID() as ArtifactId, work_order_id: unit.initial_work_order.id,
+      output_name: "result", body, capability_hash: setup.capabilities[0]!, idempotency_key: "cancel-race",
+      payload_hash: createHash("sha256").update(JSON.stringify(body)).digest("hex"), published_at: setup.input.materialized_at }),
+  ]);
+  expect(cancelled.kind).toBe("cancelled");
+  expect(["published", "work_abandoned"]).toContain(published.kind);
+  const state = await sql!.query<{ readonly run_state: string; readonly unit_state: string; readonly work_state: string; readonly slot_state: string }>(
+    `SELECT run.state AS run_state,unit.state AS unit_state,work.state AS work_state,slot.state AS slot_state
+     FROM oakridge.workflow_run run JOIN oakridge.run_unit unit ON unit.run_id=run.id
+     JOIN oakridge.work_order work ON work.run_unit_id=unit.id JOIN oakridge.run_output_slot slot ON slot.run_unit_id=unit.id
+     WHERE run.id=$1 AND work.id=$2`, [setup.input.run_id, unit.initial_work_order.id]);
+  expect(state[0]).toEqual({ run_state: "cancelled", unit_state: "cancelled", work_state: "abandoned",
+    slot_state: published.kind === "published" ? "invalidated" : "empty" });
+});
+
+test("v2 deletion refuses active work and deletes a terminal ownership graph without consulting DBOS", async () => {
+  const setup = await setupMaterializedRun();
+  if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  expect(await setup.records.delete_run(setup.input.run_id)).toEqual(expect.objectContaining({ kind: "active_conflict" }));
+  await setup.records.cancel_run({ run_id: setup.input.run_id, actor: "operator:test", reason: null, cancelled_at: setup.input.materialized_at });
+  expect(await setup.records.delete_run(setup.input.run_id)).toEqual({ kind: "deleted", run_id: setup.input.run_id });
+  expect(await setup.records.delete_run(setup.input.run_id)).toEqual({ kind: "already_deleted", run_id: setup.input.run_id });
 });

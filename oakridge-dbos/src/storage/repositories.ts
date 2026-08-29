@@ -15,7 +15,7 @@ import type { ConfirmFinalPullRequestRequest, FinalPullRequestDomainError, Final
 import type { CohortPullRequestReconciliation } from "../domain/cohort-pull-request";
 import type { CloseWaitRequest, OpenGateWaitInput, OpenHandoffDownstreamWaitInput, Wait, WaitClosesOn, WaitOutcome } from "../domain/wait";
 import type { Result } from "../domain/primitives";
-import type { CloseRunOutputWait, CloseRunOutputWaitResult, ExecutorAttachment, ExecutorHealthObservation, FailRunMaterialization, InitializeStraightThroughRun, PersistMaterializedStage, PublishWorkOrderArtifact, PublishWorkOrderArtifactResult, RetryRunUnit, RetryRunUnitResult, ReviseRunUnitInput, ReviseRunUnitInputResult, RunDecision, RunMaterializationRecord, WorkOrderExecution } from "../domain/run-record";
+import type { CancelRunRecord, CancelRunRecordResult, CloseRunOutputWait, CloseRunOutputWaitResult, ExecutorAttachment, ExecutorHealthObservation, FailRunMaterialization, InitializeStraightThroughRun, PersistMaterializedStage, PublishWorkOrderArtifact, PublishWorkOrderArtifactResult, RetryRunUnit, RetryRunUnitResult, ReviseRunUnitInput, ReviseRunUnitInputResult, RunDecision, RunMaterializationRecord, WorkOrderExecution } from "../domain/run-record";
 import type { WorkOrderId, WorkflowRunId as RunRecordWorkflowRunId } from "../domain/primitives";
 
 export interface WorkflowDefinitionRepository {
@@ -67,6 +67,8 @@ export interface RunRecordRepository {
   load_materialization_record(run_id: RunRecordWorkflowRunId): Promise<RunMaterializationRecord | null>;
   load_work_order_capability_seed(): Promise<string>;
   fail_materialization(input: FailRunMaterialization): Promise<void>;
+  cancel_run(input: CancelRunRecord): Promise<CancelRunRecordResult>;
+  delete_run(run_id: RunRecordWorkflowRunId): Promise<DeleteRunResult>;
   find_work_order_execution(work_order_id: WorkOrderId): Promise<WorkOrderExecution | null>;
   find_work_order_attachment(work_order_id: WorkOrderId): Promise<ExecutorAttachment | null>;
   /**
@@ -78,6 +80,8 @@ export interface RunRecordRepository {
   publish_artifact(request: PublishWorkOrderArtifact): Promise<PublishWorkOrderArtifactResult>;
   /** The gate/handoff command that owns a pending slot's wait, closing it and applying the matching release/invalidation atomically. */
   close_output_wait(request: CloseRunOutputWait): Promise<CloseRunOutputWaitResult>;
+  decide_gate_wait(request: { readonly wait_id: import("../domain/primitives").WaitId; readonly action: string; readonly actor: string; readonly detail: string | null; readonly decided_at: string }): Promise<CloseRunOutputWaitResult>;
+  complete_handoff_artifact(request: { readonly artifact_id: import("../domain/primitives").ArtifactId; readonly external_kind: string; readonly actor: string; readonly correlation_id: string; readonly decided_at: string }): Promise<CloseRunOutputWaitResult>;
   ensure_executor_attachment(work_order_id: WorkOrderId, executor_type: string, updated_at: string): Promise<ExecutorAttachment>;
   attach_external(work_order_id: WorkOrderId, reference: ExternalExecutionReference, updated_at: string): Promise<void>;
   observe_executor(work_order_id: WorkOrderId, health: ExecutorHealthObservation, updated_at: string): Promise<void>;
