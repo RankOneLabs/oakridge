@@ -5,7 +5,7 @@ import type { OutputReleaseContract } from "../domain/compiled-workflow";
 import type { ArtifactEnvelope, ExecutionRequest, ExternalExecutionReference } from "../domain/execution";
 import { err, ok, type ArtifactId, type InputFingerprint, type JsonValue, type OutputCollectionKey, type OutputSlotVersion, type Result, type RunRecordVersion, type RunTransitionId, type RunUnitId, type StageInstanceId, type UnitId, type WaitId, type WorkflowDefinitionId, type WorkflowRunId, type WorkOrderId } from "../domain/primitives";
 import { selectRunDecision, selectStageDecision, selectUnitDecision } from "../domain/run-decisions";
-import type { CloseRunOutputWait, CloseRunOutputWaitResult, ExecutorAttachment, ExecutorHealthObservation, InitializeStraightThroughRun, PersistMaterializedStage, PublishWorkOrderArtifact, PublishWorkOrderArtifactResult, ReviseRunUnitInput, ReviseRunUnitInputResult, RunDecision, RunOutputSlot, RunStage, RunTransitionOperation, RunUnit, UnitDecision, WorkflowRun, WorkOrder, WorkOrderExecution } from "../domain/run-record";
+import type { CloseRunOutputWait, CloseRunOutputWaitResult, ExecutorAttachment, ExecutorHealthObservation, InitializeStraightThroughRun, PersistMaterializedStage, PublishWorkOrderArtifact, PublishWorkOrderArtifactResult, RetryRunUnit, RetryRunUnitResult, ReviseRunUnitInput, ReviseRunUnitInputResult, RunDecision, RunOutputSlot, RunStage, RunTransitionOperation, RunUnit, UnitDecision, WorkflowRun, WorkOrder, WorkOrderExecution } from "../domain/run-record";
 import type { WaitClosesOn, WaitOutcome } from "../domain/wait";
 import type { StageOutcome } from "../domain/workflow";
 import type { AdmitStageUnitRequest, AdmitStageUnitResult } from "../domain/runs";
@@ -299,6 +299,56 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         operation: "input_revised", actor: input.actor, prior_record_version: prior, resulting_record_version: resulting,
         detail: { input_fingerprint: input.input_fingerprint }, created_at: input.revised_at });
       return { kind: "revised", run_id: row.run_id as WorkflowRunId, record_version: resulting };
+    });
+  }
+
+  async retry_unit(input: RetryRunUnit, retried_at: string): Promise<RetryRunUnitResult> {
+    return this.sql.transaction(async (transaction) => {
+      const unitRows = await transaction.query<{ readonly run_id: string; readonly stage_instance_id: string; readonly unit_id: string; readonly unit_state: RunUnit["state"]; readonly stage_state: RunStage["state"]; readonly run_state: WorkflowRun["state"]; readonly input_snapshot: readonly ArtifactEnvelope[]; readonly input_fingerprint: string; readonly record_version: string }>(`SELECT unit.run_id::text,unit.stage_instance_id::text,unit.unit_id,unit.state AS unit_state,
+        stage.state AS stage_state,run.state AS run_state,unit.input_snapshot,unit.input_fingerprint,run.record_version::text
+        FROM oakridge.run_unit unit JOIN oakridge.stage_instance stage ON stage.id=unit.stage_instance_id
+        JOIN oakridge.workflow_run run ON run.id=unit.run_id WHERE unit.id=$1 FOR UPDATE OF unit,stage,run`, [input.run_unit_id]);
+      const unit = unitRows[0];
+      if (!unit) return { kind: "unit_not_found", detail: `run unit '${input.run_unit_id}' was not found` };
+      const requestKey = `operator_retry:${input.idempotency_key}`;
+      const replayRows = await transaction.query<WorkOrderRow>(`SELECT id::text,run_unit_id::text,reason,input_snapshot,input_fingerprint,state,workflow_id,request_idempotency_key,execution_request,created_at::text,completed_at::text
+        FROM oakridge.work_order WHERE run_unit_id=$1 AND request_idempotency_key=$2 FOR UPDATE`, [input.run_unit_id, requestKey]);
+      if (replayRows[0]) return { kind: "already_created", work_order: decodeOrder(replayRows[0]), run_id: unit.run_id as WorkflowRunId, record_version: Number(unit.record_version) as RunRecordVersion };
+      if (unit.run_state !== "active" || unit.stage_state !== "active" || unit.unit_state === "satisfied" || unit.unit_state === "cancelled") {
+        return { kind: "not_active", detail: `run unit '${input.run_unit_id}' is not active retryable work` };
+      }
+      const waits = await transaction.query<{ readonly id: string }>("SELECT id::text FROM oakridge.wait WHERE run_unit_id=$1 AND status='open' FOR UPDATE", [input.run_unit_id]);
+      if (waits.length > 0) return { kind: "actionable_wait", detail: `run unit '${input.run_unit_id}' has an actionable wait` };
+      const activeOrders = await transaction.query<{ readonly state: WorkOrder["state"]; readonly health: ExecutorHealthObservation | null }>(`SELECT work.state,attachment.health FROM oakridge.work_order work
+        LEFT JOIN oakridge.executor_attachment attachment ON attachment.work_order_id=work.id
+        WHERE work.run_unit_id=$1 AND work.state IN ('available','started') ORDER BY work.created_at DESC,work.id DESC FOR UPDATE OF work`, [input.run_unit_id]);
+      const isRecordedMissingWork = activeOrders.every((order) => order.state === "started" && order.health !== null && order.health.kind !== "running");
+      if (!isRecordedMissingWork) return { kind: "work_in_progress", detail: `run unit '${input.run_unit_id}' already has runnable or running work` };
+      const missing = await transaction.query<{ readonly output_name: string }>("SELECT output_name FROM oakridge.run_output_slot WHERE run_unit_id=$1 AND required AND state <> 'released' FOR UPDATE", [input.run_unit_id]);
+      if (missing.length === 0) return { kind: "no_missing_work", detail: `run unit '${input.run_unit_id}' has no missing required output` };
+      const basisRows = await transaction.query<{ readonly capability_hash: string; readonly execution_request: ExecutionRequest | null }>(`SELECT capability_hash,execution_request FROM oakridge.work_order
+        WHERE run_unit_id=$1 AND execution_request IS NOT NULL ORDER BY created_at DESC,id DESC LIMIT 1 FOR UPDATE`, [input.run_unit_id]);
+      const basis = basisRows[0];
+      if (!basis?.execution_request) return { kind: "no_execution_basis", detail: `run unit '${input.run_unit_id}' has no resolved execution request` };
+      const workOrderId = randomUUID() as WorkOrderId;
+      const workflowId = `oakridge-v2-work:${workOrderId}`;
+      const executionRequest: ExecutionRequest = { ...basis.execution_request, execution_id: workOrderId as unknown as ExecutionRequest["execution_id"] };
+      await transaction.query("UPDATE oakridge.work_order SET state='abandoned',completed_at=$2::timestamptz WHERE run_unit_id=$1 AND state IN ('available','started')", [input.run_unit_id, retried_at]);
+      const rows = await transaction.query<WorkOrderRow>(`INSERT INTO oakridge.work_order
+        (id,run_unit_id,reason,input_snapshot,input_fingerprint,state,workflow_id,request_idempotency_key,capability_hash,execution_request,created_at)
+        VALUES ($1,$2,'operator_retry',$3::jsonb,$4,'available',$5,$6,$7,$8::jsonb,$9::timestamptz)
+        RETURNING id::text,run_unit_id::text,reason,input_snapshot,input_fingerprint,state,workflow_id,request_idempotency_key,execution_request,created_at::text,completed_at::text`,
+      [workOrderId, input.run_unit_id, unit.input_snapshot, unit.input_fingerprint, workflowId, requestKey, basis.capability_hash, executionRequest, retried_at]);
+      const order = rows[0];
+      if (!order) throw new Error("operator retry work order insert returned no row");
+      await transaction.query("UPDATE oakridge.run_unit SET state='ready',outcome=NULL,ended_at=NULL WHERE id=$1", [input.run_unit_id]);
+      const prior = Number(unit.record_version) as RunRecordVersion;
+      const resulting = (Number(unit.record_version) + 1) as RunRecordVersion;
+      await transaction.query("UPDATE oakridge.workflow_run SET record_version=$2 WHERE id=$1", [unit.run_id, resulting]);
+      await insertTransition(transaction, { run_id: unit.run_id as WorkflowRunId, run_unit_id: input.run_unit_id, work_order_id: workOrderId, wait_id: null, output_name: null,
+        operation: "operator_retry_created", actor: input.actor, prior_record_version: prior, resulting_record_version: resulting,
+        detail: { idempotency_key: input.idempotency_key, missing_outputs: missing.map((slot) => slot.output_name) }, created_at: retried_at });
+      return { kind: "created", work_order: decodeOrder(order), run_id: unit.run_id as WorkflowRunId, record_version: resulting };
     });
   }
 
