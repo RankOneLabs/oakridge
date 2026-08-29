@@ -1,5 +1,5 @@
 import type { ExecutionRequest, ExecutorAdapter, ExecutorObservationAttempt, ExecutorTerminalObservation, ExternalExecutionReference } from "../domain/execution";
-import type { ExecutionAttemptId, ExecutionId, JsonValue } from "../domain/primitives";
+import type { ExecutionId, ExecutorOperationId, JsonValue } from "../domain/primitives";
 
 /**
  * How long kbbl may hold one observation request open. Well under kbbl's own
@@ -132,8 +132,8 @@ export const silentDurationMs = (pending: JsonValue, now: number): number | null
  * had already died and re-failed immediately. The application version stays in
  * the key so a session never spans a backend version change.
  */
-const sessionKeyFor = (attempt_id: ExecutionAttemptId, executor_function_identity: string): string =>
-  `${attempt_id}:${executor_function_identity}`;
+const sessionKeyFor = (operation_id: ExecutorOperationId, executor_function_identity: string): string =>
+  `${operation_id}:${executor_function_identity}`;
 
 const sessionIdOf = (external_reference: ExternalExecutionReference, execution_id: ExecutionId): string => {
   if (external_reference.kind !== "kbbl_session") throw new Error(`execution ${execution_id} has no kbbl session reference`);
@@ -148,7 +148,7 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
     this.fetch = options.fetch ?? globalThis.fetch;
   }
 
-  async start_or_attach(request: ExecutionRequest, attempt_id: ExecutionAttemptId): Promise<ExternalExecutionReference> {
+  async start_or_attach(request: ExecutionRequest, operation_id: ExecutorOperationId): Promise<ExternalExecutionReference> {
     const config = parseResolvedConfig(request.resolved_config);
     const inheritedSessionId = request.workspace_source?.external_reference.kind === "kbbl_session"
       ? request.workspace_source.external_reference.session_id : null;
@@ -157,7 +157,7 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
     if (config.worktree && inheritedSessionId) {
       throw new Error(`execution ${request.execution_id} resolves its own worktree and inherits one from ${inheritedSessionId}; these are mutually exclusive`);
     }
-    const sessionKey = sessionKeyFor(attempt_id, this.options.executor_function_identity);
+    const sessionKey = sessionKeyFor(operation_id, this.options.executor_function_identity);
     const response = await this.fetch(`${this.options.base_url}/sessions/resumable/${encodeURIComponent(sessionKey)}`, {
       method: "PUT",
       headers: { "content-type": "application/json" },

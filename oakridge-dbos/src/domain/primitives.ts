@@ -27,6 +27,12 @@ export type RootWorkflowId = Brand<string, "RootWorkflowId">;
 export type StageCoordinatorWorkflowId = Brand<string, "StageCoordinatorWorkflowId">;
 export type UnitId = Brand<string, "UnitId">;
 export type WaitId = Brand<string, "WaitId">;
+export type RunUnitId = Brand<string, "RunUnitId">;
+export type WorkOrderId = Brand<string, "WorkOrderId">;
+export type ExecutorOperationId = Brand<string, "ExecutorOperationId">;
+export type RunRecordVersion = Brand<number, "RunRecordVersion">;
+export type OutputSlotVersion = Brand<number, "OutputSlotVersion">;
+export type InputFingerprint = Brand<string, "InputFingerprint">;
 
 /**
  * One attempt at an execution — the ID of the workflow running it. A rerun
@@ -37,6 +43,9 @@ export type WaitId = Brand<string, "WaitId">;
  * the session that already died.
  */
 export type ExecutionAttemptId = Brand<string, "ExecutionAttemptId">;
+
+export const executorOperationIdForAttempt = (id: ExecutionAttemptId): ExecutorOperationId => id as unknown as ExecutorOperationId;
+export const executorOperationIdForWorkOrder = (id: WorkOrderId): ExecutorOperationId => id as unknown as ExecutorOperationId;
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | readonly JsonValue[] | { readonly [key: string]: JsonValue };

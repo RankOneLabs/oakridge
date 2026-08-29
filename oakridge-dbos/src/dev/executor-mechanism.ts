@@ -1,7 +1,7 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
 import type { ExecutionRequest, ExecutorTerminalObservation, ExternalExecutionReference } from "../domain/execution";
-import type { ExecutionAttemptId } from "../domain/primitives";
+import { executorOperationIdForAttempt, type ExecutionAttemptId } from "../domain/primitives";
 import { findExecutorAdapter } from "../workflows/executor-topology";
 
 export interface ExecutorMechanismResult {
@@ -23,7 +23,7 @@ const runExecutorMechanismStep = DBOS.registerStep(async (request: ExecutionRequ
   const adapter = findExecutorAdapter(request.executor_type);
   if (!adapter) throw new Error(`executor adapter '${request.executor_type}' is not registered`);
   const attemptId = (DBOS.workflowID ?? request.execution_id) as ExecutionAttemptId;
-  const externalReference = await adapter.start_or_attach(request, attemptId);
+  const externalReference = await adapter.start_or_attach(request, executorOperationIdForAttempt(attemptId));
   const attempt = await adapter.observe_terminal(request.execution_id, externalReference);
   if (attempt.kind === "pending") throw new Error(`executor adapter '${request.executor_type}' returned a pending observation to the single-shot mechanism step`);
   return { external_reference: externalReference, terminal_observation: attempt.observation };

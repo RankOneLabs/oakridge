@@ -2,9 +2,9 @@ import { expect, test } from "bun:test";
 
 import { KbblExecutorAdapter, selectRemoteWorktreeBase, silentDurationMs } from "../src/adapters/kbbl";
 import type { ExecutionRequest } from "../src/domain/execution";
-import type { ExecutionAttemptId, ExecutionId, StageInstanceId, UnitId } from "../src/domain/primitives";
+import type { ExecutionId, ExecutorOperationId, StageInstanceId, UnitId } from "../src/domain/primitives";
 
-const attempt = (id: string) => id as ExecutionAttemptId;
+const attempt = (id: string) => id as ExecutorOperationId;
 
 test("kbbl adapter derives a stable session key from the attempt and function identity", async () => {
   const calls: Array<{ url: string; body: unknown }> = [];
@@ -201,6 +201,20 @@ test("retrying the same attempt resolves to the one session it already owns", as
   } });
   await adapter.start_or_attach(buildRequest, attempt("run:1:stage:build:unit:web"));
   await adapter.start_or_attach(buildRequest, attempt("run:1:stage:build:unit:web"));
+  expect(new Set(keys).size).toBe(1);
+});
+
+test("recovering one v2 work order reuses its external operation for free", async () => {
+  const keys: string[] = [];
+  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "v2-build", fetch: async (input) => {
+    keys.push(String(input));
+    return Response.json({ kind: keys.length === 1 ? "started" : "attached", session: { sid: "session-work-1", status: "live", endReason: null } });
+  } });
+  const workOrderId = attempt("11111111-1111-4111-8111-111111111111");
+  await adapter.start_or_attach(buildRequest, workOrderId);
+  // This is the call DBOS repeats after a worker/process failure. No domain
+  // attempt is replaced; the external idempotency identity is unchanged.
+  await adapter.start_or_attach(buildRequest, workOrderId);
   expect(new Set(keys).size).toBe(1);
 });
 
