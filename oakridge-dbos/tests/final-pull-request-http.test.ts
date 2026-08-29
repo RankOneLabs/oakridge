@@ -77,7 +77,7 @@ test("the production composed router mounts the kbbl final confirmation path", a
     async confirm() { return { ok: true, value: { outcome: "completed", profile, reconciliation: null } }; },
   };
   const app = createApp({
-    configuration: {}, admission: {}, run_lifecycle: {}, domain_reads: {},
+    configuration: {}, admission: {}, operator_retry: {}, run_lifecycle: {}, domain_reads: {},
     final_pull_requests: { final_pull_requests: repository }, artifact_callback: {}, artifact_withdraw: {},
     gate_resume: {}, handoff_complete: {}, collaboration: {}, operator_projections: {}, artifact_detail: {},
     run_launch: {}, rerun: {},

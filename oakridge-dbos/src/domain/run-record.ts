@@ -186,6 +186,21 @@ export interface ReviseRunUnitInput {
   readonly replacement_work_order: MaterializedWorkOrder;
 }
 
+export interface RetryRunUnit {
+  readonly run_unit_id: RunUnitId;
+  readonly idempotency_key: string;
+  readonly actor: string;
+}
+
+export type RetryRunUnitResult =
+  | { readonly kind: "created" | "already_created"; readonly work_order: WorkOrder; readonly run_id: WorkflowRunId; readonly record_version: RunRecordVersion }
+  | { readonly kind: "unit_not_found"; readonly detail: string }
+  | { readonly kind: "not_active"; readonly detail: string }
+  | { readonly kind: "work_in_progress"; readonly detail: string }
+  | { readonly kind: "no_missing_work"; readonly detail: string }
+  | { readonly kind: "actionable_wait"; readonly detail: string }
+  | { readonly kind: "no_execution_basis"; readonly detail: string };
+
 export type ReviseRunUnitInputResult =
   | { readonly kind: "revised"; readonly run_id: WorkflowRunId; readonly record_version: RunRecordVersion }
   | { readonly kind: "unchanged"; readonly run_id: WorkflowRunId; readonly record_version: RunRecordVersion }
@@ -267,6 +282,7 @@ export type RunTransitionOperation =
   | "stage_materialized"
   | "materialization_closed"
   | "unit_admitted"
+  | "operator_retry_created"
   | "input_revised"
   | "slot_released"
   | "slot_pending"

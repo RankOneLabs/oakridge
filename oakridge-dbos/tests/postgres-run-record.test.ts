@@ -437,6 +437,43 @@ test("manual admission cannot mutate a terminal stage or run", async () => {
   }
 });
 
+test("operator retry is idempotent, requires recorded missing work, and preserves released slots", async () => {
+  const setup = await setupMaterializedRun(4, false, false);
+  if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  const template = setup.input.units[0]!;
+  const stageId = randomUUID() as StageInstanceId;
+  const runUnitId = randomUUID() as RunUnitId;
+  const workOrderId = randomUUID() as WorkOrderId;
+  const capabilityHash = createHash("sha256").update("retry-capability").digest("hex");
+  const outputs = ["kept", "missing"].map((name) => ({ identity: { kind: "scalar" as const, output_name: name }, artifact_type: "dev.result", required: true, release: { kind: "immediate" as const } }));
+  const request = { ...template.initial_work_order.request, execution_id: workOrderId as unknown as import("../src/domain/primitives").ExecutionId,
+    stage_instance_id: stageId, unit_id: "retry-target" as UnitId,
+    declared_outputs: outputs.map((output) => ({ name: output.identity.output_name, artifact_type: output.artifact_type, required: true })),
+    expected_artifacts: outputs.map((output) => ({ unit_id: "retry-target" as UnitId, output_name: output.identity.output_name, artifact_type: output.artifact_type })) };
+  const stage = { ...setup.input, stage_instance_id: stageId, stage_key: "retry", policy: { max_parallel: 4, manual_admission: false }, units: [{ ...template,
+    id: runUnitId, unit_id: "retry-target" as UnitId, depends_on: [], outputs, initial_work_order: { id: workOrderId, workflow_id: `v2-work:${workOrderId}`, capability_hash: capabilityHash, request } }] } satisfies PersistMaterializedStage;
+  await setup.records.persist_materialized_stage(stage);
+  await setup.records.decide_run(stage.run_id, stage.materialized_at);
+  const keptBody = { value: "durable" };
+  expect((await setup.records.publish_artifact({ artifact_id: randomUUID() as ArtifactId, work_order_id: workOrderId, capability_hash: capabilityHash,
+    output_name: "kept", body: keptBody, idempotency_key: "kept", payload_hash: createHash("sha256").update(JSON.stringify(keptBody)).digest("hex"), published_at: stage.materialized_at })).kind).toBe("published");
+  await setup.records.ensure_executor_attachment(workOrderId, request.executor_type, stage.materialized_at);
+  await setup.records.observe_executor(workOrderId, { kind: "ended_failed", code: "executor_failed", detail: "boom", observed_at: stage.materialized_at }, stage.materialized_at);
+  const retry = await setup.records.retry_unit({ run_unit_id: runUnitId, idempotency_key: "retry-1", actor: "operator:test" }, stage.materialized_at);
+  expect(retry.kind).toBe("created");
+  if (retry.kind !== "created") throw new Error(`expected created, got ${retry.kind}`);
+  expect(retry.work_order.reason).toBe("operator_retry");
+  expect(retry.work_order.workflow_id).toBe(`v2-work:${retry.work_order.id}`);
+  expect(await setup.records.retry_unit({ run_unit_id: runUnitId, idempotency_key: "retry-1", actor: "operator:test" }, stage.materialized_at))
+    .toEqual(expect.objectContaining({ kind: "already_created", work_order: expect.objectContaining({ id: retry.work_order.id }) }));
+  expect(await setup.records.retry_unit({ run_unit_id: runUnitId, idempotency_key: "retry-2", actor: "operator:test" }, stage.materialized_at))
+    .toEqual(expect.objectContaining({ kind: "work_in_progress" }));
+  const slots = await sql!.query<{ readonly output_name: string; readonly state: string }>("SELECT output_name,state FROM oakridge.run_output_slot WHERE run_unit_id=$1 ORDER BY output_name", [runUnitId]);
+  expect(slots).toEqual([{ output_name: "kept", state: "released" }, { output_name: "missing", state: "empty" }]);
+  const oldOrder = await sql!.query<{ readonly state: string }>("SELECT state FROM oakridge.work_order WHERE id=$1", [workOrderId]);
+  expect(oldOrder[0]?.state).toBe("abandoned");
+});
+
 test("collection members publish independently and one revision invalidates every effective output", async () => {
   const setup = await setupMaterializedRun();
   if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
