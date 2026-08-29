@@ -1,7 +1,7 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
 import type { ArtifactEnvelope, ExecutionRequest, ExecutorAdapter, ExecutorObservationAttempt, ExecutorTerminalObservation, ExternalExecutionReference } from "../domain/execution";
-import type { ExecutionAttemptId } from "../domain/primitives";
+import { executorOperationIdForAttempt, type ExecutionAttemptId } from "../domain/primitives";
 import { gateRelayWorkflowId, gateWaitWorkflowId, gateWaitWorkflowIdFromRelay, handoffWorkflowId, terminalObserverWorkflowId } from "../domain/workflow-ids";
 import type { CollaborationPingRequest, CollaborationPingState } from "../domain/collaboration";
 import { selectRevisionTarget, type ArtifactReleaseState, type ArtifactRevision, type ExecutionContractState, type ReleaseArtifactResult } from "../domain/artifacts";
@@ -55,7 +55,7 @@ interface StartExecutorInput { readonly request: ExecutionRequest; readonly atte
 const startExecutorStep = DBOS.registerStep(async (input: StartExecutorInput): Promise<ExternalExecutionReference> => {
   const adapter = adapters.get(input.request.executor_type);
   if (!adapter) throw new Error(`executor adapter '${input.request.executor_type}' is not registered`);
-  const reference = await adapter.start_or_attach(input.request, input.attempt_id);
+  const reference = await adapter.start_or_attach(input.request, executorOperationIdForAttempt(input.attempt_id));
   await projectionObserver?.attach_external(input.request.execution_id, reference);
   return reference;
 }, { name: "oakridgeStartExecutorStep", retriesAllowed: true });
@@ -117,7 +117,7 @@ const requestRevisionStep = DBOS.registerStep(async (input: RevisionRequestInput
   if (!adapter) throw new Error(`executor adapter '${input.request.executor_type}' is not registered`);
   // Re-ensuring under this attempt's own key attaches to the session already
   // running it, rather than starting a second agent for the same work.
-  const currentReference = await adapter.start_or_attach(input.request, input.attempt_id);
+  const currentReference = await adapter.start_or_attach(input.request, executorOperationIdForAttempt(input.attempt_id));
   await adapter.deliver_input(input.request.execution_id, input.delivery_key, input.feedback, currentReference);
 }, { name: "oakridgeRequestExecutorRevisionStep", retriesAllowed: true });
 

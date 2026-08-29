@@ -1,7 +1,7 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
 import { executorHealthFromTerminal, type RunDecision, type WorkOrderExecution } from "../domain/run-record";
-import type { ExecutionAttemptId, WorkflowRunId, WorkOrderId } from "../domain/primitives";
+import { executorOperationIdForWorkOrder, type WorkflowRunId, type WorkOrderId } from "../domain/primitives";
 import type { ExecutorAdapter, ExecutorObservationAttempt, ExternalExecutionReference } from "../domain/execution";
 import type { Result } from "../domain/primitives";
 import type { RunRecordRepository, RunRecordRepositoryError } from "../storage/repositories";
@@ -39,7 +39,7 @@ const ensureExecutorStep = DBOS.registerStep(
     const adapter = workflowServices().find_executor(execution.request.executor_type);
     if (!adapter) throw new Error(`executor adapter '${execution.request.executor_type}' is not registered`);
     await records.ensure_executor_attachment(execution.work_order.id, execution.request.executor_type, workflowServices().now());
-    const reference = await adapter.start_or_attach(execution.request, execution.work_order.id as unknown as ExecutionAttemptId);
+    const reference = await adapter.start_or_attach(execution.request, executorOperationIdForWorkOrder(execution.work_order.id));
     await records.attach_external(execution.work_order.id, reference, workflowServices().now());
     return reference;
   },

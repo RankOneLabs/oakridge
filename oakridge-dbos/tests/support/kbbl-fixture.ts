@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { KbblExecutorAdapter } from "../../src/adapters/kbbl";
-import type { ExecutionId, ExecutionAttemptId } from "../../src/domain/primitives";
+import type { ExecutionId, ExecutorOperationId } from "../../src/domain/primitives";
 import type { ExecutionRequest, ExecutorObservationAttempt, ExternalExecutionReference } from "../../src/domain/execution";
 import type { ExecutionScenario } from "./dev-flow-harness";
 
@@ -231,7 +231,7 @@ export const realKbblScenario = (baseUrl: string, applicationVersion = "kbbl-fix
   const references = new Map<ExecutionId, ExternalExecutionReference>();
   return {
     async start_or_attach(request: ExecutionRequest, attempt_id: string): Promise<ExternalExecutionReference> {
-      const reference = await adapter.start_or_attach(request, attempt_id as ExecutionAttemptId);
+      const reference = await adapter.start_or_attach(request, attempt_id as ExecutorOperationId);
       references.set(request.execution_id, reference);
       return reference;
     },

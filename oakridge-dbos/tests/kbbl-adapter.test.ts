@@ -2,9 +2,9 @@ import { expect, test } from "bun:test";
 
 import { KbblExecutorAdapter, selectRemoteWorktreeBase, silentDurationMs } from "../src/adapters/kbbl";
 import type { ExecutionRequest } from "../src/domain/execution";
-import type { ExecutionAttemptId, ExecutionId, StageInstanceId, UnitId } from "../src/domain/primitives";
+import type { ExecutionId, ExecutorOperationId, StageInstanceId, UnitId } from "../src/domain/primitives";
 
-const attempt = (id: string) => id as ExecutionAttemptId;
+const attempt = (id: string) => id as ExecutorOperationId;
 
 test("kbbl adapter derives a stable session key from the attempt and function identity", async () => {
   const calls: Array<{ url: string; body: unknown }> = [];

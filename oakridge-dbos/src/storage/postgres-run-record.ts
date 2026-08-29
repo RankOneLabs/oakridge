@@ -39,6 +39,16 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       await transaction.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`v2-run:${input.run_id}`]);
       const runs = await transaction.query<{ readonly id: string }>("SELECT id::text FROM oakridge.workflow_run WHERE id = $1 FOR UPDATE", [input.run_id]);
       if (!runs[0]) throw new Error(`workflow run '${input.run_id}' was not found`);
+      const stageContract = { executor_type: input.executor_type, resolved_config: input.resolved_config, outputs: input.outputs };
+      const storedStages = await transaction.query<{ readonly immutable_matches: boolean }>(
+        `SELECT id = $3::uuid AND stage_contract = $4::jsonb AS immutable_matches FROM oakridge.stage_instance
+         WHERE run_id = $1 AND stage_key = $2 AND attempt_root_workflow_id IS NULL FOR UPDATE`,
+        [input.run_id, input.stage_key, input.stage_instance_id, stageContract],
+      );
+      const storedStage = storedStages[0];
+      if (storedStage && !storedStage.immutable_matches) {
+        throw new Error(`straight-through run '${input.run_id}' conflicts with its stored initialization`);
+      }
       const outputContracts: StoredOutputContracts = Object.fromEntries(input.outputs.map((output) => [output.name, { artifact_type: output.artifact_type, required: output.required }]));
       const existing = await transaction.query<{ readonly immutable_matches: boolean }>(`SELECT
           stage.id = $3::uuid
@@ -58,7 +68,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         JOIN oakridge.run_unit unit ON unit.stage_instance_id = stage.id
         JOIN oakridge.work_order work ON work.run_unit_id = unit.id AND work.request_idempotency_key = 'initial'
         WHERE stage.run_id = $1 AND stage.stage_key = $2 AND stage.attempt_root_workflow_id IS NULL`, [input.run_id, input.stage_key, input.stage_instance_id,
-        { executor_type: input.executor_type, resolved_config: input.resolved_config, outputs: input.outputs }, input.run_unit_id, input.unit_id,
+        stageContract, input.run_unit_id, input.unit_id,
         input.parameters, input.input_snapshot, input.input_fingerprint, input.work_order_id, input.work_order_workflow_id,
         input.work_order_capability_hash, outputContracts]);
       if (existing[0]) {
@@ -69,7 +79,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         (id, run_id, stage_key, stage_type, stage_contract, attempt_root_workflow_id, coordinator_workflow_id, started_at, state, materialization_closed)
         VALUES ($1,$2,$3,$4,$5::jsonb,NULL,$6,$7::timestamptz,'active',true)
         ON CONFLICT (run_id, stage_key) WHERE attempt_root_workflow_id IS NULL DO NOTHING`, [input.stage_instance_id, input.run_id, input.stage_key, input.executor_type,
-        { executor_type: input.executor_type, resolved_config: input.resolved_config, outputs: input.outputs }, `v2-stage:${input.stage_instance_id}`, input.created_at]);
+        stageContract, `v2-stage:${input.stage_instance_id}`, input.created_at]);
       await transaction.query(`INSERT INTO oakridge.run_unit
         (id, run_id, stage_instance_id, unit_id, parameters, input_snapshot, input_fingerprint, state, created_at)
         VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,'ready',$8::timestamptz)
@@ -187,11 +197,14 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
   }
 
   async ensure_executor_attachment(work_order_id: WorkOrderId, executor_type: string, updated_at: string): Promise<ExecutorAttachment> {
-    const rows = await this.sql.query<ExecutorAttachmentRow>(`INSERT INTO oakridge.executor_attachment (work_order_id, executor_type, updated_at)
-      VALUES ($1,$2,$3::timestamptz) ON CONFLICT (work_order_id) DO UPDATE SET updated_at = oakridge.executor_attachment.updated_at
+    const inserted = await this.sql.query<ExecutorAttachmentRow>(`INSERT INTO oakridge.executor_attachment (work_order_id, executor_type, updated_at)
+      VALUES ($1,$2,$3::timestamptz) ON CONFLICT (work_order_id) DO NOTHING
       RETURNING work_order_id::text, executor_type, external_reference, health, cleanup_state, updated_at::text`, [work_order_id, executor_type, updated_at]);
-    const row = rows[0];
-    if (!row || row.executor_type !== executor_type) throw new Error(`work order '${work_order_id}' is attached to a different executor`);
+    const row = inserted[0] ?? (await this.sql.query<ExecutorAttachmentRow>(
+      `SELECT work_order_id::text, executor_type, external_reference, health, cleanup_state, updated_at::text
+       FROM oakridge.executor_attachment WHERE work_order_id = $1`, [work_order_id]))[0];
+    if (!row) throw new Error(`executor attachment for work order '${work_order_id}' disappeared after ensure`);
+    if (row.executor_type !== executor_type) throw new Error(`work order '${work_order_id}' is attached to a different executor`);
     return { ...row, work_order_id: row.work_order_id as WorkOrderId };
   }
 

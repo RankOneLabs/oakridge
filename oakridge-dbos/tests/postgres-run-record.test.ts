@@ -43,6 +43,8 @@ test("one released run-owned slot completes a straight-through run after reposit
   expect((await sql.query<{ readonly count: string }>("SELECT count(*)::text AS count FROM oakridge.workflow_attempt WHERE run_id = $1", [runId]))[0]?.count).toBe("0");
   await expect(records.initialize_straight_through({ ...initialization, work_order_workflow_id: "conflicting-workflow" }))
     .rejects.toThrow("conflicts with its stored initialization");
+  await expect(records.initialize_straight_through({ ...initialization, stage_instance_id: randomUUID() as StageInstanceId }))
+    .rejects.toThrow("conflicts with its stored initialization");
 
   const concurrentDecisions = await Promise.all([records.decide_run(runId, now), new PostgresRunRecordRepository(sql).decide_run(runId, now)]);
   expect(concurrentDecisions.filter((decision) => decision.ok && decision.value.kind === "start_work")).toHaveLength(1);
@@ -50,9 +52,11 @@ test("one released run-owned slot completes a straight-through run after reposit
   await records.ensure_executor_attachment(workOrderId, "delegated_session", now);
   await records.attach_external(workOrderId, { kind: "kbbl_session", session_id: "session-1" }, now);
   const recoveredRecords = new PostgresRunRecordRepository(sql);
-  expect(await recoveredRecords.ensure_executor_attachment(workOrderId, "delegated_session", now)).toEqual(expect.objectContaining({
+  const recoveredAttachment = await recoveredRecords.ensure_executor_attachment(workOrderId, "delegated_session", "2026-08-29T23:59:59.000Z");
+  expect(recoveredAttachment).toEqual(expect.objectContaining({
     work_order_id: workOrderId, external_reference: { kind: "kbbl_session", session_id: "session-1" },
   }));
+  expect(Date.parse(recoveredAttachment.updated_at)).toBe(Date.parse(now));
   expect((await sql.query<{ readonly count: string }>("SELECT count(*)::text AS count FROM oakridge.executor_attachment WHERE work_order_id = $1", [workOrderId]))[0]?.count).toBe("1");
   const body = { complete: true };
   const payloadHash = createHash("sha256").update(JSON.stringify(body)).digest("hex");
