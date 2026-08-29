@@ -24,36 +24,30 @@ import type { GitCommandRunner } from "../domain/repository-provisioning";
 import { selectOrphanedVersionRuns, type OrphanedVersionRuns } from "../domain/workflow-recovery";
 import type { CohortPullRequestDependencies } from "./cohort-pull-request";
 import { pollCohortPullRequests, type CohortPollOutcome, type PullRequestReader } from "./github-pull-requests";
-import type { ArtifactId } from "../domain/primitives";
-import { selectGateStateView, selectHandoffStateView, type GateWorkflowState, type HandoffWorkflowState } from "../domain/wait";
 import { createApp } from "../http/app";
-import { getStageAdmissionState, registerDbosTransportClient, sendArtifactWorkflowMessage, sendGateWorkflowCommand, sendHandoffWorkflowCommand, sendStageCommand } from "../http/dbos-transport";
+import { registerDbosTransportClient, sendArtifactWorkflowMessage, sendRunWakeHint } from "../http/dbos-transport";
 import { seedBuiltins } from "../seed/seed-builtins";
-import { PostgresArtifactRevisionRepository, PostgresCancellationTargetRepository, PostgresExecutionArtifactContextRepository, PostgresExecutionProjectionRepository, PostgresResumeArtifactRepository, PostgresRerunTargetRepository, PostgresSessionHoldRepository, PostgresStageAdmissionTargetRepository, PostgresStageInstanceRepository, PostgresWorkflowAttemptRepository, PostgresWorkflowRunRepository } from "../storage/postgres-domain";
-import { DEFAULT_STALL_THRESHOLD_SECONDS, PostgresOperatorProjectionRepository } from "../storage/postgres-operators";
+import { PostgresArtifactRevisionRepository, PostgresExecutionArtifactContextRepository, PostgresExecutionProjectionRepository, PostgresSessionHoldRepository, PostgresStageInstanceRepository, PostgresWorkflowRunRepository } from "../storage/postgres-domain";
+import { PostgresOperatorProjectionRepository } from "../storage/postgres-operators";
 import { PostgresCohortPullRequestRepository, PostgresCollaborationRepository, PostgresEpicWorkflowProfileRepository, PostgresFinalPullRequestRepository, PostgresGateDecisionAuditRepository } from "../storage/postgres-policy";
 import { PostgresProjectRepository } from "../storage/postgres-projects";
-import { PostgresWaitRepository } from "../storage/postgres-wait";
 import { PostgresWorkflowDefinitionRepository } from "../storage/postgres-workflow-definitions";
 import { PgPostgresExecutor } from "../storage/sql-executor";
-import { registerCancellationControlServices } from "../workflows/cancellation";
-import { registerWaitRepository } from "../workflows/wait-record";
-import { registerArtifactLifecycleObserver, registerExecutionProjectionObserver, registerExecutorAdapter } from "../workflows/executor-topology";
-import { findExecutorAdapter } from "../workflows/executor-topology";
+import { requireV2CutoverDatabase } from "../storage/cutover";
+import { findExecutorAdapter, registerExecutorAdapter } from "./executor-registry";
 import { registerRunRecordWorkflowServices } from "../workflows/run-record-topology";
+import "../workflows/collaboration-responder";
 import { PostgresRunRecordRepository } from "../storage/postgres-run-record";
-import { registerProductionTopologyServices } from "../workflows/production-topology";
 import { dispatchArtifactNotifications } from "./artifact-notifications";
-import { cancelAttempt } from "./cancel-run";
-import { DbosCancellationClient } from "./dbos-cancellation-client";
-import { DbosStageRerunClient } from "./dbos-stage-rerun-client";
+import { DbosRunLaunchClient } from "./dbos-run-launch-client";
 import { DbosCollaborationPingClient } from "./collaboration-ping";
 import { emitExecutionArtifact } from "./emit-artifact";
 import { BunGitCommandRunner } from "./git-command-runner";
-import { createProductionTopologyServices } from "./production-services";
 import { createPromptTemplateLoader } from "./prompt-template";
 import { GitProjectRepositoryIdentityResolver } from "./project-identity";
 import { dispatchRunLaunches } from "./run-launch-notifications";
+import { reconcileRunMaterialization } from "./run-materialization";
+import { publishWorkOrderArtifact } from "./publish-work-order-artifact";
 
 export interface OakridgeRuntimeConfig {
   readonly database_url: string;
@@ -73,7 +67,6 @@ export interface OakridgeRuntimeConfig {
   readonly prompt_template_directory: string;
   /** Bearer token required on state-changing requests; absent on a loopback bind. */
   readonly control_token?: string;
-  readonly stall_threshold_seconds?: number;
   /**
    * Runs the git commands the provisioning stage needs. Defaults to real
    * subprocesses; a test supplies its own to drive the sequencing without a
@@ -118,6 +111,11 @@ export interface OakridgeRuntime {
 export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Promise<OakridgeRuntime> => {
   const now = config.now ?? (() => new Date().toISOString());
   const sql = PgPostgresExecutor.connect(config.database_url);
+  const cutover = await requireV2CutoverDatabase(sql);
+  if (!cutover.ok) {
+    await sql.close();
+    throw new Error(cutover.error.detail);
+  }
   const client = await DBOSClient.create({ systemDatabaseUrl: config.database_url });
 
   const definitions = new PostgresWorkflowDefinitionRepository(sql);
@@ -125,28 +123,20 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const projectIdentity = new GitProjectRepositoryIdentityResolver();
   const runs = new PostgresWorkflowRunRepository(sql);
   const runRecords = new PostgresRunRecordRepository(sql);
-  const attempts = new PostgresWorkflowAttemptRepository(sql);
   const stages = new PostgresStageInstanceRepository(sql);
-  const admissionTargets = new PostgresStageAdmissionTargetRepository(sql);
   const artifacts = new PostgresArtifactRevisionRepository(sql);
   const contexts = new PostgresExecutionArtifactContextRepository(sql);
   const executions = new PostgresExecutionProjectionRepository(sql);
-  const resumeArtifacts = new PostgresResumeArtifactRepository(sql);
-  const rerunTargets = new PostgresRerunTargetRepository(sql);
-  const cancellationTargets = new PostgresCancellationTargetRepository(sql);
-  const waits = new PostgresWaitRepository(sql);
   const sessionHolds = new PostgresSessionHoldRepository(sql, config.application_version);
   const audits = new PostgresGateDecisionAuditRepository(sql);
   const collaboration = new PostgresCollaborationRepository(sql);
   const finalPullRequests = new PostgresFinalPullRequestRepository(sql);
   const epicProfiles = new PostgresEpicWorkflowProfileRepository(sql);
   const cohortReconciliations = new PostgresCohortPullRequestRepository(sql);
-  const projections = new PostgresOperatorProjectionRepository(sql, { stall_threshold_seconds: config.stall_threshold_seconds ?? DEFAULT_STALL_THRESHOLD_SECONDS });
+  const projections = new PostgresOperatorProjectionRepository(sql);
 
-  const dbosRuns = new DbosStageRerunClient(client);
-  const dbosCancellation = new DbosCancellationClient(client);
+  const dbosRuns = new DbosRunLaunchClient(client);
   const collaborationPings = new DbosCollaborationPingClient(client, config.application_version);
-  const cancellation = { attempts, targets: cancellationTargets, dbos: dbosCancellation, now };
   const promptTemplates = createPromptTemplateLoader(config.prompt_template_directory);
 
   // HTTP handlers and the periodic workers share these dispatch functions. Keep
@@ -169,30 +159,26 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   registerExecutorAdapter(new RepositoryProvisioningAdapter({
     git: config.git_commands ?? new BunGitCommandRunner(),
     emit: (request) => emitExecutionArtifact({ contexts, artifacts, dispatch_notifications: dispatchNotifications }, request),
+    publish_work_order: async (request) => {
+      const result = await publishWorkOrderArtifact({ ...request, collection_key: null }, { records: runRecords, now });
+      if (result.kind === "published" || result.kind === "pending" || result.kind === "already_applied") {
+        await sendRunWakeHint(result.run_id, `provision:${result.run_id}:${result.record_version}`).catch(() => undefined);
+      }
+      return result;
+    },
   }));
-  registerExecutionProjectionObserver(executions);
-  registerArtifactLifecycleObserver(artifacts);
-  registerWaitRepository(waits);
-  registerCancellationControlServices({
-    list_execution_targets: (root) => cancellationTargets.list_for_attempt(root),
-    terminalize_pending_waits: (root, reason, at) => cancellationTargets.terminalize_pending_waits(root, "workflow_cancellation", reason ?? "workflow cancelled", at),
-    finish_started_stages: (root, at, reason) => cancellationTargets.finish_started_stages(root, at, reason),
-    count_open_waits: (command_workflow_id) => waits.count_open_waits(command_workflow_id),
-    close_orphaned_waits: (command_workflow_id, at) => waits.close_orphaned(command_workflow_id, at),
-  });
   // The wait table is the record of gate/handoff state; DBOS stays the command
   // mechanism, so the send functions above keep coming from the transport.
-  const getGateState = async (artifact_revision_id: ArtifactId, gate_step: string, execution_workflow_id: string): Promise<GateWorkflowState | null> =>
-    selectGateStateView(await waits.find_gate_wait(artifact_revision_id, gate_step, execution_workflow_id));
-  const getHandoffState = async (artifact_id: ArtifactId, execution_workflow_id: string): Promise<HandoffWorkflowState | null> =>
-    selectHandoffStateView(await waits.find_handoff_waits(artifact_id, execution_workflow_id));
-  registerProductionTopologyServices(createProductionTopologyServices({ definitions, runs, attempts, stages, executions, rerun_targets: rerunTargets,
-    resume_artifacts: resumeArtifacts, waits, load_prompt_template: (path) => promptTemplates.load(path) }));
-  registerRunRecordWorkflowServices({ records: runRecords, find_executor: findExecutorAdapter, now });
+  registerRunRecordWorkflowServices({ records: runRecords, find_executor: findExecutorAdapter,
+    reconcile_materialization: async (run_id, materialized_at) => {
+      const result = await reconcileRunMaterialization(run_id, materialized_at,
+        { definitions, records: runRecords, load_prompt_template: (path) => promptTemplates.load(path) });
+      if (!result.ok && result.error.kind === "infrastructure") throw new Error(`${result.error.operation}:${result.error.detail}`);
+      if (!result.ok) await runRecords.fail_materialization({ run_id, stage_key: result.error.stage_key, detail: result.error.detail, failed_at: materialized_at });
+    }, now });
 
   const cohortPullRequests: CohortPullRequestDependencies = {
-    runs, epic_profiles: epicProfiles, contexts, artifacts, reconciliations: cohortReconciliations,
-    get_handoff_state: getHandoffState, send_handoff_command: sendHandoffWorkflowCommand, now,
+    runs, epic_profiles: epicProfiles, reconciliations: cohortReconciliations, records: runRecords, now,
   };
   const pollPullRequests = (): Promise<readonly CohortPollOutcome[] | null> => {
     const reader = config.pull_request_reader;
@@ -213,27 +199,23 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
 
   const app = createApp({
     configuration: { projects, definitions, project_identity: projectIdentity, now },
-    admission: { targets: admissionTargets, get_admission_state: getStageAdmissionState, send_stage_command: sendStageCommand },
-    run_lifecycle: { runs },
+    admission: { records: runRecords, now },
+    operator_retry: { records: runRecords, now },
+    run_lifecycle: { records: runRecords },
     domain_reads: { stages, artifacts, session_holds: sessionHolds },
     final_pull_requests: { final_pull_requests: finalPullRequests, now },
     artifact_callback: { contexts, artifacts, dispatch_notifications: dispatchNotifications },
-    work_order_artifact_callback: { records: runRecords, now },
+    work_order_artifact_callback: { records: runRecords, now, send_run_wake: sendRunWakeHint },
     artifact_withdraw: { contexts, artifacts, dispatch_notifications: dispatchNotifications },
-    gate_resume: { contexts, artifacts, collaboration, audits, get_gate_state: getGateState, send_gate_command: sendGateWorkflowCommand,
-      get_handoff_state: getHandoffState, send_handoff_command: sendHandoffWorkflowCommand },
-    handoff_complete: { artifacts, contexts, get_handoff_state: getHandoffState, send_handoff_command: sendHandoffWorkflowCommand },
+    gate_resume: { records: runRecords, now, send_run_wake: sendRunWakeHint },
+    handoff_complete: { records: runRecords, now, send_run_wake: sendRunWakeHint },
     cohort_pull_requests: cohortPullRequests,
     collaboration: { artifacts, contexts, executions, collaboration, policy_for_artifact_type: collaborationPolicy,
       ping_thread: (input) => collaborationPings.enqueue(input), dispatch_notifications: dispatchNotifications },
     operator_projections: projections,
     artifact_detail: { artifacts, stages, audits, presentation_for_type: presentation, artifact_types: DEV_FLOW_ARTIFACT_TYPES },
     run_launch: { definitions, projects, runs, projections, dispatch_launches: dispatchLaunches, application_version: config.application_version, now },
-    rerun: {
-      stages, targets: rerunTargets, dbos: client, cancellation,
-      stage_rerun: { runs, attempts, definitions, dbos: dbosRuns, now,
-        supersede_attempt: (root) => cancelAttempt(root, { dbos: dbosCancellation, now }, "superseded by stage rerun") },
-    },
+    rerun: { v2_cancellation: { records: runRecords, find_executor: findExecutorAdapter, now, send_run_wake: sendRunWakeHint } },
     ...(config.control_token ? { control_token: config.control_token } : {}),
   });
 

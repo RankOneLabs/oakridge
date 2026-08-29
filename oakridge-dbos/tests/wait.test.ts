@@ -12,6 +12,8 @@ const wait = (closes_on: WaitClosesOn, status: Wait["status"], overrides: Partia
   unit_id: "unit-1" as UnitId,
   artifact_revision_id: "artifact-1" as ArtifactId,
   closes_on, status,
+  run_unit_id: null,
+  output_name: null,
   execution_workflow_id: "execution-workflow-1",
   command_workflow_id: "execution-workflow-1:gate:artifact-1:wait:artifact_approval",
   opened_at: "2026-08-21T12:00:00.000Z",
@@ -45,6 +47,11 @@ test("a superseded gate wait views as superseded", () => {
 
 test("a withdrawn gate wait views as withdrawn", () => {
   expect(selectGateStateView(wait(gateClosesOn, closed({ kind: "withdrawn" })))?.status).toBe("withdrawn");
+});
+
+test("cancelled gate and handoff waits remain readable terminal states", () => {
+  expect(selectGateStateView(wait(gateClosesOn, closed({ kind: "cancelled", reason: "run cancelled" })))?.status).toBe("cancelled");
+  expect(selectHandoffStatusFromWait("handoff_external", "closed", "cancelled")).toBe("cancelled");
 });
 
 test("an open external wait maps to awaiting_external", () => {

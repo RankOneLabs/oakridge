@@ -3,15 +3,16 @@ import { createHash } from "node:crypto";
 
 import { createWorkOrderArtifactCallbackApp } from "../src/http/work-order-artifact-callback";
 import type { PublishWorkOrderArtifact } from "../src/domain/run-record";
-import type { RunRecordVersion } from "../src/domain/primitives";
+import type { RunRecordVersion, WaitId, WorkflowRunId } from "../src/domain/primitives";
 
 const workOrderId = "11111111-1111-4111-8111-111111111111";
+const runId = "22222222-2222-4222-8222-222222222222" as WorkflowRunId;
 
 test("a work-order capability, not mutable session identity, authorizes publication", async () => {
   let published: PublishWorkOrderArtifact | null = null;
-  const app = createWorkOrderArtifactCallbackApp({ records: { publish_immediate: async (request) => {
+  const app = createWorkOrderArtifactCallbackApp({ records: { publish_artifact: async (request: PublishWorkOrderArtifact) => {
     published = request;
-    return { kind: "published", artifact_id: request.artifact_id, record_version: 4 as RunRecordVersion };
+    return { kind: "published", artifact_id: request.artifact_id, run_id: runId, record_version: 4 as RunRecordVersion };
   } }, now: () => "2026-08-28T12:00:00.000Z" });
   const response = await app.request(`/work-orders/${workOrderId}/emit/result`, { method: "PUT", headers: {
     "content-type": "application/json", "work-order-capability": "secret", "idempotency-key": "emit-1",
@@ -21,9 +22,31 @@ test("a work-order capability, not mutable session identity, authorizes publicat
     capability_hash: createHash("sha256").update("secret").digest("hex") }));
 });
 
+test("a gated output reports its pending wait rather than a release", async () => {
+  const waitId = "88888888-8888-4888-8888-888888888888" as WaitId;
+  const app = createWorkOrderArtifactCallbackApp({ records: { publish_artifact: async (request: PublishWorkOrderArtifact) =>
+    ({ kind: "pending", artifact_id: request.artifact_id, wait_id: waitId, run_id: runId, record_version: 5 as RunRecordVersion }) }, now: () => "2026-08-28T12:00:00.000Z" });
+  const response = await app.request(`/work-orders/${workOrderId}/emit/plan`, { method: "PUT", headers: {
+    "content-type": "application/json", "work-order-capability": "secret", "idempotency-key": "emit-2",
+  }, body: JSON.stringify({ draft: true }) });
+  expect(response.status).toBe(202);
+  expect(await response.json()).toEqual(expect.objectContaining({ state: "pending", wait_id: waitId, record_version: 5 }));
+});
+
+test("a second publish while the slot is already pending is reported as a 409 with the existing wait id", async () => {
+  const waitId = "99999999-9999-4999-8999-999999999999" as WaitId;
+  const app = createWorkOrderArtifactCallbackApp({ records: { publish_artifact: async () =>
+    ({ kind: "slot_pending", wait_id: waitId, detail: "output slot 'plan' is already pending a decision" }) }, now: () => "2026-08-28T12:00:00.000Z" });
+  const response = await app.request(`/work-orders/${workOrderId}/emit/plan`, { method: "PUT", headers: {
+    "content-type": "application/json", "work-order-capability": "secret", "idempotency-key": "emit-3",
+  }, body: JSON.stringify({ draft: true }) });
+  expect(response.status).toBe(409);
+  expect(await response.json()).toEqual({ error: "output slot 'plan' is already pending a decision", code: "slot_pending", wait_id: waitId });
+});
+
 test("publication without its work-order capability never reaches the domain command", async () => {
   let calls = 0;
-  const app = createWorkOrderArtifactCallbackApp({ records: { publish_immediate: async () => {
+  const app = createWorkOrderArtifactCallbackApp({ records: { publish_artifact: async () => {
     calls += 1;
     throw new Error("unexpected");
   } }, now: () => "2026-08-28T12:00:00.000Z" });

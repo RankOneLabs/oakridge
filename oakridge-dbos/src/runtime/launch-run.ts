@@ -9,7 +9,7 @@ import { createEpicProfile, prepareRunContext } from "./prepare-run-context";
 import type { OperatorProjectionRepository } from "../storage/postgres-operators";
 import type { ProjectRepository, WorkflowDefinitionRepository, WorkflowRunRepository } from "../storage/repositories";
 
-export interface CompatibleRunLaunchRequest extends CreateWorkflowRunRequest {
+export interface RunLaunchRequest extends CreateWorkflowRunRequest {
   readonly idempotency_key: string | null;
 }
 
@@ -48,7 +48,7 @@ export const deterministicRunId = (idempotencyKey: string): WorkflowRunId => {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20)}` as WorkflowRunId;
 };
 
-export const launchCompatibleRun = async (request: CompatibleRunLaunchRequest, dependencies: LaunchRunDependencies): Promise<Result<OperatorRunSummary, RunLaunchError>> => {
+export const launchRun = async (request: RunLaunchRequest, dependencies: LaunchRunDependencies): Promise<Result<OperatorRunSummary, RunLaunchError>> => {
   const definition = await dependencies.definitions.find_by_id(request.workflow_def_id);
   if (!definition) return launchFailure("definition_not_found", `workflow definition '${request.workflow_def_id}' was not found`);
   const runId = request.idempotency_key ? deterministicRunId(request.idempotency_key) : (dependencies.new_id ?? randomUUID)() as WorkflowRunId;
@@ -76,7 +76,7 @@ export const launchCompatibleRun = async (request: CompatibleRunLaunchRequest, d
   // owner, and it is not the participant that can only ever say no.
 
   const createdAt = existing?.created_at ?? dependencies.now();
-  const rootWorkflowId = `oakridge-run:${runId}:attempt:initial`;
+  const rootWorkflowId = `v2-run:${runId}`;
   const epicProfile = request.epic_profile ? createEpicProfile({ id: runId as unknown as EpicWorkflowProfileId,
     workflow_run_id: runId, config: request.epic_profile, created_at: createdAt }) : null;
   const persisted = await dependencies.runs.create_with_initial_attempt({
@@ -91,7 +91,3 @@ export const launchCompatibleRun = async (request: CompatibleRunLaunchRequest, d
   if (!summary) return launchFailure("projection_unavailable", `workflow run '${runId}' was enqueued but its operator projection is not available`);
   return ok(summary);
 };
-
-// Compatibility aliases retained for callers while the HTTP boundary migrates.
-export type LaunchRunRequest = CompatibleRunLaunchRequest;
-export const launchRun = launchCompatibleRun;

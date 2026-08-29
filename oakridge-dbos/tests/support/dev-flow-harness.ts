@@ -306,7 +306,21 @@ export interface IntegrationRuntime {
  */
 export const installIntegrationRuntime = async (databaseUrl: string): Promise<IntegrationRuntime> => {
   const migrationSql = PgPostgresExecutor.connect(databaseUrl);
-  try { await applyMigrations(migrationSql); } finally { await migrationSql.close(); }
+  try {
+    // This suite owns a dedicated application database. Slice 6c deliberately
+    // tests the supported cutover — construct the Oakridge schema from zero —
+    // rather than letting rows from an earlier local test run masquerade as an
+    // in-place migration. DBOS keeps its own schema and is not rewritten.
+    const databaseName = new URL(databaseUrl).pathname.replace(/^\//, "");
+    const isDedicatedLocalDatabase = databaseName === "oakridge_e2e";
+    const isDisposableCiDatabase = process.env.CI === "true" && process.env.OAKRIDGE_TEST_DATABASE_URL === databaseUrl;
+    if (!isDedicatedLocalDatabase && !isDisposableCiDatabase && process.env.OAKRIDGE_TEST_ALLOW_SCHEMA_DROP !== "1") {
+      throw new Error(`refusing to drop schema 'oakridge' in database '${databaseName}': set OAKRIDGE_TEST_ALLOW_SCHEMA_DROP=1 to confirm it is disposable`);
+    }
+    await migrationSql.query("DROP SCHEMA IF EXISTS oakridge CASCADE", []);
+    await migrationSql.query("DROP TABLE IF EXISTS public.oakridge_schema_migration", []);
+    await applyMigrations(migrationSql);
+  } finally { await migrationSql.close(); }
 
   const loaded = await loadDevFlowV14();
   if (!loaded.ok) throw new Error(loaded.error.detail);

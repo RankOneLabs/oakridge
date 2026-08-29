@@ -176,6 +176,20 @@ test("the provisioning executor carries its outcome in the reference it returns"
   expect(observed).toEqual({ kind: "terminal", observation: { kind: "succeeded", metadata: { base_branch: "epic/response-edits", base_head_sha: EPIC_HEAD } } });
 });
 
+test("the provisioning executor publishes through its v2 work order, never the legacy projection", async () => {
+  const published: unknown[] = [];
+  let legacyEmits = 0;
+  const adapter = new RepositoryProvisioningAdapter({ git: scriptedGit(publishedEpic).runner,
+    async emit() { legacyEmits += 1; throw new Error("legacy emit must not be called"); },
+    async publish_work_order(request) { published.push(request); return { kind: "published", artifact_id: "artifact-1" as never,
+      run_id: "run-1" as never, record_version: 1 as never }; } });
+  const request = executionRequest({ ...(resolvedConfig as object), publication: { work_order_id: "11111111-1111-4111-8111-111111111112", capability: "work-secret" } } as JsonValue);
+  expect(await adapter.start_or_attach(request, "attempt-1")).toEqual({ kind: "completed", observation: expect.objectContaining({ kind: "succeeded" }) });
+  expect(legacyEmits).toBe(0);
+  expect(published).toEqual([expect.objectContaining({ work_order_id: "11111111-1111-4111-8111-111111111112", capability: "work-secret",
+    output_name: "repository_refs", idempotency_key: "stage-1:scout:repository_refs" })]);
+});
+
 /**
  * A git failure is this unit's terminal outcome, not an exception. Throwing
  * inside the retrying step that carries it kills the observer and leaves the

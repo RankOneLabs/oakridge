@@ -4,7 +4,7 @@ import type { ProjectId, WorkflowDefinitionId } from "../src/domain/primitives";
 import type { WorkflowDefinition } from "../src/domain/workflow";
 import type { PersistWorkflowRunLaunch } from "../src/domain/runs";
 import { createRunLaunchApp } from "../src/http/run-launch";
-import { deterministicRunId, type LaunchRunDependencies } from "../src/runtime/launch-run";
+import { deterministicRunId, launchRun, type LaunchRunDependencies } from "../src/runtime/launch-run";
 import { dispatchRunLaunches } from "../src/runtime/run-launch-notifications";
 import type { WorkflowRunRepository } from "../src/storage/repositories";
 
@@ -44,14 +44,14 @@ const mountedFixture = (options: { readonly archived?: boolean } = {}) => {
     async dispatch_launches() { dispatches += 1; return 1; },
     application_version: "pr2", now: () => "2026-08-15T00:00:00Z",
   } as unknown as LaunchRunDependencies;
-  return { app: createRunLaunchApp(dependencies), stored: () => stored, dispatches: () => dispatches };
+  return { app: createRunLaunchApp(dependencies), dependencies, stored: () => stored, dispatches: () => dispatches };
 };
 
 const request = (app: ReturnType<typeof createRunLaunchApp>, value: unknown = body) => app.request("/workflow_runs", {
   method: "POST", headers: { "content-type": "application/json", "idempotency-key": "launch-1" }, body: JSON.stringify(value),
 });
 
-test("compatible workflow run POST persists, dispatches, and returns the operator RunSummary", async () => {
+test("workflow run POST persists, dispatches, and returns the operator RunSummary", async () => {
   const subject = mountedFixture();
   const response = await request(subject.app);
   expect(response.status).toBe(201);
@@ -61,7 +61,7 @@ test("compatible workflow run POST persists, dispatches, and returns the operato
   expect(subject.dispatches()).toBe(1);
 });
 
-test("compatible workflow run POST replays the same idempotent launch without a second logical run", async () => {
+test("workflow run POST replays the same idempotent launch without a second logical run", async () => {
   const subject = mountedFixture();
   expect((await request(subject.app)).status).toBe(201);
   const replay = await request(subject.app);
@@ -70,7 +70,7 @@ test("compatible workflow run POST replays the same idempotent launch without a 
   expect(subject.dispatches()).toBe(2);
 });
 
-test("compatible workflow run POST reports an immutable replay conflict", async () => {
+test("workflow run POST reports an immutable replay conflict", async () => {
   const subject = mountedFixture();
   expect((await request(subject.app)).status).toBe(201);
   const conflict = await request(subject.app, { ...body, context: { ...context, brief_notes: "different" } });
@@ -78,7 +78,7 @@ test("compatible workflow run POST reports an immutable replay conflict", async 
   expect(await conflict.json()).toEqual({ error: "conflicting replay", code: "idempotency_conflict" });
 });
 
-test("compatible workflow run POST blocks an archived definition before persistence", async () => {
+test("workflow run POST blocks an archived definition before persistence", async () => {
   const subject = mountedFixture({ archived: true });
   const response = await request(subject.app);
   expect(response.status).toBe(409);
@@ -96,9 +96,27 @@ test("run launch outbox worker starts DBOS before acknowledging its lease", asyn
   } as unknown as WorkflowRunRepository;
   let claims = 0;
   repository.claim_pending_launches = async () => { claims += 1; calls.push("claim"); return claims === 1 ? [{ id: "outbox-1", target_workflow_id: "root-1", command, idempotency_key: "launch" }] : []; };
-  const count = await dispatchRunLaunches(repository, { async start_run(id, input, version) { calls.push(`dbos:${id}:${input.workflow_definition_version}:${version}`); } }, () => "2026-08-15T00:00:00Z");
+  const count = await dispatchRunLaunches(repository, { async start_v2_run(request) { calls.push(`dbos:${request.workflow_id}:${request.run_id}:${request.application_version}`); return { ok: true, value: undefined }; } }, () => "2026-08-15T00:00:00Z");
   expect(count).toBe(1);
-  expect(calls).toEqual(["claim", "dbos:root-1:11:pr2", "delivered"]);
+  expect(calls).toEqual(["claim", `dbos:root-1:${command.run_id}:pr2`, "delivered"]);
+});
+
+test("v2 launch dispatcher addresses only the run-record workflow", async () => {
+  const calls: string[] = [];
+  const command = { kind: "launch_run" as const, run_id: deterministicRunId("v2-launch"), workflow_definition_id: definition.id,
+    workflow_definition_version: definition.version, root_workflow_id: `v2-run:${deterministicRunId("v2-launch")}`, context: {}, created_at: "2026-08-15T00:00:00Z", application_version: "v2" };
+  let claims = 0;
+  const repository = { async claim_pending_launches() { claims += 1; return claims === 1 ? [{ id: "outbox-v2", target_workflow_id: command.root_workflow_id, command, idempotency_key: "v2" }] : []; },
+    async mark_launch_delivered() { calls.push("delivered"); }, async mark_launch_failed() { calls.push("failed"); } } as unknown as WorkflowRunRepository;
+  expect(await dispatchRunLaunches(repository, { async start_v2_run(request) { calls.push(`${request.workflow_id}:${request.run_id}:${request.application_version}`); return { ok: true, value: undefined }; } })).toBe(1);
+  expect(calls).toEqual([`${command.root_workflow_id}:${command.run_id}:v2`, "delivered"]);
+});
+
+test("v2 launch identity cannot collide with a legacy root history", async () => {
+  const subject = mountedFixture();
+  const launched = await launchRun({ ...body, idempotency_key: "launch-1" }, subject.dependencies);
+  expect(launched.ok).toBe(true);
+  expect(subject.stored()?.run.root_workflow_id).toBe(`v2-run:${deterministicRunId("launch-1")}`);
 });
 
 const epicBody = {

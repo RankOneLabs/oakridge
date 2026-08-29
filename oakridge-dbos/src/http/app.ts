@@ -21,10 +21,12 @@ import { createFinalPullRequestApp, type FinalPullRequestHttpDependencies } from
 import { controlTokenMiddleware } from "./control-auth";
 import { sharedCursor } from "./shared-cursor";
 import { createWorkOrderArtifactCallbackApp, type WorkOrderArtifactCallbackDependencies } from "./work-order-artifact-callback";
+import { createOperatorRetryApp, type OperatorRetryHttpDependencies } from "./operator-retry";
 
 export interface OakridgeHttpDependencies {
   readonly configuration: ConfigurationHttpDependencies;
   readonly admission: AdmissionHttpDependencies;
+  readonly operator_retry: OperatorRetryHttpDependencies;
   readonly run_lifecycle: RunLifecycleHttpDependencies;
   readonly domain_reads: DomainReadHttpDependencies;
   readonly final_pull_requests: FinalPullRequestHttpDependencies;
@@ -48,6 +50,7 @@ export const createApp = (dependencies: OakridgeHttpDependencies): Hono => {
   if (dependencies.control_token) app.use("*", controlTokenMiddleware(dependencies.control_token));
   app.route("/", createConfigurationApp(dependencies.configuration));
   app.route("/", createAdmissionApp(dependencies.admission));
+  app.route("/", createOperatorRetryApp(dependencies.operator_retry));
   app.route("/", createRunLifecycleApp(dependencies.run_lifecycle));
   app.route("/", createDomainReadApp(dependencies.domain_reads));
   app.route("/", createFinalPullRequestApp(dependencies.final_pull_requests));

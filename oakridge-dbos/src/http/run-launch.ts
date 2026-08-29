@@ -4,7 +4,7 @@ import { z } from "zod";
 import { DELEGATED_RUNTIME_IDS } from "../domain/delegated-session";
 import type { ProjectId, WorkflowDefinitionId } from "../domain/primitives";
 import type { RunContext } from "../domain/run-context";
-import { launchCompatibleRun, type LaunchRunDependencies, type RunLaunchFailureKind } from "../runtime/launch-run";
+import { launchRun, type LaunchRunDependencies, type RunLaunchFailureKind } from "../runtime/launch-run";
 
 /** The HTTP reading of a launch failure — one place, exhaustive over the union. */
 const selectRunLaunchStatus = (kind: RunLaunchFailureKind): 400 | 404 | 409 | 503 => {
@@ -79,7 +79,7 @@ export const createRunLaunchApp = (dependencies: LaunchRunDependencies): Hono =>
   app.post("/workflow_runs", async (context) => {
     const parsed = launchSchema.safeParse(await context.req.json().catch(() => null));
     if (!parsed.success) return context.json({ error: `invalid workflow launch — ${describeInvalidRequest(parsed.error)}`, code: "invalid_context" }, 400);
-    const launched = await launchCompatibleRun({ workflow_def_id: parsed.data.workflow_def_id as WorkflowDefinitionId,
+    const launched = await launchRun({ workflow_def_id: parsed.data.workflow_def_id as WorkflowDefinitionId,
       project_id: parsed.data.project_id as ProjectId | null, context: parsed.data.context as RunContext,
       epic_profile: parsed.data.epic_profile, idempotency_key: context.req.header("idempotency-key")?.trim() || null }, dependencies);
     if (!launched.ok) return context.json({ error: launched.error.detail, code: launched.error.kind }, selectRunLaunchStatus(launched.error.kind));

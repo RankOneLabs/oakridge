@@ -11,12 +11,9 @@ import { compileWorkflowDefinition } from "../src/compiler/compile-workflow";
 import { selectAncestorStages } from "../src/compiler/select-resume-stages";
 import { hasOwn, readOwn } from "../src/domain/records";
 import { selectBuiltInGateDisposition } from "../src/domain/gates";
-import type { WorkflowDefinitionId, WorkflowRunId } from "../src/domain/primitives";
-import type { WorkflowDefinition } from "../src/domain/workflow";
 import { createDomainReadApp } from "../src/http/domain-reads";
 import { createOperatorProjectionApp } from "../src/http/operator-projections";
 import type { OperatorProjectionRepository } from "../src/storage/postgres-operators";
-import { rerunStage, type StageRerunDependencies } from "../src/runtime/stage-rerun";
 import { parseWorkflowDefinition } from "../src/validation/workflow-definition";
 import { delegatedSessionDefinitionSchema } from "../src/validation/delegated-session";
 import { loadDevFlowV14 } from "../src/seed/dev-flow-v14";
@@ -41,26 +38,6 @@ test("an inherited name is not a resumable stage", async () => {
   for (const key of INHERITED) {
     const selected = selectAncestorStages(compiled.value, key);
     expect(selected.ok).toBe(false);
-  }
-});
-
-const runId = "run-1" as WorkflowRunId;
-const rerunDefinition: WorkflowDefinition = {
-  id: "definition-1" as WorkflowDefinitionId, name: "flow", version: 1, archived: false, created_at: "2026-08-17T00:00:00Z",
-  graph: { stages: { build: { stage_type: "delegated_session", operator_role: "build", config: {}, inputs: [], outputs: [] } }, edges: [] },
-};
-
-test("an inherited name is not a rerunnable stage", async () => {
-  const dependencies = {
-    runs: { async find_by_id() { return { id: runId, workflow_definition_id: rerunDefinition.id, context: {}, archived: false }; } },
-    definitions: { async find_by_id() { return rerunDefinition; } },
-    attempts: { async find_by_root_workflow_id() { throw new Error("must not reach the attempt lookup"); }, async list_for_run() { return []; }, async insert() {} },
-    dbos: { async start_run() { throw new Error("must not start a run for a stage that does not exist"); } },
-    now: () => "2026-08-17T00:00:00Z", supersede_attempt: async () => {},
-  } as unknown as StageRerunDependencies;
-  for (const key of INHERITED) {
-    const result = await rerunStage({ run_id: runId, stage_key: key, rerun_id: "command-1" }, dependencies);
-    expect(result).toEqual({ ok: false, error: { kind: "stage_not_found", stage_key: key } });
   }
 });
 

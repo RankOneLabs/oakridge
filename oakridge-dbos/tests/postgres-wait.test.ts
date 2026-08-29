@@ -181,3 +181,75 @@ test("close_orphaned closes every open row as withdrawn", async () => {
   const found = await subject.waits.find_gate_wait(artifactId(6), "artifact_approval", "execution-1");
   expect(found?.status.kind === "closed" && found.status.outcome).toEqual({ kind: "withdrawn" });
 });
+
+/** Seeds one fresh artifact row, for a test that needs an id outside the shared 1..9 pool. */
+const seedArtifact = async (sql: PgPostgresExecutor, artifactRevisionId: string, resultName: string): Promise<void> => {
+  await sql.query(
+    `INSERT INTO oakridge.artifact (id, chain_id, run_id, stage_instance_id, execution_id, unit_id, output_name, artifact_type, body, version, emission_idempotency_key, emission_payload_hash)
+     VALUES ($1, $1, '00000000-0000-4000-8000-000000000001', $2, 'stage:unit-1', 'unit-1', $3, 'dev.result', '{}'::jsonb, 1, $3, $3)`,
+    [artifactRevisionId, STAGE, resultName],
+  );
+};
+
+/** Seeds one `run_unit` row so a v2 wait's `run_unit_id` foreign key resolves. */
+const seedRunUnit = async (sql: PgPostgresExecutor, runUnitId: string, unitId: string): Promise<void> => {
+  await sql.query(
+    `INSERT INTO oakridge.run_unit (id, run_id, stage_instance_id, unit_id, parameters, input_snapshot, input_fingerprint, state, created_at)
+     VALUES ($1, '00000000-0000-4000-8000-000000000001', $2, $3, '{}'::jsonb, '[]'::jsonb, 'empty', 'working', now())`,
+    [runUnitId, STAGE, unitId],
+  );
+};
+
+/**
+ * A legacy wait row never carries v2 identity. `RunRecordRepository` writes
+ * the v2 columns directly (its own transaction owns slot + wait together), so
+ * this proves the read side decodes them rather than that anyone here opens one.
+ */
+test("a v1 wait decodes null v2 identity", async () => {
+  const subject = await fixture();
+  if (!subject) return;
+  const artifact = "00000000-0000-4000-8000-0000000000d0" as ArtifactId;
+  await seedArtifact(subject.sql, artifact, "result_v1_decode");
+  const input = gateOpen(artifact, "execution-legacy");
+  await subject.waits.open_gate(input);
+  const found = await subject.waits.find_gate_wait(artifact, "artifact_approval", "execution-legacy");
+  expect(found).toEqual(expect.objectContaining({ run_unit_id: null, output_name: null }));
+});
+
+/** A row `RunRecordRepository` opens directly is still readable through the shared wait repository. */
+test("a v2-opened wait decodes its run-unit and output-slot identity", async () => {
+  const subject = await fixture();
+  if (!subject) return;
+  const artifact = "00000000-0000-4000-8000-0000000000d1" as ArtifactId;
+  const runUnitId = "00000000-0000-4000-8000-0000000000b1";
+  await seedArtifact(subject.sql, artifact, "result_v2_decode");
+  await seedRunUnit(subject.sql, runUnitId, "unit-v2-1");
+  await subject.sql.query(
+    `INSERT INTO oakridge.wait (id, stage_instance_id, unit_id, kind, artifact_revision_id, closes_on, status, run_unit_id, output_name, execution_workflow_id, command_workflow_id, opened_at)
+     VALUES ('00000000-0000-4000-8000-0000000000c1', $1, 'unit-v2-1', 'gate', $2, '{"kind":"gate","gate_step":"artifact_approval","actions":["release"]}'::jsonb, 'open', $3, 'result', 'v2-work:1', 'v2-wait:1:result', now())`,
+    [STAGE, artifact, runUnitId],
+  );
+  const found = await subject.waits.find_gate_wait(artifact, "artifact_approval", "v2-work:1");
+  expect(found).toEqual(expect.objectContaining({ run_unit_id: runUnitId, output_name: "result", command_workflow_id: "v2-wait:1:result" }));
+});
+
+test("at most one open v2 wait exists per output slot", async () => {
+  const subject = await fixture();
+  if (!subject) return;
+  const first = "00000000-0000-4000-8000-0000000000d2" as ArtifactId;
+  const second = "00000000-0000-4000-8000-0000000000d3" as ArtifactId;
+  const runUnitId = "00000000-0000-4000-8000-0000000000b2";
+  await seedArtifact(subject.sql, first, "result_slot_race_1");
+  await seedArtifact(subject.sql, second, "result_slot_race_2");
+  await seedRunUnit(subject.sql, runUnitId, "unit-v2-2");
+  await subject.sql.query(
+    `INSERT INTO oakridge.wait (id, stage_instance_id, unit_id, kind, artifact_revision_id, closes_on, status, run_unit_id, output_name, execution_workflow_id, command_workflow_id, opened_at)
+     VALUES ('00000000-0000-4000-8000-0000000000c2', $1, 'unit-v2-2', 'gate', $2, '{"kind":"gate","gate_step":"artifact_approval","actions":["release"]}'::jsonb, 'open', $3, 'result', 'v2-work:2', 'v2-wait:2:result', now())`,
+    [STAGE, first, runUnitId],
+  );
+  await expect(subject.sql.query(
+    `INSERT INTO oakridge.wait (id, stage_instance_id, unit_id, kind, artifact_revision_id, closes_on, status, run_unit_id, output_name, execution_workflow_id, command_workflow_id, opened_at)
+     VALUES ('00000000-0000-4000-8000-0000000000c3', $1, 'unit-v2-2', 'gate', $2, '{"kind":"gate","gate_step":"artifact_approval","actions":["release"]}'::jsonb, 'open', $3, 'result', 'v2-work:2', 'v2-wait:2:result:retry', now())`,
+    [STAGE, second, runUnitId],
+  )).rejects.toThrow(/duplicate key value/);
+});

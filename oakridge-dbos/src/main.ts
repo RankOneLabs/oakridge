@@ -13,7 +13,6 @@ import { KbblExecutorAdapter } from "./adapters/kbbl";
 import { selectControlPlaneAccess } from "./http/control-auth";
 import { createOakridgeRuntime } from "./runtime/compose";
 import { GithubPullRequestReader } from "./runtime/github-pull-requests";
-import { DEFAULT_STALL_THRESHOLD_SECONDS } from "./storage/postgres-operators";
 
 const required = (name: string): string => {
   const value = process.env[name]?.trim();
@@ -43,9 +42,6 @@ const controlAccess = selectControlPlaneAccess({
   allow_insecure_non_loopback: process.env.ALLOW_INSECURE_NON_LOOPBACK_CONTROL === "1",
 });
 if (controlAccess.kind === "refused") throw new Error(controlAccess.detail);
-const stallThresholdSeconds = Number(process.env.OAKRIDGE_STALL_THRESHOLD_SECONDS ?? String(DEFAULT_STALL_THRESHOLD_SECONDS));
-if (!Number.isFinite(stallThresholdSeconds) || stallThresholdSeconds <= 0) throw new Error("OAKRIDGE_STALL_THRESHOLD_SECONDS must be a positive number of seconds");
-
 // Optional on purpose. Without a token nothing polls GitHub, and a cohort's
 // merge is confirmed by an operator through the same route the poller uses —
 // which is also the fallback when the token cannot see a given repository.
@@ -64,7 +60,6 @@ const runtime = await createOakridgeRuntime({
     ...(maxSilentMs !== null ? { max_silent_ms: maxSilentMs } : {}),
   })],
   prompt_template_directory: resolve(import.meta.dir, "../../oakridge-core/prompts"),
-  stall_threshold_seconds: stallThresholdSeconds,
   ...(githubToken ? { pull_request_reader: new GithubPullRequestReader({ token: githubToken }) } : {}),
   ...(controlAccess.kind === "token_required" ? { control_token: controlAccess.token } : {}),
 });

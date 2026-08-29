@@ -10,12 +10,12 @@ import type { ExecutionRequest, ExecutorTerminalObservation, ExternalExecutionRe
 import type { CancellationExecutionTarget, CancellationWaitTarget, UnitRerunTarget } from "../domain/rerun";
 import type { SessionHold } from "../domain/session-hold";
 import type { CreateProject, Project } from "../domain/projects";
-import type { CreateWorkflowRunResult, DeleteRunResult, PendingRunLaunch, PersistWorkflowRunLaunch, SetRunArchiveResult, WorkflowRunLaunchRecord, WorkflowRunListFilter } from "../domain/runs";
+import type { AdmitStageUnitRequest, AdmitStageUnitResult, CreateWorkflowRunResult, DeleteRunResult, PendingRunLaunch, PersistWorkflowRunLaunch, SetRunArchiveResult, WorkflowRunLaunchRecord, WorkflowRunListFilter } from "../domain/runs";
 import type { ConfirmFinalPullRequestRequest, FinalPullRequestDomainError, FinalPullRequestProjection, PullRequestObservation } from "../domain/final-pull-request";
-import type { CohortPullRequestReconciliation } from "../domain/cohort-pull-request";
+import type { CohortPullRequestReconciliation, RunOwnedCohortHandoff } from "../domain/cohort-pull-request";
 import type { CloseWaitRequest, OpenGateWaitInput, OpenHandoffDownstreamWaitInput, Wait, WaitClosesOn, WaitOutcome } from "../domain/wait";
 import type { Result } from "../domain/primitives";
-import type { ExecutorAttachment, ExecutorHealthObservation, InitializeStraightThroughRun, PublishWorkOrderArtifact, PublishWorkOrderArtifactResult, RunDecision, WorkOrderExecution } from "../domain/run-record";
+import type { CancelRunRecord, CancelRunRecordResult, CloseRunOutputWait, CloseRunOutputWaitResult, CompleteHandoffArtifact, DecideGateWait, ExecutorAttachment, ExecutorHealthObservation, FailRunMaterialization, InitializeStraightThroughRun, PersistMaterializedStage, PublishWorkOrderArtifact, PublishWorkOrderArtifactResult, RetryRunUnit, RetryRunUnitResult, ReviseRunUnitInput, ReviseRunUnitInputResult, RunDecision, RunMaterializationRecord, WorkOrderExecution } from "../domain/run-record";
 import type { WorkOrderId, WorkflowRunId as RunRecordWorkflowRunId } from "../domain/primitives";
 
 export interface WorkflowDefinitionRepository {
@@ -59,9 +59,30 @@ export interface WorkflowRunRepository {
 /** The single transactional boundary workflows ask for v2 run truth. */
 export interface RunRecordRepository {
   initialize_straight_through(input: InitializeStraightThroughRun): Promise<void>;
+  persist_materialized_stage(input: PersistMaterializedStage): Promise<void>;
+  revise_unit_input(input: ReviseRunUnitInput): Promise<ReviseRunUnitInputResult>;
+  retry_unit(input: RetryRunUnit, retried_at: string): Promise<RetryRunUnitResult>;
+  admit_unit(request: AdmitStageUnitRequest, admitted_at: string): Promise<AdmitStageUnitResult>;
   decide_run(run_id: RunRecordWorkflowRunId, decided_at: string): Promise<Result<RunDecision, RunRecordRepositoryError>>;
+  load_materialization_record(run_id: RunRecordWorkflowRunId): Promise<RunMaterializationRecord | null>;
+  load_work_order_capability_seed(): Promise<string>;
+  fail_materialization(input: FailRunMaterialization): Promise<void>;
+  cancel_run(input: CancelRunRecord): Promise<CancelRunRecordResult>;
+  delete_run(run_id: RunRecordWorkflowRunId): Promise<DeleteRunResult>;
   find_work_order_execution(work_order_id: WorkOrderId): Promise<WorkOrderExecution | null>;
-  publish_immediate(request: PublishWorkOrderArtifact): Promise<PublishWorkOrderArtifactResult>;
+  find_work_order_attachment(work_order_id: WorkOrderId): Promise<ExecutorAttachment | null>;
+  /**
+   * Records an artifact fact under a work order's capability, atomically with
+   * the effect its declared release policy has on the slot: an `immediate`
+   * output releases directly; a `gate` or `handoff` output parks the slot
+   * `pending` and opens the wait that will decide it.
+   */
+  publish_artifact(request: PublishWorkOrderArtifact): Promise<PublishWorkOrderArtifactResult>;
+  /** The gate/handoff command that owns a pending slot's wait, closing it and applying the matching release/invalidation atomically. */
+  close_output_wait(request: CloseRunOutputWait): Promise<CloseRunOutputWaitResult>;
+  decide_gate_wait(request: DecideGateWait): Promise<CloseRunOutputWaitResult>;
+  complete_handoff_artifact(request: CompleteHandoffArtifact): Promise<CloseRunOutputWaitResult>;
+  find_cohort_handoff(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<RunOwnedCohortHandoff | null>;
   ensure_executor_attachment(work_order_id: WorkOrderId, executor_type: string, updated_at: string): Promise<ExecutorAttachment>;
   attach_external(work_order_id: WorkOrderId, reference: ExternalExecutionReference, updated_at: string): Promise<void>;
   observe_executor(work_order_id: WorkOrderId, health: ExecutorHealthObservation, updated_at: string): Promise<void>;

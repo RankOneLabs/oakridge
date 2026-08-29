@@ -1,41 +1,43 @@
 import { expect, test } from "bun:test";
 
 import type { StageInstanceId, UnitId } from "../src/domain/primitives";
-import type { StageAdmissionState } from "../src/domain/runs";
+import type { AdmitStageUnitResult } from "../src/domain/runs";
 import { createAdmissionApp } from "../src/http/admission";
 
 const stageId = "00000000-0000-4000-8000-000000000001" as StageInstanceId;
 const unitId = "web" as UnitId;
-const state: StageAdmissionState = { stage_instance_id: stageId, status: "waiting", manual_admission: true,
-  units: [{ unit_id: unitId, parameters: {}, admitted: false, eligible: true, blocked_by: [] }] };
 
-const request = (app: ReturnType<typeof createAdmissionApp>) => app.request(`/stages/${stageId}/units/${unitId}/admit`, {
-  method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ idempotency_key: "operator-1" }),
+const request = (app: ReturnType<typeof createAdmissionApp>, key = "operator-1") => app.request(`/stages/${stageId}/units/${unitId}/admit`, {
+  method: "PUT", headers: { "idempotency-key": key },
 });
 
-test("manual admission sends one durable command to the owning stage workflow", async () => {
-  const sent: unknown[] = [];
-  const app = createAdmissionApp({ targets: { find_coordinator_workflow_id: async () => "stage-workflow" }, get_admission_state: async () => state,
-    send_stage_command: async (workflowId, command, key) => { sent.push({ workflowId, command, key }); } });
+const appFor = (result: AdmitStageUnitResult) => createAdmissionApp({
+  records: { admit_unit: async () => result }, now: () => "2026-08-29T12:00:00.000Z",
+});
+
+test("manual admission asks the run-owned repository with the header idempotency key", async () => {
+  const calls: unknown[] = [];
+  const app = createAdmissionApp({ records: { admit_unit: async (input, at) => {
+    calls.push({ input, at });
+    return { kind: "admitted", stage_instance_id: stageId, unit_id: unitId };
+  } }, now: () => "2026-08-29T12:00:00.000Z" });
   const response = await request(app);
   expect(response.status).toBe(202);
-  expect(await response.json()).toEqual({ stage_instance_id: stageId, unit_id: unitId, admitted: true });
-  expect(sent).toEqual([{ workflowId: "stage-workflow", command: { kind: "admit_unit", unit_id: unitId }, key: `admit:${stageId}:${unitId}:operator-1` }]);
+  expect(calls).toEqual([{ input: { stage_instance_id: stageId, unit_id: unitId, idempotency_key: "operator-1" }, at: "2026-08-29T12:00:00.000Z" }]);
 });
 
-test("admission rejects engine-reported dependency blocks without inferring eligibility", async () => {
-  const app = createAdmissionApp({ targets: { find_coordinator_workflow_id: async () => "stage-workflow" },
-    get_admission_state: async () => ({ ...state, units: [{ unit_id: unitId, parameters: {}, admitted: false, eligible: false, blocked_by: ["api" as UnitId] }] }),
-    send_stage_command: async () => { throw new Error("must not send"); } });
-  const response = await request(app);
+test("admission reports persisted dependency blocks", async () => {
+  const response = await request(appFor({ kind: "dependency_blocked", stage_instance_id: stageId, unit_id: unitId, blocked_by: ["api" as UnitId] }));
   expect(response.status).toBe(409);
   expect(await response.json()).toEqual({ error: "stage unit dependencies are not complete", blocked_by: ["api"] });
 });
 
-test("admission is idempotent once the workflow reports the unit admitted", async () => {
-  const app = createAdmissionApp({ targets: { find_coordinator_workflow_id: async () => "stage-workflow" },
-    get_admission_state: async () => ({ ...state, units: [{ ...state.units[0]!, admitted: true }] }),
-    send_stage_command: async () => { throw new Error("must not resend"); } });
-  const response = await request(app);
+test("identical admission retries return the already-applied result", async () => {
+  const response = await request(appFor({ kind: "already_admitted", stage_instance_id: stageId, unit_id: unitId }));
   expect(response.status).toBe(200);
+});
+
+test("admission requires the HTTP Idempotency-Key header", async () => {
+  const response = await request(appFor({ kind: "admitted", stage_instance_id: stageId, unit_id: unitId }), "");
+  expect(response.status).toBe(400);
 });
