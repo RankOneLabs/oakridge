@@ -1,4 +1,5 @@
 import type { ArtifactRevision } from "./artifacts";
+import type { OutputReleaseContract } from "./compiled-workflow";
 import type { ArtifactEnvelope, ExecutorTerminalObservation, ExternalExecutionReference } from "./execution";
 import type {
   ArtifactId,
@@ -6,6 +7,7 @@ import type {
   JsonValue,
   OutputSlotVersion,
   RunRecordVersion,
+  RunTransitionId,
   RunUnitId,
   StageInstanceId,
   UnitId,
@@ -75,6 +77,8 @@ export interface RunOutputSlot {
   readonly output_name: string;
   readonly artifact_type: ArtifactTypeId;
   readonly required: boolean;
+  /** Declared at unit creation; decides whether publication releases the slot directly or parks it pending a wait. */
+  readonly release: OutputReleaseContract;
   readonly state: RunOutputSlotState;
   readonly updated_by_work_order_id: WorkOrderId | null;
   readonly version: OutputSlotVersion;
@@ -113,6 +117,7 @@ export interface StraightThroughOutput {
   readonly name: string;
   readonly artifact_type: ArtifactTypeId;
   readonly required: boolean;
+  readonly release: OutputReleaseContract;
 }
 
 export interface InitializeStraightThroughRun {
@@ -152,10 +157,59 @@ export interface PublishWorkOrderArtifact {
 
 export type PublishWorkOrderArtifactResult =
   | { readonly kind: "published"; readonly artifact_id: ArtifactId; readonly record_version: RunRecordVersion }
+  /** A gated or handoff release policy: the artifact is recorded and its slot parked pending the opened wait's decision. */
+  | { readonly kind: "pending"; readonly artifact_id: ArtifactId; readonly wait_id: WaitId; readonly record_version: RunRecordVersion }
   | { readonly kind: "already_applied"; readonly artifact_id: ArtifactId; readonly record_version: RunRecordVersion }
   | { readonly kind: "work_not_found" | "invalid_capability" | "work_abandoned" | "slot_not_found" | "slot_invalidated"; readonly detail: string }
   | { readonly kind: "slot_already_released"; readonly artifact_id: ArtifactId; readonly detail: string }
   | { readonly kind: "idempotency_conflict"; readonly artifact_id: ArtifactId; readonly detail: string };
+
+/** What the gate/handoff command that owns a pending slot's wait decided. */
+export type RunOutputWaitDisposition = "release" | "invalidate";
+
+export interface CloseRunOutputWait {
+  readonly wait_id: WaitId;
+  readonly disposition: RunOutputWaitDisposition;
+  /** Who or what made the decision — an operator identity or an external correlation id, recorded on the transition. */
+  readonly actor: string;
+  readonly detail: string | null;
+  readonly decided_at: string;
+}
+
+export type CloseRunOutputWaitResult =
+  | { readonly kind: "released"; readonly artifact_id: ArtifactId; readonly record_version: RunRecordVersion }
+  | { readonly kind: "invalidated"; readonly record_version: RunRecordVersion }
+  | { readonly kind: "already_applied"; readonly record_version: RunRecordVersion }
+  | { readonly kind: "wait_not_found"; readonly detail: string }
+  | { readonly kind: "wait_conflict"; readonly detail: string };
+
+/**
+ * One committed fact about a run-owned record changing, carrying the exact
+ * record-version boundary it crossed. This is what an operator or recovery
+ * path reads instead of inferring history from executor observations or DBOS
+ * event payloads.
+ */
+export type RunTransitionOperation =
+  | "slot_released"
+  | "slot_pending"
+  | "slot_invalidated"
+  | "unit_satisfied"
+  | "work_started";
+
+export interface RunTransition {
+  readonly id: RunTransitionId;
+  readonly run_id: WorkflowRunId;
+  readonly run_unit_id: RunUnitId | null;
+  readonly work_order_id: WorkOrderId | null;
+  readonly wait_id: WaitId | null;
+  readonly output_name: string | null;
+  readonly operation: RunTransitionOperation;
+  readonly actor: string;
+  readonly prior_record_version: RunRecordVersion;
+  readonly resulting_record_version: RunRecordVersion;
+  readonly detail: JsonValue;
+  readonly created_at: string;
+}
 
 export interface UnitOutcomeRecord {
   readonly unit: RunUnit;
