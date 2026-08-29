@@ -52,7 +52,17 @@ export interface EmittedArtifact {
   readonly release: "released" | "waiting_gate" | "waiting_handoff";
 }
 
-interface EmitResponse { readonly artifact_id: ArtifactId; readonly release: EmittedArtifact["release"] }
+interface LegacyEmitResponse {
+  readonly artifact_id: ArtifactId;
+  readonly release: EmittedArtifact["release"];
+}
+
+interface WorkOrderEmitResponse {
+  readonly artifact_id: ArtifactId;
+  readonly state: "released" | "pending";
+}
+
+type EmitResponse = LegacyEmitResponse | WorkOrderEmitResponse;
 
 /** Which of a unit's outputs an emission covers, and which round it is. */
 export interface EmissionOptions {
@@ -92,9 +102,9 @@ export const emitDeclaredArtifacts = async (baseUrl: string, request: ExecutionR
     });
     const result = await readJson<EmitResponse>(response, `emit ${expected.output_name} for unit ${expected.unit_id}`);
     const sessionName = (request.resolved_config as { readonly session_name?: string }).session_name ?? "";
-    const release = publication
-      ? ((result as unknown as { readonly state: "released" | "pending" }).state === "released" ? "released" : sessionName.startsWith("build-") ? "waiting_handoff" : "waiting_gate")
-      : result.release;
+    const release = "release" in result
+      ? result.release
+      : result.state === "released" ? "released" : sessionName.startsWith("build-") ? "waiting_handoff" : "waiting_gate";
     emitted.push({ artifact_id: result.artifact_id, output_name: expected.output_name, unit_id: expected.unit_id, release });
   }
   return emitted;
