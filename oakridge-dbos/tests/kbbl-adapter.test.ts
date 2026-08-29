@@ -38,6 +38,23 @@ test("worktree branch bases select the remote-tracking ref while immutable SHAs 
   expect(selectRemoteWorktreeBase("a".repeat(40))).toBe("a".repeat(40));
 });
 
+test("v2 work-order publication authority is delivered only in executor launch material", async () => {
+  let body: { readonly initial_prompt?: string } = {};
+  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl.test", executor_function_identity: "v2", fetch: async (_input, init) => {
+    body = JSON.parse(String(init?.body));
+    return Response.json({ kind: "started", session: { sid: "v2-session", status: "live", endReason: null } }, { status: 201 });
+  } });
+  await adapter.start_or_attach({
+    execution_id: "work-order-1" as ExecutionId, stage_instance_id: "stage-1" as StageInstanceId, unit_id: "unit-1" as UnitId,
+    executor_type: "delegated_session", resolved_config: { runtime: "claude-code", rendered_prompt: "Do the work", workdir: "/repo",
+      session_name: "worker", model: null, effort: null, publication: { base_url: "http://oakridge.test/", work_order_id: "work-order-1", capability: "secret-capability" } },
+    inputs: [], declared_outputs: [{ name: "result", artifact_type: "dev.result", required: true }], expected_artifacts: [],
+  }, attempt("work-order-1"));
+  expect(body.initial_prompt).toContain("PUT http://oakridge.test/work-orders/work-order-1/emit/<output-name>");
+  expect(body.initial_prompt).toContain("Work-Order-Capability: secret-capability");
+  expect(body.initial_prompt).toContain("successful executor exit does not satisfy the unit");
+});
+
 test("kbbl adapter observes terminal mechanism state without completing an Oakridge stage", async () => {
   const adapter = new KbblExecutorAdapter({
     base_url: "http://kbbl.test",

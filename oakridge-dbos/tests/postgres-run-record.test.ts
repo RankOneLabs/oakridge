@@ -496,6 +496,8 @@ test("collection members publish independently and one revision invalidates ever
       output_name: "files", collection_key: key as OutputCollectionKey, body, idempotency_key: "same-key-distinct-member", payload_hash: createHash("sha256").update(JSON.stringify(body)).digest("hex"), published_at: second.materialized_at });
     expect(result.kind).toBe("published");
   }
+  const artifactUnits = await sql!.query<{ readonly unit_id: string; readonly collection_key: string }>("SELECT unit_id,collection_key FROM oakridge.artifact WHERE work_order_id=$1 ORDER BY collection_key", [order.id]);
+  expect(artifactUnits).toEqual([{ unit_id: "a", collection_key: "a" }, { unit_id: "b", collection_key: "b" }]);
   const replacementWorkOrderId = randomUUID() as WorkOrderId;
   const revised = await setup.records.revise_unit_input({ run_unit_id: collectionStage.units[0]!.id, input_snapshot: [], input_fingerprint: "revised" as InputFingerprint,
     revised_at: collectionStage.materialized_at, actor: "test", replacement_work_order: {
@@ -507,4 +509,15 @@ test("collection members publish independently and one revision invalidates ever
   expect(states).toEqual([{ collection_key: "a", state: "invalidated" }, { collection_key: "b", state: "invalidated" }]);
   const replacement = await sql!.query<{ readonly state: string; readonly reason: string }>("SELECT state,reason FROM oakridge.work_order WHERE id=$1", [replacementWorkOrderId]);
   expect(replacement).toEqual([{ state: "available", reason: "input_revision" }]);
+});
+
+test("a compiler failure terminalizes the run record once instead of killing its workflow and leaving it active", async () => {
+  const setup = await setupMaterializedRun();
+  if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  await setup.records.fail_materialization({ run_id: setup.input.run_id, stage_key: setup.input.stage_key, detail: "fan-out repeats unit 'web'", failed_at: setup.input.materialized_at });
+  await setup.records.fail_materialization({ run_id: setup.input.run_id, stage_key: setup.input.stage_key, detail: "fan-out repeats unit 'web'", failed_at: setup.input.materialized_at });
+  const run = await sql!.query<{ readonly state: string; readonly outcome: { readonly code: string }; readonly record_version: string }>("SELECT state,outcome,record_version::text FROM oakridge.workflow_run WHERE id=$1", [setup.input.run_id]);
+  expect(run[0]).toEqual(expect.objectContaining({ state: "failed", outcome: expect.objectContaining({ code: "materialization_failed" }) }));
+  const transitions = await sql!.query<{ readonly count: string }>("SELECT count(*)::text AS count FROM oakridge.run_transition WHERE run_id=$1 AND operation='materialization_failed'", [setup.input.run_id]);
+  expect(transitions[0]?.count).toBe("1");
 });

@@ -4,8 +4,8 @@ import type { ProjectId, WorkflowDefinitionId } from "../src/domain/primitives";
 import type { WorkflowDefinition } from "../src/domain/workflow";
 import type { PersistWorkflowRunLaunch } from "../src/domain/runs";
 import { createRunLaunchApp } from "../src/http/run-launch";
-import { deterministicRunId, type LaunchRunDependencies } from "../src/runtime/launch-run";
-import { dispatchRunLaunches } from "../src/runtime/run-launch-notifications";
+import { deterministicRunId, launchCompatibleRun, type LaunchRunDependencies } from "../src/runtime/launch-run";
+import { dispatchRunLaunches, dispatchV2RunLaunches } from "../src/runtime/run-launch-notifications";
 import type { WorkflowRunRepository } from "../src/storage/repositories";
 
 // A definition that reads the context, because a definition that reads nothing
@@ -44,7 +44,7 @@ const mountedFixture = (options: { readonly archived?: boolean } = {}) => {
     async dispatch_launches() { dispatches += 1; return 1; },
     application_version: "pr2", now: () => "2026-08-15T00:00:00Z",
   } as unknown as LaunchRunDependencies;
-  return { app: createRunLaunchApp(dependencies), stored: () => stored, dispatches: () => dispatches };
+  return { app: createRunLaunchApp(dependencies), dependencies, stored: () => stored, dispatches: () => dispatches };
 };
 
 const request = (app: ReturnType<typeof createRunLaunchApp>, value: unknown = body) => app.request("/workflow_runs", {
@@ -99,6 +99,24 @@ test("run launch outbox worker starts DBOS before acknowledging its lease", asyn
   const count = await dispatchRunLaunches(repository, { async start_run(id, input, version) { calls.push(`dbos:${id}:${input.workflow_definition_version}:${version}`); } }, () => "2026-08-15T00:00:00Z");
   expect(count).toBe(1);
   expect(calls).toEqual(["claim", "dbos:root-1:11:pr2", "delivered"]);
+});
+
+test("v2 launch dispatcher addresses only the run-record workflow", async () => {
+  const calls: string[] = [];
+  const command = { kind: "launch_run" as const, run_id: deterministicRunId("v2-launch"), workflow_definition_id: definition.id,
+    workflow_definition_version: definition.version, root_workflow_id: `v2-run:${deterministicRunId("v2-launch")}`, context: {}, created_at: "2026-08-15T00:00:00Z", application_version: "v2" };
+  let claims = 0;
+  const repository = { async claim_pending_launches() { claims += 1; return claims === 1 ? [{ id: "outbox-v2", target_workflow_id: command.root_workflow_id, command, idempotency_key: "v2" }] : []; },
+    async mark_launch_delivered() { calls.push("delivered"); }, async mark_launch_failed() { calls.push("failed"); } } as unknown as WorkflowRunRepository;
+  expect(await dispatchV2RunLaunches(repository, { async start_v2_run(id, runId, version) { calls.push(`${id}:${runId}:${version}`); } })).toBe(1);
+  expect(calls).toEqual([`${command.root_workflow_id}:${command.run_id}:v2`, "delivered"]);
+});
+
+test("v2 launch identity cannot collide with a legacy root history", async () => {
+  const subject = mountedFixture();
+  const launched = await launchCompatibleRun({ ...body, idempotency_key: "launch-1" }, { ...subject.dependencies, launch_topology: "v2" });
+  expect(launched.ok).toBe(true);
+  expect(subject.stored()?.run.root_workflow_id).toBe(`v2-run:${deterministicRunId("launch-1")}`);
 });
 
 const epicBody = {

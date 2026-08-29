@@ -20,6 +20,7 @@ export interface LaunchRunDependencies {
   readonly projections: Pick<OperatorProjectionRepository, "list_runs">;
   readonly dispatch_launches: () => Promise<number>;
   readonly application_version: string | null;
+  readonly launch_topology?: "legacy" | "v2";
   readonly now: () => string;
   readonly new_id?: () => string;
 }
@@ -76,7 +77,7 @@ export const launchCompatibleRun = async (request: CompatibleRunLaunchRequest, d
   // owner, and it is not the participant that can only ever say no.
 
   const createdAt = existing?.created_at ?? dependencies.now();
-  const rootWorkflowId = `oakridge-run:${runId}:attempt:initial`;
+  const rootWorkflowId = dependencies.launch_topology === "v2" ? `v2-run:${runId}` : `oakridge-run:${runId}:attempt:initial`;
   const epicProfile = request.epic_profile ? createEpicProfile({ id: runId as unknown as EpicWorkflowProfileId,
     workflow_run_id: runId, config: request.epic_profile, created_at: createdAt }) : null;
   const persisted = await dependencies.runs.create_with_initial_attempt({
@@ -92,6 +93,5 @@ export const launchCompatibleRun = async (request: CompatibleRunLaunchRequest, d
   return ok(summary);
 };
 
-// Compatibility aliases retained for callers while the HTTP boundary migrates.
 export type LaunchRunRequest = CompatibleRunLaunchRequest;
 export const launchRun = launchCompatibleRun;

@@ -35,6 +35,7 @@ interface KbblResolvedConfig {
   readonly effort: string | null;
   readonly artifact_id: string | null;
   readonly worktree: { readonly branchName: string; readonly worktreeSubdir: string; readonly baseRef?: string } | null;
+  readonly publication: { readonly base_url: string; readonly work_order_id: string; readonly capability: string } | null;
 }
 
 interface KbblSessionSummary {
@@ -73,8 +74,13 @@ const parseResolvedConfig = (value: JsonValue): KbblResolvedConfig => {
     worktree = { branchName: rawWorktree.branchName, worktreeSubdir: rawWorktree.worktreeSubdir,
       ...(typeof rawWorktree.baseRef === "string" ? { baseRef: rawWorktree.baseRef } : {}) };
   }
-  return { runtime, rendered_prompt: renderedPrompt, workdir, session_name: sessionName, model, effort, artifact_id: artifactId, worktree };
+  const rawPublication = value.publication;
+  const publication = isObject(rawPublication) && typeof rawPublication.base_url === "string" && typeof rawPublication.work_order_id === "string" && typeof rawPublication.capability === "string"
+    ? { base_url: rawPublication.base_url, work_order_id: rawPublication.work_order_id, capability: rawPublication.capability } : null;
+  return { runtime, rendered_prompt: renderedPrompt, workdir, session_name: sessionName, model, effort, artifact_id: artifactId, worktree, publication };
 };
+
+const publicationInstructions = (config: KbblResolvedConfig): string => config.publication ? `\n\n## Oakridge v2 artifact publication\n\nUse this run-owned endpoint instead of any stage/execution emit URL shown earlier:\n\nPUT ${config.publication.base_url.replace(/\/$/, "")}/work-orders/${config.publication.work_order_id}/emit/<output-name>\nWork-Order-Capability: ${config.publication.capability}\nIdempotency-Key: <stable key for this output payload>\nContent-Type: application/json\n\nFor a collection member, also send Output-Collection-Key. A successful executor exit does not satisfy the unit; publish every required output.\n` : "";
 
 const parseEnsureResponse = (value: unknown): EnsureSessionResponse => {
   if (typeof value !== "object" || value === null || !("kind" in value) || !("session" in value)) throw new Error("invalid kbbl ensure-session response");
@@ -162,7 +168,7 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        initial_prompt: config.rendered_prompt,
+        initial_prompt: config.rendered_prompt + publicationInstructions(config),
         workdir: config.workdir,
         name: config.session_name,
         runtime: config.runtime,

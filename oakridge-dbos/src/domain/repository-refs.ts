@@ -158,6 +158,8 @@ export interface ResolvedRepositoryProvisioningConfig {
   readonly output_name: string;
   readonly repository: RunContextRepository;
   readonly base_branch: string;
+  /** Present only on the v2 run-owned path. Legacy execution projection calls omit it. */
+  readonly publication?: { readonly work_order_id: string; readonly capability: string };
 }
 
 export interface ResolvedRepositoryProvisioningError {
@@ -189,5 +191,16 @@ export const parseResolvedRepositoryProvisioningConfig = (value: JsonValue): Res
   if (repository === undefined) return err({ operation: "parse_resolved_repository_provisioning", detail: "resolved config has no 'repository'" });
   const parsed = parseRunContextRepository(repository);
   if (!parsed.ok) return err({ operation: "parse_resolved_repository_provisioning", detail: parsed.error.detail });
-  return ok({ executor_type: PROVISION_REPOSITORY_REFS_STAGE_TYPE, output_name: outputName, repository: parsed.value, base_branch: baseBranch });
+  const rawPublication = readJsonPointer(value, "/publication");
+  let publication: ResolvedRepositoryProvisioningConfig["publication"];
+  if (rawPublication !== undefined) {
+    const workOrderId = readJsonPointer(rawPublication, "/work_order_id");
+    const capability = readJsonPointer(rawPublication, "/capability");
+    if (typeof workOrderId !== "string" || workOrderId.length === 0 || typeof capability !== "string" || capability.length === 0) {
+      return err({ operation: "parse_resolved_repository_provisioning", detail: "resolved publication authority is invalid" });
+    }
+    publication = { work_order_id: workOrderId, capability };
+  }
+  return ok({ executor_type: PROVISION_REPOSITORY_REFS_STAGE_TYPE, output_name: outputName, repository: parsed.value, base_branch: baseBranch,
+    ...(publication ? { publication } : {}) });
 };

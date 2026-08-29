@@ -1,5 +1,6 @@
 import type { ExecutionRequest, ExecutorAdapter, ExecutorObservationAttempt, ExecutorTerminalObservation, ExternalExecutionReference } from "../domain/execution";
-import type { ExecutionId, JsonValue, Result } from "../domain/primitives";
+import type { ExecutionId, JsonValue, Result, WorkOrderId } from "../domain/primitives";
+import type { PublishWorkOrderArtifactResult } from "../domain/run-record";
 import { describeRepositoryProvisioningFailure, provisionRepositoryRefs, type GitCommandRunner } from "../domain/repository-provisioning";
 import { PROVISION_REPOSITORY_REFS_STAGE_TYPE, parseResolvedRepositoryProvisioningConfig } from "../domain/repository-refs";
 import type { EmitExecutionArtifactFailure, EmitExecutionArtifactRequest, EmittedExecutionArtifact } from "../runtime/emit-artifact";
@@ -10,6 +11,7 @@ const failed = (code: string, detail: string): ExecutorTerminalObservation => ({
 export interface RepositoryProvisioningAdapterDependencies {
   readonly git: GitCommandRunner;
   emit(request: EmitExecutionArtifactRequest): Promise<Result<EmittedExecutionArtifact, EmitExecutionArtifactFailure>>;
+  publish_work_order?(request: { readonly work_order_id: WorkOrderId; readonly capability: string; readonly output_name: string; readonly body: JsonValue; readonly idempotency_key: string }): Promise<PublishWorkOrderArtifactResult>;
 }
 
 /**
@@ -71,6 +73,16 @@ export class RepositoryProvisioningAdapter implements ExecutorAdapter {
       const provisioned = await runExclusive(repository.path, () =>
         provisionRepositoryRefs({ repository, base_branch: config.value.base_branch }, this.dependencies.git));
       if (!provisioned.ok) return failed(provisioned.error.kind, describeRepositoryProvisioningFailure(provisioned.error));
+      if (config.value.publication) {
+        if (!this.dependencies.publish_work_order) return failed("v2_publication_unavailable", "work-order publication is not configured");
+        const published = await this.dependencies.publish_work_order({ work_order_id: config.value.publication.work_order_id as WorkOrderId,
+          capability: config.value.publication.capability, output_name: config.value.output_name, body: { ...provisioned.value },
+          idempotency_key: `${request.execution_id}:${config.value.output_name}` });
+        if (published.kind !== "published" && published.kind !== "pending" && published.kind !== "already_applied") {
+          return failed(`emit_${published.kind}`, published.detail);
+        }
+        return { kind: "succeeded", metadata: { base_branch: provisioned.value.base_branch, base_head_sha: provisioned.value.base_head_sha } satisfies JsonValue };
+      }
       const emitted = await this.dependencies.emit({
         stage_instance_id: request.stage_instance_id,
         unit_id: request.unit_id,

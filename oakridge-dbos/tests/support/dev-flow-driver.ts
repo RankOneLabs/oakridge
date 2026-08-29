@@ -76,17 +76,26 @@ export const emitDeclaredArtifacts = async (baseUrl: string, request: ExecutionR
   const emitted: EmittedArtifact[] = [];
   for (const expected of request.expected_artifacts) {
     if (options.outputs && !options.outputs.includes(expected.output_name)) continue;
-    const url = `${baseUrl}/executors/${EXECUTOR_TYPE}/${request.stage_instance_id}/units/${expected.unit_id}/emit/${expected.output_name}`;
+    const publication = (request.resolved_config as { readonly publication?: { readonly work_order_id: string; readonly capability: string } }).publication;
+    const url = publication
+      ? `${baseUrl}/work-orders/${publication.work_order_id}/emit/${expected.output_name}`
+      : `${baseUrl}/executors/${EXECUTOR_TYPE}/${request.stage_instance_id}/units/${expected.unit_id}/emit/${expected.output_name}`;
     const response = await fetch(url, {
-      method: "POST",
+      method: publication ? "PUT" : "POST",
       // The revision rides in the key and the body alike: an unchanged payload
       // under a new key is still the same artifact, and an unchanged key is a
       // replay of the first emission whatever the payload says.
-      headers: { "content-type": "application/json", "idempotency-key": `${request.execution_id}:${expected.unit_id}:${expected.output_name}:v${revision}` },
+      headers: { "content-type": "application/json", "idempotency-key": `${request.execution_id}:${expected.unit_id}:${expected.output_name}:v${revision}`,
+        ...(publication ? { "work-order-capability": publication.capability,
+          ...(expected.unit_id !== request.unit_id ? { "output-collection-key": expected.unit_id } : {}) } : {}) },
       body: JSON.stringify(artifactBody(request, expected.unit_id, expected.output_name, revision) as JsonValue),
     });
     const result = await readJson<EmitResponse>(response, `emit ${expected.output_name} for unit ${expected.unit_id}`);
-    emitted.push({ artifact_id: result.artifact_id, output_name: expected.output_name, unit_id: expected.unit_id, release: result.release });
+    const sessionName = (request.resolved_config as { readonly session_name?: string }).session_name ?? "";
+    const release = publication
+      ? ((result as unknown as { readonly state: "released" | "pending" }).state === "released" ? "released" : sessionName.startsWith("build-") ? "waiting_handoff" : "waiting_gate")
+      : result.release;
+    emitted.push({ artifact_id: result.artifact_id, output_name: expected.output_name, unit_id: expected.unit_id, release });
   }
   return emitted;
 };

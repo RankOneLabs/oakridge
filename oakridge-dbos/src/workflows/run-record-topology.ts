@@ -9,6 +9,7 @@ import type { RunRecordRepository, RunRecordRepositoryError } from "../storage/r
 export interface RunRecordWorkflowServices {
   readonly records: RunRecordRepository;
   find_executor(executor_type: string): ExecutorAdapter | undefined;
+  reconcile_materialization?(run_id: WorkflowRunId, materialized_at: string): Promise<void>;
   now(): string;
 }
 
@@ -22,6 +23,11 @@ const workflowServices = (): RunRecordWorkflowServices => {
 const decideRunStep = DBOS.registerStep(
   async (run_id: WorkflowRunId): Promise<Result<RunDecision, RunRecordRepositoryError>> => workflowServices().records.decide_run(run_id, workflowServices().now()),
   { name: "oakridgeV2DecideRunStep", retriesAllowed: true },
+);
+
+const reconcileRunMaterializationStep = DBOS.registerStep(
+  async (run_id: WorkflowRunId): Promise<void> => workflowServices().reconcile_materialization?.(run_id, workflowServices().now()),
+  { name: "oakridgeV2ReconcileRunMaterializationStep", retriesAllowed: true },
 );
 
 const persistMaterializedStageStep = DBOS.registerStep(
@@ -138,6 +144,7 @@ export const RUN_RECORD_WAKE_TIMEOUT_SECONDS = 5;
  */
 export const runRecordWorkflow = DBOS.registerWorkflow(async (run_id: WorkflowRunId): Promise<RunRecordWorkflowResult> => {
   for (;;) {
+    await reconcileRunMaterializationStep(run_id);
     const result = await decideRunStep(run_id);
     if (!result.ok) throw new Error(`${result.error.operation}:${result.error.kind}:${result.error.detail}`);
     const decision = result.value;
