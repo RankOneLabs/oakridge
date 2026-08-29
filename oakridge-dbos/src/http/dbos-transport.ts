@@ -1,5 +1,7 @@
 import type { ArtifactWorkflowMessage } from "./artifact-callback";
 import { RUN_RECORD_WAKE_TOPIC } from "../workflows/run-record-topology";
+import { runRecordWorkflowId } from "../domain/workflow-ids";
+import type { WorkflowRunId } from "../domain/primitives";
 
 export interface DbosTransportClient {
   send(destination_id: string, message: unknown, topic?: string, idempotency_key?: string): Promise<void>;
@@ -24,6 +26,6 @@ export const sendArtifactWorkflowMessage = async (workflow_id: string, message: 
  * decides. `idempotency_key` only makes a retried *send* itself idempotent;
  * it plays no part in the run's own idempotency.
  */
-export const sendRunWakeHint = async (run_id: string, idempotency_key: string): Promise<void> => {
-  await client().send(run_id, {}, RUN_RECORD_WAKE_TOPIC, idempotency_key);
+export const sendRunWakeHint = async (run_id: WorkflowRunId, idempotency_key: string): Promise<void> => {
+  await client().send(runRecordWorkflowId(run_id), {}, RUN_RECORD_WAKE_TOPIC, idempotency_key);
 };

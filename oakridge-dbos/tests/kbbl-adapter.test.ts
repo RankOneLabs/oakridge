@@ -38,8 +38,10 @@ test("worktree branch bases select the remote-tracking ref while immutable SHAs 
   expect(selectRemoteWorktreeBase("a".repeat(40))).toBe("a".repeat(40));
 });
 
+interface KbblSessionStartPayload { readonly initial_prompt?: string }
+
 test("v2 work-order publication authority is delivered only in executor launch material", async () => {
-  let body: { readonly initial_prompt?: string } = {};
+  let body: KbblSessionStartPayload = {};
   const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl.test", executor_function_identity: "v2", fetch: async (_input, init) => {
     body = JSON.parse(String(init?.body));
     return Response.json({ kind: "started", session: { sid: "v2-session", status: "live", endReason: null } }, { status: 201 });

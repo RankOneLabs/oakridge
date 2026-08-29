@@ -11,6 +11,12 @@ const deliverCollaborationInputStep = DBOS.registerStep(async (input: Collaborat
 
 export const collaborationResponderWorkflow = DBOS.registerWorkflow(async (input: CollaborationPingRequest): Promise<void> => {
   await DBOS.setEvent("collaboration-ping-state", { kind: "delivering", thread_id: input.thread_id, request_id: input.request_id } satisfies CollaborationPingState);
-  await deliverCollaborationInputStep(input);
+  try {
+    await deliverCollaborationInputStep(input);
+  } catch (error) {
+    await DBOS.setEvent("collaboration-ping-state", { kind: "delivery_failed", thread_id: input.thread_id, request_id: input.request_id,
+      detail: error instanceof Error ? error.message : String(error) } satisfies CollaborationPingState);
+    throw error;
+  }
   await DBOS.setEvent("collaboration-ping-state", { kind: "delivered", thread_id: input.thread_id, request_id: input.request_id } satisfies CollaborationPingState);
 }, { name: "oakridgeCollaborationResponderWorkflow" });

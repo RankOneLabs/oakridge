@@ -170,7 +170,7 @@ export interface PersistMaterializedStage {
   readonly stage_instance_id: StageInstanceId;
   readonly stage_key: StageKey;
   readonly stage_type: string;
-  readonly stage_contract: JsonValue;
+  readonly stage_contract: import("./compiled-workflow").CompiledStageContract;
   readonly units: readonly MaterializedRunUnit[];
   readonly policy: Omit<RunStageSchedulingPolicy, "stage_instance_id">;
   readonly close_materialization: boolean;

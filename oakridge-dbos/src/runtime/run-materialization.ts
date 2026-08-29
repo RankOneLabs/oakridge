@@ -189,7 +189,7 @@ const applyRunMaterialization = async (run_id: WorkflowRunId, materialized_at: s
     }
     const materialization = stage.materialization;
     await dependencies.records.persist_materialized_stage({ run_id, stage_instance_id: stageId, stage_key: stage.stage_key, stage_type: stage.stage_type,
-      stage_contract: stage as unknown as JsonValue, units: newUnits,
+      stage_contract: stage, units: newUnits,
       policy: { max_parallel: materialization.kind === "fan_out" ? materialization.max_parallel : 1,
         manual_admission: materialization.kind === "fan_out" ? materialization.manual_admission : false },
       close_materialization: ready && shouldClose(stageKey, compiled.value, record), materialized_at });
@@ -200,10 +200,18 @@ const applyRunMaterialization = async (run_id: WorkflowRunId, materialized_at: s
 
 export interface RunMaterializationError {
   readonly operation: "reconcile_run_materialization";
+  readonly kind: "authoring" | "infrastructure";
   readonly run_id: WorkflowRunId;
   readonly stage_key: string | null;
   readonly detail: string;
 }
+
+const isInfrastructureFailure = (cause: unknown): boolean => {
+  const code = typeof cause === "object" && cause !== null && "code" in cause ? String(cause.code) : "";
+  if (["40001", "40P01", "55P03", "57P01", "57P02", "57P03", "08000", "08001", "08003", "08004", "08006", "08007", "08P01"].includes(code)) return true;
+  const detail = cause instanceof Error ? cause.message : String(cause);
+  return /connection|socket|timeout|timed out|deadlock|serialization/i.test(detail);
+};
 
 /** IO failures and authored materialization failures cross the workflow step as values. */
 export const reconcileRunMaterialization = async (
@@ -216,7 +224,7 @@ export const reconcileRunMaterialization = async (
     await applyRunMaterialization(run_id, materialized_at, dependencies, progress);
     return ok(undefined);
   } catch (cause) {
-    return err({ operation: "reconcile_run_materialization", run_id, stage_key: progress.stage_key,
+    return err({ operation: "reconcile_run_materialization", kind: isInfrastructureFailure(cause) ? "infrastructure" : "authoring", run_id, stage_key: progress.stage_key,
       detail: cause instanceof Error ? cause.message : String(cause) });
   }
 };

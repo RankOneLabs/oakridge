@@ -17,6 +17,22 @@ const sql = databaseUrl ? PgPostgresExecutor.connect(databaseUrl) : null;
 if (sql) await applyMigrations(sql);
 afterAll(async () => { await sql?.close(); });
 
+test("transient storage failures remain retryable workflow failures", async () => {
+  const failure = Object.assign(new Error("deadlock detected"), { code: "40P01" });
+  const result = await reconcileRunMaterialization("10000000-0000-4000-8000-000000000099" as WorkflowRunId, new Date().toISOString(), {
+    definitions: { async find_by_id() { return null; } },
+    records: {
+      async load_materialization_record() { throw failure; },
+      async load_work_order_capability_seed() { throw failure; },
+      async persist_materialized_stage() { throw failure; },
+      async revise_unit_input() { throw failure; },
+      async find_work_order_attachment() { throw failure; },
+    },
+    async load_prompt_template() { throw failure; },
+  });
+  expect(result).toEqual({ ok: false, error: expect.objectContaining({ kind: "infrastructure", detail: "deadlock detected" }) });
+});
+
 test("v2 reconciliation persists the whole stage graph and only source work, idempotently", async () => {
   const loaded = await loadDevFlowV14();
   if (!loaded.ok) throw new Error(loaded.error.detail);

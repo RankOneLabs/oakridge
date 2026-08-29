@@ -1,4 +1,4 @@
-import type { ArtifactId, ExecutionId, StageCoordinatorWorkflowId, UnitId } from "./primitives";
+import type { ArtifactId, ExecutionId, RootWorkflowId, StageCoordinatorWorkflowId, UnitId, WorkflowRunId } from "./primitives";
 
 /**
  * The workflow-ID grammar, in one place.
@@ -60,3 +60,5 @@ export const handoffWorkflowId = (execution_workflow_id: string, artifact_id: Ar
 /** `<owner>:fence:<execution_id>` */
 export const executorFenceWorkflowId = (owner_workflow_id: string, execution_id: ExecutionId): string =>
   `${owner_workflow_id}:fence:${execution_id}`;
+/** `v2-run:<run_id>` */
+export const runRecordWorkflowId = (run_id: WorkflowRunId): RootWorkflowId => `v2-run:${run_id}` as RootWorkflowId;

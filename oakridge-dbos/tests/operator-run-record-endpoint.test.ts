@@ -85,8 +85,8 @@ test("GET /runs/:id exposes the v2 run-record projection with every required fie
   const app = createOperatorProjectionApp(new PostgresOperatorProjectionRepository(sql));
   const response = await app.request(`/runs/${runId}`);
   expect(response.status).toBe(200);
-  const detail = (await response.json()) as { readonly run_record: unknown };
-  const runRecord = detail.run_record as {
+  interface RunRecordResponsePayload { readonly run_record: RunRecordPayload }
+  interface RunRecordPayload {
     readonly run_id: string; readonly state: string; readonly record_version: number;
     readonly units: readonly {
       readonly run_unit_id: string; readonly unit_id: string; readonly decision: string;
@@ -95,7 +95,9 @@ test("GET /runs/:id exposes the v2 run-record projection with every required fie
       readonly work_orders: readonly { readonly id: string; readonly reason: string; readonly state: string; readonly workflow_id: string; readonly executor_health: unknown; readonly cleanup_state: string | null; readonly dbos_liveness: string | null }[];
     }[];
     readonly recent_transitions: readonly { readonly operation: string; readonly actor: string; readonly prior_record_version: number; readonly resulting_record_version: number; readonly created_at: string }[];
-  };
+  }
+  const detail = (await response.json()) as RunRecordResponsePayload;
+  const runRecord = detail.run_record;
 
   expect(runRecord.run_id).toBe(runId);
   expect(runRecord.state).toBe("active");

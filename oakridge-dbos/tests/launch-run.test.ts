@@ -96,7 +96,7 @@ test("run launch outbox worker starts DBOS before acknowledging its lease", asyn
   } as unknown as WorkflowRunRepository;
   let claims = 0;
   repository.claim_pending_launches = async () => { claims += 1; calls.push("claim"); return claims === 1 ? [{ id: "outbox-1", target_workflow_id: "root-1", command, idempotency_key: "launch" }] : []; };
-  const count = await dispatchRunLaunches(repository, { async start_v2_run(id, runId, version) { calls.push(`dbos:${id}:${runId}:${version}`); } }, () => "2026-08-15T00:00:00Z");
+  const count = await dispatchRunLaunches(repository, { async start_v2_run(request) { calls.push(`dbos:${request.workflow_id}:${request.run_id}:${request.application_version}`); return { ok: true, value: undefined }; } }, () => "2026-08-15T00:00:00Z");
   expect(count).toBe(1);
   expect(calls).toEqual(["claim", `dbos:root-1:${command.run_id}:pr2`, "delivered"]);
 });
@@ -108,7 +108,7 @@ test("v2 launch dispatcher addresses only the run-record workflow", async () => 
   let claims = 0;
   const repository = { async claim_pending_launches() { claims += 1; return claims === 1 ? [{ id: "outbox-v2", target_workflow_id: command.root_workflow_id, command, idempotency_key: "v2" }] : []; },
     async mark_launch_delivered() { calls.push("delivered"); }, async mark_launch_failed() { calls.push("failed"); } } as unknown as WorkflowRunRepository;
-  expect(await dispatchRunLaunches(repository, { async start_v2_run(id, runId, version) { calls.push(`${id}:${runId}:${version}`); } })).toBe(1);
+  expect(await dispatchRunLaunches(repository, { async start_v2_run(request) { calls.push(`${request.workflow_id}:${request.run_id}:${request.application_version}`); return { ok: true, value: undefined }; } })).toBe(1);
   expect(calls).toEqual([`${command.root_workflow_id}:${command.run_id}:v2`, "delivered"]);
 });
 

@@ -30,6 +30,7 @@ export interface CollaborationPingAccepted {
 
 export type CollaborationPingState =
   | { readonly kind: "delivering"; readonly thread_id: ThreadId; readonly request_id: CollaborationPingRequestId }
+  | { readonly kind: "delivery_failed"; readonly thread_id: ThreadId; readonly request_id: CollaborationPingRequestId; readonly detail: string }
   | { readonly kind: "delivered"; readonly thread_id: ThreadId; readonly request_id: CollaborationPingRequestId };
 
 export type CollaborationPingRequestIdValidation =

@@ -399,7 +399,9 @@ const setupMaterializedRun = async (maxParallel = 1, withDependencies = true, ma
   const outputs = [{ identity: { kind: "scalar" as const, output_name: "result" }, artifact_type: "dev.result", required: true, release: { kind: "immediate" as const } }];
   const input: PersistMaterializedStage = {
     run_id: runId, stage_instance_id: stageId, stage_key: "build", stage_type: "delegated_session",
-    stage_contract: { executor_type: "delegated_session", resolved_config: {}, outputs: [{ name: "result", artifact_type: "dev.result", required: true, release: { kind: "immediate" } }] },
+    stage_contract: { stage_key: "build" as import("../src/domain/workflow").StageKey, stage_type: "delegated_session" as import("../src/domain/workflow").StageTypeId, operator_role: null,
+      inputs: [], outputs: [{ name: "result", artifact_type: "dev.result" as import("../src/domain/workflow").ArtifactTypeId, release: { kind: "immediate" } }],
+      materialization: { kind: "scalar" }, executor: { executor_type: "delegated_session", definition_config: {} } },
     policy: { max_parallel: maxParallel, manual_admission: manualAdmission }, close_materialization: true, materialized_at: now,
     units: unitIds.map((unitId, index) => ({ id: runUnitIds[index]!, unit_id: unitId as UnitId, parameters: { unit_id: unitId }, input_snapshot: [],
       input_fingerprint: `input:${unitId}` as InputFingerprint, depends_on: !withDependencies || index === 0 ? [] : [unitIds[index - 1]! as UnitId], outputs,

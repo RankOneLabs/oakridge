@@ -14,6 +14,7 @@ import { DBOS, DBOSClient } from "@dbos-inc/dbos-sdk";
 
 import type { ExecutionRequest, ExecutorAdapter, ExecutorObservationAttempt, ExternalExecutionReference } from "../src/domain/execution";
 import type { ArtifactId, InputFingerprint, RunUnitId, StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId, WorkOrderId } from "../src/domain/primitives";
+import { runRecordWorkflowId } from "../src/domain/workflow-ids";
 import { applyMigrations } from "../src/storage/migrate";
 import { PostgresRunRecordRepository } from "../src/storage/postgres-run-record";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
@@ -29,8 +30,8 @@ import { findTestDatabaseUrl } from "./support/durable-database";
  * there would leave the global pointing at a dead client for whichever test
  * file happens to run next.
  */
-const sendWake = (client: DBOSClient, run_id: string, idempotency_key: string): Promise<void> =>
-  client.send(run_id, {}, RUN_RECORD_WAKE_TOPIC, idempotency_key);
+const sendWake = (client: DBOSClient, run_id: WorkflowRunId, idempotency_key: string): Promise<void> =>
+  client.send(runRecordWorkflowId(run_id), {}, RUN_RECORD_WAKE_TOPIC, idempotency_key);
 
 const databaseUrl = await findTestDatabaseUrl();
 const sql = databaseUrl ? PgPostgresExecutor.connect(databaseUrl) : null;

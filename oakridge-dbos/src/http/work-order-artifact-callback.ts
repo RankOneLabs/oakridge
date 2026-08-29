@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 
-import { isJsonValue, parseUuidId, type OutputCollectionKey, type WorkOrderId } from "../domain/primitives";
+import { isJsonValue, parseUuidId, type OutputCollectionKey, type WorkflowRunId, type WorkOrderId } from "../domain/primitives";
 import type { PublishWorkOrderArtifactResult } from "../domain/run-record";
 import { publishWorkOrderArtifact } from "../runtime/publish-work-order-artifact";
 import type { RunRecordRepository } from "../storage/repositories";
@@ -9,7 +9,7 @@ export interface WorkOrderArtifactCallbackDependencies {
   readonly records: Pick<RunRecordRepository, "publish_artifact">;
   now(): string;
   /** Wakes the run's root workflow sooner than its bounded recheck; absent is fine — the recheck still happens. */
-  readonly send_run_wake?: (run_id: string, idempotency_key: string) => Promise<void>;
+  readonly send_run_wake?: (run_id: WorkflowRunId, idempotency_key: string) => Promise<void>;
 }
 
 const statusOf = (result: PublishWorkOrderArtifactResult): 200 | 201 | 202 | 401 | 404 | 409 => {

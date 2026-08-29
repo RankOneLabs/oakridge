@@ -1,12 +1,12 @@
 import { Hono } from "hono";
 
-import { parseUuidId, type ArtifactId } from "../domain/primitives";
+import { parseUuidId, type ArtifactId, type WorkflowRunId } from "../domain/primitives";
 import type { RunRecordRepository } from "../storage/repositories";
 
 export interface HandoffCompleteDependencies {
   readonly records: Pick<RunRecordRepository, "complete_handoff_artifact">;
   readonly now?: () => string;
-  readonly send_run_wake?: (run_id: string, idempotency_key: string) => Promise<void>;
+  readonly send_run_wake?: (run_id: WorkflowRunId, idempotency_key: string) => Promise<void>;
 }
 
 interface ExternalCompletionRequest { readonly external_kind: string; readonly correlation_id: string }

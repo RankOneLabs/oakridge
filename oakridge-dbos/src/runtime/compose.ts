@@ -173,6 +173,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     reconcile_materialization: async (run_id, materialized_at) => {
       const result = await reconcileRunMaterialization(run_id, materialized_at,
         { definitions, records: runRecords, load_prompt_template: (path) => promptTemplates.load(path) });
+      if (!result.ok && result.error.kind === "infrastructure") throw new Error(`${result.error.operation}:${result.error.detail}`);
       if (!result.ok) await runRecords.fail_materialization({ run_id, stage_key: result.error.stage_key, detail: result.error.detail, failed_at: materialized_at });
     }, now });
 
