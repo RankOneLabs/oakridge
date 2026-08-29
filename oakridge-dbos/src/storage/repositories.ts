@@ -15,6 +15,8 @@ import type { ConfirmFinalPullRequestRequest, FinalPullRequestDomainError, Final
 import type { CohortPullRequestReconciliation } from "../domain/cohort-pull-request";
 import type { CloseWaitRequest, OpenGateWaitInput, OpenHandoffDownstreamWaitInput, Wait, WaitClosesOn, WaitOutcome } from "../domain/wait";
 import type { Result } from "../domain/primitives";
+import type { ExecutorAttachment, ExecutorHealthObservation, InitializeStraightThroughRun, PublishWorkOrderArtifact, PublishWorkOrderArtifactResult, RunDecision, WorkOrderExecution } from "../domain/run-record";
+import type { WorkOrderId, WorkflowRunId as RunRecordWorkflowRunId } from "../domain/primitives";
 
 export interface WorkflowDefinitionRepository {
   insert_immutable(definition: WorkflowDefinition): Promise<WorkflowDefinition>;
@@ -52,6 +54,26 @@ export interface WorkflowRunRepository {
   claim_pending_launches(worker_id: string, claimed_at: string, claimed_until: string, limit: number): Promise<readonly PendingRunLaunch[]>;
   mark_launch_delivered(id: string, worker_id: string, delivered_at: string): Promise<void>;
   mark_launch_failed(id: string, worker_id: string, error: string, next_attempt_at: string): Promise<void>;
+}
+
+/** The single transactional boundary workflows ask for v2 run truth. */
+export interface RunRecordRepository {
+  initialize_straight_through(input: InitializeStraightThroughRun): Promise<void>;
+  decide_run(run_id: RunRecordWorkflowRunId, decided_at: string): Promise<Result<RunDecision, RunRecordRepositoryError>>;
+  find_work_order_execution(work_order_id: WorkOrderId): Promise<WorkOrderExecution | null>;
+  publish_immediate(request: PublishWorkOrderArtifact): Promise<PublishWorkOrderArtifactResult>;
+  ensure_executor_attachment(work_order_id: WorkOrderId, executor_type: string, updated_at: string): Promise<ExecutorAttachment>;
+  attach_external(work_order_id: WorkOrderId, reference: ExternalExecutionReference, updated_at: string): Promise<void>;
+  observe_executor(work_order_id: WorkOrderId, health: ExecutorHealthObservation, updated_at: string): Promise<void>;
+  request_cleanup(work_order_id: WorkOrderId, updated_at: string): Promise<void>;
+  finish_cleanup(work_order_id: WorkOrderId, succeeded: boolean, updated_at: string): Promise<void>;
+}
+
+export interface RunRecordRepositoryError {
+  readonly operation: "decide_run";
+  readonly run_id: RunRecordWorkflowRunId;
+  readonly kind: "run_not_found" | "record_corrupt";
+  readonly detail: string;
 }
 
 export interface WorkflowAttempt {
