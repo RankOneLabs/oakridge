@@ -33,6 +33,19 @@ test("transient storage failures remain retryable workflow failures", async () =
   expect(result).toEqual({ ok: false, error: expect.objectContaining({ kind: "infrastructure", detail: "deadlock detected" }) });
 });
 
+test("an authored missing connection is not mistaken for a database connection failure", async () => {
+  const result = await reconcileRunMaterialization("10000000-0000-4000-8000-000000000098" as WorkflowRunId, new Date().toISOString(), {
+    definitions: { async find_by_id() { return null; } },
+    records: {
+      async load_materialization_record() { throw new Error("input 'connection' not found"); },
+      async load_work_order_capability_seed() { throw new Error("unused"); }, async persist_materialized_stage() {},
+      async revise_unit_input() { throw new Error("unused"); }, async find_work_order_attachment() { return null; },
+    },
+    async load_prompt_template() { throw new Error("unused"); },
+  });
+  expect(result).toEqual({ ok: false, error: expect.objectContaining({ kind: "authoring", detail: "input 'connection' not found" }) });
+});
+
 test("v2 reconciliation persists the whole stage graph and only source work, idempotently", async () => {
   const loaded = await loadDevFlowV14();
   if (!loaded.ok) throw new Error(loaded.error.detail);

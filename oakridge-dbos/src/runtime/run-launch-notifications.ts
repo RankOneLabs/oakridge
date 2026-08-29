@@ -32,16 +32,22 @@ const dispatchPendingRunLaunches = async (
     const claimedUntil = new Date(Date.parse(claimedAt) + 30_000).toISOString();
     const launches = await repository.claim_pending_launches(workerId, claimedAt, claimedUntil, 100);
     for (const launch of launches) {
+      const failedAt = (): string => now();
       try {
         const result = await start({ workflow_id: launch.target_workflow_id as RootWorkflowId, run_id: launch.command.run_id,
           ...(launch.command.application_version ? { application_version: launch.command.application_version } : {}) });
-        if (!result.ok) throw new Error(`${result.error.operation}:${result.error.workflow_id}:${result.error.detail}`);
+        if (!result.ok) {
+          const at = failedAt();
+          const failure = `${result.error.operation}:workflow_id=${result.error.workflow_id}:run_id=${result.error.run_id}:${result.error.detail}`;
+          await repository.mark_launch_failed(launch.id, workerId, failure, new Date(Date.parse(at) + 5_000).toISOString());
+          continue;
+        }
         await repository.mark_launch_delivered(launch.id, workerId, now());
         delivered += 1;
       } catch (error) {
-        const failedAt = now();
+        const at = failedAt();
         await repository.mark_launch_failed(launch.id, workerId, error instanceof Error ? error.message : String(error),
-          new Date(Date.parse(failedAt) + 5_000).toISOString());
+          new Date(Date.parse(at) + 5_000).toISOString());
       }
     }
     if (launches.length < 100) return delivered;

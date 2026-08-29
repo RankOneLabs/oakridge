@@ -208,9 +208,7 @@ export interface RunMaterializationError {
 
 const isInfrastructureFailure = (cause: unknown): boolean => {
   const code = typeof cause === "object" && cause !== null && "code" in cause ? String(cause.code) : "";
-  if (["40001", "40P01", "55P03", "57P01", "57P02", "57P03", "08000", "08001", "08003", "08004", "08006", "08007", "08P01"].includes(code)) return true;
-  const detail = cause instanceof Error ? cause.message : String(cause);
-  return /connection|socket|timeout|timed out|deadlock|serialization/i.test(detail);
+  return ["40001", "40P01", "55P03", "57P01", "57P02", "57P03", "08000", "08001", "08003", "08004", "08006", "08007", "08P01"].includes(code);
 };
 
 /** IO failures and authored materialization failures cross the workflow step as values. */

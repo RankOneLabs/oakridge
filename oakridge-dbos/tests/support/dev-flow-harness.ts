@@ -312,7 +312,9 @@ export const installIntegrationRuntime = async (databaseUrl: string): Promise<In
     // rather than letting rows from an earlier local test run masquerade as an
     // in-place migration. DBOS keeps its own schema and is not rewritten.
     const databaseName = new URL(databaseUrl).pathname.replace(/^\//, "");
-    if (!/test/i.test(databaseName) && process.env.OAKRIDGE_TEST_ALLOW_SCHEMA_DROP !== "1") {
+    const isDedicatedLocalDatabase = databaseName === "oakridge_e2e";
+    const isDisposableCiDatabase = process.env.CI === "true" && process.env.OAKRIDGE_TEST_DATABASE_URL === databaseUrl;
+    if (!isDedicatedLocalDatabase && !isDisposableCiDatabase && process.env.OAKRIDGE_TEST_ALLOW_SCHEMA_DROP !== "1") {
       throw new Error(`refusing to drop schema 'oakridge' in database '${databaseName}': set OAKRIDGE_TEST_ALLOW_SCHEMA_DROP=1 to confirm it is disposable`);
     }
     await migrationSql.query("DROP SCHEMA IF EXISTS oakridge CASCADE", []);

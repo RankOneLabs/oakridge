@@ -91,7 +91,7 @@ const setupParkedRun = async (label: string): Promise<WakeHintFixture | null> =>
   const dbosClient = await DBOSClient.create({ systemDatabaseUrl: databaseUrl });
   await DBOS.launch();
 
-  await DBOS.startWorkflow(runRecordWorkflow, { workflowID: runId })(runId);
+  await DBOS.startWorkflow(runRecordWorkflow, { workflowID: runRecordWorkflowId(runId) })(runId);
   // The work order reaching 'started' is the root having already run its one
   // start_work iteration and looped back into decide_run — from here its next
   // "wait" decision parks it in `DBOS.recv`, which is the boundary these
@@ -108,7 +108,7 @@ const setupParkedRun = async (label: string): Promise<WakeHintFixture | null> =>
   await awaitCondition("the root's second decideRunStep (its wait decision) to complete", async () => {
     const rows = await sql!.query<{ readonly count: string }>(
       "SELECT count(*)::text AS count FROM dbos.operation_outputs WHERE workflow_uuid = $1 AND function_name = 'oakridgeV2DecideRunStep' AND completed_at_epoch_ms IS NOT NULL",
-      [runId]);
+      [runRecordWorkflowId(runId)]);
     return Number(rows[0]?.count ?? 0) >= 2 ? true : null;
   }, 10_000);
   // `DBOS.recv` is called on the very next line after that step returns —
@@ -190,7 +190,7 @@ test("a wake hint sent before the fact it would signal still converges once the 
     await awaitCondition("the root to process the premature wake and re-park", async () => {
       const rows = await sql!.query<{ readonly count: string }>(
         "SELECT count(*)::text AS count FROM dbos.operation_outputs WHERE workflow_uuid = $1 AND function_name = 'oakridgeV2DecideRunStep' AND completed_at_epoch_ms IS NOT NULL",
-        [fixture.runId]);
+        [runRecordWorkflowId(fixture.runId)]);
       return Number(rows[0]?.count ?? 0) >= 3 ? true : null;
     }, 5_000);
 

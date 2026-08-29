@@ -155,6 +155,12 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       const runs = await transaction.query<{ readonly id: string }>("SELECT id::text FROM oakridge.workflow_run WHERE id = $1 FOR UPDATE", [input.run_id]);
       if (!runs[0]) throw new Error(`workflow run '${input.run_id}' was not found`);
       const stageContract = { executor_type: input.executor_type, resolved_config: input.resolved_config, outputs: input.outputs };
+      const executionRequest: ExecutionRequest = {
+        execution_id: input.work_order_id as unknown as ExecutionRequest["execution_id"], stage_instance_id: input.stage_instance_id,
+        unit_id: input.unit_id, executor_type: input.executor_type, resolved_config: input.resolved_config, inputs: input.input_snapshot,
+        declared_outputs: input.outputs.map((output) => ({ name: output.name, artifact_type: output.artifact_type, required: output.required })),
+        expected_artifacts: input.outputs.filter((output) => output.required).map((output) => ({ unit_id: input.unit_id, output_name: output.name, artifact_type: output.artifact_type })),
+      };
       const storedStages = await transaction.query<{ readonly immutable_matches: boolean }>(
         `SELECT id = $3::uuid AND stage_contract = $4::jsonb AS immutable_matches FROM oakridge.stage_instance
          WHERE run_id = $1 AND stage_key = $2 AND attempt_root_workflow_id IS NULL FOR UPDATE`,
@@ -203,9 +209,9 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         (run_unit_id, output_name, artifact_type, required, release_policy, state)
         VALUES ($1,$2,$3,$4,$5::jsonb,'empty') ON CONFLICT (run_unit_id, output_name) WHERE collection_key IS NULL DO NOTHING`, [input.run_unit_id, output.name, output.artifact_type, output.required, output.release]);
       await transaction.query(`INSERT INTO oakridge.work_order
-        (id, run_unit_id, reason, input_snapshot, input_fingerprint, state, workflow_id, request_idempotency_key, capability_hash, created_at)
-        VALUES ($1,$2,'initial',$3::jsonb,$4,'available',$5,'initial',$6,$7::timestamptz)
-        ON CONFLICT (run_unit_id, request_idempotency_key) DO NOTHING`, [input.work_order_id, input.run_unit_id, JSON.stringify(input.input_snapshot), input.input_fingerprint, input.work_order_workflow_id, input.work_order_capability_hash, input.created_at]);
+        (id, run_unit_id, reason, input_snapshot, input_fingerprint, state, workflow_id, request_idempotency_key, capability_hash, execution_request, created_at)
+        VALUES ($1,$2,'initial',$3::jsonb,$4,'available',$5,'initial',$6,$7::jsonb,$8::timestamptz)
+        ON CONFLICT (run_unit_id, request_idempotency_key) DO NOTHING`, [input.work_order_id, input.run_unit_id, JSON.stringify(input.input_snapshot), input.input_fingerprint, input.work_order_workflow_id, input.work_order_capability_hash, executionRequest, input.created_at]);
       await transaction.query("UPDATE oakridge.workflow_run SET record_version = record_version + 1 WHERE id = $1", [input.run_id]);
     });
   }
