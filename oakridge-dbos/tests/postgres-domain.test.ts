@@ -259,7 +259,7 @@ test("a changed representation inserts the next parent-linked revision", async (
   const repository = new PostgresArtifactRevisionRepository(sql);
   const revision = await repository.emit_revision("revision-2" as ArtifactId, { run_id: "run" as WorkflowRunId, stage_instance_id: "stage" as StageInstanceId, execution_id: "execution" as ExecutionId, unit_id: "0" as UnitId, output_name: "result", artifact_type: "dev.result", label: null, body: { done: "better" }, idempotency_key: "emit-2", payload_hash: "new" }, "2026-08-14T00:00:01Z", { target_workflow_id: "execution-workflow", release: { kind: "immediate" } });
   expect(revision.ok && revision.value.artifact.parent_artifact_id).toBe("revision-1" as ArtifactId);
-  expect(sql.calls[5]?.parameters.slice(9, 12)).toEqual([2, "revision-1", "emit-2"]);
+  expect(sql.calls[5]?.parameters.slice(10, 13)).toEqual([2, "revision-1", "emit-2"]);
   expect(sql.calls.filter((call) => call.statement.includes("command_outbox"))).toHaveLength(1);
 });
 

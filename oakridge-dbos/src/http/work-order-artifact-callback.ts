@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Hono, type Context } from "hono";
 
-import { isJsonValue, parseUuidId, type ArtifactId, type WorkOrderId } from "../domain/primitives";
+import { isJsonValue, parseUuidId, type ArtifactId, type OutputCollectionKey, type WorkOrderId } from "../domain/primitives";
 import type { PublishWorkOrderArtifactResult } from "../domain/run-record";
 import type { RunRecordRepository } from "../storage/repositories";
 
@@ -32,8 +32,9 @@ export const createWorkOrderArtifactCallbackApp = (dependencies: WorkOrderArtifa
     try { body = await context.req.json(); } catch { return context.json({ error: "invalid json body" }, 400); }
     if (!isJsonValue(body)) return context.json({ error: "body is not JSON-compatible" }, 400);
     const payloadHash = createHash("sha256").update(JSON.stringify(body)).digest("hex");
+    const collectionKey = context.req.header("output-collection-key")?.trim() || null;
     const result = await dependencies.records.publish_artifact({ artifact_id: randomUUID() as ArtifactId, work_order_id: workOrderId,
-      capability_hash: createHash("sha256").update(capability).digest("hex"), output_name: context.req.param("outputName") ?? "", body,
+      capability_hash: createHash("sha256").update(capability).digest("hex"), output_name: context.req.param("outputName") ?? "", collection_key: collectionKey as OutputCollectionKey | null, body,
       idempotency_key: context.req.header("idempotency-key")?.trim() || payloadHash, payload_hash: payloadHash, published_at: dependencies.now() });
     const status = statusOf(result);
     if (result.kind === "published" || result.kind === "already_applied" || result.kind === "pending") {

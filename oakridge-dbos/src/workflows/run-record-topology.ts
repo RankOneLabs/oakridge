@@ -1,6 +1,6 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
-import { executorHealthFromTerminal, type RunDecision, type WorkOrderExecution } from "../domain/run-record";
+import { executorHealthFromTerminal, type PersistMaterializedStage, type ReviseRunUnitInput, type ReviseRunUnitInputResult, type RunDecision, type WorkOrderExecution } from "../domain/run-record";
 import { executorOperationIdForWorkOrder, type WorkflowRunId, type WorkOrderId } from "../domain/primitives";
 import type { ExecutorAdapter, ExecutorObservationAttempt, ExternalExecutionReference } from "../domain/execution";
 import type { Result } from "../domain/primitives";
@@ -23,6 +23,25 @@ const decideRunStep = DBOS.registerStep(
   async (run_id: WorkflowRunId): Promise<Result<RunDecision, RunRecordRepositoryError>> => workflowServices().records.decide_run(run_id, workflowServices().now()),
   { name: "oakridgeV2DecideRunStep", retriesAllowed: true },
 );
+
+const persistMaterializedStageStep = DBOS.registerStep(
+  async (input: PersistMaterializedStage): Promise<void> => workflowServices().records.persist_materialized_stage(input),
+  { name: "oakridgeV2PersistMaterializedStageStep", retriesAllowed: true },
+);
+
+const reviseRunUnitInputStep = DBOS.registerStep(
+  async (input: ReviseRunUnitInput): Promise<ReviseRunUnitInputResult> => workflowServices().records.revise_unit_input(input),
+  { name: "oakridgeV2ReviseRunUnitInputStep", retriesAllowed: true },
+);
+
+/** Compiler output crosses one durable boundary before any scheduler can act. */
+export const runRecordMaterializationWorkflow = DBOS.registerWorkflow(async (input: PersistMaterializedStage): Promise<void> => {
+  await persistMaterializedStageStep(input);
+}, { name: "oakridgeV2MaterializationWorkflow" });
+
+/** A revision changes the run record; no child is told to reinterpret its parent. */
+export const runRecordInputRevisionWorkflow = DBOS.registerWorkflow(async (input: ReviseRunUnitInput): Promise<ReviseRunUnitInputResult> =>
+  reviseRunUnitInputStep(input), { name: "oakridgeV2InputRevisionWorkflow" });
 
 const loadWorkOrderStep = DBOS.registerStep(
   async (work_order_id: WorkOrderId): Promise<WorkOrderExecution> => {

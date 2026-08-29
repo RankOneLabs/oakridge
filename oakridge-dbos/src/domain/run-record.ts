@@ -6,6 +6,7 @@ import type {
   InputFingerprint,
   JsonValue,
   OutputSlotVersion,
+  OutputCollectionKey,
   RunRecordVersion,
   RunTransitionId,
   RunUnitId,
@@ -57,9 +58,27 @@ export interface RunUnit {
   readonly input_snapshot: readonly ArtifactEnvelope[];
   readonly input_fingerprint: InputFingerprint;
   readonly state: UnitState;
+  readonly admitted: boolean;
+  readonly admitted_at: string | null;
   readonly outcome: StageOutcome | null;
   readonly created_at: string;
   readonly ended_at: string | null;
+}
+
+export type OutputSlotIdentity =
+  | { readonly kind: "scalar"; readonly output_name: string }
+  | { readonly kind: "collection_member"; readonly output_name: string; readonly collection_key: OutputCollectionKey };
+
+export interface RunUnitDependency {
+  readonly stage_instance_id: StageInstanceId;
+  readonly unit_id: UnitId;
+  readonly depends_on_unit_id: UnitId;
+}
+
+export interface RunStageSchedulingPolicy {
+  readonly stage_instance_id: StageInstanceId;
+  readonly max_parallel: number;
+  readonly manual_admission: boolean;
 }
 
 export type OutputInvalidationReason =
@@ -74,6 +93,7 @@ export type RunOutputSlotState =
 
 export interface RunOutputSlot {
   readonly run_unit_id: RunUnitId;
+  readonly identity: OutputSlotIdentity;
   readonly output_name: string;
   readonly artifact_type: ArtifactTypeId;
   readonly required: boolean;
@@ -120,6 +140,57 @@ export interface StraightThroughOutput {
   readonly release: OutputReleaseContract;
 }
 
+export interface MaterializedRunOutput {
+  readonly identity: OutputSlotIdentity;
+  readonly artifact_type: ArtifactTypeId;
+  readonly required: boolean;
+  readonly release: OutputReleaseContract;
+}
+
+export interface MaterializedWorkOrder {
+  readonly id: WorkOrderId;
+  readonly workflow_id: string;
+  readonly capability_hash: string;
+  readonly request: import("./execution").ExecutionRequest;
+}
+
+export interface MaterializedRunUnit {
+  readonly id: RunUnitId;
+  readonly unit_id: UnitId;
+  readonly parameters: JsonValue;
+  readonly input_snapshot: readonly ArtifactEnvelope[];
+  readonly input_fingerprint: InputFingerprint;
+  readonly depends_on: readonly UnitId[];
+  readonly outputs: readonly MaterializedRunOutput[];
+  readonly initial_work_order: MaterializedWorkOrder;
+}
+
+export interface PersistMaterializedStage {
+  readonly run_id: WorkflowRunId;
+  readonly stage_instance_id: StageInstanceId;
+  readonly stage_key: StageKey;
+  readonly stage_type: string;
+  readonly stage_contract: JsonValue;
+  readonly units: readonly MaterializedRunUnit[];
+  readonly policy: Omit<RunStageSchedulingPolicy, "stage_instance_id">;
+  readonly close_materialization: boolean;
+  readonly materialized_at: string;
+}
+
+export interface ReviseRunUnitInput {
+  readonly run_unit_id: RunUnitId;
+  readonly input_snapshot: readonly ArtifactEnvelope[];
+  readonly input_fingerprint: InputFingerprint;
+  readonly revised_at: string;
+  readonly actor: string;
+  readonly replacement_work_order: MaterializedWorkOrder;
+}
+
+export type ReviseRunUnitInputResult =
+  | { readonly kind: "revised"; readonly run_id: WorkflowRunId; readonly record_version: RunRecordVersion }
+  | { readonly kind: "unchanged"; readonly run_id: WorkflowRunId; readonly record_version: RunRecordVersion }
+  | { readonly kind: "unit_not_found"; readonly detail: string };
+
 export interface InitializeStraightThroughRun {
   readonly run_id: WorkflowRunId;
   readonly stage_instance_id: StageInstanceId;
@@ -149,6 +220,7 @@ export interface PublishWorkOrderArtifact {
   readonly work_order_id: WorkOrderId;
   readonly capability_hash: string;
   readonly output_name: string;
+  readonly collection_key?: OutputCollectionKey | null;
   readonly body: JsonValue;
   readonly idempotency_key: string;
   readonly payload_hash: string;
@@ -192,6 +264,10 @@ export type CloseRunOutputWaitResult =
  * event payloads.
  */
 export type RunTransitionOperation =
+  | "stage_materialized"
+  | "materialization_closed"
+  | "unit_admitted"
+  | "input_revised"
   | "slot_released"
   | "slot_pending"
   | "slot_invalidated"
@@ -205,6 +281,7 @@ export interface RunTransition {
   readonly work_order_id: WorkOrderId | null;
   readonly wait_id: WaitId | null;
   readonly output_name: string | null;
+  readonly collection_key: OutputCollectionKey | null;
   readonly operation: RunTransitionOperation;
   readonly actor: string;
   readonly prior_record_version: RunRecordVersion;

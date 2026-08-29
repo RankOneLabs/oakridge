@@ -32,6 +32,7 @@ export type WorkOrderId = Brand<string, "WorkOrderId">;
 export type ExecutorOperationId = Brand<string, "ExecutorOperationId">;
 export type RunRecordVersion = Brand<number, "RunRecordVersion">;
 export type OutputSlotVersion = Brand<number, "OutputSlotVersion">;
+export type OutputCollectionKey = Brand<string, "OutputCollectionKey">;
 export type InputFingerprint = Brand<string, "InputFingerprint">;
 export type RunTransitionId = Brand<string, "RunTransitionId">;
 
