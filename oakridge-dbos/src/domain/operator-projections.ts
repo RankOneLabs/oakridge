@@ -40,6 +40,8 @@ export interface OperatorRunRecordUnitFacts {
   readonly has_open_wait: boolean;
   readonly has_available_work_order: boolean;
   readonly has_started_work_order: boolean;
+  readonly is_admitted: boolean;
+  readonly dependencies_satisfied: boolean;
 }
 
 /**
@@ -52,13 +54,14 @@ export const selectRunRecordUnitDecision = (facts: OperatorRunRecordUnitFacts): 
   if (facts.unit_state === "failed") return "failed";
   if (facts.all_required_released) return "satisfied";
   if (facts.has_open_wait) return "waiting";
-  if (facts.has_available_work_order) return "work_available";
+  if (facts.has_available_work_order && facts.is_admitted && facts.dependencies_satisfied) return "work_available";
   if (facts.has_started_work_order) return "work_in_progress";
   return "needs_work";
 };
 
 export interface OperatorRunRecordSlot {
   readonly output_name: string;
+  readonly collection_key: string | null;
   readonly artifact_type: string;
   readonly required: boolean;
   readonly state: RunOutputSlotState["kind"];
@@ -69,6 +72,7 @@ export interface OperatorRunRecordSlot {
 export interface OperatorRunRecordWait {
   readonly id: string;
   readonly output_name: string | null;
+  readonly collection_key: string | null;
   readonly kind: "gate" | "handoff_downstream" | "handoff_external";
   readonly status: "open" | "closed";
   readonly opened_at: string;
@@ -89,6 +93,8 @@ export interface OperatorRunRecordUnit {
   readonly run_unit_id: RunUnitId;
   readonly unit_id: UnitId;
   readonly decision: OperatorRunRecordUnitDecision;
+  readonly admitted: boolean;
+  readonly blocked_by: readonly UnitId[];
   readonly slots: readonly OperatorRunRecordSlot[];
   readonly waits: readonly OperatorRunRecordWait[];
   readonly work_orders: readonly OperatorRunRecordWorkOrder[];
@@ -96,6 +102,8 @@ export interface OperatorRunRecordUnit {
 
 export interface OperatorRunRecordTransition {
   readonly operation: string;
+  readonly output_name: string | null;
+  readonly collection_key: string | null;
   readonly actor: string;
   readonly prior_record_version: number;
   readonly resulting_record_version: number;

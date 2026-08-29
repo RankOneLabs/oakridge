@@ -49,7 +49,8 @@ test("a pending gate still dominates a recorded failure", () => {
  * health, workflow return value, or DBOS status has a field to occupy here.
  */
 const facts = (overrides: Partial<OperatorRunRecordUnitFacts> = {}): OperatorRunRecordUnitFacts => ({
-  unit_state: "working", all_required_released: false, has_open_wait: false, has_available_work_order: false, has_started_work_order: false, ...overrides,
+  unit_state: "working", all_required_released: false, has_open_wait: false, has_available_work_order: false, has_started_work_order: false,
+  is_admitted: true, dependencies_satisfied: true, ...overrides,
 });
 
 test("a cancelled or failed unit dominates every other fact", () => {
@@ -68,6 +69,11 @@ test("a pending slot's open wait reads as waiting, not needing new work", () => 
 test("available and started work rank below a wait but above needing new work", () => {
   expect(selectRunRecordUnitDecision(facts({ has_available_work_order: true }))).toBe("work_available");
   expect(selectRunRecordUnitDecision(facts({ has_started_work_order: true }))).toBe("work_in_progress");
+});
+
+test("an available order is not actionable before admission and dependencies", () => {
+  expect(selectRunRecordUnitDecision(facts({ has_available_work_order: true, is_admitted: false }))).toBe("needs_work");
+  expect(selectRunRecordUnitDecision(facts({ has_available_work_order: true, dependencies_satisfied: false }))).toBe("needs_work");
 });
 
 test("nothing missing, waiting, or in progress needs an explicit new work order", () => {

@@ -255,8 +255,8 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     const run = runRows[0];
     if (!run) return null;
 
-    const unitRows = await this.sql.query<{ readonly id: string; readonly unit_id: string; readonly state: OperatorRunRecordUnitFacts["unit_state"] }>(
-      "SELECT id::text, unit_id, state FROM oakridge.run_unit WHERE run_id = $1 ORDER BY unit_id", [run_id]);
+    const unitRows = await this.sql.query<{ readonly id: string; readonly unit_id: string; readonly state: OperatorRunRecordUnitFacts["unit_state"]; readonly admitted: boolean }>(
+      "SELECT id::text, unit_id, state, admitted FROM oakridge.run_unit WHERE run_id = $1 ORDER BY unit_id", [run_id]);
     const runUnitIds = unitRows.map((row) => row.id);
 
     // One query per related table for the whole run, not per unit — a run
@@ -271,12 +271,12 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
       return grouped;
     };
 
-    const slotRows = await this.sql.query<{ readonly run_unit_id: string; readonly output_name: string; readonly artifact_type: string; readonly required: boolean; readonly state: RunOutputSlotState["kind"]; readonly artifact_revision_id: string | null; readonly version: string }>(
-      "SELECT run_unit_id::text, output_name, artifact_type, required, state, artifact_revision_id::text, version::text FROM oakridge.run_output_slot WHERE run_unit_id = ANY($1::uuid[]) ORDER BY output_name", [runUnitIds]);
+    const slotRows = await this.sql.query<{ readonly run_unit_id: string; readonly output_name: string; readonly collection_key: string | null; readonly artifact_type: string; readonly required: boolean; readonly state: RunOutputSlotState["kind"]; readonly artifact_revision_id: string | null; readonly version: string }>(
+      "SELECT run_unit_id::text, output_name, collection_key, artifact_type, required, state, artifact_revision_id::text, version::text FROM oakridge.run_output_slot WHERE run_unit_id = ANY($1::uuid[]) ORDER BY output_name,collection_key NULLS FIRST", [runUnitIds]);
     const slotsByUnit = groupByRunUnit(slotRows);
 
-    const waitRows = await this.sql.query<{ readonly id: string; readonly run_unit_id: string; readonly output_name: string | null; readonly kind: OperatorRunRecordWait["kind"]; readonly status: OperatorRunRecordWait["status"]; readonly opened_at: string }>(
-      "SELECT id::text, run_unit_id::text, output_name, kind, status, opened_at::text FROM oakridge.wait WHERE run_unit_id = ANY($1::uuid[]) ORDER BY opened_at", [runUnitIds]);
+    const waitRows = await this.sql.query<{ readonly id: string; readonly run_unit_id: string; readonly output_name: string | null; readonly collection_key: string | null; readonly kind: OperatorRunRecordWait["kind"]; readonly status: OperatorRunRecordWait["status"]; readonly opened_at: string }>(
+      "SELECT id::text, run_unit_id::text, output_name, collection_key, kind, status, opened_at::text FROM oakridge.wait WHERE run_unit_id = ANY($1::uuid[]) ORDER BY opened_at", [runUnitIds]);
     const waitsByUnit = groupByRunUnit(waitRows);
 
     const orderRows = await this.sql.query<{ readonly id: string; readonly run_unit_id: string; readonly reason: string; readonly state: OperatorRunRecordWorkOrder["state"]; readonly workflow_id: string; readonly health: OperatorRunRecordWorkOrder["executor_health"]; readonly cleanup_state: string | null; readonly dbos_status: string | null }>(
@@ -287,11 +287,17 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
        LEFT JOIN dbos.workflow_status status ON status.workflow_uuid = work.workflow_id
        WHERE work.run_unit_id = ANY($1::uuid[]) ORDER BY work.created_at`, [runUnitIds]);
     const ordersByUnit = groupByRunUnit(orderRows);
+    const dependencyRows = await this.sql.query<{ readonly run_unit_id: string; readonly dependency_id: string; readonly dependency_unit_id: string; readonly dependency_state: string; readonly has_missing_slot: boolean }>(`SELECT unit.id::text AS run_unit_id,dependency.id::text AS dependency_id,dependency.unit_id AS dependency_unit_id,dependency.state AS dependency_state,
+      EXISTS (SELECT 1 FROM oakridge.run_output_slot slot WHERE slot.run_unit_id=dependency.id AND slot.required AND slot.state <> 'released') AS has_missing_slot
+      FROM oakridge.run_unit_dependency edge JOIN oakridge.run_unit unit ON unit.stage_instance_id=edge.stage_instance_id AND unit.unit_id=edge.unit_id
+      JOIN oakridge.run_unit dependency ON dependency.stage_instance_id=edge.stage_instance_id AND dependency.unit_id=edge.depends_on_unit_id
+      WHERE unit.id=ANY($1::uuid[]) ORDER BY dependency.unit_id`, [runUnitIds]);
+    const dependenciesByUnit = groupByRunUnit(dependencyRows);
 
     const units: OperatorRunRecordUnit[] = unitRows.map((unitRow) => {
       const runUnitId = unitRow.id as RunUnitId;
       const slots: OperatorRunRecordSlot[] = (slotsByUnit.get(unitRow.id) ?? []).map((slot) => ({
-        output_name: slot.output_name, artifact_type: slot.artifact_type, required: slot.required, state: slot.state,
+        output_name: slot.output_name, collection_key: slot.collection_key, artifact_type: slot.artifact_type, required: slot.required, state: slot.state,
         artifact_revision_id: slot.artifact_revision_id as ArtifactId | null, version: Number(slot.version),
       }));
       const waits: readonly OperatorRunRecordWait[] = waitsByUnit.get(unitRow.id) ?? [];
@@ -299,6 +305,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
         id: order.id as WorkOrderId, reason: order.reason, state: order.state, workflow_id: order.workflow_id,
         executor_health: order.health, cleanup_state: order.cleanup_state, dbos_liveness: order.dbos_status,
       }));
+      const blocked_by = (dependenciesByUnit.get(unitRow.id) ?? []).filter((dependency) => dependency.dependency_state !== "satisfied" || dependency.has_missing_slot).map((dependency) => dependency.dependency_unit_id as UnitId);
 
       const decision = selectRunRecordUnitDecision({
         unit_state: unitRow.state,
@@ -306,16 +313,18 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
         has_open_wait: waits.some((wait) => wait.status === "open"),
         has_available_work_order: work_orders.some((order) => order.state === "available"),
         has_started_work_order: work_orders.some((order) => order.state === "started"),
+        is_admitted: unitRow.admitted,
+        dependencies_satisfied: blocked_by.length === 0,
       });
 
-      return { run_unit_id: runUnitId, unit_id: unitRow.unit_id as UnitId, decision, slots, waits, work_orders };
+      return { run_unit_id: runUnitId, unit_id: unitRow.unit_id as UnitId, decision, admitted: unitRow.admitted, blocked_by, slots, waits, work_orders };
     });
 
-    const transitionRows = await this.sql.query<{ readonly operation: string; readonly actor: string; readonly prior_record_version: string; readonly resulting_record_version: string; readonly created_at: string }>(
-      `SELECT operation, actor, prior_record_version::text, resulting_record_version::text, created_at::text
+    const transitionRows = await this.sql.query<{ readonly operation: string; readonly output_name: string | null; readonly collection_key: string | null; readonly actor: string; readonly prior_record_version: string; readonly resulting_record_version: string; readonly created_at: string }>(
+      `SELECT operation, output_name, collection_key, actor, prior_record_version::text, resulting_record_version::text, created_at::text
        FROM oakridge.run_transition WHERE run_id = $1 ORDER BY resulting_record_version DESC, created_at DESC LIMIT 20`, [run_id]);
     const recent_transitions: OperatorRunRecordTransition[] = transitionRows.map((transition) => ({
-      operation: transition.operation, actor: transition.actor,
+      operation: transition.operation, output_name: transition.output_name, collection_key: transition.collection_key, actor: transition.actor,
       prior_record_version: Number(transition.prior_record_version), resulting_record_version: Number(transition.resulting_record_version),
       created_at: transition.created_at,
     }));

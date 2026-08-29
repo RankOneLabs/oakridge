@@ -14,13 +14,13 @@ const unitId = "unit-1" as UnitId;
 const now = "2026-08-28T12:00:00.000Z";
 
 const unit = (state: RunUnit["state"] = "working"): RunUnit => ({ id: runUnitId, run_id: runId, stage_instance_id: stageId, unit_id: unitId,
-  parameters: {}, input_snapshot: [], input_fingerprint: "inputs" as InputFingerprint, state,
+  parameters: {}, input_snapshot: [], input_fingerprint: "inputs" as InputFingerprint, state, admitted: true, admitted_at: now,
   outcome: state === "failed" ? { kind: "failed", code: "domain_failure", detail: "failed by policy" } : null,
   created_at: now, ended_at: state === "failed" ? now : null });
 const order = (state: WorkOrder["state"]): WorkOrder => ({ id: workOrderId, run_unit_id: runUnitId, reason: "initial", input_snapshot: [],
   input_fingerprint: "inputs" as InputFingerprint, state, workflow_id: "work-order-1", request_idempotency_key: "initial", created_at: now,
   completed_at: state === "completed" || state === "abandoned" ? now : null });
-const slot = (state: RunOutputSlot["state"]): RunOutputSlot => ({ run_unit_id: runUnitId, output_name: "result", artifact_type: "dev.result", required: true,
+const slot = (state: RunOutputSlot["state"]): RunOutputSlot => ({ run_unit_id: runUnitId, identity: { kind: "scalar", output_name: "result" }, output_name: "result", artifact_type: "dev.result", required: true,
   release: { kind: "immediate" }, state, updated_by_work_order_id: state.kind === "released" ? workOrderId : null, version: 1 as OutputSlotVersion });
 const artifact: ArtifactRevision = { id: "55555555-5555-4555-8555-555555555555" as ArtifactRevision["id"], chain_id: "55555555-5555-4555-8555-555555555555" as ArtifactRevision["chain_id"],
   run_id: runId, stage_instance_id: stageId, execution_id: workOrderId as unknown as ArtifactRevision["execution_id"], unit_id: unitId,

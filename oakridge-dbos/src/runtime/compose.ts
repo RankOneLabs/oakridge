@@ -27,9 +27,9 @@ import { pollCohortPullRequests, type CohortPollOutcome, type PullRequestReader 
 import type { ArtifactId } from "../domain/primitives";
 import { selectGateStateView, selectHandoffStateView, type GateWorkflowState, type HandoffWorkflowState } from "../domain/wait";
 import { createApp } from "../http/app";
-import { getStageAdmissionState, registerDbosTransportClient, sendArtifactWorkflowMessage, sendGateWorkflowCommand, sendHandoffWorkflowCommand, sendRunWakeHint, sendStageCommand } from "../http/dbos-transport";
+import { registerDbosTransportClient, sendArtifactWorkflowMessage, sendGateWorkflowCommand, sendHandoffWorkflowCommand, sendRunWakeHint } from "../http/dbos-transport";
 import { seedBuiltins } from "../seed/seed-builtins";
-import { PostgresArtifactRevisionRepository, PostgresCancellationTargetRepository, PostgresExecutionArtifactContextRepository, PostgresExecutionProjectionRepository, PostgresResumeArtifactRepository, PostgresRerunTargetRepository, PostgresSessionHoldRepository, PostgresStageAdmissionTargetRepository, PostgresStageInstanceRepository, PostgresWorkflowAttemptRepository, PostgresWorkflowRunRepository } from "../storage/postgres-domain";
+import { PostgresArtifactRevisionRepository, PostgresCancellationTargetRepository, PostgresExecutionArtifactContextRepository, PostgresExecutionProjectionRepository, PostgresResumeArtifactRepository, PostgresRerunTargetRepository, PostgresSessionHoldRepository, PostgresStageInstanceRepository, PostgresWorkflowAttemptRepository, PostgresWorkflowRunRepository } from "../storage/postgres-domain";
 import { DEFAULT_STALL_THRESHOLD_SECONDS, PostgresOperatorProjectionRepository } from "../storage/postgres-operators";
 import { PostgresCohortPullRequestRepository, PostgresCollaborationRepository, PostgresEpicWorkflowProfileRepository, PostgresFinalPullRequestRepository, PostgresGateDecisionAuditRepository } from "../storage/postgres-policy";
 import { PostgresProjectRepository } from "../storage/postgres-projects";
@@ -127,7 +127,6 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const runRecords = new PostgresRunRecordRepository(sql);
   const attempts = new PostgresWorkflowAttemptRepository(sql);
   const stages = new PostgresStageInstanceRepository(sql);
-  const admissionTargets = new PostgresStageAdmissionTargetRepository(sql);
   const artifacts = new PostgresArtifactRevisionRepository(sql);
   const contexts = new PostgresExecutionArtifactContextRepository(sql);
   const executions = new PostgresExecutionProjectionRepository(sql);
@@ -213,7 +212,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
 
   const app = createApp({
     configuration: { projects, definitions, project_identity: projectIdentity, now },
-    admission: { targets: admissionTargets, get_admission_state: getStageAdmissionState, send_stage_command: sendStageCommand },
+    admission: { records: runRecords, now },
     run_lifecycle: { runs },
     domain_reads: { stages, artifacts, session_holds: sessionHolds },
     final_pull_requests: { final_pull_requests: finalPullRequests, now },

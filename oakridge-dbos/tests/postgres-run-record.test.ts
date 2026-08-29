@@ -1,7 +1,8 @@
 import { afterAll, expect, test } from "bun:test";
 import { createHash, randomUUID } from "node:crypto";
 
-import type { ArtifactId, InputFingerprint, RunUnitId, StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId, WorkOrderId } from "../src/domain/primitives";
+import type { ArtifactId, InputFingerprint, OutputCollectionKey, RunUnitId, StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId, WorkOrderId } from "../src/domain/primitives";
+import type { PersistMaterializedStage } from "../src/domain/run-record";
 import { applyMigrations } from "../src/storage/migrate";
 import { PostgresRunRecordRepository } from "../src/storage/postgres-run-record";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
@@ -320,4 +321,129 @@ test("a second wait opened after a slot is reset does not collide on its command
 
   const addresses = await sql!.query<{ readonly command_workflow_id: string }>("SELECT command_workflow_id FROM oakridge.wait WHERE id = ANY($1::uuid[])", [[first.wait_id, second.wait_id]]);
   expect(new Set(addresses.map((row) => row.command_workflow_id)).size).toBe(2);
+});
+
+const setupMaterializedRun = async (maxParallel = 1, withDependencies = true, manualAdmission = false): Promise<{ readonly records: PostgresRunRecordRepository; readonly input: PersistMaterializedStage; readonly capabilities: readonly string[] } | null> => {
+  if (!sql) return null;
+  const definitionId = randomUUID() as WorkflowDefinitionId;
+  const runId = randomUUID() as WorkflowRunId;
+  const stageId = randomUUID() as StageInstanceId;
+  const now = new Date().toISOString();
+  await sql.query(`INSERT INTO oakridge.workflow_definition (id,name,version,definition,archived,created_at) VALUES ($1,$2,1,'{}'::jsonb,false,$3::timestamptz)`, [definitionId, `materialized-${runId}`, now]);
+  await sql.query(`INSERT INTO oakridge.workflow_run (id,workflow_definition_id,context,created_at) VALUES ($1,$2,'{}'::jsonb,$3::timestamptz)`, [runId, definitionId, now]);
+  const unitIds = ["foundation", "web", "docs"] as const;
+  const runUnitIds = unitIds.map(() => randomUUID() as RunUnitId);
+  const workOrderIds = unitIds.map(() => randomUUID() as WorkOrderId);
+  const capabilities = unitIds.map((unit) => createHash("sha256").update(`secret:${unit}`).digest("hex"));
+  const outputs = [{ identity: { kind: "scalar" as const, output_name: "result" }, artifact_type: "dev.result", required: true, release: { kind: "immediate" as const } }];
+  const input: PersistMaterializedStage = {
+    run_id: runId, stage_instance_id: stageId, stage_key: "build", stage_type: "delegated_session",
+    stage_contract: { executor_type: "delegated_session", resolved_config: {}, outputs: [{ name: "result", artifact_type: "dev.result", required: true, release: { kind: "immediate" } }] },
+    policy: { max_parallel: maxParallel, manual_admission: manualAdmission }, close_materialization: true, materialized_at: now,
+    units: unitIds.map((unitId, index) => ({ id: runUnitIds[index]!, unit_id: unitId as UnitId, parameters: { unit_id: unitId }, input_snapshot: [],
+      input_fingerprint: `input:${unitId}` as InputFingerprint, depends_on: !withDependencies || index === 0 ? [] : [unitIds[index - 1]! as UnitId], outputs,
+      initial_work_order: { id: workOrderIds[index]!, workflow_id: `v2-work:${workOrderIds[index]}`, capability_hash: capabilities[index]!, request: {
+        execution_id: workOrderIds[index]! as unknown as import("../src/domain/primitives").ExecutionId, stage_instance_id: stageId, unit_id: unitId as UnitId,
+        executor_type: "delegated_session", resolved_config: {}, inputs: [], declared_outputs: [{ name: "result", artifact_type: "dev.result", required: true, release: { kind: "immediate" } }],
+        expected_artifacts: [{ unit_id: unitId as UnitId, output_name: "result", artifact_type: "dev.result" }],
+      } } })),
+  };
+  const records = new PostgresRunRecordRepository(sql);
+  await records.persist_materialized_stage(input);
+  return { records, input, capabilities };
+};
+
+test("compiler materialization persists an idempotent dependency graph and rejects conflicting rematerialization", async () => {
+  const setup = await setupMaterializedRun();
+  if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  await setup.records.persist_materialized_stage(setup.input);
+  const edges = await sql!.query<{ readonly unit_id: string; readonly dependency: string }>(`SELECT edge.unit_id,edge.depends_on_unit_id AS dependency FROM oakridge.run_unit_dependency edge
+    JOIN oakridge.stage_instance stage ON stage.id=edge.stage_instance_id WHERE stage.run_id=$1 ORDER BY edge.unit_id`, [setup.input.run_id]);
+  expect(edges).toEqual([{ unit_id: "docs", dependency: "web" }, { unit_id: "web", dependency: "foundation" }]);
+  await expect(setup.records.persist_materialized_stage({ ...setup.input, policy: { ...setup.input.policy, max_parallel: 2 } })).rejects.toThrow("conflicts with its stored graph");
+});
+
+test("incremental materialization persists forward edges and validates them when explicitly closed", async () => {
+  const setup = await setupMaterializedRun();
+  if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  const stageId = randomUUID() as StageInstanceId;
+  const rebind = (unit: PersistMaterializedStage["units"][number], depends_on: readonly UnitId[]) => {
+    const id = randomUUID() as RunUnitId;
+    const workOrderId = randomUUID() as WorkOrderId;
+    return { ...unit, id, depends_on, initial_work_order: { ...unit.initial_work_order, id: workOrderId, workflow_id: `v2-work:${workOrderId}`,
+      request: { ...unit.initial_work_order.request, execution_id: workOrderId as unknown as import("../src/domain/primitives").ExecutionId, stage_instance_id: stageId } } };
+  };
+  const foundation = rebind(setup.input.units[0]!, []);
+  const web = rebind(setup.input.units[1]!, [foundation.unit_id]);
+  const base = { ...setup.input, stage_instance_id: stageId, stage_key: "incremental", units: [web], close_materialization: false } satisfies PersistMaterializedStage;
+  await setup.records.persist_materialized_stage(base);
+  await setup.records.persist_materialized_stage({ ...base, units: [foundation], close_materialization: true });
+  const closed = await sql!.query<{ readonly materialization_closed: boolean }>("SELECT materialization_closed FROM oakridge.stage_instance WHERE id=$1", [stageId]);
+  expect(closed[0]?.materialization_closed).toBe(true);
+
+  const invalidStageId = randomUUID() as StageInstanceId;
+  const invalidWorkOrderId = randomUUID() as WorkOrderId;
+  const invalid = { ...base, stage_instance_id: invalidStageId, stage_key: "invalid-incremental", close_materialization: true,
+    units: [{ ...web, id: randomUUID() as RunUnitId, depends_on: ["never-arrived" as UnitId], initial_work_order: { ...web.initial_work_order,
+      id: invalidWorkOrderId, workflow_id: `v2-work:${invalidWorkOrderId}`, request: { ...web.initial_work_order.request,
+        execution_id: invalidWorkOrderId as unknown as import("../src/domain/primitives").ExecutionId, stage_instance_id: invalidStageId } } }] } satisfies PersistMaterializedStage;
+  await expect(setup.records.persist_materialized_stage(invalid)).rejects.toThrow("unknown dependency");
+});
+
+test("transactional scheduling starts only dependency-ready work within capacity", async () => {
+  const setup = await setupMaterializedRun(2, false);
+  if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  const concurrent = await Promise.all([setup.records.decide_run(setup.input.run_id, setup.input.materialized_at), new PostgresRunRecordRepository(sql!).decide_run(setup.input.run_id, setup.input.materialized_at)]);
+  expect(concurrent.flatMap((result) => result.ok && result.value.kind === "start_work" ? result.value.work_orders : [])).toHaveLength(2);
+  const started = await sql!.query<{ readonly unit_id: string }>(`SELECT unit.unit_id FROM oakridge.work_order work JOIN oakridge.run_unit unit ON unit.id=work.run_unit_id WHERE unit.run_id=$1 AND work.state='started'`, [setup.input.run_id]);
+  expect(started.map((row) => row.unit_id).sort()).toEqual(["docs", "foundation"]);
+});
+
+test("manual admission is repository-owned, dependency-aware, and idempotent", async () => {
+  const setup = await setupMaterializedRun(2, true, true);
+  if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  const [foundation, web] = setup.input.units;
+  if (!foundation || !web) throw new Error("fixture units missing");
+  expect(await setup.records.admit_unit({ stage_instance_id: setup.input.stage_instance_id, unit_id: web.unit_id, idempotency_key: "web-1" }, setup.input.materialized_at))
+    .toEqual({ kind: "dependency_blocked", stage_instance_id: setup.input.stage_instance_id, unit_id: web.unit_id, blocked_by: [foundation.unit_id] });
+  const admitted = await setup.records.admit_unit({ stage_instance_id: setup.input.stage_instance_id, unit_id: foundation.unit_id, idempotency_key: "foundation-1" }, setup.input.materialized_at);
+  expect(admitted.kind).toBe("admitted");
+  expect((await setup.records.admit_unit({ stage_instance_id: setup.input.stage_instance_id, unit_id: foundation.unit_id, idempotency_key: "foundation-1" }, setup.input.materialized_at)).kind).toBe("already_admitted");
+  const decision = await setup.records.decide_run(setup.input.run_id, setup.input.materialized_at);
+  expect(decision.ok && decision.value.kind === "start_work" ? decision.value.work_orders.map((order) => order.run_unit_id) : []).toEqual([foundation.id]);
+});
+
+test("collection members publish independently and one revision invalidates every effective output", async () => {
+  const setup = await setupMaterializedRun();
+  if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  const unit = setup.input.units[0]!;
+  const collectionOutputs = ["a", "b"].map((key) => ({ identity: { kind: "collection_member" as const, output_name: "files", collection_key: key as OutputCollectionKey }, artifact_type: "dev.file", required: true, release: { kind: "immediate" as const } }));
+  // This is a separate stage because a materialized graph is immutable.
+  const second = { ...setup.input, stage_instance_id: randomUUID() as StageInstanceId, stage_key: "collect", units: [{ ...unit, id: randomUUID() as RunUnitId,
+    unit_id: "collector" as UnitId, depends_on: [], outputs: collectionOutputs, initial_work_order: { ...unit.initial_work_order, id: randomUUID() as WorkOrderId,
+      workflow_id: `v2-work:${randomUUID()}`, request: { ...unit.initial_work_order.request, unit_id: "collector" as UnitId } } }] } satisfies PersistMaterializedStage;
+  const collectionWorkOrderId = second.units[0]!.initial_work_order.id;
+  const collectionStage = { ...second, units: [{ ...second.units[0]!, initial_work_order: { ...second.units[0]!.initial_work_order,
+    workflow_id: `v2-work:${collectionWorkOrderId}`, request: { ...second.units[0]!.initial_work_order.request,
+      execution_id: collectionWorkOrderId as unknown as import("../src/domain/primitives").ExecutionId, stage_instance_id: second.stage_instance_id } } }] } satisfies PersistMaterializedStage;
+  await setup.records.persist_materialized_stage(collectionStage);
+  await setup.records.decide_run(collectionStage.run_id, collectionStage.materialized_at);
+  const order = collectionStage.units[0]!.initial_work_order;
+  for (const key of ["a", "b"] as const) {
+    const body = { key };
+    const result = await setup.records.publish_artifact({ artifact_id: randomUUID() as ArtifactId, work_order_id: order.id, capability_hash: order.capability_hash,
+      output_name: "files", collection_key: key as OutputCollectionKey, body, idempotency_key: key, payload_hash: createHash("sha256").update(JSON.stringify(body)).digest("hex"), published_at: second.materialized_at });
+    expect(result.kind).toBe("published");
+  }
+  const replacementWorkOrderId = randomUUID() as WorkOrderId;
+  const revised = await setup.records.revise_unit_input({ run_unit_id: collectionStage.units[0]!.id, input_snapshot: [], input_fingerprint: "revised" as InputFingerprint,
+    revised_at: collectionStage.materialized_at, actor: "test", replacement_work_order: {
+      ...order, id: replacementWorkOrderId, workflow_id: `v2-work:${replacementWorkOrderId}`,
+      request: { ...order.request, execution_id: replacementWorkOrderId as unknown as import("../src/domain/primitives").ExecutionId },
+    } });
+  expect(revised.kind).toBe("revised");
+  const states = await sql!.query<{ readonly collection_key: string; readonly state: string }>("SELECT collection_key,state FROM oakridge.run_output_slot WHERE run_unit_id=$1 ORDER BY collection_key", [collectionStage.units[0]!.id]);
+  expect(states).toEqual([{ collection_key: "a", state: "invalidated" }, { collection_key: "b", state: "invalidated" }]);
+  const replacement = await sql!.query<{ readonly state: string; readonly reason: string }>("SELECT state,reason FROM oakridge.work_order WHERE id=$1", [replacementWorkOrderId]);
+  expect(replacement).toEqual([{ state: "available", reason: "input_revision" }]);
 });

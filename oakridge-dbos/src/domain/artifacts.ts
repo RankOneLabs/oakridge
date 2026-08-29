@@ -16,6 +16,7 @@ export interface ArtifactCoordinate {
 }
 
 export interface ArtifactRevision {
+  readonly collection_key?: import("./primitives").OutputCollectionKey | null;
   readonly id: ArtifactId;
   readonly chain_id: ArtifactId;
   readonly run_id: WorkflowRunId;
