@@ -9,7 +9,7 @@ import type { DelegatedSessionDefinitionConfig } from "../src/domain/delegated-s
 import type { ArtifactEnvelope } from "../src/domain/execution";
 import type { ArtifactId, JsonValue, StageInstanceId, UnitId } from "../src/domain/primitives";
 import { loadDevFlowV14 } from "../src/seed/dev-flow-v14";
-import { selectInputsForUnit, type StageInputSet } from "../src/workflows/production-topology";
+import { selectInputsForUnit, type StageInputSet } from "../src/compiler/select-unit-inputs";
 
 const stageInstanceId = "stage-1" as StageInstanceId;
 const context = {

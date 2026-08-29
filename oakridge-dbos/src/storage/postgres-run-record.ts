@@ -10,6 +10,7 @@ import type { WaitClosesOn, WaitOutcome } from "../domain/wait";
 import type { StageOutcome } from "../domain/workflow";
 import type { AdmitStageUnitRequest, AdmitStageUnitResult } from "../domain/runs";
 import type { DeleteRunResult } from "../domain/runs";
+import type { RunOwnedCohortHandoff } from "../domain/cohort-pull-request";
 import { decodeWait, waitColumns, type WaitRow } from "./postgres-wait";
 import type { RunRecordRepository, RunRecordRepositoryError } from "./repositories";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
@@ -125,6 +126,27 @@ const assertIncomingUnits = (input: PersistMaterializedStage): void => {
 };
 
 export class PostgresRunRecordRepository implements RunRecordRepository {
+  async find_cohort_handoff(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<RunOwnedCohortHandoff | null> {
+    const rows = await this.sql.query<{ readonly run_id: string; readonly stage_instance_id: string; readonly unit_id: string;
+      readonly repository_key: string; readonly handoff_artifact_id: string; readonly handoff_body: JsonValue; readonly summary_body: JsonValue }>(
+      `SELECT unit.run_id::text,unit.stage_instance_id::text,unit.unit_id,
+              COALESCE(handoff.body->>'repository_key',unit.unit_id) AS repository_key,
+              handoff.id::text AS handoff_artifact_id,handoff.body AS handoff_body,summary.body AS summary_body
+       FROM oakridge.run_unit unit
+       JOIN oakridge.run_output_slot slot ON slot.run_unit_id=unit.id AND slot.release_policy->>'kind'='handoff'
+       JOIN oakridge.artifact handoff ON handoff.id=slot.artifact_revision_id
+       JOIN LATERAL (SELECT candidate.body FROM oakridge.artifact candidate
+         WHERE candidate.stage_instance_id=unit.stage_instance_id AND candidate.unit_id=unit.unit_id
+           AND candidate.artifact_type='dev.pr_summary' AND candidate.lifecycle_state IN ('current','released')
+         ORDER BY candidate.version DESC,candidate.id LIMIT 1) summary ON true
+       WHERE unit.stage_instance_id=$1 AND unit.unit_id=$2
+       ORDER BY slot.output_name LIMIT 1`, [stage_instance_id, unit_id]);
+    const row = rows[0];
+    return row ? { run_id: row.run_id as WorkflowRunId, stage_instance_id: row.stage_instance_id as StageInstanceId,
+      unit_id: row.unit_id as UnitId, repository_key: row.repository_key, handoff_artifact_id: row.handoff_artifact_id as ArtifactId,
+      handoff_body: row.handoff_body, summary_body: row.summary_body } : null;
+  }
+
   constructor(private readonly sql: TransactionalSqlExecutor) {}
 
   async initialize_straight_through(input: InitializeStraightThroughRun): Promise<void> {
@@ -310,12 +332,12 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         (id, run_id, stage_key, stage_type, stage_contract, attempt_root_workflow_id, coordinator_workflow_id, started_at, state, materialization_closed)
         VALUES ($1,$2,$3,$4,$5::jsonb,NULL,$6,$7::timestamptz,'active',false)
         ON CONFLICT (run_id, stage_key) WHERE attempt_root_workflow_id IS NULL DO NOTHING`,
-        [input.stage_instance_id, input.run_id, input.stage_key, input.stage_type, input.stage_contract, `v2-stage:${input.stage_instance_id}`, input.materialized_at]);
+        [input.stage_instance_id, input.run_id, input.stage_key, input.stage_type, JSON.stringify(input.stage_contract), `v2-stage:${input.stage_instance_id}`, input.materialized_at]);
       }
       const stageRows = await transaction.query<{ readonly id: string; readonly immutable_matches: boolean }>(`SELECT id::text,
         id = $3::uuid AND stage_type = $4 AND stage_contract = $5::jsonb AS immutable_matches
         FROM oakridge.stage_instance WHERE run_id = $1 AND stage_key = $2 AND attempt_root_workflow_id IS NULL FOR UPDATE`,
-      [input.run_id, input.stage_key, input.stage_instance_id, input.stage_type, input.stage_contract]);
+      [input.run_id, input.stage_key, input.stage_instance_id, input.stage_type, JSON.stringify(input.stage_contract)]);
       if (!stageRows[0]?.immutable_matches) throw new Error(`materialized stage '${input.stage_key}' conflicts with its stored identity`);
       if (!stored[0]) await transaction.query(`INSERT INTO oakridge.run_stage_scheduling_policy
         (stage_instance_id,max_parallel,manual_admission,materialization_fingerprint) VALUES ($1,$2,$3,$4)`,
@@ -338,16 +360,16 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         await transaction.query(`INSERT INTO oakridge.run_unit
           (id,run_id,stage_instance_id,unit_id,parameters,input_snapshot,input_fingerprint,state,admitted,admitted_at,materialization_fingerprint,created_at)
           VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,'ready',$8,$9::timestamptz,$10,$11::timestamptz)`,
-        [unit.id, input.run_id, input.stage_instance_id, unit.unit_id, unit.parameters, JSON.stringify(unit.input_snapshot), unit.input_fingerprint,
+        [unit.id, input.run_id, input.stage_instance_id, unit.unit_id, JSON.stringify(unit.parameters), JSON.stringify(unit.input_snapshot), unit.input_fingerprint,
           admitted, admitted ? input.materialized_at : null, unitFingerprint, input.materialized_at]);
         for (const output of unit.outputs) await transaction.query(`INSERT INTO oakridge.run_output_slot
           (run_unit_id,output_name,collection_key,artifact_type,required,release_policy,state)
           VALUES ($1,$2,$3,$4,$5,$6::jsonb,'empty')`, [unit.id, output.identity.output_name,
-          output.identity.kind === "collection_member" ? output.identity.collection_key : null, output.artifact_type, output.required, output.release]);
+          output.identity.kind === "collection_member" ? output.identity.collection_key : null, output.artifact_type, output.required, JSON.stringify(output.release)]);
         await transaction.query(`INSERT INTO oakridge.work_order
           (id,run_unit_id,reason,input_snapshot,input_fingerprint,state,workflow_id,request_idempotency_key,capability_hash,execution_request,created_at)
           VALUES ($1,$2,'initial',$3::jsonb,$4,'available',$5,'initial',$6,$7::jsonb,$8::timestamptz)`,
-        [unit.initial_work_order.id, unit.id, JSON.stringify(unit.input_snapshot), unit.input_fingerprint, unit.initial_work_order.workflow_id, unit.initial_work_order.capability_hash, unit.initial_work_order.request, input.materialized_at]);
+        [unit.initial_work_order.id, unit.id, JSON.stringify(unit.input_snapshot), unit.input_fingerprint, unit.initial_work_order.workflow_id, unit.initial_work_order.capability_hash, JSON.stringify(unit.initial_work_order.request), input.materialized_at]);
       }
       for (const unit of input.units) for (const dependency of unit.depends_on) await transaction.query(`INSERT INTO oakridge.run_unit_dependency
         (stage_instance_id,unit_id,depends_on_unit_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, [input.stage_instance_id, unit.unit_id, dependency]);

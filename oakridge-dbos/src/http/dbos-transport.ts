@@ -1,8 +1,4 @@
 import type { ArtifactWorkflowMessage } from "./artifact-callback";
-import type { GateCommand } from "../workflows/gate";
-import type { HandoffCommand } from "../workflows/handoff";
-import type { StageAdmissionState } from "../domain/runs";
-import type { StageCommand } from "../workflows/production-topology";
 import { RUN_RECORD_WAKE_TOPIC } from "../workflows/run-record-topology";
 
 export interface DbosTransportClient {
@@ -19,21 +15,6 @@ const client = (): DbosTransportClient => {
 
 export const sendArtifactWorkflowMessage = async (workflow_id: string, message: ArtifactWorkflowMessage, idempotency_key: string): Promise<void> => {
   await client().send(workflow_id, message, "execution-event", idempotency_key);
-};
-
-export const sendGateWorkflowCommand = async (workflow_id: string, command: GateCommand, idempotency_key: string): Promise<void> => {
-  await client().send(workflow_id, command, "gate-command", idempotency_key);
-};
-
-export const sendHandoffWorkflowCommand = async (workflow_id: string, command: HandoffCommand, idempotency_key: string): Promise<void> => {
-  await client().send(workflow_id, command, "handoff-command", idempotency_key);
-};
-
-export const getStageAdmissionState = async (workflow_id: string): Promise<StageAdmissionState | null> =>
-  client().getEvent<StageAdmissionState>(workflow_id, "stage-admission-state", { timeoutSeconds: 0 });
-
-export const sendStageCommand = async (workflow_id: string, command: StageCommand, idempotency_key: string): Promise<void> => {
-  await client().send(workflow_id, command, "stage-command", idempotency_key);
 };
 
 /**

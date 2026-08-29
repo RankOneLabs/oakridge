@@ -92,21 +92,16 @@ export const DEFAULT_STALL_THRESHOLD_SECONDS = 3600;
 
 export interface OperatorProjectionOptions {
   readonly stall_threshold_seconds?: number;
-  /** Temporary Slice 6 selector; the legacy implementation is deleted in 6c. */
-  readonly topology?: "legacy" | "v2";
 }
 
 export class PostgresOperatorProjectionRepository implements OperatorProjectionRepository {
   private readonly stallThresholdSeconds: number;
-  private readonly topology: "legacy" | "v2";
-
   constructor(private readonly sql: SqlExecutor, options: OperatorProjectionOptions = {}) {
     this.stallThresholdSeconds = options.stall_threshold_seconds ?? DEFAULT_STALL_THRESHOLD_SECONDS;
-    this.topology = options.topology ?? "legacy";
   }
 
   async list_pending_gates(run_id?: WorkflowRunId): Promise<readonly OperatorParkedGate[]> {
-    if (this.topology === "v2") return this.listV2PendingGates(run_id);
+    return this.listV2PendingGates(run_id);
     const rows = await this.sql.query<GateProjectionRow>(
       `SELECT stage.run_id::text,
               stage.stage_key AS stage_name,
@@ -157,8 +152,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
   }
 
   async list_runs(filter: "active" | "archived" | "all" = "active"): Promise<readonly OperatorRunSummary[]> {
-    if (this.topology === "v2") return this.listV2RunSummaries(filter, null);
-    return this.listRunSummaries(filter, null);
+    return this.listV2RunSummaries(filter, null);
   }
 
   private async listV2RunSummaries(filter: "active" | "archived" | "all", run_id: WorkflowRunId | null): Promise<readonly OperatorRunSummary[]> {
@@ -400,7 +394,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
   }
 
   async get_run(id: WorkflowRunId): Promise<OperatorRunDetail | null> {
-    if (this.topology === "v2") return this.getV2Run(id);
+    return this.getV2Run(id);
     const summary = (await this.listRunSummaries("all", id))[0];
     if (!summary) return null;
     const stageRows = await this.sql.query<StageProjectionRow>(
@@ -469,7 +463,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     // topology — an empty projection object would read as "this run has a v2
     // side with nothing on it" rather than "this run has no v2 side at all".
     const runRecordDetail = await this.get_run_record_detail(id);
-    const run_record = runRecordDetail && runRecordDetail.units.length > 0 ? runRecordDetail : null;
+    const run_record = runRecordDetail?.units.length ? runRecordDetail : null;
     return { id: summary.id, workflow_name: summary.workflow_name, current_attempt_root_workflow_id: summary.current_attempt_root_workflow_id,
       attempts, status: summary.status, stages, parked_count: summary.parked_count, updated_at: summary.updated_at, is_stuck: summary.is_stuck, epic_profile, run_record };
   }
@@ -580,7 +574,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
   }
 
   async list_cohorts(): Promise<readonly OperatorCohortSummary[]> {
-    if (this.topology === "v2") return this.listV2Cohorts();
+    return this.listV2Cohorts();
     const rows = await this.sql.query<CohortProjectionRow>(
       `SELECT stage.run_id::text, definition.name AS workflow_name, stage.id::text AS stage_instance_id,
               stage.stage_key AS stage_name, unit.value->>'unit_id' AS unit_id,

@@ -13,10 +13,22 @@ startup path.
 | Oakridge DBOS | `http://127.0.0.1:8790` | Workflow definitions, durable workflows, stages, artifacts, gates, recovery, projections |
 | PostgreSQL | `127.0.0.1:54329` | Oakridge domain schema and DBOS system state |
 
-DBOS owns scheduling, runtime cardinality, fan-out/fan-in, durable waits,
-recovery, and workflow history. Oakridge owns the domain contracts and read
-models. StageInstance records only start and finish lifecycle; it is not coupled
-to kbbl sessions or any other executor mechanism.
+DBOS owns durable workflow execution and recovery. Oakridge's run-owned records
+own scheduling decisions, runtime cardinality, waits, output-slot release, and
+operator read models. A child asks those records what work exists and publishes
+facts back; it never infers its parent's state. External session identifiers are
+diagnostics, not workflow truth.
+
+## First v2 deployment
+
+V2 is a clean cutover, not an in-place migration. Stop every old Oakridge and
+DBOS worker, archive evidence needed outside the service, recreate the Oakridge
+application database, apply all numbered migrations from zero, and start with
+a new `DBOS_APPLICATION_VERSION`. Startup refuses legacy workflow-attempt IDs
+or attempt-owned stages. No rescue, adoption, or backfill command exists.
+
+Migration `0016` seeds the database-owned work-order capability secret. Do not
+inject or rotate it from process configuration during cutover.
 
 ## Prerequisites
 
@@ -111,7 +123,7 @@ OAKRIDGE_CORE_BASE_URL=http://127.0.0.1:8790 \
 ## Start and operate a run
 
 1. Open `#oakridge` and choose **New Run**.
-2. Select the seeded `dev-flow v12` definition.
+2. Select the current seeded `dev-flow` definition.
 3. Select or create a project and confirm repository bindings.
 4. Enter the Epic brief and select planner/worker runtime configuration.
 5. Start the run.
@@ -140,15 +152,16 @@ base branch origin does not have, a push origin refuses) fails as an ordinary
 stage outcome, parking that repository's unit for retry. It is not checked at
 launch, and other repositories in the same run are unaffected.
 
-DBOS owns child cardinality and completion. Oakridge artifacts are immutable
-revision chains in adjacent domain tables. Only the current unreleased revision
-is actionable; correction supersedes the prior revision and durably closes its
-gate or handoff wait.
+Run records own child cardinality and completion. Oakridge artifacts are
+immutable revision chains in adjacent domain tables. Only the current
+unreleased revision is actionable; correction supersedes the prior revision
+and atomically updates its run-owned output slot and wait.
 
 ## Gates, collaboration, and correction
 
-- Gate actions are durable DBOS commands. A pending gate survives process and
-  machine restarts as long as PostgreSQL survives.
+- Gate actions update the run-owned wait and output slot atomically. Workflows
+  receive only a wake hint and ask the record again, so lost or duplicate hints
+  do not alter correctness.
 - Collaboration thread ping starts a stable DBOS responder workflow. Oakridge
   validates the current artifact/thread and builds the domain prompt; the
   executor adapter delivers it. The path is not coupled to kbbl and can support
@@ -156,9 +169,9 @@ gate or handoff wait.
 - Changed artifact emission creates the next revision and supersedes the prior
   current revision atomically.
 - An erroneous current unreleased artifact can be withdrawn. Released artifacts
-  require a stage or unit rerun rather than mutation.
-- Unit retry forks the failed execution child. Whole-stage retry starts a new
-  workflow attempt from persisted ancestor artifacts.
+  require a run-owned retry rather than mutation.
+- Operator retry creates or reuses a work order for the same logical unit. It
+  does not replace a child workflow projection or start a new run attempt.
 
 ## Restart and recovery
 
@@ -173,10 +186,9 @@ stable resumable keys, so executor steps attach or converge rather than creating
 an app-owned scheduler.
 
 `DBOS_APPLICATION_VERSION` defaults to the Git commit. Workflow code changes can
-change durable operation order. Before deploying a new version, inspect
-`/application_versions` for older versions that still own gated work. Keep the
-old executor available until those runs drain, or explicitly cancel/rerun them.
-Do not assign changed workflow code the same application version.
+change durable operation order. Do not assign changed workflow code the same
+application version. A run's application state remains in Oakridge records;
+executor recovery reattaches by stable work-order identity.
 
 ## Remote access
 
@@ -215,9 +227,8 @@ Common failures:
   `OAKRIDGE_CORE_BASE_URL=http://127.0.0.1:8790` and DBOS is listening.
 - **Executor cannot attach:** confirm kbbl is on `:8788` and inspect the stable
   resumable session endpoint/logs.
-- **Old gated run does not advance after a code update:** its DBOS application
-  version may no longer have a live executor. Drain it with the old version or
-  deliberately cancel/rerun it.
+- **Startup refuses legacy topology data:** the v2 cutover requires a freshly
+  constructed Oakridge application database; do not bypass the refusal.
 
 ## Direct kbbl sessions
 

@@ -12,7 +12,7 @@ import type { SessionHold } from "../domain/session-hold";
 import type { CreateProject, Project } from "../domain/projects";
 import type { AdmitStageUnitRequest, AdmitStageUnitResult, CreateWorkflowRunResult, DeleteRunResult, PendingRunLaunch, PersistWorkflowRunLaunch, SetRunArchiveResult, WorkflowRunLaunchRecord, WorkflowRunListFilter } from "../domain/runs";
 import type { ConfirmFinalPullRequestRequest, FinalPullRequestDomainError, FinalPullRequestProjection, PullRequestObservation } from "../domain/final-pull-request";
-import type { CohortPullRequestReconciliation } from "../domain/cohort-pull-request";
+import type { CohortPullRequestReconciliation, RunOwnedCohortHandoff } from "../domain/cohort-pull-request";
 import type { CloseWaitRequest, OpenGateWaitInput, OpenHandoffDownstreamWaitInput, Wait, WaitClosesOn, WaitOutcome } from "../domain/wait";
 import type { Result } from "../domain/primitives";
 import type { CancelRunRecord, CancelRunRecordResult, CloseRunOutputWait, CloseRunOutputWaitResult, CompleteHandoffArtifact, DecideGateWait, ExecutorAttachment, ExecutorHealthObservation, FailRunMaterialization, InitializeStraightThroughRun, PersistMaterializedStage, PublishWorkOrderArtifact, PublishWorkOrderArtifactResult, RetryRunUnit, RetryRunUnitResult, ReviseRunUnitInput, ReviseRunUnitInputResult, RunDecision, RunMaterializationRecord, WorkOrderExecution } from "../domain/run-record";
@@ -82,6 +82,7 @@ export interface RunRecordRepository {
   close_output_wait(request: CloseRunOutputWait): Promise<CloseRunOutputWaitResult>;
   decide_gate_wait(request: DecideGateWait): Promise<CloseRunOutputWaitResult>;
   complete_handoff_artifact(request: CompleteHandoffArtifact): Promise<CloseRunOutputWaitResult>;
+  find_cohort_handoff(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<RunOwnedCohortHandoff | null>;
   ensure_executor_attachment(work_order_id: WorkOrderId, executor_type: string, updated_at: string): Promise<ExecutorAttachment>;
   attach_external(work_order_id: WorkOrderId, reference: ExternalExecutionReference, updated_at: string): Promise<void>;
   observe_executor(work_order_id: WorkOrderId, health: ExecutorHealthObservation, updated_at: string): Promise<void>;
