@@ -18,10 +18,17 @@ test("operator retry forwards the durable unit and idempotency identity", async 
   expect(call.received()).toEqual({ run_unit_id: runUnitId, idempotency_key: "retry-1", actor: "operator" });
 });
 
-test("operator retry maps replay, missing work, and malformed identity", async () => {
-  const replay = request({ kind: "no_missing_work", detail: "nothing missing" });
-  expect((await replay.response).status).toBe(409);
-  expect((await (await replay.response).json()).kind).toBe("no_missing_work");
+test("operator retry maps replay and missing work", async () => {
+  const workOrder = { id: "00000000-0000-4000-8000-000000000002", run_unit_id: runUnitId, reason: "operator_retry", input_snapshot: [], input_fingerprint: "input", state: "available", workflow_id: "v2-work:retry", request_idempotency_key: "operator_retry:retry-1", created_at: "2026-08-29T00:00:00Z", completed_at: null } as const;
+  const replay = request({ kind: "already_created", work_order: workOrder as never, run_id: "00000000-0000-4000-8000-000000000003" as never, record_version: 2 as never });
+  expect((await replay.response).status).toBe(200);
+  const missingWork = request({ kind: "no_missing_work", detail: "nothing missing" });
+  expect((await missingWork.response).status).toBe(409);
+  expect((await (await missingWork.response).json()).kind).toBe("no_missing_work");
+});
+
+test("operator retry distinguishes not found from malformed identity", async () => {
+  expect((await request({ kind: "unit_not_found", detail: "missing" }).response).status).toBe(404);
   expect((await createOperatorRetryApp({ records: { retry_unit: async () => ({ kind: "unit_not_found", detail: "missing" }) }, now: () => "now" })
     .request("/run-units/not-a-uuid/retry", { method: "PUT", headers: { "Idempotency-Key": "retry" } })).status).toBe(400);
   expect((await request({ kind: "unit_not_found", detail: "missing" }, {}).response).status).toBe(400);

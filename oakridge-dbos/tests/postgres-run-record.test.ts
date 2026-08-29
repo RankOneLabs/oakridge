@@ -463,6 +463,7 @@ test("operator retry is idempotent, requires recorded missing work, and preserve
   expect(retry.kind).toBe("created");
   if (retry.kind !== "created") throw new Error(`expected created, got ${retry.kind}`);
   expect(retry.work_order.reason).toBe("operator_retry");
+  expect(retry.work_order.workflow_id).toBe(`v2-work:${retry.work_order.id}`);
   expect(await setup.records.retry_unit({ run_unit_id: runUnitId, idempotency_key: "retry-1", actor: "operator:test" }, stage.materialized_at))
     .toEqual(expect.objectContaining({ kind: "already_created", work_order: expect.objectContaining({ id: retry.work_order.id }) }));
   expect(await setup.records.retry_unit({ run_unit_id: runUnitId, idempotency_key: "retry-2", actor: "operator:test" }, stage.materialized_at))

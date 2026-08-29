@@ -331,7 +331,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       const basis = basisRows[0];
       if (!basis?.execution_request) return { kind: "no_execution_basis", detail: `run unit '${input.run_unit_id}' has no resolved execution request` };
       const workOrderId = randomUUID() as WorkOrderId;
-      const workflowId = `oakridge-v2-work:${workOrderId}`;
+      const workflowId = `v2-work:${workOrderId}`;
       const executionRequest: ExecutionRequest = { ...basis.execution_request, execution_id: workOrderId as unknown as ExecutionRequest["execution_id"] };
       await transaction.query("UPDATE oakridge.work_order SET state='abandoned',completed_at=$2::timestamptz WHERE run_unit_id=$1 AND state IN ('available','started')", [input.run_unit_id, retried_at]);
       const rows = await transaction.query<WorkOrderRow>(`INSERT INTO oakridge.work_order
