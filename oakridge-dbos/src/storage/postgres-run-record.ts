@@ -560,6 +560,18 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
 
   async publish_artifact(request: PublishWorkOrderArtifact): Promise<PublishWorkOrderArtifactResult> {
     return this.sql.transaction(async (transaction) => {
+      // Keep the same outer-to-inner lock order as decide_run: run, then
+      // unit/work, then slot. Locking the work order first and updating the
+      // run last lets publication deadlock with a concurrent recovered ask
+      // (ask owns run and waits for work; publication owns work and waits for
+      // run). This first lookup is only routing; all authoritative fields are
+      // read again under locks below.
+      const ownerRows = await transaction.query<{ readonly run_id: string }>(`SELECT unit.run_id::text
+        FROM oakridge.work_order work JOIN oakridge.run_unit unit ON unit.id = work.run_unit_id
+        WHERE work.id = $1`, [request.work_order_id]);
+      const owner = ownerRows[0];
+      if (!owner) return { kind: "work_not_found", detail: `work order '${request.work_order_id}' was not found` };
+      await transaction.query("SELECT id FROM oakridge.workflow_run WHERE id = $1 FOR UPDATE", [owner.run_id]);
       const workRows = await transaction.query<{ readonly work_state: WorkOrder["state"]; readonly capability_hash: string; readonly workflow_id: string; readonly run_unit_id: string; readonly run_id: string; readonly stage_instance_id: string; readonly unit_id: string }>(`SELECT work.state AS work_state, work.capability_hash, work.workflow_id, unit.id::text AS run_unit_id, unit.run_id::text, unit.stage_instance_id::text, unit.unit_id
         FROM oakridge.work_order work JOIN oakridge.run_unit unit ON unit.id = work.run_unit_id
         WHERE work.id = $1 FOR UPDATE OF work, unit`, [request.work_order_id]);
