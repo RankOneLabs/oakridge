@@ -3,13 +3,21 @@
  * Every id is derived deterministically from `RUN_ID` via `src/decision/ids`,
  * exactly as production would compute it.
  */
+import { createHash } from "node:crypto";
+
 import type { CompiledStageContract, CompiledWorkflowDefinition } from "../../src/domain/compiled-workflow";
-import { fingerprintOf, runUnitIdFor, stableUuid, stageInstanceIdFor } from "../../src/decision/ids";
+import { fingerprintOf, runUnitIdFor, stageInstanceIdFor } from "../../src/decision/ids";
 import type { AvailableArtifact, RunSnapshot, StagePolicy, StageSnapshot, UnitSnapshot } from "../../src/decision/snapshot";
 import type { ArtifactId, InputFingerprint, JsonValue, OutputSlotVersion, RunRecordVersion, RunUnitId, StageInstanceId, UnitId, WaitId, WorkflowDefinitionId, WorkflowRunId, WorkOrderId } from "../../src/domain/primitives";
 import type { RunOutputSlot, RunStage, UnitState, WorkflowRun, WorkOrder } from "../../src/domain/run-record";
 import type { Wait } from "../../src/domain/wait";
 import type { StageKey, StageOutcome } from "../../src/domain/workflow";
+
+/** Deterministic fixture-id generator, local to this builder — same shape as (but independent of) `src/decision/ids.ts`'s internal `stableUuid`; determinism matters for case 12 (derive is stable across repeated calls). */
+const localStableUuid = (identity: string): string => {
+  const hex = createHash("sha256").update(identity).digest("hex").slice(0, 32);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20)}`;
+};
 
 export const RUN_ID = "11111111-1111-4111-8111-111111111111" as WorkflowRunId;
 export const NOW = "2026-08-29T12:00:00.000Z";
@@ -98,7 +106,7 @@ export const unit = (options: {
 
 /** A brief artifact from `brief_writer`, driving a fan-out unit named `unit_id` with the given dependencies. */
 export const availableBrief = (unit_id: string, depends_on: readonly string[], artifact_id?: string, body?: JsonValue): AvailableArtifact => ({
-  artifact_id: (artifact_id ?? stableUuid(`brief:${unit_id}`)) as ArtifactId, artifact_type: "dev.brief", output_name: PRODUCER_OUTPUT_NAME,
+  artifact_id: (artifact_id ?? localStableUuid(`brief:${unit_id}`)) as ArtifactId, artifact_type: "dev.brief", output_name: PRODUCER_OUTPUT_NAME,
   unit_id: unit_id as UnitId, body: body ?? ({ depends_on } as JsonValue), producer_stage_key: PRODUCER_STAGE_KEY,
 });
 
@@ -113,10 +121,10 @@ export const fingerprintForBrief = (brief: AvailableArtifact): InputFingerprint 
 let workOrderSeq = 0;
 export const workOrder = (options: { readonly state: WorkOrder["state"]; readonly created_at?: string; readonly run_unit_id?: RunUnitId; readonly id?: string }): WorkOrder => {
   workOrderSeq += 1;
-  const id = (options.id ?? stableUuid(`work-order:${workOrderSeq}`)) as WorkOrderId;
+  const id = (options.id ?? localStableUuid(`work-order:${workOrderSeq}`)) as WorkOrderId;
   const created_at = options.created_at ?? NOW;
   return {
-    id, run_unit_id: options.run_unit_id ?? (stableUuid("placeholder-run-unit") as RunUnitId), reason: "initial",
+    id, run_unit_id: options.run_unit_id ?? (localStableUuid("placeholder-run-unit") as RunUnitId), reason: "initial",
     input_snapshot: [], input_fingerprint: "inputs" as InputFingerprint, state: options.state, workflow_id: `v2-work:${id}`,
     request_idempotency_key: "initial", created_at,
     completed_at: options.state === "completed" || options.state === "abandoned" ? created_at : null,
@@ -124,14 +132,14 @@ export const workOrder = (options: { readonly state: WorkOrder["state"]; readonl
 };
 
 const baseSlot = (state: RunOutputSlot["state"], options?: { readonly output_name?: string; readonly run_unit_id?: RunUnitId }): RunOutputSlot => ({
-  run_unit_id: options?.run_unit_id ?? (stableUuid("placeholder-run-unit") as RunUnitId),
+  run_unit_id: options?.run_unit_id ?? (localStableUuid("placeholder-run-unit") as RunUnitId),
   identity: { kind: "scalar", output_name: options?.output_name ?? "result" }, output_name: options?.output_name ?? "result",
   artifact_type: "dev.build_result", required: true, release: { kind: "immediate" }, state,
   updated_by_work_order_id: null, version: 1 as OutputSlotVersion,
 });
 
 export const releasedSlot = (options?: { readonly output_name?: string; readonly run_unit_id?: RunUnitId; readonly artifact_id?: string }): RunOutputSlot =>
-  baseSlot({ kind: "released", artifact_revision_id: (options?.artifact_id ?? stableUuid("released-slot")) as ArtifactId, released_at: NOW }, options);
+  baseSlot({ kind: "released", artifact_revision_id: (options?.artifact_id ?? localStableUuid("released-slot")) as ArtifactId, released_at: NOW }, options);
 
 export const emptySlot = (options?: { readonly output_name?: string; readonly run_unit_id?: RunUnitId }): RunOutputSlot => baseSlot({ kind: "empty" }, options);
 
@@ -139,8 +147,8 @@ let waitSeq = 0;
 export const openWait = (options?: { readonly unit_id?: string; readonly stage_instance_id?: StageInstanceId }): Wait => {
   waitSeq += 1;
   return {
-    id: stableUuid(`wait:${waitSeq}`) as WaitId, stage_instance_id: options?.stage_instance_id ?? (stableUuid("placeholder-stage") as StageInstanceId),
-    unit_id: (options?.unit_id ?? "unit") as UnitId, artifact_revision_id: stableUuid("wait-artifact") as ArtifactId,
+    id: localStableUuid(`wait:${waitSeq}`) as WaitId, stage_instance_id: options?.stage_instance_id ?? (localStableUuid("placeholder-stage") as StageInstanceId),
+    unit_id: (options?.unit_id ?? "unit") as UnitId, artifact_revision_id: localStableUuid("wait-artifact") as ArtifactId,
     closes_on: { kind: "gate", gate_step: "artifact_approval", actions: ["approve"] }, status: { kind: "open" },
     run_unit_id: null, output_name: null, execution_workflow_id: "v2-work:placeholder", command_workflow_id: "v2-wait:placeholder", opened_at: NOW,
   };

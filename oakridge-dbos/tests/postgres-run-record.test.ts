@@ -521,6 +521,54 @@ test("manual admission cannot mutate a terminal stage or run", async () => {
   }
 });
 
+test("a revision reopens a succeeded stage", async () => {
+  const setup = await setupMaterializedRun();
+  if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  const stageSucceeded = async (): Promise<boolean> =>
+    (await sql!.query<{ readonly state: string }>("SELECT state FROM oakridge.stage_instance WHERE id=$1", [setup.input.stage_instance_id]))[0]?.state === "succeeded";
+
+  // Drive the chain (foundation -> web -> docs) to completion by publishing
+  // each unit's required output as its work order starts. Stop asking the
+  // instant the stage row closes: this fixture's only stage is also its only
+  // definition stage (spec §D), so one ask further would complete the run
+  // too — and the point here is a stage the run has already closed out, not
+  // a completed run.
+  for (const unit of setup.input.units) {
+    for (let asks = 0; asks < 10; asks += 1) {
+      const decision = await setup.records.decide_run(setup.input.run_id, setup.input.materialized_at);
+      if (!decision.ok) throw new Error(`decide_run failed: ${JSON.stringify(decision)}`);
+      if (decision.value.kind !== "recheck") break;
+    }
+    const order = unit.initial_work_order;
+    const body = { unit: unit.unit_id };
+    const published = await setup.records.publish_artifact({ artifact_id: randomUUID() as ArtifactId, work_order_id: order.id, output_name: "result",
+      capability_hash: order.capability_hash, body, idempotency_key: `publish-${unit.unit_id}`, payload_hash: createHash("sha256").update(JSON.stringify(body)).digest("hex"), published_at: setup.input.materialized_at });
+    expect(published.kind).toBe("published");
+  }
+  for (let asks = 0; asks < 10 && !(await stageSucceeded()); asks += 1) await setup.records.decide_run(setup.input.run_id, setup.input.materialized_at);
+  expect(await stageSucceeded()).toBe(true);
+  expect((await sql!.query<{ readonly state: string }>("SELECT state FROM oakridge.workflow_run WHERE id=$1", [setup.input.run_id]))[0]?.state).toBe("active");
+
+  // Revise "web" — the stage it belongs to is succeeded, and the revision
+  // must reopen it.
+  const revisedUnit = setup.input.units[1]!;
+  const replacementWorkOrderId = randomUUID() as WorkOrderId;
+  const revised = await setup.records.revise_unit_input({ run_unit_id: revisedUnit.id, input_snapshot: [], input_fingerprint: "revised" as InputFingerprint,
+    revised_at: setup.input.materialized_at, actor: "test", replacement_work_order: {
+      ...revisedUnit.initial_work_order, id: replacementWorkOrderId, workflow_id: `v2-work:${replacementWorkOrderId}`,
+      request: { ...revisedUnit.initial_work_order.request, execution_id: replacementWorkOrderId as unknown as import("../src/domain/primitives").ExecutionId },
+    } });
+  expect(revised.kind).toBe("revised");
+
+  const stageRow = (await sql!.query<{ readonly state: string; readonly outcome: unknown }>("SELECT state,outcome FROM oakridge.stage_instance WHERE id=$1", [setup.input.stage_instance_id]))[0];
+  expect(stageRow?.state).toBe("active");
+  expect(stageRow?.outcome).toBeNull();
+  expect((await sql!.query<{ readonly state: string }>("SELECT state FROM oakridge.run_unit WHERE id=$1", [revisedUnit.id]))[0]?.state).toBe("ready");
+
+  const nextAsk = await setup.records.decide_run(setup.input.run_id, setup.input.materialized_at);
+  expect(nextAsk).toEqual({ ok: true, value: { kind: "recheck", record_version: expect.any(Number), started: [{ id: replacementWorkOrderId, run_unit_id: revisedUnit.id }] } });
+});
+
 test("operator retry is idempotent, requires recorded missing work, and preserves released slots", async () => {
   const setup = await setupMaterializedRun(4, false, false);
   if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
@@ -612,6 +660,33 @@ test("run cancellation atomically terminalizes owned work, waits, units, stages,
   expect(rows[0]).toEqual({ run_state: "cancelled", stage_state: "cancelled", unit_state: "cancelled", work_state: "abandoned" });
   const transitions = await sql!.query<{ readonly count: string }>("SELECT count(*)::text AS count FROM oakridge.run_transition WHERE run_id=$1 AND operation='run_cancelled'", [setup.input.run_id]);
   expect(transitions[0]?.count).toBe("1");
+});
+
+test("cancelling a run parked at a gate closes its open wait as withdrawn, not cancelled", async () => {
+  const setup = await setupGatedRun();
+  if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  const { records, runId, workOrderId, capabilityHash, now } = setup;
+  const artifactId = randomUUID() as ArtifactId;
+  const body = { plan: "draft" };
+  const payloadHash = createHash("sha256").update(JSON.stringify(body)).digest("hex");
+  const published = await records.publish_artifact({ artifact_id: artifactId, work_order_id: workOrderId, output_name: "result", body,
+    capability_hash: capabilityHash, idempotency_key: "cancel-gate", payload_hash: payloadHash, published_at: now });
+  if (published.kind !== "pending") throw new Error(`expected pending, got ${published.kind}`);
+
+  // Before the fix, cancel_run wrote {kind:"cancelled"} onto every open wait, and the wait
+  // table's CHECK constraint (0009: gate waits allow only decided | superseded | withdrawn)
+  // rejected it — cancelling a run parked at a gate always failed.
+  const cancelled = await records.cancel_run({ run_id: runId, actor: "operator:test", reason: "stop", cancelled_at: now });
+  expect(cancelled).toEqual(expect.objectContaining({ kind: "cancelled", run_id: runId }));
+
+  const wait = await sql!.query<{ readonly status: string; readonly kind: string }>(
+    "SELECT status, outcome->>'kind' AS kind FROM oakridge.wait WHERE id = $1", [published.wait_id]);
+  expect(wait[0]).toEqual({ status: "closed", kind: "withdrawn" });
+  const slot = await sql!.query<{ readonly state: string }>(
+    "SELECT state FROM oakridge.run_output_slot WHERE run_unit_id = (SELECT run_unit_id FROM oakridge.work_order WHERE id = $1) AND output_name = 'result'", [workOrderId]);
+  expect(slot[0]?.state).toBe("invalidated");
+  const run = await sql!.query<{ readonly state: string }>("SELECT state FROM oakridge.workflow_run WHERE id = $1", [runId]);
+  expect(run[0]?.state).toBe("cancelled");
 });
 
 test("cancellation serializes with a concurrent artifact publication and cancellation always owns the final state", async () => {

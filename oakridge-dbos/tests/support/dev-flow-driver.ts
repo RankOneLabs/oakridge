@@ -79,6 +79,12 @@ export interface EmissionOptions {
    * a revision looks like.
    */
   readonly outputs?: readonly string[];
+  /**
+   * Restricts the emission to these collection members — the `artifact_collection`
+   * analog of `outputs`, for re-emitting one cohort's brief (say) without
+   * touching the others `request.expected_artifacts` still lists.
+   */
+  readonly unit_ids?: readonly string[];
 }
 
 /**
@@ -90,6 +96,7 @@ export const emitDeclaredArtifacts = async (baseUrl: string, request: ExecutionR
   const emitted: EmittedArtifact[] = [];
   for (const expected of request.expected_artifacts) {
     if (options.outputs && !options.outputs.includes(expected.output_name)) continue;
+    if (options.unit_ids && !options.unit_ids.includes(expected.unit_id)) continue;
     const publication = (request.resolved_config as { readonly publication?: { readonly work_order_id: string; readonly capability: string } }).publication;
     const url = publication
       ? `${baseUrl}/work-orders/${publication.work_order_id}/emit/${expected.output_name}`
@@ -260,19 +267,6 @@ export const driveRun = async <Value>(baseUrl: string, agent: ScriptedAgentScena
   const driven = new Set<string>();
   const confirmed = new Set<string>();
   const decided = new Set<string>();
-  // `oakridge.wait.unit_id` on a collection-key gate — an artifact_collection
-  // stage's per-collection output, e.g. brief_writer's one brief per cohort
-  // — is the owning run_unit's own unit_id ("0"), not the collection key, so
-  // `GET /runs/:id/gates` reports the same `unit_id` for every brief gate.
-  // `expected_artifacts[].unit_id` on the execution request does not have
-  // that gap (it is the compiled stage contract's own id, one per collection
-  // key), and `emitDeclaredArtifacts` already threads it onto what it
-  // returns — so gates are re-keyed against it below rather than trusted
-  // as-is. Rebuilt from scratch each pass, which is enough: pass 1 of every
-  // `driveRun` call re-emits (idempotently) every launched execution not yet
-  // driven *this call*, which is every execution that could have opened a
-  // gate `options.decide` has not yet acted on.
-  const cohortIdByArtifact = new Map<string, string>();
   const deadline = Date.now() + options.timeout_ms;
   for (;;) {
     for (const [workflowId, request] of agent.launched) {
@@ -282,14 +276,16 @@ export const driveRun = async <Value>(baseUrl: string, agent: ScriptedAgentScena
       // the adapter and the emit route agree on.
       const publication = (request.resolved_config as { readonly publication?: { readonly work_order_id: string } }).publication;
       expect(publication?.work_order_id).toBe(workflowId);
-      for (const artifact of await emitDeclaredArtifacts(baseUrl, request)) cohortIdByArtifact.set(artifact.artifact_id, artifact.unit_id);
+      await emitDeclaredArtifacts(baseUrl, request);
       agent.succeed(request.execution_id);
     }
 
+    // `listV2PendingGates` reports a collection-key gate's `unit_id` as the
+    // collection key itself (spec §3.7), so the gate the API lists is passed
+    // to `options.decide` as-is — no re-keying against the emitted artifact.
     for (const gate of await listRunGates(baseUrl, run.run_id)) {
       if (decided.has(gate.id)) continue;
-      const cohortId = gate.artifact_revision_id ? cohortIdByArtifact.get(gate.artifact_revision_id) : undefined;
-      const action = options.decide(cohortId ? { ...gate, unit_id: cohortId as UnitId } : gate);
+      const action = options.decide(gate);
       if (!action) continue;
       decided.add(gate.id);
       if (gate.artifact_revision_id) await decideGate(baseUrl, gate.artifact_revision_id, action);

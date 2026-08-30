@@ -10,7 +10,6 @@ import { parseGithubPullRequestIdentity, pullRequestMismatch, repositoriesMatch,
 // The pull-request vocabulary is shared with cohort reconciliation; it is
 // re-exported here so existing callers keep one import path.
 export type { ObservedPullRequestState, PullRequestMismatch, PullRequestMismatchKind, PullRequestObservation, PullRequestObservationSource } from "./pull-request";
-export { parseGithubPullRequestIdentity } from "./pull-request";
 
 export interface FinalPullRequestReconciliation {
   readonly epic_profile_id: EpicWorkflowProfileId;

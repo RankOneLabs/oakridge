@@ -333,6 +333,17 @@ export interface IntegrationRuntime {
   stop(): Promise<void>;
 }
 
+export interface InstallIntegrationRuntimeOptions {
+  /**
+   * Overrides the prompt-template root the runtime is built with. Scenario 8
+   * (spec §5.2) needs a *writable* copy of `oakridge-core/prompts` so it can
+   * remove and restore one file mid-run; the caller owns making that copy
+   * (and cleaning it up) since this harness boots once per file and cannot
+   * be re-pointed afterward.
+   */
+  readonly prompt_template_directory?: string;
+}
+
 /**
  * Brings up the backend once for the whole file: schema, DBOS runtime, real
  * repositories, real routes on a real port.
@@ -341,7 +352,7 @@ export interface IntegrationRuntime {
  * never recovered into this one, and concurrent runs on a shared database stay
  * isolated.
  */
-export const installIntegrationRuntime = async (databaseUrl: string): Promise<IntegrationRuntime> => {
+export const installIntegrationRuntime = async (databaseUrl: string, options: InstallIntegrationRuntimeOptions = {}): Promise<IntegrationRuntime> => {
   const migrationSql = PgPostgresExecutor.connect(databaseUrl);
   try {
     // This suite owns a dedicated application database. Slice 6c deliberately
@@ -388,7 +399,7 @@ export const installIntegrationRuntime = async (databaseUrl: string): Promise<In
       database_url: databaseUrl,
       application_version: applicationVersion,
       executor_adapters: [adapter],
-      prompt_template_directory: resolve(import.meta.dir, "../../../oakridge-core/prompts"),
+      prompt_template_directory: options.prompt_template_directory ?? resolve(import.meta.dir, "../../../oakridge-core/prompts"),
     });
     await runtime.seed_builtins();
     await DBOS.launch();

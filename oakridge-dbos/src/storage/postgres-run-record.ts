@@ -284,8 +284,13 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
          WHERE unit.run_id=$1 AND work.state IN ('available','started') AND attachment.external_reference IS NOT NULL
          ORDER BY work.id FOR UPDATE OF work,unit,attachment`, [input.run_id]);
       const outcome = { kind: "cancelled" as const, reason: input.reason };
+      // A wait closed by cancellation is `withdrawn` — the same outcome a
+      // revision closes it with. `{kind:"cancelled"}` is a stage outcome,
+      // and the wait table's CHECK constraint (0009) rejects it, which made
+      // every cancel of a run parked at a gate fail with a 409.
+      const withdrawn: WaitOutcome = { kind: "withdrawn" };
       await transaction.query("UPDATE oakridge.wait SET status='closed',outcome=$2::jsonb,closed_at=$3::timestamptz WHERE run_unit_id IN (SELECT id FROM oakridge.run_unit WHERE run_id=$1) AND status='open'",
-        [input.run_id, outcome, input.cancelled_at]);
+        [input.run_id, withdrawn, input.cancelled_at]);
       await transaction.query(`UPDATE oakridge.run_output_slot SET state='invalidated',release_wait_id=NULL,
         invalidation_reason=jsonb_build_object('kind','operator','detail','run cancelled'),state_changed_at=$2::timestamptz,version=version+1
         WHERE run_unit_id IN (SELECT id FROM oakridge.run_unit WHERE run_id=$1) AND state='pending'`, [input.run_id, input.cancelled_at]);

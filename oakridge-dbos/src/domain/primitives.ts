@@ -46,7 +46,6 @@ export type RunTransitionId = Brand<string, "RunTransitionId">;
  */
 export type ExecutionAttemptId = Brand<string, "ExecutionAttemptId">;
 
-export const executorOperationIdForAttempt = (id: ExecutionAttemptId): ExecutorOperationId => id as unknown as ExecutorOperationId;
 export const executorOperationIdForWorkOrder = (id: WorkOrderId): ExecutorOperationId => id as unknown as ExecutorOperationId;
 
 export type JsonPrimitive = string | number | boolean | null;
