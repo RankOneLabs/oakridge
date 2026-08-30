@@ -543,6 +543,28 @@ test("rejecting one collection member keeps a producer that still owes a sibling
   expect(withdrawn.map((row) => row.lifecycle_state)).toEqual(["withdrawn", "withdrawn"]);
 });
 
+test("rejecting a required output abandons a producer whose only empty slot is optional, so the retry is not refused as work in progress", async () => {
+  const setup = await setupMaterializedRun(4, false, false);
+  if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  const outputs: readonly MaterializedRunOutput[] = [
+    { identity: { kind: "scalar", output_name: "spec" }, artifact_type: "dev.spec", required: true, release: GATE_RELEASE },
+    { identity: { kind: "scalar", output_name: "notes" }, artifact_type: "dev.notes", required: false, release: GATE_RELEASE },
+  ];
+  const fixture = await materializeSingleUnitStage(setup, "author", "writer", outputs);
+  const body = { spec: 1 };
+  const published = await setup.records.publish_artifact({ artifact_id: randomUUID() as ArtifactId, work_order_id: fixture.workOrderId, capability_hash: fixture.capabilityHash,
+    output_name: "spec", collection_key: null, body, idempotency_key: "spec-v1", payload_hash: payloadHashOf(body), published_at: fixture.at });
+  if (published.kind !== "pending") throw new Error(`expected pending, got ${published.kind}`);
+  const slots = await sql!.query<{ readonly output_name: string; readonly required: boolean; readonly state: string }>("SELECT output_name, required, state FROM oakridge.run_output_slot WHERE run_unit_id = $1 ORDER BY output_name", [fixture.runUnitId]);
+  expect(slots).toEqual([{ output_name: "notes", required: false, state: "empty" }, { output_name: "spec", required: true, state: "pending" }]);
+
+  // The optional slot is still empty, but nothing required is owed: the producer is done.
+  await setup.records.close_output_wait({ wait_id: published.wait_id, disposition: "invalidate", actor: "operator:sam", detail: "redo", decided_at: fixture.at });
+  const workOrder = await sql!.query<{ readonly state: string }>("SELECT state FROM oakridge.work_order WHERE id = $1", [fixture.workOrderId]);
+  expect(workOrder[0]?.state).toBe("abandoned");
+  const retry = await setup.records.retry_unit({ target: { kind: "run_unit", run_unit_id: fixture.runUnitId }, idempotency_key: "retry-optional", actor: "operator:sam" }, fixture.at);
+  expect(retry.kind).toBe("created");
+});
 const setupMaterializedRun = async (maxParallel = 1, withDependencies = true, manualAdmission = false): Promise<{ readonly records: PostgresRunRecordRepository; readonly input: PersistMaterializedStage; readonly capabilities: readonly string[] } | null> => {
   if (!sql) return null;
   const definitionId = randomUUID() as WorkflowDefinitionId;

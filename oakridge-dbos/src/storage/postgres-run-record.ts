@@ -1024,7 +1024,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         // The work order that produced the rejected artifact is abandoned once
         // it has nothing left to emit: leaving it `started` would make a later
         // ask read the unit as perpetually `work_in_progress` for a workflow
-        // that already returned. A collection producer still owed empty
+        // that already returned. A collection producer still owed empty required
         // sibling slots keeps running — one rejected member is not a verdict
         // on the members it has not published yet, and abandoning it would
         // turn its later sibling PUTs into `work_abandoned`. It cannot
@@ -1034,7 +1034,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         // abandons unconditionally.
         if (slot.updated_by_work_order_id) {
           await transaction.query(`UPDATE oakridge.work_order SET state = 'abandoned', completed_at = $2::timestamptz WHERE id = $1 AND state IN ('available','started')
-            AND ($3::boolean OR NOT EXISTS (SELECT 1 FROM oakridge.run_output_slot owed WHERE owed.run_unit_id = $4 AND owed.state = 'empty'))`,
+            AND ($3::boolean OR NOT EXISTS (SELECT 1 FROM oakridge.run_output_slot owed WHERE owed.run_unit_id = $4 AND owed.required AND owed.state = 'empty'))`,
           [slot.updated_by_work_order_id, request.decided_at, request.disposition === "fail", wait.run_unit_id]);
         }
         if (request.disposition === "fail") {
