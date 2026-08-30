@@ -39,14 +39,17 @@ After all commits are complete, use the gated-review MCP tools to publish the br
 
 ## Emit the artifacts
 
-Use PUT as the canonical idempotent operation. Reuse the same `Idempotency-Key` only when retrying the identical body; a changed body intentionally supersedes the prior unreleased revision. Do not emit speculative duplicates. If the current artifact is wrong, withdraw it with `POST {{OAKRIDGE_URL}}/artifacts/<artifact_id>/withdraw` and `{"actor":"executor","reason":"<why>"}`, then stop only after Oakridge confirms the typed result.
+Use PUT as the canonical idempotent operation. Reuse the same `Idempotency-Key` only when retrying the identical body; a changed body intentionally supersedes the prior unreleased revision. Do not emit speculative duplicates. There is no withdraw call: if the current artifact is wrong, PUT the corrected body under a new `Idempotency-Key`, then stop only after Oakridge confirms the typed result.
 
 Emit **in this order** (both calls must complete before stopping):
 
 ### 1. PR summary (emit first)
 
+`<work-order-id>` and the `Work-Order-Capability` value are given in the **Oakridge v2 artifact publication** section at the end of this prompt; use them verbatim.
+
 ```http
-PUT {{OAKRIDGE_URL}}/executors/delegated_session/{{STAGE_INSTANCE_ID}}/units/{{UNIT_ID}}/emit/pr_summary
+PUT {{OAKRIDGE_URL}}/work-orders/<work-order-id>/emit/pr_summary
+Work-Order-Capability: <capability>
 Content-Type: application/json
 
 {
@@ -61,7 +64,8 @@ Content-Type: application/json
 ### 2. Build result (emit second)
 
 ```http
-PUT {{OAKRIDGE_URL}}/executors/delegated_session/{{STAGE_INSTANCE_ID}}/units/{{UNIT_ID}}/emit/build_result
+PUT {{OAKRIDGE_URL}}/work-orders/<work-order-id>/emit/build_result
+Work-Order-Capability: <capability>
 Content-Type: application/json
 
 {

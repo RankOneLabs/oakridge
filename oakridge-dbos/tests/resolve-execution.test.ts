@@ -48,12 +48,13 @@ test("production execution resolution retains v11 prompt and runtime semantics",
 });
 
 /**
- * A delegated agent is handed its own emit URL as
- * `units/{{UNIT_ID}}/emit/<output>`, so whatever fills that slot *is* the
- * execution's address. A definition left over from before a stage fanned out
- * pinned `UNIT_ID` to the literal "0"; every cohort prompt then carried the same
- * wrong address, and a build agent that did its entire job — branch pushed, PR
- * opened — got `404 execution unit not found` on the one call that records it.
+ * A delegated agent addresses its own execution using the identity slots
+ * named in its rendered prompt's own context lines — whatever fills them *is*
+ * the execution the agent believes it is running. A definition left over from
+ * before a stage fanned out pinned `UNIT_ID` to the literal "0"; every cohort
+ * prompt then carried the same wrong identity in its context lines, so a
+ * build agent that did its entire job — branch pushed, PR opened — filed
+ * every artifact under the wrong unit.
  *
  * The tell was that the worktree and session name came out right: those
  * substitute the unit id directly instead of going through the slot table.
@@ -64,6 +65,7 @@ test("a definition cannot rebind the slots that identify the execution", () => {
     slot_bindings: {
       UNIT_ID: { from: "literal", value: "0" },
       STAGE_INSTANCE_ID: { from: "literal", value: "not-the-stage" },
+      OAKRIDGE_URL: { from: "literal", value: "https://oakridge.test" },
     },
     workdir: { from: "literal", value: "/" }, session_name: "build-{{STAGE_INSTANCE_ID}}-{{UNIT_ID}}",
     fan_out: { over: { from: "input", input_name: "brief" }, unit_id_path: "/unit_id", item_bindings: {}, workdir: { from: "literal", value: "/repo" } },
@@ -73,11 +75,11 @@ test("a definition cannot rebind the slots that identify the execution", () => {
     definition, environment: { inputs: {}, context: {}, item: null },
     unit: { unit_id: "targets_spec_contract" as UnitId, depends_on: [], parameters: { artifact: {} } },
     stage_instance_id: "stage-1" as StageInstanceId,
-    prompt_template: "PUT /executors/delegated_session/{{STAGE_INSTANCE_ID}}/units/{{UNIT_ID}}/emit/pr_summary",
+    prompt_template: "Stage instance: {{STAGE_INSTANCE_ID}} Unit: {{UNIT_ID}}\nPUT {{OAKRIDGE_URL}}/work-orders/<work-order-id>/emit/pr_summary",
   });
 
   expect(result).toEqual({ ok: true, value: expect.objectContaining({
-    rendered_prompt: "PUT /executors/delegated_session/stage-1/units/targets_spec_contract/emit/pr_summary",
+    rendered_prompt: "Stage instance: stage-1 Unit: targets_spec_contract\nPUT https://oakridge.test/work-orders/<work-order-id>/emit/pr_summary",
   }) });
 });
 

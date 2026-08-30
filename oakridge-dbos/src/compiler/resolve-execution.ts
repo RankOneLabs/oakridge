@@ -93,13 +93,15 @@ const renderPrompt = (template: string, slots: Readonly<Record<string, string>>)
  * Slots that name *which execution this is*. A definition may not rebind them.
  *
  * These are facts about the unit being launched, not choices a definition gets
- * to make, and everything downstream addresses the execution by them — the emit
- * URL a delegated agent is handed is `units/{{UNIT_ID}}/emit/...`. A definition
- * that bound `UNIT_ID` to the literal `"0"` — left over from before the stage
+ * to make, and everything downstream addresses the execution by them —
+ * they're what names this execution in the rendered prompt's own context
+ * lines, and in every artifact the agent files against it. A definition that
+ * bound `UNIT_ID` to the literal `"0"` — left over from before the stage
  * fanned out — silently overwrote the real unit id, so a build agent did its
- * whole job and then PUT its artifacts to `units/0`, which 404s. Meanwhile the
- * worktree and session name came out right, because those substitute the unit
- * id directly rather than through the slot table. One execution, two identities.
+ * whole job under the wrong identity: right code, mislabeled execution.
+ * Meanwhile the worktree and session name came out right, because those
+ * substitute the unit id directly rather than through the slot table. One
+ * execution, two identities.
  *
  * So identity is applied last and wins. The alternative — rejecting a
  * definition that binds one of these — is the stricter rule, but it would hard
