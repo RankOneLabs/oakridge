@@ -13,6 +13,7 @@ import { stageInstanceIdFor } from "../decision/ids";
 import type { StageKey } from "../domain/workflow";
 import { selectSessionHoldClaim, type SessionHold } from "../domain/session-hold";
 import type { SessionHoldRepository } from "./repositories";
+import { runRecordWorkflowId } from "../domain/workflow-ids";
 
 interface GateProjectionRow {
   readonly run_id: string;
@@ -48,7 +49,7 @@ export interface OperatorProjectionRepository {
   get_run_record_detail(run_id: WorkflowRunId): Promise<OperatorRunRecordDetail | null>;
 }
 
-interface V2RunProjectionRow { readonly id: string; readonly workflow_name: string; readonly root_workflow_id: string; readonly state: RunState; readonly current_stage: string | null; readonly parked_count: string; readonly updated_at: string; readonly is_stuck: boolean; readonly archived: boolean; readonly has_materialized_stage: boolean }
+interface V2RunProjectionRow { readonly id: string; readonly workflow_name: string; readonly state: RunState; readonly current_stage: string | null; readonly parked_count: string; readonly updated_at: string; readonly is_stuck: boolean; readonly archived: boolean; readonly has_materialized_stage: boolean }
 interface OperatorExecutorReference { readonly kind?: string; readonly session_id?: string; readonly worktree_base_sha?: string }
 interface V2StageProjectionRow { readonly stage_instance_id: string; readonly name: string; readonly stage_type: string; readonly operator_role: string | null; readonly state: RunState; readonly has_open_wait: boolean }
 interface V2UnitProjectionRow { readonly stage_instance_id: string; readonly unit_id: string; readonly params: OperatorStageUnit["params"]; readonly state: UnitState; readonly external_reference: OperatorExecutorReference | null; readonly gate_step: string | null; readonly has_open_wait: boolean; readonly admission_required: boolean; readonly admitted: boolean; readonly admission_blocked_by: readonly string[] }
@@ -160,7 +161,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
 
   private async listV2RunSummaries(filter: "active" | "archived" | "all", run_id: WorkflowRunId | null): Promise<readonly OperatorRunSummary[]> {
     const rows = await this.sql.query<V2RunProjectionRow>(
-      `SELECT run.id::text,definition.name AS workflow_name,launch.root_workflow_id,run.state,
+      `SELECT run.id::text,definition.name AS workflow_name,run.state,
               current_stage.stage_key AS current_stage,COALESCE(waits.parked_count,0)::text AS parked_count,
               GREATEST(run.created_at,COALESCE(run.ended_at,run.created_at),COALESCE(progress.updated_at,run.created_at))::text AS updated_at,
               EXISTS (SELECT 1 FROM oakridge.stage_instance stage WHERE stage.run_id=run.id AND stage.attempt_root_workflow_id IS NULL) AS has_materialized_stage,
@@ -172,7 +173,6 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
               run.archived
        FROM oakridge.workflow_run run
        JOIN oakridge.workflow_definition definition ON definition.id=run.workflow_definition_id
-       LEFT JOIN LATERAL (SELECT attempt.root_workflow_id FROM oakridge.workflow_attempt attempt WHERE attempt.run_id=run.id ORDER BY attempt.created_at DESC LIMIT 1) launch ON true
        LEFT JOIN LATERAL (SELECT stage.stage_key FROM oakridge.stage_instance stage WHERE stage.run_id=run.id AND stage.attempt_root_workflow_id IS NULL AND stage.state='active' ORDER BY stage.started_at DESC LIMIT 1) current_stage ON true
        LEFT JOIN LATERAL (SELECT count(*) AS parked_count FROM oakridge.wait wait JOIN oakridge.run_unit unit ON unit.id=wait.run_unit_id WHERE unit.run_id=run.id AND wait.status='open') waits ON true
        LEFT JOIN LATERAL (SELECT max(transition.created_at) AS updated_at FROM oakridge.run_transition transition WHERE transition.run_id=run.id) progress ON true
@@ -182,7 +182,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
       const parked_count = Number(row.parked_count);
       const status = selectV2RunStatus({ state: row.state, parked_count, has_materialized_stage: row.has_materialized_stage });
       return { id: row.id as WorkflowRunId, workflow_name: row.workflow_name,
-        current_attempt_root_workflow_id: row.root_workflow_id, status, current_stage: row.current_stage,
+        current_attempt_root_workflow_id: runRecordWorkflowId(row.id as WorkflowRunId), status, current_stage: row.current_stage,
         parked_count, updated_at: row.updated_at, is_stuck: row.is_stuck, is_failed: status === "failed", archived: row.archived };
     });
   }
@@ -215,20 +215,22 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
 
   async list_application_versions(): Promise<readonly OperatorApplicationVersionInventory[]> {
     const rows = await this.sql.query<{ readonly application_version: string | null; readonly run_count: string; readonly pending_run_count: string; readonly gated_run_count: string; readonly oldest_pending_epoch_ms: string | null }>(
+      // `'v2-run:'` is spelled as a SQL literal below, as in `list_unstarted_runs`
+      // (`postgres-domain.ts`) — the one other place outside `runRecordWorkflowId`
+      // this prefix is written.
       `SELECT status.application_version,
               count(*)::text AS run_count,
               count(*) FILTER (WHERE status.status IN ('PENDING', 'ENQUEUED', 'DELAYED'))::text AS pending_run_count,
               count(*) FILTER (WHERE gates.has_pending_gate)::text AS gated_run_count,
               min(status.created_at) FILTER (WHERE status.status IN ('PENDING', 'ENQUEUED', 'DELAYED'))::text AS oldest_pending_epoch_ms
-       FROM oakridge.workflow_attempt attempt
-       JOIN dbos.workflow_status status ON status.workflow_uuid = attempt.root_workflow_id
+       FROM oakridge.workflow_run run
+       JOIN dbos.workflow_status status ON status.workflow_uuid = 'v2-run:' || run.id::text
        LEFT JOIN LATERAL (
          SELECT EXISTS (
            SELECT 1 FROM oakridge.wait wait
-           JOIN oakridge.stage_instance stage ON stage.id = wait.stage_instance_id
+           JOIN oakridge.run_unit unit ON unit.id = wait.run_unit_id
            JOIN oakridge.artifact artifact ON artifact.id = wait.artifact_revision_id
-           WHERE wait.kind = 'gate' AND wait.status = 'open' AND artifact.lifecycle_state = 'current'
-             AND stage.attempt_root_workflow_id = attempt.root_workflow_id
+           WHERE unit.run_id = run.id AND wait.kind = 'gate' AND wait.status = 'open' AND artifact.lifecycle_state = 'current'
          ) AS has_pending_gate
        ) gates ON true
        GROUP BY status.application_version

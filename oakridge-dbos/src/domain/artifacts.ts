@@ -1,7 +1,6 @@
 import type { ArtifactId, ExecutionId, JsonValue, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "./primitives";
 import { parseUuidId } from "./primitives";
 import type { ArtifactTypeId } from "./workflow";
-import type { CompiledGateStep, GateRevisionTarget } from "./compiled-workflow";
 
 /**
  * Where an artifact sits in the run graph — the natural key of its revision
@@ -51,37 +50,3 @@ export type ArtifactRevisionLifecycle =
  * work order.
  */
 export const workOrderIdOfArtifact = (artifact: ArtifactRevision): WorkOrderId | null => parseUuidId<WorkOrderId>(artifact.execution_id);
-
-export interface ArtifactEmission {
-  readonly run_id: WorkflowRunId;
-  readonly stage_instance_id: StageInstanceId;
-  readonly execution_id: ExecutionId;
-  readonly unit_id: UnitId;
-  readonly output_name: string;
-  readonly collection_key?: import("./primitives").OutputCollectionKey | null;
-  readonly artifact_type: ArtifactTypeId;
-  readonly label: string | null;
-  readonly body: JsonValue;
-  readonly idempotency_key: string;
-  readonly payload_hash: string;
-}
-
-export type ArtifactReleaseState =
-  | { readonly kind: "released"; readonly artifact: ArtifactRevision }
-  | {
-      readonly kind: "waiting_gate";
-      readonly artifact: ArtifactRevision;
-      readonly gate_steps: readonly CompiledGateStep[];
-      /**
-       * Optional only because this shape is persisted in the command outbox: a
-       * row written before this field existed carries no value, and a run in
-       * flight across the deploy must not fail to parse. Default to
-       * `"self_stage"` when absent — the pre-field behaviour.
-       */
-      readonly revision_target?: GateRevisionTarget;
-    }
-  | { readonly kind: "waiting_handoff"; readonly artifact: ArtifactRevision; readonly downstream_role: string; readonly external_wait_kind: string };
-
-export type ExecutionContractState =
-  | { readonly kind: "waiting_artifacts"; readonly missing_outputs: readonly string[] }
-  | { readonly kind: "satisfied"; readonly artifacts: readonly ArtifactRevision[] };

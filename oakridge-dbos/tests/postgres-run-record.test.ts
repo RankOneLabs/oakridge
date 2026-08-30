@@ -57,7 +57,6 @@ test("one released run-owned slot completes a straight-through run after reposit
   await records.initialize_straight_through(initialization);
   await records.initialize_straight_through(initialization);
   expect((await sql.query<{ readonly record_version: string }>("SELECT record_version::text FROM oakridge.workflow_run WHERE id = $1", [runId]))[0]?.record_version).toBe("1");
-  expect((await sql.query<{ readonly count: string }>("SELECT count(*)::text AS count FROM oakridge.workflow_attempt WHERE run_id = $1", [runId]))[0]?.count).toBe("0");
   await expect(records.initialize_straight_through({ ...initialization, work_order_workflow_id: "conflicting-workflow" }))
     .rejects.toThrow("conflicts with its stored initialization");
   await expect(records.initialize_straight_through({ ...initialization, stage_instance_id: randomUUID() as StageInstanceId }))

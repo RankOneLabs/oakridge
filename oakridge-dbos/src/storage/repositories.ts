@@ -6,7 +6,7 @@ import type { CollaborationMessage, CollaborationThread, CollaborationThreadWith
 import type { ArtifactCoordinate, ArtifactRevision } from "../domain/artifacts";
 import type { SessionHold } from "../domain/session-hold";
 import type { CreateProject, Project } from "../domain/projects";
-import type { AdmitStageUnitRequest, AdmitStageUnitResult, CreateWorkflowRunResult, DeleteRunResult, PendingRunLaunch, PersistWorkflowRunLaunch, SetRunArchiveResult, WorkflowRunLaunchRecord, WorkflowRunListFilter } from "../domain/runs";
+import type { AdmitStageUnitRequest, AdmitStageUnitResult, CreateWorkflowRunResult, DeleteRunResult, PersistWorkflowRunLaunch, SetRunArchiveResult, UnstartedRun, WorkflowRunLaunchRecord, WorkflowRunListFilter } from "../domain/runs";
 import type { ConfirmFinalPullRequestRequest, FinalPullRequestDomainError, FinalPullRequestProjection, PullRequestObservation } from "../domain/final-pull-request";
 import type { CohortPullRequestReconciliation, RunOwnedCohortHandoff } from "../domain/cohort-pull-request";
 import type { ExternalExecutionReference } from "../domain/execution";
@@ -41,16 +41,13 @@ export interface WorkflowRunRecord extends WorkflowRunLaunch {
 }
 
 export interface WorkflowRunRepository {
-  insert_launch(launch: WorkflowRunLaunch): Promise<void>;
   find_by_id(id: WorkflowRunId): Promise<WorkflowRunRecord | null>;
-  create_with_initial_attempt(input: PersistWorkflowRunLaunch): Promise<CreateWorkflowRunResult>;
+  create_run(input: PersistWorkflowRunLaunch): Promise<CreateWorkflowRunResult>;
   find_launch_by_id(id: WorkflowRunId): Promise<WorkflowRunLaunchRecord | null>;
   list(filter?: WorkflowRunListFilter): Promise<readonly WorkflowRunLaunchRecord[]>;
   set_archived(id: WorkflowRunId, archived: boolean): Promise<SetRunArchiveResult>;
-  delete_terminal(id: WorkflowRunId): Promise<DeleteRunResult>;
-  claim_pending_launches(worker_id: string, claimed_at: string, claimed_until: string, limit: number): Promise<readonly PendingRunLaunch[]>;
-  mark_launch_delivered(id: string, worker_id: string, delivered_at: string): Promise<void>;
-  mark_launch_failed(id: string, worker_id: string, error: string, next_attempt_at: string): Promise<void>;
+  /** An `active` run with no `dbos.workflow_status` row for its derived root workflow id — the sweep's launch candidates. */
+  list_unstarted_runs(limit: number): Promise<readonly UnstartedRun[]>;
 }
 
 /** The single transactional boundary workflows ask for v2 run truth. */

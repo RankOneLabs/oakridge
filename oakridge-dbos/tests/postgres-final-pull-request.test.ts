@@ -124,6 +124,7 @@ test("final integration eligibility comes only from current-attempt StageInstanc
 
   expect(result).toEqual({ ok: false, error: expect.objectContaining({ kind: "not_eligible" }) });
   expect(sql.calls[2]?.statement).not.toContain("executor_projection");
+  expect(sql.calls[2]?.statement).not.toContain("workflow_attempt");
   expect(sql.calls).toHaveLength(3);
 });
 

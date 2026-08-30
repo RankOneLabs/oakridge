@@ -43,7 +43,7 @@ import { DbosCollaborationPingClient } from "./collaboration-ping";
 import { BunGitCommandRunner } from "./git-command-runner";
 import { createPromptTemplateLoader } from "./prompt-template";
 import { GitProjectRepositoryIdentityResolver } from "./project-identity";
-import { dispatchRunLaunches } from "./run-launch-notifications";
+import { dispatchRunLaunches } from "./run-launch-dispatch";
 import { publishWorkOrderArtifact } from "./publish-work-order-artifact";
 
 export interface OakridgeRuntimeConfig {
@@ -141,7 +141,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     void pending.finally(() => inFlightDispatches.delete(pending)).catch(() => undefined);
     return pending;
   };
-  const dispatchLaunches = () => trackDispatch(() => dispatchRunLaunches(runs, dbosRuns));
+  const dispatchLaunches = () => trackDispatch(() => dispatchRunLaunches(runs, dbosRuns, config.application_version));
 
   registerDbosTransportClient(client);
   for (const adapter of config.executor_adapters) registerExecutorAdapter(adapter);
@@ -194,7 +194,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
       send_run_wake: sendRunWakeHint, ping_thread: (input) => collaborationPings.enqueue(input) },
     operator_projections: projections,
     artifact_detail: { artifacts, stages, audits, presentation_for_type: presentation, artifact_types: DEV_FLOW_ARTIFACT_TYPES },
-    run_launch: { definitions, projects, runs, projections, dispatch_launches: dispatchLaunches, application_version: config.application_version, now },
+    run_launch: { definitions, projects, runs, projections, start_run: (request) => dbosRuns.start_v2_run(request), application_version: config.application_version, now },
     rerun: { v2_cancellation: { records: runRecords, find_executor: findExecutorAdapter, now, send_run_wake: sendRunWakeHint } },
     ...(config.control_token ? { control_token: config.control_token } : {}),
   });

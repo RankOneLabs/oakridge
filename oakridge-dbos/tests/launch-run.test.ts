@@ -3,10 +3,10 @@ import { expect, test } from "bun:test";
 import type { ProjectId, WorkflowDefinitionId } from "../src/domain/primitives";
 import type { WorkflowDefinition } from "../src/domain/workflow";
 import type { PersistWorkflowRunLaunch } from "../src/domain/runs";
+import { runRecordWorkflowId } from "../src/domain/workflow-ids";
 import { createRunLaunchApp } from "../src/http/run-launch";
 import { deterministicRunId, launchRun, type LaunchRunDependencies } from "../src/runtime/launch-run";
-import { dispatchRunLaunches } from "../src/runtime/run-launch-notifications";
-import type { WorkflowRunRepository } from "../src/storage/repositories";
+import type { RunStartRequest } from "../src/runtime/run-launch-dispatch";
 
 // A definition that reads the context, because a definition that reads nothing
 // cannot show whether the launch gate checks anything.
@@ -21,9 +21,9 @@ const project = { id: "af2b47a4-d1bd-44ee-840a-e4f7b27570db" as ProjectId, name:
 const context = { brief_notes: "Replace orchestration", oakridge_url: "http://oakridge", planner_runtime: "claude-code", planner_effort: null };
 const body = { workflow_def_id: definition.id, project_id: project.id, context, epic_profile: null };
 
-const mountedFixture = (options: { readonly archived?: boolean } = {}) => {
+const mountedFixture = (options: { readonly archived?: boolean; readonly start_run_result?: "ok" | "err" } = {}) => {
   let stored: PersistWorkflowRunLaunch | null = null;
-  let dispatches = 0;
+  const starts: RunStartRequest[] = [];
   const summary = { id: deterministicRunId("launch-1"), workflow_name: "flow", status: "running" as const,
     current_attempt_root_workflow_id: "root", current_stage: null, parked_count: 0, updated_at: "2026-08-15T00:00:00Z",
     is_stuck: false, is_failed: false, archived: false };
@@ -31,34 +31,39 @@ const mountedFixture = (options: { readonly archived?: boolean } = {}) => {
     definitions: { async find_by_id() { return { ...definition, archived: options.archived ?? false }; } },
     projects: { async find_by_id() { return project; } },
     runs: {
-      async find_launch_by_id() { return stored?.run ?? null; },
-      async create_with_initial_attempt(input: PersistWorkflowRunLaunch) {
-        if (!stored) { stored = input; return { ok: true as const, value: { kind: "created" as const, run: input.run, epic_profile: input.epic_profile } }; }
+      async find_launch_by_id() { return stored?.run ? { ...stored.run, root_workflow_id: runRecordWorkflowId(stored.run.id) } : null; },
+      async create_run(input: PersistWorkflowRunLaunch) {
+        if (!stored) { stored = input; return { ok: true as const, value: { kind: "created" as const, run: { ...input.run, root_workflow_id: runRecordWorkflowId(input.run.id) }, epic_profile: input.epic_profile } }; }
         const matches = JSON.stringify(stored) === JSON.stringify(input);
         return matches
-          ? { ok: true as const, value: { kind: "replayed" as const, run: input.run, epic_profile: input.epic_profile } }
+          ? { ok: true as const, value: { kind: "replayed" as const, run: { ...input.run, root_workflow_id: runRecordWorkflowId(input.run.id) }, epic_profile: input.epic_profile } }
           : { ok: false as const, error: { operation: "create_workflow_run" as const, kind: "idempotency_conflict" as const, detail: "conflicting replay" } };
       },
     },
     projections: { async list_runs() { return [{ ...summary, id: stored?.run.id ?? summary.id }]; } },
-    async dispatch_launches() { dispatches += 1; return 1; },
+    async start_run(request: RunStartRequest) {
+      starts.push(request);
+      if (options.start_run_result === "err") return { ok: false as const, error: { operation: "start_v2_run" as const, workflow_id: request.workflow_id, run_id: request.run_id, detail: "DBOS unreachable" } };
+      return { ok: true as const, value: undefined };
+    },
     application_version: "pr2", now: () => "2026-08-15T00:00:00Z",
   } as unknown as LaunchRunDependencies;
-  return { app: createRunLaunchApp(dependencies), dependencies, stored: () => stored, dispatches: () => dispatches };
+  return { app: createRunLaunchApp(dependencies), dependencies, stored: () => stored, starts: () => starts };
 };
 
 const request = (app: ReturnType<typeof createRunLaunchApp>, value: unknown = body) => app.request("/workflow_runs", {
   method: "POST", headers: { "content-type": "application/json", "idempotency-key": "launch-1" }, body: JSON.stringify(value),
 });
 
-test("workflow run POST persists, dispatches, and returns the operator RunSummary", async () => {
+test("workflow run POST persists, starts the root workflow, and returns the operator RunSummary", async () => {
   const subject = mountedFixture();
   const response = await request(subject.app);
   expect(response.status).toBe(201);
   expect(await response.json()).toEqual(expect.objectContaining({ id: deterministicRunId("launch-1"), workflow_name: "flow", status: "running" }));
-  expect(subject.stored()).toEqual(expect.objectContaining({ workflow_definition_version: 11, application_version: "pr2",
+  expect(subject.stored()).toEqual(expect.objectContaining({ workflow_definition_version: 11,
     run: expect.objectContaining({ project_id: project.id, context: expect.objectContaining({ workdir: project.repo_dir }) }) }));
-  expect(subject.dispatches()).toBe(1);
+  expect(subject.starts()).toHaveLength(1);
+  expect(subject.starts()[0]).toEqual(expect.objectContaining({ workflow_id: runRecordWorkflowId(deterministicRunId("launch-1")), run_id: deterministicRunId("launch-1") }));
 });
 
 test("workflow run POST replays the same idempotent launch without a second logical run", async () => {
@@ -67,7 +72,7 @@ test("workflow run POST replays the same idempotent launch without a second logi
   const replay = await request(subject.app);
   expect(replay.status).toBe(201);
   expect((await replay.json()).id).toBe(deterministicRunId("launch-1"));
-  expect(subject.dispatches()).toBe(2);
+  expect(subject.starts()).toHaveLength(2);
 });
 
 test("workflow run POST reports an immutable replay conflict", async () => {
@@ -86,37 +91,34 @@ test("workflow run POST blocks an archived definition before persistence", async
   expect(subject.stored()).toBeNull();
 });
 
-test("run launch outbox worker starts DBOS before acknowledging its lease", async () => {
-  const calls: string[] = [];
-  const command = { kind: "launch_run" as const, run_id: deterministicRunId("launch-1"), workflow_definition_id: definition.id,
-    workflow_definition_version: definition.version, root_workflow_id: "root-1", context: {}, created_at: "2026-08-15T00:00:00Z", application_version: "pr2" };
-  const repository = {
-    async claim_pending_launches() { calls.push("claim"); return [{ id: "outbox-1", target_workflow_id: "root-1", command, idempotency_key: "launch" }]; },
-    async mark_launch_delivered() { calls.push("delivered"); }, async mark_launch_failed() { calls.push("failed"); },
-  } as unknown as WorkflowRunRepository;
-  let claims = 0;
-  repository.claim_pending_launches = async () => { claims += 1; calls.push("claim"); return claims === 1 ? [{ id: "outbox-1", target_workflow_id: "root-1", command, idempotency_key: "launch" }] : []; };
-  const count = await dispatchRunLaunches(repository, { async start_v2_run(request) { calls.push(`dbos:${request.workflow_id}:${request.run_id}:${request.application_version}`); return { ok: true, value: undefined }; } }, () => "2026-08-15T00:00:00Z");
-  expect(count).toBe(1);
-  expect(calls).toEqual(["claim", `dbos:root-1:${command.run_id}:pr2`, "delivered"]);
-});
-
-test("v2 launch dispatcher addresses only the run-record workflow", async () => {
-  const calls: string[] = [];
-  const command = { kind: "launch_run" as const, run_id: deterministicRunId("v2-launch"), workflow_definition_id: definition.id,
-    workflow_definition_version: definition.version, root_workflow_id: `v2-run:${deterministicRunId("v2-launch")}`, context: {}, created_at: "2026-08-15T00:00:00Z", application_version: "v2" };
-  let claims = 0;
-  const repository = { async claim_pending_launches() { claims += 1; return claims === 1 ? [{ id: "outbox-v2", target_workflow_id: command.root_workflow_id, command, idempotency_key: "v2" }] : []; },
-    async mark_launch_delivered() { calls.push("delivered"); }, async mark_launch_failed() { calls.push("failed"); } } as unknown as WorkflowRunRepository;
-  expect(await dispatchRunLaunches(repository, { async start_v2_run(request) { calls.push(`${request.workflow_id}:${request.run_id}:${request.application_version}`); return { ok: true, value: undefined }; } })).toBe(1);
-  expect(calls).toEqual([`${command.root_workflow_id}:${command.run_id}:v2`, "delivered"]);
+/**
+ * The run row is the durable intent (spec §2.5(4)): a start failure is not a
+ * launch failure. The sweep (`dispatchRunLaunches`) owns delivery from here,
+ * exactly as the deleted launch outbox retried a failed dispatch.
+ */
+test("a run whose DBOS start fails is still created and reported", async () => {
+  const subject = mountedFixture({ start_run_result: "err" });
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => { warnings.push(args.map(String).join(" ")); };
+  try {
+    const response = await request(subject.app);
+    expect(response.status).toBe(201);
+    expect(await response.json()).toEqual(expect.objectContaining({ id: deterministicRunId("launch-1") }));
+    expect(subject.stored()).not.toBeNull();
+    expect(subject.starts()).toHaveLength(1);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain(deterministicRunId("launch-1"));
+  } finally {
+    console.warn = originalWarn;
+  }
 });
 
 test("v2 launch identity cannot collide with a legacy root history", async () => {
   const subject = mountedFixture();
   const launched = await launchRun({ ...body, idempotency_key: "launch-1" }, subject.dependencies);
   expect(launched.ok).toBe(true);
-  expect(subject.stored()?.run.root_workflow_id).toBe(`v2-run:${deterministicRunId("launch-1")}`);
+  expect(subject.starts()[0]?.workflow_id).toBe(runRecordWorkflowId(deterministicRunId("launch-1")));
 });
 
 const epicBody = {
@@ -147,7 +149,7 @@ test("a launch declaring repositories proceeds without checking their branches",
     base_branch: "epic/tiers-page",
     repositories: [{ key: "pipefitter", path: "/repos/pipefitter", integration_branch: "main" }],
   }));
-  expect(subject.dispatches()).toBe(1);
+  expect(subject.starts()).toHaveLength(1);
 });
 
 /**
@@ -168,9 +170,9 @@ test("a launch whose context the definition cannot read is refused, naming every
   expect(failure.error).toContain("/planner_runtime (analyze)");
   expect(failure.error).toContain("/oakridge_url (analyze)");
   expect(failure.error).toContain("'flow' v11");
-  // Refused means refused: nothing was persisted and nothing was dispatched.
+  // Refused means refused: nothing was persisted and nothing was started.
   expect(subject.stored()).toBeNull();
-  expect(subject.dispatches()).toBe(0);
+  expect(subject.starts()).toHaveLength(0);
 });
 
 test("a context carrying keys no stage reads is still launched", async () => {

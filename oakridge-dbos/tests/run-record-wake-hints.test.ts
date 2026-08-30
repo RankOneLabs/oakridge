@@ -15,6 +15,7 @@ import { DBOS, DBOSClient } from "@dbos-inc/dbos-sdk";
 import type { ExecutionRequest, ExecutorAdapter, ExecutorObservationAttempt, ExternalExecutionReference } from "../src/domain/execution";
 import type { ArtifactId, InputFingerprint, RunUnitId, StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId, WorkOrderId } from "../src/domain/primitives";
 import { runRecordWorkflowId } from "../src/domain/workflow-ids";
+import { DbosRunLaunchClient } from "../src/runtime/dbos-run-launch-client";
 import { applyMigrations } from "../src/storage/migrate";
 import { PostgresRunRecordRepository } from "../src/storage/postgres-run-record";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
@@ -202,3 +203,31 @@ test("a wake hint sent before the fact it would signal still converges once the 
     await fixture.stop();
   }
 }, 20_000);
+
+/**
+ * `DbosRunLaunchClient.start_v2_run` is how both the HTTP launch path and the
+ * launch sweep (`dispatchRunLaunches`) start a run's root workflow — either
+ * can reach an unstarted run first, and the sweep may also retry one the HTTP
+ * path already started, so calling it twice for the same run must be safe.
+ * DBOS's own `enqueuePortable` is `ON CONFLICT (workflow_uuid) DO NOTHING`
+ * (`node_modules/@dbos-inc/dbos-sdk/dist/src/system_database.js:682`); this
+ * proves it at the boundary this client actually calls, against a real
+ * system database, rather than trusting that comment alone.
+ */
+test("starting the same run's root workflow twice is a safe no-op: both calls ok, one dbos.workflow_status row", async () => {
+  if (!sql || !databaseUrl) return skip();
+  const runId = randomUUID() as WorkflowRunId;
+  const workflowId = runRecordWorkflowId(runId);
+  const dbosClient = await DBOSClient.create({ systemDatabaseUrl: databaseUrl });
+  const launchClient = new DbosRunLaunchClient(dbosClient);
+  try {
+    const first = await launchClient.start_v2_run({ workflow_id: workflowId, run_id: runId, application_version: "wake-hint-launch-idempotency" });
+    const second = await launchClient.start_v2_run({ workflow_id: workflowId, run_id: runId, application_version: "wake-hint-launch-idempotency" });
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    const rows = await sql!.query<{ readonly count: string }>("SELECT count(*)::text AS count FROM dbos.workflow_status WHERE workflow_uuid = $1", [workflowId]);
+    expect(rows[0]?.count).toBe("1");
+  } finally {
+    await dbosClient.destroy();
+  }
+}, 10_000);

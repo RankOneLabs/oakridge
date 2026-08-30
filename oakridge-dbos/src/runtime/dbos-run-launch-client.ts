@@ -1,7 +1,7 @@
 import { DBOSClient } from "@dbos-inc/dbos-sdk";
 
 import { err, ok, type Result } from "../domain/primitives";
-import type { RunLaunchDbosClient, RunStartError, RunStartRequest } from "./run-launch-notifications";
+import type { RunLaunchDbosClient, RunStartError, RunStartRequest } from "./run-launch-dispatch";
 
 export class DbosRunLaunchClient implements RunLaunchDbosClient {
   constructor(private readonly client: DBOSClient) {}
