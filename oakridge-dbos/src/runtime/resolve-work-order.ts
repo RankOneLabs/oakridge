@@ -28,7 +28,7 @@ import { workOrderIdFor, workOrderWorkflowId } from "../decision/ids";
 import type { CompiledStageContract, MaterializedExecutionUnit } from "../domain/compiled-workflow";
 import type { DelegatedSessionDefinitionConfig } from "../domain/delegated-session";
 import type { ArtifactEnvelope, ExecutionRequest, ExternalExecutionReference } from "../domain/execution";
-import type { JsonValue, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "../domain/primitives";
+import type { JsonValue, OutputCollectionKey, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "../domain/primitives";
 import { PROVISION_REPOSITORY_REFS_STAGE_TYPE, parseBaseBranch, parseRunContextRepository, type RepositoryProvisioningDefinitionConfig, type ResolvedRepositoryProvisioningConfig } from "../domain/repository-refs";
 import type { ExecutorAttachment, MaterializedRunOutput, MaterializedWorkOrder } from "../domain/run-record";
 
@@ -113,4 +113,61 @@ export const resolveWorkOrder = async (input: ResolveWorkOrderInput, dependencie
   const id = workOrderIdFor(input.run_id, input.stage.stage_key, input.unit.unit_id, input.identity);
   const capability = capabilityFor(input.capability_seed, id);
   return { id, workflow_id: workOrderWorkflowId(id), capability_hash: capabilityHash(capability), request: await executionRequest({ ...input, work_order_id: id, capability }, dependencies) };
+};
+
+/** One required output slot a retried unit still owes, as `retry_unit` reads it off `run_output_slot`. */
+export interface MissingOutputSlot {
+  readonly output_name: string;
+  readonly collection_key: OutputCollectionKey | null;
+}
+
+export interface RebindWorkOrderPublicationInput {
+  /** The latest execution request the unit ran under — prompt, workdir, inputs are reused as they were resolved. */
+  readonly basis: ExecutionRequest;
+  readonly work_order_id: WorkOrderId;
+  readonly capability_seed: string;
+  readonly missing: readonly MissingOutputSlot[];
+}
+
+export interface ReboundWorkOrderPublication {
+  readonly request: ExecutionRequest;
+  readonly capability_hash: string;
+}
+
+const isJsonObject = (value: JsonValue): value is { readonly [key: string]: JsonValue } =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * Derives a retry's execution request from the basis request. Everything that
+ * names the work order is re-minted, never copied: the execution id, the
+ * publication target the executor PUTs to, and the capability that authorizes
+ * it — from the same durable seed `resolveWorkOrder` uses, so a capability
+ * issued to one work order never authenticates another. `expected_artifacts`
+ * narrows to the slots still owed, so the relaunched agent is told to emit
+ * those and nothing else (the adapter renders this list into its prompt).
+ *
+ * `null` when the basis carries no publication authority, or declares no
+ * output for a slot that is missing — either is a request this unit cannot be
+ * retried from, which `retry_unit` reports as `no_execution_basis`.
+ */
+export const rebindWorkOrderPublication = (input: RebindWorkOrderPublicationInput): ReboundWorkOrderPublication | null => {
+  const config = input.basis.resolved_config;
+  if (!isJsonObject(config)) return null;
+  const publication = config.publication;
+  if (!isJsonObject(publication)) return null;
+  const expected_artifacts: ExecutionRequest["expected_artifacts"][number][] = [];
+  for (const slot of input.missing) {
+    const declared = input.basis.declared_outputs.find((output) => output.name === slot.output_name);
+    if (!declared) return null;
+    expected_artifacts.push({
+      unit_id: slot.collection_key === null ? input.basis.unit_id : (slot.collection_key as unknown as UnitId),
+      output_name: slot.output_name, artifact_type: declared.artifact_type,
+    });
+  }
+  const capability = capabilityFor(input.capability_seed, input.work_order_id);
+  const resolved_config: JsonValue = { ...config, publication: { ...publication, work_order_id: input.work_order_id, capability } };
+  return {
+    capability_hash: capabilityHash(capability),
+    request: { ...input.basis, execution_id: input.work_order_id as unknown as ExecutionRequest["execution_id"], resolved_config, expected_artifacts },
+  };
 };
