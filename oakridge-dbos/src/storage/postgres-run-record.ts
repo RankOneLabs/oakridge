@@ -697,7 +697,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
 
   private async complete_run_tx(tx: SqlExecutor, run_id: WorkflowRunId, outcome: StageOutcome, at: string): Promise<TxEffect> {
     const state = outcome.kind === "succeeded" ? "succeeded" : outcome.kind;
-    await tx.query(`UPDATE oakridge.stage_instance SET state=$2, outcome=$3::jsonb, ended_at=$4::timestamptz WHERE run_id=$1 AND state='active'`, [run_id, state, outcome, at]);
+    await tx.query(`UPDATE oakridge.stage_instance SET state=$2, outcome=$3::jsonb, ended_at=$4::timestamptz WHERE run_id=$1 AND state='active' AND attempt_root_workflow_id IS NULL`, [run_id, state, outcome, at]);
     const rows = await tx.query<{ readonly id: string }>(`UPDATE oakridge.workflow_run SET state=$2, outcome=$3::jsonb, ended_at=$4::timestamptz WHERE id=$1 AND state='active' RETURNING id`, [run_id, state, outcome, at]);
     return { applied: rows.length > 0, pending: [] };
   }

@@ -287,8 +287,9 @@ export const driveRun = async <Value>(baseUrl: string, agent: ScriptedAgentScena
       if (decided.has(gate.id)) continue;
       const action = options.decide(gate);
       if (!action) continue;
+      if (!gate.artifact_revision_id) continue;
       decided.add(gate.id);
-      if (gate.artifact_revision_id) await decideGate(baseUrl, gate.artifact_revision_id, action);
+      await decideGate(baseUrl, gate.artifact_revision_id, action);
     }
 
     const inbox = await readReviewInbox(baseUrl);

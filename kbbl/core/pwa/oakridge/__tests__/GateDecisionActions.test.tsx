@@ -120,4 +120,16 @@ describe("GateDecisionActions", () => {
     expect(screen.queryByTestId("or-decision-feedback")).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("closes an already-open feedback panel when the gate becomes non-actionable", async () => {
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    const view = render(wrapper(client, gate("gate-a", "revision-a")));
+
+    fireEvent.click(screen.getByTestId("or-decision-request_revision"));
+    expect(screen.getByRole("button", { name: "Send feedback" })).toBeTruthy();
+
+    view.rerender(wrapper(client, gate("gate-a", "revision-a", { actionable: false })));
+
+    expect(screen.queryByRole("button", { name: "Send feedback" })).toBeNull();
+  });
 });

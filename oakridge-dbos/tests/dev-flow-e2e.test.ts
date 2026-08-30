@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import type { OperatorParkedGate } from "../src/domain/operator-projections";
-import type { WorkflowRunId } from "../src/domain/primitives";
+import type { UnitId, WorkflowRunId } from "../src/domain/primitives";
 import type { StageOutcome } from "../src/domain/workflow";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
 import { findTestDatabaseUrl } from "./support/durable-database";
@@ -408,7 +408,7 @@ e2e("scenario 4: approving one brief starts exactly one build and closes exactly
  * `brief_writer` stage (and so the `build` stage's driver) finishes.
  */
 e2e("scenario 5: an unknown dependency at close fails the run, not the graph around it", async () => {
-  const plan: readonly CohortPlanEntry[] = [{ id: "a", depends_on: [] }, { id: "b", depends_on: ["never"] }];
+  const plan: readonly CohortPlanEntry[] = [{ id: "a" as UnitId, depends_on: [] }, { id: "b" as UnitId, depends_on: ["never" as UnitId] }];
   const agent = scriptedAgentScenario({ cohorts: plan });
   useScenario(agent);
   const launched = await launchRun(oakridge.base_url, oakridge.definition.id, runContext(oakridge.base_url, oakridge.repository.path));
@@ -451,7 +451,7 @@ e2e("scenario 5: an unknown dependency at close fails the run, not the graph aro
  * every one of them stays visible (not actionable).
  */
 e2e("scenario 6a: a failed run strands its open gates visibly", async () => {
-  const cyclePlan: readonly CohortPlanEntry[] = SEVEN_BRIEF_PLAN.map((entry) => entry.id === "schema" ? { id: "schema", depends_on: ["api"] } : entry);
+  const cyclePlan: readonly CohortPlanEntry[] = SEVEN_BRIEF_PLAN.map((entry) => entry.id === "schema" ? { id: "schema" as UnitId, depends_on: ["api" as UnitId] } : entry);
   const agent = scriptedAgentScenario({ cohorts: cyclePlan });
   useScenario(agent);
   const launched = await launchRun(oakridge.base_url, oakridge.definition.id, runContext(oakridge.base_url, oakridge.repository.path));

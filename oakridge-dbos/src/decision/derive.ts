@@ -14,7 +14,7 @@
 import type { CompiledStageContract, CompiledWorkflowDefinition, MaterializedExecutionUnit } from "../domain/compiled-workflow";
 import type { SlotBinding } from "../domain/delegated-session";
 import type { ArtifactEnvelope } from "../domain/execution";
-import { err, ok, type ArtifactId, type InputFingerprint, type JsonValue, type OutputCollectionKey, type Result, type StageInstanceId, type UnitId, type WorkflowRunId } from "../domain/primitives";
+import { err, ok, type ArtifactId, type InputFingerprint, type JsonValue, type OutputCollectionKey, type Result, type RunUnitId, type StageInstanceId, type UnitId, type WorkflowRunId } from "../domain/primitives";
 import type { MaterializedRunOutput } from "../domain/run-record";
 import type { StageKey, StageOutcome } from "../domain/workflow";
 import { resolveBindingValue, type BindingEnvironment } from "../compiler/resolve-execution";
@@ -282,10 +282,14 @@ export const derive = (snapshot: RunSnapshot): Result<Derivation, Contradiction>
     const inputs = stageInputs(stage_key, definition, snapshot);
     const stage_instance_id = stored?.id ?? stageInstanceIdFor(run_id, stage_key);
 
+    // First mint for this stage: a cycle among the freshly minted units is refused
+    // before anything is materialized — there is no stored stage yet to contradict later.
     if (!stored) {
-      commands.push({ kind: "materialize_stage", stage_key, stage_instance_id, policy: policyOf(contract) });
       const minted = mintUnits(contract, inputs, snapshot.run.context);
       if (!minted.ok) return minted;
+      const cycle = findCycle(minted.value.map((unit) => ({ unit_id: unit.unit_id, depends_on: unit.depends_on })));
+      if (cycle) return err({ kind: "dependency_cycle", stage_key, cycle });
+      commands.push({ kind: "materialize_stage", stage_key, stage_instance_id, policy: policyOf(contract) });
       for (const unit of minted.value) commands.push(materializeUnitCommand(run_id, stage_key, stage_instance_id, unit, policyOf(contract)));
       continue; // close / satisfy / start / succeed come on the next ask (recheck contract)
     }
@@ -332,8 +336,9 @@ export const derive = (snapshot: RunSnapshot): Result<Derivation, Contradiction>
     // over no slots is vacuously true, so a unit with none is never marked
     // satisfied here — it would complete without its executor ever running.
     // Definitions refuse a stage with no outputs; this is the local guard.
+    const satisfiedNow = new Set<RunUnitId>();
     for (const unit of units) {
-      if (!TERMINAL_UNIT_STATES.has(unit.state) && unit.required_slots.length > 0 && unit.required_slots.every((slot) => slot.state.kind === "released")) commands.push({ kind: "mark_unit_satisfied", run_unit_id: unit.id });
+      if (!TERMINAL_UNIT_STATES.has(unit.state) && unit.required_slots.length > 0 && unit.required_slots.every((slot) => slot.state.kind === "released")) { commands.push({ kind: "mark_unit_satisfied", run_unit_id: unit.id }); satisfiedNow.add(unit.id); }
     }
 
     const running = units.filter((unit) => unit.work_orders.some((order) => order.state === "started") && unit.open_waits.length === 0).length;
@@ -341,8 +346,10 @@ export const derive = (snapshot: RunSnapshot): Result<Derivation, Contradiction>
 
     for (const unit of units) {
       if (capacity <= 0) break;
+      // A unit satisfied earlier in this same batch is not also started: `apply` already
+      // guards `start_work_tx`, but an unguarded command here still burns a capacity slot.
       const eligible = !TERMINAL_UNIT_STATES.has(unit.state) && unit.open_waits.length === 0 && !unit.work_orders.some((order) => order.state === "started")
-        && unit.admitted && unit.depends_on.every((dependency) => stored.units.find((candidate) => candidate.unit_id === dependency)?.state === "satisfied");
+        && unit.admitted && unit.depends_on.every((dependency) => stored.units.find((candidate) => candidate.unit_id === dependency)?.state === "satisfied") && !satisfiedNow.has(unit.id);
       const order = unit.work_orders.filter((candidate) => candidate.state === "available")
         .sort((a, b) => (a.created_at === b.created_at ? byString(a.id, b.id) : byString(a.created_at, b.created_at)))[0];
       if (eligible && order) { commands.push({ kind: "start_work", work_order_id: order.id, run_unit_id: unit.id }); capacity -= 1; }

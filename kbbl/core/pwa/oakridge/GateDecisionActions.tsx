@@ -115,7 +115,7 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
         })}
       </div>
 
-      {feedbackAction && (
+      {feedbackAction && !disabled && (
         <div className="or-decision-feedback" data-testid="or-decision-feedback">
           <label htmlFor={`or-decision-feedback-${gate.id}`}>What needs to change?</label>
           <textarea
@@ -128,7 +128,7 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
           />
           <div className="or-decision-feedback__buttons">
             <button type="button" className="or-decision-button or-decision-button--secondary" onClick={() => setFeedbackAction(null)}>Cancel</button>
-            <button type="button" className="or-decision-button or-decision-button--danger" disabled={!feedback.trim() || mutation.isPending} onClick={() => submit(feedbackAction, feedback)}>Send feedback</button>
+            <button type="button" className="or-decision-button or-decision-button--danger" disabled={disabled || !feedback.trim() || mutation.isPending} onClick={() => submit(feedbackAction, feedback)}>Send feedback</button>
           </div>
         </div>
       )}

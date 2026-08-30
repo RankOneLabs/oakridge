@@ -108,6 +108,18 @@ test("case 4: a cycle among already-known units is a contradiction, independent 
   expect(result.error).toEqual({ kind: "dependency_cycle", stage_key: "build", cycle: ["a" as UnitId, "b" as UnitId, "a" as UnitId] });
 });
 
+test("case 4b: a cycle among first-minted units is a contradiction before anything is materialized", () => {
+  const definition = fanOutDefinition({ stage_key: "build", over_input: "brief" });
+  const aBrief = availableBrief("a", ["b"]);
+  const bBrief = availableBrief("b", ["a"]);
+  const snap = snapshot({ definition, available_artifacts: [aBrief, bBrief], stages: [] });
+
+  const result = derive(snap);
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error).toEqual({ kind: "dependency_cycle", stage_key: "build", cycle: ["a" as UnitId, "b" as UnitId, "a" as UnitId] });
+});
+
 // -----------------------------------------------------------------------
 // 5. capacity: four eligible, max_parallel=2 → two start_work, in unit_id order.
 
@@ -209,6 +221,18 @@ test("case 9a': a unit with no required slots is never marked satisfied", () => 
   });
   const commands = (derive(snap) as { ok: true; value: { commands: readonly Command[] } }).value.commands;
   expect(commands.map((command) => command.kind)).toEqual(["start_work"]);
+});
+
+// Not itself one of the deleted-suite's re-expressed cases (§9's numbering stops at
+// 9a'): a unit satisfied in this same batch must not also start — `apply` already
+// guards `start_work_tx`, but the phantom command still burns a capacity slot.
+test("case 9a'': a unit satisfied in this batch is not also started", () => {
+  const snap = snapshot({
+    stages: [stage({ stage_key: "build", units: [unit({ stage_key: "build", unit_id: "u", state: "ready", required_slots: [releasedSlot()], work_orders: [workOrder({ state: "available" })] })] })],
+  });
+  const commands = (derive(snap) as { ok: true; value: { commands: readonly Command[] } }).value.commands.map((command) => command.kind);
+  expect(commands).toContain("mark_unit_satisfied");
+  expect(commands).not.toContain("start_work");
 });
 
 test("case 9b: an open wait blocks start_work even with an available order", () => {

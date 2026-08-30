@@ -82,6 +82,18 @@ const extractEdgesAndExports = (file: SourceFile): { readonly edges: readonly Im
     else edges.push({ kind: "named", from, specifier, resolved, line, names: parseBraceEntries(braces ?? "").map((entry) => entry.moduleName) });
   }
 
+  // import [type] Default from "spec"; — `importPattern` above requires a `{…}` or
+  // `* as` clause, so a default-only import falls through it and records no edge.
+  // Disjoint from `importPattern`: `import a, { b } from` has a comma after the
+  // identifier, which this pattern's `from` anchor does not match. The module-side
+  // name of a default import is `default` — that is what rule 3 matches exports on.
+  const defaultOnlyImportPattern = /import\s+(type\s+)?([A-Za-z_$][\w$]*)\s+from\s+["']([^"']+)["']/g;
+  for (const match of text.matchAll(defaultOnlyImportPattern)) {
+    const specifier = match[3]!;
+    const line = lineAt(text, match.index ?? 0);
+    edges.push({ kind: "named", from, specifier, resolved: resolveSpecifier(from, specifier), line, names: ["default"] });
+  }
+
   // side-effect-only: import "spec";
   const sideEffectPattern = /import\s+["']([^"']+)["']\s*;/g;
   for (const match of text.matchAll(sideEffectPattern)) {

@@ -54,23 +54,23 @@ let currentScenario: ExecutionScenario | null = null;
  * `depends_on` each brief carries — a value so scenarios can vary the
  * dependency graph instead of the harness hardcoding one shape.
  */
-export interface CohortPlanEntry { readonly id: string; readonly depends_on: readonly string[] }
+export interface CohortPlanEntry { readonly id: UnitId; readonly depends_on: readonly UnitId[] }
 
 /** What every test wrote by hand before the plan became a value. */
 export const DEFAULT_COHORT_PLAN: readonly CohortPlanEntry[] = [
-  { id: "foundation", depends_on: [] },
-  { id: "web", depends_on: ["foundation"] },
+  { id: "foundation" as UnitId, depends_on: [] },
+  { id: "web" as UnitId, depends_on: ["foundation" as UnitId] },
 ];
 
 /** The seven-brief dependency graph run-16381389 reproduces. */
 export const SEVEN_BRIEF_PLAN: readonly CohortPlanEntry[] = [
-  { id: "versioning", depends_on: [] },
-  { id: "schema", depends_on: [] },
-  { id: "docs", depends_on: [] },
-  { id: "rollout", depends_on: ["versioning"] },
-  { id: "api", depends_on: ["schema"] },
-  { id: "ui", depends_on: ["api", "rollout"] },
-  { id: "release", depends_on: ["ui", "docs"] },
+  { id: "versioning" as UnitId, depends_on: [] },
+  { id: "schema" as UnitId, depends_on: [] },
+  { id: "docs" as UnitId, depends_on: [] },
+  { id: "rollout" as UnitId, depends_on: ["versioning" as UnitId] },
+  { id: "api" as UnitId, depends_on: ["schema" as UnitId] },
+  { id: "ui" as UnitId, depends_on: ["api" as UnitId, "rollout" as UnitId] },
+  { id: "release" as UnitId, depends_on: ["ui" as UnitId, "docs" as UnitId] },
 ];
 
 /** The plan `artifactBody` mints its cohort/brief bodies from — set by `useScenario`. */

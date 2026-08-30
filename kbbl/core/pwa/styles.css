@@ -6126,6 +6126,8 @@ a:focus-visible {
   padding: 1rem;
 }
 
+.or-gate-card--stranded { opacity: 0.6; }
+
 .or-gate-card__meta   { display: flex; align-items: center; gap: 0.625rem; flex-wrap: wrap; }
 .or-gate-card__stage  { font-size: 0.875rem; color: var(--text-secondary); }
 
