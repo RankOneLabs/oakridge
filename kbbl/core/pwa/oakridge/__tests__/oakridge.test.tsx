@@ -339,7 +339,7 @@ describe("RunDetailView", () => {
     };
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes("/retry_stuck")) return json({}, 202);
+      if (url.includes("/units/cohort-a/retry")) return json({ work_order: { id: "retry-1" } }, 202);
       if (url.includes("/gates")) return json([]);
       return json(detail);
     });
@@ -348,10 +348,32 @@ describe("RunDetailView", () => {
 
     fireEvent.click(await screen.findByTestId("or-retry-unit-btn"));
 
+    // Oakridge's operator retry is per unit, addressed by stage instance + unit id, idempotent on its header.
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/oakridge/api/stage_instances/build-stage-1/retry_stuck",
-      expect.objectContaining({ body: JSON.stringify({ unit_id: "cohort-a" }) }),
+      "/oakridge/api/stage_instances/build-stage-1/units/cohort-a/retry",
+      expect.objectContaining({ method: "PUT", headers: expect.objectContaining({ "Idempotency-Key": expect.any(String) }) }),
     ));
+  });
+
+  it("offers unit retry for a stuck run's unfinished unit even when nothing is parked", async () => {
+    const detail: RunDetail = {
+      ...RUN_DETAIL_FIXTURE,
+      status: "running",
+      is_stuck: true,
+      stages: [{
+        stage_instance_id: "build-stage-1", name: "build", type: "delegated_session",
+        status: "running", artifacts: [], delegated_kbbl_sid: null, worktree: null,
+        units: [{
+          unit_id: "cohort-a", repository_key: "oakridge" as RepositoryKey, sid: null, worktree: null,
+          status: "running", gate: null, params: { title: "Rejected build" },
+        }],
+      }],
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch(detail));
+    wrap(<RunDetailView runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
+
+    await screen.findByText("Rejected build");
+    expect(screen.queryByTestId("or-retry-unit-btn")).not.toBeNull();
   });
 
   it("does not offer unit retry when the failed unit's stage is not parked", async () => {

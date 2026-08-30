@@ -11,7 +11,7 @@ import { PgPostgresExecutor } from "../src/storage/sql-executor";
 import { findTestDatabaseUrl } from "./support/durable-database";
 import { HARNESS_BASE_BRANCH, SEVEN_BRIEF_PLAN, awaitCondition, installIntegrationRuntime, runContext,
   scriptedAgentScenario, useScenario, type CohortPlanEntry, type IntegrationRuntime } from "./support/dev-flow-harness";
-import { assertQuietAsk, decideGate, driveRun, emitDeclaredArtifacts, launchRun, listRunGates, readReviewInbox, readRun, readRunRecordFingerprint } from "./support/dev-flow-driver";
+import { assertQuietAsk, decideGate, driveRun, launchRun, listRunGates, readReviewInbox, readRun, readRunRecordFingerprint } from "./support/dev-flow-driver";
 
 const databaseUrl = await findTestDatabaseUrl();
 if (!databaseUrl) console.warn("dev-flow e2e SKIPPED: no reachable PostgreSQL (set OAKRIDGE_TEST_DATABASE_URL)");
@@ -540,92 +540,114 @@ e2e("scenario 6b: cancelling a run with an open gate wait clears its stranded ga
 }, 90_000);
 
 /**
- * `request_revision` on a v2 gate is a storage-level fact only (invalidate
- * the slot, abandon the work order) — nothing relaunches or delivers to the
- * brief_writer's agent, which this test confirms via `agent.launched` /
- * `agent.deliveries` rather than assuming it.
+ * The operator's correction loop through the real routes: reject one brief
+ * of a seven-brief collection, decide the remaining six, retry the unit, and
+ * watch the relaunched agent publish only the rejected member into its
+ * invalidated slot — then approve the replacement and complete the run.
  *
- * This is the one scenario that does not reach its terminal assertions: the
- * re-emission path does not work through the driver, for a structural
- * reason worth recording rather than routing around. `brief_writer` is one
- * `artifact_collection` unit (`unit_id="0"`) whose single work order
- * published all seven briefs; invalidating *any one* collection member's
- * slot (`closeOutputWaitTransaction`'s invalidate branch) abandons that
- * *whole* work order (`slot.updated_by_work_order_id`), not just the
- * revised member — so re-emitting "rollout" through the same
- * already-launched request fails with `work_abandoned` (409). The
- * documented recovery for an abandoned work order, `PUT
- * /run-units/:runUnitId/retry` (`retry_unit`), is also refused here —
- * `actionable_wait`, 409 — because it requires *no* open wait anywhere on
- * the unit, and six of this unit's seven collection members (every brief but
- * `versioning`) are deliberately still open gates. There is no HTTP path
- * that revises one collection member of a still-open `artifact_collection`
- * stage without touching the rest; forcing one (hand-writing SQL, or
- * approving every other brief first, which would no longer be *this*
- * scenario) is not something this package does under its brief.
+ * What is proven, and where each step used to dead-end:
+ * - `request_revision` invalidates exactly the rejected member's slot and
+ *   closes exactly its gate; the six sibling gates stay open.
+ * - retry is refused while sibling gates are open (`actionable_wait`) — the
+ *   documented limitation, asserted so that a change to it is deliberate.
+ * - the retry's execution request carries publication authority minted for
+ *   the new work order and `expected_artifacts` narrowed to the rejected
+ *   member. `driveRun` emits exactly what a launched request lists and
+ *   asserts the PUT target is the launched work order — a request that still
+ *   named the abandoned order (the old `retry_unit`) fails right there.
+ * - `publish_artifact` accepts the replacement into the invalidated slot as a
+ *   fresh chain root, withdraws the rejected artifact, and opens a new gate.
  */
-e2e("scenario 7: a mid-graph revision rebuilds only the revised unit", async () => {
+e2e("scenario 7: rejecting one brief, retrying its unit, and approving the replacement completes the run", async () => {
   const agent = scriptedAgentScenario({ cohorts: SEVEN_BRIEF_PLAN });
   useScenario(agent);
   const launched = await launchRun(oakridge.base_url, oakridge.definition.id, runContext(oakridge.base_url, oakridge.repository.path));
   oakridge.started_runs.push(launched.root_workflow_id);
+  const siblings = ["release", "ui", "api", "docs", "schema", "versioning"];
+  const approvedBriefs = new Set<string>();
   const decide = (gate: OperatorParkedGate): string | null =>
-    gate.stage_name === "brief_writer" ? (gate.unit_id === "versioning" ? "approve" : null) : "approve";
+    gate.stage_name === "brief_writer" ? (approvedBriefs.has(gate.unit_id) ? "approve" : null) : "approve";
+  const briefWriterUnit = async (): Promise<{ readonly run_unit_id: string; readonly stage_instance_id: string }> => {
+    const rows = await sql.query<{ readonly run_unit_id: string; readonly stage_instance_id: string }>(
+      `SELECT unit.id::text AS run_unit_id, stage.id::text AS stage_instance_id FROM oakridge.run_unit unit
+       JOIN oakridge.stage_instance stage ON stage.id = unit.stage_instance_id
+       WHERE stage.run_id = $1 AND stage.stage_key = 'brief_writer' AND unit.unit_id = '0'`, [launched.run_id]);
+    if (!rows[0]) throw new Error("scenario 7 stopped here: brief_writer's run_unit row was not found");
+    return rows[0];
+  };
+  const rolloutSlot = async (runUnitId: string): Promise<{ readonly state: string; readonly artifact_revision_id: string | null } | undefined> =>
+    (await sql.query<{ readonly state: string; readonly artifact_revision_id: string | null }>(
+      "SELECT state, artifact_revision_id::text FROM oakridge.run_output_slot WHERE run_unit_id = $1 AND output_name = 'brief' AND collection_key = 'rollout'", [runUnitId]))[0];
+  // The route kbbl's run detail calls: stage instance + unit id, no run-unit row id needed.
+  const retry = (stageInstanceId: string, key: string): Promise<Response> =>
+    fetch(`${oakridge.base_url}/stage_instances/${stageInstanceId}/units/0/retry`, { method: "PUT", headers: { "idempotency-key": key } });
   try {
+    // Phase A — all seven briefs parked at their gates.
     await driveRun(oakridge.base_url, agent, launched, {
       decide,
-      until: async () => (await buildUnitState(launched.run_id, "versioning")) === "satisfied" ? true : null,
-      timeout_ms: 120_000,
+      until: async (): Promise<boolean | null> => (await openBriefGateUnitIds(launched.run_id)).size === 7 ? true : null,
+      timeout_ms: 60_000,
+    });
+    const unit = await briefWriterUnit();
+
+    // Phase B — reject rollout's brief. Only its slot is invalidated, and the
+    // rejection relaunches nothing: the replacement is the operator's retry.
+    const rolloutGate = (await listRunGates(oakridge.base_url, launched.run_id)).find((gate) => gate.stage_name === "brief_writer" && gate.unit_id === "rollout");
+    if (!rolloutGate?.artifact_revision_id) throw new Error("scenario 7 stopped here: rollout's brief gate was not open going into the revision");
+    expect(rolloutGate.resume_actions).toContain("request_revision");
+    const rejectedArtifactId = rolloutGate.artifact_revision_id;
+    const launchedBeforeReject = agent.launched.size;
+    await decideGate(oakridge.base_url, rejectedArtifactId, "request_revision");
+    expect(await openBriefGateUnitIds(launched.run_id)).toEqual(new Set(siblings));
+    expect(agent.launched.size).toBe(launchedBeforeReject);
+    expect(await rolloutSlot(unit.run_unit_id)).toEqual({ state: "invalidated", artifact_revision_id: rejectedArtifactId });
+
+    // Retry is refused while sibling gates are open — the documented limitation.
+    const refused = await retry(unit.stage_instance_id, "scenario-7-retry-early");
+    expect(refused.status).toBe(409);
+    expect((await refused.json() as { readonly kind?: string }).kind).toBe("actionable_wait");
+
+    // Phase C — decide the other six.
+    for (const sibling of siblings) approvedBriefs.add(sibling);
+    await driveRun(oakridge.base_url, agent, launched, {
+      decide,
+      until: async (): Promise<boolean | null> => (await openBriefGateUnitIds(launched.run_id)).size === 0 ? true : null,
+      timeout_ms: 60_000,
     });
     expect(await workflowRunState(launched.run_id)).toBe("active");
-    await assertQuietAsk(sql, launched.run_id);
 
-    const rolloutGate = (await listRunGates(oakridge.base_url, launched.run_id))
-      .find((gate) => gate.stage_name === "brief_writer" && gate.unit_id === "rollout");
-    if (!rolloutGate?.artifact_revision_id) throw new Error("scenario 7 stopped here: rollout's brief gate was not open going into the revision");
-    if (!rolloutGate.resume_actions.includes("request_revision")) {
-      throw new Error(`scenario 7 stopped here: rollout's brief gate does not offer 'request_revision' (offers: ${rolloutGate.resume_actions.join(", ")})`);
-    }
+    // Phase D — retry. Created once; the same key replays the same work order.
+    const accepted = await retry(unit.stage_instance_id, "scenario-7-retry-1");
+    expect(accepted.status).toBe(202);
+    const retried = await accepted.json() as { readonly work_order: { readonly id: string } };
+    const replayed = await retry(unit.stage_instance_id, "scenario-7-retry-1");
+    expect(replayed.status).toBe(200);
+    expect((await replayed.json() as { readonly work_order: { readonly id: string } }).work_order.id).toBe(retried.work_order.id);
 
-    const launchedBefore = agent.launched.size;
-    const deliveriesBefore = agent.deliveries.length;
-    await decideGate(oakridge.base_url, rolloutGate.artifact_revision_id, "request_revision");
-    // Confirmed, not assumed: the v2 layer does not relaunch or deliver on a
-    // gate revision — the agent side of a revision is the harness's own move.
-    expect(agent.launched.size).toBe(launchedBefore);
-    expect(agent.deliveries.length).toBe(deliveriesBefore);
-
-    const briefWriterRequest = [...agent.launched.values()]
-      .find((request) => (request.resolved_config as { readonly session_name?: string }).session_name?.startsWith("brief-writer-"));
-    if (!briefWriterRequest) throw new Error("scenario 7 stopped here: no brief_writer execution request is on record to re-emit from");
-
-    let reEmitFailure: string | null = null;
-    try {
-      await emitDeclaredArtifacts(oakridge.base_url, briefWriterRequest, { revision: 2, outputs: ["brief"], unit_ids: ["rollout"] });
-    } catch (error) {
-      reEmitFailure = error instanceof Error ? error.message : String(error);
-    }
-    if (!reEmitFailure) throw new Error("scenario 7 did not stop where expected: re-emitting rollout's brief through the original request unexpectedly succeeded");
-    expect(reEmitFailure).toContain("work_abandoned");
-
-    // The documented recovery for an abandoned work order is also refused,
-    // for the reason in this test's own doc comment: the unit has other open
-    // waits (the six brief gates never approved).
-    const runUnitRows = await sql.query<{ readonly id: string }>(
-      `SELECT unit.id::text FROM oakridge.run_unit unit JOIN oakridge.stage_instance stage ON stage.id = unit.stage_instance_id
-       WHERE stage.run_id = $1 AND stage.stage_key = 'brief_writer' AND unit.unit_id = '0'`, [launched.run_id]);
-    const briefWriterRunUnitId = runUnitRows[0]?.id;
-    if (!briefWriterRunUnitId) throw new Error("scenario 7 stopped here: brief_writer's run_unit row was not found");
-    const retryAttempt = await fetch(`${oakridge.base_url}/run-units/${briefWriterRunUnitId}/retry`, {
-      method: "PUT", headers: { "idempotency-key": "scenario-7-retry-1" },
+    // Phase E — the relaunched agent publishes rollout's brief and nothing
+    // else; the replacement is approved and the run completes.
+    approvedBriefs.add("rollout");
+    await driveRun(oakridge.base_url, agent, launched, {
+      decide,
+      until: async (): Promise<boolean | null> => (await workflowRunState(launched.run_id)) === "succeeded" ? true : null,
+      timeout_ms: 240_000,
     });
-    expect(retryAttempt.status).toBe(409);
-    const retryError = await retryAttempt.json() as { readonly kind?: string };
-    expect(retryError.kind).toBe("actionable_wait");
+    expect(await workflowRunState(launched.run_id)).toBe("succeeded");
+
+    const retryRequest = agent.launched.get(retried.work_order.id);
+    if (!retryRequest) throw new Error("scenario 7 stopped here: the retry work order was never launched");
+    expect(retryRequest.expected_artifacts).toEqual([{ unit_id: "rollout" as UnitId, output_name: "brief", artifact_type: expect.any(String) }]);
+    expect((retryRequest.resolved_config as { readonly publication?: { readonly work_order_id?: string } }).publication?.work_order_id).toBe(retried.work_order.id);
+    const retryArtifacts = await sql.query<{ readonly id: string; readonly collection_key: string | null; readonly version: number; readonly parent_artifact_id: string | null }>(
+      "SELECT id::text, collection_key, version, parent_artifact_id::text FROM oakridge.artifact WHERE work_order_id = $1", [retried.work_order.id]);
+    expect(retryArtifacts).toHaveLength(1);
+    expect(retryArtifacts[0]).toEqual(expect.objectContaining({ collection_key: "rollout", version: 1, parent_artifact_id: null }));
+    expect((await sql.query<{ readonly lifecycle_state: string }>("SELECT lifecycle_state FROM oakridge.artifact WHERE id = $1", [rejectedArtifactId]))[0]?.lifecycle_state).toBe("withdrawn");
+    expect(await rolloutSlot(unit.run_unit_id)).toEqual({ state: "released", artifact_revision_id: retryArtifacts[0]!.id });
   } finally {
     agent.releaseAll();
   }
-}, 180_000);
+}, 420_000);
 
 /**
  * The runtime's prompt root for this file is a writable temp copy (see
