@@ -53,7 +53,7 @@ test("project creation persists resolved forge identity and base branch", async 
 
 test("workflow definition creation owns identifiers and normalizes the legacy delivery name", async () => {
   const subject = fixture(definition.id);
-  const response = await subject.app.request("/workflow_defs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "flow", version: 1, graph: { stages: { review: { stage_type: "stub", config: {}, inputs: [{ name: "input", artifact_type: "dev.input", delivery: "stage_complete" }], outputs: [] } }, edges: [] } }) });
+  const response = await subject.app.request("/workflow_defs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "flow", version: 1, graph: { stages: { review: { stage_type: "stub", config: {}, inputs: [{ name: "input", artifact_type: "dev.input", delivery: "stage_complete" }], outputs: [{ name: "review", artifact_type: "dev.review" }] } }, edges: [] } }) });
   expect(response.status).toBe(201);
   expect(await response.json()).toEqual(expect.objectContaining({ id: definition.id, name: "flow", version: 1, archived: false, graph: { stages: { review: expect.objectContaining({ inputs: [expect.objectContaining({ delivery: "producer_complete" })] }) }, edges: [] } }));
 });

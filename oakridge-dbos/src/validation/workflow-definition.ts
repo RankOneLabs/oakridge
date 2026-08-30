@@ -68,6 +68,13 @@ const selectIncrementalInputViolation = (stageKey: string, inputs: readonly Inpu
 
 const validateGraphReferences = (definition: WorkflowDefinition): Result<WorkflowDefinition, DefinitionValidationError> => {
   for (const [stageKey, stage] of Object.entries(definition.graph.stages)) {
+    // A unit is discharged only by releasing its required outputs, so a stage
+    // with none has no completion condition: `derive` would mark its unit
+    // satisfied on the first ask and the run would succeed without the
+    // executor ever running. Refuse the shape where an operator can fix it.
+    if (stage.outputs.length === 0) {
+      return err({ operation: "validate_workflow_graph", detail: `stage '${stageKey}' must declare at least one output` });
+    }
     let fanOut: FanOutDefinition | null = null;
     if (stage.stage_type === "delegated_session") {
       const config = delegatedSessionDefinitionSchema.safeParse(stage.config);

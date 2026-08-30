@@ -194,7 +194,6 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
 
   async initialize_straight_through(input: InitializeStraightThroughRun): Promise<void> {
     await this.sql.transaction(async (transaction) => {
-      await transaction.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`v2-run:${input.run_id}`]);
       const runs = await transaction.query<{ readonly id: string }>("SELECT id::text FROM oakridge.workflow_run WHERE id = $1 FOR UPDATE", [input.run_id]);
       if (!runs[0]) throw new Error(`workflow run '${input.run_id}' was not found`);
       const stageContract = { executor_type: input.executor_type, resolved_config: input.resolved_config, outputs: input.outputs };
@@ -325,13 +324,17 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
   /**
    * Today's `persist_materialized_stage` body minus the version/transition
    * tail: `materialize_stage`, `materialize_unit`, and `close_materialization`
-   * all dispatch here through `apply`. Keeps the advisory lock, the fingerprint
-   * checks and `assertClosedGraph` as defence-in-depth — `derive` already
-   * refuses an invalid graph before this can be reached with one.
+   * all dispatch here through `apply`. Keeps the fingerprint checks and
+   * `assertClosedGraph` as defence-in-depth — `derive` already refuses an
+   * invalid graph before this can be reached with one.
+   *
+   * Serializes on the run row alone. It used to take a per-run advisory
+   * lock first; every other writer (and `decide_run`, which reaches here
+   * through `apply`) takes the row lock first, so that was the inverted
+   * lock order of a deadlock, not protection.
    */
   private async persist_materialized_stage_tx(tx: SqlExecutor, input: PersistMaterializedStage, at: string): Promise<TxEffect> {
     void at;
-    await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`v2-run:${input.run_id}`]);
     const runRows = await tx.query<{ readonly record_version: string }>("SELECT record_version::text FROM oakridge.workflow_run WHERE id = $1 FOR UPDATE", [input.run_id]);
     const run = runRows[0];
     if (!run) throw new Error(`workflow run '${input.run_id}' was not found`);
@@ -638,7 +641,11 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
        JOIN oakridge.stage_instance stage ON stage.id=unit.stage_instance_id
        JOIN oakridge.artifact artifact ON artifact.id=slot.artifact_revision_id
        WHERE unit.run_id=$1 AND (slot.state='released' OR (slot.state='pending' AND slot.release_policy->>'kind'='handoff'))
-       ORDER BY stage.stage_key,artifact.output_name,artifact.unit_id,artifact.created_at`, [run.id]);
+       ORDER BY stage.stage_key,artifact.output_name,artifact.unit_id,slot.collection_key NULLS FIRST,artifact.created_at,artifact.id`, [run.id]);
+    // This order is what `derive` fingerprints (an envelope array) and what the
+    // executor receives, so it has to be total: `created_at` is the caller's
+    // `published_at` and members of one collection can share it to the
+    // millisecond. `collection_key` then `id` break every tie.
     const available_artifacts: AvailableArtifact[] = artifactRows.map((row) => ({
       artifact_id: row.id as ArtifactId, chain_id: row.chain_id as ArtifactId, producer_stage_key: row.stage_key,
       producer_execution_id: row.execution_id as ExecutionRequest["execution_id"], unit_id: row.unit_id as UnitId,

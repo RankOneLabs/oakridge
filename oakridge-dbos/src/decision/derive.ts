@@ -328,8 +328,12 @@ export const derive = (snapshot: RunSnapshot): Result<Derivation, Contradiction>
     if (stored.state !== "active") continue;
     const units = [...stored.units].sort((a, b) => byString(a.unit_id, b.unit_id));
 
+    // A unit is discharged only by releasing its required outputs. `every`
+    // over no slots is vacuously true, so a unit with none is never marked
+    // satisfied here — it would complete without its executor ever running.
+    // Definitions refuse a stage with no outputs; this is the local guard.
     for (const unit of units) {
-      if (!TERMINAL_UNIT_STATES.has(unit.state) && unit.required_slots.every((slot) => slot.state.kind === "released")) commands.push({ kind: "mark_unit_satisfied", run_unit_id: unit.id });
+      if (!TERMINAL_UNIT_STATES.has(unit.state) && unit.required_slots.length > 0 && unit.required_slots.every((slot) => slot.state.kind === "released")) commands.push({ kind: "mark_unit_satisfied", run_unit_id: unit.id });
     }
 
     const running = units.filter((unit) => unit.work_orders.some((order) => order.state === "started") && unit.open_waits.length === 0).length;

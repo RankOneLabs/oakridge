@@ -207,3 +207,11 @@ test("rule 6: every path §2.4 deletes is gone from disk", () => {
   const stillPresent = deletedPaths.filter((relativePath) => existsSync(resolve(PACKAGE_ROOT, relativePath)));
   expect(stillPresent).toEqual([]);
 });
+
+// Not a spec rule: pins a review fix. The run record serializes every
+// writer on the run row (`FOR UPDATE`, taken first); a per-run advisory
+// lock taken before it inverted `decide_run`'s order and could deadlock.
+test("run record serializes on the run row only: no advisory lock in postgres-run-record.ts", () => {
+  const source = readFileSync(resolve(SRC_ROOT, "storage/postgres-run-record.ts"), "utf8");
+  expect(source.includes("pg_advisory")).toBe(false);
+});

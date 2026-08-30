@@ -199,6 +199,18 @@ test("case 9a: all required slots released marks the unit satisfied", () => {
   expect(derive(snap)).toEqual({ ok: true, value: { commands: [{ kind: "mark_unit_satisfied", run_unit_id: runUnitIdForTest("build", "u") }] } });
 });
 
+// `every` over no slots is vacuously true. A unit with no required output has
+// no discharge condition, so it is never satisfied — not even with a work
+// order sitting available, which would otherwise be completed by the
+// satisfaction before it could start.
+test("case 9a': a unit with no required slots is never marked satisfied", () => {
+  const snap = snapshot({
+    stages: [stage({ stage_key: "build", units: [unit({ stage_key: "build", unit_id: "u", state: "ready", required_slots: [], work_orders: [workOrder({ state: "available" })] })] })],
+  });
+  const commands = (derive(snap) as { ok: true; value: { commands: readonly Command[] } }).value.commands;
+  expect(commands.map((command) => command.kind)).toEqual(["start_work"]);
+});
+
 test("case 9b: an open wait blocks start_work even with an available order", () => {
   const snap = snapshot({
     stages: [stage({ stage_key: "build", units: [unit({ stage_key: "build", unit_id: "u", state: "working", open_waits: [openWait()], work_orders: [workOrder({ state: "available" })] })] })],
