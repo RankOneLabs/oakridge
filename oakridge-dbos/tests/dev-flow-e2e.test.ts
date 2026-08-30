@@ -697,3 +697,47 @@ e2e("scenario 8: a missing prompt template stalls the ask, not the run", async (
     agent.releaseAll();
   }
 }, 150_000);
+
+/**
+ * A real HTTP round trip through `/artifacts/:id/edits` on a run parked at a
+ * brief gate. `dev.build_brief` is `atom_editable`, so the request clears
+ * every guard ahead of the refusal (found, current, policy) and lands on the
+ * 501 `revision_unsupported` the route answers in place of a publish call
+ * the v2 run record has no operation to satisfy (`http/collaboration.ts`).
+ * The run record's fingerprint and the gate's open state are asserted
+ * unchanged around the request — the route touches nothing. A revision
+ * operation for the v2 run record remains a deferred slice; this scenario
+ * does not stand in for one.
+ */
+e2e("scenario 9: an operator edit on a gated artifact is refused through the real route", async () => {
+  const agent = scriptedAgentScenario({ cohorts: SEVEN_BRIEF_PLAN });
+  useScenario(agent);
+  const launched = await launchRun(oakridge.base_url, oakridge.definition.id, runContext(oakridge.base_url, oakridge.repository.path));
+  oakridge.started_runs.push(launched.root_workflow_id);
+  try {
+    await driveRun(oakridge.base_url, agent, launched, {
+      decide: (gate) => gate.stage_name === "brief_writer" ? null : "approve",
+      until: async () => (await openBriefGateUnitIds(launched.run_id)).size >= 1 ? true : null,
+      timeout_ms: 60_000,
+    });
+
+    const gate = (await listRunGates(oakridge.base_url, launched.run_id))
+      .find((candidate) => candidate.stage_name === "brief_writer" && candidate.artifact_revision_id);
+    if (!gate?.artifact_revision_id) throw new Error("scenario 9 stopped here: no brief_writer gate with an open artifact revision was found");
+
+    const before = await readRunRecordFingerprint(sql, launched.run_id);
+    const response = await fetch(`${oakridge.base_url}/artifacts/${gate.artifact_revision_id}/edits`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ anchor: "/goal", prev_value: "x", new_value: "y", author: "operator" }),
+    });
+    expect(response.status).toBe(501);
+    const body = await response.json() as { readonly code?: string };
+    expect(body.code).toBe("revision_unsupported");
+
+    expect(await readRunRecordFingerprint(sql, launched.run_id)).toEqual(before);
+    const gatesAfter = await listRunGates(oakridge.base_url, launched.run_id);
+    expect(gatesAfter.find((candidate) => candidate.id === gate.id)).toBeTruthy();
+  } finally {
+    agent.releaseAll();
+  }
+}, 120_000);

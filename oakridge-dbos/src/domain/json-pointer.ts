@@ -1,7 +1,7 @@
 import type { JsonValue } from "./primitives";
 
 /** RFC 6901 escaping: `~1` is `/`, `~0` is `~`, and order matters. */
-export const decodeJsonPointerSegment = (segment: string): string => segment.replaceAll("~1", "/").replaceAll("~0", "~");
+const decodeJsonPointerSegment = (segment: string): string => segment.replaceAll("~1", "/").replaceAll("~0", "~");
 
 /**
  * Read a JSON Pointer, or `undefined` where it does not resolve.

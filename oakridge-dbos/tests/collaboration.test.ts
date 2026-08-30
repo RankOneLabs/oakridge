@@ -11,12 +11,11 @@ const artifact: ArtifactRevision = { id: "11111111-1111-4111-8111-111111111111" 
 /** The v2 executor attachment `find_work_order_attachment` returns for the work order the fixture's `artifact` was published under. */
 const attachment = { work_order_id: WORK_ORDER_ID, executor_type: "delegated_session", external_reference: { kind: "kbbl_session" as const, session_id: "session-1" }, health: null, cleanup_state: "not_needed" as const, updated_at: "2026-08-14T12:00:00Z" };
 const neverCalled = (name: string) => async () => { throw new Error(`${name} must not be called`); };
-/** A `records` dependency stub for tests that never reach a work-order lookup or publication. */
-const unusedRecords: CollaborationHttpDependencies["records"] = { find_work_order_attachment: neverCalled("find_work_order_attachment"), publish_artifact: neverCalled("publish_artifact"), load_work_order_capability_seed: neverCalled("load_work_order_capability_seed") };
+/** A `records` dependency stub for tests that never reach a work-order lookup. */
+const unusedRecords: CollaborationHttpDependencies["records"] = { find_work_order_attachment: neverCalled("find_work_order_attachment") };
 
 const fixture = () => {
   const threads: CollaborationThread[] = []; const messages: CollaborationMessage[] = []; const items: ReviewItem[] = [];
-  let published: ArtifactRevision | null = null;
   let sequence = 0;
   const repository: CollaborationRepository = {
     insert_thread_with_message: async (thread, message) => { threads.push(thread); messages.push(message); return { thread_id: thread.id, message_id: message.id }; },
@@ -29,24 +28,14 @@ const fixture = () => {
     count_open_review_items: async (revision) => items.filter((item) => item.revision_id === revision && item.status === "open").length,
   };
   const pingRequests: unknown[] = [];
-  const wakeCalls: { readonly run_id: unknown; readonly hint: string }[] = [];
   const app = createCollaborationApp({
-    artifacts: { find_by_id: async () => published ?? artifact, find_current: async () => artifact, list_chain: async () => [artifact] },
+    artifacts: { find_by_id: async () => artifact, find_current: async () => artifact, list_chain: async () => [artifact] },
     collaboration: repository,
-    records: {
-      find_work_order_attachment: async () => attachment,
-      publish_artifact: async (request) => {
-        const next: ArtifactRevision = { ...artifact, id: request.artifact_id, body: request.body, version: 3, parent_artifact_id: artifact.id, lifecycle: { kind: "current" }, created_at: "2026-08-14T12:30:00Z" };
-        published = next;
-        return { kind: "published", artifact_id: request.artifact_id, run_id: artifact.run_id, record_version: 1 as never };
-      },
-      load_work_order_capability_seed: async () => "test-capability-seed",
-    },
-    send_run_wake: async (run_id, hint) => { wakeCalls.push({ run_id, hint }); },
+    records: { find_work_order_attachment: async () => attachment },
     ping_thread: async (input) => { pingRequests.push(input); return { kind: "accepted", request_id: input.request_id, workflow_id: `ping:${input.request_id}` }; },
-    policy_for_artifact_type: () => ({ commentable: true, review_items: true, atom_editable: true, anchor_schema: ["/summary"] }),
+    policy_for_artifact_type: () => ({ commentable: true, review_items: true, atom_editable: true }),
     now: () => "2026-08-14T12:30:00Z", new_id: () => `${String(++sequence).repeat(8)}-aaaa-4aaa-8aaa-aaaaaaaaaaaa` });
-  return { app, repository, threads, messages, items, pingRequests, wakeCalls, published: () => published };
+  return { app, repository, threads, messages, items, pingRequests };
 };
 
 test("thread creation atomically creates its first message against the artifact chain", async () => {
@@ -91,35 +80,26 @@ test("review items stay attached to the chain and can be resolved", async () => 
 
 test("artifact capability policy rejects unsupported collaboration", async () => {
   const subject = fixture();
-  const app = createCollaborationApp({ artifacts: { find_by_id: async () => artifact, find_current: async () => artifact, list_chain: async () => [artifact] }, records: unusedRecords, collaboration: subject.repository, ping_thread: neverCalled("ping_thread"), policy_for_artifact_type: () => ({ commentable: false, review_items: false }) });
+  const app = createCollaborationApp({ artifacts: { find_by_id: async () => artifact, find_current: async () => artifact, list_chain: async () => [artifact] }, records: unusedRecords, collaboration: subject.repository, ping_thread: neverCalled("ping_thread"), policy_for_artifact_type: () => ({ commentable: false, review_items: false, atom_editable: false }) });
   const response = await app.request("/artifacts/11111111-1111-4111-8111-111111111111/threads");
   expect(response.status).toBe(400);
+  const edit = await app.request("/artifacts/11111111-1111-4111-8111-111111111111/edits", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ anchor: "/summary", prev_value: "before", new_value: "after", author: "operator" }) });
+  expect(edit.status).toBe(400);
 });
 
-test("atom edit uses optimistic concurrency and creates a parent-linked revision", async () => {
+test("atom edit on a current, editable artifact is refused as unsupported and touches no record", async () => {
   const subject = fixture();
-  const editableArtifact = { ...artifact, body: { summary: "before" } };
-  const wakeCalls: { readonly run_id: unknown; readonly hint: string }[] = [];
-  let publishedRevision: ArtifactRevision | null = null;
   const app = createCollaborationApp({
-    artifacts: { find_by_id: async () => publishedRevision ?? editableArtifact, find_current: async () => editableArtifact, list_chain: async () => [editableArtifact] },
-    records: {
-      find_work_order_attachment: async () => attachment,
-      publish_artifact: async (request) => {
-        publishedRevision = { ...editableArtifact, id: request.artifact_id, body: request.body, version: 3, parent_artifact_id: editableArtifact.id, lifecycle: { kind: "current" }, created_at: "2026-08-14T13:00:00Z" };
-        return { kind: "published", artifact_id: request.artifact_id, run_id: editableArtifact.run_id, record_version: 1 as never };
-      },
-      load_work_order_capability_seed: async () => "test-capability-seed",
-    },
-    send_run_wake: async (run_id, hint) => { wakeCalls.push({ run_id, hint }); },
+    artifacts: { find_by_id: async () => artifact, find_current: async () => artifact, list_chain: async () => [artifact] },
+    records: unusedRecords,
     ping_thread: neverCalled("ping_thread"),
-    collaboration: subject.repository, policy_for_artifact_type: () => ({ commentable: true, review_items: true, atom_editable: true, anchor_schema: ["/summary"] }),
-    new_id: () => "55555555-5555-4555-8555-555555555555", now: () => "2026-08-14T13:00:00Z",
+    collaboration: subject.repository, policy_for_artifact_type: () => ({ commentable: true, review_items: true, atom_editable: true }),
   });
   const response = await app.request("/artifacts/11111111-1111-4111-8111-111111111111/edits", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ anchor: "/summary", prev_value: "before", new_value: "after", author: "operator" }) });
-  expect(response.status).toBe(201);
-  expect(await response.json()).toEqual({ artifact_id: "55555555-5555-4555-8555-555555555555" });
-  expect(wakeCalls).toEqual([{ run_id: editableArtifact.run_id, hint: "edit:55555555-5555-4555-8555-555555555555" }]);
+  expect(response.status).toBe(501);
+  const body = await response.json() as { readonly error: string; readonly code: string };
+  expect(body).toEqual({ error: expect.any(String), code: "revision_unsupported" });
+  expect(body.error).toContain("revision");
 });
 
 test("collaboration mutations reject a superseded artifact revision", async () => {
@@ -134,11 +114,4 @@ test("collaboration mutations reject a superseded artifact revision", async () =
   expect([thread.status, item.status]).toEqual([409, 409]);
   expect((await app.request("/artifacts/11111111-1111-4111-8111-111111111111/threads")).status).toBe(200);
   expect((await app.request("/artifacts/11111111-1111-4111-8111-111111111111/review_items")).status).toBe(200);
-});
-
-test("atom edit rejects a stale previous value", async () => {
-  const subject = fixture();
-  const response = await subject.app.request("/artifacts/11111111-1111-4111-8111-111111111111/edits", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ anchor: "/summary", prev_value: "wrong", new_value: "after", author: "operator" }) });
-  expect(response.status).toBe(409);
-  expect(subject.published()).toBeNull();
 });

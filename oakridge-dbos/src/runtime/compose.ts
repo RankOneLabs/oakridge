@@ -176,7 +176,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const collaborationPolicy = (artifactType: string) => {
     const definition = findArtifactType(artifactType);
     return definition ? { commentable: definition.capabilities.commentable, review_items: definition.capabilities.review_items,
-      atom_editable: definition.capabilities.atom_editable, anchor_schema: definition.anchor_schema } : null;
+      atom_editable: definition.capabilities.atom_editable } : null;
   };
 
   const app = createApp({
@@ -191,7 +191,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     handoff_complete: { records: runRecords, now, send_run_wake: sendRunWakeHint },
     cohort_pull_requests: cohortPullRequests,
     collaboration: { artifacts, collaboration, policy_for_artifact_type: collaborationPolicy, records: runRecords,
-      send_run_wake: sendRunWakeHint, ping_thread: (input) => collaborationPings.enqueue(input) },
+      ping_thread: (input) => collaborationPings.enqueue(input) },
     operator_projections: projections,
     artifact_detail: { artifacts, stages, audits, presentation_for_type: presentation, artifact_types: DEV_FLOW_ARTIFACT_TYPES },
     run_launch: { definitions, projects, runs, projections, start_run: (request) => dbosRuns.start_v2_run(request), application_version: config.application_version, now },
