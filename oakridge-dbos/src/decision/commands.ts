@@ -33,6 +33,8 @@ export type Command =
       readonly input_snapshot: readonly ArtifactEnvelope[];
       readonly input_fingerprint: InputFingerprint;
       readonly outputs: readonly MaterializedRunOutput[];
+      /** Part of the stage's stored materialization fingerprint; `apply` needs it to persist the unit. */
+      readonly policy: StagePolicy;
     }
   | {
       readonly kind: "revise_unit";
@@ -45,7 +47,7 @@ export type Command =
       readonly input_snapshot: readonly ArtifactEnvelope[];
       readonly input_fingerprint: InputFingerprint;
     }
-  | { readonly kind: "close_materialization"; readonly stage_key: StageKey; readonly stage_instance_id: StageInstanceId }
+  | { readonly kind: "close_materialization"; readonly stage_key: StageKey; readonly stage_instance_id: StageInstanceId; readonly policy: StagePolicy }
   | { readonly kind: "mark_unit_satisfied"; readonly run_unit_id: RunUnitId }
   | { readonly kind: "start_work"; readonly work_order_id: WorkOrderId; readonly run_unit_id: RunUnitId }
   | { readonly kind: "mark_stage_succeeded"; readonly stage_instance_id: StageInstanceId }

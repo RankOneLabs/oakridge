@@ -36,7 +36,7 @@ test("case 1: an open collection materializes a unit whose dependency has no row
   expect(result.value.commands).toEqual([
     { kind: "materialize_unit", stage_key: "build", stage_instance_id: snap.stages[0]!.id, run_unit_id: runUnitIdForTest("build", "rollout"),
       unit_id: "rollout" as UnitId, parameters: expect.anything(), depends_on: ["versioning" as UnitId], inputs: expect.anything(),
-      input_snapshot: expect.anything(), input_fingerprint: expect.anything(), outputs: expect.anything() },
+      input_snapshot: expect.anything(), input_fingerprint: expect.anything(), outputs: expect.anything(), policy: expect.anything() },
   ]);
   expect(result.value.commands.some((command) => command.kind === "start_work")).toBe(false);
 });

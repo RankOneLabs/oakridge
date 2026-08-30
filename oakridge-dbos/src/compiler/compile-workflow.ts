@@ -65,7 +65,7 @@ const materialization = (config: DelegatedSessionDefinitionConfig): Materializat
   return { kind: "scalar" };
 };
 
-export const delegatedSessionStageTypeCompiler: StageTypeCompiler = {
+const delegatedSessionStageTypeCompiler: StageTypeCompiler = {
   compile(stageKey, rawConfig) {
   const parsed = delegatedSessionDefinitionSchema.safeParse(rawConfig);
   if (!parsed.success) return err({ operation: "compile_workflow", stage_key: stageKey, detail: parsed.error.message });
@@ -85,7 +85,7 @@ export const delegatedSessionStageTypeCompiler: StageTypeCompiler = {
  * fixed by `RunContextRepository` rather than configurable, because the key is
  * what every downstream lookup already matches on.
  */
-export const repositoryProvisioningStageTypeCompiler: StageTypeCompiler = {
+const repositoryProvisioningStageTypeCompiler: StageTypeCompiler = {
   compile(stageKey, rawConfig) {
     const parsed = repositoryProvisioningDefinitionSchema.safeParse(rawConfig);
     if (!parsed.success) return err({ operation: "compile_workflow", stage_key: stageKey, detail: parsed.error.message });
@@ -104,7 +104,7 @@ export const repositoryProvisioningStageTypeCompiler: StageTypeCompiler = {
 
 export type StageTypeCompilerRegistry = Readonly<Record<string, StageTypeCompiler>>;
 
-export const builtInStageTypeCompilers: StageTypeCompilerRegistry = {
+const builtInStageTypeCompilers: StageTypeCompilerRegistry = {
   delegated_session: delegatedSessionStageTypeCompiler,
   [PROVISION_REPOSITORY_REFS_STAGE_TYPE]: repositoryProvisioningStageTypeCompiler,
 };

@@ -21,7 +21,7 @@ import {
 } from "../domain/cohort-pull-request";
 import type { BuildResultBody, PrSummaryBody } from "../domain/dev-flow-artifacts";
 import type { EpicWorkflowProfile } from "../domain/epic";
-import { err, ok, type ArtifactId, type JsonValue, type Result, type StageInstanceId, type UnitId } from "../domain/primitives";
+import { err, ok, type ArtifactId, type JsonValue, type Result, type StageInstanceId, type UnitId, type WorkflowRunId } from "../domain/primitives";
 import type { PullRequestObservation } from "../domain/pull-request";
 import type { CohortPullRequestRepository, EpicWorkflowProfileRepository, RunRecordRepository, WorkflowRunRepository } from "../storage/repositories";
 
@@ -33,6 +33,8 @@ export interface CohortPullRequestDependencies {
   readonly reconciliations: CohortPullRequestRepository;
   readonly records: Pick<RunRecordRepository, "find_cohort_handoff" | "complete_handoff_artifact">;
   readonly now: () => string;
+  /** Wakes the run's root sooner than its bounded recheck once a merge releases the handoff — a hint, never a decision. */
+  readonly send_run_wake?: (run_id: WorkflowRunId, idempotency_key: string) => Promise<void>;
 }
 
 /** How the evidence arrived. Both kinds are reconciled identically. */
@@ -181,5 +183,6 @@ export const reconcileCohortEvidence = async (
   }
   const completed = withCompletion(reconciled.reconciliation, now);
   await dependencies.reconciliations.upsert(completed);
+  await dependencies.send_run_wake?.(completion.run_id, `${completion.kind}:${completion.run_id}:${completion.record_version}`).catch(() => undefined);
   return ok({ resolution: { kind: "completed" }, reconciliation: completed });
 };

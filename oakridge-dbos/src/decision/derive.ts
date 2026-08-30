@@ -247,10 +247,10 @@ const findCycle = (nodes: readonly CycleNode[]): readonly UnitId[] | null => {
   return null;
 };
 
-const materializeUnitCommand = (run_id: WorkflowRunId, stage_key: StageKey, stage_instance_id: StageInstanceId, unit: MintedUnit): Command => ({
+const materializeUnitCommand = (run_id: WorkflowRunId, stage_key: StageKey, stage_instance_id: StageInstanceId, unit: MintedUnit, policy: StagePolicy): Command => ({
   kind: "materialize_unit", stage_key, stage_instance_id, run_unit_id: runUnitIdFor(run_id, stage_key, unit.unit_id), unit_id: unit.unit_id,
   parameters: unit.parameters, depends_on: unit.depends_on, inputs: unit.inputs, input_snapshot: unit.input_snapshot,
-  input_fingerprint: unit.input_fingerprint, outputs: unit.outputs,
+  input_fingerprint: unit.input_fingerprint, outputs: unit.outputs, policy,
 });
 
 const reviseUnitCommand = (stage_key: StageKey, stage_instance_id: StageInstanceId, existing: UnitSnapshot, unit: MintedUnit): Command => ({
@@ -286,7 +286,7 @@ export const derive = (snapshot: RunSnapshot): Result<Derivation, Contradiction>
       commands.push({ kind: "materialize_stage", stage_key, stage_instance_id, policy: policyOf(contract) });
       const minted = mintUnits(contract, inputs, snapshot.run.context);
       if (!minted.ok) return minted;
-      for (const unit of minted.value) commands.push(materializeUnitCommand(run_id, stage_key, stage_instance_id, unit));
+      for (const unit of minted.value) commands.push(materializeUnitCommand(run_id, stage_key, stage_instance_id, unit, policyOf(contract)));
       continue; // close / satisfy / start / succeed come on the next ask (recheck contract)
     }
 
@@ -304,7 +304,7 @@ export const derive = (snapshot: RunSnapshot): Result<Derivation, Contradiction>
       if (existing) {
         if (existing.input_fingerprint !== unit.input_fingerprint) { commands.push(reviseUnitCommand(stage_key, stage_instance_id, existing, unit)); revisedStageIds.add(stage_instance_id); }
       }
-      else if (!stored.materialization_closed) { commands.push(materializeUnitCommand(run_id, stage_key, stage_instance_id, unit)); added = true; }
+      else if (!stored.materialization_closed) { commands.push(materializeUnitCommand(run_id, stage_key, stage_instance_id, unit, policyOf(contract))); added = true; }
     }
     if (stored.materialization_closed) continue;
 
@@ -319,7 +319,7 @@ export const derive = (snapshot: RunSnapshot): Result<Derivation, Contradiction>
           if (!stored.units.some((candidate) => candidate.unit_id === dependency)) return err({ kind: "unknown_dependency_at_close", stage_key, unit_id: unit.unit_id, dependency });
         }
       }
-      commands.push({ kind: "close_materialization", stage_key, stage_instance_id });
+      commands.push({ kind: "close_materialization", stage_key, stage_instance_id, policy: policyOf(contract) });
     }
   }
 

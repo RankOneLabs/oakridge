@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { builtInStageTypeCompilers, compileWorkflowDefinition, type StageTypeCompiler } from "../src/compiler/compile-workflow";
+import { compileWorkflowDefinition, type StageTypeCompiler } from "../src/compiler/compile-workflow";
 import { ok } from "../src/domain/primitives";
 import { loadDevFlowV14 } from "../src/seed/dev-flow-v14";
 
@@ -77,7 +77,7 @@ test("accepts a non-session executor through the stage-type compiler registry", 
       edges: [],
     },
   };
-  const compiled = compileWorkflowDefinition(definition, { ...builtInStageTypeCompilers, headless_agent: headlessCompiler });
+  const compiled = compileWorkflowDefinition(definition, { headless_agent: headlessCompiler });
   expect(compiled.ok).toBe(true);
   if (compiled.ok) expect(compiled.value.stages.only?.executor.executor_type).toBe("headless_agent");
 });

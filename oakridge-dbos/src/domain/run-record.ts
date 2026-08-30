@@ -1,4 +1,3 @@
-import type { ArtifactRevision } from "./artifacts";
 import type { OutputReleaseContract } from "./compiled-workflow";
 import type { ArtifactEnvelope, ExecutorTerminalObservation, ExternalExecutionReference } from "./execution";
 import type {
@@ -17,7 +16,6 @@ import type {
   WorkflowRunId,
   WorkOrderId,
 } from "./primitives";
-import type { Wait } from "./wait";
 import type { ArtifactTypeId, StageKey, StageOutcome } from "./workflow";
 
 export type RunState = "active" | "succeeded" | "failed" | "cancelled";
@@ -230,40 +228,6 @@ export interface WorkOrderExecution {
   readonly request: import("./execution").ExecutionRequest;
 }
 
-/** The persisted facts the compiler asks when reconciling a run's materialized graph. */
-export interface RunMaterializationUnitRecord {
-  readonly id: RunUnitId;
-  readonly unit_id: UnitId;
-  readonly input_fingerprint: InputFingerprint;
-  readonly state: UnitState;
-}
-
-export interface RunMaterializationStageRecord {
-  readonly id: StageInstanceId;
-  readonly stage_key: StageKey;
-  readonly state: RunState;
-  readonly materialization_closed: boolean;
-  readonly units: readonly RunMaterializationUnitRecord[];
-}
-
-export interface RunMaterializationArtifact extends ArtifactEnvelope {
-  readonly producer_stage_key: StageKey;
-}
-
-export interface RunMaterializationRecord {
-  readonly run: WorkflowRun;
-  readonly stages: readonly RunMaterializationStageRecord[];
-  /** Released slots, plus pending handoffs whose policy makes them available downstream before external settlement. */
-  readonly available_artifacts: readonly RunMaterializationArtifact[];
-}
-
-export interface FailRunMaterialization {
-  readonly run_id: WorkflowRunId;
-  readonly stage_key: StageKey | null;
-  readonly detail: string;
-  readonly failed_at: string;
-}
-
 export interface CancelRunRecord {
   readonly run_id: WorkflowRunId;
   readonly actor: string;
@@ -376,45 +340,6 @@ export interface RunTransition {
   readonly detail: JsonValue;
   readonly created_at: string;
 }
-
-export interface UnitOutcomeRecord {
-  readonly unit: RunUnit;
-  readonly required_slots: readonly RunOutputSlot[];
-  readonly open_waits: readonly Wait[];
-  readonly work_orders: readonly WorkOrder[];
-  readonly artifacts: readonly ArtifactRevision[];
-}
-
-export type UnitDecision =
-  | { readonly kind: "satisfied"; readonly artifacts: readonly ArtifactRevision[] }
-  | { readonly kind: "waiting"; readonly waits: readonly Wait[] }
-  | { readonly kind: "work_available"; readonly work_order: WorkOrder }
-  | { readonly kind: "work_in_progress"; readonly work_order: WorkOrder }
-  | { readonly kind: "needs_work"; readonly missing_slots: readonly Pick<RunOutputSlot, "run_unit_id" | "output_name">[] }
-  | { readonly kind: "failed"; readonly outcome: Extract<StageOutcome, { readonly kind: "failed" }> }
-  | { readonly kind: "cancelled"; readonly outcome: Extract<StageOutcome, { readonly kind: "cancelled" }> };
-
-export interface StageDecisionRecord {
-  readonly stage: RunStage;
-  readonly units: readonly UnitDecision[];
-}
-
-export type StageDecision =
-  | { readonly kind: "start_work"; readonly work_orders: readonly WorkOrder[] }
-  | { readonly kind: "waiting" }
-  | { readonly kind: "succeeded" }
-  | { readonly kind: "failed"; readonly outcome: Extract<StageOutcome, { readonly kind: "failed" }> }
-  | { readonly kind: "cancelled"; readonly outcome: Extract<StageOutcome, { readonly kind: "cancelled" }> };
-
-export interface RunDecisionRecord {
-  readonly run: WorkflowRun;
-  readonly stages: readonly StageDecision[];
-}
-
-export type RunDecision =
-  | { readonly kind: "start_work"; readonly work_orders: readonly WorkOrder[]; readonly record_version: RunRecordVersion }
-  | { readonly kind: "wait"; readonly record_version: RunRecordVersion }
-  | { readonly kind: "complete"; readonly outcome: StageOutcome };
 
 export const executorHealthFromTerminal = (observation: ExecutorTerminalObservation, observed_at: string): ExecutorHealthObservation => {
   if (observation.kind === "succeeded") return { kind: "ended_succeeded", metadata: observation.metadata, observed_at };

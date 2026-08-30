@@ -50,14 +50,16 @@ const countBuildOrdersInState = async (runId: WorkflowRunId, state: string): Pro
   return Number(rows[0]?.count ?? 0);
 };
 
-const buildOrderState = async (runId: WorkflowRunId, unitId: string): Promise<string | null> => {
-  const rows = await sql.query<{ readonly state: string }>(
-    `SELECT work.state FROM oakridge.work_order work
-     JOIN oakridge.run_unit unit ON unit.id = work.run_unit_id
+/** The record version at which one unit's transition of `operation` was committed — the run's own, race-free clock. */
+const transitionVersion = async (runId: WorkflowRunId, operation: string, stageKey: string, unitId: string): Promise<number> => {
+  const rows = await sql.query<{ readonly version: string }>(
+    `SELECT transition.resulting_record_version::text AS version FROM oakridge.run_transition transition
+     JOIN oakridge.run_unit unit ON unit.id = transition.run_unit_id
      JOIN oakridge.stage_instance stage ON stage.id = unit.stage_instance_id
-     WHERE stage.run_id = $1 AND stage.stage_key = 'build' AND unit.unit_id = $2
-     ORDER BY work.created_at DESC LIMIT 1`, [runId, unitId]);
-  return rows[0]?.state ?? null;
+     WHERE transition.run_id = $1 AND transition.operation = $2 AND stage.stage_key = $3 AND unit.unit_id = $4
+     ORDER BY transition.resulting_record_version LIMIT 1`, [runId, operation, stageKey, unitId]);
+  if (!rows[0]) throw new Error(`no '${operation}' transition for ${stageKey}/${unitId} on run ${runId}`);
+  return Number(rows[0].version);
 };
 
 const workflowRunState = async (runId: WorkflowRunId): Promise<string> => {
@@ -159,21 +161,22 @@ e2e("scenario 1: approving a dependent brief first does not fail the run", async
     await assertQuietAsk(sql, launched.run_id);
 
     // Phase C — approve the dependency; the dependent brief's build starts
-    // only once it is satisfied.
+    // only once it is satisfied. `driveRun` drives every launched execution
+    // to completion (rollout's build included, then its assessment and merge),
+    // so the quiescent point to wait for is rollout *satisfied* — and the
+    // ordering claim is read from the transition log, which cannot race.
     approvedBriefs.add("versioning");
     await driveRun(oakridge.base_url, agent, launched, {
       decide,
-      until: async (): Promise<boolean | null> => (await buildUnitState(launched.run_id, "versioning")) === "satisfied" ? true : null,
+      until: async (): Promise<boolean | null> => (await buildUnitState(launched.run_id, "rollout")) === "satisfied" ? true : null,
       timeout_ms: 120_000,
     });
-    await driveRun(oakridge.base_url, agent, launched, {
-      decide,
-      until: async (): Promise<boolean | null> => (await buildOrderState(launched.run_id, "rollout")) === "started" ? true : null,
-      timeout_ms: 30_000,
-    });
 
-    expect(await buildOrderState(launched.run_id, "rollout")).toBe("started");
     expect(await buildUnitState(launched.run_id, "versioning")).toBe("satisfied");
+    expect(await buildUnitState(launched.run_id, "rollout")).toBe("satisfied");
+    const versioningSatisfiedAt = await transitionVersion(launched.run_id, "unit_satisfied", "build", "versioning");
+    const rolloutStartedAt = await transitionVersion(launched.run_id, "work_started", "build", "rollout");
+    expect(rolloutStartedAt).toBeGreaterThan(versioningSatisfiedAt);
     expect(await workflowRunState(launched.run_id)).toBe("active");
     const briefGatesAfterC = (await listRunGates(oakridge.base_url, launched.run_id)).filter((gate) => gate.stage_name === "brief_writer");
     expect(briefGatesAfterC).toHaveLength(5);

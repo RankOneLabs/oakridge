@@ -331,12 +331,41 @@ export const readRunRecordFingerprint = async (sql: SqlExecutor, runId: Workflow
  * to prove that answer wasn't itself a change — and asserts the fingerprint
  * taken before either ask still matches the one taken after both.
  */
+/** How long the record must sit unchanged before the root is taken to be parked: several asks' worth, well under the 5 s recheck. */
+const QUIET_SETTLE_MS = 1_500;
+
+/**
+ * Waits for the root's own cascade to finish. A drive pass returns as soon as
+ * its `until` holds, but the consequences of that pass's last emission or
+ * decision may still be in flight through the root (a wake, an ask, a
+ * `recheck`, another ask); the quiet point is when the record has stopped
+ * moving on its own.
+ */
+const awaitSettledRecord = async (sql: SqlExecutor, runId: WorkflowRunId): Promise<RunRecordFingerprint> => {
+  let last = await readRunRecordFingerprint(sql, runId);
+  let stableSince = Date.now();
+  const deadline = Date.now() + 20_000;
+  for (;;) {
+    await Bun.sleep(100);
+    const next = await readRunRecordFingerprint(sql, runId);
+    if (next.record_version !== last.record_version || next.transition_count !== last.transition_count) { last = next; stableSince = Date.now(); }
+    else if (Date.now() - stableSince >= QUIET_SETTLE_MS) return last;
+    if (Date.now() > deadline) throw new Error(`run ${runId}'s record never settled: still moving at ${JSON.stringify(next)}`);
+  }
+};
+
 export const assertQuietAsk = async (sql: TransactionalSqlExecutor, runId: WorkflowRunId): Promise<void> => {
-  const before = await readRunRecordFingerprint(sql, runId);
+  const before = await awaitSettledRecord(sql, runId);
   const repository = new PostgresRunRecordRepository(sql);
-  await repository.decide_run(runId, new Date().toISOString());
-  await repository.decide_run(runId, new Date().toISOString());
+  const first = await repository.decide_run(runId, new Date().toISOString());
+  const second = await repository.decide_run(runId, new Date().toISOString());
   const after = await readRunRecordFingerprint(sql, runId);
+  // A `recheck` here means the record was not quiescent when the scenario said
+  // it was — and a test-side ask that starts work orphans it (nothing launches
+  // its workflow), so this fails loudly instead of letting the scenario hang.
+  for (const ask of [first, second]) {
+    if (!ask.ok || ask.value.kind !== "wait") throw new Error(`quiet ask on run ${runId} was not quiet: ${JSON.stringify(ask)} (before ${JSON.stringify(before)}, after ${JSON.stringify(after)})`);
+  }
   expect(after.record_version).toBe(before.record_version);
   expect(after.transition_count).toBe(before.transition_count);
 };
