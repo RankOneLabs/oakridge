@@ -1,33 +1,18 @@
-import type { ArtifactId, StageInstanceId, UnitId, WorkflowRunId } from "../domain/primitives";
-import type { ArtifactCoordinate, ArtifactEmission, ArtifactEmissionDelivery, ArtifactLifecycleNotification, ArtifactRevision, EmitArtifactRevisionResult, PendingArtifactNotification, ReleaseArtifactResult, WithdrawArtifactRequest, WithdrawArtifactResult } from "../domain/artifacts";
+import type { ArtifactId, StageInstanceId, WorkflowRunId } from "../domain/primitives";
+import type { ArtifactCoordinate, ArtifactRevision } from "../domain/artifacts";
 import type { StageInstance, StageOutcome } from "../domain/workflow";
 import type {
   ArtifactRevisionRepository,
-  ExecutionArtifactContextRepository,
-  ExecutionArtifactContext,
-  ExecutionProjectionRepository,
-  StageAdmissionTargetRepository,
   StageInstanceRepository,
-  StartStageInstance,
   WorkflowRunLaunch,
   WorkflowRunRepository,
   WorkflowRunRecord,
-  WorkflowAttempt,
-  WorkflowAttemptRepository,
-  RerunTargetRepository,
-  ResumeArtifactRepository,
-  CancellationTargetRepository,
-  SessionHoldRepository,
 } from "./repositories";
-import { err, ok, type ExecutionId, type JsonValue } from "../domain/primitives";
-import type { ExecutionRequest, ExecutorTerminalObservation, ExternalExecutionReference } from "../domain/execution";
+import { err, ok, type JsonValue } from "../domain/primitives";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
-import { releaseStateForArtifact } from "../contracts/evaluate-artifacts";
-import type { CancellationExecutionTarget, CancellationWaitTarget, UnitRerunTarget } from "../domain/rerun";
 import type { CreateWorkflowRunResult, DeleteRunResult, PendingRunLaunch, PersistWorkflowRunLaunch, RunLaunchCommand, SetRunArchiveResult, WorkflowRunLaunchRecord, WorkflowRunListFilter } from "../domain/runs";
 import type { EpicWorkflowProfile } from "../domain/epic";
 import { isRunContext } from "../domain/run-context";
-import { selectSessionHoldClaim, type SessionHold } from "../domain/session-hold";
 
 interface StageRow {
   readonly id: string;
@@ -44,10 +29,7 @@ interface OutboxEnvelope {
   readonly target_workflow_id: string;
   readonly created_at: string;
 }
-type OutboxCommand = OutboxEnvelope & (
-  | { readonly command_type: "run_launch"; readonly payload: RunLaunchCommand }
-  | { readonly command_type: "artifact_notification"; readonly payload: ArtifactLifecycleNotification }
-);
+type OutboxCommand = OutboxEnvelope & { readonly command_type: "run_launch"; readonly payload: RunLaunchCommand };
 
 /**
  * Enqueue a command exactly once per idempotency key.
@@ -56,6 +38,9 @@ type OutboxCommand = OutboxEnvelope & (
  * `ON CONFLICT DO NOTHING` and the run-launch copy did not, so a duplicate
  * launch enqueue raised a unique violation and failed the whole transaction
  * where it should have replayed as a no-op. One statement, one behaviour.
+ * (The notification copy is gone with PR 2's legacy artifact-notification
+ * outbox; the shape stays generic on `command_type` because
+ * `oakridge.command_outbox` still carries that column.)
  */
 const enqueueCommand = async (transaction: SqlExecutor, command: OutboxCommand): Promise<void> => {
   await transaction.query(
@@ -345,80 +330,15 @@ export class PostgresWorkflowRunRepository implements WorkflowRunRepository {
   }
 }
 
-export class PostgresWorkflowAttemptRepository implements WorkflowAttemptRepository {
-  constructor(private readonly sql: SqlExecutor) {}
-
-  async insert(attempt: WorkflowAttempt): Promise<void> {
-    await this.sql.query(
-      `INSERT INTO oakridge.workflow_attempt
-         (root_workflow_id, run_id, forked_from_root_workflow_id, created_at)
-       VALUES ($1, $2, $3, $4::timestamptz)
-       ON CONFLICT (root_workflow_id) DO NOTHING`,
-      [attempt.root_workflow_id, attempt.run_id, attempt.forked_from_root_workflow_id, attempt.created_at],
-    );
-  }
-
-  async find_by_root_workflow_id(root_workflow_id: string): Promise<WorkflowAttempt | null> {
-    const rows = await this.sql.query<WorkflowAttempt>(
-      `SELECT root_workflow_id, run_id::text AS run_id,
-              forked_from_root_workflow_id, created_at::text
-       FROM oakridge.workflow_attempt WHERE root_workflow_id = $1`,
-      [root_workflow_id],
-    );
-    return rows[0] ?? null;
-  }
-
-  async list_for_run(run_id: WorkflowRunId): Promise<readonly WorkflowAttempt[]> {
-    return this.sql.query<WorkflowAttempt>(
-      `SELECT root_workflow_id, run_id::text AS run_id,
-              forked_from_root_workflow_id, created_at::text
-       FROM oakridge.workflow_attempt WHERE run_id = $1 ORDER BY created_at`,
-      [run_id],
-    );
-  }
-
-  /**
-   * Record an attempt's terminal outcome. Idempotent by design: the run
-   * workflow's finishing step is replayable, and a recovered workflow must be
-   * able to write the same outcome again without raising.
-   */
-  async finish(root_workflow_id: string, ended_at: string, outcome: StageOutcome): Promise<void> {
-    await this.sql.query(
-      `UPDATE oakridge.workflow_attempt
-       SET ended_at = $2::timestamptz, outcome = $3::jsonb
-       WHERE root_workflow_id = $1 AND ended_at IS NULL`,
-      [root_workflow_id, ended_at, outcome],
-    );
-  }
-}
-
+/**
+ * The read model over `stage_instance` domain-reads and artifact-detail use.
+ * v1 also wrote and closed rows here through `start`/`finish`; both had no
+ * `src/` caller left once the legacy execution stack that called them was
+ * deleted (spec §2.5(3): the table is shared, but `find_by_id` is the only
+ * v2 read of it).
+ */
 export class PostgresStageInstanceRepository implements StageInstanceRepository {
   constructor(private readonly sql: SqlExecutor) {}
-
-  async start(input: StartStageInstance): Promise<StageInstance> {
-    const rows = await this.sql.query<StageRow>(
-      `INSERT INTO oakridge.stage_instance
-         (id, run_id, stage_key, stage_type, stage_contract, attempt_root_workflow_id, coordinator_workflow_id, started_at)
-       VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::timestamptz)
-       ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
-       RETURNING id, run_id, stage_key, stage_type, started_at::text, ended_at::text, outcome`,
-      [input.id, input.run_id, input.stage_key, input.stage_type, input.stage_contract, input.attempt_root_workflow_id, input.coordinator_workflow_id, input.started_at],
-    );
-    if (!rows[0]) throw new Error(`stage instance ${input.id} was not returned`);
-    return decodeStage(rows[0]);
-  }
-
-  async finish(id: StageInstanceId, ended_at: string, outcome: StageOutcome): Promise<StageInstance> {
-    const rows = await this.sql.query<StageRow>(
-      `UPDATE oakridge.stage_instance
-       SET ended_at = $2::timestamptz, outcome = $3::jsonb
-       WHERE id = $1 AND (ended_at IS NULL OR (ended_at = $2::timestamptz AND outcome = $3::jsonb))
-       RETURNING id, run_id, stage_key, stage_type, started_at::text, ended_at::text, outcome`,
-      [id, ended_at, outcome],
-    );
-    if (!rows[0]) throw new Error(`stage instance ${id} is missing or already finished with another outcome`);
-    return decodeStage(rows[0]);
-  }
 
   async find_by_id(id: StageInstanceId): Promise<StageInstance | null> {
     const rows = await this.sql.query<StageRow>(
@@ -426,18 +346,6 @@ export class PostgresStageInstanceRepository implements StageInstanceRepository 
       [id],
     );
     return rows[0] ? decodeStage(rows[0]) : null;
-  }
-}
-
-export class PostgresStageAdmissionTargetRepository implements StageAdmissionTargetRepository {
-  constructor(private readonly sql: SqlExecutor) {}
-
-  async find_coordinator_workflow_id(stage_instance_id: StageInstanceId): Promise<string | null> {
-    const rows = await this.sql.query<{ readonly coordinator_workflow_id: string }>(
-      "SELECT coordinator_workflow_id FROM oakridge.stage_instance WHERE id = $1",
-      [stage_instance_id],
-    );
-    return rows[0]?.coordinator_workflow_id ?? null;
   }
 }
 
@@ -505,156 +413,6 @@ const decodeArtifact = (row: ArtifactRow): ArtifactRevision => ({
 export class PostgresArtifactRevisionRepository implements ArtifactRevisionRepository {
   constructor(private readonly sql: TransactionalSqlExecutor) {}
 
-  async emit_revision(id: ArtifactId, emission: ArtifactEmission, created_at: string, delivery: ArtifactEmissionDelivery): Promise<EmitArtifactRevisionResult> {
-    return this.sql.transaction(async (transaction) => {
-      const resourceKey = `${emission.stage_instance_id}:${emission.execution_id}:${emission.unit_id}:${emission.output_name}:${emission.collection_key ?? "scalar"}`;
-      await transaction.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [resourceKey]);
-      const stages = await transaction.query<{ readonly ended_at: string | null }>(
-        "SELECT ended_at::text FROM oakridge.stage_instance WHERE id = $1 FOR SHARE", [emission.stage_instance_id]);
-      if (!stages[0] || stages[0].ended_at !== null) return err({ operation: "emit_artifact_revision", kind: "execution_closed", artifact_id: id, detail: "stage execution is closed" });
-      const replayRows = await transaction.query<ArtifactRow>(
-        `SELECT ${artifactColumns} FROM oakridge.artifact artifact
-         WHERE artifact.id = (
-           SELECT replay.artifact_id FROM oakridge.artifact_emission_idempotency replay
-           WHERE replay.stage_instance_id = $1 AND replay.execution_id = $2 AND replay.unit_id = $3
-             AND replay.output_name = $4 AND replay.collection_key IS NOT DISTINCT FROM $5
-             AND replay.idempotency_key = $6
-         )`,
-        [emission.stage_instance_id, emission.execution_id, emission.unit_id, emission.output_name, emission.collection_key ?? null, emission.idempotency_key],
-      );
-      const replay = replayRows[0];
-      if (replay) {
-        if (replay.emission_payload_hash !== emission.payload_hash) return err({ operation: "emit_artifact_revision", kind: "idempotency_conflict", artifact_id: replay.id as ArtifactId, detail: "artifact idempotency key was reused with a different payload" });
-        return ok({ kind: "unchanged", artifact: decodeArtifact(replay), superseded_artifact_id: replay.parent_artifact_id as ArtifactId | null });
-      }
-      const effectiveRows = await transaction.query<ArtifactRow>(
-        `SELECT ${artifactColumns} FROM oakridge.artifact artifact
-         WHERE stage_instance_id = $1 AND execution_id = $2 AND unit_id = $3 AND output_name = $4
-           AND collection_key IS NOT DISTINCT FROM $5
-           AND lifecycle_state IN ('current', 'released')`,
-        artifactCoordinateParameters(emission),
-      );
-      const effective = effectiveRows[0];
-      // A released artifact is final for the attempt that released it. A later
-      // attempt of the same execution — a unit relaunched onto a revised input —
-      // is deriving the output again, and its emission supersedes what the
-      // earlier attempt released. Rows written before attempts were recorded
-      // carry none and keep the stricter rule.
-      const isLaterAttempt = effective?.lifecycle_state === "released" && effective.attempt_workflow_id !== null && effective.attempt_workflow_id !== delivery.target_workflow_id;
-      if (effective?.lifecycle_state === "released" && !isLaterAttempt) return err({ operation: "emit_artifact_revision", kind: "release_conflict", artifact_id: effective.id as ArtifactId, detail: "released artifact cannot be revised; rerun the execution" });
-      const tips = await transaction.query<ArtifactRow>(
-        `SELECT ${artifactColumns} FROM oakridge.artifact artifact
-         WHERE stage_instance_id = $1 AND execution_id = $2 AND unit_id = $3 AND output_name = $4
-           AND collection_key IS NOT DISTINCT FROM $5
-         ORDER BY version DESC LIMIT 1`,
-        artifactCoordinateParameters(emission),
-      );
-      const tip = tips[0];
-      if (effective && tip?.id !== effective.id) {
-        return err({ operation: "emit_artifact_revision", kind: "invariant_conflict", artifact_id: effective.id as ArtifactId, detail: "effective artifact is not the latest chain revision" });
-      }
-      if (effective?.lifecycle_state === "current" && effective.emission_payload_hash === emission.payload_hash) {
-        await this.recordEmissionKey(transaction, emission, effective.id as ArtifactId, created_at);
-        return ok({ kind: "unchanged", artifact: decodeArtifact(effective), superseded_artifact_id: effective.parent_artifact_id as ArtifactId | null });
-      }
-      const version = (tip?.version ?? 0) + 1;
-      const rows = await transaction.query<ArtifactRow>(
-        `INSERT INTO oakridge.artifact
-           (id, chain_id, run_id, stage_instance_id, execution_id, unit_id, output_name, collection_key, artifact_type,
-            body, label, version, parent_artifact_id, emission_idempotency_key, emission_payload_hash, created_at, attempt_workflow_id)
-         VALUES ($1, $16, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15::timestamptz, $17)
-         RETURNING ${artifactColumns}`,
-        // A first revision roots its own chain; every later one inherits the root
-        // its parent already carries, so the walk never has to be repeated.
-        [id, emission.run_id, emission.stage_instance_id, emission.execution_id, emission.unit_id, emission.output_name, emission.collection_key ?? null, emission.artifact_type, emission.body, emission.label, version, tip?.id ?? null, emission.idempotency_key, emission.payload_hash, created_at, tip?.chain_id ?? id, delivery.target_workflow_id],
-      );
-      if (!rows[0]) throw new Error("artifact revision insert returned no row");
-      await this.recordEmissionKey(transaction, emission, id, created_at);
-      const superseded = effective !== undefined && (effective.lifecycle_state === "current" || isLaterAttempt) ? effective : null;
-      if (superseded) {
-        await transaction.query(
-          `UPDATE oakridge.artifact
-           SET lifecycle_state = 'superseded', superseded_by_artifact_id = $2, superseded_at = $3::timestamptz,
-               lifecycle_updated_at = $3::timestamptz
-           WHERE id = $1 AND lifecycle_state IN ('current', 'released')`,
-          [superseded.id, id, created_at],
-        );
-      }
-      const artifact = decodeArtifact(rows[0]);
-      const supersededArtifactId = superseded ? superseded.id as ArtifactId : null;
-      const release = releaseStateForArtifact(artifact, delivery.release);
-      const notification: ArtifactLifecycleNotification = supersededArtifactId
-        ? { kind: "artifact_replaced", invalidated_artifact_id: supersededArtifactId, release }
-        : { kind: "artifact_emitted", release };
-      const notificationKey = supersededArtifactId
-        ? `artifact:${supersededArtifactId}:replaced-by:${artifact.id}`
-        : `artifact:${artifact.id}:${release.kind}`;
-      await this.enqueueNotification(transaction, delivery.target_workflow_id, notification, notificationKey, created_at);
-      return ok({ kind: "emitted", artifact, superseded_artifact_id: supersededArtifactId });
-    });
-  }
-
-  async withdraw(request: WithdrawArtifactRequest): Promise<WithdrawArtifactResult> {
-    return this.sql.transaction(async (transaction) => {
-      const rows = await transaction.query<ArtifactRow>(`SELECT ${artifactColumns} FROM oakridge.artifact artifact WHERE id = $1`, [request.artifact_id]);
-      const found = rows[0];
-      if (!found) return { kind: "not_found", artifact_id: request.artifact_id };
-      const resourceKey = `${found.stage_instance_id}:${found.execution_id}:${found.unit_id}:${found.output_name}:${found.collection_key ?? "scalar"}`;
-      await transaction.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [resourceKey]);
-      const lockedRows = await transaction.query<ArtifactRow>(`SELECT ${artifactColumns} FROM oakridge.artifact artifact WHERE id = $1 FOR UPDATE`, [request.artifact_id]);
-      const artifact = lockedRows[0];
-      if (!artifact) return { kind: "not_found", artifact_id: request.artifact_id };
-      if (artifact.lifecycle_state === "withdrawn") return { kind: "already_withdrawn", artifact: decodeArtifact(artifact) };
-      if (artifact.lifecycle_state === "released") return { kind: "release_conflict", artifact_id: request.artifact_id, released_at: artifact.released_at! };
-      if (artifact.lifecycle_state !== "current") {
-        const current = await transaction.query<{ readonly id: string }>(
-          `SELECT id::text FROM oakridge.artifact WHERE stage_instance_id = $1 AND execution_id = $2 AND unit_id = $3 AND output_name = $4 AND collection_key IS NOT DISTINCT FROM $5 AND lifecycle_state = 'current'`,
-          [artifact.stage_instance_id, artifact.execution_id, artifact.unit_id, artifact.output_name, artifact.collection_key],
-        );
-        return { kind: "not_current", artifact_id: request.artifact_id, current_artifact_id: current[0]?.id as ArtifactId ?? null };
-      }
-      const updated = await transaction.query<ArtifactRow>(
-        `UPDATE oakridge.artifact SET lifecycle_state = 'withdrawn', withdrawn_actor = $2,
-           withdrawn_reason = $3, withdrawn_at = $4::timestamptz, lifecycle_updated_at = $4::timestamptz
-         WHERE id = $1 AND lifecycle_state = 'current' RETURNING ${artifactColumns}`,
-        [request.artifact_id, request.actor, request.reason, request.withdrawn_at],
-      );
-      if (!updated[0]) throw new Error(`artifact '${request.artifact_id}' changed during withdrawal`);
-      const withdrawn = decodeArtifact(updated[0]);
-      await this.enqueueNotification(transaction, request.target_workflow_id, {
-        kind: "artifact_invalidated", artifact_id: withdrawn.id, output_name: withdrawn.output_name,
-        reason: "withdrawn", replacement_artifact_revision_id: null,
-      }, `artifact:${withdrawn.id}:withdrawn`, request.withdrawn_at);
-      return { kind: "withdrawn", artifact: withdrawn };
-    });
-  }
-
-  async mark_released(id: ArtifactId, released_at: string): Promise<ReleaseArtifactResult> {
-    return this.sql.transaction(async (transaction) => {
-      const foundRows = await transaction.query<ArtifactRow>(`SELECT ${artifactColumns} FROM oakridge.artifact artifact WHERE id = $1`, [id]);
-      const found = foundRows[0];
-      if (!found) return { kind: "not_current", artifact_id: id };
-      const resourceKey = `${found.stage_instance_id}:${found.execution_id}:${found.unit_id}:${found.output_name}:${found.collection_key ?? "scalar"}`;
-      await transaction.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [resourceKey]);
-      const rows = await transaction.query<ArtifactRow>(`SELECT ${artifactColumns} FROM oakridge.artifact artifact WHERE id = $1 FOR UPDATE`, [id]);
-      const artifact = rows[0];
-      if (!artifact || artifact.lifecycle_state === "superseded" || artifact.lifecycle_state === "withdrawn") return { kind: "not_current", artifact_id: id };
-      if (artifact.lifecycle_state === "released") return { kind: "already_released", artifact: decodeArtifact(artifact) };
-      const updated = await transaction.query<ArtifactRow>(
-        `UPDATE oakridge.artifact SET lifecycle_state = 'released', released_at = $2::timestamptz, lifecycle_updated_at = $2::timestamptz
-         WHERE id = $1 AND lifecycle_state = 'current' RETURNING ${artifactColumns}`,
-        [id, released_at],
-      );
-      if (!updated[0]) return { kind: "not_current", artifact_id: id };
-      return { kind: "released", artifact: decodeArtifact(updated[0]) };
-    });
-  }
-
-  async find_tip(coordinate: ArtifactCoordinate): Promise<ArtifactRevision | null> {
-    const rows = await this.sql.query<ArtifactRow>(`SELECT ${artifactColumns} FROM oakridge.artifact artifact WHERE stage_instance_id = $1 AND execution_id = $2 AND unit_id = $3 AND output_name = $4 AND collection_key IS NOT DISTINCT FROM $5 ORDER BY version DESC LIMIT 1`, artifactCoordinateParameters(coordinate));
-    return rows[0] ? decodeArtifact(rows[0]) : null;
-  }
-
   async find_current(coordinate: ArtifactCoordinate): Promise<ArtifactRevision | null> {
     const rows = await this.sql.query<ArtifactRow>(`SELECT ${artifactColumns} FROM oakridge.artifact artifact WHERE stage_instance_id = $1 AND execution_id = $2 AND unit_id = $3 AND output_name = $4 AND collection_key IS NOT DISTINCT FROM $5 AND lifecycle_state = 'current'`, artifactCoordinateParameters(coordinate));
     return rows[0] ? decodeArtifact(rows[0]) : null;
@@ -681,339 +439,5 @@ export class PostgresArtifactRevisionRepository implements ArtifactRevisionRepos
        WHERE run_id = $1 AND lifecycle_state IN ('current', 'released')
        ORDER BY created_at, version`, [run_id]);
     return rows.map(decodeArtifact);
-  }
-
-  async claim_pending_notifications(workerId: string, claimedAt: string, claimedUntil: string, limit: number): Promise<readonly PendingArtifactNotification[]> {
-    return this.sql.query<PendingArtifactNotification>(
-      `WITH candidates AS (
-         SELECT candidate.id
-         FROM oakridge.command_outbox candidate
-         WHERE candidate.command_type = 'artifact_notification'
-           AND candidate.delivered_at IS NULL
-           AND candidate.next_attempt_at <= $2::timestamptz
-           AND (candidate.claimed_until IS NULL OR candidate.claimed_until <= $2::timestamptz)
-           AND NOT EXISTS (
-             SELECT 1 FROM oakridge.command_outbox earlier
-             WHERE earlier.command_type = 'artifact_notification'
-               AND earlier.target_workflow_id = candidate.target_workflow_id
-               AND earlier.delivered_at IS NULL
-               AND earlier.sequence_id < candidate.sequence_id
-           )
-         ORDER BY candidate.sequence_id
-         FOR UPDATE SKIP LOCKED
-         LIMIT $4
-       )
-       UPDATE oakridge.command_outbox notification
-       SET claimed_by = $1, claimed_until = $3::timestamptz,
-           attempt_count = notification.attempt_count + 1
-       FROM candidates
-       WHERE notification.id = candidates.id
-       RETURNING notification.id::text, notification.target_workflow_id,
-                 notification.payload AS message, notification.idempotency_key`,
-      [workerId, claimedAt, claimedUntil, limit]);
-  }
-
-  /**
-   * Drop commands that were delivered long enough ago to be of no further use.
-   *
-   * Delivered rows were never removed, so the outbox only ever grew — and the
-   * two pollers scanned it every second for the life of the deployment. The
-   * retention window is generous because these rows are the audit trail of what
-   * was dispatched; it is the unbounded growth that is the problem, not the
-   * rows themselves.
-   */
-  async purge_delivered_commands(delivered_before: string): Promise<number> {
-    const rows = await this.sql.query<{ readonly id: string }>(
-      `DELETE FROM oakridge.command_outbox
-       WHERE delivered_at IS NOT NULL AND delivered_at < $1::timestamptz
-       RETURNING id::text`, [delivered_before]);
-    return rows.length;
-  }
-
-  async mark_notification_delivered(id: string, workerId: string, delivered_at: string): Promise<void> {
-    await this.sql.query(
-      `UPDATE oakridge.command_outbox SET delivered_at = $3::timestamptz, claimed_by = NULL,
-         claimed_until = NULL, last_error = NULL
-       WHERE id = $1::uuid AND command_type = 'artifact_notification'
-         AND delivered_at IS NULL AND claimed_by = $2`, [id, workerId, delivered_at]);
-  }
-
-  async mark_notification_failed(id: string, workerId: string, error: string, nextAttemptAt: string): Promise<void> {
-    await this.sql.query(
-      `UPDATE oakridge.command_outbox SET claimed_by = NULL, claimed_until = NULL,
-         last_error = $3, next_attempt_at = $4::timestamptz
-       WHERE id = $1::uuid AND command_type = 'artifact_notification'
-         AND delivered_at IS NULL AND claimed_by = $2`, [id, workerId, error, nextAttemptAt]);
-  }
-
-  private async enqueueNotification(transaction: SqlExecutor, targetWorkflowId: string, message: ArtifactLifecycleNotification, idempotencyKey: string, createdAt: string): Promise<void> {
-    await enqueueCommand(transaction, { command_type: "artifact_notification", payload: message,
-      idempotency_key: idempotencyKey, target_workflow_id: targetWorkflowId, created_at: createdAt });
-  }
-
-  private async recordEmissionKey(transaction: SqlExecutor, emission: ArtifactEmission, artifactId: ArtifactId, createdAt: string): Promise<void> {
-    await transaction.query(
-      `INSERT INTO oakridge.artifact_emission_idempotency
-         (stage_instance_id, execution_id, unit_id, output_name, collection_key, idempotency_key, payload_hash, artifact_id, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::timestamptz)`,
-      [emission.stage_instance_id, emission.execution_id, emission.unit_id, emission.output_name,
-        emission.collection_key ?? null, emission.idempotency_key, emission.payload_hash, artifactId, createdAt],
-    );
-  }
-}
-
-interface ExecutionArtifactContextRow {
-  readonly run_id: string;
-  readonly stage_key: string;
-  readonly operator_role: string | null;
-  readonly stage_instance_id: string;
-  readonly execution_id: string;
-  readonly unit_id: string;
-  readonly executor_type: string;
-  readonly execution_workflow_id: string;
-  readonly inputs: ExecutionArtifactContext["inputs"];
-  readonly outputs: ExecutionArtifactContext["outputs"];
-}
-
-export class PostgresExecutionArtifactContextRepository implements ExecutionArtifactContextRepository {
-  constructor(private readonly sql: SqlExecutor) {}
-
-  async find_for_emit(stage_instance_id: StageInstanceId, unit_id: ExecutionArtifactContext["unit_id"]): Promise<ExecutionArtifactContext | null> {
-    const rows = await this.sql.query<ExecutionArtifactContextRow>(
-      `SELECT stage.run_id, stage.stage_key, stage.stage_contract->>'operator_role' AS operator_role,
-              projection.stage_instance_id, projection.execution_id,
-              projection.unit_id, projection.executor_type, projection.execution_workflow_id,
-              projection.input_artifacts AS inputs,
-              stage.stage_contract->'outputs' AS outputs
-       FROM oakridge.executor_projection projection
-       JOIN oakridge.stage_instance stage ON stage.id = projection.stage_instance_id
-       WHERE projection.stage_instance_id = $1
-         AND stage.ended_at IS NULL
-         AND (projection.unit_id = $2 OR (
-           stage.stage_contract->'materialization'->>'kind' = 'artifact_collection'
-           AND EXISTS (
-             SELECT 1 FROM jsonb_array_elements(projection.unit_parameters) item
-             WHERE item #>> string_to_array(trim(both '/' from stage.stage_contract->'materialization'->>'id_path'), '/') = $2
-           )
-         ))`,
-      [stage_instance_id, unit_id],
-    );
-    const row = rows[0];
-    return row ? {
-      run_id: row.run_id as ExecutionArtifactContext["run_id"], stage_key: row.stage_key, operator_role: row.operator_role,
-      stage_instance_id: row.stage_instance_id as ExecutionArtifactContext["stage_instance_id"],
-      execution_id: row.execution_id as ExecutionArtifactContext["execution_id"], unit_id: unit_id,
-      executor_type: row.executor_type, execution_workflow_id: row.execution_workflow_id, inputs: row.inputs, outputs: row.outputs,
-    } : null;
-  }
-}
-
-export class PostgresExecutionProjectionRepository implements ExecutionProjectionRepository {
-  constructor(private readonly sql: SqlExecutor) {}
-
-  async record(request: ExecutionRequest, execution_workflow_id: string, parameters: JsonValue): Promise<void> {
-    await this.sql.query(
-      `INSERT INTO oakridge.executor_projection
-         (execution_id, execution_workflow_id, stage_instance_id, unit_id, executor_type, unit_parameters, input_artifacts)
-       VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb)
-       ON CONFLICT (execution_id) DO UPDATE SET
-         execution_workflow_id = EXCLUDED.execution_workflow_id,
-         unit_parameters = EXCLUDED.unit_parameters,
-         input_artifacts = EXCLUDED.input_artifacts,
-         updated_at = now()`,
-      [request.execution_id, execution_workflow_id, request.stage_instance_id, request.unit_id, request.executor_type,
-        JSON.stringify(parameters), JSON.stringify(request.inputs)],
-    );
-  }
-
-  async attach_external(execution_id: ExecutionId, reference: ExternalExecutionReference): Promise<void> {
-    await this.sql.query("UPDATE oakridge.executor_projection SET external_reference = $2::jsonb, updated_at = now() WHERE execution_id = $1", [execution_id, JSON.stringify(reference)]);
-  }
-
-  async record_terminal(execution_id: ExecutionId, observation: ExecutorTerminalObservation): Promise<void> {
-    await this.sql.query("UPDATE oakridge.executor_projection SET terminal_observation = $2::jsonb, updated_at = now() WHERE execution_id = $1", [execution_id, JSON.stringify(observation)]);
-  }
-
-  async find_external(execution_id: ExecutionId): Promise<{ readonly executor_type: string; readonly external_reference: ExternalExecutionReference } | null> {
-    const rows = await this.sql.query<{ readonly executor_type: string; readonly external_reference: ExternalExecutionReference | null }>(
-      "SELECT executor_type, external_reference FROM oakridge.executor_projection WHERE execution_id = $1",
-      [execution_id],
-    );
-    const row = rows[0];
-    return row?.external_reference ? { executor_type: row.executor_type, external_reference: row.external_reference } : null;
-  }
-}
-
-export class PostgresRerunTargetRepository implements RerunTargetRepository {
-  constructor(private readonly sql: SqlExecutor) {}
-
-  async find_unit_target(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<UnitRerunTarget | null> {
-    const rows = await this.sql.query<{ readonly run_id: string; readonly stage_instance_id: string; readonly unit_id: string; readonly execution_id: string; readonly execution_workflow_id: string; readonly stage_coordinator_workflow_id: string }>(
-      `SELECT stage.run_id::text, stage.id::text AS stage_instance_id, projection.unit_id,
-              projection.execution_id, projection.execution_workflow_id,
-              stage.coordinator_workflow_id AS stage_coordinator_workflow_id
-       FROM oakridge.stage_instance stage
-       JOIN oakridge.executor_projection projection ON projection.stage_instance_id = stage.id
-       WHERE stage.id = $1 AND projection.unit_id = $2`,
-      [stage_instance_id, unit_id],
-    );
-    const row = rows[0];
-    return row ? { run_id: row.run_id as WorkflowRunId, stage_instance_id: row.stage_instance_id as StageInstanceId,
-      unit_id: row.unit_id as UnitId, execution_id: row.execution_id as ExecutionId,
-      execution_workflow_id: row.execution_workflow_id, stage_coordinator_workflow_id: row.stage_coordinator_workflow_id } : null;
-  }
-
-  async replace_execution_workflow(execution_id: ExecutionId, replacement_workflow_id: string): Promise<void> {
-    await this.sql.query(
-      `UPDATE oakridge.executor_projection
-       SET execution_workflow_id = $2, external_reference = NULL,
-           terminal_observation = NULL, updated_at = now()
-       WHERE execution_id = $1`,
-      [execution_id, replacement_workflow_id],
-    );
-  }
-}
-
-export class PostgresResumeArtifactRepository implements ResumeArtifactRepository {
-  constructor(private readonly sql: SqlExecutor) {}
-
-  async list_latest_for_stages(run_id: WorkflowRunId, stage_keys: readonly string[]): Promise<readonly (ArtifactRevision & { readonly stage_key: string })[]> {
-    const rows = await this.sql.query<ArtifactRow & { readonly stage_key: string }>(
-      `SELECT DISTINCT ON (stage.stage_key, artifact.unit_id, artifact.output_name)
-              artifact.id::text,
-              COALESCE((WITH RECURSIVE ancestors AS (
-                SELECT root.id, root.parent_artifact_id FROM oakridge.artifact root WHERE root.id = artifact.id
-                UNION ALL SELECT parent.id, parent.parent_artifact_id FROM oakridge.artifact parent JOIN ancestors child ON parent.id = child.parent_artifact_id
-              ) SELECT id::text FROM ancestors WHERE parent_artifact_id IS NULL LIMIT 1), artifact.id::text) AS chain_id,
-              artifact.run_id::text,
-              artifact.stage_instance_id::text, artifact.execution_id, artifact.unit_id,
-              artifact.output_name, artifact.artifact_type, artifact.label, artifact.body,
-              artifact.version, artifact.parent_artifact_id::text, artifact.emission_payload_hash,
-              artifact.lifecycle_state, artifact.superseded_by_artifact_id::text,
-              artifact.withdrawn_actor, artifact.withdrawn_reason,
-              artifact.withdrawn_at::text, artifact.released_at::text,
-              artifact.created_at::text, stage.stage_key
-       FROM oakridge.artifact artifact
-       JOIN oakridge.stage_instance stage ON stage.id = artifact.stage_instance_id
-       WHERE artifact.run_id = $1 AND stage.stage_key = ANY($2::text[])
-         AND artifact.lifecycle_state IN ('current', 'released')
-       ORDER BY stage.stage_key, artifact.unit_id, artifact.output_name, artifact.created_at DESC, artifact.version DESC`,
-      [run_id, stage_keys],
-    );
-    return rows.map((row) => ({ ...decodeArtifact(row), stage_key: row.stage_key }));
-  }
-}
-
-export class PostgresSessionHoldRepository implements SessionHoldRepository {
-  constructor(
-    private readonly sql: SqlExecutor,
-    private readonly executor_application_version: string,
-  ) {}
-
-  /**
-   * Held while the execution workflow is still running. A workflow that has
-   * returned — success, failure, or cancellation — has stopped waiting on the
-   * session, so closing it can no longer strand anything.
-   *
-   * The version the holder was started under is selected rather than filtered
-   * on, so a workflow stranded by a version bump can be told apart from no
-   * workflow at all and said out loud. Silently widening the query would leave
-   * an operator with a session that became closable for no visible reason.
-   */
-  async find_session_hold(session_id: string): Promise<SessionHold | null> {
-    const rows = await this.sql.query<{
-      readonly execution_id: string; readonly execution_workflow_id: string; readonly run_id: string;
-      readonly stage_instance_id: string; readonly stage_key: string; readonly unit_id: string;
-      readonly application_version: string | null;
-    }>(
-      `SELECT projection.execution_id, projection.execution_workflow_id, stage.run_id::text,
-              projection.stage_instance_id::text, stage.stage_key, projection.unit_id,
-              execution.application_version
-       FROM oakridge.executor_projection projection
-       JOIN oakridge.stage_instance stage ON stage.id = projection.stage_instance_id
-       JOIN dbos.workflow_status execution ON execution.workflow_uuid = projection.execution_workflow_id
-       WHERE projection.external_reference->>'session_id' = $1
-         AND execution.status = 'PENDING'
-       ORDER BY projection.updated_at DESC
-       LIMIT 1`,
-      [session_id]);
-    const row = rows[0];
-    if (!row) return null;
-    const hold: SessionHold = { session_id, execution_id: row.execution_id as ExecutionId,
-      execution_workflow_id: row.execution_workflow_id,
-      run_id: row.run_id as WorkflowRunId, stage_instance_id: row.stage_instance_id as StageInstanceId,
-      stage_key: row.stage_key, unit_id: row.unit_id as UnitId };
-    const claim = selectSessionHoldClaim(hold, row.application_version, this.executor_application_version);
-    if (claim.kind === "abandoned") {
-      console.warn(`oakridge: session ${session_id} is claimed by ${claim.hold.execution_workflow_id}, ` +
-        `left PENDING by application version ${claim.holder_application_version} which this executor ` +
-        `(${this.executor_application_version}) cannot recover; the claim is ignored so the session can be closed`);
-      return null;
-    }
-    return claim.hold;
-  }
-}
-
-export class PostgresCancellationTargetRepository implements CancellationTargetRepository {
-  constructor(private readonly sql: TransactionalSqlExecutor) {}
-
-  async list_for_attempt(root_workflow_id: string): Promise<readonly CancellationExecutionTarget[]> {
-    const rows = await this.sql.query<{ readonly execution_id: string; readonly executor_type: string; readonly external_reference: ExternalExecutionReference | null }>(
-      `SELECT projection.execution_id, projection.executor_type, projection.external_reference
-       FROM oakridge.executor_projection projection
-       JOIN oakridge.stage_instance stage ON stage.id = projection.stage_instance_id
-       WHERE stage.attempt_root_workflow_id = $1`, [root_workflow_id]);
-    return rows.map((row) => ({ execution_id: row.execution_id as ExecutionId, executor_type: row.executor_type, external_reference: row.external_reference }));
-  }
-
-  async terminalize_pending_waits(root_workflow_id: string, actor: string, reason: string, withdrawn_at: string): Promise<readonly CancellationWaitTarget[]> {
-    return this.sql.transaction(async (transaction) => {
-      const resources = await transaction.query<{ readonly resource_key: string }>(
-        `SELECT DISTINCT concat(artifact.stage_instance_id, ':', artifact.execution_id, ':', artifact.unit_id, ':', artifact.output_name) AS resource_key
-         FROM oakridge.artifact artifact
-         JOIN oakridge.stage_instance stage ON stage.id = artifact.stage_instance_id
-         WHERE stage.attempt_root_workflow_id = $1 AND artifact.lifecycle_state = 'current'`, [root_workflow_id]);
-      for (const resource of resources) await transaction.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [resource.resource_key]);
-      // The wait's own application_version rides along: containment withdraws a
-      // wait by sending to it and awaiting its answer, and one stranded at a
-      // version this executor cannot recover never answers. Left joined so a
-      // wait with no status row is reported rather than dropped from the sweep.
-      // Read BEFORE the withdraw below, in the same transaction: after it no
-      // artifact is current and this returns nothing.
-      const waits = await transaction.query<{ readonly kind: "gate" | "handoff"; readonly workflow_id: string; readonly application_version: string | null }>(
-        `SELECT CASE WHEN wait.kind = 'gate' THEN 'gate' ELSE 'handoff' END AS kind,
-                wait.command_workflow_id AS workflow_id, status_row.application_version
-         FROM oakridge.wait wait
-         JOIN oakridge.artifact artifact ON artifact.id = wait.artifact_revision_id
-         JOIN oakridge.stage_instance stage ON stage.id = wait.stage_instance_id
-         LEFT JOIN dbos.workflow_status status_row ON status_row.workflow_uuid = wait.command_workflow_id
-         WHERE wait.status = 'open' AND artifact.lifecycle_state = 'current'
-           AND stage.attempt_root_workflow_id = $1`, [root_workflow_id]);
-      const rows = await transaction.query<{ readonly id: string }>(
-        `UPDATE oakridge.artifact artifact
-       SET lifecycle_state = 'withdrawn', withdrawn_actor = $2, withdrawn_reason = $3,
-           withdrawn_at = $4::timestamptz, lifecycle_updated_at = $4::timestamptz
-       FROM oakridge.stage_instance stage
-       WHERE artifact.stage_instance_id = stage.id
-         AND stage.attempt_root_workflow_id = $1
-         AND artifact.lifecycle_state = 'current'
-       RETURNING artifact.id::text`,
-        [root_workflow_id, actor, reason, withdrawn_at],
-      );
-      void rows;
-      return waits.map((wait): CancellationWaitTarget => wait.kind === "gate"
-        ? { kind: "gate", workflow_id: wait.workflow_id, application_version: wait.application_version }
-        : { kind: "handoff", workflow_id: wait.workflow_id, application_version: wait.application_version });
-    });
-  }
-
-  async finish_started_stages(root_workflow_id: string, ended_at: string, reason: string | null): Promise<void> {
-    await this.sql.query(
-      `UPDATE oakridge.stage_instance
-       SET ended_at = $2::timestamptz,
-           outcome = jsonb_build_object('kind', 'cancelled', 'reason', $3::text)
-       WHERE attempt_root_workflow_id = $1 AND ended_at IS NULL`,
-      [root_workflow_id, ended_at, reason],
-    );
   }
 }

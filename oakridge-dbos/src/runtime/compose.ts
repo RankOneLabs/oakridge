@@ -25,9 +25,9 @@ import { selectOrphanedVersionRuns, type OrphanedVersionRuns } from "../domain/w
 import type { CohortPullRequestDependencies } from "./cohort-pull-request";
 import { pollCohortPullRequests, type CohortPollOutcome, type PullRequestReader } from "./github-pull-requests";
 import { createApp } from "../http/app";
-import { registerDbosTransportClient, sendArtifactWorkflowMessage, sendRunWakeHint } from "../http/dbos-transport";
+import { registerDbosTransportClient, sendRunWakeHint } from "../http/dbos-transport";
 import { seedBuiltins } from "../seed/seed-builtins";
-import { PostgresArtifactRevisionRepository, PostgresExecutionArtifactContextRepository, PostgresExecutionProjectionRepository, PostgresSessionHoldRepository, PostgresStageInstanceRepository, PostgresWorkflowRunRepository } from "../storage/postgres-domain";
+import { PostgresArtifactRevisionRepository, PostgresStageInstanceRepository, PostgresWorkflowRunRepository } from "../storage/postgres-domain";
 import { PostgresOperatorProjectionRepository } from "../storage/postgres-operators";
 import { PostgresCohortPullRequestRepository, PostgresCollaborationRepository, PostgresEpicWorkflowProfileRepository, PostgresFinalPullRequestRepository, PostgresGateDecisionAuditRepository } from "../storage/postgres-policy";
 import { PostgresProjectRepository } from "../storage/postgres-projects";
@@ -38,10 +38,8 @@ import { findExecutorAdapter, registerExecutorAdapter } from "./executor-registr
 import { registerRunRecordWorkflowServices } from "../workflows/run-record-topology";
 import "../workflows/collaboration-responder";
 import { PostgresRunRecordRepository } from "../storage/postgres-run-record";
-import { dispatchArtifactNotifications } from "./artifact-notifications";
 import { DbosRunLaunchClient } from "./dbos-run-launch-client";
 import { DbosCollaborationPingClient } from "./collaboration-ping";
-import { emitExecutionArtifact } from "./emit-artifact";
 import { BunGitCommandRunner } from "./git-command-runner";
 import { createPromptTemplateLoader } from "./prompt-template";
 import { GitProjectRepositoryIdentityResolver } from "./project-identity";
@@ -83,14 +81,10 @@ export interface OakridgeRuntimeConfig {
 
 export interface OakridgeRuntime {
   readonly app: Hono;
-  /** Drains the artifact notification outbox into the workflows waiting on it. */
-  dispatch_notifications(): Promise<number>;
   /** Drains the run launch outbox, starting each launched run's root workflow. */
   dispatch_launches(): Promise<number>;
   /** Writes the built-in workflow definitions. Safe to call repeatedly. */
   seed_builtins(): Promise<void>;
-  /** Deletes delivered outbox rows older than the retention window. */
-  purge_outbox(older_than: string): Promise<number>;
   /**
    * Asks the forge about every cohort parked on its pull request, and closes
    * the waits whose pull requests have merged. Resolves to null when no reader
@@ -125,15 +119,12 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const runRecords = new PostgresRunRecordRepository(sql, { load_prompt_template: (path) => promptTemplates.load(path) });
   const stages = new PostgresStageInstanceRepository(sql);
   const artifacts = new PostgresArtifactRevisionRepository(sql);
-  const contexts = new PostgresExecutionArtifactContextRepository(sql);
-  const executions = new PostgresExecutionProjectionRepository(sql);
-  const sessionHolds = new PostgresSessionHoldRepository(sql, config.application_version);
   const audits = new PostgresGateDecisionAuditRepository(sql);
   const collaboration = new PostgresCollaborationRepository(sql);
   const finalPullRequests = new PostgresFinalPullRequestRepository(sql);
   const epicProfiles = new PostgresEpicWorkflowProfileRepository(sql);
   const cohortReconciliations = new PostgresCohortPullRequestRepository(sql);
-  const projections = new PostgresOperatorProjectionRepository(sql);
+  const projections = new PostgresOperatorProjectionRepository(sql, config.application_version);
 
   const dbosRuns = new DbosRunLaunchClient(client);
   const collaborationPings = new DbosCollaborationPingClient(client, config.application_version);
@@ -150,14 +141,12 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     void pending.finally(() => inFlightDispatches.delete(pending)).catch(() => undefined);
     return pending;
   };
-  const dispatchNotifications = () => trackDispatch(() => dispatchArtifactNotifications(artifacts, { send: sendArtifactWorkflowMessage }));
   const dispatchLaunches = () => trackDispatch(() => dispatchRunLaunches(runs, dbosRuns));
 
   registerDbosTransportClient(client);
   for (const adapter of config.executor_adapters) registerExecutorAdapter(adapter);
   registerExecutorAdapter(new RepositoryProvisioningAdapter({
     git: config.git_commands ?? new BunGitCommandRunner(),
-    emit: (request) => emitExecutionArtifact({ contexts, artifacts, dispatch_notifications: dispatchNotifications }, request),
     publish_work_order: async (request) => {
       const result = await publishWorkOrderArtifact({ ...request, collection_key: null }, { records: runRecords, now });
       if (result.kind === "published" || result.kind === "pending" || result.kind === "already_applied") {
@@ -195,16 +184,14 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     admission: { records: runRecords, now },
     operator_retry: { records: runRecords, now },
     run_lifecycle: { records: runRecords },
-    domain_reads: { stages, artifacts, session_holds: sessionHolds },
+    domain_reads: { stages, artifacts, session_holds: projections },
     final_pull_requests: { final_pull_requests: finalPullRequests, now },
-    artifact_callback: { contexts, artifacts, dispatch_notifications: dispatchNotifications },
     work_order_artifact_callback: { records: runRecords, now, send_run_wake: sendRunWakeHint },
-    artifact_withdraw: { contexts, artifacts, dispatch_notifications: dispatchNotifications },
     gate_resume: { records: runRecords, now, send_run_wake: sendRunWakeHint },
     handoff_complete: { records: runRecords, now, send_run_wake: sendRunWakeHint },
     cohort_pull_requests: cohortPullRequests,
-    collaboration: { artifacts, contexts, executions, collaboration, policy_for_artifact_type: collaborationPolicy,
-      ping_thread: (input) => collaborationPings.enqueue(input), dispatch_notifications: dispatchNotifications },
+    collaboration: { artifacts, collaboration, policy_for_artifact_type: collaborationPolicy, records: runRecords,
+      send_run_wake: sendRunWakeHint, ping_thread: (input) => collaborationPings.enqueue(input) },
     operator_projections: projections,
     artifact_detail: { artifacts, stages, audits, presentation_for_type: presentation, artifact_types: DEV_FLOW_ARTIFACT_TYPES },
     run_launch: { definitions, projects, runs, projections, dispatch_launches: dispatchLaunches, application_version: config.application_version, now },
@@ -214,10 +201,8 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
 
   return {
     app,
-    dispatch_notifications: dispatchNotifications,
     dispatch_launches: dispatchLaunches,
     seed_builtins: () => seedBuiltins(definitions),
-    purge_outbox: (olderThan) => artifacts.purge_delivered_commands(olderThan),
     poll_pull_requests: pollPullRequests,
     async orphaned_version_runs() {
       return selectOrphanedVersionRuns(await projections.list_application_versions(), config.application_version);

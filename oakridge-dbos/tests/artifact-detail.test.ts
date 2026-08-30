@@ -10,8 +10,8 @@ const first = revision("11111111-1111-4111-8111-111111111111", 1); const second 
 test("artifact detail derives revision status from applied gate decisions", async () => {
   const decision = { action: "approve" } as GateDecisionAudit;
   const app = createArtifactDetailApp({
-    artifacts: { emit_revision: async () => ({ ok: true, value: { kind: "unchanged", artifact: second, superseded_artifact_id: null } }), withdraw: async () => ({ kind: "not_found", artifact_id: second.id }), mark_released: async () => ({ kind: "released", artifact: second }), find_by_id: async () => second, find_tip: async () => second, find_current: async () => second, list_chain: async () => [first, second] },
-    stages: { start: async () => { throw new Error("unused"); }, finish: async () => { throw new Error("unused"); }, find_by_id: async () => ({ id: "33333333-3333-4333-8333-333333333333" as StageInstanceId, run_id: "22222222-2222-4222-8222-222222222222" as WorkflowRunId, stage_key: "build", stage_type: "delegated_session", lifecycle: { kind: "started", started_at: first.created_at } }) },
+    artifacts: { find_by_id: async () => second, find_current: async () => second, list_chain: async () => [first, second] },
+    stages: { find_by_id: async () => ({ id: "33333333-3333-4333-8333-333333333333" as StageInstanceId, run_id: "22222222-2222-4222-8222-222222222222" as WorkflowRunId, stage_key: "build", stage_type: "delegated_session", lifecycle: { kind: "started", started_at: first.created_at } }) },
     audits: { insert_idempotent: async (audit) => audit.id, mark_applied: async () => {}, find_by_idempotency_key: async () => null, find_for_revision: async (id) => id === second.id ? decision : null },
     presentation_for_type: () => ({ component_id: "build-result", capabilities: { reviewable: true, commentable: true, atom_editable: true, review_items: true }, anchor_schema: ["/summary"], review: { viewer: "build" } }),
   });

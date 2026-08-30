@@ -1,4 +1,4 @@
-import type { ArtifactId, RunUnitId, UnitId, WorkflowRunId, WorkOrderId } from "../domain/primitives";
+import type { ArtifactId, ExecutionId, RunUnitId, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "../domain/primitives";
 import { selectGateActionability, selectPendingStageOrder, selectRunRecordUnitDecision, type OperatorApplicationVersionInventory, type OperatorCohortLifecycle, type OperatorCohortSummary, type OperatorParkedGate, type OperatorReviewInbox, type OperatorReviewInboxItem, type OperatorRunDetail, type OperatorRunRecordDetail, type OperatorRunRecordSlot, type OperatorRunRecordTransition, type OperatorRunRecordUnit, type OperatorRunRecordUnitFacts, type OperatorRunRecordWait, type OperatorRunRecordWorkOrder, type OperatorRunSummary, type OperatorStageArtifact, type OperatorStageDetail, type OperatorStageUnit } from "../domain/operator-projections";
 import type { RunOutputSlotState } from "../domain/run-record";
 import type { SqlExecutor } from "./sql-executor";
@@ -11,6 +11,8 @@ import { compileWorkflowDefinition } from "../compiler/compile-workflow";
 import { parseWorkflowDefinition } from "../validation/workflow-definition";
 import { stageInstanceIdFor } from "../decision/ids";
 import type { StageKey } from "../domain/workflow";
+import { selectSessionHoldClaim, type SessionHold } from "../domain/session-hold";
+import type { SessionHoldRepository } from "./repositories";
 
 interface GateProjectionRow {
   readonly run_id: string;
@@ -65,8 +67,61 @@ interface CohortUnitParameters { readonly artifact?: { readonly repository_key?:
 interface CohortProjectionRow { readonly run_id: string; readonly workflow_name: string; readonly stage_instance_id: string; readonly stage_name: string; readonly unit_id: string; readonly params: CohortUnitParameters | null; readonly dbos_status: string; readonly artifact_revision_id: string | null; readonly handoff_wait_kind: HandoffWaitKind | null; readonly handoff_wait_status: Wait["status"]["kind"] | null; readonly handoff_outcome_kind: WaitOutcome["kind"] | null; readonly summary_pr_url: string | null; readonly reconciliation: OperatorCohortSummary["pull_request_reconciliation"]; readonly updated_at_epoch_ms: string; readonly admission_required: boolean; readonly admitted: boolean; readonly admission_eligible: boolean; readonly admission_blocked_by: readonly string[] }
 interface V2CohortProjectionRow extends Omit<CohortProjectionRow, "dbos_status" | "updated_at_epoch_ms"> { readonly unit_state: UnitState; readonly updated_at: string }
 
-export class PostgresOperatorProjectionRepository implements OperatorProjectionRepository {
-  constructor(private readonly sql: SqlExecutor) {}
+export class PostgresOperatorProjectionRepository implements OperatorProjectionRepository, SessionHoldRepository {
+  constructor(
+    private readonly sql: SqlExecutor,
+    private readonly executor_application_version: string,
+  ) {}
+
+  /**
+   * Held while a **started** work order's attachment names this session and
+   * that work order's workflow is still PENDING. A workflow that has
+   * returned — success, failure, or cancellation — has stopped waiting on the
+   * session, so closing it can no longer strand anything.
+   *
+   * The version the holder was started under is selected rather than filtered
+   * on, so a workflow stranded by a version bump can be told apart from no
+   * workflow at all and said out loud. Silently widening the query would leave
+   * an operator with a session that became closable for no visible reason.
+   * (Carried over from PR 2's deleted legacy session-hold repository, which
+   * read the pre-cutover execution projection; v2 reads the run-owned
+   * executor attachment instead.)
+   */
+  async find_session_hold(session_id: string): Promise<SessionHold | null> {
+    const rows = await this.sql.query<{
+      readonly work_order_id: string; readonly workflow_id: string; readonly run_id: string;
+      readonly stage_instance_id: string; readonly stage_key: string; readonly unit_id: string;
+      readonly application_version: string | null;
+    }>(
+      `SELECT work.id::text AS work_order_id, work.workflow_id, unit.run_id::text,
+              unit.stage_instance_id::text, stage.stage_key, unit.unit_id, status.application_version
+       FROM oakridge.executor_attachment attachment
+       JOIN oakridge.work_order work ON work.id = attachment.work_order_id
+       JOIN oakridge.run_unit unit ON unit.id = work.run_unit_id
+       JOIN oakridge.stage_instance stage ON stage.id = unit.stage_instance_id
+       JOIN dbos.workflow_status status ON status.workflow_uuid = work.workflow_id
+       WHERE attachment.external_reference->>'session_id' = $1
+         AND work.state = 'started' AND status.status = 'PENDING'
+       ORDER BY attachment.updated_at DESC LIMIT 1`,
+      [session_id]);
+    const row = rows[0];
+    if (!row) return null;
+    // v2 writes the work order id wherever v1 wrote a legacy execution id —
+    // see `workOrderIdOfArtifact` (`domain/artifacts.ts`) for the same
+    // convention on `artifact.execution_id`.
+    const hold: SessionHold = { session_id, execution_id: row.work_order_id as ExecutionId,
+      execution_workflow_id: row.workflow_id,
+      run_id: row.run_id as WorkflowRunId, stage_instance_id: row.stage_instance_id as StageInstanceId,
+      stage_key: row.stage_key, unit_id: row.unit_id as UnitId };
+    const claim = selectSessionHoldClaim(hold, row.application_version, this.executor_application_version);
+    if (claim.kind === "abandoned") {
+      console.warn(`oakridge: session ${session_id} is claimed by ${claim.hold.execution_workflow_id}, ` +
+        `left PENDING by application version ${claim.holder_application_version} which this executor ` +
+        `(${this.executor_application_version}) cannot recover; the claim is ignored so the session can be closed`);
+      return null;
+    }
+    return claim.hold;
+  }
 
   async list_pending_gates(run_id?: WorkflowRunId): Promise<readonly OperatorParkedGate[]> {
     return this.listV2PendingGates(run_id);
@@ -151,7 +206,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
          COALESCE((SELECT max(updated_at)::text FROM dbos.workflow_status), '0'),
          COALESCE((SELECT max(lifecycle_updated_at)::text FROM oakridge.artifact), '0'),
          COALESCE((SELECT max(created_at)::text FROM oakridge.gate_decision_audit), '0'),
-         COALESCE((SELECT max(updated_at)::text FROM oakridge.executor_projection), '0'),
+         COALESCE((SELECT max(updated_at)::text FROM oakridge.executor_attachment), '0'),
          COALESCE((SELECT max(updated_at)::text FROM oakridge.epic_workflow_profile), '0'),
          COALESCE((SELECT max(created_at)::text FROM oakridge.collaboration_message), '0'),
          COALESCE((SELECT max(created_at)::text FROM oakridge.review_item), '0')) AS cursor`, []);

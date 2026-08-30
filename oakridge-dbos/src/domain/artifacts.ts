@@ -1,6 +1,7 @@
-import type { ArtifactId, ExecutionId, JsonValue, Result, StageInstanceId, UnitId, WorkflowRunId } from "./primitives";
+import type { ArtifactId, ExecutionId, JsonValue, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "./primitives";
+import { parseUuidId } from "./primitives";
 import type { ArtifactTypeId } from "./workflow";
-import type { CompiledGateStep, GateRevisionTarget, OutputReleaseContract } from "./compiled-workflow";
+import type { CompiledGateStep, GateRevisionTarget } from "./compiled-workflow";
 
 /**
  * Where an artifact sits in the run graph — the natural key of its revision
@@ -40,36 +41,16 @@ export type ArtifactRevisionLifecycle =
   | { readonly kind: "withdrawn"; readonly actor: string; readonly reason: string; readonly withdrawn_at: string }
   | { readonly kind: "released"; readonly released_at: string };
 
-export type EmitArtifactRevisionResult = Result<{
-  readonly kind: "emitted" | "unchanged";
-  readonly artifact: ArtifactRevision;
-  readonly superseded_artifact_id: ArtifactId | null;
-}, {
-  readonly operation: "emit_artifact_revision";
-  readonly kind: "idempotency_conflict" | "release_conflict" | "invariant_conflict" | "execution_closed";
-  readonly artifact_id: ArtifactId;
-  readonly detail: string;
-}>;
-
-export interface WithdrawArtifactRequest {
-  readonly artifact_id: ArtifactId;
-  readonly actor: string;
-  readonly reason: string;
-  readonly withdrawn_at: string;
-  readonly target_workflow_id: string;
-}
-
-export type WithdrawArtifactResult =
-  | { readonly kind: "withdrawn"; readonly artifact: ArtifactRevision }
-  | { readonly kind: "already_withdrawn"; readonly artifact: ArtifactRevision }
-  | { readonly kind: "not_found"; readonly artifact_id: ArtifactId }
-  | { readonly kind: "not_current"; readonly artifact_id: ArtifactId; readonly current_artifact_id: ArtifactId | null }
-  | { readonly kind: "release_conflict"; readonly artifact_id: ArtifactId; readonly released_at: string };
-
-export type ReleaseArtifactResult =
-  | { readonly kind: "released"; readonly artifact: ArtifactRevision }
-  | { readonly kind: "already_released"; readonly artifact: ArtifactRevision }
-  | { readonly kind: "not_current"; readonly artifact_id: ArtifactId };
+/**
+ * The work order that produced this revision, if any.
+ *
+ * v2's `publish_artifact` (`postgres-run-record.ts:890-894`) writes the work
+ * order id into `artifact.execution_id` wherever v1 wrote a legacy execution
+ * id — the shared `artifact` table was never given a second column for it. A
+ * value that does not parse as a uuid is a pre-cutover (v1) row, not a v2
+ * work order.
+ */
+export const workOrderIdOfArtifact = (artifact: ArtifactRevision): WorkOrderId | null => parseUuidId<WorkOrderId>(artifact.execution_id);
 
 export interface ArtifactEmission {
   readonly run_id: WorkflowRunId;
@@ -83,11 +64,6 @@ export interface ArtifactEmission {
   readonly body: JsonValue;
   readonly idempotency_key: string;
   readonly payload_hash: string;
-}
-
-export interface ArtifactEmissionDelivery {
-  readonly target_workflow_id: string;
-  readonly release: OutputReleaseContract;
 }
 
 export type ArtifactReleaseState =
@@ -105,18 +81,6 @@ export type ArtifactReleaseState =
       readonly revision_target?: GateRevisionTarget;
     }
   | { readonly kind: "waiting_handoff"; readonly artifact: ArtifactRevision; readonly downstream_role: string; readonly external_wait_kind: string };
-
-export type ArtifactLifecycleNotification =
-  | { readonly kind: "artifact_emitted"; readonly release: ArtifactReleaseState }
-  | { readonly kind: "artifact_replaced"; readonly invalidated_artifact_id: ArtifactId; readonly release: ArtifactReleaseState }
-  | { readonly kind: "artifact_invalidated"; readonly artifact_id: ArtifactId; readonly output_name: string; readonly reason: "superseded" | "withdrawn"; readonly replacement_artifact_revision_id: ArtifactId | null };
-
-export interface PendingArtifactNotification {
-  readonly id: string;
-  readonly target_workflow_id: string;
-  readonly message: ArtifactLifecycleNotification;
-  readonly idempotency_key: string;
-}
 
 export type ExecutionContractState =
   | { readonly kind: "waiting_artifacts"; readonly missing_outputs: readonly string[] }

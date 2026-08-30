@@ -1,19 +1,15 @@
-import type { ArtifactId, ExecutionId, JsonValue, StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId } from "../domain/primitives";
-import type { StageInstance, StageOutcome, WorkflowDefinition } from "../domain/workflow";
+import type { ArtifactId, JsonValue, StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId } from "../domain/primitives";
+import type { StageInstance, WorkflowDefinition } from "../domain/workflow";
 import type { EpicWorkflowProfile, EpicWorkflowProfileId } from "../domain/epic";
 import type { GateDecisionAudit, GateDecisionAuditId } from "../domain/gates";
 import type { CollaborationMessage, CollaborationThread, CollaborationThreadWithMessages, MessageId, ReviewItem, ReviewItemId, ReviewItemStatus, ThreadId, ThreadStatus } from "../domain/collaboration";
-import type { ArtifactCoordinate, ArtifactEmission, ArtifactEmissionDelivery, ArtifactRevision, EmitArtifactRevisionResult, PendingArtifactNotification, ReleaseArtifactResult, WithdrawArtifactRequest, WithdrawArtifactResult } from "../domain/artifacts";
-import type { CompiledOutputContract } from "../domain/compiled-workflow";
-import type { ArtifactEnvelope } from "../domain/execution";
-import type { ExecutionRequest, ExecutorTerminalObservation, ExternalExecutionReference } from "../domain/execution";
-import type { CancellationExecutionTarget, CancellationWaitTarget, UnitRerunTarget } from "../domain/rerun";
+import type { ArtifactCoordinate, ArtifactRevision } from "../domain/artifacts";
 import type { SessionHold } from "../domain/session-hold";
 import type { CreateProject, Project } from "../domain/projects";
 import type { AdmitStageUnitRequest, AdmitStageUnitResult, CreateWorkflowRunResult, DeleteRunResult, PendingRunLaunch, PersistWorkflowRunLaunch, SetRunArchiveResult, WorkflowRunLaunchRecord, WorkflowRunListFilter } from "../domain/runs";
 import type { ConfirmFinalPullRequestRequest, FinalPullRequestDomainError, FinalPullRequestProjection, PullRequestObservation } from "../domain/final-pull-request";
 import type { CohortPullRequestReconciliation, RunOwnedCohortHandoff } from "../domain/cohort-pull-request";
-import type { CloseWaitRequest, OpenGateWaitInput, OpenHandoffDownstreamWaitInput, Wait, WaitClosesOn, WaitOutcome } from "../domain/wait";
+import type { ExternalExecutionReference } from "../domain/execution";
 import type { Result } from "../domain/primitives";
 import type { CancelRunRecord, CancelRunRecordResult, CloseRunOutputWait, CloseRunOutputWaitResult, CompleteHandoffArtifact, DecideGateWait, ExecutorAttachment, ExecutorHealthObservation, InitializeStraightThroughRun, PersistMaterializedStage, PublishWorkOrderArtifact, PublishWorkOrderArtifactResult, RetryRunUnit, RetryRunUnitResult, ReviseRunUnitInput, ReviseRunUnitInputResult, WorkOrderExecution } from "../domain/run-record";
 import type { AskResult } from "../decision/commands";
@@ -96,71 +92,11 @@ export interface RunRecordRepositoryError {
   readonly detail: string;
 }
 
-export interface WorkflowAttempt {
-  readonly root_workflow_id: string;
-  readonly run_id: WorkflowRunId;
-  readonly forked_from_root_workflow_id: string | null;
-  readonly created_at: string;
-}
-
-export interface WorkflowAttemptRepository {
-  insert(attempt: WorkflowAttempt): Promise<void>;
-  find_by_root_workflow_id(root_workflow_id: string): Promise<WorkflowAttempt | null>;
-  list_for_run(run_id: WorkflowRunId): Promise<readonly WorkflowAttempt[]>;
-  finish(root_workflow_id: string, ended_at: string, outcome: StageOutcome): Promise<void>;
-}
-
-export interface StartStageInstance {
-  readonly id: StageInstanceId;
-  readonly run_id: WorkflowRunId;
-  readonly stage_key: string;
-  readonly stage_type: string;
-  readonly stage_contract: JsonValue;
-  readonly attempt_root_workflow_id: string;
-  readonly coordinator_workflow_id: string;
-  readonly started_at: string;
-}
-
 export interface StageInstanceRepository {
-  start(input: StartStageInstance): Promise<StageInstance>;
-  finish(id: StageInstanceId, ended_at: string, outcome: StageOutcome): Promise<StageInstance>;
   find_by_id(id: StageInstanceId): Promise<StageInstance | null>;
 }
 
-export interface StageAdmissionTargetRepository {
-  find_coordinator_workflow_id(stage_instance_id: StageInstanceId): Promise<string | null>;
-}
-
-/**
- * The record of gate and handoff waits — one table, written by the two
- * workflows that own them, read by everyone else. Opens are absorbed on
- * (command_workflow_id, kind) so a retried step never double-records; a close
- * with no row to close throws, because that is record corruption, not a miss.
- */
-export interface WaitRepository {
-  open_gate(input: OpenGateWaitInput): Promise<void>;
-  open_handoff_downstream(input: OpenHandoffDownstreamWaitInput): Promise<void>;
-  close(command_workflow_id: string, request: CloseWaitRequest): Promise<void>;
-  /** Closes the downstream row as decided and opens the external row, in one transaction. */
-  release_downstream(
-    command_workflow_id: string,
-    decided_outcome: Extract<WaitOutcome, { kind: "decided" }>,
-    external_closes_on: Extract<WaitClosesOn, { kind: "handoff_external" }>,
-  ): Promise<void>;
-  find_gate_wait(artifact_revision_id: ArtifactId, gate_step: string, execution_workflow_id: string): Promise<Wait | null>;
-  find_handoff_waits(artifact_revision_id: ArtifactId, execution_workflow_id: string): Promise<readonly Wait[]>;
-  /** Every handoff row on one artifact revision, whichever execution produced it — a revision id is unique. */
-  find_handoff_waits_for_artifact(artifact_revision_id: ArtifactId): Promise<readonly Wait[]>;
-  count_open_waits(command_workflow_id: string): Promise<number>;
-  /** Cancellation closing a provably dead owner's open rows as withdrawn — the single exception to owner-closes. */
-  close_orphaned(command_workflow_id: string, at: string): Promise<void>;
-}
-
 export interface ArtifactRevisionRepository {
-  emit_revision(id: ArtifactId, emission: ArtifactEmission, created_at: string, delivery: ArtifactEmissionDelivery): Promise<EmitArtifactRevisionResult>;
-  withdraw(request: WithdrawArtifactRequest): Promise<WithdrawArtifactResult>;
-  mark_released(id: ArtifactId, released_at: string): Promise<ReleaseArtifactResult>;
-  find_tip(coordinate: ArtifactCoordinate): Promise<ArtifactRevision | null>;
   find_current(coordinate: ArtifactCoordinate): Promise<ArtifactRevision | null>;
   list_chain(chain_id: ArtifactId): Promise<readonly ArtifactRevision[]>;
   find_by_id(id: ArtifactId): Promise<ArtifactRevision | null>;
@@ -170,58 +106,9 @@ export interface RunArtifactReadRepository {
   list_effective_for_run(run_id: WorkflowRunId): Promise<readonly ArtifactRevision[]>;
 }
 
-export interface CommandOutboxMaintenanceRepository {
-  purge_delivered_commands(delivered_before: string): Promise<number>;
-}
-
-export interface ArtifactNotificationRepository {
-  claim_pending_notifications(worker_id: string, claimed_at: string, claimed_until: string, limit: number): Promise<readonly PendingArtifactNotification[]>;
-  mark_notification_delivered(id: string, worker_id: string, delivered_at: string): Promise<void>;
-  mark_notification_failed(id: string, worker_id: string, error: string, next_attempt_at: string): Promise<void>;
-}
-
-export interface ResumeArtifactRepository {
-  list_latest_for_stages(run_id: WorkflowRunId, stage_keys: readonly string[]): Promise<readonly (ArtifactRevision & { readonly stage_key: string })[]>;
-}
-
-export interface ExecutionArtifactContext {
-  readonly run_id: WorkflowRunId;
-  readonly stage_key: string;
-  readonly operator_role: string | null;
-  readonly stage_instance_id: StageInstanceId;
-  readonly execution_id: ExecutionId;
-  readonly unit_id: UnitId;
-  readonly executor_type: string;
-  readonly execution_workflow_id: string;
-  readonly inputs: readonly ArtifactEnvelope[];
-  readonly outputs: readonly CompiledOutputContract[];
-}
-
-export interface ExecutionArtifactContextRepository {
-  find_for_emit(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<ExecutionArtifactContext | null>;
-}
-
-export interface ExecutionProjectionRepository {
-  record(request: ExecutionRequest, execution_workflow_id: string, parameters: JsonValue): Promise<void>;
-  attach_external(execution_id: ExecutionId, reference: ExternalExecutionReference): Promise<void>;
-  record_terminal(execution_id: ExecutionId, observation: ExecutorTerminalObservation): Promise<void>;
-  find_external(execution_id: ExecutionId): Promise<{ readonly executor_type: string; readonly external_reference: ExternalExecutionReference } | null>;
-}
-
-export interface RerunTargetRepository {
-  find_unit_target(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<UnitRerunTarget | null>;
-  replace_execution_workflow(execution_id: ExecutionId, replacement_workflow_id: string): Promise<void>;
-}
-
 export interface SessionHoldRepository {
   /** The live execution holding this agent session, if any. */
   find_session_hold(session_id: string): Promise<SessionHold | null>;
-}
-
-export interface CancellationTargetRepository {
-  list_for_attempt(root_workflow_id: string): Promise<readonly CancellationExecutionTarget[]>;
-  terminalize_pending_waits(root_workflow_id: string, actor: string, reason: string, withdrawn_at: string): Promise<readonly CancellationWaitTarget[]>;
-  finish_started_stages(root_workflow_id: string, ended_at: string, reason: string | null): Promise<void>;
 }
 
 export interface GateDecisionAuditRepository {

@@ -5,7 +5,6 @@ import type { ExecutionRequest } from "../src/domain/execution";
 import type { ExecutionId, JsonValue, StageInstanceId, UnitId } from "../src/domain/primitives";
 import { describeRepositoryProvisioningFailure, provisionRepositoryRefs, type GitCommandOutcome, type GitCommandRunner } from "../src/domain/repository-provisioning";
 import { parseResolvedRepositoryProvisioningConfig, parseBaseBranch, parseRunContextRepository, selectBaseBranch, type RunContextRepository } from "../src/domain/repository-refs";
-import type { EmitExecutionArtifactRequest } from "../src/runtime/emit-artifact";
 import { runExclusive } from "../src/runtime/keyed-mutex";
 
 const repository: RunContextRepository = { key: "scout", path: "/repos/scout", integration_branch: "main" };
@@ -141,18 +140,21 @@ const executionRequest = (resolved_config: JsonValue): ExecutionRequest => ({
   expected_artifacts: [{ unit_id: "scout" as UnitId, output_name: "repository_refs", artifact_type: "dev.repository_refs" }],
 });
 
-const resolvedConfig = { executor_type: "provision_repository_refs", output_name: "repository_refs", base_branch: BASE_BRANCH, repository } as unknown as JsonValue;
+// v2's `resolveWorkOrder` always resolves a `publication` authority for this
+// stage (`resolve-work-order.ts:75-76`), so every real config carries one.
+const resolvedConfig = { executor_type: "provision_repository_refs", output_name: "repository_refs", base_branch: BASE_BRANCH, repository,
+  publication: { work_order_id: "11111111-1111-4111-8111-111111111112", capability: "work-secret" } } as unknown as JsonValue;
 
 const adapterWith = (git: GitCommandRunner) => {
-  const emitted: EmitExecutionArtifactRequest[] = [];
+  const published: unknown[] = [];
   const adapter = new RepositoryProvisioningAdapter({
     git,
-    async emit(request) {
-      emitted.push(request);
-      return { ok: true, value: { artifact: { id: "artifact-1" } as never, release: { kind: "released", artifact: {} as never }, superseded_artifact_id: null } };
+    async publish_work_order(request) {
+      published.push(request);
+      return { kind: "published", artifact_id: "artifact-1" as never, run_id: "run-1" as never, record_version: 1 as never };
     },
   });
-  return { adapter, emitted };
+  return { adapter, published };
 };
 
 /**
@@ -167,27 +169,13 @@ test("the provisioning executor carries its outcome in the reference it returns"
   const request = executionRequest(resolvedConfig);
   const reference = await subject.adapter.start_or_attach(request, "attempt-1");
   expect(reference).toEqual({ kind: "completed", observation: { kind: "succeeded", metadata: { base_branch: "epic/response-edits", base_head_sha: EPIC_HEAD } } });
-  expect(subject.emitted).toEqual([expect.objectContaining({ output_name: "repository_refs", unit_id: "scout",
-    idempotency_key: "stage-1:scout:repository_refs", body: expect.objectContaining({ base_head_sha: EPIC_HEAD }) })]);
+  expect(subject.published).toEqual([expect.objectContaining({ work_order_id: "11111111-1111-4111-8111-111111111112", capability: "work-secret",
+    output_name: "repository_refs", idempotency_key: "stage-1:scout:repository_refs", body: expect.objectContaining({ base_head_sha: EPIC_HEAD }) })]);
 
   // A second adapter — standing in for the process after a restart — reports
   // the same terminal state from the reference alone.
   const observed = await adapterWith(git.runner).adapter.observe_terminal(request.execution_id, reference);
   expect(observed).toEqual({ kind: "terminal", observation: { kind: "succeeded", metadata: { base_branch: "epic/response-edits", base_head_sha: EPIC_HEAD } } });
-});
-
-test("the provisioning executor publishes through its v2 work order, never the legacy projection", async () => {
-  const published: unknown[] = [];
-  let legacyEmits = 0;
-  const adapter = new RepositoryProvisioningAdapter({ git: scriptedGit(publishedEpic).runner,
-    async emit() { legacyEmits += 1; throw new Error("legacy emit must not be called"); },
-    async publish_work_order(request) { published.push(request); return { kind: "published", artifact_id: "artifact-1" as never,
-      run_id: "run-1" as never, record_version: 1 as never }; } });
-  const request = executionRequest({ ...(resolvedConfig as object), publication: { work_order_id: "11111111-1111-4111-8111-111111111112", capability: "work-secret" } } as JsonValue);
-  expect(await adapter.start_or_attach(request, "attempt-1")).toEqual({ kind: "completed", observation: expect.objectContaining({ kind: "succeeded" }) });
-  expect(legacyEmits).toBe(0);
-  expect(published).toEqual([expect.objectContaining({ work_order_id: "11111111-1111-4111-8111-111111111112", capability: "work-secret",
-    output_name: "repository_refs", idempotency_key: "stage-1:scout:repository_refs" })]);
 });
 
 /**
@@ -201,7 +189,16 @@ test("a provisioning failure becomes a named terminal observation rather than a 
   const reference = await subject.adapter.start_or_attach(executionRequest(resolvedConfig), "attempt-1");
   expect(reference).toEqual({ kind: "completed", observation: { kind: "failed", code: "not_a_git_repository",
     detail: "repository 'scout' is not a git repository at /repos/scout" } });
-  expect(subject.emitted).toEqual([]);
+  expect(subject.published).toEqual([]);
+});
+
+/** v2's resolved config always carries a `publication` authority; one that does not is refused rather than silently unpublished. */
+test("a resolved config with no publication authority fails the unit rather than falling back to a legacy emit", async () => {
+  const subject = adapterWith(scriptedGit(publishedEpic).runner);
+  const withoutPublication = { executor_type: "provision_repository_refs", output_name: "repository_refs", base_branch: BASE_BRANCH, repository } as unknown as JsonValue;
+  const reference = await subject.adapter.start_or_attach(executionRequest(withoutPublication), "attempt-1");
+  expect(reference).toEqual({ kind: "completed", observation: expect.objectContaining({ code: "v2_publication_unavailable" }) });
+  expect(subject.published).toEqual([]);
 });
 
 test("a resolved config the executor cannot read fails the unit rather than the process", async () => {

@@ -3,10 +3,11 @@ import { createHash, randomUUID } from "node:crypto";
 import { Hono } from "hono";
 
 import { renderCollaborationPingPrompt, validateCollaborationPingRequestId, type CollaborationMessage, type CollaborationPingAccepted, type CollaborationThread, type MessageId, type ReviewItem, type ReviewItemId, type ReviewItemStatus, type ThreadId, type ThreadStatus } from "../domain/collaboration";
-import { parseUuidId, isJsonValue, type ArtifactId, type JsonValue } from "../domain/primitives";
+import { parseUuidId, isJsonValue, type ArtifactId, type JsonValue, type WorkflowRunId, type WorkOrderId } from "../domain/primitives";
 import { decodeJsonPointerSegment } from "../domain/json-pointer";
-import type { ArtifactRevision } from "../domain/artifacts";
-import type { ArtifactRevisionRepository, CollaborationRepository, ExecutionArtifactContextRepository, ExecutionProjectionRepository } from "../storage/repositories";
+import { workOrderIdOfArtifact, type ArtifactRevision } from "../domain/artifacts";
+import type { ArtifactRevisionRepository, CollaborationRepository, RunRecordRepository } from "../storage/repositories";
+import { workOrderCapabilityHash } from "../runtime/resolve-work-order";
 
 export interface ArtifactCollaborationPolicy {
   readonly commentable: boolean;
@@ -17,12 +18,12 @@ export interface ArtifactCollaborationPolicy {
 }
 export interface CollaborationHttpDependencies {
   readonly artifacts: ArtifactRevisionRepository;
-  readonly contexts: ExecutionArtifactContextRepository;
   readonly collaboration: CollaborationRepository;
   readonly policy_for_artifact_type: (artifact_type: string) => ArtifactCollaborationPolicy | null;
-  readonly executions: Pick<ExecutionProjectionRepository, "find_external">;
+  readonly records: Pick<RunRecordRepository, "find_work_order_attachment" | "publish_artifact" | "load_work_order_capability_seed">;
   readonly ping_thread: (input: import("../domain/collaboration").CollaborationPingRequest) => Promise<CollaborationPingAccepted>;
-  readonly dispatch_notifications: () => Promise<number>;
+  /** Wakes the run's root workflow sooner than its bounded recheck; absent is fine — the recheck still happens. */
+  readonly send_run_wake?: (run_id: WorkflowRunId, idempotency_key: string) => Promise<void>;
   readonly now?: () => string;
   readonly new_id?: () => string;
 }
@@ -49,6 +50,18 @@ const editJsonPointer = (body: JsonValue, pointer: string, previous: JsonValue, 
   else return null;
   return clone;
 };
+
+/**
+ * An operator-driven edit carries no per-request capability header, and
+ * `publish_artifact` requires a hash matching the stored `capability_hash`
+ * whoever the caller is. The seed is one durable secret, so the value
+ * `resolveWorkOrder` minted for this work order is reproducible here — through
+ * the same transform, not a second copy of it.
+ */
+const capabilityHashForWorkOrder = async (
+  records: Pick<RunRecordRepository, "load_work_order_capability_seed">,
+  work_order_id: WorkOrderId,
+): Promise<string> => workOrderCapabilityHash(await records.load_work_order_capability_seed(), work_order_id);
 
 export const createCollaborationApp = (dependencies: CollaborationHttpDependencies): Hono => {
   const app = new Hono();
@@ -112,13 +125,13 @@ export const createCollaborationApp = (dependencies: CollaborationHttpDependenci
     const requestIdResult = validateCollaborationPingRequestId(http.req.header("idempotency-key") ?? randomUUID());
     if (requestIdResult.kind === "invalid") return http.json({ error: requestIdResult.detail }, 400);
     const requestId = requestIdResult.request_id;
-    const context = await dependencies.contexts.find_for_emit(threadRevision.stage_instance_id, threadRevision.unit_id);
-    if (!context || context.execution_id !== threadRevision.execution_id) return http.json({ error: "thread execution context is unavailable" }, 409);
-    const execution = await dependencies.executions.find_external(context.execution_id);
-    if (!execution) return http.json({ error: "thread executor is not attached" }, 409);
+    const workOrderId = workOrderIdOfArtifact(threadRevision);
+    if (!workOrderId) return http.json({ error: "thread artifact was not produced by a work order" }, 409);
+    const attachment = await dependencies.records.find_work_order_attachment(workOrderId);
+    if (!attachment || attachment.external_reference === null) return http.json({ error: "thread executor is not attached" }, 409);
     const accepted = await dependencies.ping_thread({
-      thread_id: threadId, request_id: requestId, execution_id: context.execution_id,
-      executor_type: execution.executor_type, external_reference: execution.external_reference,
+      thread_id: threadId, request_id: requestId, execution_id: threadRevision.execution_id,
+      executor_type: attachment.executor_type, external_reference: attachment.external_reference,
       prompt: renderCollaborationPingPrompt(fullThread),
     });
     return http.json({ ok: true, ...accepted }, 202);
@@ -138,20 +151,24 @@ export const createCollaborationApp = (dependencies: CollaborationHttpDependenci
     const edited = editJsonPointer(artifact.body, anchor, body.prev_value, body.new_value);
     if (!edited) return http.json({ error: `prev_value mismatch or anchor '${anchor}' was not found` }, 409);
     if (policy.validate_body && !policy.validate_body(edited)) return http.json({ error: "edited artifact body failed type validation" }, 400);
-    const execution = await dependencies.contexts.find_for_emit(artifact.stage_instance_id, artifact.unit_id);
-    const output = execution?.outputs.find((candidate) => candidate.name === artifact.output_name);
-    if (!execution || !output) return http.json({ error: "artifact execution context is unavailable" }, 409);
+    const workOrderId = workOrderIdOfArtifact(artifact);
+    if (!workOrderId) return http.json({ error: "thread artifact was not produced by a work order" }, 409);
     const payload = JSON.stringify({ anchor, prev_value: body.prev_value, new_value: body.new_value, author });
     const payloadHash = createHash("sha256").update(payload).digest("hex");
-    const result = await dependencies.artifacts.emit_revision(newId() as ArtifactId, {
-      run_id: artifact.run_id, stage_instance_id: artifact.stage_instance_id, execution_id: artifact.execution_id, unit_id: artifact.unit_id,
-      output_name: artifact.output_name, artifact_type: artifact.artifact_type, label: artifact.label, body: edited,
-      idempotency_key: http.req.header("idempotency-key")?.trim() || `edit:${payloadHash}`, payload_hash: createHash("sha256").update(JSON.stringify(edited)).digest("hex"),
-    }, now(), { target_workflow_id: execution.execution_workflow_id, release: output.release });
-    if (!result.ok) return http.json({ error: result.error.detail, code: result.error.kind }, 409);
-    const revision = result.value.artifact;
-    await dependencies.dispatch_notifications();
-    return http.json({ artifact_id: revision.id }, 201);
+    const capabilityHash = await capabilityHashForWorkOrder(dependencies.records, workOrderId);
+    const result = await dependencies.records.publish_artifact({
+      artifact_id: newId() as ArtifactId, work_order_id: workOrderId, capability_hash: capabilityHash,
+      output_name: artifact.output_name, collection_key: artifact.collection_key ?? null, body: edited,
+      idempotency_key: http.req.header("idempotency-key")?.trim() || `edit:${payloadHash}`,
+      payload_hash: createHash("sha256").update(JSON.stringify(edited)).digest("hex"),
+      published_at: now(),
+    });
+    if (result.kind !== "published" && result.kind !== "pending" && result.kind !== "already_applied") {
+      return http.json({ error: result.detail, code: result.kind }, 409);
+    }
+    await dependencies.send_run_wake?.(result.run_id, `edit:${result.artifact_id}`).catch(() => undefined);
+    const revision = await dependencies.artifacts.find_by_id(result.artifact_id);
+    return http.json({ artifact_id: revision?.id ?? result.artifact_id }, 201);
   });
   app.get("/artifacts/:id/review_items", async (http) => {
     const artifactId = parseUuidId<ArtifactId>(http.req.param("id"));

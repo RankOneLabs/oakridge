@@ -34,6 +34,13 @@ import type { ExecutorAttachment, MaterializedRunOutput, MaterializedWorkOrder }
 
 const capabilityFor = (seed: string, workOrderId: WorkOrderId): string => createHash("sha256").update(seed).update(":").update(workOrderId).digest("base64url");
 const capabilityHash = (capability: string): string => createHash("sha256").update(capability).digest("hex");
+/**
+ * The stored `work_order.capability_hash` for a work order — what
+ * `publish_artifact` checks a publication against. Exported for the one
+ * server-side publisher that has no agent-held capability to hash (the
+ * operator edit route) and must reproduce the value minted here.
+ */
+export const workOrderCapabilityHash = (seed: string, work_order_id: WorkOrderId): string => capabilityHash(capabilityFor(seed, work_order_id));
 
 const envelopes = (inputs: StageInputSet): readonly ArtifactEnvelope[] =>
   Object.values(inputs).flatMap((value) => (Array.isArray(value) ? value : [value as ArtifactEnvelope]));

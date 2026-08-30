@@ -89,7 +89,7 @@ test("GET /runs/:id exposes the v2 run-record projection with every required fie
     body, capability_hash: gatedCapability, idempotency_key: "endpoint-test-plan-1", payload_hash: payloadHash, published_at: now });
   if (published.kind !== "pending") throw new Error(`expected pending, got ${published.kind}`);
 
-  const app = createOperatorProjectionApp(new PostgresOperatorProjectionRepository(sql));
+  const app = createOperatorProjectionApp(new PostgresOperatorProjectionRepository(sql, "test-app-version"));
   const response = await app.request(`/runs/${runId}`);
   expect(response.status).toBe(200);
   interface RunRecordResponsePayload { readonly run_record: RunRecordPayload }
@@ -163,6 +163,6 @@ test("get_run_record_detail on a run with no v2 units projects an empty unit lis
   await sql.query(`INSERT INTO oakridge.workflow_definition (id, name, version, definition, archived, created_at) VALUES ($1,$2,1,'{}'::jsonb,false,$3::timestamptz)`, [definitionId, `operator-endpoint-legacy-${runId}`, now]);
   await sql.query(`INSERT INTO oakridge.workflow_run (id, workflow_definition_id, context, created_at) VALUES ($1,$2,'{}'::jsonb,$3::timestamptz)`, [runId, definitionId, now]);
 
-  const detail = await new PostgresOperatorProjectionRepository(sql).get_run_record_detail(runId);
+  const detail = await new PostgresOperatorProjectionRepository(sql, "test-app-version").get_run_record_detail(runId);
   expect(detail).toEqual(expect.objectContaining({ run_id: runId, units: [] }));
 });
