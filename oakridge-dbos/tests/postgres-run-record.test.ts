@@ -2,9 +2,12 @@ import { afterAll, expect, test } from "bun:test";
 import { createHash, randomUUID } from "node:crypto";
 
 import type { AskResult } from "../src/decision/commands";
-import type { ArtifactId, InputFingerprint, OutputCollectionKey, Result, RunUnitId, StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId, WorkOrderId } from "../src/domain/primitives";
-import type { PersistMaterializedStage } from "../src/domain/run-record";
+import type { ExecutionRequest } from "../src/domain/execution";
+import type { ArtifactId, ExecutionId, InputFingerprint, OutputCollectionKey, Result, RunUnitId, StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId, WorkOrderId } from "../src/domain/primitives";
+import type { OutputReleaseContract } from "../src/domain/compiled-workflow";
+import type { MaterializedRunOutput, PersistMaterializedStage } from "../src/domain/run-record";
 import { applyMigrations } from "../src/storage/migrate";
+import { PostgresArtifactRevisionRepository } from "../src/storage/postgres-domain";
 import { PostgresRunRecordRepository } from "../src/storage/postgres-run-record";
 import type { RunRecordRepositoryError } from "../src/storage/repositories";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
@@ -354,49 +357,188 @@ test("a second, non-replay publish while the slot is already pending is refused 
   expect(artifacts[0]?.count).toBe("1");
 });
 
+const GATE_RELEASE: OutputReleaseContract = { kind: "gate", steps: [{ type: "artifact_approval", actions: [{ name: "approve", disposition: "release" }, { name: "request_revision", disposition: "revise" }] }], requires_zero_open_review_items: false, revision_target: "self_stage" };
+
+const payloadHashOf = (body: unknown): string => createHash("sha256").update(JSON.stringify(body)).digest("hex");
+
 /**
- * The fix for a bug review flagged: the old command-address scheme was
- * deterministic per *slot*, so a second wait ever opened on the same slot —
- * which cannot happen through this slice's own code today (an invalidated or
- * released slot permanently refuses further publication) but will once a
- * later slice resets an invalidated slot for a fresh work order — would have
- * collided with the first wait's row on `(command_workflow_id, kind)`. This
- * proves the fix directly: reset the slot the way that future revision path
- * will, and confirm a second wait opens cleanly with its own address.
+ * One fresh single-unit stage on an existing materialized run, whose work
+ * order carries v2 publication authority the way `resolveWorkOrder` always
+ * produces it — the shape `retry_unit` rebinds from.
  */
-test("a second wait opened after a slot is reset does not collide on its command address", async () => {
-  const setup = await setupGatedRun();
+const materializeSingleUnitStage = async (setup: NonNullable<Awaited<ReturnType<typeof setupMaterializedRun>>>, stageKey: string, unitId: string, outputs: readonly MaterializedRunOutput[]) => {
+  const template = setup.input.units[0]!;
+  const stageId = randomUUID() as StageInstanceId;
+  const runUnitId = randomUUID() as RunUnitId;
+  const workOrderId = randomUUID() as WorkOrderId;
+  const capability = `capability:${workOrderId}`;
+  const capabilityHash = createHash("sha256").update(capability).digest("hex");
+  const declared = [...new Map(outputs.map((output) => [output.identity.output_name, { name: output.identity.output_name, artifact_type: output.artifact_type, required: true }])).values()];
+  const request: ExecutionRequest = { ...template.initial_work_order.request, execution_id: workOrderId as unknown as ExecutionId, stage_instance_id: stageId, unit_id: unitId as UnitId,
+    resolved_config: { runtime: "claude-code", rendered_prompt: "work", workdir: "/repo", session_name: unitId, publication: { base_url: "http://oakridge.test", work_order_id: workOrderId, capability } },
+    declared_outputs: declared,
+    expected_artifacts: outputs.map((output) => ({ unit_id: (output.identity.kind === "collection_member" ? output.identity.collection_key : unitId) as unknown as UnitId, output_name: output.identity.output_name, artifact_type: output.artifact_type })) };
+  const stage: PersistMaterializedStage = { ...setup.input, stage_instance_id: stageId, stage_key: stageKey, policy: { max_parallel: 4, manual_admission: false },
+    units: [{ ...template, id: runUnitId, unit_id: unitId as UnitId, depends_on: [], outputs, initial_work_order: { id: workOrderId, workflow_id: `v2-work:${workOrderId}`, capability_hash: capabilityHash, request } }] };
+  await setup.records.persist_materialized_stage(stage);
+  await setup.records.decide_run(stage.run_id, stage.materialized_at); // available -> started
+  return { stage, stageId, runUnitId, workOrderId, capabilityHash, at: stage.materialized_at };
+};
+
+interface StoredExecutionBasis { readonly capability_hash: string; readonly execution_request: ExecutionRequest }
+const storedWorkOrder = async (workOrderId: WorkOrderId): Promise<StoredExecutionBasis> => {
+  const rows = await sql!.query<StoredExecutionBasis>("SELECT capability_hash, execution_request FROM oakridge.work_order WHERE id = $1", [workOrderId]);
+  if (!rows[0]) throw new Error(`work order '${workOrderId}' was not stored`);
+  return rows[0];
+};
+const publicationOf = (request: ExecutionRequest): { readonly work_order_id: string; readonly capability: string } => {
+  const publication = (request.resolved_config as { readonly publication?: { readonly work_order_id: string; readonly capability: string } }).publication;
+  if (!publication) throw new Error("execution request carries no publication authority");
+  return publication;
+};
+
+/**
+ * The operator's correction loop at the repository: a gated output is
+ * rejected, the operator retries the unit, and the retry's work order
+ * publishes the replacement into the invalidated slot as a fresh chain root
+ * with a wait of its own. The retry's request is rebound to the new work
+ * order — its own PUT target and its own capability, never the abandoned
+ * order's — and names only the output still owed.
+ */
+test("a rejected gated output is replaced by the operator's retry as a fresh chain root with its own wait", async () => {
+  const setup = await setupMaterializedRun(4, false, false);
   if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
-  const { records, runUnitId, workOrderId, capabilityHash, now } = setup;
-  const bodyA = { plan: "a" };
-  const payloadHashA = createHash("sha256").update(JSON.stringify(bodyA)).digest("hex");
-  const first = await records.publish_artifact({ artifact_id: randomUUID() as ArtifactId, work_order_id: workOrderId, output_name: "result", body: bodyA,
-    capability_hash: capabilityHash, idempotency_key: "plan-reset-a", payload_hash: payloadHashA, published_at: now });
+  const fixture = await materializeSingleUnitStage(setup, "plan", "planner", [{ identity: { kind: "scalar", output_name: "plan" }, artifact_type: "dev.plan", required: true, release: GATE_RELEASE }]);
+  const publish = (workOrderId: WorkOrderId, capabilityHash: string, key: string, body: unknown) => setup.records.publish_artifact({ artifact_id: randomUUID() as ArtifactId, work_order_id: workOrderId,
+    capability_hash: capabilityHash, output_name: "plan", body: body as never, idempotency_key: key, payload_hash: payloadHashOf(body), published_at: fixture.at });
+
+  const first = await publish(fixture.workOrderId, fixture.capabilityHash, "plan-v1", { plan: "v1" });
   if (first.kind !== "pending") throw new Error(`expected pending, got ${first.kind}`);
-  await records.close_output_wait({ wait_id: first.wait_id, disposition: "invalidate", actor: "operator:sam", detail: null, decided_at: now });
+  await setup.records.close_output_wait({ wait_id: first.wait_id, disposition: "invalidate", actor: "operator:sam", detail: "redo it", decided_at: fixture.at });
+  // The scalar producer had nothing left to emit, so the rejection abandoned it.
+  expect(await publish(fixture.workOrderId, fixture.capabilityHash, "plan-v2-from-old-order", { plan: "v2" })).toEqual(expect.objectContaining({ kind: "work_abandoned" }));
 
-  await sql!.query("UPDATE oakridge.run_output_slot SET state = 'empty', artifact_revision_id = NULL, invalidation_reason = NULL, state_changed_at = NULL WHERE run_unit_id = $1 AND output_name = 'result'", [runUnitId]);
-  // Invalidation abandons the work order that produced the rejected output
-  // (see the dedicated test for that above); a real Slice 4/5 revision or
-  // retry issues a genuinely new one — reusing the abandoned id would also
-  // collide on the artifact table's own (coordinate, version) uniqueness,
-  // which is a separate, pre-existing constraint this test has no business
-  // exercising.
-  const secondWorkOrderId = randomUUID() as WorkOrderId;
-  const secondCapabilityHash = createHash("sha256").update(`gate-secret-reset-${secondWorkOrderId}`).digest("hex");
-  await sql!.query(`INSERT INTO oakridge.work_order (id, run_unit_id, reason, input_snapshot, input_fingerprint, state, workflow_id, request_idempotency_key, capability_hash, created_at)
-    VALUES ($1,$2,'operator_retry','[]'::jsonb,'empty','started',$3,'retry-1',$4,$5::timestamptz)`,
-    [secondWorkOrderId, runUnitId, `v2-work:${secondWorkOrderId}`, secondCapabilityHash, now]);
+  const retry = await setup.records.retry_unit({ target: { kind: "stage_unit", stage_instance_id: fixture.stageId, unit_id: "planner" as UnitId }, idempotency_key: "retry-1", actor: "operator:sam" }, fixture.at);
+  if (retry.kind !== "created") throw new Error(`expected created, got ${retry.kind}`);
+  const stored = await storedWorkOrder(retry.work_order.id);
+  const publication = publicationOf(stored.execution_request);
+  expect(publication.work_order_id).toBe(retry.work_order.id);
+  expect(createHash("sha256").update(publication.capability).digest("hex")).toBe(stored.capability_hash);
+  expect(stored.capability_hash).not.toBe(fixture.capabilityHash);
+  expect(stored.execution_request.execution_id).toBe(retry.work_order.id as unknown as ExecutionId);
+  expect(stored.execution_request.expected_artifacts).toEqual([{ unit_id: "planner" as UnitId, output_name: "plan", artifact_type: "dev.plan" as never }]);
+  // The abandoned order's capability does not authenticate the retry.
+  expect(await publish(retry.work_order.id, fixture.capabilityHash, "plan-v2-stale-capability", { plan: "v2" })).toEqual(expect.objectContaining({ kind: "invalid_capability" }));
 
-  const bodyB = { plan: "b" };
-  const payloadHashB = createHash("sha256").update(JSON.stringify(bodyB)).digest("hex");
-  const second = await records.publish_artifact({ artifact_id: randomUUID() as ArtifactId, work_order_id: secondWorkOrderId, output_name: "result", body: bodyB,
-    capability_hash: secondCapabilityHash, idempotency_key: "plan-reset-b", payload_hash: payloadHashB, published_at: now });
-  expect(second.kind).toBe("pending");
-  if (second.kind !== "pending") return;
-
+  await setup.records.decide_run(setup.input.run_id, fixture.at); // starts the retry
+  const second = await publish(retry.work_order.id, stored.capability_hash, "plan-v2", { plan: "v2" });
+  if (second.kind !== "pending") throw new Error(`expected pending, got ${second.kind}`);
+  expect(second.wait_id).not.toBe(first.wait_id);
   const addresses = await sql!.query<{ readonly command_workflow_id: string }>("SELECT command_workflow_id FROM oakridge.wait WHERE id = ANY($1::uuid[])", [[first.wait_id, second.wait_id]]);
   expect(new Set(addresses.map((row) => row.command_workflow_id)).size).toBe(2);
+
+  const artifacts = await sql!.query<{ readonly id: string; readonly lifecycle_state: string; readonly version: number; readonly parent_artifact_id: string | null; readonly chain_id: string; readonly execution_id: string }>(
+    "SELECT id::text, lifecycle_state, version, parent_artifact_id::text, chain_id::text, execution_id FROM oakridge.artifact WHERE id = ANY($1::uuid[]) ORDER BY created_at, version", [[first.artifact_id, second.artifact_id]]);
+  expect(artifacts.find((artifact) => artifact.id === first.artifact_id)).toEqual(expect.objectContaining({ lifecycle_state: "withdrawn" }));
+  expect(artifacts.find((artifact) => artifact.id === second.artifact_id)).toEqual(expect.objectContaining({ lifecycle_state: "current", version: 1, parent_artifact_id: null, chain_id: second.artifact_id, execution_id: retry.work_order.id }));
+  const slot = await sql!.query<{ readonly state: string; readonly artifact_revision_id: string; readonly updated_by_work_order_id: string }>(
+    "SELECT state, artifact_revision_id::text, updated_by_work_order_id::text FROM oakridge.run_output_slot WHERE run_unit_id = $1 AND output_name = 'plan'", [fixture.runUnitId]);
+  expect(slot[0]).toEqual({ state: "pending", artifact_revision_id: second.artifact_id, updated_by_work_order_id: retry.work_order.id });
+  const transition = await sql!.query<{ readonly detail: { readonly replaced_artifact_id?: string } }>(
+    "SELECT detail FROM oakridge.run_transition WHERE run_id = $1 AND operation = 'slot_pending' AND work_order_id = $2", [setup.input.run_id, retry.work_order.id]);
+  expect(transition[0]?.detail.replaced_artifact_id).toBe(first.artifact_id);
+});
+
+/**
+ * Input revision abandons only active work. A `completed` order keeps a valid
+ * capability and its agent may still be alive — it must not publish the
+ * old input's output into the slot the revision just invalidated. The
+ * revision's own order may, and afterwards the effective-artifact reads
+ * return the replacement alone even though the predecessor stays `released`.
+ */
+test("a completed work order cannot publish into a slot invalidated by input revision; the revision's order can, and reads follow the slot", async () => {
+  const setup = await setupMaterializedRun(4, false, false);
+  if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  const fixture = await materializeSingleUnitStage(setup, "summary", "writer", [{ identity: { kind: "scalar", output_name: "summary" }, artifact_type: "dev.summary", required: true, release: { kind: "immediate" } }]);
+  const publish = (workOrderId: WorkOrderId, capabilityHash: string, key: string, body: unknown) => setup.records.publish_artifact({ artifact_id: randomUUID() as ArtifactId, work_order_id: workOrderId,
+    capability_hash: capabilityHash, output_name: "summary", body: body as never, idempotency_key: key, payload_hash: payloadHashOf(body), published_at: fixture.at });
+
+  const first = await publish(fixture.workOrderId, fixture.capabilityHash, "summary-v1", { summary: "v1" });
+  if (first.kind !== "published") throw new Error(`expected published, got ${first.kind}`);
+  for (let asks = 0; asks < 3; asks += 1) await setup.records.decide_run(setup.input.run_id, fixture.at);
+  expect((await sql!.query<{ readonly state: string }>("SELECT state FROM oakridge.work_order WHERE id = $1", [fixture.workOrderId]))[0]?.state).toBe("completed");
+
+  const replacementWorkOrderId = randomUUID() as WorkOrderId;
+  const replacementCapability = `capability:${replacementWorkOrderId}`;
+  const replacementCapabilityHash = createHash("sha256").update(replacementCapability).digest("hex");
+  const basis = fixture.stage.units[0]!.initial_work_order.request;
+  const revised = await setup.records.revise_unit_input({ run_unit_id: fixture.runUnitId, input_snapshot: [], input_fingerprint: "revised" as InputFingerprint, revised_at: fixture.at, actor: "test",
+    replacement_work_order: { id: replacementWorkOrderId, workflow_id: `v2-work:${replacementWorkOrderId}`, capability_hash: replacementCapabilityHash,
+      request: { ...basis, execution_id: replacementWorkOrderId as unknown as ExecutionId, resolved_config: { ...(basis.resolved_config as object), publication: { base_url: "http://oakridge.test", work_order_id: replacementWorkOrderId, capability: replacementCapability } } } } });
+  expect(revised.kind).toBe("revised");
+  const slotBefore = (await sql!.query<{ readonly state: string; readonly artifact_revision_id: string | null }>("SELECT state, artifact_revision_id::text FROM oakridge.run_output_slot WHERE run_unit_id = $1", [fixture.runUnitId]))[0];
+  expect(slotBefore).toEqual({ state: "invalidated", artifact_revision_id: first.artifact_id });
+
+  expect(await publish(fixture.workOrderId, fixture.capabilityHash, "summary-v2-from-completed-order", { summary: "stale" })).toEqual(expect.objectContaining({ kind: "work_not_active" }));
+  expect((await sql!.query<{ readonly state: string; readonly artifact_revision_id: string | null }>("SELECT state, artifact_revision_id::text FROM oakridge.run_output_slot WHERE run_unit_id = $1", [fixture.runUnitId]))[0]).toEqual(slotBefore);
+
+  await setup.records.decide_run(setup.input.run_id, fixture.at); // starts the replacement
+  const second = await publish(replacementWorkOrderId, replacementCapabilityHash, "summary-v2", { summary: "v2" });
+  if (second.kind !== "published") throw new Error(`expected published, got ${second.kind}`);
+  const lifecycles = await sql!.query<{ readonly id: string; readonly lifecycle_state: string }>("SELECT id::text, lifecycle_state FROM oakridge.artifact WHERE id = ANY($1::uuid[])", [[first.artifact_id, second.artifact_id]]);
+  expect(lifecycles.find((row) => row.id === first.artifact_id)?.lifecycle_state).toBe("released");
+  expect(lifecycles.find((row) => row.id === second.artifact_id)?.lifecycle_state).toBe("released");
+  const effective = (await new PostgresArtifactRevisionRepository(sql!).list_effective_for_run(setup.input.run_id)).filter((artifact) => artifact.output_name === "summary");
+  expect(effective.map((artifact) => artifact.id)).toEqual([second.artifact_id]);
+});
+
+/**
+ * One rejected collection member is not a verdict on the members its
+ * producer has not published yet: the producer keeps running while it still
+ * owes an empty sibling and is abandoned only once a rejection leaves it
+ * nothing to emit. It cannot re-publish the rejected member itself — that is
+ * the operator retry's, whose request names the rejected members by their
+ * collection keys and publishes them under its own work order.
+ */
+test("rejecting one collection member keeps a producer that still owes a sibling; the retry replaces the rejected members", async () => {
+  const setup = await setupMaterializedRun(4, false, false);
+  if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  const members = ["a", "b"].map((key) => ({ identity: { kind: "collection_member" as const, output_name: "files", collection_key: key as OutputCollectionKey }, artifact_type: "dev.file", required: true, release: GATE_RELEASE }));
+  const fixture = await materializeSingleUnitStage(setup, "collect", "collector", members);
+  const publish = (workOrderId: WorkOrderId, capabilityHash: string, key: "a" | "b", idempotencyKey: string, body: unknown) => setup.records.publish_artifact({ artifact_id: randomUUID() as ArtifactId, work_order_id: workOrderId,
+    capability_hash: capabilityHash, output_name: "files", collection_key: key as OutputCollectionKey, body: body as never, idempotency_key: idempotencyKey, payload_hash: payloadHashOf(body), published_at: fixture.at });
+  const workOrderState = async (): Promise<string | undefined> => (await sql!.query<{ readonly state: string }>("SELECT state FROM oakridge.work_order WHERE id = $1", [fixture.workOrderId]))[0]?.state;
+  const slots = () => sql!.query<{ readonly collection_key: string; readonly state: string; readonly artifact_revision_id: string | null }>("SELECT collection_key, state, artifact_revision_id::text FROM oakridge.run_output_slot WHERE run_unit_id = $1 ORDER BY collection_key", [fixture.runUnitId]);
+
+  const firstA = await publish(fixture.workOrderId, fixture.capabilityHash, "a", "a-v1", { member: "a", revision: 1 });
+  if (firstA.kind !== "pending") throw new Error(`expected pending, got ${firstA.kind}`);
+  await setup.records.close_output_wait({ wait_id: firstA.wait_id, disposition: "invalidate", actor: "operator:sam", detail: "redo a", decided_at: fixture.at });
+  expect(await workOrderState()).toBe("started");
+
+  const firstB = await publish(fixture.workOrderId, fixture.capabilityHash, "b", "b-v1", { member: "b", revision: 1 });
+  if (firstB.kind !== "pending") throw new Error(`expected pending, got ${firstB.kind}`);
+  expect(await publish(fixture.workOrderId, fixture.capabilityHash, "a", "a-v2", { member: "a", revision: 2 })).toEqual(expect.objectContaining({ kind: "slot_invalidated" }));
+  expect(await slots()).toEqual([expect.objectContaining({ collection_key: "a", state: "invalidated", artifact_revision_id: firstA.artifact_id }), expect.objectContaining({ collection_key: "b", state: "pending", artifact_revision_id: firstB.artifact_id })]);
+
+  // Nothing empty is left to emit, so this rejection abandons the producer.
+  await setup.records.close_output_wait({ wait_id: firstB.wait_id, disposition: "invalidate", actor: "operator:sam", detail: "redo b", decided_at: fixture.at });
+  expect(await workOrderState()).toBe("abandoned");
+  expect((await publish(fixture.workOrderId, fixture.capabilityHash, "b", "b-v2", { member: "b", revision: 2 })).kind).toBe("work_abandoned");
+
+  const retry = await setup.records.retry_unit({ target: { kind: "stage_unit", stage_instance_id: fixture.stageId, unit_id: "collector" as UnitId }, idempotency_key: "retry-collection", actor: "operator:sam" }, fixture.at);
+  if (retry.kind !== "created") throw new Error(`expected created, got ${retry.kind}`);
+  const stored = await storedWorkOrder(retry.work_order.id);
+  expect(stored.execution_request.expected_artifacts).toEqual([
+    { unit_id: "a" as UnitId, output_name: "files", artifact_type: "dev.file" as never },
+    { unit_id: "b" as UnitId, output_name: "files", artifact_type: "dev.file" as never },
+  ]);
+  await setup.records.decide_run(setup.input.run_id, fixture.at); // starts the retry
+  const secondA = await publish(retry.work_order.id, stored.capability_hash, "a", "a-v2-retry", { member: "a", revision: 2 });
+  const secondB = await publish(retry.work_order.id, stored.capability_hash, "b", "b-v2-retry", { member: "b", revision: 2 });
+  if (secondA.kind !== "pending" || secondB.kind !== "pending") throw new Error(`expected pending, got ${secondA.kind}/${secondB.kind}`);
+  expect(await slots()).toEqual([expect.objectContaining({ collection_key: "a", state: "pending", artifact_revision_id: secondA.artifact_id }), expect.objectContaining({ collection_key: "b", state: "pending", artifact_revision_id: secondB.artifact_id })]);
+  const withdrawn = await sql!.query<{ readonly lifecycle_state: string }>("SELECT lifecycle_state FROM oakridge.artifact WHERE id = ANY($1::uuid[])", [[firstA.artifact_id, firstB.artifact_id]]);
+  expect(withdrawn.map((row) => row.lifecycle_state)).toEqual(["withdrawn", "withdrawn"]);
 });
 
 const setupMaterializedRun = async (maxParallel = 1, withDependencies = true, manualAdmission = false): Promise<{ readonly records: PostgresRunRecordRepository; readonly input: PersistMaterializedStage; readonly capabilities: readonly string[] } | null> => {
@@ -579,6 +721,7 @@ test("operator retry is idempotent, requires recorded missing work, and preserve
   const outputs = ["kept", "missing"].map((name) => ({ identity: { kind: "scalar" as const, output_name: name }, artifact_type: "dev.result", required: true, release: { kind: "immediate" as const } }));
   const request = { ...template.initial_work_order.request, execution_id: workOrderId as unknown as import("../src/domain/primitives").ExecutionId,
     stage_instance_id: stageId, unit_id: "retry-target" as UnitId,
+    resolved_config: { publication: { base_url: "http://oakridge.test", work_order_id: workOrderId, capability: "retry-capability" } },
     declared_outputs: outputs.map((output) => ({ name: output.identity.output_name, artifact_type: output.artifact_type, required: true })),
     expected_artifacts: outputs.map((output) => ({ unit_id: "retry-target" as UnitId, output_name: output.identity.output_name, artifact_type: output.artifact_type })) };
   const stage = { ...setup.input, stage_instance_id: stageId, stage_key: "retry", policy: { max_parallel: 4, manual_admission: false }, units: [{ ...template,
@@ -590,15 +733,23 @@ test("operator retry is idempotent, requires recorded missing work, and preserve
     output_name: "kept", body: keptBody, idempotency_key: "kept", payload_hash: createHash("sha256").update(JSON.stringify(keptBody)).digest("hex"), published_at: stage.materialized_at })).kind).toBe("published");
   await setup.records.ensure_executor_attachment(workOrderId, request.executor_type, stage.materialized_at);
   await setup.records.observe_executor(workOrderId, { kind: "ended_failed", code: "executor_failed", detail: "boom", observed_at: stage.materialized_at }, stage.materialized_at);
-  const retry = await setup.records.retry_unit({ run_unit_id: runUnitId, idempotency_key: "retry-1", actor: "operator:test" }, stage.materialized_at);
+  const retry = await setup.records.retry_unit({ target: { kind: "run_unit", run_unit_id: runUnitId }, idempotency_key: "retry-1", actor: "operator:test" }, stage.materialized_at);
   expect(retry.kind).toBe("created");
   if (retry.kind !== "created") throw new Error(`expected created, got ${retry.kind}`);
   expect(retry.work_order.reason).toBe("operator_retry");
   expect(retry.work_order.workflow_id).toBe(`v2-work:${retry.work_order.id}`);
-  expect(await setup.records.retry_unit({ run_unit_id: runUnitId, idempotency_key: "retry-1", actor: "operator:test" }, stage.materialized_at))
+  // The retry runs under authority minted for itself and owes only what is missing.
+  const stored = await storedWorkOrder(retry.work_order.id);
+  expect(publicationOf(stored.execution_request).work_order_id).toBe(retry.work_order.id);
+  expect(createHash("sha256").update(publicationOf(stored.execution_request).capability).digest("hex")).toBe(stored.capability_hash);
+  expect(stored.capability_hash).not.toBe(capabilityHash);
+  expect(stored.execution_request.expected_artifacts).toEqual([{ unit_id: "retry-target" as UnitId, output_name: "missing", artifact_type: "dev.result" as never }]);
+  expect(await setup.records.retry_unit({ target: { kind: "run_unit", run_unit_id: runUnitId }, idempotency_key: "retry-1", actor: "operator:test" }, stage.materialized_at))
     .toEqual(expect.objectContaining({ kind: "already_created", work_order: expect.objectContaining({ id: retry.work_order.id }) }));
-  expect(await setup.records.retry_unit({ run_unit_id: runUnitId, idempotency_key: "retry-2", actor: "operator:test" }, stage.materialized_at))
+  expect(await setup.records.retry_unit({ target: { kind: "stage_unit", stage_instance_id: stageId, unit_id: "retry-target" as UnitId }, idempotency_key: "retry-2", actor: "operator:test" }, stage.materialized_at))
     .toEqual(expect.objectContaining({ kind: "work_in_progress" }));
+  expect(await setup.records.retry_unit({ target: { kind: "stage_unit", stage_instance_id: stageId, unit_id: "no-such-unit" as UnitId }, idempotency_key: "retry-3", actor: "operator:test" }, stage.materialized_at))
+    .toEqual(expect.objectContaining({ kind: "unit_not_found" }));
   const slots = await sql!.query<{ readonly output_name: string; readonly state: string }>("SELECT output_name,state FROM oakridge.run_output_slot WHERE run_unit_id=$1 ORDER BY output_name", [runUnitId]);
   expect(slots).toEqual([{ output_name: "kept", state: "released" }, { output_name: "missing", state: "empty" }]);
   const oldOrder = await sql!.query<{ readonly state: string }>("SELECT state FROM oakridge.work_order WHERE id=$1", [workOrderId]);
