@@ -184,8 +184,18 @@ export interface ReviseRunUnitInput {
   readonly replacement_work_order: MaterializedWorkOrder;
 }
 
+/**
+ * Which unit an operator retry addresses. kbbl's run detail knows a unit by
+ * its stage instance and `unit_id`; the run-record row id is what the
+ * repository keys on. Both name exactly one `run_unit` row
+ * (`UNIQUE (stage_instance_id, unit_id)`).
+ */
+export type RetryRunUnitTarget =
+  | { readonly kind: "run_unit"; readonly run_unit_id: RunUnitId }
+  | { readonly kind: "stage_unit"; readonly stage_instance_id: StageInstanceId; readonly unit_id: UnitId };
+
 export interface RetryRunUnit {
-  readonly run_unit_id: RunUnitId;
+  readonly target: RetryRunUnitTarget;
   readonly idempotency_key: string;
   readonly actor: string;
 }
@@ -263,7 +273,18 @@ export type PublishWorkOrderArtifactResult =
   /** A gated or handoff release policy: the artifact is recorded and its slot parked pending the opened wait's decision. */
   | { readonly kind: "pending"; readonly artifact_id: ArtifactId; readonly wait_id: WaitId; readonly run_id: WorkflowRunId; readonly record_version: RunRecordVersion }
   | { readonly kind: "already_applied"; readonly artifact_id: ArtifactId; readonly run_id: WorkflowRunId; readonly record_version: RunRecordVersion }
-  | { readonly kind: "work_not_found" | "invalid_capability" | "work_abandoned" | "slot_not_found" | "slot_invalidated"; readonly detail: string }
+  /**
+   * An invalidated slot accepts its replacement only from a *different*,
+   * *active* work order — the operator's retry, or an input revision's order.
+   * `work_not_active`: the caller is `completed`; it keeps a valid capability
+   * (input revision abandons only active work) but must not publish
+   * old-input output into a slot just invalidated for new input.
+   * `slot_invalidated`: the caller produced the rejected output itself; a
+   * second version under the same work order would collide on the artifact
+   * table's per-execution `(coordinate, version)` uniqueness, and the
+   * replacement is a new work order's to publish.
+   */
+  | { readonly kind: "work_not_found" | "invalid_capability" | "work_abandoned" | "work_not_active" | "slot_not_found" | "slot_invalidated"; readonly detail: string }
   | { readonly kind: "slot_already_released"; readonly artifact_id: ArtifactId; readonly detail: string }
   /** A different, non-replay publish arrived while the slot is already parked pending an earlier one's wait. */
   | { readonly kind: "slot_pending"; readonly wait_id: WaitId; readonly detail: string }

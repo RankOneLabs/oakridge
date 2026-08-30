@@ -182,7 +182,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const app = createApp({
     configuration: { projects, definitions, project_identity: projectIdentity, now },
     admission: { records: runRecords, now },
-    operator_retry: { records: runRecords, now },
+    operator_retry: { records: runRecords, now, send_run_wake: sendRunWakeHint },
     run_lifecycle: { records: runRecords },
     domain_reads: { stages, artifacts, session_holds: projections },
     final_pull_requests: { final_pull_requests: finalPullRequests, now },

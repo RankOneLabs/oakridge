@@ -80,7 +80,24 @@ const parseResolvedConfig = (value: JsonValue): KbblResolvedConfig => {
   return { runtime, rendered_prompt: renderedPrompt, workdir, session_name: sessionName, model, effort, artifact_id: artifactId, worktree, publication };
 };
 
-const publicationInstructions = (config: KbblResolvedConfig): string => config.publication ? `\n\n## Oakridge v2 artifact publication\n\nUse this run-owned endpoint instead of any stage/execution emit URL shown earlier:\n\nPUT ${config.publication.base_url.replace(/\/$/, "")}/work-orders/${config.publication.work_order_id}/emit/<output-name>\nWork-Order-Capability: ${config.publication.capability}\nIdempotency-Key: <stable key for this output payload>\nContent-Type: application/json\n\nFor a collection member, also send Output-Collection-Key. A successful executor exit does not satisfy the unit; publish every required output.\n` : "";
+/**
+ * The outputs this work order owes, named the way the emit route addresses
+ * them. `expected_artifacts.unit_id` carries a collection member's key (the
+ * request's own `unit_id` marks a scalar), so a retry that owes one member of
+ * a collection tells the agent to emit that member and nothing else.
+ */
+const expectedOutputLines = (request: Pick<ExecutionRequest, "unit_id" | "expected_artifacts">): string =>
+  request.expected_artifacts.map((expected) => expected.unit_id === request.unit_id
+    ? `- ${expected.output_name}`
+    : `- ${expected.output_name} (Output-Collection-Key: ${expected.unit_id})`).join("\n");
+
+const publicationInstructions = (config: KbblResolvedConfig, request: Pick<ExecutionRequest, "unit_id" | "expected_artifacts">): string => {
+  if (!config.publication) return "";
+  const owed = request.expected_artifacts.length > 0
+    ? `\n\nPublish exactly these outputs and no others:\n${expectedOutputLines(request)}\n`
+    : "";
+  return `\n\n## Oakridge v2 artifact publication\n\nUse this run-owned endpoint instead of any stage/execution emit URL shown earlier:\n\nPUT ${config.publication.base_url.replace(/\/$/, "")}/work-orders/${config.publication.work_order_id}/emit/<output-name>\nWork-Order-Capability: ${config.publication.capability}\nIdempotency-Key: <stable key for this output payload>\nContent-Type: application/json\n\nFor a collection member, also send Output-Collection-Key. A successful executor exit does not satisfy the unit; publish every required output.\n${owed}`;
+};
 
 const parseEnsureResponse = (value: unknown): EnsureSessionResponse => {
   if (typeof value !== "object" || value === null || !("kind" in value) || !("session" in value)) throw new Error("invalid kbbl ensure-session response");
@@ -168,7 +185,7 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        initial_prompt: config.rendered_prompt + publicationInstructions(config),
+        initial_prompt: config.rendered_prompt + publicationInstructions(config, request),
         workdir: config.workdir,
         name: config.session_name,
         runtime: config.runtime,

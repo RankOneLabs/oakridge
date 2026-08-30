@@ -197,7 +197,7 @@ export function RunDetail({ runId, onBack, onSelectArtifact }: RunDetailProps) {
                           && retryMutation.variables.unitId === unit.unit_id
                           ? (retryMutation.error instanceof Error ? retryMutation.error.message : "Retry failed")
                           : undefined}
-                        canRetry={stage.status === "parked"}
+                        canRetry={(stage.status === "parked" && unit.status === "failed") || (run.is_stuck && unit.status !== "complete")}
                       />
                     );
                   });
@@ -206,12 +206,6 @@ export function RunDetail({ runId, onBack, onSelectArtifact }: RunDetailProps) {
             <RunStageRow
                     key={stage.name}
                     stage={stage}
-                    canRetry={run.is_stuck}
-                    onRetry={(sid) => void retryMutation.mutate({ stageInstanceId: sid })}
-                    retrying={
-                      retryMutation.isPending &&
-                      retryMutation.variables?.stageInstanceId === stage.stage_instance_id
-                    }
                     onSelectArtifact={onSelectArtifact}
                   />,
                 ];

@@ -7,6 +7,7 @@ import type { EpicWorkflowProfile } from "../domain/epic";
 import { PR_SUMMARY_ARTIFACT_TYPE } from "../domain/dev-flow-artifacts";
 import { selectHandoffStatusFromWait, type HandoffWaitKind, type Wait, type WaitOutcome } from "../domain/wait";
 import type { RunState, UnitState } from "../domain/run-record";
+import { effectiveArtifactPredicate } from "./sql-fragments";
 import { compileWorkflowDefinition } from "../compiler/compile-workflow";
 import { parseWorkflowDefinition } from "../validation/workflow-definition";
 import { stageInstanceIdFor } from "../decision/ids";
@@ -348,7 +349,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     const artifactRows = await this.sql.query<StageArtifactRow>(
       `SELECT DISTINCT ON (artifact.stage_instance_id,artifact.unit_id,artifact.output_name,artifact.collection_key)
               artifact.stage_instance_id::text,artifact.id::text,artifact.artifact_type AS type_id,artifact.version,artifact.label
-       FROM oakridge.artifact artifact WHERE artifact.run_id=$1 AND artifact.lifecycle_state IN ('current','released')
+       FROM oakridge.artifact artifact WHERE artifact.run_id=$1 AND ${effectiveArtifactPredicate("artifact")}
        ORDER BY artifact.stage_instance_id,artifact.unit_id,artifact.output_name,artifact.collection_key,artifact.version DESC`, [id]);
     const stages: OperatorStageDetail[] = stageRows.map((stage) => {
       const units: OperatorStageUnit[] = unitRows.filter((unit) => unit.stage_instance_id === stage.stage_instance_id).map((unit) => ({
@@ -479,9 +480,9 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
       JOIN oakridge.workflow_run run ON run.id=unit.run_id JOIN oakridge.workflow_definition definition ON definition.id=run.workflow_definition_id
       JOIN oakridge.run_stage_scheduling_policy policy ON policy.stage_instance_id=stage.id
       CROSS JOIN LATERAL (SELECT output.value->>'name' AS output_name FROM jsonb_array_elements(stage.stage_contract->'outputs') output(value) WHERE output.value->'release'->>'kind'='handoff' ORDER BY output.value->>'name' LIMIT 1) handoff_output
-      LEFT JOIN LATERAL (SELECT candidate.* FROM oakridge.artifact candidate WHERE candidate.stage_instance_id=stage.id AND candidate.unit_id=unit.unit_id AND candidate.output_name=handoff_output.output_name AND candidate.lifecycle_state IN ('current','released') ORDER BY candidate.version DESC,candidate.id LIMIT 1) artifact ON true
+      LEFT JOIN LATERAL (SELECT candidate.* FROM oakridge.artifact candidate WHERE candidate.stage_instance_id=stage.id AND candidate.unit_id=unit.unit_id AND candidate.output_name=handoff_output.output_name AND ${effectiveArtifactPredicate("candidate")} LIMIT 1) artifact ON true
       LEFT JOIN LATERAL (SELECT wait.kind,wait.status,wait.outcome->>'kind' AS outcome_kind FROM oakridge.wait wait WHERE wait.artifact_revision_id=artifact.id AND wait.kind IN ('handoff_downstream','handoff_external') ORDER BY (wait.kind='handoff_external') DESC LIMIT 1) handoff ON true
-      LEFT JOIN LATERAL (SELECT candidate.body->>'pr_url' AS pr_url FROM oakridge.artifact candidate WHERE candidate.stage_instance_id=stage.id AND candidate.unit_id=unit.unit_id AND candidate.artifact_type='${PR_SUMMARY_ARTIFACT_TYPE}' AND candidate.lifecycle_state IN ('current','released') ORDER BY candidate.version DESC,candidate.id LIMIT 1) summary ON true
+      LEFT JOIN LATERAL (SELECT candidate.body->>'pr_url' AS pr_url FROM oakridge.artifact candidate WHERE candidate.stage_instance_id=stage.id AND candidate.unit_id=unit.unit_id AND candidate.artifact_type='${PR_SUMMARY_ARTIFACT_TYPE}' AND ${effectiveArtifactPredicate("candidate")} LIMIT 1) summary ON true
       LEFT JOIN oakridge.cohort_pull_request_reconciliation reconciliation ON reconciliation.stage_instance_id=stage.id AND reconciliation.unit_id=unit.unit_id
       WHERE run.archived=false AND stage.attempt_root_workflow_id IS NULL ORDER BY updated_at DESC`, []);
     return rows.map((row) => {
