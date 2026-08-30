@@ -81,15 +81,7 @@ for (const orphaned of await runtime.orphaned_version_runs()) {
     `. They will not advance on their own — cancel them with POST /workflow_runs/:run_id/cancel.`);
 }
 
-await runtime.dispatch_notifications();
 await runtime.dispatch_launches();
-let notificationDispatch: Promise<unknown> | null = null;
-const notificationTimer = setInterval(() => {
-  if (notificationDispatch) return;
-  notificationDispatch = runtime.dispatch_notifications()
-    .catch((error: unknown) => { console.error("artifact notification dispatch failed", error); })
-    .finally(() => { notificationDispatch = null; });
-}, 1_000);
 let launchDispatch: Promise<unknown> | null = null;
 const launchTimer = setInterval(() => {
   if (launchDispatch) return;
@@ -114,20 +106,6 @@ const pullRequestTimer = setInterval(() => {
     .finally(() => { pullRequestPoll = null; });
 }, pullRequestPollIntervalMs);
 
-// The outbox is polled every second by both dispatchers, so delivered rows left
-// in place turn a bounded working set into a table that only ever grows. Swept
-// on its own slow timer: the retention window keeps a day of dispatch history,
-// which is what an operator would want to look back at, and no more.
-const OUTBOX_RETENTION_MS = 24 * 60 * 60 * 1_000;
-const OUTBOX_PURGE_INTERVAL_MS = 60 * 60 * 1_000;
-let outboxPurge: Promise<unknown> | null = null;
-const outboxPurgeTimer = setInterval(() => {
-  if (outboxPurge) return;
-  outboxPurge = runtime.purge_outbox(new Date(Date.now() - OUTBOX_RETENTION_MS).toISOString())
-    .catch((error: unknown) => { console.error("command outbox purge failed", error); })
-    .finally(() => { outboxPurge = null; });
-}, OUTBOX_PURGE_INTERVAL_MS);
-
 const server = Bun.serve({
   hostname: host,
   port,
@@ -145,14 +123,12 @@ let shutdownPromise: Promise<void> | null = null;
 const shutdown = (): Promise<void> => {
   if (shutdownPromise) return shutdownPromise;
   shutdownPromise = (async () => {
-    clearInterval(notificationTimer);
     clearInterval(launchTimer);
-    clearInterval(outboxPurgeTimer);
     clearInterval(pullRequestTimer);
     server.stop();
-    // clearInterval stops the next purge from starting; it does not settle one
+    // clearInterval stops the next poll from starting; it does not settle one
     // already running, which would still be holding a connection when SQL closes.
-    await Promise.allSettled([...(outboxPurge ? [outboxPurge] : []), ...(pullRequestPoll ? [pullRequestPoll] : [])]);
+    await Promise.allSettled(pullRequestPoll ? [pullRequestPoll] : []);
     await DBOS.shutdown();
     await runtime.close();
   })();

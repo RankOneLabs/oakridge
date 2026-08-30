@@ -1,15 +1,17 @@
 /**
- * Spec §5.3 rules 1–6: pure, no database, never skipped. Reads `src/**\/*.ts`
+ * Spec §5.3 rules 1–7: pure, no database, never skipped. Reads `src/**\/*.ts`
  * with `node:fs` and a small regex-based import/export parser — not a real TS
  * parser, but enough to prove the shape these rules care about: what imports
  * what, and which value export nothing references.
  *
- * All six rules pass. Rule 3's dead exports were deleted from `src/` (WP5);
+ * All seven rules pass. Rule 3's dead exports were deleted from `src/` (WP5);
  * rule 5's scope list was widened by one directory to cover
  * `src/validation/delegated-session.ts` and
  * `src/validation/repository-provisioning.ts`, which decode `depends_on_path`
  * / `max_parallel` off a workflow definition — the same "definition decoding"
- * category as `src/compiler/compile-workflow.ts`.
+ * category as `src/compiler/compile-workflow.ts`. Rule 7 (PR 2 / WP3) is the
+ * legacy command stack's removal: no importer, no table name in `src/`, and
+ * the deleted modules gone from disk.
  */
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
@@ -218,6 +220,35 @@ test("rule 6: every path §2.4 deletes is gone from disk", () => {
   ];
   const stillPresent = deletedPaths.filter((relativePath) => existsSync(resolve(PACKAGE_ROOT, relativePath)));
   expect(stillPresent).toEqual([]);
+});
+
+test("rule 7: the legacy command stack is gone — nothing imports src/http/artifact-callback or src/http/artifact-withdraw, no file under src/ names the tables workflow_attempt, executor_projection, or command_outbox, and the deleted modules do not exist on disk", () => {
+  const bannedImportPrefixes = ["src/http/artifact-callback", "src/http/artifact-withdraw"];
+  const importViolations = ALL_EDGES
+    .filter((edge) => edge.resolved !== null && bannedImportPrefixes.some((prefix) => edge.resolved!.startsWith(prefix)))
+    .map((edge) => `${edge.from}:${edge.line}: imports '${edge.resolved}'`);
+
+  // `.sql` under `src/storage/migrations/` is not part of `SRC_FILES` (`walk`
+  // only collects `.ts`), so the old migrations that legitimately name these
+  // tables are not scanned.
+  const bannedTables = ["workflow_attempt", "executor_projection", "command_outbox"];
+  const tableViolations: string[] = [];
+  for (const file of SRC_FILES) {
+    const lines = file.text.split("\n");
+    lines.forEach((line, index) => {
+      for (const table of bannedTables) if (line.includes(table)) tableViolations.push(`${file.module}:${index + 1}: names '${table}'`);
+    });
+  }
+
+  const deletedPaths = [
+    "src/http/artifact-callback.ts", "src/http/artifact-withdraw.ts",
+    "src/runtime/emit-artifact.ts", "src/runtime/artifact-notifications.ts", "src/runtime/run-launch-notifications.ts",
+    "tests/artifact-callback.test.ts", "tests/artifact-withdraw.test.ts",
+  ];
+  const presentViolations = deletedPaths.filter((relativePath) => existsSync(resolve(PACKAGE_ROOT, relativePath)))
+    .map((relativePath) => `${relativePath}: still present on disk`);
+
+  expect([...importViolations, ...tableViolations, ...presentViolations]).toEqual([]);
 });
 
 // Not a spec rule: pins a review fix. The run record serializes every

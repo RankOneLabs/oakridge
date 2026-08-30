@@ -4,8 +4,10 @@ import type { EpicWorkflowProfileId } from "../domain/epic";
 import type { OperatorRunSummary } from "../domain/operator-projections";
 import { err, ok, type Result, type WorkflowRunId } from "../domain/primitives";
 import type { CreateWorkflowRunRequest } from "../domain/runs";
+import { runRecordWorkflowId } from "../domain/workflow-ids";
 import { contextRequirementsOf, describeUnsatisfiedRequirements, unsatisfiedContextRequirements } from "../compiler/context-requirements";
 import { createEpicProfile, prepareRunContext } from "./prepare-run-context";
+import type { RunStartError, RunStartRequest } from "./run-launch-dispatch";
 import type { OperatorProjectionRepository } from "../storage/postgres-operators";
 import type { ProjectRepository, WorkflowDefinitionRepository, WorkflowRunRepository } from "../storage/repositories";
 
@@ -18,7 +20,7 @@ export interface LaunchRunDependencies {
   readonly projects: ProjectRepository;
   readonly runs: WorkflowRunRepository;
   readonly projections: Pick<OperatorProjectionRepository, "list_runs">;
-  readonly dispatch_launches: () => Promise<number>;
+  readonly start_run: (request: RunStartRequest) => Promise<Result<void, RunStartError>>;
   readonly application_version: string | null;
   readonly now: () => string;
   readonly new_id?: () => string;
@@ -76,17 +78,20 @@ export const launchRun = async (request: RunLaunchRequest, dependencies: LaunchR
   // owner, and it is not the participant that can only ever say no.
 
   const createdAt = existing?.created_at ?? dependencies.now();
-  const rootWorkflowId = `v2-run:${runId}`;
   const epicProfile = request.epic_profile ? createEpicProfile({ id: runId as unknown as EpicWorkflowProfileId,
     workflow_run_id: runId, config: request.epic_profile, created_at: createdAt }) : null;
-  const persisted = await dependencies.runs.create_with_initial_attempt({
+  const persisted = await dependencies.runs.create_run({
     run: { id: runId, workflow_definition_id: definition.id, project_id: request.project_id, context,
-      root_workflow_id: rootWorkflowId, archived: false, created_at: createdAt },
+      archived: false, created_at: createdAt },
     epic_profile: epicProfile, workflow_definition_version: definition.version,
-    application_version: dependencies.application_version,
   });
   if (!persisted.ok) return launchFailure("idempotency_conflict", persisted.error.detail);
-  await dependencies.dispatch_launches();
+  // The run row is the durable intent; a failed start here is not a launch
+  // failure — the sweep (`dispatchRunLaunches`) owns delivery and will retry
+  // it, exactly as the deleted launch outbox used to retry a failed dispatch.
+  const started = await dependencies.start_run({ workflow_id: runRecordWorkflowId(runId), run_id: runId,
+    ...(dependencies.application_version ? { application_version: dependencies.application_version } : {}) });
+  if (!started.ok) console.warn(`oakridge: run '${runId}' was created but its root workflow failed to start; the launch sweep will retry: ${started.error.detail}`);
   const summary = (await dependencies.projections.list_runs("all")).find((candidate) => candidate.id === runId);
   if (!summary) return launchFailure("projection_unavailable", `workflow run '${runId}' was enqueued but its operator projection is not available`);
   return ok(summary);

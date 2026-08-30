@@ -314,8 +314,6 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       const run = rows[0];
       if (!run) return { kind: "already_deleted", run_id };
       if (run.state === "active") return { kind: "active_conflict", run_id, detail: "run is active; cancel it before deletion" };
-      await transaction.query(`DELETE FROM oakridge.command_outbox command WHERE command.payload->>'run_id'=$1::text OR command.target_workflow_id IN (
-        SELECT work.workflow_id FROM oakridge.work_order work JOIN oakridge.run_unit unit ON unit.id=work.run_unit_id WHERE unit.run_id=$1::uuid)`, [run_id]);
       await transaction.query("DELETE FROM oakridge.workflow_run WHERE id=$1", [run_id]);
       return { kind: "deleted", run_id };
     });

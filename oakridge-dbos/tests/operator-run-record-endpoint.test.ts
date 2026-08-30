@@ -43,13 +43,6 @@ test("GET /runs/:id exposes the v2 run-record projection with every required fie
   const definitionBody = { id: definitionId, name: definitionName, version: 1, graph: { stages: {}, edges: [] }, created_at: now, archived: false } satisfies WorkflowDefinition;
   await sql.query(`INSERT INTO oakridge.workflow_definition (id, name, version, definition, archived, created_at) VALUES ($1,$2,1,$3::jsonb,false,$4::timestamptz)`, [definitionId, definitionName, JSON.stringify(definitionBody), now]);
   await sql.query(`INSERT INTO oakridge.workflow_run (id, workflow_definition_id, context, created_at) VALUES ($1,$2,'{}'::jsonb,$3::timestamptz)`, [runId, definitionId, now]);
-  // `get_run`'s v1 summary query still inner-joins an attempt and its DBOS
-  // status row — the old topology remains the only public launch path, so a
-  // real launch always creates one alongside whatever v2 units live under it.
-  const rootWorkflowId = `root-${runId}`;
-  await sql.query(`INSERT INTO oakridge.workflow_attempt (root_workflow_id, run_id) VALUES ($1,$2)`, [rootWorkflowId, runId]);
-  await sql.query(`INSERT INTO dbos.workflow_status (workflow_uuid, status, name, application_version, executor_id, created_at, updated_at)
-    VALUES ($1,'PENDING','oakridgeV2RunWorkflow','test','test-executor', (extract(epoch FROM now())*1000)::bigint, (extract(epoch FROM now())*1000)::bigint)`, [rootWorkflowId]);
 
   const records = new PostgresRunRecordRepository(sql);
 
@@ -89,7 +82,7 @@ test("GET /runs/:id exposes the v2 run-record projection with every required fie
     body, capability_hash: gatedCapability, idempotency_key: "endpoint-test-plan-1", payload_hash: payloadHash, published_at: now });
   if (published.kind !== "pending") throw new Error(`expected pending, got ${published.kind}`);
 
-  const app = createOperatorProjectionApp(new PostgresOperatorProjectionRepository(sql));
+  const app = createOperatorProjectionApp(new PostgresOperatorProjectionRepository(sql, "test-app-version"));
   const response = await app.request(`/runs/${runId}`);
   expect(response.status).toBe(200);
   interface RunRecordResponsePayload { readonly run_record: RunRecordPayload }
@@ -149,11 +142,9 @@ test("GET /runs/:id exposes the v2 run-record projection with every required fie
 });
 
 /**
- * A run with no v2 `run_unit` rows is still running entirely under the old
- * topology. Driving this through the full v1 `get_run` HTTP path would also
- * require standing up a `dbos.workflow_status` row that path inner-joins on
- * — real DBOS-provisioned state this file has no business faking — so this
- * checks the v2 projection directly, which is the part Slice 3 owns.
+ * A run with no v2 `run_unit` rows has nothing else worth exercising through
+ * the full `get_run` HTTP path, so this checks the v2 projection directly,
+ * which is the part Slice 3 owns.
  */
 test("get_run_record_detail on a run with no v2 units projects an empty unit list", async () => {
   if (!sql) { console.warn("operator run-record endpoint test SKIPPED: no PostgreSQL reachable"); return; }
@@ -163,6 +154,6 @@ test("get_run_record_detail on a run with no v2 units projects an empty unit lis
   await sql.query(`INSERT INTO oakridge.workflow_definition (id, name, version, definition, archived, created_at) VALUES ($1,$2,1,'{}'::jsonb,false,$3::timestamptz)`, [definitionId, `operator-endpoint-legacy-${runId}`, now]);
   await sql.query(`INSERT INTO oakridge.workflow_run (id, workflow_definition_id, context, created_at) VALUES ($1,$2,'{}'::jsonb,$3::timestamptz)`, [runId, definitionId, now]);
 
-  const detail = await new PostgresOperatorProjectionRepository(sql).get_run_record_detail(runId);
+  const detail = await new PostgresOperatorProjectionRepository(sql, "test-app-version").get_run_record_detail(runId);
   expect(detail).toEqual(expect.objectContaining({ run_id: runId, units: [] }));
 });

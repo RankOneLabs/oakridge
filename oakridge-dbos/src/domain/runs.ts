@@ -1,5 +1,5 @@
 import type { EpicWorkflowProfile } from "./epic";
-import type { JsonValue, ProjectId, Result, StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId } from "./primitives";
+import type { JsonValue, ProjectId, Result, RootWorkflowId, StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId } from "./primitives";
 import type { RunContext } from "./run-context";
 
 export interface CreateWorkflowRunRequest {
@@ -36,29 +36,21 @@ export interface WorkflowRunLaunchRecord {
   readonly created_at: string;
 }
 
+/**
+ * What `create_run` persists. `root_workflow_id` is absent — it is derived
+ * (`runRecordWorkflowId`), never stored or compared — so a launch's replay
+ * check has nothing here to compare it against.
+ */
 export interface PersistWorkflowRunLaunch {
-  readonly run: WorkflowRunLaunchRecord;
+  readonly run: Omit<WorkflowRunLaunchRecord, "root_workflow_id">;
   readonly epic_profile: EpicWorkflowProfile | null;
   readonly workflow_definition_version: number;
-  readonly application_version: string | null;
 }
 
-export interface RunLaunchCommand {
-  readonly kind: "launch_run";
+/** A run whose durable intent is stored but whose root workflow has not started. */
+export interface UnstartedRun {
   readonly run_id: WorkflowRunId;
-  readonly workflow_definition_id: WorkflowDefinitionId;
-  readonly workflow_definition_version: number;
-  readonly root_workflow_id: string;
-  readonly context: RunContext;
-  readonly created_at: string;
-  readonly application_version: string | null;
-}
-
-export interface PendingRunLaunch {
-  readonly id: string;
-  readonly target_workflow_id: string;
-  readonly command: RunLaunchCommand;
-  readonly idempotency_key: string;
+  readonly workflow_id: RootWorkflowId;
 }
 
 export interface WorkflowRunListFilter {

@@ -1,11 +1,9 @@
-import type { ArtifactWorkflowMessage } from "./artifact-callback";
 import { RUN_RECORD_WAKE_TOPIC } from "../workflows/run-record-topology";
 import { runRecordWorkflowId } from "../domain/workflow-ids";
 import type { WorkflowRunId } from "../domain/primitives";
 
 export interface DbosTransportClient {
   send(destination_id: string, message: unknown, topic?: string, idempotency_key?: string): Promise<void>;
-  getEvent<Value>(workflow_id: string, key: string, options: { readonly timeoutSeconds: number }): Promise<Value | null>;
 }
 
 let transportClient: DbosTransportClient | null = null;
@@ -13,10 +11,6 @@ export const registerDbosTransportClient = (client: DbosTransportClient): void =
 const client = (): DbosTransportClient => {
   if (!transportClient) throw new Error("DBOS external transport client is not registered");
   return transportClient;
-};
-
-export const sendArtifactWorkflowMessage = async (workflow_id: string, message: ArtifactWorkflowMessage, idempotency_key: string): Promise<void> => {
-  await client().send(workflow_id, message, "execution-event", idempotency_key);
 };
 
 /**

@@ -1,28 +1,23 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
 import { Hono } from "hono";
 
 import { renderCollaborationPingPrompt, validateCollaborationPingRequestId, type CollaborationMessage, type CollaborationPingAccepted, type CollaborationThread, type MessageId, type ReviewItem, type ReviewItemId, type ReviewItemStatus, type ThreadId, type ThreadStatus } from "../domain/collaboration";
-import { parseUuidId, isJsonValue, type ArtifactId, type JsonValue } from "../domain/primitives";
-import { decodeJsonPointerSegment } from "../domain/json-pointer";
-import type { ArtifactRevision } from "../domain/artifacts";
-import type { ArtifactRevisionRepository, CollaborationRepository, ExecutionArtifactContextRepository, ExecutionProjectionRepository } from "../storage/repositories";
+import { parseUuidId, type ArtifactId } from "../domain/primitives";
+import { workOrderIdOfArtifact, type ArtifactRevision } from "../domain/artifacts";
+import type { ArtifactRevisionRepository, CollaborationRepository, RunRecordRepository } from "../storage/repositories";
 
 export interface ArtifactCollaborationPolicy {
   readonly commentable: boolean;
   readonly review_items: boolean;
   readonly atom_editable?: boolean;
-  readonly anchor_schema?: readonly string[] | null;
-  readonly validate_body?: (body: JsonValue) => boolean;
 }
 export interface CollaborationHttpDependencies {
   readonly artifacts: ArtifactRevisionRepository;
-  readonly contexts: ExecutionArtifactContextRepository;
   readonly collaboration: CollaborationRepository;
   readonly policy_for_artifact_type: (artifact_type: string) => ArtifactCollaborationPolicy | null;
-  readonly executions: Pick<ExecutionProjectionRepository, "find_external">;
+  readonly records: Pick<RunRecordRepository, "find_work_order_attachment">;
   readonly ping_thread: (input: import("../domain/collaboration").CollaborationPingRequest) => Promise<CollaborationPingAccepted>;
-  readonly dispatch_notifications: () => Promise<number>;
   readonly now?: () => string;
   readonly new_id?: () => string;
 }
@@ -32,23 +27,6 @@ const objectBody = async (request: Request): Promise<Record<string, unknown> | n
   catch { return null; }
 };
 const nonempty = (value: unknown): string | null => typeof value === "string" && value.trim() ? value.trim() : null;
-const anchorAllowed = (anchor: string, schema: readonly string[]): boolean => schema.some((prefix) => anchor === prefix || anchor.startsWith(`${prefix}/`));
-const editJsonPointer = (body: JsonValue, pointer: string, previous: JsonValue, replacement: JsonValue): JsonValue | null => {
-  if (!pointer.startsWith("/") || pointer === "/") return null;
-  const clone = structuredClone(body) as JsonValue;
-  const segments = pointer.slice(1).split("/").map(decodeJsonPointerSegment);
-  let cursor: unknown = clone;
-  for (const segment of segments.slice(0, -1)) {
-    if (Array.isArray(cursor)) { const index = Number(segment); if (!Number.isInteger(index) || index < 0 || index >= cursor.length) return null; cursor = cursor[index]; }
-    else if (typeof cursor === "object" && cursor !== null && segment in cursor) cursor = (cursor as Record<string, unknown>)[segment];
-    else return null;
-  }
-  const leaf = segments.at(-1)!; let current: unknown;
-  if (Array.isArray(cursor)) { const index = Number(leaf); if (!Number.isInteger(index) || index < 0 || index >= cursor.length) return null; current = cursor[index]; if (JSON.stringify(current) !== JSON.stringify(previous)) return null; cursor[index] = replacement; }
-  else if (typeof cursor === "object" && cursor !== null && leaf in cursor) { current = (cursor as Record<string, unknown>)[leaf]; if (JSON.stringify(current) !== JSON.stringify(previous)) return null; (cursor as Record<string, JsonValue>)[leaf] = replacement; }
-  else return null;
-  return clone;
-};
 
 export const createCollaborationApp = (dependencies: CollaborationHttpDependencies): Hono => {
   const app = new Hono();
@@ -112,17 +90,33 @@ export const createCollaborationApp = (dependencies: CollaborationHttpDependenci
     const requestIdResult = validateCollaborationPingRequestId(http.req.header("idempotency-key") ?? randomUUID());
     if (requestIdResult.kind === "invalid") return http.json({ error: requestIdResult.detail }, 400);
     const requestId = requestIdResult.request_id;
-    const context = await dependencies.contexts.find_for_emit(threadRevision.stage_instance_id, threadRevision.unit_id);
-    if (!context || context.execution_id !== threadRevision.execution_id) return http.json({ error: "thread execution context is unavailable" }, 409);
-    const execution = await dependencies.executions.find_external(context.execution_id);
-    if (!execution) return http.json({ error: "thread executor is not attached" }, 409);
+    const workOrderId = workOrderIdOfArtifact(threadRevision);
+    if (!workOrderId) return http.json({ error: "thread artifact was not produced by a work order" }, 409);
+    const attachment = await dependencies.records.find_work_order_attachment(workOrderId);
+    if (!attachment || attachment.external_reference === null) return http.json({ error: "thread executor is not attached" }, 409);
     const accepted = await dependencies.ping_thread({
-      thread_id: threadId, request_id: requestId, execution_id: context.execution_id,
-      executor_type: execution.executor_type, external_reference: execution.external_reference,
+      thread_id: threadId, request_id: requestId, execution_id: threadRevision.execution_id,
+      executor_type: attachment.executor_type, external_reference: attachment.external_reference,
       prompt: renderCollaborationPingPrompt(fullThread),
     });
     return http.json({ ok: true, ...accepted }, 202);
   });
+  /**
+   * v1's `emit_revision` superseded an artifact's pending revision in place;
+   * the v2 run record has no equivalent operation. `publish_artifact`
+   * (`storage/postgres-run-record.ts`) hands one artifact to an output slot
+   * and refuses a second publication against the same slot in every state a
+   * `current` artifact can be found in: `slot_pending` while the artifact
+   * awaits its gate, `slot_already_released` or `slot_invalidated` once the
+   * gate has decided. There is nothing here left to build a body edit
+   * on top of — no route can construct a publish call that would succeed.
+   * `tests/postgres-run-record.test.ts` records the missing operation itself
+   * as a deferred "later slice"; building it is a decision-layer change the
+   * operator makes separately. The route stays mounted because kbbl's
+   * direct-edit UI still calls it and surfaces the `error` string to the
+   * operator; 501 is the honest status for that — "not implemented", not a
+   * conflict this request could ever resolve by retrying.
+   */
   app.post("/artifacts/:id/edits", async (http) => {
     const artifactId = parseUuidId<ArtifactId>(http.req.param("id"));
     const artifact = artifactId && await dependencies.artifacts.find_by_id(artifactId);
@@ -130,28 +124,7 @@ export const createCollaborationApp = (dependencies: CollaborationHttpDependenci
     if (!isMutable(artifact)) return http.json({ error: "artifact revision is not current", code: artifact.lifecycle.kind }, 409);
     const policy = dependencies.policy_for_artifact_type(artifact.artifact_type);
     if (!policy?.atom_editable) return http.json({ error: `artifact type '${artifact.artifact_type}' does not support 'atom_editable'` }, 400);
-    const body = await objectBody(http.req.raw); const anchor = nonempty(body?.anchor); const author = nonempty(body?.author);
-    if (!anchor || !author || !isJsonValue(body?.prev_value) || !isJsonValue(body?.new_value)) return http.json({ error: "anchor, author, prev_value, and new_value are required" }, 400);
-    if (policy.anchor_schema && !anchorAllowed(anchor, policy.anchor_schema)) return http.json({ error: `anchor '${anchor}' is not in the artifact anchor schema` }, 400);
-    const current = await dependencies.artifacts.find_current(artifact);
-    if (!current || current.id !== artifact.id) return http.json({ error: "concurrent edit: artifact revision is stale" }, 409);
-    const edited = editJsonPointer(artifact.body, anchor, body.prev_value, body.new_value);
-    if (!edited) return http.json({ error: `prev_value mismatch or anchor '${anchor}' was not found` }, 409);
-    if (policy.validate_body && !policy.validate_body(edited)) return http.json({ error: "edited artifact body failed type validation" }, 400);
-    const execution = await dependencies.contexts.find_for_emit(artifact.stage_instance_id, artifact.unit_id);
-    const output = execution?.outputs.find((candidate) => candidate.name === artifact.output_name);
-    if (!execution || !output) return http.json({ error: "artifact execution context is unavailable" }, 409);
-    const payload = JSON.stringify({ anchor, prev_value: body.prev_value, new_value: body.new_value, author });
-    const payloadHash = createHash("sha256").update(payload).digest("hex");
-    const result = await dependencies.artifacts.emit_revision(newId() as ArtifactId, {
-      run_id: artifact.run_id, stage_instance_id: artifact.stage_instance_id, execution_id: artifact.execution_id, unit_id: artifact.unit_id,
-      output_name: artifact.output_name, artifact_type: artifact.artifact_type, label: artifact.label, body: edited,
-      idempotency_key: http.req.header("idempotency-key")?.trim() || `edit:${payloadHash}`, payload_hash: createHash("sha256").update(JSON.stringify(edited)).digest("hex"),
-    }, now(), { target_workflow_id: execution.execution_workflow_id, release: output.release });
-    if (!result.ok) return http.json({ error: result.error.detail, code: result.error.kind }, 409);
-    const revision = result.value.artifact;
-    await dependencies.dispatch_notifications();
-    return http.json({ artifact_id: revision.id }, 201);
+    return http.json({ error: "operator edits are not supported: a run-owned artifact has no revision operation — a published output slot holds one artifact until its gate decides", code: "revision_unsupported" }, 501);
   });
   app.get("/artifacts/:id/review_items", async (http) => {
     const artifactId = parseUuidId<ArtifactId>(http.req.param("id"));

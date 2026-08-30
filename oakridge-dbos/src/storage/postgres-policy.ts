@@ -277,10 +277,7 @@ export class PostgresFinalPullRequestRepository implements FinalPullRequestRepos
 
   private async isFinalIntegrationEligible(transaction: SqlExecutor, run_id: WorkflowRunId): Promise<boolean> {
     const rows = await transaction.query<{ readonly stage_key: string; readonly operator_role: "build" | "assessment"; readonly ended_at: string | null; readonly outcome: { readonly kind?: string } | null }>(
-      `WITH current_attempt AS (
-         SELECT root_workflow_id FROM oakridge.workflow_attempt
-         WHERE run_id = $1 ORDER BY created_at DESC, root_workflow_id DESC LIMIT 1
-       ), required_stage AS (
+      `WITH required_stage AS (
          SELECT entry.key AS stage_key, entry.value->>'operator_role' AS operator_role
          FROM oakridge.workflow_run run
          JOIN oakridge.workflow_definition definition ON definition.id = run.workflow_definition_id
@@ -290,10 +287,9 @@ export class PostgresFinalPullRequestRepository implements FinalPullRequestRepos
        SELECT required.stage_key, required.operator_role,
               stage.ended_at::text, stage.outcome
        FROM required_stage required
-       CROSS JOIN current_attempt attempt
        LEFT JOIN oakridge.stage_instance stage
          ON stage.run_id = $1 AND stage.stage_key = required.stage_key
-        AND stage.attempt_root_workflow_id = attempt.root_workflow_id`, [run_id]);
+        AND stage.attempt_root_workflow_id IS NULL`, [run_id]);
     const roles = new Set(rows.map((row) => row.operator_role));
     return roles.has("build") && roles.has("assessment")
       && rows.every((row) => row.ended_at !== null && row.outcome?.kind === "succeeded");

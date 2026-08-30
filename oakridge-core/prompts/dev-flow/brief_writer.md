@@ -28,16 +28,21 @@ For each entry in `cohorts`, save one `brief` artifact with this shape:
 Every field is required. Arrays may be empty only when the approved plan truly
 contains no corresponding item. Never use placeholders or absolute paths.
 
-Use PUT as the canonical idempotent operation. Reuse the same `Idempotency-Key` only when retrying the identical body; a changed body intentionally supersedes the prior unreleased revision. Do not emit speculative duplicates. If the current artifact is wrong, withdraw it with `POST {{OAKRIDGE_URL}}/artifacts/<artifact_id>/withdraw` and `{"actor":"executor","reason":"<why>"}`, then stop only after Oakridge confirms the typed result.
+Use PUT as the canonical idempotent operation. Reuse the same `Idempotency-Key` only when retrying the identical body (the same key with a different body is refused as `idempotency_conflict`). Publication is final for this work order: an output slot takes one artifact, and a second PUT with a different body is refused — `slot_pending` while the first awaits review, `slot_already_released` once it is released. There is no withdraw, supersede, or correction call, so check the body before you PUT it. If you find after publishing that the artifact is wrong, do not PUT again: say exactly what is wrong, and where, in your final message so the reviewer can act on it. Do not emit speculative duplicates. Stop only after Oakridge confirms the typed result.
 
-PUT each brief to the route keyed by that cohort's ID:
+`<work-order-id>` and the `Work-Order-Capability` value are given in the **Oakridge v2 artifact publication** section at the end of this prompt; use them verbatim.
 
-```text
-{{OAKRIDGE_URL}}/executors/delegated_session/{{STAGE_INSTANCE_ID}}/units/<cohort-id>/emit/brief
+PUT each brief to the work-order route, naming that cohort's ID in the `Output-Collection-Key`
+header:
+
+```http
+PUT {{OAKRIDGE_URL}}/work-orders/<work-order-id>/emit/brief
+Work-Order-Capability: <capability>
+Output-Collection-Key: <cohort-id>
+Content-Type: application/json
 ```
 
-Set `Content-Type: application/json`. If a request or response transport fails,
-retry the same PUT for that cohort with the same JSON body.
+If a request or response transport fails, retry the same PUT for that cohort with the same JSON body.
 
 Do not combine briefs into one artifact. Stop only after every cohort has one
 emitted brief. Oakridge owns each brief's independent review and approval.

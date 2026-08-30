@@ -1,7 +1,7 @@
 /**
  * Everyone but the agent, talking to Oakridge the way they really do.
  *
- * The agent emits artifacts through the executor callback route. The operator
+ * The agent emits artifacts through the work-order emit route. The operator
  * approves gates through the gate resume route, and confirms a merge through
  * the cohort pull request route — the same one the GitHub poller posts its
  * observations to. Nothing here reaches around the HTTP surface into a
@@ -16,8 +16,6 @@ import type { ExecutionRequest } from "../../src/domain/execution";
 import type { SqlExecutor, TransactionalSqlExecutor } from "../../src/storage/sql-executor";
 import { PostgresRunRecordRepository } from "../../src/storage/postgres-run-record";
 import { artifactBody, awaitCondition, cohortHeadBranch, cohortPullRequestUrl, type ScriptedAgentScenario } from "./dev-flow-harness";
-
-const EXECUTOR_TYPE = "delegated_session";
 
 const readJson = async <Value>(response: Response, describe: string): Promise<Value> => {
   const text = await response.text();
@@ -56,17 +54,10 @@ export interface EmittedArtifact {
   readonly release: "released" | "waiting_gate" | "waiting_handoff";
 }
 
-interface LegacyEmitResponse {
-  readonly artifact_id: ArtifactId;
-  readonly release: EmittedArtifact["release"];
-}
-
 interface WorkOrderEmitResponse {
   readonly artifact_id: ArtifactId;
   readonly state: "released" | "pending";
 }
-
-type EmitResponse = LegacyEmitResponse | WorkOrderEmitResponse;
 
 /** Which of a unit's outputs an emission covers, and which round it is. */
 export interface EmissionOptions {
@@ -98,24 +89,21 @@ export const emitDeclaredArtifacts = async (baseUrl: string, request: ExecutionR
     if (options.outputs && !options.outputs.includes(expected.output_name)) continue;
     if (options.unit_ids && !options.unit_ids.includes(expected.unit_id)) continue;
     const publication = (request.resolved_config as { readonly publication?: { readonly work_order_id: string; readonly capability: string } }).publication;
-    const url = publication
-      ? `${baseUrl}/work-orders/${publication.work_order_id}/emit/${expected.output_name}`
-      : `${baseUrl}/executors/${EXECUTOR_TYPE}/${request.stage_instance_id}/units/${expected.unit_id}/emit/${expected.output_name}`;
+    if (!publication) throw new Error(`execution '${request.execution_id}' resolved with no v2 publication — a harness bug, not a legacy execution to emulate`);
+    const url = `${baseUrl}/work-orders/${publication.work_order_id}/emit/${expected.output_name}`;
     const response = await fetch(url, {
-      method: publication ? "PUT" : "POST",
+      method: "PUT",
       // The revision rides in the key and the body alike: an unchanged payload
       // under a new key is still the same artifact, and an unchanged key is a
       // replay of the first emission whatever the payload says.
       headers: { "content-type": "application/json", "idempotency-key": `${request.execution_id}:${expected.unit_id}:${expected.output_name}:v${revision}`,
-        ...(publication ? { "work-order-capability": publication.capability,
-          ...(expected.unit_id !== request.unit_id ? { "output-collection-key": expected.unit_id } : {}) } : {}) },
+        "work-order-capability": publication.capability,
+        ...(expected.unit_id !== request.unit_id ? { "output-collection-key": expected.unit_id } : {}) },
       body: JSON.stringify(artifactBody(request, expected.unit_id, expected.output_name, revision) as JsonValue),
     });
-    const result = await readJson<EmitResponse>(response, `emit ${expected.output_name} for unit ${expected.unit_id}`);
+    const result = await readJson<WorkOrderEmitResponse>(response, `emit ${expected.output_name} for unit ${expected.unit_id}`);
     const sessionName = (request.resolved_config as { readonly session_name?: string }).session_name ?? "";
-    const release = "release" in result
-      ? result.release
-      : result.state === "released" ? "released" : sessionName.startsWith("build-") ? "waiting_handoff" : "waiting_gate";
+    const release = result.state === "released" ? "released" : sessionName.startsWith("build-") ? "waiting_handoff" : "waiting_gate";
     emitted.push({ artifact_id: result.artifact_id, output_name: expected.output_name, unit_id: expected.unit_id, release });
   }
   return emitted;
