@@ -26,12 +26,6 @@ test("manual admission asks the run-owned repository with the header idempotency
   expect(calls).toEqual([{ input: { stage_instance_id: stageId, unit_id: unitId, idempotency_key: "operator-1" }, at: "2026-08-29T12:00:00.000Z" }]);
 });
 
-test("admission reports persisted dependency blocks", async () => {
-  const response = await request(appFor({ kind: "dependency_blocked", stage_instance_id: stageId, unit_id: unitId, blocked_by: ["api" as UnitId] }));
-  expect(response.status).toBe(409);
-  expect(await response.json()).toEqual({ error: "stage unit dependencies are not complete", blocked_by: ["api"] });
-});
-
 test("identical admission retries return the already-applied result", async () => {
   const response = await request(appFor({ kind: "already_admitted", stage_instance_id: stageId, unit_id: unitId }));
   expect(response.status).toBe(200);

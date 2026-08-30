@@ -91,7 +91,7 @@ describe("Rust v2 workflow definition compatibility", () => {
   test("rejects an incremental input on a stage that does not fan out", () => {
     const result = parseWorkflowDefinition(definitionWith("in", {
       a: producer,
-      b: { stage_type: "stub", config: {}, inputs: [{ name: "in", artifact_type: "a", delivery: "unit_complete" }], outputs: [] },
+      b: { stage_type: "stub", config: {}, inputs: [{ name: "in", artifact_type: "a", delivery: "unit_complete" }], outputs: [{ name: "out", artifact_type: "b" }] },
     }));
     expect(result).toEqual({ ok: false, error: expect.objectContaining({ detail: expect.stringContaining("does not fan out") }) });
   });
@@ -99,7 +99,7 @@ describe("Rust v2 workflow definition compatibility", () => {
   test("rejects an incremental input on a fan-out driven by something other than an input", () => {
     const result = parseWorkflowDefinition(definitionWith("in", {
       a: producer,
-      b: { stage_type: "delegated_session", outputs: [], inputs: [{ name: "in", artifact_type: "a", delivery: "unit_complete" }],
+      b: { stage_type: "delegated_session", outputs: [{ name: "out", artifact_type: "b" }], inputs: [{ name: "in", artifact_type: "a", delivery: "unit_complete" }],
         config: delegatedConfig({ over: { from: "context", path: "/repositories" }, unit_id_path: "/unit_id" }) },
     }));
     expect(result).toEqual({ ok: false, error: expect.objectContaining({ detail: expect.stringContaining("drives nothing") }) });
@@ -108,10 +108,20 @@ describe("Rust v2 workflow definition compatibility", () => {
   test("accepts several incremental inputs when one of them is the fan-out driver", () => {
     const result = parseWorkflowDefinition(definitionWith("driver", {
       a: producer,
-      b: { stage_type: "delegated_session", outputs: [],
+      b: { stage_type: "delegated_session", outputs: [{ name: "out", artifact_type: "b" }],
         inputs: [{ name: "driver", artifact_type: "a", delivery: "unit_complete" }, { name: "companion", artifact_type: "a", delivery: "unit_complete" }],
         config: delegatedConfig({ over: { from: "input", input_name: "driver" }, unit_id_path: "/unit_id" }) },
     }));
     expect(result.ok).toBe(true);
+  });
+
+  // A unit is satisfied when every required output slot is released; a stage
+  // with no outputs would satisfy vacuously and complete without executing.
+  test("rejects a stage that declares no outputs", () => {
+    const result = parseWorkflowDefinition(definitionWith("in", {
+      a: producer,
+      b: { stage_type: "stub", config: {}, inputs: [{ name: "in", artifact_type: "a" }], outputs: [] },
+    }));
+    expect(result).toEqual({ ok: false, error: expect.objectContaining({ operation: "validate_workflow_graph", detail: "stage 'b' must declare at least one output" }) });
   });
 });

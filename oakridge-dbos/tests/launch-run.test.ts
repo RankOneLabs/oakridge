@@ -10,7 +10,7 @@ import type { WorkflowRunRepository } from "../src/storage/repositories";
 
 // A definition that reads the context, because a definition that reads nothing
 // cannot show whether the launch gate checks anything.
-const graph = { stages: { analyze: { stage_type: "delegated_session", operator_role: null, inputs: [], outputs: [],
+const graph = { stages: { analyze: { stage_type: "delegated_session", operator_role: null, inputs: [], outputs: [{ name: "analysis", artifact_type: "dev.analysis" }],
   config: { runtime: { from: "context", path: "/planner_runtime" }, effort: { from: "context", path: "/planner_effort" },
     slot_bindings: { NOTES: { from: "context", path: "/brief_notes" }, URL: { from: "context", path: "/oakridge_url" } } } } }, edges: [] };
 const definition = { id: "ef2b47a4-d1bd-44ee-840a-e4f7b27570db" as WorkflowDefinitionId, name: "flow", version: 11,

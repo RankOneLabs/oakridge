@@ -162,6 +162,9 @@ export interface CreateRunRequest {
 
 export type RunStatus = "pending" | "running" | "parked" | "failed" | "complete" | "cancelled";
 
+/** The run's own persisted lifecycle state, distinct from the derived `RunStatus` above — carried on a gate row so a stranded gate can say what happened to its run. */
+export type RunState = "active" | "succeeded" | "failed" | "cancelled";
+
 export interface RunSummary {
   id: string;
   workflow_name: string;
@@ -293,6 +296,10 @@ export interface ParkedGate {
   worktree: WorktreeMetadata | null;
   resume_actions: string[];
   pr_url?: string | null;
+  /** The run's persisted state at read time — a gate stays listed whatever it is. */
+  run_state: RunState;
+  /** Whether a decision on this gate can still take effect. `false` means the run moved on (or ended) while the gate sat open — render it stranded. */
+  actionable: boolean;
 }
 
 export interface GateResumeRequest {

@@ -46,7 +46,6 @@ import { BunGitCommandRunner } from "./git-command-runner";
 import { createPromptTemplateLoader } from "./prompt-template";
 import { GitProjectRepositoryIdentityResolver } from "./project-identity";
 import { dispatchRunLaunches } from "./run-launch-notifications";
-import { reconcileRunMaterialization } from "./run-materialization";
 import { publishWorkOrderArtifact } from "./publish-work-order-artifact";
 
 export interface OakridgeRuntimeConfig {
@@ -122,7 +121,8 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const projects = new PostgresProjectRepository(sql);
   const projectIdentity = new GitProjectRepositoryIdentityResolver();
   const runs = new PostgresWorkflowRunRepository(sql);
-  const runRecords = new PostgresRunRecordRepository(sql);
+  const promptTemplates = createPromptTemplateLoader(config.prompt_template_directory);
+  const runRecords = new PostgresRunRecordRepository(sql, { load_prompt_template: (path) => promptTemplates.load(path) });
   const stages = new PostgresStageInstanceRepository(sql);
   const artifacts = new PostgresArtifactRevisionRepository(sql);
   const contexts = new PostgresExecutionArtifactContextRepository(sql);
@@ -137,7 +137,6 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
 
   const dbosRuns = new DbosRunLaunchClient(client);
   const collaborationPings = new DbosCollaborationPingClient(client, config.application_version);
-  const promptTemplates = createPromptTemplateLoader(config.prompt_template_directory);
 
   // HTTP handlers and the periodic workers share these dispatch functions. Keep
   // every invocation in the same in-flight set so shutdown cannot close the SQL
@@ -169,16 +168,10 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   }));
   // The wait table is the record of gate/handoff state; DBOS stays the command
   // mechanism, so the send functions above keep coming from the transport.
-  registerRunRecordWorkflowServices({ records: runRecords, find_executor: findExecutorAdapter,
-    reconcile_materialization: async (run_id, materialized_at) => {
-      const result = await reconcileRunMaterialization(run_id, materialized_at,
-        { definitions, records: runRecords, load_prompt_template: (path) => promptTemplates.load(path) });
-      if (!result.ok && result.error.kind === "infrastructure") throw new Error(`${result.error.operation}:${result.error.detail}`);
-      if (!result.ok) await runRecords.fail_materialization({ run_id, stage_key: result.error.stage_key, detail: result.error.detail, failed_at: materialized_at });
-    }, now });
+  registerRunRecordWorkflowServices({ records: runRecords, find_executor: findExecutorAdapter, now });
 
   const cohortPullRequests: CohortPullRequestDependencies = {
-    runs, epic_profiles: epicProfiles, reconciliations: cohortReconciliations, records: runRecords, now,
+    runs, epic_profiles: epicProfiles, reconciliations: cohortReconciliations, records: runRecords, now, send_run_wake: sendRunWakeHint,
   };
   const pollPullRequests = (): Promise<readonly CohortPollOutcome[] | null> => {
     const reader = config.pull_request_reader;

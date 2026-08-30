@@ -4,11 +4,11 @@ import type { EpicWorkflowProfile, EpicWorkflowProfileId } from "../src/domain/e
 import {
   confirmFinalPullRequest,
   observeFinalPullRequest,
-  parseGithubPullRequestIdentity,
   type FinalPullRequestReconciliation,
   type PullRequestObservation,
 } from "../src/domain/final-pull-request";
 import type { WorkflowRunId } from "../src/domain/primitives";
+import { parseGithubPullRequestIdentity } from "../src/domain/pull-request";
 
 const profile = (policy: EpicWorkflowProfile["final_merge_policy"] = "external_confirmation"): EpicWorkflowProfile => ({
   id: "00000000-0000-0000-0000-000000000001" as EpicWorkflowProfileId,

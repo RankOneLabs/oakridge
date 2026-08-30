@@ -34,15 +34,6 @@ export const BUILT_IN_GATE_DISPOSITIONS: Readonly<Record<string, GateDisposition
 };
 
 /**
- * The disposition of a decision against the actions its gate step declared.
- * An action the step never offered is `terminal`: the operator surface refuses
- * it before it reaches here, so arriving anyway means the step moved under a
- * decision already in flight, and ending the unit is the safe reading.
- */
-export const selectGateDisposition = (action: string, declared: readonly GateAction[]): GateDisposition =>
-  declared.find((candidate) => candidate.name === action)?.disposition ?? "terminal";
-
-/**
  * Whether a name is genuinely in the vocabulary. A plain index answers truthily
  * for `toString` and `constructor`, so an action named after an inherited
  * property passed validation and then resolved to a `Function` wearing a

@@ -64,7 +64,7 @@ const seedUnit = async (label: string): Promise<CrashUnit | null> => {
   const workOrderWorkflowId = `v2-work:${workOrderId}`;
   const now = new Date().toISOString();
   const capabilityHash = createHash("sha256").update(`crash-${workOrderId}`).digest("hex");
-  await sql.query(`INSERT INTO oakridge.workflow_definition (id, name, version, definition, archived, created_at) VALUES ($1,$2,1,'{}'::jsonb,false,$3::timestamptz)`, [definitionId, `crash-worker-${runId}`, now]);
+  await sql.query(`INSERT INTO oakridge.workflow_definition (id, name, version, definition, archived, created_at) VALUES ($1,$2,1,'{"graph":{"stages":{},"edges":[]}}'::jsonb,false,$3::timestamptz)`, [definitionId, `crash-worker-${runId}`, now]);
   await sql.query(`INSERT INTO oakridge.workflow_run (id, workflow_definition_id, context, created_at) VALUES ($1,$2,'{}'::jsonb,$3::timestamptz)`, [runId, definitionId, now]);
   const records = new PostgresRunRecordRepository(sql);
   await records.initialize_straight_through({

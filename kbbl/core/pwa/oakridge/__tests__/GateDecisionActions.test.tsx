@@ -3,9 +3,9 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { GateDecisionActions } from "../GateDecisionActions";
-import type { ParkedGate, RepositoryKey } from "../types";
+import type { ParkedGate, RepositoryKey, RunState } from "../types";
 
-function gate(id: string, revision: string): ParkedGate {
+function gate(id: string, revision: string, overrides: Partial<Pick<ParkedGate, "run_state" | "actionable">> = {}): ParkedGate {
   return {
     id,
     gate_type: "artifact_approval",
@@ -18,6 +18,9 @@ function gate(id: string, revision: string): ParkedGate {
     worktree: null,
     resume_actions: ["approve", "request_revision"],
     pr_url: null,
+    run_state: "active",
+    actionable: true,
+    ...overrides,
   };
 }
 
@@ -97,5 +100,36 @@ describe("GateDecisionActions", () => {
 
     expect(requests.map((request) => request.feedback)).toEqual(["First explanation", "Better explanation"]);
     expect(requests[0].idempotency_key).not.toBe(requests[1].idempotency_key);
+  });
+
+  it("renders a stranded gate as visible, but with every decision disabled and no feedback textarea reachable", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ gate_id: "gate-a", resumed: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    const runState: RunState = "cancelled";
+    render(wrapper(client, gate("gate-a", "revision-a", { run_state: runState, actionable: false })));
+
+    const stranded = screen.getByTestId("or-gate-stranded");
+    expect(stranded.textContent).toBe("Run cancelled — gate stranded");
+    expect((screen.getByTestId("or-decision-approve") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByTestId("or-decision-request_revision") as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.click(screen.getByTestId("or-decision-request_revision"));
+    expect(screen.queryByTestId("or-decision-feedback")).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("closes an already-open feedback panel when the gate becomes non-actionable", async () => {
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    const view = render(wrapper(client, gate("gate-a", "revision-a")));
+
+    fireEvent.click(screen.getByTestId("or-decision-request_revision"));
+    expect(screen.getByRole("button", { name: "Send feedback" })).toBeTruthy();
+
+    view.rerender(wrapper(client, gate("gate-a", "revision-a", { actionable: false })));
+
+    expect(screen.queryByRole("button", { name: "Send feedback" })).toBeNull();
   });
 });

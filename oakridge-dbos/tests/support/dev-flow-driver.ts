@@ -8,10 +8,14 @@
  * workflow, because a message a test can post but production cannot is exactly
  * how a deadlock ships green.
  */
+import { expect } from "bun:test";
+
 import type { OperatorArtifactDetail, OperatorParkedGate, OperatorRunDetail, OperatorRunSummary, OperatorReviewInbox } from "../../src/domain/operator-projections";
-import type { ArtifactId, JsonValue, UnitId, WorkflowDefinitionId } from "../../src/domain/primitives";
+import type { ArtifactId, JsonValue, UnitId, WorkflowDefinitionId, WorkflowRunId } from "../../src/domain/primitives";
 import type { ExecutionRequest } from "../../src/domain/execution";
-import { artifactBody, awaitCondition, cohortHeadBranch, cohortPullRequestUrl } from "./dev-flow-harness";
+import type { SqlExecutor, TransactionalSqlExecutor } from "../../src/storage/sql-executor";
+import { PostgresRunRecordRepository } from "../../src/storage/postgres-run-record";
+import { artifactBody, awaitCondition, cohortHeadBranch, cohortPullRequestUrl, type ScriptedAgentScenario } from "./dev-flow-harness";
 
 const EXECUTOR_TYPE = "delegated_session";
 
@@ -75,6 +79,12 @@ export interface EmissionOptions {
    * a revision looks like.
    */
   readonly outputs?: readonly string[];
+  /**
+   * Restricts the emission to these collection members — the `artifact_collection`
+   * analog of `outputs`, for re-emitting one cohort's brief (say) without
+   * touching the others `request.expected_artifacts` still lists.
+   */
+  readonly unit_ids?: readonly string[];
 }
 
 /**
@@ -86,6 +96,7 @@ export const emitDeclaredArtifacts = async (baseUrl: string, request: ExecutionR
   const emitted: EmittedArtifact[] = [];
   for (const expected of request.expected_artifacts) {
     if (options.outputs && !options.outputs.includes(expected.output_name)) continue;
+    if (options.unit_ids && !options.unit_ids.includes(expected.unit_id)) continue;
     const publication = (request.resolved_config as { readonly publication?: { readonly work_order_id: string; readonly capability: string } }).publication;
     const url = publication
       ? `${baseUrl}/work-orders/${publication.work_order_id}/emit/${expected.output_name}`
@@ -214,3 +225,144 @@ export const readRun = async (baseUrl: string, runId: OperatorRunSummary["id"]):
 
 export const readReviewInbox = async (baseUrl: string): Promise<OperatorReviewInbox> =>
   readJson<OperatorReviewInbox>(await fetch(`${baseUrl}/review_inbox`), "read review inbox");
+
+/** The gates parked against one run, as `GET /runs/:id/gates` reports them. */
+export const listRunGates = async (baseUrl: string, runId: LaunchedRun["run_id"]): Promise<readonly OperatorParkedGate[]> =>
+  readJson<readonly OperatorParkedGate[]>(await fetch(`${baseUrl}/runs/${runId}/gates`), `list gates for run ${runId}`);
+
+/**
+ * One driven pass of the loop every scenario shares: emit whatever agents
+ * owe, decide whichever parked gates the scenario's policy allows, confirm
+ * every cohort merge waiting in the review inbox, then check whether the
+ * scenario's own condition has been reached.
+ */
+export interface DriveOptions<Value> {
+  /** Decide a parked gate, or leave it open. Called with the gate as `GET /gates` lists it. */
+  readonly decide: (gate: OperatorParkedGate) => string | null;
+  /** Stop when this returns non-null; it is polled after every pass. */
+  readonly until: () => Promise<Value | null>;
+  readonly timeout_ms: number;
+}
+
+export interface DriveOutcome<Value> {
+  readonly value: Value;
+  /** Execution workflow ids this drive emitted artifacts for and succeeded. */
+  readonly driven: ReadonlySet<string>;
+  /** Cohort ids (`${stage_instance_id}:${unit_id}`) confirmed merged this drive. */
+  readonly confirmed: ReadonlySet<string>;
+}
+
+/**
+ * Drives a launched run the way every participant but the operator's gate
+ * policy really does: emit artifacts, confirm merges, and — the one thing
+ * that varies between scenarios — decide only the gates `options.decide`
+ * says to.
+ *
+ * `driven` and `confirmed` accumulate for the lifetime of this call only; a
+ * scenario that calls `driveRun` more than once (to vary the gate policy
+ * between phases) gets a fresh count each call, exactly as an inline loop
+ * restarted with fresh sets would.
+ */
+export const driveRun = async <Value>(baseUrl: string, agent: ScriptedAgentScenario, run: LaunchedRun, options: DriveOptions<Value>): Promise<DriveOutcome<Value>> => {
+  const driven = new Set<string>();
+  const confirmed = new Set<string>();
+  const decided = new Set<string>();
+  const deadline = Date.now() + options.timeout_ms;
+  for (;;) {
+    for (const [workflowId, request] of agent.launched) {
+      if (driven.has(workflowId)) continue;
+      driven.add(workflowId);
+      // The execution's publication handle is its own work order — the seam
+      // the adapter and the emit route agree on.
+      const publication = (request.resolved_config as { readonly publication?: { readonly work_order_id: string } }).publication;
+      expect(publication?.work_order_id).toBe(workflowId);
+      await emitDeclaredArtifacts(baseUrl, request);
+      agent.succeed(request.execution_id);
+    }
+
+    // `listV2PendingGates` reports a collection-key gate's `unit_id` as the
+    // collection key itself (spec §3.7), so the gate the API lists is passed
+    // to `options.decide` as-is — no re-keying against the emitted artifact.
+    for (const gate of await listRunGates(baseUrl, run.run_id)) {
+      if (decided.has(gate.id)) continue;
+      const action = options.decide(gate);
+      if (!action) continue;
+      if (!gate.artifact_revision_id) continue;
+      decided.add(gate.id);
+      await decideGate(baseUrl, gate.artifact_revision_id, action);
+    }
+
+    const inbox = await readReviewInbox(baseUrl);
+    for (const item of inbox.items) {
+      if (item.kind !== "pull_request_merge" || item.run_id !== run.run_id) continue;
+      const cohortId = `${item.stage_instance_id}:${item.unit_id}`;
+      // The inbox item's PR is the one the build's pr_summary named.
+      expect(item.pr_url).toBe(cohortPullRequestUrl(item.unit_id as UnitId));
+      const result = await confirmCohortMerged(baseUrl, cohortId);
+      if (result.kind === "accepted" && result.outcome === "completed") confirmed.add(cohortId);
+    }
+
+    const value = await options.until();
+    if (value !== null) return { value, driven, confirmed };
+    if (Date.now() > deadline) throw new Error(`driveRun timed out after ${options.timeout_ms}ms waiting for run ${run.run_id}'s condition`);
+    await Bun.sleep(50);
+  }
+};
+
+/** `record_version` and how many transitions have been written for one run — invariant 7's measurement. */
+export interface RunRecordFingerprint {
+  readonly record_version: number;
+  readonly transition_count: number;
+}
+
+export const readRunRecordFingerprint = async (sql: SqlExecutor, runId: WorkflowRunId): Promise<RunRecordFingerprint> => {
+  const runRows = await sql.query<{ readonly record_version: number }>("SELECT record_version FROM oakridge.workflow_run WHERE id = $1", [runId]);
+  if (!runRows[0]) throw new Error(`workflow run '${runId}' was not found`);
+  const transitionRows = await sql.query<{ readonly count: string }>("SELECT count(*)::text AS count FROM oakridge.run_transition WHERE run_id = $1", [runId]);
+  return { record_version: Number(runRows[0].record_version), transition_count: Number(transitionRows[0]?.count ?? 0) };
+};
+
+/**
+ * Invariant 7 measured: asking again changes nothing. Asks `decide_run`
+ * twice — once to prove a quiescent record answers with no work, once more
+ * to prove that answer wasn't itself a change — and asserts the fingerprint
+ * taken before either ask still matches the one taken after both.
+ */
+/** How long the record must sit unchanged before the root is taken to be parked: several asks' worth, well under the 5 s recheck. */
+const QUIET_SETTLE_MS = 1_500;
+
+/**
+ * Waits for the root's own cascade to finish. A drive pass returns as soon as
+ * its `until` holds, but the consequences of that pass's last emission or
+ * decision may still be in flight through the root (a wake, an ask, a
+ * `recheck`, another ask); the quiet point is when the record has stopped
+ * moving on its own.
+ */
+const awaitSettledRecord = async (sql: SqlExecutor, runId: WorkflowRunId): Promise<RunRecordFingerprint> => {
+  let last = await readRunRecordFingerprint(sql, runId);
+  let stableSince = Date.now();
+  const deadline = Date.now() + 20_000;
+  for (;;) {
+    await Bun.sleep(100);
+    const next = await readRunRecordFingerprint(sql, runId);
+    if (next.record_version !== last.record_version || next.transition_count !== last.transition_count) { last = next; stableSince = Date.now(); }
+    else if (Date.now() - stableSince >= QUIET_SETTLE_MS) return last;
+    if (Date.now() > deadline) throw new Error(`run ${runId}'s record never settled: still moving at ${JSON.stringify(next)}`);
+  }
+};
+
+export const assertQuietAsk = async (sql: TransactionalSqlExecutor, runId: WorkflowRunId): Promise<void> => {
+  const before = await awaitSettledRecord(sql, runId);
+  const repository = new PostgresRunRecordRepository(sql);
+  const first = await repository.decide_run(runId, new Date().toISOString());
+  const second = await repository.decide_run(runId, new Date().toISOString());
+  const after = await readRunRecordFingerprint(sql, runId);
+  // A `recheck` here means the record was not quiescent when the scenario said
+  // it was — and a test-side ask that starts work orphans it (nothing launches
+  // its workflow), so this fails loudly instead of letting the scenario hang.
+  for (const ask of [first, second]) {
+    if (!ask.ok || ask.value.kind !== "wait") throw new Error(`quiet ask on run ${runId} was not quiet: ${JSON.stringify(ask)} (before ${JSON.stringify(before)}, after ${JSON.stringify(after)})`);
+  }
+  expect(after.record_version).toBe(before.record_version);
+  expect(after.transition_count).toBe(before.transition_count);
+};

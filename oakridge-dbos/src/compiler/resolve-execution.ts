@@ -79,7 +79,7 @@ const resolveBindable = (value: Bindable | undefined, environment: BindingEnviro
   return resolved.ok ? ok(resolved.value === null ? null : stringify(resolved.value)) : resolved;
 };
 
-export const renderPrompt = (template: string, slots: Readonly<Record<string, string>>): Result<string, ResolveExecutionError> => {
+const renderPrompt = (template: string, slots: Readonly<Record<string, string>>): Result<string, ResolveExecutionError> => {
   let missing: string | null = null;
   const rendered = template.replace(/\{\{([^{}]+)\}\}/g, (_match, key: string) => {
     const value = slots[key];

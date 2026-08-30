@@ -15,7 +15,8 @@ import type { ConfirmFinalPullRequestRequest, FinalPullRequestDomainError, Final
 import type { CohortPullRequestReconciliation, RunOwnedCohortHandoff } from "../domain/cohort-pull-request";
 import type { CloseWaitRequest, OpenGateWaitInput, OpenHandoffDownstreamWaitInput, Wait, WaitClosesOn, WaitOutcome } from "../domain/wait";
 import type { Result } from "../domain/primitives";
-import type { CancelRunRecord, CancelRunRecordResult, CloseRunOutputWait, CloseRunOutputWaitResult, CompleteHandoffArtifact, DecideGateWait, ExecutorAttachment, ExecutorHealthObservation, FailRunMaterialization, InitializeStraightThroughRun, PersistMaterializedStage, PublishWorkOrderArtifact, PublishWorkOrderArtifactResult, RetryRunUnit, RetryRunUnitResult, ReviseRunUnitInput, ReviseRunUnitInputResult, RunDecision, RunMaterializationRecord, WorkOrderExecution } from "../domain/run-record";
+import type { CancelRunRecord, CancelRunRecordResult, CloseRunOutputWait, CloseRunOutputWaitResult, CompleteHandoffArtifact, DecideGateWait, ExecutorAttachment, ExecutorHealthObservation, InitializeStraightThroughRun, PersistMaterializedStage, PublishWorkOrderArtifact, PublishWorkOrderArtifactResult, RetryRunUnit, RetryRunUnitResult, ReviseRunUnitInput, ReviseRunUnitInputResult, WorkOrderExecution } from "../domain/run-record";
+import type { AskResult } from "../decision/commands";
 import type { WorkOrderId, WorkflowRunId as RunRecordWorkflowRunId } from "../domain/primitives";
 
 export interface WorkflowDefinitionRepository {
@@ -63,10 +64,8 @@ export interface RunRecordRepository {
   revise_unit_input(input: ReviseRunUnitInput): Promise<ReviseRunUnitInputResult>;
   retry_unit(input: RetryRunUnit, retried_at: string): Promise<RetryRunUnitResult>;
   admit_unit(request: AdmitStageUnitRequest, admitted_at: string): Promise<AdmitStageUnitResult>;
-  decide_run(run_id: RunRecordWorkflowRunId, decided_at: string): Promise<Result<RunDecision, RunRecordRepositoryError>>;
-  load_materialization_record(run_id: RunRecordWorkflowRunId): Promise<RunMaterializationRecord | null>;
+  decide_run(run_id: RunRecordWorkflowRunId, decided_at: string): Promise<Result<AskResult, RunRecordRepositoryError>>;
   load_work_order_capability_seed(): Promise<string>;
-  fail_materialization(input: FailRunMaterialization): Promise<void>;
   cancel_run(input: CancelRunRecord): Promise<CancelRunRecordResult>;
   delete_run(run_id: RunRecordWorkflowRunId): Promise<DeleteRunResult>;
   find_work_order_execution(work_order_id: WorkOrderId): Promise<WorkOrderExecution | null>;
@@ -93,7 +92,7 @@ export interface RunRecordRepository {
 export interface RunRecordRepositoryError {
   readonly operation: "decide_run";
   readonly run_id: RunRecordWorkflowRunId;
-  readonly kind: "run_not_found" | "record_corrupt";
+  readonly kind: "run_not_found";
   readonly detail: string;
 }
 

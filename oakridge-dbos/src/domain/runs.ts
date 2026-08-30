@@ -94,7 +94,6 @@ export interface AdmitStageUnitRequest {
 export type AdmitStageUnitResult =
   | { readonly kind: "admitted" | "already_admitted"; readonly stage_instance_id: StageInstanceId; readonly unit_id: UnitId }
   | { readonly kind: "stage_not_found" | "unit_not_found" | "not_manual" | "not_pending"; readonly stage_instance_id: StageInstanceId; readonly unit_id: UnitId }
-  | { readonly kind: "dependency_blocked"; readonly stage_instance_id: StageInstanceId; readonly unit_id: UnitId; readonly blocked_by: readonly UnitId[] }
   | { readonly kind: "idempotency_conflict"; readonly stage_instance_id: StageInstanceId; readonly unit_id: UnitId };
 
 export interface StageAdmissionUnitState {

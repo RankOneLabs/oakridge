@@ -1,6 +1,8 @@
 import type { ArtifactId, JsonValue, RunUnitId, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "./primitives";
 import type { EpicWorkflowProfile } from "./epic";
-import type { RunOutputSlotState, WorkOrderState } from "./run-record";
+import type { RunOutputSlotState, RunState, WorkOrderState } from "./run-record";
+import type { CompiledWorkflowDefinition } from "./compiled-workflow";
+import type { StageKey } from "./workflow";
 
 export type OperatorRunStatus = "pending" | "running" | "parked" | "failed" | "complete" | "cancelled";
 export type OperatorStageStatus = "pending" | "running" | "complete" | "failed" | "parked";
@@ -11,7 +13,17 @@ export interface OperatorStageUnit { readonly unit_id: UnitId; readonly reposito
 export interface OperatorStageDetail { readonly stage_instance_id: StageInstanceId; readonly name: string; readonly type: string; readonly operator_role: string | null; readonly status: OperatorStageStatus; readonly artifacts: readonly OperatorStageArtifact[]; readonly delegated_kbbl_sid: string | null; readonly worktree: OperatorStageUnit["worktree"]; readonly units: readonly OperatorStageUnit[] }
 /** `run_record` is the v2 run-record projection (see below) for a run that has any `run_unit` rows; null for a run still running only under the old topology. */
 export interface OperatorRunDetail { readonly id: WorkflowRunId; readonly workflow_name: string; readonly current_attempt_root_workflow_id: string; readonly attempts: readonly OperatorWorkflowAttempt[]; readonly status: OperatorRunStatus; readonly stages: readonly OperatorStageDetail[]; readonly parked_count: number; readonly updated_at: string; readonly is_stuck: boolean; readonly epic_profile: EpicWorkflowProfile | null; readonly run_record: OperatorRunRecordDetail | null }
-export interface OperatorParkedGate { readonly id: string; readonly stage_instance_id?: StageInstanceId; readonly gate_type: string; readonly run_id: WorkflowRunId; readonly stage_name: string; readonly unit_id: UnitId; readonly repository_key: string | null; readonly artifact_revision_id: ArtifactId | null; readonly gate_step: string | null; readonly worktree: OperatorStageUnit["worktree"]; readonly resume_actions: readonly string[]; readonly pr_url: string | null }
+/**
+ * A gate that is open is listed whatever its run's state (spec §1 rule 9 —
+ * the operator projection never hides a fact because of the state of its
+ * parent). `run_state` says what the run is doing; `actionable` says whether
+ * an operator's decision on this gate can still take effect, so kbbl can
+ * render a gate stranded by a failed or cancelled run instead of hiding it.
+ */
+export interface OperatorParkedGate { readonly id: string; readonly stage_instance_id?: StageInstanceId; readonly gate_type: string; readonly run_id: WorkflowRunId; readonly stage_name: string; readonly unit_id: UnitId; readonly repository_key: string | null; readonly artifact_revision_id: ArtifactId | null; readonly gate_step: string | null; readonly worktree: OperatorStageUnit["worktree"]; readonly resume_actions: readonly string[]; readonly pr_url: string | null; readonly run_state: RunState; readonly actionable: boolean }
+
+/** A gate's decision only takes effect while its run is still active. */
+export const selectGateActionability = (run_state: RunState): boolean => run_state === "active";
 export interface OperatorArtifactRevision { readonly id: ArtifactId; readonly status: "draft" | "approved" | "rejected"; readonly lifecycle: "current" | "superseded" | "withdrawn" | "released"; readonly created_at: string; readonly body: JsonValue; readonly validation: JsonValue }
 export interface OperatorArtifactDetail { readonly id: ArtifactId; readonly requested_revision_id: ArtifactId; readonly current_revision_id: ArtifactId | null; readonly type_id: string; readonly component_id: string | null; readonly capabilities: { readonly reviewable: boolean; readonly commentable: boolean; readonly atom_editable: boolean; readonly review_items: boolean } | null; readonly anchor_schema: readonly string[] | null; readonly review: JsonValue | null; readonly run_id: WorkflowRunId; readonly producing_stage: string; readonly label: string | null; readonly revisions: readonly OperatorArtifactRevision[] }
 export type OperatorCohortLifecycle = "waiting_admission" | "building" | "artifact_review" | "revision_requested" | "merge_confirmation" | "assessing" | "github_review" | "pull_request_mismatch" | "complete" | "failed";
@@ -117,3 +129,50 @@ export interface OperatorRunRecordDetail {
   readonly units: readonly OperatorRunRecordUnit[];
   readonly recent_transitions: readonly OperatorRunRecordTransition[];
 }
+
+/**
+ * Run detail lists every definition stage even before it has a row (spec
+ * §3.6 — a `stage_instance` row is now created only when a stage becomes
+ * ready). This orders the stages that have none yet: a Kahn topological sort
+ * over `definition.edges` at stage granularity, ties broken by `stage_key`,
+ * seeded from `definition.source_stages` — the same "no blocking required
+ * input" stages the compiler already identifies as having nothing to wait on.
+ * A cycle or an unreachable stage (which `derive`'s own closure check would
+ * reject before this ever runs against a real definition) is not thrown on
+ * here — a projection lists every stage rather than erroring the whole run
+ * detail over a graph anomaly; the leftover stages are appended in
+ * `stage_key` order.
+ */
+export const selectPendingStageOrder = (definition: CompiledWorkflowDefinition, stored_stage_keys: readonly StageKey[]): readonly StageKey[] => {
+  const stageKeys = (Object.keys(definition.stages) as StageKey[]).sort();
+  const inDegree = new Map<StageKey, number>(stageKeys.map((key) => [key, 0]));
+  const dependents = new Map<StageKey, Set<StageKey>>(stageKeys.map((key) => [key, new Set<StageKey>()]));
+  for (const edge of definition.edges) {
+    const outgoing = dependents.get(edge.producer_stage);
+    if (!outgoing || outgoing.has(edge.consumer_stage)) continue;
+    outgoing.add(edge.consumer_stage);
+    inDegree.set(edge.consumer_stage, (inDegree.get(edge.consumer_stage) ?? 0) + 1);
+  }
+
+  const ready = new Set<StageKey>(definition.source_stages);
+  for (const key of stageKeys) if ((inDegree.get(key) ?? 0) === 0) ready.add(key);
+
+  const visited = new Set<StageKey>();
+  const order: StageKey[] = [];
+  while (ready.size > 0) {
+    const next = [...ready].sort()[0] as StageKey;
+    ready.delete(next);
+    if (visited.has(next)) continue;
+    visited.add(next);
+    order.push(next);
+    for (const dependent of dependents.get(next) ?? []) {
+      const remaining = (inDegree.get(dependent) ?? 0) - 1;
+      inDegree.set(dependent, remaining);
+      if (remaining <= 0 && !visited.has(dependent)) ready.add(dependent);
+    }
+  }
+  for (const key of stageKeys) if (!visited.has(key)) order.push(key);
+
+  const stored = new Set(stored_stage_keys);
+  return order.filter((key) => !stored.has(key));
+};

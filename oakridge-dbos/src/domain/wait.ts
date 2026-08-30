@@ -84,50 +84,13 @@ export interface OpenHandoffDownstreamWaitInput {
   readonly downstream_role: string;
 }
 
-/**
- * The wait-backed views of what the gate and handoff state events used to
- * carry. Consumers keep their guard logic verbatim against these; the events'
- * payloads are reproduced exactly, with two named divergences: a superseded or
- * withdrawn external row reports `decision_artifact_id` where the event
- * omitted it, and `downstream_role` fills in every status where the events
- * carried it only on `awaiting_downstream`. Neither field has a consumer where
- * it diverges.
- */
-export interface GateWorkflowState {
-  readonly status: "pending" | "closed" | "superseded" | "withdrawn" | "cancelled";
-  readonly action?: string;
-  readonly artifact_revision_id: ArtifactId;
-  readonly gate_step: string;
-  readonly command_workflow_id: string;
-}
-
-export interface HandoffWorkflowState {
-  readonly status: "awaiting_downstream" | "awaiting_external" | "revision_requested" | "released" | "superseded" | "withdrawn" | "cancelled";
-  readonly artifact_id: ArtifactId;
-  readonly downstream_role?: string;
-  readonly decision_artifact_id?: ArtifactId;
-  readonly command_workflow_id: string;
-}
-
-export const selectGateStateView = (wait: Wait | null): GateWorkflowState | null => {
-  if (!wait) return null;
-  if (wait.closes_on.kind !== "gate") throw new Error(`wait '${wait.id}' is not a gate wait`);
-  const base = { artifact_revision_id: wait.artifact_revision_id, gate_step: wait.closes_on.gate_step, command_workflow_id: wait.command_workflow_id };
-  if (wait.status.kind === "open") return { status: "pending", ...base };
-  const outcome = wait.status.outcome;
-  if (outcome.kind === "decided") return { status: "closed", action: outcome.action, ...base };
-  if (outcome.kind === "superseded") return { status: "superseded", ...base };
-  if (outcome.kind === "withdrawn") return { status: "withdrawn", ...base };
-  if (outcome.kind === "cancelled") return { status: "cancelled", ...base };
-  throw new Error(`gate wait '${wait.id}' closed with outcome '${outcome.kind}'`);
-};
-
 export type HandoffWaitKind = Extract<WaitKind, "handoff_downstream" | "handoff_external">;
+
+export type HandoffWaitStatus = "awaiting_downstream" | "awaiting_external" | "revision_requested" | "released" | "superseded" | "withdrawn" | "cancelled";
 
 /**
  * The ONE mapping from a handoff wait row to the status vocabulary its
- * consumers guard on — shared by `selectHandoffStateView` and the cohort
- * projection's row mapper: one function, imported twice, never copied.
+ * consumers guard on — the cohort projection's row mapper is its one importer.
  *
  * `decided → revision_requested` is total, not a guess: a release-disposition
  * decision closes the downstream row and opens the external row in one
@@ -138,7 +101,7 @@ export const selectHandoffStatusFromWait = (
   kind: HandoffWaitKind,
   status: Wait["status"]["kind"],
   outcome: WaitOutcome["kind"] | null,
-): HandoffWorkflowState["status"] => {
+): HandoffWaitStatus => {
   if (status === "open") return kind === "handoff_external" ? "awaiting_external" : "awaiting_downstream";
   if (outcome === "superseded") return "superseded";
   if (outcome === "withdrawn") return "withdrawn";
@@ -146,30 +109,4 @@ export const selectHandoffStatusFromWait = (
   if (outcome === "external_completed") return "released";
   if (outcome === "decided") return "revision_requested";
   throw new Error(`a closed handoff wait carries no outcome (kind '${kind}')`);
-};
-
-/** The view over a handoff's rows — the external row when one exists, else the downstream row. */
-export const selectHandoffStateView = (waits: readonly Wait[]): HandoffWorkflowState | null => {
-  const downstream = waits.find((wait) => wait.closes_on.kind === "handoff_downstream") ?? null;
-  const external = waits.find((wait) => wait.closes_on.kind === "handoff_external") ?? null;
-  const subject = external ?? downstream;
-  if (!subject) return null;
-  const status = selectHandoffStatusFromWait(
-    external ? "handoff_external" : "handoff_downstream",
-    subject.status.kind,
-    subject.status.kind === "closed" ? subject.status.outcome.kind : null,
-  );
-  const downstream_role = downstream?.closes_on.kind === "handoff_downstream" ? downstream.closes_on.downstream_role : undefined;
-  const external_decision = external?.closes_on.kind === "handoff_external" ? external.closes_on.decision_artifact_id : undefined;
-  const downstream_decision = downstream?.status.kind === "closed" && downstream.status.outcome.kind === "decided"
-    ? downstream.status.outcome.decision_artifact_id ?? undefined
-    : undefined;
-  const decision_artifact_id = external_decision ?? downstream_decision;
-  return {
-    status,
-    artifact_id: subject.artifact_revision_id,
-    ...(downstream_role === undefined ? {} : { downstream_role }),
-    ...(decision_artifact_id === undefined ? {} : { decision_artifact_id }),
-    command_workflow_id: subject.command_workflow_id,
-  };
 };

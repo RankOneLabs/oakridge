@@ -69,6 +69,8 @@ const PARKED_GATE_FIXTURE: ParkedGate = {
   artifact_revision_id: "rev-abc",
   worktree: { branch: "cohort/v2_readiness/3-foo", path: "/home/steve/codes/rol/oakridge", base_ref: "epic/v2_readiness" },
   resume_actions: ["approve", "reject"],
+  run_state: "active",
+  actionable: true,
 };
 
 const RUN_DETAIL_FIXTURE: RunDetail = {
@@ -477,6 +479,16 @@ describe("GlobalParkedGateList", () => {
     wrap(<GlobalParkedGateList onNavigateRun={() => {}} onNavigateArtifact={onNavigateArtifact} />);
     fireEvent.click(await screen.findByTestId("or-gate-artifact-link"));
     expect(onNavigateArtifact).toHaveBeenCalledWith("rev-abc");
+  });
+
+  it("still lists a gate whose run is no longer active, rendered stranded rather than hidden", async () => {
+    const strandedGate: ParkedGate = { ...PARKED_GATE_FIXTURE, id: "gate-2", run_state: "failed", actionable: false };
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json([strandedGate]));
+    wrap(<GlobalParkedGateList onNavigateRun={() => {}} />);
+
+    expect(await screen.findByTestId("or-gate-card")).toBeTruthy();
+    expect(screen.getByTestId("or-gate-stranded").textContent).toBe("Run failed — gate stranded");
+    expect((screen.getByTestId("or-decision-approve") as HTMLButtonElement).disabled).toBe(true);
   });
 });
 

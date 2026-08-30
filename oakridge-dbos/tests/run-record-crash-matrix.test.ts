@@ -32,10 +32,12 @@ import { createHash, randomUUID } from "node:crypto";
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
+import type { AskResult } from "../src/decision/commands";
 import type { ExecutionRequest, ExecutorAdapter, ExecutorObservationAttempt, ExternalExecutionReference } from "../src/domain/execution";
-import type { ArtifactId, InputFingerprint, RunUnitId, StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId, WorkOrderId } from "../src/domain/primitives";
+import type { ArtifactId, InputFingerprint, Result, RunUnitId, StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId, WorkOrderId } from "../src/domain/primitives";
 import { applyMigrations } from "../src/storage/migrate";
 import { PostgresRunRecordRepository } from "../src/storage/postgres-run-record";
+import type { RunRecordRepositoryError } from "../src/storage/repositories";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
 import { registerRunRecordWorkflowServices, runRecordWorkflow, runRecordWorkOrderWorkflow } from "../src/workflows/run-record-topology";
 import { awaitCondition } from "./support/dev-flow-harness";
@@ -47,6 +49,20 @@ if (sql) await applyMigrations(sql);
 afterAll(async () => { await sql?.close(); });
 
 const skip = (): void => console.warn("run-record crash-matrix test SKIPPED: no PostgreSQL reachable");
+
+/**
+ * A run now completes over several back-to-back asks (a fact -> `recheck`,
+ * its consequence -> `recheck`, run complete) rather than one: each ask
+ * commits from persisted truth alone, so this drives to a terminal decision
+ * instead of assuming one call reaches it.
+ */
+const decideUntilSettled = async (records: PostgresRunRecordRepository, runId: WorkflowRunId, at: string): Promise<Result<AskResult, RunRecordRepositoryError>> => {
+  for (let asks = 0; asks < 10; asks += 1) {
+    const decision = await records.decide_run(runId, at);
+    if (!decision.ok || decision.value.kind !== "recheck") return decision;
+  }
+  throw new Error(`decide_run for run '${runId}' did not settle within 10 asks`);
+};
 
 interface FreshUnit {
   readonly records: PostgresRunRecordRepository;
@@ -68,7 +84,7 @@ const freshUnit = async (executorType = "crash-matrix-executor"): Promise<FreshU
   const now = new Date().toISOString();
   const capabilityHash = createHash("sha256").update(`secret-${workOrderId}`).digest("hex");
   const workOrderWorkflowId = `v2-work:${workOrderId}`;
-  await sql.query(`INSERT INTO oakridge.workflow_definition (id, name, version, definition, archived, created_at) VALUES ($1,$2,1,'{}'::jsonb,false,$3::timestamptz)`, [definitionId, `crash-matrix-${runId}`, now]);
+  await sql.query(`INSERT INTO oakridge.workflow_definition (id, name, version, definition, archived, created_at) VALUES ($1,$2,1,'{"graph":{"stages":{},"edges":[]}}'::jsonb,false,$3::timestamptz)`, [definitionId, `crash-matrix-${runId}`, now]);
   await sql.query(`INSERT INTO oakridge.workflow_run (id, workflow_definition_id, context, created_at) VALUES ($1,$2,'{}'::jsonb,$3::timestamptz)`, [runId, definitionId, now]);
   const records = new PostgresRunRecordRepository(sql);
   await records.initialize_straight_through({
@@ -94,7 +110,7 @@ test("crash matrix: root decide before and after the start_work transition commi
   // Before: nothing has decided yet. A second repository instance racing the
   // first is exactly "two recoveries of the same crashed step".
   const raced = await Promise.all([records.decide_run(runId, now), new PostgresRunRecordRepository(sql!).decide_run(runId, now)]);
-  expect(raced.filter((decision) => decision.ok && decision.value.kind === "start_work")).toHaveLength(1);
+  expect(raced.filter((decision) => decision.ok && decision.value.kind === "recheck")).toHaveLength(1);
   const started = await sql!.query<{ readonly count: string }>("SELECT count(*)::text AS count FROM oakridge.work_order WHERE id = $1 AND state = 'started'", [unit.workOrderId]);
   expect(started[0]?.count).toBe("1");
   // After: replaying the already-applied decision (a recovered decideRunStep
@@ -165,7 +181,7 @@ test("crash matrix: gated publication replayed before and after the wait opens c
   const workOrderId = randomUUID() as WorkOrderId;
   const now = new Date().toISOString();
   const capabilityHash = createHash("sha256").update(`gate-secret-${workOrderId}`).digest("hex");
-  await sql.query(`INSERT INTO oakridge.workflow_definition (id, name, version, definition, archived, created_at) VALUES ($1,$2,1,'{}'::jsonb,false,$3::timestamptz)`, [definitionId, `crash-matrix-gate-${runId}`, now]);
+  await sql.query(`INSERT INTO oakridge.workflow_definition (id, name, version, definition, archived, created_at) VALUES ($1,$2,1,'{"graph":{"stages":{},"edges":[]}}'::jsonb,false,$3::timestamptz)`, [definitionId, `crash-matrix-gate-${runId}`, now]);
   await sql.query(`INSERT INTO oakridge.workflow_run (id, workflow_definition_id, context, created_at) VALUES ($1,$2,'{}'::jsonb,$3::timestamptz)`, [runId, definitionId, now]);
   const records = new PostgresRunRecordRepository(sql);
   await records.initialize_straight_through({
@@ -208,7 +224,7 @@ test("crash matrix: handoff-external close replayed after a crash absorbs rather
   const workOrderId = randomUUID() as WorkOrderId;
   const now = new Date().toISOString();
   const capabilityHash = createHash("sha256").update(`handoff-secret-${workOrderId}`).digest("hex");
-  await sql.query(`INSERT INTO oakridge.workflow_definition (id, name, version, definition, archived, created_at) VALUES ($1,$2,1,'{}'::jsonb,false,$3::timestamptz)`, [definitionId, `crash-matrix-handoff-${runId}`, now]);
+  await sql.query(`INSERT INTO oakridge.workflow_definition (id, name, version, definition, archived, created_at) VALUES ($1,$2,1,'{"graph":{"stages":{},"edges":[]}}'::jsonb,false,$3::timestamptz)`, [definitionId, `crash-matrix-handoff-${runId}`, now]);
   await sql.query(`INSERT INTO oakridge.workflow_run (id, workflow_definition_id, context, created_at) VALUES ($1,$2,'{}'::jsonb,$3::timestamptz)`, [runId, definitionId, now]);
   const records = new PostgresRunRecordRepository(sql);
   await records.initialize_straight_through({
@@ -228,7 +244,7 @@ test("crash matrix: handoff-external close replayed after a crash absorbs rather
   expect(first.kind).toBe("released");
   const replay = await new PostgresRunRecordRepository(sql).close_output_wait({ wait_id: published.wait_id, disposition: "release", actor: "poller:github", detail: "pr-42-merged", decided_at: now });
   expect(replay.kind).toBe("already_applied");
-  expect(await records.decide_run(runId, now)).toEqual({ ok: true, value: { kind: "complete", outcome: { kind: "succeeded" } } });
+  expect(await decideUntilSettled(records, runId, now)).toEqual({ ok: true, value: { kind: "complete", outcome: { kind: "succeeded" } } });
 });
 
 // ---------------------------------------------------------------------------
@@ -241,8 +257,8 @@ test("crash matrix: duplicate start of the same work-order workflow id reuses th
   if (!unit) return skip();
   const { runId } = unit;
   const decision = await unit.records.decide_run(runId, unit.now);
-  if (!decision.ok || decision.value.kind !== "start_work") throw new Error("expected start_work");
-  const workOrderIds = new Set(decision.value.work_orders.map((order) => order.id));
+  if (!decision.ok || decision.value.kind !== "recheck") throw new Error("expected recheck");
+  const workOrderIds = new Set(decision.value.started.map((order) => order.id));
   // A second decide (the recovered root re-asking after its own crash) must
   // select the same, already-started work order rather than mint another.
   const second = await new PostgresRunRecordRepository(sql!).decide_run(runId, unit.now);

@@ -1,15 +1,16 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
-import { executorHealthFromTerminal, type PersistMaterializedStage, type ReviseRunUnitInput, type ReviseRunUnitInputResult, type RunDecision, type WorkOrderExecution } from "../domain/run-record";
+import type { AskResult } from "../decision/commands";
+import { executorHealthFromTerminal, type WorkOrderExecution } from "../domain/run-record";
 import { executorOperationIdForWorkOrder, type WorkflowRunId, type WorkOrderId } from "../domain/primitives";
 import type { ExecutorAdapter, ExecutorObservationAttempt, ExternalExecutionReference } from "../domain/execution";
 import type { Result } from "../domain/primitives";
+import type { StageOutcome } from "../domain/workflow";
 import type { RunRecordRepository, RunRecordRepositoryError } from "../storage/repositories";
 
 export interface RunRecordWorkflowServices {
   readonly records: RunRecordRepository;
   find_executor(executor_type: string): ExecutorAdapter | undefined;
-  reconcile_materialization?(run_id: WorkflowRunId, materialized_at: string): Promise<void>;
   now(): string;
 }
 
@@ -21,33 +22,9 @@ const workflowServices = (): RunRecordWorkflowServices => {
 };
 
 const decideRunStep = DBOS.registerStep(
-  async (run_id: WorkflowRunId): Promise<Result<RunDecision, RunRecordRepositoryError>> => workflowServices().records.decide_run(run_id, workflowServices().now()),
-  { name: "oakridgeV2DecideRunStep", retriesAllowed: true },
+  async (run_id: WorkflowRunId): Promise<Result<AskResult, RunRecordRepositoryError>> => workflowServices().records.decide_run(run_id, workflowServices().now()),
+  { name: "oakridgeV2DecideRunStep", retriesAllowed: true, maxAttempts: 5, intervalSeconds: 1, backoffRate: 2 },
 );
-
-const reconcileRunMaterializationStep = DBOS.registerStep(
-  async (run_id: WorkflowRunId): Promise<void> => workflowServices().reconcile_materialization?.(run_id, workflowServices().now()),
-  { name: "oakridgeV2ReconcileRunMaterializationStep", retriesAllowed: true },
-);
-
-const persistMaterializedStageStep = DBOS.registerStep(
-  async (input: PersistMaterializedStage): Promise<void> => workflowServices().records.persist_materialized_stage(input),
-  { name: "oakridgeV2PersistMaterializedStageStep", retriesAllowed: true },
-);
-
-const reviseRunUnitInputStep = DBOS.registerStep(
-  async (input: ReviseRunUnitInput): Promise<ReviseRunUnitInputResult> => workflowServices().records.revise_unit_input(input),
-  { name: "oakridgeV2ReviseRunUnitInputStep", retriesAllowed: true },
-);
-
-/** Compiler output crosses one durable boundary before any scheduler can act. */
-export const runRecordMaterializationWorkflow = DBOS.registerWorkflow(async (input: PersistMaterializedStage): Promise<void> => {
-  await persistMaterializedStageStep(input);
-}, { name: "oakridgeV2MaterializationWorkflow" });
-
-/** A revision changes the run record; no child is told to reinterpret its parent. */
-export const runRecordInputRevisionWorkflow = DBOS.registerWorkflow(async (input: ReviseRunUnitInput): Promise<ReviseRunUnitInputResult> =>
-  reviseRunUnitInputStep(input), { name: "oakridgeV2InputRevisionWorkflow" });
 
 const loadWorkOrderStep = DBOS.registerStep(
   async (work_order_id: WorkOrderId): Promise<WorkOrderExecution> => {
@@ -123,7 +100,7 @@ export const runRecordWorkOrderWorkflow = DBOS.registerWorkflow(async (work_orde
   }
 }, { name: "oakridgeV2WorkOrderWorkflow" });
 
-export interface RunRecordWorkflowResult { readonly run_id: WorkflowRunId; readonly outcome: Extract<RunDecision, { kind: "complete" }>["outcome"] }
+export interface RunRecordWorkflowResult { readonly run_id: WorkflowRunId; readonly outcome: StageOutcome }
 
 /**
  * Every commit that can change `decide_run`'s answer for this run — a
@@ -135,26 +112,40 @@ export interface RunRecordWorkflowResult { readonly run_id: WorkflowRunId; reado
 export const RUN_RECORD_WAKE_TOPIC = "oakridge-v2-run-record-wake";
 /** The bound on how long a lost or never-sent wake can delay a recheck. */
 export const RUN_RECORD_WAKE_TIMEOUT_SECONDS = 5;
+/** How long the root sleeps, durably, before asking again after a run of failed asks. */
+export const RUN_RECORD_ASK_FAILURE_BACKOFF_SECONDS = 30;
 
 /**
  * A bounded recheck makes notifications an optimization rather than
  * correctness: `DBOS.recv` either returns a wake hint or times out, and
  * either way the very next line re-reads the authoritative record. No
  * decision here is ever taken from the hint's payload or its absence.
+ *
+ * The only step is `decideRunStep`. Anything it throws (a blip that outlasts
+ * the step's own `maxAttempts`) is caught here, logged, and slept through
+ * durably: the run stays `active` and visible, and the root asks again once
+ * the cause clears — no wake, no operator action (spec §3.5). `run_not_found`
+ * is the one case that still ends the workflow by throwing: the record was
+ * deleted and there is nothing left to keep alive.
  */
 export const runRecordWorkflow = DBOS.registerWorkflow(async (run_id: WorkflowRunId): Promise<RunRecordWorkflowResult> => {
   for (;;) {
-    await reconcileRunMaterializationStep(run_id);
-    const result = await decideRunStep(run_id);
-    if (!result.ok) throw new Error(`${result.error.operation}:${result.error.kind}:${result.error.detail}`);
-    const decision = result.value;
-    if (decision.kind === "complete") return { run_id, outcome: decision.outcome };
-    if (decision.kind === "start_work") {
-      for (const order of decision.work_orders) {
+    let ask: Result<AskResult, RunRecordRepositoryError>;
+    try {
+      ask = await decideRunStep(run_id);
+    } catch (error) {
+      DBOS.logger.error(`run ${run_id}: ask failed, retrying in ${RUN_RECORD_ASK_FAILURE_BACKOFF_SECONDS}s: ${String(error)}`);
+      await DBOS.sleepSeconds(RUN_RECORD_ASK_FAILURE_BACKOFF_SECONDS);
+      continue;
+    }
+    if (!ask.ok) throw new Error(`${ask.error.operation}:${ask.error.kind}:${ask.error.detail}`);
+    if (ask.value.kind === "complete") return { run_id, outcome: ask.value.outcome };
+    if (ask.value.kind === "recheck") {
+      for (const order of ask.value.started) {
         const execution = await loadWorkOrderStep(order.id);
         await DBOS.startWorkflow(runRecordWorkOrderWorkflow, { workflowID: execution.work_order.workflow_id })(execution.work_order.id);
       }
-      continue;
+      continue; // something changed: ask again now, no recv
     }
     await DBOS.recv(RUN_RECORD_WAKE_TOPIC, { timeoutSeconds: RUN_RECORD_WAKE_TIMEOUT_SECONDS });
   }

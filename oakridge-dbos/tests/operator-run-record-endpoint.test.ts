@@ -10,6 +10,7 @@ import { afterAll, expect, test } from "bun:test";
 import { createHash, randomUUID } from "node:crypto";
 
 import type { ArtifactId, InputFingerprint, RunUnitId, StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId, WorkOrderId } from "../src/domain/primitives";
+import type { WorkflowDefinition } from "../src/domain/workflow";
 import { createOperatorProjectionApp } from "../src/http/operator-projections";
 import { applyMigrations } from "../src/storage/migrate";
 import { PostgresOperatorProjectionRepository } from "../src/storage/postgres-operators";
@@ -34,7 +35,13 @@ test("GET /runs/:id exposes the v2 run-record projection with every required fie
   const runningStageId = randomUUID() as StageInstanceId;
   const gatedStageId = randomUUID() as StageInstanceId;
   const now = new Date().toISOString();
-  await sql.query(`INSERT INTO oakridge.workflow_definition (id, name, version, definition, archived, created_at) VALUES ($1,$2,1,'{}'::jsonb,false,$3::timestamptz)`, [definitionId, `operator-endpoint-${runId}`, now]);
+  const definitionName = `operator-endpoint-${runId}`;
+  // A full, self-describing definition — not just `{graph:...}` — because this
+  // route (`get_run_record_detail`, spec §3.6) parses the stored definition in
+  // full to synthesize `pending` entries for stages with no row yet, not only
+  // compiles it the way `decide_run` does.
+  const definitionBody = { id: definitionId, name: definitionName, version: 1, graph: { stages: {}, edges: [] }, created_at: now, archived: false } satisfies WorkflowDefinition;
+  await sql.query(`INSERT INTO oakridge.workflow_definition (id, name, version, definition, archived, created_at) VALUES ($1,$2,1,$3::jsonb,false,$4::timestamptz)`, [definitionId, definitionName, JSON.stringify(definitionBody), now]);
   await sql.query(`INSERT INTO oakridge.workflow_run (id, workflow_definition_id, context, created_at) VALUES ($1,$2,'{}'::jsonb,$3::timestamptz)`, [runId, definitionId, now]);
   // `get_run`'s v1 summary query still inner-joins an attempt and its DBOS
   // status row — the old topology remains the only public launch path, so a

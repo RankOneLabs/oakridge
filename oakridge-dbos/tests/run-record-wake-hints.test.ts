@@ -74,7 +74,7 @@ const setupParkedRun = async (label: string): Promise<WakeHintFixture | null> =>
   const workOrderId = randomUUID() as WorkOrderId;
   const now = new Date().toISOString();
   const capabilityHash = createHash("sha256").update(`wake-hint-${workOrderId}`).digest("hex");
-  await sql.query(`INSERT INTO oakridge.workflow_definition (id, name, version, definition, archived, created_at) VALUES ($1,$2,1,'{}'::jsonb,false,$3::timestamptz)`, [definitionId, `wake-hint-${runId}`, now]);
+  await sql.query(`INSERT INTO oakridge.workflow_definition (id, name, version, definition, archived, created_at) VALUES ($1,$2,1,'{"graph":{"stages":{},"edges":[]}}'::jsonb,false,$3::timestamptz)`, [definitionId, `wake-hint-${runId}`, now]);
   await sql.query(`INSERT INTO oakridge.workflow_run (id, workflow_definition_id, context, created_at) VALUES ($1,$2,'{}'::jsonb,$3::timestamptz)`, [runId, definitionId, now]);
   const records = new PostgresRunRecordRepository(sql);
   await records.initialize_straight_through({

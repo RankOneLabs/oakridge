@@ -7,10 +7,10 @@ import type {
 import { err, ok, type Result } from "./primitives";
 import { parseGithubPullRequestIdentity, pullRequestMismatch, repositoriesMatch, type PullRequestMismatch, type PullRequestObservation } from "./pull-request";
 
-// The pull-request vocabulary is shared with cohort reconciliation; it is
-// re-exported here so existing callers keep one import path.
+// The pull-request vocabulary is shared with cohort reconciliation; its
+// types are re-exported here so existing callers keep one import path. The
+// parser itself is not re-exported — import it from ./pull-request directly.
 export type { ObservedPullRequestState, PullRequestMismatch, PullRequestMismatchKind, PullRequestObservation, PullRequestObservationSource } from "./pull-request";
-export { parseGithubPullRequestIdentity } from "./pull-request";
 
 export interface FinalPullRequestReconciliation {
   readonly epic_profile_id: EpicWorkflowProfileId;

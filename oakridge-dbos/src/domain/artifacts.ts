@@ -99,16 +99,12 @@ export type ArtifactReleaseState =
       /**
        * Optional only because this shape is persisted in the command outbox: a
        * row written before this field existed carries no value, and a run in
-       * flight across the deploy must not fail to parse. Read it through
-       * `selectRevisionTarget`, never directly.
+       * flight across the deploy must not fail to parse. Default to
+       * `"self_stage"` when absent — the pre-field behaviour.
        */
       readonly revision_target?: GateRevisionTarget;
     }
   | { readonly kind: "waiting_handoff"; readonly artifact: ArtifactRevision; readonly downstream_role: string; readonly external_wait_kind: string };
-
-/** The revision target of a gate wait, defaulting to the pre-field behaviour. */
-export const selectRevisionTarget = (release: Extract<ArtifactReleaseState, { kind: "waiting_gate" }>): GateRevisionTarget =>
-  release.revision_target ?? "self_stage";
 
 export type ArtifactLifecycleNotification =
   | { readonly kind: "artifact_emitted"; readonly release: ArtifactReleaseState }
