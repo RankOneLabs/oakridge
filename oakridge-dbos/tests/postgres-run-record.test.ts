@@ -415,6 +415,8 @@ test("a rejected gated output is replaced by the operator's retry as a fresh cha
   const first = await publish(fixture.workOrderId, fixture.capabilityHash, "plan-v1", { plan: "v1" });
   if (first.kind !== "pending") throw new Error(`expected pending, got ${first.kind}`);
   await setup.records.close_output_wait({ wait_id: first.wait_id, disposition: "invalidate", actor: "operator:sam", detail: "redo it", decided_at: fixture.at });
+  const effectiveAfterRejection = await new PostgresArtifactRevisionRepository(sql!).list_effective_for_run(setup.input.run_id);
+  expect(effectiveAfterRejection.some((artifact) => artifact.id === first.artifact_id)).toBe(false);
   // The scalar producer had nothing left to emit, so the rejection abandoned it.
   expect(await publish(fixture.workOrderId, fixture.capabilityHash, "plan-v2-from-old-order", { plan: "v2" })).toEqual(expect.objectContaining({ kind: "work_abandoned" }));
 

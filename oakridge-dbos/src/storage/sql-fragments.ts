@@ -15,7 +15,9 @@ export const superjsonValueLateral = (column: string, alias: string): string =>
  * The artifact a run-owned output slot points at is the one in effect. A
  * replacement published into an invalidated slot is a fresh chain root, so a
  * released predecessor keeps `lifecycle_state = 'released'` and a read keyed
- * on lifecycle alone would return both; the slot pointer returns exactly one.
+ * on lifecycle alone would return both. A pending or released slot pointer
+ * returns exactly one; an invalidated slot deliberately makes its rejected
+ * artifact unavailable until a replacement is published.
  */
 export const effectiveArtifactPredicate = (artifactAlias: string): string =>
-  `EXISTS (SELECT 1 FROM oakridge.run_output_slot effective_slot WHERE effective_slot.artifact_revision_id = ${artifactAlias}.id)`;
+  `EXISTS (SELECT 1 FROM oakridge.run_output_slot effective_slot WHERE effective_slot.artifact_revision_id = ${artifactAlias}.id AND effective_slot.state IN ('pending','released'))`;

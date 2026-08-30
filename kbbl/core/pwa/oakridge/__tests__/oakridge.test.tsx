@@ -376,6 +376,34 @@ describe("RunDetailView", () => {
     expect(screen.queryByTestId("or-retry-unit-btn")).not.toBeNull();
   });
 
+  it("retries the single unit hidden behind a collapsed stage row", async () => {
+    const detail: RunDetail = {
+      ...RUN_DETAIL_FIXTURE,
+      status: "running",
+      is_stuck: true,
+      stages: [{
+        stage_instance_id: "brief-writer-stage", name: "brief_writer", type: "artifact_collection",
+        status: "running", artifacts: [], delegated_kbbl_sid: null, worktree: null,
+        units: [{ unit_id: "0", repository_key: null, sid: null, worktree: null, status: "running", gate: null, params: null }],
+      }],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/units/0/retry")) return json({ work_order: { id: "retry-brief-writer" } }, 202);
+      if (url.includes("/gates")) return json([]);
+      return json(detail);
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(fetchMock);
+    wrap(<RunDetailView runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
+
+    fireEvent.click(await screen.findByTestId("or-retry-unit-btn"));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/oakridge/api/stage_instances/brief-writer-stage/units/0/retry",
+      expect.objectContaining({ method: "PUT", headers: expect.objectContaining({ "Idempotency-Key": expect.any(String) }) }),
+    ));
+  });
+
   it("does not offer unit retry when the failed unit's stage is not parked", async () => {
     const detail: RunDetail = {
       ...RUN_DETAIL_FIXTURE,

@@ -18,16 +18,23 @@ function stageRowClass(status: string): string {
 interface RunStageRowProps {
   stage: StageDetail;
   onSelectArtifact?: (artifactId: string) => void;
+  retry?: {
+    readonly onRetry: () => void;
+    readonly isRetrying: boolean;
+    readonly error?: string;
+  };
 }
 
-/** A stage without unit rows. Retry is a per-unit operation (see `RunUnitRow`); a stage has no retry of its own. */
-export function RunStageRow({ stage, onSelectArtifact }: RunStageRowProps) {
+/** A collapsed single-unit stage. Its optional retry still targets that one unit; it is never a stage-wide command. */
+export function RunStageRow({ stage, onSelectArtifact, retry }: RunStageRowProps) {
   return (
     <tr className={stageRowClass(stage.status)} data-testid="or-stage-row">
       <td className={`${tableCellClass} font-medium text-[var(--text-primary)]`} data-testid="or-stage-name">{stage.name}</td>
       <td className={`${tableCellClass} text-[var(--text-secondary)]`}>{stage.type}</td>
       <td className={tableCellClass}><div className="flex items-center gap-2">
         <StatusBadge status={stage.status} />
+        {retry && <button type="button" className="rounded border border-red-500 px-2 py-0.5 text-xs text-red-500 hover:bg-red-500 hover:text-white disabled:opacity-50" onClick={retry.onRetry} disabled={retry.isRetrying} data-testid="or-retry-unit-btn">{retry.isRetrying ? "Retrying…" : "Retry"}</button>}
+        {retry?.error && <span role="alert" className="text-xs text-red-500">{retry.error}</span>}
       </div></td>
       <ArtifactCell artifacts={stage.artifacts} onSelectArtifact={onSelectArtifact} />
       <SessionCell sid={stage.delegated_kbbl_sid} />
