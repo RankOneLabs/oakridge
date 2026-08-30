@@ -229,6 +229,22 @@ async function oakridgePost<T>(path: string, body: unknown, options: OakridgePos
   return (await res.json()) as T;
 }
 
+interface OakridgePutOptions { readonly idempotency_key: string }
+
+/** A bodiless, idempotent PUT — the shape of oakridge's operator commands (retry). */
+async function oakridgePut<T>(path: string, options: OakridgePutOptions): Promise<T> {
+  const res = await fetch(`${API}${path}`, {
+    method: "PUT",
+    headers: { "Idempotency-Key": options.idempotency_key },
+  });
+  if (!res.ok) {
+    const b = await res.json().catch(() => null) as unknown;
+    const detail = selectFailureDetail(b, `oakridge PUT ${path}: ${res.status}`);
+    throw new Error(detail);
+  }
+  return (await res.json()) as T;
+}
+
 async function oakridgeDelete(path: string): Promise<void> {
   const res = await fetch(`${API}${path}`, { method: "DELETE" });
   if (!res.ok) {
@@ -356,10 +372,17 @@ export function deleteRun(runId: string): Promise<void> {
   return oakridgeDelete(`/workflow_runs/${encodeURIComponent(runId)}`);
 }
 
-export function retryStuckStage(stageInstanceId: string, unitId?: string): Promise<unknown> {
-  return oakridgePost<unknown>(`/stage_instances/${encodeURIComponent(stageInstanceId)}/retry_stuck`, {
-    unit_id: unitId,
-  });
+/**
+ * Operator retry of one run unit — the recovery for a rejected output or a
+ * dead executor. Oakridge keys the request on `Idempotency-Key`; a fresh key
+ * per click is a fresh decision, and a repeat of the same key returns the
+ * work order it already created.
+ */
+export function retryRunUnit(stageInstanceId: string, unitId: string): Promise<unknown> {
+  return oakridgePut<unknown>(
+    `/stage_instances/${encodeURIComponent(stageInstanceId)}/units/${encodeURIComponent(unitId)}/retry`,
+    { idempotency_key: crypto.randomUUID() },
+  );
 }
 
 export function confirmFinalPullRequest(

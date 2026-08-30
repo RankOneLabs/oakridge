@@ -9,6 +9,7 @@ import type {
 } from "./repositories";
 import { err, ok, type JsonValue } from "../domain/primitives";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
+import { effectiveArtifactPredicate } from "./sql-fragments";
 import type { CreateWorkflowRunResult, PersistWorkflowRunLaunch, SetRunArchiveResult, UnstartedRun, WorkflowRunLaunchRecord, WorkflowRunListFilter } from "../domain/runs";
 import type { EpicWorkflowProfile } from "../domain/epic";
 import { isRunContext } from "../domain/run-context";
@@ -304,7 +305,7 @@ export class PostgresArtifactRevisionRepository implements ArtifactRevisionRepos
   async list_effective_for_run(run_id: WorkflowRunId): Promise<readonly ArtifactRevision[]> {
     const rows = await this.sql.query<ArtifactRow>(
       `SELECT ${artifactColumns} FROM oakridge.artifact artifact
-       WHERE run_id = $1 AND lifecycle_state IN ('current', 'released')
+       WHERE run_id = $1 AND ${effectiveArtifactPredicate("artifact")}
        ORDER BY created_at, version`, [run_id]);
     return rows.map(decodeArtifact);
   }
