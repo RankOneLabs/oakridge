@@ -49,8 +49,41 @@ export interface ExecutionScenario {
 
 let currentScenario: ExecutionScenario | null = null;
 
+/**
+ * Which cohorts a run's plan-writer and brief-writer emit, and the
+ * `depends_on` each brief carries — a value so scenarios can vary the
+ * dependency graph instead of the harness hardcoding one shape.
+ */
+export interface CohortPlanEntry { readonly id: string; readonly depends_on: readonly string[] }
+
+/** What every test wrote by hand before the plan became a value. */
+export const DEFAULT_COHORT_PLAN: readonly CohortPlanEntry[] = [
+  { id: "foundation", depends_on: [] },
+  { id: "web", depends_on: ["foundation"] },
+];
+
+/** The seven-brief dependency graph run-16381389 reproduces. */
+export const SEVEN_BRIEF_PLAN: readonly CohortPlanEntry[] = [
+  { id: "versioning", depends_on: [] },
+  { id: "schema", depends_on: [] },
+  { id: "docs", depends_on: [] },
+  { id: "rollout", depends_on: ["versioning"] },
+  { id: "api", depends_on: ["schema"] },
+  { id: "ui", depends_on: ["api", "rollout"] },
+  { id: "release", depends_on: ["ui", "docs"] },
+];
+
+/** The plan `artifactBody` mints its cohort/brief bodies from — set by `useScenario`. */
+let activeCohortPlan: readonly CohortPlanEntry[] = DEFAULT_COHORT_PLAN;
+
+const hasCohortPlan = (scenario: ExecutionScenario): scenario is ExecutionScenario & { readonly cohorts: readonly CohortPlanEntry[] } =>
+  "cohorts" in scenario;
+
 /** Point the registered adapter at the scenario for the test about to run. */
-export const useScenario = (scenario: ExecutionScenario): void => { currentScenario = scenario; };
+export const useScenario = (scenario: ExecutionScenario): void => {
+  currentScenario = scenario;
+  activeCohortPlan = hasCohortPlan(scenario) ? scenario.cohorts : DEFAULT_COHORT_PLAN;
+};
 
 const requireScenario = (): ExecutionScenario => {
   if (!currentScenario) throw new Error("no execution scenario is active — call useScenario() first");
@@ -112,6 +145,8 @@ export interface AgentDelivery {
 }
 
 export interface ScriptedAgentScenario extends ExecutionScenario {
+  /** The cohort plan this scenario's plan-writer and brief-writer emit against. */
+  readonly cohorts: readonly CohortPlanEntry[];
   /** Execution workflow id → the request that started it, in launch order. */
   readonly launched: Map<string, ExecutionRequest>;
   /** Every follow-up the run has sent an agent — a revision request, say. */
@@ -121,7 +156,8 @@ export interface ScriptedAgentScenario extends ExecutionScenario {
   releaseAll(): void;
 }
 
-export const scriptedAgentScenario = (): ScriptedAgentScenario => {
+export const scriptedAgentScenario = (options?: { readonly cohorts?: readonly CohortPlanEntry[] }): ScriptedAgentScenario => {
+  const cohorts = options?.cohorts ?? DEFAULT_COHORT_PLAN;
   const launched = new Map<string, ExecutionRequest>();
   const deliveries: AgentDelivery[] = [];
   const succeeded = new Set<string>();
@@ -129,6 +165,7 @@ export const scriptedAgentScenario = (): ScriptedAgentScenario => {
   const success: ExecutorObservationAttempt = { kind: "terminal", observation: { kind: "succeeded", metadata: {} } };
   let released = false;
   return {
+    cohorts,
     launched,
     deliveries,
     async deliver_input(execution_id, delivery_key, prompt) {
@@ -381,8 +418,16 @@ export const installIntegrationRuntime = async (databaseUrl: string): Promise<In
   };
 };
 
-/** A canonical GitHub pull request URL per cohort, so reconciliation has an identity to check. */
-export const cohortPullRequestUrl = (unitId: UnitId): string => `https://github.com/RankOneLabs/oakridge/pull/${unitId === "web" ? 2 : 1}`;
+/**
+ * A canonical GitHub pull request URL per cohort, so reconciliation has an
+ * identity to check. The number is the cohort's position in the active plan
+ * (1-based); a cohort id the plan does not name falls back to 1 — the same
+ * default the hardcoded version used for every id but "web".
+ */
+export const cohortPullRequestUrl = (unitId: UnitId): string => {
+  const index = activeCohortPlan.findIndex((entry) => entry.id === unitId);
+  return `https://github.com/RankOneLabs/oakridge/pull/${index >= 0 ? index + 1 : 1}`;
+};
 export const cohortHeadBranch = (unitId: UnitId): string => `cohort/${unitId}`;
 
 /**
@@ -395,10 +440,11 @@ export const cohortHeadBranch = (unitId: UnitId): string => `cohort/${unitId}`;
 export const artifactBody = (request: ExecutionRequest, unitId: UnitId, outputName: string, revision = 1): JsonValue => {
   const session = (request.resolved_config as { readonly session_name?: string }).session_name ?? "";
   if (session.startsWith("spec-analyzer-")) return { requirements: [{ id: "R1", description: `harness v${revision}` }] };
-  if (session.startsWith("plan-writer-")) return { cohorts: [{ id: "foundation" }, { id: "web" }] };
+  if (session.startsWith("plan-writer-")) return { cohorts: activeCohortPlan.map(({ id }) => ({ id })) };
   if (session.startsWith("brief-writer-")) {
+    const dependsOn = activeCohortPlan.find((entry) => entry.id === unitId)?.depends_on ?? [];
     return { cohort_id: unitId, repository_key: "oakridge", title: String(unitId), goal: "harness", files_in_scope: [],
-      next_action: "build", decisions_made: [], acceptance_criteria: ["passes"], depends_on: unitId === "web" ? ["foundation"] : [] };
+      next_action: "build", decisions_made: [], acceptance_criteria: ["passes"], depends_on: dependsOn };
   }
   if (session.startsWith("build-")) {
     // The two build outputs are genuinely different documents, and the pull

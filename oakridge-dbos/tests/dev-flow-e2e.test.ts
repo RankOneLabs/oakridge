@@ -1,62 +1,88 @@
 /** Public v2 proof: real runtime, repositories, routes, workflows, gates and handoffs; only the agent is scripted. */
 import { afterAll, beforeAll, expect, test } from "bun:test";
 
-import type { ArtifactId, UnitId } from "../src/domain/primitives";
+import type { OperatorParkedGate } from "../src/domain/operator-projections";
+import type { WorkflowRunId } from "../src/domain/primitives";
+import { PgPostgresExecutor } from "../src/storage/sql-executor";
 import { findTestDatabaseUrl } from "./support/durable-database";
-import { HARNESS_BASE_BRANCH, awaitCondition, cohortPullRequestUrl, installIntegrationRuntime, runContext,
+import { HARNESS_BASE_BRANCH, SEVEN_BRIEF_PLAN, installIntegrationRuntime, runContext,
   scriptedAgentScenario, useScenario, type IntegrationRuntime } from "./support/dev-flow-harness";
-import { confirmCohortMerged, decideGate, emitDeclaredArtifacts, launchRun, readReviewInbox, readRun } from "./support/dev-flow-driver";
+import { assertQuietAsk, driveRun, launchRun, listRunGates, readRun } from "./support/dev-flow-driver";
 
 const databaseUrl = await findTestDatabaseUrl();
 if (!databaseUrl) console.warn("dev-flow e2e SKIPPED: no reachable PostgreSQL (set OAKRIDGE_TEST_DATABASE_URL)");
 const e2e = databaseUrl ? test : test.skip;
 let oakridge: IntegrationRuntime;
+let sql: PgPostgresExecutor;
 
 beforeAll(async () => {
-  if (databaseUrl) oakridge = await installIntegrationRuntime(databaseUrl);
+  if (databaseUrl) {
+    oakridge = await installIntegrationRuntime(databaseUrl);
+    sql = PgPostgresExecutor.connect(databaseUrl);
+  }
 }, 120_000);
 
 afterAll(async () => {
-  if (databaseUrl) await oakridge.stop();
+  if (databaseUrl) {
+    await oakridge.stop();
+    await sql.close();
+  }
 }, 60_000);
 
-e2e("the public dev flow runs solely on run-owned v2 workflows", async () => {
+/** Every unit under one run's `build` stage: its unit id and current state. */
+const buildUnitRows = async (runId: WorkflowRunId): Promise<readonly { readonly unit_id: string; readonly state: string }[]> =>
+  sql.query<{ readonly unit_id: string; readonly state: string }>(
+    `SELECT unit.unit_id, unit.state FROM oakridge.run_unit unit
+     JOIN oakridge.stage_instance stage ON stage.id = unit.stage_instance_id
+     WHERE stage.run_id = $1 AND stage.stage_key = 'build' ORDER BY unit.unit_id`, [runId]);
+
+const countBuildUnits = async (runId: WorkflowRunId): Promise<number> => (await buildUnitRows(runId)).length;
+
+const buildUnitState = async (runId: WorkflowRunId, unitId: string): Promise<string | null> =>
+  (await buildUnitRows(runId)).find((row) => row.unit_id === unitId)?.state ?? null;
+
+const countBuildOrdersInState = async (runId: WorkflowRunId, state: string): Promise<number> => {
+  const rows = await sql.query<{ readonly count: string }>(
+    `SELECT count(*)::text AS count FROM oakridge.work_order work
+     JOIN oakridge.run_unit unit ON unit.id = work.run_unit_id
+     JOIN oakridge.stage_instance stage ON stage.id = unit.stage_instance_id
+     WHERE stage.run_id = $1 AND stage.stage_key = 'build' AND work.state = $2`, [runId, state]);
+  return Number(rows[0]?.count ?? 0);
+};
+
+const buildOrderState = async (runId: WorkflowRunId, unitId: string): Promise<string | null> => {
+  const rows = await sql.query<{ readonly state: string }>(
+    `SELECT work.state FROM oakridge.work_order work
+     JOIN oakridge.run_unit unit ON unit.id = work.run_unit_id
+     JOIN oakridge.stage_instance stage ON stage.id = unit.stage_instance_id
+     WHERE stage.run_id = $1 AND stage.stage_key = 'build' AND unit.unit_id = $2
+     ORDER BY work.created_at DESC LIMIT 1`, [runId, unitId]);
+  return rows[0]?.state ?? null;
+};
+
+const workflowRunState = async (runId: WorkflowRunId): Promise<string> => {
+  const rows = await sql.query<{ readonly state: string }>("SELECT state FROM oakridge.workflow_run WHERE id = $1", [runId]);
+  if (!rows[0]) throw new Error(`workflow run '${runId}' was not found`);
+  return rows[0].state;
+};
+
+e2e("straight-through dev flow completes", async () => {
   const agent = scriptedAgentScenario();
   useScenario(agent);
   const launched = await launchRun(oakridge.base_url, oakridge.definition.id, runContext(oakridge.base_url, oakridge.repository.path));
   oakridge.started_runs.push(launched.root_workflow_id);
   expect(launched.root_workflow_id).toBe(`v2-run:${launched.run_id}`);
 
-  const driven = new Set<string>();
-  const gates: ArtifactId[] = [];
-  const confirmed = new Set<string>();
   try {
-    await awaitCondition("the public v2 dev flow to complete", async () => {
-      for (const [workflowId, request] of agent.launched) {
-        if (driven.has(workflowId)) continue;
-        driven.add(workflowId);
-        const publication = (request.resolved_config as { readonly publication?: { readonly work_order_id: string } }).publication;
-        expect(publication?.work_order_id).toBe(workflowId);
-        for (const artifact of await emitDeclaredArtifacts(oakridge.base_url, request)) {
-          if (artifact.release === "waiting_gate") gates.push(artifact.artifact_id);
-        }
-        agent.succeed(request.execution_id);
-      }
-      while (gates.length > 0) await decideGate(oakridge.base_url, gates.shift()!, "approve");
+    const { value: detail, driven, confirmed } = await driveRun(oakridge.base_url, agent, launched, {
+      decide: () => "approve",
+      until: async () => {
+        const runDetail = await readRun(oakridge.base_url, launched.run_id);
+        return runDetail.status === "complete" || runDetail.status === "failed" ? runDetail : null;
+      },
+      timeout_ms: 180_000,
+    });
 
-      const inbox = await readReviewInbox(oakridge.base_url);
-      for (const item of inbox.items) {
-        if (item.kind !== "pull_request_merge" || item.run_id !== launched.run_id) continue;
-        const cohortId = `${item.stage_instance_id}:${item.unit_id}`;
-        expect(item.pr_url).toBe(cohortPullRequestUrl(item.unit_id as UnitId));
-        const result = await confirmCohortMerged(oakridge.base_url, cohortId);
-        if (result.kind === "accepted" && result.outcome === "completed") confirmed.add(cohortId);
-      }
-      const detail = await readRun(oakridge.base_url, launched.run_id);
-      return detail.status === "complete" || detail.status === "failed" ? detail : null;
-    }, 180_000);
-
-    const detail = await readRun(oakridge.base_url, launched.run_id);
     if (detail.status !== "complete") throw new Error(`v2 run failed: ${JSON.stringify(detail)}`);
     expect(detail.status).toBe("complete");
     expect(detail.stages).toHaveLength(6);
@@ -68,3 +94,91 @@ e2e("the public dev flow runs solely on run-owned v2 workflows", async () => {
     agent.releaseAll();
   }
 }, 240_000);
+
+/**
+ * Reproduces run `16381389-e7ba-4ae6-8041-7a150b201c75`: seven briefs, a
+ * dependency among them, and an operator who approves a dependent brief
+ * before the brief it depends on. On `9ce75fd` this fails the whole run 40ms
+ * after the approval — `materialize_stage:build:unknown dependency
+ * 'gecko-dbos-versioning'` — and every other open gate vanishes from the
+ * operator projection with it (`listV2PendingGates` filters on
+ * `run.state='active'`). This is the first test written for the
+ * decision-layer rewrite and it must fail on today's code; the rewrite's
+ * PR description is its red/green evidence.
+ */
+e2e("scenario 1: approving a dependent brief first does not fail the run", async () => {
+  const agent = scriptedAgentScenario({ cohorts: SEVEN_BRIEF_PLAN });
+  useScenario(agent);
+  const launched = await launchRun(oakridge.base_url, oakridge.definition.id, runContext(oakridge.base_url, oakridge.repository.path));
+  oakridge.started_runs.push(launched.root_workflow_id);
+
+  const approvedBriefs = new Set<string>();
+  const decide = (gate: OperatorParkedGate): string | null =>
+    gate.stage_name === "brief_writer" ? (approvedBriefs.has(gate.unit_id) ? "approve" : null) : "approve";
+
+  try {
+    // Phase A — drive until all seven briefs are parked at their gate.
+    await driveRun(oakridge.base_url, agent, launched, {
+      decide,
+      until: async (): Promise<boolean | null> => {
+        const gates = await listRunGates(oakridge.base_url, launched.run_id);
+        const briefGates = gates.filter((gate) => gate.stage_name === "brief_writer");
+        return briefGates.length === 7 ? true : null;
+      },
+      timeout_ms: 60_000,
+    });
+
+    // Phase B — approve the dependent brief ("rollout") before its
+    // dependency ("versioning"). On today's code the run fails almost
+    // immediately; `until` also stops on that so the failure lands as an
+    // assertion below rather than a timeout.
+    approvedBriefs.add("rollout");
+    await driveRun(oakridge.base_url, agent, launched, {
+      decide,
+      until: async (): Promise<boolean | null> => {
+        const state = await workflowRunState(launched.run_id);
+        if (state !== "active") return true;
+        const gates = await listRunGates(oakridge.base_url, launched.run_id);
+        const briefGates = gates.filter((gate) => gate.stage_name === "brief_writer");
+        const buildUnitCount = await countBuildUnits(launched.run_id);
+        return briefGates.length === 6 && buildUnitCount === 1 ? true : null;
+      },
+      timeout_ms: 30_000,
+    });
+
+    expect(await workflowRunState(launched.run_id)).toBe("active");
+    const briefGatesAfterB = (await listRunGates(oakridge.base_url, launched.run_id)).filter((gate) => gate.stage_name === "brief_writer");
+    expect(briefGatesAfterB).toHaveLength(6);
+    const buildUnitsAfterB = await buildUnitRows(launched.run_id);
+    expect(buildUnitsAfterB).toHaveLength(1);
+    expect(buildUnitsAfterB[0]?.unit_id).toBe("rollout");
+    expect(await countBuildOrdersInState(launched.run_id, "started")).toBe(0);
+    const detailAfterB = await readRun(oakridge.base_url, launched.run_id);
+    expect(detailAfterB.status).not.toBe("failed");
+    expect(detailAfterB.status).not.toBe("complete");
+    await assertQuietAsk(sql, launched.run_id);
+
+    // Phase C — approve the dependency; the dependent brief's build starts
+    // only once it is satisfied.
+    approvedBriefs.add("versioning");
+    await driveRun(oakridge.base_url, agent, launched, {
+      decide,
+      until: async (): Promise<boolean | null> => (await buildUnitState(launched.run_id, "versioning")) === "satisfied" ? true : null,
+      timeout_ms: 120_000,
+    });
+    await driveRun(oakridge.base_url, agent, launched, {
+      decide,
+      until: async (): Promise<boolean | null> => (await buildOrderState(launched.run_id, "rollout")) === "started" ? true : null,
+      timeout_ms: 30_000,
+    });
+
+    expect(await buildOrderState(launched.run_id, "rollout")).toBe("started");
+    expect(await buildUnitState(launched.run_id, "versioning")).toBe("satisfied");
+    expect(await workflowRunState(launched.run_id)).toBe("active");
+    const briefGatesAfterC = (await listRunGates(oakridge.base_url, launched.run_id)).filter((gate) => gate.stage_name === "brief_writer");
+    expect(briefGatesAfterC).toHaveLength(5);
+    await assertQuietAsk(sql, launched.run_id);
+  } finally {
+    agent.releaseAll();
+  }
+}, 300_000);

@@ -8,10 +8,14 @@
  * workflow, because a message a test can post but production cannot is exactly
  * how a deadlock ships green.
  */
+import { expect } from "bun:test";
+
 import type { OperatorArtifactDetail, OperatorParkedGate, OperatorRunDetail, OperatorRunSummary, OperatorReviewInbox } from "../../src/domain/operator-projections";
-import type { ArtifactId, JsonValue, UnitId, WorkflowDefinitionId } from "../../src/domain/primitives";
+import type { ArtifactId, JsonValue, UnitId, WorkflowDefinitionId, WorkflowRunId } from "../../src/domain/primitives";
 import type { ExecutionRequest } from "../../src/domain/execution";
-import { artifactBody, awaitCondition, cohortHeadBranch, cohortPullRequestUrl } from "./dev-flow-harness";
+import type { SqlExecutor, TransactionalSqlExecutor } from "../../src/storage/sql-executor";
+import { PostgresRunRecordRepository } from "../../src/storage/postgres-run-record";
+import { artifactBody, awaitCondition, cohortHeadBranch, cohortPullRequestUrl, type ScriptedAgentScenario } from "./dev-flow-harness";
 
 const EXECUTOR_TYPE = "delegated_session";
 
@@ -214,3 +218,125 @@ export const readRun = async (baseUrl: string, runId: OperatorRunSummary["id"]):
 
 export const readReviewInbox = async (baseUrl: string): Promise<OperatorReviewInbox> =>
   readJson<OperatorReviewInbox>(await fetch(`${baseUrl}/review_inbox`), "read review inbox");
+
+/** The gates parked against one run, as `GET /runs/:id/gates` reports them. */
+export const listRunGates = async (baseUrl: string, runId: LaunchedRun["run_id"]): Promise<readonly OperatorParkedGate[]> =>
+  readJson<readonly OperatorParkedGate[]>(await fetch(`${baseUrl}/runs/${runId}/gates`), `list gates for run ${runId}`);
+
+/**
+ * One driven pass of the loop every scenario shares: emit whatever agents
+ * owe, decide whichever parked gates the scenario's policy allows, confirm
+ * every cohort merge waiting in the review inbox, then check whether the
+ * scenario's own condition has been reached.
+ */
+export interface DriveOptions<Value> {
+  /** Decide a parked gate, or leave it open. Called with the gate as `GET /gates` lists it. */
+  readonly decide: (gate: OperatorParkedGate) => string | null;
+  /** Stop when this returns non-null; it is polled after every pass. */
+  readonly until: () => Promise<Value | null>;
+  readonly timeout_ms: number;
+}
+
+export interface DriveOutcome<Value> {
+  readonly value: Value;
+  /** Execution workflow ids this drive emitted artifacts for and succeeded. */
+  readonly driven: ReadonlySet<string>;
+  /** Cohort ids (`${stage_instance_id}:${unit_id}`) confirmed merged this drive. */
+  readonly confirmed: ReadonlySet<string>;
+}
+
+/**
+ * Drives a launched run the way every participant but the operator's gate
+ * policy really does: emit artifacts, confirm merges, and — the one thing
+ * that varies between scenarios — decide only the gates `options.decide`
+ * says to.
+ *
+ * `driven` and `confirmed` accumulate for the lifetime of this call only; a
+ * scenario that calls `driveRun` more than once (to vary the gate policy
+ * between phases) gets a fresh count each call, exactly as an inline loop
+ * restarted with fresh sets would.
+ */
+export const driveRun = async <Value>(baseUrl: string, agent: ScriptedAgentScenario, run: LaunchedRun, options: DriveOptions<Value>): Promise<DriveOutcome<Value>> => {
+  const driven = new Set<string>();
+  const confirmed = new Set<string>();
+  const decided = new Set<string>();
+  // `oakridge.wait.unit_id` on a collection-key gate — an artifact_collection
+  // stage's per-collection output, e.g. brief_writer's one brief per cohort
+  // — is the owning run_unit's own unit_id ("0"), not the collection key, so
+  // `GET /runs/:id/gates` reports the same `unit_id` for every brief gate.
+  // `expected_artifacts[].unit_id` on the execution request does not have
+  // that gap (it is the compiled stage contract's own id, one per collection
+  // key), and `emitDeclaredArtifacts` already threads it onto what it
+  // returns — so gates are re-keyed against it below rather than trusted
+  // as-is. Rebuilt from scratch each pass, which is enough: pass 1 of every
+  // `driveRun` call re-emits (idempotently) every launched execution not yet
+  // driven *this call*, which is every execution that could have opened a
+  // gate `options.decide` has not yet acted on.
+  const cohortIdByArtifact = new Map<string, string>();
+  const deadline = Date.now() + options.timeout_ms;
+  for (;;) {
+    for (const [workflowId, request] of agent.launched) {
+      if (driven.has(workflowId)) continue;
+      driven.add(workflowId);
+      // The execution's publication handle is its own work order — the seam
+      // the adapter and the emit route agree on.
+      const publication = (request.resolved_config as { readonly publication?: { readonly work_order_id: string } }).publication;
+      expect(publication?.work_order_id).toBe(workflowId);
+      for (const artifact of await emitDeclaredArtifacts(baseUrl, request)) cohortIdByArtifact.set(artifact.artifact_id, artifact.unit_id);
+      agent.succeed(request.execution_id);
+    }
+
+    for (const gate of await listRunGates(baseUrl, run.run_id)) {
+      if (decided.has(gate.id)) continue;
+      const cohortId = gate.artifact_revision_id ? cohortIdByArtifact.get(gate.artifact_revision_id) : undefined;
+      const action = options.decide(cohortId ? { ...gate, unit_id: cohortId as UnitId } : gate);
+      if (!action) continue;
+      decided.add(gate.id);
+      if (gate.artifact_revision_id) await decideGate(baseUrl, gate.artifact_revision_id, action);
+    }
+
+    const inbox = await readReviewInbox(baseUrl);
+    for (const item of inbox.items) {
+      if (item.kind !== "pull_request_merge" || item.run_id !== run.run_id) continue;
+      const cohortId = `${item.stage_instance_id}:${item.unit_id}`;
+      // The inbox item's PR is the one the build's pr_summary named.
+      expect(item.pr_url).toBe(cohortPullRequestUrl(item.unit_id as UnitId));
+      const result = await confirmCohortMerged(baseUrl, cohortId);
+      if (result.kind === "accepted" && result.outcome === "completed") confirmed.add(cohortId);
+    }
+
+    const value = await options.until();
+    if (value !== null) return { value, driven, confirmed };
+    if (Date.now() > deadline) throw new Error(`driveRun timed out after ${options.timeout_ms}ms waiting for run ${run.run_id}'s condition`);
+    await Bun.sleep(50);
+  }
+};
+
+/** `record_version` and how many transitions have been written for one run — invariant 7's measurement. */
+export interface RunRecordFingerprint {
+  readonly record_version: number;
+  readonly transition_count: number;
+}
+
+export const readRunRecordFingerprint = async (sql: SqlExecutor, runId: WorkflowRunId): Promise<RunRecordFingerprint> => {
+  const runRows = await sql.query<{ readonly record_version: number }>("SELECT record_version FROM oakridge.workflow_run WHERE id = $1", [runId]);
+  if (!runRows[0]) throw new Error(`workflow run '${runId}' was not found`);
+  const transitionRows = await sql.query<{ readonly count: string }>("SELECT count(*)::text AS count FROM oakridge.run_transition WHERE run_id = $1", [runId]);
+  return { record_version: Number(runRows[0].record_version), transition_count: Number(transitionRows[0]?.count ?? 0) };
+};
+
+/**
+ * Invariant 7 measured: asking again changes nothing. Asks `decide_run`
+ * twice — once to prove a quiescent record answers with no work, once more
+ * to prove that answer wasn't itself a change — and asserts the fingerprint
+ * taken before either ask still matches the one taken after both.
+ */
+export const assertQuietAsk = async (sql: TransactionalSqlExecutor, runId: WorkflowRunId): Promise<void> => {
+  const before = await readRunRecordFingerprint(sql, runId);
+  const repository = new PostgresRunRecordRepository(sql);
+  await repository.decide_run(runId, new Date().toISOString());
+  await repository.decide_run(runId, new Date().toISOString());
+  const after = await readRunRecordFingerprint(sql, runId);
+  expect(after.record_version).toBe(before.record_version);
+  expect(after.transition_count).toBe(before.transition_count);
+};
