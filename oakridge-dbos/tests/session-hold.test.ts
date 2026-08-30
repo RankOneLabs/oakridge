@@ -12,6 +12,7 @@ import { PostgresOperatorProjectionRepository } from "../src/storage/postgres-op
 import { PostgresRunRecordRepository } from "../src/storage/postgres-run-record";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
 import { findTestDatabaseUrl } from "./support/durable-database";
+import { ensureDbosSystemSchema } from "./support/dbos-system-schema";
 
 const hold: SessionHold = {
   session_id: "session-1", execution_id: "stage-1:0" as SessionHold["execution_id"],
@@ -50,6 +51,7 @@ test("a session id is passed through without uuid validation", async () => {
 const databaseUrl = await findTestDatabaseUrl();
 const sql = databaseUrl ? PgPostgresExecutor.connect(databaseUrl) : null;
 if (sql) await applyMigrations(sql);
+if (sql && databaseUrl) await ensureDbosSystemSchema(databaseUrl);
 afterAll(async () => { await sql?.close(); });
 
 const EXECUTOR_VERSION = "v2";

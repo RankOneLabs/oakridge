@@ -9,10 +9,12 @@ import { applyMigrations } from "../src/storage/migrate";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
 import type { SqlExecutor, TransactionalSqlExecutor } from "../src/storage/sql-executor";
 import { findTestDatabaseUrl } from "./support/durable-database";
+import { ensureDbosSystemSchema } from "./support/dbos-system-schema";
 
 const databaseUrl = await findTestDatabaseUrl();
 const sql = databaseUrl ? PgPostgresExecutor.connect(databaseUrl) : null;
 if (sql) await applyMigrations(sql);
+if (sql && databaseUrl) await ensureDbosSystemSchema(databaseUrl);
 afterAll(async () => { await sql?.close(); });
 
 class TransactionStubSql implements TransactionalSqlExecutor {
