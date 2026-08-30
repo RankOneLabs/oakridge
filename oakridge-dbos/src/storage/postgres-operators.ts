@@ -1,5 +1,5 @@
 import type { ArtifactId, RunUnitId, UnitId, WorkflowRunId, WorkOrderId } from "../domain/primitives";
-import { selectRunRecordUnitDecision, type OperatorApplicationVersionInventory, type OperatorCohortLifecycle, type OperatorCohortSummary, type OperatorParkedGate, type OperatorReviewInbox, type OperatorReviewInboxItem, type OperatorRunDetail, type OperatorRunRecordDetail, type OperatorRunRecordSlot, type OperatorRunRecordTransition, type OperatorRunRecordUnit, type OperatorRunRecordUnitFacts, type OperatorRunRecordWait, type OperatorRunRecordWorkOrder, type OperatorRunSummary, type OperatorStageArtifact, type OperatorStageDetail, type OperatorStageUnit } from "../domain/operator-projections";
+import { selectGateActionability, selectPendingStageOrder, selectRunRecordUnitDecision, type OperatorApplicationVersionInventory, type OperatorCohortLifecycle, type OperatorCohortSummary, type OperatorParkedGate, type OperatorReviewInbox, type OperatorReviewInboxItem, type OperatorRunDetail, type OperatorRunRecordDetail, type OperatorRunRecordSlot, type OperatorRunRecordTransition, type OperatorRunRecordUnit, type OperatorRunRecordUnitFacts, type OperatorRunRecordWait, type OperatorRunRecordWorkOrder, type OperatorRunSummary, type OperatorStageArtifact, type OperatorStageDetail, type OperatorStageUnit } from "../domain/operator-projections";
 import type { RunOutputSlotState } from "../domain/run-record";
 import type { SqlExecutor } from "./sql-executor";
 import { selectV2RunStatus, selectV2StageStatus, selectV2UnitStatus } from "../operators/select-status";
@@ -7,6 +7,10 @@ import type { EpicWorkflowProfile } from "../domain/epic";
 import { PR_SUMMARY_ARTIFACT_TYPE } from "../domain/dev-flow-artifacts";
 import { selectHandoffStatusFromWait, type HandoffWaitKind, type Wait, type WaitOutcome } from "../domain/wait";
 import type { RunState, UnitState } from "../domain/run-record";
+import { compileWorkflowDefinition } from "../compiler/compile-workflow";
+import { parseWorkflowDefinition } from "../validation/workflow-definition";
+import { stageInstanceIdFor } from "../decision/ids";
+import type { StageKey } from "../domain/workflow";
 
 interface GateProjectionRow {
   readonly run_id: string;
@@ -21,6 +25,7 @@ interface GateProjectionRow {
 interface V2GateProjectionRow extends GateProjectionRow {
   readonly wait_id: string;
   readonly repository_key: string | null;
+  readonly run_state: RunState;
 }
 
 export interface OperatorProjectionRepository {
@@ -68,23 +73,30 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
   }
 
   private async listV2PendingGates(run_id?: WorkflowRunId): Promise<readonly OperatorParkedGate[]> {
+    // No `run.state='active'` filter — spec §1 rule 9 / §3.7: an open wait is
+    // listed whatever the run's state, and `actionable` (derived below from
+    // `run_state`) says whether a decision on it can still take effect. A
+    // collection-member gate (brief_writer: one unit `"0"` fanning artifacts
+    // out per cohort) reports its `collection_key` as `unit_id` instead of the
+    // owning unit's own id, so an operator can tell cohort gates apart.
     const rows = await this.sql.query<V2GateProjectionRow>(
       `SELECT wait.id::text AS wait_id,stage.run_id::text,stage.stage_key AS stage_name,wait.stage_instance_id::text,
-              wait.unit_id,wait.artifact_revision_id::text,wait.closes_on->>'gate_step' AS gate_step,
+              COALESCE(wait.collection_key,wait.unit_id) AS unit_id,wait.artifact_revision_id::text,wait.closes_on->>'gate_step' AS gate_step,
               COALESCE(ARRAY(SELECT jsonb_array_elements_text(wait.closes_on->'actions')),ARRAY[]::text[]) AS actions,
-              COALESCE(unit.parameters->'artifact'->>'repository_key',unit.parameters->>'repository_key') AS repository_key
+              COALESCE(unit.parameters->'artifact'->>'repository_key',unit.parameters->>'repository_key') AS repository_key,
+              run.state AS run_state
        FROM oakridge.wait wait
        JOIN oakridge.run_unit unit ON unit.id=wait.run_unit_id
        JOIN oakridge.stage_instance stage ON stage.id=unit.stage_instance_id
        JOIN oakridge.workflow_run run ON run.id=unit.run_id
        JOIN oakridge.artifact artifact ON artifact.id=wait.artifact_revision_id
-       WHERE wait.kind='gate' AND wait.status='open' AND run.state='active' AND run.archived=false
+       WHERE wait.kind='gate' AND wait.status='open' AND run.archived=false
          AND artifact.lifecycle_state='current' AND ($1::uuid IS NULL OR run.id=$1::uuid)
        ORDER BY wait.opened_at,wait.id`, [run_id ?? null]);
     return rows.map((row) => ({ id: row.wait_id, stage_instance_id: row.stage_instance_id as import("../domain/primitives").StageInstanceId, gate_type: row.gate_step, run_id: row.run_id as WorkflowRunId,
       stage_name: row.stage_name, unit_id: row.unit_id as UnitId, repository_key: row.repository_key,
       artifact_revision_id: row.artifact_revision_id as ArtifactId, gate_step: row.gate_step, worktree: null,
-      resume_actions: row.actions, pr_url: null }));
+      resume_actions: row.actions, pr_url: null, run_state: row.run_state, actionable: selectGateActionability(row.run_state) }));
   }
 
   async list_runs(filter: "active" | "archived" | "all" = "active"): Promise<readonly OperatorRunSummary[]> {
@@ -301,13 +313,45 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
       base_branch,repositories,created_at::text,updated_at::text FROM oakridge.epic_workflow_profile WHERE workflow_run_id=$1`, [id]);
     const profile = profileRows[0];
     const epic_profile: EpicWorkflowProfile | null = profile ? { ...profile, id: profile.id as EpicWorkflowProfile["id"], workflow_run_id: profile.workflow_run_id as WorkflowRunId } : null;
+    // spec §3.6: a stage's `stage_instance` row exists only once it is ready,
+    // so `detail.stages` synthesizes a `"pending"` entry for every definition
+    // stage that has none yet — a dedicated single-row lookup, not folded into
+    // `listV2RunSummaries`, so listing many runs never pays for compiling a
+    // definition it does not need.
+    const definitionRows = await this.sql.query<{ readonly definition: unknown }>(
+      `SELECT definition.definition FROM oakridge.workflow_run run
+       JOIN oakridge.workflow_definition definition ON definition.id=run.workflow_definition_id
+       WHERE run.id=$1`, [id]);
+    const definitionJson = definitionRows[0]?.definition;
+    const pendingStages: OperatorStageDetail[] = [];
+    if (definitionJson !== undefined) {
+      // Definitions are validated when seeded (immutable per name+version), so
+      // a stored definition that fails to parse or compile here is an
+      // exception, not a value this projection degrades gracefully around.
+      const parsedDefinition = parseWorkflowDefinition(definitionJson);
+      if (!parsedDefinition.ok) throw new Error(`run ${id}'s stored workflow definition is invalid: ${parsedDefinition.error.detail}`);
+      const compiled = compileWorkflowDefinition(parsedDefinition.value);
+      if (!compiled.ok) throw new Error(`run ${id}'s stored workflow definition does not compile: ${compiled.error.detail}`);
+      const storedStageKeys = stageRows.map((stage) => stage.name as StageKey);
+      for (const stage_key of selectPendingStageOrder(compiled.value, storedStageKeys)) {
+        const contract = compiled.value.stages[stage_key];
+        if (!contract) continue; // selectPendingStageOrder only yields definition stage keys; defensive only.
+        pendingStages.push({ stage_instance_id: stageInstanceIdFor(id, stage_key), name: stage_key, type: contract.stage_type,
+          operator_role: contract.operator_role, status: "pending", artifacts: [], delegated_kbbl_sid: null, worktree: null, units: [] });
+      }
+    }
     return { id: summary.id, workflow_name: summary.workflow_name, current_attempt_root_workflow_id: summary.current_attempt_root_workflow_id,
-      attempts: [], status: summary.status, stages, parked_count: summary.parked_count, updated_at: summary.updated_at,
+      attempts: [], status: summary.status, stages: [...stages, ...pendingStages], parked_count: summary.parked_count, updated_at: summary.updated_at,
       is_stuck: summary.is_stuck, epic_profile, run_record: await this.get_run_record_detail(id) };
   }
 
   async get_review_inbox(): Promise<OperatorReviewInbox> {
-    const [gates, runs, projectedCohorts] = await Promise.all([this.list_pending_gates(), this.list_runs(), this.list_cohorts()]);
+    const [allGates, runs, projectedCohorts] = await Promise.all([this.list_pending_gates(), this.list_runs(), this.list_cohorts()]);
+    // The inbox is the operator's decision queue. A gate stranded by a run
+    // that has ended is still listed by `list_pending_gates` (spec §3.7) and
+    // rendered on the run, but no decision on it can take effect, so it is
+    // not queued here as work.
+    const gates = allGates.filter((gate) => gate.actionable);
     const names = new Map(runs.map((run) => [run.id, run.workflow_name]));
     const cohorts = projectedCohorts.map((cohort): OperatorCohortSummary => {
       const gate = gates.find((candidate) => candidate.run_id === cohort.run_id && candidate.unit_id === cohort.unit_id);

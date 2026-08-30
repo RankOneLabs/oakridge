@@ -27,7 +27,7 @@ function gateTypeLabel(gateType: string): string {
 function GateCard({ gate, onNavigateRun, onNavigateArtifact }: GateCardProps) {
   return (
     <div
-      className="flex flex-col gap-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-4"
+      className={`flex flex-col gap-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-4${gate.actionable ? "" : " or-gate-card--stranded"}`}
       data-testid="or-gate-card"
     >
       <div className="flex flex-wrap items-center gap-2.5">

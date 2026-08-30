@@ -13,6 +13,20 @@ test("v2 operator status is selected only from persisted run-owned state", () =>
   expect(selectV2UnitStatus("waiting", true)).toBe("parked");
 });
 
+/**
+ * `detail.stages` (run-detail projection, §3.6) now synthesizes `"pending"`
+ * entries for definition stages with no `stage_instance` row yet, alongside
+ * real rows that are running or parked. `selectV2RunStatus` never reads that
+ * list — `has_materialized_stage` is a fact about persisted rows only — so a
+ * synthesized pending stage can never pull a run with real work in progress
+ * back down to `"pending"`. `has_materialized_stage: true` here stands for a
+ * run with at least one real (running or parked) stage row.
+ */
+test("a synthesized pending stage cannot turn a run with real materialized work into pending", () => {
+  expect(selectV2RunStatus({ state: "active", parked_count: 0, has_materialized_stage: true })).toBe("running");
+  expect(selectV2RunStatus({ state: "active", parked_count: 2, has_materialized_stage: true })).toBe("parked");
+});
+
 test("pending gate dominates engine running status for operator projections", () => {
   expect(selectStageStatus("PENDING", true)).toBe("parked");
   expect(selectRunStatus("PENDING", 1)).toBe("parked");

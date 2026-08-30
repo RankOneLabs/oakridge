@@ -54,6 +54,10 @@ function itemToGate(item: ReviewInboxItem): ParkedGate | null {
     worktree: null,
     resume_actions: item.resume_actions,
     pr_url: item.pr_url,
+    // The inbox only queues gates whose run is still active (`get_review_inbox`
+    // filters on `actionable`); stranded gates are rendered on the run instead.
+    run_state: "active",
+    actionable: true,
   };
 }
 

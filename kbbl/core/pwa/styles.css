@@ -5826,6 +5826,7 @@ a:focus-visible {
 .or-decision-feedback label { font-size: 0.875rem; font-weight: 650; }
 .or-decision-feedback textarea { width: 100%; min-height: 7rem; resize: vertical; padding: 0.75rem; border: 1px solid var(--border-muted); border-radius: 0.5rem; background: var(--bg-surface); color: var(--text-primary); font: inherit; line-height: 1.45; }
 .or-decision-success { padding: 0.9rem 1rem; border: 1px solid var(--success-border, var(--accent-blue)); border-radius: 0.5rem; background: var(--success-bg, var(--accent-muted)); color: var(--text-primary); line-height: 1.45; }
+.or-decision-actions__stranded { padding: 0.75rem 1rem; border: 1px solid var(--border-muted); border-radius: 0.5rem; background: var(--bg-surface); color: var(--text-secondary); font-size: 0.875rem; line-height: 1.45; }
 .or-progress-list { overflow: hidden; border: 1px solid var(--border-subtle); border-radius: 0.75rem; }
 .or-progress-row { width: 100%; display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(10rem, auto) auto; align-items: center; gap: 1rem; min-height: 4.25rem; padding: 0.75rem 1rem; border: 0; border-bottom: 1px solid var(--border-subtle); background: var(--bg-surface); color: var(--text-primary); cursor: pointer; text-align: left; }
 .or-progress-row:last-child { border-bottom: 0; }

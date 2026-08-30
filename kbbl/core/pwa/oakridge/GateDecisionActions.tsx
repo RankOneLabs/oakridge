@@ -40,6 +40,11 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
   const [completedAction, setCompletedAction] = useState<string | null>(null);
   const requestKeys = useRef(new Map<string, string>());
   const isActive = useRef(true);
+  // A gate stays listed whatever its run's state (spec §1 rule 9); it is only
+  // actionable while the run is still active. `disabled` on every button is
+  // what keeps the feedback textarea from ever opening too — a disabled
+  // native button never fires its onClick.
+  const disabled = !gate.actionable;
 
   useEffect(() => {
     return () => { isActive.current = false; };
@@ -86,6 +91,11 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
 
   return (
     <div className="or-decision-actions" data-testid="or-decision-actions">
+      {disabled && (
+        <div className="or-decision-actions__stranded" role="status" data-testid="or-gate-stranded">
+          Run {gate.run_state} — gate stranded
+        </div>
+      )}
       <div className="or-decision-actions__buttons">
         {gate.resume_actions.map((action) => {
           const needsFeedback = action === "request_revision" || action === "rerun" || action === "reject" || action === "fail";
@@ -95,7 +105,7 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
               key={action}
               type="button"
               className={isPrimary ? "or-decision-button or-decision-button--primary" : "or-decision-button or-decision-button--secondary"}
-              disabled={mutation.isPending}
+              disabled={mutation.isPending || disabled}
               onClick={() => needsFeedback ? setFeedbackAction(action) : submit(action)}
               data-testid={`or-decision-${action}`}
             >
