@@ -45,7 +45,6 @@ function buildApp(
     manager: {} as unknown as SessionManager,
     acp,
     defaultWorkdir,
-    sessionsDir: tmpRoot,
     handoffsDir: tmpRoot,
     pwaDistDir: tmpRoot,
     getBunServer: () => null,

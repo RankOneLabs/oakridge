@@ -8,9 +8,7 @@ import { insertEpic, getEpicBySpec } from "../../db/epics";
 import { isFrozen } from "../../db/epic-freeze";
 import { getProject } from "../../db/projects";
 import { taskTrackerEvents } from "../../db/events";
-import type { RuntimeId, RuntimeRegistry } from "../../runtime";
 import {
-  isAllowedEffortForRuntime,
   isAllowedModelForRuntime,
   type RuntimeModelSelection,
 } from "../../runtime";
@@ -42,30 +40,21 @@ const PatchSpecSchema = z.object({
 
 interface SpecsRouteDeps {
   db: Database;
-  registry?: RuntimeRegistry;
 }
 
 type ModelSelectionValidationResult =
   | { ok: true; value: RuntimeModelSelection }
   | { ok: false; error: string };
 
-function isRuntimeRegistered(
-  registry: RuntimeRegistry | undefined,
-  runtimeId: RuntimeId,
-): boolean {
-  if (registry) return registry.runtimes.has(runtimeId);
-  // ACP era: both production agent profiles exist; per-model/effort
-  // validation moved into the session itself (§12), so routing entries
-  // are gated on profile id only.
-  return runtimeId === "claude-code" || runtimeId === "codex";
-}
-
-function registeredRuntimeList(registry: RuntimeRegistry | undefined): string {
-  return registry ? [...registry.runtimes.keys()].join(", ") : "claude-code, codex";
-}
-
+/**
+ * ACP era (§12, §20.2): there is no runtime registry any more — both
+ * production agent profiles always exist, and per-model/effort validation
+ * moved into the session itself. Routing entries here are gated only on
+ * runtime id and non-emptiness; isAllowedModelForRuntime/
+ * isAllowedEffortForRuntime are called with no descriptor, which is their
+ * permissive "accept any non-empty value" path.
+ */
 function validateModelSelection(
-  registry: RuntimeRegistry | undefined,
   selection: { runtime: string; model: string; effort?: string | null },
   role: "planner" | "worker",
 ): ModelSelectionValidationResult {
@@ -76,13 +65,7 @@ function validateModelSelection(
   if (runtime !== "claude-code" && runtime !== "codex") {
     return {
       ok: false,
-      error: `${role} runtime "${runtime}" is not registered — registered: ${registeredRuntimeList(registry)}`,
-    };
-  }
-  if (!isRuntimeRegistered(registry, runtime)) {
-    return {
-      ok: false,
-      error: `${role} runtime "${runtime}" is not registered — registered: ${registeredRuntimeList(registry)}`,
+      error: `${role} runtime "${runtime}" is not registered — registered: claude-code, codex`,
     };
   }
   const model = selection.model.trim();
@@ -92,8 +75,7 @@ function validateModelSelection(
       error: `${role} model must not be empty for runtime "${runtime}"`,
     };
   }
-  const runtimeDescriptor = registry?.runtimes.get(runtime as RuntimeId);
-  if (!isAllowedModelForRuntime(runtimeDescriptor, model)) {
+  if (!isAllowedModelForRuntime(undefined, model)) {
     return {
       ok: false,
       error: `${role} model "${model}" is not allowed for runtime "${runtime}"`,
@@ -110,21 +92,15 @@ function validateModelSelection(
         error: `${role} effort must not be empty for runtime "${runtime}"`,
       };
     }
-    // With no registry (ACP era) any non-empty effort passes here; the
-    // agent's own config options are the authority at session start (§12).
-    if (registry && !isAllowedEffortForRuntime(runtimeDescriptor, effort)) {
-      return {
-        ok: false,
-        error: `${role} effort "${effort}" is not allowed for runtime "${runtime}"`,
-      };
-    }
+    // Any non-empty effort passes here; the agent's own config options are
+    // the authority at session start (§12).
     return { ok: true, value: { runtime, model, effort } };
   }
   return { ok: true, value: { runtime, model, effort: null } };
 }
 
 export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {
-  const { db, registry } = deps;
+  const { db } = deps;
 
   app.get("/specs", (c) => {
     const project_id = c.req.query("project_id");
@@ -156,9 +132,9 @@ export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {
       planner_model_selection,
       worker_model_selection,
     } = result.data;
-    const plannerSelection = validateModelSelection(registry, planner_model_selection, "planner");
+    const plannerSelection = validateModelSelection(planner_model_selection, "planner");
     if (!plannerSelection.ok) return c.json({ error: plannerSelection.error }, 400);
-    const workerSelection = validateModelSelection(registry, worker_model_selection, "worker");
+    const workerSelection = validateModelSelection(worker_model_selection, "worker");
     if (!workerSelection.ok) return c.json({ error: workerSelection.error }, 400);
 
     const id = crypto.randomUUID();

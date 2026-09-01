@@ -3,6 +3,16 @@ import type { RuntimeId } from "../runtime";
 export type SessionId = string & { readonly __brand: "SessionId" };
 export type ArtifactId = string & { readonly __brand: "ArtifactId" };
 
+/**
+ * Hard cap on `artifactId` length. Enforced at the POST /sessions handler,
+ * the GET /artifacts/:artifactId/sessions handler, and archived-snapshot
+ * reconstruction so the invariant holds at every entry point. Bounds the
+ * bytes that ride on every session_started record and session_created
+ * delta; 200 is generous for any reasonable id scheme (UUIDs, slugs,
+ * hashes).
+ */
+export const MAX_ARTIFACT_ID_LENGTH = 200;
+
 export type SessionStatus = "starting" | "live" | "compacting" | "ended";
 export type SessionEndReason = "user_closed" | "subprocess_exited" | "compacted";
 

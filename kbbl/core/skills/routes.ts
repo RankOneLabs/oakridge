@@ -6,7 +6,7 @@
 
 import type { Hono } from "hono";
 
-import { isValidSid } from "../server/handlers/per-sid";
+import { isValidSid } from "../server/handlers/acp-per-sid";
 import type { AcpSessionService } from "../acp/session-service";
 import type { KbblConfig } from "../config";
 import { aggregateSkillsForProfile } from "./registry";

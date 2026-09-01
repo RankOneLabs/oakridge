@@ -13,7 +13,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 
-import { mountSessionsRoutes } from "./sessions";
+import {
+  mountSessionsRoutes,
+  selectTerminalWaitMs,
+  TERMINAL_WAIT_MS_DEFAULT,
+  TERMINAL_WAIT_MS_MAX,
+} from "./sessions";
 import { makeAcpTestService, type AcpTestHarness } from "../../acp/test-harness";
 import type { SessionManager } from "../../session/session-manager";
 
@@ -139,6 +144,17 @@ describe("POST /sessions resume_from (§17.3: worktree inheritance)", () => {
     const app = makeApp();
     const res = await postSessions(app, { resume_from: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" });
     expect(res.status).toBe(404);
+  });
+});
+
+describe("selectTerminalWaitMs", () => {
+  test("defaults, clamps, and rejects non-numeric input", () => {
+    expect(selectTerminalWaitMs(undefined)).toBe(TERMINAL_WAIT_MS_DEFAULT);
+    expect(selectTerminalWaitMs("1000")).toBe(1000);
+    expect(selectTerminalWaitMs("999999")).toBe(TERMINAL_WAIT_MS_MAX);
+    expect(selectTerminalWaitMs("-5")).toBe(TERMINAL_WAIT_MS_DEFAULT);
+    expect(selectTerminalWaitMs("nonsense")).toBe(TERMINAL_WAIT_MS_DEFAULT);
+    expect(TERMINAL_WAIT_MS_MAX).toBeLessThan(255_000);
   });
 });
 

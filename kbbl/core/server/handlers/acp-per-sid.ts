@@ -1,15 +1,25 @@
 // Browser-facing per-session ACP routes (§14.3–14.8). The PWA consumes
 // kbbl UI events only — raw ACP JSON-RPC never crosses this boundary
-// (guardrail 4). Mounted under /sessions/:sid/* so the legacy /:sid/*
-// routes keep serving pre-cutover JSONL sessions untouched.
+// (guardrail 4). Mounted under /sessions/:sid/*.
 
 import type { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 
 import type { AcpSessionService } from "../../acp/session-service";
-import { isValidSid } from "./per-sid";
 
 const HEARTBEAT_MS = 15_000;
+
+// UUID v4 specifically — sids come from crypto.randomUUID(), which always
+// produces v4. Accepting other versions would be dead space that never
+// matches any real sid the server wrote. Shared by every per-sid route
+// (ACP and adjacent: session CRUD, skills, compaction handoff) so a
+// URL-encoded path-traversal sid can't slip past any of them.
+export const SID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function isValidSid(sid: string): boolean {
+  return SID_PATTERN.test(sid);
+}
 
 export interface AcpPerSidRouteDeps {
   acp: AcpSessionService;

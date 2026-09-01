@@ -1,7 +1,7 @@
 import type { Hono } from "hono";
 import { join } from "node:path";
 
-import { isValidSid } from "./per-sid";
+import { isValidSid } from "./acp-per-sid";
 
 export interface HandoffRouteDeps {
   /**

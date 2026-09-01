@@ -10,7 +10,6 @@ import { mountSpecsRoutes } from "../server/handlers/specs";
 import { taskTrackerEvents } from "./events";
 import { insertProject } from "./projects";
 import { insertEpic, getEpicBySpec } from "./epics";
-import type { AgentRuntime, RuntimeId, RuntimeRegistry } from "../runtime";
 
 let db: Database;
 let app: Hono;
@@ -18,44 +17,10 @@ let repoPath: string;
 
 const PROJECT_ID = "proj-1";
 
-const MODELS_BY_RUNTIME: Record<RuntimeId, string[]> = {
-  "claude-code": ["claude-opus-4-8", "claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001", "opus", "sonnet", "haiku"],
-  codex: [
-    "gpt-5.6-sol",
-    "gpt-5.6-terra",
-    "gpt-5.6-luna",
-    "gpt-5.5",
-    "gpt-5.4",
-    "gpt-5.4-mini",
-    "gpt-5.3-codex-spark",
-  ],
-};
-
 const CREATE_SPEC_SELECTIONS = {
   planner_model_selection: { runtime: "claude-code" as const, model: "claude-opus-4-8" },
   worker_model_selection: { runtime: "claude-code" as const, model: "claude-sonnet-4-6" },
 };
-
-function makeRegistry(runtimeIds: RuntimeId[]): RuntimeRegistry {
-  return {
-    defaultId: runtimeIds[0] ?? "claude-code",
-    runtimes: new Map(
-      runtimeIds.map((id) => [
-        id,
-        {
-          id,
-          descriptor: {
-            id,
-            label: id,
-            models: MODELS_BY_RUNTIME[id].map((value) => ({ value, label: value })),
-            supportsCompaction: id === "claude-code",
-          },
-          isAllowedModel: (model: string) => MODELS_BY_RUNTIME[id].includes(model),
-        } as unknown as AgentRuntime,
-      ]),
-    ),
-  };
-}
 
 function createSpecPayload(body: Record<string, unknown>): Record<string, unknown> {
   return { ...CREATE_SPEC_SELECTIONS, ...body };
@@ -66,7 +31,7 @@ beforeEach(() => {
   repoPath = mkdtempSync(join(tmpdir(), "specs-repo-"));
   insertProject(db, { id: PROJECT_ID, name: "Test Project", repo_path: repoPath });
   app = new Hono();
-  mountSpecsRoutes(app, { db, registry: makeRegistry(["claude-code", "codex"]) });
+  mountSpecsRoutes(app, { db });
 });
 
 afterEach(() => {
@@ -307,7 +272,7 @@ describe("POST /specs", () => {
     });
   });
 
-  test("rejects a model that the selected runtime does not allow", async () => {
+  test("rejects an unregistered runtime id with a clear error", async () => {
     const res = await app.request("/specs", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -315,140 +280,16 @@ describe("POST /specs", () => {
         createSpecPayload({
           project_id: PROJECT_ID,
           title: "Bad split",
-          planner_model_selection: { runtime: "codex", model: "not-a-model" },
+          planner_model_selection: { runtime: "not-registered", model: "claude-opus-4-8" },
           worker_model_selection: { runtime: "codex", model: "gpt-5.6-luna" },
         }),
       ),
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
-    expect(body.error).toContain("not allowed");
-  });
-
-  test("uses descriptor models when runtime has no validator", async () => {
-    const registry = makeRegistry(["claude-code"]);
-    const runtime = registry.runtimes.get("claude-code");
-    if (!runtime) throw new Error("missing runtime");
-    delete (runtime as { isAllowedModel?: unknown }).isAllowedModel;
-
-    const descriptorOnlyApp = new Hono();
-    mountSpecsRoutes(descriptorOnlyApp, { db, registry });
-
-    const ok = await descriptorOnlyApp.request("/specs", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(
-        createSpecPayload({
-          project_id: PROJECT_ID,
-          title: "Descriptor ok",
-          planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
-          worker_model_selection: { runtime: "claude-code", model: "claude-sonnet-4-6" },
-        }),
-      ),
-    });
-    expect(ok.status).toBe(201);
-
-    const bad = await descriptorOnlyApp.request("/specs", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(
-        createSpecPayload({
-          project_id: PROJECT_ID,
-          title: "Descriptor bad",
-          planner_model_selection: { runtime: "claude-code", model: "not-listed" },
-          worker_model_selection: { runtime: "claude-code", model: "claude-sonnet-4-6" },
-        }),
-      ),
-    });
-    expect(bad.status).toBe(400);
-    const body = (await bad.json()) as { error: string };
-    expect(body.error).toContain("not allowed");
-  });
-
-  test("accepts free-form models when runtime has no validator and no model list", async () => {
-    const runtime = {
-      id: "claude-code" as const,
-      descriptor: {
-        id: "claude-code" as const,
-        label: "Claude Code",
-        models: [],
-        supportsCompaction: true,
-      },
-    } as unknown as AgentRuntime;
-
-    const registry: RuntimeRegistry = {
-      defaultId: "claude-code",
-      runtimes: new Map([["claude-code", runtime]]),
-    };
-
-    const freeFormApp = new Hono();
-    mountSpecsRoutes(freeFormApp, { db, registry });
-
-    const res = await freeFormApp.request("/specs", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(
-        createSpecPayload({
-          project_id: PROJECT_ID,
-          title: "Free-form descriptor",
-          planner_model_selection: { runtime: "claude-code", model: "manual-planner-model" },
-          worker_model_selection: { runtime: "claude-code", model: "manual-worker-model" },
-        }),
-      ),
-    });
-
-    expect(res.status).toBe(201);
-  });
-
-  test("respects runtime isAllowedModel even when descriptor models are empty", async () => {
-    const runtime = {
-      id: "claude-code" as const,
-      descriptor: {
-        id: "claude-code" as const,
-        label: "Claude Code",
-        models: [],
-        supportsCompaction: true,
-      },
-      isAllowedModel: (model: string) => model === "adapter-model",
-    } as unknown as AgentRuntime;
-
-    const registry: RuntimeRegistry = {
-      defaultId: "claude-code",
-      runtimes: new Map([["claude-code", runtime]]),
-    };
-
-    const adapterApp = new Hono();
-    mountSpecsRoutes(adapterApp, { db, registry });
-
-    const ok = await adapterApp.request("/specs", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(
-        createSpecPayload({
-          project_id: PROJECT_ID,
-          title: "Adapter ok",
-          planner_model_selection: { runtime: "claude-code", model: "adapter-model" },
-          worker_model_selection: { runtime: "claude-code", model: "adapter-model" },
-        }),
-      ),
-    });
-    expect(ok.status).toBe(201);
-
-    const bad = await adapterApp.request("/specs", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(
-        createSpecPayload({
-          project_id: PROJECT_ID,
-          title: "Adapter bad",
-          planner_model_selection: { runtime: "claude-code", model: "blocked-model" },
-          worker_model_selection: { runtime: "claude-code", model: "adapter-model" },
-        }),
-      ),
-    });
-    expect(bad.status).toBe(400);
-    const body = (await bad.json()) as { error: string };
-    expect(body.error).toContain("not allowed");
+    expect(body.error).toBe(
+      'planner runtime "not-registered" is not registered — registered: claude-code, codex',
+    );
   });
 
   test("rejects missing split selections", async () => {
