@@ -54,11 +54,14 @@ function isRuntimeRegistered(
   runtimeId: RuntimeId,
 ): boolean {
   if (registry) return registry.runtimes.has(runtimeId);
-  return runtimeId === "claude-code";
+  // ACP era: both production agent profiles exist; per-model/effort
+  // validation moved into the session itself (§12), so routing entries
+  // are gated on profile id only.
+  return runtimeId === "claude-code" || runtimeId === "codex";
 }
 
 function registeredRuntimeList(registry: RuntimeRegistry | undefined): string {
-  return registry ? [...registry.runtimes.keys()].join(", ") : "claude-code";
+  return registry ? [...registry.runtimes.keys()].join(", ") : "claude-code, codex";
 }
 
 function validateModelSelection(
@@ -107,7 +110,9 @@ function validateModelSelection(
         error: `${role} effort must not be empty for runtime "${runtime}"`,
       };
     }
-    if (!isAllowedEffortForRuntime(runtimeDescriptor, effort)) {
+    // With no registry (ACP era) any non-empty effort passes here; the
+    // agent's own config options are the authority at session start (§12).
+    if (registry && !isAllowedEffortForRuntime(runtimeDescriptor, effort)) {
       return {
         ok: false,
         error: `${role} effort "${effort}" is not allowed for runtime "${runtime}"`,

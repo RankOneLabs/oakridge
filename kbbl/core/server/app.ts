@@ -3,9 +3,9 @@ import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import type { Database } from "bun:sqlite";
 
-import type { AppRuntime, RuntimeRegistry } from "../runtime";
 import type { KbblConfig } from "../config";
 import type { SessionManager } from "../session/session-manager";
+import type { AcpSessionService } from "../acp/session-service";
 import type { createDispatcher } from "../orchestrator/backends/dispatcher";
 import {
   makeControlAuthMiddleware,
@@ -16,6 +16,7 @@ import {
 import { inboxHandler } from "../stream/inbox";
 import { mountHandoffRoutes } from "./handlers/handoff";
 import { mountPerSidRoutes } from "./handlers/per-sid";
+import { mountAcpPerSidRoutes } from "./handlers/acp-per-sid";
 import { mountProjectsRoutes } from "./handlers/projects";
 import { mountSpecsRoutes } from "./handlers/specs";
 import { mountPlansRoutes } from "./handlers/plans";
@@ -45,15 +46,13 @@ import { mountSkillsRoutes } from "../skills/routes";
 import { mountOakridgeProxyRoutes } from "./handlers/oakridge-proxy";
 
 export interface CreateAppDeps {
-  manager: SessionManager;
-  /** Adapter owns adapter-specific routes (e.g., CC's /hook/approval). */
-  runtime: AppRuntime;
   /**
-   * Runtime registry. When provided, GET /config includes
-   * `defaultRuntimeId` and `runtimes`, and POST /sessions uses the
-   * registry for model validation. Optional for backward compat.
+   * Read-only legacy manager: archived JSONL listing/serving and legacy
+   * purge only. All session creation and runtime work goes through `acp`.
    */
-  registry?: RuntimeRegistry;
+  manager: SessionManager;
+  /** ACP session service — the production session backend. */
+  acp: AcpSessionService;
   /** Optional server default workdir (from --workdir CLI arg). */
   defaultWorkdir: string | null;
   /** Path to the on-disk sessions directory. */
@@ -105,13 +104,11 @@ export interface CreateAppDeps {
 export function createApp(deps: CreateAppDeps): Hono {
   const {
     manager,
-    runtime,
-    registry,
+    acp,
     defaultWorkdir,
     sessionsDir,
     handoffsDir,
     pwaDistDir,
-    getBunServer,
     config,
     configPath,
     db,
@@ -137,17 +134,18 @@ export function createApp(deps: CreateAppDeps): Hono {
   // storing it in JS-accessible state).
   app.post("/auth/cookie", makeCookieHandler(authPolicy));
 
-  // ---- runtime routes (loopback-only adapter endpoints) ----
+  // ---- ACP per-session routes (§14) ----
   //
-  // Registered BEFORE /:sid/* so Hono's registration-order match doesn't
-  // catch routes like POST /hook/approval as /:sid/approval with sid="hook".
-  runtime.mountRoutes(app, { manager, getBunServer });
+  // Mounted before the legacy /:sid/* routes; /sessions/:sid/* and /:sid/*
+  // never overlap, but keeping them adjacent makes the split visible.
+  mountAcpPerSidRoutes(app, { acp });
 
-  // ---- per-sid routes ----
+  // ---- per-sid routes (legacy JSONL sessions only) ----
   mountPerSidRoutes(app, { manager, sessionsDir });
 
-  // ---- per-sid skills ----
-  mountSkillsRoutes(app, { manager, registry, config });
+  // ---- per-sid skills (legacy sessions; ACP command surface lands with
+  // the PWA cutover via available_commands_update) ----
+  mountSkillsRoutes(app, { manager, registry: undefined, config });
 
   // ---- per-sid handoff ----
   //
@@ -163,18 +161,25 @@ export function createApp(deps: CreateAppDeps): Hono {
   // PATCH /config allows runtime mutation of soft_threshold_tokens, persisted
   // back to configPath so the value survives a server restart.
   app.get("/config", (c) => {
-    const base = {
+    // Model/effort lists are no longer static kbbl knowledge (§12): each
+    // agent exposes them per-session via ACP config options. The runtime
+    // descriptors here keep the PWA's new-session form rendering until it
+    // consumes ACP config options directly.
+    return c.json({
       defaultWorkdir,
       softThresholdTokens: config.compact.soft_threshold_tokens,
-    };
-    if (registry) {
-      return c.json({
-        ...base,
-        defaultRuntimeId: registry.defaultId,
-        runtimes: [...registry.runtimes.values()].map((r) => r.descriptor),
-      });
-    }
-    return c.json(base);
+      defaultRuntimeId: acp.defaultAgent,
+      runtimes: acp
+        .listProfiles()
+        .filter((profile) => profile.enabled)
+        .map((profile) => ({
+          id: profile.id,
+          label: profile.label,
+          models: [],
+          efforts: [],
+          supportsCompaction: false,
+        })),
+    });
   });
 
   app.patch("/config", async (c) => {
@@ -231,7 +236,7 @@ export function createApp(deps: CreateAppDeps): Hono {
   });
 
   // ---- sessions CRUD ----
-  mountSessionsRoutes(app, { manager, defaultWorkdir, sessionsDir, registry, oakridgeBaseUrl: process.env.OAKRIDGE_CORE_BASE_URL });
+  mountSessionsRoutes(app, { acp, manager, defaultWorkdir, oakridgeBaseUrl: process.env.OAKRIDGE_CORE_BASE_URL });
 
   // ---- local directory browser ----
   mountDirectoriesRoutes(app, { defaultWorkdir });
@@ -247,7 +252,7 @@ export function createApp(deps: CreateAppDeps): Hono {
   mountProjectsRoutes(app, { db });
 
   // ---- task-tracker CRUD (specs, plans, cohorts, briefs) ----
-  mountSpecsRoutes(app, { db, registry });
+  mountSpecsRoutes(app, { db });
   mountSpecDiscrepanciesRoutes(app, { db });
   mountSpecStatusRoutes(app, { db });
   mountPlansRoutes(app, { db });

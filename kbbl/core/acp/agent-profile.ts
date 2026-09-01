@@ -28,10 +28,19 @@ export interface AgentProfile {
 
 export type AcpRuntimeConfig = KbblConfig["acp"];
 
+/**
+ * Profiles from config, overlaid on optional built-in defaults. A config
+ * entry replaces the builtin of the same id wholesale — including its
+ * env_policy — so an operator override is never surprised by hidden
+ * merged fields. (The ANTHROPIC_API_KEY exclusion travels with the
+ * builtin claude-code profile; overriding that profile takes ownership
+ * of the billing hazard too.)
+ */
 export function loadAgentProfiles(
   acp: AcpRuntimeConfig,
+  builtins?: ReadonlyMap<AgentProfileId, AgentProfile>,
 ): Map<AgentProfileId, AgentProfile> {
-  const profiles = new Map<AgentProfileId, AgentProfile>();
+  const profiles = new Map<AgentProfileId, AgentProfile>(builtins ?? []);
   for (const [id, agent] of Object.entries(acp.agents)) {
     profiles.set(id, {
       id,

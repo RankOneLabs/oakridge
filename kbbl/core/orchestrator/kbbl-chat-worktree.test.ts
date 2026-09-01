@@ -2,21 +2,16 @@
  * Integration tests for KbblChatBackend's worktree dispatch behavior.
  *
  * Worktree-isolation is mandatory for every dispatched stage — there is no
- * opt-out. These tests wire KbblChatBackend against a real SessionManager
- * (noopSpawn) and verify that both build and planner stages produce a
- * worktree, regardless of stage name.
- *
- * Kept separate from dispatch.test.ts to avoid paying that file's full
- * app/DB/prompt-fixture setup cost for lightweight worktree assertions.
+ * opt-out. These tests wire KbblChatBackend against a real AcpSessionService
+ * (fake ACP agent + real git worktree provider) and verify that both build
+ * and planner stages produce a worktree, regardless of stage name.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { KbblConfigSchema } from "../config";
-import { SessionManager } from "../session/session-manager";
-import type { Session, SpawnCmd } from "../session/session";
+import { makeAcpTestService, type AcpTestHarness } from "../acp/test-harness";
 import { createKbblChatBackend } from "./backends/kbbl-chat";
 
 async function gitInit(cwd: string): Promise<void> {
@@ -38,43 +33,34 @@ async function gitInit(cwd: string): Promise<void> {
   }
 }
 
-async function noopSpawn(_session: Session): Promise<SpawnCmd> {
-  // cat reads stdin so the pipe stays open long enough for writeInput to succeed
-  return { cmd: ["cat"], cwd: "/tmp", env: {} };
-}
-
 describe("KbblChatBackend dispatch worktree behavior", () => {
   let tmpRoot: string;
+  let harness: AcpTestHarness;
 
   beforeEach(async () => {
     tmpRoot = mkdtempSync(join(tmpdir(), "kbbl-chat-wt-test-"));
     const p = Bun.spawn({
       cmd: ["mkdir", "-p",
         join(tmpRoot, "repo"),
-        join(tmpRoot, "sessions"),
+        join(tmpRoot, "state"),
         join(tmpRoot, "worktrees"),
-        join(tmpRoot, "handoffs"),
       ],
     });
     await p.exited;
     await gitInit(join(tmpRoot, "repo"));
+    harness = makeAcpTestService({
+      stateDir: join(tmpRoot, "state"),
+      worktreesRoot: join(tmpRoot, "worktrees"),
+    });
   });
 
   afterEach(async () => {
+    await harness.service.shutdown();
     rmSync(tmpRoot, { recursive: true, force: true });
   });
 
   test("both build and planner dispatches produce a worktree", async () => {
-    const config = KbblConfigSchema.parse({});
-    const manager = new SessionManager({
-      sessionsDir: join(tmpRoot, "sessions"),
-      handoffsDir: join(tmpRoot, "handoffs"),
-      worktreesDir: join(tmpRoot, "worktrees"),
-      buildSpawnCmd: noopSpawn,
-      config,
-    });
-
-    const backend = createKbblChatBackend({ manager });
+    const backend = createKbblChatBackend({ acp: harness.service });
 
     const buildStage = {
       name: "build",
@@ -97,30 +83,28 @@ describe("KbblChatBackend dispatch worktree behavior", () => {
       id: "fake-brief-id",
       workdir: join(tmpRoot, "repo"),
       sessionName: "test-session",
-      modelSelection: { runtime: "claude-code" as const, model: "claude-sonnet-4-6" },
+      modelSelection: { runtime: "claude-code" as const, model: "fake-small" },
     };
 
-    // build stage: worktreePath must be set
+    // build stage: a real per-session worktree must exist
     const buildResult = await backend.dispatch(buildStage, inputRef, "build prompt");
-    const buildSession = manager.get(buildResult.session_ref);
+    const buildSession = harness.service.getSession(buildResult.session_ref);
     if (!buildSession) throw new Error("expected build session to exist");
-    expect(buildSession.worktreePath).not.toBeNull();
-    if (!buildSession.worktreePath) throw new Error("expected build worktreePath to be set");
-    expect(existsSync(buildSession.worktreePath)).toBe(true);
+    expect(buildSession.worktree_branch).not.toBeNull();
+    expect(buildSession.worktree_path).not.toBe(inputRef.workdir);
+    expect(existsSync(buildSession.worktree_path)).toBe(true);
 
-    // plan_writer stage: worktreePath must ALSO be set — no opt-out
+    // plan_writer stage: worktree must ALSO be set — no opt-out
     const plannerRef = {
       ...inputRef,
       type: "spec" as const,
-      modelSelection: { runtime: "claude-code" as const, model: "claude-opus-4-8" },
+      modelSelection: { runtime: "claude-code" as const, model: "fake-large" },
     };
     const plannerResult = await backend.dispatch(plannerStage, plannerRef, "planner prompt");
-    const plannerSession = manager.get(plannerResult.session_ref);
+    const plannerSession = harness.service.getSession(plannerResult.session_ref);
     if (!plannerSession) throw new Error("expected planner session to exist");
-    expect(plannerSession.worktreePath).not.toBeNull();
-    if (!plannerSession.worktreePath) throw new Error("expected planner worktreePath to be set");
-    expect(existsSync(plannerSession.worktreePath)).toBe(true);
-
-    await manager.endAll();
+    expect(plannerSession.worktree_branch).not.toBeNull();
+    expect(plannerSession.worktree_path).not.toBe(inputRef.workdir);
+    expect(existsSync(plannerSession.worktree_path)).toBe(true);
   });
 });

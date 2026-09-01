@@ -164,6 +164,12 @@ export interface WorktreeResolution {
   readonly worktree_branch: string | null;
   readonly worktree_base_ref: string | null;
   readonly parent_sid: KbblSessionId | null;
+  /**
+   * Original repo root when it differs from spec.workdir (worktree
+   * inheritance: the child runs in a worktree cut from the parent's
+   * worktree, but its project identity stays the original repo).
+   */
+  readonly project_workdir?: string;
 }
 
 export interface WorktreeProvider {
@@ -171,6 +177,12 @@ export interface WorktreeProvider {
     sid: KbblSessionId,
     spec: AcpSessionStartSpec,
   ): Promise<Result<WorktreeResolution, AcpError>>;
+  /** Best-effort removal on purge; optional (test providers omit it). */
+  remove?(row: {
+    project_workdir: string;
+    worktree_path: string;
+    worktree_branch: string | null;
+  }): Promise<void>;
 }
 
 // === Service-facing shapes (§8.6) ===
@@ -197,6 +209,11 @@ export interface AcpSessionSnapshot {
 export type EnsureResult =
   | { kind: "created"; session: AcpSessionSnapshot }
   | { kind: "existing"; session: AcpSessionSnapshot };
+
+/** §10.6 operator advance: detach a wedged key after fencing its session. */
+export type AdvanceResult =
+  | { kind: "not_found" }
+  | { kind: "advanced"; session: AcpSessionSnapshot };
 
 export interface InputReceipt {
   readonly sid: KbblSessionId;
