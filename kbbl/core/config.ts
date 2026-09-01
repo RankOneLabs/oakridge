@@ -117,6 +117,44 @@ const SkillsSchema = z
   })
   .strict();
 
+// ACP agent process configuration (migration spec §20). Each entry under
+// acp.agents is a launch profile: which binary to run and how to shape its
+// environment. env_policy exists for billing hardening — e.g. the Claude
+// profile excludes ANTHROPIC_API_KEY so a stray key in kbbl's environment
+// can never flip agent sessions to per-token API billing.
+const AcpEnvPolicySchema = z
+  .object({
+    inherit: z.boolean().default(true),
+    include: z.array(z.string().min(1)).nullable().optional(),
+    exclude: z.array(z.string().min(1)).default([]),
+    set: z.record(z.string(), z.string()).default({}),
+  })
+  .strict();
+
+const AcpAgentSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    label: z.string().min(1).nullable().optional(),
+    command: z.string().min(1),
+    args: z.array(z.string()).default([]),
+    env_policy: AcpEnvPolicySchema.prefault({}),
+    // DBOS-managed sessions require session/load (guardrail 18); a profile
+    // may opt out only for browser-only agents.
+    require_load_session: z.boolean().default(true),
+  })
+  .strict();
+
+const AcpSchema = z
+  .object({
+    default_agent: z.string().min(1).default("claude-code"),
+    agents: z.record(z.string().min(1), AcpAgentSchema).default({}),
+    graceful_kill_ms: z.number().int().positive().default(3000),
+    hard_kill_ms: z.number().int().positive().default(5000),
+    idle_child_ttl_ms: z.number().int().positive().default(900000),
+    live_event_buffer: z.number().int().positive().default(2000),
+  })
+  .strict();
+
 export const KbblConfigSchema = z
   .object({
     // .prefault({}) is the input-side default in Zod 4: when the key is
@@ -129,6 +167,7 @@ export const KbblConfigSchema = z
     sessions: SessionsSchema.prefault({}),
     runtime: RuntimeSchema.prefault({}),
     skills: SkillsSchema.prefault({}),
+    acp: AcpSchema.prefault({}),
   })
   .strict();
 
