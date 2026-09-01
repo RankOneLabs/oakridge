@@ -16,6 +16,7 @@ import {
   acpError,
   err,
   ok,
+  type AcpDispatchStatus,
   type AcpError,
   type AcpSessionRow,
   type AcpSessionSnapshot,
@@ -195,6 +196,26 @@ export class AcpSessionService {
   getSession(sid: string): AcpSessionSnapshot | null {
     const row = this.deps.store.getSession(sid as KbblSessionId);
     return row ? toSnapshot(row) : null;
+  }
+
+  /**
+   * Settlement read for orchestrator dispatch attempts and boot
+   * reconciliation: completion is the initial turn settling, never the
+   * session ending (a durable session stays idle/resumable after its work
+   * is done). Null when the sid is not an ACP session.
+   */
+  dispatchStatus(sid: string): AcpDispatchStatus | null {
+    const row = this.deps.store.getSession(sid as KbblSessionId);
+    if (!row) return null;
+    const observed = this.classifyInitialTurn(row);
+    switch (observed.kind) {
+      case "succeeded":
+        return "completed";
+      case "failed":
+        return "failed";
+      case "pending":
+        return "running";
+    }
   }
 
   listByArtifact(artifactId: string): AcpSessionSnapshot[] {

@@ -235,9 +235,10 @@ const manager = new SessionManager({
 
 // === Boot reconciliation — must run before dispatch hooks accept new work ===
 // Any dispatch_attempts left in dispatching or running status survived a prior
-// process death. Reconcile them to dispatch_failed so the active-claim slots
-// are freed and operators have a clear recovery path before new dispatches fire.
-reconcileDispatchAttempts(db, manager);
+// process death. Settle each from the durable ACP record (recoverOnBoot has
+// already swept in-flight turns) or fail it so the active-claim slot is freed
+// with a clear recovery path before new dispatches fire.
+reconcileDispatchAttempts(db, manager, acpService);
 
 // === Dispatcher + dispatch hooks + responder spawn ===
 

@@ -224,6 +224,14 @@ export interface InputReceipt {
 }
 
 /**
+ * Settlement read for orchestrator dispatch attempts. ACP sessions outlive
+ * their work — a durable session sitting idle after its initial turn
+ * succeeded is DONE work, not running work — so dispatch completion derives
+ * from the initial turn, never from session liveness.
+ */
+export type AcpDispatchStatus = "running" | "completed" | "failed";
+
+/**
  * Terminal observation over the INITIAL turn (§11.2): pending until that
  * turn reaches a known final outcome; the agent process staying alive
  * afterwards does not make the session non-terminal.

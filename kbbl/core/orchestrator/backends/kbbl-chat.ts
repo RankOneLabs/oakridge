@@ -1,4 +1,5 @@
 import type {
+  AcpDispatchStatus,
   AcpError,
   AcpSessionSnapshot,
   AcpSessionStartSpec,
@@ -13,7 +14,7 @@ export interface KbblChatSessionPort {
   createSession(
     spec: AcpSessionStartSpec,
   ): Promise<Result<AcpSessionSnapshot, AcpError>>;
-  getSession(sid: string): AcpSessionSnapshot | null;
+  dispatchStatus(sid: string): AcpDispatchStatus | null;
 }
 
 export function createKbblChatBackend({
@@ -64,11 +65,10 @@ export function createKbblChatBackend({
     },
 
     async status(session_ref: string): Promise<"running" | "completed" | "failed"> {
-      const session = acp.getSession(session_ref);
-      if (!session) return "failed";
-      if (session.status === "failed") return "failed";
-      if (session.status === "ended" || session.status === "fenced") return "completed";
-      return "running";
+      // Settlement, not liveness: an ACP session sits idle and resumable
+      // after its work is done, so "the session is alive" must never read
+      // as "the attempt is still running".
+      return acp.dispatchStatus(session_ref) ?? "failed";
     },
   };
 }

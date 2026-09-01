@@ -16,7 +16,7 @@ function makeFakePort(): { port: KbblChatSessionPort; calls: AcpSessionStartSpec
       calls.push(spec);
       return ok({ sid: `sid-${calls.length}` } as unknown as AcpSessionSnapshot);
     },
-    getSession() {
+    dispatchStatus() {
       return null;
     },
   };
@@ -165,6 +165,88 @@ async function getRevParse(workdir: string, ref: string): Promise<string> {
   if (code !== 0) throw new Error(`git rev-parse ${ref} failed`);
   return stdout.trim();
 }
+
+describe("KbblChatBackend status reflects turn settlement, not session liveness", () => {
+  let tmpRoot: string;
+  let workdir: string;
+  let harness: AcpTestHarness | null;
+
+  beforeEach(async () => {
+    tmpRoot = mkdtempSync(join(tmpdir(), "kbbl-chat-status-"));
+    workdir = join(tmpRoot, "repo");
+    const dirs = Bun.spawn({
+      cmd: ["mkdir", "-p", workdir, join(tmpRoot, "state"), join(tmpRoot, "worktrees")],
+    });
+    await dirs.exited;
+    await runCmd(["git", "init", "-q", "-b", "main", workdir]);
+    await runCmd(["git", "-C", workdir, "config", "user.email", "test@example.com"]);
+    await runCmd(["git", "-C", workdir, "config", "user.name", "test"]);
+    await runCmd(["git", "-C", workdir, "config", "commit.gpgsign", "false"]);
+    await runCmd(["git", "-C", workdir, "commit", "--allow-empty", "-q", "-m", "init"]);
+    harness = null;
+  });
+
+  afterEach(async () => {
+    await harness?.service.shutdown();
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  function makeHarness(behavior?: string, delayMs?: number): AcpTestHarness {
+    harness = makeAcpTestService({
+      stateDir: join(tmpRoot, "state"),
+      worktreesRoot: join(tmpRoot, "worktrees"),
+      ...(behavior ? { behavior } : {}),
+      ...(delayMs !== undefined ? { delayMs } : {}),
+    });
+    return harness;
+  }
+
+  async function dispatchOne(h: AcpTestHarness): Promise<string> {
+    const backendUnderTest = createKbblChatBackend({ acp: h.service });
+    const { session_ref } = await backendUnderTest.dispatch(
+      stage("build"),
+      { ...inputRef, workdir, modelSelection: FAKE_WORKER_SELECTION },
+      "prompt",
+    );
+    return session_ref;
+  }
+
+  test("an idle session whose initial turn succeeded reports completed", async () => {
+    const h = makeHarness();
+    const backend = createKbblChatBackend({ acp: h.service });
+    const sid = await dispatchOne(h);
+    const observed = await h.service.observeInitialTurn(sid, 15_000);
+    if (!observed.ok) throw new Error(`observe failed: ${observed.error.code}`);
+    expect(observed.value.kind).toBe("succeeded");
+
+    // The session is idle and resumable — the WORK is done, the session is
+    // not. The dispatch attempt must settle anyway.
+    expect(await backend.status(sid)).toBe("completed");
+  });
+
+  test("a session still running its initial turn reports running", async () => {
+    const h = makeHarness("delayed", 8_000);
+    const backend = createKbblChatBackend({ acp: h.service });
+    const sid = await dispatchOne(h);
+    expect(await backend.status(sid)).toBe("running");
+  });
+
+  test("a session whose agent crashed mid-prompt reports failed", async () => {
+    const h = makeHarness("crash_mid_prompt");
+    const backend = createKbblChatBackend({ acp: h.service });
+    const sid = await dispatchOne(h);
+    const observed = await h.service.observeInitialTurn(sid, 15_000);
+    if (!observed.ok) throw new Error(`observe failed: ${observed.error.code}`);
+    expect(observed.value.kind).toBe("failed");
+    expect(await backend.status(sid)).toBe("failed");
+  });
+
+  test("an unknown session ref reports failed", async () => {
+    const h = makeHarness();
+    const backend = createKbblChatBackend({ acp: h.service });
+    expect(await backend.status("no-such-session")).toBe("failed");
+  });
+});
 
 describe("KbblChatBackend worktreeIdentity integration", () => {
   let tmpRoot: string;
