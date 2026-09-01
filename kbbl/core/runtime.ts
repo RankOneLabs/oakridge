@@ -55,10 +55,9 @@ export function defaultWorkerModelForRuntime(runtimeId: RuntimeId): string {
   return DEFAULT_WORKER_MODEL_BY_RUNTIME[runtimeId];
 }
 
-/** Minimal shape `isAllowedModelForRuntime`/`isAllowedEffortForRuntime` need
- * from a runtime descriptor lookup — narrower than the old AgentRuntime
- * contract, since neither function needs anything beyond the descriptor
- * and (for models) an optional adapter-native validator. */
+/** Minimal shape `isAllowedModelForRuntime` needs from a runtime descriptor
+ * lookup — narrower than the old AgentRuntime contract, since it needs
+ * nothing beyond the descriptor and an optional adapter-native validator. */
 export interface RuntimeDescriptorLookup {
   descriptor: RuntimeDescriptor;
   isAllowedModel?(model: string): boolean;
@@ -75,21 +74,4 @@ export function isAllowedModelForRuntime(
     return declaredModels.some((m) => m.value === trimmedModel);
   }
   return trimmedModel.length > 0;
-}
-
-/**
- * Gate an `effort` string against a runtime's declared effort levels. Validates
- * strictly against the descriptor: a runtime with no declared efforts rejects
- * any non-empty effort. Callers only invoke this for a provided, non-empty
- * effort — an omitted/empty effort means "use the runtime default" and is not
- * validated. Used by the dev-flow spec handler, mirroring
- * isAllowedModelForRuntime.
- */
-export function isAllowedEffortForRuntime(
-  runtime: Pick<RuntimeDescriptorLookup, "descriptor"> | undefined,
-  effort: string,
-): boolean {
-  const trimmedEffort = effort.trim();
-  const declaredEfforts = runtime?.descriptor.efforts ?? [];
-  return declaredEfforts.some((e) => e.value === trimmedEffort);
 }

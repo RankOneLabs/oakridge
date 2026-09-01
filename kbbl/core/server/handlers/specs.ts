@@ -50,9 +50,10 @@ type ModelSelectionValidationResult =
  * ACP era (§12, §20.2): there is no runtime registry any more — both
  * production agent profiles always exist, and per-model/effort validation
  * moved into the session itself. Routing entries here are gated only on
- * runtime id and non-emptiness; isAllowedModelForRuntime/
- * isAllowedEffortForRuntime are called with no descriptor, which is their
- * permissive "accept any non-empty value" path.
+ * runtime id and non-emptiness: isAllowedModelForRuntime is called with no
+ * descriptor (its permissive "accept any non-empty value" path), and a
+ * provided effort is checked inline for non-emptiness — the agent's own
+ * config options are the authority at session start.
  */
 function validateModelSelection(
   selection: { runtime: string; model: string; effort?: string | null },

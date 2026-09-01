@@ -22,8 +22,8 @@ function isValidPayload(value: unknown): boolean {
  * Registers `POST /inbox/workspace-events` on the given Hono app.
  *
  * The workspace layer (legit-biz-club) posts project lifecycle and
- * coordination events here. Before the ACP cutover this re-broadcast the
- * event to the legacy SessionManager's inbox subscribers; the ACP-era
+ * coordination events here. Before the ACP cutover this handler
+ * re-broadcast the event to the legacy SessionManager's inbox subscribers; the ACP-era
  * `/inbox` stream (`acpInboxHandler`) has no equivalent taxonomy of
  * per-field deltas to fan a workspace event into, and nothing subscribes
  * to the legacy broadcast path any more (§14.1). The route stays mounted
