@@ -67,6 +67,48 @@ async function readSnapshotUntil(
 }
 
 describe("GET /inbox (ACP)", () => {
+  test("writes ready before the first snapshot frame", async () => {
+    // Without an early `: ready` write the EventSource sits on an empty
+    // body until the heartbeat and the browser spinner never settles.
+    const h = makeHarness();
+    const app = new Hono();
+    app.get("/inbox", acpInboxHandler(h.service));
+    const controller = new AbortController();
+    const res = await app.fetch(
+      new Request("http://kbbl.test/inbox", { signal: controller.signal }),
+    );
+    expect(res.status).toBe(200);
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    try {
+      const deadline = Date.now() + 5000;
+      while (!buf.includes("event: snapshot") && Date.now() < deadline) {
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        const timeoutResult = new Promise<{ done: true; value: undefined }>(
+          (r) => {
+            timeout = setTimeout(
+              () => r({ done: true, value: undefined }),
+              deadline - Date.now(),
+            );
+          },
+        );
+        const result = await Promise.race([reader.read(), timeoutResult]).finally(
+          () => {
+            if (timeout !== undefined) clearTimeout(timeout);
+          },
+        );
+        if (result.done) break;
+        buf += decoder.decode(result.value, { stream: true });
+      }
+      expect(buf.indexOf(": ready")).toBeGreaterThanOrEqual(0);
+      expect(buf.indexOf(": ready")).toBeLessThan(buf.indexOf("event: snapshot"));
+    } finally {
+      controller.abort();
+      await reader.cancel().catch(() => {});
+    }
+  }, 15000);
+
   test("connect delivers the current session list in the PWA wire shape", async () => {
     const h = makeHarness();
     const created = await h.service.createSession({

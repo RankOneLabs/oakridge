@@ -15,7 +15,6 @@ import {
 } from "./auth";
 import { acpInboxHandler } from "./handlers/acp-inbox";
 import { mountHandoffRoutes } from "./handlers/handoff";
-import { mountPerSidRoutes } from "./handlers/per-sid";
 import { mountAcpPerSidRoutes } from "./handlers/acp-per-sid";
 import { mountProjectsRoutes } from "./handlers/projects";
 import { mountSpecsRoutes } from "./handlers/specs";
@@ -55,8 +54,6 @@ export interface CreateAppDeps {
   acp: AcpSessionService;
   /** Optional server default workdir (from --workdir CLI arg). */
   defaultWorkdir: string | null;
-  /** Path to the on-disk sessions directory. */
-  sessionsDir: string;
   /** Path to the on-disk handoffs directory (`<dataDir>/handoffs`). */
   handoffsDir: string;
   /** Path to the built PWA dist directory served as static files. */
@@ -106,7 +103,6 @@ export function createApp(deps: CreateAppDeps): Hono {
     manager,
     acp,
     defaultWorkdir,
-    sessionsDir,
     handoffsDir,
     pwaDistDir,
     config,
@@ -135,13 +131,7 @@ export function createApp(deps: CreateAppDeps): Hono {
   app.post("/auth/cookie", makeCookieHandler(authPolicy));
 
   // ---- ACP per-session routes (§14) ----
-  //
-  // Mounted before the legacy /:sid/* routes; /sessions/:sid/* and /:sid/*
-  // never overlap, but keeping them adjacent makes the split visible.
   mountAcpPerSidRoutes(app, { acp });
-
-  // ---- per-sid routes (legacy JSONL sessions only) ----
-  mountPerSidRoutes(app, { manager, sessionsDir });
 
   // ---- per-session skills (app-owned sources over the ACP backend;
   // agent slash commands reach the PWA via `commands` UI events) ----
@@ -243,10 +233,11 @@ export function createApp(deps: CreateAppDeps): Hono {
 
   // ---- workspace-layer event ingest ----
   //
-  // POST /inbox/workspace-events lets legit-biz-club push project
-  // lifecycle and coordination events through to inbox subscribers
-  // without kbbl interpreting them.
-  mountWorkspaceEventsRoutes(app, { manager });
+  // POST /inbox/workspace-events accepts (validates + acknowledges)
+  // project lifecycle and coordination events from legit-biz-club. See
+  // handlers/workspace-events.ts for why the event itself is discarded
+  // rather than forwarded.
+  mountWorkspaceEventsRoutes(app);
 
   // ---- projects CRUD ----
   mountProjectsRoutes(app, { db });

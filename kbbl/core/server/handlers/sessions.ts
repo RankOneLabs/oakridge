@@ -2,9 +2,8 @@ import type { Hono } from "hono";
 import { isAbsolute, resolve } from "node:path";
 import { stat } from "node:fs/promises";
 
-import { MAX_ARTIFACT_ID_LENGTH, type ArtifactId } from "../../session/session";
+import { MAX_ARTIFACT_ID_LENGTH, type ArtifactId } from "../../session/types";
 import type { SessionManager } from "../../session/session-manager";
-import { selectTerminalWaitMs } from "../../session/resumable-session";
 import type { AcpSessionService } from "../../acp/session-service";
 import type { AcpError, AcpSessionStartSpec } from "../../acp/types";
 import {
@@ -17,7 +16,7 @@ import {
   toPwaSessionSnapshot,
 } from "../../acp/pwa-wire";
 import { listPwaSessions } from "./acp-inbox";
-import { isValidSid } from "./per-sid";
+import { isValidSid } from "./acp-per-sid";
 import { findSessionHold, isTruthyFlag, selectCloseAuthority, selectCloseRefusal } from "../session-hold";
 
 /**
@@ -46,6 +45,17 @@ export async function validateWorkdir(path: string): Promise<string | null> {
   }
   return null;
 }
+
+/** Bounds for the `wait_ms` query parameter on the terminal-observation route. */
+export const TERMINAL_WAIT_MS_DEFAULT = 25_000;
+export const TERMINAL_WAIT_MS_MAX = 60_000;
+
+export const selectTerminalWaitMs = (raw: string | undefined): number => {
+  if (raw === undefined) return TERMINAL_WAIT_MS_DEFAULT;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) return TERMINAL_WAIT_MS_DEFAULT;
+  return Math.min(Math.trunc(parsed), TERMINAL_WAIT_MS_MAX);
+};
 
 /**
  * Validate a git ref-name component. Returns a human-readable error string or
@@ -452,7 +462,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       );
     const legacy = manager
       .listByArtifact(trimmed as ArtifactId)
-      .map((s) => archivedLegacyToPwaSnapshot(s.snapshot()));
+      .map(archivedLegacyToPwaSnapshot);
     return c.json({ sessions: [...acpSessions, ...legacy] });
   });
 

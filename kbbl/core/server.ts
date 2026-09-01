@@ -222,16 +222,11 @@ const idleReaper = setInterval(() => {
 idleReaper.unref?.();
 
 // === legacy manager (read-only) ===
-// Pre-cutover sessions live as JSONL transcripts. The manager stays only
-// to list/serve those archives until the legacy machinery is deleted; it
-// spawns nothing (no runtimes are registered).
+// Pre-cutover sessions live as JSONL transcripts. The manager only
+// lists/serves those archives and lets an operator purge one; it spawns
+// nothing.
 
-const manager = new SessionManager({
-  sessionsDir,
-  handoffsDir,
-  worktreesDir,
-  config,
-});
+const manager = new SessionManager({ sessionsDir });
 
 // === Boot reconciliation — must run before dispatch hooks accept new work ===
 // Any dispatch_attempts left in dispatching or running status survived a prior
@@ -265,7 +260,6 @@ const app = createApp({
   manager,
   acp: acpService,
   defaultWorkdir: workdir,
-  sessionsDir,
   handoffsDir,
   pwaDistDir,
   getBunServer: () => bunServer,
