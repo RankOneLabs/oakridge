@@ -54,19 +54,26 @@ export function usePendingSends(
   // Reconcile echoes: a user_message whose text matches a pending bubble
   // retires it (first match wins).
   useEffect(() => {
+    // Collect every echo in the new slice first, then retire matches in
+    // ONE update — an epoch-reset replay delivers many user_messages at
+    // once, and per-echo updates would queue a state update apiece.
+    const echoedTexts: string[] = [];
     for (let i = lastScannedIdxRef.current; i < events.length; i++) {
       const event = events[i];
       if (event.kind !== "user_message") continue;
-      const text = event.content.map((block) => block.text).join("");
-      setPendingSends((prev) => {
-        const idx = prev.findIndex((m) => m.text === text);
-        if (idx === -1) return prev;
-        const next = prev.slice();
-        next.splice(idx, 1);
-        return next;
-      });
+      echoedTexts.push(event.content.map((block) => block.text).join(""));
     }
     lastScannedIdxRef.current = events.length;
+    if (echoedTexts.length === 0) return;
+    setPendingSends((prev) => {
+      if (prev.length === 0) return prev;
+      const next = prev.slice();
+      for (const text of echoedTexts) {
+        const idx = next.findIndex((m) => m.text === text);
+        if (idx !== -1) next.splice(idx, 1);
+      }
+      return next.length === prev.length ? prev : next;
+    });
   }, [events]);
 
   // Reset the scan cursor when events is wiped (sid change / epoch reset)

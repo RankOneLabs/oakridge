@@ -99,10 +99,17 @@ export function useAcpSession(sid: string, enabled = true): AcpSessionStream {
           method: "GET",
           headers: { accept: "text/event-stream" },
         });
+        // The cleanup clears failTimer, so a probe never STARTS after
+        // unmount — but one already in flight can resolve after it.
+        if (stopped) {
+          await res.body?.cancel().catch(() => {});
+          return;
+        }
         if (!res.ok) {
           const body = (await res.json().catch(() => null)) as {
             error?: unknown;
           } | null;
+          if (stopped) return;
           setStreamError(
             typeof body?.error === "string"
               ? body.error
