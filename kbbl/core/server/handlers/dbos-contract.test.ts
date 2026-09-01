@@ -286,3 +286,137 @@ test("inherited worktrees chain through workspace_source, and the sha still reac
   expect(childRow?.parent_sid).toBe(parent.session_id as KbblSessionId);
   expect(child.worktree_base_sha).toMatch(/^[0-9a-f]{40}$/);
 });
+
+test("an inherited workspace carries the producer's committed work, in a fresh worktree", async () => {
+  makeHarness();
+  const producer = await adapter.start_or_attach(
+    makeRequest({ execution_id: "exec-10" }),
+    "op-10" as ExecutorOperationId,
+  );
+  if (producer.kind !== "kbbl_session") throw new Error("expected session");
+  const producerRow = harness.store.getSession(producer.session_id as KbblSessionId);
+  if (!producerRow) throw new Error("producer row missing");
+
+  // The producer's output: a file committed in its worktree. Inheriting the
+  // workspace means the consumer starts from this state, not the project base.
+  await Bun.write(join(producerRow.worktree_path, "produced.txt"), "the artifact\n");
+  for (const args of [["add", "produced.txt"], ["commit", "-q", "-m", "producer output"]]) {
+    const p = Bun.spawn({ cmd: ["git", "-C", producerRow.worktree_path, ...args], stdout: "ignore", stderr: "pipe" });
+    const [stderr, code] = await Promise.all([new Response(p.stderr).text(), p.exited]);
+    if (code !== 0) throw new Error(`git ${args.join(" ")} failed: ${stderr}`);
+  }
+
+  const consumer = await adapter.start_or_attach(
+    makeRequest({
+      execution_id: "exec-11",
+      workspace_source: { execution_id: "exec-10", external_reference: producer },
+    }),
+    "op-11" as ExecutorOperationId,
+  );
+  if (consumer.kind !== "kbbl_session") throw new Error("expected session");
+  const consumerRow = harness.store.getSession(consumer.session_id as KbblSessionId);
+  if (!consumerRow) throw new Error("consumer row missing");
+  // A NEW worktree cut from the parent's — never the same directory two
+  // agents would then race in — with the parent's committed work present.
+  expect(consumerRow.worktree_path).not.toBe(producerRow.worktree_path);
+  expect(await Bun.file(join(consumerRow.worktree_path, "produced.txt")).exists()).toBe(true);
+}, 20000);
+
+test("the same session key with a different start spec conflicts instead of hijacking the session", async () => {
+  makeHarness();
+  await adapter.start_or_attach(makeRequest({ execution_id: "exec-12" }), "op-12" as ExecutorOperationId);
+  const changed = makeRequest({ execution_id: "exec-12", prompt: "do something else entirely" });
+  await expect(
+    adapter.start_or_attach(changed, "op-12" as ExecutorOperationId),
+  ).rejects.toThrow(/409/);
+});
+
+test("20 concurrent ensures of one operation run the initial prompt exactly once", async () => {
+  // Delayed agent so all twenty land while the first is still provisioning
+  // or prompting — the crowd a recovering DBOS step retry actually produces.
+  makeHarness("delayed", 500);
+  const request = makeRequest({ execution_id: "exec-13" });
+  const references = await Promise.all(
+    Array.from({ length: 20 }, () => adapter.start_or_attach(request, "op-13" as ExecutorOperationId)),
+  );
+  const sids = new Set(references.map((r) => (r.kind === "kbbl_session" ? r.session_id : r.kind)));
+  expect(sids.size).toBe(1);
+  expect(harness.store.listSessions()).toHaveLength(1);
+  const sid = [...sids][0] as KbblSessionId;
+  const turns = harness.db
+    .query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM acp_turns WHERE sid = ?")
+    .get(sid);
+  expect(turns?.n).toBe(1);
+}, 20000);
+
+test("20 concurrent retries of one delivery key accept a single turn", async () => {
+  makeHarness();
+  const reference = await adapter.start_or_attach(
+    makeRequest({ execution_id: "exec-14" }),
+    "op-14" as ExecutorOperationId,
+  );
+  if (reference.kind !== "kbbl_session") throw new Error("expected session");
+  await Promise.all(
+    Array.from({ length: 20 }, () =>
+      adapter.deliver_input("exec-14" as ExecutionId, "delivery-14", "ship it", reference),
+    ),
+  );
+  const turns = harness.db
+    .query<{ n: number }, [string, string]>(
+      "SELECT COUNT(*) AS n FROM acp_turns WHERE sid = ? AND turn_key = ?",
+    )
+    .get(reference.session_id, "delivery-14");
+  expect(turns?.n).toBe(1);
+}, 20000);
+
+test("a session silent past the DBOS silence bound fails instead of being polled forever", async () => {
+  makeHarness("delayed", 8_000);
+  const reference = await adapter.start_or_attach(
+    makeRequest({ execution_id: "exec-15" }),
+    "op-15" as ExecutorOperationId,
+  );
+  if (reference.kind !== "kbbl_session") throw new Error("expected session");
+  // Same kbbl, but an observer whose clock says an hour has passed since the
+  // activity kbbl reports — over the default 30-minute silence bound.
+  const staleObserver = new KbblExecutorAdapter({
+    base_url: `http://127.0.0.1:${server.port}`,
+    executor_function_identity: "contract-test",
+    observe_wait_ms: 200,
+    now: () => Date.now() + 60 * 60_000,
+  });
+  const observed = await staleObserver.observe_terminal("exec-15" as ExecutionId, reference);
+  if (observed.kind !== "terminal" || observed.observation.kind !== "failed") {
+    throw new Error("expected a terminal failure");
+  }
+  expect(observed.observation.code).toBe("executor_silent_timeout");
+  // The live-clock observer reads the same answer as work still in progress.
+  const live = await adapter.observe_terminal("exec-15" as ExecutionId, reference);
+  expect(live.kind).toBe("pending");
+}, 20000);
+
+test("a fence retry lands on already-fenced, and later input is refused", async () => {
+  makeHarness("delayed", 8_000);
+  const reference = await adapter.start_or_attach(
+    makeRequest({ execution_id: "exec-16" }),
+    "op-16" as ExecutorOperationId,
+  );
+  if (reference.kind !== "kbbl_session") throw new Error("expected session");
+  await adapter.cancel_or_fence("exec-16" as ExecutionId, reference);
+  // The recovery replay of a fence step must land, not error.
+  await adapter.cancel_or_fence("exec-16" as ExecutionId, reference);
+  expect(harness.store.getSession(reference.session_id as KbblSessionId)?.status).toBe("fenced");
+  await expect(
+    adapter.deliver_input("exec-16" as ExecutionId, "delivery-16", "too late", reference),
+  ).rejects.toThrow(/409/);
+}, 20000);
+
+test("fencing a session kbbl no longer knows is treated as already fenced", async () => {
+  makeHarness();
+  const unknown: ExternalExecutionReference = {
+    kind: "kbbl_session",
+    session_id: "aaaaaaaa-bbbb-4ccc-8ddd-000000000099",
+  };
+  // kbbl answers 404; the adapter must accept it rather than fail the cancel
+  // step of a run whose session is already gone.
+  await adapter.cancel_or_fence("exec-17" as ExecutionId, unknown);
+});
