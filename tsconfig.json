@@ -25,6 +25,7 @@
     "kbbl/core/**/*.ts",
     "kbbl/core/**/*.tsx",
     "kbbl/adapters/**/*.ts",
+    "kbbl/scripts/**/*.ts",
     "lbc-dashboard/**/*.ts",
     "lbc-dashboard/**/*.tsx",
     "oakridge-dbos/**/*.ts"
