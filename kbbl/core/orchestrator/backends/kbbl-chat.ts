@@ -1,12 +1,26 @@
-import type { SessionManager, WorktreeCreateIdentity } from "../../session/session-manager";
+import type {
+  AcpDispatchStatus,
+  AcpError,
+  AcpSessionSnapshot,
+  AcpSessionStartSpec,
+  Result,
+} from "../../acp/types";
 import type { ExecutionBackend, InputRef, StageRow } from "./interface";
 
 export const NO_ROUTING_ENTRY_ERROR_PREFIX = 'No routing entry for stage "';
 
+/** The slice of AcpSessionService this backend needs (testable port). */
+export interface KbblChatSessionPort {
+  createSession(
+    spec: AcpSessionStartSpec,
+  ): Promise<Result<AcpSessionSnapshot, AcpError>>;
+  dispatchStatus(sid: string): AcpDispatchStatus | null;
+}
+
 export function createKbblChatBackend({
-  manager,
+  acp,
 }: {
-  manager: SessionManager;
+  acp: KbblChatSessionPort;
 }): ExecutionBackend {
   return {
     id: "kbbl_chat",
@@ -19,37 +33,42 @@ export function createKbblChatBackend({
         );
       }
 
-      // Convert dev-flow EpicIdentity to generic WorktreeCreateIdentity at this
-      // boundary so session-manager stays free of orchestrator domain knowledge.
+      // Convert dev-flow EpicIdentity to the wire worktree shape at this
+      // boundary so the ACP layer stays free of orchestrator domain knowledge.
       const epicIdentity = inputRef.worktreeIdentity;
-      const worktreeIdentity: WorktreeCreateIdentity | undefined = epicIdentity
+      const worktree = epicIdentity
         ? (() => {
             const { epicSlug, cohortSlug, epicBranch, attemptSuffix } = epicIdentity;
             const suffix = attemptSuffix ? `/${attemptSuffix}` : "";
             return {
-              branchName: `cohort/${epicSlug}/${cohortSlug}${suffix}`,
-              worktreeSubdir: `${epicSlug}/${cohortSlug}${suffix}`,
-              baseRef: `origin/${epicBranch}`,
+              branch_name: `cohort/${epicSlug}/${cohortSlug}${suffix}`,
+              worktree_subdir: `${epicSlug}/${cohortSlug}${suffix}`,
+              base_ref: `origin/${epicBranch}`,
             };
           })()
         : undefined;
-      const session = await manager.create({
+      const created = await acp.createSession({
+        initial_prompt: renderedPrompt,
         workdir: inputRef.workdir,
         name: inputRef.sessionName,
         model: routing.model,
         effort: routing.effort ?? undefined,
         runtime: routing.runtime,
-        ...(worktreeIdentity ? { worktreeIdentity } : {}),
+        ...(worktree ? { worktree } : {}),
       });
-      await session.writeInput(renderedPrompt);
-      return { session_ref: session.oakridgeSid };
+      if (!created.ok) {
+        throw new Error(
+          `kbbl_chat dispatch failed: ${created.error.code} (${created.error.detail})`,
+        );
+      }
+      return { session_ref: created.value.sid };
     },
 
     async status(session_ref: string): Promise<"running" | "completed" | "failed"> {
-      const session = manager.get(session_ref);
-      if (!session) return "failed";
-      if (session.status === "ended") return "completed";
-      return "running";
+      // Settlement, not liveness: an ACP session sits idle and resumable
+      // after its work is done, so "the session is alive" must never read
+      // as "the attempt is still running".
+      return acp.dispatchStatus(session_ref) ?? "failed";
     },
   };
 }

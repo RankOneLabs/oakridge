@@ -1,32 +1,25 @@
+/**
+ * Route-level lifecycle behavior for the ACP-backed session surface:
+ * listing in the legacy snapshot projection, resume-as-worktree-inheritance
+ * (§17.3), and purge. Static model/effort allowlist tests died with the
+ * provider adapters — §12 moved that validation into the session, covered
+ * by sessions.contract.test.ts.
+ */
+
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 
-import { KbblConfigSchema } from "../../config";
-import { SessionManager } from "../../session/session-manager";
-import type { Session, SpawnCmd } from "../../session/session";
 import { mountSessionsRoutes } from "./sessions";
-import {
-  createRuntimeRegistry,
-  type AgentRuntime,
-  type RuntimeConfig,
-  type RuntimeDescriptor,
-  type RuntimeEvent,
-  type RuntimeId,
-  type RuntimeRegistry,
-  type RuntimeSnapshotContrib,
-  type SessionHandle,
-} from "../../runtime";
-import type { EnvelopeEvent } from "../../session/session";
+import { makeAcpTestService, type AcpTestHarness } from "../../acp/test-harness";
+import type { SessionManager } from "../../session/session-manager";
 
 let tmpRoot: string;
-let sessionsDir: string;
-let worktreesDir: string;
 let repoDir: string;
+let harness: AcpTestHarness;
 
 async function gitInitRepo(dir: string): Promise<void> {
   const cmds: string[][] = [
@@ -44,535 +37,134 @@ async function gitInitRepo(dir: string): Promise<void> {
   }
 }
 
-async function noopSpawn(_session: Session): Promise<SpawnCmd> {
-  return { cmd: ["true"], cwd: "/tmp", env: {} };
-}
+const stubManager = {
+  listSnapshots: () => [],
+  listArchivedSnapshots: async () => [],
+  listByArtifact: () => [],
+  remove: async () => false,
+} as unknown as SessionManager;
 
-function makeManager(): SessionManager {
-  return new SessionManager({
-    sessionsDir,
-    handoffsDir: join(tmpRoot, "handoffs"),
-    worktreesDir,
-    buildSpawnCmd: noopSpawn,
-    config: KbblConfigSchema.parse({}),
-  });
-}
-
-function makeRuntime(id: RuntimeId, models: string[]): AgentRuntime {
-  const descriptor: RuntimeDescriptor = {
-    id,
-    label: id === "claude-code" ? "Claude Code" : "Codex",
-    models: models.map((model) => ({ value: model, label: model })),
-    efforts:
-      id === "claude-code"
-        ? [{ value: "low", label: "low" }, { value: "high", label: "high" }]
-        : [{ value: "minimal", label: "minimal" }, { value: "medium", label: "medium" }],
-    supportsCompaction: id === "claude-code",
-  };
-  return {
-    id,
-    descriptor,
-    isAllowedModel: (model) => models.includes(model),
-    async spawn(config: RuntimeConfig): Promise<SessionHandle> {
-      const sessionId =
-        typeof config.runtimeSpecific?.oakridgeSid === "string"
-          ? config.runtimeSpecific.oakridgeSid
-          : "fake-session";
-      return { sessionId, runtimeSid: `${id}-runtime-sid` };
-    },
-    async terminate(): Promise<void> {},
-    async *events(): AsyncIterable<RuntimeEvent> {
-      yield { type: "completed", result: { code: 0 } };
-    },
-    async send(): Promise<void> {},
-    async resolveResumeRef(): Promise<{ kind: "unknown" }> {
-      return { kind: "unknown" };
-    },
-    reconstructSnapshot(_events: readonly EnvelopeEvent[]): RuntimeSnapshotContrib {
-      return {
-        runtimeSid: null,
-        yoloMode: false,
-        allowedTools: [],
-        lastResultUsage: null,
-        initialObservedModel: null,
-        observedModel: null,
-      };
-    },
-  };
-}
-
-function makeRegistry(defaultId: RuntimeId = "claude-code"): RuntimeRegistry {
-  return createRuntimeRegistry([
-    makeRuntime("claude-code", ["claude-sonnet-4-6", "claude-opus-4-7"]),
-    makeRuntime("codex", ["gpt-5.1-codex"]),
-  ], defaultId);
-}
-
-function makeRegistryManager(registry: RuntimeRegistry): SessionManager {
-  return new SessionManager({
-    sessionsDir,
-    handoffsDir: join(tmpRoot, "handoffs"),
-    worktreesDir,
-    registry,
-    config: KbblConfigSchema.parse({}),
-  });
-}
-
-function makeApp(
-  manager: SessionManager,
-  registry?: RuntimeRegistry,
-  defaultWorkdir: string | null = null,
-): Hono {
+function makeApp(): Hono {
   const app = new Hono();
   mountSessionsRoutes(app, {
-    manager,
-    defaultWorkdir,
-    sessionsDir,
-    registry,
+    acp: harness.service,
+    manager: stubManager,
+    defaultWorkdir: repoDir,
   });
   return app;
 }
 
-async function postSessions(app: Hono, body: Record<string, unknown>): Promise<Response> {
-  return app.request("/sessions", {
+async function postSessions(app: Hono, body: unknown): Promise<{ status: number; body: Record<string, unknown> }> {
+  const res = await app.request("/sessions", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-}
-
-/** Write a minimal archived JSONL for a fake parent session. */
-async function writeArchivedParent(opts: {
-  sid: string;
-  model: string | null;
-  effort?: string | null;
-  runtimeId?: RuntimeId;
-  ccSid?: string;
-}): Promise<void> {
-  const ccSid = opts.ccSid ?? `fake-cc-${opts.sid.slice(0, 8)}`;
-  const lines = [
-    JSON.stringify({
-      id: 0,
-      type: "session_started",
-      ts: "2025-01-01T00:00:00.000Z",
-      payload: {
-        command: ["true"],
-        workdir: repoDir,
-        name: "parent",
-        sessionId: opts.sid,
-        parentCcSid: null,
-        parentOakridgeSid: null,
-        artifactId: null,
-        runtimeId: opts.runtimeId ?? "claude-code",
-        worktreePath: null,
-        worktreeBranch: null,
-        worktreeBaseRef: null,
-        projectWorkdir: null,
-        model: opts.model,
-        effort: opts.effort ?? null,
-      },
-    }),
-    JSON.stringify({
-      id: 1,
-      type: "cc_session_id_observed",
-      ts: "2025-01-01T00:00:01.000Z",
-      payload: { cc_session_id: ccSid },
-    }),
-    JSON.stringify({
-      id: 2,
-      type: "subprocess_exited",
-      ts: "2025-01-01T00:00:02.000Z",
-      payload: { code: 0, reason: "clean" },
-    }),
-  ];
-  await writeFile(join(sessionsDir, `${opts.sid}.jsonl`), lines.join("\n") + "\n");
+  return { status: res.status, body: (await res.json()) as Record<string, unknown> };
 }
 
 beforeEach(async () => {
-  tmpRoot = mkdtempSync(join(tmpdir(), "kbbl-model-test-"));
-  sessionsDir = join(tmpRoot, "sessions");
-  worktreesDir = join(tmpRoot, "worktrees");
+  tmpRoot = mkdtempSync(join(tmpdir(), "kbbl-sessions-model-test-"));
   repoDir = join(tmpRoot, "repo");
-  await mkdir(sessionsDir, { recursive: true });
-  await mkdir(worktreesDir, { recursive: true });
+  await mkdir(join(tmpRoot, "worktrees"), { recursive: true });
+  await mkdir(join(tmpRoot, "state"), { recursive: true });
   mkdirSync(repoDir, { recursive: true });
   await gitInitRepo(repoDir);
+  harness = makeAcpTestService({
+    stateDir: join(tmpRoot, "state"),
+    worktreesRoot: join(tmpRoot, "worktrees"),
+  });
 });
 
 afterEach(async () => {
+  await harness.service.shutdown();
   rmSync(tmpRoot, { recursive: true, force: true });
 });
 
-describe("POST /sessions model validation", () => {
-  test("rejects fresh session without workdir when no default is configured", async () => {
-    const manager = makeManager();
-    const app = makeApp(manager, undefined, null);
+describe("GET /sessions", () => {
+  test("lists ACP sessions in the legacy snapshot projection", async () => {
+    const app = makeApp();
+    const created = await postSessions(app, { workdir: repoDir, name: "one" });
+    expect(created.status).toBe(200);
 
-    const res = await postSessions(app, {});
-
-    expect(res.status).toBe(400);
-    expect(((await res.json()) as { error: string }).error).toBe("workdir is required");
-  });
-
-  test("case 1: valid model accepted, snapshot.model matches", async () => {
-    const manager = makeManager();
-    const app = makeApp(manager, undefined, repoDir);
-    const res = await postSessions(app, { model: "claude-sonnet-4-6", workdir: repoDir });
+    const res = await app.request("/sessions");
     expect(res.status).toBe(200);
-    const body = await res.json() as { model: string | null };
-    expect(body.model).toBe("claude-sonnet-4-6");
-    await manager.endAll();
+    const body = (await res.json()) as { sessions: Array<Record<string, unknown>> };
+    expect(body.sessions).toHaveLength(1);
+    const snapshot = body.sessions[0]!;
+    expect(snapshot.sid).toBe(created.body.sid);
+    expect(snapshot.name).toBe("one");
+    // Legacy vocabulary: an idle ACP session reads as "live".
+    expect(snapshot.status).toBe("live");
+    expect(snapshot.runtimeId).toBe("claude-code");
+    expect(typeof snapshot.lastActivityTs).toBe("string");
   });
 
-  test("case 2: unknown model returns 400 with error", async () => {
-    const manager = makeManager();
-    try {
-      const app = makeApp(manager, undefined, repoDir);
-      const res = await postSessions(app, { model: "garbage", workdir: repoDir });
-      expect(res.status).toBe(400);
-      const body = await res.json() as { error: string };
-      expect(body.error).toBe("unknown model: garbage");
-    } finally {
-      await manager.endAll();
-    }
-  });
+  test("artifact-tagged sessions surface through /artifacts/:id/sessions", async () => {
+    const app = makeApp();
+    await postSessions(app, { workdir: repoDir, artifact_id: "artifact-7" });
+    await postSessions(app, { workdir: repoDir });
 
-  test("case 3: empty string model returns 400 with error", async () => {
-    const manager = makeManager();
-    try {
-      const app = makeApp(manager, undefined, repoDir);
-      const res = await postSessions(app, { model: "", workdir: repoDir });
-      expect(res.status).toBe(400);
-      const body = await res.json() as { error: string };
-      expect(body.error).toBe("model must be non-empty when provided");
-    } finally {
-      await manager.endAll();
-    }
-  });
-
-  test("case 4: non-string model returns 400 with error", async () => {
-    const manager = makeManager();
-    try {
-      const app = makeApp(manager, undefined, repoDir);
-      const res = await postSessions(app, { model: 42, workdir: repoDir });
-      expect(res.status).toBe(400);
-      const body = await res.json() as { error: string };
-      expect(body.error).toBe("model must be a string");
-    } finally {
-      await manager.endAll();
-    }
-  });
-
-  test("null model returns 400 (null is not a string; oakridge must omit key when no model override)", async () => {
-    // kbbl distinguishes null (present invalid value) from absent (use runtime default).
-    // The oakridge kbbl_client must serialize model: None as absent, not as null.
-    const manager = makeManager();
-    try {
-      const app = makeApp(manager, undefined, repoDir);
-      const res = await postSessions(app, { model: null, workdir: repoDir });
-      expect(res.status).toBe(400);
-      const body = await res.json() as { error: string };
-      expect(body.error).toBe("model must be a string");
-    } finally {
-      await manager.endAll();
-    }
-  });
-
-  test("case 5: omitted model → snapshot.model is null", async () => {
-    const manager = makeManager();
-    const app = makeApp(manager, undefined, repoDir);
-    const res = await postSessions(app, { workdir: repoDir });
+    const res = await app.request("/artifacts/artifact-7/sessions");
     expect(res.status).toBe(200);
-    const body = await res.json() as { model: string | null };
-    expect(body.model).toBeNull();
-    await manager.endAll();
-  });
-
-  test("case 6: resume inherits parent model when no model in body", async () => {
-    const parentSid = randomUUID();
-    await writeArchivedParent({ sid: parentSid, model: "claude-sonnet-4-6" });
-    const manager = makeManager();
-    const app = makeApp(manager, undefined, repoDir);
-    const res = await postSessions(app, { resume_from: parentSid });
-    expect(res.status).toBe(200);
-    const body = await res.json() as { model: string | null };
-    expect(body.model).toBe("claude-sonnet-4-6");
-    await manager.endAll();
-  });
-
-  test("case 7: resume with explicit model overrides parent model", async () => {
-    const parentSid = randomUUID();
-    await writeArchivedParent({ sid: parentSid, model: "claude-sonnet-4-6" });
-    const manager = makeManager();
-    const app = makeApp(manager, undefined, repoDir);
-    const res = await postSessions(app, {
-      resume_from: parentSid,
-      model: "claude-opus-4-7",
-    });
-    expect(res.status).toBe(200);
-    const body = await res.json() as { model: string | null };
-    expect(body.model).toBe("claude-opus-4-7");
-    await manager.endAll();
-  });
-
-  test("case 8: resume from archived parent (disk-only) inherits model", async () => {
-    const parentSid = randomUUID();
-    await writeArchivedParent({ sid: parentSid, model: "claude-haiku-4-5-20251001" });
-    // Explicitly not adding the parent to any in-memory manager — it only exists on disk.
-    const manager = makeManager();
-    const app = makeApp(manager, undefined, repoDir);
-    const res = await postSessions(app, { resume_from: parentSid });
-    expect(res.status).toBe(200);
-    const body = await res.json() as { model: string | null };
-    expect(body.model).toBe("claude-haiku-4-5-20251001");
-    await manager.endAll();
-  });
-
-  test("accepts a Codex model when runtime is Codex", async () => {
-    const registry = makeRegistry();
-    const manager = makeRegistryManager(registry);
-    const app = makeApp(manager, registry, repoDir);
-    const res = await postSessions(app, {
-      runtime: "codex",
-      model: "gpt-5.1-codex",
-      workdir: repoDir,
-    });
-    expect(res.status).toBe(200);
-    const body = await res.json() as { runtimeId: RuntimeId; model: string | null };
-    expect(body.runtimeId).toBe("codex");
-    expect(body.model).toBe("gpt-5.1-codex");
-    await manager.endAll();
-  });
-
-  test("rejects a Claude model for Codex runtime", async () => {
-    const registry = makeRegistry();
-    const manager = makeRegistryManager(registry);
-    try {
-      const app = makeApp(manager, registry, repoDir);
-      const res = await postSessions(app, {
-        runtime: "codex",
-        model: "claude-sonnet-4-6",
-        workdir: repoDir,
-      });
-      expect(res.status).toBe(400);
-      const body = await res.json() as { error: string };
-      expect(body.error).toBe("unknown model for codex: claude-sonnet-4-6");
-    } finally {
-      await manager.endAll();
-    }
-  });
-
-  test("rejects a Codex model for Claude runtime", async () => {
-    const registry = makeRegistry();
-    const manager = makeRegistryManager(registry);
-    try {
-      const app = makeApp(manager, registry, repoDir);
-      const res = await postSessions(app, {
-        runtime: "claude-code",
-        model: "gpt-5.1-codex",
-        workdir: repoDir,
-      });
-      expect(res.status).toBe(400);
-      const body = await res.json() as { error: string };
-      expect(body.error).toBe("unknown model for claude-code: gpt-5.1-codex");
-    } finally {
-      await manager.endAll();
-    }
-  });
-
-  test("omitted runtime validates against configured default runtime", async () => {
-    const registry = makeRegistry("codex");
-    const manager = makeRegistryManager(registry);
-    const app = makeApp(manager, registry, repoDir);
-    const res = await postSessions(app, {
-      model: "gpt-5.1-codex",
-      workdir: repoDir,
-    });
-    expect(res.status).toBe(200);
-    const body = await res.json() as { runtimeId: RuntimeId; model: string | null };
-    expect(body.runtimeId).toBe("codex");
-    expect(body.model).toBe("gpt-5.1-codex");
-    await manager.endAll();
-  });
-
-  test("unknown runtime returns 400", async () => {
-    const registry = makeRegistry();
-    const manager = makeRegistryManager(registry);
-    try {
-      const app = makeApp(manager, registry, repoDir);
-      const res = await postSessions(app, {
-        runtime: "future-runtime",
-        workdir: repoDir,
-      });
-      expect(res.status).toBe(400);
-      const body = await res.json() as { error: string };
-      const registered = [...registry.runtimes.keys()].join(", ");
-      expect(body.error).toContain("unknown runtime: future-runtime");
-      expect(body.error).toContain(`registered: ${registered}`);
-    } finally {
-      await manager.endAll();
-    }
-  });
-
-  test("resume rejects cross-runtime override", async () => {
-    const registry = makeRegistry();
-    const manager = makeRegistryManager(registry);
-    try {
-      const parent = await manager.create({ workdir: repoDir, runtime: "codex" });
-      const app = makeApp(manager, registry, repoDir);
-      const res = await postSessions(app, {
-        resume_from: parent.oakridgeSid,
-        runtime: "claude-code",
-      });
-      expect(res.status).toBe(400);
-      const body = await res.json() as { error: string };
-      expect(body.error).toBe(
-        "resume_from parent runtime is codex; cross-runtime resume to claude-code is not supported",
-      );
-    } finally {
-      await manager.endAll();
-    }
-  });
-
-  test("resume returns 400 when parent runtime is not registered", async () => {
-    const parentSid = randomUUID();
-    await writeArchivedParent({
-      sid: parentSid,
-      runtimeId: "codex",
-      model: null,
-    });
-    const registry = createRuntimeRegistry([
-      makeRuntime("claude-code", ["claude-sonnet-4-6", "claude-opus-4-7"]),
-    ]);
-    const manager = makeRegistryManager(registry);
-    try {
-      const app = makeApp(manager, registry, repoDir);
-      const res = await postSessions(app, { resume_from: parentSid });
-      expect(res.status).toBe(400);
-      const body = await res.json() as { error: string };
-      expect(body.error).toBe('resume_from parent runtime "codex" is not registered');
-    } finally {
-      await manager.endAll();
-    }
+    const body = (await res.json()) as { sessions: Array<{ artifactId: string | null }> };
+    expect(body.sessions).toHaveLength(1);
+    expect(body.sessions[0]!.artifactId).toBe("artifact-7");
   });
 });
 
-describe("POST /sessions effort validation", () => {
-  test("valid effort accepted, snapshot.effort matches (legacy path)", async () => {
-    const manager = makeManager();
-    const app = makeApp(manager, undefined, repoDir);
-    const res = await postSessions(app, { effort: "high", workdir: repoDir });
+describe("POST /sessions resume_from (§17.3: worktree inheritance)", () => {
+  test("the child runs in a fresh worktree cut from the parent's, with lineage recorded", async () => {
+    const app = makeApp();
+    const parent = await postSessions(app, { workdir: repoDir, name: "parent" });
+    expect(parent.status).toBe(200);
+    const parentSid = parent.body.sid as string;
+    const parentWorktree = parent.body.worktreePath as string;
+
+    const child = await postSessions(app, { resume_from: parentSid, name: "child" });
+    expect(child.status).toBe(200);
+    expect(child.body.worktreePath).not.toBe(parentWorktree);
+    expect(child.body.worktreeBranch).toMatch(/-r1$/);
+    expect(child.body.parentOakridgeSid ?? null).toBeNull(); // legacy field stays null
+    const childRow = harness.store.getSession(
+      child.body.sid as never,
+    );
+    expect(childRow?.parent_sid).toBe(parentSid as never);
+    // Project identity points at the original repo, not the parent worktree.
+    expect(childRow?.project_workdir).toBe(repoDir);
+  });
+
+  test("resume_from an unknown session is a 404", async () => {
+    const app = makeApp();
+    const res = await postSessions(app, { resume_from: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" });
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("DELETE /sessions/:sid?purge=true", () => {
+  test("purge removes the worktree and the session row", async () => {
+    const app = makeApp();
+    const created = await postSessions(app, { workdir: repoDir });
+    const sid = created.body.sid as string;
+    const worktreePath = created.body.worktreePath as string;
+    expect(existsSync(worktreePath)).toBe(true);
+
+    const res = await app.request(`/sessions/${sid}?purge=true`, { method: "DELETE" });
     expect(res.status).toBe(200);
-    const body = await res.json() as { effort: string | null };
-    expect(body.effort).toBe("high");
-    await manager.endAll();
+    expect(await res.json()).toEqual({ ok: true, removed: true });
+    expect(existsSync(worktreePath)).toBe(false);
+    expect(harness.service.getSession(sid)).toBeNull();
   });
 
-  test("unknown effort returns 400", async () => {
-    const manager = makeManager();
-    try {
-      const app = makeApp(manager, undefined, repoDir);
-      const res = await postSessions(app, { effort: "turbo", workdir: repoDir });
-      expect(res.status).toBe(400);
-      expect(((await res.json()) as { error: string }).error).toBe("unknown effort: turbo");
-    } finally {
-      await manager.endAll();
-    }
-  });
+  test("plain close retains the session row and worktree", async () => {
+    const app = makeApp();
+    const created = await postSessions(app, { workdir: repoDir });
+    const sid = created.body.sid as string;
 
-  test("empty string effort returns 400", async () => {
-    const manager = makeManager();
-    try {
-      const app = makeApp(manager, undefined, repoDir);
-      const res = await postSessions(app, { effort: "", workdir: repoDir });
-      expect(res.status).toBe(400);
-      expect(((await res.json()) as { error: string }).error).toBe(
-        "effort must be non-empty when provided",
-      );
-    } finally {
-      await manager.endAll();
-    }
-  });
-
-  test("non-string effort returns 400", async () => {
-    const manager = makeManager();
-    try {
-      const app = makeApp(manager, undefined, repoDir);
-      const res = await postSessions(app, { effort: 3, workdir: repoDir });
-      expect(res.status).toBe(400);
-      expect(((await res.json()) as { error: string }).error).toBe("effort must be a string");
-    } finally {
-      await manager.endAll();
-    }
-  });
-
-  test("omitted effort → snapshot.effort is null", async () => {
-    const manager = makeManager();
-    const app = makeApp(manager, undefined, repoDir);
-    const res = await postSessions(app, { workdir: repoDir });
+    const res = await app.request(`/sessions/${sid}`, { method: "DELETE" });
     expect(res.status).toBe(200);
-    const body = await res.json() as { effort: string | null };
-    expect(body.effort).toBeNull();
-    await manager.endAll();
-  });
-
-  test("resume inherits parent effort when none in body", async () => {
-    const parentSid = randomUUID();
-    await writeArchivedParent({ sid: parentSid, model: null, effort: "high" });
-    const manager = makeManager();
-    const app = makeApp(manager, undefined, repoDir);
-    const res = await postSessions(app, { resume_from: parentSid });
-    expect(res.status).toBe(200);
-    const body = await res.json() as { effort: string | null };
-    expect(body.effort).toBe("high");
-    await manager.endAll();
-  });
-
-  test("resume with explicit effort overrides parent effort", async () => {
-    const parentSid = randomUUID();
-    await writeArchivedParent({ sid: parentSid, model: null, effort: "high" });
-    const manager = makeManager();
-    const app = makeApp(manager, undefined, repoDir);
-    const res = await postSessions(app, { resume_from: parentSid, effort: "low" });
-    expect(res.status).toBe(200);
-    const body = await res.json() as { effort: string | null };
-    expect(body.effort).toBe("low");
-    await manager.endAll();
-  });
-
-  test("effort validated against the selected runtime's declared levels", async () => {
-    const registry = makeRegistry();
-    const manager = makeRegistryManager(registry);
-    try {
-      const app = makeApp(manager, registry, repoDir);
-      // "high" is a claude-code level but not a codex level.
-      const res = await postSessions(app, {
-        runtime: "codex",
-        effort: "high",
-        workdir: repoDir,
-      });
-      expect(res.status).toBe(400);
-      expect(((await res.json()) as { error: string }).error).toBe(
-        "unknown effort for codex: high",
-      );
-    } finally {
-      await manager.endAll();
-    }
-  });
-
-  test("accepts a codex effort for the codex runtime", async () => {
-    const registry = makeRegistry();
-    const manager = makeRegistryManager(registry);
-    const app = makeApp(manager, registry, repoDir);
-    const res = await postSessions(app, {
-      runtime: "codex",
-      effort: "medium",
-      workdir: repoDir,
-    });
-    expect(res.status).toBe(200);
-    const body = await res.json() as { runtimeId: RuntimeId; effort: string | null };
-    expect(body.runtimeId).toBe("codex");
-    expect(body.effort).toBe("medium");
-    await manager.endAll();
+    const after = harness.service.getSession(sid);
+    expect(after?.status).toBe("ended");
+    expect(existsSync(created.body.worktreePath as string)).toBe(true);
   });
 });

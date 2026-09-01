@@ -172,7 +172,7 @@ test("one session gets exactly one child across multiple turns", async () => {
   const pidBefore = registry.getLive(sid as KbblSessionId)?.childPid;
   expect(pidBefore).toBeGreaterThan(0);
 
-  const sent = await service.sendInput(sid, "follow-up", "delivery-1");
+  const sent = await service.sendInput(sid, "follow-up", { delivery_key: "delivery-1" });
   expect(sent.ok).toBe(true);
   await until(
     () => store.getTurn(sid as KbblSessionId, "delivery-1" as TurnKey)?.status === "succeeded",
@@ -215,8 +215,8 @@ test("same delivery key with the same body dedupes to one turn", async () => {
   const sid = ensured.value.session.sid;
   await service.observeInitialTurn(sid, 8000);
 
-  const first = await service.sendInput(sid, "same text", "delivery-1");
-  const second = await service.sendInput(sid, "same text", "delivery-1");
+  const first = await service.sendInput(sid, "same text", { delivery_key: "delivery-1" });
+  const second = await service.sendInput(sid, "same text", { delivery_key: "delivery-1" });
   expect(first.ok && second.ok).toBe(true);
   if (!first.ok || !second.ok) return;
   expect(second.value.turn_key).toBe(first.value.turn_key);
@@ -235,8 +235,8 @@ test("same delivery key with a different body conflicts", async () => {
   const sid = ensured.value.session.sid;
   await service.observeInitialTurn(sid, 8000);
 
-  await service.sendInput(sid, "one body", "delivery-1");
-  const conflict = await service.sendInput(sid, "another body", "delivery-1");
+  await service.sendInput(sid, "one body", { delivery_key: "delivery-1" });
+  const conflict = await service.sendInput(sid, "another body", { delivery_key: "delivery-1" });
   expect(!conflict.ok && conflict.error.code).toBe("delivery_key_conflict");
 }, 15000);
 
@@ -282,7 +282,7 @@ test("collaboration delivery to a busy session is accepted durably and dispatche
     "initial turn to start prompting",
   );
 
-  const delivered = await service.sendInput(sid, "queued while busy", "delivery-1");
+  const delivered = await service.sendInput(sid, "queued while busy", { delivery_key: "delivery-1" });
   expect(delivered.ok).toBe(true);
   if (!delivered.ok) return;
   expect(delivered.value.status).toBe("accepted");
@@ -354,7 +354,7 @@ test("fence cancels, closes, kills the child, and rejects later input — idempo
   expect(row?.fenced_by).toBe("exec-99");
   expect(registry.getLive(sid as KbblSessionId)).toBeNull();
 
-  const rejected = await service.sendInput(sid, "too late", "delivery-9");
+  const rejected = await service.sendInput(sid, "too late", { delivery_key: "delivery-9" });
   expect(!rejected.ok && rejected.error.code).toBe("session_fenced");
 
   const again = await service.closeSession(sid, { fenced_by: "exec-99" });
@@ -572,3 +572,40 @@ test("operator input whose touch fails is never queued for a later dispatch", as
   );
   expect(doomedEvent).toBeUndefined();
 }, 25000);
+
+test("operator retry with the same client_message_id returns the stored receipt even while that turn is prompting", async () => {
+  const { stateDir, workdir } = await makeDirs();
+  const harness = makeHarness({ behavior: "delayed", stateDir, delayMs: 5000 });
+  const created = await harness.service.createSession(spec(workdir, ""));
+  if (!created.ok) throw new Error(`createSession failed: ${created.error.code}`);
+  const sid = created.value.sid;
+
+  const first = await harness.service.sendInput(sid, "do the work", {
+    client_message_id: "msg-1",
+  });
+  if (!first.ok) throw new Error(`first send failed: ${first.error.code}`);
+
+  await until(
+    () => harness.store.getSession(sid)?.status === "prompting",
+    8000,
+    "operator turn prompting",
+  );
+
+  // §14.5: a retry of the SAME message is answered with its receipt, not
+  // session_busy — the busy guard refuses only new operator input.
+  const retry = await harness.service.sendInput(sid, "do the work", {
+    client_message_id: "msg-1",
+  });
+  if (!retry.ok) throw new Error(`retry rejected: ${retry.error.code}`);
+  expect(retry.value.turn_key).toBe(first.value.turn_key);
+
+  const differentText = await harness.service.sendInput(sid, "different text", {
+    client_message_id: "msg-1",
+  });
+  expect(!differentText.ok && differentText.error.code).toBe("delivery_key_conflict");
+
+  const newInput = await harness.service.sendInput(sid, "unrelated", {
+    client_message_id: "msg-2",
+  });
+  expect(!newInput.ok && newInput.error.code).toBe("session_busy");
+}, 20000);

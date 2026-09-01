@@ -179,6 +179,28 @@ export function markAttemptSucceeded(db: Database, id: string): void {
   }
 }
 
+export function markRunningAttemptFailedBySessionRef(
+  db: Database,
+  session_ref: string,
+  opts: { last_error: string; recovery_hint?: string },
+): DispatchAttempt | null {
+  const attempt = db
+    .prepare<DispatchAttempt, [string, string, string]>(
+      `UPDATE dispatch_attempts
+          SET status = 'dispatch_failed',
+              last_error = ?,
+              recovery_hint = ?,
+              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+        WHERE actual_session_ref = ? AND status = 'running'
+        RETURNING *`,
+    )
+    .get(opts.last_error, opts.recovery_hint ?? "Retry dispatch manually.", session_ref) ?? null;
+  if (attempt?.actual_session_ref) {
+    clearOwnerSessionRef(db, attempt);
+  }
+  return attempt;
+}
+
 export function markRunningAttemptSucceededBySessionRef(
   db: Database,
   session_ref: string,

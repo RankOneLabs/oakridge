@@ -106,6 +106,8 @@ export function resolveRequestedOption(
 }
 
 export class AcpSessionController {
+  /** §14.4: SSE event ids only have meaning within one projection epoch. */
+  readonly streamEpoch: string = crypto.randomUUID();
   private child: AcpChildProcess | null = null;
   private client: AcpClient | null = null;
   private acpSessionId: AcpAgentSessionId | null = null;

@@ -11,17 +11,19 @@ import { resolveProfile } from "./agent-profile";
 import { AcpSessionController } from "./controller";
 import type { AcpControllerRegistry } from "./controller-registry";
 import type { AcpProcessSupervisor } from "./process-supervisor";
-import { startSpecHash, toSnapshot, type AcpSessionStore } from "./store";
+import { sha256Hex, startSpecHash, toSnapshot, type AcpSessionStore } from "./store";
 import {
   acpError,
   err,
   ok,
+  type AcpDispatchStatus,
   type AcpError,
   type AcpSessionRow,
   type AcpSessionSnapshot,
   type AcpSessionStartSpec,
   type AcpTurnRow,
   type AcpUiEvent,
+  type AdvanceResult,
   type EnsureResult,
   type FenceContext,
   type InputReceipt,
@@ -48,6 +50,12 @@ export interface AcpSessionServiceDeps {
   readonly supervisor: AcpProcessSupervisor;
   readonly worktrees: WorktreeProvider;
   readonly config: AcpServiceConfig;
+  /**
+   * Fired when a session leaves the live set (ended, fenced, or failed).
+   * The dispatch-attempt reconciler hangs off this the way it hung off
+   * the legacy manager's onRuntimeSessionEnded.
+   */
+  readonly onSessionEnded?: (sid: KbblSessionId) => void;
 }
 
 const OBSERVE_POLL_MS = 100;
@@ -191,16 +199,54 @@ export class AcpSessionService {
   }
 
   /**
-   * Input delivery (§11.3). With an `inputKey` this is a durable DBOS
+   * Settlement read for orchestrator dispatch attempts and boot
+   * reconciliation: completion is the initial turn settling, never the
+   * session ending (a durable session stays idle/resumable after its work
+   * is done). Null when the sid is not an ACP session.
+   */
+  dispatchStatus(sid: string): AcpDispatchStatus | null {
+    const row = this.deps.store.getSession(sid as KbblSessionId);
+    if (!row) return null;
+    const observed = this.classifyInitialTurn(row);
+    switch (observed.kind) {
+      case "succeeded":
+        return "completed";
+      case "failed":
+        return "failed";
+      case "pending":
+        return "running";
+    }
+  }
+
+  listByArtifact(artifactId: string): AcpSessionSnapshot[] {
+    return this.deps.store.listByArtifact(artifactId).map(toSnapshot);
+  }
+
+  listProfiles(): Array<{ id: string; label: string; enabled: boolean }> {
+    return [...this.deps.profiles.values()].map((profile) => ({
+      id: profile.id,
+      label: profile.label,
+      enabled: profile.enabled,
+    }));
+  }
+
+  get defaultAgent(): string {
+    return this.deps.config.default_agent;
+  }
+
+  /**
+   * Input delivery (§11.3). With a `delivery_key` this is a durable DBOS
    * collaboration delivery: accepted even while a turn is active, then
-   * dispatched serially. Without one it is operator input, which answers
-   * busy instead of queueing.
+   * dispatched serially. Otherwise it is operator input, which answers
+   * busy instead of queueing; `client_message_id` makes an operator turn
+   * idempotent (§14.5) without changing its non-queueing semantics.
    */
   async sendInput(
     sid: string,
     input: string,
-    inputKey?: string,
+    opts?: { delivery_key?: string; client_message_id?: string },
   ): Promise<Result<InputReceipt, AcpError>> {
+    const inputKey = opts?.delivery_key;
     const row = this.deps.store.getSession(sid as KbblSessionId);
     if (!row) {
       return err(
@@ -229,6 +275,30 @@ export class AcpSessionService {
     }
 
     const isCollaboration = inputKey !== undefined;
+    const turnKey = (inputKey ??
+      `operator:${opts?.client_message_id ?? randomUUID()}`) as TurnKey;
+
+    // §14.5 idempotency: a retry of an already-recorded operator turn
+    // returns its stored receipt (or conflicts on different text) even
+    // while that turn is still prompting — the busy guard below only
+    // refuses NEW operator input.
+    if (!isCollaboration && opts?.client_message_id !== undefined) {
+      const existing = this.deps.store.getTurn(row.sid, turnKey);
+      if (existing) {
+        if (existing.payload_hash !== sha256Hex(input)) {
+          return err(
+            acpError(
+              "delivery_key_conflict",
+              "service.sendInput",
+              `input key "${turnKey}" already used with different text`,
+              row.sid,
+            ),
+          );
+        }
+        return ok(turnToReceipt(existing));
+      }
+    }
+
     const busy =
       row.status === "prompting" ||
       (this.deps.controllers.getLive(row.sid)?.isPromptActive ?? false);
@@ -242,10 +312,9 @@ export class AcpSessionService {
         ),
       );
     }
-
     const accepted = this.deps.store.acceptTurn({
       sid: row.sid,
-      turn_key: (inputKey ?? `operator:${randomUUID()}`) as TurnKey,
+      turn_key: turnKey,
       source: isCollaboration ? "collaboration" : "operator",
       payload: input,
     });
@@ -254,7 +323,7 @@ export class AcpSessionService {
         acpError(
           "delivery_key_conflict",
           "service.sendInput",
-          `delivery key "${inputKey}" already used with different text`,
+          `input key "${turnKey}" already used with different text`,
           row.sid,
         ),
       );
@@ -316,6 +385,8 @@ export class AcpSessionService {
   ): Promise<Result<void, AcpError>> {
     const row = this.deps.store.getSession(sid as KbblSessionId);
     if (!row) return ok(undefined);
+    const wasLive =
+      row.status !== "ended" && row.status !== "fenced" && row.status !== "failed";
     const controller = this.deps.controllers.getLive(row.sid);
     if (fence) {
       if (controller) {
@@ -324,13 +395,52 @@ export class AcpSessionService {
         this.deps.store.setFencedBy(row.sid, fence.fenced_by);
         this.deps.store.markEnded(row.sid, "fenced", "fenced", fence.fenced_by);
       }
+      if (wasLive) this.deps.onSessionEnded?.(row.sid);
       return ok(undefined);
     }
     if (controller) await controller.closeChild();
     if (row.status !== "ended" && row.status !== "fenced") {
       this.deps.store.markEnded(row.sid, "ended", "user_closed");
     }
+    if (wasLive) this.deps.onSessionEnded?.(row.sid);
     return ok(undefined);
+  }
+
+  /**
+   * §10.6 operator advance: an explicit escape hatch for a key whose
+   * session can no longer make progress. Fences whatever the key points
+   * at, then detaches the key so the next ensure creates a fresh session.
+   * Never reachable by an ensure retry.
+   */
+  async advanceResumable(key: string): Promise<AdvanceResult> {
+    const row = this.deps.store.getByResumableKey(key as ResumableKey);
+    if (!row) return { kind: "not_found" };
+    await this.closeSession(row.sid, { fenced_by: `advance:${key}` });
+    this.deps.store.clearResumableKey(row.sid);
+    const after = this.deps.store.getSession(row.sid);
+    return { kind: "advanced", session: toSnapshot(after ?? row) };
+  }
+
+  /**
+   * Operator hard delete: fence out any live child, best-effort worktree
+   * removal, then drop the row (turn ledger goes with it).
+   */
+  async purgeSession(sid: string): Promise<Result<boolean, AcpError>> {
+    const row = this.deps.store.getSession(sid as KbblSessionId);
+    if (!row) return ok(false);
+    await this.closeSession(sid);
+    await this.deps.worktrees.remove?.({
+      project_workdir: row.project_workdir,
+      worktree_path: row.worktree_path,
+      worktree_branch: row.worktree_branch,
+    });
+    this.deps.store.deleteSession(row.sid);
+    return ok(true);
+  }
+
+  /** Live projection epoch (§14.4), or null with no live controller. */
+  streamEpoch(sid: string): string | null {
+    return this.deps.controllers.getLive(sid as KbblSessionId)?.streamEpoch ?? null;
   }
 
   /**
@@ -466,6 +576,7 @@ export class AcpSessionService {
       worktree_branch: worktree.value.worktree_branch,
       worktree_base_ref: worktree.value.worktree_base_ref,
       parent_sid: worktree.value.parent_sid,
+      project_workdir: worktree.value.project_workdir,
     });
 
     const created = await this.deps.controllers.getOrCreate(row.sid, async () => {
@@ -511,6 +622,7 @@ export class AcpSessionService {
     console.error(
       `[acp] sid=${row.sid} provisioning failed: ${error.code} (${error.detail})`,
     );
+    this.deps.onSessionEnded?.(row.sid);
     return err({ ...error, sid: row.sid });
   }
 
@@ -588,6 +700,21 @@ export class AcpSessionService {
       };
     }
     const turn = this.deps.store.getInitialTurn(row.sid);
+    // A closed/fenced session can never complete its initial turn: pending
+    // here would be a wait on a state that cannot arrive. Success stays
+    // success (the turn finished before the close); everything else is a
+    // terminal fence/close outcome.
+    if (
+      (row.status === "fenced" || row.status === "ended") &&
+      turn?.status !== "succeeded"
+    ) {
+      return {
+        kind: "failed",
+        session,
+        failure_code: "session_fenced",
+        failure_detail: `session was ${row.status} (${row.end_reason ?? "closed"}) before the initial turn completed`,
+      };
+    }
     if (!turn) return { kind: "pending", session };
     switch (turn.status) {
       case "succeeded":

@@ -17,6 +17,8 @@ import { Hono } from "hono";
 
 import { mountSessionsRoutes } from "./sessions";
 import type { SessionManager } from "../../session/session-manager";
+import type { AcpSessionService } from "../../acp/session-service";
+import { ok, type FenceContext } from "../../acp/types";
 
 const SID = "db26174d-21e2-40f4-af40-fc359c4e9604";
 const HOLDER = "012c6027-4a21-4ec4-aadd-244ebf3236a9:0";
@@ -33,6 +35,7 @@ const hold = {
 
 interface Closed {
   readonly aborted: string[];
+  readonly fences: Array<FenceContext | undefined>;
 }
 
 /**
@@ -51,16 +54,15 @@ afterEach(() => {
  * session that records whether it was actually closed.
  */
 const guardedApp = (): { app: Hono; closed: Closed } => {
-  const closed: Closed = { aborted: [] };
-  const manager = {
-    get: (sid: string) => ({
-      markEndReason: () => {},
-      abort: async () => {
-        closed.aborted.push(sid);
-        return 0;
-      },
-    }),
-  } as unknown as SessionManager;
+  const closed: Closed = { aborted: [], fences: [] };
+  const acp = {
+    getSession: (sid: string) => ({ sid, status: "idle" }),
+    closeSession: async (sid: string, fence?: FenceContext) => {
+      closed.aborted.push(sid);
+      closed.fences.push(fence);
+      return ok(undefined);
+    },
+  } as unknown as AcpSessionService;
 
   const oakridge = new Hono();
   oakridge.get("/session_holds/:sid", (c) =>
@@ -70,9 +72,9 @@ const guardedApp = (): { app: Hono; closed: Closed } => {
 
   const app = new Hono();
   mountSessionsRoutes(app, {
-    manager,
+    acp,
+    manager: {} as unknown as SessionManager,
     defaultWorkdir: "/tmp/kbbl-test",
-    sessionsDir: "/tmp/kbbl-test",
     oakridgeBaseUrl: `http://127.0.0.1:${oakridgeServer.port}`,
   });
   return { app, closed };
@@ -96,6 +98,9 @@ test("the execution holding the session may fence it, and the session actually c
     new Request(`http://kbbl/sessions/${SID}?fenced_by=${encodeURIComponent(HOLDER)}`, { method: "DELETE" }));
   expect(response.status).toBe(200);
   expect(closed.aborted).toEqual([SID]);
+  // The fencer's identity travels into the fence sequence (§10.5), not a
+  // plain close.
+  expect(closed.fences).toEqual([{ fenced_by: HOLDER }]);
 });
 
 test("one execution may not fence the session another execution holds", async () => {

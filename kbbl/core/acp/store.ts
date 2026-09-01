@@ -72,6 +72,16 @@ export type AcceptTurnOutcome =
   | { kind: "existing"; row: AcpTurnRow }
   | { kind: "payload_conflict"; row: AcpTurnRow };
 
+/** Worktree columns written once resolution finishes (setWorktree). */
+export interface WorktreeAssignment {
+  worktree_path: string;
+  worktree_branch: string | null;
+  worktree_base_ref: string | null;
+  parent_sid: KbblSessionId | null;
+  /** Original repo root; set on inheritance where it differs from spec.workdir. */
+  project_workdir?: string;
+}
+
 export interface BootSweepResult {
   turns_marked_unknown: number;
   turns_retained_accepted: number;
@@ -194,20 +204,13 @@ export class AcpSessionStore {
       .run(acpSessionId, nowIso(), sid);
   }
 
-  setWorktree(
-    sid: KbblSessionId,
-    worktree: {
-      worktree_path: string;
-      worktree_branch: string | null;
-      worktree_base_ref: string | null;
-      parent_sid: KbblSessionId | null;
-    },
-  ): void {
+  setWorktree(sid: KbblSessionId, worktree: WorktreeAssignment): void {
     this.db
       .prepare(
         `UPDATE acp_sessions
          SET worktree_path = ?, worktree_branch = ?, worktree_base_ref = ?,
-             parent_sid = ?, updated_at = ?
+             parent_sid = ?, project_workdir = COALESCE(?, project_workdir),
+             updated_at = ?
          WHERE sid = ?`,
       )
       .run(
@@ -215,9 +218,26 @@ export class AcpSessionStore {
         worktree.worktree_branch,
         worktree.worktree_base_ref,
         worktree.parent_sid,
+        worktree.project_workdir ?? null,
         nowIso(),
         sid,
       );
+  }
+
+  listByArtifact(artifactId: string): AcpSessionRow[] {
+    return this.db
+      .prepare<AcpSessionRow, [string]>(
+        "SELECT * FROM acp_sessions WHERE artifact_id = ? ORDER BY updated_at DESC",
+      )
+      .all(artifactId);
+  }
+
+  /** Hard delete (operator purge). Turn rows go with the session. */
+  deleteSession(sid: KbblSessionId): void {
+    this.db.transaction(() => {
+      this.db.prepare("DELETE FROM acp_turns WHERE sid = ?").run(sid);
+      this.db.prepare("DELETE FROM acp_sessions WHERE sid = ?").run(sid);
+    })();
   }
 
   touchActivity(sid: KbblSessionId): void {

@@ -146,7 +146,10 @@ const AcpAgentSchema = z
 
 const AcpSchema = z
   .object({
-    default_agent: z.string().min(1).default("claude-code"),
+    // No schema default on purpose: "unset" and "explicitly claude-code"
+    // must stay distinguishable so the one-release runtime.default alias
+    // in server.ts never overrides an explicit operator choice.
+    default_agent: z.string().min(1).optional(),
     agents: z.record(z.string().min(1), AcpAgentSchema).default({}),
     graceful_kill_ms: z.number().int().positive().default(3000),
     hard_kill_ms: z.number().int().positive().default(5000),

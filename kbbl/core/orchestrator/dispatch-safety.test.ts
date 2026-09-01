@@ -53,7 +53,12 @@ import {
   getAttempt,
   formatAttemptSuffix,
 } from "../db/dispatch-attempts";
-import { reconcileDispatchAttempts } from "./dispatch-reconciler";
+import {
+  reconcileDispatchAttempts,
+  settleAttemptForEndedSession,
+  type ReconcilerAcpPort,
+} from "./dispatch-reconciler";
+import type { AcpDispatchStatus } from "../acp/types";
 import { insertProject } from "../db/projects";
 import { insertSpec } from "../db/specs";
 import { insertEpic } from "../db/epics";
@@ -68,6 +73,15 @@ import type { RuntimeModelSelection } from "../runtime";
 const stubManager = {
   get: (_sid: string) => undefined,
 } as unknown as SessionManager;
+
+// ---- stub ACP settlement port ----
+// Null = "not an ACP session"; per-ref map = the ACP store's answer.
+
+const noAcpSessions: ReconcilerAcpPort = { dispatchStatus: () => null };
+
+function acpPortWith(statuses: Record<string, AcpDispatchStatus>): ReconcilerAcpPort {
+  return { dispatchStatus: (sid) => statuses[sid] ?? null };
+}
 
 // ---- MockBackend ----
 
@@ -244,7 +258,7 @@ describe("1. Boot reconciliation — stranded dispatching attempts", () => {
 
     // Simulate server restart: run boot reconciliation with an empty manager
     // (no live sessions survive a process restart).
-    reconcileDispatchAttempts(db, stubManager);
+    reconcileDispatchAttempts(db, stubManager, noAcpSessions);
 
     // The stranded dispatching attempt must become dispatch_failed so the
     // active-claim slot is freed and the operator has a recovery path.
@@ -278,7 +292,7 @@ describe("1. Boot reconciliation — stranded dispatching attempts", () => {
       "UPDATE cohorts SET current_session_ref = ?, current_session_stage = 'build' WHERE id = ?",
     ).run("ghost-session-ref", cohort.id);
 
-    reconcileDispatchAttempts(db, stubManager);
+    reconcileDispatchAttempts(db, stubManager, noAcpSessions);
 
     const afterRecon = getAttempt(db, r.attempt.id)!;
     expect(afterRecon.status).toBe("dispatch_failed");
@@ -296,8 +310,75 @@ describe("1. Boot reconciliation — stranded dispatching attempts", () => {
 
   test("reconciliation is a no-op when there are no active attempts", () => {
     // Fresh DB — nothing to reconcile, should not throw.
-    expect(() => reconcileDispatchAttempts(db, stubManager)).not.toThrow();
+    expect(() => reconcileDispatchAttempts(db, stubManager, noAcpSessions)).not.toThrow();
     expect(listActiveAttempts(db)).toHaveLength(0);
+  });
+
+  test("running attempt whose ACP session completed its work is settled succeeded, not failed", async () => {
+    const { brief, cohort } = await seedBuildChain();
+    const r = claimDispatch(db, {
+      id: crypto.randomUUID(),
+      entity_kind: "brief",
+      entity_id: brief.id,
+      stage: "build",
+      cohort_id: cohort.id,
+    });
+    expect(r.claimed).toBe(true);
+    if (!r.claimed) throw new Error("expected claim");
+    markAttemptRunning(db, r.attempt.id, "acp-done-ref");
+
+    // The ACP store survives restart: the session's initial turn succeeded
+    // before the crash. Marking this failed would free the claim for
+    // duplicate work that already happened.
+    reconcileDispatchAttempts(db, stubManager, acpPortWith({ "acp-done-ref": "completed" }));
+
+    const afterRecon = getAttempt(db, r.attempt.id)!;
+    expect(afterRecon.status).toBe("succeeded");
+    expect(getActiveAttempt(db, "brief", brief.id, "build")).toBeNull();
+  });
+
+  test("running attempt whose ACP session failed its work is settled dispatch_failed", async () => {
+    const { brief, cohort } = await seedBuildChain();
+    const r = claimDispatch(db, {
+      id: crypto.randomUUID(),
+      entity_kind: "brief",
+      entity_id: brief.id,
+      stage: "build",
+      cohort_id: cohort.id,
+    });
+    expect(r.claimed).toBe(true);
+    if (!r.claimed) throw new Error("expected claim");
+    markAttemptRunning(db, r.attempt.id, "acp-failed-ref");
+
+    reconcileDispatchAttempts(db, stubManager, acpPortWith({ "acp-failed-ref": "failed" }));
+
+    const afterRecon = getAttempt(db, r.attempt.id)!;
+    expect(afterRecon.status).toBe("dispatch_failed");
+    expect(afterRecon.last_error).toContain("acp-failed-ref");
+    expect(afterRecon.recovery_hint).toBeTruthy();
+    expect(getActiveAttempt(db, "brief", brief.id, "build")).toBeNull();
+  });
+
+  test("running attempt whose ACP session is resumable with unsettled work keeps its claim", async () => {
+    const { brief, cohort } = await seedBuildChain();
+    const r = claimDispatch(db, {
+      id: crypto.randomUUID(),
+      entity_kind: "brief",
+      entity_id: brief.id,
+      stage: "build",
+      cohort_id: cohort.id,
+    });
+    expect(r.claimed).toBe(true);
+    if (!r.claimed) throw new Error("expected claim");
+    markAttemptRunning(db, r.attempt.id, "acp-resumable-ref");
+
+    reconcileDispatchAttempts(db, stubManager, acpPortWith({ "acp-resumable-ref": "running" }));
+
+    // Durable session, work not yet settled: the claim stays valid so a
+    // concurrent dispatch cannot start duplicate work against it.
+    const afterRecon = getAttempt(db, r.attempt.id)!;
+    expect(afterRecon.status).toBe("running");
+    expect(getActiveAttempt(db, "brief", brief.id, "build")?.id).toBe(r.attempt.id);
   });
 });
 
@@ -538,6 +619,44 @@ describe("4a. Session lifecycle closes dispatch attempts", () => {
       await manager.endAll();
       rmSync(managerRoot, { recursive: true, force: true });
     }
+  });
+});
+
+describe("4a'. Session-end settlement derives the outcome from the turn record", () => {
+  async function claimRunning(sessionRef: string) {
+    const { brief, cohort } = await seedBuildChain();
+    const r = claimDispatch(db, {
+      id: crypto.randomUUID(),
+      entity_kind: "brief",
+      entity_id: brief.id,
+      stage: "build",
+      cohort_id: cohort.id,
+    });
+    if (!r.claimed) throw new Error("expected claim");
+    markAttemptRunning(db, r.attempt.id, sessionRef);
+    return { brief, attemptId: r.attempt.id };
+  }
+
+  test("a session whose initial turn succeeded settles the attempt succeeded", async () => {
+    const { brief, attemptId } = await claimRunning("done-ref");
+    settleAttemptForEndedSession(db, acpPortWith({ "done-ref": "completed" }), "done-ref");
+    expect(getAttempt(db, attemptId)?.status).toBe("succeeded");
+    expect(getActiveAttempt(db, "brief", brief.id, "build")).toBeNull();
+  });
+
+  test("a fenced/failed session settles the attempt dispatch_failed, never succeeded", async () => {
+    const { brief, attemptId } = await claimRunning("fenced-ref");
+    settleAttemptForEndedSession(db, acpPortWith({ "fenced-ref": "failed" }), "fenced-ref");
+    const settled = getAttempt(db, attemptId)!;
+    expect(settled.status).toBe("dispatch_failed");
+    expect(settled.last_error).toContain("fenced-ref");
+    expect(getActiveAttempt(db, "brief", brief.id, "build")).toBeNull();
+  });
+
+  test("an unknown ref leaves the attempt untouched", async () => {
+    const { attemptId } = await claimRunning("mystery-ref");
+    settleAttemptForEndedSession(db, noAcpSessions, "mystery-ref");
+    expect(getAttempt(db, attemptId)?.status).toBe("running");
   });
 });
 

@@ -2,36 +2,25 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createKbblChatBackend } from "./kbbl-chat";
+import { createKbblChatBackend, type KbblChatSessionPort } from "./kbbl-chat";
 import type { InputRef, StageRow } from "./interface";
-import { SessionManager } from "../../session/session-manager";
-import type { KbblConfig } from "../../config";
-import { KbblConfigSchema } from "../../config";
-import type { RuntimeId } from "../../runtime";
-import type { Session, SpawnCmd } from "../../session/session";
+import type { AcpSessionSnapshot, AcpSessionStartSpec } from "../../acp/types";
+import { ok } from "../../acp/types";
+import { makeAcpTestService, type AcpTestHarness } from "../../acp/test-harness";
 import { ensureEpicBranchExists } from "./dispatcher";
 
-interface FakeCreateOpts {
-  workdir: string;
-  name: string;
-  model: string | null;
-  runtime?: RuntimeId;
-}
-
-type CreateCall = FakeCreateOpts;
-
-function makeFakeManager(): { manager: SessionManager; calls: CreateCall[] } {
-  const calls: CreateCall[] = [];
-  const manager = {
-    async create(opts: FakeCreateOpts) {
-      calls.push({ workdir: opts.workdir, name: opts.name, model: opts.model, runtime: opts.runtime });
-      return {
-        oakridgeSid: `sid-${calls.length}`,
-        async writeInput(_input: string) {},
-      };
+function makeFakePort(): { port: KbblChatSessionPort; calls: AcpSessionStartSpec[] } {
+  const calls: AcpSessionStartSpec[] = [];
+  const port: KbblChatSessionPort = {
+    async createSession(spec) {
+      calls.push(spec);
+      return ok({ sid: `sid-${calls.length}` } as unknown as AcpSessionSnapshot);
     },
-  } as unknown as SessionManager;
-  return { manager, calls };
+    dispatchStatus() {
+      return null;
+    },
+  };
+  return { port, calls };
 }
 
 // Real artifact types per the stages table — kept accurate so future
@@ -72,48 +61,51 @@ const CLAUDE_PLANNER_SELECTION = { runtime: "claude-code", model: "claude-opus-4
 const CLAUDE_WORKER_SELECTION = { runtime: "claude-code", model: "claude-sonnet-4-6" } as const;
 const CODEX_PLANNER_SELECTION = { runtime: "codex", model: "gpt-5.6-sol" } as const;
 const CODEX_WORKER_SELECTION = { runtime: "codex", model: "gpt-5.6-luna" } as const;
+// The fake ACP agent exposes fake-small/fake-large as its model options;
+// integration dispatches must request one of those (§12 resolution is real).
+const FAKE_WORKER_SELECTION = { runtime: "claude-code", model: "fake-small" } as const;
 
 describe("KbblChatBackend dispatch routes explicit model selections", () => {
   test("spec_analyzer → planner selection", async () => {
-    const { manager, calls } = makeFakeManager();
-    const backend = createKbblChatBackend({ manager });
+    const { port, calls } = makeFakePort();
+    const backend = createKbblChatBackend({ acp: port });
     await backend.dispatch(stage("spec_analyzer"), { ...inputRef, modelSelection: CLAUDE_PLANNER_SELECTION }, "prompt");
     expect(calls[0]?.model).toBe("claude-opus-4-8");
     expect(calls[0]?.runtime).toBe("claude-code");
   });
 
   test("plan_writer → planner selection", async () => {
-    const { manager, calls } = makeFakeManager();
-    const backend = createKbblChatBackend({ manager });
+    const { port, calls } = makeFakePort();
+    const backend = createKbblChatBackend({ acp: port });
     await backend.dispatch(stage("plan_writer"), { ...inputRef, modelSelection: CLAUDE_PLANNER_SELECTION }, "prompt");
     expect(calls[0]?.model).toBe("claude-opus-4-8");
   });
 
   test("brief_writer → planner selection", async () => {
-    const { manager, calls } = makeFakeManager();
-    const backend = createKbblChatBackend({ manager });
+    const { port, calls } = makeFakePort();
+    const backend = createKbblChatBackend({ acp: port });
     await backend.dispatch(stage("brief_writer"), { ...inputRef, modelSelection: CLAUDE_PLANNER_SELECTION }, "prompt");
     expect(calls[0]?.model).toBe("claude-opus-4-8");
   });
 
   test("assessor → planner selection", async () => {
-    const { manager, calls } = makeFakeManager();
-    const backend = createKbblChatBackend({ manager });
+    const { port, calls } = makeFakePort();
+    const backend = createKbblChatBackend({ acp: port });
     await backend.dispatch(stage("assessor"), { ...inputRef, modelSelection: CLAUDE_PLANNER_SELECTION }, "prompt");
     expect(calls[0]?.model).toBe("claude-opus-4-8");
     expect(calls[0]?.runtime).toBe("claude-code");
   });
 
   test("build → worker selection", async () => {
-    const { manager, calls } = makeFakeManager();
-    const backend = createKbblChatBackend({ manager });
+    const { port, calls } = makeFakePort();
+    const backend = createKbblChatBackend({ acp: port });
     await backend.dispatch(stage("build"), { ...inputRef, modelSelection: CLAUDE_WORKER_SELECTION }, "prompt");
     expect(calls[0]?.model).toBe("claude-sonnet-4-6");
   });
 
   test("codex flow routes planner stages to gpt-5.6-sol", async () => {
-    const { manager, calls } = makeFakeManager();
-    const backend = createKbblChatBackend({ manager });
+    const { port, calls } = makeFakePort();
+    const backend = createKbblChatBackend({ acp: port });
     await backend.dispatch(
       stage("plan_writer"),
       { ...inputRef, modelSelection: CODEX_PLANNER_SELECTION },
@@ -124,8 +116,8 @@ describe("KbblChatBackend dispatch routes explicit model selections", () => {
   });
 
   test("codex flow routes build to gpt-5.6-luna", async () => {
-    const { manager, calls } = makeFakeManager();
-    const backend = createKbblChatBackend({ manager });
+    const { port, calls } = makeFakePort();
+    const backend = createKbblChatBackend({ acp: port });
     await backend.dispatch(
       stage("build"),
       { ...inputRef, modelSelection: CODEX_WORKER_SELECTION },
@@ -136,11 +128,26 @@ describe("KbblChatBackend dispatch routes explicit model selections", () => {
   });
 
   test("unknown stage still routes when dispatcher passes explicit modelSelection", async () => {
-    const { manager, calls } = makeFakeManager();
-    const backend = createKbblChatBackend({ manager });
+    const { port, calls } = makeFakePort();
+    const backend = createKbblChatBackend({ acp: port });
     await backend.dispatch(stage("future-stage"), { ...inputRef, modelSelection: CODEX_PLANNER_SELECTION }, "prompt");
     expect(calls[0]?.model).toBe("gpt-5.6-sol");
     expect(calls[0]?.runtime).toBe("codex");
+  });
+
+  test("the rendered prompt travels as the initial turn", async () => {
+    const { port, calls } = makeFakePort();
+    const backend = createKbblChatBackend({ acp: port });
+    await backend.dispatch(stage("build"), { ...inputRef, modelSelection: CLAUDE_WORKER_SELECTION }, "the rendered prompt");
+    expect(calls[0]?.initial_prompt).toBe("the rendered prompt");
+  });
+
+  test("missing modelSelection is refused", async () => {
+    const { port } = makeFakePort();
+    const backend = createKbblChatBackend({ acp: port });
+    await expect(
+      backend.dispatch(stage("build"), { ...inputRef, modelSelection: undefined } as unknown as InputRef, "prompt"),
+    ).rejects.toThrow(/No routing entry/);
   });
 });
 
@@ -159,14 +166,92 @@ async function getRevParse(workdir: string, ref: string): Promise<string> {
   return stdout.trim();
 }
 
-async function noopSpawn(_session: Session): Promise<SpawnCmd> {
-  return { cmd: ["cat"], cwd: "/tmp", env: {} };
-}
+describe("KbblChatBackend status reflects turn settlement, not session liveness", () => {
+  let tmpRoot: string;
+  let workdir: string;
+  let harness: AcpTestHarness | null;
+
+  beforeEach(async () => {
+    tmpRoot = mkdtempSync(join(tmpdir(), "kbbl-chat-status-"));
+    workdir = join(tmpRoot, "repo");
+    const dirs = Bun.spawn({
+      cmd: ["mkdir", "-p", workdir, join(tmpRoot, "state"), join(tmpRoot, "worktrees")],
+    });
+    await dirs.exited;
+    await runCmd(["git", "init", "-q", "-b", "main", workdir]);
+    await runCmd(["git", "-C", workdir, "config", "user.email", "test@example.com"]);
+    await runCmd(["git", "-C", workdir, "config", "user.name", "test"]);
+    await runCmd(["git", "-C", workdir, "config", "commit.gpgsign", "false"]);
+    await runCmd(["git", "-C", workdir, "commit", "--allow-empty", "-q", "-m", "init"]);
+    harness = null;
+  });
+
+  afterEach(async () => {
+    await harness?.service.shutdown();
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  function makeHarness(behavior?: string, delayMs?: number): AcpTestHarness {
+    harness = makeAcpTestService({
+      stateDir: join(tmpRoot, "state"),
+      worktreesRoot: join(tmpRoot, "worktrees"),
+      ...(behavior ? { behavior } : {}),
+      ...(delayMs !== undefined ? { delayMs } : {}),
+    });
+    return harness;
+  }
+
+  async function dispatchOne(h: AcpTestHarness): Promise<string> {
+    const backendUnderTest = createKbblChatBackend({ acp: h.service });
+    const { session_ref } = await backendUnderTest.dispatch(
+      stage("build"),
+      { ...inputRef, workdir, modelSelection: FAKE_WORKER_SELECTION },
+      "prompt",
+    );
+    return session_ref;
+  }
+
+  test("an idle session whose initial turn succeeded reports completed", async () => {
+    const h = makeHarness();
+    const backend = createKbblChatBackend({ acp: h.service });
+    const sid = await dispatchOne(h);
+    const observed = await h.service.observeInitialTurn(sid, 15_000);
+    if (!observed.ok) throw new Error(`observe failed: ${observed.error.code}`);
+    expect(observed.value.kind).toBe("succeeded");
+
+    // The session is idle and resumable — the WORK is done, the session is
+    // not. The dispatch attempt must settle anyway.
+    expect(await backend.status(sid)).toBe("completed");
+  });
+
+  test("a session still running its initial turn reports running", async () => {
+    const h = makeHarness("delayed", 8_000);
+    const backend = createKbblChatBackend({ acp: h.service });
+    const sid = await dispatchOne(h);
+    expect(await backend.status(sid)).toBe("running");
+  });
+
+  test("a session whose agent crashed mid-prompt reports failed", async () => {
+    const h = makeHarness("crash_mid_prompt");
+    const backend = createKbblChatBackend({ acp: h.service });
+    const sid = await dispatchOne(h);
+    const observed = await h.service.observeInitialTurn(sid, 15_000);
+    if (!observed.ok) throw new Error(`observe failed: ${observed.error.code}`);
+    expect(observed.value.kind).toBe("failed");
+    expect(await backend.status(sid)).toBe("failed");
+  });
+
+  test("an unknown session ref reports failed", async () => {
+    const h = makeHarness();
+    const backend = createKbblChatBackend({ acp: h.service });
+    expect(await backend.status("no-such-session")).toBe("failed");
+  });
+});
 
 describe("KbblChatBackend worktreeIdentity integration", () => {
   let tmpRoot: string;
   let workdir: string;
-  let manager: SessionManager;
+  let harness: AcpTestHarness;
 
   const EPIC_SLUG = "test_epic";
   const COHORT_SLUG = "1-test_cohort";
@@ -186,7 +271,7 @@ describe("KbblChatBackend worktreeIdentity integration", () => {
     const originPath = join(tmpRoot, "origin");
     workdir = join(tmpRoot, "workdir");
     const dirs = Bun.spawn({
-      cmd: ["mkdir", "-p", join(tmpRoot, "sessions"), join(tmpRoot, "worktrees"), join(tmpRoot, "handoffs")],
+      cmd: ["mkdir", "-p", join(tmpRoot, "state"), join(tmpRoot, "worktrees")],
     });
     await dirs.exited;
     await runCmd(["git", "init", "--bare", "-b", "main", originPath]);
@@ -197,18 +282,14 @@ describe("KbblChatBackend worktreeIdentity integration", () => {
     await runCmd(["git", "-C", workdir, "commit", "--allow-empty", "-m", "init"]);
     await runCmd(["git", "-C", workdir, "push", "origin", "main"]);
 
-    const config = KbblConfigSchema.parse({}) as KbblConfig;
-    manager = new SessionManager({
-      sessionsDir: join(tmpRoot, "sessions"),
-      handoffsDir: join(tmpRoot, "handoffs"),
-      worktreesDir: join(tmpRoot, "worktrees"),
-      buildSpawnCmd: noopSpawn,
-      config,
+    harness = makeAcpTestService({
+      stateDir: join(tmpRoot, "state"),
+      worktreesRoot: join(tmpRoot, "worktrees"),
     });
   });
 
   afterEach(async () => {
-    await manager.endAll();
+    await harness.service.shutdown();
     rmSync(tmpRoot, { recursive: true, force: true });
   });
 
@@ -225,15 +306,15 @@ describe("KbblChatBackend worktreeIdentity integration", () => {
       workdir,
       sessionName: "test-session",
       worktreeIdentity: { epicSlug: EPIC_SLUG, cohortSlug: COHORT_SLUG, epicBranch: EPIC_BRANCH },
-      modelSelection: CLAUDE_WORKER_SELECTION,
+      modelSelection: FAKE_WORKER_SELECTION,
     };
-    const backend = createKbblChatBackend({ manager });
+    const backend = createKbblChatBackend({ acp: harness.service });
     const { session_ref } = await backend.dispatch(buildStage, ref, "prompt");
 
-    const session = manager.get(session_ref);
+    const session = harness.service.getSession(session_ref);
     if (!session) throw new Error("session not found");
-    expect(session.worktreeBranch).toBe(`cohort/${EPIC_SLUG}/${COHORT_SLUG}`);
-    expect(session.worktreeBaseRef).toBe(expectedSha);
+    expect(session.worktree_branch).toBe(`cohort/${EPIC_SLUG}/${COHORT_SLUG}`);
+    expect(session.worktree_base_ref).toBe(expectedSha);
   });
 
   test("Test B: absent epic branch → seed it with git, session lands on slug branch", async () => {
@@ -249,14 +330,6 @@ describe("KbblChatBackend worktreeIdentity integration", () => {
     await runCmd(["git", "-C", workdir, "push", "origin", `main:refs/heads/${EPIC_BRANCH}`]);
     await runCmd(["git", "-C", workdir, "fetch", "origin", EPIC_BRANCH]);
 
-    // Confirm seeding worked
-    const lsAfter = Bun.spawn({
-      cmd: ["git", "-C", workdir, "ls-remote", "origin", `refs/heads/${EPIC_BRANCH}`],
-      stdout: "pipe", stderr: "pipe",
-    });
-    const [lsAfterOut] = await Promise.all([new Response(lsAfter.stdout).text(), lsAfter.exited]);
-    expect(lsAfterOut.trim()).not.toBe("");
-
     // Dispatch with worktreeIdentity — branch is now seeded + local tracking ref updated
     const expectedSha = await getRevParse(workdir, `origin/${EPIC_BRANCH}`);
     const ref: InputRef = {
@@ -265,15 +338,15 @@ describe("KbblChatBackend worktreeIdentity integration", () => {
       workdir,
       sessionName: "test-session",
       worktreeIdentity: { epicSlug: EPIC_SLUG, cohortSlug: COHORT_SLUG, epicBranch: EPIC_BRANCH },
-      modelSelection: CLAUDE_WORKER_SELECTION,
+      modelSelection: FAKE_WORKER_SELECTION,
     };
-    const backend = createKbblChatBackend({ manager });
+    const backend = createKbblChatBackend({ acp: harness.service });
     const { session_ref } = await backend.dispatch(buildStage, ref, "prompt");
 
-    const session = manager.get(session_ref);
+    const session = harness.service.getSession(session_ref);
     if (!session) throw new Error("session not found");
-    expect(session.worktreeBranch).toBe(`cohort/${EPIC_SLUG}/${COHORT_SLUG}`);
-    expect(session.worktreeBaseRef).toBe(expectedSha);
+    expect(session.worktree_branch).toBe(`cohort/${EPIC_SLUG}/${COHORT_SLUG}`);
+    expect(session.worktree_base_ref).toBe(expectedSha);
   });
 
   test("absent epic branch is seeded from latest remote main, not stale local main", async () => {

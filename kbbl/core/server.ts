@@ -6,12 +6,15 @@ import { fileURLToPath } from "node:url";
 import { loadConfig, type KbblConfig } from "./config";
 import { resolveStartupAuthPolicy, type AuthPolicy } from "./server/auth";
 import { SessionManager } from "./session/session-manager";
-import type { Session } from "./session/session";
 import { isGitRepo, isPathInside, resolveRepoTopLevel } from "./session/worktree";
 import { createApp } from "./server/app";
-import { createClaudeCodeRuntime } from "../adapters/claude-code";
-import { createCodexRuntime } from "../adapters/codex";
-import { createRuntimeRegistry } from "./runtime";
+import { loadAgentProfiles } from "./acp/agent-profile";
+import { builtinAgentProfiles } from "./acp/default-profiles";
+import { AcpControllerRegistry } from "./acp/controller-registry";
+import { AcpProcessSupervisor } from "./acp/process-supervisor";
+import { AcpSessionService } from "./acp/session-service";
+import { AcpSessionStore } from "./acp/store";
+import { GitWorktreeProvider } from "./worktree/service";
 import { validateWorkdir } from "./server/handlers/sessions";
 import { openDb } from "./db/connection";
 import { applyMigrations } from "./db/migrations";
@@ -19,8 +22,10 @@ import { bootstrap as bootstrapOrchestrator } from "./orchestrator/bootstrap";
 import { createKbblChatBackend } from "./orchestrator/backends/kbbl-chat";
 import { createDispatcher } from "./orchestrator/backends/dispatcher";
 import { wireDispatchHooks } from "./orchestrator/dispatch-hooks";
-import { reconcileDispatchAttempts } from "./orchestrator/dispatch-reconciler";
-import { markRunningAttemptSucceededBySessionRef } from "./db/dispatch-attempts";
+import {
+  reconcileDispatchAttempts,
+  settleAttemptForEndedSession,
+} from "./orchestrator/dispatch-reconciler";
 import { wireResponderSpawn } from "./orchestrator/responders/spawn";
 import { reviewRegistry } from "./review/registry";
 import { reviewEvents } from "./review/events";
@@ -63,7 +68,8 @@ if (!Number.isInteger(port) || port <= 0 || port > 65535) {
   process.exit(1);
 }
 const host = values.host ?? "127.0.0.1";
-const claudeBin = values.claudeBin ?? "claude";
+// --claudeBin is still accepted so operator launch scripts don't break, but
+// agent binaries now come from ACP profiles (config.acp.agents).
 
 // === auth policy ===
 // Resolved before any other startup work so a misconfigured non-loopback
@@ -167,98 +173,76 @@ if (workdir !== null && (await isGitRepo(workdir))) {
   }
 }
 
-// === runtime adapter ===
-// The Claude Code adapter owns its CLI flags, settings.json, and the
-// hook routes. Core consumes it through the AppRuntime contract
-// and never imports CC-specific files directly.
+// === ACP session stack (§21) ===
+// The ACP substrate replaces the provider runtime adapters: agent profiles
+// describe how to launch each ACP agent binary; the service owns session
+// lifecycle over the shared SQLite store.
 
-const runtime = await createClaudeCodeRuntime({
-  claudeBin,
-  port,
-  dataDir,
-});
-
-// === runtime registry ===
-
-const runtimes: import("./runtime").AgentRuntime[] = [runtime];
-if (config.runtime.codex.enabled) {
-  const codexBin = config.runtime.codex.bin || "codex";
-  const codexListen =
-    config.runtime.codex.listen ??
-    `unix://${join(dataDir, "codex-app-server.sock")}`;
-  try {
-    const codexRuntime = await createCodexRuntime({
-      bin: codexBin,
-      listenUrl: codexListen,
-      sessionsDir,
-    });
-    runtimes.push(codexRuntime);
-    console.error(
-      `kbbl: Codex runtime started (listen=${codexListen})`,
-    );
-  } catch (err) {
-    console.error(
-      `kbbl: failed to start Codex runtime: ${
-        err instanceof Error ? err.message : String(err)
-      } (continuing without Codex)`,
-    );
-  }
-}
-
-const registeredRuntimeIds = new Set(runtimes.map((r) => r.id));
-const configuredDefaultRuntime = registeredRuntimeIds.has(config.runtime.default)
-  ? config.runtime.default
-  : undefined;
-const registry = createRuntimeRegistry(runtimes, configuredDefaultRuntime);
-if (!configuredDefaultRuntime) {
+if (config.runtime.codex.enabled || config.runtime.default !== "claude-code") {
   console.error(
-    `kbbl: configured default runtime "${config.runtime.default}" is unavailable; using "${registry.defaultId}" instead`,
+    "kbbl: config `runtime.*` is deprecated — provider sessions now run through ACP. " +
+      "Configure agents under `acp.agents` / `acp.default_agent`; the old block is ignored except runtime.default as a default-agent alias.",
   );
 }
+const acpProfiles = loadAgentProfiles(config.acp, builtinAgentProfiles(kbblRoot));
+const acpStore = new AcpSessionStore(db);
+const acpSupervisor = new AcpProcessSupervisor({
+  graceful_kill_ms: config.acp.graceful_kill_ms,
+  hard_kill_ms: config.acp.hard_kill_ms,
+});
+const acpControllers = new AcpControllerRegistry();
+const acpWorktrees = new GitWorktreeProvider({
+  worktreesRoot: worktreesDir,
+  store: acpStore,
+});
+// One-release alias (§20.2): an explicit acp.default_agent always wins —
+// including an explicit "claude-code". Only when the key is absent does
+// the legacy runtime.default apply (it defaults to claude-code itself).
+const defaultAgent = config.acp.default_agent ?? config.runtime.default;
+const acpService = new AcpSessionService({
+  store: acpStore,
+  controllers: acpControllers,
+  profiles: acpProfiles,
+  supervisor: acpSupervisor,
+  worktrees: acpWorktrees,
+  config: {
+    default_agent: defaultAgent,
+    graceful_kill_ms: config.acp.graceful_kill_ms,
+    idle_child_ttl_ms: config.acp.idle_child_ttl_ms,
+    live_event_buffer: config.acp.live_event_buffer,
+  },
+  onSessionEnded: (sid) => {
+    settleAttemptForEndedSession(db, acpService, sid);
+  },
+});
+acpService.recoverOnBoot();
+const idleReaper = setInterval(() => {
+  void acpService.reapIdleChildren();
+}, 60_000);
+idleReaper.unref?.();
 
-// The CC adapter owns the ccSid→oakridgeSid map. Expose callback hooks so
-// the manager can delegate getByCcSid lookups without importing CC directly.
-type CcRuntimeExtensions = {
-  registerCcSid: (ccSid: string, oakridgeSid: string) => void;
-  unregisterBySid: (session: Session) => void;
-  lookupByCcSid: (ccSid: string) => Session | undefined;
-  trackSession: (s: Session) => void;
-};
-const ccRuntime = runtime as typeof runtime & CcRuntimeExtensions;
-
-// === manager ===
+// === legacy manager (read-only) ===
+// Pre-cutover sessions live as JSONL transcripts. The manager stays only
+// to list/serve those archives until the legacy machinery is deleted; it
+// spawns nothing (no runtimes are registered).
 
 const manager = new SessionManager({
   sessionsDir,
   handoffsDir,
   worktreesDir,
-  // Legacy buildSpawnCmd kept as fallback (not used when registry is set, but
-  // satisfies backward-compat tests and any path that bypasses the registry).
-  buildSpawnCmd: runtime.buildSpawnCmd,
-  classifyEvent: runtime.classifyEvent,
-  nonPersistedEventTypes: runtime.nonPersistedEventTypes,
-  registry,
-  lookupByCcSid: (ccSid) => ccRuntime.lookupByCcSid(ccSid),
-  onRuntimeSessionObserved: (session, runtimeSid) => {
-    ccRuntime.registerCcSid(runtimeSid, session.oakridgeSid);
-    ccRuntime.trackSession(session);
-  },
-  onRuntimeSessionEnded: (session) => {
-    ccRuntime.unregisterBySid(session);
-    markRunningAttemptSucceededBySessionRef(db, session.oakridgeSid);
-  },
   config,
 });
 
 // === Boot reconciliation — must run before dispatch hooks accept new work ===
 // Any dispatch_attempts left in dispatching or running status survived a prior
-// process death. Reconcile them to dispatch_failed so the active-claim slots
-// are freed and operators have a clear recovery path before new dispatches fire.
-reconcileDispatchAttempts(db, manager);
+// process death. Settle each from the durable ACP record (recoverOnBoot has
+// already swept in-flight turns) or fail it so the active-claim slot is freed
+// with a clear recovery path before new dispatches fire.
+reconcileDispatchAttempts(db, manager, acpService);
 
 // === Dispatcher + dispatch hooks + responder spawn ===
 
-const kbblChatBackend = createKbblChatBackend({ manager });
+const kbblChatBackend = createKbblChatBackend({ acp: acpService });
 // Internal URL for in-process dispatchers and spawned responders. Always
 // loopback regardless of the operator's bind host: --host=0.0.0.0 (or a raw
 // IPv6 address) is fine as an external listener but would resolve to a
@@ -279,8 +263,7 @@ const coreControlToken =
 
 const app = createApp({
   manager,
-  runtime,
-  registry,
+  acp: acpService,
   defaultWorkdir: workdir,
   sessionsDir,
   handoffsDir,
@@ -333,34 +316,21 @@ for (const sig of ["SIGINT", "SIGTERM"] as const) {
     if (shuttingDown) return;
     shuttingDown = true;
     void (async () => {
-      const worstCode = await manager.endAll();
-      await manager.drainLifecycle();
-      // Stop any optional app-servers (e.g. Codex). Capability-based: only
-      // runtimes that expose stopAppServer (as a function) need to be stopped.
-      // A 5 s timeout per runtime prevents a stuck teardown from hanging
-      // shutdown indefinitely. Failure is logged but never blocks process exit.
-      for (const r of runtimes) {
-        const stopAppServer = (r as unknown as { stopAppServer?: unknown }).stopAppServer;
-        if (typeof stopAppServer === "function") {
-          let timeoutId: ReturnType<typeof setTimeout> | undefined;
-          await Promise.race([
-            (stopAppServer as () => Promise<void>)(),
-            new Promise<void>((_, reject) => {
-              timeoutId = setTimeout(() => reject(new Error("stopAppServer timed out")), 5_000);
-            }),
-          ])
-            .finally(() => {
-              if (timeoutId !== undefined) clearTimeout(timeoutId);
-            })
-            .catch((err: unknown) => {
-              console.error(
-                `kbbl: ${r.id} stopAppServer error: ${err instanceof Error ? err.message : String(err)}`,
-              );
-            });
-        }
-      }
+      // Bounded ACP shutdown (§21): each controller closes within the
+      // configured grace, then children are hard-killed by the supervisor.
+      // Never wait indefinitely for an ACP child.
+      clearInterval(idleReaper);
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        acpService.shutdown(),
+        new Promise<void>((resolveWait) => {
+          timeoutId = setTimeout(resolveWait, config.acp.graceful_kill_ms + config.acp.hard_kill_ms + 2_000);
+        }),
+      ]).finally(() => {
+        if (timeoutId !== undefined) clearTimeout(timeoutId);
+      });
       server.stop();
-      process.exit(worstCode);
+      process.exit(0);
     })();
   });
 }

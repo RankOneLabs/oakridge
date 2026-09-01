@@ -495,7 +495,10 @@ describe("POST /specs", () => {
     });
   });
 
-  test("rejects codex split selections when no runtime registry is mounted", async () => {
+  test("accepts codex split selections without a runtime registry (ACP era)", async () => {
+    // Both production agent profiles exist in the ACP era; per-model
+    // validation happens inside the session (§12), so routing entries are
+    // gated on profile id only.
     const noRegistryApp = new Hono();
     mountSpecsRoutes(noRegistryApp, { db });
 
@@ -512,9 +515,14 @@ describe("POST /specs", () => {
       ),
     });
 
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe('worker runtime "codex" is not registered — registered: claude-code');
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: string };
+    const epic = getEpicBySpec(db, body.id);
+    expect(epic?.worker_model_selection).toEqual({
+      runtime: "codex",
+      model: "custom-worker-model",
+      effort: null,
+    });
   });
 
   test("returns 400 for missing title", async () => {

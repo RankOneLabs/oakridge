@@ -6,9 +6,8 @@ import { Hono } from "hono";
 import type { Database } from "bun:sqlite";
 
 import { KbblConfigSchema, type KbblConfig } from "../config";
-import type { AppRuntime } from "../runtime";
-import type { AgentRuntime, RuntimeRegistry } from "../runtime";
 import type { SessionManager } from "../session/session-manager";
+import type { AcpSessionService } from "../acp/session-service";
 import type { createDispatcher } from "../orchestrator/backends/dispatcher";
 import { openTestDb } from "../db/test-db";
 import { createApp } from "./app";
@@ -18,56 +17,33 @@ let tmpRoot: string;
 let configPath: string;
 let db: Database;
 
-function makeRuntime(id: "claude-code" | "codex", models: string[]): AgentRuntime {
+function makeStubAcp(
+  profiles: Array<{ id: string; label: string; enabled: boolean }>,
+  defaultAgent = "claude-code",
+): AcpSessionService {
   return {
-    id,
-    descriptor: {
-      id,
-      label: id === "claude-code" ? "Claude Code" : "Codex",
-      models: models.map((value) => ({ value, label: value })),
-      efforts: [],
-      supportsCompaction: id === "claude-code",
+    listProfiles: () => profiles,
+    get defaultAgent() {
+      return defaultAgent;
     },
-    isAllowedModel: (model: string) => models.includes(model),
-    async spawn() {
-      return { sessionId: "sid" };
-    },
-    async terminate() {},
-    async *events() {},
-    async send() {},
-    async resolveResumeRef() {
-      return { kind: "unknown" };
-    },
-    reconstructSnapshot() {
-      return {
-        runtimeSid: null,
-        yoloMode: false,
-        allowedTools: [],
-        lastResultUsage: null,
-        initialObservedModel: null,
-        observedModel: null,
-      };
-    },
-  } as AgentRuntime;
+  } as unknown as AcpSessionService;
 }
 
 function buildApp(
   config: KbblConfig,
   defaultWorkdir: string | null = "/tmp/test-workdir",
-  registry?: RuntimeRegistry,
+  acp: AcpSessionService = makeStubAcp([
+    { id: "claude-code", label: "Claude Code (ACP)", enabled: true },
+    { id: "codex", label: "Codex (ACP)", enabled: true },
+  ]),
   authPolicy?: AuthPolicy,
 ): Hono {
-  const runtime: AppRuntime = {
-    id: "test",
-    mountRoutes: () => {},
-    buildSpawnCmd: async () => { throw new Error("not used in config tests"); },
-  };
   const dispatcher: ReturnType<typeof createDispatcher> = {
     dispatch: async () => { throw new Error("not used in config tests"); },
   };
   return createApp({
     manager: {} as unknown as SessionManager,
-    runtime,
+    acp,
     defaultWorkdir,
     sessionsDir: tmpRoot,
     handoffsDir: tmpRoot,
@@ -77,7 +53,6 @@ function buildApp(
     configPath,
     db,
     dispatcher,
-    registry,
     authPolicy,
   });
 }
@@ -106,26 +81,16 @@ describe("GET /config", () => {
     expect(body.softThresholdTokens).toBe(config.compact.soft_threshold_tokens);
   });
 
-  test("returns runtime descriptors when a registry is wired", async () => {
-    const registry = {
-      defaultId: "codex",
-      runtimes: new Map([
-        ["claude-code", makeRuntime("claude-code", ["claude-opus-4-8", "claude-sonnet-4-6"])],
-        [
-          "codex",
-          makeRuntime("codex", [
-            "gpt-5.6-sol",
-            "gpt-5.6-terra",
-            "gpt-5.6-luna",
-            "gpt-5.5",
-            "gpt-5.4",
-            "gpt-5.4-mini",
-            "gpt-5.3-codex-spark",
-          ]),
-        ],
-      ]),
-    } as RuntimeRegistry;
-    const app = buildApp(KbblConfigSchema.parse({}), "/tmp/test-workdir", registry);
+  test("returns ACP profile descriptors with empty model lists (§12)", async () => {
+    const acp = makeStubAcp(
+      [
+        { id: "claude-code", label: "Claude Code (ACP)", enabled: true },
+        { id: "codex", label: "Codex (ACP)", enabled: true },
+        { id: "disabled-agent", label: "Disabled", enabled: false },
+      ],
+      "codex",
+    );
+    const app = buildApp(KbblConfigSchema.parse({}), "/tmp/test-workdir", acp);
 
     const res = await app.request("/config");
 
@@ -136,38 +101,17 @@ describe("GET /config", () => {
         id: string;
         label: string;
         supportsCompaction: boolean;
-        models: Array<{ value: string; label: string }>;
+        models: unknown[];
+        efforts: unknown[];
       }>;
     };
     expect(body.defaultRuntimeId).toBe("codex");
-    expect(body.runtimes).toEqual(expect.arrayContaining([
-      {
-        id: "claude-code",
-        label: "Claude Code",
-        supportsCompaction: true,
-        models: [
-          { value: "claude-opus-4-8", label: "claude-opus-4-8" },
-          { value: "claude-sonnet-4-6", label: "claude-sonnet-4-6" },
-        ],
-        efforts: [],
-      },
-      {
-        id: "codex",
-        label: "Codex",
-        supportsCompaction: false,
-        models: [
-          { value: "gpt-5.6-sol", label: "gpt-5.6-sol" },
-          { value: "gpt-5.6-terra", label: "gpt-5.6-terra" },
-          { value: "gpt-5.6-luna", label: "gpt-5.6-luna" },
-          { value: "gpt-5.5", label: "gpt-5.5" },
-          { value: "gpt-5.4", label: "gpt-5.4" },
-          { value: "gpt-5.4-mini", label: "gpt-5.4-mini" },
-          { value: "gpt-5.3-codex-spark", label: "gpt-5.3-codex-spark" },
-        ],
-        efforts: [],
-      },
-    ]));
-    expect(body.runtimes).toHaveLength(2);
+    // Model/effort lists are per-session ACP config options now, never
+    // static kbbl knowledge — the descriptors carry identity only.
+    expect(body.runtimes).toEqual([
+      { id: "claude-code", label: "Claude Code (ACP)", models: [], efforts: [], supportsCompaction: false },
+      { id: "codex", label: "Codex (ACP)", models: [], efforts: [], supportsCompaction: false },
+    ]);
   });
 
   test("allows a null defaultWorkdir", async () => {
