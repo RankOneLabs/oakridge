@@ -1404,7 +1404,7 @@ async fn seeded_multi_repository_dev_flow_inherits_only_the_matching_build_resul
         if finished.status == RunStatus::Done {
             break;
         }
-        tokio::task::yield_now().await;
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         finished = queries::get_workflow_run_by_id(&pool, &run.id)
             .await
             .unwrap();
