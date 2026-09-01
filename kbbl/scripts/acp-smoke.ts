@@ -32,7 +32,7 @@ import type * as schema from "@agentclientprotocol/sdk";
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 import { Readable as NodeReadable, Writable as NodeWritable } from "node:stream";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 
 type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
 
@@ -78,6 +78,22 @@ interface SmokeReport {
   update_kinds_seen: Set<string>;
 }
 
+/** Splits a command spec on whitespace, keeping double-quoted segments intact. */
+function split_command_spec(spec: string): string[] {
+  const parts: string[] = [];
+  let current = "";
+  let in_quotes = false;
+  for (const char of spec) {
+    if (char === '"') in_quotes = !in_quotes;
+    else if (!in_quotes && /\s/.test(char)) {
+      if (current.length > 0) parts.push(current);
+      current = "";
+    } else current += char;
+  }
+  if (current.length > 0) parts.push(current);
+  return parts;
+}
+
 function parse_args(argv: readonly string[]): Result<SmokeArgs, SmokeError> {
   let agent_spec: string | null = null;
   let cwd: string | null = null;
@@ -113,8 +129,7 @@ function parse_args(argv: readonly string[]): Result<SmokeArgs, SmokeError> {
     };
   }
 
-  const parts = agent_spec.split(/\s+/).filter((p) => p.length > 0);
-  const [agent_command, ...agent_args] = parts;
+  const [agent_command, ...agent_args] = split_command_spec(agent_spec);
   if (agent_command === undefined) {
     return {
       ok: false,
@@ -138,6 +153,9 @@ function parse_args(argv: readonly string[]): Result<SmokeArgs, SmokeError> {
 
 /** Reads /proc to snapshot every descendant of `root_pid` with its cmdline. */
 function snapshot_descendants(root_pid: number): ChildProcessSnapshot[] {
+  // /proc is Linux-only; elsewhere skip evidence capture rather than throw
+  // inside the snapshot timer and sink the whole run.
+  if (!existsSync("/proc")) return [];
   const parent_of = new Map<number, number>();
   for (const entry of readdirSync("/proc")) {
     const pid = Number(entry);
@@ -277,13 +295,15 @@ function render_report(report: SmokeReport): string {
     `| mcpCapabilities | ${JSON.stringify(caps?.mcpCapabilities ?? null)} |`,
   );
 
+  const escape_cell = (text: string): string => text.replaceAll("|", "\\|");
+
   const config_rows = report.config_options.map(
     (option) =>
-      `| ${option.id} | ${option.category ?? "-"} | ${option.type} | ${option.name} |`,
+      `| ${escape_cell(option.id)} | ${escape_cell(option.category ?? "-")} | ${option.type} | ${escape_cell(option.name)} |`,
   );
 
   const step_rows = report.steps.map(
-    (step) => `| ${step.name} | ${step.status} | ${step.detail.replaceAll("|", "\\|")} |`,
+    (step) => `| ${step.name} | ${step.status} | ${escape_cell(step.detail)} |`,
   );
 
   const descendant_lines =
