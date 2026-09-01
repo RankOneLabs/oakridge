@@ -5,6 +5,7 @@
 // PWA and DBOS adapters consume ACP shapes natively.
 
 import type {
+  AcpFailureCode,
   AcpSessionSnapshot,
   AcpSessionStatus,
   TerminalObservation,
@@ -48,14 +49,53 @@ export function toLegacyEndReason(
 }
 
 /**
- * The legacy snapshot shape (core/session/types.ts SessionSnapshot) built
- * from an ACP session. Fields the ACP world deliberately lacks — runtime
- * session ids, yolo mode, compaction chains — render as their empty
- * values; the PWA treats those as "feature not present".
+ * The legacy snapshot wire shape (mirrors core/session/types.ts
+ * SessionSnapshot as parsed by oakridge-dbos and the current PWA). Fields
+ * the ACP world deliberately lacks — runtime session ids, yolo mode,
+ * compaction chains — are pinned to their empty values.
  */
-export function toLegacySnapshot(
-  snapshot: AcpSessionSnapshot,
-): Record<string, unknown> {
+export interface LegacyWireSnapshot {
+  sid: string;
+  name: string;
+  workdir: string;
+  status: LegacyWireStatus;
+  createdAt: string;
+  lastActivityTs: string;
+  runtimeId: string;
+  runtimeSid: string | null;
+  ccSid: null;
+  parentCcSid: null;
+  parentOakridgeSid: null;
+  artifactId: string | null;
+  pendingCount: number;
+  yoloMode: boolean;
+  allowedTools: string[];
+  lastResultUsage: null;
+  worktreePath: string | null;
+  worktreeBranch: string | null;
+  worktreeBaseRef: string | null;
+  projectWorkdir: string | null;
+  model: string | null;
+  effort: string | null;
+  initialObservedModel: null;
+  observedModel: null;
+  endReason: "user_closed" | "subprocess_exited" | null;
+  exitCode: null;
+  successorSid: null;
+}
+
+/** §11.2 terminal-route wire body. */
+export interface LegacyTerminalBody {
+  session: LegacyWireSnapshot;
+  exit_code: number;
+  failure?: { code: AcpFailureCode; detail: string };
+}
+
+/**
+ * The legacy snapshot shape built from an ACP session; the PWA treats the
+ * pinned-empty fields as "feature not present".
+ */
+export function toLegacySnapshot(snapshot: AcpSessionSnapshot): LegacyWireSnapshot {
   return {
     sid: snapshot.sid,
     name: snapshot.name,
@@ -95,7 +135,7 @@ export function toLegacySnapshot(
  */
 export function toTerminalBody(
   observation: Exclude<TerminalObservation, { kind: "pending" }>,
-): Record<string, unknown> {
+): LegacyTerminalBody {
   const session = toLegacySnapshot(observation.session);
   if (observation.kind === "succeeded") {
     return { session: { ...session, endReason: null }, exit_code: 0 };

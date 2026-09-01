@@ -53,7 +53,11 @@ import {
   getAttempt,
   formatAttemptSuffix,
 } from "../db/dispatch-attempts";
-import { reconcileDispatchAttempts, type ReconcilerAcpPort } from "./dispatch-reconciler";
+import {
+  reconcileDispatchAttempts,
+  settleAttemptForEndedSession,
+  type ReconcilerAcpPort,
+} from "./dispatch-reconciler";
 import type { AcpDispatchStatus } from "../acp/types";
 import { insertProject } from "../db/projects";
 import { insertSpec } from "../db/specs";
@@ -615,6 +619,44 @@ describe("4a. Session lifecycle closes dispatch attempts", () => {
       await manager.endAll();
       rmSync(managerRoot, { recursive: true, force: true });
     }
+  });
+});
+
+describe("4a'. Session-end settlement derives the outcome from the turn record", () => {
+  async function claimRunning(sessionRef: string) {
+    const { brief, cohort } = await seedBuildChain();
+    const r = claimDispatch(db, {
+      id: crypto.randomUUID(),
+      entity_kind: "brief",
+      entity_id: brief.id,
+      stage: "build",
+      cohort_id: cohort.id,
+    });
+    if (!r.claimed) throw new Error("expected claim");
+    markAttemptRunning(db, r.attempt.id, sessionRef);
+    return { brief, attemptId: r.attempt.id };
+  }
+
+  test("a session whose initial turn succeeded settles the attempt succeeded", async () => {
+    const { brief, attemptId } = await claimRunning("done-ref");
+    settleAttemptForEndedSession(db, acpPortWith({ "done-ref": "completed" }), "done-ref");
+    expect(getAttempt(db, attemptId)?.status).toBe("succeeded");
+    expect(getActiveAttempt(db, "brief", brief.id, "build")).toBeNull();
+  });
+
+  test("a fenced/failed session settles the attempt dispatch_failed, never succeeded", async () => {
+    const { brief, attemptId } = await claimRunning("fenced-ref");
+    settleAttemptForEndedSession(db, acpPortWith({ "fenced-ref": "failed" }), "fenced-ref");
+    const settled = getAttempt(db, attemptId)!;
+    expect(settled.status).toBe("dispatch_failed");
+    expect(settled.last_error).toContain("fenced-ref");
+    expect(getActiveAttempt(db, "brief", brief.id, "build")).toBeNull();
+  });
+
+  test("an unknown ref leaves the attempt untouched", async () => {
+    const { attemptId } = await claimRunning("mystery-ref");
+    settleAttemptForEndedSession(db, noAcpSessions, "mystery-ref");
+    expect(getAttempt(db, attemptId)?.status).toBe("running");
   });
 });
 

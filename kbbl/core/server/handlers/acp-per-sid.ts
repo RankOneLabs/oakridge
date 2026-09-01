@@ -71,14 +71,22 @@ export function mountAcpPerSidRoutes(app: Hono, deps: AcpPerSidRouteDeps): void 
 
       let closed = false;
       const done = new Promise<void>((resolveDone) => {
+        let heartbeat: ReturnType<typeof setInterval> | undefined;
+        let unsubscribe: (() => void) | null = null;
+        // All teardown lives in finish: a rejected write resolves the
+        // stream WITHOUT firing onAbort (Hono closes on normal callback
+        // return), so cleanup hung off onAbort alone would leak the
+        // interval and the ACP subscription per disconnected client.
         const finish = () => {
           if (closed) return;
           closed = true;
+          if (heartbeat !== undefined) clearInterval(heartbeat);
+          unsubscribe?.();
           resolveDone();
         };
         stream.onAbort(finish);
 
-        const unsubscribe = acp.subscribe(sid, (event) => {
+        unsubscribe = acp.subscribe(sid, (event) => {
           void stream
             .writeSSE({
               event: "acp",
@@ -88,14 +96,9 @@ export function mountAcpPerSidRoutes(app: Hono, deps: AcpPerSidRouteDeps): void 
             .catch(finish);
         });
 
-        const heartbeat = setInterval(() => {
+        heartbeat = setInterval(() => {
           void stream.write(": ping\n\n").catch(finish);
         }, HEARTBEAT_MS);
-
-        stream.onAbort(() => {
-          clearInterval(heartbeat);
-          unsubscribe?.();
-        });
         // No live controller (ended/failed session): nothing further will
         // arrive; leave the stream open on heartbeats so the client owns
         // the close, exactly like an ended legacy session's stream.
@@ -118,8 +121,13 @@ export function mountAcpPerSidRoutes(app: Hono, deps: AcpPerSidRouteDeps): void 
     if (typeof body.text !== "string" || body.text.trim().length === 0) {
       return c.json({ error: "text must be a non-empty string" }, 400);
     }
-    if (body.client_message_id !== undefined && typeof body.client_message_id !== "string") {
-      return c.json({ error: "client_message_id must be a string" }, 400);
+    if (
+      body.client_message_id !== undefined &&
+      (typeof body.client_message_id !== "string" || body.client_message_id.length === 0)
+    ) {
+      // An empty key would collapse every such input onto the constant
+      // turn key "operator:", conflicting unrelated messages.
+      return c.json({ error: "client_message_id must be a non-empty string" }, 400);
     }
     const sent = await acp.sendInput(sid, body.text.trim(), {
       ...(typeof body.client_message_id === "string"

@@ -572,3 +572,40 @@ test("operator input whose touch fails is never queued for a later dispatch", as
   );
   expect(doomedEvent).toBeUndefined();
 }, 25000);
+
+test("operator retry with the same client_message_id returns the stored receipt even while that turn is prompting", async () => {
+  const { stateDir, workdir } = await makeDirs();
+  const harness = makeHarness({ behavior: "delayed", stateDir, delayMs: 5000 });
+  const created = await harness.service.createSession(spec(workdir, ""));
+  if (!created.ok) throw new Error(`createSession failed: ${created.error.code}`);
+  const sid = created.value.sid;
+
+  const first = await harness.service.sendInput(sid, "do the work", {
+    client_message_id: "msg-1",
+  });
+  if (!first.ok) throw new Error(`first send failed: ${first.error.code}`);
+
+  await until(
+    () => harness.store.getSession(sid)?.status === "prompting",
+    8000,
+    "operator turn prompting",
+  );
+
+  // §14.5: a retry of the SAME message is answered with its receipt, not
+  // session_busy — the busy guard refuses only new operator input.
+  const retry = await harness.service.sendInput(sid, "do the work", {
+    client_message_id: "msg-1",
+  });
+  if (!retry.ok) throw new Error(`retry rejected: ${retry.error.code}`);
+  expect(retry.value.turn_key).toBe(first.value.turn_key);
+
+  const differentText = await harness.service.sendInput(sid, "different text", {
+    client_message_id: "msg-1",
+  });
+  expect(!differentText.ok && differentText.error.code).toBe("delivery_key_conflict");
+
+  const newInput = await harness.service.sendInput(sid, "unrelated", {
+    client_message_id: "msg-2",
+  });
+  expect(!newInput.ok && newInput.error.code).toBe("session_busy");
+}, 20000);

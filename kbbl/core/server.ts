@@ -22,8 +22,10 @@ import { bootstrap as bootstrapOrchestrator } from "./orchestrator/bootstrap";
 import { createKbblChatBackend } from "./orchestrator/backends/kbbl-chat";
 import { createDispatcher } from "./orchestrator/backends/dispatcher";
 import { wireDispatchHooks } from "./orchestrator/dispatch-hooks";
-import { reconcileDispatchAttempts } from "./orchestrator/dispatch-reconciler";
-import { markRunningAttemptSucceededBySessionRef } from "./db/dispatch-attempts";
+import {
+  reconcileDispatchAttempts,
+  settleAttemptForEndedSession,
+} from "./orchestrator/dispatch-reconciler";
 import { wireResponderSpawn } from "./orchestrator/responders/spawn";
 import { reviewRegistry } from "./review/registry";
 import { reviewEvents } from "./review/events";
@@ -193,12 +195,10 @@ const acpWorktrees = new GitWorktreeProvider({
   worktreesRoot: worktreesDir,
   store: acpStore,
 });
-// One-release alias (§20.2): honor old runtime.default when the operator
-// has not set an explicit acp.default_agent.
-const defaultAgent =
-  config.acp.default_agent !== "claude-code"
-    ? config.acp.default_agent
-    : config.runtime.default;
+// One-release alias (§20.2): an explicit acp.default_agent always wins —
+// including an explicit "claude-code". Only when the key is absent does
+// the legacy runtime.default apply (it defaults to claude-code itself).
+const defaultAgent = config.acp.default_agent ?? config.runtime.default;
 const acpService = new AcpSessionService({
   store: acpStore,
   controllers: acpControllers,
@@ -212,7 +212,7 @@ const acpService = new AcpSessionService({
     live_event_buffer: config.acp.live_event_buffer,
   },
   onSessionEnded: (sid) => {
-    markRunningAttemptSucceededBySessionRef(db, sid);
+    settleAttemptForEndedSession(db, acpService, sid);
   },
 });
 acpService.recoverOnBoot();

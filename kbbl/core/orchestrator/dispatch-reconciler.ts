@@ -5,11 +5,35 @@ import {
   listActiveAttempts,
   markAttemptFailed,
   markAttemptSucceeded,
+  markRunningAttemptFailedBySessionRef,
+  markRunningAttemptSucceededBySessionRef,
 } from "../db/dispatch-attempts";
 
-/** The slice of AcpSessionService boot reconciliation needs (testable port). */
+/** The slice of AcpSessionService dispatch settlement needs (testable port). */
 export interface ReconcilerAcpPort {
   dispatchStatus(sid: string): AcpDispatchStatus | null;
+}
+
+/**
+ * Eager settlement when a session leaves the live set (fence, operator
+ * close, provisioning failure). Success is the initial turn having
+ * succeeded — a session that ended any other way fails its attempt
+ * instead of being blindly recorded as succeeded.
+ */
+export function settleAttemptForEndedSession(
+  db: Database,
+  acp: ReconcilerAcpPort,
+  sid: string,
+): void {
+  const outcome = acp.dispatchStatus(sid);
+  if (outcome === "completed") {
+    markRunningAttemptSucceededBySessionRef(db, sid);
+  } else if (outcome === "failed") {
+    markRunningAttemptFailedBySessionRef(db, sid, {
+      last_error: `session ${sid} ended without completing its initial turn`,
+    });
+  }
+  // "running"/null: leave the claim — boot or lazy settlement owns it.
 }
 
 /**

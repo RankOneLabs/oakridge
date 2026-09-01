@@ -11,7 +11,7 @@ import { resolveProfile } from "./agent-profile";
 import { AcpSessionController } from "./controller";
 import type { AcpControllerRegistry } from "./controller-registry";
 import type { AcpProcessSupervisor } from "./process-supervisor";
-import { startSpecHash, toSnapshot, type AcpSessionStore } from "./store";
+import { sha256Hex, startSpecHash, toSnapshot, type AcpSessionStore } from "./store";
 import {
   acpError,
   err,
@@ -275,6 +275,30 @@ export class AcpSessionService {
     }
 
     const isCollaboration = inputKey !== undefined;
+    const turnKey = (inputKey ??
+      `operator:${opts?.client_message_id ?? randomUUID()}`) as TurnKey;
+
+    // §14.5 idempotency: a retry of an already-recorded operator turn
+    // returns its stored receipt (or conflicts on different text) even
+    // while that turn is still prompting — the busy guard below only
+    // refuses NEW operator input.
+    if (!isCollaboration && opts?.client_message_id !== undefined) {
+      const existing = this.deps.store.getTurn(row.sid, turnKey);
+      if (existing) {
+        if (existing.payload_hash !== sha256Hex(input)) {
+          return err(
+            acpError(
+              "delivery_key_conflict",
+              "service.sendInput",
+              `input key "${turnKey}" already used with different text`,
+              row.sid,
+            ),
+          );
+        }
+        return ok(turnToReceipt(existing));
+      }
+    }
+
     const busy =
       row.status === "prompting" ||
       (this.deps.controllers.getLive(row.sid)?.isPromptActive ?? false);
@@ -288,9 +312,6 @@ export class AcpSessionService {
         ),
       );
     }
-
-    const turnKey = (inputKey ??
-      `operator:${opts?.client_message_id ?? randomUUID()}`) as TurnKey;
     const accepted = this.deps.store.acceptTurn({
       sid: row.sid,
       turn_key: turnKey,

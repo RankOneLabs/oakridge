@@ -72,6 +72,16 @@ export type AcceptTurnOutcome =
   | { kind: "existing"; row: AcpTurnRow }
   | { kind: "payload_conflict"; row: AcpTurnRow };
 
+/** Worktree columns written once resolution finishes (setWorktree). */
+export interface WorktreeAssignment {
+  worktree_path: string;
+  worktree_branch: string | null;
+  worktree_base_ref: string | null;
+  parent_sid: KbblSessionId | null;
+  /** Original repo root; set on inheritance where it differs from spec.workdir. */
+  project_workdir?: string;
+}
+
 export interface BootSweepResult {
   turns_marked_unknown: number;
   turns_retained_accepted: number;
@@ -194,17 +204,7 @@ export class AcpSessionStore {
       .run(acpSessionId, nowIso(), sid);
   }
 
-  setWorktree(
-    sid: KbblSessionId,
-    worktree: {
-      worktree_path: string;
-      worktree_branch: string | null;
-      worktree_base_ref: string | null;
-      parent_sid: KbblSessionId | null;
-      /** Original repo root; set on inheritance where it differs from spec.workdir. */
-      project_workdir?: string;
-    },
-  ): void {
+  setWorktree(sid: KbblSessionId, worktree: WorktreeAssignment): void {
     this.db
       .prepare(
         `UPDATE acp_sessions

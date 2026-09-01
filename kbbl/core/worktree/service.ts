@@ -37,6 +37,14 @@ export function parseDepthFromBranch(branch: string | null): number {
   return match ? Number(match[1]) : 0;
 }
 
+/** How to cut one worktree: source checkout, chain depth, DBOS identity. */
+interface CreateWorktreeOptions {
+  workdir: string;
+  resumeDepth: number;
+  identity?: { branchName: string; worktreeSubdir: string };
+  baseRef?: string;
+}
+
 export interface GitWorktreeProviderDeps {
   /** `<dataDir>/<worktree_dir_name>` — parent of all per-session worktrees. */
   readonly worktreesRoot: string;
@@ -144,12 +152,7 @@ export class GitWorktreeProvider implements WorktreeProvider {
 
   private async createFor(
     sid: KbblSessionId,
-    opts: {
-      workdir: string;
-      resumeDepth: number;
-      identity?: { branchName: string; worktreeSubdir: string };
-      baseRef?: string;
-    },
+    opts: CreateWorktreeOptions,
   ): Promise<Result<WorktreeResolution, AcpError>> {
     try {
       const created = await createWorktree({
