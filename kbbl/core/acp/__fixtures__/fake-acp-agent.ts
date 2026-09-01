@@ -136,6 +136,17 @@ const app = agent({ name: `fake-acp-${behavior}` })
       const update = JSON.parse(line) as schema.SessionUpdate;
       await ctx.client.notify("session/update", { sessionId, update });
     }
+    // The stable session/load contract answers with configOptions just
+    // like session/new, so a client can rebuild its selectors after a
+    // respawn without waiting for a config_option_update.
+    if (!configState.has(sessionId)) configState.set(sessionId, new Map());
+    const options = CONFIG_OPTIONS.map((option) => {
+      const current = configState.get(sessionId)?.get(option.id);
+      return current === undefined
+        ? option
+        : ({ ...option, currentValue: current } as schema.SessionConfigOption);
+    });
+    return { configOptions: options };
   })
   .onRequest("session/set_config_option", (ctx) => {
     const { sessionId, configId, value } = ctx.params;

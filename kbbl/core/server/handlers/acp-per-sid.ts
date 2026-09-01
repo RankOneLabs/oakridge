@@ -58,7 +58,10 @@ export function mountAcpPerSidRoutes(app: Hono, deps: AcpPerSidRouteDeps): void 
       await stream.write(": ready\n\n");
       await stream.writeSSE({
         event: "epoch",
-        data: JSON.stringify({ stream_epoch: epoch }),
+        data: JSON.stringify({
+          stream_epoch: epoch,
+          expired: history.value.expired,
+        }),
       });
       let eventId = 0;
       for (const event of history.value.events) {

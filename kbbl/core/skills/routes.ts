@@ -1,51 +1,48 @@
+// Skill routes over the ACP session backend (§16.2), mounted on the
+// /sessions/:sid/* browser surface. Listing degrades to [] (the rail
+// hides rather than erroring); invocation formats the selection as agent
+// input and submits it as an operator turn — the live model sees the
+// steering request and owns the actual tool call.
+
 import type { Hono } from "hono";
 
-import { SessionNotReadyError } from "../session/session";
 import { isValidSid } from "../server/handlers/per-sid";
-import type { SessionManager } from "../session/session-manager";
-import type { RuntimeRegistry } from "../runtime";
+import type { AcpSessionService } from "../acp/session-service";
 import type { KbblConfig } from "../config";
-import { buildSkillRegistry } from "./registry";
+import { aggregateSkillsForProfile } from "./registry";
+import { formatSkillInvocation } from "./format";
 
 export interface SkillRoutesDeps {
-  manager: SessionManager;
-  registry: RuntimeRegistry | undefined;
+  acp: AcpSessionService;
   config: KbblConfig;
 }
 
 export function mountSkillsRoutes(app: Hono, deps: SkillRoutesDeps): void {
-  const { manager, registry, config } = deps;
-  const aggregator = buildSkillRegistry({ registry, config });
+  const { acp, config } = deps;
 
-  // GET /:sid/skills — returns visible+permitted Skill[] (possibly empty).
-  // Always 200: the rail degrades to an empty list rather than an error banner.
-  // Only a malformed sid shape returns 400; unknown/not-live sessions return [].
-  app.get("/:sid/skills", async (c) => {
+  // GET /sessions/:sid/skills — visible+permitted Skill[] (possibly empty).
+  // Always 200 for a well-formed sid: unknown or closed sessions return []
+  // so the rail degrades to hidden instead of an error banner.
+  app.get("/sessions/:sid/skills", (c) => {
     const sid = c.req.param("sid");
     if (!isValidSid(sid)) return c.json({ error: "invalid sid" }, 400);
 
-    const session = manager.get(sid);
-    if (!session || session.status !== "live") return c.json([]);
-
-    const skills = await aggregator.aggregate(session);
-    return c.json(skills);
+    const session = acp.getSession(sid);
+    if (!session || session.status === "ended" || session.status === "fenced" || session.status === "failed") {
+      return c.json([]);
+    }
+    return c.json(aggregateSkillsForProfile(session.agent_profile, config));
   });
 
-  // POST /:sid/skills/invoke — formats the selection as agent input and submits
-  // it through session.writeInput(). MCP rail actions are steering requests:
-  // the live model sees the request and owns the actual tool call.
-  app.post("/:sid/skills/invoke", async (c) => {
+  // POST /sessions/:sid/skills/invoke — format the selection and submit it
+  // through the ACP input path. A busy session answers 409 exactly like
+  // typed operator input (operator turns never queue, §11.3).
+  app.post("/sessions/:sid/skills/invoke", async (c) => {
     const sid = c.req.param("sid");
     if (!isValidSid(sid)) return c.json({ error: "invalid sid" }, 400);
 
-    const session = manager.get(sid);
+    const session = acp.getSession(sid);
     if (!session) return c.json({ error: "unknown session" }, 404);
-    // Reject non-live sessions early with an explicit state error. The rail
-    // already disables when status !== "live"; without this guard the invoke
-    // falls through to writeInput() and surfaces as a misleading 503.
-    if (session.status !== "live") {
-      return c.json({ error: "session not live" }, 409);
-    }
 
     let body: { skill_id?: unknown; args?: unknown };
     try {
@@ -68,9 +65,9 @@ export function mountSkillsRoutes(app: Hono, deps: SkillRoutesDeps): void {
       return c.json({ error: "args must be an object" }, 400);
     }
     const rawArgs = (body.args ?? {}) as Record<string, unknown>;
-    for (const [k, v] of Object.entries(rawArgs)) {
-      if (typeof v !== "string") {
-        return c.json({ error: `args.${k} must be a string` }, 400);
+    for (const [key, value] of Object.entries(rawArgs)) {
+      if (typeof value !== "string") {
+        return c.json({ error: `args.${key} must be a string` }, 400);
       }
     }
     const args = rawArgs as Record<string, string>;
@@ -78,39 +75,29 @@ export function mountSkillsRoutes(app: Hono, deps: SkillRoutesDeps): void {
     // Re-aggregate on every invoke — this is the authorization boundary.
     // Re-applying the policy filter here ensures a hidden or stale skill
     // can never be invoked even if the client crafts the id directly.
-    const skills = await aggregator.aggregate(session);
-    const skill = skills.find((s) => s.id === skillId);
+    const skills = aggregateSkillsForProfile(session.agent_profile, config);
+    const skill = skills.find((entry) => entry.id === skillId);
     if (!skill) return c.json({ error: "unknown or hidden skill" }, 404);
 
-    // Validate required args before touching the runtime.
+    // Validate required args before touching the session.
     for (const argSpec of skill.args) {
       if (argSpec.required && !args[argSpec.key]?.trim()) {
         return c.json({ error: `missing required arg: ${argSpec.key}` }, 400);
       }
     }
 
-    const runtime = registry?.runtimes.get(session.runtimeId);
-    if (!runtime?.formatSkillInvocation) {
-      return c.json(
-        { error: "runtime does not support skill invocation formatting" },
-        409,
-      );
+    const trigger = formatSkillInvocation(skill, args);
+    const sent = await acp.sendInput(sid, trigger);
+    if (!sent.ok) {
+      const status =
+        sent.error.code === "session_not_found"
+          ? 404
+          : sent.error.code === "session_busy" ||
+              sent.error.code === "session_fenced"
+            ? 409
+            : 503;
+      return c.json({ error: sent.error.detail, code: sent.error.code }, status);
     }
-
-    const trigger = runtime.formatSkillInvocation(skill, args);
-
-    try {
-      await session.writeInput(trigger, {
-        command: trigger.trimStart().startsWith("/"),
-      });
-    } catch (err) {
-      if (err instanceof SessionNotReadyError) {
-        return c.json({ error: "subprocess not ready" }, 503);
-      }
-      const msg = err instanceof Error ? err.message : String(err);
-      return c.json({ error: `subprocess write failed: ${msg}` }, 503);
-    }
-
     return c.json({ ok: true });
   });
 }

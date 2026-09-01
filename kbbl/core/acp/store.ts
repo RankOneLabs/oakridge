@@ -94,7 +94,23 @@ function nowIso(): string {
 }
 
 export class AcpSessionStore {
+  private readonly sessionsChangedListeners = new Set<() => void>();
+
   constructor(private readonly db: Database) {}
+
+  /**
+   * Coarse change feed over the sessions table (§14.1 inbox): fired after
+   * any write that can alter a session snapshot. Subscribers re-read; no
+   * delta payloads — the snapshot is always the authority.
+   */
+  subscribeSessionsChanged(listener: () => void): () => void {
+    this.sessionsChangedListeners.add(listener);
+    return () => this.sessionsChangedListeners.delete(listener);
+  }
+
+  private notifySessionsChanged(): void {
+    for (const listener of this.sessionsChangedListeners) listener();
+  }
 
   /**
    * Idempotent resumable-key claim (§10.2 steps 1–2), one transaction:
@@ -116,7 +132,7 @@ export class AcpSessionStore {
 
   insertSession(input: ClaimInput): AcpSessionRow {
     const ts = nowIso();
-    return this.db
+    const row = this.db
       .prepare<
         AcpSessionRow,
         [
@@ -157,6 +173,8 @@ export class AcpSessionStore {
         ts,
         ts,
       )!;
+    this.notifySessionsChanged();
+    return row;
   }
 
   getSession(sid: KbblSessionId): AcpSessionRow | null {
@@ -194,6 +212,7 @@ export class AcpSessionStore {
         "UPDATE acp_sessions SET status = ?, updated_at = ? WHERE sid = ?",
       )
       .run(status, ts, sid);
+    this.notifySessionsChanged();
   }
 
   setAcpSessionId(sid: KbblSessionId, acpSessionId: string): void {
@@ -202,6 +221,7 @@ export class AcpSessionStore {
         "UPDATE acp_sessions SET acp_session_id = ?, updated_at = ? WHERE sid = ?",
       )
       .run(acpSessionId, nowIso(), sid);
+    this.notifySessionsChanged();
   }
 
   setWorktree(sid: KbblSessionId, worktree: WorktreeAssignment): void {
@@ -222,6 +242,7 @@ export class AcpSessionStore {
         nowIso(),
         sid,
       );
+    this.notifySessionsChanged();
   }
 
   listByArtifact(artifactId: string): AcpSessionRow[] {
@@ -238,6 +259,7 @@ export class AcpSessionStore {
       this.db.prepare("DELETE FROM acp_turns WHERE sid = ?").run(sid);
       this.db.prepare("DELETE FROM acp_sessions WHERE sid = ?").run(sid);
     })();
+    this.notifySessionsChanged();
   }
 
   touchActivity(sid: KbblSessionId): void {
@@ -247,6 +269,7 @@ export class AcpSessionStore {
         "UPDATE acp_sessions SET last_activity_at = ?, updated_at = ? WHERE sid = ?",
       )
       .run(ts, ts, sid);
+    this.notifySessionsChanged();
   }
 
   markEnded(
@@ -263,6 +286,7 @@ export class AcpSessionStore {
          WHERE sid = ?`,
       )
       .run(status, endReason, fencedBy ?? null, nowIso(), sid);
+    this.notifySessionsChanged();
   }
 
   /** §10.5 fence step 1: record the fencer before any teardown begins. */
@@ -272,6 +296,7 @@ export class AcpSessionStore {
         "UPDATE acp_sessions SET fenced_by = ?, updated_at = ? WHERE sid = ?",
       )
       .run(fencedBy, nowIso(), sid);
+    this.notifySessionsChanged();
   }
 
   /** §10.6 advance: detach the key; the row stays queryable by sid. */
@@ -281,6 +306,7 @@ export class AcpSessionStore {
         "UPDATE acp_sessions SET resumable_key = NULL, updated_at = ? WHERE sid = ?",
       )
       .run(nowIso(), sid);
+    this.notifySessionsChanged();
   }
 
   /**
@@ -398,7 +424,7 @@ export class AcpSessionStore {
    * exactly-once dispatch when the controller next becomes live.
    */
   bootSweep(): BootSweepResult {
-    return this.db.transaction((): BootSweepResult => {
+    const result = this.db.transaction((): BootSweepResult => {
       const ts = nowIso();
       const unknownTurns = this.db
         .prepare(
@@ -433,6 +459,8 @@ export class AcpSessionStore {
         sessions_marked_failed: failedSessions.changes,
       };
     })();
+    this.notifySessionsChanged();
+    return result;
   }
 }
 

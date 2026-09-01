@@ -1,43 +1,34 @@
+// PWA domain model, mirroring the server's ACP-era browser wire (§14):
+// PwaSessionSnapshot from core/acp/pwa-wire.ts and AcpUiEvent from
+// core/acp/types.ts. Provider payload shapes (CC content blocks, Codex
+// deltas) are gone with the legacy transcript surface — the browser only
+// ever sees ACP-semantic UI events.
+
 import type { RuntimeId } from "../runtime-interface";
-import type {
-  SessionSnapshot,
-  SessionStatus,
-} from "../session/types";
 
 export type {
-  ResultUsage,
-  SessionSnapshot,
-  SessionStatus,
-} from "../session/types";
-
-export interface EnvelopeEvent {
-  id: number;
-  type: string;
-  ts: string;
-  payload: unknown;
-}
-
-export type InboxDelta =
-  | { type: "session_created"; session: SessionSnapshot }
-  | { type: "session_ended"; sid: string }
-  | { type: "session_removed"; sid: string }
-  | { type: "session_compacted"; sid: string; successor_sid: string }
-  | { type: "compact_suggested"; sid: string; tokens: number; reason: string }
-  | { type: "status_changed"; sid: string; status: SessionStatus }
-  | { type: "pending_count_changed"; sid: string; count: number }
-  | { type: "last_activity_changed"; sid: string; ts: string }
-  | { type: "yolo_changed"; sid: string; yoloMode: boolean }
-  | {
-      type: "observed_model_changed";
-      sid: string;
-      initialObservedModel: string;
-      observedModel: string;
-    };
+  PwaSessionSnapshot as SessionSnapshot,
+  PwaSessionSource as SessionSource,
+} from "../acp/pwa-wire";
+export type {
+  AcpSessionStatus as SessionStatus,
+  AcpUiEvent,
+  UiAvailableCommand,
+  UiContent,
+  UiPermissionOption,
+  UiPlanEntry,
+  UiSessionConfig,
+  UiToolLocation,
+} from "../acp/types";
 
 export type Status = "connecting" | "connected" | "disconnected" | "stale";
 export type Theme = "dark" | "light";
-export type ResolutionMap = Map<string, "allow" | "deny">;
 
+// Legacy runtime descriptor shapes still consumed by the new-session form
+// and the oakridge run-launch UI. Model/effort option lists arrive empty
+// from /config in the ACP era (each agent exposes them per-session via
+// config options); the id doubles as the agent profile id and stays the
+// narrow RuntimeId union while the orchestrator launch surface does.
 export interface RuntimeModelOption {
   value: string;
   label: string;
@@ -47,7 +38,6 @@ export interface RuntimeDescriptor {
   id: RuntimeId;
   label: string;
   models: RuntimeModelOption[];
-  /** Reasoning/effort levels this runtime accepts (value/label like models). */
   efforts: RuntimeModelOption[];
   supportsCompaction: boolean;
 }
@@ -69,168 +59,9 @@ export interface PendingBriefCard {
   created_at: string;
 }
 
-export interface CompactSuggestion {
-  sid: string;
-  tokens: number;
-}
-
-export interface InboxState {
-  sessions: Map<string, SessionSnapshot>;
-  /**
-   * Sids the server currently has in memory (live or ended-but-lingering).
-   * Differs from `sessions.keys()` because archived-only entries from the
-   * /sessions?include=archived fetch aren't in memory. Used to decide whether
-   * a SessionView can open /:sid/stream (in-memory) or must fall back to the
-   * one-shot /:sid/events (archived on disk).
-   */
-  inMemorySids: Set<string>;
-  inboxStatus: Status;
-  /** Per-session compact suggestions keyed by sid. */
-  compactSuggestions: Map<string, CompactSuggestion>;
-  /** Optimistically clear the suggestion for a given sid. */
-  clearCompactSuggestion: (sid: string) => void;
-  /**
-   * Fold a snapshot we already have in hand (e.g. the response body of
-   * POST /sessions) into the inbox state so the destination view mounts
-   * with the correct snapshot instead of racing the /inbox delta. Safe
-   * to call before /inbox actually delivers session_created — the delta
-   * just re-seats the same entry.
-   */
-  hydrateSession: (snapshot: SessionSnapshot) => void;
-}
-
-// Reconstructs a live partial assistant message from --include-partial-messages
-// stream_event records. CC emits an Anthropic-style sequence: message_start →
-// content_block_start (per block) → content_block_delta (many) →
-// content_block_stop → message_delta → message_stop.
-//
-// Built incrementally: a useRef accumulator advances as new events append to
-// the array, so a long stream stays O(N) overall instead of O(N²) (each
-// useMemo run previously rescanned the entire post-`result` window). Block
-// updates are immutable — `blocks.set(idx, { ...block, text: block.text + ... })`
-// — so cached prior renders can't be mutated by a future delta under React
-// Strict Mode or the React Compiler.
-export interface InFlightAssistant {
-  blocks: ContentBlock[];
-  outputTokens: number | null;
-  startedAt: number;
-}
-
-export interface InFlightAccum {
-  blocks: Map<number, ContentBlock>;
-  // Per-block-index accumulator for `input_json_delta` chunks. Anthropic
-  // streams tool_use inputs as concatenated partial JSON; we buffer the
-  // string and parse opportunistically so the live panel can preview the
-  // call (Bash command, file path, etc.) before the turn closes.
-  partialToolInputs: Map<number, string>;
-  // Codex delta accumulator: item_id → accumulated text. Parallel to the
-  // CC block map but keyed by item_id (string). Insertion order = render order.
-  codexDeltaItems: Map<string, string>;
-  outputTokens: number | null;
-  startedAtMs: number | null;
-  lastEventIdx: number;
-  sid: string;
-}
-
-export interface PendingMessage {
+/** Optimistic operator send awaiting its user_message echo on the stream. */
+export interface PendingSend {
   localId: number;
   text: string;
   sentAt: number;
-}
-
-export interface SessionMetrics {
-  turns: number;
-  totalIn: number;
-  totalOut: number;
-  totalCacheRead: number;
-  totalCacheCreate: number;
-  totalCost: number;
-  totalDur: number;
-  last: {
-    inT: number;
-    outT: number;
-    cacheRead: number;
-    cacheCreate: number;
-    dur: number;
-    cost: number;
-  } | null;
-}
-
-export type ListItem =
-  | { kind: "event"; event: EnvelopeEvent }
-  | { kind: "tool_batch"; events: EnvelopeEvent[]; firstId: number }
-  | {
-      kind: "compact";
-      startEvent: EnvelopeEvent;
-      doneEvent: EnvelopeEvent | null;
-    };
-
-export interface SystemStatusPayload {
-  subtype?: string;
-  status?: string | null;
-  compact_result?: string;
-}
-
-export interface ToolUseEntry {
-  id: string;
-  name: string;
-  input: unknown;
-  eventId: number;
-}
-export interface ToolResultEntry {
-  content: unknown;
-  isError: boolean;
-  eventId: number;
-}
-
-export interface CCUserPayload {
-  message?: { role?: string; content?: string | ContentBlock[] };
-}
-export interface CCAssistantPayload {
-  message?: { content?: ContentBlock[] };
-}
-export type ContentBlock =
-  | { type: "text"; text: string }
-  | { type: "thinking"; thinking: string }
-  | { type: "tool_use"; id: string; name: string; input: unknown }
-  | {
-      type: "tool_result";
-      tool_use_id: string;
-      // Anthropic's tool_result block technically allows structured content
-      // (text blocks, image blocks) in addition to plain strings. CC's CLI
-      // emits strings today but typing this as `unknown` lets the renderer
-      // handle both without a future schema drift breaking the UI.
-      content: unknown;
-      is_error?: boolean;
-    };
-
-export interface PermissionRequestPayload {
-  request_id: string;
-  tool_name: string;
-  tool_input: unknown;
-  tool_use_id: string;
-}
-
-export interface RuntimeSessionObservedPayload {
-  runtime_id?: string;
-  runtime_sid?: string;
-}
-
-export interface RuntimeErrorPayload {
-  message?: string;
-}
-
-// Payload emitted by the Codex adapter for streaming assistant text deltas.
-// Mirrors kbbl/adapters/codex/events.ts AssistantDeltaEvent payload shape.
-export interface AssistantDeltaPayload {
-  type: "assistant_delta";
-  threadId: string;
-  turnId: string;
-  itemId: string;
-  delta: string;
-}
-
-export interface InFlightCodexAccum {
-  // item_id → accumulated delta text, in insertion order
-  items: Map<string, string>;
 }

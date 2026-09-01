@@ -329,6 +329,17 @@ export type AcpUiEvent =
       title: string;
       options: readonly UiPermissionOption[];
     }
+  /**
+   * A pending permission request left the pending set — answered by an
+   * operator (any client) or cancelled by fence/child loss. Lets every
+   * subscriber retire the card without polling.
+   */
+  | {
+      kind: "permission_resolved";
+      requestId: string;
+      outcome: "selected" | "cancelled";
+      optionId?: string;
+    }
   | { kind: "config_options"; options: readonly UiSessionConfig[] }
   | { kind: "commands"; commands: readonly UiAvailableCommand[] }
   | { kind: "session_info"; title?: string | null; updatedAt?: string | null }

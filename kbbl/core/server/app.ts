@@ -13,7 +13,7 @@ import {
   makeRequiredControlAuthMiddleware,
   type AuthPolicy,
 } from "./auth";
-import { inboxHandler } from "../stream/inbox";
+import { acpInboxHandler } from "./handlers/acp-inbox";
 import { mountHandoffRoutes } from "./handlers/handoff";
 import { mountPerSidRoutes } from "./handlers/per-sid";
 import { mountAcpPerSidRoutes } from "./handlers/acp-per-sid";
@@ -143,9 +143,9 @@ export function createApp(deps: CreateAppDeps): Hono {
   // ---- per-sid routes (legacy JSONL sessions only) ----
   mountPerSidRoutes(app, { manager, sessionsDir });
 
-  // ---- per-sid skills (legacy sessions; ACP command surface lands with
-  // the PWA cutover via available_commands_update) ----
-  mountSkillsRoutes(app, { manager, registry: undefined, config });
+  // ---- per-session skills (app-owned sources over the ACP backend;
+  // agent slash commands reach the PWA via `commands` UI events) ----
+  mountSkillsRoutes(app, { acp, config });
 
   // ---- per-sid handoff ----
   //
@@ -295,8 +295,8 @@ export function createApp(deps: CreateAppDeps): Hono {
     coreControlToken,
   });
 
-  // ---- /inbox (always-on delta stream) ----
-  app.get("/inbox", inboxHandler(manager));
+  // ---- /inbox (always-on snapshot stream over the ACP session list) ----
+  app.get("/inbox", acpInboxHandler(acp));
 
   // ---- static PWA ----
   app.use(

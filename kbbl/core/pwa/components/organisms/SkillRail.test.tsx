@@ -3,12 +3,12 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 
 import { SkillRail } from "./SkillRail";
 import type { Skill } from "../../../runtime-interface";
-import type { SessionSnapshot } from "../../../session/types";
+import type { SessionSnapshot } from "../../types";
 
 vi.mock("../../hooks/useSkills");
-import { useSkills, useInvokeSkill } from "../../hooks/useSkills";
+import { useSkills, useInvokeSkill, useInvokeAgentCommand } from "../../hooks/useSkills";
 
-const LIVE_SNAPSHOT = { status: "live" } as SessionSnapshot;
+const LIVE_SNAPSHOT = { status: "idle", agentProfile: "claude-code", source: "acp" } as SessionSnapshot;
 
 const CONFIRM_SKILL: Skill = {
   id: "s-deploy",
@@ -54,6 +54,10 @@ function setup(skills: Skill[]) {
     mutateAsync: mockMutateAsync,
     error: null,
   } as unknown as ReturnType<typeof useInvokeSkill>);
+  vi.mocked(useInvokeAgentCommand).mockReturnValue({
+    mutateAsync: vi.fn().mockResolvedValue(undefined),
+    error: null,
+  } as unknown as ReturnType<typeof useInvokeAgentCommand>);
 }
 
 function renderOpenRail() {

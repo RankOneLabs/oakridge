@@ -2,36 +2,36 @@ import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { useStore } from "../state/store";
-import type { InboxDelta, SessionSnapshot } from "../types";
+import type { SessionSnapshot } from "../types";
 
 interface SessionsListResponse {
   sessions: SessionSnapshot[];
 }
 
-// Mounts the inbox subscription: a one-shot seed query for the in-memory +
-// archived session list and a long-lived /inbox EventSource whose snapshot
-// and delta events fold into the Zustand store. The hook returns void —
-// consumers read the inbox snapshot, status, and compact-suggestion map
-// directly from `useStore`.
+// Mounts the inbox subscription: a one-shot seed query for the full list
+// (archived pre-ACP sessions included) and a long-lived /inbox
+// EventSource whose `snapshot` frames replace the ACP session list in the
+// Zustand store wholesale. The server pushes a fresh snapshot on every
+// session change — there are no deltas to fold, and a reconnect needs no
+// replay reasoning because the next frame is always authoritative.
 //
-// Live data flows SSE → store, NOT through React Query. The seed query uses
-// staleTime=Infinity / refetchOnMount=false because the SSE channel is what
-// keeps the snapshot fresh; a refetch would only race the deltas.
+// Live data flows SSE → store, NOT through React Query. The seed query
+// uses staleTime=Infinity / refetchOnMount=false because the SSE channel
+// keeps the ACP half fresh and the archived half never changes.
 //
 // Foreground revival: when the browser backgrounds the PWA (e.g. tablet
 // sleep) the EventSource can enter CLOSED state permanently. On
 // visibilitychange or focus, if the source is CLOSED we rebuild it — the
-// snapshot frame on reconnect re-seats any missed deltas. A CONNECTING source
-// is the browser's own retry/backoff: we leave it alone to avoid resetting
-// that backoff and hammering the server.
+// snapshot frame on reconnect re-seats everything missed. A CONNECTING
+// source is the browser's own retry/backoff: we leave it alone to avoid
+// resetting that backoff and hammering the server.
 export function useInbox(opts: { onSessionRemoved?: (sid: string) => void } = {}): void {
   const seedSessions = useStore((s) => s.seedSessions);
   const applySnapshot = useStore((s) => s.applySnapshot);
-  const applyInboxDelta = useStore((s) => s.applyInboxDelta);
   const setInboxStatus = useStore((s) => s.setInboxStatus);
 
   // Mirror the callback into a ref so the EventSource handler (set up once)
-  // reads the latest closure on each delta instead of a stale one captured
+  // reads the latest closure on each frame instead of a stale one captured
   // at mount. Mutating in render — sanctioned by the React docs for this
   // always-fresh-callback pattern.
   const onSessionRemovedRef = useRef(opts.onSessionRemoved);
@@ -75,21 +75,11 @@ export function useInbox(opts: { onSessionRemoved?: (sid: string) => void } = {}
       es.addEventListener("snapshot", (e) => {
         try {
           const data = JSON.parse((e as MessageEvent).data) as SessionsListResponse;
-          applySnapshot(data.sessions);
-        } catch {
-          markStaleAndReconnect();
-        }
-      });
-
-      es.addEventListener("delta", (e) => {
-        try {
-          const delta = JSON.parse((e as MessageEvent).data) as InboxDelta;
-          applyInboxDelta(delta);
-          if (delta.type === "session_removed") {
-            // Fire consumer callback AFTER the store mutation so any navigate(null)
-            // it triggers lands on the same React batch as the map drop.
-            onSessionRemovedRef.current?.(delta.sid);
-          }
+          const removed = applySnapshot(data.sessions);
+          // Fire consumer callbacks AFTER the store mutation so any
+          // navigate(null) they trigger lands on the same React batch as
+          // the map drop.
+          for (const sid of removed) onSessionRemovedRef.current?.(sid);
         } catch {
           markStaleAndReconnect();
         }
@@ -109,10 +99,9 @@ export function useInbox(opts: { onSessionRemoved?: (sid: string) => void } = {}
 
     const reviveIfStale = () => {
       if (document.visibilityState !== "visible") return;
-      // Only rebuild when the browser has actually given up (CLOSED) or there's
-      // no source. A CONNECTING source is the browser's own retry/backoff in
-      // flight after a transient drop — tearing it down on every focus event
-      // would reset that backoff and could hammer the server.
+      // Only rebuild when the browser has actually given up (CLOSED) or
+      // there's no source — a CONNECTING source is the browser's own
+      // retry/backoff in flight after a transient drop.
       if (!current || current.readyState === EventSource.CLOSED) connect();
     };
 
@@ -127,5 +116,5 @@ export function useInbox(opts: { onSessionRemoved?: (sid: string) => void } = {}
       if (reconnectTimer !== null) clearTimeout(reconnectTimer);
       current?.close();
     };
-  }, [applyInboxDelta, applySnapshot, setInboxStatus]);
+  }, [applySnapshot, setInboxStatus]);
 }

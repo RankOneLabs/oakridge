@@ -1,9 +1,21 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Hono } from "hono";
 
 import type { EnvelopeEvent, SessionId } from "../../session/session";
-import { inboxHandler, type InboxStreamManager } from "../../stream/inbox";
+import { makeAcpTestService } from "../../acp/test-harness";
+import { acpInboxHandler } from "./acp-inbox";
 import { streamForSession, type SessionStreamSource } from "../../stream/sse";
+
+const tmpRoot = mkdtempSync(join(tmpdir(), "sse-readiness-"));
+const harness = makeAcpTestService({ stateDir: join(tmpRoot, "state") });
+
+afterAll(async () => {
+  await harness.service.shutdown();
+  rmSync(tmpRoot, { recursive: true, force: true });
+});
 
 async function readUntil(
   reader: ReadableStreamDefaultReader<Uint8Array>,
@@ -32,13 +44,9 @@ async function readUntil(
 describe("SSE readiness", () => {
   test("inbox stream writes ready before the snapshot frame", async () => {
     const app = new Hono();
-    const manager = {
-      subscribeInbox: () => () => {},
-      listSnapshots: () => [],
-    } satisfies InboxStreamManager;
     const controller = new AbortController();
 
-    app.get("/inbox", inboxHandler(manager));
+    app.get("/inbox", acpInboxHandler(harness.service));
 
     const res = await app.fetch(
       new Request("http://kbbl.test/inbox", { signal: controller.signal }),

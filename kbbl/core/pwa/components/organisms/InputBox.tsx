@@ -1,6 +1,8 @@
 import { useState, type Ref } from "react";
 import { useMutation } from "@tanstack/react-query";
 
+import { randomUuid } from "../../lib/random-uuid";
+
 // Distinguishes a server's explicit non-OK response (which means the server
 // definitively rejected the message — safe to roll back the optimistic
 // bubble and re-show the text) from a thrown fetch (network drop, request
@@ -27,9 +29,9 @@ export function InputBox({
   onSendFailed: (localId: number) => void;
   canStop: boolean;
   // True while a turn is in flight (the thinking indicator is up). The
-  // Interrupt control is shown only then — it cancels the current turn (ESC to
-  // the agent) and leaves the session live, distinct from the always-present
-  // Stop button which kills the whole session.
+  // Interrupt control is shown only then — it cancels the current turn
+  // (session/cancel) and leaves the session live, distinct from the
+  // always-present Stop button which closes the whole session.
   isTurnActive: boolean;
 }) {
   const [text, setText] = useState("");
@@ -37,11 +39,17 @@ export function InputBox({
   const [error, setError] = useState<string | null>(null);
 
   const sendMutation = useMutation({
-    mutationFn: async (payload: string) => {
-      const res = await fetch(`/${encodeURIComponent(sid)}/input`, {
+    // client_message_id is the operator turn's idempotency key (§14.5),
+    // minted per message (not per request) so any retry of the same send
+    // cannot double-dispatch.
+    mutationFn: async (payload: { text: string; clientMessageId: string }) => {
+      const res = await fetch(`/sessions/${encodeURIComponent(sid)}/input`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text: payload }),
+        body: JSON.stringify({
+          text: payload.text,
+          client_message_id: payload.clientMessageId,
+        }),
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as {
@@ -90,24 +98,18 @@ export function InputBox({
     setText("");
     setError(null);
     const localId = onSend(payload);
-    // [hang-debug] Bracket the POST /:sid/input mutation so we can tell
-    // whether send hung pre-flight, mid-flight, or completed (and the
-    // bubble-reconciliation is the stuck step).
-    const debugStart = Date.now();
-    console.debug(`[hang-debug] send.start sid=${sid} localId=${localId} bytes=${payload.length}`);
     try {
-      await sendMutation.mutateAsync(payload);
-      console.debug(`[hang-debug] send.ok sid=${sid} localId=${localId} elapsed_ms=${Date.now() - debugStart}`);
+      await sendMutation.mutateAsync({
+        text: payload,
+        clientMessageId: randomUuid(),
+      });
     } catch (err) {
-      const elapsed = Date.now() - debugStart;
       if (err instanceof ServerRejection) {
-        console.debug(`[hang-debug] send.reject sid=${sid} localId=${localId} elapsed_ms=${elapsed} msg=${JSON.stringify(err.message)}`);
         onSendFailed(localId);
         setText(payload);
         setError(err.message);
       } else {
         const msg = err instanceof Error ? err.message : "request failed";
-        console.warn(`[hang-debug] send.network_error sid=${sid} localId=${localId} elapsed_ms=${elapsed} msg=${JSON.stringify(msg)}`);
         setError(
           `${msg} — delivery status unknown, check the transcript before retrying`,
         );
@@ -117,7 +119,7 @@ export function InputBox({
 
   const interruptMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`/${encodeURIComponent(sid)}/interrupt`, {
+      const res = await fetch(`/sessions/${encodeURIComponent(sid)}/cancel`, {
         method: "POST",
       });
       if (!res.ok) {
@@ -184,7 +186,7 @@ export function InputBox({
             className="btn-interrupt"
             onClick={() => void interrupt()}
             disabled={interruptMutation.isPending}
-            title="Cancels the agent's current turn (ESC). The session stays live — type your next message to redirect."
+            title="Cancels the agent's current turn. The session stays live — type your next message to redirect."
           >
             {interruptMutation.isPending ? "interrupting…" : "Interrupt"}
           </button>

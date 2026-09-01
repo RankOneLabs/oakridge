@@ -12,6 +12,11 @@ import {
   toLegacyStatus,
   toTerminalBody,
 } from "../../acp/legacy-wire";
+import {
+  archivedLegacyToPwaSnapshot,
+  toPwaSessionSnapshot,
+} from "../../acp/pwa-wire";
+import { listPwaSessions } from "./acp-inbox";
 import { isValidSid } from "./per-sid";
 import { findSessionHold, isTruthyFlag, selectCloseAuthority, selectCloseRefusal } from "../session-hold";
 
@@ -267,18 +272,19 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
   });
 
   app.get("/sessions", async (c) => {
-    const acpSessions = acp.listSessions().map(toLegacySnapshot);
+    const acpSessions = listPwaSessions(acp);
     const include = c.req.query("include");
     if (include !== "archived") return c.json({ sessions: acpSessions });
-    // Pre-cutover sessions live as JSONL; keep them browsable until the
-    // legacy machinery is deleted. Ordered newest first by lastActivityTs
-    // so the PWA can render without a second sort.
+    // Pre-cutover sessions live as JSONL; keep them listed (closed, not
+    // viewable) until the legacy machinery is deleted. Ordered newest
+    // first by lastActivityTs so the PWA can render without a second sort.
     const archived = await manager.listArchivedSnapshots();
-    const merged = [...acpSessions, ...manager.listSnapshots(), ...archived].sort((a, b) => {
-      const left = (a as { lastActivityTs: string }).lastActivityTs;
-      const right = (b as { lastActivityTs: string }).lastActivityTs;
-      if (left === right) return 0;
-      return left < right ? 1 : -1;
+    const legacy = [...manager.listSnapshots(), ...archived].map(
+      archivedLegacyToPwaSnapshot,
+    );
+    const merged = [...acpSessions, ...legacy].sort((a, b) => {
+      if (a.lastActivityTs === b.lastActivityTs) return 0;
+      return a.lastActivityTs < b.lastActivityTs ? 1 : -1;
     });
     return c.json({ sessions: merged });
   });
@@ -418,7 +424,12 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       const { status, body: errBody } = errorResponse(created.error);
       return c.json(errBody, status);
     }
-    return c.json(toLegacySnapshot(created.value));
+    return c.json(
+      toPwaSessionSnapshot(
+        created.value,
+        acp.pendingPermissionCount(created.value.sid),
+      ),
+    );
   });
 
   app.get("/artifacts/:artifactId/sessions", (c) => {
@@ -434,10 +445,14 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
         400,
       );
     }
-    const acpSessions = acp.listByArtifact(trimmed).map(toLegacySnapshot);
+    const acpSessions = acp
+      .listByArtifact(trimmed)
+      .map((session) =>
+        toPwaSessionSnapshot(session, acp.pendingPermissionCount(session.sid)),
+      );
     const legacy = manager
       .listByArtifact(trimmed as ArtifactId)
-      .map((s) => s.snapshot());
+      .map((s) => archivedLegacyToPwaSnapshot(s.snapshot()));
     return c.json({ sessions: [...acpSessions, ...legacy] });
   });
 
