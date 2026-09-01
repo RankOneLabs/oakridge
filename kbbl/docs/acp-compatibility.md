@@ -75,7 +75,7 @@ Diagnosis: PTY keystroke injection bitrot against claude 2.1.252 (package
 published 2026-05-14). This is precisely the input fragility kbbl abandoned
 when `send()` moved to the Channels push transport (PR #277).
 
-## Claude candidate 2 — `@agentclientprotocol/claude-agent-acp` 0.70.0: WORKS, WRONG BILLING BUCKET
+## Claude candidate 2 — `@agentclientprotocol/claude-agent-acp` 0.70.0: SELECTED
 
 All nine smoke steps pass, richest capability matrix of the three:
 
@@ -96,14 +96,16 @@ mirror Claude Code permission modes (`default`, `acceptEdits`, `plan`,
 
 Billing: no child `claude` process — it runs the Claude Agent SDK in-process.
 `ANTHROPIC_API_KEY` was confirmed absent from the environment, so the run used
-subscription OAuth, which on the Agent SDK path draws from the **separate
-monthly Agent SDK credit**, not interactive-plan usage. Under the operator's
-2026-08-31 ruling (interactive billing only) this **fails the gate** on
-billing despite being functionally flawless.
+subscription OAuth, which on the Agent SDK path draws from the separate monthly
+Agent SDK credit bucket. The operator's initial 2026-08-31 ruling excluded that
+bucket; the operator revised the ruling the same day after seeing the spike
+results — **the Agent SDK path is acceptable**, so this candidate passes the
+billing criterion and, having passed all nine protocol steps, is selected.
 
-> Operator verification pending: the spike sent two tiny prompts + one
-> cancelled prompt through this agent (~2026-08-31 evening, session
-> `96438c5f`). Check the Claude usage view to confirm which bucket they hit.
+> Operator verification still worthwhile: the spike sent two tiny prompts + one
+> cancelled prompt through this agent (2026-08-31 evening, session `96438c5f`).
+> Check the Claude usage view to confirm they hit a subscription bucket and not
+> API billing.
 
 ## Claude candidate 3 — `harukitosa/claude-code-acp`: NOT RUN
 
@@ -116,16 +118,18 @@ replaced upstream; it cannot without forking.
 
 - **Codex candidate selected:** `@agentclientprotocol/codex-acp@1.7.0`. Cohort 2
   stage 1 can proceed.
-- **Claude gate: no ready-made candidate passes.** The §6.3 contingency is the
-  recommended path: a thin ACP server shim over kbbl's existing, production-
-  proven claude-code adapter machinery (Channels push for input, hook/transcript
-  integration, trust seeding), run as a separate process. Candidate 1 proves the
-  shape is expressible in ACP (its protocol layer is fine); its PTY input layer
-  is the only broken part, and kbbl's adapter already solved that problem with
-  Channels.
-- The alternative is an operator reversal on billing: if Agent SDK credit
-  becomes acceptable, candidate 2 is production-ready today with the best
-  capability matrix. That is an operator decision, not an engineering one.
-- `session/load` works on both functioning agents — the §7 no-transcript-store
+- **Claude candidate selected:** `@agentclientprotocol/claude-agent-acp@0.70.0`.
+  The operator's initial interactive-billing-only ruling would have failed it;
+  the operator revised that ruling on 2026-08-31 (Agent SDK path acceptable),
+  and it passes every protocol step with the best capability matrix of the
+  three. No API key required or wanted: it authenticates via the existing
+  subscription OAuth login, and the profile env policy must exclude
+  `ANTHROPIC_API_KEY` so a stray key can never silently flip sessions to
+  per-token API billing.
+- The §6.3 PTY-bridge contingency stays dormant. It becomes relevant only if
+  the billing ruling reverts to interactive-only or cohort 2 stage 2's deeper
+  checks (`.claude` instructions, hooks, skills, MCP, worktree cwd, orphan
+  cleanup) surface a disqualifier.
+- `session/load` works on both selected agents — the §7 no-transcript-store
   ownership model holds. No unresolved question remains about `session/load`
   for the selected production profiles.
