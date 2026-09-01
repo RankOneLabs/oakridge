@@ -44,7 +44,7 @@ describe("gated-review tool catalog", () => {
 
   test("omits undeclared and whitespace-only arguments from the request", () => {
     const skill = gatedReviewSkills("claude-code").find(
-      (candidate) => candidate.id === "cc:mcp:gated-review:git.fetch",
+      (candidate) => candidate.id === "claude-code:mcp:gated-review:git.fetch",
     );
     if (skill === undefined) throw new Error("missing git.fetch fixture");
 

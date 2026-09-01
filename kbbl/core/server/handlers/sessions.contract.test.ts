@@ -95,9 +95,9 @@ describe("POST /sessions create-session contract", () => {
       runtime: "claude-code",
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { runtimeId: string; model: string | null };
-    expect(body.runtimeId).toBe("claude-code");
-    expect(body.model).toBeNull();
+    const body = (await res.json()) as { agentProfile: string; requestedModel: string | null };
+    expect(body.agentProfile).toBe("claude-code");
+    expect(body.requestedModel).toBeNull();
   });
 
   test("a model the agent's config options resolve is accepted and recorded", async () => {
@@ -108,8 +108,8 @@ describe("POST /sessions create-session contract", () => {
       model: "fake-small",
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { model: string | null };
-    expect(body.model).toBe("fake-small");
+    const body = (await res.json()) as { requestedModel: string | null };
+    expect(body.requestedModel).toBe("fake-small");
   });
 
   test("a model the agent does not expose is refused with the ACP failure code", async () => {
@@ -149,7 +149,7 @@ describe("POST /sessions create-session contract", () => {
     const app = makeApp(repoDir);
     const res = await postSessions(app, { workdir: repoDir, agent_profile: "codex" });
     expect(res.status).toBe(200);
-    expect(((await res.json()) as { runtimeId: string }).runtimeId).toBe("codex");
+    expect(((await res.json()) as { agentProfile: string }).agentProfile).toBe("codex");
   });
 
   test("conflicting runtime and agent_profile are rejected", async () => {
@@ -171,7 +171,7 @@ describe("POST /sessions create-session contract", () => {
       effort: "low",
     });
     expect(res.status).toBe(200);
-    expect(((await res.json()) as { effort: string | null }).effort).toBe("low");
+    expect(((await res.json()) as { requestedEffort: string | null }).requestedEffort).toBe("low");
   });
 
   test("an effort the agent does not expose is refused with the ACP failure code", async () => {

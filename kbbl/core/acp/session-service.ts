@@ -222,6 +222,23 @@ export class AcpSessionService {
     return this.deps.store.listByArtifact(artifactId).map(toSnapshot);
   }
 
+  /** Permission requests awaiting an operator answer (0 with no live
+   * controller — pending permissions do not survive the child). */
+  pendingPermissionCount(sid: string): number {
+    return (
+      this.deps.controllers.getLive(sid as KbblSessionId)
+        ?.pendingPermissionCount ?? 0
+    );
+  }
+
+  /**
+   * Coarse §14.1 change feed: fires after any sessions-table write. The
+   * inbox re-reads snapshots on each tick; there are no delta payloads.
+   */
+  subscribeSessionsChanged(listener: () => void): () => void {
+    return this.deps.store.subscribeSessionsChanged(listener);
+  }
+
   listProfiles(): Array<{ id: string; label: string; enabled: boolean }> {
     return [...this.deps.profiles.values()].map((profile) => ({
       id: profile.id,

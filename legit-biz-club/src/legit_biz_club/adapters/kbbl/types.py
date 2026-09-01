@@ -56,7 +56,9 @@ class WorkspaceEventRequest(_KbblModel):
     payload: WorkspaceEventPayload | None = None
 
 
-SessionStatus = Literal["starting", "live", "ended"]
+SessionStatus = Literal[
+    "provisioning", "idle", "prompting", "ended", "fenced", "failed", "unknown"
+]
 
 
 class ResultUsage(BaseModel):
@@ -77,28 +79,28 @@ class ResultUsage(BaseModel):
 
 
 class SessionSnapshot(_KbblModel):
-    """Mirror of kbbl's `SessionSnapshot` interface.
+    """Mirror of kbbl's ``PwaSessionSnapshot`` (the §14.1 browser wire).
 
-    Nullable fields (``cc_sid``, ``parent_cc_sid``, etc.) are typed as
-    ``T | None`` but **without** a ``None`` default, so a missing key
-    in kbbl's response triggers a pydantic validation error rather than
-    silently defaulting to ``None``. That keeps contract drift loud.
-    Only fields that are genuinely optional in kbbl's contract carry
-    explicit defaults.
+    Nullable fields are typed as ``T | None`` but **without** a ``None``
+    default, so a missing key in kbbl's response triggers a pydantic
+    validation error rather than silently defaulting to ``None``. That
+    keeps contract drift loud.
     """
 
     sid: str
     name: str
-    workdir: str
+    agent_profile: str
     status: SessionStatus
+    source: Literal["acp", "legacy_archive"]
     created_at: str
     last_activity_ts: str
-    cc_sid: str | None
-    parent_cc_sid: str | None
-    parent_oakridge_sid: str | None
     artifact_id: str | None
-    pending_count: int
-    yolo_mode: bool
-    allowed_tools: list[str]
-    last_result_usage: ResultUsage | None
-    model: str | None
+    project_workdir: str
+    worktree_path: str
+    worktree_branch: str | None
+    worktree_base_ref: str | None
+    requested_model: str | None
+    requested_effort: str | None
+    end_reason: str | None
+    fenced_by: str | None
+    pending_permission_count: int

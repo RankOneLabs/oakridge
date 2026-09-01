@@ -222,6 +222,14 @@ export class AcpSessionController {
       await this.teardownChild();
       return loaded;
     }
+    // session/load answers with configOptions like session/new does; a
+    // respawned session must keep the §12 resolver cache and the UI's
+    // config selectors alive across child restarts.
+    const loadedOptions = loaded.value?.configOptions ?? [];
+    if (loadedOptions.length > 0) {
+      this.configOptions = loadedOptions;
+      this.emit(projectConfigOptions(loadedOptions));
+    }
     return ok(undefined);
   }
 
@@ -309,6 +317,16 @@ export class AcpSessionController {
     this.deps.store.markTurnPrompting(turn.sid, turn.turn_key);
     this.deps.store.setStatus(turn.sid, "prompting");
     this.deps.store.touchActivity(turn.sid);
+    // Agents do not echo the prompt back as a user_message_chunk (that
+    // update type is for replay and agent-injected user turns), so the
+    // dispatched text is projected here — the only place every turn
+    // source (initial, operator, collaboration) passes through.
+    this.emit({
+      kind: "user_message",
+      id: turn.turn_key,
+      content: [{ type: "text", text: turn.payload }],
+      replayed: false,
+    });
     this.emit({ kind: "turn_state", state: "prompting" });
     console.log(
       `[acp] sid=${turn.sid} turn=${turn.turn_key} prompting (pid=${this.childPid})`,
@@ -483,7 +501,18 @@ export class AcpSessionController {
     }
     this.pendingPermissions.delete(requestId);
     pending.resolve({ outcome: { outcome: "selected", optionId } });
+    this.deps.store.touchActivity(this.deps.sid);
+    this.emit({
+      kind: "permission_resolved",
+      requestId,
+      outcome: "selected",
+      optionId,
+    });
     return ok(undefined);
+  }
+
+  get pendingPermissionCount(): number {
+    return this.pendingPermissions.size;
   }
 
   stderrTail(): readonly string[] {
@@ -501,6 +530,17 @@ export class AcpSessionController {
 
   private handleUpdate(notification: schema.SessionNotification): void {
     this.deps.store.touchActivity(this.deps.sid);
+    // While a kbbl-dispatched prompt is active, a live user_message_chunk
+    // is the agent echoing that prompt back — runTurn already projected
+    // the dispatched text, so the echo would duplicate it. Replayed user
+    // chunks (session/load) still flow: there runTurn emitted nothing.
+    if (
+      !this.replaying &&
+      this.activeTurnKey !== null &&
+      notification.update.sessionUpdate === "user_message_chunk"
+    ) {
+      return;
+    }
     this.chunkCounter += 1;
     const projected = projectSessionUpdate(
       notification.update,
@@ -530,6 +570,9 @@ export class AcpSessionController {
     const requestId = `perm-${this.permissionCounter}`;
     return new Promise((resolve) => {
       this.pendingPermissions.set(requestId, { requestId, resolve });
+      // A waiting permission is session activity: it bumps the inbox so
+      // the operator sees the session asking, not just going quiet.
+      this.deps.store.touchActivity(this.deps.sid);
       this.emit(projectPermissionRequest(requestId, request));
       console.log(
         `[acp] sid=${this.deps.sid} permission requested (${requestId}: ${request.toolCall.title ?? "untitled"})`,
@@ -540,6 +583,11 @@ export class AcpSessionController {
   private rejectPendingPermissions(): void {
     for (const pending of this.pendingPermissions.values()) {
       pending.resolve({ outcome: { outcome: "cancelled" } });
+      this.emit({
+        kind: "permission_resolved",
+        requestId: pending.requestId,
+        outcome: "cancelled",
+      });
     }
     this.pendingPermissions.clear();
   }

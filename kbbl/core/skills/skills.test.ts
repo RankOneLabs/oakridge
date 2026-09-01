@@ -1,39 +1,23 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Hono } from "hono";
 
-import { KbblConfigSchema } from "../config";
-import type { Session, WriteInputOpts } from "../session/session";
-import { SessionNotReadyError } from "../session/session";
-import type { SessionManager } from "../session/session-manager";
-import type { RuntimeRegistry, AgentRuntime } from "../runtime";
+import { KbblConfigSchema, type KbblConfig } from "../config";
+import { makeAcpTestService, type AcpTestHarness } from "../acp/test-harness";
 import type { Skill } from "./types";
-import { filterSkillsForSession, buildSkillRegistry } from "./registry";
+import { aggregateSkillsForProfile } from "./registry";
 import { FIXTURE_SKILLS } from "./fixtures";
 import { formatMcpSkillRequest, gatedReviewSkills } from "./gated-review";
+import { formatSkillInvocation } from "./format";
 import { mountSkillsRoutes } from "./routes";
 
-const VALID_SID = "deadbeef-cafe-4abc-8def-aaaaaaaaaaaa";
+const UNKNOWN_SID = "deadbeef-cafe-4abc-8def-aaaaaaaaaaaa";
 
-// Minimal session stub — cast to Session since Session is a large class
-function makeSession(overrides: {
-  runtimeId?: "claude-code" | "codex";
-  status?: "starting" | "live" | "compacting" | "ended";
-  writeInput?: (
-    text: string,
-    opts?: WriteInputOpts,
-  ) => Promise<void>;
-} = {}): Session {
-  return {
-    oakridgeSid: VALID_SID,
-    runtimeId: overrides.runtimeId ?? "claude-code",
-    status: overrides.status ?? "live",
-    currentCcSid: null,
-    currentObservedModel: null,
-    writeInput: overrides.writeInput ?? (() => Promise.resolve()),
-  } as unknown as Session;
-}
-
-function makeConfig(overrides: { hidden?: string[]; fixtures?: boolean; confirm?: string[] } = {}) {
+function makeConfig(
+  overrides: { hidden?: string[]; fixtures?: boolean; confirm?: string[] } = {},
+): KbblConfig {
   return KbblConfigSchema.parse({
     skills: {
       hidden: overrides.hidden ?? [],
@@ -43,385 +27,169 @@ function makeConfig(overrides: { hidden?: string[]; fixtures?: boolean; confirm?
   });
 }
 
-function makeRegistry(discoverFn?: () => Promise<Skill[]>): RuntimeRegistry {
-  const runtime: Partial<AgentRuntime> = {
-    id: "claude-code",
-    discoverSkills: discoverFn,
-  };
-  return {
-    runtimes: new Map([["claude-code", runtime as AgentRuntime]]),
-    defaultId: "claude-code",
-  };
-}
+// === aggregateSkillsForProfile ===
 
-// === filterSkillsForSession ===
-
-describe("filterSkillsForSession", () => {
-  const skills: Skill[] = [
-    {
-      id: "s1",
-      name: "list-tasks",
-      description: "",
-      backend: "claude-code",
-      scope: "user",
-      args: [],
-      user_invocable: true,
-      model_invocable: true,
-    },
-    {
-      id: "s2",
-      name: "deploy",
-      description: "",
-      backend: "claude-code",
-      scope: "user",
-      args: [],
-      user_invocable: true,
-      model_invocable: false,
-    },
-  ];
-
-  test("returns all skills when hidden list is empty", () => {
-    const result = filterSkillsForSession(makeSession(), skills, []);
-    expect(result).toEqual(skills);
+describe("aggregateSkillsForProfile", () => {
+  test("default source is the gated-review shortcuts for the profile", () => {
+    const result = aggregateSkillsForProfile("claude-code", makeConfig());
+    expect(result.length).toBeGreaterThan(0);
+    expect(result.every((s) => s.backend === "claude-code")).toBe(true);
+    expect(result.every((s) => s.name.startsWith("mcp:gated-review:"))).toBe(true);
   });
 
-  test("drops skills whose name is in the hidden list", () => {
-    const result = filterSkillsForSession(makeSession(), skills, ["deploy"]);
-    expect(result).toHaveLength(1);
-    expect(result[0].id).toBe("s1");
-  });
-
-  test("hidden list is matched by name, not id", () => {
-    const result = filterSkillsForSession(makeSession(), skills, ["s1"]);
-    expect(result).toHaveLength(2); // "s1" is the id, not the name
-  });
-});
-
-// === buildSkillRegistry.aggregate ===
-
-describe("buildSkillRegistry aggregate()", () => {
-  test("returns [] when registry is undefined and fixtures is false", async () => {
-    const config = makeConfig();
-    const agg = buildSkillRegistry({ registry: undefined, config });
-    const result = await agg.aggregate(makeSession());
-    expect(result).toEqual([]);
-  });
-
-  test("returns [] when runtime has no discoverSkills", async () => {
-    const registry: RuntimeRegistry = {
-      runtimes: new Map([
-        [
-          "claude-code",
-          { id: "claude-code" } as unknown as AgentRuntime,
-        ],
-      ]),
-      defaultId: "claude-code",
-    };
-    const config = makeConfig();
-    const agg = buildSkillRegistry({ registry, config });
-    const result = await agg.aggregate(makeSession());
-    expect(result).toEqual([]);
-  });
-
-  test("returns [] when discoverSkills throws", async () => {
-    const registry = makeRegistry(() => {
-      throw new Error("discovery exploded");
-    });
-    const config = makeConfig();
-    const agg = buildSkillRegistry({ registry, config });
-    const result = await agg.aggregate(makeSession());
-    expect(result).toEqual([]);
-  });
-
-  test("drops user_invocable=false skills", async () => {
-    const skills: Skill[] = [
-      {
-        id: "visible",
-        name: "visible-skill",
-        description: "",
-        backend: "claude-code",
-        scope: "user",
-        args: [],
-        user_invocable: true,
-        model_invocable: false,
-      },
-      {
-        id: "hidden-internal",
-        name: "internal",
-        description: "",
-        backend: "claude-code",
-        scope: "user",
-        args: [],
-        user_invocable: false,
-        model_invocable: true,
-      },
-    ];
-    const registry = makeRegistry(() => Promise.resolve(skills));
-    const config = makeConfig();
-    const agg = buildSkillRegistry({ registry, config });
-    const result = await agg.aggregate(makeSession());
-    expect(result).toHaveLength(1);
-    expect(result[0].id).toBe("visible");
-  });
-
-  test("applies the hidden name denylist after user_invocable filter", async () => {
-    const skills: Skill[] = [
-      {
-        id: "s1",
-        name: "deploy",
-        description: "",
-        backend: "claude-code",
-        scope: "user",
-        args: [],
-        user_invocable: true,
-        model_invocable: false,
-      },
-      {
-        id: "s2",
-        name: "list-tasks",
-        description: "",
-        backend: "claude-code",
-        scope: "user",
-        args: [],
-        user_invocable: true,
-        model_invocable: true,
-      },
-    ];
-    const registry = makeRegistry(() => Promise.resolve(skills));
-    const config = makeConfig({ hidden: ["deploy"] });
-    const agg = buildSkillRegistry({ registry, config });
-    const result = await agg.aggregate(makeSession());
-    expect(result).toHaveLength(1);
-    expect(result[0].name).toBe("list-tasks");
-  });
-
-  test("fixtures mode returns only skills matching session.runtimeId", async () => {
+  test("fixtures mode returns only skills matching the profile", () => {
     const config = makeConfig({ fixtures: true });
-    const agg = buildSkillRegistry({ registry: undefined, config });
-
-    const ccResult = await agg.aggregate(makeSession({ runtimeId: "claude-code" }));
-    expect(ccResult.every((s) => s.backend === "claude-code")).toBe(true);
-
-    const codexResult = await agg.aggregate(makeSession({ runtimeId: "codex" }));
-    expect(codexResult.every((s) => s.backend === "codex")).toBe(true);
+    const cc = aggregateSkillsForProfile("claude-code", config);
+    expect(cc.every((s) => s.backend === "claude-code")).toBe(true);
+    const codex = aggregateSkillsForProfile("codex", config);
+    expect(codex.every((s) => s.backend === "codex")).toBe(true);
   });
 
-  test("fixtures mode returns FIXTURE_SKILLS minus user_invocable=false", async () => {
+  test("fixtures mode drops user_invocable=false skills", () => {
     const config = makeConfig({ fixtures: true });
-    const agg = buildSkillRegistry({ registry: undefined, config });
-    const result = await agg.aggregate(makeSession({ runtimeId: "claude-code" }));
-
-    // Only CC fixtures, minus the one with user_invocable=false
+    const result = aggregateSkillsForProfile("claude-code", config);
     const expectedCount = FIXTURE_SKILLS.filter(
       (s) => s.backend === "claude-code" && s.user_invocable !== false,
     ).length;
     expect(result).toHaveLength(expectedCount);
-    expect(result.every((s) => s.user_invocable !== false)).toBe(true);
   });
 
-  test("fixtures mode still applies the hidden denylist", async () => {
-    const config = makeConfig({ fixtures: true, hidden: ["list-tasks"] });
-    const agg = buildSkillRegistry({ registry: undefined, config });
-    const result = await agg.aggregate(makeSession());
-    expect(result.every((s) => s.name !== "list-tasks")).toBe(true);
+  test("hidden denylist matches by name, not id", () => {
+    const config = makeConfig({ fixtures: true, hidden: ["cc-list-tasks"] });
+    const byId = aggregateSkillsForProfile("claude-code", config);
+    expect(byId.some((s) => s.name === "list-tasks")).toBe(true);
+
+    const byName = aggregateSkillsForProfile(
+      "claude-code",
+      makeConfig({ fixtures: true, hidden: ["list-tasks"] }),
+    );
+    expect(byName.every((s) => s.name !== "list-tasks")).toBe(true);
   });
 
-  test("confirm annotation: empty allowlist means no skill gets confirm=true", async () => {
-    const skills: Skill[] = [
-      {
-        id: "s1",
-        name: "deploy",
-        description: "",
-        backend: "claude-code",
-        scope: "user",
-        args: [],
-        user_invocable: true,
-        model_invocable: false,
-      },
-    ];
-    const registry = makeRegistry(() => Promise.resolve(skills));
-    const config = makeConfig(); // confirm defaults to []
-    const agg = buildSkillRegistry({ registry, config });
-    const result = await agg.aggregate(makeSession());
-    expect(result.every((s) => s.confirm !== true)).toBe(true);
-  });
-
-  test("confirm annotation: skills matching the allowlist get confirm=true, others get confirm=false", async () => {
-    const skills: Skill[] = [
-      {
-        id: "s1",
-        name: "deploy",
-        description: "",
-        backend: "claude-code",
-        scope: "user",
-        args: [],
-        user_invocable: true,
-        model_invocable: false,
-      },
-      {
-        id: "s2",
-        name: "list-tasks",
-        description: "",
-        backend: "claude-code",
-        scope: "user",
-        args: [],
-        user_invocable: true,
-        model_invocable: true,
-      },
-    ];
-    const registry = makeRegistry(() => Promise.resolve(skills));
-    const config = makeConfig({ confirm: ["deploy"] });
-    const agg = buildSkillRegistry({ registry, config });
-    const result = await agg.aggregate(makeSession());
+  test("confirm annotation: allowlisted names get confirm=true, others false", () => {
+    const config = makeConfig({ fixtures: true, confirm: ["deploy"] });
+    const result = aggregateSkillsForProfile("claude-code", config);
     expect(result.find((s) => s.name === "deploy")?.confirm).toBe(true);
     expect(result.find((s) => s.name === "list-tasks")?.confirm).toBe(false);
   });
 
-  test("confirm annotation: mutating gated-review skills are gated by default", async () => {
-    const skills: Skill[] = [
-      {
-        id: "cc:mcp:gated-review:git.push",
-        name: "mcp:gated-review:git.push",
-        description: "",
-        backend: "claude-code",
-        scope: "system",
-        args: [],
-        user_invocable: true,
-        model_invocable: true,
-      },
-      {
-        id: "cc:mcp:gated-review:get_review_round",
-        name: "mcp:gated-review:get_review_round",
-        description: "",
-        backend: "claude-code",
-        scope: "system",
-        args: [],
-        user_invocable: true,
-        model_invocable: true,
-      },
-    ];
-    const registry = makeRegistry(() => Promise.resolve(skills));
-    const config = KbblConfigSchema.parse({});
-    const agg = buildSkillRegistry({ registry, config });
-    const result = await agg.aggregate(makeSession());
-    expect(result.find((s) => s.name === "mcp:gated-review:git.push")?.confirm).toBe(
-      true,
+  test("default config gates mutating gated-review actions", () => {
+    const result = aggregateSkillsForProfile(
+      "claude-code",
+      KbblConfigSchema.parse({}),
     );
+    expect(
+      result.find((s) => s.name === "mcp:gated-review:git.push")?.confirm,
+    ).toBe(true);
     expect(
       result.find((s) => s.name === "mcp:gated-review:get_review_round")?.confirm,
     ).toBe(false);
   });
 
-  test("confirm annotation runs after hidden filter: hidden skills are absent from result", async () => {
-    const skills: Skill[] = [
-      {
-        id: "s1",
-        name: "deploy",
-        description: "",
-        backend: "claude-code",
-        scope: "user",
-        args: [],
-        user_invocable: true,
-        model_invocable: false,
-      },
-    ];
-    const registry = makeRegistry(() => Promise.resolve(skills));
-    // deploy is in both the confirm allowlist and the hidden denylist
-    const config = makeConfig({ confirm: ["deploy"], hidden: ["deploy"] });
-    const agg = buildSkillRegistry({ registry, config });
-    const result = await agg.aggregate(makeSession());
-    expect(result).toHaveLength(0);
+  test("a skill both hidden and confirm-listed stays hidden", () => {
+    const config = makeConfig({
+      fixtures: true,
+      hidden: ["deploy"],
+      confirm: ["deploy"],
+    });
+    const result = aggregateSkillsForProfile("claude-code", config);
+    expect(result.every((s) => s.name !== "deploy")).toBe(true);
   });
 });
 
-// === routes ===
+// === formatSkillInvocation ===
 
-function buildRoutesApp(opts: {
-  session?: Session | null;
-  registry?: RuntimeRegistry;
-  hidden?: string[];
-  fixtures?: boolean;
-}): Hono {
-  const { session, registry } = opts;
-  const manager: Partial<SessionManager> = {
-    get: (sid: string) =>
-      sid === VALID_SID && session !== undefined
-        ? (session ?? undefined)
-        : undefined,
+describe("formatSkillInvocation", () => {
+  const slashSkill: Skill = {
+    id: "cc-foo",
+    name: "foo",
+    description: "",
+    backend: "claude-code",
+    scope: "user",
+    args: [
+      { key: "1", required: false, hint: "" },
+      { key: "2", required: false, hint: "" },
+      { key: "flag", required: false, hint: "" },
+    ],
+    user_invocable: true,
+    model_invocable: false,
   };
-  const config = makeConfig({ hidden: opts.hidden, fixtures: opts.fixtures });
-  const app = new Hono();
-  mountSkillsRoutes(app, {
-    manager: manager as SessionManager,
-    registry,
-    config,
-  });
-  return app;
-}
 
-describe("GET /:sid/skills", () => {
-  test("returns 400 for invalid sid", async () => {
-    const app = buildRoutesApp({ session: null });
-    const res = await app.fetch(new Request("http://kbbl.test/not-a-uuid/skills"));
-    expect(res.status).toBe(400);
-    expect((await res.json() as { error: string }).error).toMatch(/invalid sid/);
+  test("no args → bare slash trigger", () => {
+    expect(formatSkillInvocation(slashSkill, {})).toBe("/foo");
   });
 
-  test("returns 200 [] for unknown session (not in manager)", async () => {
-    const app = buildRoutesApp({ session: null });
-    const res = await app.fetch(
-      new Request(`http://kbbl.test/${VALID_SID}/skills`),
+  test("positional args serialize in ascending numeric order", () => {
+    expect(formatSkillInvocation(slashSkill, { "2": "b", "1": "a" })).toBe(
+      "/foo a b",
     );
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual([]);
   });
 
-  test("returns 200 [] for a non-live (ended) session", async () => {
-    const session = makeSession({ status: "ended" });
-    const app = buildRoutesApp({ session, fixtures: true });
-    const res = await app.fetch(
-      new Request(`http://kbbl.test/${VALID_SID}/skills`),
-    );
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual([]);
+  test("positional args precede named args; empty values dropped", () => {
+    expect(
+      formatSkillInvocation(slashSkill, { "1": "", flag: "named", "2": "val" }),
+    ).toBe("/foo val named");
   });
 
-  test("returns 200 with fixture skills in fixtures mode", async () => {
-    const session = makeSession();
-    const app = buildRoutesApp({ session, fixtures: true });
-    const res = await app.fetch(
-      new Request(`http://kbbl.test/${VALID_SID}/skills`),
+  test("MCP skills format as a steering request, undeclared args stripped", () => {
+    const skill = gatedReviewSkills("claude-code").find(
+      (s) => s.name === "mcp:gated-review:get_review_round",
+    )!;
+    expect(
+      formatSkillInvocation(skill, {
+        pullRequestNumber: "373",
+        includeResolved: "false",
+        repository: "attacker/repository",
+        repo_path: "/tmp/attacker-worktree",
+      }),
+    ).toBe(
+      'Use the gated-review MCP tool get_review_round with these arguments: {"pullRequestNumber":"373","includeResolved":"false"}.',
     );
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as Skill[];
-    expect(Array.isArray(body)).toBe(true);
-    expect(body.length).toBeGreaterThan(0);
-    expect(body.every((s) => s.user_invocable !== false)).toBe(true);
   });
 
-  test("returns 200 [] when runtime has no discoverSkills (not fixtures mode)", async () => {
-    const session = makeSession();
-    const registry: RuntimeRegistry = {
-      runtimes: new Map([
-        ["claude-code", { id: "claude-code" } as unknown as AgentRuntime],
-      ]),
-      defaultId: "claude-code",
-    };
-    const app = buildRoutesApp({ session, registry });
-    const res = await app.fetch(
-      new Request(`http://kbbl.test/${VALID_SID}/skills`),
+  test("MCP skill with no provided args formats without an argument clause", () => {
+    const skill = gatedReviewSkills("codex").find(
+      (s) => s.name === "mcp:gated-review:git.fetch",
+    )!;
+    expect(formatMcpSkillRequest(skill, {})).toBe(
+      "Use the gated-review MCP tool git.fetch.",
     );
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual([]);
   });
 });
 
-describe("POST /:sid/skills/invoke", () => {
-  const SKILL_ID = "cc-list-tasks"; // present in FIXTURE_SKILLS, user_invocable=true
+// === routes (over the real ACP service + fake agent) ===
 
-  function post(app: Hono, body: unknown) {
+describe("skills routes", () => {
+  let tmpRoot: string;
+  let harness: AcpTestHarness;
+  let app: Hono;
+  let sid: string;
+
+  beforeAll(async () => {
+    tmpRoot = mkdtempSync(join(tmpdir(), "skills-routes-"));
+    harness = makeAcpTestService({ stateDir: join(tmpRoot, "state") });
+    app = new Hono();
+    mountSkillsRoutes(app, {
+      acp: harness.service,
+      config: makeConfig({ fixtures: true }),
+    });
+    const created = await harness.service.createSession({
+      initial_prompt: "",
+      workdir: tmpRoot,
+      runtime: "claude-code",
+    });
+    if (!created.ok) throw new Error(`createSession failed: ${created.error.detail}`);
+    sid = created.value.sid;
+  });
+
+  afterAll(async () => {
+    await harness.service.shutdown();
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  function post(target: string, body: unknown) {
     return app.fetch(
-      new Request(`http://kbbl.test/${VALID_SID}/skills/invoke`, {
+      new Request(`http://kbbl.test/sessions/${target}/skills/invoke`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
@@ -429,246 +197,82 @@ describe("POST /:sid/skills/invoke", () => {
     );
   }
 
-  test("returns 400 for invalid sid", async () => {
-    const app = buildRoutesApp({ session: null });
+  test("GET returns 400 for a malformed sid", async () => {
     const res = await app.fetch(
-      new Request("http://kbbl.test/not-a-uuid/skills/invoke", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ skill_id: SKILL_ID }),
-      }),
+      new Request("http://kbbl.test/sessions/not-a-uuid/skills"),
     );
     expect(res.status).toBe(400);
   });
 
-  test("returns 404 for unknown session", async () => {
-    const app = buildRoutesApp({ session: null });
-    const res = await post(app, { skill_id: SKILL_ID });
-    expect(res.status).toBe(404);
-    expect((await res.json() as { error: string }).error).toMatch(/unknown session/);
-  });
-
-  test("returns 400 when an args value is not a string", async () => {
-    const session = makeSession();
-    const app = buildRoutesApp({ session, fixtures: true });
-    const res = await post(app, { skill_id: SKILL_ID, args: { query: 123 } });
-    expect(res.status).toBe(400);
-    expect((await res.json() as { error: string }).error).toMatch(/args\.query must be a string/);
-  });
-
-  test("returns 404 for unknown or hidden skill id", async () => {
-    const session = makeSession();
-    const app = buildRoutesApp({ session, fixtures: true });
-    const res = await post(app, { skill_id: "does-not-exist" });
-    expect(res.status).toBe(404);
-    expect((await res.json() as { error: string }).error).toMatch(/unknown or hidden skill/);
-  });
-
-  test("returns 400 for missing required arg", async () => {
-    const session = makeSession({ runtimeId: "codex" });
-    const app = buildRoutesApp({ session, fixtures: true });
-    // codex-search has a required arg "query"
-    const res = await post(app, { skill_id: "codex-search", args: {} });
-    expect(res.status).toBe(400);
-    expect((await res.json() as { error: string }).error).toMatch(/missing required arg/);
-  });
-
-  test("returns 409 when runtime lacks formatSkillInvocation", async () => {
-    const session = makeSession();
-    const registry: RuntimeRegistry = {
-      runtimes: new Map([
-        [
-          "claude-code",
-          {
-            id: "claude-code",
-            discoverSkills: async () => [
-              {
-                id: SKILL_ID,
-                name: "list-tasks",
-                description: "",
-                backend: "claude-code",
-                scope: "user",
-                args: [],
-                user_invocable: true,
-                model_invocable: true,
-              },
-            ],
-            // no formatSkillInvocation
-          } as unknown as AgentRuntime,
-        ],
-      ]),
-      defaultId: "claude-code",
-    };
-    const app = buildRoutesApp({ session, registry, fixtures: false });
-    const res = await post(app, { skill_id: SKILL_ID });
-    expect(res.status).toBe(409);
-  });
-
-  test("returns 503 when writeInput throws SessionNotReadyError", async () => {
-    const session = makeSession({
-      writeInput: async () => {
-        throw new SessionNotReadyError();
-      },
-    });
-    const registry: RuntimeRegistry = {
-      runtimes: new Map([
-        [
-          "claude-code",
-          {
-            id: "claude-code",
-            discoverSkills: async () => [
-              {
-                id: SKILL_ID,
-                name: "list-tasks",
-                description: "",
-                backend: "claude-code",
-                scope: "user",
-                args: [],
-                user_invocable: true,
-                model_invocable: true,
-              },
-            ],
-            formatSkillInvocation: () => "/list-tasks",
-          } as unknown as AgentRuntime,
-        ],
-      ]),
-      defaultId: "claude-code",
-    };
-    const app = buildRoutesApp({ session, registry, fixtures: false });
-    const res = await post(app, { skill_id: SKILL_ID });
-    expect(res.status).toBe(503);
-    expect((await res.json() as { error: string }).error).toMatch(/subprocess not ready/);
-  });
-
-  test("returns 200 { ok: true } and writes trigger on success (fixtures mode)", async () => {
-    let captured: string | null = null;
-    let capturedCommand = false;
-    const session = makeSession({
-      writeInput: async (text, opts) => {
-        captured = text;
-        capturedCommand = opts?.command === true;
-      },
-    });
-    const registry: RuntimeRegistry = {
-      runtimes: new Map([
-        [
-          "claude-code",
-          {
-            id: "claude-code",
-            formatSkillInvocation: (_skill: Skill, _args: Record<string, string>) =>
-              "/list-tasks",
-          } as unknown as AgentRuntime,
-        ],
-      ]),
-      defaultId: "claude-code",
-    };
-    const app = buildRoutesApp({ session, registry, fixtures: true });
-    const res = await post(app, { skill_id: SKILL_ID });
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true });
-    expect(captured as unknown as string).toBe("/list-tasks");
-    expect(capturedCommand).toBe(true);
-  });
-
-  test("ack-only — no result envelope in the 200 body", async () => {
-    const session = makeSession();
-    const registry: RuntimeRegistry = {
-      runtimes: new Map([
-        [
-          "claude-code",
-          {
-            id: "claude-code",
-            formatSkillInvocation: () => "/list-tasks",
-          } as unknown as AgentRuntime,
-        ],
-      ]),
-      defaultId: "claude-code",
-    };
-    const app = buildRoutesApp({ session, registry, fixtures: true });
-    const res = await post(app, { skill_id: SKILL_ID });
-    const body = (await res.json()) as Record<string, unknown>;
-    // Only { ok: true } — no result, no skill data, no trigger
-    expect(Object.keys(body)).toEqual(["ok"]);
-  });
-
-  test("gated-review actions write a normal text request into the model session", async () => {
-    let capturedText: string | null = null;
-    let capturedCommand: boolean | undefined;
-    const session = makeSession({
-      writeInput: async (text, opts) => {
-        capturedText = text;
-        capturedCommand = opts?.command;
-      },
-    });
-    const runtime: Partial<AgentRuntime> = {
-      id: "claude-code",
-      discoverSkills: () => Promise.resolve(gatedReviewSkills("claude-code")),
-      formatSkillInvocation: (skill, args) => {
-        const request = formatMcpSkillRequest(skill, args);
-        if (request === null) throw new Error("expected MCP skill");
-        return request;
-      },
-    };
-    const registry: RuntimeRegistry = {
-      runtimes: new Map([["claude-code", runtime as AgentRuntime]]),
-      defaultId: "claude-code",
-    };
-    const app = buildRoutesApp({ session, registry });
-
-    const res = await post(app, {
-      skill_id: "cc:mcp:gated-review:get_review_round",
-      args: {
-        pullRequestNumber: "373",
-        includeResolved: "false",
-        repository: "attacker/repository",
-        repo_path: "/tmp/attacker-worktree",
-      },
-    });
-
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true });
-    expect(capturedText as unknown as string).toBe(
-      'Use the gated-review MCP tool get_review_round with these arguments: {"pullRequestNumber":"373","includeResolved":"false"}.',
+  test("GET returns [] for an unknown session", async () => {
+    const res = await app.fetch(
+      new Request(`http://kbbl.test/sessions/${UNKNOWN_SID}/skills`),
     );
-    expect(capturedCommand).toBe(false);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
   });
 
-  test("native slash-command built-ins dispatch on the command path", async () => {
-    const captured: Array<{ text: string; command: boolean | undefined }> = [];
-    const session = makeSession({
-      writeInput: async (text, opts) => {
-        captured.push({ text, command: opts?.command });
-      },
+  test("GET returns the profile's visible skills for a live session", async () => {
+    const res = await app.fetch(
+      new Request(`http://kbbl.test/sessions/${sid}/skills`),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Skill[];
+    expect(body.length).toBeGreaterThan(0);
+    expect(body.every((s) => s.backend === "claude-code")).toBe(true);
+    expect(body.every((s) => s.user_invocable !== false)).toBe(true);
+  });
+
+  test("invoke on an unknown session is 404", async () => {
+    const res = await post(UNKNOWN_SID, { skill_id: "cc-list-tasks" });
+    expect(res.status).toBe(404);
+  });
+
+  test("invoke with a non-string arg value is 400", async () => {
+    const res = await post(sid, { skill_id: "cc-list-tasks", args: { q: 7 } });
+    expect(res.status).toBe(400);
+  });
+
+  test("invoke with an unknown skill id is 404", async () => {
+    const res = await post(sid, { skill_id: "does-not-exist" });
+    expect(res.status).toBe(404);
+  });
+
+  test("invoke with a missing required arg is 400", async () => {
+    const res = await post(sid, { skill_id: "cc-create-pr", args: {} });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toMatch(
+      /missing required arg/,
+    );
+  });
+
+  test("invoke submits the formatted trigger as an operator turn", async () => {
+    const res = await post(sid, { skill_id: "cc-list-tasks" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    const turns = harness.db
+      .query<{ payload: string; source: string }, [string]>(
+        "SELECT payload, source FROM acp_turns WHERE sid = ? ORDER BY created_at DESC",
+      )
+      .all(sid);
+    expect(turns.some((t) => t.payload === "/list-tasks" && t.source === "operator")).toBe(
+      true,
+    );
+  });
+
+  test("ended sessions list no skills", async () => {
+    const created = await harness.service.createSession({
+      initial_prompt: "",
+      workdir: tmpRoot,
+      runtime: "claude-code",
     });
-    const builtins: Skill[] = ["code-review", "simplify"].map((name) => ({
-      id: `cc:builtin:${name}`,
-      name,
-      description: `${name} action`,
-      backend: "claude-code",
-      scope: "system",
-      args: [],
-      user_invocable: true,
-      model_invocable: false,
-    }));
-    const runtime: Partial<AgentRuntime> = {
-      id: "claude-code",
-      discoverSkills: () => Promise.resolve(builtins),
-      formatSkillInvocation: (skill) => `/${skill.name}`,
-    };
-    const registry: RuntimeRegistry = {
-      runtimes: new Map([["claude-code", runtime as AgentRuntime]]),
-      defaultId: "claude-code",
-    };
-    const app = buildRoutesApp({ session, registry });
-
-    const reviewResponse = await post(app, { skill_id: "cc:builtin:code-review" });
-    const simplifyResponse = await post(app, { skill_id: "cc:builtin:simplify" });
-
-    expect(reviewResponse.status).toBe(200);
-    expect(simplifyResponse.status).toBe(200);
-    expect(captured).toEqual([
-      { text: "/code-review", command: true },
-      { text: "/simplify", command: true },
-    ]);
+    if (!created.ok) throw new Error("createSession failed");
+    const closed = await harness.service.closeSession(created.value.sid);
+    expect(closed.ok).toBe(true);
+    const res = await app.fetch(
+      new Request(`http://kbbl.test/sessions/${created.value.sid}/skills`),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
   });
 });

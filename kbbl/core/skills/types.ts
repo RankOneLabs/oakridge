@@ -1,5 +1,3 @@
-import type { RuntimeId } from "../runtime";
-
 export interface ArgSpec {
   key: string;
   required: boolean;
@@ -12,7 +10,8 @@ export interface Skill {
   id: string;
   name: string;
   description: string;
-  backend: RuntimeId;
+  /** Agent profile id this skill is offered for (e.g. "claude-code"). */
+  backend: string;
   scope: "user" | "project" | "system" | "admin";
   args: ArgSpec[];
   user_invocable: boolean;

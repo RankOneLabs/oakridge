@@ -82,7 +82,7 @@ afterEach(async () => {
 });
 
 describe("GET /sessions", () => {
-  test("lists ACP sessions in the legacy snapshot projection", async () => {
+  test("lists ACP sessions in the PWA snapshot shape", async () => {
     const app = makeApp();
     const created = await postSessions(app, { workdir: repoDir, name: "one" });
     expect(created.status).toBe(200);
@@ -94,9 +94,10 @@ describe("GET /sessions", () => {
     const snapshot = body.sessions[0]!;
     expect(snapshot.sid).toBe(created.body.sid);
     expect(snapshot.name).toBe("one");
-    // Legacy vocabulary: an idle ACP session reads as "live".
-    expect(snapshot.status).toBe("live");
-    expect(snapshot.runtimeId).toBe("claude-code");
+    // Native ACP vocabulary on the browser wire: idle stays idle.
+    expect(snapshot.status).toBe("idle");
+    expect(snapshot.agentProfile).toBe("claude-code");
+    expect(snapshot.source).toBe("acp");
     expect(typeof snapshot.lastActivityTs).toBe("string");
   });
 

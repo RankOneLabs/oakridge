@@ -19,16 +19,17 @@ export function SessionRow({
   resumeDisabled: boolean;
 }) {
   const relative = useRelativeTime(snapshot.lastActivityTs);
-  const canResume = snapshot.status === "ended";
+  // Resume = new session inheriting this one's worktree — only meaningful
+  // for a closed ACP session (pre-ACP archives can't inherit).
+  const canResume =
+    snapshot.source === "acp" &&
+    (snapshot.status === "ended" ||
+      snapshot.status === "fenced" ||
+      snapshot.status === "failed");
   const [confirmRemove, setConfirmRemove] = useState(false);
-  const primaryModel = snapshot.initialObservedModel ?? snapshot.model;
-  const primaryModelLabel = snapshot.initialObservedModel ? "initial" : "requested";
-  const currentModel = snapshot.observedModel;
-  const shouldShowCurrentModel =
-    Boolean(primaryModel && currentModel) && currentModel !== primaryModel;
 
-  // Server broadcasts session_removed; the inbox handler drops the row, so
-  // there is no optimistic UI. A failure has to be rendered though: the
+  // Server pushes a fresh /inbox snapshot after the purge drops the row,
+  // so there is no optimistic UI. A failure has to be rendered though: the
   // execution-hold refusal is deterministic, so a silent failure left the
   // operator tapping Remove forever with nothing to read and no way past.
   const removeMutation = useMutation({
@@ -70,6 +71,11 @@ export function SessionRow({
     }
   }
 
+  const isOpen =
+    snapshot.status !== "ended" &&
+    snapshot.status !== "fenced" &&
+    snapshot.status !== "failed";
+
   return (
     <li className="session-row-li">
       {/* Anchors the absolutely-positioned Resume/Remove buttons to the row
@@ -83,54 +89,50 @@ export function SessionRow({
         >
           <div className="session-row-line">
             <span className={`session-row-status session-row-status-${snapshot.status}`}>
-              {snapshot.status === "compacting" ? "compacting…" : snapshot.status}
+              {snapshot.status}
             </span>
             <span className="session-row-name" title={snapshot.sid}>
               {snapshot.name || snapshot.sid.slice(0, 8)}
             </span>
-            {primaryModel && (
-              <span className="session-row-model" title={`${primaryModelLabel}: ${primaryModel}`}>
-                {primaryModelLabel} {prettyModelLabel(primaryModel)}
+            <span className="session-row-model" title={`agent: ${snapshot.agentProfile}`}>
+              {snapshot.agentProfile}
+            </span>
+            {snapshot.requestedModel && (
+              <span
+                className="session-row-model"
+                title={`requested: ${snapshot.requestedModel}`}
+              >
+                {prettyModelLabel(snapshot.requestedModel)}
               </span>
             )}
-            {shouldShowCurrentModel && currentModel && (
-              <span className="session-row-model" title={`current: ${currentModel}`}>
-                current {prettyModelLabel(currentModel)}
+            {snapshot.requestedEffort && (
+              <span
+                className="session-row-effort"
+                title={`effort: ${snapshot.requestedEffort}`}
+              >
+                effort {prettyEffortLabel(snapshot.requestedEffort)}
               </span>
             )}
-            {snapshot.effort && (
-              <span className="session-row-effort" title={`effort: ${snapshot.effort}`}>
-                effort {prettyEffortLabel(snapshot.effort)}
+            {snapshot.pendingPermissionCount > 0 && (
+              <span
+                className="session-row-pending"
+                aria-label={`${snapshot.pendingPermissionCount} pending permissions`}
+              >
+                {snapshot.pendingPermissionCount} pending
               </span>
-            )}
-            {snapshot.pendingCount > 0 && (
-              <span className="session-row-pending" aria-label={`${snapshot.pendingCount} pending approvals`}>
-                {snapshot.pendingCount} pending
-              </span>
-            )}
-            {snapshot.yoloMode && (
-              <span className="session-row-yolo">YOLO</span>
             )}
             <span className="session-row-activity">{relative}</span>
           </div>
-          <div className="session-row-workdir" title={snapshot.workdir}>
-            {snapshot.workdir}
+          <div className="session-row-workdir" title={snapshot.worktreePath}>
+            {snapshot.projectWorkdir}
           </div>
-          {snapshot.endReason === "compacted" && snapshot.successorSid && (
-            <div
-              className="session-row-successor"
-              title={`Continued in successor session ${snapshot.successorSid}`}
-            >
-              → {snapshot.successorSid.slice(0, 8)}
-            </div>
-          )}
         </button>
         {canResume && (
           <button
             type="button"
             className="btn-resume"
             disabled={resumeDisabled}
-            title={resumeTitle(snapshot.lastResultUsage)}
+            title={resumeTitle()}
             onClick={(e) => {
               // Don't also trigger the row's open-transcript click behind us.
               e.stopPropagation();
@@ -145,9 +147,9 @@ export function SessionRow({
           className={`btn-remove${confirmRemove ? " is-confirming" : ""}`}
           disabled={removeMutation.isPending}
           title={
-            snapshot.status === "live"
-              ? "Aborts the live subprocess and deletes the transcript file."
-              : "Deletes the transcript file."
+            isOpen
+              ? "Closes the agent session and deletes its record."
+              : "Deletes the session record."
           }
           onClick={(e) => {
             e.stopPropagation();

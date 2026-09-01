@@ -17,6 +17,7 @@ import { AcpSessionStore } from "./store";
 import {
   ok,
   type AcpSessionStartSpec,
+  type AcpUiEvent,
   type KbblSessionId,
   type TurnKey,
   type WorktreeProvider,
@@ -608,4 +609,149 @@ test("operator retry with the same client_message_id returns the stored receipt 
     client_message_id: "msg-2",
   });
   expect(!newInput.ok && newInput.error.code).toBe("session_busy");
+}, 20000);
+
+// === PWA cutover surface (§13/§14): dispatch echo, permission lifecycle,
+// load-path config options, sessions change feed ===
+
+test("dispatching a turn projects the prompt as a user_message UI event", async () => {
+  const { stateDir, workdir } = await makeDirs();
+  const { service } = makeHarness({ stateDir });
+
+  const ensured = await service.ensureResumableSession(
+    "key-echo",
+    spec(workdir, "say hello"),
+  );
+  expect(ensured.ok).toBe(true);
+  if (!ensured.ok) return;
+  const sid = ensured.value.session.sid;
+  await service.observeInitialTurn(sid, 8000);
+
+  const history = await service.loadHistory(sid);
+  expect(history.ok).toBe(true);
+  if (!history.ok) return;
+  const userEvents = history.value.events.filter(
+    (event) => event.kind === "user_message",
+  );
+  expect(userEvents).toHaveLength(1);
+  expect(userEvents[0]).toMatchObject({
+    id: "initial:key-echo",
+    content: [{ type: "text", text: "say hello" }],
+    replayed: false,
+  });
+}, 15000);
+
+test("permission answer emits permission_resolved and drops the pending count", async () => {
+  const { stateDir, workdir } = await makeDirs();
+  const { service, store } = makeHarness({ stateDir, behavior: "permission" });
+
+  const ensured = await service.ensureResumableSession("key-perm", spec(workdir));
+  expect(ensured.ok).toBe(true);
+  if (!ensured.ok) return;
+  const sid = ensured.value.session.sid;
+
+  const events: AcpUiEvent[] = [];
+  await until(() => service.subscribe(sid, (event) => events.push(event)) !== null);
+  const permission = await until(
+    () =>
+      events.find(
+        (event): event is Extract<AcpUiEvent, { kind: "permission" }> =>
+          event.kind === "permission",
+      ),
+    8000,
+    "permission request",
+  );
+  expect(service.pendingPermissionCount(sid)).toBe(1);
+
+  const resolved = service.resolvePermission(sid, permission.requestId, "allow");
+  expect(resolved.ok).toBe(true);
+  expect(service.pendingPermissionCount(sid)).toBe(0);
+
+  const resolvedEvent = events.find(
+    (event) => event.kind === "permission_resolved",
+  );
+  expect(resolvedEvent).toMatchObject({
+    requestId: permission.requestId,
+    outcome: "selected",
+    optionId: "allow",
+  });
+
+  const observed = await service.observeInitialTurn(sid, 8000);
+  expect(observed.ok && observed.value.kind).toBe("succeeded");
+  expect(store.getSession(sid)?.status).toBe("idle");
+}, 20000);
+
+test("fence cancels pending permissions with a permission_resolved cancellation", async () => {
+  const { stateDir, workdir } = await makeDirs();
+  const { service } = makeHarness({ stateDir, behavior: "permission" });
+
+  const ensured = await service.ensureResumableSession(
+    "key-perm-fence",
+    spec(workdir),
+  );
+  expect(ensured.ok).toBe(true);
+  if (!ensured.ok) return;
+  const sid = ensured.value.session.sid;
+
+  const events: AcpUiEvent[] = [];
+  await until(() => service.subscribe(sid, (event) => events.push(event)) !== null);
+  await until(
+    () => service.pendingPermissionCount(sid) > 0,
+    8000,
+    "pending permission",
+  );
+
+  await service.closeSession(sid, { fenced_by: "op-99" });
+  const cancelledEvent = events.find(
+    (event) => event.kind === "permission_resolved",
+  );
+  expect(cancelledEvent).toMatchObject({ outcome: "cancelled" });
+  expect(service.pendingPermissionCount(sid)).toBe(0);
+}, 20000);
+
+test("session/load re-emits config options so a respawned session keeps its selectors", async () => {
+  const { stateDir, workdir } = await makeDirs();
+  const { service, registry } = makeHarness({ stateDir });
+
+  const ensured = await service.ensureResumableSession("key-cfg", spec(workdir));
+  expect(ensured.ok).toBe(true);
+  if (!ensured.ok) return;
+  const sid = ensured.value.session.sid;
+  await service.observeInitialTurn(sid, 8000);
+
+  // Kill the child; the next history load respawns via session/load.
+  const controller = registry.getLive(sid as KbblSessionId);
+  expect(controller).not.toBeNull();
+  await controller!.closeChild();
+
+  const reloaded = await service.loadHistory(sid);
+  expect(reloaded.ok).toBe(true);
+  if (!reloaded.ok) return;
+  expect(reloaded.value.expired).toBe(false);
+  const configEvents = reloaded.value.events.filter(
+    (event) => event.kind === "config_options",
+  );
+  expect(configEvents.length).toBeGreaterThan(0);
+}, 20000);
+
+test("sessions change feed fires on session writes and stops after unsubscribe", async () => {
+  const { stateDir, workdir } = await makeDirs();
+  const { service } = makeHarness({ stateDir });
+
+  let ticks = 0;
+  const unsubscribe = service.subscribeSessionsChanged(() => {
+    ticks += 1;
+  });
+  const ensured = await service.ensureResumableSession("key-feed", spec(workdir));
+  expect(ensured.ok).toBe(true);
+  expect(ticks).toBeGreaterThan(0);
+
+  const beforeClose = ticks;
+  if (ensured.ok) await service.closeSession(ensured.value.session.sid);
+  expect(ticks).toBeGreaterThan(beforeClose);
+
+  unsubscribe();
+  const afterUnsubscribe = ticks;
+  await service.ensureResumableSession("key-feed-2", spec(workdir));
+  expect(ticks).toBe(afterUnsubscribe);
 }, 20000);

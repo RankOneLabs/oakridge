@@ -1,62 +1,34 @@
 import type { Skill } from "./types";
-import type { Session } from "../session/session";
-import type { RuntimeRegistry } from "../runtime";
 import type { KbblConfig } from "../config";
+import { gatedReviewSkills } from "./gated-review";
 import { FIXTURE_SKILLS } from "./fixtures";
 
-export interface SkillAggregator {
-  aggregate(session: Session): Promise<Skill[]>;
-}
-
 /**
- * Apply the global skill-name denylist. Called after user_invocable filtering
- * so hidden= operates on the post-filter visible list only.
- * Takes `session` as first arg so a per-session policy is a non-breaking change.
+ * App-owned skill aggregation for one agent profile (§16.2). The legacy
+ * runtime skill probes are gone with the provider adapters; the sources
+ * are kbbl's own: the gated-review shortcuts (or the fixture set when
+ * config.skills.fixtures is on), filtered by visibility and the global
+ * hidden denylist, annotated with the confirm gate. Agent-provided slash
+ * commands are a separate source the PWA reads from the session's
+ * `commands` UI events — they never pass through this registry.
  */
-export function filterSkillsForSession(
-  _session: Session,
-  skills: Skill[],
-  hidden: string[],
+export function aggregateSkillsForProfile(
+  profileId: string,
+  config: KbblConfig,
 ): Skill[] {
-  if (hidden.length === 0) return skills;
-  const hiddenSet = new Set(hidden);
-  return skills.filter((s) => !hiddenSet.has(s.name));
-}
+  const raw = config.skills.fixtures
+    ? FIXTURE_SKILLS.filter((skill) => skill.backend === profileId)
+    : gatedReviewSkills(profileId);
 
-export function buildSkillRegistry({
-  registry,
-  config,
-}: {
-  registry: RuntimeRegistry | undefined;
-  config: KbblConfig;
-}): SkillAggregator {
-  async function aggregate(session: Session): Promise<Skill[]> {
-    let raw: Skill[];
-
-    if (config.skills.fixtures) {
-      raw = FIXTURE_SKILLS.filter((s) => s.backend === session.runtimeId);
-    } else {
-      const runtime = registry?.runtimes.get(session.runtimeId);
-      if (!runtime?.discoverSkills) return [];
-
-      const handle = {
-        sessionId: session.oakridgeSid,
-        runtimeSid: session.currentCcSid,
-        resolvedModel: session.currentObservedModel,
-      };
-
-      try {
-        raw = await runtime.discoverSkills(handle);
-      } catch {
-        return [];
-      }
-    }
-
-    const visible = raw.filter((s) => s.user_invocable !== false);
-    const filtered = filterSkillsForSession(session, visible, config.skills.hidden);
-    const confirmNames = new Set(config.skills.confirm);
-    return filtered.map((s) => ({ ...s, confirm: confirmNames.has(s.name) }));
-  }
-
-  return { aggregate };
+  const visible = raw.filter((skill) => skill.user_invocable !== false);
+  const hiddenSet = new Set(config.skills.hidden);
+  const filtered =
+    hiddenSet.size === 0
+      ? visible
+      : visible.filter((skill) => !hiddenSet.has(skill.name));
+  const confirmNames = new Set(config.skills.confirm);
+  return filtered.map((skill) => ({
+    ...skill,
+    confirm: confirmNames.has(skill.name),
+  }));
 }

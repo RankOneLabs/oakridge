@@ -1,4 +1,3 @@
-import type { RuntimeId } from "../runtime";
 import type { ArgSpec, Skill } from "./types";
 
 export const GATED_REVIEW_MCP_URL = "http://otto:3555/mcp";
@@ -147,10 +146,9 @@ export function getGatedReviewToolSpec(
   );
 }
 
-export function gatedReviewSkills(backend: RuntimeId): Skill[] {
-  const idPrefix = backend === "claude-code" ? "cc" : "codex";
+export function gatedReviewSkills(backend: string): Skill[] {
   return GATED_REVIEW_TOOL_SPECS.map((tool) => ({
-    id: `${idPrefix}:mcp:${GATED_REVIEW_SERVER_NAME}:${tool.name}`,
+    id: `${backend}:mcp:${GATED_REVIEW_SERVER_NAME}:${tool.name}`,
     name: `mcp:${GATED_REVIEW_SERVER_NAME}:${tool.name}`,
     description: tool.description,
     backend,
@@ -167,13 +165,11 @@ export interface McpSkillReference {
 }
 
 export function parseMcpSkillReference(skill: Skill): McpSkillReference | null {
+  // Id shape: `<agent-profile>:mcp:<server>:<tool>`. The profile segment
+  // is identity only ("cc"/"codex" prefixes predate ACP profiles and stay
+  // parseable); anything without the mcp marker is not an MCP skill.
   const [backend, marker, serverName, ...toolParts] = skill.id.split(":");
-  if (
-    (backend !== "cc" && backend !== "codex") ||
-    marker !== "mcp" ||
-    !serverName ||
-    toolParts.length === 0
-  ) {
+  if (!backend || marker !== "mcp" || !serverName || toolParts.length === 0) {
     return null;
   }
   const toolName = toolParts.join(":");

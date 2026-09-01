@@ -55,7 +55,7 @@ describe("useInbox EventSource revival and parse guards", () => {
         json: () => Promise.resolve({ sessions: [] }),
       }),
     );
-    useStore.setState({ inboxStatus: "connecting" });
+    useStore.setState({ inboxStatus: "connecting", sessions: new Map(), removedSids: new Set() });
   });
 
   afterEach(() => {
@@ -114,26 +114,44 @@ describe("useInbox EventSource revival and parse guards", () => {
     expect(MockEventSource.instances).toHaveLength(2);
   });
 
-  it("sets inboxStatus=stale and does not throw on a malformed delta frame", () => {
-    vi.useFakeTimers();
-    renderHook(() => useInbox(), { wrapper: makeWrapper() });
-
-    act(() => {
-      MockEventSource.last!.onopen?.({});
-    });
-    expect(useStore.getState().inboxStatus).toBe("connected");
-
-    act(() => {
-      MockEventSource.last!.dispatch("delta", "bad json");
+  it("folds snapshot frames into the store and reports removed sids", () => {
+    const removed: string[] = [];
+    renderHook(() => useInbox({ onSessionRemoved: (sid) => removed.push(sid) }), {
+      wrapper: makeWrapper(),
     });
 
-    expect(useStore.getState().inboxStatus).toBe("stale");
-    expect(MockEventSource.instances[0]!.closed).toBe(true);
+    const snapshot = {
+      sid: "aaaaaaaa-bbbb-4ccc-8ddd-000000000001",
+      name: "one",
+      agentProfile: "claude-code",
+      status: "idle",
+      source: "acp",
+      lastActivityTs: "2026-01-01T00:00:00.000Z",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      artifactId: null,
+      projectWorkdir: "/repo",
+      worktreePath: "/repo",
+      worktreeBranch: null,
+      worktreeBaseRef: null,
+      requestedModel: null,
+      requestedEffort: null,
+      endReason: null,
+      fencedBy: null,
+      pendingPermissionCount: 0,
+    };
 
     act(() => {
-      vi.runOnlyPendingTimers();
+      MockEventSource.last!.dispatch(
+        "snapshot",
+        JSON.stringify({ sessions: [snapshot] }),
+      );
     });
+    expect(useStore.getState().sessions.get(snapshot.sid as never)?.name).toBe("one");
 
-    expect(MockEventSource.instances).toHaveLength(2);
+    act(() => {
+      MockEventSource.last!.dispatch("snapshot", JSON.stringify({ sessions: [] }));
+    });
+    expect(useStore.getState().sessions.has(snapshot.sid as never)).toBe(false);
+    expect(removed).toEqual([snapshot.sid]);
   });
 });

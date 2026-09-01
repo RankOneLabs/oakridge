@@ -1,5 +1,4 @@
-import type { SessionSnapshot, ResultUsage } from "../types";
-import { formatTokens } from "./format";
+import type { SessionSnapshot } from "../types";
 
 const SLUG_ADJ = [
   "amber","azure","brave","bright","calm","clever","cobalt","cozy","crimson",
@@ -35,14 +34,12 @@ export function workdirBasename(p: string): string {
 }
 
 export function sessionLabelTitle(snapshot: SessionSnapshot, sid: string): string {
-  // Tooltip surface — show full paths (operator workdir + worktree path)
+  // Tooltip surface — show full paths (project workdir + worktree path)
   // and the branch so an operator hovering can confirm where edits land
-  // without opening DevTools. Falls back to just workdir for pre-Phase-1
-  // sessions, matching the pre-existing tooltip shape.
+  // without opening DevTools.
   const lines = [snapshot.name];
-  const project = snapshot.projectWorkdir ?? snapshot.workdir;
-  if (project) lines.push(project);
-  if (snapshot.worktreePath && snapshot.worktreePath !== project) {
+  if (snapshot.projectWorkdir) lines.push(snapshot.projectWorkdir);
+  if (snapshot.worktreePath && snapshot.worktreePath !== snapshot.projectWorkdir) {
     lines.push(`worktree: ${snapshot.worktreePath}`);
   }
   if (snapshot.worktreeBranch) {
@@ -92,21 +89,9 @@ export async function resumeSession(
   }
 }
 
-export function resumeTitle(usage: ResultUsage | null): string {
-  if (!usage) {
-    return "Start a new session inheriting this one's context.";
-  }
-  // Cache reads are ~free; cache_creation is what a resume re-ingests as
-  // new context on Claude Max, so include it in the rough "cost" number.
-  // This is a ballpark — CC's internal tokenization + prompt scaffolding
-  // add overhead we can't see from the result event alone.
-  const rough =
-    usage.input_tokens +
-    (usage.cache_creation_input_tokens ?? 0) +
-    usage.output_tokens;
-  return (
-    `Start a new session inheriting this one's context.\n` +
-    `~${formatTokens(rough)} parent context — ` +
-    `on Claude Max this burns against the 5-hour rate-limit window, not dollars.`
-  );
+export function resumeTitle(): string {
+  // Resume = a fresh session in a new worktree cut from this one's, with
+  // the parent's committed work carried forward (§17.3). Context/history
+  // stays with the agent's own store.
+  return "Start a new session in a worktree inheriting this one's work.";
 }

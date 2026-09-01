@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 
 import { useHashRoute } from "./hooks/useHashRoute";
 import { useHashSid } from "./hooks/useHashSid";
@@ -26,10 +26,10 @@ export function App() {
   const [sid, navigate] = useHashSid();
   const [theme, toggleTheme] = useTheme();
 
-  // SSE subscription: writes inbox snapshot + status + compact-suggestions
-  // into the store. When the active session is purged from another client,
-  // drop back to the inbox list so SessionView isn't left rendering a stale
-  // transcript with no underlying record.
+  // SSE subscription: writes inbox snapshots + status into the store.
+  // When the active session is purged from another client, drop back to
+  // the inbox list so SessionView isn't left rendering a stale transcript
+  // with no underlying record.
   useInbox({
     onSessionRemoved: (removedSid) => {
       if (removedSid === sid) navigate(null);
@@ -39,11 +39,8 @@ export function App() {
   // Inbox slice selectors — each reads only its own field so unrelated store
   // mutations don't re-render App.
   const sessions = useStore((s) => s.sessions);
-  const inMemorySids = useStore((s) => s.inMemorySids);
   const inboxStatus = useStore((s) => s.inboxStatus);
-  const compactSuggestions = useStore((s) => s.compactSuggestions);
   const hydrateSession = useStore((s) => s.hydrateSession);
-  const clearCompactSuggestion = useStore((s) => s.clearCompactSuggestion);
   const setCurrentSid = useStore((s) => s.setCurrentSid);
 
   // Mirror the URL-derived sid into the store so other components can read
@@ -53,15 +50,6 @@ export function App() {
   }, [sid, setCurrentSid]);
 
   const config = useServerConfig();
-  const [softThresholdTokens, setSoftThresholdTokens] = useState<number>(50000);
-  const [thresholdInput, setThresholdInput] = useState<string>("50000");
-
-  useEffect(() => {
-    if (typeof config?.softThresholdTokens === "number") {
-      setSoftThresholdTokens(config.softThresholdTokens);
-      setThresholdInput(String(config.softThresholdTokens));
-    }
-  }, [config?.softThresholdTokens]);
 
   // Hash routing precedence: plan/brief/cohort views win over session/task
   // views. These use path-style hashes (#plan/<id>, #brief/<id>) which don't
@@ -115,17 +103,8 @@ export function App() {
       <SessionView
         sid={sid}
         snapshot={sessions.get(sid as Sid) ?? null}
-        inMemory={inMemorySids.has(sid as Sid)}
         inboxStatus={inboxStatus}
         theme={theme}
-        compactSuggestion={compactSuggestions.get(sid as Sid) ?? null}
-        onClearCompactSuggestion={() => clearCompactSuggestion(sid as Sid)}
-        softThresholdTokens={softThresholdTokens}
-        thresholdInput={thresholdInput}
-        onSoftThresholdChange={(n, input) => {
-          setSoftThresholdTokens(n);
-          setThresholdInput(input);
-        }}
         onToggleTheme={toggleTheme}
         onBack={() => navigate(null)}
         onResume={(parentSid) => resumeSession(parentSid, hydrateSession, navigate)}

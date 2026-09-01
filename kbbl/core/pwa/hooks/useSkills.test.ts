@@ -56,7 +56,7 @@ describe("useSkills", () => {
     });
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    expect(fetchMock).toHaveBeenCalledWith("/s%2Fid%20test/skills");
+    expect(fetchMock).toHaveBeenCalledWith("/sessions/s%2Fid%20test/skills");
     expect(result.current).toEqual([]);
   });
 

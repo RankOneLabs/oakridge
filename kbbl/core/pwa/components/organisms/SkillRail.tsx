@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { SessionSnapshot } from "../../types";
+import type { SessionSnapshot, UiAvailableCommand } from "../../types";
 import type { Skill } from "../../../runtime-interface";
-import { useSkills, useInvokeSkill } from "../../hooks/useSkills";
+import {
+  useSkills,
+  useInvokeSkill,
+  useInvokeAgentCommand,
+} from "../../hooks/useSkills";
 import { SkillButton } from "../molecules/SkillButton";
 import { ArgSheet } from "./ArgSheet";
 
@@ -19,7 +23,9 @@ function isMcpSkill(skill: Skill): boolean {
 }
 
 function backendLabel(backend: Skill["backend"]): string {
-  return backend === "claude-code" ? "Claude Code" : "Codex";
+  if (backend === "claude-code") return "Claude Code";
+  if (backend === "codex") return "Codex";
+  return backend;
 }
 
 /**
@@ -51,14 +57,19 @@ function skillLabel(skill: Skill): string {
 export function SkillRail({
   sid,
   snapshot,
+  commands = [],
   position = "bottom",
 }: {
   sid: string;
   snapshot: SessionSnapshot | null;
+  /** Agent-provided slash commands (§16.1), from the session's
+   * `commands` UI events — the second rail source next to app skills. */
+  commands?: readonly UiAvailableCommand[];
   position?: "bottom" | "right";
 }) {
   const skills = useSkills(sid);
   const invokeMutation = useInvokeSkill(sid);
+  const commandMutation = useInvokeAgentCommand(sid);
   const [dispatchingId, setDispatchingId] = useState<string | null>(null);
   const [collecting, setCollecting] = useState<Skill | null>(null);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
@@ -75,10 +86,30 @@ export function SkillRail({
     };
   }, []);
 
-  const isSessionLive = snapshot?.status === "live";
+  const isSessionLive =
+    snapshot?.status === "idle" || snapshot?.status === "prompting";
 
   const sections = useMemo(() => {
     const map = new Map<string, RailSection>();
+    // Agent-provided slash commands (§16.1) lead the rail: they are what
+    // this agent says it can do right now.
+    if (commands.length > 0) {
+      map.set("agent-commands", {
+        key: "agent-commands",
+        label: "Agent commands",
+        isMcp: false,
+        skills: commands.map((command) => ({
+          id: `agent-command:${command.name}`,
+          name: command.name,
+          description: command.description ?? "",
+          backend: snapshot?.agentProfile ?? "agent",
+          scope: "system",
+          args: [],
+          user_invocable: true,
+          model_invocable: false,
+        })),
+      });
+    }
     for (const skill of skills) {
       const { key, label, isMcp } = sectionFor(skill);
       let section = map.get(key);
@@ -92,9 +123,9 @@ export function SkillRail({
     return [...map.values()].sort((a, b) =>
       a.isMcp === b.isMcp ? 0 : a.isMcp ? 1 : -1,
     );
-  }, [skills]);
+  }, [skills, commands, snapshot?.agentProfile]);
 
-  if (skills.length === 0) return null;
+  if (skills.length === 0 && commands.length === 0) return null;
 
   function isSectionOpen(section: RailSection): boolean {
     return sectionOverrides[section.key] ?? !section.isMcp;
@@ -123,7 +154,11 @@ export function SkillRail({
     setInvokeError(null);
     setDispatchingId(skill.id);
     try {
-      await invokeMutation.mutateAsync({ skill_id: skill.id, args });
+      if (skill.id.startsWith("agent-command:")) {
+        await commandMutation.mutateAsync(skill.name);
+      } else {
+        await invokeMutation.mutateAsync({ skill_id: skill.id, args });
+      }
     } catch (err) {
       // Submission failed (transport down, session not live, …). Surface it
       // explicitly so the user can tell "not dispatched" from "dispatched".

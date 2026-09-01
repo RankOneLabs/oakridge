@@ -6188,3 +6188,89 @@ a:focus-visible {
 .or-def-edges li { align-items: center; background: var(--bg-elevated); border: 1px solid var(--border-subtle); border-radius: 6px; display: flex; flex-wrap: wrap; gap: 0.625rem; padding: 0.625rem 0.75rem; }
 .or-def-edges li span { color: var(--accent-blue); }
 @media (max-width: 640px) { .or-def-detail__header { flex-direction: column; } }
+
+/* === ACP session view (PWA cutover) ============================== */
+
+/* Tool-call status chip inside a card summary. */
+.card-tool-status-completed {
+  color: var(--success-fg);
+}
+.card-tool-status-failed {
+  color: var(--danger-fg);
+}
+.card-tool-status-in_progress,
+.card-tool-status-pending {
+  color: var(--text-faintest);
+}
+.card-tool-locations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+}
+.card-tool-location {
+  color: var(--text-fainter);
+  font-size: 0.75rem;
+}
+
+/* Plan card entries. */
+.card-plan-entries {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.card-plan-entry {
+  color: var(--text-secondary);
+}
+.card-plan-entry-completed {
+  color: var(--text-fainter);
+  text-decoration: line-through;
+}
+.card-plan-entry-in_progress {
+  color: var(--text-session);
+}
+
+/* Turn outcome notices. */
+.notice-turn-cancelled {
+  color: var(--amber-fg);
+}
+.notice-turn-failed,
+.notice-turn-unknown {
+  color: var(--danger-fg);
+}
+
+/* Config selectors (§12.3): one compact strip under the top bar. */
+.session-config-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.35rem 0.8rem;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  font-size: 0.8rem;
+}
+.session-config-item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--text-fainter);
+}
+.session-config-label {
+  white-space: nowrap;
+}
+.session-config-item select {
+  font: inherit;
+  background: transparent;
+  color: var(--text-session);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 0.15rem 0.3rem;
+  max-width: 14rem;
+}
+.session-config-error {
+  color: var(--danger-fg);
+}
