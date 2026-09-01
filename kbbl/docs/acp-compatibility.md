@@ -102,10 +102,10 @@ bucket; the operator revised the ruling the same day after seeing the spike
 results — **the Agent SDK path is acceptable**, so this candidate passes the
 billing criterion and, having passed all nine protocol steps, is selected.
 
-> Operator verification still worthwhile: the spike sent two tiny prompts + one
-> cancelled prompt through this agent (2026-08-31 evening, session `96438c5f`).
-> Check the Claude usage view to confirm they hit a subscription bucket and not
-> API billing.
+> Operator verified 2026-08-31: after the spike's two tiny prompts + one
+> cancelled prompt (session `96438c5f`), the usage view shows 0% credits spent
+> — no API charges, prompts too small to register against the subscription
+> bucket. The §6.2 billing verification is closed.
 
 ## Claude candidate 3 — `harukitosa/claude-code-acp`: NOT RUN
 
