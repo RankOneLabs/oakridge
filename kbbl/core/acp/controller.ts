@@ -115,6 +115,7 @@ export class AcpSessionController {
   private fenced = false;
   private defunct = false;
   private permissionCounter = 0;
+  private chunkCounter = 0;
   private readonly pendingPermissions = new Map<string, PendingPermission>();
   private readonly events: AcpUiEvent[] = [];
   private readonly listeners = new Set<UiEventListener>();
@@ -498,7 +499,12 @@ export class AcpSessionController {
 
   private handleUpdate(notification: schema.SessionNotification): void {
     this.deps.store.touchActivity(this.deps.sid);
-    const projected = projectSessionUpdate(notification.update, this.replaying);
+    this.chunkCounter += 1;
+    const projected = projectSessionUpdate(
+      notification.update,
+      this.replaying,
+      `chunk-${this.chunkCounter}`,
+    );
     if (projected === null) {
       console.log(
         `[acp] sid=${this.deps.sid} unprojected update "${notification.update.sessionUpdate}"`,

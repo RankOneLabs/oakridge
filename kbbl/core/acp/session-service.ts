@@ -266,7 +266,17 @@ export class AcpSessionService {
     // Durable now; dispatch when the controller is (or becomes) idle.
     const touched = await this.touchController(row.sid);
     if (touched.ok) void touched.value.dispatchAcceptedTurns();
-    else if (!isCollaboration) return touched;
+    else if (!isCollaboration) {
+      // Operator input never queues (§11.3): a turn whose touch failed
+      // must not sit accepted and dispatch on some later touch after the
+      // operator was already told it failed.
+      this.deps.store.completeTurn(row.sid, accepted.row.turn_key, {
+        status: "failed",
+        failure_code: touched.error.code,
+        failure_detail: touched.error.detail,
+      });
+      return touched;
+    }
     return ok(turnToReceipt(accepted.row));
   }
 

@@ -20,11 +20,11 @@ function contentBlockText(block: schema.ContentBlock): UiContent {
   return { type: "text", text: `[${block.type}]` };
 }
 
-let chunkCounter = 0;
-function chunkId(messageId: string | null | undefined): string {
-  if (messageId) return messageId;
-  chunkCounter += 1;
-  return `chunk-${chunkCounter}`;
+function chunkId(
+  messageId: string | null | undefined,
+  fallbackChunkId: string,
+): string {
+  return messageId ?? fallbackChunkId;
 }
 
 export function projectConfigOptions(
@@ -78,24 +78,26 @@ export function projectPermissionRequest(
 /**
  * Projects one session/update into a UI event, or null for update types
  * the UI does not render (compaction internals, mode echoes, unknown
- * extension updates).
+ * extension updates). `fallbackChunkId` names a message chunk that
+ * carries no messageId; the caller owns its uniqueness (per session).
  */
 export function projectSessionUpdate(
   update: schema.SessionUpdate,
   replayed: boolean,
+  fallbackChunkId: string,
 ): AcpUiEvent | null {
   switch (update.sessionUpdate) {
     case "user_message_chunk":
       return {
         kind: "user_message",
-        id: chunkId(update.messageId),
+        id: chunkId(update.messageId, fallbackChunkId),
         content: [contentBlockText(update.content)],
         replayed,
       };
     case "agent_message_chunk":
       return {
         kind: "agent_message",
-        id: chunkId(update.messageId),
+        id: chunkId(update.messageId, fallbackChunkId),
         content: [contentBlockText(update.content)],
         streaming: !replayed,
         replayed,
@@ -103,7 +105,7 @@ export function projectSessionUpdate(
     case "agent_thought_chunk":
       return {
         kind: "thought",
-        id: chunkId(update.messageId),
+        id: chunkId(update.messageId, fallbackChunkId),
         content: [contentBlockText(update.content)],
         streaming: !replayed,
         replayed,

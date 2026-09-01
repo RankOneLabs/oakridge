@@ -513,3 +513,62 @@ test("a missing agent binary records a visible failed session", async () => {
   expect(rows).toHaveLength(1);
   expect(rows[0]!.status).toBe("failed");
 }, 15000);
+
+test("operator input whose touch fails is never queued for a later dispatch", async () => {
+  const { stateDir, workdir } = await makeDirs();
+  const first = makeHarness({ stateDir });
+
+  const ensured = await first.service.ensureResumableSession(
+    "key-1",
+    spec(workdir),
+  );
+  if (!ensured.ok) throw new Error("ensure failed");
+  const sid = ensured.value.session.sid;
+  const observed = await first.service.observeInitialTurn(sid, 8000);
+  expect(observed.ok && observed.value.kind).toBe("succeeded");
+
+  // Restart onto a broken agent binary so the lazy respawn (touch) fails.
+  await first.service.shutdown();
+  const broken = makeHarness({
+    stateDir,
+    db: first.db,
+    command: "/nonexistent/acp-agent-binary",
+  });
+  broken.service.recoverOnBoot();
+
+  const sent = await broken.service.sendInput(sid, "doomed operator input");
+  expect(sent.ok).toBe(false);
+  // §11.3: the operator was told it failed, so the turn must not sit
+  // accepted and dispatch on some later successful touch.
+  expect(broken.store.listAcceptedTurns(sid as KbblSessionId)).toHaveLength(0);
+  const doomedTurn = broken.db
+    .prepare<{ status: string }, [string]>(
+      "SELECT status FROM acp_turns WHERE sid = ? AND source = 'operator'",
+    )
+    .get(sid);
+  expect(doomedTurn?.status).toBe("failed");
+
+  // Restart onto a working binary: the touch must find nothing to dispatch.
+  await broken.service.shutdown();
+  const healthy = makeHarness({ stateDir, db: first.db });
+  healthy.service.recoverOnBoot();
+  const history = await healthy.service.loadHistory(sid);
+  expect(history.ok && !history.value.expired).toBe(true);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const afterTouch = healthy.db
+    .prepare<{ status: string }, [string]>(
+      "SELECT status FROM acp_turns WHERE sid = ? AND source = 'operator'",
+    )
+    .get(sid);
+  expect(afterTouch?.status).toBe("failed");
+  const reloaded = await healthy.service.loadHistory(sid);
+  expect(reloaded.ok).toBe(true);
+  if (!reloaded.ok) return;
+  const doomedEvent = reloaded.value.events.find(
+    (event) =>
+      "content" in event &&
+      Array.isArray(event.content) &&
+      event.content.some((content) => content.text.includes("doomed")),
+  );
+  expect(doomedEvent).toBeUndefined();
+}, 25000);

@@ -63,8 +63,10 @@ test("projectSessionUpdate maps agent chunks and returns null for unknown update
       content: { type: "text", text: "hello" },
     },
     false,
+    "chunk-1",
   );
   expect(projected?.kind).toBe("agent_message");
+  expect(projected && "id" in projected ? projected.id : null).toBe("chunk-1");
 
   const unknown = projectSessionUpdate(
     {
@@ -73,6 +75,7 @@ test("projectSessionUpdate maps agent chunks and returns null for unknown update
       status: "in_progress",
     } as unknown as schema.SessionUpdate,
     false,
+    "chunk-2",
   );
   expect(unknown).toBeNull();
 });
