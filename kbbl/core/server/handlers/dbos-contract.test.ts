@@ -306,6 +306,10 @@ test("an inherited workspace carries the producer's committed work, in a fresh w
     if (code !== 0) throw new Error(`git ${args.join(" ")} failed: ${stderr}`);
   }
 
+  const producerHead = Bun.spawnSync({ cmd: ["git", "-C", producerRow.worktree_path, "rev-parse", "HEAD"] })
+    .stdout.toString()
+    .trim();
+
   const consumer = await adapter.start_or_attach(
     makeRequest({
       execution_id: "exec-11",
@@ -317,8 +321,13 @@ test("an inherited workspace carries the producer's committed work, in a fresh w
   const consumerRow = harness.store.getSession(consumer.session_id as KbblSessionId);
   if (!consumerRow) throw new Error("consumer row missing");
   // A NEW worktree cut from the parent's — never the same directory two
-  // agents would then race in — with the parent's committed work present.
+  // agents would then race in — sitting on the parent's committed HEAD,
+  // not a copy of its working tree.
   expect(consumerRow.worktree_path).not.toBe(producerRow.worktree_path);
+  const consumerHead = Bun.spawnSync({ cmd: ["git", "-C", consumerRow.worktree_path, "rev-parse", "HEAD"] })
+    .stdout.toString()
+    .trim();
+  expect(consumerHead).toBe(producerHead);
   expect(await Bun.file(join(consumerRow.worktree_path, "produced.txt")).exists()).toBe(true);
 }, 20000);
 
@@ -343,10 +352,14 @@ test("20 concurrent ensures of one operation run the initial prompt exactly once
   expect(sids.size).toBe(1);
   expect(harness.store.listSessions()).toHaveLength(1);
   const sid = [...sids][0] as KbblSessionId;
+  // Unfiltered on purpose: twenty ensures must accept ONE turn total — and
+  // the single row must be the initial turn, not something else entirely.
   const turns = harness.db
-    .query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM acp_turns WHERE sid = ?")
-    .get(sid);
-  expect(turns?.n).toBe(1);
+    .query<{ turn_key: string; source: string }, [string]>(
+      "SELECT turn_key, source FROM acp_turns WHERE sid = ?",
+    )
+    .all(sid);
+  expect(turns).toEqual([{ turn_key: "initial:op-13:contract-test", source: "initial" }]);
 }, 20000);
 
 test("20 concurrent retries of one delivery key accept a single turn", async () => {
