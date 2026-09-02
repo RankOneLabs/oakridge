@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import type { AcpUiEvent, PendingSend, SessionStatus, UiOpenTurn } from "../types";
+import type {
+  AcpUiEvent,
+  PendingSend,
+  SessionStatus,
+  TurnKey,
+  UiOpenTurn,
+} from "../types";
 
 export interface AcceptedInputReceipt {
-  readonly turnKey: string;
+  readonly turnKey: TurnKey;
   readonly status: "accepted" | "prompting";
 }
 

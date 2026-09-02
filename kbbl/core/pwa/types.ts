@@ -5,6 +5,7 @@
 // ever sees ACP-semantic UI events.
 
 import type { RuntimeId } from "../runtime-interface";
+import type { TurnKey } from "../acp/types";
 
 export type {
   PwaSessionSnapshot as SessionSnapshot,
@@ -64,7 +65,7 @@ export interface PendingBriefCard {
 /** Optimistic operator send awaiting its user_message echo on the stream. */
 export interface PendingSend {
   clientMessageId: string;
-  turnKey: string | null;
+  turnKey: TurnKey | null;
   text: string;
   sentAt: number;
   status: "sending" | "accepted" | "prompting";

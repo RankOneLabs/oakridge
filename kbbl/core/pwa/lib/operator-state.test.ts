@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { PendingSend } from "../types";
+import type { PendingSend, TurnKey } from "../types";
 import { selectOperatorExecutionState } from "./operator-state";
 
 const base = {
@@ -19,7 +19,7 @@ describe("selectOperatorExecutionState", () => {
       ...base,
       pendingSends: [{
         clientMessageId: "message-1",
-        turnKey: "operator:message-1",
+        turnKey: "operator:message-1" as TurnKey,
         text: "next",
         sentAt: 1,
         status: "accepted",

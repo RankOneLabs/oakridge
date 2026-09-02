@@ -5,6 +5,7 @@ import type { AcpUiEvent, TurnKey, UiOpenTurn } from "../types";
 import { usePendingSends } from "./usePendingSends";
 
 describe("usePendingSends", () => {
+  const turnKey = (value: string) => value as TurnKey;
   it("reconciles identical messages by turn identity", () => {
     let events: AcpUiEvent[] = [];
     const openTurns: UiOpenTurn[] = [];
@@ -15,11 +16,11 @@ describe("usePendingSends", () => {
       result.current.addPendingSend("same text", "first");
       result.current.addPendingSend("same text", "second");
       result.current.acceptPendingSend("first", {
-        turnKey: "operator:first",
+        turnKey: turnKey("operator:first"),
         status: "accepted",
       });
       result.current.acceptPendingSend("second", {
-        turnKey: "operator:second",
+        turnKey: turnKey("operator:second"),
         status: "accepted",
       });
     });

@@ -3,6 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 
 import { randomUuid } from "../../lib/random-uuid";
 import type { AcceptedInputReceipt } from "../../hooks/usePendingSends";
+import type { TurnKey } from "../../types";
 
 // Distinguishes a server's explicit non-OK response (which means the server
 // definitively rejected the message — safe to roll back the optimistic
@@ -67,10 +68,16 @@ export function InputBox({
         );
       }
       const body = (await res.json()) as { turn_key: string; status: string };
+      if (typeof body.turn_key !== "string" || body.turn_key.length === 0) {
+        throw new ServerRejection("server returned an invalid turn key");
+      }
       if (body.status !== "accepted" && body.status !== "prompting") {
         throw new ServerRejection(`server returned invalid turn status ${body.status}`);
       }
-      return { turnKey: body.turn_key, status: body.status } satisfies AcceptedInputReceipt;
+      return {
+        turnKey: body.turn_key as TurnKey,
+        status: body.status,
+      } satisfies AcceptedInputReceipt;
     },
   });
 
