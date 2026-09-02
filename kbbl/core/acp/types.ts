@@ -253,8 +253,18 @@ export interface FenceContext {
 export interface UiSessionHistory {
   readonly sid: KbblSessionId;
   readonly events: readonly AcpUiEvent[];
+  readonly openTurns: readonly UiOpenTurn[];
   /** True when the agent could not replay (expired/unsupported history). */
   readonly expired: boolean;
+}
+
+/** Durable, non-terminal work shown by the operator surface. */
+export interface UiOpenTurn {
+  readonly turnKey: TurnKey;
+  readonly source: AcpTurnSource;
+  readonly text: string;
+  readonly status: Extract<AcpTurnStatus, "accepted" | "prompting">;
+  readonly createdAt: string;
 }
 
 // === UI projection (§13.1) ===
@@ -351,6 +361,7 @@ export type AcpUiEvent =
     }
   | {
       kind: "turn_state";
+      turnKey: TurnKey;
       state: "prompting" | "idle" | "cancelled" | "failed" | "unknown";
       stopReason?: string;
       detail?: string;

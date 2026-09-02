@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import type { AcpUiEvent, Status } from "../types";
+import type { AcpUiEvent, Status, UiOpenTurn } from "../types";
 
 export interface AcpSessionStream {
   events: AcpUiEvent[];
@@ -9,6 +9,8 @@ export interface AcpSessionStream {
   expired: boolean;
   /** Non-null when the stream endpoint refused the session outright. */
   streamError: string | null;
+  openTurns: readonly UiOpenTurn[];
+  historyLoaded: boolean;
 }
 
 // One SSE subscription to /sessions/:sid/stream. The server opens every
@@ -26,11 +28,15 @@ export function useAcpSession(sid: string, enabled = true): AcpSessionStream {
   const [streamStatus, setStreamStatus] = useState<Status>("connecting");
   const [expired, setExpired] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
+  const [openTurns, setOpenTurns] = useState<readonly UiOpenTurn[]>([]);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
 
   useEffect(() => {
     setEvents([]);
     setExpired(false);
     setStreamError(null);
+    setOpenTurns([]);
+    setHistoryLoaded(false);
     if (!enabled) {
       setStreamStatus("disconnected");
       return;
@@ -74,18 +80,52 @@ export function useAcpSession(sid: string, enabled = true): AcpSessionStream {
         try {
           const data = JSON.parse((e as MessageEvent).data) as {
             expired?: unknown;
+            open_turns?: unknown;
           };
           setExpired(data.expired === true);
+          setOpenTurns(
+            Array.isArray(data.open_turns)
+              ? (data.open_turns as UiOpenTurn[])
+              : [],
+          );
+          setHistoryLoaded(true);
         } catch {
           setExpired(false);
+          setOpenTurns([]);
+          setHistoryLoaded(true);
         }
       });
 
       es.addEventListener("acp", (e) => {
         try {
-          enqueue(JSON.parse((e as MessageEvent).data) as AcpUiEvent);
+          const event = JSON.parse((e as MessageEvent).data) as AcpUiEvent;
+          enqueue(event);
+          if (event.kind === "turn_state") {
+            setOpenTurns((turns) =>
+              event.state === "prompting"
+                ? turns.map((turn) =>
+                    turn.turnKey === event.turnKey
+                      ? { ...turn, status: "prompting" }
+                      : turn,
+                  )
+                : turns.filter((turn) => turn.turnKey !== event.turnKey),
+            );
+          }
         } catch {
           // malformed frame; ignore
+        }
+      });
+
+      es.addEventListener("stream_error", (e) => {
+        try {
+          const data = JSON.parse((e as MessageEvent).data) as {
+            error?: unknown;
+          };
+          setStreamError(
+            typeof data.error === "string" ? data.error : "stream unavailable",
+          );
+        } catch {
+          setStreamError("stream unavailable");
         }
       });
     };
@@ -156,5 +196,12 @@ export function useAcpSession(sid: string, enabled = true): AcpSessionStream {
     };
   }, [sid, enabled]);
 
-  return { events, streamStatus, expired, streamError };
+  return {
+    events,
+    streamStatus,
+    expired,
+    streamError,
+    openTurns,
+    historyLoaded,
+  };
 }

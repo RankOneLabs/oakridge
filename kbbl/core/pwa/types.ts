@@ -17,8 +17,10 @@ export type {
   UiContent,
   UiPermissionOption,
   UiPlanEntry,
+  UiOpenTurn,
   UiSessionConfig,
   UiToolLocation,
+  TurnKey,
 } from "../acp/types";
 
 export type Status = "connecting" | "connected" | "disconnected" | "stale";
@@ -61,7 +63,9 @@ export interface PendingBriefCard {
 
 /** Optimistic operator send awaiting its user_message echo on the stream. */
 export interface PendingSend {
-  localId: number;
+  clientMessageId: string;
+  turnKey: string | null;
   text: string;
   sentAt: number;
+  status: "sending" | "accepted" | "prompting";
 }

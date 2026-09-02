@@ -72,6 +72,10 @@ export type AcceptTurnOutcome =
   | { kind: "existing"; row: AcpTurnRow }
   | { kind: "payload_conflict"; row: AcpTurnRow };
 
+export type OpenTurnRow = AcpTurnRow & {
+  status: Extract<AcpTurnStatus, "accepted" | "prompting">;
+};
+
 /** Worktree columns written once resolution finishes (setWorktree). */
 export interface WorktreeAssignment {
   worktree_path: string;
@@ -368,6 +372,14 @@ export class AcpSessionStore {
     return this.db
       .prepare<AcpTurnRow, [string]>(
         "SELECT * FROM acp_turns WHERE sid = ? AND status = 'accepted' ORDER BY created_at ASC, rowid ASC",
+      )
+      .all(sid);
+  }
+
+  listOpenTurns(sid: KbblSessionId): OpenTurnRow[] {
+    return this.db
+      .prepare<OpenTurnRow, [string]>(
+        "SELECT * FROM acp_turns WHERE sid = ? AND status IN ('accepted', 'prompting') ORDER BY created_at ASC, rowid ASC",
       )
       .all(sid);
   }

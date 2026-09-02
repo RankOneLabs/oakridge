@@ -2,6 +2,7 @@ import { useState, type Ref } from "react";
 import { useMutation } from "@tanstack/react-query";
 
 import { randomUuid } from "../../lib/random-uuid";
+import type { AcceptedInputReceipt } from "../../hooks/usePendingSends";
 
 // Distinguishes a server's explicit non-OK response (which means the server
 // definitively rejected the message — safe to roll back the optimistic
@@ -19,20 +20,24 @@ export function InputBox({
   ref,
   sid,
   onSend,
+  onSendAccepted,
   onSendFailed,
   canStop,
   isTurnActive,
+  onInterruptingChange,
 }: {
   ref?: Ref<HTMLDivElement>;
   sid: string;
-  onSend: (text: string) => number;
-  onSendFailed: (localId: number) => void;
+  onSend: (text: string, clientMessageId: string) => void;
+  onSendAccepted: (clientMessageId: string, receipt: AcceptedInputReceipt) => void;
+  onSendFailed: (clientMessageId: string) => void;
   canStop: boolean;
   // True while a turn is in flight (the thinking indicator is up). The
   // Interrupt control is shown only then — it cancels the current turn
   // (session/cancel) and leaves the session live, distinct from the
   // always-present Stop button which closes the whole session.
   isTurnActive: boolean;
+  onInterruptingChange?: (isInterrupting: boolean) => void;
 }) {
   const [text, setText] = useState("");
   const [confirmStop, setConfirmStop] = useState(false);
@@ -61,6 +66,11 @@ export function InputBox({
             : `server returned ${res.status}`,
         );
       }
+      const body = (await res.json()) as { turn_key: string; status: string };
+      if (body.status !== "accepted" && body.status !== "prompting") {
+        throw new ServerRejection(`server returned invalid turn status ${body.status}`);
+      }
+      return { turnKey: body.turn_key, status: body.status } satisfies AcceptedInputReceipt;
     },
   });
 
@@ -97,15 +107,17 @@ export function InputBox({
     //    command if the original actually went through.
     setText("");
     setError(null);
-    const localId = onSend(payload);
+    const clientMessageId = randomUuid();
+    onSend(payload, clientMessageId);
     try {
-      await sendMutation.mutateAsync({
+      const receipt = await sendMutation.mutateAsync({
         text: payload,
-        clientMessageId: randomUuid(),
+        clientMessageId,
       });
+      onSendAccepted(clientMessageId, receipt);
     } catch (err) {
       if (err instanceof ServerRejection) {
-        onSendFailed(localId);
+        onSendFailed(clientMessageId);
         setText(payload);
         setError(err.message);
       } else {
@@ -138,10 +150,13 @@ export function InputBox({
   async function interrupt() {
     if (interruptMutation.isPending) return;
     setError(null);
+    onInterruptingChange?.(true);
     try {
       await interruptMutation.mutateAsync();
     } catch (err) {
       setError(err instanceof Error ? err.message : "network error");
+    } finally {
+      onInterruptingChange?.(false);
     }
   }
 

@@ -269,6 +269,15 @@ test("operator input to a busy session is accepted durably and dispatched afterw
 
   const turnKey = queued.value.turn_key;
   expect(store.getTurn(sid as KbblSessionId, turnKey)?.status).toBe("accepted");
+  const history = await service.loadHistory(sid);
+  if (!history.ok) throw new Error("history load failed");
+  expect(history.value.openTurns).toContainEqual({
+    turnKey,
+    source: "operator",
+    text: "operator interjection",
+    status: "accepted",
+    createdAt: queued.value.created_at,
+  });
   await until(
     () => store.getTurn(sid as KbblSessionId, turnKey)?.status === "succeeded",
     10000,
@@ -451,7 +460,7 @@ test("terminal history reads never respawn an ACP child", async () => {
   const history = await service.loadHistory(sid);
   expect(history).toEqual({
     ok: true,
-    value: { sid, events: [], expired: true },
+    value: { sid, events: [], openTurns: [], expired: true },
   });
   expect(registry.getLive(sid as KbblSessionId)).toBeNull();
 }, 15000);
