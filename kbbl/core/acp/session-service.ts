@@ -252,11 +252,9 @@ export class AcpSessionService {
   }
 
   /**
-   * Input delivery (§11.3). With a `delivery_key` this is a durable DBOS
-   * collaboration delivery: accepted even while a turn is active, then
-   * dispatched serially. Otherwise it is operator input, which answers
-   * busy instead of queueing; `client_message_id` makes an operator turn
-   * idempotent (§14.5) without changing its non-queueing semantics.
+   * Input delivery (§11.3). Operator and collaboration turns are accepted
+   * durably even while another turn is active, then dispatched serially.
+   * `client_message_id` makes an operator turn idempotent (§14.5).
    */
   async sendInput(
     sid: string,
@@ -296,9 +294,7 @@ export class AcpSessionService {
       `operator:${opts?.client_message_id ?? randomUUID()}`) as TurnKey;
 
     // §14.5 idempotency: a retry of an already-recorded operator turn
-    // returns its stored receipt (or conflicts on different text) even
-    // while that turn is still prompting — the busy guard below only
-    // refuses NEW operator input.
+    // returns its stored receipt (or conflicts on different text).
     if (!isCollaboration && opts?.client_message_id !== undefined) {
       const existing = this.deps.store.getTurn(row.sid, turnKey);
       if (existing) {
@@ -316,19 +312,6 @@ export class AcpSessionService {
       }
     }
 
-    const busy =
-      row.status === "prompting" ||
-      (this.deps.controllers.getLive(row.sid)?.isPromptActive ?? false);
-    if (!isCollaboration && busy) {
-      return err(
-        acpError(
-          "session_busy",
-          "service.sendInput",
-          "a turn is active; operator input does not queue",
-          row.sid,
-        ),
-      );
-    }
     const accepted = this.deps.store.acceptTurn({
       sid: row.sid,
       turn_key: turnKey,
@@ -352,17 +335,9 @@ export class AcpSessionService {
     // Durable now; dispatch when the controller is (or becomes) idle.
     const touched = await this.touchController(row.sid);
     if (touched.ok) void touched.value.dispatchAcceptedTurns();
-    else if (!isCollaboration) {
-      // Operator input never queues (§11.3): a turn whose touch failed
-      // must not sit accepted and dispatch on some later touch after the
-      // operator was already told it failed.
-      this.deps.store.completeTurn(row.sid, accepted.row.turn_key, {
-        status: "failed",
-        failure_code: touched.error.code,
-        failure_detail: touched.error.detail,
-      });
-      return touched;
-    }
+    // A failed immediate touch does not revoke durable acceptance. The
+    // retained turn is safe to dispatch after controller recovery because
+    // it has not crossed the accepted -> prompting boundary.
     return ok(turnToReceipt(accepted.row));
   }
 
@@ -524,6 +499,13 @@ export class AcpSessionService {
     if (live) {
       return ok({ sid: kbblSid, events: live.snapshotEvents(), expired: false });
     }
+    if (
+      row.status === "ended" ||
+      row.status === "fenced" ||
+      row.status === "failed"
+    ) {
+      return ok({ sid: kbblSid, events: [], expired: true });
+    }
     const touched = await this.touchController(kbblSid);
     if (!touched.ok) {
       if (touched.error.code === "acp_session_load_failed") {
@@ -656,6 +638,20 @@ export class AcpSessionService {
           "session_not_found",
           "service.touchController",
           `no session ${sid}`,
+        ),
+      );
+    }
+    if (
+      row.status === "ended" ||
+      row.status === "fenced" ||
+      row.status === "failed"
+    ) {
+      return err(
+        acpError(
+          "session_not_found",
+          "service.touchController",
+          `session is ${row.status}`,
+          sid,
         ),
       );
     }

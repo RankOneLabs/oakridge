@@ -241,12 +241,12 @@ test("same delivery key with a different body conflicts", async () => {
   expect(!conflict.ok && conflict.error.code).toBe("delivery_key_conflict");
 }, 15000);
 
-test("operator input to a busy session answers busy instead of queueing", async () => {
+test("operator input to a busy session is accepted durably and dispatched afterwards", async () => {
   const { stateDir, workdir } = await makeDirs();
   const { service, store } = makeHarness({
     stateDir,
     behavior: "delayed",
-    delayMs: 3000,
+    delayMs: 800,
   });
 
   const ensured = await service.ensureResumableSession("key-1", spec(workdir));
@@ -260,9 +260,21 @@ test("operator input to a busy session answers busy instead of queueing", async 
     "initial turn to start prompting",
   );
 
-  const busy = await service.sendInput(sid, "operator interjection");
-  expect(!busy.ok && busy.error.code).toBe("session_busy");
-}, 15000);
+  const queued = await service.sendInput(sid, "operator interjection", {
+    client_message_id: "operator-1",
+  });
+  expect(queued.ok).toBe(true);
+  if (!queued.ok) return;
+  expect(queued.value.status).toBe("accepted");
+
+  const turnKey = queued.value.turn_key;
+  expect(store.getTurn(sid as KbblSessionId, turnKey)?.status).toBe("accepted");
+  await until(
+    () => store.getTurn(sid as KbblSessionId, turnKey)?.status === "succeeded",
+    10000,
+    "queued operator turn to run after the active turn",
+  );
+}, 20000);
 
 test("collaboration delivery to a busy session is accepted durably and dispatched afterwards", async () => {
   const { stateDir, workdir } = await makeDirs();
@@ -394,6 +406,56 @@ test("session/load rebuilds history after controller destruction", async () => {
   expect(replayedReply).toBeDefined();
 }, 20000);
 
+test("session/load replay does not rewrite live activity or notify the inbox", async () => {
+  const { stateDir, workdir } = await makeDirs();
+  const first = makeHarness({ stateDir });
+
+  const ensured = await first.service.ensureResumableSession(
+    "key-replay-activity",
+    spec(workdir, "historical reply"),
+  );
+  if (!ensured.ok) throw new Error("ensure failed");
+  const sid = ensured.value.session.sid;
+  await first.service.observeInitialTurn(sid, 8000);
+  await first.service.shutdown();
+
+  const second = makeHarness({ stateDir, db: first.db });
+  second.service.recoverOnBoot();
+  const before = second.store.getSession(sid as KbblSessionId)?.last_activity_at;
+  let inboxTicks = 0;
+  const unsubscribe = second.service.subscribeSessionsChanged(() => {
+    inboxTicks += 1;
+  });
+
+  const history = await second.service.loadHistory(sid);
+  unsubscribe();
+  expect(history.ok && !history.value.expired).toBe(true);
+  expect(second.store.getSession(sid as KbblSessionId)?.last_activity_at).toBe(before);
+  expect(inboxTicks).toBe(0);
+}, 20000);
+
+test("terminal history reads never respawn an ACP child", async () => {
+  const { stateDir, workdir } = await makeDirs();
+  const { service, registry } = makeHarness({ stateDir });
+
+  const ensured = await service.ensureResumableSession(
+    "key-terminal-history",
+    spec(workdir),
+  );
+  if (!ensured.ok) throw new Error("ensure failed");
+  const sid = ensured.value.session.sid;
+  await service.observeInitialTurn(sid, 8000);
+  await service.closeSession(sid);
+  expect(registry.getLive(sid as KbblSessionId)).toBeNull();
+
+  const history = await service.loadHistory(sid);
+  expect(history).toEqual({
+    ok: true,
+    value: { sid, events: [], expired: true },
+  });
+  expect(registry.getLive(sid as KbblSessionId)).toBeNull();
+}, 15000);
+
 test("an agent without loadSession is rejected for a load-requiring profile", async () => {
   const { stateDir, workdir } = await makeDirs();
   const { service, store } = makeHarness({ stateDir, behavior: "no_load" });
@@ -515,7 +577,7 @@ test("a missing agent binary records a visible failed session", async () => {
   expect(rows[0]!.status).toBe("failed");
 }, 15000);
 
-test("operator input whose touch fails is never queued for a later dispatch", async () => {
+test("operator input whose immediate touch fails remains accepted for recovery", async () => {
   const { stateDir, workdir } = await makeDirs();
   const first = makeHarness({ stateDir });
 
@@ -537,46 +599,55 @@ test("operator input whose touch fails is never queued for a later dispatch", as
   });
   broken.service.recoverOnBoot();
 
-  const sent = await broken.service.sendInput(sid, "doomed operator input");
-  expect(sent.ok).toBe(false);
-  // §11.3: the operator was told it failed, so the turn must not sit
-  // accepted and dispatch on some later successful touch.
-  expect(broken.store.listAcceptedTurns(sid as KbblSessionId)).toHaveLength(0);
-  const doomedTurn = broken.db
+  const sent = await broken.service.sendInput(sid, "recoverable operator input", {
+    client_message_id: "recoverable-1",
+  });
+  expect(sent.ok).toBe(true);
+  expect(broken.store.listAcceptedTurns(sid as KbblSessionId)).toHaveLength(1);
+  const acceptedTurn = broken.db
     .prepare<{ status: string }, [string]>(
       "SELECT status FROM acp_turns WHERE sid = ? AND source = 'operator'",
     )
     .get(sid);
-  expect(doomedTurn?.status).toBe("failed");
+  expect(acceptedTurn?.status).toBe("accepted");
 
-  // Restart onto a working binary: the touch must find nothing to dispatch.
+  // Restart onto a working binary: the retained accepted turn dispatches.
   await broken.service.shutdown();
   const healthy = makeHarness({ stateDir, db: first.db });
   healthy.service.recoverOnBoot();
   const history = await healthy.service.loadHistory(sid);
   expect(history.ok && !history.value.expired).toBe(true);
-  await new Promise((resolve) => setTimeout(resolve, 300));
+  await until(
+    () =>
+      healthy.db
+        .prepare<{ status: string }, [string]>(
+          "SELECT status FROM acp_turns WHERE sid = ? AND source = 'operator'",
+        )
+        .get(sid)?.status === "succeeded",
+    8000,
+    "retained operator turn to dispatch after recovery",
+  );
   const afterTouch = healthy.db
     .prepare<{ status: string }, [string]>(
       "SELECT status FROM acp_turns WHERE sid = ? AND source = 'operator'",
     )
     .get(sid);
-  expect(afterTouch?.status).toBe("failed");
+  expect(afterTouch?.status).toBe("succeeded");
   const reloaded = await healthy.service.loadHistory(sid);
   expect(reloaded.ok).toBe(true);
   if (!reloaded.ok) return;
-  const doomedEvent = reloaded.value.events.find(
+  const recoveredEvent = reloaded.value.events.find(
     (event) =>
       "content" in event &&
       Array.isArray(event.content) &&
-      event.content.some((content) => content.text.includes("doomed")),
+      event.content.some((content) => content.text.includes("recoverable")),
   );
-  expect(doomedEvent).toBeUndefined();
+  expect(recoveredEvent).toBeDefined();
 }, 25000);
 
 test("operator retry with the same client_message_id returns the stored receipt even while that turn is prompting", async () => {
   const { stateDir, workdir } = await makeDirs();
-  const harness = makeHarness({ behavior: "delayed", stateDir, delayMs: 5000 });
+  const harness = makeHarness({ behavior: "delayed", stateDir, delayMs: 800 });
   const created = await harness.service.createSession(spec(workdir, ""));
   if (!created.ok) throw new Error(`createSession failed: ${created.error.code}`);
   const sid = created.value.sid;
@@ -592,8 +663,7 @@ test("operator retry with the same client_message_id returns the stored receipt 
     "operator turn prompting",
   );
 
-  // §14.5: a retry of the SAME message is answered with its receipt, not
-  // session_busy — the busy guard refuses only new operator input.
+  // §14.5: a retry of the SAME message is answered with its receipt.
   const retry = await harness.service.sendInput(sid, "do the work", {
     client_message_id: "msg-1",
   });
@@ -608,7 +678,16 @@ test("operator retry with the same client_message_id returns the stored receipt 
   const newInput = await harness.service.sendInput(sid, "unrelated", {
     client_message_id: "msg-2",
   });
-  expect(!newInput.ok && newInput.error.code).toBe("session_busy");
+  expect(newInput.ok && newInput.value.status).toBe("accepted");
+  if (!newInput.ok) return;
+  expect(newInput.value.turn_key).not.toBe(first.value.turn_key);
+  await until(
+    () =>
+      harness.store.getTurn(sid, newInput.value.turn_key)?.status ===
+      "succeeded",
+    10000,
+    "second operator turn to dispatch",
+  );
 }, 20000);
 
 // === PWA cutover surface (§13/§14): dispatch echo, permission lifecycle,

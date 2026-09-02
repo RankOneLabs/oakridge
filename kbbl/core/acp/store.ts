@@ -367,7 +367,7 @@ export class AcpSessionStore {
   listAcceptedTurns(sid: KbblSessionId): AcpTurnRow[] {
     return this.db
       .prepare<AcpTurnRow, [string]>(
-        "SELECT * FROM acp_turns WHERE sid = ? AND status = 'accepted' ORDER BY created_at ASC, turn_key ASC",
+        "SELECT * FROM acp_turns WHERE sid = ? AND status = 'accepted' ORDER BY created_at ASC, rowid ASC",
       )
       .all(sid);
   }
