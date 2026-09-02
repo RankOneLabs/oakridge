@@ -456,6 +456,113 @@ test("terminal history reads never respawn an ACP child", async () => {
   expect(registry.getLive(sid as KbblSessionId)).toBeNull();
 }, 15000);
 
+test("a cold history lease closes its display-only child on release", async () => {
+  const { stateDir, workdir } = await makeDirs();
+  const first = makeHarness({ stateDir });
+  const ensured = await first.service.ensureResumableSession(
+    "key-history-lease",
+    spec(workdir),
+  );
+  if (!ensured.ok) throw new Error("ensure failed");
+  const sid = ensured.value.session.sid;
+  await first.service.observeInitialTurn(sid, 8000);
+  await first.service.shutdown();
+
+  const second = makeHarness({ stateDir, db: first.db });
+  const acquired = await second.service.acquireHistory(sid);
+  expect(acquired.ok).toBe(true);
+  if (!acquired.ok) return;
+  expect(second.registry.getLive(sid as KbblSessionId)).not.toBeNull();
+
+  await acquired.value.release();
+  expect(second.registry.getLive(sid as KbblSessionId)).toBeNull();
+}, 20000);
+
+test("a history lease never closes a controller that was already live", async () => {
+  const { stateDir, workdir } = await makeDirs();
+  const { service, registry } = makeHarness({ stateDir });
+  const ensured = await service.ensureResumableSession(
+    "key-live-history-lease",
+    spec(workdir),
+  );
+  if (!ensured.ok) throw new Error("ensure failed");
+  const sid = ensured.value.session.sid;
+  await service.observeInitialTurn(sid, 8000);
+  const existing = registry.getLive(sid as KbblSessionId);
+
+  const acquired = await service.acquireHistory(sid);
+  if (!acquired.ok) throw new Error("history acquisition failed");
+  await acquired.value.release();
+  expect(registry.getLive(sid as KbblSessionId)).toBe(existing);
+}, 15000);
+
+test("concurrent cold history readers share one child until the final release", async () => {
+  const { stateDir, workdir } = await makeDirs();
+  const first = makeHarness({ stateDir });
+  const ensured = await first.service.ensureResumableSession(
+    "key-shared-history-lease",
+    spec(workdir),
+  );
+  if (!ensured.ok) throw new Error("ensure failed");
+  const sid = ensured.value.session.sid;
+  await first.service.observeInitialTurn(sid, 8000);
+  await first.service.shutdown();
+
+  const second = makeHarness({
+    stateDir,
+    db: first.db,
+    behavior: "delayed_load",
+    delayMs: 200,
+  });
+  const [left, right] = await Promise.all([
+    second.service.acquireHistory(sid),
+    second.service.acquireHistory(sid),
+  ]);
+  if (!left.ok || !right.ok) throw new Error("history acquisition failed");
+  expect(second.registry.liveCount()).toBe(1);
+
+  await left.value.release();
+  expect(second.registry.liveCount()).toBe(1);
+  await right.value.release();
+  expect(second.registry.liveCount()).toBe(0);
+}, 20000);
+
+test("durable input takes ownership of a history-created controller", async () => {
+  const { stateDir, workdir } = await makeDirs();
+  const first = makeHarness({ stateDir });
+  const ensured = await first.service.ensureResumableSession(
+    "key-history-work-transfer",
+    spec(workdir),
+  );
+  if (!ensured.ok) throw new Error("ensure failed");
+  const sid = ensured.value.session.sid;
+  await first.service.observeInitialTurn(sid, 8000);
+  await first.service.shutdown();
+
+  const second = makeHarness({
+    stateDir,
+    db: first.db,
+    behavior: "delayed",
+    delayMs: 500,
+  });
+  const acquired = await second.service.acquireHistory(sid);
+  if (!acquired.ok) throw new Error("history acquisition failed");
+  const sent = await second.service.sendInput(sid, "keep this controller", {
+    client_message_id: "history-transfer-1",
+  });
+  if (!sent.ok) throw new Error("input was not accepted");
+
+  await acquired.value.release();
+  expect(second.registry.getLive(sid as KbblSessionId)).not.toBeNull();
+  await until(
+    () =>
+      second.store.getTurn(sid as KbblSessionId, sent.value.turn_key)?.status ===
+      "succeeded",
+    8000,
+    "durable turn to survive history release",
+  );
+}, 20000);
+
 test("an agent without loadSession is rejected for a load-requiring profile", async () => {
   const { stateDir, workdir } = await makeDirs();
   const { service, store } = makeHarness({ stateDir, behavior: "no_load" });
