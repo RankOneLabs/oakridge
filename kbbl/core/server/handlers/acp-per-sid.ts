@@ -78,7 +78,11 @@ export function mountAcpPerSidRoutes(app: Hono, deps: AcpPerSidRouteDeps): void 
         unsubscribe = null;
         const release = releaseHistory;
         releaseHistory = null;
-        if (release) void release();
+        if (release) {
+          void release().catch((error: unknown) => {
+            console.error(`acp stream: sid=${sid} history release failed`, error);
+          });
+        }
         resolveDone?.();
       };
       stream.onAbort(finish);

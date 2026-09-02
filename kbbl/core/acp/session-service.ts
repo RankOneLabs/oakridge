@@ -560,7 +560,9 @@ export class AcpSessionService {
       await this.releaseHistoryConsumer(kbblSid, coldLoad);
     };
     const releaseOnAbort = () => {
-      void release();
+      void release().catch((error: unknown) => {
+        console.error(`[acp] sid=${kbblSid} history release failed`, error);
+      });
     };
     consumerSignal?.addEventListener("abort", releaseOnAbort, { once: true });
     if (consumerSignal?.aborted) releaseOnAbort();
