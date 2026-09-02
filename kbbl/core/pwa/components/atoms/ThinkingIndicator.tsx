@@ -1,9 +1,11 @@
 import { formatElapsedSeconds } from "../../lib/time";
 
 export function ThinkingIndicator({
+  label = "thinking",
   elapsedSec,
   outputTokens,
 }: {
+  label?: string;
   elapsedSec: number | null;
   outputTokens: number | null;
 }) {
@@ -26,7 +28,7 @@ export function ThinkingIndicator({
           aria-live="polite"
           aria-atomic="true"
         >
-          thinking
+          {label}
         </span>
         {(showElapsed || showTokens) && (
           <span className="thinking-meta" aria-hidden="true">

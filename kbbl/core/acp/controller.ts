@@ -26,6 +26,7 @@ import {
   type KbblSessionId,
   type Result,
   type StopReason,
+  type TurnKey,
 } from "./types";
 
 export interface ControllerConfig {
@@ -112,7 +113,7 @@ export class AcpSessionController {
   private client: AcpClient | null = null;
   private acpSessionId: AcpAgentSessionId | null = null;
   private configOptions: readonly schema.SessionConfigOption[] = [];
-  private activeTurnKey: string | null = null;
+  private activeTurnKey: TurnKey | null = null;
   private replaying = false;
   private fenced = false;
   private defunct = false;
@@ -361,7 +362,7 @@ export class AcpSessionController {
       content: [{ type: "text", text: turn.payload }],
       replayed: false,
     });
-    this.emit({ kind: "turn_state", state: "prompting" });
+    this.emit({ kind: "turn_state", turnKey: turn.turn_key, state: "prompting" });
     console.log(
       `[acp] sid=${turn.sid} turn=${turn.turn_key} prompting (pid=${this.childPid})`,
     );
@@ -653,6 +654,7 @@ export class AcpSessionController {
       this.deps.store.setStatus(this.deps.sid, "idle");
       this.emit({
         kind: "turn_state",
+        turnKey,
         state: "unknown",
         detail: `agent process exited (code ${code}) during the turn`,
       });
@@ -672,7 +674,13 @@ export class AcpSessionController {
   ): void {
     if (!this.defunct) this.deps.store.setStatus(turn.sid, "idle");
     this.deps.store.touchActivity(turn.sid);
-    this.emit({ kind: "turn_state", state, stopReason, detail });
+    this.emit({
+      kind: "turn_state",
+      turnKey: turn.turn_key,
+      state,
+      stopReason,
+      detail,
+    });
     console.log(
       `[acp] sid=${turn.sid} turn=${turn.turn_key} finished state=${state} stop=${stopReason ?? "-"}`,
     );

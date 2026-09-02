@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { AcpUiEvent } from "../types";
+import type { AcpUiEvent, TurnKey } from "../types";
 import { groupConfigOptions, projectTimeline } from "./acp-timeline";
 
 function agentChunk(id: string, text: string, streaming = true): AcpUiEvent {
@@ -141,22 +141,30 @@ describe("projectTimeline permissions", () => {
 });
 
 describe("projectTimeline turn state and latest-wins folds", () => {
+  const turnKey = "turn-1" as TurnKey;
   it("turnActive follows the last turn_state", () => {
     expect(
-      projectTimeline([{ kind: "turn_state", state: "prompting" }]).turnActive,
+      projectTimeline([
+        { kind: "turn_state", turnKey, state: "prompting" },
+      ]).turnActive,
     ).toBe(true);
     expect(
       projectTimeline([
-        { kind: "turn_state", state: "prompting" },
-        { kind: "turn_state", state: "idle" },
+        { kind: "turn_state", turnKey, state: "prompting" },
+        { kind: "turn_state", turnKey, state: "idle" },
       ]).turnActive,
     ).toBe(false);
   });
 
   it("cancelled/failed/unknown turns leave a visible note; idle does not", () => {
     const projection = projectTimeline([
-      { kind: "turn_state", state: "idle" },
-      { kind: "turn_state", state: "cancelled", stopReason: "cancelled" },
+      { kind: "turn_state", turnKey, state: "idle" },
+      {
+        kind: "turn_state",
+        turnKey,
+        state: "cancelled",
+        stopReason: "cancelled",
+      },
     ]);
     expect(projection.items).toHaveLength(1);
     expect(projection.items[0]).toMatchObject({ kind: "turn_note", state: "cancelled" });

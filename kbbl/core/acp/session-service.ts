@@ -11,7 +11,13 @@ import { resolveProfile } from "./agent-profile";
 import { AcpSessionController } from "./controller";
 import type { AcpControllerRegistry } from "./controller-registry";
 import type { AcpProcessSupervisor } from "./process-supervisor";
-import { sha256Hex, startSpecHash, toSnapshot, type AcpSessionStore } from "./store";
+import {
+  sha256Hex,
+  startSpecHash,
+  toSnapshot,
+  type AcpSessionStore,
+  type OpenTurnRow,
+} from "./store";
 import {
   acpError,
   err,
@@ -33,6 +39,7 @@ import {
   type TerminalObservation,
   type TurnKey,
   type UiSessionHistory,
+  type UiOpenTurn,
   type WorktreeProvider,
 } from "./types";
 
@@ -67,6 +74,16 @@ function turnToReceipt(row: AcpTurnRow): InputReceipt {
     payload_hash: row.payload_hash,
     status: row.status,
     created_at: row.created_at,
+  };
+}
+
+function turnToOpenTurn(row: OpenTurnRow): UiOpenTurn {
+  return {
+    turnKey: row.turn_key,
+    source: row.source,
+    text: row.payload,
+    status: row.status,
+    createdAt: row.created_at,
   };
 }
 
@@ -508,25 +525,41 @@ export class AcpSessionService {
     }
     const live = this.deps.controllers.getLive(kbblSid);
     if (live) {
-      return ok({ sid: kbblSid, events: live.snapshotEvents(), expired: false });
+      return ok({
+        sid: kbblSid,
+        events: live.snapshotEvents(),
+        openTurns: this.deps.store.listOpenTurns(kbblSid).map(turnToOpenTurn),
+        expired: false,
+      });
     }
     if (
       row.status === "ended" ||
       row.status === "fenced" ||
       row.status === "failed"
     ) {
-      return ok({ sid: kbblSid, events: [], expired: true });
+      return ok({
+        sid: kbblSid,
+        events: [],
+        openTurns: this.deps.store.listOpenTurns(kbblSid).map(turnToOpenTurn),
+        expired: true,
+      });
     }
     const touched = await this.touchController(kbblSid, loadSignal);
     if (!touched.ok) {
       if (touched.error.code === "acp_session_load_failed") {
-        return ok({ sid: kbblSid, events: [], expired: true });
+        return ok({
+          sid: kbblSid,
+          events: [],
+          openTurns: this.deps.store.listOpenTurns(kbblSid).map(turnToOpenTurn),
+          expired: true,
+        });
       }
       return touched;
     }
     return ok({
       sid: kbblSid,
       events: touched.value.snapshotEvents(),
+      openTurns: this.deps.store.listOpenTurns(kbblSid).map(turnToOpenTurn),
       expired: false,
     });
   }

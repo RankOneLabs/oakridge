@@ -6,10 +6,12 @@ export function PendingUserBubble({
   text,
   sentAt,
   isLatest,
+  status,
 }: {
   text: string;
   sentAt: number;
   isLatest: boolean;
+  status: "sending" | "accepted" | "prompting";
 }) {
   // Re-render once after the 2s threshold so the label rolls from "sending"
   // to "awaiting agent" without polling forever. The bubble is pending the
@@ -37,7 +39,13 @@ export function PendingUserBubble({
         <div className="bubble bubble-user bubble-user-pending">
           {text}
           <span className="bubble-pending-tag">
-            {slow ? "awaiting agent…" : "sending…"}
+            {status === "accepted"
+              ? "queued"
+              : status === "prompting"
+                ? "starting…"
+                : slow
+                  ? "delivery uncertain…"
+                  : "sending…"}
           </span>
         </div>
       </div>

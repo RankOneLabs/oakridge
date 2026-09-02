@@ -116,6 +116,39 @@ describe("useAcpSession", () => {
     await waitFor(() => expect(result.current.expired).toBe(true));
   });
 
+  it("hydrates durable open turns and reports history readiness from epoch", async () => {
+    const { result } = renderHook(() => useAcpSession(SID));
+    act(() => {
+      MockEventSource.last!.dispatch(
+        "epoch",
+        JSON.stringify({
+          stream_epoch: "e1",
+          expired: false,
+          open_turns: [{
+            turnKey: "operator:queued",
+            source: "operator",
+            text: "queued input",
+            status: "accepted",
+            createdAt: "2026-09-02T00:00:00.000Z",
+          }],
+        }),
+      );
+    });
+    await waitFor(() => expect(result.current.historyLoaded).toBe(true));
+    expect(result.current.openTurns).toHaveLength(1);
+  });
+
+  it("surfaces an in-band stream_error after early SSE readiness", async () => {
+    const { result } = renderHook(() => useAcpSession(SID));
+    act(() => {
+      MockEventSource.last!.dispatch(
+        "stream_error",
+        JSON.stringify({ error: "history load failed" }),
+      );
+    });
+    await waitFor(() => expect(result.current.streamError).toBe("history load failed"));
+  });
+
   it("does not open a stream when disabled (pre-ACP archived sessions)", () => {
     const { result } = renderHook(() => useAcpSession(SID, false));
     expect(MockEventSource.instances).toHaveLength(0);

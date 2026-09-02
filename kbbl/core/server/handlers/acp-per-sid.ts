@@ -44,6 +44,7 @@ export function mountAcpPerSidRoutes(app: Hono, deps: AcpPerSidRouteDeps): void 
         stream_epoch: acp.streamEpoch(sid),
         expired: acquired.value.history.expired,
         events: acquired.value.history.events,
+        open_turns: acquired.value.history.openTurns,
       });
     } finally {
       await acquired.value.release();
@@ -115,6 +116,7 @@ export function mountAcpPerSidRoutes(app: Hono, deps: AcpPerSidRouteDeps): void 
           data: JSON.stringify({
             stream_epoch: epoch,
             expired: acquired.value.history.expired,
+            open_turns: acquired.value.history.openTurns,
           }),
         });
         let eventId = 0;

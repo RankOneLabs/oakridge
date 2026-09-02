@@ -6,6 +6,10 @@ import { usePendingSends } from "../hooks/usePendingSends";
 import { useElapsedSeconds } from "../hooks/useElapsedSeconds";
 import { useAutoScrollAndLayout } from "../hooks/useAutoScrollAndLayout";
 import { projectTimeline } from "../lib/acp-timeline";
+import {
+  operatorStateLabel,
+  selectOperatorExecutionState,
+} from "../lib/operator-state";
 
 import { SessionTopBar } from "../components/organisms/SessionTopBar";
 import { SessionTimeline } from "../components/organisms/SessionTimeline";
@@ -39,10 +43,14 @@ export function SessionView({
 
   const isLegacyArchive = snapshot?.source === "legacy_archive";
   // A pre-ACP archived session has no ACP stream — don't open one.
-  const { events, streamStatus, expired, streamError } = useAcpSession(
-    sid,
-    !isLegacyArchive,
-  );
+  const {
+    events,
+    streamStatus,
+    expired,
+    streamError,
+    openTurns,
+    historyLoaded,
+  } = useAcpSession(sid, !isLegacyArchive);
 
   const projection = useMemo(() => projectTimeline(events), [events]);
 
@@ -55,12 +63,24 @@ export function SessionView({
   const {
     pendingSends,
     addPendingSend,
+    acceptPendingSend,
     removePendingSend,
-    lastPendingLocalId,
-  } = usePendingSends(sid, events, sessionStatus);
+    lastPendingClientMessageId,
+  } = usePendingSends(sid, events, openTurns, sessionStatus);
+
+  const [isInterrupting, setIsInterrupting] = useState(false);
+  const operatorState = selectOperatorExecutionState({
+    sessionStatus,
+    streamStatus,
+    historyLoaded: isLegacyArchive || historyLoaded,
+    pendingSends,
+    isTurnActive: projection.turnActive,
+    hasOpenPermission: projection.openPermissions.length > 0,
+    isInterrupting,
+  });
 
   const awaitingResult =
-    !sessionClosed && (projection.turnActive || pendingSends.length > 0);
+    !sessionClosed && operatorState.kind !== "idle";
 
   // Wall-clock start of the visible wait, for the thinking indicator's
   // elapsed counter: reset whenever the wait begins.
@@ -132,14 +152,19 @@ export function SessionView({
           />
           {pendingSends.map((m) => (
             <PendingUserBubble
-              key={m.localId}
+              key={m.clientMessageId}
               text={m.text}
               sentAt={m.sentAt}
-              isLatest={m.localId === lastPendingLocalId}
+              status={m.status}
+              isLatest={m.clientMessageId === lastPendingClientMessageId}
             />
           ))}
-          {awaitingResult && (
-            <ThinkingIndicator elapsedSec={elapsedSec} outputTokens={null} />
+          {operatorState.kind !== "idle" && !sessionClosed && (
+            <ThinkingIndicator
+              label={operatorStateLabel(operatorState)}
+              elapsedSec={elapsedSec}
+              outputTokens={null}
+            />
           )}
         </>
       )}
@@ -151,9 +176,11 @@ export function SessionView({
           <InputBox
             sid={sid}
             onSend={addPendingSend}
+            onSendAccepted={acceptPendingSend}
             onSendFailed={removePendingSend}
             canStop={true}
-            isTurnActive={awaitingResult}
+            isTurnActive={projection.turnActive}
+            onInterruptingChange={setIsInterrupting}
           />
         )}
         {!canInput && !isLegacyArchive && sessionClosed && (
