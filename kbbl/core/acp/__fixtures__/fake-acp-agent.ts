@@ -129,6 +129,7 @@ const app = agent({ name: `fake-acp-${behavior}` })
     if (!existsSync(path)) {
       throw RequestError.resourceNotFound(sessionId);
     }
+    if (behavior === "delayed_load") await delay(Math.max(0, delayMs));
     const lines = readFileSync(path, "utf8")
       .split("\n")
       .filter((line) => line.trim().length > 0);

@@ -54,3 +54,57 @@ describe("POST /sessions/:sid/input validation", () => {
     expect(res.status).toBe(404);
   });
 });
+
+test("cold session stream flushes readiness and releases its child after disconnect", async () => {
+  const stateDir = join(tmpRoot, "cold-stream-state");
+  const first = makeAcpTestService({ stateDir });
+  const created = await first.service.createSession({
+    initial_prompt: "remember this",
+    workdir: tmpRoot,
+    runtime: "fake",
+  });
+  if (!created.ok) throw new Error(`create failed: ${created.error.code}`);
+  const sid = created.value.sid;
+  await first.service.observeInitialTurn(sid, 8000);
+  await first.service.shutdown();
+
+  const cold = makeAcpTestService({
+    stateDir,
+    db: first.db,
+    behavior: "delayed_load",
+    delayMs: 600,
+  });
+  const coldApp = new Hono();
+  mountAcpPerSidRoutes(coldApp, { acp: cold.service });
+  const requestController = new AbortController();
+  const response = await coldApp.fetch(
+    new Request(`http://kbbl.test/sessions/${sid}/stream`, {
+      signal: requestController.signal,
+    }),
+  );
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("stream response has no body");
+
+  try {
+    const firstChunk = await Promise.race([
+      reader.read(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("readiness frame timed out")), 250),
+      ),
+    ]);
+    expect(new TextDecoder().decode(firstChunk.value)).toContain(": ready");
+  } finally {
+    requestController.abort();
+    await reader.cancel().catch(() => {});
+  }
+
+  // Wait past the fake agent's load delay: a cancelled single-flight must
+  // not install a controller after the request has already disappeared.
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  const deadline = Date.now() + 3000;
+  while (cold.registry.liveCount() !== 0 && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  expect(cold.registry.liveCount()).toBe(0);
+  await cold.service.shutdown();
+}, 15000);

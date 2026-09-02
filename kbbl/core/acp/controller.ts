@@ -168,11 +168,45 @@ export class AcpSessionController {
   async start(
     cwd: string,
     mode: ControllerStartMode,
+    abortSignal?: AbortSignal,
   ): Promise<Result<void, AcpError>> {
+    if (abortSignal?.aborted) {
+      return err(
+        acpError(
+          "acp_session_load_failed",
+          "controller.start",
+          "cold history load was cancelled",
+          this.deps.sid,
+        ),
+      );
+    }
     const spawned = this.deps.supervisor.spawn(this.deps.profile, cwd);
     if (!spawned.ok) return spawned;
     this.child = spawned.value;
     this.child.onExit((code) => this.handleChildExit(code));
+    if (abortSignal?.aborted) {
+      await this.teardownChild();
+      return err(
+        acpError(
+          "acp_session_load_failed",
+          "controller.start",
+          "cold history load was cancelled",
+          this.deps.sid,
+        ),
+      );
+    }
+    abortSignal?.addEventListener(
+      "abort",
+      () => {
+        void this.teardownChild().catch((error: unknown) => {
+          console.error(
+            `[acp] sid=${this.deps.sid} cancelled child teardown failed`,
+            error,
+          );
+        });
+      },
+      { once: true },
+    );
 
     this.client = new AcpClient(this.deps.sid, this.child, {
       onSessionUpdate: (notification) => this.handleUpdate(notification),

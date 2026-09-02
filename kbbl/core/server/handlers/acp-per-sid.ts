@@ -33,17 +33,21 @@ export function mountAcpPerSidRoutes(app: Hono, deps: AcpPerSidRouteDeps): void 
   app.get("/sessions/:sid/history", async (c) => {
     const sid = c.req.param("sid");
     if (!isValidSid(sid)) return c.json({ error: "invalid sid" }, 400);
-    const history = await acp.loadHistory(sid);
-    if (!history.ok) {
-      const status = history.error.code === "session_not_found" ? 404 : 503;
-      return c.json({ error: history.error.detail, code: history.error.code }, status);
+    const acquired = await acp.acquireHistory(sid, c.req.raw.signal);
+    if (!acquired.ok) {
+      const status = acquired.error.code === "session_not_found" ? 404 : 503;
+      return c.json({ error: acquired.error.detail, code: acquired.error.code }, status);
     }
-    return c.json({
-      session_id: sid,
-      stream_epoch: acp.streamEpoch(sid),
-      expired: history.value.expired,
-      events: history.value.events,
-    });
+    try {
+      return c.json({
+        session_id: sid,
+        stream_epoch: acp.streamEpoch(sid),
+        expired: acquired.value.history.expired,
+        events: acquired.value.history.events,
+      });
+    } finally {
+      await acquired.value.release();
+    }
   });
 
   // Live stream (§14.4): SSE of AcpUiEvent. Event ids are offsets within
@@ -54,50 +58,73 @@ export function mountAcpPerSidRoutes(app: Hono, deps: AcpPerSidRouteDeps): void 
     if (!isValidSid(sid)) return c.json({ error: "invalid sid" }, 400);
     const session = acp.getSession(sid);
     if (!session) return c.json({ error: "unknown session" }, 404);
-    // Touch so an idle session without a live child respawns via load and
-    // the stream has a projection to attach to.
-    const history = await acp.loadHistory(sid);
-    if (!history.ok) {
-      return c.json({ error: history.error.detail, code: history.error.code }, 503);
-    }
-    const epoch = acp.streamEpoch(sid);
-
     return streamSSE(c, async (stream) => {
-      // SSE readiness: write before any path that can block, so the
-      // EventSource never sits on an empty body until the heartbeat.
+      // Flush before session/load: a cold replay may be expensive and must
+      // not leave EventSource on an empty response body.
       await stream.write(": ready\n\n");
-      await stream.writeSSE({
-        event: "epoch",
-        data: JSON.stringify({
-          stream_epoch: epoch,
-          expired: history.value.expired,
-        }),
+      let closed = false;
+      let releaseHistory: (() => Promise<void>) | null = null;
+      let unsubscribe: (() => void) | null = null;
+      let heartbeat: ReturnType<typeof setInterval> | undefined;
+      let resolveDone: (() => void) | null = null;
+      const done = new Promise<void>((resolve) => {
+        resolveDone = resolve;
       });
-      let eventId = 0;
-      for (const event of history.value.events) {
-        await stream.writeSSE({
-          event: "acp",
-          id: String(eventId++),
-          data: JSON.stringify(event),
-        });
+      const finish = () => {
+        if (closed) return;
+        closed = true;
+        if (heartbeat !== undefined) clearInterval(heartbeat);
+        unsubscribe?.();
+        unsubscribe = null;
+        const release = releaseHistory;
+        releaseHistory = null;
+        if (release) {
+          void release().catch((error: unknown) => {
+            console.error(`acp stream: sid=${sid} history release failed`, error);
+          });
+        }
+        resolveDone?.();
+      };
+      stream.onAbort(finish);
+
+      const acquired = await acp.acquireHistory(sid, c.req.raw.signal);
+      if (!acquired.ok) {
+        if (!closed) {
+          await stream.writeSSE({
+            event: "stream_error",
+            data: JSON.stringify({
+              error: acquired.error.detail,
+              code: acquired.error.code,
+            }),
+          }).catch(() => {});
+        }
+        finish();
+        return;
+      }
+      releaseHistory = acquired.value.release;
+      if (closed) {
+        await acquired.value.release();
+        releaseHistory = null;
+        return;
       }
 
-      let closed = false;
-      const done = new Promise<void>((resolveDone) => {
-        let heartbeat: ReturnType<typeof setInterval> | undefined;
-        let unsubscribe: (() => void) | null = null;
-        // All teardown lives in finish: a rejected write resolves the
-        // stream WITHOUT firing onAbort (Hono closes on normal callback
-        // return), so cleanup hung off onAbort alone would leak the
-        // interval and the ACP subscription per disconnected client.
-        const finish = () => {
-          if (closed) return;
-          closed = true;
-          if (heartbeat !== undefined) clearInterval(heartbeat);
-          unsubscribe?.();
-          resolveDone();
-        };
-        stream.onAbort(finish);
+      try {
+        const epoch = acp.streamEpoch(sid);
+        await stream.writeSSE({
+          event: "epoch",
+          data: JSON.stringify({
+            stream_epoch: epoch,
+            expired: acquired.value.history.expired,
+          }),
+        });
+        let eventId = 0;
+        for (const event of acquired.value.history.events) {
+          await stream.writeSSE({
+            event: "acp",
+            id: String(eventId++),
+            data: JSON.stringify(event),
+          });
+        }
 
         unsubscribe = acp.subscribe(sid, (event) => {
           void stream
@@ -108,15 +135,14 @@ export function mountAcpPerSidRoutes(app: Hono, deps: AcpPerSidRouteDeps): void 
             })
             .catch(finish);
         });
-
         heartbeat = setInterval(() => {
           void stream.write(": ping\n\n").catch(finish);
         }, HEARTBEAT_MS);
-        // No live controller (ended/failed session): nothing further will
-        // arrive; leave the stream open on heartbeats so the client owns
-        // the close, exactly like an ended legacy session's stream.
-      });
-      await done;
+
+        await done;
+      } finally {
+        finish();
+      }
     });
   });
 

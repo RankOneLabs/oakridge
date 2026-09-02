@@ -70,7 +70,15 @@ function turnToReceipt(row: AcpTurnRow): InputReceipt {
   };
 }
 
+export interface HistoryLease {
+  readonly history: UiSessionHistory;
+  release(): Promise<void>;
+}
+
 export class AcpSessionService {
+  private readonly historyConsumers = new Map<KbblSessionId, number>();
+  private readonly coldHistoryLoads = new Map<KbblSessionId, AbortController>();
+
   constructor(private readonly deps: AcpSessionServiceDeps) {}
 
   /** §10.7 boot recovery sweep. Call once before serving requests. */
@@ -483,7 +491,10 @@ export class AcpSessionService {
    * from the projection buffer; otherwise a fresh child replays
    * session/load. A failed load reports an expired history, not an error.
    */
-  async loadHistory(sid: string): Promise<Result<UiSessionHistory, AcpError>> {
+  async loadHistory(
+    sid: string,
+    loadSignal?: AbortSignal,
+  ): Promise<Result<UiSessionHistory, AcpError>> {
     const kbblSid = sid as KbblSessionId;
     const row = this.deps.store.getSession(kbblSid);
     if (!row) {
@@ -506,7 +517,7 @@ export class AcpSessionService {
     ) {
       return ok({ sid: kbblSid, events: [], expired: true });
     }
-    const touched = await this.touchController(kbblSid);
+    const touched = await this.touchController(kbblSid, loadSignal);
     if (!touched.ok) {
       if (touched.error.code === "acp_session_load_failed") {
         return ok({ sid: kbblSid, events: [], expired: true });
@@ -517,6 +528,54 @@ export class AcpSessionService {
       sid: kbblSid,
       events: touched.value.snapshotEvents(),
       expired: false,
+    });
+  }
+
+  /**
+   * History ownership for HTTP/SSE readers. A cold read may need an ACP child
+   * for session/load, but that display-only child must not outlive its final
+   * reader. Durable work and pre-existing live controllers are never owned by
+   * this lease and are therefore never closed by it.
+   */
+  async acquireHistory(
+    sid: string,
+    consumerSignal?: AbortSignal,
+  ): Promise<Result<HistoryLease, AcpError>> {
+    const kbblSid = sid as KbblSessionId;
+    let coldLoad = this.coldHistoryLoads.get(kbblSid) ?? null;
+    if (coldLoad === null && this.deps.controllers.getLive(kbblSid) === null) {
+      coldLoad = new AbortController();
+      this.coldHistoryLoads.set(kbblSid, coldLoad);
+    }
+    this.historyConsumers.set(
+      kbblSid,
+      (this.historyConsumers.get(kbblSid) ?? 0) + 1,
+    );
+
+    let isReleased = false;
+    const release = async () => {
+      if (isReleased) return;
+      isReleased = true;
+      consumerSignal?.removeEventListener("abort", releaseOnAbort);
+      await this.releaseHistoryConsumer(kbblSid, coldLoad);
+    };
+    const releaseOnAbort = () => {
+      void release().catch((error: unknown) => {
+        console.error(`[acp] sid=${kbblSid} history release failed`, error);
+      });
+    };
+    consumerSignal?.addEventListener("abort", releaseOnAbort, { once: true });
+    if (consumerSignal?.aborted) releaseOnAbort();
+
+    const history = await this.loadHistory(sid, coldLoad?.signal);
+    if (!history.ok) {
+      await release();
+      return history;
+    }
+
+    return ok({
+      history: history.value,
+      release,
     });
   }
 
@@ -628,6 +687,7 @@ export class AcpSessionService {
   /** §10.3 lazy respawn: fresh child + session/load for an idle session. */
   private async touchController(
     sid: KbblSessionId,
+    loadSignal?: AbortSignal,
   ): Promise<Result<AcpSessionController, AcpError>> {
     const live = this.deps.controllers.getLive(sid);
     if (live) return ok(live);
@@ -684,7 +744,7 @@ export class AcpSessionService {
       const started = await controller.start(row.worktree_path, {
         kind: "load",
         acp_session_id: acpSessionId,
-      });
+      }, loadSignal);
       if (!started.ok) return started;
       return ok(controller);
     });
@@ -699,6 +759,42 @@ export class AcpSessionService {
       this.deps.controllers.getLive(row.sid) === null &&
       this.deps.store.listAcceptedTurns(row.sid).length > 0
     );
+  }
+
+  private async releaseHistoryConsumer(
+    sid: KbblSessionId,
+    coldLoad: AbortController | null,
+  ): Promise<void> {
+    const remaining = Math.max(0, (this.historyConsumers.get(sid) ?? 1) - 1);
+    if (remaining > 0) {
+      this.historyConsumers.set(sid, remaining);
+      return;
+    }
+    this.historyConsumers.delete(sid);
+    if (coldLoad === null) return;
+    const controller = this.deps.controllers.getLive(sid);
+    const hasDurableWork =
+      (controller?.isPromptActive ?? false) ||
+      this.deps.store.listAcceptedTurns(sid).length > 0;
+    if (hasDurableWork || (controller?.hasSubscribers ?? false)) {
+      // The display-only child has acquired a real owner. Detach it from
+      // history lifecycle without aborting the active/queued work.
+      if (this.coldHistoryLoads.get(sid) === coldLoad) {
+        this.coldHistoryLoads.delete(sid);
+      }
+      return;
+    }
+    if (controller) {
+      if (this.coldHistoryLoads.get(sid) === coldLoad) {
+        this.coldHistoryLoads.delete(sid);
+      }
+      await controller.closeChild();
+      return;
+    }
+    if (this.coldHistoryLoads.get(sid) === coldLoad) {
+      this.coldHistoryLoads.delete(sid);
+      coldLoad.abort();
+    }
   }
 
   private classifyInitialTurn(row: AcpSessionRow): TerminalObservation {
