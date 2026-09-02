@@ -100,6 +100,33 @@ test("same turn key with a different payload conflicts", () => {
   expect(outcome.kind).toBe("payload_conflict");
 });
 
+test("accepted turns with the same timestamp retain insertion order", () => {
+  const db = openTestDb();
+  const store = new AcpSessionStore(db);
+  const { row } = claim(store, "sid-1", startSpecHash(SPEC));
+  store.acceptTurn({
+    sid: row.sid,
+    turn_key: "z-first" as TurnKey,
+    source: "operator",
+    payload: "first",
+  });
+  store.acceptTurn({
+    sid: row.sid,
+    turn_key: "a-second" as TurnKey,
+    source: "operator",
+    payload: "second",
+  });
+  db.prepare("UPDATE acp_turns SET created_at = ? WHERE sid = ?").run(
+    "2026-09-02T00:00:00.000Z",
+    row.sid,
+  );
+
+  expect(store.listAcceptedTurns(row.sid).map((turn) => turn.payload)).toEqual([
+    "first",
+    "second",
+  ]);
+});
+
 test("boot sweep fails prompting turns, retains accepted turns, and settles session statuses", () => {
   const store = makeStore();
   const { row } = claim(store, "sid-1", startSpecHash(SPEC));

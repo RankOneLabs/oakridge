@@ -120,8 +120,8 @@ export function mountAcpPerSidRoutes(app: Hono, deps: AcpPerSidRouteDeps): void 
     });
   });
 
-  // Operator input (§14.5). client_message_id is the idempotency key; a
-  // busy session answers 409 — operator input never queues (§11.3).
+  // Operator input (§14.5). client_message_id is the idempotency key;
+  // accepted input queues durably behind any active turn (§11.3).
   app.post("/sessions/:sid/input", async (c) => {
     const sid = c.req.param("sid");
     if (!isValidSid(sid)) return c.json({ error: "invalid sid" }, 400);

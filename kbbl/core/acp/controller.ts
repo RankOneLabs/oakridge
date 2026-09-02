@@ -529,7 +529,10 @@ export class AcpSessionController {
   }
 
   private handleUpdate(notification: schema.SessionNotification): void {
-    this.deps.store.touchActivity(this.deps.sid);
+    // session/load replays historical chunks through the same notification
+    // callback. A history read is not live activity and must not rewrite the
+    // session timestamp or fan out one global inbox update per replay chunk.
+    if (!this.replaying) this.deps.store.touchActivity(this.deps.sid);
     // While a kbbl-dispatched prompt is active, a live user_message_chunk
     // is the agent echoing that prompt back — runTurn already projected
     // the dispatched text, so the echo would duplicate it. Replayed user
