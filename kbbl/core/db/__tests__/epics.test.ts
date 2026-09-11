@@ -3,7 +3,16 @@ import type { Database } from "bun:sqlite";
 import { openTestDb } from "../test-db";
 import { insertProject } from "../projects";
 import { insertSpec } from "../specs";
-import { insertEpic, getEpic, getEpicBySpec, listEpicsByProject, updateEpicFields } from "../epics";
+import {
+  deleteEpicCascade,
+  insertEpic,
+  getEpic,
+  getEpicBySpec,
+  listEpicsByProject,
+  updateEpicFields,
+} from "../epics";
+import { insertPlan } from "../plans";
+import { insertCohort } from "../cohorts";
 import type { RuntimeModelSelection } from "../../runtime";
 
 const PROJECT_ID = "proj-1";
@@ -224,5 +233,47 @@ describe("updateEpicFields", () => {
     const result = updateEpicFields(db, "ew", {});
     expect(result?.id).toBe("ew");
     expect(result?.status).toBe("active");
+  });
+});
+
+describe("deleteEpicCascade", () => {
+  function countIn(table: string): number {
+    return db
+      .prepare<{ n: number }, []>(`SELECT COUNT(*) AS n FROM ${table}`)
+      .get()!.n;
+  }
+
+  test("takes the epic's spec and everything hanging off it", () => {
+    insertTestEpic({
+      id: "ed",
+      spec_id: SPEC_ID,
+      project_id: PROJECT_ID,
+      title: "D",
+      status: "active",
+      current_stage: "build",
+    });
+    insertPlan(db, { id: "plan-1", spec_id: SPEC_ID });
+    insertCohort(db, { id: "cohort-1", plan_id: "plan-1", title: "C", position: 0 });
+
+    expect(deleteEpicCascade(db, "ed")).toBe(true);
+
+    expect(getEpic(db, "ed")).toBeNull();
+    expect(countIn("cohorts")).toBe(0);
+    expect(countIn("plans")).toBe(0);
+    expect(countIn("specs")).toBe(0);
+  });
+
+  test("an unknown id deletes nothing and reports it", () => {
+    insertTestEpic({
+      id: "ek",
+      spec_id: SPEC_ID,
+      project_id: PROJECT_ID,
+      title: "K",
+      status: "active",
+      current_stage: "build",
+    });
+
+    expect(deleteEpicCascade(db, "nope")).toBe(false);
+    expect(getEpic(db, "ek")).not.toBeNull();
   });
 });

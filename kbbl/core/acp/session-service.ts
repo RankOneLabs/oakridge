@@ -21,6 +21,7 @@ import {
 import {
   acpError,
   err,
+  isAcpFailureCode,
   ok,
   type AcpDispatchStatus,
   type AcpError,
@@ -410,14 +411,18 @@ export class AcpSessionService {
         await controller.fence(fence.fenced_by);
       } else if (row.status !== "fenced") {
         this.deps.store.setFencedBy(row.sid, fence.fenced_by);
-        this.deps.store.markEnded(row.sid, "fenced", "fenced", fence.fenced_by);
+        this.deps.store.markEnded(row.sid, {
+          status: "fenced",
+          reason: "fenced",
+          fenced_by: fence.fenced_by,
+        });
       }
       if (wasLive) this.deps.onSessionEnded?.(row.sid);
       return ok(undefined);
     }
     if (controller) await controller.closeChild();
     if (row.status !== "ended" && row.status !== "fenced") {
-      this.deps.store.markEnded(row.sid, "ended", "user_closed");
+      this.deps.store.markEnded(row.sid, { status: "ended", reason: "user_closed" });
     }
     if (wasLive) this.deps.onSessionEnded?.(row.sid);
     return ok(undefined);
@@ -709,7 +714,11 @@ export class AcpSessionService {
     row: AcpSessionRow,
     error: AcpError,
   ): Result<never, AcpError> {
-    this.deps.store.markEnded(row.sid, "failed", error.code);
+    this.deps.store.markEnded(row.sid, {
+      status: "failed",
+      reason: error.code,
+      detail: error.detail,
+    });
     console.error(
       `[acp] sid=${row.sid} provisioning failed: ${error.code} (${error.detail})`,
     );
@@ -833,12 +842,21 @@ export class AcpSessionService {
   private classifyInitialTurn(row: AcpSessionRow): TerminalObservation {
     const session = toSnapshot(row);
     if (row.status === "failed") {
+      // `failProvisioning` ends the row with the failing error's own code and
+      // detail, so the row already says what happened. Reporting
+      // `agent_spawn_failed` for all of them threw that away at the one
+      // boundary that matters: a caller watching for terminal state
+      // (Oakridge's observer, the PWA) saw "the agent would not start" for a
+      // session whose agent started fine and was handed a model it does not
+      // offer.
       return {
         kind: "failed",
         session,
-        failure_code:
-          row.end_reason === "kbbl_restart" ? "kbbl_restart" : "agent_spawn_failed",
-        failure_detail: row.end_reason ?? "session failed during provisioning",
+        failure_code: isAcpFailureCode(row.end_reason)
+          ? row.end_reason
+          : "agent_spawn_failed",
+        failure_detail:
+          row.end_detail ?? row.end_reason ?? "session failed during provisioning",
       };
     }
     const turn = this.deps.store.getInitialTurn(row.sid);

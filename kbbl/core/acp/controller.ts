@@ -490,7 +490,11 @@ export class AcpSessionController {
       await this.closeSessionBounded(client);
     }
     await this.teardownChild();
-    this.deps.store.markEnded(this.deps.sid, "fenced", endReason, fencedBy);
+    this.deps.store.markEnded(this.deps.sid, {
+      status: "fenced",
+      reason: endReason,
+      fenced_by: fencedBy,
+    });
     console.log(`[acp] sid=${this.deps.sid} fenced by ${fencedBy}`);
     this.deps.onDefunct(this.deps.sid);
   }

@@ -125,6 +125,28 @@ test("kbbl adapter fails a session that exited non-zero", async () => {
     .toEqual({ kind: "terminal", observation: { kind: "failed", code: "executor_exit_nonzero", detail: "kbbl runtime exited with code 1" } });
 });
 
+test("kbbl adapter reports kbbl's own failure code when the terminal body carries one", async () => {
+  // Every kbbl failure exits 1. A spec-analyzer launched on a model its agent
+  // does not offer died before its first turn and the run record said only
+  // "exited with code 1"; the reason kbbl had already named was dropped here.
+  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "build", fetch: async () =>
+    Response.json({
+      session: { sid: "session-1", status: "failed", endReason: "subprocess_exited" },
+      exit_code: 1,
+      failure: { code: "requested_model_unsupported", detail: 'no option matching "gpt-6-astra" in config option "model"' },
+    }) });
+  expect(await adapter.observe_terminal("execution-1" as ExecutionId, { kind: "kbbl_session", session_id: "session-1" }))
+    .toEqual({ kind: "terminal", observation: { kind: "failed", code: "requested_model_unsupported",
+      detail: 'kbbl session session-1 failed: no option matching "gpt-6-astra" in config option "model"' } });
+});
+
+test("kbbl adapter falls back to the exit code when the failure sidecar is malformed", async () => {
+  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "build", fetch: async () =>
+    Response.json({ session: { sid: "session-1", status: "ended", endReason: "subprocess_exited" }, exit_code: 1, failure: { detail: "no code here" } }) });
+  expect(await adapter.observe_terminal("execution-1" as ExecutionId, { kind: "kbbl_session", session_id: "session-1" }))
+    .toEqual({ kind: "terminal", observation: { kind: "failed", code: "executor_exit_nonzero", detail: "kbbl runtime exited with code 1" } });
+});
+
 test("kbbl adapter requests a fresh session inheriting the producer workspace", async () => {
   let body: unknown = null;
   const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl.test", executor_function_identity: "assessor-v1", fetch: async (_input, init) => {

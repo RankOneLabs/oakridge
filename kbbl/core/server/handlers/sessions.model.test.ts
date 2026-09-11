@@ -15,6 +15,7 @@ import { Hono } from "hono";
 
 import {
   mountSessionsRoutes,
+  resolveResumedRuntimeSelection,
   selectTerminalWaitMs,
   TERMINAL_WAIT_MS_DEFAULT,
   TERMINAL_WAIT_MS_MAX,
@@ -144,6 +145,107 @@ describe("POST /sessions resume_from (§17.3: worktree inheritance)", () => {
     const app = makeApp();
     const res = await postSessions(app, { resume_from: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" });
     expect(res.status).toBe(404);
+  });
+
+  test("the child inherits the parent's agent, model and effort", async () => {
+    const app = makeApp();
+    const parent = await postSessions(app, {
+      workdir: repoDir,
+      runtime: "codex",
+      model: "fake-large",
+      effort: "high",
+    });
+    expect(parent.status).toBe(200);
+
+    // The PWA's resume button posts nothing but resume_from. Without
+    // inheritance the child fell back to default_agent with a null model.
+    const child = await postSessions(app, { resume_from: parent.body.sid as string });
+    expect(child.status).toBe(200);
+    const childRow = harness.store.getSession(child.body.sid as never);
+    expect(childRow?.agent_profile).toBe("codex");
+    expect(childRow?.requested_model).toBe("fake-large");
+    expect(childRow?.requested_effort).toBe("high");
+  });
+
+  test("an explicit body selection overrides what the parent ran", async () => {
+    const app = makeApp();
+    const parent = await postSessions(app, { workdir: repoDir, runtime: "codex", model: "fake-large" });
+    expect(parent.status).toBe(200);
+
+    const child = await postSessions(app, {
+      resume_from: parent.body.sid as string,
+      runtime: "claude-code",
+      model: "fake-small",
+    });
+    expect(child.status).toBe(200);
+    const childRow = harness.store.getSession(child.body.sid as never);
+    expect(childRow?.agent_profile).toBe("claude-code");
+    expect(childRow?.requested_model).toBe("fake-small");
+  });
+});
+
+describe("resolveResumedRuntimeSelection", () => {
+  const parent = {
+    agent_profile: "codex",
+    requested_model: "gpt-6-astra",
+    requested_effort: "high",
+  } as const;
+
+  test("an unstated field falls back to the parent's", () => {
+    expect(
+      resolveResumedRuntimeSelection(
+        { agent_profile: undefined, model: undefined, effort: undefined },
+        parent,
+      ),
+    ).toEqual({ agent_profile: "codex", model: "gpt-6-astra", effort: "high" });
+  });
+
+  test("a stated field wins over the parent's", () => {
+    expect(
+      resolveResumedRuntimeSelection(
+        { agent_profile: undefined, model: "gpt-5.6-sol", effort: undefined },
+        parent,
+      ),
+    ).toEqual({ agent_profile: "codex", model: "gpt-5.6-sol", effort: "high" });
+  });
+
+  test("switching agent inherits no model or effort from the old one", () => {
+    // `gpt-6-astra` and a Codex effort id mean nothing to Claude Code;
+    // inheriting them would provision straight into
+    // `requested_model_unsupported`.
+    expect(
+      resolveResumedRuntimeSelection(
+        { agent_profile: "claude-code", model: undefined, effort: undefined },
+        parent,
+      ),
+    ).toEqual({ agent_profile: "claude-code", model: undefined, effort: undefined });
+  });
+
+  test("switching agent still honours a model the request names", () => {
+    expect(
+      resolveResumedRuntimeSelection(
+        { agent_profile: "claude-code", model: "sonnet", effort: undefined },
+        parent,
+      ),
+    ).toEqual({ agent_profile: "claude-code", model: "sonnet", effort: undefined });
+  });
+
+  test("restating the parent's own agent still inherits its selection", () => {
+    expect(
+      resolveResumedRuntimeSelection(
+        { agent_profile: "codex", model: undefined, effort: undefined },
+        parent,
+      ),
+    ).toEqual({ agent_profile: "codex", model: "gpt-6-astra", effort: "high" });
+  });
+
+  test("a parent that requested nothing leaves the child unset, not null", () => {
+    expect(
+      resolveResumedRuntimeSelection(
+        { agent_profile: undefined, model: undefined, effort: undefined },
+        { agent_profile: "claude-code", requested_model: null, requested_effort: null },
+      ),
+    ).toEqual({ agent_profile: "claude-code", model: undefined, effort: undefined });
   });
 });
 

@@ -58,6 +58,57 @@ export const selectTerminalWaitMs = (raw: string | undefined): number => {
 };
 
 /**
+ * Which agent, model and effort a POST /sessions body asked for. `undefined`
+ * means the body said nothing — the distinction that makes resume
+ * inheritance possible.
+ */
+export interface RequestedRuntimeSelection {
+  readonly agent_profile: string | undefined;
+  readonly model: string | undefined;
+  readonly effort: string | undefined;
+}
+
+/** The parent fields a resumed child inherits its runtime selection from. */
+export interface ResumeParentSelection {
+  readonly agent_profile: string;
+  readonly requested_model: string | null;
+  readonly requested_effort: string | null;
+}
+
+/**
+ * Resume (§17.3) continues a session's work in a fresh worktree, so the
+ * child runs the parent's agent, model and effort unless the request names
+ * its own. The PWA's resume button posts nothing but `resume_from`; before
+ * this, the child fell through to `config.default_agent` with a null model,
+ * so resuming a Codex/gpt-6-astra session handed back a Claude Code session
+ * on whatever that agent defaults to. Worktree inheritance without runtime
+ * inheritance is not a resume.
+ *
+ * An explicit body value always wins — switching agent mid-lineage stays
+ * possible, it just is not the default. A model or effort id belongs to the
+ * agent that advertised it (`gpt-6-astra` means nothing to Claude Code), so
+ * naming a different agent without naming a model inherits nothing: the child
+ * takes that agent's own defaults rather than provisioning straight into
+ * `requested_model_unsupported`.
+ */
+export function resolveResumedRuntimeSelection(
+  requested: RequestedRuntimeSelection,
+  parent: ResumeParentSelection,
+): RequestedRuntimeSelection {
+  const switchesAgent =
+    requested.agent_profile !== undefined &&
+    requested.agent_profile !== parent.agent_profile;
+  const inherited = <T>(parentValue: T | null): T | undefined =>
+    switchesAgent ? undefined : parentValue ?? undefined;
+
+  return {
+    agent_profile: requested.agent_profile ?? parent.agent_profile,
+    model: requested.model ?? inherited(parent.requested_model),
+    effort: requested.effort ?? inherited(parent.requested_effort),
+  };
+}
+
+/**
  * Validate a git ref-name component. Returns a human-readable error string or
  * null. Applies a strict subset of git-check-ref-format rules sufficient to
  * prevent ambiguous refs, traversal, and shell-injection via the branch name.
@@ -398,6 +449,12 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       };
     }
 
+    let selection: RequestedRuntimeSelection = {
+      agent_profile: profileId,
+      model,
+      effort,
+    };
+
     let workdir: string;
     if (resumeFrom !== undefined) {
       // Worktree inheritance is the resume mechanism (§17.3): the child
@@ -406,6 +463,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       const parent = acp.getSession(resumeFrom);
       if (!parent) return c.json({ error: "unknown resume_from session" }, 404);
       workdir = parent.worktree_path;
+      selection = resolveResumedRuntimeSelection(selection, parent);
     } else {
       const requested = typeof parsed.workdir === "string" ? parsed.workdir : defaultWorkdir;
       if (typeof parsed.workdir !== "undefined" && typeof parsed.workdir !== "string") {
@@ -424,9 +482,9 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       workdir,
       ...(name ? { name } : {}),
       ...(artifactId ? { artifact_id: artifactId } : {}),
-      ...(profileId ? { runtime: profileId } : {}),
-      ...(model ? { model } : {}),
-      ...(effort ? { effort } : {}),
+      ...(selection.agent_profile ? { runtime: selection.agent_profile } : {}),
+      ...(selection.model ? { model: selection.model } : {}),
+      ...(selection.effort ? { effort: selection.effort } : {}),
       ...(worktree ? { worktree } : {}),
       ...(resumeFrom ? { inherit_worktree_from: resumeFrom } : {}),
     });

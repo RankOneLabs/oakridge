@@ -112,7 +112,7 @@ describe("GET /config", () => {
       supportsCompaction: false,
     });
     expect(body.runtimes[0]?.models).toContainEqual({
-      value: "claude-fable-5-1",
+      value: "claude-fable-5-1[1m]",
       label: "fable 5.1",
     });
     expect(body.runtimes[0]?.efforts).toContainEqual({ value: "max", label: "max" });
@@ -125,7 +125,7 @@ describe("GET /config", () => {
       value: "gpt-6-astra",
       label: "gpt-6 astra",
     });
-    expect(body.runtimes[1]?.efforts).toContainEqual({ value: "minimal", label: "minimal" });
+    expect(body.runtimes[1]?.efforts).toContainEqual({ value: "ultra", label: "ultra" });
   });
 
   test("allows a null defaultWorkdir", async () => {
