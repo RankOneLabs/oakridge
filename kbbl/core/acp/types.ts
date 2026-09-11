@@ -32,29 +32,46 @@ export type TurnKey = string & { readonly __brand: "TurnKey" };
 
 // === Failure codes (§18) ===
 
-export type AcpFailureCode =
-  | "agent_profile_unavailable"
-  | "agent_spawn_failed"
-  | "acp_initialize_failed"
-  | "acp_protocol_mismatch"
-  | "acp_required_capability_missing"
-  | "acp_session_new_failed"
-  | "acp_session_load_failed"
-  | "acp_config_unsupported"
-  | "acp_prompt_failed"
-  | "acp_transport_lost"
-  | "acp_process_exited"
-  | "acp_cancel_failed"
-  | "acp_close_failed"
-  | "session_busy"
-  | "session_fenced"
-  | "session_key_conflict"
-  | "delivery_key_conflict"
-  | "worktree_failed"
-  | "requested_model_unsupported"
-  | "requested_effort_unsupported"
-  | "session_not_found"
-  | "kbbl_restart";
+/**
+ * The failure-code vocabulary, as values. `AcpFailureCode` is derived from
+ * it so the list cannot drift from the type, and `isAcpFailureCode` can
+ * recover a code from persisted text: `end_reason` on a failed session row
+ * stores the code that ended it, and that is the only record of *why* a
+ * session died before its first turn.
+ */
+export const ACP_FAILURE_CODES = [
+  "agent_profile_unavailable",
+  "agent_spawn_failed",
+  "acp_initialize_failed",
+  "acp_protocol_mismatch",
+  "acp_required_capability_missing",
+  "acp_session_new_failed",
+  "acp_session_load_failed",
+  "acp_config_unsupported",
+  "acp_prompt_failed",
+  "acp_transport_lost",
+  "acp_process_exited",
+  "acp_cancel_failed",
+  "acp_close_failed",
+  "session_busy",
+  "session_fenced",
+  "session_key_conflict",
+  "delivery_key_conflict",
+  "worktree_failed",
+  "requested_model_unsupported",
+  "requested_effort_unsupported",
+  "session_not_found",
+  "kbbl_restart",
+] as const;
+
+export type AcpFailureCode = (typeof ACP_FAILURE_CODES)[number];
+
+export function isAcpFailureCode(value: unknown): value is AcpFailureCode {
+  return (
+    typeof value === "string" &&
+    (ACP_FAILURE_CODES as readonly string[]).includes(value)
+  );
+}
 
 /** Domain error with trace context: operation, entity, detail. */
 export interface AcpError {

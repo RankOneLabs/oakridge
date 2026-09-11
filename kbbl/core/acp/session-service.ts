@@ -21,6 +21,7 @@ import {
 import {
   acpError,
   err,
+  isAcpFailureCode,
   ok,
   type AcpDispatchStatus,
   type AcpError,
@@ -833,11 +834,18 @@ export class AcpSessionService {
   private classifyInitialTurn(row: AcpSessionRow): TerminalObservation {
     const session = toSnapshot(row);
     if (row.status === "failed") {
+      // `failProvisioning` ends the row with the failing error's own code, so
+      // `end_reason` already names the cause. Reporting `agent_spawn_failed`
+      // for all of them threw that away at the one boundary that matters:
+      // a caller watching for terminal state (Oakridge's observer, the PWA)
+      // saw "the agent would not start" for a session whose agent started
+      // fine and was handed a model it does not offer.
       return {
         kind: "failed",
         session,
-        failure_code:
-          row.end_reason === "kbbl_restart" ? "kbbl_restart" : "agent_spawn_failed",
+        failure_code: isAcpFailureCode(row.end_reason)
+          ? row.end_reason
+          : "agent_spawn_failed",
         failure_detail: row.end_reason ?? "session failed during provisioning",
       };
     }

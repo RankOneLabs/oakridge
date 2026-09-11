@@ -17,8 +17,8 @@
     "test:all": "bun run test && bun run test:pwa"
   },
   "dependencies": {
-    "@agentclientprotocol/claude-agent-acp": "0.70.0",
-    "@agentclientprotocol/codex-acp": "1.7.0",
+    "@agentclientprotocol/claude-agent-acp": "0.76.0",
+    "@agentclientprotocol/codex-acp": "1.11.0",
     "@agentclientprotocol/sdk": "1.4.0",
     "@tanstack/react-query": "^5.100.13",
     "@types/dagre": "^0.7.54",

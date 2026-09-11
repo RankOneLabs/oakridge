@@ -26,7 +26,7 @@ const runtimeDescriptors: RuntimeDescriptors = [
 describe("Oakridge v2 role model choices", () => {
   test("uses Opus and Sol as both role defaults", () => {
     for (const role of ["planner", "worker"] as const) {
-      expect(roleDefaultModel(role, runtimeDescriptors[0])).toBe("claude-opus-5");
+      expect(roleDefaultModel(role, runtimeDescriptors[0])).toBe("opus[1m]");
       expect(roleDefaultModel(role, runtimeDescriptors[1])).toBe("gpt-5.6-sol");
     }
   });
@@ -36,7 +36,7 @@ describe("Oakridge v2 role model choices", () => {
     const view = render(
       <RoleModelPicker
         role="planner"
-        selection={{ runtime: "claude-code", model: "claude-opus-5" }}
+        selection={{ runtime: "claude-code", model: "opus[1m]" }}
         setSelection={setSelection}
         setRuntimeTouched={() => {}}
         runtimeDescriptors={runtimeDescriptors}
@@ -46,7 +46,7 @@ describe("Oakridge v2 role model choices", () => {
     );
 
     expect(screen.getByLabelText("Planner model").textContent).toContain("fable 5.1");
-    expect(screen.getByLabelText("Planner model").textContent).toContain("opus 4.8");
+    expect(screen.getByLabelText("Planner model").textContent).toContain("sonnet 5");
     expect(screen.getByLabelText("Planner effort").textContent).toContain("max");
 
     fireEvent.change(screen.getByLabelText("Planner runtime"), {
@@ -70,6 +70,6 @@ describe("Oakridge v2 role model choices", () => {
     );
 
     expect(screen.getByLabelText("Planner model").textContent).toContain("gpt-6 astra");
-    expect(screen.getByLabelText("Planner effort").textContent).toContain("minimal");
+    expect(screen.getByLabelText("Planner effort").textContent).toContain("ultra");
   });
 });

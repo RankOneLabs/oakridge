@@ -15,7 +15,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { openTestDb } from "../db/test-db";
+import type { RuntimeId } from "../runtime";
 import { GitWorktreeProvider } from "../worktree/service";
+import { ADVERTISED_AGENT_VOCABULARY } from "./__fixtures__/agent-config-options";
 import { builtinAgentProfiles } from "./default-profiles";
 import { AcpControllerRegistry } from "./controller-registry";
 import { AcpProcessSupervisor } from "./process-supervisor";
@@ -99,6 +101,28 @@ realTest(
     report.push(
       `config_options=${options.map((option) => `${option.id}(${option.category ?? "-"})`).join(",") || "none"}`,
     );
+
+    // The fixture the launch pickers are checked against (§12) is a snapshot
+    // of exactly this. Drift here means RUNTIME_MODELS / RUNTIME_EFFORTS now
+    // offer models the installed agent will refuse, and every launch on one
+    // of them dies during provisioning — so a dependency bump has to fail
+    // here rather than in front of an operator.
+    const vocabulary = ADVERTISED_AGENT_VOCABULARY[REAL_AGENT as RuntimeId];
+    const advertised = (category: "model" | "thought_level"): string[] => {
+      const selector = options.find(
+        (option) => option.type === "select" && option.category === category,
+      );
+      if (!selector || selector.type !== "select") return [];
+      return selector.options
+        .flatMap((entry) => ("options" in entry ? entry.options : [entry]))
+        .map((entry) => entry.value);
+    };
+    report.push(
+      `models=${advertised("model").join(",")}`,
+      `efforts=${advertised("thought_level").join(",")}`,
+    );
+    expect(advertised("model")).toEqual([...vocabulary.model_values]);
+    expect(advertised("thought_level")).toEqual([...vocabulary.effort_values]);
 
     const history = await service.loadHistory(sid);
     if (!history.ok) throw new Error(`history failed: ${history.error.code}`);

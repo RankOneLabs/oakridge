@@ -144,6 +144,33 @@ test("happy path: ensure provisions, runs the initial prompt, reports terminal s
   expect(turn?.stop_reason).toBe("end_turn");
 }, 15000);
 
+test("a session that died provisioning is observed with the code that killed it", async () => {
+  // The observation is all a DBOS observer or the PWA ever sees, and
+  // reporting every provisioning death as `agent_spawn_failed` said the
+  // agent would not start — for an agent that started fine and was handed a
+  // model it does not offer. The code is what tells an operator whether to
+  // fix a config or rerun.
+  const { stateDir, workdir } = await makeDirs();
+  const { service, store } = makeHarness({ stateDir });
+
+  const ensured = await service.ensureResumableSession("key-1", {
+    ...spec(workdir),
+    model: "gpt-6-astra",
+  });
+  expect(ensured.ok).toBe(false);
+  if (ensured.ok) return;
+  expect(ensured.error.code).toBe("requested_model_unsupported");
+
+  const row = store.listSessions()[0]!;
+  expect(row.status).toBe("failed");
+  const observed = await service.observeInitialTurn(row.sid, 8000);
+  expect(observed.ok).toBe(true);
+  if (!observed.ok) return;
+  expect(observed.value.kind).toBe("failed");
+  if (observed.value.kind !== "failed") return;
+  expect(observed.value.failure_code).toBe("requested_model_unsupported");
+}, 15000);
+
 test("the prompt response is the terminal success signal — the child stays alive past it", async () => {
   const { stateDir, workdir } = await makeDirs();
   const { service, registry } = makeHarness({ stateDir });

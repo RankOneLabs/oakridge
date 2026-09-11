@@ -26,6 +26,28 @@ const DEFAULT_MAX_SILENT_MS = 30 * 60_000;
 
 const terminal = (observation: ExecutorTerminalObservation): ExecutorObservationAttempt => ({ kind: "terminal", observation });
 
+/**
+ * The structured failure kbbl attaches to a terminal body when a session
+ * ended badly (`toTerminalBody` in kbbl/core/acp/legacy-wire.ts). It is the
+ * only place the actual reason survives: the exit code is always 1, so
+ * without this a provisioning failure, a killed child, and a failed prompt
+ * are indistinguishable to an operator reading the run record.
+ */
+interface KbblTerminalFailure {
+  readonly code: string;
+  readonly detail: string;
+}
+
+/** Reads kbbl's `failure` sidecar off a terminal body; null when absent. */
+function parseTerminalFailure(raw: unknown): KbblTerminalFailure | null {
+  if (typeof raw !== "object" || raw === null || !("failure" in raw)) return null;
+  const failure = (raw as { failure: unknown }).failure;
+  if (typeof failure !== "object" || failure === null) return null;
+  const { code, detail } = failure as { code?: unknown; detail?: unknown };
+  if (typeof code !== "string" || code === "") return null;
+  return { code, detail: typeof detail === "string" && detail !== "" ? detail : code };
+}
+
 interface KbblResolvedConfig {
   readonly runtime: "claude-code" | "codex";
   readonly rendered_prompt: string;
@@ -245,7 +267,16 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
     // unknown code as success strands the execution waiting for artifacts a
     // dead runtime will never emit, with nothing visible to the operator.
     if (exitCode === null) return terminal({ kind: "failed", code: "exit_unknown", detail: `kbbl session ${sessionId} ended without a recorded exit code` });
-    if (exitCode !== 0) return terminal({ kind: "failed", code: "executor_exit_nonzero", detail: `kbbl runtime exited with code ${exitCode}` });
+    if (exitCode !== 0) {
+      // Every kbbl failure exits 1, so the exit code says nothing an operator
+      // can act on. When kbbl names the failure, that name is the observation:
+      // "requested_model_unsupported" is a config fix, "kbbl_restart" is a
+      // rerun. `executor_exit_nonzero` stays the honest answer only when kbbl
+      // sends no structured failure at all.
+      const failure = parseTerminalFailure(raw);
+      if (failure) return terminal({ kind: "failed", code: failure.code, detail: `kbbl session ${sessionId} failed: ${failure.detail}` });
+      return terminal({ kind: "failed", code: "executor_exit_nonzero", detail: `kbbl runtime exited with code ${exitCode}` });
+    }
     return terminal({ kind: "succeeded", metadata: { session_id: sessionId, exit_code: exitCode } });
   }
 
