@@ -118,10 +118,23 @@ export interface AcpSessionRow {
   requested_effort: string | null;
   status: AcpSessionStatus;
   end_reason: string | null;
+  end_detail: string | null;
   fenced_by: string | null;
   last_activity_at: string;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * How a session stopped. `reason` is the branchable name — an
+ * `AcpFailureCode` for a failed session, `user_closed`/`fenced` otherwise —
+ * and `detail` is the human sentence behind it, which only a failure has.
+ */
+export interface AcpSessionEnd {
+  readonly status: Extract<AcpSessionStatus, "ended" | "fenced" | "failed">;
+  readonly reason: string;
+  readonly detail?: string;
+  readonly fenced_by?: string;
 }
 
 export type AcpTurnSource = "initial" | "operator" | "collaboration";
@@ -218,6 +231,7 @@ export interface AcpSessionSnapshot {
   requested_model: string | null;
   requested_effort: string | null;
   end_reason: string | null;
+  end_detail: string | null;
   fenced_by: string | null;
   last_activity_at: string;
   created_at: string;

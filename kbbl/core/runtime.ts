@@ -126,6 +126,29 @@ export function defaultWorkerModelForRuntime(runtimeId: RuntimeId): string {
   return defaultModelForRuntime(runtimeId);
 }
 
+/**
+ * Whether a stored selection still names options the pinned agent advertises.
+ *
+ * A role selection is persisted as free text (`epics.planner_model` and
+ * friends) and forwarded to ACP verbatim, so an agent bump that renames or
+ * drops an id leaves rows that provision straight into
+ * `requested_model_unsupported`. The picker lists are the vocabulary the
+ * agent accepts, so a selection outside them is one no dispatch can honour.
+ */
+export function isCurrentRuntimeSelection(
+  selection: RuntimeModelSelection,
+): boolean {
+  const offersModel = RUNTIME_MODELS[selection.runtime].some(
+    (option) => option.value === selection.model,
+  );
+  const effort = selection.effort;
+  const offersEffort =
+    effort === undefined ||
+    effort === null ||
+    RUNTIME_EFFORTS[selection.runtime].some((option) => option.value === effort);
+  return offersModel && offersEffort;
+}
+
 /** Minimal shape `isAllowedModelForRuntime` needs from a runtime descriptor
  * lookup — narrower than the old AgentRuntime contract, since it needs
  * nothing beyond the descriptor and an optional adapter-native validator. */

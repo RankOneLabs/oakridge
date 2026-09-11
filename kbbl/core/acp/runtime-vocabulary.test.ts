@@ -53,6 +53,15 @@ const RUNTIME_IDS: readonly RuntimeId[] = Object.keys(
   ADVERTISED_AGENT_VOCABULARY,
 ).filter(isRuntimeId);
 
+/**
+ * The picker offers everything the agent advertises except `default`, which
+ * is the agent restating its own current selection rather than a model an
+ * operator would pick.
+ */
+function offerable(values: readonly string[]): string[] {
+  return values.filter((value) => value !== "default").sort();
+}
+
 for (const runtimeId of RUNTIME_IDS) describe(`${runtimeId} launch picker`, () => {
   const vocabulary = ADVERTISED_AGENT_VOCABULARY[runtimeId];
   const options = advertisedOptions(vocabulary);
@@ -84,9 +93,20 @@ for (const runtimeId of RUNTIME_IDS) describe(`${runtimeId} launch picker`, () =
     expect(resolved.ok).toBe(true);
   });
 
-  test("the picker does not restate the agent's own default entry", () => {
+  // The resolver checks above catch a picker entry the agent dropped. These
+  // catch the other direction — a bump that *adds* a model or effort and
+  // leaves the picker unable to offer it, which no resolver check can see.
+  // Together they pin the picker to exactly the agent's vocabulary, minus the
+  // `default` entry the agent uses to restate its own current selection.
+
+  test("the offered models are exactly the models the agent advertises", () => {
     const offered = RUNTIME_MODELS[runtimeId].map((option) => option.value);
-    expect(offered).not.toContain("default");
+    expect(offered.sort()).toEqual(offerable(vocabulary.model_values));
+  });
+
+  test("the offered efforts are exactly the efforts the agent advertises", () => {
+    const offered = RUNTIME_EFFORTS[runtimeId].map((option) => option.value);
+    expect(offered.sort()).toEqual(offerable(vocabulary.effort_values));
   });
 });
 

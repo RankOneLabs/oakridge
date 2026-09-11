@@ -203,10 +203,40 @@ describe("resolveResumedRuntimeSelection", () => {
   test("a stated field wins over the parent's", () => {
     expect(
       resolveResumedRuntimeSelection(
+        { agent_profile: undefined, model: "gpt-5.6-sol", effort: undefined },
+        parent,
+      ),
+    ).toEqual({ agent_profile: "codex", model: "gpt-5.6-sol", effort: "high" });
+  });
+
+  test("switching agent inherits no model or effort from the old one", () => {
+    // `gpt-6-astra` and a Codex effort id mean nothing to Claude Code;
+    // inheriting them would provision straight into
+    // `requested_model_unsupported`.
+    expect(
+      resolveResumedRuntimeSelection(
+        { agent_profile: "claude-code", model: undefined, effort: undefined },
+        parent,
+      ),
+    ).toEqual({ agent_profile: "claude-code", model: undefined, effort: undefined });
+  });
+
+  test("switching agent still honours a model the request names", () => {
+    expect(
+      resolveResumedRuntimeSelection(
         { agent_profile: "claude-code", model: "sonnet", effort: undefined },
         parent,
       ),
-    ).toEqual({ agent_profile: "claude-code", model: "sonnet", effort: "high" });
+    ).toEqual({ agent_profile: "claude-code", model: "sonnet", effort: undefined });
+  });
+
+  test("restating the parent's own agent still inherits its selection", () => {
+    expect(
+      resolveResumedRuntimeSelection(
+        { agent_profile: "codex", model: undefined, effort: undefined },
+        parent,
+      ),
+    ).toEqual({ agent_profile: "codex", model: "gpt-6-astra", effort: "high" });
   });
 
   test("a parent that requested nothing leaves the child unset, not null", () => {

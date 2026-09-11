@@ -85,16 +85,26 @@ export interface ResumeParentSelection {
  * inheritance is not a resume.
  *
  * An explicit body value always wins — switching agent mid-lineage stays
- * possible, it just is not the default.
+ * possible, it just is not the default. A model or effort id belongs to the
+ * agent that advertised it (`gpt-6-astra` means nothing to Claude Code), so
+ * naming a different agent without naming a model inherits nothing: the child
+ * takes that agent's own defaults rather than provisioning straight into
+ * `requested_model_unsupported`.
  */
 export function resolveResumedRuntimeSelection(
   requested: RequestedRuntimeSelection,
   parent: ResumeParentSelection,
 ): RequestedRuntimeSelection {
+  const switchesAgent =
+    requested.agent_profile !== undefined &&
+    requested.agent_profile !== parent.agent_profile;
+  const inherited = <T>(parentValue: T | null): T | undefined =>
+    switchesAgent ? undefined : parentValue ?? undefined;
+
   return {
     agent_profile: requested.agent_profile ?? parent.agent_profile,
-    model: requested.model ?? parent.requested_model ?? undefined,
-    effort: requested.effort ?? parent.requested_effort ?? undefined,
+    model: requested.model ?? inherited(parent.requested_model),
+    effort: requested.effort ?? inherited(parent.requested_effort),
   };
 }
 

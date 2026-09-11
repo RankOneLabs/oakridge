@@ -169,6 +169,10 @@ test("a session that died provisioning is observed with the code that killed it"
   expect(observed.value.kind).toBe("failed");
   if (observed.value.kind !== "failed") return;
   expect(observed.value.failure_code).toBe("requested_model_unsupported");
+  // The detail is persisted beside the code, so the observation names the
+  // model that was refused rather than echoing the code back.
+  expect(observed.value.failure_detail).toBe(ensured.error.detail);
+  expect(observed.value.failure_detail).toContain("gpt-6-astra");
 }, 15000);
 
 test("the prompt response is the terminal success signal — the child stays alive past it", async () => {

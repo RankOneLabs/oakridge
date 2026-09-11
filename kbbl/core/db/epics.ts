@@ -147,6 +147,14 @@ export function listEpicsByProject(
     .map(toEpic);
 }
 
+/** Every epic, across projects — maintenance surface, not a request path. */
+export function listAllEpics(db: Database): Epic[] {
+  return db
+    .prepare<EpicRow, []>("SELECT * FROM epics ORDER BY created_at, id")
+    .all()
+    .map(toEpic);
+}
+
 const STAGE_EVENTS = new Set<string>([
   "epic_spec_approved",
   "epic_plan_approved",
@@ -190,6 +198,63 @@ export function advanceEpicByEvent(
     if (next.current_stage !== epic.current_stage) fields.current_stage = next.current_stage;
 
     return updateEpicFields(db, epic_id, fields);
+  })();
+}
+
+/**
+ * Delete an epic and everything reachable from its spec: plans, their
+ * cohorts and briefs, assessments, discrepancies, and finally the spec
+ * itself. Deepest FK dependency first, and the epic before its spec, since
+ * `epics.spec_id` references `specs(id)`.
+ *
+ * One transaction, and the only place this cascade is written — the delete
+ * route and the legacy-epic purge both call it rather than restating the
+ * order, which is exactly the kind of thing that rots out of sync.
+ *
+ * Returns false when the epic does not exist.
+ */
+export function deleteEpicCascade(db: Database, id: string): boolean {
+  return db.transaction((): boolean => {
+    const epic = getEpic(db, id);
+    if (!epic) return false;
+
+    const spec_id = epic.spec_id;
+
+    const planIds = db
+      .prepare<{ id: string }, [string]>("SELECT id FROM plans WHERE spec_id = ?")
+      .all(spec_id)
+      .map((row) => row.id);
+
+    const cohortIds =
+      planIds.length > 0
+        ? db
+            .prepare<{ id: string }, string[]>(
+              `SELECT id FROM cohorts WHERE plan_id IN (${planIds.map(() => "?").join(",")})`,
+            )
+            .all(...planIds)
+            .map((row) => row.id)
+        : [];
+
+    if (cohortIds.length > 0) {
+      const ph = cohortIds.map(() => "?").join(",");
+      db.prepare(`DELETE FROM briefs WHERE cohort_id IN (${ph})`).run(...cohortIds);
+      db.prepare(
+        `DELETE FROM cohort_dependencies WHERE from_cohort_id IN (${ph}) OR to_cohort_id IN (${ph})`,
+      ).run(...cohortIds, ...cohortIds);
+      db.prepare(`DELETE FROM cohorts WHERE id IN (${ph})`).run(...cohortIds);
+    }
+
+    if (planIds.length > 0) {
+      const ph = planIds.map(() => "?").join(",");
+      db.prepare(`DELETE FROM assessments WHERE plan_id IN (${ph})`).run(...planIds);
+      db.prepare(`DELETE FROM plans WHERE id IN (${ph})`).run(...planIds);
+    }
+
+    db.prepare("DELETE FROM spec_discrepancies WHERE spec_id = ?").run(spec_id);
+    db.prepare("DELETE FROM epics WHERE id = ?").run(id);
+    db.prepare("DELETE FROM specs WHERE id = ?").run(spec_id);
+
+    return true;
   })();
 }
 

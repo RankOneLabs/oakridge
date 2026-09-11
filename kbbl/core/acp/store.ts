@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 
 import type {
   AcpFailureCode,
+  AcpSessionEnd,
   AcpSessionRow,
   AcpSessionSnapshot,
   AcpSessionStatus,
@@ -276,20 +277,22 @@ export class AcpSessionStore {
     this.notifySessionsChanged();
   }
 
-  markEnded(
-    sid: KbblSessionId,
-    status: Extract<AcpSessionStatus, "ended" | "fenced" | "failed">,
-    endReason: string,
-    fencedBy?: string,
-  ): void {
+  markEnded(sid: KbblSessionId, end: AcpSessionEnd): void {
     this.db
       .prepare(
         `UPDATE acp_sessions
-         SET status = ?, end_reason = ?, fenced_by = COALESCE(?, fenced_by),
-             updated_at = ?
+         SET status = ?, end_reason = ?, end_detail = ?,
+             fenced_by = COALESCE(?, fenced_by), updated_at = ?
          WHERE sid = ?`,
       )
-      .run(status, endReason, fencedBy ?? null, nowIso(), sid);
+      .run(
+        end.status,
+        end.reason,
+        end.detail ?? null,
+        end.fenced_by ?? null,
+        nowIso(),
+        sid,
+      );
     this.notifySessionsChanged();
   }
 
@@ -460,7 +463,9 @@ export class AcpSessionStore {
       const failedSessions = this.db
         .prepare(
           `UPDATE acp_sessions
-           SET status = 'failed', end_reason = 'kbbl_restart', updated_at = ?
+           SET status = 'failed', end_reason = 'kbbl_restart',
+               end_detail = 'kbbl restarted while the session was provisioning',
+               updated_at = ?
            WHERE status = 'provisioning'`,
         )
         .run(ts);
@@ -491,6 +496,7 @@ export function toSnapshot(row: AcpSessionRow): AcpSessionSnapshot {
     requested_model: row.requested_model,
     requested_effort: row.requested_effort,
     end_reason: row.end_reason,
+    end_detail: row.end_detail,
     fenced_by: row.fenced_by,
     last_activity_at: row.last_activity_at,
     created_at: row.created_at,

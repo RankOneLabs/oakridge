@@ -1,7 +1,12 @@
 import { z } from "zod";
 import type { Hono } from "hono";
 import type { Database } from "bun:sqlite";
-import { getEpic, listEpicsByProject, advanceEpicByEvent } from "../../db/epics";
+import {
+  advanceEpicByEvent,
+  deleteEpicCascade,
+  getEpic,
+  listEpicsByProject,
+} from "../../db/epics";
 import { taskTrackerEvents } from "../../db/events";
 import type { EpicStatus } from "../../types/task-tracker";
 
@@ -150,56 +155,15 @@ export function mountEpicsRoutes(app: Hono, deps: EpicsRouteDeps): void {
   app.delete("/epics/:id", (c) => {
     const id = c.req.param("id");
 
-    let errorCode: string | null = null;
+    let deleted: boolean;
     try {
-      errorCode = db.transaction((): string | null => {
-        const epic = getEpic(db, id);
-        if (!epic) return "not_found";
-
-        const spec_id = epic.spec_id;
-
-        // Collect plan IDs for this spec so we can cascade through cohorts
-        const planIds = db
-          .prepare<{ id: string }, [string]>("SELECT id FROM plans WHERE spec_id = ?")
-          .all(spec_id)
-          .map((r) => r.id);
-
-        const cohortIds = planIds.length > 0
-          ? db
-              .prepare<{ id: string }, string[]>(
-                `SELECT id FROM cohorts WHERE plan_id IN (${planIds.map(() => "?").join(",")})`,
-              )
-              .all(...planIds)
-              .map((r) => r.id)
-          : [];
-
-        // Ordered cascade: deepest FK dependencies first
-        if (cohortIds.length > 0) {
-          const ph = cohortIds.map(() => "?").join(",");
-          db.prepare(`DELETE FROM briefs WHERE cohort_id IN (${ph})`).run(...cohortIds);
-          db.prepare(`DELETE FROM cohort_dependencies WHERE from_cohort_id IN (${ph}) OR to_cohort_id IN (${ph})`).run(...cohortIds, ...cohortIds);
-          db.prepare(`DELETE FROM cohorts WHERE id IN (${ph})`).run(...cohortIds);
-        }
-
-        if (planIds.length > 0) {
-          const ph = planIds.map(() => "?").join(",");
-          db.prepare(`DELETE FROM assessments WHERE plan_id IN (${ph})`).run(...planIds);
-          db.prepare(`DELETE FROM plans WHERE id IN (${ph})`).run(...planIds);
-        }
-
-        db.prepare("DELETE FROM spec_discrepancies WHERE spec_id = ?").run(spec_id);
-        // epics.spec_id → specs.id: delete epic before spec to satisfy FK constraint
-        db.prepare("DELETE FROM epics WHERE id = ?").run(id);
-        db.prepare("DELETE FROM specs WHERE id = ?").run(spec_id);
-
-        return null;
-      })();
+      deleted = deleteEpicCascade(db, id);
     } catch (err) {
       console.error("epics:delete failed", err);
       return c.json({ error: "internal server error" }, 500);
     }
 
-    if (errorCode === "not_found") return c.json({ error: "not found" }, 404);
+    if (!deleted) return c.json({ error: "not found" }, 404);
 
     return new Response(null, { status: 204 });
   });
