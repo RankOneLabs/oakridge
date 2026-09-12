@@ -23,11 +23,15 @@ import { AcpControllerRegistry } from "./controller-registry";
 import { AcpProcessSupervisor } from "./process-supervisor";
 import { AcpSessionService } from "./session-service";
 import { AcpSessionStore } from "./store";
+import type { AcpUiEvent, TurnKey } from "./types";
 
 const REAL_AGENT = process.env.KBBL_ACP_REAL_AGENT ?? "";
 const realTest = REAL_AGENT === "claude-code" || REAL_AGENT === "codex" ? test : test.skip;
 
 const cleanups: Array<() => Promise<void> | void> = [];
+const agentText = (events: readonly AcpUiEvent[]): string => events
+  .flatMap(event => event.kind === "agent_message" ? event.content.map(content => content.text) : [])
+  .join("");
 afterAll(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup();
 });
@@ -126,13 +130,9 @@ realTest(
 
     const history = await service.loadHistory(sid);
     if (!history.ok) throw new Error(`history failed: ${history.error.code}`);
-    const reply = history.value.events.find(
-      (event) =>
-        event.kind === "agent_message" &&
-        event.content.some((content) => content.text.includes("SMOKE-OK")),
-    );
+    const reply = agentText(history.value.events).includes("SMOKE-OK");
     report.push(`agent_reply=${reply ? "SMOKE-OK" : "MISSING"}`);
-    expect(reply).toBeDefined();
+    expect(reply).toBe(true);
 
     // Kill the child, then rebuild history through session/load — the §10.3
     // production restart path, against the real agent's own store.
@@ -142,6 +142,27 @@ realTest(
     if (!reloaded.ok) throw new Error(`reload failed: ${reloaded.error.code}`);
     report.push(`load_replay=${reloaded.value.expired ? "EXPIRED" : `${reloaded.value.events.length} events`}`);
     expect(reloaded.value.expired).toBe(false);
+
+    // A browser resume starts empty. Codex may not persist it before the first
+    // prompt: reap the child, then prove the queued operator turn still runs
+    // on the same kbbl session/worktree after cold recovery.
+    const empty = await service.createSession({ initial_prompt: "", workdir: repoDir, runtime: REAL_AGENT });
+    if (!empty.ok) throw new Error(empty.error.detail);
+    await registry.getLive(empty.value.sid)?.closeChild();
+    const input = await service.sendInput(empty.value.sid,
+      "Reply with exactly RESUME-OK and nothing else. Do not run tools.", { client_message_id: "resume-smoke" });
+    if (!input.ok) throw new Error(input.error.detail);
+    const deadline = Date.now() + 60_000;
+    const turnKey = "operator:resume-smoke" as TurnKey;
+    while (store.getTurn(empty.value.sid, turnKey)?.status === "accepted" || store.getTurn(empty.value.sid, turnKey)?.status === "prompting") {
+      if (Date.now() > deadline) throw new Error("resumed operator turn did not finish");
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    expect(store.getTurn(empty.value.sid, turnKey)?.status).toBe("succeeded");
+    expect(store.getSession(empty.value.sid)?.worktree_path).toBe(empty.value.worktree_path);
+    const resumedHistory = await service.loadHistory(empty.value.sid);
+    expect(resumedHistory.ok && agentText(resumedHistory.value.events).includes("RESUME-OK")).toBe(true);
+    report.push("empty_session_recovery=RESUME-OK");
 
     console.log(`[acp-real-smoke] ${report.join(" | ")}`);
   },

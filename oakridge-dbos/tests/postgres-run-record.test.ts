@@ -894,3 +894,36 @@ test("v2 deletion refuses active work and deletes a terminal ownership graph wit
   expect(await setup.records.delete_run(setup.input.run_id)).toEqual({ kind: "deleted", run_id: setup.input.run_id });
   expect(await setup.records.delete_run(setup.input.run_id)).toEqual({ kind: "already_deleted", run_id: setup.input.run_id });
 });
+
+test("failed executor cleanup keeps a terminal run undeletable until fencing succeeds", async () => {
+  const setup = await setupMaterializedRun();
+  if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  const workId = setup.input.units[0]!.initial_work_order.id;
+  await setup.records.ensure_executor_attachment(workId, "test", setup.input.materialized_at);
+  await setup.records.cancel_run({ run_id: setup.input.run_id, actor: "test", reason: null, cancelled_at: setup.input.materialized_at });
+  await setup.records.request_cleanup(workId, setup.input.materialized_at);
+  await setup.records.finish_cleanup(workId, false, setup.input.materialized_at);
+  expect((await setup.records.delete_run(setup.input.run_id)).kind).toBe("external_execution_conflict");
+  await setup.records.request_cleanup(workId, setup.input.materialized_at);
+  await setup.records.finish_cleanup(workId, true, setup.input.materialized_at);
+  expect((await setup.records.delete_run(setup.input.run_id)).kind).toBe("deleted");
+});
+
+test("deletion racing the first executor reservation cannot delete a successfully reserved execution", async () => {
+  const setup = await setupMaterializedRun();
+  if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  const workId = setup.input.units[0]!.initial_work_order.id;
+  await setup.records.cancel_run({ run_id: setup.input.run_id, actor: "test", reason: null, cancelled_at: setup.input.materialized_at });
+  const [reservation, deletion] = await Promise.allSettled([
+    setup.records.ensure_executor_attachment(workId, "test", setup.input.materialized_at),
+    new PostgresRunRecordRepository(sql!).delete_run(setup.input.run_id),
+  ]);
+  if (deletion.status !== "fulfilled") throw deletion.reason;
+  expect(deletion.value.kind).toBe(reservation.status === "fulfilled" ? "external_execution_conflict" : "deleted");
+  if (reservation.status === "fulfilled") {
+    await setup.records.finish_cleanup(workId, true, setup.input.materialized_at);
+    expect((await setup.records.delete_run(setup.input.run_id)).kind).toBe("deleted");
+  }
+  // If deletion wins, ensure fails before the workflow can call start_or_attach.
+  await expect(setup.records.ensure_executor_attachment(workId, "test", setup.input.materialized_at)).rejects.toThrow("was not found");
+});

@@ -289,8 +289,7 @@ export class AcpSessionController {
       if (!client) {
         return err(this.notLiveError("controller.applyRequestedConfig"));
       }
-      const applied = await client.setConfigOption(
-        String(this.acpSessionId),
+      const applied = await this.setConfigOption(
         resolved.value.configId,
         resolved.value.valueId,
       );
@@ -313,6 +312,8 @@ export class AcpSessionController {
       value,
     );
     if (!applied.ok) return applied;
+    this.configOptions = applied.value.configOptions;
+    this.emit(projectConfigOptions(this.configOptions));
     return ok(undefined);
   }
 

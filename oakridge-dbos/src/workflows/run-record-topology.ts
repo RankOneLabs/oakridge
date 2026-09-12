@@ -81,6 +81,14 @@ const cleanupExecutorStep = DBOS.registerStep(
 );
 
 export const runRecordCleanupWorkflow = DBOS.registerWorkflow(async (input: CleanupWorkOrderInput): Promise<void> => {
+  // A terminal executor observation can mean only that its first turn ended.
+  // The run record owns approval: retain the session until all required outputs
+  // are released, or the work is abandoned by cancellation/replacement.
+  for (;;) {
+    const current = await loadWorkOrderStep(input.execution.work_order.id);
+    if (current.work_order.state === "completed" || current.work_order.state === "abandoned") break;
+    await DBOS.sleepSeconds(OBSERVE_INTERVAL_SECONDS);
+  }
   await cleanupExecutorStep(input);
 }, { name: "oakridgeV2CleanupExecutorWorkflow" });
 

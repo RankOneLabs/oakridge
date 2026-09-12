@@ -6,6 +6,14 @@ import type { RunRecordRepository } from "../src/storage/repositories";
 
 const runId = "00000000-0000-4000-8000-000000000001" as WorkflowRunId;
 
+test("terminal run deletion returns a typed conflict while executor cleanup is incomplete", async () => {
+  const conflict = { kind: "external_execution_conflict" as const, run_id: runId, detail: "executor cleanup is incomplete" };
+  const app = createRunLifecycleApp({ records: { delete_run: async () => conflict } });
+  const response = await app.request(`/workflow_runs/${runId}`, { method: "DELETE" });
+  expect(response.status).toBe(409);
+  expect(await response.json()).toEqual(conflict);
+});
+
 test("terminal run deletion is idempotent", async () => {
   const app = createRunLifecycleApp({ records: { delete_run: async () => ({ kind: "deleted", run_id: runId }) } as unknown as RunRecordRepository });
   expect((await app.request(`/workflow_runs/${runId}`, { method: "DELETE" })).status).toBe(204);

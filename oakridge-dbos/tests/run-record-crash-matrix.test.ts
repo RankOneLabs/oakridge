@@ -33,6 +33,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
 import type { AskResult } from "../src/decision/commands";
+import type { OutputReleaseContract } from "../src/domain/compiled-workflow";
 import type { ExecutionRequest, ExecutorAdapter, ExecutorObservationAttempt, ExternalExecutionReference } from "../src/domain/execution";
 import type { ArtifactId, InputFingerprint, Result, RunUnitId, StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId, WorkOrderId } from "../src/domain/primitives";
 import { applyMigrations } from "../src/storage/migrate";
@@ -74,7 +75,7 @@ interface FreshUnit {
 }
 
 /** One straight-through run with a single immediate-release unit, freshly initialized. */
-const freshUnit = async (executorType = "crash-matrix-executor"): Promise<FreshUnit | null> => {
+const freshUnit = async (executorType = "crash-matrix-executor", release: OutputReleaseContract = { kind: "immediate" }): Promise<FreshUnit | null> => {
   if (!sql) return null;
   const definitionId = randomUUID() as WorkflowDefinitionId;
   const runId = randomUUID() as WorkflowRunId;
@@ -91,7 +92,7 @@ const freshUnit = async (executorType = "crash-matrix-executor"): Promise<FreshU
     run_id: runId, stage_instance_id: stageId, run_unit_id: runUnitId, unit_id: "unit-1" as UnitId,
     work_order_id: workOrderId, work_order_workflow_id: workOrderWorkflowId, stage_key: "build", executor_type: executorType,
     work_order_capability_hash: capabilityHash, resolved_config: {}, parameters: {}, input_snapshot: [], input_fingerprint: "empty" as InputFingerprint,
-    outputs: [{ name: "result", artifact_type: "dev.result", required: true, release: { kind: "immediate" } }],
+    outputs: [{ name: "result", artifact_type: "dev.result", required: true, release }],
     created_at: now,
   });
   return { records, runId, workOrderId, workOrderWorkflowId, capabilityHash, now };
@@ -286,12 +287,70 @@ test("crash matrix: duplicate start of the same work-order workflow id reuses th
 
 const DBOS_APP_NAME = "oakridge-crash-matrix";
 
-test("crash matrix: starting the same work-order workflow id twice never re-attaches its external session", async () => {
+for (const boundary of ["attachment", "observation"] as const) {
+  test(`deletion waits for fencing when cancellation interrupts executor ${boundary}`, async () => {
+    if (!sql || !databaseUrl) return skip();
+    const unit = await freshUnit();
+    if (!unit) return skip();
+    const paused = Promise.withResolvers<void>();
+    const proceed = Promise.withResolvers<void>();
+    const fencing = Promise.withResolvers<void>();
+    const finishFence = Promise.withResolvers<void>();
+    let closeCalls = 0;
+    const adapter: ExecutorAdapter = {
+      executor_type: "crash-matrix-executor",
+      async start_or_attach() {
+        if (boundary === "attachment") { paused.resolve(); await proceed.promise; }
+        return { kind: "kbbl_session", session_id: `delete-race-${unit.workOrderId}` };
+      },
+      async observe_terminal() {
+        if (boundary === "observation") { paused.resolve(); await proceed.promise; }
+        return { kind: "terminal", observation: { kind: "succeeded", metadata: {} } };
+      },
+      async deliver_input() {},
+      async cancel_or_fence() { closeCalls += 1; fencing.resolve(); await finishFence.promise; },
+    };
+    DBOS.setConfig({ name: DBOS_APP_NAME, systemDatabaseUrl: databaseUrl,
+      applicationVersion: `delete-race-${randomUUID()}`, logLevel: "warn" });
+    registerRunRecordWorkflowServices({ records: unit.records, find_executor: () => adapter, now: () => new Date().toISOString() });
+    await DBOS.launch();
+    try {
+      await unit.records.decide_run(unit.runId, unit.now);
+      await DBOS.startWorkflow(runRecordWorkOrderWorkflow, { workflowID: unit.workOrderWorkflowId })(unit.workOrderId);
+      await paused.promise;
+      await unit.records.cancel_run({ run_id: unit.runId, actor: "test", reason: "delete race", cancelled_at: unit.now });
+      expect((await unit.records.delete_run(unit.runId)).kind).toBe("external_execution_conflict");
+      expect(await unit.records.find_work_order_execution(unit.workOrderId)).not.toBeNull();
+      proceed.resolve();
+      await fencing.promise;
+      expect((await unit.records.delete_run(unit.runId)).kind).toBe("external_execution_conflict");
+      finishFence.resolve();
+      await awaitCondition("executor fencing to be recorded", async () => {
+        const rows = await sql!.query<{ readonly cleanup_state: string }>(
+          "SELECT cleanup_state FROM oakridge.executor_attachment WHERE work_order_id=$1", [unit.workOrderId]);
+        return rows[0]?.cleanup_state === "complete" ? true : null;
+      }, 10_000);
+      expect(closeCalls).toBe(1);
+      expect((await unit.records.delete_run(unit.runId)).kind).toBe("deleted");
+      expect(await unit.records.find_work_order_execution(unit.workOrderId)).toBeNull();
+    } finally {
+      proceed.resolve();
+      finishFence.resolve();
+      await DBOS.shutdown();
+    }
+  }, 20_000);
+}
+
+test("a completed initial turn retains its session through publication and closes only after approval", async () => {
   if (!sql || !databaseUrl) return skip();
-  const unit = await freshUnit("crash-matrix-real-dbos");
+  const unit = await freshUnit("crash-matrix-real-dbos", {
+    kind: "gate", steps: [{ type: "artifact_approval", actions: [{ name: "approve", disposition: "release" }] }],
+    requires_zero_open_review_items: false, revision_target: "self_stage",
+  });
   if (!unit) return skip();
 
   let startCalls = 0;
+  let closeCalls = 0;
   const adapter: ExecutorAdapter = {
     executor_type: "crash-matrix-real-dbos",
     async start_or_attach(_request: ExecutionRequest, _operation_id): Promise<ExternalExecutionReference> {
@@ -304,7 +363,7 @@ test("crash matrix: starting the same work-order workflow id twice never re-atta
       return { kind: "terminal", observation: { kind: "succeeded", metadata: {} } };
     },
     async deliver_input() {},
-    async cancel_or_fence() {},
+    async cancel_or_fence() { closeCalls += 1; },
   };
 
   const applicationVersion = `crash-matrix-${randomUUID()}`;
@@ -312,12 +371,29 @@ test("crash matrix: starting the same work-order workflow id twice never re-atta
   registerRunRecordWorkflowServices({ records: unit.records, find_executor: () => adapter, now: () => new Date().toISOString() });
   await DBOS.launch();
   try {
+    await unit.records.decide_run(unit.runId, unit.now);
     await DBOS.startWorkflow(runRecordWorkOrderWorkflow, { workflowID: unit.workOrderWorkflowId })(unit.workOrderId);
+    await awaitCondition("the initial turn to finish", async () => {
+      const rows = await sql!.query<{ readonly health: { readonly kind: string } }>("SELECT health FROM oakridge.executor_attachment WHERE work_order_id = $1", [unit.workOrderId]);
+      return rows[0]?.health.kind === "ended_succeeded" ? true : null;
+    }, 10_000);
+    const body = { done: true };
+    const publication = await unit.records.publish_artifact({ artifact_id: randomUUID() as ArtifactId,
+      work_order_id: unit.workOrderId, output_name: "result", body, capability_hash: unit.capabilityHash,
+      idempotency_key: "review-result", payload_hash: createHash("sha256").update(JSON.stringify(body)).digest("hex"), published_at: unit.now });
+    if (publication.kind !== "pending") throw new Error(`expected pending, got ${publication.kind}`);
+    // Cross an entire cleanup polling interval while the operator has not approved.
+    await new Promise(resolve => setTimeout(resolve, 5500));
+    expect(closeCalls).toBe(0);
+    expect((await unit.records.find_work_order_execution(unit.workOrderId))?.work_order.state).toBe("started");
+    await unit.records.close_output_wait({ wait_id: publication.wait_id, disposition: "release", actor: "operator", detail: null, decided_at: unit.now });
+    await decideUntilSettled(unit.records, unit.runId, unit.now);
     await awaitCondition("the work order's cleanup workflow to finish", async () => {
       const rows = await sql!.query<{ readonly cleanup_state: string }>("SELECT cleanup_state FROM oakridge.executor_attachment WHERE work_order_id = $1", [unit.workOrderId]);
       return rows[0]?.cleanup_state === "complete" ? true : null;
     }, 10_000);
     expect(startCalls).toBe(1);
+    expect(closeCalls).toBe(1);
 
     // A restarted process re-invoking the same work order id — believing it
     // needs to start work it does not know already finished — must not
@@ -327,9 +403,10 @@ test("crash matrix: starting the same work-order workflow id twice never re-atta
     const attachments = await sql!.query<{ readonly count: string }>("SELECT count(*)::text AS count FROM oakridge.executor_attachment WHERE work_order_id = $1", [unit.workOrderId]);
     expect(attachments[0]?.count).toBe("1");
   } finally {
+    await unit.records.cancel_run({ run_id: unit.runId, actor: "test", reason: "test cleanup", cancelled_at: new Date().toISOString() });
     await DBOS.shutdown();
   }
-}, 20_000);
+}, 30_000);
 
 test("crash matrix: starting the same run workflow id twice never starts a second work order", async () => {
   if (!sql || !databaseUrl) return skip();

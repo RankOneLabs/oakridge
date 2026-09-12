@@ -19,6 +19,8 @@
 //     "malformed"        → writes a non-JSON line to stdout mid-prompt.
 //     "stderr_spam"      → happy, plus continuous stderr noise.
 //     "close_ignored"    → session/close never answers (kill-path test).
+//     "persist_on_prompt" → session/new stays in memory until the first
+//                           prompt, like agents with lazy transcript storage.
 //
 //   FAKE_ACP_STATE_DIR=  transcript dir (required for load replay across
 //                        process restarts). Defaults to a tmp subdir.
@@ -115,7 +117,7 @@ const app = agent({ name: `fake-acp-${behavior}` })
   }))
   .onRequest("session/new", (ctx) => {
     const sessionId = `fake-${randomUUID()}`;
-    appendFileSync(transcriptPath(sessionId), "");
+    if (behavior !== "persist_on_prompt") appendFileSync(transcriptPath(sessionId), "");
     configState.set(sessionId, new Map());
     void ctx;
     return { sessionId, configOptions: CONFIG_OPTIONS };

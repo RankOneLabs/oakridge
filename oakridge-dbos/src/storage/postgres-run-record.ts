@@ -327,6 +327,16 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       const run = rows[0];
       if (!run) return { kind: "already_deleted", run_id };
       if (run.state === "active") return { kind: "active_conflict", run_id, detail: "run is active; cancel it before deletion" };
+      // ensure_executor_attachment takes this same run lock before reserving
+      // an external execution. Include reservations with no reference yet:
+      // start_or_attach may still be in flight after cancellation returns.
+      const pending = await transaction.query<{ readonly work_order_id: string }>(
+        `SELECT attachment.work_order_id::text FROM oakridge.executor_attachment attachment
+         JOIN oakridge.work_order work ON work.id=attachment.work_order_id
+         JOIN oakridge.run_unit unit ON unit.id=work.run_unit_id
+         WHERE unit.run_id=$1 AND attachment.cleanup_state <> 'complete' LIMIT 1`, [run_id]);
+      if (pending.length > 0) return { kind: "external_execution_conflict", run_id,
+        detail: "executor cleanup is incomplete; wait for cleanup before deletion" };
       await transaction.query("DELETE FROM oakridge.workflow_run WHERE id=$1", [run_id]);
       return { kind: "deleted", run_id };
     });
@@ -1102,15 +1112,23 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
   }
 
   async ensure_executor_attachment(work_order_id: WorkOrderId, executor_type: string, updated_at: string): Promise<ExecutorAttachment> {
-    const inserted = await this.sql.query<ExecutorAttachmentRow>(`INSERT INTO oakridge.executor_attachment (work_order_id, executor_type, updated_at)
-      VALUES ($1,$2,$3::timestamptz) ON CONFLICT (work_order_id) DO NOTHING
-      RETURNING work_order_id::text, executor_type, external_reference, health, cleanup_state, updated_at::text`, [work_order_id, executor_type, updated_at]);
-    const row = inserted[0] ?? (await this.sql.query<ExecutorAttachmentRow>(
-      `SELECT work_order_id::text, executor_type, external_reference, health, cleanup_state, updated_at::text
-       FROM oakridge.executor_attachment WHERE work_order_id = $1`, [work_order_id]))[0];
-    if (!row) throw new Error(`executor attachment for work order '${work_order_id}' disappeared after ensure`);
-    if (row.executor_type !== executor_type) throw new Error(`work order '${work_order_id}' is attached to a different executor`);
-    return { ...row, work_order_id: row.work_order_id as WorkOrderId };
+    return this.sql.transaction(async (transaction) => {
+      const runs = await transaction.query<{ readonly id: string }>(
+        `SELECT run.id::text FROM oakridge.workflow_run run
+         JOIN oakridge.run_unit unit ON unit.run_id=run.id
+         JOIN oakridge.work_order work ON work.run_unit_id=unit.id
+         WHERE work.id=$1 FOR UPDATE OF run`, [work_order_id]);
+      if (!runs[0]) throw new Error(`work order '${work_order_id}' was not found before executor attachment`);
+      const inserted = await transaction.query<ExecutorAttachmentRow>(`INSERT INTO oakridge.executor_attachment (work_order_id, executor_type, updated_at)
+        VALUES ($1,$2,$3::timestamptz) ON CONFLICT (work_order_id) DO NOTHING
+        RETURNING work_order_id::text, executor_type, external_reference, health, cleanup_state, updated_at::text`, [work_order_id, executor_type, updated_at]);
+      const row = inserted[0] ?? (await transaction.query<ExecutorAttachmentRow>(
+        `SELECT work_order_id::text, executor_type, external_reference, health, cleanup_state, updated_at::text
+         FROM oakridge.executor_attachment WHERE work_order_id = $1`, [work_order_id]))[0];
+      if (!row) throw new Error(`executor attachment for work order '${work_order_id}' disappeared after ensure`);
+      if (row.executor_type !== executor_type) throw new Error(`work order '${work_order_id}' is attached to a different executor`);
+      return { ...row, work_order_id: row.work_order_id as WorkOrderId };
+    });
   }
 
   async attach_external(work_order_id: WorkOrderId, reference: ExternalExecutionReference, updated_at: string): Promise<void> {
