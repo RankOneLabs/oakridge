@@ -783,11 +783,22 @@ export class AcpSessionService {
         },
         onDefunct: (defunctSid) => this.deps.controllers.remove(defunctSid),
       });
-      const started = await controller.start(row.worktree_path, {
-        kind: "load",
-        acp_session_id: acpSessionId,
-      }, loadSignal);
+      // Some agents do not persist session/new until the first prompt. The
+      // durable ledger proves whether any prompt may have reached the agent;
+      // only a never-dispatched session can safely start afresh on this same
+      // worktree. Accepted input keeps its original key and dispatches once.
+      const hasDispatchedTurns = this.deps.store.hasDispatchedTurns(sid);
+      const started = await controller.start(row.worktree_path, hasDispatchedTurns
+        ? { kind: "load", acp_session_id: acpSessionId }
+        : { kind: "new" }, loadSignal);
       if (!started.ok) return started;
+      if (!hasDispatchedTurns) {
+        const configured = await controller.applyRequestedConfig(row.requested_model, row.requested_effort);
+        if (!configured.ok) {
+          await controller.closeChild();
+          return configured;
+        }
+      }
       return ok(controller);
     });
     if (created.ok) void created.value.dispatchAcceptedTurns();

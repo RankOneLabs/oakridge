@@ -77,9 +77,9 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
 
   /**
    * Held while a **started** work order's attachment names this session and
-   * that work order's workflow is still PENDING. A workflow that has
-   * returned — success, failure, or cancellation — has stopped waiting on the
-   * session, so closing it can no longer strand anything.
+   * that work order's workflow is PENDING or SUCCESS, with cleanup unfinished.
+   * SUCCESS can mean only the initial turn ended: its cleanup workflow still
+   * retains the session for review until the run record releases the work.
    *
    * The version the holder was started under is selected rather than filtered
    * on, so a workflow stranded by a version bump can be told apart from no
@@ -103,7 +103,8 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
        JOIN oakridge.stage_instance stage ON stage.id = unit.stage_instance_id
        JOIN dbos.workflow_status status ON status.workflow_uuid = work.workflow_id
        WHERE attachment.external_reference->>'session_id' = $1
-         AND work.state = 'started' AND status.status = 'PENDING'
+         AND work.state = 'started' AND status.status IN ('PENDING', 'SUCCESS')
+         AND attachment.cleanup_state <> 'complete'
        ORDER BY attachment.updated_at DESC LIMIT 1`,
       [session_id]);
     const row = rows[0];

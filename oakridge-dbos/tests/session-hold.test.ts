@@ -138,10 +138,19 @@ test("a completed work order holds nothing", async () => {
   expect(await repository.find_session_hold(sessionId)).toBeNull();
 });
 
-test("a workflow that is not PENDING holds nothing", async () => {
+test("a finished initial turn still holds its session while review is outstanding", async () => {
   if (!sql) { console.warn("session hold PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
   const sessionId = `session-${randomUUID()}`;
   await seedWorkOrder(sql, { work_state: "started", attach_session_id: sessionId, dbos_status: "SUCCESS", dbos_application_version: EXECUTOR_VERSION });
+  const repository = new PostgresOperatorProjectionRepository(sql, EXECUTOR_VERSION);
+  expect(await repository.find_session_hold(sessionId)).toEqual(expect.objectContaining({ session_id: sessionId }));
+});
+
+test("a cleaned up attachment holds nothing even if its work remains started", async () => {
+  if (!sql) { console.warn("session hold PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  const sessionId = `session-${randomUUID()}`;
+  const seeded = await seedWorkOrder(sql, { work_state: "started", attach_session_id: sessionId, dbos_status: "SUCCESS", dbos_application_version: EXECUTOR_VERSION });
+  await sql.query("UPDATE oakridge.executor_attachment SET cleanup_state = 'complete' WHERE work_order_id = $1", [seeded.work_order_id]);
   const repository = new PostgresOperatorProjectionRepository(sql, EXECUTOR_VERSION);
   expect(await repository.find_session_hold(sessionId)).toBeNull();
 });

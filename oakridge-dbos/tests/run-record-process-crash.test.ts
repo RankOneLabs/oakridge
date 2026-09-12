@@ -165,6 +165,10 @@ test("a work order killed right after its executor attaches recovers without a s
     try {
       // ensureExecutorStep already checkpointed before the kill: recovery
       // must resume the workflow past it, not re-run its body.
+      // Cleanup now waits for the work record to release the session. Cancelling
+      // through the repository exercises that release without fabricating output.
+      const records = new PostgresRunRecordRepository(sql!);
+      await records.cancel_run({ run_id: unit.runId, actor: "test", cancelled_at: new Date().toISOString(), reason: "crash recovery cleanup test" });
       await awaitCondition("the recovered work order to reach cleanup", cleanupComplete(unit.workOrderId), 10_000);
 
       expect(recovery.stdout.text()).not.toContain(START_OR_ATTACH_CALLED_MARKER);

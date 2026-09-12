@@ -3,7 +3,7 @@
 // service -> registry -> controller -> client -> supervisor path.
 
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Database } from "bun:sqlite";
@@ -413,6 +413,46 @@ test("fence cancels, closes, kills the child, and rejects later input — idempo
   const again = await service.closeSession(sid, { fenced_by: "exec-99" });
   expect(again.ok).toBe(true);
 }, 20000);
+
+test("an unprompted session survives idle reaping and delivers queued input once", async () => {
+  const { stateDir, workdir } = await makeDirs();
+  const first = makeHarness({ stateDir, behavior: "persist_on_prompt" });
+  const created = await first.service.createSession({ ...spec(workdir, ""), model: "fake-large", effort: "high" });
+  if (!created.ok) throw new Error(created.error.detail);
+  const sid = created.value.sid;
+  const original = first.store.getSession(sid);
+  await first.service.reapIdleChildren(Date.now() + 900001);
+  expect(first.registry.getLive(sid)).toBeNull();
+
+  const accepted = first.store.acceptTurn({ sid, turn_key: "operator:review" as TurnKey, source: "operator", payload: "handle the review" });
+  expect(accepted.kind).toBe("created");
+  const second = makeHarness({ stateDir, db: first.db, behavior: "persist_on_prompt" });
+  second.service.recoverOnBoot();
+  const history = await second.service.loadHistory(sid);
+  expect(history.ok && !history.value.expired).toBe(true);
+  await until(() => second.store.getTurn(sid, "operator:review" as TurnKey)?.status === "succeeded");
+  expect(second.store.getSession(sid)?.acp_session_id).not.toBe(original?.acp_session_id);
+  expect(second.store.getSession(sid)?.worktree_path).toBe(original?.worktree_path);
+  const controller = second.registry.getLive(sid);
+  expect(controller?.liveConfigOptions.map(option => option.currentValue)).toEqual(["fake-large", "high"]);
+  const replay = await second.service.sendInput(sid, "handle the review", { client_message_id: "review" });
+  expect(replay.ok && replay.value.status).toBe("succeeded");
+}, 15000);
+
+test("a missing transcript after a dispatched turn never starts an empty replacement", async () => {
+  const { stateDir, workdir } = await makeDirs();
+  const { service, store } = makeHarness({ stateDir });
+  const created = await service.createSession(spec(workdir));
+  if (!created.ok) throw new Error(created.error.detail);
+  const sid = created.value.sid;
+  await service.observeInitialTurn(sid, 8000);
+  const agentId = store.getSession(sid)?.acp_session_id;
+  await service.shutdown();
+  await unlink(join(stateDir, `${agentId}.jsonl`));
+  const history = await service.loadHistory(sid);
+  expect(history.ok && history.value.expired).toBe(true);
+  expect(store.getSession(sid)?.acp_session_id).toBe(agentId);
+}, 15000);
 
 test("session/load rebuilds history after controller destruction", async () => {
   const { stateDir, workdir } = await makeDirs();

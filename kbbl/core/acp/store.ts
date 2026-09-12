@@ -370,6 +370,13 @@ export class AcpSessionStore {
     );
   }
 
+  /** Whether a prompt may have reached the agent, including uncertain outcomes. */
+  hasDispatchedTurns(sid: KbblSessionId): boolean {
+    return this.db.prepare<{ found: number }, [string]>(
+      "SELECT 1 AS found FROM acp_turns WHERE sid = ? AND (status <> 'accepted' OR started_at IS NOT NULL) LIMIT 1",
+    ).get(sid) !== null;
+  }
+
   /** Oldest-first retained deliveries awaiting dispatch (§11.3). */
   listAcceptedTurns(sid: KbblSessionId): AcpTurnRow[] {
     return this.db

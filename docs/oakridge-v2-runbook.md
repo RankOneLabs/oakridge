@@ -175,6 +175,16 @@ and atomically updates its run-owned output slot and wait.
 
 ## Restart and recovery
 
+An agent finishing its initial turn does not close its session. Cleanup waits
+for the work order to become completed (its required outputs have been
+released) or abandoned (cancellation or replacement). While review is open,
+send corrections to the original session and branch. Idle child processes
+may still be reaped; kbbl reloads their agent history when work resumes.
+For a session whose turn ledger proves no prompt was ever dispatched, kbbl
+may create a fresh agent session on the same worktree, preserving queued input
+and the requested runtime settings. It never substitutes an empty session for
+a missing transcript after a prompt may have run.
+
 Restart with the same command:
 
 ```bash
@@ -189,6 +199,14 @@ an app-owned scheduler.
 change durable operation order. Do not assign changed workflow code the same
 application version. A run's application state remains in Oakridge records;
 executor recovery reattaches by stable work-order identity.
+
+The review-lifecycle repair does not automatically reopen sessions already
+closed by the old cleanup workflow or migrate in-flight DBOS workflows to a
+new application version. Before updating a parked run, back up PostgreSQL and
+kbbl's SQLite database and inspect its pending workflow/version rows. A plain
+restart at a new commit leaves old-version workflows pending; do not cancel
+the run or reset either database as an upgrade step. A version transition
+requires a separate, replay-checked recovery operation.
 
 ## Remote access
 
