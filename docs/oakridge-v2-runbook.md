@@ -208,6 +208,11 @@ restart at a new commit leaves old-version workflows pending; do not cancel
 the run or reset either database as an upgrade step. A version transition
 requires a separate, replay-checked recovery operation.
 
+Deleting a terminal run returns `409 external_execution_conflict` while any
+executor attachment has incomplete cleanup, including an attachment still being
+created or a failed fencing attempt. Wait for successful cleanup before retrying
+deletion; cancellation returning does not mean executor cleanup has finished.
+
 ## Remote access
 
 Keep DBOS and PostgreSQL on loopback. Expose only kbbl:

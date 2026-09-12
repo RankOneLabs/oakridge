@@ -287,6 +287,60 @@ test("crash matrix: duplicate start of the same work-order workflow id reuses th
 
 const DBOS_APP_NAME = "oakridge-crash-matrix";
 
+for (const boundary of ["attachment", "observation"] as const) {
+  test(`deletion waits for fencing when cancellation interrupts executor ${boundary}`, async () => {
+    if (!sql || !databaseUrl) return skip();
+    const unit = await freshUnit();
+    if (!unit) return skip();
+    const paused = Promise.withResolvers<void>();
+    const proceed = Promise.withResolvers<void>();
+    const fencing = Promise.withResolvers<void>();
+    const finishFence = Promise.withResolvers<void>();
+    let closeCalls = 0;
+    const adapter: ExecutorAdapter = {
+      executor_type: "crash-matrix-executor",
+      async start_or_attach() {
+        if (boundary === "attachment") { paused.resolve(); await proceed.promise; }
+        return { kind: "kbbl_session", session_id: `delete-race-${unit.workOrderId}` };
+      },
+      async observe_terminal() {
+        if (boundary === "observation") { paused.resolve(); await proceed.promise; }
+        return { kind: "terminal", observation: { kind: "succeeded", metadata: {} } };
+      },
+      async deliver_input() {},
+      async cancel_or_fence() { closeCalls += 1; fencing.resolve(); await finishFence.promise; },
+    };
+    DBOS.setConfig({ name: DBOS_APP_NAME, systemDatabaseUrl: databaseUrl,
+      applicationVersion: `delete-race-${randomUUID()}`, logLevel: "warn" });
+    registerRunRecordWorkflowServices({ records: unit.records, find_executor: () => adapter, now: () => new Date().toISOString() });
+    await DBOS.launch();
+    try {
+      await unit.records.decide_run(unit.runId, unit.now);
+      await DBOS.startWorkflow(runRecordWorkOrderWorkflow, { workflowID: unit.workOrderWorkflowId })(unit.workOrderId);
+      await paused.promise;
+      await unit.records.cancel_run({ run_id: unit.runId, actor: "test", reason: "delete race", cancelled_at: unit.now });
+      expect((await unit.records.delete_run(unit.runId)).kind).toBe("external_execution_conflict");
+      expect(await unit.records.find_work_order_execution(unit.workOrderId)).not.toBeNull();
+      proceed.resolve();
+      await fencing.promise;
+      expect((await unit.records.delete_run(unit.runId)).kind).toBe("external_execution_conflict");
+      finishFence.resolve();
+      await awaitCondition("executor fencing to be recorded", async () => {
+        const rows = await sql!.query<{ readonly cleanup_state: string }>(
+          "SELECT cleanup_state FROM oakridge.executor_attachment WHERE work_order_id=$1", [unit.workOrderId]);
+        return rows[0]?.cleanup_state === "complete" ? true : null;
+      }, 10_000);
+      expect(closeCalls).toBe(1);
+      expect((await unit.records.delete_run(unit.runId)).kind).toBe("deleted");
+      expect(await unit.records.find_work_order_execution(unit.workOrderId)).toBeNull();
+    } finally {
+      proceed.resolve();
+      finishFence.resolve();
+      await DBOS.shutdown();
+    }
+  }, 20_000);
+}
+
 test("a completed initial turn retains its session through publication and closes only after approval", async () => {
   if (!sql || !databaseUrl) return skip();
   const unit = await freshUnit("crash-matrix-real-dbos", {
