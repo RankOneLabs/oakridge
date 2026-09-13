@@ -1,6 +1,6 @@
 // Shared test wiring: an AcpSessionService backed by the fake ACP agent
 // (§24.1) over real SQLite, optionally with the real git worktree
-// provider. Used by handler tests, orchestrator tests, and the DBOS
+// provider. Used by handler tests and the DBOS
 // contract fixture — production code never imports this module.
 
 import { join } from "node:path";
@@ -13,7 +13,7 @@ import { AcpControllerRegistry } from "./controller-registry";
 import { AcpProcessSupervisor } from "./process-supervisor";
 import { AcpSessionService } from "./session-service";
 import { AcpSessionStore } from "./store";
-import { ok, type KbblSessionId, type WorktreeProvider } from "./types";
+import { ok, type WorktreeProvider } from "./types";
 
 export const FAKE_AGENT_FIXTURE = join(
   import.meta.dir,
@@ -32,7 +32,6 @@ export interface AcpTestHarnessOptions {
   /** Profile ids all mapped to the fake agent. */
   profileIds?: readonly string[];
   defaultAgent?: string;
-  onSessionEnded?: (sid: KbblSessionId) => void;
 }
 
 export interface AcpTestHarness {
@@ -97,7 +96,6 @@ export function makeAcpTestService(
       idle_child_ttl_ms: 900_000,
       live_event_buffer: 2000,
     },
-    ...(options.onSessionEnded ? { onSessionEnded: options.onSessionEnded } : {}),
   });
   return { db, store, registry, service };
 }

@@ -6,7 +6,6 @@ import {
   selectPendingApprovalCount,
   selectSessionView,
   selectSessionsAwaitingApproval,
-  selectSidebarSessions,
   selectSortedSessions,
 } from "./selectors";
 
@@ -50,20 +49,6 @@ describe("selectSortedSessions", () => {
       ]),
     );
     expect(sorted.map((s) => s.sid)).toEqual([newer.sid, older.sid]);
-  });
-});
-
-describe("selectSidebarSessions", () => {
-  it("projects the sidebar subset with the project workdir", () => {
-    const snapshot = makeSnapshot();
-    expect(selectSidebarSessions([snapshot])).toEqual([
-      {
-        sid: snapshot.sid,
-        name: "test-session",
-        workdir: "/repo",
-        status: "idle",
-      },
-    ]);
   });
 });
 

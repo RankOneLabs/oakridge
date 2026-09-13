@@ -23,7 +23,6 @@ import {
   err,
   isAcpFailureCode,
   ok,
-  type AcpDispatchStatus,
   type AcpError,
   type AcpSessionRow,
   type AcpSessionSnapshot,
@@ -58,12 +57,6 @@ export interface AcpSessionServiceDeps {
   readonly supervisor: AcpProcessSupervisor;
   readonly worktrees: WorktreeProvider;
   readonly config: AcpServiceConfig;
-  /**
-   * Fired when a session leaves the live set (ended, fenced, or failed).
-   * The dispatch-attempt reconciler hangs off this the way it hung off
-   * the legacy manager's onRuntimeSessionEnded.
-   */
-  readonly onSessionEnded?: (sid: KbblSessionId) => void;
 }
 
 const OBSERVE_POLL_MS = 100;
@@ -222,26 +215,6 @@ export class AcpSessionService {
   getSession(sid: string): AcpSessionSnapshot | null {
     const row = this.deps.store.getSession(sid as KbblSessionId);
     return row ? toSnapshot(row) : null;
-  }
-
-  /**
-   * Settlement read for orchestrator dispatch attempts and boot
-   * reconciliation: completion is the initial turn settling, never the
-   * session ending (a durable session stays idle/resumable after its work
-   * is done). Null when the sid is not an ACP session.
-   */
-  dispatchStatus(sid: string): AcpDispatchStatus | null {
-    const row = this.deps.store.getSession(sid as KbblSessionId);
-    if (!row) return null;
-    const observed = this.classifyInitialTurn(row);
-    switch (observed.kind) {
-      case "succeeded":
-        return "completed";
-      case "failed":
-        return "failed";
-      case "pending":
-        return "running";
-    }
   }
 
   listByArtifact(artifactId: string): AcpSessionSnapshot[] {
@@ -403,8 +376,6 @@ export class AcpSessionService {
   ): Promise<Result<void, AcpError>> {
     const row = this.deps.store.getSession(sid as KbblSessionId);
     if (!row) return ok(undefined);
-    const wasLive =
-      row.status !== "ended" && row.status !== "fenced" && row.status !== "failed";
     const controller = this.deps.controllers.getLive(row.sid);
     if (fence) {
       if (controller) {
@@ -417,14 +388,12 @@ export class AcpSessionService {
           fenced_by: fence.fenced_by,
         });
       }
-      if (wasLive) this.deps.onSessionEnded?.(row.sid);
       return ok(undefined);
     }
     if (controller) await controller.closeChild();
     if (row.status !== "ended" && row.status !== "fenced") {
       this.deps.store.markEnded(row.sid, { status: "ended", reason: "user_closed" });
     }
-    if (wasLive) this.deps.onSessionEnded?.(row.sid);
     return ok(undefined);
   }
 
@@ -722,7 +691,6 @@ export class AcpSessionService {
     console.error(
       `[acp] sid=${row.sid} provisioning failed: ${error.code} (${error.detail})`,
     );
-    this.deps.onSessionEnded?.(row.sid);
     return err({ ...error, sid: row.sid });
   }
 

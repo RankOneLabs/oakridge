@@ -31,11 +31,6 @@ export type OakridgeSubRoute =
   | { sub: "def-edit"; id: string };
 
 export type HashRoute =
-  | { view: "plan"; id: string }
-  | { view: "brief"; id: string }
-  | { view: "cohort"; id: string }
-  | { view: "repo"; id: string }
-  | { view: "epic"; id: string }
   | { view: "oakridge"; route: OakridgeSubRoute };
 
 function tryDecode(s: string): string {
@@ -48,26 +43,6 @@ function tryDecode(s: string): string {
 
 export function readHashRoute(): HashRoute | null {
   const hash = window.location.hash.slice(1);
-  if (hash.startsWith("plan/")) {
-    const id = hash.slice(5);
-    if (id) return { view: "plan", id };
-  }
-  if (hash.startsWith("brief/")) {
-    const id = hash.slice(6);
-    if (id) return { view: "brief", id };
-  }
-  if (hash.startsWith("cohort/")) {
-    const id = hash.slice(7);
-    if (id) return { view: "cohort", id };
-  }
-  if (hash.startsWith("repo/")) {
-    const id = hash.slice(5);
-    if (id) return { view: "repo", id };
-  }
-  if (hash.startsWith("epic/")) {
-    const id = hash.slice(5);
-    if (id) return { view: "epic", id };
-  }
   if (hash === "oakridge" || hash.startsWith("oakridge/")) {
     const rest = hash.slice("oakridge".length);
     if (rest === "" || rest === "/") {

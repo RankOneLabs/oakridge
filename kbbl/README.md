@@ -6,6 +6,13 @@ Two runtime adapters ship: **claude-code** (default) and **codex** (opt-in). The
 
 ## How it works
 
+Workflow orchestration runs in `oakridge-dbos`, with definitions and prompts in
+`workflow-config`. The former kbbl v1 Projects/spec/plan/brief workflow UI,
+dispatcher, review API, and prompts have been retired. The `/projects` registry
+remains for v2 launch presets, as do shared session and v2 review components.
+Existing SQLite history and migration files are retained; this cleanup does not
+delete stored projects, artifacts, or sessions.
+
 A single Bun + Hono server hosts many sessions. Each session is a runtime-spawned subprocess; the server pipes its NDJSON events through a per-session JSONL transcript and broadcasts them over SSE to connected PWA clients. A PreToolUse hook (currently `adapters/claude-code/scripts/gate.sh`) routes every tool call through the server, which parks the decision until the operator taps Approve or Deny in the PWA — approval latency = time to tap.
 
 The PWA opens to a session list backed by a `/inbox` delta stream (snapshot + create/end/status/pending/activity events). New sessions are created from the list view, not by launching another server. Ended sessions linger on disk and can be resumed from their row in the list — the resumed session is a new fork that inherits the parent's context.

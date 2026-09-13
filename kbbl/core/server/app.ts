@@ -6,41 +6,18 @@ import type { Database } from "bun:sqlite";
 import type { KbblConfig } from "../config";
 import type { SessionManager } from "../session/session-manager";
 import type { AcpSessionService } from "../acp/session-service";
-import type { createDispatcher } from "../orchestrator/backends/dispatcher";
 import {
   makeControlAuthMiddleware,
   makeCookieHandler,
-  makeRequiredControlAuthMiddleware,
   type AuthPolicy,
 } from "./auth";
 import { acpInboxHandler } from "./handlers/acp-inbox";
 import { mountHandoffRoutes } from "./handlers/handoff";
 import { mountAcpPerSidRoutes } from "./handlers/acp-per-sid";
 import { mountProjectsRoutes } from "./handlers/projects";
-import { mountSpecsRoutes } from "./handlers/specs";
-import { mountPlansRoutes } from "./handlers/plans";
-import { mountPlanStatusRoutes } from "./handlers/plan-status";
-import { mountPlanReopenRoutes } from "./handlers/plan-reopen";
-import { mountBriefStatusRoutes } from "./handlers/brief-status";
-import { mountBuildsRoutes } from "./handlers/builds";
-import { mountDispatchAttemptsRoutes } from "./handlers/dispatch-attempts";
-import { mountCohortsRoutes } from "./handlers/cohorts";
-import { mountCohortStatusRoutes } from "./handlers/cohort-status";
-import { mountCohortMergeRoutes } from "./handlers/cohort-merge";
-import * as ghGateway from "../github/gh-gateway";
-import { mountBriefsRoutes } from "./handlers/briefs";
-import { mountAssessmentsRoutes } from "./handlers/assessments";
-import { mountEpicsRoutes } from "./handlers/epics";
-import { mountSpecDiscrepanciesRoutes } from "./handlers/spec-discrepancies";
-import { mountSpecStatusRoutes } from "./handlers/spec-status";
-import { mountReviewFreezeRoutes } from "./handlers/review-freeze";
-import { mountReviewAtomsRoutes } from "./handlers/review-atoms";
-import { mountReviewThreadsRoutes } from "./handlers/review-threads";
 import { mountSessionsRoutes } from "./handlers/sessions";
 import { mountDirectoriesRoutes } from "./handlers/directories";
 import { mountWorkspaceEventsRoutes } from "./handlers/workspace-events";
-import { mountArtifactStreamRoutes } from "./handlers/artifact-stream";
-import { artifactEventBus } from "../stream/artifact-event-bus";
 import { mountSkillsRoutes } from "../skills/routes";
 import { mountOakridgeProxyRoutes } from "./handlers/oakridge-proxy";
 import {
@@ -81,8 +58,6 @@ export interface CreateAppDeps {
   configPath: string;
   /** Open SQLite database instance shared across all DB-backed handlers. */
   db: Database;
-  /** Dispatcher for stage-based agent dispatch; mounts POST /briefs/:id/build. */
-  dispatcher: ReturnType<typeof createDispatcher>;
   /**
    * Startup auth policy resolved from host + OAKRIDGE_CONTROL_TOKEN +
    * ALLOW_INSECURE_NON_LOOPBACK_CONTROL. Defaults to loopback when absent
@@ -113,7 +88,6 @@ export function createApp(deps: CreateAppDeps): Hono {
     config,
     configPath,
     db,
-    dispatcher,
     authPolicy = { mode: "loopback" },
     coreControlToken,
   } = deps;
@@ -256,38 +230,6 @@ export function createApp(deps: CreateAppDeps): Hono {
 
   // ---- projects CRUD ----
   mountProjectsRoutes(app, { db });
-
-  // ---- task-tracker CRUD (specs, plans, cohorts, briefs) ----
-  mountSpecsRoutes(app, { db });
-  mountSpecDiscrepanciesRoutes(app, { db });
-  mountSpecStatusRoutes(app, { db });
-  mountPlansRoutes(app, { db });
-  mountPlanStatusRoutes(app, { db });
-  mountPlanReopenRoutes(app, { db });
-  mountCohortsRoutes(app, { db, manager });
-  mountCohortStatusRoutes(app, { db });
-  mountCohortMergeRoutes(app, { db, gh: ghGateway });
-  mountBriefsRoutes(app, { db });
-  mountBriefStatusRoutes(app, { db });
-  mountBuildsRoutes(app, { db, dispatcher });
-  app.use("/dispatch-attempts", makeRequiredControlAuthMiddleware(authPolicy));
-  app.use("/dispatch-attempts/*", makeRequiredControlAuthMiddleware(authPolicy));
-  mountDispatchAttemptsRoutes(app, { db, dispatcher });
-  mountAssessmentsRoutes(app, { db });
-  mountEpicsRoutes(app, { db });
-
-  // ---- review primitive (cohort 2) ----
-  mountReviewFreezeRoutes(app, { db });
-  mountReviewAtomsRoutes(app, { db });
-  mountReviewThreadsRoutes(app, { db });
-
-  // ---- artifact SSE stream ----
-  //
-  // GET /artifact-stream?target_type=&target_id= — review events publish
-  // into artifactEventBus via the mirror adapter in kbbl/core/review/events.ts,
-  // so this route carries atom edits, thread activity, and freeze transitions
-  // to the PWA.
-  mountArtifactStreamRoutes(app, { bus: artifactEventBus });
 
   // ---- Oakridge backend proxy ----
   //
