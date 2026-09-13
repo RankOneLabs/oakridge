@@ -508,7 +508,7 @@ export interface PatchReviewItemRequest {
 }
 
 // ── Workflow-def authoring types ──────────────────────────────────────────────
-// Mirror the oakridge-core Rust schema so form output matches what
+// Mirror the oakridge-dbos workflow-definition contract so form output matches what
 // POST /workflow_defs and GET /workflow_defs/:id round-trip.
 
 export type SlotBindingSource =
@@ -543,7 +543,7 @@ export type SlotBinding =
       value_path: string;
     };
 
-// Bindable: a bare string literal OR a SlotBinding (Rust #[serde(untagged)])
+// Bindable: a bare string literal OR a SlotBinding.
 export type Bindable = string | SlotBinding;
 
 export interface WorktreeTemplate {
@@ -556,7 +556,7 @@ export interface WorktreeTemplate {
   base_ref?: Bindable | null;
 }
 
-// camelCase: matches Rust #[serde(rename_all = "camelCase")] on WorktreeIdentity
+// camelCase matches the executor's WorktreeIdentity wire contract.
 export interface WorktreeIdentity {
   branchName: string;
   worktreeSubdir: string;
@@ -575,7 +575,7 @@ export interface FanOutConfig {
 }
 
 export interface DelegatedSessionStageConfig {
-  // Bindable like model/effort, but required: oakridge-core errors rather than
+  // Bindable like model/effort, but required: oakridge-dbos errors rather than
   // defaulting when a bound runtime resolves to nothing.
   runtime: Bindable;
   prompt_template_path: string;

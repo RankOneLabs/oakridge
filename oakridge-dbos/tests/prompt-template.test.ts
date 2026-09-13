@@ -4,10 +4,17 @@ import { resolve, sep } from "node:path";
 import { createPromptTemplateLoader } from "../src/runtime/prompt-template";
 
 describe("production prompt template loading", () => {
-  const loader = createPromptTemplateLoader(resolve(import.meta.dir, "../../oakridge-core/prompts"));
+  const loader = createPromptTemplateLoader(resolve(import.meta.dir, "../../workflow-config/prompts"));
 
-  test("loads the seeded workflow path from the repository prompt root", async () => {
-    const template = await loader.load("dev-flow/spec_analyzer_v2.md");
+  test.each([
+    "dev-flow/spec_analyzer_v2.md",
+    "dev-flow/plan_writer_v2.md",
+    "dev-flow/brief_writer.md",
+    "dev-flow/build_v2.md",
+    "dev-flow/assessor_v2.md",
+    "collab/ping_responder.md",
+  ])("loads production template %s from workflow-config", async (path) => {
+    const template = await loader.load(path);
     expect(template.length).toBeGreaterThan(0);
   });
 

@@ -22,3 +22,7 @@ __pycache__/
 
 .DS_Store
 *.log
+
+# Retired backend: preserve local databases, build output, and the temporary
+# prompt compatibility symlink without adding them back to the repository.
+/oakridge-core/

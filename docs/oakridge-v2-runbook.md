@@ -1,9 +1,9 @@
 # Oakridge v2 DBOS Operator Runbook
 
 This is the operating guide for the current Oakridge v2 stack. The active
-workflow substrate is the TypeScript service in `oakridge-dbos/`. The Rust
-`oakridge-core/` tree is retained as reference material and is not part of the
-startup path.
+workflow substrate is the TypeScript service in `oakridge-dbos/`. Shared JSON
+definitions and Markdown prompts live in `workflow-config/`. The retired Rust
+backend has been removed; its source remains available in Git history.
 
 ## Runtime ownership
 

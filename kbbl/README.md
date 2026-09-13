@@ -85,12 +85,12 @@ export OAKRIDGE_CONTROL_TOKEN=$(openssl rand -hex 32)
 
 Then open `http://<machine>:8788/` on your phone. The browser prompts for the token on first visit and stores it as an HttpOnly cookie. Add to Home Screen for a full-screen standalone app.
 
-If oakridge-core uses the same token, set it once and both services pick it up:
+If oakridge-dbos uses the same token, set it once and both services pick it up:
 ```bash
 export OAKRIDGE_CONTROL_TOKEN=<your-token>
 ```
 
-If oakridge-core uses a **different** secret, set the proxy override so kbbl can inject the right token into forwarded core write requests:
+If oakridge-dbos uses a **different** secret, set the proxy override so kbbl can inject the right token into forwarded core write requests:
 ```bash
 export OAKRIDGE_CONTROL_TOKEN=<kbbl-token>
 export OAKRIDGE_CORE_CONTROL_TOKEN=<core-token>
@@ -123,9 +123,9 @@ Ctrl-C stops the server; all live agent subprocesses die with it. Ended sessions
 
 ### Oakridge delegated sessions
 
-oakridge-core can also create kbbl sessions as workflow execution substrates. Those
+oakridge-dbos can also create kbbl sessions as workflow execution substrates. Those
 sessions use the same runtime adapters and operator approval UI as directly launched
-sessions, but oakridge-core supplies `artifact_id = <stage_instance_id>` so the session
+sessions, but oakridge-dbos supplies `artifact_id = <stage_instance_id>` so the session
 can be correlated with a workflow stage. For the full v2 operator runbook — including
 the worktree contract, effort setting, tool approval policy, and migration map — see
 [`../docs/oakridge-v2-runbook.md`](../docs/oakridge-v2-runbook.md).
@@ -133,7 +133,7 @@ the worktree contract, effort setting, tool approval policy, and migration map �
 This does not replace direct kbbl usage. The two supported launch paths are:
 
 - Direct session: operator uses the PWA or calls `POST /sessions`.
-- Delegated workflow session: oakridge-core calls `POST /sessions`, sends the workflow
+- Delegated workflow session: oakridge-dbos calls `POST /sessions`, sends the workflow
   prompt with `POST /:sid/input`, and later tears the session down with
   `DELETE /sessions/:sid` when the workflow reaches its terminal gate.
 
@@ -231,7 +231,7 @@ The `core/` ↔ `adapters/` boundary is enforced by import direction: only `core
 
 - **Network:** binds to `127.0.0.1` by default. Operator opts into wider exposure with `--host=0.0.0.0` for tailnet/phone access. Non-loopback binds require `OAKRIDGE_CONTROL_TOKEN` or the explicit `ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1` escape hatch — the server exits at startup if neither is set.
 - **Control auth:** on non-loopback binds, all write routes (POST/PATCH/DELETE) require `Authorization: Bearer <token>`. The browser PWA can also authenticate via an HttpOnly SameSite=Lax cookie established by `POST /auth/cookie` with a valid Bearer token. Tokens are compared with a constant-time helper. Missing credentials → 401; wrong token → 403.
-- **Proxy auth:** oakridge-core write requests are forwarded with the core token injected server-side (`OAKRIDGE_CORE_CONTROL_TOKEN`, falling back to `OAKRIDGE_CONTROL_TOKEN`). The browser Authorization header is stripped before forwarding so browser credentials never reach the core upstream.
+- **Proxy auth:** oakridge-dbos write requests are forwarded with the core token injected server-side (`OAKRIDGE_CORE_CONTROL_TOKEN`, falling back to `OAKRIDGE_CONTROL_TOKEN`). The browser Authorization header is stripped before forwarding so browser credentials never reach the core upstream.
 - **Hook endpoint:** `/hook/approval` is filtered to `127.0.0.1` at the route handler — only the in-process gate script can park approval requests, not a tailnet peer. Hook routes are excluded from the control auth middleware.
 - **Path-traversal guard:** `:sid` route params are validated against a strict v4 UUID regex before any filesystem access.
 - **Markdown:** assistant text is rendered with `react-markdown` + `rehype-sanitize`; no `dangerouslySetInnerHTML`, so prompt-injected HTML from web-fetched content can't execute.

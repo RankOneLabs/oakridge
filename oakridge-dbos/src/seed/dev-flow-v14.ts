@@ -29,7 +29,7 @@ import type { WorkflowDefinition } from "../domain/workflow";
  * database that already holds it — and runs still in flight against v13 must
  * keep compiling the graph they were launched with.
  */
-const SOURCE = new URL("../../../oakridge-core/examples/dev_flow_v14.json", import.meta.url);
+const SOURCE = new URL("../../../workflow-config/definitions/dev_flow_v14.json", import.meta.url);
 
 export const loadDevFlowV14 = async (): Promise<Result<WorkflowDefinition, DefinitionValidationError>> => {
   // The IO boundary. A missing or unparseable file is the same kind of answer as

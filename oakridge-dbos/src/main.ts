@@ -59,7 +59,7 @@ const runtime = await createOakridgeRuntime({
     executor_function_identity: applicationVersion,
     ...(maxSilentMs !== null ? { max_silent_ms: maxSilentMs } : {}),
   })],
-  prompt_template_directory: resolve(import.meta.dir, "../../oakridge-core/prompts"),
+  prompt_template_directory: resolve(import.meta.dir, "../../workflow-config/prompts"),
   ...(githubToken ? { pull_request_reader: new GithubPullRequestReader({ token: githubToken }) } : {}),
   ...(controlAccess.kind === "token_required" ? { control_token: controlAccess.token } : {}),
 });
