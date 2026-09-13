@@ -19,11 +19,11 @@ const definitionWith = (consumerInput: string, stages: Record<string, unknown>) 
 
 const producer = { stage_type: "stub", config: {}, inputs: [], outputs: [{ name: "out", artifact_type: "a" }] };
 
-describe("Rust v2 workflow definition compatibility", () => {
+describe("versioned workflow definition compatibility", () => {
   // v11 is still stored, and runs launched against it still compile it. It has
   // to keep parsing for exactly as long as one of those runs is in flight.
   test("loads unmodified dev_flow_v11.json with defaults", async () => {
-    const source = await Bun.file(new URL("../../oakridge-core/examples/dev_flow_v11.json", import.meta.url)).json();
+    const source = await Bun.file(new URL("../../workflow-config/definitions/dev_flow_v11.json", import.meta.url)).json();
     const result = parseWorkflowDefinition(source);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -34,7 +34,7 @@ describe("Rust v2 workflow definition compatibility", () => {
   });
 
   test("loads unmodified dev_flow_v14.json, provisioning stage included", async () => {
-    const source = await Bun.file(new URL("../../oakridge-core/examples/dev_flow_v14.json", import.meta.url)).json();
+    const source = await Bun.file(new URL("../../workflow-config/definitions/dev_flow_v14.json", import.meta.url)).json();
     const result = parseWorkflowDefinition(source);
     expect(result.ok).toBe(true);
     if (!result.ok) return;

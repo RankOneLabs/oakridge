@@ -336,7 +336,7 @@ export interface IntegrationRuntime {
 export interface InstallIntegrationRuntimeOptions {
   /**
    * Overrides the prompt-template root the runtime is built with. Scenario 8
-   * (spec §5.2) needs a *writable* copy of `oakridge-core/prompts` so it can
+   * (spec §5.2) needs a *writable* copy of `workflow-config/prompts` so it can
    * remove and restore one file mid-run; the caller owns making that copy
    * (and cleaning it up) since this harness boots once per file and cannot
    * be re-pointed afterward.
@@ -399,7 +399,7 @@ export const installIntegrationRuntime = async (databaseUrl: string, options: In
       database_url: databaseUrl,
       application_version: applicationVersion,
       executor_adapters: [adapter],
-      prompt_template_directory: options.prompt_template_directory ?? resolve(import.meta.dir, "../../../oakridge-core/prompts"),
+      prompt_template_directory: options.prompt_template_directory ?? resolve(import.meta.dir, "../../../workflow-config/prompts"),
     });
     await runtime.seed_builtins();
     await DBOS.launch();

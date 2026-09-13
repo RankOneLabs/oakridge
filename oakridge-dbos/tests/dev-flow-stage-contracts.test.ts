@@ -52,7 +52,7 @@ const loadCompiled = async () => {
  */
 const resolveStage = async (stage: CompiledStageContract, unit: MaterializedExecutionUnit, inputs: StageInputSet) => {
   const definition = stage.executor.definition_config as DelegatedSessionDefinitionConfig;
-  const template = await Bun.file(new URL(`../../oakridge-core/prompts/${definition.prompt_template_path}`, import.meta.url)).text();
+  const template = await Bun.file(new URL(`../../workflow-config/prompts/${definition.prompt_template_path}`, import.meta.url)).text();
   return resolveDelegatedExecution({ definition, environment: { inputs, context, item: null }, unit, stage_instance_id: stageInstanceId, prompt_template: template });
 };
 

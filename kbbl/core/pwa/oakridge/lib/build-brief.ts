@@ -10,7 +10,7 @@ export interface RejectedApproach {
   reason: string;
 }
 
-/** Mirrors the registered oakridge-core `dev.build_brief` artifact body. */
+/** Mirrors the registered oakridge-dbos `dev.build_brief` artifact body. */
 export interface BuildBrief {
   cohort_id: CohortId;
   repository_key: RepositoryKey;

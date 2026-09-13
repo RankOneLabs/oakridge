@@ -12,7 +12,7 @@ the current interactive Claude Code executor.
 oakridge/
 ├── oakridge-dbos/         # TypeScript domain backend and DBOS workflows
 ├── kbbl/                  # operator PWA and interactive agent sessions
-├── oakridge-core/         # retired Rust v2 reference; not started in production
+├── workflow-config/       # versioned workflow definitions and shared prompts
 ├── legit-biz-club/        # future headless-agent integration surface
 ├── lbc-dashboard/         # read-only legit-biz-club study dashboard
 ├── docs/                  # operator documentation
@@ -43,7 +43,7 @@ Open <http://127.0.0.1:8788/#oakridge>. The command:
 5. stops DBOS and kbbl together on Ctrl-C.
 
 The PostgreSQL container and `oakridge-postgres-data` volume remain running and
-persistent across application restarts. The bundled `dev-flow v11` definition
+persistent across application restarts. The bundled `dev-flow v14` definition
 is seeded automatically.
 
 To use an existing PostgreSQL database instead of managed Docker:

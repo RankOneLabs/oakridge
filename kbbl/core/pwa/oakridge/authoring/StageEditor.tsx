@@ -17,7 +17,7 @@ const addBtnClass =
 const sectionClass =
   "flex flex-col gap-3 rounded-md border border-[var(--border-subtle)] p-3";
 
-// Mirrors oakridge-core's DelegatedRuntime enum (VALID_RUNTIME_VALUES).
+// Mirrors oakridge-dbos's delegated-session runtime values.
 const RUNTIME_LITERAL_OPTIONS = [
   { value: "claude-code", label: "claude-code" },
   { value: "codex", label: "codex" },

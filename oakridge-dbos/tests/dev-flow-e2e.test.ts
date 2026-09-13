@@ -19,7 +19,7 @@ const e2e = databaseUrl ? test : test.skip;
 let oakridge: IntegrationRuntime;
 let sql: PgPostgresExecutor;
 /**
- * A writable copy of `oakridge-core/prompts`, built once for the whole file.
+ * A writable copy of `workflow-config/prompts`, built once for the whole file.
  * Scenario 8 is the only one that ever mutates it (and always restores what
  * it removed); every other scenario reads it exactly as it would the real
  * tree, since it is a plain recursive copy.
@@ -29,7 +29,7 @@ let promptTemplateDir: string | null = null;
 beforeAll(async () => {
   if (databaseUrl) {
     promptTemplateDir = await mkdtemp(join(tmpdir(), "oakridge-e2e-prompts-"));
-    await cp(resolve(import.meta.dir, "../../oakridge-core/prompts"), promptTemplateDir, { recursive: true });
+    await cp(resolve(import.meta.dir, "../../workflow-config/prompts"), promptTemplateDir, { recursive: true });
     oakridge = await installIntegrationRuntime(databaseUrl, { prompt_template_directory: promptTemplateDir });
     sql = PgPostgresExecutor.connect(databaseUrl);
   }

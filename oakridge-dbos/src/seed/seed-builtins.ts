@@ -13,7 +13,7 @@ import { loadDevFlowV14 } from "./dev-flow-v14";
  * this file exists to clear up, pointed at the operator instead of the runtime.
  *
  * Ids can. Anything this seed has ever inserted came from a file in
- * `oakridge-core/examples`, so listing them is that knowledge made explicit, and
+ * `workflow-config/definitions`, so listing them is that knowledge made explicit, and
  * the failure mode is now the harmless direction: an id missing from this list
  * means that version keeps appearing in the launcher, never that someone else's
  * definition disappears from it.
