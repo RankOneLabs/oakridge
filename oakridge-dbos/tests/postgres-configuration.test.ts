@@ -21,6 +21,13 @@ test("project repository persists and decodes the public project model", async (
   expect(sql.calls[0]?.parameters).toEqual([row.id, row.name, row.repo_dir, row.created_at, null, null]);
 });
 
+test("project repository updates the mutable project fields", async () => {
+  const row = { id: "00000000-0000-4000-8000-000000000001", name: "Scout", repo_dir: "/code/scout", created_at: "2026-08-15T12:00:00Z", forge_repository: null, base_branch: "main" };
+  const sql = new StubSql([row]);
+  expect(await new PostgresProjectRepository(sql).update(row.id as ProjectId, { name: row.name, repo_dir: row.repo_dir, forge_repository: null, base_branch: row.base_branch })).toEqual({ ...row, id: row.id as ProjectId });
+  expect(sql.calls[0]?.statement).toContain("UPDATE oakridge.project");
+});
+
 test("workflow definition list passes explicit archival policy to SQL", async () => {
   const sql = new StubSql([]);
   await new PostgresWorkflowDefinitionRepository(sql).list(true);

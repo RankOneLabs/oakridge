@@ -6,6 +6,7 @@ import type {
   ConfirmCohortMergedRequest,
   OakridgeConfig,
   Project,
+  ProjectWriteInput,
   WorkflowDefSummary,
   WorkflowDefFull,
   WorkflowDefInput,
@@ -245,6 +246,19 @@ async function oakridgePut<T>(path: string, options: OakridgePutOptions): Promis
   return (await res.json()) as T;
 }
 
+async function oakridgePutJson<T>(path: string, body: object): Promise<T> {
+  const res = await fetch(`${API}${path}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const responseBody = await res.json().catch(() => null) as unknown;
+    throw new Error(selectFailureDetail(responseBody, `oakridge PUT ${path}: ${res.status}`));
+  }
+  return (await res.json()) as T;
+}
+
 async function oakridgeDelete(path: string): Promise<void> {
   const res = await fetch(`${API}${path}`, { method: "DELETE" });
   if (!res.ok) {
@@ -325,8 +339,12 @@ export function fetchProjects(): Promise<Project[]> {
   return oakridgeGet<Project[]>("/projects");
 }
 
-export function createProject(body: { name: string; repo_dir: string }): Promise<Project> {
+export function createProject(body: ProjectWriteInput): Promise<Project> {
   return oakridgePost<Project>("/projects", body);
+}
+
+export function updateProject(id: string, body: ProjectWriteInput): Promise<Project> {
+  return oakridgePutJson<Project>(`/projects/${encodeURIComponent(id)}`, body);
 }
 
 // Retired defs are hidden by default: the seed archives superseded built-ins, so

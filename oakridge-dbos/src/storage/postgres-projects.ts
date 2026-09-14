@@ -1,5 +1,5 @@
 import type { ProjectId } from "../domain/primitives";
-import type { CreateProject, Project } from "../domain/projects";
+import type { CreateProject, Project, UpdateProject } from "../domain/projects";
 import type { ProjectRepository } from "./repositories";
 import type { SqlExecutor } from "./sql-executor";
 
@@ -33,6 +33,15 @@ export class PostgresProjectRepository implements ProjectRepository {
       [],
     );
     return rows.map(decodeProject);
+  }
+
+  async update(id: ProjectId, project: UpdateProject): Promise<Project | null> {
+    const rows = await this.sql.query<ProjectRow>(
+      `UPDATE oakridge.project SET name=$2,repo_dir=$3,forge_repository=$4::jsonb,base_branch=$5
+       WHERE id=$1 RETURNING id::text,name,repo_dir,created_at::text,forge_repository,base_branch`,
+      [id, project.name, project.repo_dir, project.forge_repository, project.base_branch],
+    );
+    return rows[0] ? decodeProject(rows[0]) : null;
   }
 
   async find_by_id(id: ProjectId): Promise<Project | null> {

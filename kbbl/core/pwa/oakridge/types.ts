@@ -17,6 +17,11 @@ export interface Project {
   base_branch?: string | null;
 }
 
+export interface ProjectWriteInput {
+  readonly name: string;
+  readonly repo_dir: string;
+}
+
 export interface WorkflowDefSummary {
   id: string;
   name: string;

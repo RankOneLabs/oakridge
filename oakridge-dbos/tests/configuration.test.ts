@@ -14,6 +14,7 @@ const fixture = (generatedId = project.id as string, identity: Project["forge_re
   const definitions: WorkflowDefinition[] = [];
   const projectRepository: ProjectRepository = {
     insert: async (input) => { if (shouldFailProjectInsert) throw new Error("storage unavailable"); const created = { ...input }; projects.push(created); return created; },
+    update: async (id, input) => { const index = projects.findIndex((candidate) => candidate.id === id); if (index < 0) return null; projects[index] = { ...projects[index]!, ...input }; return projects[index]!; },
     list: async () => projects,
     find_by_id: async (id) => projects.find((candidate) => candidate.id === id) ?? null,
   };
@@ -35,6 +36,15 @@ test("project creation and listing preserve the existing public response", async
   expect(await created.json()).toEqual(project);
   const listed = await subject.app.request("/projects");
   expect(await listed.json()).toEqual([project]);
+});
+
+test("project update preserves identity and replaces repository metadata", async () => {
+  const identity = { provider: "github" as const, owner: "RankOneLabs", name: "scout" };
+  const subject = fixture(project.id, identity, "main");
+  subject.projects.push(project);
+  const response = await subject.app.request(`/projects/${project.id}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Scout", repo_dir: "/code/scout" }) });
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ ...project, name: "Scout", repo_dir: "/code/scout", forge_repository: identity, base_branch: "main" });
 });
 
 test("unexpected project storage failures are server errors", async () => {
