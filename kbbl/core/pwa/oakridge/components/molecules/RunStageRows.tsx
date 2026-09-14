@@ -2,6 +2,7 @@ import type { StageDetail, StageUnit } from "../../types";
 import { StatusBadge } from "../atoms/StatusBadge";
 import { Fragment } from "react";
 import { CohortBrief } from "./CohortBrief";
+import { selectCohortBrief } from "../../lib/stage-unit-params";
 
 const tableCellClass = "border-b border-[var(--border-subtle)] px-3 py-2.5 align-middle";
 const chipBaseClass = "inline-block rounded border bg-[var(--bg-surface)] px-2 py-0.5 text-xs font-medium";
@@ -60,7 +61,7 @@ interface RunUnitRowProps {
 
 export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelectArtifact, onAdmit, admitting, admissionError, onRetry, retrying, retryError, canRetry }: RunUnitRowProps) {
   const blockedBy = unit.admission_blocked_by ?? [];
-  const dependencies = unit.params?.depends_on ?? [];
+  const dependencies = selectCohortBrief(unit)?.depends_on ?? [];
   const needsAdmission = unit.status === "pending" && unit.admission_required === true && unit.admitted !== true;
   return (
     <Fragment>

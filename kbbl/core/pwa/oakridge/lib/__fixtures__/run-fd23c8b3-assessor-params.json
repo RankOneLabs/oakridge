@@ -1,0 +1,22 @@
+{
+  "unit_id": "acceptance-and-browser",
+  "artifact": {
+    "tests": {
+      "failed": 0,
+      "output": "558 passed, 9 skipped in 189.32s; frontend unit: 8 pass, 0 fail; Chromium: 6 pass, 0 fail, 97 assertions; Ruff, mypy, schema check, TypeScript, and clean-PATH wheel build passed.",
+      "passed": 572
+    },
+    "summary": "Built the cross-component acceptance suite for immutable serve/export behavior, verification scopes, stale and corrupt reports, and the forbidden review-layer call invariant. Added real file:// Chromium coverage with hostile data and blocked HTTP(S), plus clean wheel installation checks before and after installing the review extra. CI now provisions the locked Python review environment for browser fixture generation; all acceptance gates passed.",
+    "known_issues": [],
+    "changed_files": [
+      "tests/test_review_acceptance.py",
+      "tests/test_review_packaging.py",
+      "web/tests/browser/review.test.ts",
+      ".github/workflows/ci.yml"
+    ],
+    "repository_key": "assay",
+    "delegated_session_metadata": {
+      "cohort_id": "acceptance-and-browser"
+    }
+  }
+}
