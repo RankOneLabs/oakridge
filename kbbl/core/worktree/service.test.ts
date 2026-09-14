@@ -107,6 +107,7 @@ describe("GitWorktreeProvider.resolve", () => {
       worktree_path: parent.value.worktree_path,
       requested_model: null,
       requested_effort: null,
+      workflow: null,
     });
     store.setWorktree(SID, {
       worktree_path: parent.value.worktree_path,

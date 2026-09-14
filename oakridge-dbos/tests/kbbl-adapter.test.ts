@@ -6,6 +6,12 @@ import type { ExecutionId, ExecutorOperationId, StageInstanceId, UnitId } from "
 
 const attempt = (id: string) => id as ExecutorOperationId;
 
+/** A representative resolved session_identity — the shape every v2 delegated session's resolved_config now carries. */
+const SESSION_IDENTITY = {
+  run_id: "run-1", stage_instance_id: "stage-1", unit_id: "unit-1",
+  operator_role: "build", cohort_title: "Targets spec contract", repository_key: "pipefitter",
+};
+
 test("kbbl adapter derives a stable session key from the attempt and function identity", async () => {
   const calls: Array<{ url: string; body: unknown }> = [];
   const adapter = new KbblExecutorAdapter({
@@ -22,14 +28,79 @@ test("kbbl adapter derives a stable session key from the attempt and function id
     unit_id: "unit-1" as UnitId,
     executor_type: "delegated_session",
     resolved_config: { runtime: "claude-code", rendered_prompt: "Build", workdir: "/repo", session_name: "builder", model: null, effort: null, artifact_id: null,
-      worktree: { branchName: "cohort/stage-1/unit-1", worktreeSubdir: "stage-1/unit-1", baseRef: "epic/test" } },
+      worktree: { branchName: "cohort/stage-1/unit-1", worktreeSubdir: "stage-1/unit-1", baseRef: "epic/test" }, session_identity: SESSION_IDENTITY },
     inputs: [],
     declared_outputs: [], expected_artifacts: [],
   };
   expect(await adapter.start_or_attach(request, attempt("run:1:stage:build:unit:web"))).toEqual({ kind: "kbbl_session", session_id: "session-1", worktree_base_sha: "a".repeat(40) });
   expect(calls[0]?.url).toEndWith("/sessions/resumable/run%3A1%3Astage%3Abuild%3Aunit%3Aweb%3Aexecutor-step-v1");
   expect(calls[0]?.body).toEqual({ initial_prompt: "Build", workdir: "/repo", name: "builder", runtime: "claude-code",
-    worktree: { branch_name: "cohort/stage-1/unit-1", worktree_subdir: "stage-1/unit-1", base_ref: "origin/epic/test" } });
+    worktree: { branch_name: "cohort/stage-1/unit-1", worktree_subdir: "stage-1/unit-1", base_ref: "origin/epic/test" },
+    workflow: { workflow_run_id: "run-1", stage_instance_id: "stage-1", unit_id: "unit-1",
+      operator_role: "build", cohort_title: "Targets spec contract", repository_key: "pipefitter" } });
+});
+
+/**
+ * Step 1 (kbbl) validates against exactly these member names; this pins
+ * the adapter as the sender that must never drift from that contract.
+ */
+test("start_or_attach sends the workflow object using the exact member names kbbl validates", async () => {
+  let body: { workflow?: unknown } = {};
+  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl.test", executor_function_identity: "v2", fetch: async (_input, init) => {
+    body = JSON.parse(String(init?.body));
+    return Response.json({ kind: "started", session: { sid: "session-1", status: "live", endReason: null } }, { status: 201 });
+  } });
+  await adapter.start_or_attach({
+    execution_id: "execution-1" as ExecutionId, stage_instance_id: "stage-1" as StageInstanceId, unit_id: "unit-1" as UnitId,
+    executor_type: "delegated_session", resolved_config: { runtime: "claude-code", rendered_prompt: "Build", workdir: "/repo",
+      session_name: "builder", model: null, effort: null, session_identity: SESSION_IDENTITY },
+    inputs: [], declared_outputs: [], expected_artifacts: [],
+  }, attempt("run:1:stage:build:unit:web"));
+  expect(body.workflow).toEqual({
+    workflow_run_id: "run-1", stage_instance_id: "stage-1", unit_id: "unit-1",
+    operator_role: "build", cohort_title: "Targets spec contract", repository_key: "pipefitter",
+  });
+});
+
+test("null session_identity members are omitted from the workflow object rather than sent as null", async () => {
+  let body: { workflow?: unknown } = {};
+  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl.test", executor_function_identity: "v2", fetch: async (_input, init) => {
+    body = JSON.parse(String(init?.body));
+    return Response.json({ kind: "started", session: { sid: "session-1", status: "live", endReason: null } }, { status: 201 });
+  } });
+  await adapter.start_or_attach({
+    execution_id: "execution-1" as ExecutionId, stage_instance_id: "stage-1" as StageInstanceId, unit_id: "0" as UnitId,
+    executor_type: "delegated_session", resolved_config: { runtime: "claude-code", rendered_prompt: "Assess", workdir: "/repo",
+      session_name: "assessor", model: null, effort: null,
+      session_identity: { run_id: "run-1", stage_instance_id: "stage-2", unit_id: "0", operator_role: "assessment", cohort_title: null, repository_key: null } },
+    inputs: [], declared_outputs: [], expected_artifacts: [],
+  }, attempt("run:1:stage:assess:unit:0"));
+  expect(body.workflow).toEqual({ workflow_run_id: "run-1", stage_instance_id: "stage-2", unit_id: "0", operator_role: "assessment" });
+});
+
+test("a resolved config with no session_identity is a hard parse error, not a silently omitted workflow member", async () => {
+  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl.test", executor_function_identity: "v2", fetch: async () => new Response(null) });
+  await expect(adapter.start_or_attach({
+    execution_id: "execution-1" as ExecutionId, stage_instance_id: "stage-1" as StageInstanceId, unit_id: "unit-1" as UnitId,
+    executor_type: "delegated_session", resolved_config: { runtime: "claude-code", rendered_prompt: "Build", workdir: "/repo", session_name: "builder", model: null, effort: null },
+    inputs: [], declared_outputs: [], expected_artifacts: [],
+  }, attempt("run:1:stage:build:unit:web"))).rejects.toThrow("session_identity");
+});
+
+/**
+ * `session_identity` normally arrives freshly typed from
+ * `resolveDelegatedExecution`, but `resolved_config` is a `JsonValue` that
+ * round-trips through storage for a retry/replay — a blank required id
+ * there should fail here, not one layer later as kbbl's own 400.
+ */
+test("a blank required identifier in session_identity is rejected rather than forwarded", async () => {
+  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl.test", executor_function_identity: "v2", fetch: async () => new Response(null) });
+  await expect(adapter.start_or_attach({
+    execution_id: "execution-1" as ExecutionId, stage_instance_id: "stage-1" as StageInstanceId, unit_id: "unit-1" as UnitId,
+    executor_type: "delegated_session", resolved_config: { runtime: "claude-code", rendered_prompt: "Build", workdir: "/repo", session_name: "builder", model: null, effort: null,
+      session_identity: { ...SESSION_IDENTITY, run_id: "" } },
+    inputs: [], declared_outputs: [], expected_artifacts: [],
+  }, attempt("run:1:stage:build:unit:web"))).rejects.toThrow("session_identity");
 });
 
 test("worktree branch bases select the remote-tracking ref while immutable SHAs stay unchanged", () => {
@@ -49,7 +120,8 @@ test("v2 work-order publication authority is delivered only in executor launch m
   await adapter.start_or_attach({
     execution_id: "work-order-1" as ExecutionId, stage_instance_id: "stage-1" as StageInstanceId, unit_id: "unit-1" as UnitId,
     executor_type: "delegated_session", resolved_config: { runtime: "claude-code", rendered_prompt: "Do the work", workdir: "/repo",
-      session_name: "worker", model: null, effort: null, publication: { base_url: "http://oakridge.test/", work_order_id: "work-order-1", capability: "secret-capability" } },
+      session_name: "worker", model: null, effort: null, publication: { base_url: "http://oakridge.test/", work_order_id: "work-order-1", capability: "secret-capability" },
+      session_identity: SESSION_IDENTITY },
     inputs: [], declared_outputs: [{ name: "result", artifact_type: "dev.result", required: true }], expected_artifacts: [],
   }, attempt("work-order-1"));
   expect(body.initial_prompt).toContain("PUT http://oakridge.test/work-orders/work-order-1/emit/<output-name>");
@@ -73,7 +145,8 @@ test("the publication block names exactly the outputs the work order owes, colle
   await adapter.start_or_attach({
     execution_id: "retry-1" as ExecutionId, stage_instance_id: "stage-1" as StageInstanceId, unit_id: "0" as UnitId,
     executor_type: "delegated_session", resolved_config: { runtime: "claude-code", rendered_prompt: "Write all seven briefs", workdir: "/repo",
-      session_name: "brief-writer", model: null, effort: null, publication: { base_url: "http://oakridge.test", work_order_id: "retry-1", capability: "retry-capability" } },
+      session_name: "brief-writer", model: null, effort: null, publication: { base_url: "http://oakridge.test", work_order_id: "retry-1", capability: "retry-capability" },
+      session_identity: { ...SESSION_IDENTITY, unit_id: "0" } },
     inputs: [], declared_outputs: [{ name: "brief", artifact_type: "dev.brief", required: true }],
     expected_artifacts: [{ unit_id: "rollout" as UnitId, output_name: "brief", artifact_type: "dev.brief" as never }],
   }, attempt("retry-1"));
@@ -95,7 +168,7 @@ test("kbbl adapter observes terminal mechanism state without completing an Oakri
     stage_instance_id: "stage-1" as StageInstanceId,
     unit_id: "unit-1" as UnitId,
     executor_type: "delegated_session",
-    resolved_config: { runtime: "claude-code", rendered_prompt: "Build", workdir: "/repo", session_name: "builder", model: null, effort: null, artifact_id: null },
+    resolved_config: { runtime: "claude-code", rendered_prompt: "Build", workdir: "/repo", session_name: "builder", model: null, effort: null, artifact_id: null, session_identity: SESSION_IDENTITY },
     inputs: [], declared_outputs: [], expected_artifacts: [],
   }, attempt("run:1:stage:build:unit:web"));
   expect(await adapter.observe_terminal(executionId, { kind: "kbbl_session", session_id: "session-1" })).toEqual({ kind: "terminal", observation: { kind: "succeeded", metadata: { session_id: "session-1", exit_code: 0 } } });
@@ -155,11 +228,13 @@ test("kbbl adapter requests a fresh session inheriting the producer workspace", 
   } });
   await adapter.start_or_attach({
     execution_id: "assessment-execution" as ExecutionId, stage_instance_id: "assessment-stage" as StageInstanceId, unit_id: "web" as UnitId,
-    executor_type: "delegated_session", resolved_config: { runtime: "claude-code", rendered_prompt: "Assess", workdir: "/repo", session_name: "assessor", model: null, effort: null },
+    executor_type: "delegated_session", resolved_config: { runtime: "claude-code", rendered_prompt: "Assess", workdir: "/repo", session_name: "assessor", model: null, effort: null,
+      session_identity: { run_id: "run-1", stage_instance_id: "assessment-stage", unit_id: "web", operator_role: "assessment", cohort_title: null, repository_key: "pipefitter" } },
     inputs: [], declared_outputs: [], expected_artifacts: [], workspace_source: { execution_id: "build-execution" as ExecutionId,
       external_reference: { kind: "kbbl_session", session_id: "build-session" } },
   }, attempt("run:1:stage:assess:unit:web"));
-  expect(body).toEqual({ initial_prompt: "Assess", workdir: "/repo", name: "assessor", runtime: "claude-code", inherit_worktree_from: "build-session" });
+  expect(body).toEqual({ initial_prompt: "Assess", workdir: "/repo", name: "assessor", runtime: "claude-code", inherit_worktree_from: "build-session",
+    workflow: { workflow_run_id: "run-1", stage_instance_id: "assessment-stage", unit_id: "web", operator_role: "assessment", repository_key: "pipefitter" } });
 });
 
 test("kbbl adapter refuses to both cut and inherit a worktree", async () => {
@@ -171,7 +246,7 @@ test("kbbl adapter refuses to both cut and inherit a worktree", async () => {
   const request: ExecutionRequest = {
     execution_id: "conflicted-execution" as ExecutionId, stage_instance_id: "assessment-stage" as StageInstanceId, unit_id: "web" as UnitId,
     executor_type: "delegated_session", resolved_config: { runtime: "claude-code", rendered_prompt: "Assess", workdir: "/repo", session_name: "assessor", model: null, effort: null,
-      worktree: { branchName: "cohort/web", worktreeSubdir: "web" } },
+      worktree: { branchName: "cohort/web", worktreeSubdir: "web" }, session_identity: SESSION_IDENTITY },
     inputs: [], declared_outputs: [], expected_artifacts: [], workspace_source: { execution_id: "build-execution" as ExecutionId,
       external_reference: { kind: "kbbl_session", session_id: "build-session" } },
   };
@@ -242,7 +317,7 @@ test("a refused fence is raised rather than swallowed", async () => {
 const buildRequest: ExecutionRequest = {
   execution_id: "execution-1" as ExecutionId, stage_instance_id: "stage-1" as StageInstanceId, unit_id: "web" as UnitId,
   executor_type: "delegated_session",
-  resolved_config: { runtime: "claude-code", rendered_prompt: "Build", workdir: "/repo", session_name: "builder", model: null, effort: null },
+  resolved_config: { runtime: "claude-code", rendered_prompt: "Build", workdir: "/repo", session_name: "builder", model: null, effort: null, session_identity: SESSION_IDENTITY },
   inputs: [], declared_outputs: [], expected_artifacts: [],
 };
 

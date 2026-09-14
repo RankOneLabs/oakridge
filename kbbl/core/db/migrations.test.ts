@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
@@ -274,5 +274,70 @@ describe("split model migration", () => {
         )
       `),
     ).toThrow();
+  });
+});
+
+describe("migration 029 onto an existing 028 database", () => {
+  test("adds the nullable identity columns and cohort index without disturbing a pre-existing row", () => {
+    const realMigrationsDir = join(import.meta.dir, "migrations");
+    const upTo028 = readdirSync(realMigrationsDir)
+      .filter((f) => /^\d{3}_[a-z0-9_]+\.sql$/.test(f) && Number(f.slice(0, 3)) <= 28)
+      .sort();
+    for (const file of upTo028) {
+      writeFileSync(join(migrationsDir, file), readFileSync(join(realMigrationsDir, file), "utf8"));
+    }
+    applyMigrations(db, migrationsDir);
+
+    db.exec(`
+      INSERT INTO acp_sessions (
+        sid, agent_profile, name, project_workdir, worktree_path, status,
+        last_activity_at, created_at, updated_at
+      ) VALUES (
+        'sid-pre-029', 'claude-code', 'pre-existing session', '/repo', '/repo', 'idle',
+        '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+      )
+    `);
+
+    writeFileSync(
+      join(migrationsDir, "029_acp_session_workflow_identity.sql"),
+      readFileSync(join(realMigrationsDir, "029_acp_session_workflow_identity.sql"), "utf8"),
+    );
+    const { applied } = applyMigrations(db, migrationsDir);
+    expect(applied).toEqual(["029_acp_session_workflow_identity.sql"]);
+
+    const row = db
+      .query<
+        {
+          name: string;
+          workflow_run_id: string | null;
+          stage_instance_id: string | null;
+          stage_unit_id: string | null;
+          operator_role: string | null;
+          cohort_title: string | null;
+          repository_key: string | null;
+        },
+        [string]
+      >(
+        `SELECT name, workflow_run_id, stage_instance_id, stage_unit_id, operator_role, cohort_title, repository_key
+         FROM acp_sessions WHERE sid = ?`,
+      )
+      .get("sid-pre-029");
+    expect(row).toEqual({
+      name: "pre-existing session",
+      workflow_run_id: null,
+      stage_instance_id: null,
+      stage_unit_id: null,
+      operator_role: null,
+      cohort_title: null,
+      repository_key: null,
+    });
+
+    const indexes = db
+      .query<{ name: string }, []>(
+        "SELECT name FROM sqlite_schema WHERE type = 'index' AND tbl_name = 'acp_sessions'",
+      )
+      .all()
+      .map((r) => r.name);
+    expect(indexes).toContain("acp_sessions_cohort_idx");
   });
 });

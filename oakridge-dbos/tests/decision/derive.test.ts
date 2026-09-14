@@ -203,6 +203,37 @@ test("case 8: a driver artifact whose depends_on is not an array is a contradict
   });
 });
 
+/**
+ * `"0"` is the sentinel `scalar`/`artifact_collection` stages always mint
+ * (below), and the one kbbl's session-list grouping reads as "no cohort" —
+ * so a fan-out cohort minting the literal id `"0"` must fail loudly here
+ * rather than silently collide with a scalar stage's identity downstream.
+ */
+test("a fan-out driver artifact minting unit_id '0' is a contradiction, not a silent collision with the scalar sentinel", () => {
+  const definition = fanOutDefinition({ stage_key: "build", over_input: "brief" });
+  const zeroId = availableBrief("0", []);
+  const snap = snapshot({ definition, available_artifacts: [zeroId] });
+
+  const result = derive(snap);
+  expect(result).toEqual({
+    ok: false,
+    error: { kind: "malformed_driver_artifact", stage_key: "build", artifact_id: zeroId.artifact_id, path: "/unit_id",
+      detail: "unit_id at '/unit_id' must not be '0' — that value is reserved for scalar and artifact_collection stages" },
+  });
+});
+
+test("a scalar stage still mints unit_id '0' unaffected by the fan-out reservation", () => {
+  const definition = scalarStageDefinition(["spec_analyzer"]);
+  const snap = snapshot({ definition, stages: [] });
+
+  const result = derive(snap);
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  expect(result.value.commands).toContainEqual(
+    expect.objectContaining({ kind: "materialize_unit", stage_key: "spec_analyzer", unit_id: "0" as UnitId }),
+  );
+});
+
 // -----------------------------------------------------------------------
 // 9. every case from the deleted run-decisions.test.ts, re-expressed against derive.
 
