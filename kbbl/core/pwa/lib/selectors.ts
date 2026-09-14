@@ -2,46 +2,19 @@ import type { Sid } from "./ids";
 import { sortSessions } from "./session";
 import type { AppState } from "../state/store";
 import type {
-  PendingBriefCard,
-  PendingPlanCard,
   SessionSnapshot,
   Status,
 } from "../types";
 
 /**
  * Sorted session list — newest activity first. Consumed by the session
- * list AND by the sidebar mapping that derives SidebarSession entries
- * from it. Wraps the existing pure helper in lib/session.ts so callers
+ * list. Wraps the existing pure helper in lib/session.ts so callers
  * can pull from the store without importing both modules.
  */
 export function selectSortedSessions(
   sessions: Map<Sid, SessionSnapshot>,
 ): SessionSnapshot[] {
   return sortSessions(sessions as Map<string, SessionSnapshot>);
-}
-
-/**
- * Sidebar projection: the minimal subset of SessionSnapshot the sidebar
- * needs. projectWorkdir (the canonical repo path) is what the sidebar
- * groups by — worktree-backed sessions live under
- * /tmp/.../worktrees/<branch>.
- */
-export interface SidebarSessionProjection {
-  sid: string;
-  name: string;
-  workdir: string;
-  status: string;
-}
-
-export function selectSidebarSessions(
-  sorted: SessionSnapshot[],
-): SidebarSessionProjection[] {
-  return sorted.map((s) => ({
-    sid: s.sid,
-    name: s.name,
-    workdir: s.projectWorkdir,
-    status: s.status,
-  }));
 }
 
 /**
@@ -61,18 +34,6 @@ export function selectSessionView(
     snapshot: state.sessions.get(sid) ?? null,
     inboxStatus: state.inboxStatus,
   };
-}
-
-/**
- * Aggregate count of pending plan + brief reviews. The SessionListView
- * header surfaces the section when count > 0; future badges and the
- * sidebar review chip read the same shape.
- */
-export function selectPendingReviewsCount(
-  plans: PendingPlanCard[],
-  briefs: PendingBriefCard[],
-): number {
-  return plans.length + briefs.length;
 }
 
 /** One session with at least one permission request awaiting an answer. */

@@ -1,18 +1,3 @@
-import type { ReactNode } from "react";
-
-export type { MergeReviewThread as ReviewThread } from "../../../shared/cohort-merge-contract";
-
-export interface AtomEdit {
-  id: string;
-  target_type: string;
-  target_id: string;
-  anchor: string | null;
-  prior_value: string | null;
-  new_value: string;
-  author: string;
-  created_at: string;
-}
-
 export interface Thread {
   id: string;
   target_type: string;
@@ -32,40 +17,3 @@ export interface Message {
 }
 
 export type ReviewMode = "review" | "edit";
-
-export interface CanvasProps {
-  mode: ReviewMode;
-  edits: AtomEdit[];
-  threads: Thread[];
-  frozen: boolean;
-  onOpenThread: (anchor: string) => void;
-  onAtomEdit?: (anchor: string, prevValue: string | null, newValue: string) => void;
-}
-
-export interface ReviewShellProps {
-  backHref?: string;
-  onBack: () => void;
-  artifactTypeLabel: string;
-  statusLabel: string;
-  frozen: boolean;
-  actionPending: boolean;
-  isPendingApproval: boolean;
-  onToggleTheme: () => void;
-  mode: ReviewMode;
-  onModeChange: (m: ReviewMode) => void;
-  onApprove: () => void | Promise<void>;
-  onReject: (reason: string) => void | Promise<void>;
-  rejectSubjectLabel: string;
-  approveSubjectLabel: string;
-  artifactId: string;
-  threads: Thread[];
-  selectedThreadId: string | null;
-  threadMessages: Map<string, Message[]>;
-  onSelectThread: (id: string) => void;
-  onCloseThread: () => void;
-  onNewThread: () => void;
-  onSendMessage: (threadId: string, body: string) => void;
-  onPing: (threadId: string) => void;
-  onResolve: (threadId: string) => void;
-  children: ReactNode;
-}

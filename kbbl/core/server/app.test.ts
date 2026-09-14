@@ -8,7 +8,6 @@ import type { Database } from "bun:sqlite";
 import { KbblConfigSchema, type KbblConfig } from "../config";
 import type { SessionManager } from "../session/session-manager";
 import type { AcpSessionService } from "../acp/session-service";
-import type { createDispatcher } from "../orchestrator/backends/dispatcher";
 import { openTestDb } from "../db/test-db";
 import { createApp } from "./app";
 import type { AuthPolicy } from "./auth";
@@ -38,9 +37,6 @@ function buildApp(
   ]),
   authPolicy?: AuthPolicy,
 ): Hono {
-  const dispatcher: ReturnType<typeof createDispatcher> = {
-    dispatch: async () => { throw new Error("not used in config tests"); },
-  };
   return createApp({
     manager: {} as unknown as SessionManager,
     acp,
@@ -51,7 +47,6 @@ function buildApp(
     config,
     configPath,
     db,
-    dispatcher,
     authPolicy,
   });
 }
@@ -139,28 +134,22 @@ describe("GET /config", () => {
   });
 });
 
-describe("GET /dispatch-attempts auth", () => {
-  test("requires token auth in token mode despite being a GET route", async () => {
-    const app = buildApp(
-      KbblConfigSchema.parse({}),
-      "/tmp/test-workdir",
-      undefined,
-      { mode: "token", token: "secret" },
-    );
+describe("retired v1 workflow routes", () => {
+  test.each(["/specs", "/plans", "/cohorts", "/briefs", "/assessments", "/epics", "/dispatch-attempts", "/review/frozen", "/artifact-stream", "/projects/old-id/specs", "/projects/old-id/epics"])("GET %s is absent", async (route) => {
+    const app = buildApp(KbblConfigSchema.parse({}));
+    expect((await app.request(route)).status).toBe(404);
+  });
 
-    const missing = await app.request("/dispatch-attempts");
-    expect(missing.status).toBe(401);
+  test.each(["/specs", "/plans", "/briefs/old-id/build", "/dispatch-attempts", "/review/freeze", "/epics"])("POST %s cannot launch v1 work", async (route) => {
+    const app = buildApp(KbblConfigSchema.parse({}));
+    expect((await app.request(route, { method: "POST", body: "{}", headers: { "content-type": "application/json" } })).status).toBe(404);
+  });
 
-    const wrong = await app.request("/dispatch-attempts", {
-      headers: { authorization: "Bearer wrong" },
-    });
-    expect(wrong.status).toBe(403);
-
-    const ok = await app.request("/dispatch-attempts", {
-      headers: { authorization: "Bearer secret" },
-    });
-    expect(ok.status).toBe(200);
-    expect(await ok.json()).toEqual({ attempts: [] });
+  test("keeps the project registry used by v2 launch presets", async () => {
+    const app = buildApp(KbblConfigSchema.parse({}));
+    const created = await app.request("/projects", { method: "POST", body: JSON.stringify({ name: "v2 preset", repo_path: "/tmp/v2-preset" }), headers: { "content-type": "application/json" } });
+    expect(created.status).toBe(201);
+    expect((await app.request("/projects")).status).toBe(200);
   });
 });
 

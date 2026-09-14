@@ -1,6 +1,24 @@
 # Codex Follow-ups
 
-Tracked items deferred from the Cohort 3 / rollout PR. Each item has a brief motivation and the decision context that made it a follow-up rather than in-scope.
+Historical notes from the pre-ACP Codex rollout. The direct app-server adapter
+has been removed; these implementation proposals are not the current backlog.
+
+Current disposition:
+
+- Archive aliases remain a compatibility concern: do not remove retained
+  archive readers merely because live execution moved to ACP.
+- Compaction and mid-turn steering would require evaluation at the ACP boundary,
+  not wiring the removed direct app-server adapter.
+- Current ACP sessions persist identity and can lazily reload agent-owned
+  history after restart or idle reaping. The old claim that kbbl has no
+  reattachment path no longer describes the active backend; this does not
+  guarantee transparent recovery of every interrupted turn.
+- Creating a successor with `resume_from` inherits worktree/runtime settings;
+  it is not a cross-runtime conversation-history transfer feature.
+
+See [the kbbl README](../kbbl/README.md) and
+[ACP session service](../kbbl/core/acp/session-service.ts) for current behavior.
+The original notes below are preserved as decision history, not instructions.
 
 ---
 
@@ -20,7 +38,8 @@ could still hydrate after the runtime-id migration.
 **What:** Codex has a `thread/compact/start` protocol method that may serve the same role as kbbl's `/compact` flow (token reduction + handoff). Evaluate whether it can be wired to `POST /:sid/compact` and integrated with the CompactedBanner UX.
 
 **Blocked on:** Codex CLI version that stabilizes `thread/compact/start` semantics.
-Current adapter conformance notes live in `kbbl/adapters/codex/README.md`.
+The former adapter conformance notes are available in Git history at
+`kbbl/adapters/codex/README.md` (the file has been removed).
 
 **When:** After the Codex app-server protocol reaches a stable release with documented compaction semantics.
 

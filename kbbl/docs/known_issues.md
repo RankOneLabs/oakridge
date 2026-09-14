@@ -1,6 +1,8 @@
-# Known Issues
+# Historical kbbl v1 issue — retired
 
-Tracked bugs / surface gaps that aren't blocking but are worth surfacing for future fixers. New entries go at the top.
+The v1 cohort route, dispatcher, and RunBuildButton described below have been
+removed. This resolved issue is retained for historical context only; its
+residual race is not an active v2 issue.
 
 ---
 

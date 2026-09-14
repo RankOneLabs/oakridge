@@ -18,18 +18,6 @@ import { GitWorktreeProvider } from "./worktree/service";
 import { validateWorkdir } from "./server/handlers/sessions";
 import { openDb } from "./db/connection";
 import { applyMigrations } from "./db/migrations";
-import { bootstrap as bootstrapOrchestrator } from "./orchestrator/bootstrap";
-import { createKbblChatBackend } from "./orchestrator/backends/kbbl-chat";
-import { createDispatcher } from "./orchestrator/backends/dispatcher";
-import { wireDispatchHooks } from "./orchestrator/dispatch-hooks";
-import {
-  reconcileDispatchAttempts,
-  settleAttemptForEndedSession,
-} from "./orchestrator/dispatch-reconciler";
-import { wireResponderSpawn } from "./orchestrator/responders/spawn";
-import { reviewRegistry } from "./review/registry";
-import { reviewEvents } from "./review/events";
-import { taskTrackerEvents } from "./db/events";
 
 // === args ===
 
@@ -111,7 +99,6 @@ await mkdir(handoffsDir, { recursive: true });
 const dbPath = join(dataDir, "kbbl.db");
 const db = openDb(dbPath);
 applyMigrations(db, join(moduleDir, "db", "migrations"));
-bootstrapOrchestrator({ db, registry: reviewRegistry, reviewEvents, taskTrackerEvents });
 
 // === config ===
 // Load before binding the port so a malformed config.json fails fast, with
@@ -211,9 +198,6 @@ const acpService = new AcpSessionService({
     idle_child_ttl_ms: config.acp.idle_child_ttl_ms,
     live_event_buffer: config.acp.live_event_buffer,
   },
-  onSessionEnded: (sid) => {
-    settleAttemptForEndedSession(db, acpService, sid);
-  },
 });
 acpService.recoverOnBoot();
 const idleReaper = setInterval(() => {
@@ -227,26 +211,6 @@ idleReaper.unref?.();
 // nothing.
 
 const manager = new SessionManager({ sessionsDir });
-
-// === Boot reconciliation — must run before dispatch hooks accept new work ===
-// Any dispatch_attempts left in dispatching or running status survived a prior
-// process death. Settle each from the durable ACP record (recoverOnBoot has
-// already swept in-flight turns) or fail it so the active-claim slot is freed
-// with a clear recovery path before new dispatches fire.
-reconcileDispatchAttempts(db, manager, acpService);
-
-// === Dispatcher + dispatch hooks + responder spawn ===
-
-const kbblChatBackend = createKbblChatBackend({ acp: acpService });
-// Internal URL for in-process dispatchers and spawned responders. Always
-// loopback regardless of the operator's bind host: --host=0.0.0.0 (or a raw
-// IPv6 address) is fine as an external listener but would resolve to a
-// non-routable or malformed origin for self-calls. Subprocesses run on the
-// same machine as the server, so 127.0.0.1 is the right target.
-const kbblUrl = `http://127.0.0.1:${port}`;
-const dispatcher = createDispatcher({ db, backends: { kbbl_chat: kbblChatBackend }, kbblUrl });
-wireDispatchHooks({ taskTrackerEvents, dispatcher, db });
-wireResponderSpawn({ reviewEvents, kbblUrl });
 
 // === Hono app ===
 
@@ -266,7 +230,6 @@ const app = createApp({
   config,
   configPath,
   db,
-  dispatcher,
   authPolicy,
   coreControlToken,
 });

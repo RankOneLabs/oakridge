@@ -1,4 +1,5 @@
-import type { CohortStatus } from "../../../types/task-tracker";
+// Display states retained by the shared DAG viewer and historical plan artifacts.
+type CohortStatus = "waiting" | "planned" | "briefing" | "brief_review" | "building" | "ready_to_build" | "awaiting_merge" | "done" | "blocked";
 
 export interface Cohort {
   id: string;
@@ -14,14 +15,4 @@ export interface CohortDependency {
   id: string;
   from_cohort_id: string;
   to_cohort_id: string;
-}
-
-export interface Plan {
-  id: string;
-  spec_id: string;
-  status: "draft" | "pending_approval" | "approved" | "rejected" | "superseded";
-  predecessor_plan_id: string | null;
-  model: string | null;
-  rejection_reason: string | null;
-  created_at: string;
 }

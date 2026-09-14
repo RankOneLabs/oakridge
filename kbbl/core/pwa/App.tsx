@@ -9,11 +9,6 @@ import { resumeSession } from "./lib/session";
 import { useStore } from "./state/store";
 import type { Sid } from "./lib/ids";
 
-import { PlanReviewView } from "./review/plan/PlanReviewView";
-import { BriefReviewView } from "./review/brief/BriefReviewView";
-import { CohortReviewView } from "./review/cohort/CohortReviewView";
-import { RepoDashboardView } from "./dashboard/RepoDashboardView";
-import { EpicDetailView } from "./epic/EpicDetailView";
 import { OakridgeShell } from "./oakridge/OakridgeShell";
 
 import { SessionListView } from "./views/SessionListView";
@@ -51,47 +46,9 @@ export function App() {
 
   const config = useServerConfig();
 
-  // Hash routing precedence: plan/brief/cohort views win over session/task
-  // views. These use path-style hashes (#plan/<id>, #brief/<id>) which don't
-  // collide with the query-param style #sid=X and #task=X routes.
+  // Workflow routes take precedence over session hashes.
   let view: React.ReactNode;
-  if (route?.view === "plan") {
-    view = (
-      <PlanReviewView
-        id={route.id}
-        theme={theme}
-        onToggleTheme={toggleTheme}
-        onBack={() => { window.location.hash = ""; }}
-      />
-    );
-  } else if (route?.view === "brief") {
-    view = (
-      <BriefReviewView
-        id={route.id}
-        theme={theme}
-        onToggleTheme={toggleTheme}
-        onBack={() => { window.location.hash = ""; }}
-      />
-    );
-  } else if (route?.view === "cohort") {
-    view = (
-      <CohortReviewView
-        id={route.id}
-        theme={theme}
-        onToggleTheme={toggleTheme}
-        onBack={() => { window.location.hash = ""; }}
-      />
-    );
-  } else if (route?.view === "repo") {
-    view = (
-      <RepoDashboardView
-        project_id={route.id}
-        onBack={() => { window.location.hash = ""; }}
-      />
-    );
-  } else if (route?.view === "epic") {
-    view = <EpicDetailView key={route.id} epic_id={route.id} />;
-  } else if (route?.view === "oakridge") {
+  if (route?.view === "oakridge") {
     view = (
       <OakridgeShell
         route={route.route}

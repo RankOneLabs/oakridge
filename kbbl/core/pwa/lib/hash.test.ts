@@ -8,6 +8,10 @@ function withHash(hash: string) {
 }
 
 describe("readHashRoute oakridge routes", () => {
+  it.each(["plan", "brief", "cohort", "repo", "epic"])("does not expose the retired %s route", (view) => {
+    expect(withHash(`#${view}/old-id`)).toBeNull();
+  });
+
   it("matches only the oakridge path segment", () => {
     expect(withHash("#oakridge")).toEqual({
       view: "oakridge",

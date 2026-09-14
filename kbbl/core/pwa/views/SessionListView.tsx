@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 
-import { Sidebar, type SidebarSession } from "../sidebar/Sidebar";
 
 import type {
   RuntimeDescriptor, SessionSnapshot, Theme, Status,
@@ -14,7 +13,6 @@ import {
   NewSessionForm,
   type NewSessionFormValues,
 } from "../components/organisms/NewSessionForm";
-import { usePendingReviews } from "../hooks/usePendingReviews";
 import { useUrlPrefill } from "../hooks/useUrlPrefill";
 
 interface StartSessionBody {
@@ -52,14 +50,7 @@ export function SessionListView({
   const [pendingError, setPendingError] = useState<string | null>(null);
   const [resetSignal, setResetSignal] = useState(0);
 
-  const { pendingPlans, pendingBriefs } = usePendingReviews();
   const prefill = useUrlPrefill();
-
-  const pendingPlanCards = pendingPlans?.ok ? pendingPlans.value : [];
-  const pendingBriefCards = pendingBriefs?.ok ? pendingBriefs.value : [];
-  const dataErrors = [pendingPlans, pendingBriefs]
-    .filter((r): r is { ok: false; error: Error } => r?.ok === false)
-    .map((r) => r.error.message);
 
   const sorted = useMemo(() => sortSessions(sessions), [sessions]);
 
@@ -127,23 +118,8 @@ export function SessionListView({
     }
   }
 
-  const sidebarSessions: SidebarSession[] = useMemo(
-    () =>
-      sorted.map((s) => ({
-        sid: s.sid,
-        name: s.name,
-        // Worktree-backed sessions live under /tmp/.../worktrees/<branch>;
-        // projectWorkdir holds the canonical repo path that matches the
-        // project.repo_path the sidebar groups by.
-        workdir: s.projectWorkdir,
-        status: s.status,
-      })),
-    [sorted],
-  );
-
   return (
     <div className="app-list-shell">
-      <Sidebar sessions={sidebarSessions} onSelectSession={onSelect} />
       <div className="app app-list">
       <header className="top-bar">
         <div className="workspace-heading">
@@ -198,64 +174,6 @@ export function SessionListView({
           onSubmit={(values) => { void startSession(values); }}
         />
       </div>
-      {dataErrors.length > 0 && (
-        <section style={{ padding: "8px 12px" }}>
-          <div className="sidebar-error" role="alert">
-            {dataErrors.join(" · ")}
-          </div>
-        </section>
-      )}
-
-      {pendingPlanCards.length > 0 && (
-        <section className="inbox-review-section">
-          <h2 className="inbox-review-heading">
-            Pending plans
-          </h2>
-          <ul className="inbox-review-list">
-            {pendingPlanCards.map((p) => (
-              <li key={p.id}>
-                <button
-                  type="button"
-                  onClick={() => { window.location.hash = `plan/${p.id}`; }}
-                  className="inbox-review-card"
-                >
-                  <span>Plan {p.id.slice(0, 8)}</span>
-                  <time dateTime={p.created_at}>
-                    {p.created_at.slice(0, 10)}
-                  </time>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {pendingBriefCards.length > 0 && (
-        <section className="inbox-review-section">
-          <h2 className="inbox-review-heading">
-            Pending briefs
-          </h2>
-          <ul className="inbox-review-list">
-            {pendingBriefCards.map((b) => (
-              <li key={b.id}>
-                <button
-                  type="button"
-                  onClick={() => { window.location.hash = `brief/${b.id}`; }}
-                  className="inbox-review-card"
-                >
-                  <span>
-                    {b.goal.length > 60 ? `${b.goal.slice(0, 60)}…` : b.goal}
-                  </span>
-                  <time dateTime={b.created_at}>
-                    {b.created_at.slice(0, 10)}
-                  </time>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
       {sorted.length === 0 ? (
         <div className="session-list-empty">No sessions yet.</div>
       ) : (

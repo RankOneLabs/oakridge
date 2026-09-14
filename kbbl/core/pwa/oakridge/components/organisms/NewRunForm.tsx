@@ -5,7 +5,7 @@ import {
   useServerConfig,
 } from "../../../hooks/useServerConfig";
 import type { RuntimeModelSelection } from "../../../types";
-import { coerceSelection } from "../../../sidebar/AddSpecModal";
+import { coerceSelection } from "../../lib/launch-config";
 import {
   defaultWorkflowDefinitionId,
   sortWorkflowDefinitions,

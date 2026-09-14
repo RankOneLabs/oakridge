@@ -31,7 +31,7 @@ export type Theme = "dark" | "light";
 // and the oakridge run-launch UI. Model/effort option lists arrive empty
 // from /config in the ACP era (each agent exposes them per-session via
 // config options); the id doubles as the agent profile id and stays the
-// narrow RuntimeId union while the orchestrator launch surface does.
+// narrow RuntimeId union used by the Oakridge launch surface.
 export interface RuntimeModelOption {
   value: string;
   label: string;
@@ -46,21 +46,6 @@ export interface RuntimeDescriptor {
 }
 
 export type { RuntimeModelSelection } from "../runtime-interface";
-
-export interface PendingPlanCard {
-  id: string;
-  spec_id: string;
-  status: string;
-  created_at: string;
-}
-
-export interface PendingBriefCard {
-  id: string;
-  cohort_id: string;
-  goal: string;
-  status: string;
-  created_at: string;
-}
 
 /** Optimistic operator send awaiting its user_message echo on the stream. */
 export interface PendingSend {

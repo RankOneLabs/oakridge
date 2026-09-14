@@ -6,8 +6,12 @@ Conventions for `kbbl` — the operator surface for CLI coding agents.
 
 ## What this is
 
-Bun + Hono backend on `:8788` that serves a React PWA, manages Claude Code
-sub-sessions, and exposes a review/dispatch layer for plans and briefs.
+Bun + Hono backend on `:8788` that serves a React PWA and manages Claude Code
+and Codex sessions through ACP. Workflow orchestration belongs to
+`oakridge-dbos/`; kbbl hosts its v2 UI and same-origin proxy. The old kbbl
+v1 Projects UI and review/dispatch backend have been removed. V2 uses the
+DBOS project registry at `/oakridge/api/projects`; the separate legacy
+kbbl `/projects` registry and shared v2 DAG/collaboration components remain.
 Session-shaped UX (live transcripts, inbox, per-sid streams). LBC's
 project-shaped dashboard lives separately in `../lbc-dashboard` — do not
 conflate.
@@ -19,16 +23,10 @@ conflate.
 - **Realtime**: Server-Sent Events (Hono `streamSSE`)
 - **DAG**: `reactflow@11` + `dagre` for plan-review cohort layout
 - **Markdown**: `react-markdown` with `rehype-sanitize`
-- **Styling**: `core/pwa/styles.css` + inline `style={{}}` props (current).
-  **Tailwind CSS v4 is not yet installed** — it is the target convention; a
-  follow-up refactor pass will add it and migrate existing styles. Until then,
-  new components and changed files should use the existing `styles.css` /
-  `className` vocabulary or inline `style={{}}`; do not add Tailwind utility
-  classNames that will not be applied. Exception:
-  `core/pwa/review/**` is mid-flight on its own `.review-shell__*` /
-  `.brief-*` / `.cohort-detail__*` / `.cohort-node__*` className vocabulary
-  in `styles.css`; new components inside `review/**` use existing classes or
-  extend the vocabulary until the Tailwind migration absorbs that subtree.
+- **Styling**: Tailwind CSS v4 is installed through Vite and imported by
+  `core/pwa/styles.css`. Existing named classes and inline styles remain;
+  preserve the surrounding component vocabulary when maintaining them.
+  Shared DAG components still use `.cohort-node__*` classes.
 
 ## Frontend file organization
 
@@ -46,10 +44,10 @@ core/pwa/
 │   ├── atoms/
 │   ├── molecules/
 │   └── organisms/
-└── review/
-    ├── plan/              # PlanReviewView + locals (DagEditor, CohortNode, …)
-    ├── brief/             # BriefReviewView + locals (StructuredDocEditor)
-    └── shared/            # ThreadView, ModeToggle, useArtifactStream, …
+├── oakridge/             # v2 workflow views, components, hooks, selectors
+└── review/               # shared v2 building blocks, not v1 routes
+    ├── plan/              # DagEditor, CohortNode, shared DAG types
+    └── shared/            # ThreadSidebar, ThreadView, atom comment affordance
 ```
 
 ## Hard rules
@@ -61,16 +59,16 @@ core/pwa/
 
 2. **File size soft cap: 300 lines.** When a component crosses 300 lines,
    split before adding more. When a file crosses 500 lines, splitting is
-   mandatory before the PR ships. App.tsx and BriefReviewView are
-   grandfathered but must shrink.
+   mandatory before the PR ships. Existing oversized files must shrink
+   when changed; removed v1 views are not precedents.
 
 3. **One hook per file in `hooks/`.** Each owns its `useEffect` lifecycle,
    abort handling, and refresh key. Don't define hooks inside view
    components.
 
-4. **One view per route.** `#plan/<id>` → `views/PlanReviewView.tsx`,
-   `#brief/<id>` → `views/BriefReviewView.tsx`, etc. App.tsx never inlines
-   route bodies.
+4. **One view per route.** Session routes use `views/`; v2 workflow routes
+   are composed under `oakridge/`. App.tsx never inlines route bodies.
+   Do not restore retired `#plan`, `#brief`, `#cohort`, `#repo`, or `#epic` routes.
 
 5. **External library CSS must be imported at the consumer.** Forgetting
    `import "reactflow/dist/style.css"` in `DagEditor.tsx` is what broke
@@ -93,7 +91,8 @@ core/pwa/
 - Heartbeat at 15s with `: ping\n\n` is standard. Don't tune per-route.
 - Client-side: SSE lifecycle goes in a `hooks/use<Stream>.ts`. View
   components consume, they don't `new EventSource` directly.
-  `useArtifactStream` (in `review/shared/`) is the model.
+  Follow `hooks/useAcpSession.ts` and the Oakridge stream hooks; the v1
+  artifact stream and its hook have been removed.
 - Client must close the EventSource in the effect cleanup. A `useRef` over
   `cancelled` per the React docs pattern is fine.
 
@@ -129,11 +128,13 @@ Production mode is what `kbbl-start` runs. The PWA is rebuilt on every
 ## Configuration
 
 - `KBBL_PORT` — defaults to `8788`. Followed by both Hono and Vite's dev proxy.
-- `--workdir=<path>` — required CLI arg to `core/server.ts`. Validated to
-  be inside a git repo.
+- `--workdir=<path>` — optional CLI arg to `core/server.ts`, supplying the
+  new-session form's default directory.
 - `--host=<addr>` — bind host, defaults to `127.0.0.1`. Use `0.0.0.0` for
   Tailscale access.
 - `--config=<path>` — optional override for `config.json` location.
+- `acp.default_agent` and `acp.agents` configure active agent profiles.
+  Legacy runtime settings do not configure the removed adapters.
 
 ## What's NOT in this project (yet)
 
@@ -142,7 +143,7 @@ Production mode is what `kbbl-start` runs. The PWA is rebuilt on every
   beyond ~15 entries, revisit.
 - **GraphQL** — REST + SSE handles everything currently.
 
-<!-- import: ../standards/core.md @ 5787c28ec1ee -->
+<!-- import: ../standards/core.md @ 64f1695b5090 -->
 ## Two gates before building
 
 **Stop when uncertain.** Before introducing a pattern, dependency, file, or structural
@@ -227,7 +228,7 @@ over terse — `user_count`, not `n`. Booleans read as questions — `is_active`
 `has_permission`, `should_retry`.
 <!-- /import: ../standards/core.md -->
 
-<!-- import: ../standards/typescript.md @ 5787c28ec1ee -->
+<!-- import: ../standards/typescript.md @ 64f1695b5090 -->
 ## Strictness
 
 `strict` mode on. No `any` — use `unknown` and narrow. No non-null assertions (`!`)
@@ -269,7 +270,7 @@ The project's configured linter and formatter (ESLint + Prettier, or Biome) clea
 Type-check in CI, not just locally.
 <!-- /import: ../standards/typescript.md -->
 
-<!-- import: ../standards/backend.md @ 5787c28ec1ee -->
+<!-- import: ../standards/backend.md @ 64f1695b5090 -->
 ## Contracts first
 
 Define the API or data contract as named types before writing the handler. Derive the
@@ -312,7 +313,7 @@ Pure logic is unit-tested in isolation. IO and integration seams are tested at t
 boundary, against real or faithfully-faked dependencies.
 <!-- /import: ../standards/backend.md -->
 
-<!-- import: ../standards/frontend.md @ 5787c28ec1ee -->
+<!-- import: ../standards/frontend.md @ 64f1695b5090 -->
 ## Data model before UI
 
 The domain model exists before any component. Types live in `types/` and mirror the real
@@ -361,7 +362,7 @@ utilities rather than ad-hoc values.
 - Building UI before the data model exists — the expensive one.
 <!-- /import: ../standards/frontend.md -->
 
-<!-- import: ../standards/react.md @ 5787c28ec1ee -->
+<!-- import: ../standards/react.md @ 64f1695b5090 -->
 ## Atomic design
 
 Three tiers; the boundary is a hard rule, not a judgment call:

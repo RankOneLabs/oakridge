@@ -1,243 +1,181 @@
 # kbbl
 
-Operator surface for CLI coding agents. Drives one or more agent sessions from a browser — at your desk, on your phone over Tailscale, or any viewport in between. Tablet-first.
+Browser operator surface for CLI coding agents: direct sessions, live transcripts,
+permission requests, and the Oakridge v2 workflow UI. A Bun + Hono server hosts
+the React PWA and manages agents through ACP (Agent Client Protocol).
 
-Two runtime adapters ship: **claude-code** (default) and **codex** (opt-in). The architecture treats the runtime as a plugin behind a typed interface, so new adapters can be added without touching core.
+## Ownership and retired functionality
 
-## How it works
+Workflow orchestration runs in [oakridge-dbos](../oakridge-dbos/README.md);
+definitions and prompts live in [workflow-config](../workflow-config/README.md).
+The kbbl v1 Projects/spec/plan/brief UI, dispatcher, review API, and prompts are
+retired. V2 launch presets use the DBOS project registry through
+`/oakridge/api/projects`. The separate legacy kbbl `/projects` registry
+remains available, along with shared session and v2 review components.
 
-A single Bun + Hono server hosts many sessions. Each session is a runtime-spawned subprocess; the server pipes its NDJSON events through a per-session JSONL transcript and broadcasts them over SSE to connected PWA clients. A PreToolUse hook (currently `adapters/claude-code/scripts/gate.sh`) routes every tool call through the server, which parks the decision until the operator taps Approve or Deny in the PWA — approval latency = time to tap.
+Existing SQLite history and migrations are retained. Retirement does not delete
+stored projects, artifacts, or sessions. Archived pre-ACP JSONL sessions remain
+available for read-only viewing; they are not the current execution backend.
 
-The PWA opens to a session list backed by a `/inbox` delta stream (snapshot + create/end/status/pending/activity events). New sessions are created from the list view, not by launching another server. Ended sessions linger on disk and can be resumed from their row in the list — the resumed session is a new fork that inherits the parent's context.
+## Quick start
 
-Specs create Epics with split model selections. Planner stages (`spec_analyzer`, `plan_writer`, `brief_writer`, `assessor`) use `planner_model_selection`; `build` uses `worker_model_selection`. The spec modal reads `/config` runtime descriptors so each role can pick its own runtime/model pair.
+From the repository root, start the complete workflow stack:
 
-### Compaction
+```bash
+bun install
+bun run oakridge
+```
 
-Each session tracks token usage from runtime events. Two thresholds (`compact.soft_threshold_tokens`, `compact.hard_threshold_tokens` in `config.json`) drive different behaviors:
+Open <http://127.0.0.1:8788/#oakridge>. See the
+[v2 operator runbook](../docs/oakridge-v2-runbook.md) for PostgreSQL, upgrades,
+recovery, and workflow lifecycle.
 
-- **Soft threshold** — the PWA surfaces a banner offering to compact. The operator clicks to fire `POST /:sid/compact`; nothing happens automatically.
-- **Hard threshold** — the server force-fires compaction itself (banner-or-not), bounded by `compact_call_timeout_seconds` and `max_consecutive_failures_before_force`.
+For standalone sessions without DBOS:
 
-Compaction runs the agent's `/compact` prompt, writes a handoff markdown to `data/handoffs/<sid>.md`, and ends the session with `endReason: "compacted"`. The successor session resumes from the handoff doc; the PWA renders a CompactedBanner that fetches the markdown via `GET /:sid/handoff`. The soft threshold is mutable at runtime via `PATCH /config { softThresholdTokens }` so the operator can retune without a server restart.
+```bash
+./kbbl/scripts/kbbl-start /absolute/path/to/repository
+```
 
-## Runtimes
+The workdir argument is optional and supplies the new-session form's default.
+The launcher rebuilds the PWA before starting. Open <http://127.0.0.1:8788/> and
+choose **+ New session**. A second launcher would compete for the same port;
+create additional sessions in the PWA instead.
 
-kbbl supports two agent runtimes. Configure via `kbbl/config.json`:
+## Agent profiles
 
-> `kbbl/config.json` is git-ignored per-deploy local config. Copy the checked-in
-> `kbbl/config.example.json` to `kbbl/config.json` and edit it locally; a missing
-> `config.json` falls back to built-in schema defaults.
+Both built-in ACP profiles are enabled: `claude-code` (the default) and `codex`.
+Their installed agent packages are launched over ACP; kbbl no longer drives
+the old stream-JSON/PreToolUse-hook or direct Codex app-server adapters.
 
-| Runtime | ID | Default | Notes |
-|---|---|---|---|
-| Claude Code | `claude-code` | yes | Drives CC via `--output-format stream-json`. Full feature set: compaction, approval hook, yolo mode. |
-| Codex | `codex` | no | Connects to the `codex` CLI app-server over a unix socket. Approval cards work; compaction not supported in v0. |
-
-### Switching to Codex
-
-Set `runtime.codex.enabled = true` in `kbbl/config.json` and restart the server:
+Configure `acp.default_agent` and profile overrides under `acp.agents` in the
+git-ignored `kbbl/config.json`. A missing file uses schema defaults. For example:
 
 ```json
 {
-  "runtime": {
-    "default": "claude-code",
-    "codex": { "enabled": true, "bin": "codex" }
+  "acp": {
+    "default_agent": "codex"
   }
 }
 ```
 
-`default` stays `claude-code`. Direct sessions can be launched from the PWA, and
-trusted local callers can choose a runtime with `POST /sessions` by passing
-`runtime: "claude-code"` or `runtime: "codex"`.
+The old `runtime.default` is a compatibility fallback when `acp.default_agent`
+is absent. Other old runtime settings are ignored; `runtime.codex.enabled`
+does not control the ACP profile. The checked-in `config.example.json` still
+contains legacy settings, so do not use its runtime block to configure ACP.
 
-When creating a spec, choose planner and worker model selections independently.
-The server validates each selection against the selected runtime descriptor and
-stores only the explicit split selections on each Epic.
+Profile definitions and configuration validation are in
+[default-profiles.ts](core/acp/default-profiles.ts),
+[agent-profile.ts](core/acp/agent-profile.ts), and [config.ts](core/config.ts).
+Agent model, effort, mode, and command choices are discovered from the agent.
 
-### Not in v0
+The built-in Claude profile excludes `ANTHROPIC_API_KEY` from its inherited
+environment to avoid silently selecting API-key billing. Agent authentication
+must already be available to the server's user.
 
-- Cross-runtime resume (a CC session cannot be continued as Codex or vice versa)
-- Codex compaction (`thread/compact/start` evaluation is a follow-up)
-- Runtime selector in the PWA new-session form
+## Session lifecycle
 
-See [`adapters/codex/README.md`](adapters/codex/README.md) for full Codex configuration, the approval mapping table, and the complete limitations list.
+SQLite stores session identity, queued turns, and worktree ownership. Agents own
+their conversation histories. The PWA reads projected ACP events via history
+and SSE endpoints; kbbl can lazily reload agent history after an idle child is
+reaped or the server restarts.
 
-## Quick start
+Finishing a turn does not close the session. Operator input queues durably behind
+an active turn. Permission cards answer the exact options offered by the agent;
+interrupting a turn is distinct from closing or fencing its session.
+
+`resume_from` on direct session creation inherits the parent's worktree and
+runtime selection into a new session; it is not a promise to fork conversation
+history. Continuing an existing resumable session uses its stable identity and
+agent history. Pre-ACP archives are read-only.
+
+The old automatic compaction/handoff pipeline and YOLO/hook endpoints are not
+part of the active ACP API. A retained handoff reader serves historical files;
+retained compaction config fields do not enable automatic ACP compaction.
+
+### Delegated Oakridge sessions
+
+DBOS uses `PUT /sessions/resumable/:sessionKey` with a stable work-order key
+and initial prompt. Further workflow input uses delivery-keyed requests.
+Cleanup closes or fences the executor only after its work order is completed
+(required outputs released) or abandoned. Artifact emission or the end of the
+initial turn alone is not approval and does not trigger cleanup.
+
+See the [runbook's recovery section](../docs/oakridge-v2-runbook.md#restart-and-recovery)
+before changing application versions or attempting recovery.
+
+## API overview
+
+Current route contracts live in [sessions.ts](core/server/handlers/sessions.ts)
+and [acp-per-sid.ts](core/server/handlers/acp-per-sid.ts).
+
+- `GET /sessions` — list ACP sessions; `?include=archived` also includes legacy history.
+- `POST /sessions` — create a session; accepts `workdir`, `name`,
+  `agent_profile` (or `runtime` alias), `model`, `effort`, `artifact_id`,
+  and optional `resume_from` or `worktree`. Returns a snapshot with `sid`.
+- `DELETE /sessions/:sid` — close; `?fenced_by=...` fences;
+  `?purge=true` requests permanent removal subject to handler guards.
+- `GET /sessions/:sid/history` — projected history, expiry, and open turns.
+- `GET /sessions/:sid/stream` — ACP UI events over SSE.
+- `POST /sessions/:sid/input` — `{ text, client_message_id? }`.
+- `POST /sessions/:sid/permissions/:requestId` — `{ option_id }`.
+- `POST /sessions/:sid/cancel` — interrupt the current turn.
+- `POST /sessions/:sid/config` — `{ config_id, value }`.
+- `GET /artifacts/:artifactId/sessions` — sessions with a correlation tag.
+- `GET /inbox` — session-list SSE; `POST /inbox/workspace-events` ingests workspace events.
+- `GET /config` — defaults and available runtime descriptors.
+- `GET /directories?path=<absolute-path>` — directory picker.
+- `GET /:sid/handoff` — historical compaction handoff.
+- `/projects` — retained legacy kbbl project registry, not the v2 registry.
+- `/oakridge/api/projects` — DBOS project registry used by v2 launch presets.
+- `/oakridge/api/*` — same-origin DBOS proxy.
+
+Executor integration additionally uses resumable ensure, initial-turn observation,
+delivery-keyed input, and explicit advance routes in `sessions.ts`. These are
+workflow integration contracts, not replacements for browser session controls.
+
+## Remote access and security
+
+Keep DBOS on loopback and expose only kbbl on a trusted LAN or tailnet:
 
 ```bash
-bun install
-bun run build:pwa
+export OAKRIDGE_CONTROL_TOKEN="$(openssl rand -hex 32)"
+./kbbl/scripts/kbbl-start --host=0.0.0.0
+```
+
+The browser exchanges the token for an HttpOnly cookie. Non-loopback writes
+require control authentication. For trusted-network development only,
+`ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1` permits an unauthenticated bind.
+This is not a public-internet deployment configuration.
+
+`OAKRIDGE_CORE_BASE_URL` points to DBOS despite its retained name.
+`OAKRIDGE_CORE_CONTROL_TOKEN` overrides the upstream token, otherwise
+`OAKRIDGE_CONTROL_TOKEN` is used. Browser authorization is stripped before
+proxying. Agent permission decisions are separate from HTTP control authentication.
+
+## Development and layout
+
+From `kbbl/`:
+
+```bash
 ./scripts/kbbl-start
-```
-
-Defaults to `127.0.0.1:8788` — open `http://localhost:8788/` in a browser on the same machine. From the session list, click **+ New session**, choose a directory, and start the session in the workdir of your choice.
-
-For phone/tablet access over Tailscale, bind all interfaces with a control token:
-
-```bash
-# Generate a token (do this once and store it somewhere safe):
-export OAKRIDGE_CONTROL_TOKEN=$(openssl rand -hex 32)
-
-# Start kbbl bound to all interfaces:
-./scripts/kbbl-start --host=0.0.0.0
-```
-
-Then open `http://<machine>:8788/` on your phone. The browser prompts for the token on first visit and stores it as an HttpOnly cookie. Add to Home Screen for a full-screen standalone app.
-
-If oakridge-dbos uses the same token, set it once and both services pick it up:
-```bash
-export OAKRIDGE_CONTROL_TOKEN=<your-token>
-```
-
-If oakridge-dbos uses a **different** secret, set the proxy override so kbbl can inject the right token into forwarded core write requests:
-```bash
-export OAKRIDGE_CONTROL_TOKEN=<kbbl-token>
-export OAKRIDGE_CORE_CONTROL_TOKEN=<core-token>
-```
-
-**Development without a token (escape hatch):** If you need non-loopback access without authentication during development, set:
-```bash
-export ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1
-```
-This emits a warning at startup and skips all auth checks. Do not use in production.
-
-You can still pass a workdir to `kbbl-start`; it becomes the default path shown in the **+ New session** form. If omitted, the form starts empty and the directory picker opens at the server user's home directory.
-
-## Development
-
-```bash
-# Terminal 1: server with the agent subprocesses
-./scripts/kbbl-start
-
-# Terminal 2: Vite dev server with HMR (proxies API calls to :8788)
+# Separate terminal:
 bun run dev:pwa
-# open http://localhost:5173
+# Tests:
+bun run test:all
 ```
 
-## Running
+Run `bun run typecheck` from the repository root. Vite serves development UI
+on port 5173; production assets are built into `core/pwa/dist/`.
 
-The primary flow is `./scripts/kbbl-start` in a terminal — that's the *server*. Adding sessions happens in the PWA (or via `POST /sessions`); a second `kbbl-start` would just collide on the port.
+- `core/acp/` — profiles, process supervision, sessions, turn ledger, ACP projections.
+- `core/server/` — HTTP handlers, control auth, and DBOS proxy.
+- `core/db/` — SQLite connection, retained migrations, project registry.
+- `core/worktree/` — worktree provisioning and ownership.
+- `core/session/` — retained legacy archive compatibility.
+- `core/pwa/hooks/useAcpSession.ts` — ACP history and stream lifecycle.
+- `core/pwa/views/` and `core/pwa/components/` — session UI.
+- `core/pwa/oakridge/` — v2 workflow UI.
+- `core/pwa/review/` — shared DAG and collaboration components used by v2.
 
-Ctrl-C stops the server; all live agent subprocesses die with it. Ended sessions remain readable via their on-disk JSONL the next time the server starts.
-
-### Oakridge delegated sessions
-
-oakridge-dbos can also create kbbl sessions as workflow execution substrates. Those
-sessions use the same runtime adapters and operator approval UI as directly launched
-sessions, but oakridge-dbos supplies `artifact_id = <stage_instance_id>` so the session
-can be correlated with a workflow stage. For the full v2 operator runbook — including
-the worktree contract, effort setting, tool approval policy, and migration map — see
-[`../docs/oakridge-v2-runbook.md`](../docs/oakridge-v2-runbook.md).
-
-This does not replace direct kbbl usage. The two supported launch paths are:
-
-- Direct session: operator uses the PWA or calls `POST /sessions`.
-- Delegated workflow session: oakridge-dbos calls `POST /sessions`, sends the workflow
-  prompt with `POST /:sid/input`, and later tears the session down with
-  `DELETE /sessions/:sid` when the workflow reaches its terminal gate.
-
-### Optional: cgroup limits via systemd-run
-
-If you want to bound resource use (shared box, or a box hosting other workloads), wrap the invocation:
-
-```bash
-systemd-run --user --scope --unit=kbbl \
-  -p MemoryMax=2G -p CPUQuota=200% \
-  ./scripts/kbbl-start
-```
-
-Stop with `systemctl --user stop kbbl`. Not needed on a dedicated workstation.
-
-## Endpoints
-
-### Sessions
-
-- `GET /sessions` — list live sessions (add `?include=archived` to fold in on-disk JSONL)
-- `POST /sessions` — create a session; body:
-  `{ workdir?, resume_from?, name?, artifact_id?, model?, runtime? }`.
-  `runtime` accepts `"claude-code"` or `"codex"`; omitted uses the configured default.
-  With `resume_from`, forks an ended session. The response is a session snapshot whose
-  session id field is `sid`.
-- `DELETE /sessions/:sid` — kill a live session (`?purge=true` also deletes the transcript)
-- `GET /artifacts/:artifactId/sessions` — list sessions tagged with a given workspace-layer artifact id
-
-### Per-session
-
-- `GET /:sid/stream` — SSE event stream for one session
-- `GET /:sid/events` — replay JSONL history (falls through to disk for archived sessions)
-- `POST /:sid/input` — send operator text to the session
-- `POST /:sid/approval` — Approve / Deny / Always-{tool} reply for a parked PreToolUse
-- `POST /:sid/yolo` — toggle the session's auto-approve mode
-- `POST /:sid/compact` — operator-initiated compaction (the soft-threshold banner action)
-- `GET /:sid/handoff` — markdown body of the session's compaction handoff (404 if never compacted)
-
-### Inbox + config
-
-- `GET /inbox` — SSE delta stream for the session list (snapshot + create/end/status/pending/activity)
-- `POST /inbox/workspace-events` — local trusted callers push project / coordination events for SSE re-broadcast
-- `GET /config` — server config snapshot for the PWA (`defaultWorkdir`, `softThresholdTokens`)
-- `PATCH /config` — mutate `softThresholdTokens` at runtime (persisted back to `config.json`)
-- `GET /directories?path=<absolute-path>` — list child directories for the new-session directory picker
-
-### Runtime-private
-
-- `POST /hook/approval` — `127.0.0.1`-only loopback endpoint mounted by the Claude Code adapter's gate script
-
-## Layout
-
-```text
-kbbl/
-├── core/                          # runtime-agnostic
-│   ├── server.ts                  # entry: arg parsing, manager + app + Bun.serve wiring, signals
-│   ├── config.ts                  # config.json loader + KbblConfig shape
-│   ├── runtime.ts                 # AppRuntime contract that adapters implement
-│   ├── runtime-interface.ts       # richer aspirational interface (sketch)
-│   ├── session/
-│   │   ├── session.ts             # one agent subprocess: spawn, JSONL persistence,
-│   │   │                          # per-session event broadcast, YOLO / always-allow state
-│   │   ├── session-manager.ts     # Map<sid, Session>, /inbox subscriptions, archived snapshots
-│   │   └── compactor.ts           # soft/hard threshold tracking + runCompact lifecycle
-│   ├── server/
-│   │   ├── app.ts                 # Hono app factory; mounts all route groups
-│   │   └── handlers/
-│   │       ├── per-sid.ts         # /:sid/{stream,events,input,yolo,approval,compact}
-│   │       ├── sessions.ts        # GET/POST/DELETE /sessions, /artifacts/:id/sessions
-│   │       ├── directories.ts     # GET /directories?path=<absolute-path>
-│   │       ├── handoff.ts         # GET /:sid/handoff (compaction markdown)
-│   │       └── workspace-events.ts # POST /inbox/workspace-events ingest
-│   ├── stream/
-│   │   ├── sse.ts                 # streamForSession, eventsForSession, parseEventsSince
-│   │   └── inbox.ts               # /inbox SSE handler
-│   └── pwa/                       # React + Vite client (built to core/pwa/dist/)
-├── adapters/
-│   └── claude-code/               # Claude Code runtime adapter
-│       ├── index.ts               # createClaudeCodeRuntime — implements AppRuntime
-│       ├── spawn.ts               # CLI flags + settings.json generator
-│       ├── hook-route.ts          # /hook/approval handler
-│       ├── event-classifier.ts    # parses CC stdout for ccSid + result usage
-│       └── scripts/gate.sh        # PreToolUse hook script invoked by CC
-├── scripts/
-│   └── kbbl-start                 # launcher: validates optional workdir, execs core/server.ts
-├── config.json                    # compact thresholds, retention
-└── data/
-    ├── sessions/                  # one JSONL transcript per session (gitignored)
-    └── handoffs/                  # compaction handoff markdowns, one per compacted sid
-```
-
-The `core/` ↔ `adapters/` boundary is enforced by import direction: only `core/server.ts` (the entry) imports from the adapter, to wire it in. Everything else in `core/` consumes runtimes through the `AppRuntime` interface in `core/runtime.ts`.
-
-## Security posture
-
-- **Network:** binds to `127.0.0.1` by default. Operator opts into wider exposure with `--host=0.0.0.0` for tailnet/phone access. Non-loopback binds require `OAKRIDGE_CONTROL_TOKEN` or the explicit `ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1` escape hatch — the server exits at startup if neither is set.
-- **Control auth:** on non-loopback binds, all write routes (POST/PATCH/DELETE) require `Authorization: Bearer <token>`. The browser PWA can also authenticate via an HttpOnly SameSite=Lax cookie established by `POST /auth/cookie` with a valid Bearer token. Tokens are compared with a constant-time helper. Missing credentials → 401; wrong token → 403.
-- **Proxy auth:** oakridge-dbos write requests are forwarded with the core token injected server-side (`OAKRIDGE_CORE_CONTROL_TOKEN`, falling back to `OAKRIDGE_CONTROL_TOKEN`). The browser Authorization header is stripped before forwarding so browser credentials never reach the core upstream.
-- **Hook endpoint:** `/hook/approval` is filtered to `127.0.0.1` at the route handler — only the in-process gate script can park approval requests, not a tailnet peer. Hook routes are excluded from the control auth middleware.
-- **Path-traversal guard:** `:sid` route params are validated against a strict v4 UUID regex before any filesystem access.
-- **Markdown:** assistant text is rendered with `react-markdown` + `rehype-sanitize`; no `dangerouslySetInnerHTML`, so prompt-injected HTML from web-fetched content can't execute.
-- **Agent user settings (Claude Code adapter):** the server spawns CC with `--setting-sources user` so your user-level skills and slash commands are available inside the spawned subprocess. Tradeoff: user-level allowlists and permission settings in `~/.claude/settings.json` can bypass kbbl's approval gate — if you've globally approved a tool there, the PreToolUse hook won't fire for it. The operator-controlled escape hatches below (YOLO, "Always {tool}") are the intended path for short-circuiting the gate; don't rely on the gate to stop things you've already auto-approved at the user level.
-- **YOLO mode and per-tool always-allow** are operator-controlled escape hatches, scoped to a single session. YOLO mode (top-bar toggle) auto-approves every PreToolUse for the rest of the session — useful for setting an agent loose on a long task without tapping each prompt. The "Always {tool}" button on a permission card adds that tool name to a session-scoped allowlist; matching future calls auto-approve. Both reset on server restart, are emitted as visible events, and turn the gate into "see what happened" rather than "decide each call." Use them deliberately.
-
-## Known issue: permission_required stream events
-
-Agents running under `--print --output-format stream-json` emit permission prompts as events in the JSON stream rather than as interactive terminal prompts. The PWA currently does not render these events as approval cards (only PreToolUse hook calls are rendered). If your runtime's permission system rejects something pre-hook, the rejection drops silently. Workaround: configure the runtime so the gate is the only approval surface (for Claude Code, ensure user-level allowlist covers the tool so the permission system passes through to the hook). Surfacing permission_required events in the PWA is on the roadmap.
+The [ACP compatibility report](docs/acp-compatibility.md) records the dated
+agent-selection spike, not current dependency versions or an operator setup guide.

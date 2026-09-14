@@ -196,25 +196,6 @@ export function makeControlAuthMiddleware(policy: AuthPolicy): MiddlewareHandler
 }
 
 /**
- * Returns a Hono middleware that enforces the same token/cookie auth even for
- * GET/HEAD routes. Use this for read endpoints that disclose control-plane
- * internals such as dispatch attempts.
- */
-export function makeRequiredControlAuthMiddleware(policy: AuthPolicy): MiddlewareHandler {
-  if (policy.mode === "loopback" || policy.mode === "insecure-non-loopback") {
-    return async (_c: Context, next: Next) => { await next(); };
-  }
-
-  const { token } = policy;
-
-  return async (c: Context, next: Next) => {
-    const rejection = verifyControlCredentials(c, token);
-    if (rejection) return rejection;
-    await next();
-  };
-}
-
-/**
  * Returns a Hono handler for POST /auth/cookie that validates a Bearer
  * token and establishes an HttpOnly SameSite=Lax cookie.
  *
