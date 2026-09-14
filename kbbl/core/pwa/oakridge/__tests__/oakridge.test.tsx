@@ -315,6 +315,8 @@ describe("RunDetailView", () => {
     wrap(<RunDetailView runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
 
     expect(await screen.findByText("Build the cohort UI")).toBeTruthy();
+    expect(screen.getByText("Operator workflow")).toBeTruthy();
+    expect(screen.getByText("kbbl/core/pwa/oakridge")).toBeTruthy();
     expect(screen.getByText("Admission is explicit")).toBeTruthy();
     expect(screen.getByTestId("or-admit-unit-btn")).toBeTruthy();
   });

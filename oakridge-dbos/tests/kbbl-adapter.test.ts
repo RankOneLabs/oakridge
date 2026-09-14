@@ -78,6 +78,15 @@ test("null session_identity members are omitted from the workflow object rather 
   expect(body.workflow).toEqual({ workflow_run_id: "run-1", stage_instance_id: "stage-2", unit_id: "0", operator_role: "assessment" });
 });
 
+test("a resolved config with no session_identity is a hard parse error, not a silently omitted workflow member", async () => {
+  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl.test", executor_function_identity: "v2", fetch: async () => new Response(null) });
+  await expect(adapter.start_or_attach({
+    execution_id: "execution-1" as ExecutionId, stage_instance_id: "stage-1" as StageInstanceId, unit_id: "unit-1" as UnitId,
+    executor_type: "delegated_session", resolved_config: { runtime: "claude-code", rendered_prompt: "Build", workdir: "/repo", session_name: "builder", model: null, effort: null },
+    inputs: [], declared_outputs: [], expected_artifacts: [],
+  }, attempt("run:1:stage:build:unit:web"))).rejects.toThrow("session_identity");
+});
+
 test("worktree branch bases select the remote-tracking ref while immutable SHAs stay unchanged", () => {
   expect(selectRemoteWorktreeBase("epic/test")).toBe("origin/epic/test");
   expect(selectRemoteWorktreeBase("origin/epic/test")).toBe("origin/epic/test");
