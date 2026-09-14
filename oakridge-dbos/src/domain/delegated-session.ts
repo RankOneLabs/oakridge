@@ -2,6 +2,24 @@ import type { JsonValue } from "./primitives";
 import type { StageOperatorRole } from "./workflow";
 
 /**
+ * The workflow identity a delegated session is launched for — forwarded to
+ * kbbl (migration 029's `acp_sessions` columns) so the session list can
+ * group a cohort's build and assessment sessions together. `run_id` and
+ * `stage_instance_id` name the execution; `unit_id` is the fan-out item (or
+ * `"0"` for a scalar stage); `operator_role`, `cohort_title` and
+ * `repository_key` are the human-facing labels a grouped session list
+ * renders.
+ */
+export interface SessionIdentity {
+  readonly run_id: string;
+  readonly stage_instance_id: string;
+  readonly unit_id: string;
+  readonly operator_role: StageOperatorRole | null;
+  readonly cohort_title: string | null;
+  readonly repository_key: string | null;
+}
+
+/**
  * The agent runtimes a delegated session can run on.
  *
  * Named because the pair was spelled out inline everywhere it was checked — the
@@ -89,4 +107,5 @@ export interface ResolvedExecutorConfig {
   readonly effort: string | null;
   readonly worktree?: WorktreeIdentity;
   readonly executor_options: JsonValue;
+  readonly session_identity: SessionIdentity;
 }

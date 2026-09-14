@@ -1,8 +1,9 @@
 import type { MaterializedExecutionUnit } from "../domain/compiled-workflow";
-import { isDelegatedRuntimeId, type Bindable, type DelegatedSessionDefinitionConfig, type ResolvedExecutorConfig, type SlotBinding } from "../domain/delegated-session";
+import { isDelegatedRuntimeId, type Bindable, type DelegatedSessionDefinitionConfig, type ResolvedExecutorConfig, type SessionIdentity, type SlotBinding } from "../domain/delegated-session";
 import type { ArtifactEnvelope } from "../domain/execution";
-import { err, ok, type JsonValue, type Result, type StageInstanceId } from "../domain/primitives";
+import { err, ok, type JsonValue, type Result, type StageInstanceId, type WorkflowRunId } from "../domain/primitives";
 import { readJsonPointer } from "../domain/json-pointer";
+import type { StageOperatorRole } from "../domain/workflow";
 
 export interface ResolveExecutionError { readonly operation: "resolve_execution"; readonly detail: string }
 export interface BindingEnvironment {
@@ -16,6 +17,8 @@ export interface ResolveDelegatedExecutionInput {
   readonly unit: MaterializedExecutionUnit;
   readonly stage_instance_id: StageInstanceId;
   readonly prompt_template: string;
+  readonly run_id: WorkflowRunId;
+  readonly operator_role: StageOperatorRole | null;
 }
 
 
@@ -110,6 +113,23 @@ const renderPrompt = (template: string, slots: Readonly<Record<string, string>>)
  */
 const IDENTITY_SLOTS = ["UNIT_ID", "STAGE_INSTANCE_ID"] as const;
 
+/**
+ * Reserved slot names read back out for `session_identity` after ordinary
+ * binding resolution, rather than defined here: `dev_flow_v14`'s build stage
+ * already binds `COHORT_TITLE` and `REPOSITORY_KEY` on its `fan_out.item_bindings`
+ * (and `REPOSITORY_KEY` alone on `assessor`), so reading them back needs no
+ * definition change. A stage that binds neither yields a `session_identity`
+ * with both fields `null` — the assessor stage has no title of its own by
+ * construction; its session list entry inherits one from its build sibling.
+ */
+const COHORT_TITLE_SLOT = "COHORT_TITLE";
+const REPOSITORY_KEY_SLOT = "REPOSITORY_KEY";
+
+const stringSlot = (slots: Readonly<Record<string, string>>, name: string): string | null => {
+  const value = slots[name];
+  return typeof value === "string" && value.length > 0 ? value : null;
+};
+
 export const resolveDelegatedExecution = (input: ResolveDelegatedExecutionInput): Result<ResolvedExecutorConfig, ResolveExecutionError> => {
   const environment = { ...input.environment, item: input.unit.parameters };
   const slots: Record<string, string> = {};
@@ -128,6 +148,14 @@ export const resolveDelegatedExecution = (input: ResolveDelegatedExecutionInput)
     STAGE_INSTANCE_ID: input.stage_instance_id,
   } satisfies Record<(typeof IDENTITY_SLOTS)[number], string>;
   Object.assign(slots, identity);
+  const session_identity: SessionIdentity = {
+    run_id: input.run_id,
+    stage_instance_id: input.stage_instance_id,
+    unit_id: input.unit.unit_id,
+    operator_role: input.operator_role,
+    cohort_title: stringSlot(slots, COHORT_TITLE_SLOT),
+    repository_key: stringSlot(slots, REPOSITORY_KEY_SLOT),
+  };
   const prompt = renderPrompt(input.prompt_template, slots);
   if (!prompt.ok) return prompt;
   const runtime = resolveBindable(input.definition.runtime, environment);
@@ -157,5 +185,6 @@ export const resolveDelegatedExecution = (input: ResolveDelegatedExecutionInput)
   return ok({ executor_type: "delegated_session", runtime: runtime.value, rendered_prompt: prompt.value, workdir: workdir.value,
     session_name: substituteIdentity(input.definition.session_name),
     model: model.value, effort: effort.value, ...(worktree ? { worktree } : {}),
-    executor_options: { pre_authorized_tools: input.definition.pre_authorized_tools ?? [], yolo: input.definition.yolo ?? false } });
+    executor_options: { pre_authorized_tools: input.definition.pre_authorized_tools ?? [], yolo: input.definition.yolo ?? false },
+    session_identity });
 };

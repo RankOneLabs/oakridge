@@ -6,10 +6,11 @@ import type { StageInputSet } from "../src/decision/commands";
 import type { CompiledStageContract, MaterializedExecutionUnit } from "../src/domain/compiled-workflow";
 import type { DelegatedSessionDefinitionConfig } from "../src/domain/delegated-session";
 import type { ArtifactEnvelope } from "../src/domain/execution";
-import type { ArtifactId, JsonValue, StageInstanceId, UnitId } from "../src/domain/primitives";
+import type { ArtifactId, JsonValue, StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
 import { loadDevFlowV14 } from "../src/seed/dev-flow-v14";
 
 const stageInstanceId = "stage-1" as StageInstanceId;
+const runId = "run-1" as WorkflowRunId;
 const context = {
   brief_notes: "Build the requested change",
   base_branch: "epic/test",
@@ -53,7 +54,8 @@ const loadCompiled = async () => {
 const resolveStage = async (stage: CompiledStageContract, unit: MaterializedExecutionUnit, inputs: StageInputSet) => {
   const definition = stage.executor.definition_config as DelegatedSessionDefinitionConfig;
   const template = await Bun.file(new URL(`../../workflow-config/prompts/${definition.prompt_template_path}`, import.meta.url)).text();
-  return resolveDelegatedExecution({ definition, environment: { inputs, context, item: null }, unit, stage_instance_id: stageInstanceId, prompt_template: template });
+  return resolveDelegatedExecution({ definition, environment: { inputs, context, item: null }, unit, stage_instance_id: stageInstanceId, prompt_template: template,
+    run_id: runId, operator_role: stage.operator_role });
 };
 
 const scalarUnit: MaterializedExecutionUnit = { unit_id: "0" as UnitId, parameters: {}, depends_on: [] };
