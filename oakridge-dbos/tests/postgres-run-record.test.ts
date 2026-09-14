@@ -428,6 +428,7 @@ test("a rejected gated output is replaced by the operator's retry as a fresh cha
   expect(createHash("sha256").update(publication.capability).digest("hex")).toBe(stored.capability_hash);
   expect(stored.capability_hash).not.toBe(fixture.capabilityHash);
   expect(stored.execution_request.execution_id).toBe(retry.work_order.id as unknown as ExecutionId);
+  expect((stored.execution_request.resolved_config as { readonly session_name?: string }).session_name).toBe(retry.work_order.id);
   expect(stored.execution_request.expected_artifacts).toEqual([{ unit_id: "planner" as UnitId, output_name: "plan", artifact_type: "dev.plan" as never }]);
   const retryPrompt = (stored.execution_request.resolved_config as { readonly rendered_prompt: string }).rendered_prompt;
   expect(retryPrompt).toContain("redo it");

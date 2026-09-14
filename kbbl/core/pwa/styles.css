@@ -1289,6 +1289,18 @@ body {
   font-weight: 600;
   letter-spacing: 0.04em;
 }
+.session-row-role {
+  background: var(--bg-code);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-muted);
+  border-radius: 3px;
+  padding: 0.1rem 0.4rem;
+  font-family: "SF Mono", Menlo, monospace;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
 .session-row-model,
 .session-row-effort {
   font-size: 0.7rem;
@@ -4820,6 +4832,56 @@ a:focus-visible {
 [data-theme="light"] .or-btn--primary,
 [data-theme="light"] .or-decision-button--primary {
   color: #fff;
+}
+
+.session-cohort-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 1.75rem;
+  max-width: 70rem;
+  margin: 0;
+}
+
+.session-cohort-group--ungrouped {
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.session-cohort-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0 0 0.6rem;
+}
+
+.session-cohort-heading__title {
+  color: var(--text-primary);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.session-cohort-heading--plain {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.session-cohort-heading__id {
+  color: var(--text-faint);
+  font-family: "SF Mono", Menlo, monospace;
+  font-size: 0.75rem;
+}
+
+.session-cohort-heading__repo {
+  color: var(--text-secondary);
+  background: var(--bg-code);
+  border-radius: 3px;
+  padding: 0.1rem 0.4rem;
+  font-family: "SF Mono", Menlo, monospace;
+  font-size: 0.7rem;
 }
 
 .session-list {

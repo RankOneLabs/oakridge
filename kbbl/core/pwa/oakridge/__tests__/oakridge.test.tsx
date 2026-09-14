@@ -7,7 +7,8 @@ import { RunListView } from "../views/RunListView";
 import { RunDetailView } from "../views/RunDetailView";
 import { ArtifactReviewView } from "../views/ArtifactReviewView";
 import { GlobalParkedGateList } from "../ParkedGateList";
-import type { RunSummary, RunDetail, ArtifactDetail, ParkedGate, RepositoryKey, EpicProfileId, WorkflowRunId } from "../types";
+import type { RunSummary, RunDetail, ArtifactDetail, ParkedGate, RepositoryKey, CohortId, EpicProfileId, StageUnitParams, WorkflowRunId } from "../types";
+import type { BuildBrief } from "../lib/build-brief";
 
 type FetchHandler = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -32,6 +33,30 @@ function json(body: unknown, status = 200): Response {
 }
 
 afterEach(() => vi.restoreAllMocks());
+
+/**
+ * A stage unit's `params` is the minted fan-out item (`{unit_id, artifact}`)
+ * — a build unit's `artifact` is a `dev.build_brief` body. Fixtures build a
+ * full valid BuildBrief rather than the flat ad hoc shape this replaced, so
+ * `selectCohortBrief`'s `isBuildBrief` guard accepts them the way it accepts
+ * a real one.
+ */
+function buildBriefParams(overrides: Partial<BuildBrief> = {}): StageUnitParams {
+  const artifact: BuildBrief = {
+    cohort_id: "cohort-a" as CohortId,
+    repository_key: "oakridge" as RepositoryKey,
+    title: "Untitled cohort",
+    depends_on: [],
+    goal: "",
+    files_in_scope: [],
+    decisions_made: [],
+    approaches_rejected: [],
+    acceptance_criteria: [],
+    next_action: "",
+    ...overrides,
+  };
+  return { unit_id: artifact.cohort_id, artifact };
+}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Fixtures
@@ -266,16 +291,16 @@ describe("RunDetailView", () => {
           admitted: false,
           admission_eligible: true,
           admission_blocked_by: [],
-          params: {
+          params: buildBriefParams({
             title: "Build the cohort UI",
-            scope: "Operator workflow",
-            description: "Expose the materialized cohort brief.",
+            goal: "Operator workflow",
+            next_action: "Expose the materialized cohort brief.",
             files_in_scope: ["kbbl/core/pwa/oakridge"],
-            decisions: ["Reuse the run table"],
+            decisions_made: [{ decision: "Reuse the run table", rationale: "Avoids a second table" }],
             acceptance_criteria: ["Admission is explicit"],
             depends_on: ["spec"],
-            repository_key: "oakridge",
-          },
+            repository_key: "oakridge" as RepositoryKey,
+          }),
         }],
       }],
     };
@@ -290,6 +315,8 @@ describe("RunDetailView", () => {
     wrap(<RunDetailView runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
 
     expect(await screen.findByText("Build the cohort UI")).toBeTruthy();
+    expect(screen.getByText("Operator workflow")).toBeTruthy();
+    expect(screen.getByText("kbbl/core/pwa/oakridge")).toBeTruthy();
     expect(screen.getByText("Admission is explicit")).toBeTruthy();
     expect(screen.getByTestId("or-admit-unit-btn")).toBeTruthy();
   });
@@ -306,7 +333,7 @@ describe("RunDetailView", () => {
       admitted: false,
       admission_eligible: false,
       admission_blocked_by: ["cohort-a", "schema-review"],
-      params: { title: "Blocked cohort", depends_on: ["cohort-a", "schema-review"] },
+      params: buildBriefParams({ title: "Blocked cohort", depends_on: ["cohort-a", "schema-review"] }),
     };
     const detail: RunDetail = {
       ...RUN_DETAIL_FIXTURE,
@@ -333,7 +360,7 @@ describe("RunDetailView", () => {
         status: "parked", artifacts: [], delegated_kbbl_sid: null, worktree: null,
         units: [{
           unit_id: "cohort-a", repository_key: "oakridge" as RepositoryKey, sid: null, worktree: null,
-          status: "failed", gate: null, params: { title: "Failed build" },
+          status: "failed", gate: null, params: buildBriefParams({ title: "Failed build" }),
         }],
       }],
     };
@@ -365,7 +392,7 @@ describe("RunDetailView", () => {
         status: "running", artifacts: [], delegated_kbbl_sid: null, worktree: null,
         units: [{
           unit_id: "cohort-a", repository_key: "oakridge" as RepositoryKey, sid: null, worktree: null,
-          status: "running", gate: null, params: { title: "Rejected build" },
+          status: "running", gate: null, params: buildBriefParams({ title: "Rejected build" }),
         }],
       }],
     };
@@ -414,7 +441,7 @@ describe("RunDetailView", () => {
         status: "running", artifacts: [], delegated_kbbl_sid: null, worktree: null,
         units: [{
           unit_id: "cohort-a", repository_key: "oakridge" as RepositoryKey, sid: null, worktree: null,
-          status: "failed", gate: null, params: { title: "Failed build" },
+          status: "failed", gate: null, params: buildBriefParams({ title: "Failed build" }),
         }],
       }],
     };

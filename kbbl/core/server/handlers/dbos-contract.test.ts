@@ -75,6 +75,10 @@ function makeRequest(overrides: {
       rendered_prompt: overrides.prompt ?? "analyze the spec",
       workdir: overrides.workdir ?? repoDir,
       session_name: `contract-${overrides.execution_id}`,
+      session_identity: {
+        run_id: "run-1", stage_instance_id: "stage-1", unit_id: "0",
+        operator_role: "spec", cohort_title: null, repository_key: null,
+      },
       ...(overrides.worktree ? { worktree: overrides.worktree } : {}),
     },
     inputs: [],

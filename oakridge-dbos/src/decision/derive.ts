@@ -129,6 +129,12 @@ interface DriverParseSpec { readonly unit_id_path: string; readonly depends_on_p
 const parseUnit = (item: JsonValue, spec: DriverParseSpec): Result<MaterializedExecutionUnit, { readonly path: string; readonly detail: string }> => {
   const id = readJsonPointer(item, spec.unit_id_path);
   if (typeof id !== "string" || id.length === 0) return err({ path: spec.unit_id_path, detail: `unit_id at '${spec.unit_id_path}' must be a non-empty string` });
+  // "0" is reserved for the unit `scalar` and `artifact_collection` stages
+  // always mint (see `mintUnits` below) — a session's grouping identity
+  // (kbbl's `pwa-session-order.ts`) reads unit_id "0" as "no cohort" for
+  // exactly that reason. A fan-out cohort minting "0" would silently
+  // collide with that sentinel instead of failing loudly here.
+  if (id === "0") return err({ path: spec.unit_id_path, detail: `unit_id at '${spec.unit_id_path}' must not be '0' — that value is reserved for scalar and artifact_collection stages` });
   const dependsOnPath = spec.depends_on_path;
   const rawDependencies = dependsOnPath === null ? [] : readJsonPointer(item, dependsOnPath);
   if (!Array.isArray(rawDependencies) || rawDependencies.some((dependency) => typeof dependency !== "string" || dependency.length === 0))

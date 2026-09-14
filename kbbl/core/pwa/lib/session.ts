@@ -1,4 +1,5 @@
 import type { SessionSnapshot } from "../types";
+import { compareSessionsByActivity } from "../../acp/pwa-session-order";
 
 const SLUG_ADJ = [
   "amber","azure","brave","bright","calm","clever","cobalt","cozy","crimson",
@@ -52,14 +53,24 @@ export function sessionLabelTitle(snapshot: SessionSnapshot, sid: string): strin
   return lines.join("\n");
 }
 
+/**
+ * A cohort session's row label once it has a workflow identity: role and
+ * unit id, with none of the stage-instance uuid the raw `session_name`
+ * template embeds. The operator role is also rendered as its own element
+ * beside this label — the two are complementary, not duplicates: the badge
+ * is a quick visual scan target, this is the identifying text.
+ */
+export function selectSessionCohortLabel(
+  workflow: NonNullable<SessionSnapshot["workflow"]>,
+): string {
+  return `${workflow.operatorRole ?? "session"}-${workflow.unitId}`;
+}
+
 export function sortSessions(sessions: Map<string, SessionSnapshot>): SessionSnapshot[] {
   // Sort by last activity, newest first. Pending-approval sessions don't
   // float — the pending badge is visible enough, and operators told us
   // they'd rather preserve predictable chronological order.
-  return [...sessions.values()].sort((a, b) => {
-    if (a.lastActivityTs === b.lastActivityTs) return 0;
-    return a.lastActivityTs < b.lastActivityTs ? 1 : -1;
-  });
+  return [...sessions.values()].sort(compareSessionsByActivity);
 }
 
 export async function resumeSession(

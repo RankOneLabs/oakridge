@@ -1,0 +1,93 @@
+{
+  "unit_id": "acceptance-and-browser",
+  "artifact": {
+    "goal": "Close out the required cases that only exist once the server, exporter, frontend and CLI are all real \u2014 non-mutation after serve and export, hostile-string rendering in Chromium, verification scope behaviour, the full file:// navigation circuit with zero HTTP requests, and the wheel-install checks with and without the review extra \u2014 and wire the section 10 acceptance gate, including the grep invariant encoded as a test.",
+    "title": "End-to-end, browser, offline and packaging acceptance",
+    "cohort_id": "acceptance-and-browser",
+    "depends_on": [
+      "review-cli",
+      "frontend-bundle"
+    ],
+    "next_action": "Create tests/test_review_acceptance.py with the two cheapest cross-component gates first: required case 5 (serve and export against the fixture store and its bundle, then assert verify_bundle returns () and nothing was written inside objects/sha256/), and the section 10 grep test asserting execute_plan, compile_plan and persist_report appear nowhere under src/assay/review/ or web/.",
+    "decisions_made": [
+      {
+        "decision": "Required case 5 is asserted after actually serving and exporting against the fixture store and its bundle: verify_bundle on the exported bundle still returns no failures and nothing was written inside objects/sha256/.",
+        "rationale": "The read-only property is only meaningful if it survives the full surface running against the store, not just a unit-level claim about each function."
+      },
+      {
+        "decision": "Required case 14 opens the export in Chromium with the shared hostile-string fixture values placed in source, paths, labels and diagnostics, and asserts no injected code runs and every decoded and displayed string is exactly as recorded.",
+        "rationale": "Escaping correctness is a property of the rendered document, not of the escaper in isolation; the same constant set is used by the server, exporter and browser suites so no surface is tested against its own payloads."
+      },
+      {
+        "decision": "Required case 15 covers both verification scopes on a working store with multiple runs and an unrelated blob (root passes, exact-bundle reports extra objects), both scopes on the appropriate exact bundle, current-report verification explicitly including recomputation, stale-engine report verification returning partial with its closure checks named and never full success while corrupt bytes still return failed, and GET being unable to trigger either POST-only action.",
+        "rationale": "The scope distinction is the whole point of offering two; an implementation that quietly treats them the same would pass any weaker test."
+      },
+      {
+        "decision": "Required case 21 opens the exported HTML via file:// and navigates the grid, cell detail, every arm pair, ambiguity links, traces, object downloads and report-linked runs, exercises fragment reload and back/forward, and asserts zero HTTP(S) requests by denying all requests at the browser level; verification, recompute and refresh stay disabled with reasons.",
+        "rationale": "Denying at the browser level is what makes a fetch fallback fail the test rather than silently succeed against a reachable server."
+      },
+      {
+        "decision": "External-reference assertions inspect actual DOM attributes; object text that merely looks like a URL is treated as legitimate data.",
+        "rationale": "Evidence routinely contains URL-shaped strings; flagging them would make the assertion fail on healthy fixtures and train people to loosen it."
+      },
+      {
+        "decision": "Required case 24 builds the wheel, installs it WITHOUT the review extra into a clean venv outside the source checkout and exercises discovery and static export there while `assay review serve` reports its missing dependency, then installs WITH the extra and serves the committed assets from outside the source checkout; browser tests confirm loading/empty/error states, keyboard access, action pending states, and separate labels for missing, negative and ambiguous data.",
+        "rationale": "Running from outside the checkout is what stops an asset accidentally resolved from the working tree from passing the test."
+      },
+      {
+        "decision": "The section 10 grep invariant \u2014 execute_plan, compile_plan and persist_report appear nowhere under src/assay/review/ or web/ \u2014 is encoded as a test.",
+        "rationale": "A one-time manual grep is true on the day it is run; a test keeps it true."
+      },
+      {
+        "decision": "Static-export browser tests deny all HTTP(S) requests; HTTP tests use the in-process ASGI client; no test makes a provider call or needs Docker or the network; toolchain and browser binaries are installed during CI setup, not as package runtime requirements.",
+        "rationale": "Keeps the suite hermetic and keeps Playwright and Bun out of the shipped package's dependency surface."
+      },
+      {
+        "decision": "This work is its own cohort rather than folded into whichever earlier cohort finishes last.",
+        "rationale": "Cross-component cases with no clear owner are the ones that get quietly dropped."
+      }
+    ],
+    "files_in_scope": [
+      "tests/test_review_acceptance.py",
+      "tests/test_review_packaging.py",
+      "web/tests/",
+      ".github/workflows/ci.yml"
+    ],
+    "repository_key": "assay",
+    "acceptance_criteria": [
+      "All 24 required cases in spec section 9.1 have passing tests.",
+      "Opening the export in Chromium with the hostile-string fixture sets no injected global, executes no injected script, and displays every string exactly as recorded.",
+      "The file:// export completes a full navigation circuit (grid, cell detail, every arm pair, ambiguity links, traces, object downloads, report-linked runs, fragment reload, back/forward) with zero HTTP(S) requests observed.",
+      "Root verification passes on a working store with an unrelated blob while bundle verification reports extra objects; both pass on the exact bundle; stale-engine report verification returns partial and corrupt bytes return failed.",
+      "The wheel installed without the extra, outside the source checkout, runs discovery and static export, and `assay review serve` reports the missing extra; installed with the extra it serves the committed assets from outside the checkout.",
+      "No occurrence of execute_plan, compile_plan or persist_report exists under src/assay/review/ or web/, asserted by a test.",
+      "The full section 10 acceptance gate passes, including `uv build` with no Bun or Node on PATH."
+    ],
+    "approaches_rejected": [
+      {
+        "reason": "If a server happens to be reachable, a fetch fallback succeeds silently and the test passes; denying all requests at the browser level makes the fallback fail loudly.",
+        "approach": "Allow HTTP(S) requests during the static-export browser tests and simply assert none were observed."
+      },
+      {
+        "reason": "A static asset resolved by accident from the working tree would pass, which is precisely the regression the check exists to catch.",
+        "approach": "Run the wheel-install checks from inside the source checkout."
+      },
+      {
+        "reason": "It is only true on the day it is run; as a test it stays true.",
+        "approach": "Leave the execute_plan / compile_plan / persist_report grep as a manual pre-merge check."
+      },
+      {
+        "reason": "Evidence legitimately contains URL-shaped text; the assertion inspects real DOM attributes instead.",
+        "approach": "Flag any object-derived string containing a URL as an external reference."
+      },
+      {
+        "reason": "They only exist once all four components are real, and without an owner they get dropped.",
+        "approach": "Fold the cross-component cases into the server, exporter or frontend cohort."
+      },
+      {
+        "reason": "They are CI setup concerns; adding them to the package would contradict the core-only installation requirement.",
+        "approach": "Make Playwright or Bun a package runtime requirement so the browser tests can run anywhere."
+      }
+    ]
+  }
+}

@@ -101,6 +101,23 @@ export type AcpSessionStatus =
   | "failed"
   | "unknown";
 
+/**
+ * The workflow identity a v2 delegated session was launched for (migration
+ * 029). Absence is the nullable throughout: a hand-started POST /sessions
+ * session, and every session predating this migration, carries none.
+ * `workflow_run_id`, `stage_instance_id` and `unit_id` are required together
+ * — the row reader yields `null` unless all three stored columns are
+ * non-null.
+ */
+export interface AcpSessionWorkflowIdentity {
+  workflow_run_id: string;
+  stage_instance_id: string;
+  unit_id: string;
+  operator_role: string | null;
+  cohort_title: string | null;
+  repository_key: string | null;
+}
+
 export interface AcpSessionRow {
   sid: KbblSessionId;
   resumable_key: ResumableKey | null;
@@ -123,6 +140,7 @@ export interface AcpSessionRow {
   last_activity_at: string;
   created_at: string;
   updated_at: string;
+  workflow: AcpSessionWorkflowIdentity | null;
 }
 
 /**
@@ -235,6 +253,7 @@ export interface AcpSessionSnapshot {
   fenced_by: string | null;
   last_activity_at: string;
   created_at: string;
+  workflow: AcpSessionWorkflowIdentity | null;
 }
 
 export type EnsureResult =

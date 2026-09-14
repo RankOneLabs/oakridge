@@ -48,6 +48,15 @@ function parseTerminalFailure(raw: unknown): KbblTerminalFailure | null {
   return { code, detail: typeof detail === "string" && detail !== "" ? detail : code };
 }
 
+interface KbblResolvedSessionIdentity {
+  readonly run_id: string;
+  readonly stage_instance_id: string;
+  readonly unit_id: string;
+  readonly operator_role: string | null;
+  readonly cohort_title: string | null;
+  readonly repository_key: string | null;
+}
+
 interface KbblResolvedConfig {
   readonly runtime: "claude-code" | "codex";
   readonly rendered_prompt: string;
@@ -58,6 +67,7 @@ interface KbblResolvedConfig {
   readonly artifact_id: string | null;
   readonly worktree: { readonly branchName: string; readonly worktreeSubdir: string; readonly baseRef?: string } | null;
   readonly publication: { readonly base_url: string; readonly work_order_id: string; readonly capability: string } | null;
+  readonly session_identity: KbblResolvedSessionIdentity;
 }
 
 interface KbblSessionSummary {
@@ -99,7 +109,30 @@ const parseResolvedConfig = (value: JsonValue): KbblResolvedConfig => {
   const rawPublication = value.publication;
   const publication = isObject(rawPublication) && typeof rawPublication.base_url === "string" && typeof rawPublication.work_order_id === "string" && typeof rawPublication.capability === "string"
     ? { base_url: rawPublication.base_url, work_order_id: rawPublication.work_order_id, capability: rawPublication.capability } : null;
-  return { runtime, rendered_prompt: renderedPrompt, workdir, session_name: sessionName, model, effort, artifact_id: artifactId, worktree, publication };
+  const session_identity = parseSessionIdentity(value.session_identity);
+  return { runtime, rendered_prompt: renderedPrompt, workdir, session_name: sessionName, model, effort, artifact_id: artifactId, worktree, publication, session_identity };
+};
+
+/**
+ * Every v2 delegated session now carries a `session_identity` (§2 of this
+ * cohort) — a resolved config missing it is a hard parse error, not a
+ * silently omitted member, since forwarding it is the whole point of this
+ * adapter change.
+ */
+const parseSessionIdentity = (value: JsonValue): KbblResolvedSessionIdentity => {
+  if (!isObject(value)) throw new Error("kbbl resolved config is missing session_identity");
+  const { run_id, stage_instance_id, unit_id, operator_role, cohort_title, repository_key } = value;
+  if (typeof run_id !== "string" || run_id.length === 0
+    || typeof stage_instance_id !== "string" || stage_instance_id.length === 0
+    || typeof unit_id !== "string" || unit_id.length === 0) {
+    throw new Error("kbbl resolved config session_identity is missing required fields");
+  }
+  return {
+    run_id, stage_instance_id, unit_id,
+    operator_role: typeof operator_role === "string" ? operator_role : null,
+    cohort_title: typeof cohort_title === "string" ? cohort_title : null,
+    repository_key: typeof repository_key === "string" ? repository_key : null,
+  };
 };
 
 /**
@@ -217,6 +250,14 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
         ...(config.worktree ? { worktree: { branch_name: config.worktree.branchName, worktree_subdir: config.worktree.worktreeSubdir,
           ...(config.worktree.baseRef ? { base_ref: selectRemoteWorktreeBase(config.worktree.baseRef) } : {}) } } : {}),
         ...(inheritedSessionId ? { inherit_worktree_from: inheritedSessionId } : {}),
+        workflow: {
+          workflow_run_id: config.session_identity.run_id,
+          stage_instance_id: config.session_identity.stage_instance_id,
+          unit_id: config.session_identity.unit_id,
+          ...(config.session_identity.operator_role ? { operator_role: config.session_identity.operator_role } : {}),
+          ...(config.session_identity.cohort_title ? { cohort_title: config.session_identity.cohort_title } : {}),
+          ...(config.session_identity.repository_key ? { repository_key: config.session_identity.repository_key } : {}),
+        },
       }),
     });
     if (!response.ok) throw new Error(`kbbl ensure-session failed (${response.status}): ${await response.text()}`);

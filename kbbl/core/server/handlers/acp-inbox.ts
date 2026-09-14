@@ -12,6 +12,7 @@ import { streamSSE } from "hono/streaming";
 
 import type { AcpSessionService } from "../../acp/session-service";
 import { toPwaSessionSnapshot, type PwaSessionSnapshot } from "../../acp/pwa-wire";
+import { compareSessionsByActivity } from "../../acp/pwa-session-order";
 
 const HEARTBEAT_MS = 15_000;
 /** Trailing coalesce window: a burst of store writes (provision, turn
@@ -24,10 +25,7 @@ export function listPwaSessions(acp: AcpSessionService): PwaSessionSnapshot[] {
     .map((session) =>
       toPwaSessionSnapshot(session, acp.pendingPermissionCount(session.sid)),
     )
-    .sort((left, right) => {
-      if (left.lastActivityTs === right.lastActivityTs) return 0;
-      return left.lastActivityTs < right.lastActivityTs ? 1 : -1;
-    });
+    .sort(compareSessionsByActivity);
 }
 
 export function acpInboxHandler(acp: AcpSessionService) {

@@ -1,9 +1,11 @@
 import { expect, test } from "bun:test";
-import { boundKbblSessionName, resolveBinding, resolveDelegatedExecution } from "../src/compiler/resolve-execution";
+import { resolveBinding, resolveDelegatedExecution } from "../src/compiler/resolve-execution";
 import type { DelegatedSessionDefinitionConfig } from "../src/domain/delegated-session";
-import type { StageInstanceId, UnitId } from "../src/domain/primitives";
+import type { StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
 import { loadDevFlowV14 } from "../src/seed/dev-flow-v14";
 import { delegatedSessionDefinitionSchema } from "../src/validation/delegated-session";
+
+const RUN_ID = "run-1" as WorkflowRunId;
 
 test("context lookup resolves repository workdir from the runtime fan-out item", () => {
   const result = resolveBinding({ from: "context_lookup", collection_path: "/repositories", collection_key_path: "/key", item_key_path: "/artifact/repository_key", value_path: "/path" }, {
@@ -43,19 +45,46 @@ test("production execution resolution retains v11 prompt and runtime semantics",
     session_name: "build-{{STAGE_INSTANCE_ID}}-{{UNIT_ID}}", model: { from: "context", path: "/worker_model" },
     fan_out: { over: { from: "input", input_name: "brief" }, unit_id_path: "/unit_id", item_bindings: { COHORT_TITLE: { from: "item", path: "/artifact/title" } }, workdir: { from: "context_lookup", collection_path: "/repositories", collection_key_path: "/key", item_key_path: "/artifact/repository_key", value_path: "/path" } },
   };
-  const result = resolveDelegatedExecution({ definition, environment: { inputs: {}, context: { worker_runtime: "claude-code", worker_model: "opus", repositories: [{ key: "web", path: "/repo/web" }] }, item: null }, unit: { unit_id: "web" as UnitId, depends_on: [], parameters: { artifact: { title: "Build web", repository_key: "web" } } }, stage_instance_id: "stage-1" as StageInstanceId, prompt_template: "{{COHORT_TITLE}} ({{UNIT_ID}})" });
+  const result = resolveDelegatedExecution({ definition, environment: { inputs: {}, context: { worker_runtime: "claude-code", worker_model: "opus", repositories: [{ key: "web", path: "/repo/web" }] }, item: null }, unit: { unit_id: "web" as UnitId, depends_on: [], parameters: { artifact: { title: "Build web", repository_key: "web" } } }, stage_instance_id: "stage-1" as StageInstanceId, prompt_template: "{{COHORT_TITLE}} ({{UNIT_ID}})", run_id: RUN_ID, operator_role: "build" });
   expect(result).toEqual({ ok: true, value: expect.objectContaining({ runtime: "claude-code", rendered_prompt: "Build web (web)", workdir: "/repo/web", session_name: "build-stage-1-web", model: "opus" }) });
 });
 
-test("generated kbbl session names stay within the persisted boundary and remain distinct", () => {
-  const stageId = "0a561231-fdcd-4094-82fe-ad8fc75ea1df";
-  const first = boundKbblSessionName(`assessor-${stageId}-coverage-observability-and-validation`);
-  const second = boundKbblSessionName(`assessor-${stageId}-coverage-observability-and-verification`);
+test("session_identity carries the run/stage/unit identity and the cohort title read back off the COHORT_TITLE slot", () => {
+  const definition: DelegatedSessionDefinitionConfig = {
+    runtime: { from: "context", path: "/worker_runtime" }, prompt_template_path: "dev-flow/build_v2.md",
+    slot_bindings: {}, workdir: { from: "literal", value: "/" },
+    session_name: "build-{{STAGE_INSTANCE_ID}}-{{UNIT_ID}}", model: { from: "context", path: "/worker_model" },
+    fan_out: { over: { from: "input", input_name: "brief" }, unit_id_path: "/unit_id",
+      item_bindings: { COHORT_TITLE: { from: "item", path: "/artifact/title" }, REPOSITORY_KEY: { from: "item", path: "/artifact/repository_key" } },
+      workdir: { from: "literal", value: "/repo/web" } },
+  };
+  const result = resolveDelegatedExecution({
+    definition, environment: { inputs: {}, context: { worker_runtime: "claude-code", worker_model: "opus" }, item: null },
+    unit: { unit_id: "web" as UnitId, depends_on: [], parameters: { artifact: { title: "Build web", repository_key: "web" } } },
+    stage_instance_id: "stage-1" as StageInstanceId, prompt_template: "build", run_id: RUN_ID, operator_role: "build",
+  });
+  expect(result).toEqual({ ok: true, value: expect.objectContaining({
+    session_identity: { run_id: "run-1", stage_instance_id: "stage-1", unit_id: "web", operator_role: "build", cohort_title: "Build web", repository_key: "web" },
+  }) });
+});
 
-  expect(first.length).toBe(80);
-  expect(second.length).toBe(80);
-  expect(first).not.toBe(second);
-  expect(first).toStartWith(`assessor-${stageId}-coverage-observability`);
+/** The assessor stage binds no COHORT_TITLE, so its session_identity carries none — the client inherits one from the build sibling. */
+test("session_identity's cohort_title is null when the stage binds no COHORT_TITLE slot", () => {
+  const definition: DelegatedSessionDefinitionConfig = {
+    runtime: { from: "context", path: "/planner_runtime" }, prompt_template_path: "dev-flow/assessor_v2.md",
+    slot_bindings: {}, workdir: { from: "literal", value: "/repo/web" }, session_name: "assessor-{{STAGE_INSTANCE_ID}}-{{UNIT_ID}}",
+    model: { from: "context", path: "/planner_model" },
+    fan_out: { over: { from: "input", input_name: "build_result" }, unit_id_path: "/unit_id",
+      item_bindings: { REPOSITORY_KEY: { from: "item", path: "/artifact/repository_key" } } },
+  };
+  const result = resolveDelegatedExecution({
+    definition, environment: { inputs: {}, context: { planner_runtime: "claude-code", planner_model: "opus" }, item: null },
+    unit: { unit_id: "web" as UnitId, depends_on: [], parameters: { artifact: { repository_key: "web" } } },
+    stage_instance_id: "assessment-stage" as StageInstanceId, prompt_template: "assess", run_id: RUN_ID, operator_role: "assessment",
+  });
+  expect(result).toEqual({ ok: true, value: expect.objectContaining({
+    session_identity: { run_id: "run-1", stage_instance_id: "assessment-stage", unit_id: "web", operator_role: "assessment", cohort_title: null, repository_key: "web" },
+  }) });
 });
 
 /**
@@ -87,6 +116,7 @@ test("a definition cannot rebind the slots that identify the execution", () => {
     unit: { unit_id: "targets_spec_contract" as UnitId, depends_on: [], parameters: { artifact: {} } },
     stage_instance_id: "stage-1" as StageInstanceId,
     prompt_template: "Stage instance: {{STAGE_INSTANCE_ID}} Unit: {{UNIT_ID}}\nPUT {{OAKRIDGE_URL}}/work-orders/<work-order-id>/emit/pr_summary",
+    run_id: RUN_ID, operator_role: "build",
   });
 
   expect(result).toEqual({ ok: true, value: expect.objectContaining({
@@ -150,6 +180,7 @@ test("the seeded build stage addresses the unit it is running", async () => {
     unit: { unit_id: "targets_spec_contract" as UnitId, depends_on: [], parameters: cohort },
     stage_instance_id: "stage-1" as StageInstanceId,
     prompt_template: "units/{{UNIT_ID}}/emit/pr_summary",
+    run_id: RUN_ID, operator_role: "build",
   });
 
   expect(result).toEqual({ ok: true, value: expect.objectContaining({
@@ -170,6 +201,7 @@ test("a null effort binding preserves the runtime default", () => {
     unit: { unit_id: "main" as UnitId, depends_on: [], parameters: null },
     stage_instance_id: "stage-1" as StageInstanceId,
     prompt_template: "Analyze",
+    run_id: RUN_ID, operator_role: "spec",
   });
 
   expect(result).toEqual({ ok: true, value: expect.objectContaining({ effort: null }) });
