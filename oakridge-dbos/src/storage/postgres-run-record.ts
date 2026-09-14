@@ -530,7 +530,9 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       const rejectedOutputs = await transaction.query<import("../runtime/resolve-work-order").RejectedOutputContext>(`SELECT slot.output_name,slot.collection_key,
           artifact.id::text AS artifact_id,artifact.body,slot.invalidation_reason->>'detail' AS feedback
         FROM oakridge.run_output_slot slot JOIN oakridge.artifact artifact ON artifact.id=slot.artifact_revision_id
-        WHERE slot.run_unit_id=$1 AND slot.required AND slot.state='invalidated' ORDER BY slot.output_name,slot.collection_key`, [runUnitId]);
+        WHERE slot.run_unit_id=$1 AND slot.required AND slot.state='invalidated'
+          AND slot.invalidation_reason->>'kind'='operator'
+        ORDER BY slot.output_name,slot.collection_key`, [runUnitId]);
       // The new order gets publication authority minted for itself — the
       // basis's URL would point the agent at the abandoned order, and its
       // capability must not authenticate a second work order.

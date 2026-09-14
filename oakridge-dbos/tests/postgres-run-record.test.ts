@@ -838,16 +838,28 @@ test("collection members publish independently and one revision invalidates ever
   const artifactUnits = await sql!.query<{ readonly unit_id: string; readonly collection_key: string }>("SELECT unit_id,collection_key FROM oakridge.artifact WHERE work_order_id=$1 ORDER BY collection_key", [order.id]);
   expect(artifactUnits).toEqual([{ unit_id: "a", collection_key: "a" }, { unit_id: "b", collection_key: "b" }]);
   const replacementWorkOrderId = randomUUID() as WorkOrderId;
+  const replacementCapability = "input-revision-capability";
+  const revisedAt = new Date(Date.parse(collectionStage.materialized_at) + 1_000).toISOString();
   const revised = await setup.records.revise_unit_input({ run_unit_id: collectionStage.units[0]!.id, input_snapshot: [], input_fingerprint: "revised" as InputFingerprint,
-    revised_at: collectionStage.materialized_at, actor: "test", replacement_work_order: {
+    revised_at: revisedAt, actor: "test", replacement_work_order: {
       ...order, id: replacementWorkOrderId, workflow_id: `v2-work:${replacementWorkOrderId}`,
-      request: { ...order.request, execution_id: replacementWorkOrderId as unknown as import("../src/domain/primitives").ExecutionId },
+      capability_hash: createHash("sha256").update(replacementCapability).digest("hex"),
+      request: { ...order.request, execution_id: replacementWorkOrderId as unknown as import("../src/domain/primitives").ExecutionId,
+        declared_outputs: [{ name: "files", artifact_type: "dev.file", required: true }],
+        resolved_config: { rendered_prompt: "collect files", publication: { base_url: "http://oakridge.test", work_order_id: replacementWorkOrderId, capability: replacementCapability } } },
     } });
   expect(revised.kind).toBe("revised");
   const states = await sql!.query<{ readonly collection_key: string; readonly state: string }>("SELECT collection_key,state FROM oakridge.run_output_slot WHERE run_unit_id=$1 ORDER BY collection_key", [collectionStage.units[0]!.id]);
   expect(states).toEqual([{ collection_key: "a", state: "invalidated" }, { collection_key: "b", state: "invalidated" }]);
   const replacement = await sql!.query<{ readonly state: string; readonly reason: string }>("SELECT state,reason FROM oakridge.work_order WHERE id=$1", [replacementWorkOrderId]);
   expect(replacement).toEqual([{ state: "available", reason: "input_revision" }]);
+
+  await sql!.query("UPDATE oakridge.work_order SET state='abandoned',completed_at=$2::timestamptz WHERE id=$1", [replacementWorkOrderId, revisedAt]);
+  const retry = await setup.records.retry_unit({ target: { kind: "run_unit", run_unit_id: collectionStage.units[0]!.id }, idempotency_key: "retry-input-revision", actor: "operator:test" }, revisedAt);
+  expect(retry).toEqual(expect.objectContaining({ kind: "created" }));
+  if (retry.kind !== "created") return;
+  const retryConfig = (await storedWorkOrder(retry.work_order.id)).execution_request.resolved_config;
+  expect(JSON.stringify(retryConfig)).not.toContain("Requested output corrections");
 });
 
 test("run cancellation atomically terminalizes owned work, waits, units, stages, and the run", async () => {
