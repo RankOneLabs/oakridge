@@ -240,3 +240,31 @@ test("boot sweep fails prompting turns, retains accepted turns, and settles sess
   expect(store.getSession(provisioning.sid)?.status).toBe("failed");
   expect(store.getSession(provisioning.sid)?.end_reason).toBe("kbbl_restart");
 });
+
+test("listByArtifact reads back the stored workflow identity, not a raw undefined field", () => {
+  const store = makeStore();
+  const workflow: AcpSessionWorkflowIdentity = {
+    workflow_run_id: "run-1",
+    stage_instance_id: "stage-1",
+    unit_id: "cohort-a",
+    operator_role: "build",
+    cohort_title: "Targets spec contract",
+    repository_key: "pipefitter",
+  };
+  store.insertSession({
+    sid: "sid-1" as KbblSessionId,
+    resumable_key: null,
+    start_spec_hash: null,
+    agent_profile: "fake",
+    name: "test",
+    artifact_id: "artifact-1",
+    project_workdir: "/tmp/repo",
+    worktree_path: "/tmp/repo",
+    requested_model: null,
+    requested_effort: null,
+    workflow,
+  });
+
+  const [row] = store.listByArtifact("artifact-1");
+  expect(row?.workflow).toEqual(workflow);
+});

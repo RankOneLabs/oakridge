@@ -87,6 +87,22 @@ test("a resolved config with no session_identity is a hard parse error, not a si
   }, attempt("run:1:stage:build:unit:web"))).rejects.toThrow("session_identity");
 });
 
+/**
+ * `session_identity` normally arrives freshly typed from
+ * `resolveDelegatedExecution`, but `resolved_config` is a `JsonValue` that
+ * round-trips through storage for a retry/replay — a blank required id
+ * there should fail here, not one layer later as kbbl's own 400.
+ */
+test("a blank required identifier in session_identity is rejected rather than forwarded", async () => {
+  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl.test", executor_function_identity: "v2", fetch: async () => new Response(null) });
+  await expect(adapter.start_or_attach({
+    execution_id: "execution-1" as ExecutionId, stage_instance_id: "stage-1" as StageInstanceId, unit_id: "unit-1" as UnitId,
+    executor_type: "delegated_session", resolved_config: { runtime: "claude-code", rendered_prompt: "Build", workdir: "/repo", session_name: "builder", model: null, effort: null,
+      session_identity: { ...SESSION_IDENTITY, run_id: "" } },
+    inputs: [], declared_outputs: [], expected_artifacts: [],
+  }, attempt("run:1:stage:build:unit:web"))).rejects.toThrow("session_identity");
+});
+
 test("worktree branch bases select the remote-tracking ref while immutable SHAs stay unchanged", () => {
   expect(selectRemoteWorktreeBase("epic/test")).toBe("origin/epic/test");
   expect(selectRemoteWorktreeBase("origin/epic/test")).toBe("origin/epic/test");

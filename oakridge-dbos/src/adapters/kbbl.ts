@@ -122,7 +122,9 @@ const parseResolvedConfig = (value: JsonValue): KbblResolvedConfig => {
 const parseSessionIdentity = (value: JsonValue): KbblResolvedSessionIdentity => {
   if (!isObject(value)) throw new Error("kbbl resolved config is missing session_identity");
   const { run_id, stage_instance_id, unit_id, operator_role, cohort_title, repository_key } = value;
-  if (typeof run_id !== "string" || typeof stage_instance_id !== "string" || typeof unit_id !== "string") {
+  if (typeof run_id !== "string" || run_id.length === 0
+    || typeof stage_instance_id !== "string" || stage_instance_id.length === 0
+    || typeof unit_id !== "string" || unit_id.length === 0) {
     throw new Error("kbbl resolved config session_identity is missing required fields");
   }
   return {

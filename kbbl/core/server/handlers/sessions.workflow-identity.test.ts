@@ -4,7 +4,7 @@
  * through the real Hono handler, the real AcpSessionService and store.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
@@ -14,6 +14,7 @@ import { makeAcpTestService, type AcpTestHarness } from "../../acp/test-harness"
 import type { SessionManager } from "../../session/session-manager";
 import type { PwaSessionSnapshot } from "../../acp/pwa-wire";
 
+let tmpRoot: string;
 let repoDir: string;
 let harness: AcpTestHarness;
 
@@ -60,19 +61,22 @@ const WORKFLOW = {
 };
 
 beforeEach(async () => {
-  repoDir = mkdtempSync(join(tmpdir(), "kbbl-workflow-identity-test-"));
+  tmpRoot = mkdtempSync(join(tmpdir(), "kbbl-workflow-identity-test-"));
+  repoDir = join(tmpRoot, "repo");
+  mkdirSync(repoDir, { recursive: true });
+  mkdirSync(join(tmpRoot, "state"), { recursive: true });
   await git(repoDir, "init", "-q", "-b", "main");
   await git(repoDir, "config", "user.email", "test@example.com");
   await git(repoDir, "config", "user.name", "test");
   await git(repoDir, "config", "commit.gpgsign", "false");
   await git(repoDir, "config", "tag.gpgsign", "false");
   await git(repoDir, "commit", "--allow-empty", "-m", "init");
-  harness = makeAcpTestService({ stateDir: mkdtempSync(join(tmpdir(), "kbbl-workflow-identity-state-")) });
+  harness = makeAcpTestService({ stateDir: join(tmpRoot, "state") });
 });
 
 afterEach(async () => {
   await harness.service.shutdown();
-  rmSync(repoDir, { recursive: true, force: true });
+  rmSync(tmpRoot, { recursive: true, force: true });
 });
 
 describe("PUT /sessions/resumable/:key workflow member", () => {

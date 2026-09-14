@@ -360,10 +360,11 @@ export class AcpSessionStore {
 
   listByArtifact(artifactId: string): AcpSessionRow[] {
     return this.db
-      .prepare<AcpSessionRow, [string]>(
+      .prepare<RawAcpSessionRow, [string]>(
         "SELECT * FROM acp_sessions WHERE artifact_id = ? ORDER BY updated_at DESC",
       )
-      .all(artifactId);
+      .all(artifactId)
+      .map(toAcpSessionRow);
   }
 
   /** Hard delete (operator purge). Turn rows go with the session. */
