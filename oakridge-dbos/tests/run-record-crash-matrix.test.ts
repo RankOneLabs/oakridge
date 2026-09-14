@@ -341,16 +341,18 @@ for (const boundary of ["attachment", "observation"] as const) {
   }, 20_000);
 }
 
-test("a completed initial turn retains its session through publication and closes only after approval", async () => {
+test("a completed initial turn receives revision feedback in the same session and closes only after approval", async () => {
   if (!sql || !databaseUrl) return skip();
   const unit = await freshUnit("crash-matrix-real-dbos", {
-    kind: "gate", steps: [{ type: "artifact_approval", actions: [{ name: "approve", disposition: "release" }] }],
+    kind: "gate", steps: [{ type: "artifact_approval", actions: [{ name: "approve", disposition: "release" }, { name: "request_revision", disposition: "revise" }] }],
     requires_zero_open_review_items: false, revision_target: "self_stage",
   });
   if (!unit) return skip();
 
   let startCalls = 0;
   let closeCalls = 0;
+  const feedbackDeliveries = new Map<string, string>();
+  let deliveryAttempts = 0;
   const adapter: ExecutorAdapter = {
     executor_type: "crash-matrix-real-dbos",
     async start_or_attach(_request: ExecutionRequest, _operation_id): Promise<ExternalExecutionReference> {
@@ -362,7 +364,11 @@ test("a completed initial turn retains its session through publication and close
     async observe_terminal(): Promise<ExecutorObservationAttempt> {
       return { kind: "terminal", observation: { kind: "succeeded", metadata: {} } };
     },
-    async deliver_input() {},
+    async deliver_input(_execution, key, prompt) {
+      deliveryAttempts += 1;
+      if (deliveryAttempts === 1) throw new Error("temporary delivery failure");
+      feedbackDeliveries.set(key, prompt);
+    },
     async cancel_or_fence() { closeCalls += 1; },
   };
 
@@ -386,7 +392,22 @@ test("a completed initial turn retains its session through publication and close
     await new Promise(resolve => setTimeout(resolve, 5500));
     expect(closeCalls).toBe(0);
     expect((await unit.records.find_work_order_execution(unit.workOrderId))?.work_order.state).toBe("started");
-    await unit.records.close_output_wait({ wait_id: publication.wait_id, disposition: "release", actor: "operator", detail: null, decided_at: unit.now });
+    await unit.records.decide_gate_wait({ wait_id: publication.wait_id, action: "request_revision", actor: "operator", detail: "Use one cohort", decided_at: unit.now });
+    await awaitCondition("feedback to reach the original writer after a delivery failure", async () => feedbackDeliveries.size ? true : null, 15_000);
+    expect(feedbackDeliveries.get(`revision:${publication.wait_id}`)).toContain("Use one cohort");
+    expect(feedbackDeliveries.get(`revision:${publication.wait_id}`)).toContain(publication.artifact_id);
+    expect(closeCalls).toBe(0);
+    expect((await unit.records.find_work_order_execution(unit.workOrderId))?.work_order.state).toBe("started");
+    const replacement = await unit.records.publish_artifact({ artifact_id: randomUUID() as ArtifactId,
+      work_order_id: unit.workOrderId, output_name: "result", body: { cohorts: ["one"] }, capability_hash: unit.capabilityHash,
+      idempotency_key: "review-result-v2", payload_hash: "revised-result", published_at: unit.now });
+    if (replacement.kind !== "pending") throw new Error(`expected pending revision, got ${replacement.kind}`);
+    const revisions = await sql!.query<{ readonly version: number; readonly parent_artifact_id: string | null; readonly lifecycle_state: string }>(
+      "SELECT version,parent_artifact_id::text,lifecycle_state FROM oakridge.artifact WHERE chain_id=$1 ORDER BY version", [publication.artifact_id]);
+    expect(revisions).toEqual([{ version: 1, parent_artifact_id: null, lifecycle_state: "superseded" },
+      { version: 2, parent_artifact_id: publication.artifact_id, lifecycle_state: "current" }]);
+    expect(await unit.records.list_work_order_revision_feedback(unit.workOrderId)).toEqual([]);
+    await unit.records.close_output_wait({ wait_id: replacement.wait_id, disposition: "release", actor: "operator", detail: null, decided_at: unit.now });
     await decideUntilSettled(unit.records, unit.runId, unit.now);
     await awaitCondition("the work order's cleanup workflow to finish", async () => {
       const rows = await sql!.query<{ readonly cleanup_state: string }>("SELECT cleanup_state FROM oakridge.executor_attachment WHERE work_order_id = $1", [unit.workOrderId]);
@@ -406,7 +427,7 @@ test("a completed initial turn retains its session through publication and close
     await unit.records.cancel_run({ run_id: unit.runId, actor: "test", reason: "test cleanup", cancelled_at: new Date().toISOString() });
     await DBOS.shutdown();
   }
-}, 30_000);
+}, 40_000);
 
 test("crash matrix: starting the same run workflow id twice never starts a second work order", async () => {
   if (!sql || !databaseUrl) return skip();

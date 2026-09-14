@@ -1,7 +1,7 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
 import type { AskResult } from "../decision/commands";
-import { executorHealthFromTerminal, type WorkOrderExecution } from "../domain/run-record";
+import { executorHealthFromTerminal, type WorkOrderExecution, type WorkOrderRevisionFeedback } from "../domain/run-record";
 import { executorOperationIdForWorkOrder, type WorkflowRunId, type WorkOrderId } from "../domain/primitives";
 import type { ExecutorAdapter, ExecutorObservationAttempt, ExternalExecutionReference } from "../domain/execution";
 import type { Result } from "../domain/primitives";
@@ -49,6 +49,28 @@ const ensureExecutorStep = DBOS.registerStep(
 );
 
 interface ObserveWorkOrderInput { readonly execution: WorkOrderExecution; readonly reference: ExternalExecutionReference }
+
+export const revisionFeedbackPrompt = (revision: WorkOrderRevisionFeedback): string =>
+  `The operator requested changes to your ${revision.output_name}${revision.collection_key === null ? "" : ` [${revision.collection_key}]`} output.\n\n` +
+  `Feedback: ${revision.feedback ?? "Revise the submitted output."}\n\n` +
+  `Previous artifact (${revision.artifact_id}):\n${JSON.stringify(revision.body, null, 2)}\n\n` +
+  "Update this artifact and publish the corrected output using your existing work-order publication endpoint and capability, with a new Idempotency-Key. Your work order remains active. Wait for operator approval after publishing.";
+
+const deliverRevisionFeedbackStep = DBOS.registerStep(async (input: ObserveWorkOrderInput): Promise<void> => {
+  const pending = await workflowServices().records.list_work_order_revision_feedback(input.execution.work_order.id);
+  const adapter = workflowServices().find_executor(input.execution.request.executor_type);
+  if (!adapter) throw new Error(`executor adapter '${input.execution.request.executor_type}' is not registered`);
+  for (const revision of pending) {
+    // kbbl durably deduplicates this key, including after process recovery.
+    // A failed delivery remains discoverable from the invalidated slot.
+    try {
+      await adapter.deliver_input(input.execution.request.execution_id, `revision:${revision.wait_id}`, revisionFeedbackPrompt(revision), input.reference);
+    } catch (error) {
+      DBOS.logger.warn(`work order ${input.execution.work_order.id}: feedback for wait ${revision.wait_id} could not be delivered; retrying: ${String(error)}`);
+    }
+  }
+}, { name: "oakridgeV2DeliverRevisionFeedbackStep", retriesAllowed: true });
+
 const observeExecutorStep = DBOS.registerStep(
   async (input: ObserveWorkOrderInput): Promise<ExecutorObservationAttempt> => {
     const adapter = workflowServices().find_executor(input.execution.request.executor_type);
@@ -87,6 +109,7 @@ export const runRecordCleanupWorkflow = DBOS.registerWorkflow(async (input: Clea
   for (;;) {
     const current = await loadWorkOrderStep(input.execution.work_order.id);
     if (current.work_order.state === "completed" || current.work_order.state === "abandoned") break;
+    await deliverRevisionFeedbackStep(input);
     await DBOS.sleepSeconds(OBSERVE_INTERVAL_SECONDS);
   }
   await cleanupExecutorStep(input);
@@ -99,6 +122,7 @@ export const runRecordWorkOrderWorkflow = DBOS.registerWorkflow(async (work_orde
   const execution = await loadWorkOrderStep(work_order_id);
   const reference = await ensureExecutorStep(execution);
   for (;;) {
+    await deliverRevisionFeedbackStep({ execution, reference });
     const observation = await observeExecutorStep({ execution, reference });
     if (observation.kind === "terminal") {
       await DBOS.startWorkflow(runRecordCleanupWorkflow, { workflowID: `${execution.work_order.workflow_id}:cleanup` })({ execution, reference });

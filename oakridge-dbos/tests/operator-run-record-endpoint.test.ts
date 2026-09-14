@@ -139,6 +139,13 @@ test("GET /runs/:id exposes the v2 run-record projection with every required fie
   const inbox = await (await app.request("/review_inbox")).json() as { readonly items: readonly { readonly gate_id: string; readonly stage_instance_id: string }[] };
   expect(inbox.items.find((item) => item.gate_id === published.wait_id))
     .toEqual(expect.objectContaining({ gate_id: published.wait_id, stage_instance_id: gatedStageId }));
+
+  // Requesting corrections must not erase the operator's route back to the draft.
+  await records.close_output_wait({ wait_id: published.wait_id, disposition: "invalidate", actor: "operator",
+    detail: "Use one cohort", decided_at: now });
+  const revised = await new PostgresOperatorProjectionRepository(sql, "test-app-version").get_run(runId);
+  expect(revised?.stages.find((stage) => stage.stage_instance_id === gatedStageId)?.artifacts)
+    .toEqual([expect.objectContaining({ id: published.artifact_id, type_id: "dev.plan" })]);
 });
 
 /**

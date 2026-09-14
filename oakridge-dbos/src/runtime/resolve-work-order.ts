@@ -28,7 +28,7 @@ import { workOrderIdFor, workOrderWorkflowId } from "../decision/ids";
 import type { CompiledStageContract, MaterializedExecutionUnit } from "../domain/compiled-workflow";
 import type { DelegatedSessionDefinitionConfig } from "../domain/delegated-session";
 import type { ArtifactEnvelope, ExecutionRequest, ExternalExecutionReference } from "../domain/execution";
-import type { JsonValue, OutputCollectionKey, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "../domain/primitives";
+import type { ArtifactId, JsonValue, OutputCollectionKey, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "../domain/primitives";
 import { PROVISION_REPOSITORY_REFS_STAGE_TYPE, parseBaseBranch, parseRunContextRepository, type RepositoryProvisioningDefinitionConfig, type ResolvedRepositoryProvisioningConfig } from "../domain/repository-refs";
 import type { ExecutorAttachment, MaterializedRunOutput, MaterializedWorkOrder } from "../domain/run-record";
 
@@ -121,12 +121,20 @@ export interface MissingOutputSlot {
   readonly collection_key: OutputCollectionKey | null;
 }
 
+/** Rejected artifact and feedback from run_output_slot and its referenced artifact row. */
+export interface RejectedOutputContext extends MissingOutputSlot {
+  readonly artifact_id: ArtifactId;
+  readonly body: JsonValue;
+  readonly feedback: string | null;
+}
+
 export interface RebindWorkOrderPublicationInput {
   /** The latest execution request the unit ran under — prompt, workdir, inputs are reused as they were resolved. */
   readonly basis: ExecutionRequest;
   readonly work_order_id: WorkOrderId;
   readonly capability_seed: string;
   readonly missing: readonly MissingOutputSlot[];
+  readonly rejected_outputs?: readonly RejectedOutputContext[];
 }
 
 export interface ReboundWorkOrderPublication {
@@ -165,7 +173,11 @@ export const rebindWorkOrderPublication = (input: RebindWorkOrderPublicationInpu
     });
   }
   const capability = capabilityFor(input.capability_seed, input.work_order_id);
-  const resolved_config: JsonValue = { ...config, publication: { ...publication, work_order_id: input.work_order_id, capability } };
+  const rejected = input.rejected_outputs ?? [];
+  const reboundConfig = { ...config, publication: { ...publication, work_order_id: input.work_order_id, capability } };
+  const resolved_config: JsonValue = rejected.length > 0 && typeof config.rendered_prompt === "string"
+    ? { ...reboundConfig, rendered_prompt: `${config.rendered_prompt}\n\n## Requested output corrections\n\nThe previous writer is being replaced. Revise these stored outputs according to the operator feedback; preserve the remaining scope. Publish using the new work-order instructions below.\n\n${JSON.stringify(rejected, null, 2)}` }
+    : reboundConfig;
   return {
     capability_hash: capabilityHash(capability),
     request: { ...input.basis, execution_id: input.work_order_id as unknown as ExecutionRequest["execution_id"], resolved_config, expected_artifacts },
