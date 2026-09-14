@@ -238,6 +238,16 @@ export interface WorkOrderExecution {
   readonly request: import("./execution").ExecutionRequest;
 }
 
+/** A rejected output and its operator feedback, read from the slot's closed gate wait. */
+export interface WorkOrderRevisionFeedback {
+  readonly wait_id: WaitId;
+  readonly output_name: string;
+  readonly collection_key: OutputCollectionKey | null;
+  readonly artifact_id: ArtifactId;
+  readonly body: JsonValue;
+  readonly feedback: string | null;
+}
+
 export interface CancelRunRecord {
   readonly run_id: WorkflowRunId;
   readonly actor: string;

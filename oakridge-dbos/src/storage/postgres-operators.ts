@@ -350,7 +350,8 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     const artifactRows = await this.sql.query<StageArtifactRow>(
       `SELECT DISTINCT ON (artifact.stage_instance_id,artifact.unit_id,artifact.output_name,artifact.collection_key)
               artifact.stage_instance_id::text,artifact.id::text,artifact.artifact_type AS type_id,artifact.version,artifact.label
-       FROM oakridge.artifact artifact WHERE artifact.run_id=$1 AND ${effectiveArtifactPredicate("artifact")}
+       FROM oakridge.artifact artifact WHERE artifact.run_id=$1
+         AND EXISTS (SELECT 1 FROM oakridge.run_output_slot visible_slot WHERE visible_slot.artifact_revision_id=artifact.id)
        ORDER BY artifact.stage_instance_id,artifact.unit_id,artifact.output_name,artifact.collection_key,artifact.version DESC`, [id]);
     const stages: OperatorStageDetail[] = stageRows.map((stage) => {
       const units: OperatorStageUnit[] = unitRows.filter((unit) => unit.stage_instance_id === stage.stage_instance_id).map((unit) => ({

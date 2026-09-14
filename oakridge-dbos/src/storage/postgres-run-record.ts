@@ -25,6 +25,8 @@ interface SlotRow { readonly run_unit_id: string; readonly output_name: string; 
 interface WorkOrderRow { readonly id: string; readonly run_unit_id: string; readonly reason: WorkOrder["reason"]; readonly input_snapshot: readonly ArtifactEnvelope[]; readonly input_fingerprint: string; readonly state: WorkOrder["state"]; readonly workflow_id: string; readonly request_idempotency_key: string; readonly execution_request?: ExecutionRequest | null; readonly created_at: string; readonly completed_at: string | null }
 interface ExecutorAttachmentRow { readonly work_order_id: string; readonly executor_type: string; readonly external_reference: ExternalExecutionReference | null; readonly health: ExecutorHealthObservation | null; readonly cleanup_state: ExecutorAttachment["cleanup_state"]; readonly updated_at: string }
 class GateCoordinationConflict extends Error { constructor(readonly result: CloseRunOutputWaitResult) { super("gate coordination conflict"); } }
+interface CloseOutputWaitTransactionRequest extends CloseRunOutputWait { readonly retain_producer?: boolean }
+interface PublicationPredecessor { readonly id: ArtifactId; readonly chain_id: ArtifactId; readonly version: number; readonly revision_action: string | null }
 interface StoredOutputContracts { readonly [output_name: string]: { readonly artifact_type: string; readonly required: boolean; readonly release: OutputReleaseContract } }
 
 const decodeRun = (row: RunRow): WorkflowRun => ({ ...row, id: row.id as WorkflowRunId, workflow_definition_id: row.workflow_definition_id as WorkflowDefinitionId, record_version: Number(row.record_version) as RunRecordVersion });
@@ -525,11 +527,16 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       if (!basis?.execution_request) return { kind: "no_execution_basis", detail: `run unit '${runUnitId}' has no resolved execution request` };
       const workOrderId = randomUUID() as WorkOrderId;
       const workflowId = `v2-work:${workOrderId}`;
+      const rejectedOutputs = await transaction.query<import("../runtime/resolve-work-order").RejectedOutputContext>(`SELECT slot.output_name,slot.collection_key,
+          artifact.id::text AS artifact_id,artifact.body,slot.invalidation_reason->>'detail' AS feedback
+        FROM oakridge.run_output_slot slot JOIN oakridge.artifact artifact ON artifact.id=slot.artifact_revision_id
+        WHERE slot.run_unit_id=$1 AND slot.required AND slot.state='invalidated' ORDER BY slot.output_name,slot.collection_key`, [runUnitId]);
       // The new order gets publication authority minted for itself — the
       // basis's URL would point the agent at the abandoned order, and its
       // capability must not authenticate a second work order.
       const rebound = rebindWorkOrderPublication({ basis: basis.execution_request, work_order_id: workOrderId,
         capability_seed: await this.load_work_order_capability_seed_tx(transaction),
+        rejected_outputs: rejectedOutputs,
         missing: missing.map((slot) => ({ output_name: slot.output_name, collection_key: slot.collection_key as OutputCollectionKey | null })) });
       if (!rebound) return { kind: "no_execution_basis", detail: `run unit '${runUnitId}' has no publication authority to rebind for a retry` };
       await transaction.query("UPDATE oakridge.work_order SET state='abandoned',completed_at=$2::timestamptz WHERE run_unit_id=$1 AND state IN ('available','started')", [runUnitId, retried_at]);
@@ -876,6 +883,17 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
     return this.find_work_order_attachment_tx(this.sql, work_order_id);
   }
 
+  async list_work_order_revision_feedback(work_order_id: WorkOrderId): Promise<readonly import("../domain/run-record").WorkOrderRevisionFeedback[]> {
+    return this.sql.query<import("../domain/run-record").WorkOrderRevisionFeedback>(`SELECT wait.id::text AS wait_id,slot.output_name,slot.collection_key,
+        artifact.id::text AS artifact_id,artifact.body,wait.outcome->>'feedback' AS feedback
+      FROM oakridge.work_order work JOIN oakridge.run_output_slot slot ON slot.run_unit_id=work.run_unit_id
+      JOIN oakridge.artifact artifact ON artifact.id=slot.artifact_revision_id
+      JOIN oakridge.wait wait ON wait.artifact_revision_id=artifact.id AND wait.run_unit_id=work.run_unit_id
+      WHERE work.id=$1 AND work.state IN ('available','started') AND slot.state='invalidated'
+        AND slot.updated_by_work_order_id=work.id AND wait.status='closed' AND wait.outcome->>'kind'='decided'
+      ORDER BY wait.closed_at,wait.id`, [work_order_id]);
+  }
+
   async publish_artifact(request: PublishWorkOrderArtifact): Promise<PublishWorkOrderArtifactResult> {
     return this.sql.transaction(async (transaction) => {
       // Keep the same outer-to-inner lock order as decide_run: run, then
@@ -909,21 +927,22 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         return { kind: "already_applied", artifact_id: replay[0].artifact_id as ArtifactId, run_id: row.run_id as WorkflowRunId, record_version: version };
       }
       if (row.work_state === "abandoned") return { kind: "work_abandoned", detail: `work order '${request.work_order_id}' is abandoned` };
-      // An invalidated slot takes its replacement from a different, active
-      // work order only. Every path that invalidates a slot also creates the
-      // replacement order (`retry_unit`, `revise_unit_input_tx`) and abandons
-      // the active work it supersedes — but a `completed` order keeps a valid
-      // capability and its agent may still be alive; it must not publish
-      // old-input output here. And the producer of the rejected output cannot
-      // publish a second version under its own execution id: the artifact
-      // table's per-execution `(coordinate, version)` uniqueness refuses it,
-      // so the refusal is typed here instead of surfacing as a constraint.
+      // A self-stage revision retains its writer and appends to the existing
+      // artifact chain. Replacement work after retry/input revision still starts
+      // a new chain; an inactive producer never regains publication authority.
+      let predecessor: PublicationPredecessor | null = null;
       if (row.slot_state === "invalidated") {
         if (row.work_state !== "available" && row.work_state !== "started") {
           return { kind: "work_not_active", detail: `work order '${request.work_order_id}' is ${row.work_state} and cannot replace an invalidated output` };
         }
         if (row.updated_by_work_order_id === request.work_order_id) {
-          return { kind: "slot_invalidated", detail: `work order '${request.work_order_id}' produced the rejected output in slot '${request.output_name}'; its replacement is published by the operator's retry work order` };
+          const previous = (await transaction.query<PublicationPredecessor>(`SELECT artifact.id::text,artifact.chain_id::text,artifact.version,wait.outcome->>'action' AS revision_action
+            FROM oakridge.artifact artifact JOIN oakridge.wait wait ON wait.artifact_revision_id=artifact.id
+            WHERE artifact.id=$1 AND wait.status='closed' ORDER BY wait.closed_at DESC LIMIT 1`, [row.artifact_revision_id]))[0];
+          const canRevise = previous && row.release_policy.kind === "gate" && row.release_policy.revision_target === "self_stage"
+            && row.release_policy.steps.some((step) => step.actions.some((action) => action.name === previous.revision_action && action.disposition === "revise"));
+          if (!canRevise) return { kind: "slot_invalidated", detail: `work order '${request.work_order_id}' cannot replace this invalidated output` };
+          predecessor = previous;
         }
       }
       if (row.slot_state === "released" && row.artifact_revision_id) return { kind: "slot_already_released", artifact_id: row.artifact_revision_id as ArtifactId, detail: `output slot '${request.output_name}' is already released` };
@@ -938,21 +957,22 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       await transaction.query(`INSERT INTO oakridge.artifact
         (id, chain_id, run_id, stage_instance_id, execution_id, unit_id, output_name, collection_key, artifact_type, body, label, version, parent_artifact_id,
          emission_idempotency_key, emission_payload_hash, created_at, lifecycle_state, released_at, lifecycle_updated_at, attempt_workflow_id, work_order_id)
-        VALUES ($1,$1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$5,1,NULL,$10,$11,$12::timestamptz,$14,$15::timestamptz,$12::timestamptz,$16,$13)`,
+        VALUES ($1,$17,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$5,$18,$19,$10,$11,$12::timestamptz,$14,$15::timestamptz,$12::timestamptz,$16,$13)`,
         [request.artifact_id, row.run_id, row.stage_instance_id, request.work_order_id, artifactUnitId, request.output_name, request.collection_key ?? null, row.artifact_type, request.body, request.idempotency_key, request.payload_hash, request.published_at, request.work_order_id,
-          immediate ? "released" : "current", immediate ? request.published_at : null, row.workflow_id]);
+          immediate ? "released" : "current", immediate ? request.published_at : null, row.workflow_id,
+          predecessor?.chain_id ?? request.artifact_id, predecessor ? predecessor.version + 1 : 1, predecessor?.id ?? null]);
       await transaction.query(`INSERT INTO oakridge.artifact_emission_idempotency
         (stage_instance_id, execution_id, unit_id, output_name, collection_key, idempotency_key, payload_hash, artifact_id, created_at)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::timestamptz)`, [row.stage_instance_id, request.work_order_id, artifactUnitId, request.output_name, request.collection_key ?? null, request.idempotency_key, request.payload_hash, request.artifact_id, request.published_at]);
 
-      // Replacing an invalidated slot starts a fresh chain (version 1, no
-      // parent — the revision-link trigger allows one execution id per chain).
-      // The rejected artifact stays readable as history but is no longer
-      // current. A released predecessor keeps `released` (the 0010 shape CHECK
-      // forbids `withdrawn` with `released_at`); reads find the artifact in
-      // effect through the slot pointer, never through lifecycle alone.
+      // The retained writer supersedes its previous revision in the same chain.
+      // A replacement writer starts a new chain and withdraws the rejected draft.
+      // Released predecessors stay released; effective reads follow the slot.
       const replacedArtifactId = row.slot_state === "invalidated" ? (row.artifact_revision_id as ArtifactId | null) : null;
-      if (replacedArtifactId) {
+      if (predecessor) {
+        await transaction.query("UPDATE oakridge.artifact SET lifecycle_state='superseded',superseded_by_artifact_id=$2,superseded_at=$3::timestamptz,lifecycle_updated_at=$3::timestamptz WHERE id=$1 AND lifecycle_state='current'",
+          [predecessor.id, request.artifact_id, request.published_at]);
+      } else if (replacedArtifactId) {
         await transaction.query("UPDATE oakridge.artifact SET lifecycle_state = 'withdrawn', withdrawn_actor = $2, withdrawn_reason = 'replaced', withdrawn_at = $3::timestamptz, lifecycle_updated_at = $3::timestamptz WHERE id = $1 AND lifecycle_state = 'current'",
           [replacedArtifactId, `work_order:${request.work_order_id}`, request.published_at]);
       }
@@ -992,7 +1012,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
     return this.sql.transaction((transaction) => this.closeOutputWaitTransaction(transaction, request));
   }
 
-  private async closeOutputWaitTransaction(transaction: SqlExecutor, request: CloseRunOutputWait): Promise<CloseRunOutputWaitResult> {
+  private async closeOutputWaitTransaction(transaction: SqlExecutor, request: CloseOutputWaitTransactionRequest): Promise<CloseRunOutputWaitResult> {
       const ownerRows = await transaction.query<{ readonly run_id: string }>(`SELECT unit.run_id::text FROM oakridge.wait wait
         JOIN oakridge.run_unit unit ON unit.id=wait.run_unit_id WHERE wait.id=$1 AND wait.run_unit_id IS NOT NULL`, [request.wait_id]);
       if (!ownerRows[0]) return { kind: "wait_not_found", detail: `v2 wait '${request.wait_id}' was not found` };
@@ -1031,7 +1051,8 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       } else {
         const reason = { kind: "operator", detail: request.detail ?? "invalidated" };
         await transaction.query("UPDATE oakridge.run_output_slot SET state = 'invalidated', release_wait_id = NULL, invalidation_reason = $3::jsonb, state_changed_at = $4::timestamptz, version = version + 1 WHERE run_unit_id = $1 AND output_name = $2 AND collection_key IS NOT DISTINCT FROM $5", [wait.run_unit_id, wait.output_name, reason, request.decided_at, wait.collection_key]);
-        // The work order that produced the rejected artifact is abandoned once
+        // A self-stage revision retains its producer for feedback and corrections.
+        // Otherwise, the work order that produced the artifact is abandoned once
         // it has nothing left to emit: leaving it `started` would make a later
         // ask read the unit as perpetually `work_in_progress` for a workflow
         // that already returned. A collection producer still owed empty required
@@ -1042,7 +1063,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         // its own execution id there); that replacement is the operator's
         // retry, a separate decision. `fail` is terminal for the unit, so it
         // abandons unconditionally.
-        if (slot.updated_by_work_order_id) {
+        if (slot.updated_by_work_order_id && !request.retain_producer) {
           await transaction.query(`UPDATE oakridge.work_order SET state = 'abandoned', completed_at = $2::timestamptz WHERE id = $1 AND state IN ('available','started')
             AND ($3::boolean OR NOT EXISTS (SELECT 1 FROM oakridge.run_output_slot owed WHERE owed.run_unit_id = $4 AND owed.required AND owed.state = 'empty'))`,
           [slot.updated_by_work_order_id, request.decided_at, request.disposition === "fail", wait.run_unit_id]);
@@ -1076,7 +1097,8 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         const action = pendingStep?.actions.find((candidate) => gateClose?.actions.includes(candidate.name) && candidate.name === request.action);
         if (!action) return { kind: "wait_conflict", detail: `action '${request.action}' is not allowed for wait '${request.wait_id}'` };
         const disposition: RunOutputWaitDisposition = action.disposition === "release" ? "release" : action.disposition === "revise" ? "invalidate" : "fail";
-        const own = await this.closeOutputWaitTransaction(transaction, { ...request, disposition });
+        const own = await this.closeOutputWaitTransaction(transaction, { ...request, disposition,
+          retain_producer: action.disposition === "revise" && release.revision_target === "self_stage" });
         if (own.kind === "wait_conflict" || own.kind === "wait_not_found") throw new GateCoordinationConflict(own);
         if (disposition !== "release" && release.revision_target === "upstream_handoff") {
           const upstreamRows = await transaction.query<{ readonly wait_id: string }>(`SELECT wait.id::text AS wait_id

@@ -63,6 +63,7 @@ export interface RunRecordRepository {
   delete_run(run_id: RunRecordWorkflowRunId): Promise<DeleteRunResult>;
   find_work_order_execution(work_order_id: WorkOrderId): Promise<WorkOrderExecution | null>;
   find_work_order_attachment(work_order_id: WorkOrderId): Promise<ExecutorAttachment | null>;
+  list_work_order_revision_feedback(work_order_id: WorkOrderId): Promise<readonly import("../domain/run-record").WorkOrderRevisionFeedback[]>;
   /**
    * Records an artifact fact under a work order's capability, atomically with
    * the effect its declared release policy has on the slot: an `immediate`

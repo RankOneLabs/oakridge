@@ -429,6 +429,10 @@ test("a rejected gated output is replaced by the operator's retry as a fresh cha
   expect(stored.capability_hash).not.toBe(fixture.capabilityHash);
   expect(stored.execution_request.execution_id).toBe(retry.work_order.id as unknown as ExecutionId);
   expect(stored.execution_request.expected_artifacts).toEqual([{ unit_id: "planner" as UnitId, output_name: "plan", artifact_type: "dev.plan" as never }]);
+  const retryPrompt = (stored.execution_request.resolved_config as { readonly rendered_prompt: string }).rendered_prompt;
+  expect(retryPrompt).toContain("redo it");
+  expect(retryPrompt).toContain(first.artifact_id);
+  expect(retryPrompt).toContain('"plan": "v1"');
   // The abandoned order's capability does not authenticate the retry.
   expect(await publish(retry.work_order.id, fixture.capabilityHash, "plan-v2-stale-capability", { plan: "v2" })).toEqual(expect.objectContaining({ kind: "invalid_capability" }));
 
@@ -449,6 +453,35 @@ test("a rejected gated output is replaced by the operator's retry as a fresh cha
   const transition = await sql!.query<{ readonly detail: { readonly replaced_artifact_id?: string } }>(
     "SELECT detail FROM oakridge.run_transition WHERE run_id = $1 AND operation = 'slot_pending' AND work_order_id = $2", [setup.input.run_id, retry.work_order.id]);
   expect(transition[0]?.detail.replaced_artifact_id).toBe(first.artifact_id);
+});
+
+test("self-stage revision retains the writer across repeated corrections and preserves the artifact chain", async () => {
+  const setup = await setupMaterializedRun(4, false, false);
+  if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  const fixture = await materializeSingleUnitStage(setup, "plan", "planner", [{ identity: { kind: "scalar", output_name: "plan" }, artifact_type: "dev.plan", required: true, release: GATE_RELEASE }]);
+  const revisions: ArtifactId[] = [];
+  for (let version = 1; version <= 3; version += 1) {
+    const body = { cohorts: version === 1 ? ["a", "b", "c"] : ["one"], version };
+    const publication = { artifact_id: randomUUID() as ArtifactId, work_order_id: fixture.workOrderId,
+      capability_hash: fixture.capabilityHash, output_name: "plan", body, idempotency_key: `plan-${version}`, payload_hash: payloadHashOf(body), published_at: fixture.at };
+    const emitted = await setup.records.publish_artifact(publication);
+    if (emitted.kind !== "pending") throw new Error(`expected pending, got ${emitted.kind}`);
+    revisions.push(emitted.artifact_id);
+    expect((await setup.records.publish_artifact(publication)).kind).toBe("already_applied");
+    if (version === 3) break;
+    const decision = { wait_id: emitted.wait_id, action: "request_revision", actor: "operator", detail: "Use one cohort", decided_at: fixture.at };
+    await setup.records.decide_gate_wait(decision);
+    expect((await setup.records.decide_gate_wait(decision)).kind).toBe("already_applied");
+    expect((await setup.records.find_work_order_execution(fixture.workOrderId))?.work_order.state).toBe("started");
+    expect(await setup.records.list_work_order_revision_feedback(fixture.workOrderId)).toEqual([
+      { wait_id: emitted.wait_id, output_name: "plan", collection_key: null, artifact_id: emitted.artifact_id, body, feedback: "Use one cohort" },
+    ]);
+  }
+  const chain = await new PostgresArtifactRevisionRepository(sql!).list_chain(revisions[0]!);
+  expect(chain.map((revision) => ({ id: revision.id, version: revision.version, lifecycle: revision.lifecycle.kind })))
+    .toEqual(revisions.map((id, index) => ({ id, version: index + 1, lifecycle: index === 2 ? "current" : "superseded" })));
+  await expect(sql!.query("UPDATE oakridge.artifact SET lifecycle_state='current',superseded_by_artifact_id=NULL,superseded_at=NULL WHERE id=$1", [revisions[0]]))
+    .rejects.toThrow("artifact_one_effective_revision");
 });
 
 /**
