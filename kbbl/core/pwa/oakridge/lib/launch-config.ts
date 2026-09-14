@@ -122,7 +122,8 @@ export function coerceSelection(
       : undefined;
   if (nextRuntime.models.length === 0) {
     const nextModel = selection.model.trim().length > 0 ? selection.model : getRoleDefaultModel(role, nextRuntime);
-    if (nextRuntime.id === selection.runtime && nextModel === selection.model) {
+    if (nextRuntime.id === selection.runtime && nextModel === selection.model &&
+        nextEffort === (selection.effort ?? undefined)) {
       return selection;
     }
     return {
@@ -134,7 +135,8 @@ export function coerceSelection(
   const nextModel = isModelAllowed(nextRuntime, selection.model)
     ? selection.model
     : getRoleDefaultModel(role, nextRuntime);
-  if (nextRuntime.id === selection.runtime && nextModel === selection.model) {
+  if (nextRuntime.id === selection.runtime && nextModel === selection.model &&
+      nextEffort === (selection.effort ?? undefined)) {
     return selection;
   }
   return {

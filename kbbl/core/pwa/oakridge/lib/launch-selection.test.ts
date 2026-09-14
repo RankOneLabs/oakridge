@@ -22,6 +22,37 @@ describe("coerceSelection effort handling", () => {
   };
   const descriptors = [claude, codex];
 
+  describe.each([
+    { label: "advertised model", descriptor: claude },
+    { label: "empty model descriptor", descriptor: { ...claude, models: [] } },
+  ])("$label", ({ descriptor }) => {
+    test("drops stale effort without changing a valid model", () => {
+      const next = coerceSelection(
+        "planner",
+        { runtime: "claude-code", model: "claude-opus-4-8", effort: "minimal" },
+        [descriptor],
+        "claude-code",
+        true,
+      );
+      expect(next).toEqual({
+        runtime: "claude-code",
+        model: "claude-opus-4-8",
+        effort: undefined,
+      });
+    });
+
+    test.each([null, undefined])("preserves no-override effort %s", (effort) => {
+      const next = coerceSelection(
+        "planner",
+        { runtime: "claude-code", model: "claude-opus-4-8", effort },
+        [descriptor],
+        "claude-code",
+        true,
+      );
+      expect(next.effort).toBe(effort);
+    });
+  });
+
   test("preserves an effort still valid for the unchanged runtime", () => {
     const next = coerceSelection(
       "planner",

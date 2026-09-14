@@ -1,8 +1,11 @@
-# Known issues
+# Historical kbbl v1 issues — retired
 
-Tracked issues that are not yet fixed but are understood and have a planned
-mitigation. Each entry should describe the failure mode, who's affected,
-and the work needed to close it.
+All entries below concern the removed kbbl v1 dispatcher and Projects sidebar.
+They are retained as historical context, not active bugs or a backlog for v2.
+The referenced routes, files, and proposed fixes no longer apply. Removing the
+feature retired these issues; it did not implement the proposed fixes.
+
+For the current stack, see the [v2 operator runbook](oakridge-v2-runbook.md).
 
 ## TOCTOU race in `POST /briefs/:id/build`
 
