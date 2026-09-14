@@ -14,6 +14,7 @@ import type {
   AcpSessionSnapshot,
   AcpSessionStatus,
   AcpSessionStartSpec,
+  AcpSessionWorkflowIdentity,
   AcpTurnRow,
   AcpTurnSource,
   AcpTurnStatus,
@@ -54,6 +55,7 @@ export interface ClaimInput {
   worktree_path: string;
   requested_model: string | null;
   requested_effort: string | null;
+  workflow: AcpSessionWorkflowIdentity | null;
 }
 
 export type ClaimOutcome =
@@ -98,6 +100,67 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+/**
+ * `acp_sessions`' actual column shape: the workflow identity is six flat
+ * nullable TEXT columns, not the nested object `AcpSessionRow` exposes.
+ * Every `SELECT *`/`RETURNING *` reads this shape; `toAcpSessionRow`
+ * assembles the nested `workflow` member consumers see.
+ */
+interface RawAcpSessionRow {
+  sid: KbblSessionId;
+  resumable_key: ResumableKey | null;
+  start_spec_hash: string | null;
+  agent_profile: string;
+  acp_session_id: string | null;
+  name: string;
+  artifact_id: string | null;
+  project_workdir: string;
+  worktree_path: string;
+  worktree_branch: string | null;
+  worktree_base_ref: string | null;
+  parent_sid: KbblSessionId | null;
+  requested_model: string | null;
+  requested_effort: string | null;
+  status: AcpSessionStatus;
+  end_reason: string | null;
+  end_detail: string | null;
+  fenced_by: string | null;
+  last_activity_at: string;
+  created_at: string;
+  updated_at: string;
+  workflow_run_id: string | null;
+  stage_instance_id: string | null;
+  stage_unit_id: string | null;
+  operator_role: string | null;
+  cohort_title: string | null;
+  repository_key: string | null;
+}
+
+/** Absence is the nullable: yields `null` unless all three required columns are non-null. */
+function toAcpSessionRow(raw: RawAcpSessionRow): AcpSessionRow {
+  const {
+    workflow_run_id,
+    stage_instance_id,
+    stage_unit_id,
+    operator_role,
+    cohort_title,
+    repository_key,
+    ...rest
+  } = raw;
+  const workflow: AcpSessionWorkflowIdentity | null =
+    workflow_run_id !== null && stage_instance_id !== null && stage_unit_id !== null
+      ? {
+          workflow_run_id,
+          stage_instance_id,
+          unit_id: stage_unit_id,
+          operator_role,
+          cohort_title,
+          repository_key,
+        }
+      : null;
+  return { ...rest, workflow } as AcpSessionRow;
+}
+
 export class AcpSessionStore {
   private readonly sessionsChangedListeners = new Set<() => void>();
 
@@ -121,6 +184,10 @@ export class AcpSessionStore {
    * Idempotent resumable-key claim (§10.2 steps 1–2), one transaction:
    * absent key inserts a `provisioning` row; present key with the same
    * spec hash attaches; present key with a different hash is a conflict.
+   * An attach onto a stored row with no identity yet backfills the
+   * supplied one (one-way — a differing identity never overwrites a
+   * stored non-null one, and is never a conflict: the spec hash is the
+   * only conflict axis).
    */
   claimResumable(key: ResumableKey, input: ClaimInput): ClaimOutcome {
     return this.db.transaction((): ClaimOutcome => {
@@ -129,17 +196,45 @@ export class AcpSessionStore {
         if (existing.start_spec_hash !== input.start_spec_hash) {
           return { kind: "spec_conflict", row: existing };
         }
+        if (existing.workflow === null && input.workflow !== null) {
+          this.writeWorkflowIdentity(existing.sid, input.workflow);
+          return { kind: "existing", row: this.getSession(existing.sid)! };
+        }
         return { kind: "existing", row: existing };
       }
       return { kind: "created", row: this.insertSession(input) };
     })();
   }
 
+  private writeWorkflowIdentity(
+    sid: KbblSessionId,
+    workflow: AcpSessionWorkflowIdentity,
+  ): void {
+    this.db
+      .prepare(
+        `UPDATE acp_sessions
+         SET workflow_run_id = ?, stage_instance_id = ?, stage_unit_id = ?,
+             operator_role = ?, cohort_title = ?, repository_key = ?, updated_at = ?
+         WHERE sid = ?`,
+      )
+      .run(
+        workflow.workflow_run_id,
+        workflow.stage_instance_id,
+        workflow.unit_id,
+        workflow.operator_role,
+        workflow.cohort_title,
+        workflow.repository_key,
+        nowIso(),
+        sid,
+      );
+    this.notifySessionsChanged();
+  }
+
   insertSession(input: ClaimInput): AcpSessionRow {
     const ts = nowIso();
     const row = this.db
       .prepare<
-        AcpSessionRow,
+        RawAcpSessionRow,
         [
           string,
           string | null,
@@ -154,13 +249,21 @@ export class AcpSessionStore {
           string,
           string,
           string,
+          string | null,
+          string | null,
+          string | null,
+          string | null,
+          string | null,
+          string | null,
         ]
       >(
         `INSERT INTO acp_sessions (
            sid, resumable_key, start_spec_hash, agent_profile, name,
            artifact_id, project_workdir, worktree_path, requested_model,
-           requested_effort, status, last_activity_at, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?)
+           requested_effort, status, last_activity_at, created_at, updated_at,
+           workflow_run_id, stage_instance_id, stage_unit_id, operator_role,
+           cohort_title, repository_key
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?, ?, ?, ?)
          RETURNING *`,
       )
       .get(
@@ -177,37 +280,42 @@ export class AcpSessionStore {
         ts,
         ts,
         ts,
+        input.workflow?.workflow_run_id ?? null,
+        input.workflow?.stage_instance_id ?? null,
+        input.workflow?.unit_id ?? null,
+        input.workflow?.operator_role ?? null,
+        input.workflow?.cohort_title ?? null,
+        input.workflow?.repository_key ?? null,
       )!;
     this.notifySessionsChanged();
-    return row;
+    return toAcpSessionRow(row);
   }
 
   getSession(sid: KbblSessionId): AcpSessionRow | null {
-    return (
-      this.db
-        .prepare<AcpSessionRow, [string]>(
-          "SELECT * FROM acp_sessions WHERE sid = ?",
-        )
-        .get(sid) ?? null
-    );
+    const row = this.db
+      .prepare<RawAcpSessionRow, [string]>(
+        "SELECT * FROM acp_sessions WHERE sid = ?",
+      )
+      .get(sid);
+    return row ? toAcpSessionRow(row) : null;
   }
 
   getByResumableKey(key: ResumableKey): AcpSessionRow | null {
-    return (
-      this.db
-        .prepare<AcpSessionRow, [string]>(
-          "SELECT * FROM acp_sessions WHERE resumable_key = ?",
-        )
-        .get(key) ?? null
-    );
+    const row = this.db
+      .prepare<RawAcpSessionRow, [string]>(
+        "SELECT * FROM acp_sessions WHERE resumable_key = ?",
+      )
+      .get(key);
+    return row ? toAcpSessionRow(row) : null;
   }
 
   listSessions(): AcpSessionRow[] {
     return this.db
-      .prepare<AcpSessionRow, []>(
+      .prepare<RawAcpSessionRow, []>(
         "SELECT * FROM acp_sessions ORDER BY updated_at DESC",
       )
-      .all();
+      .all()
+      .map(toAcpSessionRow);
   }
 
   setStatus(sid: KbblSessionId, status: AcpSessionStatus): void {
@@ -507,5 +615,6 @@ export function toSnapshot(row: AcpSessionRow): AcpSessionSnapshot {
     fenced_by: row.fenced_by,
     last_activity_at: row.last_activity_at,
     created_at: row.created_at,
+    workflow: row.workflow,
   };
 }

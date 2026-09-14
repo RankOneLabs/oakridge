@@ -28,6 +28,7 @@ function makeSnapshot(overrides: Partial<SessionSnapshot> = {}): SessionSnapshot
     endReason: null,
     fencedBy: null,
     pendingPermissionCount: 0,
+    workflow: null,
     ...overrides,
   };
 }

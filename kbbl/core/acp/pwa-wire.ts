@@ -5,13 +5,27 @@
 // agent-issued acp_session_id never crosses this boundary — it is not
 // browser-facing identity.
 
-import type { AcpSessionSnapshot, AcpSessionStatus } from "./types";
+import type {
+  AcpSessionSnapshot,
+  AcpSessionStatus,
+  AcpSessionWorkflowIdentity,
+} from "./types";
 
 /** Where a listed session's record lives. `legacy_archive` rows are
  * pre-cutover JSONL sessions: listable, closed, transcript not viewable
  * since the ACP cutover (reconstruction is deleted with the legacy
  * machinery). */
 export type PwaSessionSource = "acp" | "legacy_archive";
+
+/** camelCase mirror of `AcpSessionWorkflowIdentity` on the browser wire. */
+export interface PwaSessionWorkflowIdentity {
+  runId: string;
+  stageInstanceId: string;
+  unitId: string;
+  operatorRole: string | null;
+  cohortTitle: string | null;
+  repositoryKey: string | null;
+}
 
 export interface PwaSessionSnapshot {
   sid: string;
@@ -32,6 +46,22 @@ export interface PwaSessionSnapshot {
   fencedBy: string | null;
   /** Permission requests currently awaiting an operator answer. */
   pendingPermissionCount: number;
+  workflow: PwaSessionWorkflowIdentity | null;
+}
+
+function toPwaWorkflowIdentity(
+  workflow: AcpSessionWorkflowIdentity | null,
+): PwaSessionWorkflowIdentity | null {
+  return workflow
+    ? {
+        runId: workflow.workflow_run_id,
+        stageInstanceId: workflow.stage_instance_id,
+        unitId: workflow.unit_id,
+        operatorRole: workflow.operator_role,
+        cohortTitle: workflow.cohort_title,
+        repositoryKey: workflow.repository_key,
+      }
+    : null;
 }
 
 export function toPwaSessionSnapshot(
@@ -56,6 +86,7 @@ export function toPwaSessionSnapshot(
     endReason: snapshot.end_reason,
     fencedBy: snapshot.fenced_by,
     pendingPermissionCount,
+    workflow: toPwaWorkflowIdentity(snapshot.workflow),
   };
 }
 
@@ -102,5 +133,6 @@ export function archivedLegacyToPwaSnapshot(
     endReason: snapshot.endReason,
     fencedBy: null,
     pendingPermissionCount: 0,
+    workflow: null,
   };
 }

@@ -27,6 +27,7 @@ import {
   type AcpSessionRow,
   type AcpSessionSnapshot,
   type AcpSessionStartSpec,
+  type AcpSessionWorkflowIdentity,
   type AcpTurnRow,
   type AcpUiEvent,
   type AdvanceResult,
@@ -103,10 +104,16 @@ export class AcpSessionService {
     );
   }
 
-  /** Idempotent DBOS ensure (§10.2). */
+  /**
+   * Idempotent DBOS ensure (§10.2). `identity` is not part of the hashed
+   * start spec (folding it in would change `startSpecHash` for
+   * already-claimed keys) — it is written on create, and backfilled by
+   * the store on an attach whose stored identity is still null.
+   */
   async ensureResumableSession(
     key: string,
     spec: AcpSessionStartSpec,
+    identity: AcpSessionWorkflowIdentity | null = null,
   ): Promise<Result<EnsureResult, AcpError>> {
     const resumableKey = key as ResumableKey;
     const specHash = startSpecHash(spec);
@@ -124,6 +131,7 @@ export class AcpSessionService {
       worktree_path: spec.workdir,
       requested_model: spec.model ?? null,
       requested_effort: spec.effort ?? null,
+      workflow: identity,
     });
 
     if (claimed.kind === "spec_conflict") {
@@ -190,6 +198,7 @@ export class AcpSessionService {
       worktree_path: spec.workdir,
       requested_model: spec.model ?? null,
       requested_effort: spec.effort ?? null,
+      workflow: null,
     });
 
     const provisioned = await this.provision(row, spec);

@@ -5,7 +5,7 @@ import { stat } from "node:fs/promises";
 import { MAX_ARTIFACT_ID_LENGTH, type ArtifactId } from "../../session/types";
 import type { SessionManager } from "../../session/session-manager";
 import type { AcpSessionService } from "../../acp/session-service";
-import type { AcpError, AcpSessionStartSpec } from "../../acp/types";
+import type { AcpError, AcpSessionStartSpec, AcpSessionWorkflowIdentity } from "../../acp/types";
 import {
   toLegacySnapshot,
   toLegacyStatus,
@@ -154,6 +154,75 @@ export function validateWorktreeSubdir(subdir: string): string | null {
 }
 
 /**
+ * Parses the optional `workflow` member of a resumable ensure body (step 2's
+ * kbbl adapter sends these member names verbatim; they are written once
+ * here). Absence is not an error — most sessions carry no workflow
+ * identity — it maps to a null result.
+ */
+export function parseWorkflowIdentity(
+  raw: unknown,
+): { value: AcpSessionWorkflowIdentity | null } | { error: string } {
+  if (raw === undefined) return { value: null };
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return { error: "workflow must be an object" };
+  }
+  const value = raw as {
+    workflow_run_id?: unknown;
+    stage_instance_id?: unknown;
+    unit_id?: unknown;
+    operator_role?: unknown;
+    cohort_title?: unknown;
+    repository_key?: unknown;
+  };
+  const requiredField = (field: unknown, name: string): string | null => {
+    if (typeof field !== "string" || field.trim() === "") {
+      return `workflow.${name} must be a non-empty string`;
+    }
+    if (field.trim().length > 200) {
+      return `workflow.${name} must be at most 200 characters`;
+    }
+    return null;
+  };
+  const runIdError = requiredField(value.workflow_run_id, "workflow_run_id");
+  if (runIdError) return { error: runIdError };
+  const stageInstanceError = requiredField(value.stage_instance_id, "stage_instance_id");
+  if (stageInstanceError) return { error: stageInstanceError };
+  const unitIdError = requiredField(value.unit_id, "unit_id");
+  if (unitIdError) return { error: unitIdError };
+
+  const optionalField = (
+    field: unknown,
+    name: string,
+    maxLength: number,
+  ): { value: string | null } | { error: string } => {
+    if (field === undefined) return { value: null };
+    if (typeof field !== "string") return { error: `workflow.${name} must be a string` };
+    const trimmed = field.trim();
+    if (trimmed.length > maxLength) {
+      return { error: `workflow.${name} must be at most ${maxLength} characters` };
+    }
+    return { value: trimmed.length > 0 ? trimmed : null };
+  };
+  const operatorRole = optionalField(value.operator_role, "operator_role", 200);
+  if ("error" in operatorRole) return operatorRole;
+  const cohortTitle = optionalField(value.cohort_title, "cohort_title", 300);
+  if ("error" in cohortTitle) return cohortTitle;
+  const repositoryKey = optionalField(value.repository_key, "repository_key", 200);
+  if ("error" in repositoryKey) return repositoryKey;
+
+  return {
+    value: {
+      workflow_run_id: (value.workflow_run_id as string).trim(),
+      stage_instance_id: (value.stage_instance_id as string).trim(),
+      unit_id: (value.unit_id as string).trim(),
+      operator_role: operatorRole.value,
+      cohort_title: cohortTitle.value,
+      repository_key: repositoryKey.value,
+    },
+  };
+}
+
+/**
  * Map a service-layer AcpError onto the HTTP status the legacy routes used
  * for the equivalent failure, with the ACP code carried in the body so a
  * follow-up DBOS change can consume it (§22.10).
@@ -224,6 +293,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
     const body = raw as {
       initial_prompt?: unknown; workdir?: unknown; name?: unknown; artifact_id?: unknown;
       runtime?: unknown; model?: unknown; effort?: unknown; worktree?: unknown; inherit_worktree_from?: unknown;
+      workflow?: unknown;
     };
     if (typeof body.initial_prompt !== "string" || body.initial_prompt.trim() === "") return c.json({ error: "initial_prompt must be a non-empty string" }, 400);
     if (typeof body.workdir !== "string") return c.json({ error: "workdir must be a string" }, 400);
@@ -251,6 +321,8 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       inheritWorktreeFrom = body.inherit_worktree_from.trim();
     }
     if (worktree && inheritWorktreeFrom !== undefined) return c.json({ error: "worktree cannot be combined with inherit_worktree_from" }, 400);
+    const workflowResult = parseWorkflowIdentity(body.workflow);
+    if ("error" in workflowResult) return c.json({ error: workflowResult.error }, 400);
     const startSpec: AcpSessionStartSpec = {
       initial_prompt: body.initial_prompt,
       workdir: resolve(body.workdir),
@@ -262,7 +334,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       ...(worktree ? { worktree } : {}),
       ...(inheritWorktreeFrom ? { inherit_worktree_from: inheritWorktreeFrom } : {}),
     };
-    const ensured = await acp.ensureResumableSession(rawKey, startSpec);
+    const ensured = await acp.ensureResumableSession(rawKey, startSpec, workflowResult.value);
     if (!ensured.ok) {
       const { status, body: errBody } = errorResponse(ensured.error);
       return c.json(errBody, status);
