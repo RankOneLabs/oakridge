@@ -15,6 +15,7 @@ import {
   archivedLegacyToPwaSnapshot,
   toPwaSessionSnapshot,
 } from "../../acp/pwa-wire";
+import { compareSessionsByActivity } from "../../acp/pwa-session-order";
 import { listPwaSessions } from "./acp-inbox";
 import { isValidSid } from "./acp-per-sid";
 import { findSessionHold, isTruthyFlag, selectCloseAuthority, selectCloseRefusal } from "../session-hold";
@@ -415,10 +416,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
     const legacy = [...manager.listSnapshots(), ...archived].map(
       archivedLegacyToPwaSnapshot,
     );
-    const merged = [...acpSessions, ...legacy].sort((a, b) => {
-      if (a.lastActivityTs === b.lastActivityTs) return 0;
-      return a.lastActivityTs < b.lastActivityTs ? 1 : -1;
-    });
+    const merged = [...acpSessions, ...legacy].sort(compareSessionsByActivity);
     return c.json({ sessions: merged });
   });
 
