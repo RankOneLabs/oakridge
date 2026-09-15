@@ -6,6 +6,9 @@ import type {
   ConfirmCohortMergedRequest,
   OakridgeConfig,
   Project,
+  ProjectId,
+  ProjectUpdateCommand,
+  ProjectUpdateError,
   ProjectWriteInput,
   WorkflowDefSummary,
   WorkflowDefFull,
@@ -39,6 +42,7 @@ import type {
   EpicProfileId,
   WorkflowRunId,
 } from "./types";
+import type { Result } from "../lib/result";
 import { parseRepositoryKey } from "./repository-inputs";
 
 const API = "/oakridge/api";
@@ -66,15 +70,40 @@ interface RawReviewInbox {
   items: RawReviewInboxItem[];
 }
 
-type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
-
 interface ResponseParseError {
   operation: string;
   detail: string;
 }
 
+interface RawProject extends Omit<Project, "id"> {
+  readonly id: string;
+}
+
 const ok = <T>(value: T): Result<T, ResponseParseError> => ({ ok: true, value });
 const err = (operation: string, detail: string): Result<never, ResponseParseError> => ({ ok: false, error: { operation, detail } });
+
+const projectUpdateError = (path: string, detail: string): Result<never, ProjectUpdateError> => ({
+  ok: false,
+  error: { operation: "update project", path, detail },
+});
+
+const parseProject = (value: unknown): Result<Project, ResponseParseError> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return err("parse project", "response was not an object");
+  const project = value as Partial<RawProject>;
+  if (typeof project.id !== "string" || !project.id.trim()) return err("parse project", "response contained an empty project id");
+  if (typeof project.name !== "string") return err("parse project", "response contained an invalid project name");
+  if (typeof project.repo_dir !== "string") return err("parse project", "response contained an invalid repository path");
+  if (typeof project.created_at !== "string") return err("parse project", "response contained an invalid creation time");
+  if (project.base_branch !== null && project.base_branch !== undefined && typeof project.base_branch !== "string") {
+    return err("parse project", "response contained an invalid base branch");
+  }
+  const forge = project.forge_repository;
+  if (forge !== null && forge !== undefined && (typeof forge !== "object" || forge.provider !== "github"
+      || typeof forge.owner !== "string" || typeof forge.name !== "string")) {
+    return err("parse project", "response contained an invalid forge repository");
+  }
+  return ok({ ...project, id: project.id as ProjectId } as Project);
+};
 
 function parseOptionalRepositoryKey(value: string | null | undefined): Result<RepositoryKey | null | undefined, ResponseParseError> {
   if (value == null) return ok(value);
@@ -246,19 +275,6 @@ async function oakridgePut<T>(path: string, options: OakridgePutOptions): Promis
   return (await res.json()) as T;
 }
 
-async function oakridgePutJson<T>(path: string, body: object): Promise<T> {
-  const res = await fetch(`${API}${path}`, {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const responseBody = await res.json().catch(() => null) as unknown;
-    throw new Error(selectFailureDetail(responseBody, `oakridge PUT ${path}: ${res.status}`));
-  }
-  return (await res.json()) as T;
-}
-
 async function oakridgeDelete(path: string): Promise<void> {
   const res = await fetch(`${API}${path}`, { method: "DELETE" });
   if (!res.ok) {
@@ -343,8 +359,23 @@ export function createProject(body: ProjectWriteInput): Promise<Project> {
   return oakridgePost<Project>("/projects", body);
 }
 
-export function updateProject(id: string, body: ProjectWriteInput): Promise<Project> {
-  return oakridgePutJson<Project>(`/projects/${encodeURIComponent(id)}`, body);
+export async function updateProject(command: ProjectUpdateCommand): Promise<Result<Project, ProjectUpdateError>> {
+  const path = `/projects/${encodeURIComponent(command.id)}`;
+  try {
+    const response = await fetch(`${API}${path}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(command.project),
+    });
+    if (!response.ok) {
+      const responseBody = await response.json().catch(() => null) as unknown;
+      return projectUpdateError(path, selectFailureDetail(responseBody, `oakridge PUT ${path}: ${response.status}`));
+    }
+    const parsed = parseProject(await response.json());
+    return parsed.ok ? parsed : projectUpdateError(path, `${parsed.error.operation}: ${parsed.error.detail}`);
+  } catch (error) {
+    return projectUpdateError(path, error instanceof Error ? error.message : "request failed");
+  }
 }
 
 // Retired defs are hidden by default: the seed archives superseded built-ins, so

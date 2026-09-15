@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useCreateProject } from "../../hooks/useCreateProject";
 import { useProjects } from "../../hooks/useProjects";
 import { useUpdateProject } from "../../hooks/useUpdateProject";
+import type { ProjectId, ProjectWriteInput } from "../../types";
 import { Button } from "../atoms/Button";
 import { FeedbackMessage } from "../atoms/FeedbackMessage";
 import { FormField, formControlClass } from "../molecules/FormField";
@@ -16,15 +17,15 @@ export function CreateProjectForm({ onBack, onCreated }: CreateProjectFormProps)
   const [name, setName] = useState("");
   const [repoDir, setRepoDir] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [projectId, setProjectId] = useState("");
+  const [projectId, setProjectId] = useState<ProjectId | null>(null);
   const projects = useProjects();
   const createProject = useCreateProject();
   const updateProject = useUpdateProject();
   const pending = createProject.isPending || updateProject.isPending;
 
-  const onSelectProject = (id: string) => {
-    setProjectId(id);
-    const project = projects.data?.find((candidate) => candidate.id === id);
+  const onSelectProject = (rawId: string) => {
+    const project = projects.data?.find((candidate) => candidate.id === rawId);
+    setProjectId(project?.id ?? null);
     setName(project?.name ?? "");
     setRepoDir(project?.repo_dir ?? "");
     setError(null);
@@ -35,10 +36,15 @@ export function CreateProjectForm({ onBack, onCreated }: CreateProjectFormProps)
     setError(null);
     if (!name.trim()) { setError("Project name is required."); return; }
     if (!repoDir.trim()) { setError("Repository path is required."); return; }
+    const input: ProjectWriteInput = { name: name.trim(), repo_dir: repoDir.trim() };
+    if (projectId) {
+      const result = await updateProject.mutateAsync({ id: projectId, project: input });
+      if (!result.ok) { setError(result.error.detail); return; }
+      onCreated();
+      return;
+    }
     try {
-      const input = { name: name.trim(), repo_dir: repoDir.trim() };
-      if (projectId) await updateProject.mutateAsync({ id: projectId, ...input });
-      else await createProject.mutateAsync(input);
+      await createProject.mutateAsync(input);
       onCreated();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save project");
@@ -56,7 +62,7 @@ export function CreateProjectForm({ onBack, onCreated }: CreateProjectFormProps)
 
       <form className="or-form-card flex flex-col gap-4" onSubmit={(e) => { void onSubmit(e); }}>
         <FormField label="Existing project">
-          <select className={formControlClass} value={projectId} onChange={(event) => onSelectProject(event.target.value)} disabled={pending || projects.isPending}>
+          <select className={formControlClass} value={projectId ?? ""} onChange={(event) => onSelectProject(event.target.value)} disabled={pending || projects.isPending}>
             <option value="">Create a new project</option>
             {projects.data?.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
           </select>
