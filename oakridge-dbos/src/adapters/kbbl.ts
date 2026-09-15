@@ -1,4 +1,4 @@
-import type { ExecutionRequest, ExecutorAdapter, ExecutorObservationAttempt, ExecutorTerminalObservation, ExternalExecutionReference } from "../domain/execution";
+import { ExecutorStartRejectedError, type ExecutionRequest, type ExecutorAdapter, type ExecutorObservationAttempt, type ExecutorTerminalObservation, type ExternalExecutionReference } from "../domain/execution";
 import type { ExecutionId, ExecutorOperationId, JsonValue } from "../domain/primitives";
 
 /**
@@ -227,13 +227,18 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
   }
 
   async start_or_attach(request: ExecutionRequest, operation_id: ExecutorOperationId): Promise<ExternalExecutionReference> {
-    const config = parseResolvedConfig(request.resolved_config);
+    let config: KbblResolvedConfig;
+    try {
+      config = parseResolvedConfig(request.resolved_config);
+    } catch (error) {
+      throw new ExecutorStartRejectedError(error instanceof Error ? error.message : String(error));
+    }
     const inheritedSessionId = request.workspace_source?.external_reference.kind === "kbbl_session"
       ? request.workspace_source.external_reference.session_id : null;
     // Definition-time validation should have caught this; failing here keeps the
     // message actionable instead of surfacing as an opaque kbbl 400.
     if (config.worktree && inheritedSessionId) {
-      throw new Error(`execution ${request.execution_id} resolves its own worktree and inherits one from ${inheritedSessionId}; these are mutually exclusive`);
+      throw new ExecutorStartRejectedError(`execution ${request.execution_id} resolves its own worktree and inherits one from ${inheritedSessionId}; these are mutually exclusive`);
     }
     const sessionKey = sessionKeyFor(operation_id, this.options.executor_function_identity);
     const response = await this.fetch(`${this.options.base_url}/sessions/resumable/${encodeURIComponent(sessionKey)}`, {
@@ -260,7 +265,7 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
         },
       }),
     });
-    if (!response.ok) throw new Error(`kbbl ensure-session failed (${response.status}): ${await response.text()}`);
+    if (!response.ok) throw new ExecutorStartRejectedError(`kbbl ensure-session failed (${response.status}): ${await response.text()}`);
     const ensured = parseEnsureResponse(await response.json());
     return { kind: "kbbl_session", session_id: ensured.session.sid,
       ...(ensured.session.worktreeBaseRef ? { worktree_base_sha: ensured.session.worktreeBaseRef } : {}) };

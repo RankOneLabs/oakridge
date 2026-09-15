@@ -452,6 +452,27 @@ describe("RunDetailView", () => {
     expect(screen.queryByTestId("or-retry-unit-btn")).not.toBeNull();
   });
 
+  it("does not offer unit retry after the run is terminal", async () => {
+    const detail: RunDetail = {
+      ...RUN_DETAIL_FIXTURE,
+      status: "failed",
+      is_stuck: false,
+      stages: [{
+        stage_instance_id: "build-stage-1", name: "build", type: "delegated_session",
+        status: "failed", artifacts: [], delegated_kbbl_sid: null, worktree: null,
+        units: [{
+          unit_id: "cohort-a", repository_key: "oakridge" as RepositoryKey, sid: null, worktree: null,
+          status: "failed", gate: null, params: buildBriefParams({ title: "Failed build" }),
+        }],
+      }],
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch(detail));
+    wrap(<RunDetailView runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
+
+    await screen.findByText("Failed build");
+    expect(screen.queryByTestId("or-retry-unit-btn")).toBeNull();
+  });
+
   it("shows final integration and explicitly confirms external completion", async () => {
     const repositoryKey = "oakridge" as RepositoryKey;
     const detail: RunDetail = {

@@ -34,7 +34,7 @@ import { DBOS } from "@dbos-inc/dbos-sdk";
 
 import type { AskResult } from "../src/decision/commands";
 import type { OutputReleaseContract } from "../src/domain/compiled-workflow";
-import type { ExecutionRequest, ExecutorAdapter, ExecutorObservationAttempt, ExternalExecutionReference } from "../src/domain/execution";
+import { ExecutorStartRejectedError, type ExecutionRequest, type ExecutorAdapter, type ExecutorObservationAttempt, type ExternalExecutionReference } from "../src/domain/execution";
 import type { ArtifactId, InputFingerprint, Result, RunUnitId, StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId, WorkOrderId } from "../src/domain/primitives";
 import { applyMigrations } from "../src/storage/migrate";
 import { PostgresRunRecordRepository } from "../src/storage/postgres-run-record";
@@ -295,7 +295,7 @@ test("executor start failure becomes a visible retryable terminal observation", 
     executor_type: "start-failure-executor",
     async start_or_attach(): Promise<ExternalExecutionReference> {
       startCalls += 1;
-      throw new Error("ensure-session rejected the generated name");
+      throw new ExecutorStartRejectedError("ensure-session rejected the generated name");
     },
     async observe_terminal(): Promise<ExecutorObservationAttempt> { return { kind: "pending" }; },
     async deliver_input() {},
