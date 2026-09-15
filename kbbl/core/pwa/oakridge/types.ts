@@ -8,13 +8,31 @@ export interface OakridgeConfig {
   core_url?: string | null;
 }
 
+export type ProjectId = string & { readonly __brand: "ProjectId" };
+
 export interface Project {
-  id: string;
+  id: ProjectId;
   name: string;
   repo_dir: string;
   created_at: string;
   forge_repository?: ForgeRepositoryIdentity | null;
   base_branch?: string | null;
+}
+
+export interface ProjectWriteInput {
+  readonly name: string;
+  readonly repo_dir: string;
+}
+
+export interface ProjectUpdateCommand {
+  readonly id: ProjectId;
+  readonly project: ProjectWriteInput;
+}
+
+export interface ProjectUpdateError {
+  readonly operation: "update project";
+  readonly path: string;
+  readonly detail: string;
 }
 
 export interface WorkflowDefSummary {

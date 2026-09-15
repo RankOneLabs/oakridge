@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { repositoryDraftFromProject, validateRepositoryInputs } from "./repository-inputs";
+import type { ProjectId } from "./types";
+
+const projectId = "project-1" as ProjectId;
 
 describe("repositoryDraftFromProject", () => {
   it("prefills forge identity derived from the local repository", () => {
     expect(repositoryDraftFromProject({
-      id: "project-1", name: "PAA dot DEV", repo_dir: "/repos/paa", created_at: "2026-08-12T00:00:00Z",
+      id: projectId, name: "PAA dot DEV", repo_dir: "/repos/paa", created_at: "2026-08-12T00:00:00Z",
       forge_repository: { provider: "github", owner: "RankOneLabs", name: "paa_site" }, base_branch: "develop",
     }, { key: "repo", path: "", forge_owner: "", forge_name: "", integration_branch: "main" })).toEqual({
       key: "paa-dot-dev", path: "/repos/paa", forge_owner: "RankOneLabs", forge_name: "paa_site", integration_branch: "develop",
@@ -13,7 +16,7 @@ describe("repositoryDraftFromProject", () => {
 
   it("keeps explicit overrides when identity cannot be derived", () => {
     expect(repositoryDraftFromProject({
-      id: "project-1", name: "API", repo_dir: "/repos/api", created_at: "2026-08-12T00:00:00Z",
+      id: projectId, name: "API", repo_dir: "/repos/api", created_at: "2026-08-12T00:00:00Z",
     }, { key: "old", path: "/old", forge_owner: "acme", forge_name: "api", integration_branch: "release" })).toMatchObject({
       forge_owner: "acme", forge_name: "api", integration_branch: "release",
     });

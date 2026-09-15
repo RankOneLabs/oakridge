@@ -521,8 +521,14 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       // already-released siblings.
       const missing = await transaction.query<{ readonly output_name: string; readonly collection_key: string | null }>("SELECT output_name, collection_key FROM oakridge.run_output_slot WHERE run_unit_id=$1 AND required AND state <> 'released' ORDER BY output_name, collection_key NULLS FIRST FOR UPDATE", [runUnitId]);
       if (missing.length === 0) return { kind: "no_missing_work", detail: `run unit '${runUnitId}' has no missing required output` };
+      // An operator retry's rendered prompt includes that retry's correction
+      // section. Rebinding from it again would accumulate obsolete artifacts
+      // and feedback. The latest initial/input-revision order is the stable
+      // resolved basis; current missing slots and rejection context are added
+      // below for this retry only.
       const basisRows = await transaction.query<{ readonly execution_request: ExecutionRequest | null }>(`SELECT execution_request FROM oakridge.work_order
-        WHERE run_unit_id=$1 AND execution_request IS NOT NULL ORDER BY created_at DESC,id DESC LIMIT 1 FOR UPDATE`, [runUnitId]);
+        WHERE run_unit_id=$1 AND execution_request IS NOT NULL AND reason <> 'operator_retry'
+        ORDER BY created_at DESC,id DESC LIMIT 1 FOR UPDATE`, [runUnitId]);
       const basis = basisRows[0];
       if (!basis?.execution_request) return { kind: "no_execution_basis", detail: `run unit '${runUnitId}' has no resolved execution request` };
       const workOrderId = randomUUID() as WorkOrderId;

@@ -53,6 +53,19 @@ export const createConfigurationApp = (dependencies: ConfigurationHttpDependenci
       return http.json({ error: error instanceof Error ? error.message : "project creation failed" }, 500);
     }
   });
+  app.put("/projects/:id", async (http) => {
+    const projectId = parseUuidId<ProjectId>(http.req.param("id"));
+    if (!projectId) return http.json({ error: "project not found" }, 404);
+    const parsed = createProjectSchema.safeParse(await http.req.json().catch(() => null));
+    if (!parsed.success) return http.json({ error: "name and repo_dir are required" }, 400);
+    try {
+      const identity = await dependencies.project_identity.resolve(parsed.data.repo_dir);
+      const project = await dependencies.projects.update(projectId, { ...parsed.data, forge_repository: identity?.forge_repository ?? null, base_branch: identity?.base_branch ?? null });
+      return project ? http.json(project) : http.json({ error: "project not found" }, 404);
+    } catch (error) {
+      return http.json({ error: error instanceof Error ? error.message : "project update failed" }, 500);
+    }
+  });
 
   app.get("/workflow_defs", async (http) => {
     const includeArchived = http.req.query("include_archived") === "1" || http.req.query("include_archived") === "true";

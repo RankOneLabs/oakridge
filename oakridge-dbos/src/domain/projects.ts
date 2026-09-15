@@ -18,6 +18,13 @@ export interface CreateProject {
   readonly base_branch: string | null;
 }
 
+export interface UpdateProject {
+  readonly name: string;
+  readonly repo_dir: string;
+  readonly forge_repository: Project["forge_repository"];
+  readonly base_branch: string | null;
+}
+
 export interface ProjectRepositoryIdentity {
   readonly forge_repository: NonNullable<Project["forge_repository"]>;
   readonly base_branch: string | null;

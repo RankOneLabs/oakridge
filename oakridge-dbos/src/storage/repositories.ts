@@ -5,7 +5,7 @@ import type { GateDecisionAudit, GateDecisionAuditId } from "../domain/gates";
 import type { CollaborationMessage, CollaborationThread, CollaborationThreadWithMessages, MessageId, ReviewItem, ReviewItemId, ReviewItemStatus, ThreadId, ThreadStatus } from "../domain/collaboration";
 import type { ArtifactCoordinate, ArtifactRevision } from "../domain/artifacts";
 import type { SessionHold } from "../domain/session-hold";
-import type { CreateProject, Project } from "../domain/projects";
+import type { CreateProject, Project, UpdateProject } from "../domain/projects";
 import type { AdmitStageUnitRequest, AdmitStageUnitResult, CreateWorkflowRunResult, DeleteRunResult, PersistWorkflowRunLaunch, SetRunArchiveResult, UnstartedRun, WorkflowRunLaunchRecord, WorkflowRunListFilter } from "../domain/runs";
 import type { ConfirmFinalPullRequestRequest, FinalPullRequestDomainError, FinalPullRequestProjection, PullRequestObservation } from "../domain/final-pull-request";
 import type { CohortPullRequestReconciliation, RunOwnedCohortHandoff } from "../domain/cohort-pull-request";
@@ -25,6 +25,7 @@ export interface WorkflowDefinitionRepository {
 
 export interface ProjectRepository {
   insert(project: CreateProject): Promise<Project>;
+  update(id: import("../domain/primitives").ProjectId, project: UpdateProject): Promise<Project | null>;
   list(): Promise<readonly Project[]>;
   find_by_id(id: import("../domain/primitives").ProjectId): Promise<Project | null>;
 }
