@@ -769,12 +769,13 @@ export class AcpSessionService {
         ? { kind: "load", acp_session_id: acpSessionId }
         : { kind: "new" }, loadSignal);
       if (!started.ok) return started;
-      if (!hasDispatchedTurns) {
-        const configured = await controller.applyRequestedConfig(row.requested_model, row.requested_effort);
-        if (!configured.ok) {
-          await controller.closeChild();
-          return configured;
-        }
+      // session/load may report the agent's default config instead of the
+      // selection used before the child exited. The durable requested values
+      // remain authoritative across both new-session recovery and reload.
+      const configured = await controller.applyRequestedConfig(row.requested_model, row.requested_effort);
+      if (!configured.ok) {
+        await controller.closeChild();
+        return configured;
       }
       return ok(controller);
     });
