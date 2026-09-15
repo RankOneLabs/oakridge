@@ -6,6 +6,8 @@ import { usePendingSends } from "../hooks/usePendingSends";
 import { useElapsedSeconds } from "../hooks/useElapsedSeconds";
 import { useAutoScrollAndLayout } from "../hooks/useAutoScrollAndLayout";
 import { projectTimeline } from "../lib/acp-timeline";
+import { shouldSuggestCompaction } from "../lib/compaction";
+import { useInvokeAgentCommand } from "../hooks/useSkills";
 import {
   operatorStateLabel,
   selectOperatorExecutionState,
@@ -19,11 +21,13 @@ import { PendingUserBubble } from "../components/molecules/PendingUserBubble";
 import { EndedBanner } from "../components/organisms/EndedBanner";
 import { ThinkingIndicator } from "../components/atoms/ThinkingIndicator";
 import { SkillRail } from "../components/organisms/SkillRail";
+import { CompactSuggestionBanner } from "../components/organisms/CompactSuggestionBanner";
 
 export function SessionView({
   sid,
   snapshot,
   inboxStatus,
+  softThresholdTokens,
   theme,
   onToggleTheme,
   onBack,
@@ -32,6 +36,7 @@ export function SessionView({
   sid: string;
   snapshot: SessionSnapshot | null;
   inboxStatus: Status;
+  softThresholdTokens: number | null;
   theme: Theme;
   onToggleTheme: () => void;
   onBack: () => void;
@@ -53,6 +58,31 @@ export function SessionView({
   } = useAcpSession(sid, !isLegacyArchive);
 
   const projection = useMemo(() => projectTimeline(events), [events]);
+  const compactMutation = useInvokeAgentCommand(sid);
+  const [isCompactSuggestionDismissed, setIsCompactSuggestionDismissed] =
+    useState(false);
+
+  useEffect(() => {
+    setIsCompactSuggestionDismissed(false);
+  }, [sid]);
+
+  useEffect(() => {
+    if (
+      projection.usage !== null &&
+      projection.usage.used !== null &&
+      softThresholdTokens !== null &&
+      projection.usage.used < softThresholdTokens
+    ) {
+      setIsCompactSuggestionDismissed(false);
+    }
+  }, [projection.usage?.used, softThresholdTokens]);
+
+  const showCompactSuggestion = shouldSuggestCompaction({
+    usage: projection.usage,
+    softThresholdTokens,
+    commands: projection.commands,
+    isDismissed: isCompactSuggestionDismissed,
+  });
 
   const sessionStatus = snapshot?.status ?? null;
   const sessionClosed =
@@ -169,6 +199,22 @@ export function SessionView({
         </>
       )}
       <div className="bottom-stack" ref={bottomBarRef}>
+        {canInput &&
+          showCompactSuggestion &&
+          projection.usage !== null &&
+          projection.usage.used !== null && (
+          <CompactSuggestionBanner
+            tokens={projection.usage.used}
+            isPending={compactMutation.isPending}
+            error={compactMutation.error instanceof Error ? compactMutation.error.message : null}
+            onCompact={() =>
+              compactMutation.mutate("compact", {
+                onSuccess: () => setIsCompactSuggestionDismissed(true),
+              })
+            }
+            onDismiss={() => setIsCompactSuggestionDismissed(true)}
+          />
+        )}
         {canInput && (
           <SkillRail sid={sid} snapshot={snapshot} commands={projection.commands} />
         )}
