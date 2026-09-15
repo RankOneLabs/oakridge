@@ -50,6 +50,24 @@ const ensureExecutorStep = DBOS.registerStep(
 
 interface ObserveWorkOrderInput { readonly execution: WorkOrderExecution; readonly reference: ExternalExecutionReference }
 
+interface ExecutorStartFailureInput { readonly execution: WorkOrderExecution; readonly detail: string }
+
+/**
+ * A start failure has no external reference for the observer to poll, so the
+ * ensure step's terminal error must itself become the durable health fact that
+ * makes this work order retryable. Cleanup is complete because Oakridge never
+ * acquired an external execution it can fence.
+ */
+const recordExecutorStartFailureStep = DBOS.registerStep(async (input: ExecutorStartFailureInput): Promise<void> => {
+  const { records } = workflowServices();
+  const now = workflowServices().now();
+  await records.ensure_executor_attachment(input.execution.work_order.id, input.execution.request.executor_type, now);
+  await records.observe_executor(input.execution.work_order.id, {
+    kind: "ended_failed", code: "executor_start_failed", detail: input.detail, observed_at: now,
+  }, now);
+  await records.finish_cleanup(input.execution.work_order.id, true, now);
+}, { name: "oakridgeV2RecordExecutorStartFailureStep", retriesAllowed: true });
+
 export const revisionFeedbackPrompt = (revision: WorkOrderRevisionFeedback): string =>
   `The operator requested changes to your ${revision.output_name}${revision.collection_key === null ? "" : ` [${revision.collection_key}]`} output.\n\n` +
   `Feedback: ${revision.feedback ?? "Revise the submitted output."}\n\n` +
@@ -120,7 +138,13 @@ const OBSERVE_INTERVAL_SECONDS = 5;
 /** Independent child: its return value is never a domain outcome. */
 export const runRecordWorkOrderWorkflow = DBOS.registerWorkflow(async (work_order_id: WorkOrderId): Promise<void> => {
   const execution = await loadWorkOrderStep(work_order_id);
-  const reference = await ensureExecutorStep(execution);
+  let reference: ExternalExecutionReference;
+  try {
+    reference = await ensureExecutorStep(execution);
+  } catch (error) {
+    await recordExecutorStartFailureStep({ execution, detail: error instanceof Error ? error.message : String(error) });
+    return;
+  }
   for (;;) {
     await deliverRevisionFeedbackStep({ execution, reference });
     const observation = await observeExecutorStep({ execution, reference });

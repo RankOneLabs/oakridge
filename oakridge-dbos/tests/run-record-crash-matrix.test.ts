@@ -287,6 +287,47 @@ test("crash matrix: duplicate start of the same work-order workflow id reuses th
 
 const DBOS_APP_NAME = "oakridge-crash-matrix";
 
+test("executor start failure becomes a visible retryable terminal observation", async () => {
+  const unit = await freshUnit("start-failure-executor");
+  if (!unit || !sql) return skip();
+  let startCalls = 0;
+  const adapter: ExecutorAdapter = {
+    executor_type: "start-failure-executor",
+    async start_or_attach(): Promise<ExternalExecutionReference> {
+      startCalls += 1;
+      throw new Error("ensure-session rejected the generated name");
+    },
+    async observe_terminal(): Promise<ExecutorObservationAttempt> { return { kind: "pending" }; },
+    async deliver_input() {},
+    async cancel_or_fence() {},
+  };
+  DBOS.setConfig({ name: DBOS_APP_NAME, systemDatabaseUrl: databaseUrl!,
+    applicationVersion: `start-failure-${randomUUID()}`, logLevel: "warn" });
+  registerRunRecordWorkflowServices({ records: unit.records, find_executor: () => adapter, now: () => new Date().toISOString() });
+  await DBOS.launch();
+  try {
+    await sql.query("UPDATE oakridge.work_order SET execution_request=jsonb_set(execution_request,'{resolved_config,publication}',$2::jsonb,true) WHERE id=$1", [
+      unit.workOrderId, JSON.stringify({ base_url: "http://oakridge.test", work_order_id: unit.workOrderId, capability: "initial-capability" }),
+    ]);
+    await unit.records.decide_run(unit.runId, unit.now);
+    await DBOS.startWorkflow(runRecordWorkOrderWorkflow, { workflowID: unit.workOrderWorkflowId })(unit.workOrderId);
+    await awaitCondition("executor start failure to be recorded", async () => {
+      const rows = await sql.query<{ readonly health: { readonly kind: string; readonly code?: string }; readonly cleanup_state: string }>(
+        "SELECT health,cleanup_state FROM oakridge.executor_attachment WHERE work_order_id=$1", [unit.workOrderId]);
+      return rows[0]?.health?.kind === "ended_failed" && rows[0]?.cleanup_state === "complete" ? rows[0] : null;
+    }, 15_000);
+    expect(startCalls).toBeGreaterThan(0);
+    const runUnit = (await sql.query<{ readonly id: string }>(
+      "SELECT run_unit_id::text AS id FROM oakridge.work_order WHERE id=$1", [unit.workOrderId]))[0];
+    if (!runUnit) throw new Error("test work order lost its run unit");
+    const retry = await unit.records.retry_unit({ target: { kind: "run_unit", run_unit_id: runUnit.id as RunUnitId },
+      idempotency_key: "retry-after-start-failure", actor: "operator:test" }, new Date().toISOString());
+    expect(retry.kind).toBe("created");
+  } finally {
+    await DBOS.shutdown();
+  }
+}, 25_000);
+
 for (const boundary of ["attachment", "observation"] as const) {
   test(`deletion waits for fencing when cancellation interrupts executor ${boundary}`, async () => {
     if (!sql || !databaseUrl) return skip();

@@ -404,7 +404,7 @@ describe("RunDetailView", () => {
     ));
   });
 
-  it("does not offer unit retry when the failed unit's stage is not parked", async () => {
+  it("offers unit retry when executor startup failed before the stage could park", async () => {
     const detail: RunDetail = {
       ...RUN_DETAIL_FIXTURE,
       status: "running",
@@ -422,7 +422,7 @@ describe("RunDetailView", () => {
     wrap(<RunDetailView runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
 
     await screen.findByText("Failed build");
-    expect(screen.queryByTestId("or-retry-unit-btn")).toBeNull();
+    expect(screen.queryByTestId("or-retry-unit-btn")).not.toBeNull();
   });
 
   it("shows final integration and explicitly confirms external completion", async () => {

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type { MaterializedExecutionUnit } from "../domain/compiled-workflow";
 import { isDelegatedRuntimeId, type Bindable, type DelegatedSessionDefinitionConfig, type ResolvedExecutorConfig, type SlotBinding } from "../domain/delegated-session";
 import type { ArtifactEnvelope } from "../domain/execution";
@@ -110,6 +112,22 @@ const renderPrompt = (template: string, slots: Readonly<Record<string, string>>)
  */
 const IDENTITY_SLOTS = ["UNIT_ID", "STAGE_INSTANCE_ID"] as const;
 
+/** kbbl's persisted session-name contract (`handlers/sessions.ts`). */
+export const MAX_KBBL_SESSION_NAME_LENGTH = 80;
+
+/**
+ * Keeps a generated display name inside kbbl's boundary without weakening
+ * identity. The resumable operation key owns attachment identity; this name is
+ * for operators. A hash suffix keeps long names distinguishable when their
+ * useful difference falls beyond the retained prefix.
+ */
+export const boundKbblSessionName = (name: string): string => {
+  const trimmed = name.trim();
+  if (trimmed.length <= MAX_KBBL_SESSION_NAME_LENGTH) return trimmed;
+  const suffix = createHash("sha256").update(trimmed).digest("hex").slice(0, 8);
+  return `${trimmed.slice(0, MAX_KBBL_SESSION_NAME_LENGTH - suffix.length - 1)}-${suffix}`;
+};
+
 export const resolveDelegatedExecution = (input: ResolveDelegatedExecutionInput): Result<ResolvedExecutorConfig, ResolveExecutionError> => {
   const environment = { ...input.environment, item: input.unit.parameters };
   const slots: Record<string, string> = {};
@@ -155,7 +173,7 @@ export const resolveDelegatedExecution = (input: ResolveDelegatedExecutionInput)
       ...(baseRef.value ? { baseRef: substituteIdentity(baseRef.value) } : {}) };
   }
   return ok({ executor_type: "delegated_session", runtime: runtime.value, rendered_prompt: prompt.value, workdir: workdir.value,
-    session_name: substituteIdentity(input.definition.session_name),
+    session_name: boundKbblSessionName(substituteIdentity(input.definition.session_name)),
     model: model.value, effort: effort.value, ...(worktree ? { worktree } : {}),
     executor_options: { pre_authorized_tools: input.definition.pre_authorized_tools ?? [], yolo: input.definition.yolo ?? false } });
 };
