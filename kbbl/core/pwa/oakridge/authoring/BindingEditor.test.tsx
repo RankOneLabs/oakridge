@@ -45,13 +45,13 @@ describe("BindingEditor", () => {
 
   test("both item-keyed lookups are offered inside a fan out, and neither outside one", () => {
     const { unmount } = render(<BindingEditor label="binding" value={{ from: "literal", value: "" }} onChange={vi.fn()} allowItem />);
-    const inFanOut = [...(screen.getByLabelText("binding binding source") as HTMLSelectElement).options].map((option) => option.value);
+    const inFanOut = Array.from((screen.getByLabelText("binding binding source") as HTMLSelectElement).options).map((option) => option.value);
     expect(inFanOut).toContain("input_lookup");
     expect(inFanOut).toContain("context_lookup");
     unmount();
 
     render(<BindingEditor label="binding" value={{ from: "literal", value: "" }} onChange={vi.fn()} />);
-    const scalar = [...(screen.getByLabelText("binding binding source") as HTMLSelectElement).options].map((option) => option.value);
+    const scalar = Array.from((screen.getByLabelText("binding binding source") as HTMLSelectElement).options).map((option) => option.value);
     expect(scalar).toEqual(["literal", "input", "context"]);
   });
 });
