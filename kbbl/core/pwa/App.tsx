@@ -61,6 +61,7 @@ export function App() {
         sid={sid}
         snapshot={sessions.get(sid as Sid) ?? null}
         inboxStatus={inboxStatus}
+        softThresholdTokens={config?.softThresholdTokens ?? null}
         theme={theme}
         onToggleTheme={toggleTheme}
         onBack={() => navigate(null)}

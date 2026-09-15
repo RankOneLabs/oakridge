@@ -72,6 +72,19 @@ export type ExecutorObservationAttempt =
   | { readonly kind: "terminal"; readonly observation: ExecutorTerminalObservation };
 
 /**
+ * A start request that the executor definitively rejected before creating an
+ * external execution. Transport failures stay ordinary errors because their
+ * creation outcome is unknown and must remain recoverable under the same
+ * durable workflow step.
+ */
+export class ExecutorStartRejectedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ExecutorStartRejectedError";
+  }
+}
+
+/**
  * `external_reference` is required on every post-start operation: the caller
  * always holds one by then, and an adapter that had to fall back to in-process
  * memory silently did nothing after a backend restart — a fence that no-ops is

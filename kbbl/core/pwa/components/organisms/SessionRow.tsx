@@ -5,7 +5,7 @@ import type { SessionSnapshot } from "../../types";
 import { useRelativeTime } from "../../hooks/useRelativeTime";
 import { prettyEffortLabel, prettyModelLabel } from "../../lib/format";
 import { refusalOf, sessionCloseError } from "../../lib/session-close";
-import { resumeTitle } from "../../lib/session";
+import { resumeTitle, selectSessionCohortLabel } from "../../lib/session";
 
 export function SessionRow({
   snapshot,
@@ -91,9 +91,23 @@ export function SessionRow({
             <span className={`session-row-status session-row-status-${snapshot.status}`}>
               {snapshot.status}
             </span>
-            <span className="session-row-name" title={snapshot.sid}>
-              {snapshot.name || snapshot.sid.slice(0, 8)}
-            </span>
+            {snapshot.workflow ? (
+              <>
+                <span
+                  className="session-row-role"
+                  title={`operator role: ${snapshot.workflow.operatorRole ?? "unknown"}`}
+                >
+                  {snapshot.workflow.operatorRole ?? "session"}
+                </span>
+                <span className="session-row-name" title={snapshot.sid}>
+                  {selectSessionCohortLabel(snapshot.workflow)}
+                </span>
+              </>
+            ) : (
+              <span className="session-row-name" title={snapshot.sid}>
+                {snapshot.name || snapshot.sid.slice(0, 8)}
+              </span>
+            )}
             <span className="session-row-model" title={`agent: ${snapshot.agentProfile}`}>
               {snapshot.agentProfile}
             </span>

@@ -26,13 +26,13 @@ function isFannedOut(stage: StageDetail): boolean {
 }
 
 interface UnitRetryFacts {
+  readonly isRunActive: boolean;
   readonly isRunStuck: boolean;
-  readonly stageStatus: StageDetail["status"];
   readonly unitStatus: NonNullable<StageDetail["units"]>[number]["status"];
 }
 
-const canRetryUnit = ({ isRunStuck, stageStatus, unitStatus }: UnitRetryFacts): boolean =>
-  (stageStatus === "parked" && unitStatus === "failed") || (isRunStuck && unitStatus !== "complete");
+const canRetryUnit = ({ isRunActive, isRunStuck, unitStatus }: UnitRetryFacts): boolean =>
+  isRunActive && (unitStatus === "failed" || (isRunStuck && unitStatus !== "complete"));
 
 interface RunDetailProps {
   runId: string;
@@ -82,6 +82,7 @@ export function RunDetail({ runId, onBack, onSelectArtifact }: RunDetailProps) {
   const run = query.data;
 
   const canCancel = run.status === "running" || run.status === "parked";
+  const isRunActive = run.status === "running" || run.status === "parked";
 
   return (
     <div className="or-page or-page--wide" data-testid="or-run-detail">
@@ -206,14 +207,14 @@ export function RunDetail({ runId, onBack, onSelectArtifact }: RunDetailProps) {
                           && retryMutation.variables.unitId === unit.unit_id
                           ? (retryMutation.error instanceof Error ? retryMutation.error.message : "Retry failed")
                           : undefined}
-                        canRetry={canRetryUnit({ isRunStuck: run.is_stuck, stageStatus: stage.status, unitStatus: unit.status })}
+                        canRetry={canRetryUnit({ isRunActive, isRunStuck: run.is_stuck, unitStatus: unit.status })}
                       />
                     );
                   });
                 }
                 const unit = units?.length === 1 ? units[0] : undefined;
                 const shouldOfferRetry = unit !== undefined
-                  && canRetryUnit({ isRunStuck: run.is_stuck, stageStatus: stage.status, unitStatus: unit.status });
+                  && canRetryUnit({ isRunActive, isRunStuck: run.is_stuck, unitStatus: unit.status });
                 return [
             <RunStageRow
                     key={stage.name}

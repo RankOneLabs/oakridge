@@ -77,12 +77,14 @@ const executionRequest = async (input: ExecutionRequestInput, dependencies: Reso
   } else if (input.stage.executor.executor_type === "delegated_session") {
     const definition = input.stage.executor.definition_config as DelegatedSessionDefinitionConfig;
     const planned = resolveDelegatedExecution({ definition, environment: { inputs: unitInputs, context: input.context, item: input.unit.parameters }, unit: input.unit,
-      stage_instance_id: input.stage_instance_id, prompt_template: await dependencies.load_prompt_template(definition.prompt_template_path) });
+      stage_instance_id: input.stage_instance_id, prompt_template: await dependencies.load_prompt_template(definition.prompt_template_path),
+      run_id: input.run_id, operator_role: input.stage.operator_role });
     if (!planned.ok) throw new Error(`${planned.error.operation}:${planned.error.detail}`);
     const urlBinding = definition.slot_bindings.OAKRIDGE_URL;
     const url = urlBinding ? resolveBinding(urlBinding, { inputs: unitInputs, context: input.context, item: input.unit.parameters }) : null;
     if (!url?.ok) throw new Error(`stage '${input.stage.stage_key}' must resolve OAKRIDGE_URL for work-order publication`);
-    resolved = { ...planned.value, publication: { base_url: url.value, work_order_id: input.work_order_id, capability: input.capability } } as unknown as JsonValue;
+    resolved = { ...planned.value, session_name: input.work_order_id,
+      publication: { base_url: url.value, work_order_id: input.work_order_id, capability: input.capability } } as unknown as JsonValue;
   } else {
     throw new Error(`executor '${input.stage.executor.executor_type}' has no v2 resolver`);
   }
@@ -174,7 +176,9 @@ export const rebindWorkOrderPublication = (input: RebindWorkOrderPublicationInpu
   }
   const capability = capabilityFor(input.capability_seed, input.work_order_id);
   const rejected = input.rejected_outputs ?? [];
-  const reboundConfig = { ...config, publication: { ...publication, work_order_id: input.work_order_id, capability } };
+  const reboundConfig = { ...config,
+    ...(typeof config.session_name === "string" ? { session_name: input.work_order_id } : {}),
+    publication: { ...publication, work_order_id: input.work_order_id, capability } };
   const resolved_config: JsonValue = rejected.length > 0 && typeof config.rendered_prompt === "string"
     ? { ...reboundConfig, rendered_prompt: `${config.rendered_prompt}\n\n## Requested output corrections\n\nThe previous writer is being replaced. Revise these stored outputs according to the operator feedback; preserve the remaining scope. Publish using the new work-order instructions below.\n\n${JSON.stringify(rejected, null, 2)}` }
     : reboundConfig;

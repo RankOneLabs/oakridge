@@ -3,7 +3,7 @@ import { DBOS } from "@dbos-inc/dbos-sdk";
 import type { AskResult } from "../decision/commands";
 import { executorHealthFromTerminal, type WorkOrderExecution, type WorkOrderRevisionFeedback } from "../domain/run-record";
 import { executorOperationIdForWorkOrder, type WorkflowRunId, type WorkOrderId } from "../domain/primitives";
-import type { ExecutorAdapter, ExecutorObservationAttempt, ExternalExecutionReference } from "../domain/execution";
+import { ExecutorStartRejectedError, type ExecutorAdapter, type ExecutorObservationAttempt, type ExternalExecutionReference } from "../domain/execution";
 import type { Result } from "../domain/primitives";
 import type { StageOutcome } from "../domain/workflow";
 import type { RunRecordRepository, RunRecordRepositoryError } from "../storage/repositories";
@@ -35,20 +35,48 @@ const loadWorkOrderStep = DBOS.registerStep(
   { name: "oakridgeV2LoadWorkOrderStep", retriesAllowed: true },
 );
 
+type EnsureExecutorAttempt =
+  | { readonly kind: "started"; readonly reference: ExternalExecutionReference }
+  | { readonly kind: "rejected"; readonly detail: string };
+
 const ensureExecutorStep = DBOS.registerStep(
-  async (execution: WorkOrderExecution): Promise<ExternalExecutionReference> => {
+  async (execution: WorkOrderExecution): Promise<EnsureExecutorAttempt> => {
     const { records } = workflowServices();
     const adapter = workflowServices().find_executor(execution.request.executor_type);
     if (!adapter) throw new Error(`executor adapter '${execution.request.executor_type}' is not registered`);
     await records.ensure_executor_attachment(execution.work_order.id, execution.request.executor_type, workflowServices().now());
-    const reference = await adapter.start_or_attach(execution.request, executorOperationIdForWorkOrder(execution.work_order.id));
+    let reference: ExternalExecutionReference;
+    try {
+      reference = await adapter.start_or_attach(execution.request, executorOperationIdForWorkOrder(execution.work_order.id));
+    } catch (error) {
+      if (error instanceof ExecutorStartRejectedError) return { kind: "rejected", detail: error.message };
+      throw error;
+    }
     await records.attach_external(execution.work_order.id, reference, workflowServices().now());
-    return reference;
+    return { kind: "started", reference };
   },
   { name: "oakridgeV2EnsureExecutorStep", retriesAllowed: true },
 );
 
 interface ObserveWorkOrderInput { readonly execution: WorkOrderExecution; readonly reference: ExternalExecutionReference }
+
+interface ExecutorStartFailureInput { readonly execution: WorkOrderExecution; readonly detail: string }
+
+/**
+ * A start failure has no external reference for the observer to poll, so the
+ * ensure step's terminal error must itself become the durable health fact that
+ * makes this work order retryable. Cleanup is complete because Oakridge never
+ * acquired an external execution it can fence.
+ */
+const recordExecutorStartFailureStep = DBOS.registerStep(async (input: ExecutorStartFailureInput): Promise<void> => {
+  const { records } = workflowServices();
+  const now = workflowServices().now();
+  await records.ensure_executor_attachment(input.execution.work_order.id, input.execution.request.executor_type, now);
+  await records.observe_executor(input.execution.work_order.id, {
+    kind: "ended_failed", code: "executor_start_failed", detail: input.detail, observed_at: now,
+  }, now);
+  await records.finish_cleanup(input.execution.work_order.id, true, now);
+}, { name: "oakridgeV2RecordExecutorStartFailureStep", retriesAllowed: true });
 
 export const revisionFeedbackPrompt = (revision: WorkOrderRevisionFeedback): string =>
   `The operator requested changes to your ${revision.output_name}${revision.collection_key === null ? "" : ` [${revision.collection_key}]`} output.\n\n` +
@@ -120,7 +148,12 @@ const OBSERVE_INTERVAL_SECONDS = 5;
 /** Independent child: its return value is never a domain outcome. */
 export const runRecordWorkOrderWorkflow = DBOS.registerWorkflow(async (work_order_id: WorkOrderId): Promise<void> => {
   const execution = await loadWorkOrderStep(work_order_id);
-  const reference = await ensureExecutorStep(execution);
+  const ensured = await ensureExecutorStep(execution);
+  if (ensured.kind === "rejected") {
+    await recordExecutorStartFailureStep({ execution, detail: ensured.detail });
+    return;
+  }
+  const reference = ensured.reference;
   for (;;) {
     await deliverRevisionFeedbackStep({ execution, reference });
     const observation = await observeExecutorStep({ execution, reference });

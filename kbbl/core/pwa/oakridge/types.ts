@@ -213,7 +213,7 @@ export interface StageArtifact {
 export interface StageUnit {
   unit_id: string;
   repository_key?: RepositoryKey | null;
-  params?: CohortBriefParams | null;
+  params?: StageUnitParams | null;
   sid: string | null;
   worktree: WorktreeMetadata | null;
   base_sha?: string | null;
@@ -225,16 +225,17 @@ export interface StageUnit {
   admission_blocked_by?: string[];
 }
 
-/** The operator-facing subset of the persisted fan-out item contract. */
-export interface CohortBriefParams {
-  title?: string;
-  scope?: string;
-  description?: string;
-  files_in_scope?: string[];
-  decisions?: string[];
-  acceptance_criteria?: string[];
-  depends_on?: string[];
-  repository_key?: RepositoryKey | string;
+/**
+ * `run_unit.parameters` verbatim (`GET /runs/:id`, `postgres-operators.ts`):
+ * the fan-out item `derive` minted — `{unit_id, artifact}` — not the
+ * `dev.plan` cohort shape this used to wrongly claim. `artifact` is
+ * `unknown` because its real type varies by producing stage (a build unit's
+ * is a `dev.build_brief` body; an assessor unit's is `dev.build_result`);
+ * narrow it with a type guard, never trust the shape blind.
+ */
+export interface StageUnitParams {
+  unit_id?: string;
+  artifact?: unknown;
 }
 
 export interface StageDetail {

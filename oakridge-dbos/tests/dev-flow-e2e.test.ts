@@ -638,6 +638,7 @@ e2e("scenario 7: rejecting one brief, retrying its unit, and approving the repla
     if (!retryRequest) throw new Error("scenario 7 stopped here: the retry work order was never launched");
     expect(retryRequest.expected_artifacts).toEqual([{ unit_id: "rollout" as UnitId, output_name: "brief", artifact_type: expect.any(String) }]);
     expect((retryRequest.resolved_config as { readonly publication?: { readonly work_order_id?: string } }).publication?.work_order_id).toBe(retried.work_order.id);
+    expect((retryRequest.resolved_config as { readonly session_name?: string }).session_name).toBe(retried.work_order.id);
     const retryArtifacts = await sql.query<{ readonly id: string; readonly collection_key: string | null; readonly version: number; readonly parent_artifact_id: string | null }>(
       "SELECT id::text, collection_key, version, parent_artifact_id::text FROM oakridge.artifact WHERE work_order_id = $1", [retried.work_order.id]);
     expect(retryArtifacts).toHaveLength(1);

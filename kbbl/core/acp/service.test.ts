@@ -975,11 +975,15 @@ test("fence cancels pending permissions with a permission_resolved cancellation"
   expect(service.pendingPermissionCount(sid)).toBe(0);
 }, 20000);
 
-test("session/load re-emits config options so a respawned session keeps its selectors", async () => {
+test("session/load restores the requested config and re-emits its selectors", async () => {
   const { stateDir, workdir } = await makeDirs();
   const { service, registry } = makeHarness({ stateDir });
 
-  const ensured = await service.ensureResumableSession("key-cfg", spec(workdir));
+  const ensured = await service.ensureResumableSession("key-cfg", {
+    ...spec(workdir),
+    model: "fake-large",
+    effort: "high",
+  });
   expect(ensured.ok).toBe(true);
   if (!ensured.ok) return;
   const sid = ensured.value.session.sid;
@@ -998,6 +1002,10 @@ test("session/load re-emits config options so a respawned session keeps its sele
     (event) => event.kind === "config_options",
   );
   expect(configEvents.length).toBeGreaterThan(0);
+  expect(configEvents.at(-1)?.options).toEqual(expect.arrayContaining([
+    expect.objectContaining({ category: "model", value: "fake-large" }),
+    expect.objectContaining({ category: "thought_level", value: "high" }),
+  ]));
 }, 20000);
 
 test("sessions change feed fires on session writes and stops after unsubscribe", async () => {

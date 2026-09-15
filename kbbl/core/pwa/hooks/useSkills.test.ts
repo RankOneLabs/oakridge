@@ -3,7 +3,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-import { useSkills, useInvokeSkill } from "./useSkills";
+import { useSkills, useInvokeAgentCommand, useInvokeSkill } from "./useSkills";
 import type { Skill } from "../../runtime-interface";
 
 function makeWrapper() {
@@ -133,5 +133,36 @@ describe("useInvokeSkill", () => {
 
     expect(thrown).toBeInstanceOf(Error);
     expect((thrown as Error).message).toBe("server returned 500");
+  });
+});
+
+describe("useInvokeAgentCommand", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("submits compact as a slash-command operator turn", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useInvokeAgentCommand("sid-1"), {
+      wrapper: makeWrapper(),
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync("compact");
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/sessions/sid-1/input",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.any(String),
+      }),
+    );
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(init.body))).toEqual({
+      text: "/compact",
+      client_message_id: expect.any(String),
+    });
   });
 });

@@ -27,7 +27,7 @@ import { DBOS } from "@dbos-inc/dbos-sdk";
 
 import type { ExecutionRequest, ExecutorAdapter, ExecutorObservationAttempt, ExternalExecutionReference } from "../../src/domain/execution";
 import type { ExecutionId, JsonValue, UnitId } from "../../src/domain/primitives";
-import type { WorkflowDefinition } from "../../src/domain/workflow";
+import type { StageOperatorRole, WorkflowDefinition } from "../../src/domain/workflow";
 import { createOakridgeRuntime, type OakridgeRuntime } from "../../src/runtime/compose";
 import { applyMigrations } from "../../src/storage/migrate";
 import { PgPostgresExecutor } from "../../src/storage/sql-executor";
@@ -441,6 +441,13 @@ export const cohortPullRequestUrl = (unitId: UnitId): string => {
 };
 export const cohortHeadBranch = (unitId: UnitId): string => `cohort/${unitId}`;
 
+/** The stage role carried by every delegated request in the seeded v2 flow. */
+export const executionOperatorRole = (request: ExecutionRequest): StageOperatorRole => {
+  const identity = (request.resolved_config as { readonly session_identity?: { readonly operator_role?: StageOperatorRole | null } }).session_identity;
+  if (!identity?.operator_role) throw new Error(`execution '${request.execution_id}' resolved with no operator role`);
+  return identity.operator_role;
+};
+
 /**
  * The body a faked agent would have produced for a given output.
  *
@@ -449,15 +456,15 @@ export const cohortHeadBranch = (unitId: UnitId): string => `cohort/${unitId}`;
  * repository keys a new version on.
  */
 export const artifactBody = (request: ExecutionRequest, unitId: UnitId, outputName: string, revision = 1): JsonValue => {
-  const session = (request.resolved_config as { readonly session_name?: string }).session_name ?? "";
-  if (session.startsWith("spec-analyzer-")) return { requirements: [{ id: "R1", description: `harness v${revision}` }] };
-  if (session.startsWith("plan-writer-")) return { cohorts: activeCohortPlan.map(({ id }) => ({ id })) };
-  if (session.startsWith("brief-writer-")) {
+  const operatorRole = executionOperatorRole(request);
+  if (operatorRole === "spec") return { requirements: [{ id: "R1", description: `harness v${revision}` }] };
+  if (operatorRole === "plan") return { cohorts: activeCohortPlan.map(({ id }) => ({ id })) };
+  if (operatorRole === "brief") {
     const dependsOn = activeCohortPlan.find((entry) => entry.id === unitId)?.depends_on ?? [];
     return { cohort_id: unitId, repository_key: "oakridge", title: String(unitId), goal: "harness", files_in_scope: [],
       next_action: "build", decisions_made: [], acceptance_criteria: ["passes"], depends_on: dependsOn };
   }
-  if (session.startsWith("build-")) {
+  if (operatorRole === "build") {
     // The two build outputs are genuinely different documents, and the pull
     // request reconciler reads one of them — so the harness has to emit the
     // right shape into the right slot rather than one body into both.

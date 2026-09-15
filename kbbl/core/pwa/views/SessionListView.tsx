@@ -6,9 +6,10 @@ import type {
   RuntimeDescriptor, SessionSnapshot, Theme, Status,
 } from "../types";
 import type { RuntimeId } from "../../runtime-interface";
-import { sortSessions } from "../lib/session";
+import { groupSessionsByCohort } from "../../acp/pwa-session-order";
 
 import { SessionRow } from "../components/organisms/SessionRow";
+import { SessionCohortHeading } from "../components/molecules/SessionCohortHeading";
 import {
   NewSessionForm,
   type NewSessionFormValues,
@@ -22,6 +23,29 @@ interface StartSessionBody {
   runtime?: RuntimeId;
   model?: string;
   effort?: string;
+}
+
+interface SessionRowListProps {
+  sessions: SessionSnapshot[];
+  onSelect: (sid: string) => void;
+  onResume: (sid: string) => void;
+  resumeDisabled: boolean;
+}
+
+function SessionRowList({ sessions, onSelect, onResume, resumeDisabled }: SessionRowListProps) {
+  return (
+    <ul className="session-list">
+      {sessions.map((s) => (
+        <SessionRow
+          key={s.sid}
+          snapshot={s}
+          onOpen={() => onSelect(s.sid)}
+          onResume={() => onResume(s.sid)}
+          resumeDisabled={resumeDisabled}
+        />
+      ))}
+    </ul>
+  );
 }
 
 interface SessionListViewProps {
@@ -52,7 +76,11 @@ export function SessionListView({
 
   const prefill = useUrlPrefill();
 
-  const sorted = useMemo(() => sortSessions(sessions), [sessions]);
+  const grouping = useMemo(
+    () => groupSessionsByCohort([...sessions.values()]),
+    [sessions],
+  );
+  const totalCount = sessions.size;
 
   const startMutation = useMutation({
     mutationFn: async (body: StartSessionBody): Promise<SessionSnapshot> => {
@@ -129,7 +157,7 @@ export function SessionListView({
         <div className="workspace-status">
           <span className={`status status-${inboxStatus}`}>{inboxStatus}</span>
           <span className="event-count">
-            {sorted.length} {sorted.length === 1 ? "session" : "sessions"}
+            {totalCount} {totalCount === 1 ? "session" : "sessions"}
           </span>
         </div>
         <button
@@ -174,20 +202,39 @@ export function SessionListView({
           onSubmit={(values) => { void startSession(values); }}
         />
       </div>
-      {sorted.length === 0 ? (
+      {totalCount === 0 ? (
         <div className="session-list-empty">No sessions yet.</div>
       ) : (
-        <ul className="session-list">
-          {sorted.map((s) => (
-            <SessionRow
-              key={s.sid}
-              snapshot={s}
-              onOpen={() => onSelect(s.sid)}
-              onResume={() => void startSession(undefined, s.sid)}
-              resumeDisabled={startMutation.isPending}
-            />
+        <div className="session-cohort-groups">
+          {grouping.groups.map((group) => (
+            <section key={group.key} className="session-cohort-group">
+              <SessionCohortHeading
+                title={group.title}
+                unitId={group.unitId}
+                repositoryKey={group.repositoryKey}
+              />
+              <SessionRowList
+                sessions={group.sessions}
+                onSelect={onSelect}
+                onResume={(sid) => void startSession(undefined, sid)}
+                resumeDisabled={startMutation.isPending}
+              />
+            </section>
           ))}
-        </ul>
+          {grouping.ungrouped.length > 0 && (
+            <section className="session-cohort-group session-cohort-group--ungrouped">
+              <h2 className="session-cohort-heading session-cohort-heading--plain">
+                Other sessions
+              </h2>
+              <SessionRowList
+                sessions={grouping.ungrouped}
+                onSelect={onSelect}
+                onResume={(sid) => void startSession(undefined, sid)}
+                resumeDisabled={startMutation.isPending}
+              />
+            </section>
+          )}
+        </div>
       )}
       </div>
     </div>

@@ -15,7 +15,7 @@ import type { ArtifactId, JsonValue, UnitId, WorkflowDefinitionId, WorkflowRunId
 import type { ExecutionRequest } from "../../src/domain/execution";
 import type { SqlExecutor, TransactionalSqlExecutor } from "../../src/storage/sql-executor";
 import { PostgresRunRecordRepository } from "../../src/storage/postgres-run-record";
-import { artifactBody, awaitCondition, cohortHeadBranch, cohortPullRequestUrl, type ScriptedAgentScenario } from "./dev-flow-harness";
+import { artifactBody, awaitCondition, cohortHeadBranch, cohortPullRequestUrl, executionOperatorRole, type ScriptedAgentScenario } from "./dev-flow-harness";
 
 const readJson = async <Value>(response: Response, describe: string): Promise<Value> => {
   const text = await response.text();
@@ -102,8 +102,7 @@ export const emitDeclaredArtifacts = async (baseUrl: string, request: ExecutionR
       body: JSON.stringify(artifactBody(request, expected.unit_id, expected.output_name, revision) as JsonValue),
     });
     const result = await readJson<WorkOrderEmitResponse>(response, `emit ${expected.output_name} for unit ${expected.unit_id}`);
-    const sessionName = (request.resolved_config as { readonly session_name?: string }).session_name ?? "";
-    const release = result.state === "released" ? "released" : sessionName.startsWith("build-") ? "waiting_handoff" : "waiting_gate";
+    const release = result.state === "released" ? "released" : executionOperatorRole(request) === "build" ? "waiting_handoff" : "waiting_gate";
     emitted.push({ artifact_id: result.artifact_id, output_name: expected.output_name, unit_id: expected.unit_id, release });
   }
   return emitted;
