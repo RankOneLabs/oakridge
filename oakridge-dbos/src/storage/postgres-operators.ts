@@ -53,7 +53,7 @@ export interface OperatorProjectionRepository {
 interface V2RunProjectionRow { readonly id: string; readonly workflow_name: string; readonly state: RunState; readonly current_stage: string | null; readonly parked_count: string; readonly updated_at: string; readonly is_stuck: boolean; readonly archived: boolean; readonly has_materialized_stage: boolean }
 interface OperatorExecutorReference { readonly kind?: string; readonly session_id?: string; readonly worktree_base_sha?: string }
 interface V2StageProjectionRow { readonly stage_instance_id: string; readonly name: string; readonly stage_type: string; readonly operator_role: string | null; readonly state: RunState; readonly has_open_wait: boolean }
-interface V2UnitProjectionRow { readonly stage_instance_id: string; readonly unit_id: string; readonly params: OperatorStageUnit["params"]; readonly state: UnitState; readonly external_reference: OperatorExecutorReference | null; readonly executor_health_kind: string | null; readonly gate_step: string | null; readonly has_open_wait: boolean; readonly admission_required: boolean; readonly admitted: boolean; readonly admission_blocked_by: readonly string[] }
+interface V2UnitProjectionRow { readonly stage_instance_id: string; readonly unit_id: string; readonly params: OperatorStageUnit["params"]; readonly state: UnitState; readonly external_reference: OperatorExecutorReference | null; readonly executor_health_kind: string | null; readonly gate_step: string | null; readonly has_open_wait: boolean; readonly has_missing_required_output: boolean; readonly admission_required: boolean; readonly admitted: boolean; readonly admission_blocked_by: readonly string[] }
 interface StageArtifactRow { readonly stage_instance_id: string; readonly id: string; readonly type_id: string; readonly version: number; readonly label: string | null }
 interface EpicProfileRow extends Omit<EpicWorkflowProfile, "id" | "workflow_run_id"> { readonly id: string; readonly workflow_run_id: string }
 /**
@@ -339,6 +339,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
       `SELECT unit.stage_instance_id::text,unit.unit_id,unit.parameters AS params,unit.state,attachment.external_reference,
               attachment.health->>'kind' AS executor_health_kind,
               gate.gate_step,EXISTS (SELECT 1 FROM oakridge.wait wait WHERE wait.run_unit_id=unit.id AND wait.status='open') AS has_open_wait,
+              EXISTS (SELECT 1 FROM oakridge.run_output_slot slot WHERE slot.run_unit_id=unit.id AND slot.required AND slot.state IN ('empty','invalidated')) AS has_missing_required_output,
               policy.manual_admission AS admission_required,unit.admitted,
               COALESCE(ARRAY(SELECT edge.depends_on_unit_id FROM oakridge.run_unit_dependency edge
                 LEFT JOIN oakridge.run_unit dependency ON dependency.stage_instance_id=edge.stage_instance_id AND dependency.unit_id=edge.depends_on_unit_id
@@ -360,7 +361,9 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
         sid: unit.external_reference?.kind === "kbbl_session" ? unit.external_reference.session_id ?? null : null,
         worktree: null, base_sha: unit.external_reference?.worktree_base_sha ?? null,
         status: selectV2UnitStatus(unit.state, unit.has_open_wait,
-          unit.executor_health_kind === "ended_failed" || unit.executor_health_kind === "ended_cancelled" || unit.executor_health_kind === "unresponsive"), gate: unit.gate_step,
+          unit.executor_health_kind === "ended_succeeded" || unit.executor_health_kind === "ended_failed"
+            || unit.executor_health_kind === "ended_cancelled" || unit.executor_health_kind === "unresponsive",
+          unit.has_missing_required_output), gate: unit.gate_step,
         admission_required: unit.admission_required, admitted: unit.admitted,
         admission_eligible: unit.admission_blocked_by.length === 0, admission_blocked_by: unit.admission_blocked_by,
       }));

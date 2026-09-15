@@ -11,7 +11,8 @@ test("v2 operator status is selected only from persisted run-owned state", () =>
   expect(selectV2StageStatus("succeeded", false)).toBe("complete");
   expect(selectV2UnitStatus("ready", false)).toBe("pending");
   expect(selectV2UnitStatus("waiting", true)).toBe("parked");
-  expect(selectV2UnitStatus("working", false, true)).toBe("failed");
+  expect(selectV2UnitStatus("working", false, true, true)).toBe("failed");
+  expect(selectV2UnitStatus("working", false, true, false)).toBe("running");
 });
 
 /**

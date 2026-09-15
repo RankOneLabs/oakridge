@@ -56,10 +56,10 @@ export const selectV2StageStatus = (state: RunState, has_open_wait: boolean): Op
 };
 
 /** Unit rows share the existing stage-status vocabulary on the operator API. */
-export const selectV2UnitStatus = (state: UnitState, has_open_wait: boolean, has_failed_executor = false): OperatorStageStatus => {
+export const selectV2UnitStatus = (state: UnitState, has_open_wait: boolean, has_terminal_executor = false, has_missing_required_output = false): OperatorStageStatus => {
   if (state === "satisfied") return "complete";
   if (state === "failed" || state === "cancelled") return "failed";
   if (has_open_wait) return "parked";
-  if (has_failed_executor) return "failed";
+  if (has_terminal_executor && has_missing_required_output) return "failed";
   return state === "ready" ? "pending" : "running";
 };
