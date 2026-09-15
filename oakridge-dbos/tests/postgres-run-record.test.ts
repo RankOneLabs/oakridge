@@ -455,6 +455,37 @@ test("a rejected gated output is replaced by the operator's retry as a fresh cha
   expect(transition[0]?.detail.replaced_artifact_id).toBe(first.artifact_id);
 });
 
+test("each repeated operator retry replaces the previous correction context", async () => {
+  const setup = await setupMaterializedRun(4, false, false);
+  if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  const fixture = await materializeSingleUnitStage(setup, "plan-retry-context", "planner", [{ identity: { kind: "scalar", output_name: "plan" }, artifact_type: "dev.plan", required: true, release: GATE_RELEASE }]);
+  const publish = (workOrderId: WorkOrderId, capabilityHash: string, key: string, body: unknown) => setup.records.publish_artifact({ artifact_id: randomUUID() as ArtifactId, work_order_id: workOrderId,
+    capability_hash: capabilityHash, output_name: "plan", body: body as never, idempotency_key: key, payload_hash: payloadHashOf(body), published_at: fixture.at });
+
+  const first = await publish(fixture.workOrderId, fixture.capabilityHash, "context-v1", { plan: "four cohorts" });
+  if (first.kind !== "pending") throw new Error(`expected pending, got ${first.kind}`);
+  await setup.records.close_output_wait({ wait_id: first.wait_id, disposition: "invalidate", actor: "operator:sam", detail: "use two cohorts", decided_at: fixture.at });
+  const firstRetry = await setup.records.retry_unit({ target: { kind: "run_unit", run_unit_id: fixture.runUnitId }, idempotency_key: "context-retry-1", actor: "operator:sam" }, fixture.at);
+  if (firstRetry.kind !== "created") throw new Error(`expected created, got ${firstRetry.kind}`);
+  const firstRetryOrder = await storedWorkOrder(firstRetry.work_order.id);
+  await setup.records.decide_run(setup.input.run_id, fixture.at);
+
+  const second = await publish(firstRetry.work_order.id, firstRetryOrder.capability_hash, "context-v2", { plan: "two cohorts" });
+  if (second.kind !== "pending") throw new Error(`expected pending, got ${second.kind}`);
+  await setup.records.close_output_wait({ wait_id: second.wait_id, disposition: "invalidate", actor: "operator:sam", detail: "use one cohort", decided_at: fixture.at });
+  const secondRetry = await setup.records.retry_unit({ target: { kind: "run_unit", run_unit_id: fixture.runUnitId }, idempotency_key: "context-retry-2", actor: "operator:sam" }, fixture.at);
+  if (secondRetry.kind !== "created") throw new Error(`expected created, got ${secondRetry.kind}`);
+  const secondRetryOrder = await storedWorkOrder(secondRetry.work_order.id);
+  const prompt = (secondRetryOrder.execution_request.resolved_config as { readonly rendered_prompt: string }).rendered_prompt;
+
+  expect(prompt).toContain("use one cohort");
+  expect(prompt).toContain(second.artifact_id);
+  expect(prompt).toContain('"plan": "two cohorts"');
+  expect(prompt).not.toContain("use two cohorts");
+  expect(prompt).not.toContain(first.artifact_id);
+  expect(prompt.split("## Requested output corrections")).toHaveLength(2);
+});
+
 test("self-stage revision retains the writer across repeated corrections and preserves the artifact chain", async () => {
   const setup = await setupMaterializedRun(4, false, false);
   if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
