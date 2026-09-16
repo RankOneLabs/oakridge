@@ -1908,39 +1908,40 @@ body {
   }
 }
 
-/* === compact suggestion banner (inline above MetricsStrip) === */
-.compact-suggestion-banner {
+/* === persistent session actions === */
+.compact-control {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
   gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
-  background: var(--amber-bg);
-  color: var(--amber-fg);
-  border-top: 1px solid var(--amber-border);
-  border-bottom: 1px solid var(--amber-border);
+  justify-content: flex-end;
+  padding: 0.35rem 0.75rem;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-subtle);
   font-size: 0.85rem;
 }
-.compact-suggestion-banner__text {
+.compact-control__error {
   flex: 1;
   min-width: 12rem;
+  color: var(--danger-fg);
 }
-.compact-suggestion-banner__action,
-.compact-suggestion-banner__dismiss {
-  padding: 0.2rem 0.6rem;
+.compact-control__action {
+  min-height: 36px;
+  padding: 0.25rem 0.75rem;
   border-radius: 4px;
-  border: 1px solid var(--amber-border);
+  border: 1px solid var(--border-subtle);
   background: transparent;
-  color: var(--amber-fg);
+  color: var(--text-secondary);
   font-size: 0.8rem;
+  font-weight: 600;
   cursor: pointer;
 }
-.compact-suggestion-banner__action {
-  font-weight: 600;
+.compact-control__action:hover:not(:disabled) {
+  border-color: var(--border-hover);
+  color: var(--text-primary);
 }
-.compact-suggestion-banner__action:hover,
-.compact-suggestion-banner__dismiss:hover {
-  background: var(--amber-border);
+.compact-control__action:disabled {
+  cursor: wait;
+  opacity: 0.6;
 }
 
 /* === threshold setting input in SessionTopBar === */
