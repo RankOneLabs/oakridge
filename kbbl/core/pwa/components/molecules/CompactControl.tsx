@@ -1,10 +1,12 @@
+import { Button } from "../atoms/Button";
+
 interface CompactControlProps {
   isPending: boolean;
   error: string | null;
   onCompact: () => void;
 }
 
-/** Persistent operator action for every live ACP session. */
+/** Persistent operator action composed from the shared button atom. */
 export function CompactControl({
   isPending,
   error,
@@ -17,14 +19,13 @@ export function CompactControl({
           Compact failed: {error}
         </span>
       )}
-      <button
-        type="button"
+      <Button
         className="compact-control__action"
         disabled={isPending}
         onClick={onCompact}
       >
         {isPending ? "Compacting…" : "Compact"}
-      </button>
+      </Button>
     </div>
   );
 }

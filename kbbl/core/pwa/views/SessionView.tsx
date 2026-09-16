@@ -20,7 +20,7 @@ import { PendingUserBubble } from "../components/molecules/PendingUserBubble";
 import { EndedBanner } from "../components/organisms/EndedBanner";
 import { ThinkingIndicator } from "../components/atoms/ThinkingIndicator";
 import { SkillRail } from "../components/organisms/SkillRail";
-import { CompactControl } from "../components/organisms/CompactControl";
+import { CompactControl } from "../components/molecules/CompactControl";
 
 export function SessionView({
   sid,
