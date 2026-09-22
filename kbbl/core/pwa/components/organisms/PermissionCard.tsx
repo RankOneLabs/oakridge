@@ -4,6 +4,9 @@ import type { UiPermissionOption } from "../../types";
 import type { PermissionResolution } from "../../lib/acp-timeline";
 import { usePermissionAnswer } from "../../hooks/usePermissionAnswer";
 
+export const permissionCardAnchorId = (request_id: string): string =>
+  `permission-${encodeURIComponent(request_id)}`;
+
 // One ACP permission request. Renders exactly the options the agent
 // supplied (§15.2) — never a synthesized allow/deny pair. The card
 // retires via the stream's permission_resolved event, so a decision made
@@ -62,7 +65,11 @@ export function PermissionCard({
   }
 
   return (
-    <div className="card card-permission">
+    <div
+      className="card card-permission"
+      id={permissionCardAnchorId(requestId)}
+      tabIndex={-1}
+    >
       <div className="card-permission-header">{title}</div>
       {error && <div className="card-error">error: {error}</div>}
       <div className="card-permission-buttons">

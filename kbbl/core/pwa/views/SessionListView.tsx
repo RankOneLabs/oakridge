@@ -6,7 +6,10 @@ import type {
   RuntimeDescriptor, SessionSnapshot, Theme, Status,
 } from "../types";
 import type { RuntimeId } from "../../runtime-interface";
-import { groupSessionsByCohort } from "../../acp/pwa-session-order";
+import {
+  compareSessionsByDisplayedActivity,
+  groupSessionsByCohort,
+} from "../../acp/pwa-session-order";
 
 import { SessionRow } from "../components/organisms/SessionRow";
 import { SessionCohortHeading } from "../components/molecules/SessionCohortHeading";
@@ -77,7 +80,10 @@ export function SessionListView({
   const prefill = useUrlPrefill();
 
   const grouping = useMemo(
-    () => groupSessionsByCohort([...sessions.values()]),
+    () => groupSessionsByCohort(
+      [...sessions.values()],
+      compareSessionsByDisplayedActivity(Date.now()),
+    ),
     [sessions],
   );
   const totalCount = sessions.size;

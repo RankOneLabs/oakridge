@@ -93,6 +93,40 @@ describe("GitWorktreeProvider.resolve", () => {
     expect(second.error.detail).toMatch(/cohort\/x|<path>/);
   });
 
+  test("a workflow retry reuses the fenced owner of its deterministic branch", async () => {
+    const identity = { branch_name: "cohort/epic/1-x", worktree_subdir: "epic/1-x" };
+    const first = await provider.resolve(SID, spec({ worktree: identity }));
+    if (!first.ok) throw new Error("first worktree failed");
+    store.insertSession({
+      sid: SID,
+      resumable_key: null,
+      start_spec_hash: null,
+      agent_profile: "fake",
+      name: "first attempt",
+      artifact_id: null,
+      project_workdir: repoDir,
+      worktree_path: first.value.worktree_path,
+      requested_model: null,
+      requested_effort: null,
+      workflow: null,
+    });
+    store.setWorktree(SID, {
+      worktree_path: first.value.worktree_path,
+      worktree_branch: first.value.worktree_branch,
+      worktree_base_ref: first.value.worktree_base_ref,
+      parent_sid: null,
+    });
+    store.markEnded(SID, { status: "fenced", reason: "fenced", fenced_by: "retry" });
+
+    const retried = await provider.resolve(SID2, spec({ worktree: identity }));
+    expect(retried.ok).toBe(true);
+    if (!retried.ok) return;
+    expect(retried.value.worktree_path).toBe(first.value.worktree_path);
+    expect(retried.value.worktree_branch).toBe(identity.branch_name);
+    expect(retried.value.parent_sid).toBe(SID);
+    expect(retried.value.project_workdir).toBe(repoDir);
+  });
+
   test("inheritance cuts a NEW worktree from the parent's, with lineage", async () => {
     const parent = await provider.resolve(SID, spec());
     if (!parent.ok) throw new Error("parent worktree failed");

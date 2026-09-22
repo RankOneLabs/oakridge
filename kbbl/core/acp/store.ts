@@ -318,6 +318,24 @@ export class AcpSessionStore {
       .map(toAcpSessionRow);
   }
 
+  /**
+   * The most recent terminal owner of a deterministic workflow branch.
+   * Operator retries deliberately keep the branch so the replacement agent
+   * updates the same PR; once the old session is fenced, its checkout is safe
+   * for the replacement session to reuse.
+   */
+  findReusableWorktree(projectWorkdir: string, branch: string): AcpSessionRow | null {
+    const row = this.db
+      .prepare<RawAcpSessionRow, [string, string]>(
+        `SELECT * FROM acp_sessions
+         WHERE project_workdir = ? AND worktree_branch = ?
+           AND status IN ('ended', 'fenced', 'failed')
+         ORDER BY updated_at DESC LIMIT 1`,
+      )
+      .get(projectWorkdir, branch);
+    return row ? toAcpSessionRow(row) : null;
+  }
+
   setStatus(sid: KbblSessionId, status: AcpSessionStatus): void {
     const ts = nowIso();
     this.db

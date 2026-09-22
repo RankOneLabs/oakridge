@@ -8,6 +8,13 @@ import type { PwaSessionSnapshot } from "./pwa-wire";
 
 /** A session with no workflow identity, or a scalar stage's unit "0". */
 const UNGROUPED_UNIT_ID = "0";
+/** Must match the label boundary in `core/pwa/lib/time.ts`. */
+export const JUST_NOW_WINDOW_MS = 5_000;
+
+export type SessionActivityComparator = (
+  left: PwaSessionSnapshot,
+  right: PwaSessionSnapshot,
+) => number;
 
 export interface SessionCohortGroup {
   key: string;
@@ -32,6 +39,24 @@ export function compareSessionsByActivity(
   return left.lastActivityTs < right.lastActivityTs ? 1 : -1;
 }
 
+const isJustNow = (session: PwaSessionSnapshot, now_ms: number): boolean => {
+  const activity_ms = Date.parse(session.lastActivityTs);
+  return Number.isFinite(activity_ms)
+    && Math.max(0, now_ms - activity_ms) < JUST_NOW_WINDOW_MS;
+};
+
+/**
+ * The inbox order operators see. Two rows carrying the same "just now"
+ * label compare equal, so stable sort preserves their established position
+ * instead of making them jump whenever one receives another event.
+ */
+export const compareSessionsByDisplayedActivity = (
+  now_ms: number,
+): SessionActivityComparator => (left, right) =>
+  isJustNow(left, now_ms) && isJustNow(right, now_ms)
+    ? 0
+    : compareSessionsByActivity(left, right);
+
 function firstNonNull(
   sessions: readonly PwaSessionSnapshot[],
   select: (session: PwaSessionSnapshot) => string | null,
@@ -54,6 +79,7 @@ function firstNonNull(
  */
 export function groupSessionsByCohort(
   sessions: readonly PwaSessionSnapshot[],
+  compare_activity: SessionActivityComparator = compareSessionsByActivity,
 ): SessionCohortGrouping {
   const byKey = new Map<string, PwaSessionSnapshot[]>();
   const ungrouped: PwaSessionSnapshot[] = [];
@@ -71,7 +97,7 @@ export function groupSessionsByCohort(
   }
 
   const groups: SessionCohortGroup[] = [...byKey.entries()].map(([key, members]) => {
-    const sorted = [...members].sort(compareSessionsByActivity);
+    const sorted = [...members].sort(compare_activity);
     // Every member of this group has a non-null workflow with this unitId,
     // by construction of the loop above.
     const workflow = sorted[0].workflow as NonNullable<PwaSessionSnapshot["workflow"]>;
@@ -80,8 +106,8 @@ export function groupSessionsByCohort(
     return { key, runId: workflow.runId, unitId: workflow.unitId, title, repositoryKey, sessions: sorted };
   });
 
-  groups.sort((left, right) => compareSessionsByActivity(left.sessions[0], right.sessions[0]));
-  ungrouped.sort(compareSessionsByActivity);
+  groups.sort((left, right) => compare_activity(left.sessions[0], right.sessions[0]));
+  ungrouped.sort(compare_activity);
 
   return { groups, ungrouped };
 }
