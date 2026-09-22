@@ -89,6 +89,8 @@ describe("NewSessionForm runtime model selection", () => {
 
     expect(modelSelect).toHaveProperty("value", "gpt-5.6-sol");
     expect(modelSelect.textContent).toContain("gpt-6 astra");
+    expect(modelSelect.textContent).toContain("gpt-6 sol");
+    expect(modelSelect.textContent).toContain("gpt-6 luna");
     expect(modelSelect.textContent).not.toContain("sonnet 5");
   });
 
