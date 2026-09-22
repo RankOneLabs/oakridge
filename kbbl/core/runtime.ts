@@ -67,14 +67,15 @@ export const RUNTIME_MODELS: Readonly<Record<RuntimeId, readonly RuntimeOption[]
     { value: "sonnet", label: "sonnet 5" },
     { value: "haiku", label: "haiku 4.5" },
   ],
-  // @agentclientprotocol/codex-acp 1.11.0, config option `model`.
+  // @agentclientprotocol/codex-acp 1.13.0, config option `model`.
   codex: [
     { value: "gpt-6-astra", label: "gpt-6 astra" },
+    { value: "gpt-6-sol", label: "gpt-6 sol" },
+    { value: "gpt-6-luna", label: "gpt-6 luna" },
     { value: "gpt-5.6-sol", label: "gpt-5.6 sol" },
     { value: "gpt-5.6-terra", label: "gpt-5.6 terra" },
     { value: "gpt-5.6-luna", label: "gpt-5.6 luna" },
     { value: "gpt-5.5", label: "gpt-5.5" },
-    { value: "gpt-5.3-codex-spark", label: "gpt-5.3 codex spark" },
   ],
 };
 
@@ -87,7 +88,7 @@ export const RUNTIME_EFFORTS: Readonly<Record<RuntimeId, readonly RuntimeOption[
     { value: "xhigh", label: "xhigh" },
     { value: "max", label: "max" },
   ],
-  // codex-acp 1.11.0, config option `reasoning_effort`.
+  // codex-acp 1.13.0, config option `reasoning_effort`.
   codex: [
     { value: "low", label: "low" },
     { value: "medium", label: "medium" },
