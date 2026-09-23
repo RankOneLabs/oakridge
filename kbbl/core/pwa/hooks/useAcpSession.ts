@@ -1,12 +1,20 @@
 import { useEffect, useState } from "react";
 
-import type { AcpUiEvent, Status, UiOpenTurn } from "../types";
+import type {
+  AcpUiEvent,
+  SessionHistoryUnavailableReason,
+  Status,
+  TerminalSessionSummary,
+  UiOpenTurn,
+} from "../types";
 
 export interface AcpSessionStream {
   events: AcpUiEvent[];
   streamStatus: Status;
   /** The agent could not replay this session's history (expired). */
   expired: boolean;
+  summary: TerminalSessionSummary | null;
+  unavailableReason: SessionHistoryUnavailableReason | null;
   /** Non-null when the stream endpoint refused the session outright. */
   streamError: string | null;
   openTurns: readonly UiOpenTurn[];
@@ -27,6 +35,8 @@ export function useAcpSession(sid: string, enabled = true): AcpSessionStream {
   const [events, setEvents] = useState<AcpUiEvent[]>([]);
   const [streamStatus, setStreamStatus] = useState<Status>("connecting");
   const [expired, setExpired] = useState(false);
+  const [summary, setSummary] = useState<TerminalSessionSummary | null>(null);
+  const [unavailableReason, setUnavailableReason] = useState<SessionHistoryUnavailableReason | null>(null);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [openTurns, setOpenTurns] = useState<readonly UiOpenTurn[]>([]);
   const [historyLoaded, setHistoryLoaded] = useState(false);
@@ -34,6 +44,8 @@ export function useAcpSession(sid: string, enabled = true): AcpSessionStream {
   useEffect(() => {
     setEvents([]);
     setExpired(false);
+    setSummary(null);
+    setUnavailableReason(null);
     setStreamError(null);
     setOpenTurns([]);
     setHistoryLoaded(false);
@@ -80,9 +92,23 @@ export function useAcpSession(sid: string, enabled = true): AcpSessionStream {
         try {
           const data = JSON.parse((e as MessageEvent).data) as {
             expired?: unknown;
+            summary?: unknown;
+            unavailable_reason?: unknown;
             open_turns?: unknown;
           };
           setExpired(data.expired === true);
+          setSummary(
+            typeof data.summary === "object" && data.summary !== null
+              ? data.summary as TerminalSessionSummary
+              : null,
+          );
+          setUnavailableReason(
+            data.unavailable_reason === "missing_acp_session_id" ||
+            data.unavailable_reason === "agent_history_unavailable" ||
+            data.unavailable_reason === "summary_unavailable"
+              ? data.unavailable_reason
+              : null,
+          );
           setOpenTurns(
             Array.isArray(data.open_turns)
               ? (data.open_turns as UiOpenTurn[])
@@ -91,6 +117,8 @@ export function useAcpSession(sid: string, enabled = true): AcpSessionStream {
           setHistoryLoaded(true);
         } catch {
           setExpired(false);
+          setSummary(null);
+          setUnavailableReason(null);
           setOpenTurns([]);
           setHistoryLoaded(true);
         }
@@ -200,6 +228,8 @@ export function useAcpSession(sid: string, enabled = true): AcpSessionStream {
     events,
     streamStatus,
     expired,
+    summary,
+    unavailableReason,
     streamError,
     openTurns,
     historyLoaded,

@@ -50,7 +50,7 @@ export interface OperatorProjectionRepository {
   get_run_record_detail(run_id: WorkflowRunId): Promise<OperatorRunRecordDetail | null>;
 }
 
-interface V2RunProjectionRow { readonly id: string; readonly workflow_name: string; readonly state: RunState; readonly current_stage: string | null; readonly parked_count: string; readonly updated_at: string; readonly is_stuck: boolean; readonly archived: boolean; readonly has_materialized_stage: boolean }
+interface V2RunProjectionRow { readonly id: string; readonly title: string | null; readonly repository_keys: readonly string[]; readonly workflow_name: string; readonly state: RunState; readonly current_stage: string | null; readonly parked_count: string; readonly updated_at: string; readonly is_stuck: boolean; readonly archived: boolean; readonly has_materialized_stage: boolean }
 interface OperatorExecutorReference { readonly kind?: string; readonly session_id?: string; readonly worktree_base_sha?: string }
 interface V2StageProjectionRow { readonly stage_instance_id: string; readonly name: string; readonly stage_type: string; readonly operator_role: string | null; readonly state: RunState; readonly has_open_wait: boolean }
 interface V2UnitProjectionRow { readonly stage_instance_id: string; readonly unit_id: string; readonly params: OperatorStageUnit["params"]; readonly state: UnitState; readonly external_reference: OperatorExecutorReference | null; readonly executor_health_kind: string | null; readonly gate_step: string | null; readonly has_open_wait: boolean; readonly has_missing_required_output: boolean; readonly admission_required: boolean; readonly admitted: boolean; readonly admission_blocked_by: readonly string[] }
@@ -178,7 +178,15 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
 
   private async listV2RunSummaries(filter: "active" | "archived" | "all", run_id: WorkflowRunId | null): Promise<readonly OperatorRunSummary[]> {
     const rows = await this.sql.query<V2RunProjectionRow>(
-      `SELECT run.id::text,definition.name AS workflow_name,run.state,
+      `SELECT run.id::text,profile.title,
+              COALESCE(
+                (SELECT jsonb_agg(repository.value->>'repository_key' ORDER BY repository.ordinality)
+                   FROM jsonb_array_elements(profile.repositories) WITH ORDINALITY repository(value, ordinality)),
+                (SELECT jsonb_agg(repository.value->>'key' ORDER BY repository.ordinality)
+                   FROM jsonb_array_elements(CASE WHEN jsonb_typeof(run.context->'repositories')='array' THEN run.context->'repositories' ELSE '[]'::jsonb END) WITH ORDINALITY repository(value, ordinality)),
+                '[]'::jsonb
+              ) AS repository_keys,
+              definition.name AS workflow_name,run.state,
               current_stage.stage_key AS current_stage,COALESCE(waits.parked_count,0)::text AS parked_count,
               GREATEST(run.created_at,COALESCE(run.ended_at,run.created_at),COALESCE(progress.updated_at,run.created_at))::text AS updated_at,
               EXISTS (SELECT 1 FROM oakridge.stage_instance stage WHERE stage.run_id=run.id AND stage.attempt_root_workflow_id IS NULL) AS has_materialized_stage,
@@ -190,6 +198,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
               run.archived
        FROM oakridge.workflow_run run
        JOIN oakridge.workflow_definition definition ON definition.id=run.workflow_definition_id
+       LEFT JOIN oakridge.epic_workflow_profile profile ON profile.workflow_run_id=run.id
        LEFT JOIN LATERAL (SELECT stage.stage_key FROM oakridge.stage_instance stage WHERE stage.run_id=run.id AND stage.attempt_root_workflow_id IS NULL AND stage.state='active' ORDER BY stage.started_at DESC LIMIT 1) current_stage ON true
        LEFT JOIN LATERAL (SELECT count(*) AS parked_count FROM oakridge.wait wait JOIN oakridge.run_unit unit ON unit.id=wait.run_unit_id WHERE unit.run_id=run.id AND wait.status='open') waits ON true
        LEFT JOIN LATERAL (SELECT max(transition.created_at) AS updated_at FROM oakridge.run_transition transition WHERE transition.run_id=run.id) progress ON true
@@ -198,7 +207,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     return rows.map((row) => {
       const parked_count = Number(row.parked_count);
       const status = selectV2RunStatus({ state: row.state, parked_count, has_materialized_stage: row.has_materialized_stage });
-      return { id: row.id as WorkflowRunId, workflow_name: row.workflow_name,
+      return { id: row.id as WorkflowRunId, title: row.title, repository_keys: row.repository_keys, workflow_name: row.workflow_name,
         current_attempt_root_workflow_id: runRecordWorkflowId(row.id as WorkflowRunId), status, current_stage: row.current_stage,
         parked_count, updated_at: row.updated_at, is_stuck: row.is_stuck, is_failed: status === "failed", archived: row.archived };
     });
@@ -420,7 +429,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
           operator_role: contract.operator_role, status: "pending", artifacts: [], delegated_kbbl_sid: null, worktree: null, units: [] });
       }
     }
-    return { id: summary.id, workflow_name: summary.workflow_name, current_attempt_root_workflow_id: summary.current_attempt_root_workflow_id,
+    return { id: summary.id, title: summary.title, repository_keys: summary.repository_keys, workflow_name: summary.workflow_name, current_attempt_root_workflow_id: summary.current_attempt_root_workflow_id,
       attempts: [], status: summary.status, stages: [...stages, ...pendingStages], parked_count: summary.parked_count, updated_at: summary.updated_at,
       is_stuck: summary.is_stuck, epic_profile, run_record: await this.get_run_record_detail(id) };
   }

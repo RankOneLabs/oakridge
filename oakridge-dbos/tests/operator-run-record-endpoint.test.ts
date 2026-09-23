@@ -48,6 +48,11 @@ test("GET /runs/:id exposes the v2 run-record projection with every required fie
   const definitionBody = { id: definitionId, name: definitionName, version: 1, graph: { stages: {}, edges: [] }, created_at: now, archived: false } satisfies WorkflowDefinition;
   await sql.query(`INSERT INTO oakridge.workflow_definition (id, name, version, definition, archived, created_at) VALUES ($1,$2,1,$3::jsonb,false,$4::timestamptz)`, [definitionId, definitionName, JSON.stringify(definitionBody), now]);
   await sql.query(`INSERT INTO oakridge.workflow_run (id, workflow_definition_id, context, created_at) VALUES ($1,$2,'{}'::jsonb,$3::timestamptz)`, [runId, definitionId, now]);
+  await sql.query(`INSERT INTO oakridge.epic_workflow_profile
+    (id,workflow_run_id,title,slug,lifecycle_state,final_merge_policy,base_branch,repositories,created_at,updated_at)
+    VALUES ($1,$2,'Readable run name','readable-run-name','active','guarded','epic/readable-run-name',$3::jsonb,$4::timestamptz,$4::timestamptz)`, [
+    randomUUID(), runId, JSON.stringify([{ repository_key: "oakridge" }, { repository_key: "kbbl" }]), now,
+  ]);
 
   const records = new PostgresRunRecordRepository(sql);
 
@@ -90,7 +95,7 @@ test("GET /runs/:id exposes the v2 run-record projection with every required fie
   const app = createOperatorProjectionApp(new PostgresOperatorProjectionRepository(sql, "test-app-version"));
   const response = await app.request(`/runs/${runId}`);
   expect(response.status).toBe(200);
-  interface RunRecordResponsePayload { readonly run_record: RunRecordPayload }
+  interface RunRecordResponsePayload { readonly title: string | null; readonly repository_keys: readonly string[]; readonly run_record: RunRecordPayload }
   interface RunRecordPayload {
     readonly run_id: string; readonly state: string; readonly record_version: number;
     readonly units: readonly {
@@ -102,6 +107,8 @@ test("GET /runs/:id exposes the v2 run-record projection with every required fie
     readonly recent_transitions: readonly { readonly operation: string; readonly actor: string; readonly prior_record_version: number; readonly resulting_record_version: number; readonly created_at: string }[];
   }
   const detail = (await response.json()) as RunRecordResponsePayload;
+  expect(detail.title).toBe("Readable run name");
+  expect(detail.repository_keys).toEqual(["oakridge", "kbbl"]);
   const runRecord = detail.run_record;
 
   expect(runRecord.run_id).toBe(runId);

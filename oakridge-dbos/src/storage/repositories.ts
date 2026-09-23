@@ -74,6 +74,7 @@ export interface RunRecordRepository {
   publish_artifact(request: PublishWorkOrderArtifact): Promise<PublishWorkOrderArtifactResult>;
   /** The gate/handoff command that owns a pending slot's wait, closing it and applying the matching release/invalidation atomically. */
   close_output_wait(request: CloseRunOutputWait): Promise<CloseRunOutputWaitResult>;
+  /** Decides an operator gate; an upstream revision also creates the upstream unit's correction work in the same transaction. */
   decide_gate_wait(request: DecideGateWait): Promise<CloseRunOutputWaitResult>;
   complete_handoff_artifact(request: CompleteHandoffArtifact): Promise<CloseRunOutputWaitResult>;
   find_cohort_handoff(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<RunOwnedCohortHandoff | null>;

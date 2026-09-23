@@ -292,13 +292,52 @@ export interface FenceContext {
   readonly fenced_by: string;
 }
 
-export interface UiSessionHistory {
-  readonly sid: KbblSessionId;
-  readonly events: readonly AcpUiEvent[];
-  readonly openTurns: readonly UiOpenTurn[];
-  /** True when the agent could not replay (expired/unsupported history). */
-  readonly expired: boolean;
+export type SessionSummaryMethod = "native_compaction" | "manual_compaction" | "final_response";
+
+export interface TerminalSessionSummaryDraft {
+  readonly schema_version: 1;
+  readonly session_id: KbblSessionId;
+  readonly method: SessionSummaryMethod;
+  readonly produced_at: string;
+  readonly markdown: string;
 }
+
+export interface TerminalSessionSummary extends TerminalSessionSummaryDraft {
+  readonly created_at: string;
+  readonly updated_at: string;
+}
+
+export type SessionHistoryUnavailableReason =
+  | "missing_acp_session_id"
+  | "agent_history_unavailable"
+  | "summary_unavailable";
+
+export type UiSessionHistory =
+  | {
+      readonly kind: "transcript";
+      readonly sid: KbblSessionId;
+      readonly events: readonly AcpUiEvent[];
+      readonly openTurns: readonly UiOpenTurn[];
+      readonly expired: false;
+      readonly summary: null;
+    }
+  | {
+      readonly kind: "summary";
+      readonly sid: KbblSessionId;
+      readonly events: readonly [];
+      readonly openTurns: readonly UiOpenTurn[];
+      readonly expired: true;
+      readonly summary: TerminalSessionSummary;
+    }
+  | {
+      readonly kind: "unavailable";
+      readonly sid: KbblSessionId;
+      readonly events: readonly [];
+      readonly openTurns: readonly UiOpenTurn[];
+      readonly expired: true;
+      readonly summary: null;
+      readonly reason: SessionHistoryUnavailableReason;
+    };
 
 /** Durable, non-terminal work shown by the operator surface. */
 export interface UiOpenTurn {

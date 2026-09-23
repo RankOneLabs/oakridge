@@ -127,7 +127,8 @@ export function RunList({ onSelectRun, onNewRun, onNewProject, onReviewInbox, on
         <table className="or-data-table w-full border-collapse text-sm" aria-label="Workflow runs">
           <thead>
             <tr>
-              <th className={tableHeaderClass}>Workflow</th>
+              <th className={tableHeaderClass}>Run</th>
+              <th className={tableHeaderClass}>Repositories</th>
               <th className={tableHeaderClass}>Status</th>
               <th className={tableHeaderClass}>Stage</th>
               <th className={tableHeaderClass}>Parked</th>
@@ -152,8 +153,14 @@ export function RunList({ onSelectRun, onNewRun, onNewProject, onReviewInbox, on
                     }
                   }}
                 >
-                  <td className={`${tableCellClass} font-medium text-[var(--text-primary)]`}>
-                    {run.workflow_name}
+                  <td className={tableCellClass}>
+                    <div className="font-medium text-[var(--text-primary)]" data-testid="or-run-title">
+                      {run.title ?? run.workflow_name}
+                    </div>
+                    {run.title && <div className="mt-0.5 text-xs text-[var(--text-muted)]">{run.workflow_name}</div>}
+                  </td>
+                  <td className={`${tableCellClass} text-[var(--text-secondary)]`} data-testid="or-run-repositories">
+                    {run.repository_keys.length > 0 ? run.repository_keys.join(", ") : "-"}
                   </td>
                   <td className={tableCellClass}>
                     <span className={statusChipClass(status)}>{status}</span>
