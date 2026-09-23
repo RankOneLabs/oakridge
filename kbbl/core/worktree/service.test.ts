@@ -30,9 +30,26 @@ async function gitInitRepo(dir: string): Promise<void> {
 
 const SID = "aaaaaaaa-bbbb-4ccc-8ddd-000000000001" as KbblSessionId;
 const SID2 = "aaaaaaaa-bbbb-4ccc-8ddd-000000000002" as KbblSessionId;
+const SID3 = "aaaaaaaa-bbbb-4ccc-8ddd-000000000003" as KbblSessionId;
 
 function spec(overrides: Partial<AcpSessionStartSpec> = {}): AcpSessionStartSpec {
   return { initial_prompt: "x", workdir: repoDir, ...overrides };
+}
+
+function insertProvisioningSession(sid: KbblSessionId, name: string): void {
+  store.insertSession({
+    sid,
+    resumable_key: null,
+    start_spec_hash: null,
+    agent_profile: "fake",
+    name,
+    artifact_id: null,
+    project_workdir: repoDir,
+    worktree_path: repoDir,
+    requested_model: null,
+    requested_effort: null,
+    workflow: null,
+  });
 }
 
 beforeEach(async () => {
@@ -118,6 +135,7 @@ describe("GitWorktreeProvider.resolve", () => {
     });
     store.markEnded(SID, { status: "fenced", reason: "fenced", fenced_by: "retry" });
 
+    insertProvisioningSession(SID2, "retry");
     const retried = await provider.resolve(SID2, spec({ worktree: identity }));
     expect(retried.ok).toBe(true);
     if (!retried.ok) return;
@@ -125,6 +143,49 @@ describe("GitWorktreeProvider.resolve", () => {
     expect(retried.value.worktree_branch).toBe(identity.branch_name);
     expect(retried.value.parent_sid).toBe(SID);
     expect(retried.value.project_workdir).toBe(repoDir);
+    expect(store.getSession(SID)?.worktree_branch).toBeNull();
+    expect(store.getSession(SID)?.worktree_path).toBe(repoDir);
+    expect(store.getSession(SID2)?.worktree_branch).toBe(identity.branch_name);
+  });
+
+  test("a second retry cannot claim a checkout already transferred to a live retry", async () => {
+    const identity = { branch_name: "cohort/epic/1-x", worktree_subdir: "epic/1-x" };
+    const first = await provider.resolve(SID, spec({ worktree: identity }));
+    if (!first.ok) throw new Error("first worktree failed");
+    insertProvisioningSession(SID, "first attempt");
+    store.setWorktree(SID, {
+      ...first.value,
+      parent_sid: null,
+    });
+    store.markEnded(SID, { status: "fenced", reason: "fenced", fenced_by: "retry" });
+    insertProvisioningSession(SID2, "first retry");
+    const claimed = await provider.resolve(SID2, spec({ worktree: identity }));
+    expect(claimed.ok).toBe(true);
+
+    insertProvisioningSession(SID3, "second retry");
+    const rejected = await provider.resolve(SID3, spec({ worktree: identity }));
+    expect(rejected.ok).toBe(false);
+    expect(store.getSession(SID3)?.worktree_path).toBe(repoDir);
+  });
+
+  test("a checkout cannot be claimed after its owner starts purging", async () => {
+    const identity = { branch_name: "cohort/epic/1-x", worktree_subdir: "epic/1-x" };
+    const first = await provider.resolve(SID, spec({ worktree: identity }));
+    if (!first.ok) throw new Error("first worktree failed");
+    insertProvisioningSession(SID, "first attempt");
+    store.setWorktree(SID, {
+      ...first.value,
+      parent_sid: null,
+    });
+    store.markEnded(SID, { status: "fenced", reason: "fenced", fenced_by: "retry" });
+    store.markPurgeStarted(SID);
+    insertProvisioningSession(SID2, "retry during purge");
+
+    const rejected = await provider.resolve(SID2, spec({ worktree: identity }));
+
+    expect(rejected.ok).toBe(false);
+    expect(store.getSession(SID)?.worktree_branch).toBe(identity.branch_name);
+    expect(store.getSession(SID2)?.worktree_path).toBe(repoDir);
   });
 
   test("inheritance cuts a NEW worktree from the parent's, with lineage", async () => {

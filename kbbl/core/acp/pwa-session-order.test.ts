@@ -4,6 +4,7 @@ import {
   compareSessionsByActivity,
   compareSessionsByDisplayedActivity,
   groupSessionsByCohort,
+  selectNextJustNowExpiryDelay,
 } from "./pwa-session-order";
 import type { PwaSessionSnapshot, PwaSessionWorkflowIdentity } from "./pwa-wire";
 
@@ -71,6 +72,21 @@ test("display ordering returns to newest-first outside the shared just-now bucke
       .sort(compareSessionsByDisplayedActivity(now))
       .map((session) => session.sid),
   ).toEqual(["newer", "older"]);
+});
+
+test("selectNextJustNowExpiryDelay returns the earliest displayed bucket boundary", () => {
+  const now = Date.parse("2026-01-01T00:00:05.000Z");
+  const expiresFirst = makeSnapshot({ lastActivityTs: "2026-01-01T00:00:03.000Z" });
+  const expiresLater = makeSnapshot({ lastActivityTs: "2026-01-01T00:00:04.000Z" });
+
+  expect(selectNextJustNowExpiryDelay([expiresLater, expiresFirst], now)).toBe(3_000);
+});
+
+test("selectNextJustNowExpiryDelay ignores sessions outside the bucket", () => {
+  const now = Date.parse("2026-01-01T00:01:00.000Z");
+  const expired = makeSnapshot({ lastActivityTs: "2026-01-01T00:00:03.000Z" });
+
+  expect(selectNextJustNowExpiryDelay([expired], now)).toBeNull();
 });
 
 test("a build session and an assessor session sharing a run and unit land in one group", () => {

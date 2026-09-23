@@ -57,6 +57,22 @@ export const compareSessionsByDisplayedActivity = (
     ? 0
     : compareSessionsByActivity(left, right);
 
+/** Milliseconds until the next session leaves the displayed just-now bucket. */
+export function selectNextJustNowExpiryDelay(
+  sessions: readonly PwaSessionSnapshot[],
+  now_ms: number,
+): number | null {
+  let nextDelay: number | null = null;
+  for (const session of sessions) {
+    const activity_ms = Date.parse(session.lastActivityTs);
+    if (!Number.isFinite(activity_ms)) continue;
+    const delay = activity_ms + JUST_NOW_WINDOW_MS - now_ms;
+    if (delay <= 0) continue;
+    nextDelay = nextDelay === null ? delay : Math.min(nextDelay, delay);
+  }
+  return nextDelay;
+}
+
 function firstNonNull(
   sessions: readonly PwaSessionSnapshot[],
   select: (session: PwaSessionSnapshot) => string | null,

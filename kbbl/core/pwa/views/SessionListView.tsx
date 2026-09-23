@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 
 
@@ -9,6 +9,7 @@ import type { RuntimeId } from "../../runtime-interface";
 import {
   compareSessionsByDisplayedActivity,
   groupSessionsByCohort,
+  selectNextJustNowExpiryDelay,
 } from "../../acp/pwa-session-order";
 
 import { SessionRow } from "../components/organisms/SessionRow";
@@ -76,6 +77,14 @@ export function SessionListView({
 }: SessionListViewProps) {
   const [pendingError, setPendingError] = useState<string | null>(null);
   const [resetSignal, setResetSignal] = useState(0);
+  const [orderingTick, setOrderingTick] = useState(0);
+
+  useEffect(() => {
+    const delay = selectNextJustNowExpiryDelay([...sessions.values()], Date.now());
+    if (delay === null) return;
+    const timeout = setTimeout(() => setOrderingTick((tick) => tick + 1), delay);
+    return () => clearTimeout(timeout);
+  }, [orderingTick, sessions]);
 
   const prefill = useUrlPrefill();
 
@@ -84,7 +93,7 @@ export function SessionListView({
       [...sessions.values()],
       compareSessionsByDisplayedActivity(Date.now()),
     ),
-    [sessions],
+    [orderingTick, sessions],
   );
   const totalCount = sessions.size;
 

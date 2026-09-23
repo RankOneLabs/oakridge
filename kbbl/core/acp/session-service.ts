@@ -426,14 +426,22 @@ export class AcpSessionService {
    * removal, then drop the row (turn ledger goes with it).
    */
   async purgeSession(sid: string): Promise<Result<boolean, AcpError>> {
-    const row = this.deps.store.getSession(sid as KbblSessionId);
+    const row = this.deps.store.markPurgeStarted(sid as KbblSessionId);
     if (!row) return ok(false);
     await this.closeSession(sid);
-    await this.deps.worktrees.remove?.({
-      project_workdir: row.project_workdir,
-      worktree_path: row.worktree_path,
-      worktree_branch: row.worktree_branch,
-    });
+    const hasOtherOwner = row.worktree_branch !== null
+      && this.deps.store.hasOtherWorktreeOwner(
+        row.sid,
+        row.worktree_path,
+        row.worktree_branch,
+      );
+    if (!hasOtherOwner) {
+      await this.deps.worktrees.remove?.({
+        project_workdir: row.project_workdir,
+        worktree_path: row.worktree_path,
+        worktree_branch: row.worktree_branch,
+      });
+    }
     this.deps.store.deleteSession(row.sid);
     return ok(true);
   }

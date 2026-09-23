@@ -1,6 +1,6 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import type { RuntimeDescriptor, SessionSnapshot } from "../types";
 import type { PwaSessionWorkflowIdentity } from "../../acp/pwa-wire";
@@ -118,5 +118,34 @@ describe("SessionListView grouping", () => {
 
     expect(screen.queryByText("No sessions yet.")).toBeNull();
     expect(screen.getByText("Other sessions")).toBeTruthy();
+  });
+
+  test("returns to newest-first order when the just-now bucket expires", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:05.000Z"));
+    try {
+      const established = makeSnapshot({
+        sid: "established",
+        name: "established",
+        lastActivityTs: "2026-01-01T00:00:04.000Z",
+      });
+      const newest = makeSnapshot({
+        sid: "newest",
+        name: "newest",
+        lastActivityTs: "2026-01-01T00:00:05.000Z",
+      });
+      const { container } = renderList(new Map([
+        [established.sid, established],
+        [newest.sid, newest],
+      ]));
+      const visibleNames = () => Array.from(container.querySelectorAll(".session-row-name"))
+        .map((node) => node.textContent);
+
+      expect(visibleNames()).toEqual(["established", "newest"]);
+      act(() => vi.advanceTimersByTime(5_000));
+      expect(visibleNames()).toEqual(["newest", "established"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
