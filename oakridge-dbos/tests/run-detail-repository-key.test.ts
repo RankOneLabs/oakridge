@@ -15,10 +15,18 @@ import type { WorkflowDefinition } from "../src/domain/workflow";
 import { applyMigrations } from "../src/storage/migrate";
 import { PostgresOperatorProjectionRepository } from "../src/storage/postgres-operators";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
+import { ensureDbosSystemSchema } from "./support/dbos-system-schema";
 import { findTestDatabaseUrl } from "./support/durable-database";
 
 const databaseUrl = await findTestDatabaseUrl();
 const sql = databaseUrl ? PgPostgresExecutor.connect(databaseUrl) : null;
+// `get_run` folds in the run-record detail, which LEFT JOINs
+// `dbos.workflow_status` — a schema the SDK creates at launch, not one
+// `applyMigrations` owns. Without this the test passes on any database some
+// earlier launch prepared (every local run, since `oakridge_e2e` persists) and
+// fails on CI's fresh one whenever no DBOS-launching file happened to run
+// first.
+if (sql && databaseUrl) await ensureDbosSystemSchema(databaseUrl);
 if (sql) await applyMigrations(sql);
 afterAll(async () => { await sql?.close(); });
 

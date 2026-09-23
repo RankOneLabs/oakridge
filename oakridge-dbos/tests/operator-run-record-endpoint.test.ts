@@ -16,10 +16,15 @@ import { applyMigrations } from "../src/storage/migrate";
 import { PostgresOperatorProjectionRepository } from "../src/storage/postgres-operators";
 import { PostgresRunRecordRepository } from "../src/storage/postgres-run-record";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
+import { ensureDbosSystemSchema } from "./support/dbos-system-schema";
 import { findTestDatabaseUrl } from "./support/durable-database";
 
 const databaseUrl = await findTestDatabaseUrl();
 const sql = databaseUrl ? PgPostgresExecutor.connect(databaseUrl) : null;
+// The run-record projection LEFT JOINs `dbos.workflow_status` for its liveness
+// metadata — the SDK's schema, not one `applyMigrations` owns. See the same
+// note in run-detail-repository-key.test.ts.
+if (sql && databaseUrl) await ensureDbosSystemSchema(databaseUrl);
 if (sql) await applyMigrations(sql);
 afterAll(async () => { await sql?.close(); });
 

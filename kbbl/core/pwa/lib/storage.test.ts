@@ -78,25 +78,66 @@ describe("new session model storage", () => {
   });
 
   test("preserves supported Claude model writes", () => {
+    const normalized = writeStoredNewSessionModel("opus", claudeRuntime);
+
+    expect(normalized).toBe("opus");
+    expect(localStorage.getItem(newSessionModelKey("claude-code"))).toBe(
+      "opus",
+    );
+    expect(readStoredNewSessionModel(claudeRuntime)).toBe("opus");
+  });
+
+  // Browsers that picked a model before the picker dropped `[1m]` still hold
+  // the old id. It is no longer an option element, so the select would render
+  // blank; coercing keeps the form showing what it will launch. Fable rather
+  // than Opus, because Opus *is* the runtime default — a plain
+  // unsupported-value fallback would pass an `opus[1m]` test while silently
+  // turning every other family into Opus.
+  test("coerces a stored context-hinted Claude model to the same family's picker entry", () => {
+    const normalized = writeStoredNewSessionModel(
+      "claude-fable-5-1[1m]",
+      claudeRuntime,
+    );
+
+    expect(normalized).toBe("claude-fable-5-1");
+    expect(readStoredNewSessionModel(claudeRuntime)).toBe("claude-fable-5-1");
+  });
+
+  test("reads a context-hinted stored value back as its picker entry", () => {
+    // The value predates the write path's coercion, so it is in localStorage
+    // hinted and only the read path can rescue it.
+    localStorage.setItem(
+      newSessionModelKey("claude-code"),
+      "claude-fable-5-1[1m]",
+    );
+
+    expect(readStoredNewSessionModel(claudeRuntime)).toBe("claude-fable-5-1");
+  });
+
+  test("coerces a stored context-hinted default-family model to its picker entry", () => {
     const normalized = writeStoredNewSessionModel("opus[1m]", claudeRuntime);
 
-    expect(normalized).toBe("opus[1m]");
-    expect(localStorage.getItem(newSessionModelKey("claude-code"))).toBe(
-      "opus[1m]",
-    );
-    expect(readStoredNewSessionModel(claudeRuntime)).toBe("opus[1m]");
+    expect(normalized).toBe("opus");
+    expect(readStoredNewSessionModel(claudeRuntime)).toBe("opus");
+  });
+
+  test("coerces a model from a family the runtime does not offer to the default", () => {
+    const normalized = writeStoredNewSessionModel("opus[1m]", codexRuntime);
+
+    expect(normalized).toBe("gpt-5.6-sol");
+    expect(readStoredNewSessionModel(codexRuntime)).toBe("gpt-5.6-sol");
   });
 
   test("stores runtime preferences independently", () => {
-    writeStoredNewSessionModel("opus[1m]", claudeRuntime);
+    writeStoredNewSessionModel("opus", claudeRuntime);
     writeStoredNewSessionModel("gpt-5.6-sol", codexRuntime);
 
-    expect(readStoredNewSessionModel(claudeRuntime)).toBe("opus[1m]");
+    expect(readStoredNewSessionModel(claudeRuntime)).toBe("opus");
     expect(readStoredNewSessionModel(codexRuntime)).toBe("gpt-5.6-sol");
   });
 
   test("uses Opus and Sol when no preference is stored", () => {
-    expect(readStoredNewSessionModel(claudeRuntime)).toBe("opus[1m]");
+    expect(readStoredNewSessionModel(claudeRuntime)).toBe("opus");
     expect(readStoredNewSessionModel(codexRuntime)).toBe("gpt-5.6-sol");
   });
 });

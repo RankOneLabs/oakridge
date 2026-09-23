@@ -107,7 +107,7 @@ describe("GET /config", () => {
       supportsCompaction: false,
     });
     expect(body.runtimes[0]?.models).toContainEqual({
-      value: "claude-fable-5-1[1m]",
+      value: "claude-fable-5-1",
       label: "fable 5.1",
     });
     expect(body.runtimes[0]?.efforts).toContainEqual({ value: "max", label: "max" });

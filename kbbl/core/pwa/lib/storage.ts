@@ -1,6 +1,6 @@
 import type { Theme } from "../types";
 import type { RuntimeDescriptor } from "../types";
-import { defaultModelForRuntime } from "../../runtime";
+import { defaultModelForRuntime, withoutContextHint } from "../../runtime";
 
 export const THEME_STORAGE_KEY = "oakridge.theme";
 /**
@@ -18,12 +18,31 @@ export function newSessionModelKey(runtimeId: string): string {
   return `kbbl.newSession.model.${runtimeId}`;
 }
 
-export function isValidNewSessionModelForRuntime(
+/**
+ * The picker entry a stored model id selects, or `null` when the runtime
+ * offers nothing in that family. `""` means "no explicit model" and selects
+ * itself.
+ *
+ * Exact match first, then match on family — ignoring the context-window hint,
+ * the same canonicalization the ACP resolver applies when provisioning
+ * (`core/acp/controller.ts`). Claude Code's advertised ids gain and lose the
+ * `[1m]` suffix with the account's entitlement, so a browser that stored
+ * `claude-fable-5-1[1m]` before the picker dropped the hint still means Fable.
+ * Without this it matches nothing and falls all the way back to the runtime
+ * default — silently launching Opus for an operator who chose Fable.
+ */
+export function matchStoredNewSessionModel(
   value: string,
   runtime: RuntimeDescriptor,
-): boolean {
-  if (value === "") return true;
-  return runtime.models.some((o) => o.value === value);
+): string | null {
+  if (value === "") return "";
+  const exact = runtime.models.find((option) => option.value === value);
+  if (exact) return exact.value;
+  const family = withoutContextHint(value);
+  const relative = runtime.models.find(
+    (option) => withoutContextHint(option.value) === family,
+  );
+  return relative?.value ?? null;
 }
 
 export function defaultNewSessionModelForRuntime(runtime: RuntimeDescriptor): string {
@@ -37,8 +56,10 @@ export function normalizeNewSessionModelForRuntime(
   value: string,
   runtime: RuntimeDescriptor,
 ): string {
-  if (isValidNewSessionModelForRuntime(value, runtime)) return value;
-  return defaultNewSessionModelForRuntime(runtime);
+  return (
+    matchStoredNewSessionModel(value, runtime) ??
+    defaultNewSessionModelForRuntime(runtime)
+  );
 }
 
 /**
@@ -50,20 +71,16 @@ export function readStoredNewSessionModel(runtime: RuntimeDescriptor): string {
   try {
     const namespacedKey = newSessionModelKey(runtime.id);
     const namespaced = localStorage.getItem(namespacedKey);
-    if (
-      namespaced !== null &&
-      isValidNewSessionModelForRuntime(namespaced, runtime)
-    ) {
-      return namespaced;
-    }
+    const stored =
+      namespaced === null ? null : matchStoredNewSessionModel(namespaced, runtime);
+    if (stored !== null) return stored;
     // Migration: read legacy key once, migrate to namespaced key.
     const legacy = localStorage.getItem(NEW_SESSION_MODEL_STORAGE_KEY);
-    if (
-      legacy !== null &&
-      isValidNewSessionModelForRuntime(legacy, runtime)
-    ) {
-      try { localStorage.setItem(namespacedKey, legacy); } catch {}
-      return legacy;
+    const migrated =
+      legacy === null ? null : matchStoredNewSessionModel(legacy, runtime);
+    if (migrated !== null) {
+      try { localStorage.setItem(namespacedKey, migrated); } catch {}
+      return migrated;
     }
   } catch {}
   return defaultNewSessionModelForRuntime(runtime);
