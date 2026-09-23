@@ -6,6 +6,7 @@
 
 import type * as schema from "@agentclientprotocol/sdk";
 
+import { contextHintOf, withoutContextHint } from "../runtime";
 import type { AgentProfile } from "./agent-profile";
 import { AcpClient } from "./client";
 import {
@@ -57,16 +58,46 @@ interface PendingPermission {
 export type UiEventListener = (event: AcpUiEvent) => void;
 
 /**
+ * How a request was satisfied. `exact` means the agent advertises the id (or
+ * display name) that was asked for. `context_hint_ignored` means only the
+ * same model in a different context window was on offer, so the hints differ
+ * between what was asked for and what will run — the caller logs it, because
+ * nothing else can tell the operator their window changed.
+ */
+export type OptionMatchKind =
+  | { kind: "exact" }
+  | {
+      kind: "context_hint_ignored";
+      readonly requestedHint: string | null;
+      readonly matchedHint: string | null;
+    };
+
+export interface ResolvedOption {
+  readonly configId: string;
+  readonly valueId: string;
+  readonly match: OptionMatchKind;
+}
+
+/**
  * Pure resolver for requested model/effort against the agent's config
  * options (§12): first select option in the semantic category, matched by
  * value id or normalized display name. Returns null when nothing was
  * requested; an error when a request cannot be satisfied.
+ *
+ * **The agent's model vocabulary is not a constant.** The same pinned binary
+ * advertises different ids from one `session/new` to the next as the 1M
+ * context entitlement comes and goes — `opus[1m]` and `opus` are each
+ * sometimes the only opus on offer, and likewise `claude-fable-5-1[1m]` and
+ * `claude-fable-5-1`. Matching those ids strictly means a launch button that
+ * works all morning and kills the session before its first turn in the
+ * afternoon, so the context hint is the last thing compared and the first
+ * thing dropped: a hint mismatch changes the window, which beats not running.
  */
 export function resolveRequestedOption(
   options: readonly schema.SessionConfigOption[],
   category: "model" | "thought_level",
   requested: string | null,
-): Result<{ configId: string; valueId: string } | null, AcpError> {
+): Result<ResolvedOption | null, AcpError> {
   if (requested === null) return ok(null);
   const code =
     category === "model"
@@ -88,22 +119,46 @@ export function resolveRequestedOption(
   const flat = selector.options.flatMap((entry) =>
     "options" in entry ? entry.options : [entry],
   );
-  const match = flat.find(
+  const exact = flat.find(
     (item) =>
       item.value === requested ||
       item.value.toLowerCase() === normalized ||
       item.name.trim().toLowerCase() === normalized,
   );
-  if (!match) {
-    return err(
-      acpError(
-        code,
-        "resolveRequestedOption",
-        `no option matching "${requested}" in config option "${selector.id}"`,
-      ),
-    );
+  if (exact) {
+    return ok({
+      configId: selector.id,
+      valueId: exact.value,
+      match: { kind: "exact" },
+    });
   }
-  return ok({ configId: selector.id, valueId: match.value });
+  // Same model, different window. Prefer the hintless id when the agent
+  // offers several, so the fallback is deterministic rather than dependent
+  // on advertised order.
+  const family = withoutContextHint(normalized);
+  const relatives = flat.filter(
+    (item) => withoutContextHint(item.value.toLowerCase()) === family,
+  );
+  const relative =
+    relatives.find((item) => contextHintOf(item.value) === null) ?? relatives[0];
+  if (relative) {
+    return ok({
+      configId: selector.id,
+      valueId: relative.value,
+      match: {
+        kind: "context_hint_ignored",
+        requestedHint: contextHintOf(normalized),
+        matchedHint: contextHintOf(relative.value),
+      },
+    });
+  }
+  return err(
+    acpError(
+      code,
+      "resolveRequestedOption",
+      `no option matching "${requested}" in config option "${selector.id}"`,
+    ),
+  );
 }
 
 export class AcpSessionController {
@@ -285,6 +340,15 @@ export class AcpSessionController {
       );
       if (!resolved.ok) return resolved;
       if (resolved.value === null) continue;
+      const match = resolved.value.match;
+      if (match.kind === "context_hint_ignored") {
+        console.log(
+          `[acp] sid=${this.deps.sid} ${category} requested=${requested} ` +
+            `resolved=${resolved.value.valueId} context_hint_ignored ` +
+            `requested_hint=${match.requestedHint ?? "none"} ` +
+            `matched_hint=${match.matchedHint ?? "none"}`,
+        );
+      }
       const client = this.client;
       if (!client) {
         return err(this.notLiveError("controller.applyRequestedConfig"));

@@ -14,6 +14,25 @@ export function isRuntimeId(value: unknown): value is RuntimeId {
   return value === "claude-code" || value === "codex";
 }
 
+/**
+ * A context-window hint carried by a model id — the `1m` of `opus[1m]`.
+ *
+ * Claude Code spells the same model both ways depending on whether the 1M
+ * entitlement is live, so every comparison of a requested id against an
+ * advertised one has to be able to look past the hint. Defined here beside
+ * the vocabulary it describes; `resolveRequestedOption` is the consumer.
+ */
+const CONTEXT_HINT_PATTERN = /\[(\d+[mk])\]$/i;
+
+/** `opus[1m]` → `opus`; ids without a hint are returned unchanged. */
+export function withoutContextHint(value: string): string {
+  return value.replace(CONTEXT_HINT_PATTERN, "");
+}
+
+export function contextHintOf(value: string): string | null {
+  return value.match(CONTEXT_HINT_PATTERN)?.[1]?.toLowerCase() ?? null;
+}
+
 export interface RuntimeDescriptor {
   id: RuntimeId;
   label: string;
@@ -48,13 +67,21 @@ export interface RuntimeOption {
  * picker entry the pinned agent does not advertise is therefore not a
  * cosmetic nicety, it is a launch button that always fails.
  *
+ * The Claude ids here are deliberately hintless (`opus`, not `opus[1m]`).
+ * The agent advertises the two interchangeably depending on whether the 1M
+ * context entitlement is live, so the resolver treats a context hint as
+ * droppable and matches either way; asking without one just means kbbl is
+ * not the thing requesting the bigger window. Stored selections still
+ * carrying `opus[1m]` from before keep resolving — no migration needed.
+ *
  * Both lists are pinned to the agent versions in kbbl/package.json and
- * guarded two ways: `runtime-vocabulary.test.ts` checks them against
- * fixtures of what those versions advertise, and the opt-in real-agent
- * smoke test checks the fixtures against the installed binaries. Bumping
- * `@agentclientprotocol/*` means re-running the smoke test and updating
- * both the fixture and these lists together — the ids do drift (0.70.0's
- * `claude-fable-5[1m]` became 0.76.0's `claude-fable-5-1[1m]`).
+ * guarded two ways: `runtime-vocabulary.test.ts` checks every entry resolves
+ * against each vocabulary variant recorded in the fixture, and the opt-in
+ * real-agent smoke test checks the installed binary still answers with one
+ * of those variants. Bumping `@agentclientprotocol/*` means re-running the
+ * smoke test and updating both the fixture and these lists together — the
+ * ids do drift (0.70.0's `claude-fable-5[1m]` became 0.76.0's
+ * `claude-fable-5-1[1m]`).
  *
  * Each agent also advertises a "default" option; kbbl expresses that as an
  * unset (null) model/effort instead, so it is deliberately not listed here.
@@ -62,8 +89,8 @@ export interface RuntimeOption {
 export const RUNTIME_MODELS: Readonly<Record<RuntimeId, readonly RuntimeOption[]>> = {
   // @agentclientprotocol/claude-agent-acp 0.76.0, config option `model`.
   "claude-code": [
-    { value: "opus[1m]", label: "opus 5" },
-    { value: "claude-fable-5-1[1m]", label: "fable 5.1" },
+    { value: "opus", label: "opus 5.5" },
+    { value: "claude-fable-5-1", label: "fable 5.1" },
     { value: "sonnet", label: "sonnet 5" },
     { value: "haiku", label: "haiku 4.5" },
   ],
@@ -111,7 +138,7 @@ export type RuntimeModelSelection = {
 };
 
 const DEFAULT_MODEL_BY_RUNTIME: Record<RuntimeId, string> = {
-  "claude-code": "opus[1m]",
+  "claude-code": "opus",
   codex: "gpt-5.6-sol",
 };
 
@@ -135,12 +162,17 @@ export function defaultWorkerModelForRuntime(runtimeId: RuntimeId): string {
  * drops an id leaves rows that provision straight into
  * `requested_model_unsupported`. The picker lists are the vocabulary the
  * agent accepts, so a selection outside them is one no dispatch can honour.
+ *
+ * Context hints are compared the way `resolveRequestedOption` compares them —
+ * ignored — so a row still holding `opus[1m]` counts as current. It is: the
+ * resolver will land it on whichever opus the agent is advertising.
  */
 export function isCurrentRuntimeSelection(
   selection: RuntimeModelSelection,
 ): boolean {
+  const selectedModel = withoutContextHint(selection.model.trim().toLowerCase());
   const offersModel = RUNTIME_MODELS[selection.runtime].some(
-    (option) => option.value === selection.model,
+    (option) => withoutContextHint(option.value.toLowerCase()) === selectedModel,
   );
   const effort = selection.effort;
   const offersEffort =

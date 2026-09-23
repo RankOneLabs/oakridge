@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { openTestDb } from "../db/test-db";
-import type { RuntimeId } from "../runtime";
+import { withoutContextHint, type RuntimeId } from "../runtime";
 import { GitWorktreeProvider } from "../worktree/service";
 import { ADVERTISED_AGENT_VOCABULARY } from "./__fixtures__/agent-config-options";
 import { builtinAgentProfiles } from "./default-profiles";
@@ -106,11 +106,13 @@ realTest(
       `config_options=${options.map((option) => `${option.id}(${option.category ?? "-"})`).join(",") || "none"}`,
     );
 
-    // The fixture the launch pickers are checked against (§12) is a snapshot
-    // of exactly this. Drift here means RUNTIME_MODELS / RUNTIME_EFFORTS now
-    // offer models the installed agent will refuse, and every launch on one
-    // of them dies during provisioning — so a dependency bump has to fail
-    // here rather than in front of an operator.
+    // The fixture the launch pickers are checked against (§12) records every
+    // model list this agent has been seen to advertise. Answering with a list
+    // matching none of them is new drift: RUNTIME_MODELS may now offer models
+    // the installed agent will refuse, and a launch on one of them dies
+    // during provisioning — so it has to fail here rather than in front of an
+    // operator. The fix is to add the new variant, not to replace the
+    // recorded ones; the agent returns to the older lists.
     const vocabulary = ADVERTISED_AGENT_VOCABULARY[REAL_AGENT as RuntimeId];
     const advertised = (category: "model" | "thought_level"): string[] => {
       const selector = options.find(
@@ -125,8 +127,58 @@ realTest(
       `models=${advertised("model").join(",")}`,
       `efforts=${advertised("thought_level").join(",")}`,
     );
-    expect(advertised("model")).toEqual([...vocabulary.model_values]);
+    const recorded = vocabulary.model_value_variants.map((variant) =>
+      variant.join(","),
+    );
+    expect(recorded).toContain(advertised("model").join(","));
     expect(advertised("thought_level")).toEqual([...vocabulary.effort_values]);
+
+    // Launch on the context-window spelling this agent is NOT offering right
+    // now. Whichever variant is live, the other spelling is what some stored
+    // selection or picker entry is carrying, and under a strict matcher this
+    // is the session that dies at provisioning. Derived from what the agent
+    // just advertised rather than hardcoded, so it keeps testing the drift
+    // rather than one side of it.
+    const advertisedModels = advertised("model");
+    const flipSpelling = (value: string): string =>
+      /\[\d+[mk]\]$/i.test(value) ? withoutContextHint(value) : `${value}[1m]`;
+    // Only a spelling the agent is *not* offering exercises the fallback; a
+    // variant advertising both `opus` and `opus[1m]` would resolve the flip
+    // exactly and prove nothing.
+    const flipCandidate = advertisedModels
+      .filter((value) => value !== "default")
+      .find((value) => !advertisedModels.includes(flipSpelling(value)));
+    if (flipCandidate === undefined) {
+      throw new Error(
+        `every advertised model is offered in both spellings (${advertisedModels.join(",")}); ` +
+          "the hint-drop fallback cannot be exercised against this variant",
+      );
+    }
+    const flipped = flipSpelling(flipCandidate);
+    report.push(`hint_flipped_request=${flipped}`);
+    const flippedSession = await service.createSession({
+      initial_prompt: "",
+      workdir: repoDir,
+      runtime: REAL_AGENT,
+      model: flipped,
+    });
+    if (!flippedSession.ok) {
+      throw new Error(
+        `hint-flipped launch failed: ${flippedSession.error.code} ${flippedSession.error.detail}`,
+      );
+    }
+    const flippedOptions =
+      registry.getLive(flippedSession.value.sid)?.liveConfigOptions ?? [];
+    const flippedModel = flippedOptions.find(
+      (option) => option.type === "select" && option.category === "model",
+    );
+    const landedOn =
+      flippedModel?.type === "select" ? flippedModel.currentValue : null;
+    report.push(`hint_flipped_resolved=${landedOn ?? "none"}`);
+    // It landed on a model the agent actually offers, and on the same family.
+    if (landedOn === null) throw new Error("model config option went missing");
+    expect(advertisedModels).toContain(landedOn);
+    expect(withoutContextHint(landedOn)).toBe(withoutContextHint(flipped));
 
     const history = await service.loadHistory(sid);
     if (!history.ok) throw new Error(`history failed: ${history.error.code}`);

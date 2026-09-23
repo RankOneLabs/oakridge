@@ -26,7 +26,7 @@ const runtimeDescriptors: RuntimeDescriptors = [
 describe("Oakridge v2 role model choices", () => {
   test("uses Opus and Sol as both role defaults", () => {
     for (const role of ["planner", "worker"] as const) {
-      expect(roleDefaultModel(role, runtimeDescriptors[0])).toBe("opus[1m]");
+      expect(roleDefaultModel(role, runtimeDescriptors[0])).toBe("opus");
       expect(roleDefaultModel(role, runtimeDescriptors[1])).toBe("gpt-5.6-sol");
     }
   });
@@ -36,7 +36,7 @@ describe("Oakridge v2 role model choices", () => {
     const view = render(
       <RoleModelPicker
         role="planner"
-        selection={{ runtime: "claude-code", model: "opus[1m]" }}
+        selection={{ runtime: "claude-code", model: "opus" }}
         setSelection={setSelection}
         setRuntimeTouched={() => {}}
         runtimeDescriptors={runtimeDescriptors}

@@ -78,7 +78,7 @@ describe("NewSessionForm runtime model selection", () => {
     renderForm(() => {});
 
     const modelSelect = screen.getByLabelText("Model for new session");
-    expect(modelSelect).toHaveProperty("value", "opus[1m]");
+    expect(modelSelect).toHaveProperty("value", "opus");
     expect(modelSelect.textContent).toContain("fable 5.1");
     expect(modelSelect.textContent).toContain("sonnet 5");
     expect(modelSelect.textContent).not.toContain("gpt-6 astra");
