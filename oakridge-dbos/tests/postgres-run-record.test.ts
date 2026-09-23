@@ -213,9 +213,13 @@ test("an authored v2 gate action selects its persisted disposition, including te
   expect(unit[0]).toEqual({ state: "failed", code: "gate_rejected" });
 });
 
-test("an upstream-targeted revision closes its gate and upstream handoff in one run-owned transaction", async () => {
+test("an upstream-targeted revision closes both waits and creates upstream correction work in one transaction", async () => {
   const setup = await setupGatedRun();
   if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  const upstreamResolvedConfig = { rendered_prompt: "build the candidate", publication: { base_url: "http://oakridge.test", work_order_id: setup.workOrderId, capability: "gate-secret" } };
+  await sql!.query("UPDATE oakridge.work_order SET execution_request=jsonb_set(execution_request,'{resolved_config}',$2::jsonb) WHERE id=$1", [
+    setup.workOrderId, upstreamResolvedConfig,
+  ]);
   const upstreamArtifactId = randomUUID() as ArtifactId;
   const upstreamBody = { build: "candidate" };
   const handoff = { kind: "handoff", downstream_role: "assessment", external_wait_kind: "github_review" } as const;
@@ -243,6 +247,20 @@ test("an upstream-targeted revision closes its gate and upstream handoff in one 
     output_name: "result", body: assessmentBody, capability_hash: downstreamCapability, idempotency_key: "assessment-gate",
     payload_hash: createHash("sha256").update(JSON.stringify(assessmentBody)).digest("hex"), published_at: setup.now });
   if (assessment.kind !== "pending") throw new Error(`expected pending assessment gate, got ${assessment.kind}`);
+
+  // A gate response must not commit half the correction loop. If the upstream
+  // execution cannot be rebound, both waits and slots remain pending so the
+  // operator can retry the same decision after the underlying issue is fixed.
+  await sql!.query("UPDATE oakridge.work_order SET execution_request=execution_request #- '{resolved_config,publication}' WHERE id=$1", [setup.workOrderId]);
+  expect(await setup.records.decide_gate_wait({ wait_id: assessment.wait_id, action: "request_revision", actor: "operator:test",
+    detail: "revise upstream", decided_at: setup.now })).toEqual(expect.objectContaining({ kind: "wait_conflict" }));
+  const pendingWaits = await sql!.query<{ readonly status: string }>("SELECT status FROM oakridge.wait WHERE id=ANY($1::uuid[])", [[upstream.wait_id, assessment.wait_id]]);
+  expect(pendingWaits.every((wait) => wait.status === "open")).toBe(true);
+  const pendingSlots = await sql!.query<{ readonly state: string }>(
+    "SELECT state FROM oakridge.run_output_slot WHERE run_unit_id=ANY($1::uuid[])", [[setup.runUnitId, downstreamUnitId]]);
+  expect(pendingSlots.every((slot) => slot.state === "pending")).toBe(true);
+  await sql!.query("UPDATE oakridge.work_order SET execution_request=jsonb_set(execution_request,'{resolved_config}',$2::jsonb) WHERE id=$1", [setup.workOrderId, upstreamResolvedConfig]);
+
   expect(await setup.records.decide_gate_wait({ wait_id: assessment.wait_id, action: "request_revision", actor: "operator:test",
     detail: "revise upstream", decided_at: setup.now })).toEqual(expect.objectContaining({ kind: "invalidated" }));
   const waits = await sql!.query<{ readonly id: string; readonly status: string }>(
@@ -252,6 +270,15 @@ test("an upstream-targeted revision closes its gate and upstream handoff in one 
   const slots = await sql!.query<{ readonly state: string }>(
     "SELECT state FROM oakridge.run_output_slot WHERE run_unit_id=ANY($1::uuid[]) ORDER BY run_unit_id", [[setup.runUnitId, downstreamUnitId]]);
   expect(slots.map((slot) => slot.state)).toEqual(["invalidated", "invalidated"]);
+  const correctionOrders = await sql!.query<{ readonly state: string; readonly request_idempotency_key: string; readonly rendered_prompt: string }>(`SELECT state,request_idempotency_key,
+      execution_request->'resolved_config'->>'rendered_prompt' AS rendered_prompt
+    FROM oakridge.work_order WHERE run_unit_id=$1 AND reason='operator_retry'`, [setup.runUnitId]);
+  expect(correctionOrders).toHaveLength(1);
+  expect(correctionOrders[0]).toEqual(expect.objectContaining({
+    state: "available",
+    request_idempotency_key: `operator_retry:gate_revision:${assessment.wait_id}:${upstream.wait_id}`,
+  }));
+  expect(correctionOrders[0]?.rendered_prompt).toContain("revise upstream");
 });
 
 test("a rejected gate invalidates the slot and abandons the work order that produced it, instead of releasing", async () => {

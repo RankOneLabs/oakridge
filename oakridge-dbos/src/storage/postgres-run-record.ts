@@ -489,8 +489,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
     });
   }
 
-  async retry_unit(input: RetryRunUnit, retried_at: string): Promise<RetryRunUnitResult> {
-    return this.sql.transaction(async (transaction) => {
+  private async retryUnitTransaction(transaction: SqlExecutor, input: RetryRunUnit, retried_at: string): Promise<RetryRunUnitResult> {
       const target = await resolveRetryTarget(transaction, input.target);
       if (!target) return { kind: "unit_not_found", detail: `run unit ${describeRetryTarget(input.target)} was not found` };
       const runUnitId = target.run_unit_id;
@@ -563,7 +562,10 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         operation: "operator_retry_created", actor: input.actor, prior_record_version: prior, resulting_record_version: resulting,
         detail: { idempotency_key: input.idempotency_key, missing_outputs: missing.map((slot) => slot.collection_key === null ? slot.output_name : `${slot.output_name}[${slot.collection_key}]`) }, created_at: retried_at });
       return { kind: "created", work_order: decodeOrder(order), run_id: unit.run_id as WorkflowRunId, record_version: resulting };
-    });
+  }
+
+  async retry_unit(input: RetryRunUnit, retried_at: string): Promise<RetryRunUnitResult> {
+    return this.sql.transaction((transaction) => this.retryUnitTransaction(transaction, input, retried_at));
   }
 
   async admit_unit(request: AdmitStageUnitRequest, admitted_at: string): Promise<AdmitStageUnitResult> {
@@ -1108,8 +1110,14 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         const own = await this.closeOutputWaitTransaction(transaction, { ...request, disposition,
           retain_producer: action.disposition === "revise" && release.revision_target === "self_stage" });
         if (own.kind === "wait_conflict" || own.kind === "wait_not_found") throw new GateCoordinationConflict(own);
+        // A replay of the gate decision also replays the transaction that
+        // created any upstream correction work. Do not look for the now-closed
+        // handoff again: its absence is the durable proof that this command
+        // already crossed that edge.
+        if (own.kind === "already_applied") return own;
+        let coordinated = own;
         if (disposition !== "release" && release.revision_target === "upstream_handoff") {
-          const upstreamRows = await transaction.query<{ readonly wait_id: string }>(`SELECT wait.id::text AS wait_id
+          const upstreamRows = await transaction.query<{ readonly wait_id: string; readonly run_unit_id: string }>(`SELECT wait.id::text AS wait_id,wait.run_unit_id::text
             FROM oakridge.run_unit unit CROSS JOIN LATERAL jsonb_array_elements(unit.input_snapshot) input(value)
             JOIN oakridge.wait wait ON wait.artifact_revision_id=(input.value->>'artifact_id')::uuid
             WHERE unit.id=$1 AND wait.kind='handoff_external' AND wait.run_unit_id IS NOT NULL AND wait.status='open' ORDER BY wait.id FOR UPDATE OF wait`, [subject.run_unit_id]);
@@ -1118,9 +1126,19 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
             const result = await this.closeOutputWaitTransaction(transaction, { wait_id: upstream.wait_id as WaitId,
               disposition: "invalidate", action: request.action, actor: request.actor, detail: request.detail, decided_at: request.decided_at });
             if (result.kind === "wait_conflict" || result.kind === "wait_not_found") throw new GateCoordinationConflict(result);
+            if (action.disposition !== "revise") continue;
+            const retry = await this.retryUnitTransaction(transaction, {
+              target: { kind: "run_unit", run_unit_id: upstream.run_unit_id as RunUnitId },
+              idempotency_key: `gate_revision:${request.wait_id}:${upstream.wait_id}`,
+              actor: request.actor,
+            }, request.decided_at);
+            if ("detail" in retry) {
+              throw new GateCoordinationConflict({ kind: "wait_conflict", detail: `upstream revision could not create correction work: ${retry.detail}` });
+            }
+            coordinated = { kind: "invalidated", run_id: retry.run_id, record_version: retry.record_version };
           }
         }
-        return own;
+        return coordinated;
       });
     } catch (cause) {
       if (cause instanceof GateCoordinationConflict) return cause.result;
