@@ -1,6 +1,11 @@
 import { expect, test } from "bun:test";
 
-import { compareSessionsByActivity, groupSessionsByCohort } from "./pwa-session-order";
+import {
+  compareSessionsByActivity,
+  compareSessionsByDisplayedActivity,
+  groupSessionsByCohort,
+  selectNextJustNowExpiryDelay,
+} from "./pwa-session-order";
 import type { PwaSessionSnapshot, PwaSessionWorkflowIdentity } from "./pwa-wire";
 
 function workflow(overrides: Partial<PwaSessionWorkflowIdentity> = {}): PwaSessionWorkflowIdentity {
@@ -43,6 +48,45 @@ test("compareSessionsByActivity orders newest first", () => {
   const older = makeSnapshot({ sid: "a", lastActivityTs: "2026-01-01T00:00:00.000Z" });
   const newer = makeSnapshot({ sid: "b", lastActivityTs: "2026-01-02T00:00:00.000Z" });
   expect([older, newer].sort(compareSessionsByActivity).map((s) => s.sid)).toEqual(["b", "a"]);
+});
+
+test("display ordering preserves input order while both sessions read just now", () => {
+  const now = Date.parse("2026-01-01T00:00:05.000Z");
+  const establishedFirst = makeSnapshot({ sid: "first", lastActivityTs: "2026-01-01T00:00:03.000Z" });
+  const newlyActive = makeSnapshot({ sid: "second", lastActivityTs: "2026-01-01T00:00:04.900Z" });
+
+  expect(
+    [establishedFirst, newlyActive]
+      .sort(compareSessionsByDisplayedActivity(now))
+      .map((session) => session.sid),
+  ).toEqual(["first", "second"]);
+});
+
+test("display ordering returns to newest-first outside the shared just-now bucket", () => {
+  const now = Date.parse("2026-01-01T00:01:00.000Z");
+  const older = makeSnapshot({ sid: "older", lastActivityTs: "2026-01-01T00:00:03.000Z" });
+  const newer = makeSnapshot({ sid: "newer", lastActivityTs: "2026-01-01T00:00:04.900Z" });
+
+  expect(
+    [older, newer]
+      .sort(compareSessionsByDisplayedActivity(now))
+      .map((session) => session.sid),
+  ).toEqual(["newer", "older"]);
+});
+
+test("selectNextJustNowExpiryDelay returns the earliest displayed bucket boundary", () => {
+  const now = Date.parse("2026-01-01T00:00:05.000Z");
+  const expiresFirst = makeSnapshot({ lastActivityTs: "2026-01-01T00:00:03.000Z" });
+  const expiresLater = makeSnapshot({ lastActivityTs: "2026-01-01T00:00:04.000Z" });
+
+  expect(selectNextJustNowExpiryDelay([expiresLater, expiresFirst], now)).toBe(3_000);
+});
+
+test("selectNextJustNowExpiryDelay ignores sessions outside the bucket", () => {
+  const now = Date.parse("2026-01-01T00:01:00.000Z");
+  const expired = makeSnapshot({ lastActivityTs: "2026-01-01T00:00:03.000Z" });
+
+  expect(selectNextJustNowExpiryDelay([expired], now)).toBeNull();
 });
 
 test("a build session and an assessor session sharing a run and unit land in one group", () => {

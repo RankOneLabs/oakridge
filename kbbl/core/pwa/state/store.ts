@@ -74,14 +74,26 @@ export const useStore = create<AppState>()((set) => ({
         snapshots.map((snapshot) => [snapshot.sid as Sid, snapshot]),
       );
       const sessions = new Map<Sid, SessionSnapshot>();
-      for (const [sid, snapshot] of incoming) sessions.set(sid, snapshot);
+      // Preserve the established order of existing rows. The server sorts
+      // each frame by exact timestamps, but the UI deliberately treats two
+      // "just now" rows as tied; rebuilding in server order would defeat
+      // that stable tie every time either session emitted an event.
       for (const [sid, existing] of state.sessions) {
-        if (incoming.has(sid)) continue;
+        const replacement = incoming.get(sid);
+        if (replacement !== undefined) {
+          sessions.set(sid, replacement);
+          continue;
+        }
         if (existing.source === "legacy_archive") {
           sessions.set(sid, existing);
         } else {
           removed.push(sid);
         }
+      }
+      // Truly new sessions have no prior position and follow the frame's
+      // authoritative order until subsequent snapshots preserve it.
+      for (const [sid, snapshot] of incoming) {
+        if (!sessions.has(sid)) sessions.set(sid, snapshot);
       }
       const removedSids = new Set(state.removedSids);
       for (const sid of incoming.keys()) removedSids.delete(sid);

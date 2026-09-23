@@ -1,9 +1,11 @@
+import { JUST_NOW_WINDOW_MS } from "../../acp/pwa-session-order";
+
 export function formatRelative(iso: string): string {
   if (!iso) return "";
   const then = Date.parse(iso);
   if (!Number.isFinite(then)) return "";
   const deltaSec = Math.max(0, Math.floor((Date.now() - then) / 1000));
-  if (deltaSec < 5) return "just now";
+  if (deltaSec < JUST_NOW_WINDOW_MS / 1_000) return "just now";
   if (deltaSec < 60) return `${deltaSec}s ago`;
   // Floor rather than round for the larger unit conversions — a 1m30s-old
   // session showing as "2m ago" overstates the elapsed time. Labels

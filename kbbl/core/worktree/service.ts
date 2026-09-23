@@ -87,6 +87,24 @@ export class GitWorktreeProvider implements WorktreeProvider {
       );
     }
 
+    if (spec.worktree) {
+      const reusable = this.deps.store.claimReusableWorktree({
+        sid,
+        project_workdir: spec.workdir,
+        worktree_branch: spec.worktree.branch_name,
+      });
+      if (reusable) {
+        try {
+          if (await isGitRepo(reusable.worktree_path)) {
+            return ok(reusable);
+          }
+        } catch {
+          // A stale checkout is not reusable. Fall through to normal creation
+          // so the ordinary, path-scrubbed git diagnostic remains authoritative.
+        }
+      }
+    }
+
     return this.createFor(sid, {
       workdir: spec.workdir,
       resumeDepth: 0,

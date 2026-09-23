@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { readHashRoute } from "./hash";
+import {
+  readHashRoute,
+  readHashSessionTarget,
+  writeHashSessionTarget,
+} from "./hash";
 
 function withHash(hash: string) {
   window.location.hash = hash;
@@ -30,5 +34,14 @@ describe("readHashRoute oakridge routes", () => {
       route: { sub: "review-inbox" },
     });
     expect(withHash("#oakridgeSomethingElse")).toBeNull();
+  });
+});
+
+describe("session targets", () => {
+  it("links a pending-approval alert to the approval location in its session", () => {
+    writeHashSessionTarget("sid/one", "pending-permission");
+
+    expect(window.location.hash).toBe("#sid=sid%2Fone&focus=pending-permission");
+    expect(readHashSessionTarget()).toBe("pending-permission");
   });
 });

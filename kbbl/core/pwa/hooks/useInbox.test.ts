@@ -154,4 +154,38 @@ describe("useInbox EventSource revival and parse guards", () => {
     expect(useStore.getState().sessions.has(snapshot.sid as never)).toBe(false);
     expect(removed).toEqual([snapshot.sid]);
   });
+
+  it("keeps existing session positions when a snapshot arrives in a new timestamp order", () => {
+    renderHook(() => useInbox(), { wrapper: makeWrapper() });
+    const base = {
+      name: "session",
+      agentProfile: "claude-code",
+      status: "idle",
+      source: "acp",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      artifactId: null,
+      projectWorkdir: "/repo",
+      worktreePath: "/repo",
+      worktreeBranch: null,
+      worktreeBaseRef: null,
+      requestedModel: null,
+      requestedEffort: null,
+      endReason: null,
+      fencedBy: null,
+      pendingPermissionCount: 0,
+    } as const;
+    const first = { ...base, sid: "sid-first", lastActivityTs: "2026-01-01T00:00:03.000Z" };
+    const second = { ...base, sid: "sid-second", lastActivityTs: "2026-01-01T00:00:02.000Z" };
+
+    act(() => {
+      MockEventSource.last!.dispatch("snapshot", JSON.stringify({ sessions: [first, second] }));
+      MockEventSource.last!.dispatch("snapshot", JSON.stringify({
+        sessions: [{ ...second, lastActivityTs: "2026-01-01T00:00:04.000Z" }, first],
+      }));
+    });
+
+    expect([...useStore.getState().sessions.keys()]).toEqual(["sid-first", "sid-second"]);
+    expect(useStore.getState().sessions.get("sid-second" as never)?.lastActivityTs)
+      .toBe("2026-01-01T00:00:04.000Z");
+  });
 });

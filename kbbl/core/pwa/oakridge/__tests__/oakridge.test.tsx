@@ -269,7 +269,7 @@ describe("RunDetailView", () => {
     expect(await screen.findByTestId("or-run-detail-error")).toBeTruthy();
   });
 
-  it("renders a manual admission control when the workflow explicitly requires it", async () => {
+  it("keeps full cohort briefs out of the stage list while rendering admission controls", async () => {
     const detail: RunDetail = {
       ...RUN_DETAIL_FIXTURE,
       stages: [{
@@ -315,9 +315,9 @@ describe("RunDetailView", () => {
     wrap(<RunDetailView runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
 
     expect(await screen.findByText("Build the cohort UI")).toBeTruthy();
-    expect(screen.getByText("Operator workflow")).toBeTruthy();
-    expect(screen.getByText("kbbl/core/pwa/oakridge")).toBeTruthy();
-    expect(screen.getByText("Admission is explicit")).toBeTruthy();
+    expect(screen.queryByText("Operator workflow")).toBeNull();
+    expect(screen.queryByText("kbbl/core/pwa/oakridge")).toBeNull();
+    expect(screen.queryByText("Admission is explicit")).toBeNull();
     expect(screen.getByTestId("or-admit-unit-btn")).toBeTruthy();
   });
 

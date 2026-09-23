@@ -1,7 +1,6 @@
 import type { StageDetail, StageUnit } from "../../types";
 import { StatusBadge } from "../atoms/StatusBadge";
 import { Fragment } from "react";
-import { CohortBrief } from "./CohortBrief";
 import { selectCohortBrief } from "../../lib/stage-unit-params";
 
 const tableCellClass = "border-b border-[var(--border-subtle)] px-3 py-2.5 align-middle";
@@ -61,7 +60,8 @@ interface RunUnitRowProps {
 
 export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelectArtifact, onAdmit, admitting, admissionError, onRetry, retrying, retryError, canRetry }: RunUnitRowProps) {
   const blockedBy = unit.admission_blocked_by ?? [];
-  const dependencies = selectCohortBrief(unit)?.depends_on ?? [];
+  const brief = selectCohortBrief(unit);
+  const dependencies = brief?.depends_on ?? [];
   const needsAdmission = unit.status === "pending" && unit.admission_required === true && unit.admitted !== true;
   return (
     <Fragment>
@@ -70,6 +70,7 @@ export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelect
         <span>{stageName}</span>
         {unit.repository_key && <span className="ml-1.5 rounded border border-[var(--border-muted)] px-1.5 py-0.5 text-xs text-[var(--text-secondary)]">{unit.repository_key}</span>}
         <span className="ml-1.5 rounded bg-[var(--bg-elevated)] px-1.5 py-0.5 text-xs font-mono text-[var(--text-muted)]">{unit.unit_id}</span>
+        {brief?.title && <div className="mt-1 text-xs font-normal text-[var(--text-muted)]" data-testid="or-cohort-title">{brief.title}</div>}
       </td>
       <td className={`${tableCellClass} text-[var(--text-secondary)]`}>{stageType}</td>
       <td className={tableCellClass}><div className="flex items-center gap-2">
@@ -83,11 +84,10 @@ export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelect
       <SessionCell sid={unit.sid} />
       <WorktreeCell worktree={unit.worktree} />
     </tr>
-    {(unit.params || needsAdmission) && (
+    {(dependencies.length > 0 || needsAdmission) && (
       <tr data-testid="or-cohort-detail-row">
         <td colSpan={6} className={`${tableCellClass} bg-[var(--bg-surface)]`}>
           <div className="flex flex-col gap-3">
-            <CohortBrief unit={unit} />
             {dependencies.length > 0 && (
               <div className="flex flex-wrap items-center gap-2 text-xs" data-testid="or-dependency-status">
                 <span className="font-semibold uppercase text-[var(--text-muted)]">Dependency status</span>

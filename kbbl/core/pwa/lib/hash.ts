@@ -18,6 +18,20 @@ export function writeHashSid(sid: string | null): void {
   }
 }
 
+export type SessionHashTarget = "pending-permission";
+
+export function writeHashSessionTarget(sid: string, target: SessionHashTarget): void {
+  const params = new URLSearchParams();
+  params.set("sid", sid);
+  params.set("focus", target);
+  window.location.hash = params.toString();
+}
+
+export function readHashSessionTarget(): SessionHashTarget | null {
+  const params = new URLSearchParams(window.location.hash.slice(1));
+  return params.get("focus") === "pending-permission" ? "pending-permission" : null;
+}
+
 export type OakridgeSubRoute =
   | { sub: "runs" }
   | { sub: "review-inbox" }

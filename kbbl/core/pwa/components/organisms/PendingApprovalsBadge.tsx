@@ -1,6 +1,6 @@
 import { useStore } from "../../state/store";
 import { selectSessionsAwaitingApproval } from "../../lib/selectors";
-import { writeHashSid } from "../../lib/hash";
+import { writeHashSessionTarget } from "../../lib/hash";
 
 /**
  * Global, always-visible badge for parked tool-approvals. Rendered in the app
@@ -27,9 +27,9 @@ export function PendingApprovalsBadge() {
       type="button"
       className="pending-approvals-badge"
       onClick={() => {
-        writeHashSid(target.sid);
+        writeHashSessionTarget(target.sid, "pending-permission");
       }}
-      title="Open the session waiting for tool approval"
+      title="Open the pending tool approval in its session"
     >
       <span className="pending-approvals-badge-dot" aria-hidden="true" />
       {label}
