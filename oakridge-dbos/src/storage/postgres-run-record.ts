@@ -1122,14 +1122,22 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
             JOIN oakridge.wait wait ON wait.artifact_revision_id=(input.value->>'artifact_id')::uuid
             WHERE unit.id=$1 AND wait.kind='handoff_external' AND wait.run_unit_id IS NOT NULL AND wait.status='open' ORDER BY wait.id FOR UPDATE OF wait`, [subject.run_unit_id]);
           if (upstreamRows.length === 0) throw new GateCoordinationConflict({ kind: "wait_conflict", detail: "gate revision target has no run-owned upstream handoff" });
+          const waitsByUpstreamUnit = new Map<string, Map<string, typeof upstreamRows[number]>>();
           for (const upstream of upstreamRows) {
-            const result = await this.closeOutputWaitTransaction(transaction, { wait_id: upstream.wait_id as WaitId,
-              disposition: "invalidate", action: request.action, actor: request.actor, detail: request.detail, decided_at: request.decided_at });
-            if (result.kind === "wait_conflict" || result.kind === "wait_not_found") throw new GateCoordinationConflict(result);
+            const waits = waitsByUpstreamUnit.get(upstream.run_unit_id) ?? new Map<string, typeof upstream>();
+            waits.set(upstream.wait_id, upstream);
+            waitsByUpstreamUnit.set(upstream.run_unit_id, waits);
+          }
+          for (const [runUnitId, waits] of waitsByUpstreamUnit) {
+            for (const upstream of waits.values()) {
+              const result = await this.closeOutputWaitTransaction(transaction, { wait_id: upstream.wait_id as WaitId,
+                disposition: "invalidate", action: request.action, actor: request.actor, detail: request.detail, decided_at: request.decided_at });
+              if (result.kind === "wait_conflict" || result.kind === "wait_not_found") throw new GateCoordinationConflict(result);
+            }
             if (action.disposition !== "revise") continue;
             const retry = await this.retryUnitTransaction(transaction, {
-              target: { kind: "run_unit", run_unit_id: upstream.run_unit_id as RunUnitId },
-              idempotency_key: `gate_revision:${request.wait_id}:${upstream.wait_id}`,
+              target: { kind: "run_unit", run_unit_id: runUnitId as RunUnitId },
+              idempotency_key: `gate_revision:${request.wait_id}:${runUnitId}`,
               actor: request.actor,
             }, request.decided_at);
             if ("detail" in retry) {

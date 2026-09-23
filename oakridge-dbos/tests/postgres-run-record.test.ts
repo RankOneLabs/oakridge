@@ -221,19 +221,32 @@ test("an upstream-targeted revision closes both waits and creates upstream corre
     setup.workOrderId, upstreamResolvedConfig,
   ]);
   const upstreamArtifactId = randomUUID() as ArtifactId;
+  const upstreamMetadataId = randomUUID() as ArtifactId;
   const upstreamBody = { build: "candidate" };
+  const upstreamMetadataBody = { metadata: "candidate" };
   const handoff = { kind: "handoff", downstream_role: "assessment", external_wait_kind: "github_review" } as const;
   await sql!.query("UPDATE oakridge.run_output_slot SET release_policy=$2::jsonb WHERE run_unit_id=$1", [setup.runUnitId, handoff]);
+  await sql!.query(`INSERT INTO oakridge.run_output_slot (run_unit_id,output_name,artifact_type,required,release_policy,state)
+    VALUES ($1,'metadata','dev.metadata',true,$2::jsonb,'empty')`, [setup.runUnitId, handoff]);
+  await sql!.query(`UPDATE oakridge.work_order SET execution_request=jsonb_set(execution_request,'{declared_outputs}',
+    (execution_request->'declared_outputs') || '[{"name":"metadata","artifact_type":"dev.metadata","required":true}]'::jsonb) WHERE id=$1`, [setup.workOrderId]);
   const upstream = await setup.records.publish_artifact({ artifact_id: upstreamArtifactId, work_order_id: setup.workOrderId,
     output_name: "result", body: upstreamBody, capability_hash: setup.capabilityHash, idempotency_key: "upstream-handoff",
     payload_hash: createHash("sha256").update(JSON.stringify(upstreamBody)).digest("hex"), published_at: setup.now });
   if (upstream.kind !== "pending") throw new Error(`expected pending upstream handoff, got ${upstream.kind}`);
+  const upstreamMetadata = await setup.records.publish_artifact({ artifact_id: upstreamMetadataId, work_order_id: setup.workOrderId,
+    output_name: "metadata", body: upstreamMetadataBody, capability_hash: setup.capabilityHash, idempotency_key: "upstream-metadata-handoff",
+    payload_hash: createHash("sha256").update(JSON.stringify(upstreamMetadataBody)).digest("hex"), published_at: setup.now });
+  if (upstreamMetadata.kind !== "pending") throw new Error(`expected pending upstream metadata handoff, got ${upstreamMetadata.kind}`);
 
   const downstreamStageId = randomUUID() as StageInstanceId;
   const downstreamUnitId = randomUUID() as RunUnitId;
   const downstreamWorkId = randomUUID() as WorkOrderId;
   const downstreamCapability = createHash("sha256").update("downstream-secret").digest("hex");
-  const input = [{ artifact_id: upstreamArtifactId, artifact_type: "dev.result", output_name: "result", unit_id: "unit-1" as UnitId, body: upstreamBody }];
+  const input = [
+    { artifact_id: upstreamArtifactId, artifact_type: "dev.result", output_name: "result", unit_id: "unit-1" as UnitId, body: upstreamBody },
+    { artifact_id: upstreamMetadataId, artifact_type: "dev.metadata", output_name: "metadata", unit_id: "unit-1" as UnitId, body: upstreamMetadataBody },
+  ];
   await setup.records.initialize_straight_through({ run_id: setup.runId, stage_instance_id: downstreamStageId, run_unit_id: downstreamUnitId,
     unit_id: "assessment" as UnitId, work_order_id: downstreamWorkId, work_order_workflow_id: `v2-work:${downstreamWorkId}`,
     stage_key: "assessment", executor_type: "delegated_session", work_order_capability_hash: downstreamCapability,
@@ -254,7 +267,7 @@ test("an upstream-targeted revision closes both waits and creates upstream corre
   await sql!.query("UPDATE oakridge.work_order SET execution_request=execution_request #- '{resolved_config,publication}' WHERE id=$1", [setup.workOrderId]);
   expect(await setup.records.decide_gate_wait({ wait_id: assessment.wait_id, action: "request_revision", actor: "operator:test",
     detail: "revise upstream", decided_at: setup.now })).toEqual(expect.objectContaining({ kind: "wait_conflict" }));
-  const pendingWaits = await sql!.query<{ readonly status: string }>("SELECT status FROM oakridge.wait WHERE id=ANY($1::uuid[])", [[upstream.wait_id, assessment.wait_id]]);
+  const pendingWaits = await sql!.query<{ readonly status: string }>("SELECT status FROM oakridge.wait WHERE id=ANY($1::uuid[])", [[upstream.wait_id, upstreamMetadata.wait_id, assessment.wait_id]]);
   expect(pendingWaits.every((wait) => wait.status === "open")).toBe(true);
   const pendingSlots = await sql!.query<{ readonly state: string }>(
     "SELECT state FROM oakridge.run_output_slot WHERE run_unit_id=ANY($1::uuid[])", [[setup.runUnitId, downstreamUnitId]]);
@@ -264,21 +277,23 @@ test("an upstream-targeted revision closes both waits and creates upstream corre
   expect(await setup.records.decide_gate_wait({ wait_id: assessment.wait_id, action: "request_revision", actor: "operator:test",
     detail: "revise upstream", decided_at: setup.now })).toEqual(expect.objectContaining({ kind: "invalidated" }));
   const waits = await sql!.query<{ readonly id: string; readonly status: string }>(
-    "SELECT id::text,status FROM oakridge.wait WHERE id=ANY($1::uuid[]) ORDER BY id", [[upstream.wait_id, assessment.wait_id]]);
-  expect(waits).toHaveLength(2);
+    "SELECT id::text,status FROM oakridge.wait WHERE id=ANY($1::uuid[]) ORDER BY id", [[upstream.wait_id, upstreamMetadata.wait_id, assessment.wait_id]]);
+  expect(waits).toHaveLength(3);
   expect(waits.every((wait) => wait.status === "closed")).toBe(true);
   const slots = await sql!.query<{ readonly state: string }>(
     "SELECT state FROM oakridge.run_output_slot WHERE run_unit_id=ANY($1::uuid[]) ORDER BY run_unit_id", [[setup.runUnitId, downstreamUnitId]]);
-  expect(slots.map((slot) => slot.state)).toEqual(["invalidated", "invalidated"]);
-  const correctionOrders = await sql!.query<{ readonly state: string; readonly request_idempotency_key: string; readonly rendered_prompt: string }>(`SELECT state,request_idempotency_key,
-      execution_request->'resolved_config'->>'rendered_prompt' AS rendered_prompt
+  expect(slots).toHaveLength(3);
+  expect(slots.every((slot) => slot.state === "invalidated")).toBe(true);
+  const correctionOrders = await sql!.query<{ readonly state: string; readonly request_idempotency_key: string; readonly rendered_prompt: string; readonly expected_artifacts: readonly { readonly output_name: string }[] }>(`SELECT state,request_idempotency_key,
+      execution_request->'resolved_config'->>'rendered_prompt' AS rendered_prompt,execution_request->'expected_artifacts' AS expected_artifacts
     FROM oakridge.work_order WHERE run_unit_id=$1 AND reason='operator_retry'`, [setup.runUnitId]);
   expect(correctionOrders).toHaveLength(1);
   expect(correctionOrders[0]).toEqual(expect.objectContaining({
     state: "available",
-    request_idempotency_key: `operator_retry:gate_revision:${assessment.wait_id}:${upstream.wait_id}`,
+    request_idempotency_key: `operator_retry:gate_revision:${assessment.wait_id}:${setup.runUnitId}`,
   }));
   expect(correctionOrders[0]?.rendered_prompt).toContain("revise upstream");
+  expect(correctionOrders[0]?.expected_artifacts.map((artifact) => artifact.output_name).sort()).toEqual(["metadata", "result"]);
 });
 
 test("a rejected gate invalidates the slot and abandons the work order that produced it, instead of releasing", async () => {

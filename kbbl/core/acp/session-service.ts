@@ -409,6 +409,7 @@ export class AcpSessionService {
         await controller.fence(fence.fenced_by);
       } else if (row.status !== "fenced") {
         this.deps.store.setFencedBy(row.sid, fence.fenced_by);
+        await this.captureColdSummary(this.deps.store.getSession(row.sid) ?? row);
         this.deps.store.markEnded(row.sid, {
           status: "fenced",
           reason: "fenced",
@@ -420,6 +421,8 @@ export class AcpSessionService {
     if (controller) {
       await this.captureSummary(controller);
       await controller.closeChild();
+    } else if (row.status !== "ended" && row.status !== "fenced") {
+      await this.captureColdSummary(row);
     }
     if (row.status !== "ended" && row.status !== "fenced") {
       this.deps.store.markEnded(row.sid, { status: "ended", reason: "user_closed" });
@@ -752,6 +755,17 @@ export class AcpSessionService {
     } catch (error) {
       console.error(`[acp] sid=${controller.sid} terminal summary persistence failed: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  /**
+   * Capture a terminal fallback without registering a live controller or
+   * dispatching durable input. This is the cold counterpart to
+   * `captureSummary`: fencing records ownership first, then this display-only
+   * load runs before the session row is finalized.
+   */
+  private async captureColdSummary(row: AcpSessionRow): Promise<void> {
+    if (this.deps.store.getSessionSummary(row.sid)) return;
+    await this.loadTerminalHistory(row);
   }
 
   /**

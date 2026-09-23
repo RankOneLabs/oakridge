@@ -414,6 +414,53 @@ test("fence cancels, closes, kills the child, and rejects later input — idempo
   expect(again.ok).toBe(true);
 }, 20000);
 
+test("cold fencing captures a summary through display-only history before terminalizing", async () => {
+  const { stateDir, workdir } = await makeDirs();
+  const first = makeHarness({ stateDir });
+  const ensured = await first.service.ensureResumableSession(
+    "key-cold-fence",
+    spec(workdir, "preserve this fenced result"),
+  );
+  if (!ensured.ok) throw new Error("ensure failed");
+  const sid = ensured.value.session.sid;
+  await first.service.observeInitialTurn(sid, 8000);
+  const agentId = first.store.getSession(sid)?.acp_session_id;
+  if (!agentId) throw new Error("missing agent session id");
+  await first.service.shutdown();
+
+  const second = makeHarness({ stateDir, db: first.db });
+  expect(second.registry.getLive(sid)).toBeNull();
+  const fenced = await second.service.closeSession(sid, { fenced_by: "exec-cold" });
+  expect(fenced.ok).toBe(true);
+  expect(second.store.getSession(sid)?.status).toBe("fenced");
+  expect(second.store.getSessionSummary(sid)?.markdown).toContain("preserve this fenced result");
+  expect(second.registry.getLive(sid)).toBeNull();
+
+  await unlink(join(stateDir, `${agentId}.jsonl`));
+  const history = await second.service.loadHistory(sid);
+  expect(history.ok && history.value.kind).toBe("summary");
+}, 20000);
+
+test("advancing a cold resumable session preserves its summary before detaching the key", async () => {
+  const { stateDir, workdir } = await makeDirs();
+  const first = makeHarness({ stateDir });
+  const ensured = await first.service.ensureResumableSession(
+    "key-cold-advance",
+    spec(workdir, "preserve this advanced result"),
+  );
+  if (!ensured.ok) throw new Error("ensure failed");
+  const sid = ensured.value.session.sid;
+  await first.service.observeInitialTurn(sid, 8000);
+  await first.service.shutdown();
+
+  const second = makeHarness({ stateDir, db: first.db });
+  const advanced = await second.service.advanceResumable("key-cold-advance");
+  expect(advanced.kind).toBe("advanced");
+  expect(second.store.getSessionSummary(sid)?.markdown).toContain("preserve this advanced result");
+  expect(second.store.getSession(sid)?.resumable_key).toBeNull();
+  expect(second.registry.getLive(sid)).toBeNull();
+}, 20000);
+
 test("an unprompted session survives idle reaping and delivers queued input once", async () => {
   const { stateDir, workdir } = await makeDirs();
   const first = makeHarness({ stateDir, behavior: "persist_on_prompt" });
