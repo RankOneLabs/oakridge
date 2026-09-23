@@ -64,6 +64,8 @@ function buildBriefParams(overrides: Partial<BuildBrief> = {}): StageUnitParams 
 
 const RUN_SUMMARY_FIXTURE: RunSummary = {
   id: "run-1",
+  title: "Ship the operator console",
+  repository_keys: ["oakridge"],
   workflow_name: "v2_spec_to_ship",
   status: "running",
   current_stage: "build",
@@ -75,6 +77,8 @@ const RUN_SUMMARY_FIXTURE: RunSummary = {
 
 const PARKED_RUN_SUMMARY: RunSummary = {
   id: "run-2",
+  title: "Repair production auth",
+  repository_keys: ["kbbl", "oakridge"],
   workflow_name: "v2_hotfix",
   status: "parked",
   current_stage: "approve",
@@ -100,6 +104,8 @@ const PARKED_GATE_FIXTURE: ParkedGate = {
 
 const RUN_DETAIL_FIXTURE: RunDetail = {
   id: "run-1",
+  title: "Ship the operator console",
+  repository_keys: ["oakridge"],
   workflow_name: "v2_spec_to_ship",
   status: "running",
   is_stuck: false,
@@ -176,6 +182,9 @@ describe("RunListView", () => {
     wrap(<RunListView onSelectRun={() => {}} onNewRun={() => {}} onNewProject={() => {}} />);
     const rows = await screen.findAllByTestId("or-run-row");
     expect(rows).toHaveLength(2);
+    expect(screen.getByText("Ship the operator console")).toBeTruthy();
+    expect(screen.getByText("oakridge")).toBeTruthy();
+    expect(screen.getByText("kbbl, oakridge")).toBeTruthy();
   });
 
   it("shows parked_count badge when parked_count > 0", async () => {

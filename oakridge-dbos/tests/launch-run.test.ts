@@ -24,7 +24,7 @@ const body = { workflow_def_id: definition.id, project_id: project.id, context, 
 const mountedFixture = (options: { readonly archived?: boolean; readonly start_run_result?: "ok" | "err" } = {}) => {
   let stored: PersistWorkflowRunLaunch | null = null;
   const starts: RunStartRequest[] = [];
-  const summary = { id: deterministicRunId("launch-1"), workflow_name: "flow", status: "running" as const,
+  const summary = { id: deterministicRunId("launch-1"), title: null, repository_keys: [], workflow_name: "flow", status: "running" as const,
     current_attempt_root_workflow_id: "root", current_stage: null, parked_count: 0, updated_at: "2026-08-15T00:00:00Z",
     is_stuck: false, is_failed: false, archived: false };
   const dependencies = {

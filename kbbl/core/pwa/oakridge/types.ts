@@ -185,6 +185,8 @@ export type RunState = "active" | "succeeded" | "failed" | "cancelled";
 
 export interface RunSummary {
   id: string;
+  title: string | null;
+  repository_keys: string[];
   workflow_name: string;
   status: RunStatus;
   current_stage: string | null;
@@ -251,6 +253,8 @@ export interface StageDetail {
 
 export interface RunDetail {
   id: string;
+  title: string | null;
+  repository_keys: string[];
   workflow_name: string;
   status: RunStatus;
   stages: StageDetail[];
