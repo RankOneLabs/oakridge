@@ -129,6 +129,7 @@ describe("openTestDb schema after all migrations", () => {
       expect(tables).toContain("cohorts");
       expect(tables).toContain("cohort_dependencies");
       expect(tables).toContain("briefs");
+      expect(tables).toContain("acp_session_summaries");
     } finally {
       testDb.close();
     }

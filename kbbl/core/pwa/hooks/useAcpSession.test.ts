@@ -116,6 +116,31 @@ describe("useAcpSession", () => {
     await waitFor(() => expect(result.current.expired).toBe(true));
   });
 
+  it("hydrates a persisted terminal summary from the epoch frame", async () => {
+    const { result } = renderHook(() => useAcpSession(SID));
+    act(() => {
+      MockEventSource.last!.dispatch(
+        "epoch",
+        JSON.stringify({
+          stream_epoch: null,
+          history_kind: "summary",
+          expired: true,
+          summary: {
+            schema_version: 1,
+            session_id: SID,
+            method: "final_response",
+            produced_at: "2026-09-23T00:00:00.000Z",
+            markdown: "Recovered result",
+            created_at: "2026-09-23T00:00:01.000Z",
+            updated_at: "2026-09-23T00:00:01.000Z",
+          },
+        }),
+      );
+    });
+    await waitFor(() => expect(result.current.summary?.markdown).toBe("Recovered result"));
+    expect(result.current.unavailableReason).toBeNull();
+  });
+
   it("hydrates durable open turns and reports history readiness from epoch", async () => {
     const { result } = renderHook(() => useAcpSession(SID));
     act(() => {

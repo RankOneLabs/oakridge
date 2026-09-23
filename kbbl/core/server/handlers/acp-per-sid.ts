@@ -42,7 +42,12 @@ export function mountAcpPerSidRoutes(app: Hono, deps: AcpPerSidRouteDeps): void 
       return c.json({
         session_id: sid,
         stream_epoch: acp.streamEpoch(sid),
+        history_kind: acquired.value.history.kind,
         expired: acquired.value.history.expired,
+        summary: acquired.value.history.summary,
+        ...(acquired.value.history.kind === "unavailable"
+          ? { unavailable_reason: acquired.value.history.reason }
+          : {}),
         events: acquired.value.history.events,
         open_turns: acquired.value.history.openTurns,
       });
@@ -115,7 +120,12 @@ export function mountAcpPerSidRoutes(app: Hono, deps: AcpPerSidRouteDeps): void 
           event: "epoch",
           data: JSON.stringify({
             stream_epoch: epoch,
+            history_kind: acquired.value.history.kind,
             expired: acquired.value.history.expired,
+            summary: acquired.value.history.summary,
+            ...(acquired.value.history.kind === "unavailable"
+              ? { unavailable_reason: acquired.value.history.reason }
+              : {}),
             open_turns: acquired.value.history.openTurns,
           }),
         });

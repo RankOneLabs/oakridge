@@ -514,7 +514,7 @@ test("session/load replay does not rewrite live activity or notify the inbox", a
   expect(inboxTicks).toBe(0);
 }, 20000);
 
-test("terminal history reads never respawn an ACP child", async () => {
+test("terminal history reads replay through a display-only ACP child", async () => {
   const { stateDir, workdir } = await makeDirs();
   const { service, registry } = makeHarness({ stateDir });
 
@@ -529,11 +529,36 @@ test("terminal history reads never respawn an ACP child", async () => {
   expect(registry.getLive(sid as KbblSessionId)).toBeNull();
 
   const history = await service.loadHistory(sid);
-  expect(history).toEqual({
-    ok: true,
-    value: { sid, events: [], openTurns: [], expired: true },
-  });
+  expect(history.ok && history.value.kind).toBe("transcript");
+  expect(history.ok && history.value.events.some((event) => event.kind === "agent_message")).toBe(true);
+  expect(service.getSession(sid)?.status).toBe("ended");
   expect(registry.getLive(sid as KbblSessionId)).toBeNull();
+}, 15000);
+
+test("terminal history falls back to the persisted final response when agent replay expires", async () => {
+  const { stateDir, workdir } = await makeDirs();
+  const { service, store } = makeHarness({ stateDir });
+  const ensured = await service.ensureResumableSession(
+    "key-terminal-summary",
+    spec(workdir, "remember this result"),
+  );
+  if (!ensured.ok) throw new Error("ensure failed");
+  const sid = ensured.value.session.sid;
+  await service.observeInitialTurn(sid, 8000);
+  const agentId = store.getSession(sid)?.acp_session_id;
+  if (!agentId) throw new Error("missing agent session id");
+
+  await service.closeSession(sid);
+  expect(store.getSessionSummary(sid)?.markdown).toContain("remember this result");
+  await unlink(join(stateDir, `${agentId}.jsonl`));
+
+  const history = await service.loadHistory(sid);
+  expect(history.ok && history.value.kind).toBe("summary");
+  if (!history.ok || history.value.kind !== "summary") return;
+  expect(history.value.summary.method).toBe("final_response");
+  expect(history.value.summary.markdown).toContain("remember this result");
+  await service.purgeSession(sid);
+  expect(store.getSessionSummary(sid)).toBeNull();
 }, 15000);
 
 test("a cold history lease closes its display-only child on release", async () => {
@@ -1002,7 +1027,9 @@ test("session/load restores the requested config and re-emits its selectors", as
     (event) => event.kind === "config_options",
   );
   expect(configEvents.length).toBeGreaterThan(0);
-  expect(configEvents.at(-1)?.options).toEqual(expect.arrayContaining([
+  const lastConfigEvent = configEvents.at(-1);
+  if (!lastConfigEvent || lastConfigEvent.kind !== "config_options") throw new Error("missing config event");
+  expect(lastConfigEvent.options).toEqual(expect.arrayContaining([
     expect.objectContaining({ category: "model", value: "fake-large" }),
     expect.objectContaining({ category: "thought_level", value: "high" }),
   ]));

@@ -21,6 +21,8 @@ export type {
   UiOpenTurn,
   UiSessionConfig,
   UiToolLocation,
+  TerminalSessionSummary,
+  SessionHistoryUnavailableReason,
   TurnKey,
 } from "../acp/types";
 

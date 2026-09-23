@@ -17,6 +17,7 @@ import { SessionTimeline } from "../components/organisms/SessionTimeline";
 import { SessionConfigBar } from "../components/organisms/SessionConfigBar";
 import { InputBox } from "../components/organisms/InputBox";
 import { PendingUserBubble } from "../components/molecules/PendingUserBubble";
+import { AgentMessage } from "../components/molecules/AgentMessage";
 import { EndedBanner } from "../components/organisms/EndedBanner";
 import { ThinkingIndicator } from "../components/atoms/ThinkingIndicator";
 import { SkillRail } from "../components/organisms/SkillRail";
@@ -51,6 +52,8 @@ export function SessionView({
     events,
     streamStatus,
     expired,
+    summary,
+    unavailableReason,
     streamError,
     openTurns,
     historyLoaded,
@@ -158,11 +161,23 @@ export function SessionView({
               <div className="notice notice-muted">stream: {streamError}</div>
             </div>
           )}
-          {expired && (
+          {summary !== null && (
+            <>
+              <div className="row row-system">
+                <div className="notice notice-muted">
+                  Recovered session summary · {summary.method.replaceAll("_", " ")} · {new Date(summary.produced_at).toLocaleString()}
+                </div>
+              </div>
+              <AgentMessage text={summary.markdown} />
+            </>
+          )}
+          {expired && summary === null && (
             <div className="row row-system">
               <div className="notice notice-muted">
-                history expired — the agent no longer holds this session's
-                transcript
+                session history unavailable
+                {unavailableReason === "missing_acp_session_id"
+                  ? " — no agent session id was recorded"
+                  : " — the agent no longer holds this session's transcript and no terminal summary was captured"}
               </div>
             </div>
           )}
