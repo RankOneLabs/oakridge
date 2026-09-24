@@ -11,74 +11,37 @@ import { usePatchReviewItem } from "../../hooks/usePatchReviewItem";
 import { useAtomEdit } from "../../hooks/useAtomEdit";
 import { resolveViewer } from "../../artifactRegistry";
 import { ReviewItemsChecklist } from "../../ReviewItemsChecklist";
-import type { ArtifactRevision, ArtifactReviewDescriptor } from "../../types";
+import type { ArtifactRevision } from "../../types";
 import { formatRelative } from "../../../lib/time";
 import { ThreadSidebar } from "../../../review/shared/ThreadSidebar";
 import { ThreadView } from "../../../review/shared/ThreadView";
 import type { Thread, Message } from "../../../review/shared/types";
 import { GateDecisionActions } from "../../GateDecisionActions";
+import { ArtifactJsonRevisionPanel } from "../molecules/ArtifactJsonRevisionPanel";
+import { ArtifactRevisionNavigation } from "../molecules/ArtifactRevisionNavigation";
 import { ArtifactReviewShell } from "./ArtifactReviewShell";
 
-// JSON pretty-print fallback — retained from ArtifactDetailView
-function stringify(value: unknown): string {
-  try {
-    return typeof value === "string" ? value : JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
-function JsonRevisionPanel({ revision, descriptor }: { revision: ArtifactRevision; descriptor?: ArtifactReviewDescriptor | null }) {
-  let bodyText: string;
-  try {
-    bodyText = JSON.stringify(revision.body, null, 2);
-  } catch {
-    bodyText = String(revision.body);
-  }
-
-  let validationText: string | null = null;
-  if (revision.validation !== null && revision.validation !== undefined) {
-    try {
-      validationText = JSON.stringify(revision.validation, null, 2);
-    } catch {
-      validationText = String(revision.validation);
-    }
-  }
-
-  return (
-    <div className="or-revision-panel" data-testid="or-revision-panel">
-      <div className="or-revision-panel__body">
-        <span className="or-label">Body</span>
-        {descriptor?.sections.length && revision.body && typeof revision.body === "object" && !Array.isArray(revision.body) ? (
-          <div data-testid="or-descriptor-sections">
-            {descriptor.sections.map((section) => {
-              const value = (revision.body as Record<string, unknown>)[section];
-              return value === undefined ? null : (
-                <section key={section} data-artifact-section={section}>
-                  <h3 className="or-viewer__section-title">{section.replaceAll("_", " ")}</h3>
-                  <pre className="or-pre">{stringify(value)}</pre>
-                </section>
-              );
-            })}
-          </div>
-        ) : <pre className="or-pre" data-testid="or-revision-body">{bodyText}</pre>}
-      </div>
-      {validationText && (
-        <div className="or-revision-panel__validation">
-          <span className="or-label">Validation</span>
-          <pre className="or-pre" data-testid="or-revision-validation">{validationText}</pre>
-        </div>
-      )}
-    </div>
-  );
-}
+/**
+ * Who frames this review, and so which affordance the review itself owns.
+ *
+ * A route-hosted review carries the app-level back action. A pane-hosted one
+ * carries none of its own: `RunPaneChrome` is the frame `RunWorkspace` already
+ * wraps every pane body in, and it owns the pane's close and
+ * open-in-other-pane. A second back button inside the body would mean
+ * something different from the affordances above it, which is the confusion
+ * this union exists to make unrepresentable — neither variant carries the
+ * other's fields.
+ */
+export type ArtifactReviewChrome =
+  | { readonly kind: "route"; readonly onBack: () => void }
+  | { readonly kind: "pane" };
 
 interface ArtifactReviewProps {
   artifactId: string;
-  onBack: () => void;
+  chrome: ArtifactReviewChrome;
 }
 
-export function ArtifactReview({ artifactId, onBack }: ArtifactReviewProps) {
+export function ArtifactReview({ artifactId, chrome }: ArtifactReviewProps) {
   const query = useArtifact(artifactId);
   const [selectedRevIdx, setSelectedRevIdx] = useState<number | null>(null);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
@@ -111,10 +74,16 @@ export function ArtifactReview({ artifactId, onBack }: ArtifactReviewProps) {
   const resolveThread = useResolveThread(artifactId);
   const patchReviewItem = usePatchReviewItem(artifactId);
 
+  // The one place the chrome variant is read. It appears at three sites —
+  // error, loading, loaded — and they must agree, so the element is built once.
+  const backButton = chrome.kind === "route" ? (
+    <button type="button" className="or-btn or-btn--secondary" onClick={chrome.onBack}>← Back</button>
+  ) : null;
+
   if (query.isError) {
     return (
       <div className="or-artifact-detail" data-testid="or-artifact-detail">
-        <button type="button" className="or-btn or-btn--secondary" onClick={onBack}>← Back</button>
+        {backButton}
         <div className="or-error" role="alert" data-testid="or-artifact-detail-error">
           {query.error instanceof Error ? query.error.message : "Failed to load artifact"}
         </div>
@@ -125,7 +94,7 @@ export function ArtifactReview({ artifactId, onBack }: ArtifactReviewProps) {
   if (query.isPending || !query.data) {
     return (
       <div className="or-artifact-detail" data-testid="or-artifact-detail">
-        <button type="button" className="or-btn or-btn--secondary" onClick={onBack}>← Back</button>
+        {backButton}
         <div className="or-loading">Loading artifact…</div>
       </div>
     );
@@ -196,7 +165,7 @@ export function ArtifactReview({ artifactId, onBack }: ArtifactReviewProps) {
   }
 
   const header = <>
-      <button type="button" className="or-btn or-btn--secondary" onClick={onBack}>← Back</button>
+      {backButton}
       <header className="or-artifact-detail__header">
         <h2 className="or-artifact-detail__title" data-testid="or-artifact-type">
           {artifact.type_id}
@@ -223,21 +192,12 @@ export function ArtifactReview({ artifactId, onBack }: ArtifactReviewProps) {
     </>;
 
   const revisionNavigation = revisions.length > 1 ? (
-        <nav className="or-artifact-detail__rev-nav">
-          {revisions.map((rev, i) => (
-            <button
-              key={rev.id}
-              type="button"
-              className={`or-btn or-btn--sm ${i === revIdx ? "or-btn--primary" : "or-btn--secondary"}`}
-              onClick={() => setSelectedRevIdx(i)}
-              data-testid={`or-rev-tab-${i}`}
-            >
-              <span className={`or-chip or-chip--${rev.status}`}>{rev.status}</span>
-              <span className="or-muted">{formatRelative(rev.created_at)}</span>
-            </button>
-          ))}
-        </nav>
-      ) : undefined;
+    <ArtifactRevisionNavigation
+      revisions={revisions}
+      selectedIndex={revIdx}
+      onSelect={setSelectedRevIdx}
+    />
+  ) : undefined;
 
   const artifactContent = revision ? (
         <section className="or-artifact-detail__revision">
@@ -266,7 +226,7 @@ export function ArtifactReview({ artifactId, onBack }: ArtifactReviewProps) {
               } : undefined}
             />
           ) : (
-            <JsonRevisionPanel revision={revision} descriptor={artifact.review} />
+            <ArtifactJsonRevisionPanel revision={revision} descriptor={artifact.review} />
           )}
         </section>
       ) : <div className="or-empty">No revisions.</div>;
