@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { confirmFinalPullRequest, createRun, fetchRun } from "./client";
+import { confirmFinalPullRequest, createRun, fetchRun, fetchRunSessions, fetchSessionRun } from "./client";
 import { parseRepositoryKey } from "./repository-inputs";
 import type { CreateRunRequest, RepositoryKey } from "./types";
 
@@ -52,6 +52,40 @@ describe("Oakridge response parsing", () => {
     }));
 
     await expect(fetchRun("run-1")).rejects.toThrow("oakridge /runs/run-1: parse repository key");
+  });
+
+  it("parses a run's session attempts through the field guards", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json([{
+      work_order_id: "work-1", session_id: "sid-1", stage_instance_id: "stage-1", stage_key: "build",
+      unit_id: "api", reason: "operator_retry", work_order_state: "started", created_at: "2026-09-01T00:00:00Z",
+      completed_at: null, executor_health_kind: null, cleanup_state: "not_needed",
+    }]));
+
+    await expect(fetchRunSessions("run-1")).resolves.toEqual([expect.objectContaining({ session_id: "sid-1", reason: "operator_retry" })]);
+  });
+
+  /** An attempt label this build does not know must name the field, not render blank. */
+  it("rejects an unknown work order reason at the API boundary", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json([{
+      work_order_id: "work-1", session_id: "sid-1", stage_instance_id: "stage-1", stage_key: "build",
+      unit_id: "api", reason: "surprise", work_order_state: "started", created_at: "2026-09-01T00:00:00Z",
+      completed_at: null, executor_health_kind: null, cleanup_state: "not_needed",
+    }]));
+
+    await expect(fetchRunSessions("run-1")).rejects.toThrow("entry contained an unknown work order reason");
+  });
+
+  /** 404 is the route's answer for "this session has no run" — a value, not a failure. */
+  it("reads a session that belongs to no run as null", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ error: "session belongs to no run" }), { status: 404 }));
+    await expect(fetchSessionRun("sid-unknown")).resolves.toBeNull();
+  });
+
+  it("resolves a session to its run", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json({
+      run_id: "run-1", stage_instance_id: "stage-1", stage_key: "build", unit_id: "api", work_order_id: "work-1",
+    }));
+    await expect(fetchSessionRun("sid-1")).resolves.toEqual(expect.objectContaining({ run_id: "run-1", unit_id: "api" }));
   });
 
   it("rejects unknown final reconciliation outcomes at the API boundary", async () => {

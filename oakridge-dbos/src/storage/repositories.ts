@@ -5,6 +5,7 @@ import type { GateDecisionAudit, GateDecisionAuditId } from "../domain/gates";
 import type { CollaborationMessage, CollaborationThread, CollaborationThreadWithMessages, MessageId, ReviewItem, ReviewItemId, ReviewItemStatus, ThreadId, ThreadStatus } from "../domain/collaboration";
 import type { ArtifactCoordinate, ArtifactRevision } from "../domain/artifacts";
 import type { SessionHold } from "../domain/session-hold";
+import type { OperatorSessionRunLocation } from "../domain/operator-projections";
 import type { CreateProject, Project, UpdateProject } from "../domain/projects";
 import type { AdmitStageUnitRequest, AdmitStageUnitResult, CreateWorkflowRunResult, DeleteRunResult, PersistWorkflowRunLaunch, SetRunArchiveResult, UnstartedRun, WorkflowRunLaunchRecord, WorkflowRunListFilter } from "../domain/runs";
 import type { ConfirmFinalPullRequestRequest, FinalPullRequestDomainError, FinalPullRequestProjection, PullRequestObservation } from "../domain/final-pull-request";
@@ -109,6 +110,21 @@ export interface RunArtifactReadRepository {
 export interface SessionHoldRepository {
   /** The live execution holding this agent session, if any. */
   find_session_hold(session_id: string): Promise<SessionHold | null>;
+}
+
+/**
+ * Where a session sits in the run graph — a navigation read, deliberately
+ * separate from `SessionHoldRepository`.
+ *
+ * `find_session_hold` answers close-safety, and its predicates (started work
+ * order, PENDING/SUCCESS workflow, cleanup unfinished) *are* those semantics.
+ * Loosening them so a finished session still resolved to its run would make
+ * kbbl refuse to close sessions that are safe to close. So navigation gets its
+ * own unconditional lookup rather than a widened hold.
+ */
+export interface SessionRunLocationRepository {
+  /** The run, stage and unit this session's executor attachment belongs to — whatever state that work reached. Null when no attachment names it. */
+  find_run_for_session(session_id: string): Promise<OperatorSessionRunLocation | null>;
 }
 
 export interface GateDecisionAuditRepository {

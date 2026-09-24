@@ -210,6 +210,13 @@ export interface StageArtifact {
   type_id: string;
   version: number;
   label?: string | null;
+  /**
+   * `OperatorStageArtifact.created_at` (`oakridge-dbos`
+   * `src/domain/operator-projections.ts`): when *this version* was written,
+   * i.e. the slot's latest visible release — not the artifact chain's birth.
+   * Optional because a backend older than this field still answers without it.
+   */
+  created_at?: string;
 }
 
 export interface StageUnit {
@@ -262,6 +269,59 @@ export interface RunDetail {
   updated_at: string;
   is_stuck: boolean;
   epic_profile?: EpicWorkflowProfile | null;
+}
+
+/**
+ * Why a work order exists — `oakridge.work_order.reason`
+ * (`migrations/0011_run_owned_work.sql:69`), mirrored from
+ * `OperatorRunSessionAttempt["reason"]`. This is the attempt's label in the UI:
+ * it is the column the retry path actually writes, so the label cannot drift
+ * from the record.
+ */
+export type WorkOrderReason = "initial" | "operator_retry" | "input_revision";
+
+/** `oakridge.work_order.state` (`migrations/0011_run_owned_work.sql:72`). */
+export type WorkOrderState = "available" | "started" | "completed" | "abandoned";
+
+/**
+ * One executor attempt at one unit, mirroring `OperatorRunSessionAttempt`
+ * (`oakridge-dbos/src/domain/operator-projections.ts`) — `GET /runs/:id/sessions`.
+ *
+ * Every attempt keeps its own session for the unit's whole life, so a unit
+ * that was retried contributes one entry per attempt, not one per unit.
+ */
+export interface RunSessionAttempt {
+  work_order_id: string;
+  /** kbbl's session id, not a domain uuid. */
+  session_id: string;
+  stage_instance_id: string;
+  stage_key: string;
+  unit_id: string;
+  reason: WorkOrderReason;
+  work_order_state: WorkOrderState;
+  created_at: string;
+  /** Null while the attempt is `available` or `started`. */
+  completed_at: string | null;
+  /** Null when nothing has observed the executor yet. */
+  executor_health_kind: string | null;
+  cleanup_state: string;
+}
+
+/**
+ * Where a session sits in the run graph, mirroring
+ * `OperatorSessionRunLocation` (`oakridge-dbos/src/domain/operator-projections.ts`)
+ * — `GET /sessions/:session_id/run`.
+ *
+ * Unconditional by design: this answers navigation, which stays true after the
+ * work order finished and its cleanup completed. It is not a session *hold*,
+ * which answers whether the session is safe to close.
+ */
+export interface SessionRunLocation {
+  run_id: WorkflowRunId;
+  stage_instance_id: string;
+  stage_key: string;
+  unit_id: string;
+  work_order_id: string;
 }
 
 export interface ArtifactRevision {

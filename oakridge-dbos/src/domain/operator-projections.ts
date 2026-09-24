@@ -1,6 +1,6 @@
 import type { ArtifactId, JsonValue, RunUnitId, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "./primitives";
 import type { EpicWorkflowProfile } from "./epic";
-import type { RunOutputSlotState, RunState, WorkOrderState } from "./run-record";
+import type { RunOutputSlotState, RunState, WorkOrderReason, WorkOrderState } from "./run-record";
 import type { CompiledWorkflowDefinition } from "./compiled-workflow";
 import type { StageKey } from "./workflow";
 
@@ -8,7 +8,78 @@ export type OperatorRunStatus = "pending" | "running" | "parked" | "failed" | "c
 export type OperatorStageStatus = "pending" | "running" | "complete" | "failed" | "parked";
 export interface OperatorRunSummary { readonly id: WorkflowRunId; readonly title: string | null; readonly repository_keys: readonly string[]; readonly workflow_name: string; readonly current_attempt_root_workflow_id: string; readonly status: OperatorRunStatus; readonly current_stage: string | null; readonly parked_count: number; readonly updated_at: string; readonly is_stuck: boolean; readonly is_failed: boolean; readonly archived: boolean }
 export interface OperatorWorkflowAttempt { readonly root_workflow_id: string; readonly forked_from_root_workflow_id: string | null; readonly status: OperatorRunStatus; readonly created_at: string }
-export interface OperatorStageArtifact { readonly id: ArtifactId; readonly type_id: string; readonly version: number; readonly label: string | null }
+/**
+ * `created_at` is when this version was written, not when the chain began. The
+ * run-detail projection this feeds is
+ * `DISTINCT ON (stage_instance_id, unit_id, output_name, collection_key) ... ORDER BY ... version DESC`
+ * over every artifact a `run_output_slot` points at, in any slot state, so each
+ * entry is the highest version of one slot and its `created_at`
+ * (`oakridge.artifact.created_at`, `0001_domain.sql:54`) is when *that version*
+ * was written. A caller wanting the chain's origin must read the chain.
+ *
+ * Deliberately broader than `effectiveArtifactPredicate`
+ * (`storage/sql-fragments.ts`), which narrows to `pending`/`released` slots.
+ * That predicate answers "what may a downstream consume"; this projection
+ * answers "what can the operator open", and those differ exactly while a slot
+ * is `invalidated` — a draft sent back for corrections has no consumer, but the
+ * operator still needs a route to it. Tightening this to the effective
+ * predicate breaks that route, and
+ * `tests/operator-run-record-endpoint.test.ts` holds the line.
+ */
+export interface OperatorStageArtifact { readonly id: ArtifactId; readonly type_id: string; readonly version: number; readonly label: string | null; readonly created_at: string }
+
+/**
+ * One executor attempt at one unit, mirroring `oakridge.work_order` joined to
+ * its `oakridge.executor_attachment` (migrations/0011_run_owned_work.sql:66-96).
+ * `executor_attachment.work_order_id` is a PRIMARY KEY, so every attempt keeps
+ * its own session for the unit's whole life and the list is the unit's full
+ * session history rather than only its live attempt.
+ */
+export interface OperatorRunSessionAttempt {
+  /** `oakridge.work_order.id` (0011:67). */
+  readonly work_order_id: WorkOrderId;
+  /** `oakridge.executor_attachment.external_reference->>'session_id'` (0011:91) — kbbl's session id, not a domain uuid. */
+  readonly session_id: string;
+  /** `oakridge.run_unit.stage_instance_id`. */
+  readonly stage_instance_id: StageInstanceId;
+  /** `oakridge.stage_instance.stage_key`. */
+  readonly stage_key: string;
+  /** `oakridge.run_unit.unit_id`. */
+  readonly unit_id: UnitId;
+  /** `oakridge.work_order.reason` (0011:69) — the attempt's label, written by the path that created it. */
+  readonly reason: WorkOrderReason;
+  /** `oakridge.work_order.state` (0011:72). */
+  readonly work_order_state: WorkOrderState;
+  /** `oakridge.work_order.created_at` (0011:75). */
+  readonly created_at: string;
+  /** `oakridge.work_order.completed_at` (0011:76) — null while the attempt is `available` or `started` (0011:78-79). */
+  readonly completed_at: string | null;
+  /** `oakridge.executor_attachment.health->>'kind'` (0011:92) — null when nothing has observed the executor yet. */
+  readonly executor_health_kind: string | null;
+  /** `oakridge.executor_attachment.cleanup_state` (0011:93), `NOT NULL DEFAULT 'not_needed'`. */
+  readonly cleanup_state: string;
+}
+
+/**
+ * Where a session sits in the run graph, mirroring `oakridge.run_unit` reached
+ * through the session's `oakridge.executor_attachment`
+ * (migrations/0011_run_owned_work.sql:88-96). Unconditional by design: this
+ * answers navigation ("which run is this session part of"), which stays true
+ * after the work order completes and its cleanup finishes — unlike
+ * `SessionHold`, which answers close-safety and must not widen.
+ */
+export interface OperatorSessionRunLocation {
+  /** `oakridge.run_unit.run_id`. */
+  readonly run_id: WorkflowRunId;
+  /** `oakridge.run_unit.stage_instance_id`. */
+  readonly stage_instance_id: StageInstanceId;
+  /** `oakridge.stage_instance.stage_key`. */
+  readonly stage_key: string;
+  /** `oakridge.run_unit.unit_id`. */
+  readonly unit_id: UnitId;
+  /** `oakridge.work_order.id` (0011:67) — the attempt whose attachment named the session. */
+  readonly work_order_id: WorkOrderId;
+}
 export interface OperatorStageUnit { readonly unit_id: UnitId; readonly repository_key: string | null; readonly params: JsonValue | null; readonly sid: string | null; readonly worktree: { readonly branch: string; readonly path: string; readonly base_ref: string } | null; readonly base_sha: string | null; readonly status: OperatorStageStatus; readonly gate: string | null; readonly admission_required: boolean; readonly admitted: boolean; readonly admission_eligible: boolean; readonly admission_blocked_by: readonly string[] }
 export interface OperatorStageDetail { readonly stage_instance_id: StageInstanceId; readonly name: string; readonly type: string; readonly operator_role: string | null; readonly status: OperatorStageStatus; readonly artifacts: readonly OperatorStageArtifact[]; readonly delegated_kbbl_sid: string | null; readonly worktree: OperatorStageUnit["worktree"]; readonly units: readonly OperatorStageUnit[] }
 /** `run_record` is the v2 run-record projection (see below) for a run that has any `run_unit` rows; null for a run still running only under the old topology. */
