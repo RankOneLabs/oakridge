@@ -61,9 +61,12 @@ export function App() {
         sid={sid}
         snapshot={sessions.get(sid as Sid) ?? null}
         inboxStatus={inboxStatus}
-        theme={theme}
-        onToggleTheme={toggleTheme}
-        onBack={() => navigate(null)}
+        chrome={{
+          kind: "route",
+          theme,
+          onToggleTheme: toggleTheme,
+          onBack: () => navigate(null),
+        }}
         onResume={(parentSid) => resumeSession(parentSid, hydrateSession, navigate)}
       />
     );

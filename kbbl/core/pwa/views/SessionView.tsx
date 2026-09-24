@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import type { SessionSnapshot, Status, Theme } from "../types";
+import type { SessionSnapshot, Status } from "../types";
 import { useAcpSession } from "../hooks/useAcpSession";
 import { usePendingSends } from "../hooks/usePendingSends";
 import { useElapsedSeconds } from "../hooks/useElapsedSeconds";
@@ -26,6 +26,7 @@ import { permissionCardAnchorId } from "../components/organisms/PermissionCard";
 import { readHashSessionTarget } from "../lib/hash";
 import {
   DOCUMENT_SESSION_SURFACE_LAYOUT,
+  type SessionSurfaceChrome,
   type SessionSurfaceLayout,
 } from "../lib/session-surface";
 
@@ -33,18 +34,15 @@ export function SessionView({
   sid,
   snapshot,
   inboxStatus,
-  theme,
-  onToggleTheme,
-  onBack,
+  chrome,
   onResume,
   layout = DOCUMENT_SESSION_SURFACE_LAYOUT,
 }: {
   sid: string;
   snapshot: SessionSnapshot | null;
   inboxStatus: Status;
-  theme: Theme;
-  onToggleTheme: () => void;
-  onBack: () => void;
+  /** Which app-level affordances the host contributes to the top bar. */
+  chrome: SessionSurfaceChrome;
   onResume: (parentSid: string) => Promise<string | null>;
   /**
    * Which host this view scrolls and where its input bar anchors. Defaults to
@@ -154,9 +152,7 @@ export function SessionView({
         streamStatus={streamStatus}
         inboxStatus={inboxStatus}
         usage={projection.usage}
-        theme={theme}
-        onToggleTheme={onToggleTheme}
-        onBack={onBack}
+        chrome={chrome}
       />
       {isLegacyArchive ? (
         <div className="session-ended-banner">
