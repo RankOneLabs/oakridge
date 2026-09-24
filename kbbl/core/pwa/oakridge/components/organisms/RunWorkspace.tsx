@@ -1,0 +1,194 @@
+import { useState } from "react";
+
+import { useRun } from "../../hooks/useRun";
+import { useRunGates } from "../../hooks/useRunGates";
+import { useRunSessions } from "../../hooks/useRunSessions";
+import { useRunWorkspaceState } from "../../hooks/useRunWorkspaceState";
+import { selectRunAccentClass } from "../../lib/run-accent";
+import {
+  selectRunArtifacts,
+  selectRunOverview,
+  selectRunSidebarSessions,
+  type RunOverview,
+} from "../../lib/run-overview";
+import {
+  canMoveToOtherSlot,
+  describePane,
+  isTwinView,
+  type RoutePaneTarget,
+  type RunWorkspacePane,
+  type RunWorkspaceSlot,
+} from "../../lib/run-workspace";
+import type { ArtifactId } from "../../../lib/ids";
+import { RunIdentityHeader } from "../molecules/RunIdentityHeader";
+import { RunPaneChrome } from "../molecules/RunPaneChrome";
+import { RunOverviewPane } from "./RunOverviewPane";
+import { RunWorkspaceSidebar } from "./RunWorkspaceSidebar";
+import { RunDetail } from "./RunDetail";
+import { ArtifactReview } from "./ArtifactReview";
+
+interface RunWorkspaceProps {
+  runId: string;
+  routePane: RoutePaneTarget | null;
+  onBack: () => void;
+}
+
+/**
+ * The run command center: identity header, persistent sidebar, and a workspace
+ * of one or two panes.
+ *
+ * This is the only component here that reads — `useRun`, `useRunGates` and
+ * `useRunSessions` — and the only one that owns workspace state. Everything
+ * below it takes derived values as props.
+ */
+export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
+  const runQuery = useRun(runId);
+  const gatesQuery = useRunGates(runId);
+  const sessionsQuery = useRunSessions(runId);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  const run = runQuery.data;
+  const workspace = useRunWorkspaceState({
+    runId,
+    routePane,
+    run,
+    sessions: sessionsQuery.data,
+  });
+
+  if (runQuery.isError) {
+    return (
+      <div className="or-page or-page--wide" data-testid="or-run-workspace-error">
+        <div
+          className="rounded-md border border-[var(--danger-card-border)] bg-[var(--danger-bg)] px-4 py-3 text-sm text-[var(--danger-fg)]"
+          role="alert"
+        >
+          {runQuery.error instanceof Error ? runQuery.error.message : "Failed to load run"}
+        </div>
+      </div>
+    );
+  }
+
+  if (run === undefined || workspace.state === null) {
+    return (
+      <div className="or-page or-page--wide" data-testid="or-run-workspace-loading">
+        <div className="py-6 text-sm text-[var(--text-muted)]">Loading run…</div>
+      </div>
+    );
+  }
+
+  const state = workspace.state;
+  const gates = gatesQuery.data ?? [];
+  const sessions = sessionsQuery.data ?? [];
+  const overview = selectRunOverview({ run, sessions, gates });
+  const sidebarSessions = selectRunSidebarSessions({ sessions, gates });
+  const sidebarArtifacts = selectRunArtifacts(run);
+
+  const renderPane = (slot: RunWorkspaceSlot, pane: RunWorkspacePane) => {
+    const heading = describePane(pane);
+    return (
+      <RunPaneChrome
+        slot={slot}
+        title={heading.title}
+        subtitle={heading.subtitle}
+        actions={{
+          onOpenInOtherPane: canMoveToOtherSlot(state, slot)
+            ? () => workspace.moveSlot(slot)
+            : null,
+          onClose: () => workspace.closeSlot(slot),
+        }}
+      >
+        <PaneBody
+          pane={pane}
+          runId={runId}
+          onBack={onBack}
+          onOpenPane={(next) => workspace.openPane(next, slot)}
+          overview={overview}
+        />
+      </RunPaneChrome>
+    );
+  };
+
+  return (
+    <div
+      className={`or-run-workspace ${selectRunAccentClass(runId)}`}
+      data-testid="or-run-workspace"
+    >
+      <RunIdentityHeader
+        run={run}
+        accentClass={selectRunAccentClass(runId)}
+        isSidebarOpen={isSidebarOpen}
+        onToggleSidebar={() => setIsSidebarOpen((open) => !open)}
+        onBack={onBack}
+      />
+      <div className="or-run-workspace__body">
+        <RunWorkspaceSidebar
+          isOpen={isSidebarOpen}
+          workspace={state}
+          sessions={sidebarSessions}
+          artifacts={sidebarArtifacts}
+          onOpenPane={(pane, slot) => workspace.openPane(pane, slot)}
+          onCollapse={workspace.collapse}
+        />
+        <div
+          className={`or-run-workspace__panes ${isTwinView(state) ? "or-run-workspace__panes--twin" : ""}`}
+          data-testid="or-run-panes"
+          data-twin={isTwinView(state)}
+        >
+          {renderPane("primary", state.primary)}
+          {state.secondary !== null && renderPane("secondary", state.secondary)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface PaneBodyProps {
+  pane: RunWorkspacePane;
+  runId: string;
+  overview: RunOverview;
+  onBack: () => void;
+  onOpenPane: (pane: RunWorkspacePane) => void;
+}
+
+/**
+ * What each pane variant renders.
+ *
+ * The list pane mounts the existing `RunDetail` organism unchanged, and the
+ * artifact pane mounts the existing `ArtifactReview`: `#oakridge/artifact/:id`
+ * now redirects into this workspace, so the pane has to keep that surface
+ * working rather than hold its place. c3 replaces both entity bodies.
+ */
+function PaneBody({ pane, runId, overview, onBack, onOpenPane }: PaneBodyProps) {
+  switch (pane.kind) {
+    case "overview":
+      return <RunOverviewPane overview={overview} onOpenPane={onOpenPane} />;
+    case "list":
+      return (
+        <RunDetail
+          runId={runId}
+          onBack={onBack}
+          onSelectArtifact={(artifactId) =>
+            onOpenPane({ kind: "artifact", artifact_id: artifactId as ArtifactId })
+          }
+        />
+      );
+    case "artifact":
+      return <ArtifactReview artifactId={pane.artifact_id} onBack={onBack} />;
+    case "session":
+      return (
+        <div className="py-4 text-sm text-[var(--text-secondary)]" data-testid="or-run-pane-session">
+          <p className="m-0">
+            The in-workspace session surface arrives with the session pane body.
+          </p>
+          <p className="mb-0 mt-2">
+            <a
+              className="text-[var(--accent-blue)] underline"
+              href={`#sid=${encodeURIComponent(pane.session_id)}`}
+            >
+              Open session {pane.session_id.slice(0, 8)} in kbbl
+            </a>
+          </p>
+        </div>
+      );
+  }
+}

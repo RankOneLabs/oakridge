@@ -73,11 +73,50 @@ export const arePanesEqual = (
   return true;
 };
 
+export interface RunPaneHeading {
+  readonly title: string;
+  readonly subtitle: string | null;
+}
+
+/**
+ * What a pane calls itself in its chrome. Lives beside the union so adding a
+ * pane variant is a compile error here too, rather than a pane that renders
+ * with a blank header.
+ */
+export const describePane = (pane: RunWorkspacePane): RunPaneHeading => {
+  switch (pane.kind) {
+    case "overview":
+      return { title: "Overview", subtitle: null };
+    case "list":
+      return { title: "Stages", subtitle: null };
+    case "session":
+      return { title: "Session", subtitle: pane.session_id.slice(0, 8) };
+    case "artifact":
+      return { title: "Artifact", subtitle: pane.artifact_id.slice(0, 8) };
+  }
+};
+
 /** The panes currently on screen, primary first. */
 export const panesOf = (state: RunWorkspaceState): readonly RunWorkspacePane[] =>
   state.secondary === null ? [state.primary] : [state.primary, state.secondary];
 
 export const isTwinView = (state: RunWorkspaceState): boolean => state.secondary !== null;
+
+export interface OpenEntityIds {
+  readonly session_ids: ReadonlySet<string>;
+  readonly artifact_ids: ReadonlySet<string>;
+}
+
+/** Which entities are on screen right now, so a sidebar row can mark itself open. */
+export const selectOpenEntityIds = (state: RunWorkspaceState): OpenEntityIds => {
+  const session_ids = new Set<string>();
+  const artifact_ids = new Set<string>();
+  for (const pane of panesOf(state)) {
+    if (pane.kind === "session") session_ids.add(pane.session_id);
+    if (pane.kind === "artifact") artifact_ids.add(pane.artifact_id);
+  }
+  return { session_ids, artifact_ids };
+};
 
 /**
  * Show `pane` in `slot`, replacing whatever was there.
@@ -114,6 +153,30 @@ export const closePane = (
   if (slot === "secondary") return { primary: state.primary, secondary: null };
   if (state.secondary !== null) return { primary: state.secondary, secondary: null };
   return DEFAULT_RUN_WORKSPACE_STATE;
+};
+
+/**
+ * Whether the pane in `slot` has anywhere to go. The single overview pane is
+ * the one case that does not: sending it right would leave the overview on
+ * both sides of the split.
+ */
+export const canMoveToOtherSlot = (state: RunWorkspaceState, slot: RunWorkspaceSlot): boolean =>
+  state.secondary !== null || (slot === "primary" && !arePanesEqual(state.primary, OVERVIEW_PANE));
+
+/**
+ * Send the pane in `slot` to the other side.
+ *
+ * In twin view that is a swap — both panes stay open, they trade places. From a
+ * single pane it opens the twin, with the overview taking the vacated left-hand
+ * slot rather than the workspace briefly having no primary.
+ */
+export const moveToOtherSlot = (
+  state: RunWorkspaceState,
+  slot: RunWorkspaceSlot,
+): RunWorkspaceState => {
+  if (!canMoveToOtherSlot(state, slot)) return state;
+  if (state.secondary === null) return { primary: OVERVIEW_PANE, secondary: state.primary };
+  return { primary: state.secondary, secondary: state.primary };
 };
 
 /**

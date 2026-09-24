@@ -70,14 +70,80 @@ export interface RunOverviewGate {
   readonly resume_actions: readonly string[];
 }
 
-export interface RunOverviewSlotRelease {
+/**
+ * One artifact the run holds, flattened out of `run.stages[].artifacts` with
+ * its producing stage attached. The overview reads these sorted and capped as
+ * recent slot releases; the sidebar reads them in stage order. One flatten,
+ * two views.
+ */
+export interface RunArtifactRef {
   readonly artifact_id: ArtifactId;
   readonly type_id: string;
+  readonly version: number;
   readonly stage_name: string;
+  /** The fan-out unit this artifact belongs to, when the stage fanned out. */
   readonly label: string | null;
   /** Absent on a backend older than `OperatorStageArtifact.created_at`. */
   readonly created_at: string | null;
 }
+
+/** Every artifact the run holds, in stage order then slot order. */
+export const selectRunArtifacts = (run: RunDetail): readonly RunArtifactRef[] => {
+  const artifacts: RunArtifactRef[] = [];
+  for (const stage of run.stages) {
+    for (const artifact of stage.artifacts) {
+      artifacts.push({
+        artifact_id: artifact.id as ArtifactId,
+        type_id: artifact.type_id,
+        version: artifact.version,
+        stage_name: stage.name,
+        label: artifact.label ?? null,
+        created_at: artifact.created_at ?? null,
+      });
+    }
+  }
+  return artifacts;
+};
+
+/** One attempt as the sidebar's Sessions section lists it. */
+export interface RunSidebarSessionRow {
+  readonly session_id: Sid;
+  readonly stage_key: string;
+  readonly unit_id: string;
+  readonly attempt_label: string;
+  readonly work_order_state: WorkOrderState;
+  /** Whether this attempt is what its unit currently is, rather than a superseded one. */
+  readonly is_current: boolean;
+  readonly requires_operator_action: boolean;
+}
+
+export interface RunSidebarSessionsInput {
+  readonly sessions: readonly RunSessionAttempt[];
+  readonly gates: readonly ParkedGate[];
+}
+
+/**
+ * Every session of the run, prior attempts included, in the route's oldest-first
+ * order. Only a unit's *current* attempt can require operator action — a
+ * superseded attempt has nothing left to decide.
+ */
+export const selectRunSidebarSessions = ({
+  sessions,
+  gates,
+}: RunSidebarSessionsInput): readonly RunSidebarSessionRow[] => {
+  const awaitingAction = selectUnitsAwaitingAction(gates);
+  return selectRunSessionRows(sessions).map((row) => ({
+    session_id: row.attempt.session_id as Sid,
+    stage_key: row.attempt.stage_key,
+    unit_id: row.attempt.unit_id,
+    attempt_label: formatAttemptLabel(row),
+    work_order_state: row.attempt.work_order_state,
+    is_current: row.is_current,
+    requires_operator_action:
+      row.is_current &&
+      awaitingAction.has(unitActionKeyOf(row.attempt.stage_key, row.attempt.unit_id)),
+  }));
+};
 
 export interface RunOverviewStageProgress {
   readonly total: number;
@@ -96,7 +162,7 @@ export interface RunOverview {
   readonly current_session: RunOverviewSessionRef | null;
   readonly sessions_awaiting_action: readonly RunOverviewSessionRef[];
   readonly active_gates: readonly RunOverviewGate[];
-  readonly recent_slot_releases: readonly RunOverviewSlotRelease[];
+  readonly recent_slot_releases: readonly RunArtifactRef[];
   readonly stage_progress: RunOverviewStageProgress;
 }
 
@@ -148,25 +214,13 @@ const selectStageProgress = (run: RunDetail): RunOverviewStageProgress => {
  * `01:30:00-04` but happens 45 minutes after it. Releases with no timestamp
  * keep their document order at the end rather than jumping to the front.
  */
-const selectRecentSlotReleases = (run: RunDetail): readonly RunOverviewSlotRelease[] => {
-  const releases: RunOverviewSlotRelease[] = [];
-  for (const stage of run.stages) {
-    for (const artifact of stage.artifacts) {
-      releases.push({
-        artifact_id: artifact.id as ArtifactId,
-        type_id: artifact.type_id,
-        stage_name: stage.name,
-        label: artifact.label ?? null,
-        created_at: artifact.created_at ?? null,
-      });
-    }
-  }
-  const instantOf = (release: RunOverviewSlotRelease): number => {
+const selectRecentSlotReleases = (run: RunDetail): readonly RunArtifactRef[] => {
+  const instantOf = (release: RunArtifactRef): number => {
     if (release.created_at === null) return Number.NEGATIVE_INFINITY;
     const parsed = Date.parse(release.created_at);
     return Number.isNaN(parsed) ? Number.NEGATIVE_INFINITY : parsed;
   };
-  return releases
+  return [...selectRunArtifacts(run)]
     .sort((left, right) => instantOf(right) - instantOf(left))
     .slice(0, RECENT_SLOT_RELEASE_LIMIT);
 };

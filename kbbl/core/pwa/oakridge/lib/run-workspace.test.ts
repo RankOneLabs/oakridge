@@ -6,11 +6,15 @@ import {
   LIST_PANE,
   OVERVIEW_PANE,
   arePanesEqual,
+  canMoveToOtherSlot,
   closePane,
   collapseToSingle,
+  describePane,
   isTwinView,
+  moveToOtherSlot,
   openInPane,
   panesOf,
+  selectOpenEntityIds,
   type RunWorkspacePane,
   type RunWorkspaceState,
 } from "./run-workspace";
@@ -97,6 +101,67 @@ describe("collapseToSingle", () => {
 
   it("leaves a single-pane workspace alone", () => {
     expect(collapseToSingle(DEFAULT_RUN_WORKSPACE_STATE)).toEqual(DEFAULT_RUN_WORKSPACE_STATE);
+  });
+});
+
+describe("moveToOtherSlot", () => {
+  it("swaps the two panes in twin view", () => {
+    expect(moveToOtherSlot(twin(OVERVIEW_PANE, LIST_PANE), "primary")).toEqual({
+      primary: LIST_PANE,
+      secondary: OVERVIEW_PANE,
+    });
+  });
+
+  it("swaps from either side", () => {
+    expect(moveToOtherSlot(twin(OVERVIEW_PANE, LIST_PANE), "secondary")).toEqual({
+      primary: LIST_PANE,
+      secondary: OVERVIEW_PANE,
+    });
+  });
+
+  it("opens the twin with the overview on the left when sending the only pane right", () => {
+    const before = { primary: sessionPane("sid-1"), secondary: null };
+
+    expect(moveToOtherSlot(before, "primary")).toEqual({
+      primary: OVERVIEW_PANE,
+      secondary: sessionPane("sid-1"),
+    });
+  });
+
+  it("refuses to put the overview on both sides", () => {
+    expect(canMoveToOtherSlot(DEFAULT_RUN_WORKSPACE_STATE, "primary")).toBe(false);
+    expect(moveToOtherSlot(DEFAULT_RUN_WORKSPACE_STATE, "primary")).toBe(DEFAULT_RUN_WORKSPACE_STATE);
+  });
+});
+
+describe("selectOpenEntityIds", () => {
+  it("reports the entities on screen in either slot", () => {
+    const open = selectOpenEntityIds(twin(sessionPane("sid-1"), artifactPane("art-1")));
+
+    expect(open.session_ids).toEqual(new Set(["sid-1"]));
+    expect(open.artifact_ids).toEqual(new Set(["art-1"]));
+  });
+
+  it("reports nothing for the run-derived panes", () => {
+    const open = selectOpenEntityIds(twin(OVERVIEW_PANE, LIST_PANE));
+
+    expect(open.session_ids.size).toBe(0);
+    expect(open.artifact_ids.size).toBe(0);
+  });
+});
+
+describe("describePane", () => {
+  it("names every pane variant", () => {
+    expect(describePane(OVERVIEW_PANE)).toEqual({ title: "Overview", subtitle: null });
+    expect(describePane(LIST_PANE)).toEqual({ title: "Stages", subtitle: null });
+    expect(describePane(sessionPane("sid-123456789"))).toEqual({
+      title: "Session",
+      subtitle: "sid-1234",
+    });
+    expect(describePane(artifactPane("art-123456789"))).toEqual({
+      title: "Artifact",
+      subtitle: "art-1234",
+    });
   });
 });
 
