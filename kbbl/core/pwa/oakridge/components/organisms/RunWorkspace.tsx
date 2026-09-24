@@ -7,6 +7,7 @@ import { useRunWorkspaceState } from "../../hooks/useRunWorkspaceState";
 import { selectRunAccentClass } from "../../lib/run-accent";
 import {
   selectRunArtifacts,
+  selectRunGatesRead,
   selectRunOverview,
   selectRunSidebarSessions,
   type RunOverview,
@@ -47,12 +48,13 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   const run = runQuery.data;
-  const workspace = useRunWorkspaceState({
-    runId,
-    routePane,
-    run,
-    sessions: sessionsQuery.data,
-  });
+  // `data` is undefined both while the sessions read is in flight and after it
+  // fails, and restore waits on undefined — so a failed read would hold the
+  // workspace on "Loading run…" forever. `isPending` is what actually separates
+  // "still loading" from "there is no list": once the query has settled, an
+  // absent list is an empty one, and the run opens on its stored arrangement.
+  const sessions = sessionsQuery.isPending ? undefined : (sessionsQuery.data ?? []);
+  const workspace = useRunWorkspaceState({ runId, routePane, run, sessions });
 
   if (runQuery.isError) {
     return (
@@ -76,10 +78,16 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
   }
 
   const state = workspace.state;
-  const gates = gatesQuery.data ?? [];
-  const sessions = sessionsQuery.data ?? [];
-  const overview = selectRunOverview({ run, sessions, gates });
-  const sidebarSessions = selectRunSidebarSessions({ sessions, gates });
+  // A gate read that never landed is not an empty gate list — `selectRunGatesRead`
+  // keeps the two apart so neither surface can render an outage as "nothing needs you".
+  const gates = selectRunGatesRead({
+    gates: gatesQuery.data,
+    is_pending: gatesQuery.isPending,
+    is_error: gatesQuery.isError,
+  });
+  const sessionRows = sessions ?? [];
+  const overview = selectRunOverview({ run, sessions: sessionRows, gates });
+  const sidebarSessions = selectRunSidebarSessions({ sessions: sessionRows, gates });
   const sidebarArtifacts = selectRunArtifacts(run);
 
   const renderPane = (slot: RunWorkspaceSlot, pane: RunWorkspacePane) => {

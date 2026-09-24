@@ -21,6 +21,46 @@ import { selectRunSessionRows, type RunSessionRow } from "./run-sessions";
 export const RECENT_SLOT_RELEASE_LIMIT = 8;
 
 /**
+ * What the run's gate read currently knows.
+ *
+ * A failed read is not an empty gate list. Collapsing the two lets a backend
+ * outage render as "no gate is open" and drop every "needs you" marker, which
+ * is the one message an outage must never be able to send — the operator reads
+ * it as "nothing wants me" and walks away from a parked run.
+ */
+export type RunGatesRead =
+  | { readonly kind: "loaded"; readonly gates: readonly ParkedGate[] }
+  | { readonly kind: "pending" }
+  | { readonly kind: "unavailable" };
+
+export interface RunGatesQueryState {
+  /** The last successful payload — absent while first loading, and after a first load that failed. */
+  readonly gates: readonly ParkedGate[] | undefined;
+  readonly is_pending: boolean;
+  readonly is_error: boolean;
+}
+
+/**
+ * The gate read behind a polling query.
+ *
+ * Stale gates beat no gates: the query layer keeps the last successful payload
+ * across a failed poll, and a list from ten seconds ago still answers "is
+ * anything waiting on me". Only a read that never produced one is unavailable.
+ */
+export const selectRunGatesRead = ({
+  gates,
+  is_pending,
+  is_error,
+}: RunGatesQueryState): RunGatesRead => {
+  if (gates !== undefined) return { kind: "loaded", gates };
+  // Unavailable only once the read has settled with nothing — a first attempt
+  // still in flight has not failed, and saying so would flash a warning on
+  // every load. Anything else the query layer can be in is still "not yet".
+  if (is_error && !is_pending) return { kind: "unavailable" };
+  return { kind: "pending" };
+};
+
+/**
  * A unit's identity as the *gate* list spells it — `stage_name:unit_id`.
  *
  * `ParkedGate.stage_name` and `StageDetail.name` are both the stage's
@@ -117,9 +157,21 @@ export interface RunSidebarSessionRow {
   readonly requires_operator_action: boolean;
 }
 
+/**
+ * The sidebar's Sessions section.
+ *
+ * `is_action_state_known` travels with the rows because it is the only thing
+ * that distinguishes "no row needs you" from "we could not find out" — without
+ * it the section renders identically either way.
+ */
+export interface RunSidebarSessionsView {
+  readonly rows: readonly RunSidebarSessionRow[];
+  readonly is_action_state_known: boolean;
+}
+
 export interface RunSidebarSessionsInput {
   readonly sessions: readonly RunSessionAttempt[];
-  readonly gates: readonly ParkedGate[];
+  readonly gates: RunGatesRead;
 }
 
 /**
@@ -130,19 +182,24 @@ export interface RunSidebarSessionsInput {
 export const selectRunSidebarSessions = ({
   sessions,
   gates,
-}: RunSidebarSessionsInput): readonly RunSidebarSessionRow[] => {
-  const awaitingAction = selectUnitsAwaitingAction(gates);
-  return selectRunSessionRows(sessions).map((row) => ({
-    session_id: row.attempt.session_id as Sid,
-    stage_key: row.attempt.stage_key,
-    unit_id: row.attempt.unit_id,
-    attempt_label: formatAttemptLabel(row),
-    work_order_state: row.attempt.work_order_state,
-    is_current: row.is_current,
-    requires_operator_action:
-      row.is_current &&
-      awaitingAction.has(unitActionKeyOf(row.attempt.stage_key, row.attempt.unit_id)),
-  }));
+}: RunSidebarSessionsInput): RunSidebarSessionsView => {
+  const awaitingAction =
+    gates.kind === "loaded" ? selectUnitsAwaitingAction(gates.gates) : null;
+  return {
+    is_action_state_known: awaitingAction !== null,
+    rows: selectRunSessionRows(sessions).map((row) => ({
+      session_id: row.attempt.session_id as Sid,
+      stage_key: row.attempt.stage_key,
+      unit_id: row.attempt.unit_id,
+      attempt_label: formatAttemptLabel(row),
+      work_order_state: row.attempt.work_order_state,
+      is_current: row.is_current,
+      requires_operator_action:
+        row.is_current &&
+        awaitingAction !== null &&
+        awaitingAction.has(unitActionKeyOf(row.attempt.stage_key, row.attempt.unit_id)),
+    })),
+  };
 };
 
 export interface RunOverviewStageProgress {
@@ -154,14 +211,29 @@ export interface RunOverviewStageProgress {
   readonly pending: number;
 }
 
+/**
+ * Everything the overview derives from the gate list, under one tag.
+ *
+ * Both fields answer "who is waiting on a decision", so neither is readable
+ * without a gate list — grouping them makes that a fact of the type rather than
+ * a rule each consumer has to remember.
+ */
+export type RunOverviewGates =
+  | {
+      readonly kind: "known";
+      readonly active: readonly RunOverviewGate[];
+      readonly sessions_awaiting_action: readonly RunOverviewSessionRef[];
+    }
+  | { readonly kind: "pending" }
+  | { readonly kind: "unavailable" };
+
 export interface RunOverview {
   readonly status: RunStatus;
   readonly is_stuck: boolean;
   readonly parked_count: number;
   /** The attempt the run is live in right now, or null when nothing is executing. */
   readonly current_session: RunOverviewSessionRef | null;
-  readonly sessions_awaiting_action: readonly RunOverviewSessionRef[];
-  readonly active_gates: readonly RunOverviewGate[];
+  readonly gates: RunOverviewGates;
   readonly recent_slot_releases: readonly RunArtifactRef[];
   readonly stage_progress: RunOverviewStageProgress;
 }
@@ -169,7 +241,7 @@ export interface RunOverview {
 export interface RunOverviewInput {
   readonly run: RunDetail;
   readonly sessions: readonly RunSessionAttempt[];
-  readonly gates: readonly ParkedGate[];
+  readonly gates: RunGatesRead;
 }
 
 const toSessionRef = (row: RunSessionRow): RunOverviewSessionRef => ({
@@ -225,23 +297,16 @@ const selectRecentSlotReleases = (run: RunDetail): readonly RunArtifactRef[] => 
     .slice(0, RECENT_SLOT_RELEASE_LIMIT);
 };
 
-/** Everything the overview pane renders, derived once. */
-export const selectRunOverview = ({ run, sessions, gates }: RunOverviewInput): RunOverview => {
-  const rows = selectRunSessionRows(sessions);
-  const awaitingAction = selectUnitsAwaitingAction(gates);
+const selectOverviewGates = (
+  rows: readonly RunSessionRow[],
+  read: RunGatesRead,
+): RunOverviewGates => {
+  // `pending` and `unavailable` carry no payload, so the read *is* the answer.
+  if (read.kind !== "loaded") return read;
+  const awaitingAction = selectUnitsAwaitingAction(read.gates);
   return {
-    status: run.status,
-    is_stuck: run.is_stuck,
-    parked_count: run.parked_count,
-    current_session: selectCurrentSession(rows),
-    sessions_awaiting_action: rows
-      .filter(
-        (row) =>
-          row.is_current &&
-          awaitingAction.has(unitActionKeyOf(row.attempt.stage_key, row.attempt.unit_id)),
-      )
-      .map(toSessionRef),
-    active_gates: gates
+    kind: "known",
+    active: read.gates
       .filter((gate) => gate.actionable)
       .map((gate) => ({
         gate_id: gate.id,
@@ -250,6 +315,25 @@ export const selectRunOverview = ({ run, sessions, gates }: RunOverviewInput): R
         unit_id: gate.unit_id,
         resume_actions: gate.resume_actions,
       })),
+    sessions_awaiting_action: rows
+      .filter(
+        (row) =>
+          row.is_current &&
+          awaitingAction.has(unitActionKeyOf(row.attempt.stage_key, row.attempt.unit_id)),
+      )
+      .map(toSessionRef),
+  };
+};
+
+/** Everything the overview pane renders, derived once. */
+export const selectRunOverview = ({ run, sessions, gates }: RunOverviewInput): RunOverview => {
+  const rows = selectRunSessionRows(sessions);
+  return {
+    status: run.status,
+    is_stuck: run.is_stuck,
+    parked_count: run.parked_count,
+    current_session: selectCurrentSession(rows),
+    gates: selectOverviewGates(rows, gates),
     recent_slot_releases: selectRecentSlotReleases(run),
     stage_progress: selectStageProgress(run),
   };

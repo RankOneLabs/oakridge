@@ -16,6 +16,7 @@ import {
   DEFAULT_RUN_WORKSPACE_STATE,
   LIST_PANE,
   OVERVIEW_PANE,
+  arePanesEqual,
   type RunWorkspacePane,
   type RunWorkspaceState,
 } from "./run-workspace";
@@ -64,12 +65,18 @@ const parseStoredPane = (value: unknown): RunWorkspacePane | null => {
  * is dropped and the primary still restores. An unreadable primary has no such
  * fallback within the stored value, so the whole entry is rejected and the
  * caller gets the default.
+ *
+ * A secondary that duplicates the primary is dropped for the same reason it is
+ * unreadable: `openInPane` refuses to put one pane in both slots, so an entry
+ * that says otherwise came from an older build or a hand edit, and restoring it
+ * would reintroduce a state the model cannot otherwise reach.
  */
 const parseStoredState = (value: unknown): RunWorkspaceState | null => {
   if (!isRecord(value)) return null;
   const primary = parseStoredPane(value.primary);
   if (primary === null) return null;
-  return { primary, secondary: parseStoredPane(value.secondary) };
+  const secondary = parseStoredPane(value.secondary);
+  return { primary, secondary: arePanesEqual(primary, secondary) ? null : secondary };
 };
 
 /**

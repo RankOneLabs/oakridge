@@ -3,9 +3,13 @@ import { describe, expect, it } from "vitest";
 import type { ParkedGate, RunDetail, RunSessionAttempt, StageDetail } from "../types";
 import {
   RECENT_SLOT_RELEASE_LIMIT,
+  selectRunGatesRead,
   selectRunOverview,
+  selectRunSidebarSessions,
   selectUnitsAwaitingAction,
   unitActionKeyOf,
+  type RunOverview,
+  type RunOverviewGates,
 } from "./run-overview";
 
 const stage = (overrides: Partial<StageDetail> & Pick<StageDetail, "name" | "status">): StageDetail => ({
@@ -61,8 +65,23 @@ const run = (overrides: Partial<RunDetail> = {}): RunDetail => ({
   ...overrides,
 });
 
-const overviewOf = (input: Partial<Parameters<typeof selectRunOverview>[0]> = {}) =>
-  selectRunOverview({ run: run(), sessions: [], gates: [], ...input });
+interface OverviewInput {
+  readonly run?: RunDetail;
+  readonly sessions?: readonly RunSessionAttempt[];
+  /** The gate list the read produced; the read itself is exercised separately. */
+  readonly gates?: readonly ParkedGate[];
+}
+
+const overviewOf = ({ gates = [], ...input }: OverviewInput = {}): RunOverview =>
+  selectRunOverview({ run: run(), sessions: [], ...input, gates: { kind: "loaded", gates } });
+
+/** The gate-derived half of an overview, or a failure naming what it got instead. */
+const knownGates = (overview: RunOverview): Extract<RunOverviewGates, { kind: "known" }> => {
+  if (overview.gates.kind !== "known") {
+    throw new Error(`expected a loaded gate read, got "${overview.gates.kind}"`);
+  }
+  return overview.gates;
+};
 
 describe("run status", () => {
   it("carries the run's own status, stuck flag and parked count", () => {
@@ -118,7 +137,9 @@ describe("sessions awaiting action", () => {
       gates: [gate({ id: "gate-1", unit_id: "c2" })],
     });
 
-    expect(overview.sessions_awaiting_action.map((ref) => ref.session_id)).toEqual(["sid-2"]);
+    expect(knownGates(overview).sessions_awaiting_action.map((ref) => ref.session_id)).toEqual([
+      "sid-2",
+    ]);
   });
 
   it("ignores a stranded gate the run has already moved past", () => {
@@ -127,7 +148,7 @@ describe("sessions awaiting action", () => {
       gates: [gate({ id: "gate-1", unit_id: "c1", actionable: false })],
     });
 
-    expect(overview.sessions_awaiting_action).toEqual([]);
+    expect(knownGates(overview).sessions_awaiting_action).toEqual([]);
   });
 
   it("keys a gate and an attempt on the same unit identically", () => {
@@ -147,8 +168,79 @@ describe("active gates", () => {
       ],
     });
 
-    expect(overview.active_gates.map((entry) => entry.gate_id)).toEqual(["gate-open"]);
-    expect(overview.active_gates[0].resume_actions).toEqual(["approve", "reject"]);
+    const active = knownGates(overview).active;
+    expect(active.map((entry) => entry.gate_id)).toEqual(["gate-open"]);
+    expect(active[0].resume_actions).toEqual(["approve", "reject"]);
+  });
+});
+
+describe("the gate read", () => {
+  it("keeps a payload it already has when a later poll fails", () => {
+    const gates = [gate({ id: "gate-1", unit_id: "c1" })];
+
+    expect(selectRunGatesRead({ gates, is_pending: false, is_error: true })).toEqual({
+      kind: "loaded",
+      gates,
+    });
+  });
+
+  it("is unavailable when the read failed before producing anything", () => {
+    expect(selectRunGatesRead({ gates: undefined, is_pending: false, is_error: true })).toEqual({
+      kind: "unavailable",
+    });
+  });
+
+  it("is pending rather than empty while the first read is in flight", () => {
+    expect(selectRunGatesRead({ gates: undefined, is_pending: true, is_error: false })).toEqual({
+      kind: "pending",
+    });
+  });
+});
+
+describe("an unavailable gate read", () => {
+  const unreadOverview = () =>
+    selectRunOverview({
+      run: run(),
+      sessions: [attempt({ work_order_id: "wo-1", session_id: "sid-1", unit_id: "c1" })],
+      gates: { kind: "unavailable" },
+    });
+
+  it("never reports an empty gate list the overview could render as 'no gate is open'", () => {
+    expect(unreadOverview().gates).toEqual({ kind: "unavailable" });
+  });
+
+  it("still reports the run's own status, which does not come from the gate list", () => {
+    const overview = unreadOverview();
+
+    expect(overview.parked_count).toBe(1);
+    expect(overview.current_session?.session_id).toBe("sid-1");
+  });
+
+  it("tells the sidebar its action markers are unknown rather than absent", () => {
+    const view = selectRunSidebarSessions({
+      sessions: [attempt({ work_order_id: "wo-1", session_id: "sid-1", unit_id: "c1" })],
+      gates: { kind: "unavailable" },
+    });
+
+    expect(view.is_action_state_known).toBe(false);
+    expect(view.rows.map((row) => row.requires_operator_action)).toEqual([false]);
+  });
+});
+
+describe("sidebar sessions", () => {
+  it("marks the current attempt of a unit holding an actionable gate", () => {
+    const view = selectRunSidebarSessions({
+      sessions: [
+        attempt({ work_order_id: "wo-1", session_id: "sid-1", unit_id: "c1" }),
+        attempt({ work_order_id: "wo-2", session_id: "sid-2", unit_id: "c2" }),
+      ],
+      gates: { kind: "loaded", gates: [gate({ id: "gate-1", unit_id: "c2" })] },
+    });
+
+    expect(view.is_action_state_known).toBe(true);
+    expect(view.rows.filter((row) => row.requires_operator_action).map((row) => row.session_id)).toEqual([
+      "sid-2",
+    ]);
   });
 });
 

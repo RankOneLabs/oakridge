@@ -17,6 +17,12 @@ interface SessionWorkspaceRedirectViewProps {
  * close-safety hold — so a session whose work finished and whose cleanup
  * completed still lands in its run. A session that belongs to no run has
  * nowhere to land, which is a not-found state rather than a redirect.
+ *
+ * Only a 404 means "no run": `fetchSessionRun` returns null for that and throws
+ * for everything else, so a transient or 5xx failure gets the error state. They
+ * are opposite instructions to the operator — one says stop looking, the other
+ * says try again — and rendering the second as the first sends them away from a
+ * session that does have a run.
  */
 export function SessionWorkspaceRedirectView({ sessionId, onBack }: SessionWorkspaceRedirectViewProps) {
   const query = useSessionRun(sessionId);
@@ -31,6 +37,25 @@ export function SessionWorkspaceRedirectView({ sessionId, onBack }: SessionWorks
     return (
       <div className="or-page" data-testid="or-session-redirect">
         <div className="py-6 text-sm text-[var(--text-muted)]">Locating session…</div>
+      </div>
+    );
+  }
+
+  if (query.isError) {
+    return (
+      <div className="or-page" data-testid="or-session-redirect">
+        <div
+          className="rounded-md border border-[var(--danger-card-border)] bg-[var(--danger-bg)] px-4 py-3 text-sm text-[var(--danger-fg)]"
+          role="alert"
+          data-testid="or-session-redirect-error"
+        >
+          {query.error instanceof Error ? query.error.message : "Failed to locate session"}
+        </div>
+        <div>
+          <button type="button" className="or-shell__back" onClick={onBack}>
+            Back to runs
+          </button>
+        </div>
       </div>
     );
   }

@@ -109,6 +109,36 @@ describe("readStoredRunWorkspace", () => {
     expect(readStoredRunWorkspace("run-1")).toEqual({ primary: LIST_PANE, secondary: null });
   });
 
+  it("drops a secondary that duplicates the primary rather than restore a twin of one pane", () => {
+    localStorage.setItem(
+      runWorkspaceStorageKey("run-1"),
+      JSON.stringify({
+        primary: { kind: "artifact", artifact_id: "art-1" },
+        secondary: { kind: "artifact", artifact_id: "art-1" },
+      }),
+    );
+
+    expect(readStoredRunWorkspace("run-1")).toEqual({
+      primary: { kind: "artifact", artifact_id: "art-1" },
+      secondary: null,
+    });
+  });
+
+  it("keeps a secondary naming a different entity of the same kind", () => {
+    localStorage.setItem(
+      runWorkspaceStorageKey("run-1"),
+      JSON.stringify({
+        primary: { kind: "session", session_id: "sid-1" },
+        secondary: { kind: "session", session_id: "sid-2" },
+      }),
+    );
+
+    expect(readStoredRunWorkspace("run-1").secondary).toEqual({
+      kind: "session",
+      session_id: "sid-2",
+    });
+  });
+
   it("keeps each run's arrangement independent of the others", () => {
     writeStoredRunWorkspace("run-1", { primary: LIST_PANE, secondary: OVERVIEW_PANE });
     writeStoredRunWorkspace("run-2", { primary: OVERVIEW_PANE, secondary: null });

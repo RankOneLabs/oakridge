@@ -98,6 +98,17 @@ const makeFetch = (run: RunDetail = RUN): FetchHandler =>
     return json([]);
   });
 
+/** Every read answers except the one named, which 500s the way a down backend does. */
+const makeFetchWithout = (failingPath: string): FetchHandler =>
+  vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes(failingPath)) return json({ error: "backend unavailable" }, 500);
+    if (url.includes("/gates")) return json(GATES);
+    if (url.includes("/sessions")) return json(SESSIONS);
+    if (url.includes("/runs/")) return json(RUN);
+    return json([]);
+  });
+
 const renderWorkspace = (runId = "run-1") =>
   wrap(<RunDetailView runId={runId} routePane={null} onBack={() => {}} />);
 
@@ -249,6 +260,45 @@ describe("legacy deep links converge on the workspace URL", () => {
     wrap(<SessionWorkspaceRedirectView sessionId={"sid-orphan" as Sid} onBack={() => {}} />);
 
     expect(await screen.findByTestId("or-session-not-in-run")).toBeTruthy();
+  });
+
+  it("shows an error rather than 'belongs to no run' when the lookup itself fails", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ error: "down" }, 500));
+
+    wrap(<SessionWorkspaceRedirectView sessionId={"sid-c1" as Sid} onBack={() => {}} />);
+
+    expect(await screen.findByTestId("or-session-redirect-error")).toBeTruthy();
+    expect(screen.queryByTestId("or-session-not-in-run")).toBeNull();
+  });
+});
+
+describe("a read the workspace cannot complete", () => {
+  it("opens the run anyway when the sessions read fails", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(makeFetchWithout("/sessions"));
+
+    renderWorkspace();
+
+    expect(await screen.findByTestId("or-run-overview")).toBeTruthy();
+    expect(screen.queryByTestId("or-run-workspace-loading")).toBeNull();
+  });
+
+  it("says the gate status is unavailable instead of that no gate is open", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(makeFetchWithout("/gates"));
+
+    renderWorkspace();
+
+    expect(await screen.findByTestId("or-overview-gates-unavailable")).toBeTruthy();
+    expect(screen.queryByTestId("or-overview-no-gates")).toBeNull();
+    expect(screen.queryByTestId("or-overview-no-awaiting")).toBeNull();
+  });
+
+  it("marks the sidebar's action state unknown rather than dropping the markers silently", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(makeFetchWithout("/gates"));
+
+    renderWorkspace();
+
+    expect(await screen.findByTestId("or-sidebar-sessions-gates-unavailable")).toBeTruthy();
+    expect(screen.queryByTestId("or-sidebar-session-action-required")).toBeNull();
   });
 });
 

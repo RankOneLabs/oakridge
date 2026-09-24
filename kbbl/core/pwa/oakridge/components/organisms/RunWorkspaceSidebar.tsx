@@ -1,5 +1,5 @@
 import type { ArtifactId, Sid } from "../../../lib/ids";
-import type { RunArtifactRef, RunSidebarSessionRow } from "../../lib/run-overview";
+import type { RunArtifactRef, RunSidebarSessionsView } from "../../lib/run-overview";
 import {
   LIST_PANE,
   OVERVIEW_PANE,
@@ -16,7 +16,7 @@ import { RunSidebarSessions } from "../molecules/RunSidebarSessions";
 interface RunWorkspaceSidebarProps {
   isOpen: boolean;
   workspace: RunWorkspaceState;
-  sessions: readonly RunSidebarSessionRow[];
+  sessions: RunSidebarSessionsView;
   artifacts: readonly RunArtifactRef[];
   onOpenPane: (pane: RunWorkspacePane, slot: RunWorkspaceSlot) => void;
   onCollapse: () => void;
@@ -104,7 +104,12 @@ export function RunWorkspaceSidebar({
         )}
       </section>
 
-      <RunSidebarSessions rows={sessions} openSessionIds={open.session_ids} onOpen={openSession} />
+      <RunSidebarSessions
+        rows={sessions.rows}
+        isActionStateKnown={sessions.is_action_state_known}
+        openSessionIds={open.session_ids}
+        onOpen={openSession}
+      />
       <RunSidebarArtifacts rows={artifacts} openArtifactIds={open.artifact_ids} onOpen={openArtifact} />
     </aside>
   );
