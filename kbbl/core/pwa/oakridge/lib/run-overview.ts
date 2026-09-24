@@ -172,33 +172,48 @@ export interface RunSidebarSessionsView {
 export interface RunSidebarSessionsInput {
   readonly sessions: readonly RunSessionAttempt[];
   readonly gates: RunGatesRead;
+  /**
+   * Sids kbbl's inbox has reported purged server-side. Oakridge keeps listing
+   * the work order behind a purged session, so without this the sidebar offers
+   * a row whose transcript no longer exists.
+   */
+  readonly purgedSessionIds: ReadonlySet<string>;
 }
 
 /**
- * Every session of the run, prior attempts included, in the route's oldest-first
- * order. Only a unit's *current* attempt can require operator action — a
- * superseded attempt has nothing left to decide.
+ * Every session of the run the operator can still open, prior attempts
+ * included, in the route's oldest-first order. Only a unit's *current* attempt
+ * can require operator action — a superseded attempt has nothing left to decide.
+ *
+ * A purged session is dropped rather than disabled: the section is a list of
+ * what can be opened, and a row that refuses to open says nothing the operator
+ * can act on. The filter runs *after* numbering so a surviving row still reads
+ * "attempt 2 of 2" — the attempt history is a durable record, and a purge
+ * removes the transcript, not the attempt that produced it.
  */
 export const selectRunSidebarSessions = ({
   sessions,
   gates,
+  purgedSessionIds,
 }: RunSidebarSessionsInput): RunSidebarSessionsView => {
   const awaitingAction =
     gates.kind === "loaded" ? selectUnitsAwaitingAction(gates.gates) : null;
   return {
     is_action_state_known: awaitingAction !== null,
-    rows: selectRunSessionRows(sessions).map((row) => ({
-      session_id: row.attempt.session_id as Sid,
-      stage_key: row.attempt.stage_key,
-      unit_id: row.attempt.unit_id,
-      attempt_label: formatAttemptLabel(row),
-      work_order_state: row.attempt.work_order_state,
-      is_current: row.is_current,
-      requires_operator_action:
-        row.is_current &&
-        awaitingAction !== null &&
-        awaitingAction.has(unitActionKeyOf(row.attempt.stage_key, row.attempt.unit_id)),
-    })),
+    rows: selectRunSessionRows(sessions)
+      .filter((row) => !purgedSessionIds.has(row.attempt.session_id))
+      .map((row) => ({
+        session_id: row.attempt.session_id as Sid,
+        stage_key: row.attempt.stage_key,
+        unit_id: row.attempt.unit_id,
+        attempt_label: formatAttemptLabel(row),
+        work_order_state: row.attempt.work_order_state,
+        is_current: row.is_current,
+        requires_operator_action:
+          row.is_current &&
+          awaitingAction !== null &&
+          awaitingAction.has(unitActionKeyOf(row.attempt.stage_key, row.attempt.unit_id)),
+      })),
   };
 };
 

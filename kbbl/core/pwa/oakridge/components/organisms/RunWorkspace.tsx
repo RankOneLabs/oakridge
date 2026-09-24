@@ -94,7 +94,11 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
   });
   const sessionRows = sessions ?? [];
   const overview = selectRunOverview({ run, sessions: sessionRows, gates });
-  const sidebarSessions = selectRunSidebarSessions({ sessions: sessionRows, gates });
+  const sidebarSessions = selectRunSidebarSessions({
+    sessions: sessionRows,
+    gates,
+    purgedSessionIds,
+  });
   const sidebarArtifacts = selectRunArtifacts(run);
 
   const renderPane = (slot: RunWorkspaceSlot, pane: RunWorkspacePane) => {

@@ -190,6 +190,30 @@ describe("a session purged while a pane holds it", () => {
     expect(screen.queryByTestId("or-run-pane-session")).toBeNull();
     expect(localStorage.getItem(runWorkspaceStorageKey("run-1"))).not.toContain("sid-c1");
   });
+
+  it("stops listing it in the sidebar, which the run's own reads still would", async () => {
+    await openSessionPane();
+    useStore.setState({ removedSids: new Set(["sid-c1" as Sid]) });
+    await waitFor(() => expect(screen.getByTestId("or-run-overview")).toBeTruthy());
+
+    // Oakridge keeps listing the work order behind a purged session, so without
+    // the filter the row outlives the pane it just cost.
+    const rows = screen.getAllByTestId("or-sidebar-session");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.textContent).toContain("c2");
+  });
+
+  it("refuses to open it from a surface still holding its id", async () => {
+    // The overview names the run's current session from the run's own reads,
+    // which is exactly the surface the sidebar filter does not cover.
+    useStore.setState({ removedSids: new Set(["sid-c2" as Sid]) });
+    renderWorkspace();
+
+    fireEvent.click(await screen.findByTestId("or-overview-current-session"));
+
+    expect(screen.queryByTestId("or-run-pane-session")).toBeNull();
+    expect(screen.getByTestId("or-run-overview")).toBeTruthy();
+  });
 });
 
 describe("resuming an ended session from a pane", () => {

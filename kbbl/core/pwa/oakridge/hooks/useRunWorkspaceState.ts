@@ -105,21 +105,46 @@ export function useRunWorkspaceState({
     setState(validated.state);
   }, [state, run, sessions, purgedSessionIds, runId]);
 
+  /**
+   * Whether an open may proceed — asked of a session the inbox has reported
+   * purged, and nothing else.
+   *
+   * Deliberately narrower than the restore-time rule. Restore validates a
+   * stored pane against everything the run lists because the store is untrusted
+   * input that can be arbitrarily old; an open happening now is the operator
+   * (or a route) naming something, and the run's own reads lag what exists —
+   * resuming an ended session opens a sid that `GET /runs/:id/sessions` has not
+   * listed yet. So the only thing refused here is a target already known to be
+   * gone, which the validation effect above would otherwise drop a frame after
+   * the pane mounted.
+   */
+  const canOpen = useCallback(
+    (pane: RunWorkspacePane): boolean =>
+      pane.kind !== "session" || !purgedSessionIds.has(pane.session_id),
+    [purgedSessionIds],
+  );
+
   useEffect(() => {
     if (state === null || appliedRouteKey.current === routePaneKey) return;
     appliedRouteKey.current = routePaneKey;
-    if (routePane === null) return;
+    // A deep link to a purged session leaves the operator's arrangement alone
+    // rather than replacing it with a pane that cannot survive the next frame.
+    if (routePane === null || !canOpen(routePane)) return;
     setState((current) => (current === null ? current : openInPane(current, "primary", routePane)));
-  }, [state, routePane, routePaneKey]);
+  }, [state, routePane, routePaneKey, canOpen]);
 
   useEffect(() => {
     if (state === null) return;
     writeStoredRunWorkspace(runId, state);
   }, [runId, state]);
 
-  const openPane = useCallback((pane: RunWorkspacePane, slot: RunWorkspaceSlot) => {
-    setState((current) => (current === null ? current : openInPane(current, slot, pane)));
-  }, []);
+  const openPane = useCallback(
+    (pane: RunWorkspacePane, slot: RunWorkspaceSlot) => {
+      if (!canOpen(pane)) return;
+      setState((current) => (current === null ? current : openInPane(current, slot, pane)));
+    },
+    [canOpen],
+  );
 
   const closeSlot = useCallback((slot: RunWorkspaceSlot) => {
     setState((current) => (current === null ? current : closePane(current, slot)));
