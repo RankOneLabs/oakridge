@@ -5074,6 +5074,32 @@ a:focus-visible {
   padding: clamp(2rem, 5vw, 5rem) clamp(1rem, 4vw, 4rem) 6rem;
 }
 
+/* Per-run accent palette. `selectRunAccentClass` (oakridge/lib/run-accent.ts)
+   hashes a run id into exactly one of these eight classes, so the same run
+   wears the same colour everywhere. Each sets one custom property; components
+   read it as text-[var(--or-run-accent)] / border-[var(--or-run-accent)].
+   Enumerated rather than computed because Tailwind cannot generate a class from
+   a runtime value and inline style objects are out. */
+.or-run-accent--0 { --or-run-accent: #7dd890; }
+.or-run-accent--1 { --or-run-accent: #67d4de; }
+.or-run-accent--2 { --or-run-accent: #7fb0f5; }
+.or-run-accent--3 { --or-run-accent: #b39ef0; }
+.or-run-accent--4 { --or-run-accent: #e58ac8; }
+.or-run-accent--5 { --or-run-accent: #ef8f8f; }
+.or-run-accent--6 { --or-run-accent: #f5b050; }
+.or-run-accent--7 { --or-run-accent: #c3dd6a; }
+
+/* Light theme needs its own values: the dark set is tuned against #0c100f and
+   drops below the AA contrast floor on white. */
+[data-theme="light"] .or-run-accent--0 { --or-run-accent: #157f4a; }
+[data-theme="light"] .or-run-accent--1 { --or-run-accent: #0f6f7a; }
+[data-theme="light"] .or-run-accent--2 { --or-run-accent: #1f5fd0; }
+[data-theme="light"] .or-run-accent--3 { --or-run-accent: #6b41c9; }
+[data-theme="light"] .or-run-accent--4 { --or-run-accent: #a8267f; }
+[data-theme="light"] .or-run-accent--5 { --or-run-accent: #b0342f; }
+[data-theme="light"] .or-run-accent--6 { --or-run-accent: #8a5a06; }
+[data-theme="light"] .or-run-accent--7 { --or-run-accent: #4f6a12; }
+
 /* Shared v2 route composition. Every Oakridge route uses these primitives so
    navigation, hierarchy, reading width, and form density remain consistent. */
 .or-page {
