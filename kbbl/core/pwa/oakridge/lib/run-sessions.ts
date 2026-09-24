@@ -6,6 +6,10 @@
 // belong to the same unit, and which one of them is the unit's *current*
 // attempt. Both are pure functions of the rows, so both live here rather than
 // in a component render body.
+//
+// That oldest-first order is a contract, not a convenience: it is how these
+// transforms know which attempt is newest, and a caller that re-sorts the list
+// before passing it here will get the wrong current attempt.
 
 import type { RunSessionAttempt } from "../types";
 
@@ -42,22 +46,21 @@ export interface RunSessionRow {
  * better answer than the newest, so that wins rather than the unit showing no
  * current attempt at all.
  *
- * Ties on `created_at` fall to the later row, which is the backend's
- * `ORDER BY work.created_at, work.id` order — the same order the list arrives
- * in, so two attempts created in the same transaction resolve deterministically
- * rather than by whichever the comparison happened to see first.
+ * "Newest" means the last row, not the largest `created_at`. The route already
+ * ordered the list `ORDER BY work.created_at, work.id` in Postgres, comparing
+ * real timestamps; what reaches us is `timestamptz::text`, whose rendered UTC
+ * offset follows a session timezone nothing in the backend pins. Comparing
+ * those strings would read a DST fold backwards — `01:15:00-05` sorts before
+ * `01:30:00-04` but happens 45 minutes after it — so this trusts the ordering
+ * the database already did rather than redoing it on the rendering. That also
+ * makes two attempts created in the same transaction resolve deterministically,
+ * by `work.id`, instead of by whichever a comparison happened to see first.
  */
 const selectCurrentAttemptIndex = (attempts: readonly RunSessionAttempt[]): number => {
-  let newestLive = -1;
-  let newestOverall = -1;
-  for (let index = 0; index < attempts.length; index += 1) {
-    const attempt = attempts[index];
-    if (!attempt) continue;
-    if (newestOverall === -1 || attempt.created_at >= (attempts[newestOverall]?.created_at ?? "")) newestOverall = index;
-    if (attempt.work_order_state === "abandoned") continue;
-    if (newestLive === -1 || attempt.created_at >= (attempts[newestLive]?.created_at ?? "")) newestLive = index;
+  for (let index = attempts.length - 1; index >= 0; index -= 1) {
+    if (attempts[index]?.work_order_state !== "abandoned") return index;
   }
-  return newestLive === -1 ? newestOverall : newestLive;
+  return attempts.length - 1;
 };
 
 /**

@@ -9,13 +9,22 @@ export type OperatorStageStatus = "pending" | "running" | "complete" | "failed" 
 export interface OperatorRunSummary { readonly id: WorkflowRunId; readonly title: string | null; readonly repository_keys: readonly string[]; readonly workflow_name: string; readonly current_attempt_root_workflow_id: string; readonly status: OperatorRunStatus; readonly current_stage: string | null; readonly parked_count: number; readonly updated_at: string; readonly is_stuck: boolean; readonly is_failed: boolean; readonly archived: boolean }
 export interface OperatorWorkflowAttempt { readonly root_workflow_id: string; readonly forked_from_root_workflow_id: string | null; readonly status: OperatorRunStatus; readonly created_at: string }
 /**
- * `created_at` is the slot's latest visible release, not the artifact's birth:
- * the run-detail projection this feeds is
+ * `created_at` is when this version was written, not when the chain began. The
+ * run-detail projection this feeds is
  * `DISTINCT ON (stage_instance_id, unit_id, output_name, collection_key) ... ORDER BY ... version DESC`
- * filtered to artifacts a `run_output_slot` still points at, so each entry is
- * the latest visible version of one slot and its `created_at`
+ * over every artifact a `run_output_slot` points at, in any slot state, so each
+ * entry is the highest version of one slot and its `created_at`
  * (`oakridge.artifact.created_at`, `0001_domain.sql:54`) is when *that version*
  * was written. A caller wanting the chain's origin must read the chain.
+ *
+ * Deliberately broader than `effectiveArtifactPredicate`
+ * (`storage/sql-fragments.ts`), which narrows to `pending`/`released` slots.
+ * That predicate answers "what may a downstream consume"; this projection
+ * answers "what can the operator open", and those differ exactly while a slot
+ * is `invalidated` — a draft sent back for corrections has no consumer, but the
+ * operator still needs a route to it. Tightening this to the effective
+ * predicate breaks that route, and
+ * `tests/operator-run-record-endpoint.test.ts` holds the line.
  */
 export interface OperatorStageArtifact { readonly id: ArtifactId; readonly type_id: string; readonly version: number; readonly label: string | null; readonly created_at: string }
 
