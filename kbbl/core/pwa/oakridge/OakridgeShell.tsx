@@ -9,7 +9,8 @@ import { WorkflowDefListView } from "./views/WorkflowDefListView";
 import { WorkflowDefEditorView } from "./views/WorkflowDefEditorView";
 import { WorkflowDefDetailView } from "./views/WorkflowDefDetailView";
 import { ReviewInboxView } from "./views/ReviewInboxView";
-import type { OakridgeSubRoute } from "../lib/hash";
+import { SessionWorkspaceRedirectView } from "./views/SessionWorkspaceRedirectView";
+import { formatRunWorkspaceHash, type OakridgeSubRoute } from "../lib/hash";
 import type { WorkflowDefSummary } from "./types";
 import { useOakridgeInvalidationStream } from "./hooks/useOakridgeInvalidationStream";
 
@@ -52,7 +53,7 @@ function OakridgeShellInner({ route, onBack, onNavigate }: OakridgeShellInnerPro
     );
   }
 
-  const navigateToRun = (id: string) => onNavigate(`oakridge/run/${encodeURIComponent(id)}`);
+  const navigateToRun = (id: string) => onNavigate(formatRunWorkspaceHash(id, null));
   const navigateToArtifact = (id: string) => onNavigate(`oakridge/artifact/${encodeURIComponent(id)}`);
   const navigateToRuns = () => onNavigate("oakridge");
   const navigateToNewRun = () => onNavigate("oakridge/new-run");
@@ -91,6 +92,11 @@ function OakridgeShellInner({ route, onBack, onNavigate }: OakridgeShellInnerPro
           onBack={navigateToRuns}
           onSelectArtifact={navigateToArtifact}
         />
+      );
+      break;
+    case "session":
+      content = (
+        <SessionWorkspaceRedirectView sessionId={route.session_id} onBack={navigateToRuns} />
       );
       break;
     case "artifact":

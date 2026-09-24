@@ -1,3 +1,10 @@
+// `RoutePaneTarget` is defined once in the workspace model
+// (`oakridge/lib/run-workspace.ts`) so a parsed route and a workspace pane are
+// the same type rather than two kept in step by hand. This module already owns
+// the oakridge sub-route namespace, so the reference is not a new coupling.
+import type { RoutePaneTarget } from "../oakridge/lib/run-workspace";
+import type { ArtifactId, Sid } from "./ids";
+
 export function readHashSid(): string | null {
   const hash = window.location.hash.slice(1);
   if (!hash) return null;
@@ -35,8 +42,11 @@ export function readHashSessionTarget(): SessionHashTarget | null {
 export type OakridgeSubRoute =
   | { sub: "runs" }
   | { sub: "review-inbox" }
-  | { sub: "run"; id: string }
+  /** `#oakridge/run/:id`, optionally naming the pane to open in `#oakridge/run/:id/session/:sid` form. */
+  | { sub: "run"; id: string; pane: RoutePaneTarget | null }
   | { sub: "artifact"; id: string }
+  /** `#oakridge/session/:sid` — resolved to its run and replaced with the run-scoped form. */
+  | { sub: "session"; session_id: Sid }
   | { sub: "new-run" }
   | { sub: "create-project" }
   | { sub: "defs" }
@@ -55,6 +65,54 @@ function tryDecode(s: string): string {
   }
 }
 
+/**
+ * `#oakridge/run/:id`, with the optional `/session/:sid` or `/artifact/:id`
+ * suffix that names the pane to open.
+ *
+ * Segments are split while still percent-encoded: every id reaches the hash
+ * through `encodeURIComponent`, so a literal `/` inside one is `%2F` here and
+ * cannot be mistaken for a separator. Decoding happens per segment afterwards.
+ */
+function parseRunRoute(rest: string): OakridgeSubRoute | null {
+  const segments = rest.slice("/run/".length).split("/");
+  const [rawId, paneKind, rawPaneId] = segments;
+  if (!rawId) return null;
+  const id = tryDecode(rawId);
+  if (segments.length === 3 && rawPaneId) {
+    if (paneKind === "session") {
+      return { sub: "run", id, pane: { kind: "session", session_id: tryDecode(rawPaneId) as Sid } };
+    }
+    if (paneKind === "artifact") {
+      return { sub: "run", id, pane: { kind: "artifact", artifact_id: tryDecode(rawPaneId) as ArtifactId } };
+    }
+  }
+  return { sub: "run", id, pane: null };
+}
+
+/**
+ * The canonical in-workspace URL for a run, with or without a pane. The one
+ * place these hashes are built, so the parser above and every navigation that
+ * produces one cannot disagree about encoding.
+ */
+export function formatRunWorkspaceHash(runId: string, pane: RoutePaneTarget | null): string {
+  const base = `oakridge/run/${encodeURIComponent(runId)}`;
+  if (pane === null) return base;
+  if (pane.kind === "session") return `${base}/session/${encodeURIComponent(pane.session_id)}`;
+  return `${base}/artifact/${encodeURIComponent(pane.artifact_id)}`;
+}
+
+/**
+ * Swap the current hash for another without pushing a history entry, so Back
+ * skips the legacy URL that was redirected away from instead of bouncing the
+ * operator straight back into the redirect. `replaceState` doesn't fire
+ * `hashchange`, so sibling hash hooks are nudged manually — same reason as
+ * `writeHashSid`.
+ */
+export function replaceHashRoute(hash: string): void {
+  history.replaceState(null, "", `#${hash}`);
+  window.dispatchEvent(new Event("hashchange"));
+}
+
 export function readHashRoute(): HashRoute | null {
   const hash = window.location.hash.slice(1);
   if (hash === "oakridge" || hash.startsWith("oakridge/")) {
@@ -63,10 +121,16 @@ export function readHashRoute(): HashRoute | null {
       return { view: "oakridge", route: { sub: "runs" } };
     }
     if (rest.startsWith("/run/")) {
-      const raw = rest.slice("/run/".length);
+      const route = parseRunRoute(rest);
+      if (route) return { view: "oakridge", route };
+    }
+    if (rest.startsWith("/session/")) {
+      const raw = rest.slice("/session/".length);
       if (raw) {
-        const id = tryDecode(raw);
-        return { view: "oakridge", route: { sub: "run", id } };
+        return {
+          view: "oakridge",
+          route: { sub: "session", session_id: tryDecode(raw) as Sid },
+        };
       }
     }
     if (rest.startsWith("/artifact/")) {
