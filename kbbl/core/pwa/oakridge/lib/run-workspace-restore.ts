@@ -10,12 +10,17 @@
 //    says.
 //
 // 2. **Persisted state is untrusted input.** Runs are deletable, sessions are
-//    purgeable (`App.tsx` already handles `onSessionRemoved`), artifact ids go
-//    stale, and with attempt history listed a stored pane can point at an
-//    abandoned work order's session. Every pane — primary and secondary — is
-//    validated against freshly fetched run/session data; an unresolvable
-//    primary becomes the overview and an unresolvable secondary closes, and the
-//    caller is told to prune rather than an error pane being rendered.
+//    purgeable, artifact ids go stale, and with attempt history listed a stored
+//    pane can point at an abandoned work order's session. Every pane — primary
+//    and secondary — is validated against freshly fetched run/session data; an
+//    unresolvable primary becomes the overview and an unresolvable secondary
+//    closes, and the caller is told to prune rather than an error pane being
+//    rendered.
+//
+//    `validateWorkspacePanes` is that rule on its own, because restore is not
+//    the only moment a pane goes stale: the inbox can report a session purged
+//    while a pane is holding it, and that is the same shape of problem with the
+//    same answer.
 
 import type { RunDetail, RunSessionAttempt } from "../types";
 import {
@@ -36,6 +41,19 @@ export interface RunEntityIndex {
   readonly artifact_ids: ReadonlySet<string>;
 }
 
+export interface RunEntityIndexInput {
+  readonly run: RunDetail;
+  readonly sessions: readonly RunSessionAttempt[];
+  /**
+   * Sids kbbl's inbox has reported gone server-side. Oakridge's own reads keep
+   * listing a purged session — the work order it belongs to is a durable
+   * record — so the run's data alone cannot tell that the transcript behind it
+   * no longer exists. Subtracting them here makes a purge the same kind of
+   * staleness as a deleted run or a stale artifact, resolved by one rule.
+   */
+  readonly purgedSessionIds: ReadonlySet<string>;
+}
+
 /**
  * Every session the run shows and every artifact it holds.
  *
@@ -44,10 +62,11 @@ export interface RunEntityIndex {
  * indexing only the attempt list would refuse to restore a pane the list view
  * can still link to.
  */
-export const indexRunEntities = (
-  run: RunDetail,
-  sessions: readonly RunSessionAttempt[],
-): RunEntityIndex => {
+export const indexRunEntities = ({
+  run,
+  sessions,
+  purgedSessionIds,
+}: RunEntityIndexInput): RunEntityIndex => {
   const session_ids = new Set<string>();
   const artifact_ids = new Set<string>();
   for (const attempt of sessions) session_ids.add(attempt.session_id);
@@ -58,6 +77,7 @@ export const indexRunEntities = (
     }
     for (const artifact of stage.artifacts) artifact_ids.add(artifact.id);
   }
+  for (const purged of purgedSessionIds) session_ids.delete(purged);
   return { session_ids, artifact_ids };
 };
 
@@ -78,6 +98,36 @@ export const isPaneResolvable = (pane: RunWorkspacePane, index: RunEntityIndex):
   }
 };
 
+export interface ValidatedWorkspaceState {
+  readonly state: RunWorkspaceState;
+  /** True when validation dropped at least one pane the input still held. */
+  readonly dropped_a_pane: boolean;
+}
+
+/**
+ * Every pane that no longer names something the run contains, dropped.
+ *
+ * An unresolvable primary becomes the overview and an unresolvable secondary
+ * closes — never an error pane, because a pane pointing at something that is
+ * gone is not a failure the operator can act on. One transform for every way a
+ * pane goes stale: a deleted run, an artifact that never existed, a session
+ * purged out from under an open pane.
+ */
+export const validateWorkspacePanes = (
+  state: RunWorkspaceState,
+  index: RunEntityIndex,
+): ValidatedWorkspaceState => {
+  const primaryResolves = isPaneResolvable(state.primary, index);
+  const secondaryResolves = state.secondary === null || isPaneResolvable(state.secondary, index);
+  return {
+    state: {
+      primary: primaryResolves ? state.primary : OVERVIEW_PANE,
+      secondary: secondaryResolves ? state.secondary : null,
+    },
+    dropped_a_pane: !primaryResolves || !secondaryResolves,
+  };
+};
+
 export interface RunWorkspaceResolutionInput {
   /** The pane the URL names, or null for a bare `#oakridge/run/:id`. */
   readonly routePane: RoutePaneTarget | null;
@@ -85,6 +135,7 @@ export interface RunWorkspaceResolutionInput {
   readonly storedState: RunWorkspaceState | null;
   readonly run: RunDetail;
   readonly sessions: readonly RunSessionAttempt[];
+  readonly purgedSessionIds: ReadonlySet<string>;
 }
 
 export interface RunWorkspaceResolution {
@@ -111,22 +162,16 @@ export const resolveWorkspaceState = ({
   storedState,
   run,
   sessions,
+  purgedSessionIds,
 }: RunWorkspaceResolutionInput): RunWorkspaceResolution => {
-  const index = indexRunEntities(run, sessions);
+  const index = indexRunEntities({ run, sessions, purgedSessionIds });
   const stored = storedState ?? DEFAULT_RUN_WORKSPACE_STATE;
 
-  const primaryResolves = isPaneResolvable(stored.primary, index);
-  const secondaryResolves = stored.secondary !== null && isPaneResolvable(stored.secondary, index);
-
-  const restored: RunWorkspaceState = {
-    primary: primaryResolves ? stored.primary : OVERVIEW_PANE,
-    secondary: secondaryResolves ? stored.secondary : null,
-  };
-  const should_prune_stored =
-    storedState !== null && (!primaryResolves || (stored.secondary !== null && !secondaryResolves));
+  const validated = validateWorkspacePanes(stored, index);
+  const should_prune_stored = storedState !== null && validated.dropped_a_pane;
 
   if (routePane !== null && isPaneResolvable(routePane, index)) {
-    return { state: openInPane(restored, "primary", routePane), should_prune_stored };
+    return { state: openInPane(validated.state, "primary", routePane), should_prune_stored };
   }
-  return { state: restored, should_prune_stored };
+  return { state: validated.state, should_prune_stored };
 };

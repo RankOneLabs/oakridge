@@ -20,10 +20,13 @@ import {
   type RunWorkspacePane,
   type RunWorkspaceSlot,
 } from "../../lib/run-workspace";
-import type { ArtifactId } from "../../../lib/ids";
+import type { ArtifactId, Sid } from "../../../lib/ids";
+import { useStore } from "../../../state/store";
 import { RunIdentityHeader } from "../molecules/RunIdentityHeader";
 import { RunPaneChrome } from "../molecules/RunPaneChrome";
+import { ArtifactReview } from "./ArtifactReview";
 import { RunOverviewPane } from "./RunOverviewPane";
+import { RunSessionPane } from "./RunSessionPane";
 import { RunWorkspaceSidebar } from "./RunWorkspaceSidebar";
 import { RunDetail } from "./RunDetail";
 
@@ -54,7 +57,11 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
   // "still loading" from "there is no list": once the query has settled, an
   // absent list is an empty one, and the run opens on its stored arrangement.
   const sessions = sessionsQuery.isPending ? undefined : (sessionsQuery.data ?? []);
-  const workspace = useRunWorkspaceState({ runId, routePane, run, sessions });
+  // The inbox's record of what has been purged server-side. Oakridge keeps
+  // listing the work order behind a purged session, so this is the only signal
+  // that a pane holding one is showing a transcript that no longer exists.
+  const purgedSessionIds = useStore((state) => state.removedSids);
+  const workspace = useRunWorkspaceState({ runId, routePane, run, sessions, purgedSessionIds });
 
   if (runQuery.isError) {
     return (
@@ -160,8 +167,13 @@ interface PaneBodyProps {
 /**
  * What each pane variant renders.
  *
- * The list pane mounts the existing `RunDetail` organism unchanged. Both entity
- * panes hold their place until c3 fills them.
+ * Every variant mounts an existing organism rather than a pane-local copy of
+ * one: the list pane `RunDetail`, the artifact pane `ArtifactReview` with its
+ * descriptor-driven viewer, review items, threads and gate decisions intact,
+ * and the session pane `SessionView` through `RunSessionPane`. Both entity
+ * renderers keep owning their own fetching — lifting their queries up here
+ * would give one renderer two fetching paths, which is the duplication reuse
+ * was meant to avoid.
  */
 function PaneBody({ pane, runId, overview, onBack, onOpenPane }: PaneBodyProps) {
   switch (pane.kind) {
@@ -178,29 +190,15 @@ function PaneBody({ pane, runId, overview, onBack, onOpenPane }: PaneBodyProps) 
         />
       );
     case "artifact":
-      return (
-        <div className="py-4 text-sm text-[var(--text-secondary)]" data-testid="or-run-pane-artifact">
-          <p className="m-0">
-            The in-workspace artifact surface arrives with the artifact pane body.
-          </p>
-          <p className="mb-0 mt-2">Artifact {pane.artifact_id.slice(0, 8)}</p>
-        </div>
-      );
+      return <ArtifactReview artifactId={pane.artifact_id} chrome={{ kind: "pane" }} />;
     case "session":
       return (
-        <div className="py-4 text-sm text-[var(--text-secondary)]" data-testid="or-run-pane-session">
-          <p className="m-0">
-            The in-workspace session surface arrives with the session pane body.
-          </p>
-          <p className="mb-0 mt-2">
-            <a
-              className="text-[var(--accent-blue)] underline"
-              href={`#sid=${encodeURIComponent(pane.session_id)}`}
-            >
-              Open session {pane.session_id.slice(0, 8)} in kbbl
-            </a>
-          </p>
-        </div>
+        <RunSessionPane
+          sessionId={pane.session_id}
+          onOpenSession={(sessionId: Sid) =>
+            onOpenPane({ kind: "session", session_id: sessionId })
+          }
+        />
       );
   }
 }

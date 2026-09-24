@@ -11,7 +11,11 @@ import {
   type RunWorkspaceSlot,
   type RunWorkspaceState,
 } from "../lib/run-workspace";
-import { resolveWorkspaceState } from "../lib/run-workspace-restore";
+import {
+  indexRunEntities,
+  resolveWorkspaceState,
+  validateWorkspacePanes,
+} from "../lib/run-workspace-restore";
 import {
   pruneStoredRunWorkspace,
   readStoredRunWorkspace,
@@ -25,6 +29,12 @@ export interface RunWorkspaceStateInput {
   readonly run: RunDetail | undefined;
   /** Undefined until `GET /runs/:id/sessions` resolves; restore waits for it. */
   readonly sessions: readonly RunSessionAttempt[] | undefined;
+  /**
+   * Sids kbbl's inbox has reported gone. Oakridge keeps listing the work
+   * order behind a purged session, so nothing in the run's own reads says the
+   * transcript is gone — this is the signal that a pane holding one is stale.
+   */
+  readonly purgedSessionIds: ReadonlySet<string>;
 }
 
 export interface RunWorkspaceStateHandle {
@@ -56,6 +66,7 @@ export function useRunWorkspaceState({
   routePane,
   run,
   sessions,
+  purgedSessionIds,
 }: RunWorkspaceStateInput): RunWorkspaceStateHandle {
   const [state, setState] = useState<RunWorkspaceState | null>(null);
   const routePaneKey = routePaneKeyOf(routePane);
@@ -71,11 +82,28 @@ export function useRunWorkspaceState({
       storedState: readStoredRunWorkspace(runId),
       run,
       sessions,
+      purgedSessionIds,
     });
     if (resolution.should_prune_stored) pruneStoredRunWorkspace(runId);
     appliedRouteKey.current = routePaneKey;
     setState(resolution.state);
-  }, [state, run, sessions, routePane, routePaneKey, runId]);
+  }, [state, run, sessions, purgedSessionIds, routePane, routePaneKey, runId]);
+
+  // A session purged while a pane holds it is the restore-time staleness rule
+  // arriving late, so it goes through the same transform rather than a second
+  // one. Guarded on `dropped_a_pane` so an unchanged arrangement never restates
+  // itself — this runs on every inbox frame that removes anything, for any run.
+  useEffect(() => {
+    if (state === null || run === undefined || sessions === undefined) return;
+    if (purgedSessionIds.size === 0) return;
+    const validated = validateWorkspacePanes(
+      state,
+      indexRunEntities({ run, sessions, purgedSessionIds }),
+    );
+    if (!validated.dropped_a_pane) return;
+    pruneStoredRunWorkspace(runId);
+    setState(validated.state);
+  }, [state, run, sessions, purgedSessionIds, runId]);
 
   useEffect(() => {
     if (state === null || appliedRouteKey.current === routePaneKey) return;

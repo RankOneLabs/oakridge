@@ -1390,7 +1390,27 @@ body {
   left: auto;
   right: auto;
   max-width: none;
-  margin: 0;
+  /* `margin-top: auto` is what holds the bar at the foot of a *short*
+     transcript: sticky only pins once the content overflows, so without it a
+     session with three messages would leave its input bar floating mid-pane. */
+  margin: auto 0 0;
+}
+
+/* The embedded surface itself. The 800px reading column and the bottom
+   clearance both belong to the standalone route, where the window is the
+   surface and the bar is out of flow; in a pane the bar is in flow and the
+   pane's own body padding is the only gutter that should apply. */
+.session-surface--embedded {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  max-width: none;
+  padding: 0;
+}
+
+/* No notch to clear inside a pane — the safe-area inset is the window's. */
+.session-surface--embedded .top-bar {
+  padding-top: 0.5rem;
 }
 
 .input-bar {
@@ -5201,6 +5221,16 @@ a:focus-visible {
 
 .or-run-workspace__pane-action { border: 1px solid var(--border-subtle); border-radius: 0.4rem; background: none; color: var(--text-muted); cursor: pointer; font: inherit; font-size: 0.75rem; padding: 0.2rem 0.45rem; }
 .or-run-workspace__pane-body { flex: 1; min-height: 0; padding: 0.9rem; }
+
+/* The element a session pane hands to `SessionSurfaceLayout` as its scroll
+   host. It is bounded by the pane body rather than by the window, which is
+   what makes two session panes scroll independently — and, because it never
+   overflows its own pane, the enclosing `.or-run-workspace__pane` scrollport
+   stays out of it. */
+.or-run-pane-session {
+  height: 100%;
+  overflow-y: auto;
+}
 .or-run-overview__heading { margin: 0 0 0.4rem; color: var(--text-muted); font-size: 0.6875rem; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; }
 .or-run-overview__empty { margin: 0; color: var(--text-faint); font-size: 0.8125rem; }
 .or-run-overview__list { display: flex; flex-direction: column; gap: 0.3rem; list-style: none; margin: 0; padding: 0; }
