@@ -25,7 +25,6 @@ import { RunPaneChrome } from "../molecules/RunPaneChrome";
 import { RunOverviewPane } from "./RunOverviewPane";
 import { RunWorkspaceSidebar } from "./RunWorkspaceSidebar";
 import { RunDetail } from "./RunDetail";
-import { ArtifactReview } from "./ArtifactReview";
 
 interface RunWorkspaceProps {
   runId: string;
@@ -153,10 +152,8 @@ interface PaneBodyProps {
 /**
  * What each pane variant renders.
  *
- * The list pane mounts the existing `RunDetail` organism unchanged, and the
- * artifact pane mounts the existing `ArtifactReview`: `#oakridge/artifact/:id`
- * now redirects into this workspace, so the pane has to keep that surface
- * working rather than hold its place. c3 replaces both entity bodies.
+ * The list pane mounts the existing `RunDetail` organism unchanged. Both entity
+ * panes hold their place until c3 fills them.
  */
 function PaneBody({ pane, runId, overview, onBack, onOpenPane }: PaneBodyProps) {
   switch (pane.kind) {
@@ -173,7 +170,14 @@ function PaneBody({ pane, runId, overview, onBack, onOpenPane }: PaneBodyProps) 
         />
       );
     case "artifact":
-      return <ArtifactReview artifactId={pane.artifact_id} onBack={onBack} />;
+      return (
+        <div className="py-4 text-sm text-[var(--text-secondary)]" data-testid="or-run-pane-artifact">
+          <p className="m-0">
+            The in-workspace artifact surface arrives with the artifact pane body.
+          </p>
+          <p className="mb-0 mt-2">Artifact {pane.artifact_id.slice(0, 8)}</p>
+        </div>
+      );
     case "session":
       return (
         <div className="py-4 text-sm text-[var(--text-secondary)]" data-testid="or-run-pane-session">
