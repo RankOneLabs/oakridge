@@ -4,8 +4,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
 
 import { RunListView } from "../views/RunListView";
-import { RunDetailView } from "../views/RunDetailView";
-import { ArtifactReviewView } from "../views/ArtifactReviewView";
+// Aliased: `RunDetail` is also the name of the run view-model type below.
+import { RunDetail as RunDetailOrganism } from "../components/organisms/RunDetail";
+import { ArtifactReview } from "../components/organisms/ArtifactReview";
 import { GlobalParkedGateList } from "../ParkedGateList";
 import type { RunSummary, RunDetail, ArtifactDetail, ParkedGate, RepositoryKey, CohortId, EpicProfileId, StageUnitParams, WorkflowRunId } from "../types";
 import type { BuildBrief } from "../lib/build-brief";
@@ -232,7 +233,7 @@ describe("RunListView", () => {
 // Run detail view
 // ──────────────────────────────────────────────────────────────────────────────
 
-describe("RunDetailView", () => {
+describe("RunDetail stage list", () => {
   function makeFetch(detail = RUN_DETAIL_FIXTURE, gates: ParkedGate[] = []): FetchHandler {
     return vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -244,21 +245,21 @@ describe("RunDetailView", () => {
 
   it("renders stage rows with name and status", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch());
-    wrap(<RunDetailView runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
+    wrap(<RunDetailOrganism runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
     const rows = await screen.findAllByTestId("or-stage-row");
     expect(rows).toHaveLength(2);
   });
 
   it("shows delegated session link for stages with a kbbl sid", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch());
-    wrap(<RunDetailView runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
+    wrap(<RunDetailOrganism runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
     const link = await screen.findByTestId("or-delegated-session-link");
     expect(link.getAttribute("href")).toContain("aaaabbbbccccdddd");
   });
 
   it("shows branch and path when worktree metadata is present", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch());
-    wrap(<RunDetailView runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
+    wrap(<RunDetailOrganism runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
     const branches = await screen.findAllByTestId("or-stage-branch");
     expect(branches.some((b) => b.textContent?.includes("cohort/v2_readiness/3-minimum_v2"))).toBe(true);
     const paths = await screen.findAllByTestId("or-stage-path");
@@ -267,14 +268,14 @@ describe("RunDetailView", () => {
 
   it("shows parked gates section when gates exist", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch(RUN_DETAIL_FIXTURE, [PARKED_GATE_FIXTURE]));
-    wrap(<RunDetailView runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
+    wrap(<RunDetailOrganism runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
     expect(await screen.findByTestId("or-run-gate-list")).toBeTruthy();
     expect(await screen.findByTestId("or-gate-card")).toBeTruthy();
   });
 
   it("shows error state when run fetch fails", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ error: "not found" }, 404));
-    wrap(<RunDetailView runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
+    wrap(<RunDetailOrganism runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
     expect(await screen.findByTestId("or-run-detail-error")).toBeTruthy();
   });
 
@@ -321,7 +322,7 @@ describe("RunDetailView", () => {
     });
     vi.spyOn(globalThis, "fetch").mockImplementation(fetchMock);
 
-    wrap(<RunDetailView runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
+    wrap(<RunDetailOrganism runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
 
     expect(await screen.findByText("Build the cohort UI")).toBeTruthy();
     expect(screen.queryByText("Operator workflow")).toBeNull();
@@ -353,7 +354,7 @@ describe("RunDetailView", () => {
       }],
     };
     vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch(detail));
-    wrap(<RunDetailView runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
+    wrap(<RunDetailOrganism runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
 
     expect((await screen.findByTestId("or-dependency-status")).textContent).toContain("cohort-a: waiting");
     expect(screen.queryByTestId("or-admit-unit-btn")).toBeNull();
@@ -380,7 +381,7 @@ describe("RunDetailView", () => {
       return json(detail);
     });
     vi.spyOn(globalThis, "fetch").mockImplementation(fetchMock);
-    wrap(<RunDetailView runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
+    wrap(<RunDetailOrganism runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
 
     fireEvent.click(await screen.findByTestId("or-retry-unit-btn"));
 
@@ -406,7 +407,7 @@ describe("RunDetailView", () => {
       }],
     };
     vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch(detail));
-    wrap(<RunDetailView runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
+    wrap(<RunDetailOrganism runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
 
     await screen.findByText("Rejected build");
     expect(screen.queryByTestId("or-retry-unit-btn")).not.toBeNull();
@@ -430,7 +431,7 @@ describe("RunDetailView", () => {
       return json(detail);
     });
     vi.spyOn(globalThis, "fetch").mockImplementation(fetchMock);
-    wrap(<RunDetailView runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
+    wrap(<RunDetailOrganism runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
 
     fireEvent.click(await screen.findByTestId("or-retry-unit-btn"));
 
@@ -455,7 +456,7 @@ describe("RunDetailView", () => {
       }],
     };
     vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch(detail));
-    wrap(<RunDetailView runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
+    wrap(<RunDetailOrganism runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
 
     await screen.findByText("Failed build");
     expect(screen.queryByTestId("or-retry-unit-btn")).not.toBeNull();
@@ -476,7 +477,7 @@ describe("RunDetailView", () => {
       }],
     };
     vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch(detail));
-    wrap(<RunDetailView runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
+    wrap(<RunDetailOrganism runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
 
     await screen.findByText("Failed build");
     expect(screen.queryByTestId("or-retry-unit-btn")).toBeNull();
@@ -535,7 +536,7 @@ describe("RunDetailView", () => {
     });
     vi.spyOn(globalThis, "fetch").mockImplementation(fetchMock);
 
-    wrap(<RunDetailView runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
+    wrap(<RunDetailOrganism runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
 
     expect(await screen.findByTestId("or-final-integration")).toBeTruthy();
     expect(screen.getAllByText("epic/v2-parity")).toHaveLength(2);
@@ -603,10 +604,10 @@ describe("GlobalParkedGateList", () => {
 // Artifact detail view
 // ──────────────────────────────────────────────────────────────────────────────
 
-describe("ArtifactReviewView", () => {
+describe("ArtifactReview", () => {
   it("renders artifact type, producing stage, and revision body", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json(ARTIFACT_FIXTURE));
-    wrap(<ArtifactReviewView artifactId="art-1" onBack={() => {}} />);
+    wrap(<ArtifactReview artifactId="art-1" onBack={() => {}} />);
 
     expect(await screen.findByTestId("or-artifact-type")).toBeTruthy();
     expect(screen.getByTestId("or-artifact-type").textContent).toBe("spec_v2");
@@ -621,7 +622,7 @@ describe("ArtifactReviewView", () => {
 
   it("shows revision status chip", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json(ARTIFACT_FIXTURE));
-    wrap(<ArtifactReviewView artifactId="art-1" onBack={() => {}} />);
+    wrap(<ArtifactReview artifactId="art-1" onBack={() => {}} />);
     const status = await screen.findByTestId("or-revision-status");
     expect(status.textContent).toBe("approved");
   });
@@ -645,7 +646,7 @@ describe("ArtifactReviewView", () => {
       if (url.includes("/gates")) return json([{ ...PARKED_GATE_FIXTURE, artifact_revision_id: "rev-1", resume_actions: ["approve"] }]);
       return json(described);
     });
-    wrap(<ArtifactReviewView artifactId="art-1" onBack={() => {}} />);
+    wrap(<ArtifactReview artifactId="art-1" onBack={() => {}} />);
 
     await waitFor(() => expect(screen.getByTestId("or-artifact-detail").getAttribute("data-review-layout")).toBe("report"));
     expect(await screen.findByTestId("or-artifact-gate-actions")).toBeTruthy();
@@ -670,7 +671,7 @@ describe("ArtifactReviewView", () => {
       }
       return json(artifact);
     });
-    wrap(<ArtifactReviewView artifactId="art-1" onBack={() => {}} />);
+    wrap(<ArtifactReview artifactId="art-1" onBack={() => {}} />);
 
     await screen.findByTestId("or-artifact-type");
     expect(await screen.findByTestId("or-artifact-gate-actions")).toBeTruthy();
@@ -696,7 +697,7 @@ describe("ArtifactReviewView", () => {
     };
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
       String(input).includes("/gates") ? json([]) : json(plan));
-    wrap(<ArtifactReviewView artifactId="art-1" onBack={() => {}} />);
+    wrap(<ArtifactReview artifactId="art-1" onBack={() => {}} />);
 
     expect(await screen.findByText("Scope")).toBeTruthy();
     expect(screen.getByText("Risks")).toBeTruthy();
@@ -705,7 +706,7 @@ describe("ArtifactReviewView", () => {
 
   it("shows error state when artifact fetch fails", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ error: "not found" }, 404));
-    wrap(<ArtifactReviewView artifactId="bad-id" onBack={() => {}} />);
+    wrap(<ArtifactReview artifactId="bad-id" onBack={() => {}} />);
     expect(await screen.findByTestId("or-artifact-detail-error")).toBeTruthy();
   });
 });
