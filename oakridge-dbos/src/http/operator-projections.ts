@@ -24,6 +24,17 @@ export const createOperatorProjectionApp = (projections: OperatorProjectionRepos
     const id = parseUuidId<WorkflowRunId>(http.req.param("id"));
     return http.json(id ? await projections.list_pending_gates(id) : []);
   });
+  /**
+   * Every agent session the run has ever opened, oldest first — one row per
+   * work order that has one, so a retried unit lists each attempt rather than
+   * only its live one. An unknown or malformed run id answers `[]` rather than
+   * 404, matching `/runs/:id/gates` above: a list route reports "no such
+   * sessions", and the run's own 404 is `/runs/:id`'s to give.
+   */
+  app.get("/runs/:id/sessions", async (http) => {
+    const id = parseUuidId<WorkflowRunId>(http.req.param("id"));
+    return http.json(id ? await projections.list_run_sessions(id) : []);
+  });
   app.post("/workflow_runs/:id/archive", async (http) => {
     const id = parseUuidId<WorkflowRunId>(http.req.param("id"));
     const updated = id !== null && await projections.set_run_archived(id, true);

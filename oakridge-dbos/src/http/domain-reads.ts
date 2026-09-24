@@ -1,12 +1,13 @@
 import { Hono } from "hono";
 
 import { parseUuidId, type ArtifactId, type StageInstanceId, type WorkflowRunId } from "../domain/primitives";
-import type { ArtifactRevisionRepository, RunArtifactReadRepository, SessionHoldRepository, StageInstanceRepository } from "../storage/repositories";
+import type { ArtifactRevisionRepository, RunArtifactReadRepository, SessionHoldRepository, SessionRunLocationRepository, StageInstanceRepository } from "../storage/repositories";
 
 export interface DomainReadHttpDependencies {
   readonly stages: StageInstanceRepository;
   readonly artifacts: ArtifactRevisionRepository & RunArtifactReadRepository;
   readonly session_holds: SessionHoldRepository;
+  readonly session_run_locations: SessionRunLocationRepository;
 }
 
 export const createDomainReadApp = (dependencies: DomainReadHttpDependencies): Hono => {
@@ -37,6 +38,21 @@ export const createDomainReadApp = (dependencies: DomainReadHttpDependencies): H
   app.get("/session_holds/:session_id", async (http) => {
     const hold = await dependencies.session_holds.find_session_hold(http.req.param("session_id"));
     return http.json({ held: hold !== null, hold });
+  });
+  /**
+   * Where a session sits in the run graph, for navigation. Distinct from
+   * `/session_holds/:session_id` above on purpose: this resolves a session
+   * whose work order finished and whose cleanup completed — a case the hold
+   * route correctly reports as `held: false`, because it answers whether the
+   * session may be closed, not which run it came from.
+   *
+   * 404 rather than a null body, so the caller can tell "this session is not
+   * one of ours" from "this session has no run". Session ids are kbbl's, not
+   * uuid-shaped domain ids, so they pass through as given.
+   */
+  app.get("/sessions/:session_id/run", async (http) => {
+    const location = await dependencies.session_run_locations.find_run_for_session(http.req.param("session_id"));
+    return location ? http.json(location) : http.json({ error: "session belongs to no run" }, 404);
   });
   return app;
 };

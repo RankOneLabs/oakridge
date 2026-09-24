@@ -41,6 +41,10 @@ import type {
   AdmitStageUnitResponse,
   EpicProfileId,
   WorkflowRunId,
+  RunSessionAttempt,
+  SessionRunLocation,
+  WorkOrderReason,
+  WorkOrderState,
 } from "./types";
 import type { Result } from "../lib/result";
 import { parseRepositoryKey } from "./repository-inputs";
@@ -206,6 +210,68 @@ function parseFinalPullRequestResponse(value: unknown): Result<FinalPullRequestR
   return ok({ outcome: raw.outcome, profile: profile.value } as FinalPullRequestResponse);
 }
 
+const WORK_ORDER_REASONS = new Set<string>(["initial", "operator_retry", "input_revision"]);
+const WORK_ORDER_STATES = new Set<string>(["available", "started", "completed", "abandoned"]);
+
+const isNullableString = (value: unknown): value is string | null => value === null || typeof value === "string";
+
+/**
+ * One attempt from `GET /runs/:id/sessions`, checked field by field.
+ *
+ * The union members are validated against the sets above rather than cast,
+ * because they are the sidebar's attempt label and its state badge: a value the
+ * backend grew that this build does not know about must surface as a parse
+ * failure naming the field, not render as a blank chip.
+ */
+function parseRunSessionAttempt(value: unknown): Result<RunSessionAttempt, ResponseParseError> {
+  const operation = "parse run session attempt";
+  if (!value || typeof value !== "object" || Array.isArray(value)) return err(operation, "entry was not an object");
+  const raw = value as Partial<Record<keyof RunSessionAttempt, unknown>>;
+  if (typeof raw.work_order_id !== "string" || !raw.work_order_id) return err(operation, "entry contained an empty work order id");
+  if (typeof raw.session_id !== "string" || !raw.session_id) return err(operation, "entry contained an empty session id");
+  if (typeof raw.stage_instance_id !== "string" || !raw.stage_instance_id) return err(operation, "entry contained an empty stage instance id");
+  if (typeof raw.stage_key !== "string") return err(operation, "entry contained an invalid stage key");
+  if (typeof raw.unit_id !== "string") return err(operation, "entry contained an invalid unit id");
+  if (typeof raw.reason !== "string" || !WORK_ORDER_REASONS.has(raw.reason)) return err(operation, "entry contained an unknown work order reason");
+  if (typeof raw.work_order_state !== "string" || !WORK_ORDER_STATES.has(raw.work_order_state)) return err(operation, "entry contained an unknown work order state");
+  if (typeof raw.created_at !== "string") return err(operation, "entry contained an invalid creation time");
+  if (!isNullableString(raw.completed_at)) return err(operation, "entry contained an invalid completion time");
+  if (!isNullableString(raw.executor_health_kind)) return err(operation, "entry contained an invalid executor health kind");
+  if (typeof raw.cleanup_state !== "string") return err(operation, "entry contained an invalid cleanup state");
+  return ok({
+    work_order_id: raw.work_order_id, session_id: raw.session_id, stage_instance_id: raw.stage_instance_id,
+    stage_key: raw.stage_key, unit_id: raw.unit_id, reason: raw.reason as WorkOrderReason,
+    work_order_state: raw.work_order_state as WorkOrderState, created_at: raw.created_at,
+    completed_at: raw.completed_at, executor_health_kind: raw.executor_health_kind, cleanup_state: raw.cleanup_state,
+  });
+}
+
+function parseRunSessionAttempts(value: unknown): Result<RunSessionAttempt[], ResponseParseError> {
+  if (!Array.isArray(value)) return err("parse run sessions", "response was not an array");
+  const attempts: RunSessionAttempt[] = [];
+  for (const entry of value) {
+    const attempt = parseRunSessionAttempt(entry);
+    if (!attempt.ok) return attempt;
+    attempts.push(attempt.value);
+  }
+  return ok(attempts);
+}
+
+function parseSessionRunLocation(value: unknown): Result<SessionRunLocation, ResponseParseError> {
+  const operation = "parse session run location";
+  if (!value || typeof value !== "object" || Array.isArray(value)) return err(operation, "response was not an object");
+  const raw = value as Partial<Record<keyof SessionRunLocation, unknown>>;
+  if (typeof raw.run_id !== "string" || !raw.run_id) return err(operation, "response contained an empty run id");
+  if (typeof raw.stage_instance_id !== "string" || !raw.stage_instance_id) return err(operation, "response contained an empty stage instance id");
+  if (typeof raw.stage_key !== "string") return err(operation, "response contained an invalid stage key");
+  if (typeof raw.unit_id !== "string") return err(operation, "response contained an invalid unit id");
+  if (typeof raw.work_order_id !== "string" || !raw.work_order_id) return err(operation, "response contained an empty work order id");
+  return ok({
+    run_id: raw.run_id as WorkflowRunId, stage_instance_id: raw.stage_instance_id,
+    stage_key: raw.stage_key, unit_id: raw.unit_id, work_order_id: raw.work_order_id,
+  });
+}
+
 function unwrapResponse<T>(path: string, result: Result<T, ResponseParseError>): T {
   if (result.ok) return result.value;
   throw new Error(`oakridge ${path}: ${result.error.operation}: ${result.error.detail}`);
@@ -317,6 +383,34 @@ export function fetchRun(id: string): Promise<RunDetail> {
 export function fetchRunGates(runId: string): Promise<ParkedGate[]> {
   const path = `/runs/${encodeURIComponent(runId)}/gates`;
   return oakridgeGet<RawParkedGate[]>(path).then((value) => unwrapResponse(path, parseParkedGates(value)));
+}
+
+/**
+ * Every agent session the run has opened, oldest first — one entry per work
+ * order that has one, so a retried unit lists each attempt rather than only its
+ * live one. An unknown run id answers `[]`, matching `/runs/:id/gates`.
+ */
+export function fetchRunSessions(runId: string): Promise<RunSessionAttempt[]> {
+  const path = `/runs/${encodeURIComponent(runId)}/sessions`;
+  return oakridgeGet<unknown>(path).then((value) => unwrapResponse(path, parseRunSessionAttempts(value)));
+}
+
+/**
+ * The run a session belongs to, or null when it belongs to none.
+ *
+ * The route answers 404 for "no run" so a caller can tell it from "not one of
+ * ours"; that is a routine answer here, not a failure, so it becomes `null`
+ * rather than a thrown error. Every other non-OK status still throws.
+ */
+export async function fetchSessionRun(sessionId: string): Promise<SessionRunLocation | null> {
+  const path = `/sessions/${encodeURIComponent(sessionId)}/run`;
+  const res = await fetch(`${API}${path}`);
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const body = await res.json().catch(() => null) as unknown;
+    throw new Error(selectFailureDetail(body, `oakridge ${path}: ${res.status}`));
+  }
+  return unwrapResponse(path, parseSessionRunLocation(await res.json()));
 }
 
 export function fetchGates(): Promise<ParkedGate[]> {

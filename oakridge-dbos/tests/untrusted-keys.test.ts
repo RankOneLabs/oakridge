@@ -71,6 +71,7 @@ test("no operator projection route queries on a malformed run id", async () => {
     const encoded = encodeURIComponent(id);
     expect((await app.request(`/runs/${encoded}`)).status).toBe(404);
     expect((await app.request(`/runs/${encoded}/gates`)).status).toBe(200);
+    expect((await app.request(`/runs/${encoded}/sessions`)).status).toBe(200);
     expect((await app.request(`/workflow_runs/${encoded}/archive`, { method: "POST" })).status).toBe(404);
     expect((await app.request(`/workflow_runs/${encoded}/unarchive`, { method: "POST" })).status).toBe(404);
   }
@@ -81,6 +82,11 @@ test("no domain read route queries on a malformed id", async () => {
     stages: refuseEveryCall("stages") as never,
     artifacts: refuseEveryCall("artifacts") as never,
     session_holds: refuseEveryCall("session_holds") as never,
+    // Not exercised by the loop below: `/session_holds/:id` and
+    // `/sessions/:id/run` are keyed by kbbl session ids, which are not
+    // uuid-shaped and so are passed through as given — querying on one is
+    // correct, not a leak of an id that cannot exist.
+    session_run_locations: refuseEveryCall("session_run_locations") as never,
   }));
   for (const id of MALFORMED) {
     const encoded = encodeURIComponent(id);

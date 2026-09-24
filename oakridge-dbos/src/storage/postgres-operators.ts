@@ -1,6 +1,6 @@
 import type { ArtifactId, ExecutionId, RunUnitId, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "../domain/primitives";
-import { selectGateActionability, selectPendingStageOrder, selectRunRecordUnitDecision, type OperatorApplicationVersionInventory, type OperatorCohortLifecycle, type OperatorCohortSummary, type OperatorParkedGate, type OperatorReviewInbox, type OperatorReviewInboxItem, type OperatorRunDetail, type OperatorRunRecordDetail, type OperatorRunRecordSlot, type OperatorRunRecordTransition, type OperatorRunRecordUnit, type OperatorRunRecordUnitFacts, type OperatorRunRecordWait, type OperatorRunRecordWorkOrder, type OperatorRunSummary, type OperatorStageArtifact, type OperatorStageDetail, type OperatorStageUnit } from "../domain/operator-projections";
-import type { RunOutputSlotState } from "../domain/run-record";
+import { selectGateActionability, selectPendingStageOrder, selectRunRecordUnitDecision, type OperatorApplicationVersionInventory, type OperatorCohortLifecycle, type OperatorCohortSummary, type OperatorParkedGate, type OperatorReviewInbox, type OperatorReviewInboxItem, type OperatorRunDetail, type OperatorRunRecordDetail, type OperatorRunRecordSlot, type OperatorRunRecordTransition, type OperatorRunRecordUnit, type OperatorRunRecordUnitFacts, type OperatorRunRecordWait, type OperatorRunRecordWorkOrder, type OperatorRunSessionAttempt, type OperatorRunSummary, type OperatorSessionRunLocation, type OperatorStageArtifact, type OperatorStageDetail, type OperatorStageUnit } from "../domain/operator-projections";
+import type { RunOutputSlotState, WorkOrderReason } from "../domain/run-record";
 import type { SqlExecutor } from "./sql-executor";
 import { selectV2RunStatus, selectV2StageStatus, selectV2UnitStatus } from "../operators/select-status";
 import type { EpicWorkflowProfile } from "../domain/epic";
@@ -13,7 +13,7 @@ import { parseWorkflowDefinition } from "../validation/workflow-definition";
 import { stageInstanceIdFor } from "../decision/ids";
 import type { StageKey } from "../domain/workflow";
 import { selectSessionHoldClaim, type SessionHold } from "../domain/session-hold";
-import type { SessionHoldRepository } from "./repositories";
+import type { SessionHoldRepository, SessionRunLocationRepository } from "./repositories";
 import { runRecordWorkflowId } from "../domain/workflow-ids";
 
 interface GateProjectionRow {
@@ -43,6 +43,14 @@ export interface OperatorProjectionRepository {
    * lifecycle the inbox blends a pending gate into.
    */
   list_cohorts(): Promise<readonly OperatorCohortSummary[]>;
+  /**
+   * Every attempt at every unit of the run that has an agent session, oldest
+   * first — the unit's session history, not just its live attempt. No
+   * state/status/cleanup predicate: a completed or abandoned attempt keeps its
+   * session id (`executor_attachment.work_order_id` is a PRIMARY KEY), and
+   * hiding finished attempts is exactly what would make the history useless.
+   */
+  list_run_sessions(run_id: WorkflowRunId): Promise<readonly OperatorRunSessionAttempt[]>;
   set_run_archived(id: WorkflowRunId, archived: boolean): Promise<boolean>;
   get_invalidation_cursor(): Promise<string>;
   list_application_versions(): Promise<readonly OperatorApplicationVersionInventory[]>;
@@ -54,7 +62,7 @@ interface V2RunProjectionRow { readonly id: string; readonly title: string | nul
 interface OperatorExecutorReference { readonly kind?: string; readonly session_id?: string; readonly worktree_base_sha?: string }
 interface V2StageProjectionRow { readonly stage_instance_id: string; readonly name: string; readonly stage_type: string; readonly operator_role: string | null; readonly state: RunState; readonly has_open_wait: boolean }
 interface V2UnitProjectionRow { readonly stage_instance_id: string; readonly unit_id: string; readonly params: OperatorStageUnit["params"]; readonly state: UnitState; readonly external_reference: OperatorExecutorReference | null; readonly executor_health_kind: string | null; readonly gate_step: string | null; readonly has_open_wait: boolean; readonly has_missing_required_output: boolean; readonly admission_required: boolean; readonly admitted: boolean; readonly admission_blocked_by: readonly string[] }
-interface StageArtifactRow { readonly stage_instance_id: string; readonly id: string; readonly type_id: string; readonly version: number; readonly label: string | null }
+interface StageArtifactRow { readonly stage_instance_id: string; readonly id: string; readonly type_id: string; readonly version: number; readonly label: string | null; readonly created_at: string }
 interface EpicProfileRow extends Omit<EpicWorkflowProfile, "id" | "workflow_run_id"> { readonly id: string; readonly workflow_run_id: string }
 /**
  * A fan-out unit's parameters are the item the stage fanned out over, wrapped.
@@ -84,7 +92,19 @@ function selectStageUnitRepositoryKey(params: unknown): string | null {
   return typeof repositoryKey === "string" ? repositoryKey : null;
 }
 
-export class PostgresOperatorProjectionRepository implements OperatorProjectionRepository, SessionHoldRepository {
+interface RunSessionAttemptRow {
+  readonly work_order_id: string; readonly session_id: string; readonly stage_instance_id: string;
+  readonly stage_key: string; readonly unit_id: string; readonly reason: WorkOrderReason;
+  readonly work_order_state: OperatorRunSessionAttempt["work_order_state"]; readonly created_at: string;
+  readonly completed_at: string | null; readonly executor_health_kind: string | null; readonly cleanup_state: string;
+}
+
+interface SessionRunLocationRow {
+  readonly run_id: string; readonly stage_instance_id: string; readonly stage_key: string;
+  readonly unit_id: string; readonly work_order_id: string;
+}
+
+export class PostgresOperatorProjectionRepository implements OperatorProjectionRepository, SessionHoldRepository, SessionRunLocationRepository {
   constructor(
     private readonly sql: SqlExecutor,
     private readonly executor_application_version: string,
@@ -139,6 +159,58 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
       return null;
     }
     return claim.hold;
+  }
+
+  /**
+   * The run's full session history — see the interface doc for why this
+   * carries no state, status or cleanup predicate. Deliberately *not* built on
+   * `find_session_hold`'s query: that one answers close-safety and its
+   * predicates are those semantics, so widening it to serve navigation would
+   * make kbbl refuse to close sessions that are safe to close.
+   */
+  async list_run_sessions(run_id: WorkflowRunId): Promise<readonly OperatorRunSessionAttempt[]> {
+    const rows = await this.sql.query<RunSessionAttemptRow>(
+      `SELECT work.id::text AS work_order_id,
+              attachment.external_reference->>'session_id' AS session_id,
+              unit.stage_instance_id::text AS stage_instance_id, stage.stage_key, unit.unit_id,
+              work.reason, work.state AS work_order_state,
+              work.created_at::text AS created_at, work.completed_at::text AS completed_at,
+              attachment.health->>'kind' AS executor_health_kind, attachment.cleanup_state
+       FROM oakridge.run_unit unit
+       JOIN oakridge.work_order work ON work.run_unit_id = unit.id
+       JOIN oakridge.executor_attachment attachment ON attachment.work_order_id = work.id
+       JOIN oakridge.stage_instance stage ON stage.id = unit.stage_instance_id
+       WHERE unit.run_id = $1 AND attachment.external_reference->>'session_id' IS NOT NULL
+       ORDER BY work.created_at, work.id`, [run_id]);
+    return rows.map((row) => ({
+      work_order_id: row.work_order_id as WorkOrderId, session_id: row.session_id,
+      stage_instance_id: row.stage_instance_id as StageInstanceId, stage_key: row.stage_key,
+      unit_id: row.unit_id as UnitId, reason: row.reason, work_order_state: row.work_order_state,
+      created_at: row.created_at, completed_at: row.completed_at,
+      executor_health_kind: row.executor_health_kind, cleanup_state: row.cleanup_state,
+    }));
+  }
+
+  /**
+   * Navigation: the run a session belongs to, whatever became of the work that
+   * opened it. `ORDER BY attachment.updated_at DESC` picks the most recently
+   * touched attachment in the (unexpected) case that a session id was reused
+   * across work orders — the session's latest home, not an arbitrary one.
+   */
+  async find_run_for_session(session_id: string): Promise<OperatorSessionRunLocation | null> {
+    const rows = await this.sql.query<SessionRunLocationRow>(
+      `SELECT unit.run_id::text AS run_id, unit.stage_instance_id::text AS stage_instance_id,
+              stage.stage_key, unit.unit_id, work.id::text AS work_order_id
+       FROM oakridge.executor_attachment attachment
+       JOIN oakridge.work_order work ON work.id = attachment.work_order_id
+       JOIN oakridge.run_unit unit ON unit.id = work.run_unit_id
+       JOIN oakridge.stage_instance stage ON stage.id = unit.stage_instance_id
+       WHERE attachment.external_reference->>'session_id' = $1
+       ORDER BY attachment.updated_at DESC LIMIT 1`, [session_id]);
+    const row = rows[0];
+    if (!row) return null;
+    return { run_id: row.run_id as WorkflowRunId, stage_instance_id: row.stage_instance_id as StageInstanceId,
+      stage_key: row.stage_key, unit_id: row.unit_id as UnitId, work_order_id: row.work_order_id as WorkOrderId };
   }
 
   async list_pending_gates(run_id?: WorkflowRunId): Promise<readonly OperatorParkedGate[]> {
@@ -375,7 +447,8 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
        WHERE unit.run_id=$1 ORDER BY unit.stage_instance_id,unit.unit_id`, [id]);
     const artifactRows = await this.sql.query<StageArtifactRow>(
       `SELECT DISTINCT ON (artifact.stage_instance_id,artifact.unit_id,artifact.output_name,artifact.collection_key)
-              artifact.stage_instance_id::text,artifact.id::text,artifact.artifact_type AS type_id,artifact.version,artifact.label
+              artifact.stage_instance_id::text,artifact.id::text,artifact.artifact_type AS type_id,artifact.version,artifact.label,
+              artifact.created_at::text AS created_at
        FROM oakridge.artifact artifact WHERE artifact.run_id=$1
          AND EXISTS (SELECT 1 FROM oakridge.run_output_slot visible_slot WHERE visible_slot.artifact_revision_id=artifact.id)
        ORDER BY artifact.stage_instance_id,artifact.unit_id,artifact.output_name,artifact.collection_key,artifact.version DESC`, [id]);
@@ -392,7 +465,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
         admission_eligible: unit.admission_blocked_by.length === 0, admission_blocked_by: unit.admission_blocked_by,
       }));
       const artifacts = artifactRows.filter((artifact) => artifact.stage_instance_id === stage.stage_instance_id)
-        .map((artifact): OperatorStageArtifact => ({ id: artifact.id as ArtifactId, type_id: artifact.type_id, version: artifact.version, label: artifact.label }));
+        .map((artifact): OperatorStageArtifact => ({ id: artifact.id as ArtifactId, type_id: artifact.type_id, version: artifact.version, label: artifact.label, created_at: artifact.created_at }));
       return { stage_instance_id: stage.stage_instance_id as import("../domain/primitives").StageInstanceId,
         name: stage.name, type: stage.stage_type, operator_role: stage.operator_role,
         status: selectV2StageStatus(stage.state, stage.has_open_wait), artifacts,
