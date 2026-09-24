@@ -1,0 +1,202 @@
+// The run-level selectors the command center reads — `selectRunOverview` for
+// the overview pane, plus the two small derivations the sidebar shares with it.
+//
+// Everything here is a pure function of data already on screen: `GET /runs/:id`,
+// `GET /runs/:id/sessions` (via c1's `selectRunSessionRows`) and
+// `GET /runs/:id/gates`. No per-session or per-artifact fetch is added, and no
+// component re-derives any of it in a render body.
+
+import type { ArtifactId, Sid } from "../../lib/ids";
+import type {
+  ParkedGate,
+  RunDetail,
+  RunSessionAttempt,
+  RunStatus,
+  StageStatus,
+  WorkOrderState,
+} from "../types";
+import { selectRunSessionRows, type RunSessionRow } from "./run-sessions";
+
+/** How many artifact releases the overview lists before "recent" stops meaning anything. */
+export const RECENT_SLOT_RELEASE_LIMIT = 8;
+
+/**
+ * A unit's identity as the *gate* list spells it — `stage_name:unit_id`.
+ *
+ * `ParkedGate.stage_name` and `StageDetail.name` are both the stage's
+ * `stage_key` (oakridge-dbos `postgres-operators.ts` projects the stage as
+ * `name: stage_key`), and `RunSessionAttempt.stage_key` is that same column, so
+ * an attempt and a gate on the same unit produce the same key.
+ */
+export type UnitActionKey = string & { readonly __brand: "UnitActionKey" };
+
+export const unitActionKeyOf = (stageKey: string, unitId: string): UnitActionKey =>
+  `${stageKey}:${unitId}` as UnitActionKey;
+
+/**
+ * The units where the run is waiting on a person. A gate that is no longer
+ * `actionable` is one the run moved past while it sat open — it is stranded,
+ * not pending, and counting it would tell the operator to act on nothing.
+ */
+export const selectUnitsAwaitingAction = (
+  gates: readonly ParkedGate[],
+): ReadonlySet<UnitActionKey> => {
+  const keys = new Set<UnitActionKey>();
+  for (const gate of gates) {
+    if (gate.actionable) keys.add(unitActionKeyOf(gate.stage_name, gate.unit_id));
+  }
+  return keys;
+};
+
+/** "attempt 2 of 3" for a retried unit, "attempt 1" for one that ran once. */
+export const formatAttemptLabel = (row: RunSessionRow): string =>
+  row.attempt_count > 1
+    ? `attempt ${row.attempt_number} of ${row.attempt_count}`
+    : `attempt ${row.attempt_number}`;
+
+export interface RunOverviewSessionRef {
+  readonly session_id: Sid;
+  readonly stage_key: string;
+  readonly unit_id: string;
+  readonly attempt_label: string;
+  readonly work_order_state: WorkOrderState;
+}
+
+export interface RunOverviewGate {
+  readonly gate_id: string;
+  readonly gate_type: string;
+  readonly stage_name: string;
+  readonly unit_id: string;
+  readonly resume_actions: readonly string[];
+}
+
+export interface RunOverviewSlotRelease {
+  readonly artifact_id: ArtifactId;
+  readonly type_id: string;
+  readonly stage_name: string;
+  readonly label: string | null;
+  /** Absent on a backend older than `OperatorStageArtifact.created_at`. */
+  readonly created_at: string | null;
+}
+
+export interface RunOverviewStageProgress {
+  readonly total: number;
+  readonly complete: number;
+  readonly running: number;
+  readonly parked: number;
+  readonly failed: number;
+  readonly pending: number;
+}
+
+export interface RunOverview {
+  readonly status: RunStatus;
+  readonly is_stuck: boolean;
+  readonly parked_count: number;
+  /** The attempt the run is live in right now, or null when nothing is executing. */
+  readonly current_session: RunOverviewSessionRef | null;
+  readonly sessions_awaiting_action: readonly RunOverviewSessionRef[];
+  readonly active_gates: readonly RunOverviewGate[];
+  readonly recent_slot_releases: readonly RunOverviewSlotRelease[];
+  readonly stage_progress: RunOverviewStageProgress;
+}
+
+export interface RunOverviewInput {
+  readonly run: RunDetail;
+  readonly sessions: readonly RunSessionAttempt[];
+  readonly gates: readonly ParkedGate[];
+}
+
+const toSessionRef = (row: RunSessionRow): RunOverviewSessionRef => ({
+  session_id: row.attempt.session_id as Sid,
+  stage_key: row.attempt.stage_key,
+  unit_id: row.attempt.unit_id,
+  attempt_label: formatAttemptLabel(row),
+  work_order_state: row.attempt.work_order_state,
+});
+
+/**
+ * The newest current attempt that is actually executing.
+ *
+ * `selectRunSessionRows` preserves the route's oldest-first order, so the last
+ * match is the newest — the same reason c1 reads the list from the end rather
+ * than comparing `created_at` strings whose rendered UTC offset nothing pins.
+ */
+const selectCurrentSession = (rows: readonly RunSessionRow[]): RunOverviewSessionRef | null => {
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const row = rows[index];
+    if (row.is_current && row.attempt.work_order_state === "started") return toSessionRef(row);
+  }
+  return null;
+};
+
+const selectStageProgress = (run: RunDetail): RunOverviewStageProgress => {
+  const counts: Record<StageStatus, number> = {
+    pending: 0,
+    running: 0,
+    complete: 0,
+    failed: 0,
+    parked: 0,
+  };
+  for (const stage of run.stages) counts[stage.status] += 1;
+  return { total: run.stages.length, ...counts };
+};
+
+/**
+ * Newest first. Sorted on the parsed instant, not the rendered string: the
+ * backend hands these over as `timestamptz::text`, and comparing those
+ * lexically reads a DST fold backwards — `01:15:00-05` sorts before
+ * `01:30:00-04` but happens 45 minutes after it. Releases with no timestamp
+ * keep their document order at the end rather than jumping to the front.
+ */
+const selectRecentSlotReleases = (run: RunDetail): readonly RunOverviewSlotRelease[] => {
+  const releases: RunOverviewSlotRelease[] = [];
+  for (const stage of run.stages) {
+    for (const artifact of stage.artifacts) {
+      releases.push({
+        artifact_id: artifact.id as ArtifactId,
+        type_id: artifact.type_id,
+        stage_name: stage.name,
+        label: artifact.label ?? null,
+        created_at: artifact.created_at ?? null,
+      });
+    }
+  }
+  const instantOf = (release: RunOverviewSlotRelease): number => {
+    if (release.created_at === null) return Number.NEGATIVE_INFINITY;
+    const parsed = Date.parse(release.created_at);
+    return Number.isNaN(parsed) ? Number.NEGATIVE_INFINITY : parsed;
+  };
+  return releases
+    .sort((left, right) => instantOf(right) - instantOf(left))
+    .slice(0, RECENT_SLOT_RELEASE_LIMIT);
+};
+
+/** Everything the overview pane renders, derived once. */
+export const selectRunOverview = ({ run, sessions, gates }: RunOverviewInput): RunOverview => {
+  const rows = selectRunSessionRows(sessions);
+  const awaitingAction = selectUnitsAwaitingAction(gates);
+  return {
+    status: run.status,
+    is_stuck: run.is_stuck,
+    parked_count: run.parked_count,
+    current_session: selectCurrentSession(rows),
+    sessions_awaiting_action: rows
+      .filter(
+        (row) =>
+          row.is_current &&
+          awaitingAction.has(unitActionKeyOf(row.attempt.stage_key, row.attempt.unit_id)),
+      )
+      .map(toSessionRef),
+    active_gates: gates
+      .filter((gate) => gate.actionable)
+      .map((gate) => ({
+        gate_id: gate.id,
+        gate_type: gate.gate_type,
+        stage_name: gate.stage_name,
+        unit_id: gate.unit_id,
+        resume_actions: gate.resume_actions,
+      })),
+    recent_slot_releases: selectRecentSlotReleases(run),
+    stage_progress: selectStageProgress(run),
+  };
+};
