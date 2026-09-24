@@ -220,6 +220,7 @@ describe("an unavailable gate read", () => {
     const view = selectRunSidebarSessions({
       sessions: [attempt({ work_order_id: "wo-1", session_id: "sid-1", unit_id: "c1" })],
       gates: { kind: "unavailable" },
+      purgedSessionIds: new Set(),
     });
 
     expect(view.is_action_state_known).toBe(false);
@@ -235,12 +236,53 @@ describe("sidebar sessions", () => {
         attempt({ work_order_id: "wo-2", session_id: "sid-2", unit_id: "c2" }),
       ],
       gates: { kind: "loaded", gates: [gate({ id: "gate-1", unit_id: "c2" })] },
+      purgedSessionIds: new Set(),
     });
 
     expect(view.is_action_state_known).toBe(true);
     expect(view.rows.filter((row) => row.requires_operator_action).map((row) => row.session_id)).toEqual([
       "sid-2",
     ]);
+  });
+
+  it("drops a purged session, since the run keeps listing its work order", () => {
+    const view = selectRunSidebarSessions({
+      sessions: [
+        attempt({ work_order_id: "wo-1", session_id: "sid-1", unit_id: "c1" }),
+        attempt({ work_order_id: "wo-2", session_id: "sid-2", unit_id: "c2" }),
+      ],
+      gates: { kind: "loaded", gates: [] },
+      purgedSessionIds: new Set(["sid-1"]),
+    });
+
+    expect(view.rows.map((row) => row.session_id)).toEqual(["sid-2"]);
+  });
+
+  it("leaves a surviving attempt's number alone when an earlier attempt is purged", () => {
+    const view = selectRunSidebarSessions({
+      sessions: [
+        attempt({
+          work_order_id: "wo-1",
+          session_id: "sid-1",
+          unit_id: "c1",
+          created_at: "2026-09-01T09:00:00Z",
+          work_order_state: "abandoned",
+        }),
+        attempt({
+          work_order_id: "wo-2",
+          session_id: "sid-2",
+          unit_id: "c1",
+          created_at: "2026-09-01T10:00:00Z",
+          reason: "operator_retry",
+        }),
+      ],
+      gates: { kind: "loaded", gates: [] },
+      purgedSessionIds: new Set(["sid-1"]),
+    });
+
+    // The purge took the transcript, not the attempt that produced it — the
+    // retry is still the unit's second try and says so.
+    expect(view.rows.map((row) => row.attempt_label)).toEqual(["attempt 2 of 2"]);
   });
 });
 

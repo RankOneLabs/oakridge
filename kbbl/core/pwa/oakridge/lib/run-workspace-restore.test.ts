@@ -3,7 +3,12 @@ import { describe, expect, it } from "vitest";
 import type { ArtifactId, Sid } from "../../lib/ids";
 import type { RunDetail, RunSessionAttempt } from "../types";
 import { LIST_PANE, OVERVIEW_PANE, type RunWorkspacePane } from "./run-workspace";
-import { indexRunEntities, isPaneResolvable, resolveWorkspaceState } from "./run-workspace-restore";
+import {
+  indexRunEntities,
+  isPaneResolvable,
+  resolveWorkspaceState,
+  validateWorkspacePanes,
+} from "./run-workspace-restore";
 
 const sessionPane = (id: string): RunWorkspacePane => ({ kind: "session", session_id: id as Sid });
 const artifactPane = (id: string): RunWorkspacePane => ({ kind: "artifact", artifact_id: id as ArtifactId });
@@ -75,27 +80,79 @@ const SESSIONS: readonly RunSessionAttempt[] = [
 const resolve = (
   routePane: Parameters<typeof resolveWorkspaceState>[0]["routePane"],
   storedState: Parameters<typeof resolveWorkspaceState>[0]["storedState"],
-) => resolveWorkspaceState({ routePane, storedState, run: RUN, sessions: SESSIONS });
+) => resolveWorkspaceState({ routePane, storedState, run: RUN, sessions: SESSIONS, purgedSessionIds: NO_PURGED_SESSIONS });
+
+/** Nothing purged — the ordinary case, named so each call site says so. */
+const NO_PURGED_SESSIONS: ReadonlySet<string> = new Set();
 
 describe("indexRunEntities", () => {
   it("indexes every session the run shows, from attempts and from stages alike", () => {
-    const index = indexRunEntities(RUN, SESSIONS);
+    const index = indexRunEntities({ run: RUN, sessions: SESSIONS, purgedSessionIds: NO_PURGED_SESSIONS });
 
     expect(index.session_ids).toEqual(new Set(["sid-c1", "sid-c2", "sid-plan"]));
     expect(index.artifact_ids).toEqual(new Set(["art-plan", "art-build"]));
   });
 });
 
+describe("a session purged out from under a pane", () => {
+  const purged: ReadonlySet<string> = new Set(["sid-c1"]);
+
+  it("leaves the index, even though the run still lists its work order", () => {
+    const index = indexRunEntities({ run: RUN, sessions: SESSIONS, purgedSessionIds: purged });
+
+    expect(index.session_ids.has("sid-c1")).toBe(false);
+    expect(index.session_ids.has("sid-c2")).toBe(true);
+  });
+
+  it("drops the pane holding it back to the overview", () => {
+    const index = indexRunEntities({ run: RUN, sessions: SESSIONS, purgedSessionIds: purged });
+
+    const validated = validateWorkspacePanes(
+      { primary: sessionPane("sid-c1"), secondary: LIST_PANE },
+      index,
+    );
+
+    expect(validated.state.primary).toEqual(OVERVIEW_PANE);
+    expect(validated.state.secondary).toEqual(LIST_PANE);
+    expect(validated.dropped_a_pane).toBe(true);
+  });
+
+  it("closes a twin holding it and leaves the primary alone", () => {
+    const index = indexRunEntities({ run: RUN, sessions: SESSIONS, purgedSessionIds: purged });
+
+    const validated = validateWorkspacePanes(
+      { primary: LIST_PANE, secondary: sessionPane("sid-c1") },
+      index,
+    );
+
+    expect(validated.state.primary).toEqual(LIST_PANE);
+    expect(validated.state.secondary).toBeNull();
+    expect(validated.dropped_a_pane).toBe(true);
+  });
+
+  it("reports nothing dropped when every pane still resolves", () => {
+    const index = indexRunEntities({ run: RUN, sessions: SESSIONS, purgedSessionIds: purged });
+
+    const validated = validateWorkspacePanes(
+      { primary: sessionPane("sid-c2"), secondary: null },
+      index,
+    );
+
+    expect(validated.state.primary).toEqual(sessionPane("sid-c2"));
+    expect(validated.dropped_a_pane).toBe(false);
+  });
+});
+
 describe("isPaneResolvable", () => {
   it("always resolves the panes derived from the run itself", () => {
-    const index = indexRunEntities(RUN, SESSIONS);
+    const index = indexRunEntities({ run: RUN, sessions: SESSIONS, purgedSessionIds: NO_PURGED_SESSIONS });
 
     expect(isPaneResolvable(OVERVIEW_PANE, index)).toBe(true);
     expect(isPaneResolvable(LIST_PANE, index)).toBe(true);
   });
 
   it("resolves an entity pane only when the run still contains it", () => {
-    const index = indexRunEntities(RUN, SESSIONS);
+    const index = indexRunEntities({ run: RUN, sessions: SESSIONS, purgedSessionIds: NO_PURGED_SESSIONS });
 
     expect(isPaneResolvable(sessionPane("sid-c1"), index)).toBe(true);
     expect(isPaneResolvable(sessionPane("sid-purged"), index)).toBe(false);

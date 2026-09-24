@@ -8,6 +8,8 @@
 
 import type { RefObject } from "react";
 
+import type { Theme } from "../types";
+
 /**
  * What a session view scrolls. A discriminated union, not a nullable ref
  * beside a boolean: the container only exists for the element variant, and
@@ -37,6 +39,25 @@ export const DOCUMENT_SESSION_SURFACE_LAYOUT: SessionSurfaceLayout = {
   scrollHost: { kind: "document" },
   barAnchor: "viewport",
 };
+
+/**
+ * Which app-level affordances the session's host contributes to its top bar.
+ *
+ * The standalone route owns the whole window, so its bar carries the back
+ * action out to the session list and the theme toggle. A session in a pane
+ * owns neither: back and theme are shell concerns, and a pane-local copy of
+ * them would give the operator two different "back"s with different meanings.
+ * A discriminated union rather than a pair of optional callbacks — neither
+ * host carries the other's fields, and "pane" has no payload to get wrong.
+ */
+export type SessionSurfaceChrome =
+  | {
+      readonly kind: "route";
+      readonly theme: Theme;
+      readonly onToggleTheme: () => void;
+      readonly onBack: () => void;
+    }
+  | { readonly kind: "pane" };
 
 /**
  * How close to the bottom still counts as "following along", in CSS pixels.
