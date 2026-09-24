@@ -4,7 +4,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
 
 import { RunDetailView } from "../views/RunDetailView";
+import { ArtifactWorkspaceRedirectView } from "../views/ArtifactWorkspaceRedirectView";
+import { SessionWorkspaceRedirectView } from "../views/SessionWorkspaceRedirectView";
 import { runWorkspaceStorageKey } from "../lib/run-workspace-storage";
+import type { ArtifactId, Sid } from "../../lib/ids";
 import type { ParkedGate, RunDetail, RunSessionAttempt } from "../types";
 
 // Pane-host wiring only. kbbl's frontend convention keeps tests on lib/ logic;
@@ -101,6 +104,8 @@ const renderWorkspace = (runId = "run-1") =>
 beforeEach(() => {
   vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch());
   localStorage.clear();
+  // The redirect cases write the hash; reset it so no test inherits another's URL.
+  history.replaceState(null, "", window.location.pathname);
 });
 
 afterEach(() => {
@@ -206,6 +211,44 @@ describe("twin view", () => {
     fireEvent.click(screen.getByTestId("or-sidebar-collapse"));
 
     await waitFor(() => expect(screen.queryByTestId("or-run-pane-secondary")).toBeNull());
+  });
+});
+
+describe("legacy deep links converge on the workspace URL", () => {
+  it("resolves an artifact to its run and replaces the hash", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      json({ id: "art-plan", run_id: "run-1", type_id: "dev.plan", revisions: [] }),
+    );
+
+    wrap(<ArtifactWorkspaceRedirectView artifactId={"art-plan" as ArtifactId} onBack={() => {}} />);
+
+    await waitFor(() =>
+      expect(window.location.hash).toBe("#oakridge/run/run-1/artifact/art-plan"),
+    );
+  });
+
+  it("resolves a session to its run and replaces the hash", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      json({
+        run_id: "run-1",
+        stage_instance_id: "si-build",
+        stage_key: "build",
+        unit_id: "c1",
+        work_order_id: "wo-1",
+      }),
+    );
+
+    wrap(<SessionWorkspaceRedirectView sessionId={"sid-c1" as Sid} onBack={() => {}} />);
+
+    await waitFor(() => expect(window.location.hash).toBe("#oakridge/run/run-1/session/sid-c1"));
+  });
+
+  it("shows a not-found state for a session that belongs to no run", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ error: "not found" }, 404));
+
+    wrap(<SessionWorkspaceRedirectView sessionId={"sid-orphan" as Sid} onBack={() => {}} />);
+
+    expect(await screen.findByTestId("or-session-not-in-run")).toBeTruthy();
   });
 });
 
