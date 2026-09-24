@@ -56,13 +56,10 @@ const ARTIFACT_FIXTURE: ArtifactDetail = {
   ],
 };
 
-const ROUTE_CHROME = { kind: "route", onBack: () => {} } as const;
-const PANE_CHROME = { kind: "pane" } as const;
-
 describe("ArtifactReview", () => {
   it("renders artifact type, producing stage, and revision body", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json(ARTIFACT_FIXTURE));
-    wrap(<ArtifactReview artifactId="art-1" chrome={ROUTE_CHROME} />);
+    wrap(<ArtifactReview artifactId="art-1" />);
 
     expect(await screen.findByTestId("or-artifact-type")).toBeTruthy();
     expect(screen.getByTestId("or-artifact-type").textContent).toBe("spec_v2");
@@ -77,7 +74,7 @@ describe("ArtifactReview", () => {
 
   it("shows revision status chip", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json(ARTIFACT_FIXTURE));
-    wrap(<ArtifactReview artifactId="art-1" chrome={ROUTE_CHROME} />);
+    wrap(<ArtifactReview artifactId="art-1" />);
     const status = await screen.findByTestId("or-revision-status");
     expect(status.textContent).toBe("approved");
   });
@@ -101,7 +98,7 @@ describe("ArtifactReview", () => {
       if (url.includes("/gates")) return json([{ ...PARKED_GATE_FIXTURE, artifact_revision_id: "rev-1", resume_actions: ["approve"] }]);
       return json(described);
     });
-    wrap(<ArtifactReview artifactId="art-1" chrome={ROUTE_CHROME} />);
+    wrap(<ArtifactReview artifactId="art-1" />);
 
     await waitFor(() => expect(screen.getByTestId("or-artifact-detail").getAttribute("data-review-layout")).toBe("report"));
     expect(await screen.findByTestId("or-artifact-gate-actions")).toBeTruthy();
@@ -125,7 +122,7 @@ describe("ArtifactReview", () => {
       }
       return json(artifact);
     });
-    wrap(<ArtifactReview artifactId="art-1" chrome={ROUTE_CHROME} />);
+    wrap(<ArtifactReview artifactId="art-1" />);
 
     await screen.findByTestId("or-artifact-type");
     expect(await screen.findByTestId("or-artifact-gate-actions")).toBeTruthy();
@@ -151,7 +148,7 @@ describe("ArtifactReview", () => {
     };
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
       String(input).includes("/gates") ? json([]) : json(plan));
-    wrap(<ArtifactReview artifactId="art-1" chrome={ROUTE_CHROME} />);
+    wrap(<ArtifactReview artifactId="art-1" />);
 
     expect(await screen.findByText("Scope")).toBeTruthy();
     expect(screen.getByText("Risks")).toBeTruthy();
@@ -160,43 +157,20 @@ describe("ArtifactReview", () => {
 
   it("shows error state when artifact fetch fails", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ error: "not found" }, 404));
-    wrap(<ArtifactReview artifactId="bad-id" chrome={ROUTE_CHROME} />);
+    wrap(<ArtifactReview artifactId="bad-id" />);
     expect(await screen.findByTestId("or-artifact-detail-error")).toBeTruthy();
   });
 });
 
-describe("the chrome variant", () => {
-  it("offers a back button to a route host", async () => {
-    const onBack = vi.fn();
+describe("navigation inside the review", () => {
+  // The pane frame above this body owns close and open-in-other-pane, and the
+  // standalone artifact route is gone. A back control appearing here again
+  // would sit directly under those and mean something different from them.
+  it("offers none of its own, so the pane frame stays the only frame", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json(ARTIFACT_FIXTURE));
-    wrap(<ArtifactReview artifactId="art-1" chrome={{ kind: "route", onBack }} />);
+    wrap(<ArtifactReview artifactId="art-1" />);
 
     await screen.findByTestId("or-artifact-type");
-    fireEvent.click(screen.getByText("← Back"));
-    expect(onBack).toHaveBeenCalledOnce();
-  });
-
-  it("offers no back button to a pane host", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(json(ARTIFACT_FIXTURE));
-    wrap(<ArtifactReview artifactId="art-1" chrome={PANE_CHROME} />);
-
-    await screen.findByTestId("or-artifact-type");
-    expect(screen.queryByText("← Back")).toBeNull();
-  });
-
-  it("offers no back button to a pane host while the artifact is still loading", () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise(() => {}));
-    wrap(<ArtifactReview artifactId="art-1" chrome={PANE_CHROME} />);
-
-    expect(screen.getByText("Loading artifact…")).toBeTruthy();
-    expect(screen.queryByText("← Back")).toBeNull();
-  });
-
-  it("offers no back button to a pane host when the artifact read fails", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ error: "not found" }, 404));
-    wrap(<ArtifactReview artifactId="bad-id" chrome={PANE_CHROME} />);
-
-    expect(await screen.findByTestId("or-artifact-detail-error")).toBeTruthy();
     expect(screen.queryByText("← Back")).toBeNull();
   });
 });

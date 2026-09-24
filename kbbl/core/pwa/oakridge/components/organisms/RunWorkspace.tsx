@@ -190,7 +190,7 @@ function PaneBody({ pane, runId, overview, onBack, onOpenPane }: PaneBodyProps) 
         />
       );
     case "artifact":
-      return <ArtifactReview artifactId={pane.artifact_id} chrome={{ kind: "pane" }} />;
+      return <ArtifactReview artifactId={pane.artifact_id} />;
     case "session":
       return (
         <RunSessionPane

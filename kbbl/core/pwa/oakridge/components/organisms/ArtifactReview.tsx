@@ -22,26 +22,21 @@ import { ArtifactRevisionNavigation } from "../molecules/ArtifactRevisionNavigat
 import { ArtifactReviewShell } from "./ArtifactReviewShell";
 
 /**
- * Who frames this review, and so which affordance the review itself owns.
+ * The review owns no navigation of its own.
  *
- * A route-hosted review carries the app-level back action. A pane-hosted one
- * carries none of its own: `RunPaneChrome` is the frame `RunWorkspace` already
- * wraps every pane body in, and it owns the pane's close and
- * open-in-other-pane. A second back button inside the body would mean
- * something different from the affordances above it, which is the confusion
- * this union exists to make unrepresentable — neither variant carries the
- * other's fields.
+ * It had a back button while a standalone `#oakridge/artifact/:id` route
+ * hosted it; that route is now a redirect into the workspace, so the pane is
+ * the only host. `RunPaneChrome` is the frame `RunWorkspace` wraps every pane
+ * body in, and it owns close and open-in-other-pane — a back button inside the
+ * body would mean something different from the affordances directly above it.
+ * If a standalone route ever returns, give this a `chrome` discriminated union
+ * rather than an `onBack?`; the variant carries its own payload or nothing.
  */
-export type ArtifactReviewChrome =
-  | { readonly kind: "route"; readonly onBack: () => void }
-  | { readonly kind: "pane" };
-
 interface ArtifactReviewProps {
   artifactId: string;
-  chrome: ArtifactReviewChrome;
 }
 
-export function ArtifactReview({ artifactId, chrome }: ArtifactReviewProps) {
+export function ArtifactReview({ artifactId }: ArtifactReviewProps) {
   const query = useArtifact(artifactId);
   const [selectedRevIdx, setSelectedRevIdx] = useState<number | null>(null);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
@@ -74,16 +69,9 @@ export function ArtifactReview({ artifactId, chrome }: ArtifactReviewProps) {
   const resolveThread = useResolveThread(artifactId);
   const patchReviewItem = usePatchReviewItem(artifactId);
 
-  // The one place the chrome variant is read. It appears at three sites —
-  // error, loading, loaded — and they must agree, so the element is built once.
-  const backButton = chrome.kind === "route" ? (
-    <button type="button" className="or-btn or-btn--secondary" onClick={chrome.onBack}>← Back</button>
-  ) : null;
-
   if (query.isError) {
     return (
       <div className="or-artifact-detail" data-testid="or-artifact-detail">
-        {backButton}
         <div className="or-error" role="alert" data-testid="or-artifact-detail-error">
           {query.error instanceof Error ? query.error.message : "Failed to load artifact"}
         </div>
@@ -94,7 +82,6 @@ export function ArtifactReview({ artifactId, chrome }: ArtifactReviewProps) {
   if (query.isPending || !query.data) {
     return (
       <div className="or-artifact-detail" data-testid="or-artifact-detail">
-        {backButton}
         <div className="or-loading">Loading artifact…</div>
       </div>
     );
@@ -164,8 +151,7 @@ export function ArtifactReview({ artifactId, chrome }: ArtifactReviewProps) {
     patchReviewItem.mutate({ id, req: { status: "waived", resolution: resolution || undefined } });
   }
 
-  const header = <>
-      {backButton}
+  const header = (
       <header className="or-artifact-detail__header">
         <h2 className="or-artifact-detail__title" data-testid="or-artifact-type">
           {artifact.type_id}
@@ -189,7 +175,7 @@ export function ArtifactReview({ artifactId, chrome }: ArtifactReviewProps) {
           )}
         </div>
       </header>
-    </>;
+  );
 
   const revisionNavigation = revisions.length > 1 ? (
     <ArtifactRevisionNavigation
