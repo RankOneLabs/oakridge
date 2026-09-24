@@ -161,6 +161,10 @@ export const snapshotOf = (sid: string): SessionSnapshot => ({
 export const makeFetch = (): FetchHandler =>
   vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
+    // A send the operator makes from inside a pane. `InputBox` rejects any
+    // body without a turn key, so answering this properly is what keeps the
+    // send path on its success branch rather than its error branch.
+    if (url.includes("/input")) return json({ turn_key: "turn-1", status: "accepted" });
     if (url.includes("/review_items")) return json(REVIEW_ITEMS);
     if (url.includes("/threads")) return json([]);
     if (url.includes("/artifact_details/")) return json(ARTIFACT);

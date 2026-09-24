@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 
 import { RunDetailView } from "../views/RunDetailView";
 import { runWorkspaceStorageKey } from "../lib/run-workspace-storage";
@@ -138,6 +138,30 @@ describe("two session panes", () => {
     expect(first!.querySelectorAll(".bottom-stack")).toHaveLength(1);
     expect(second!.querySelectorAll(".bottom-stack")).toHaveLength(1);
     expect(first!.contains(second!)).toBe(false);
+  });
+
+  it("send from the second pane under that pane's sid, not the first's", async () => {
+    const fetchSpy = vi.mocked(globalThis.fetch);
+    renderWorkspace();
+    const rows = await screen.findAllByTestId("or-sidebar-session");
+    fireEvent.click(rows[0]!);
+    fireEvent.click(await screen.findByLabelText("Open build c2 in the second pane"));
+    await waitFor(() => expect(screen.getAllByTestId("or-run-pane-session")).toHaveLength(2));
+
+    const second = screen.getAllByTestId("or-run-pane-session")[1]!;
+    fireEvent.change(within(second).getByLabelText("message input"), {
+      target: { value: "status?" },
+    });
+    fireEvent.click(within(second).getByText("Send"));
+
+    // The sid reaches `InputBox` down the pane's own `SessionView`, so a send
+    // landing on the other pane's session is the failure this guards against.
+    await waitFor(() => {
+      const send = fetchSpy.mock.calls.find(([input]) => String(input).includes("/input"));
+      expect(send).toBeTruthy();
+      expect(String(send![0])).toBe("/sessions/sid-c2/input");
+      expect(JSON.parse(String(send![1]?.body))).toMatchObject({ text: "status?" });
+    });
   });
 
   it("sits beside an artifact pane without either losing its own chrome", async () => {
