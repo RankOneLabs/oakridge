@@ -62,6 +62,14 @@ core/pwa/
    mandatory before the PR ships. Existing oversized files must shrink
    when changed; removed v1 views are not precedents.
 
+   **`core/pwa/styles.css` is exempt.** It is the single global stylesheet
+   until the Tailwind migration lands, so every feature that needs a rule
+   grows it — the cap would only push rules into per-component stylesheets
+   the styling convention above forbids. Judge a change to it on whether
+   the rules are scoped (a new pane variant belongs under its own class,
+   not in a shared selector), not on the line count. Splitting it is a
+   deliberate migration, not something a feature cohort does in passing.
+
 3. **One hook per file in `hooks/`.** Each owns its `useEffect` lifecycle,
    abort handling, and refresh key. Don't define hooks inside view
    components.
