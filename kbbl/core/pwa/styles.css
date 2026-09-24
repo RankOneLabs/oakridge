@@ -1377,6 +1377,22 @@ body {
   z-index: 10;
 }
 
+/* Bar anchoring is injected per surface — see core/pwa/lib/session-surface.ts.
+   The viewport-fixed default above is the standalone mobile path, where the
+   bar must span the window and carry its own safe-area inset. A session
+   mounted inside a pane scrolls its own element, so a viewport-fixed bar would
+   float over unrelated chrome and ignore the pane's bounds; sticky keeps it
+   flush to the bottom of the surface instead. Specificity carries this over
+   the desktop max-width override further down. */
+.session-surface--embedded .bottom-stack {
+  position: sticky;
+  bottom: 0;
+  left: auto;
+  right: auto;
+  max-width: none;
+  margin: 0;
+}
+
 .input-bar {
   /* .bottom-stack is the fixed viewport anchor. Keeping the input itself in
      normal flow lets the skill rail sit above it and be included in the same

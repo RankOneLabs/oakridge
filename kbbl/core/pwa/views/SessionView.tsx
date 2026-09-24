@@ -24,6 +24,10 @@ import { SkillRail } from "../components/organisms/SkillRail";
 import { CompactControl } from "../components/molecules/CompactControl";
 import { permissionCardAnchorId } from "../components/organisms/PermissionCard";
 import { readHashSessionTarget } from "../lib/hash";
+import {
+  DOCUMENT_SESSION_SURFACE_LAYOUT,
+  type SessionSurfaceLayout,
+} from "../lib/session-surface";
 
 export function SessionView({
   sid,
@@ -33,6 +37,7 @@ export function SessionView({
   onToggleTheme,
   onBack,
   onResume,
+  layout = DOCUMENT_SESSION_SURFACE_LAYOUT,
 }: {
   sid: string;
   snapshot: SessionSnapshot | null;
@@ -41,6 +46,12 @@ export function SessionView({
   onToggleTheme: () => void;
   onBack: () => void;
   onResume: (parentSid: string) => Promise<string | null>;
+  /**
+   * Which host this view scrolls and where its input bar anchors. Defaults to
+   * the document/viewport layout, so the standalone route renders exactly as
+   * it did before anchoring became injectable.
+   */
+  layout?: SessionSurfaceLayout;
 }) {
   const appRef = useRef<HTMLDivElement>(null);
   const topBarRef = useRef<HTMLElement>(null);
@@ -123,12 +134,19 @@ export function SessionView({
     appRef,
     topBarRef,
     bottomBarRef,
+    layout,
   });
 
   const canInput = snapshot !== null && !isLegacyArchive && !sessionClosed;
 
+  // Anchoring is a scoped class rather than an inline style object: the bar's
+  // viewport-fixed rules and the sticky override both belong to the stylesheet
+  // that owns .bottom-stack, and one system is what keeps the safe-area
+  // padding and the desktop max-width in a single place.
+  const surfaceClassName = layout.barAnchor === "surface" ? "app session-surface--embedded" : "app";
+
   return (
-    <div className="app" ref={appRef}>
+    <div className={surfaceClassName} ref={appRef}>
       <SessionTopBar
         ref={topBarRef}
         sid={sid}
