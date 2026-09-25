@@ -36,6 +36,7 @@ interface HarnessOptions {
   behavior?: string;
   stateDir: string;
   delayMs?: number;
+  liveEventBuffer?: number;
   db?: Database;
   command?: string;
 }
@@ -94,7 +95,7 @@ function makeHarness(options: HarnessOptions): Harness {
       default_agent: "fake",
       graceful_kill_ms: 1000,
       idle_child_ttl_ms: 900000,
-      live_event_buffer: 2000,
+      live_event_buffer: options.liveEventBuffer ?? 2000,
     },
   });
   const harness: Harness = { db, store, registry, service };
@@ -531,6 +532,41 @@ test("session/load rebuilds history after controller destruction", async () => {
       event.content.some((content) => content.text.includes("remember me")),
   );
   expect(replayedReply).toBeDefined();
+}, 20000);
+
+test("resume loads the full transcript while the parent's display buffer is bounded", async () => {
+  const { stateDir, workdir } = await makeDirs();
+  const { service, registry } = makeHarness({ stateDir, liveEventBuffer: 2 });
+  const ensured = await service.ensureResumableSession("key-full-resume", spec(workdir, "remember the first turn"));
+  if (!ensured.ok) throw new Error("ensure failed");
+  const sid = ensured.value.session.sid;
+  await service.observeInitialTurn(sid, 8000);
+  const live = registry.getLive(sid as KbblSessionId);
+  const displayed = await service.loadHistory(sid);
+  expect(displayed.ok && displayed.value.events.some((event) => event.kind === "user_message")).toBe(false);
+
+  const resumed = await service.loadResumeHistory(sid);
+  expect(resumed.ok && resumed.value.events.some((event) => event.kind === "user_message" && event.content.some((part) => part.text.includes("remember the first turn")))).toBe(true);
+  expect(registry.getLive(sid as KbblSessionId)).toBe(live);
+}, 20000);
+
+test("canceling a resume interrupts its private history replay", async () => {
+  const { stateDir, workdir } = await makeDirs();
+  const first = makeHarness({ stateDir });
+  const ensured = await first.service.ensureResumableSession("key-cancel-resume", spec(workdir));
+  if (!ensured.ok) throw new Error("ensure failed");
+  const sid = ensured.value.session.sid;
+  await first.service.observeInitialTurn(sid, 8000);
+
+  const second = makeHarness({ stateDir, db: first.db, behavior: "delayed_load", delayMs: 2000 });
+  const controller = new AbortController();
+  const loading = second.service.loadResumeHistory(sid, controller.signal);
+  setTimeout(() => controller.abort(), 50);
+  const startedAt = Date.now();
+  const result = await loading;
+  expect(result.ok).toBe(false);
+  expect(Date.now() - startedAt).toBeLessThan(1800);
+  expect(second.registry.getLive(sid as KbblSessionId)).toBeNull();
 }, 20000);
 
 test("session/load replay does not rewrite live activity or notify the inbox", async () => {

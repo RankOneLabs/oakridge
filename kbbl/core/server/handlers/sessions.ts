@@ -536,19 +536,16 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       if (!parent) return c.json({ error: "unknown resume_from session" }, 404);
       workdir = parent.worktree_path;
       selection = resolveResumedRuntimeSelection(selection, parent);
-      const leased = await acp.acquireHistory(resumeFrom);
-      if (!leased.ok) {
-        const { status, body: errBody } = errorResponse(leased.error);
+      const history = await acp.loadResumeHistory(resumeFrom, c.req.raw.signal);
+      if (!history.ok) {
+        const { status, body: errBody } = errorResponse(history.error);
         return c.json(errBody, status);
       }
-      try {
-        if (leased.value.history.kind === "unavailable") {
-          return c.json({ error: "previous session history is unavailable; resume would lose its context" }, 409);
-        }
-        initialPrompt = buildResumeContext(resumeFrom, leased.value.history);
-      } finally {
-        await leased.value.release();
+      if (c.req.raw.signal.aborted) return c.json({ error: "resume request was cancelled" }, 408);
+      if (history.value.kind === "unavailable") {
+        return c.json({ error: "previous session history is unavailable; resume would lose its context" }, 409);
       }
+      initialPrompt = buildResumeContext(resumeFrom, history.value);
     } else {
       const requested = typeof parsed.workdir === "string" ? parsed.workdir : defaultWorkdir;
       if (typeof parsed.workdir !== "undefined" && typeof parsed.workdir !== "string") {
