@@ -101,8 +101,5 @@ export async function resumeSession(
 }
 
 export function resumeTitle(): string {
-  // Resume = a fresh session in a new worktree cut from this one's, with
-  // the parent's committed work carried forward (§17.3). Context/history
-  // stays with the agent's own store.
-  return "Start a new session in a worktree inheriting this one's work.";
+  return "Start a new session with this conversation and its committed work.";
 }

@@ -581,6 +581,52 @@ export class AcpSessionService {
     });
   }
 
+  /** Resume needs the complete ACP replay, including events evicted from a
+   * live controller's bounded display buffer. The replay child is private and
+   * never takes ownership of the parent's active session. */
+  async loadResumeHistory(
+    sid: string,
+    loadSignal?: AbortSignal,
+  ): Promise<Result<UiSessionHistory, AcpError>> {
+    const kbblSid = sid as KbblSessionId;
+    const row = this.deps.store.getSession(kbblSid);
+    if (!row) return err(acpError("session_not_found", "service.loadResumeHistory", `no session ${sid}`));
+    const openTurns = this.deps.store.listOpenTurns(kbblSid).map(turnToOpenTurn);
+    const fallback = (reason: "missing_acp_session_id" | "agent_history_unavailable"): UiSessionHistory => {
+      const summary = this.deps.store.getSessionSummary(kbblSid);
+      return summary
+        ? { kind: "summary", sid: kbblSid, events: [], openTurns, expired: true, summary }
+        : { kind: "unavailable", sid: kbblSid, events: [], openTurns, expired: true, summary: null, reason };
+    };
+    if (loadSignal?.aborted) return err(acpError("acp_session_load_failed", "service.loadResumeHistory", "resume request was cancelled", kbblSid));
+    if (row.acp_session_id === null) return ok(fallback("missing_acp_session_id"));
+    const profile = resolveProfile(this.deps.profiles, row.agent_profile);
+    if (!profile.ok) return ok(fallback("agent_history_unavailable"));
+
+    const controller = new AcpSessionController({
+      sid: kbblSid,
+      profile: profile.value,
+      store: this.deps.store,
+      supervisor: this.deps.supervisor,
+      config: {
+        live_event_buffer: Number.MAX_SAFE_INTEGER,
+        close_grace_ms: this.deps.config.graceful_kill_ms,
+      },
+      onDefunct: () => undefined,
+    });
+    try {
+      const started = await controller.start(row.worktree_path, {
+        kind: "load",
+        acp_session_id: row.acp_session_id,
+      }, loadSignal);
+      if (loadSignal?.aborted) return err(acpError("acp_session_load_failed", "service.loadResumeHistory", "resume request was cancelled", kbblSid));
+      if (!started.ok) return ok(fallback("agent_history_unavailable"));
+      return ok({ kind: "transcript", sid: kbblSid, events: controller.snapshotEvents(), openTurns, expired: false, summary: null });
+    } finally {
+      await controller.closeChild();
+    }
+  }
+
   /**
    * History ownership for HTTP/SSE readers. A cold read may need an ACP child
    * for session/load, but that display-only child must not outlive its final

@@ -5,6 +5,8 @@ import {
   formatRunWorkspaceHash,
   readHashRoute,
   readHashSessionTarget,
+  readHashPermissionTarget,
+  writeHashPermissionTarget,
   writeHashSessionTarget,
 } from "./hash";
 import type { RoutePaneTarget } from "../oakridge/lib/run-workspace";
@@ -106,5 +108,12 @@ describe("session targets", () => {
 
     expect(window.location.hash).toBe("#sid=sid%2Fone&focus=pending-permission");
     expect(readHashSessionTarget()).toBe("pending-permission");
+  });
+
+  it("preserves the exact permission request in a session link", () => {
+    writeHashPermissionTarget("sid/one", "request/second");
+
+    expect(window.location.hash).toBe("#sid=sid%2Fone&focus=permission&requestId=request%2Fsecond");
+    expect(readHashPermissionTarget()).toBe("request/second");
   });
 });

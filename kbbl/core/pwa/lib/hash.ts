@@ -34,6 +34,25 @@ export function writeHashSessionTarget(sid: string, target: SessionHashTarget): 
   window.location.hash = params.toString();
 }
 
+/** Link to one permission card, including when another request in that session is first. */
+export function writeHashPermissionTarget(sid: string, requestId: string): void {
+  const params = new URLSearchParams();
+  params.set("sid", sid);
+  params.set("focus", "permission");
+  params.set("requestId", requestId);
+  const hash = params.toString();
+  if (window.location.hash.slice(1) === hash) {
+    window.dispatchEvent(new Event("hashchange"));
+    return;
+  }
+  window.location.hash = hash;
+}
+
+export function readHashPermissionTarget(): string | null {
+  const params = new URLSearchParams(window.location.hash.slice(1));
+  return params.get("focus") === "permission" ? params.get("requestId") : null;
+}
+
 export function readHashSessionTarget(): SessionHashTarget | null {
   const params = new URLSearchParams(window.location.hash.slice(1));
   return params.get("focus") === "pending-permission" ? "pending-permission" : null;

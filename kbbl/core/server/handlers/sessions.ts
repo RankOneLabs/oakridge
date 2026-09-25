@@ -16,6 +16,7 @@ import {
   toPwaSessionSnapshot,
 } from "../../acp/pwa-wire";
 import { compareSessionsByActivity } from "../../acp/pwa-session-order";
+import { buildResumeContext } from "../../acp/resume-context";
 import { listPwaSessions } from "./acp-inbox";
 import { isValidSid } from "./acp-per-sid";
 import { findSessionHold, isTruthyFlag, selectCloseAuthority, selectCloseRefusal } from "../session-hold";
@@ -526,6 +527,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
     };
 
     let workdir: string;
+    let initialPrompt = "";
     if (resumeFrom !== undefined) {
       // Worktree inheritance is the resume mechanism (§17.3): the child
       // runs in a fresh worktree cut from the parent's. The parent
@@ -534,6 +536,16 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       if (!parent) return c.json({ error: "unknown resume_from session" }, 404);
       workdir = parent.worktree_path;
       selection = resolveResumedRuntimeSelection(selection, parent);
+      const history = await acp.loadResumeHistory(resumeFrom, c.req.raw.signal);
+      if (!history.ok) {
+        const { status, body: errBody } = errorResponse(history.error);
+        return c.json(errBody, status);
+      }
+      if (c.req.raw.signal.aborted) return c.json({ error: "resume request was cancelled" }, 408);
+      if (history.value.kind === "unavailable") {
+        return c.json({ error: "previous session history is unavailable; resume would lose its context" }, 409);
+      }
+      initialPrompt = buildResumeContext(resumeFrom, history.value);
     } else {
       const requested = typeof parsed.workdir === "string" ? parsed.workdir : defaultWorkdir;
       if (typeof parsed.workdir !== "undefined" && typeof parsed.workdir !== "string") {
@@ -548,7 +560,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
     }
 
     const created = await acp.createSession({
-      initial_prompt: "",
+      initial_prompt: initialPrompt,
       workdir,
       ...(name ? { name } : {}),
       ...(artifactId ? { artifact_id: artifactId } : {}),
