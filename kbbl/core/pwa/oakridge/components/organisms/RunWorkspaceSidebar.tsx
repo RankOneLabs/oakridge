@@ -107,6 +107,7 @@ export function RunWorkspaceSidebar({
       <RunSidebarSessions
         rows={sessions.rows}
         isActionStateKnown={sessions.is_action_state_known}
+        isSessionListKnown={sessions.is_session_list_known}
         openSessionIds={open.session_ids}
         onOpen={openSession}
       />

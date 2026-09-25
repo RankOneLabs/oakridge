@@ -225,21 +225,21 @@ describe("RunDetail stage list", () => {
 
   it("renders stage rows with name and status", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch());
-    wrap(<RunDetailOrganism runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
+    wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
     const rows = await screen.findAllByTestId("or-stage-row");
     expect(rows).toHaveLength(2);
   });
 
   it("shows delegated session link for stages with a kbbl sid", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch());
-    wrap(<RunDetailOrganism runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
+    wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
     const link = await screen.findByTestId("or-delegated-session-link");
     expect(link.getAttribute("href")).toContain("aaaabbbbccccdddd");
   });
 
   it("shows branch and path when worktree metadata is present", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch());
-    wrap(<RunDetailOrganism runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
+    wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
     const branches = await screen.findAllByTestId("or-stage-branch");
     expect(branches.some((b) => b.textContent?.includes("cohort/v2_readiness/3-minimum_v2"))).toBe(true);
     const paths = await screen.findAllByTestId("or-stage-path");
@@ -248,14 +248,14 @@ describe("RunDetail stage list", () => {
 
   it("shows parked gates section when gates exist", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch(RUN_DETAIL_FIXTURE, [PARKED_GATE_FIXTURE]));
-    wrap(<RunDetailOrganism runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
+    wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
     expect(await screen.findByTestId("or-run-gate-list")).toBeTruthy();
     expect(await screen.findByTestId("or-gate-card")).toBeTruthy();
   });
 
   it("shows error state when run fetch fails", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ error: "not found" }, 404));
-    wrap(<RunDetailOrganism runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
+    wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
     expect(await screen.findByTestId("or-run-detail-error")).toBeTruthy();
   });
 
@@ -302,7 +302,7 @@ describe("RunDetail stage list", () => {
     });
     vi.spyOn(globalThis, "fetch").mockImplementation(fetchMock);
 
-    wrap(<RunDetailOrganism runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
+    wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
 
     expect(await screen.findByText("Build the cohort UI")).toBeTruthy();
     expect(screen.queryByText("Operator workflow")).toBeNull();
@@ -334,7 +334,7 @@ describe("RunDetail stage list", () => {
       }],
     };
     vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch(detail));
-    wrap(<RunDetailOrganism runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
+    wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
 
     expect((await screen.findByTestId("or-dependency-status")).textContent).toContain("cohort-a: waiting");
     expect(screen.queryByTestId("or-admit-unit-btn")).toBeNull();
@@ -361,7 +361,7 @@ describe("RunDetail stage list", () => {
       return json(detail);
     });
     vi.spyOn(globalThis, "fetch").mockImplementation(fetchMock);
-    wrap(<RunDetailOrganism runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
+    wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
 
     fireEvent.click(await screen.findByTestId("or-retry-unit-btn"));
 
@@ -387,7 +387,7 @@ describe("RunDetail stage list", () => {
       }],
     };
     vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch(detail));
-    wrap(<RunDetailOrganism runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
+    wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
 
     await screen.findByText("Rejected build");
     expect(screen.queryByTestId("or-retry-unit-btn")).not.toBeNull();
@@ -411,7 +411,7 @@ describe("RunDetail stage list", () => {
       return json(detail);
     });
     vi.spyOn(globalThis, "fetch").mockImplementation(fetchMock);
-    wrap(<RunDetailOrganism runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
+    wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
 
     fireEvent.click(await screen.findByTestId("or-retry-unit-btn"));
 
@@ -436,7 +436,7 @@ describe("RunDetail stage list", () => {
       }],
     };
     vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch(detail));
-    wrap(<RunDetailOrganism runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
+    wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
 
     await screen.findByText("Failed build");
     expect(screen.queryByTestId("or-retry-unit-btn")).not.toBeNull();
@@ -457,7 +457,7 @@ describe("RunDetail stage list", () => {
       }],
     };
     vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch(detail));
-    wrap(<RunDetailOrganism runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
+    wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
 
     await screen.findByText("Failed build");
     expect(screen.queryByTestId("or-retry-unit-btn")).toBeNull();
@@ -516,7 +516,7 @@ describe("RunDetail stage list", () => {
     });
     vi.spyOn(globalThis, "fetch").mockImplementation(fetchMock);
 
-    wrap(<RunDetailOrganism runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
+    wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
 
     expect(await screen.findByTestId("or-final-integration")).toBeTruthy();
     expect(screen.getAllByText("epic/v2-parity")).toHaveLength(2);

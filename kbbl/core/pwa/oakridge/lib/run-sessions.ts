@@ -14,6 +14,51 @@
 import type { RunSessionAttempt } from "../types";
 
 /**
+ * What the run's attempt-list read currently knows.
+ *
+ * The same three-way shape as `RunGatesRead`, and for the same reason: a failed
+ * read is not an empty history. Collapsing the two lets a 5xx mean "this run
+ * has no sessions", and everything downstream believes it — the sidebar says
+ * "No sessions yet." and, worse, pane validation concludes every stored session
+ * pane names something the run no longer contains and prunes the operator's
+ * arrangement out of storage. An outage must be able to say "I do not know".
+ */
+export type RunSessionsRead =
+  | { readonly kind: "loaded"; readonly attempts: readonly RunSessionAttempt[] }
+  | { readonly kind: "pending" }
+  | { readonly kind: "unavailable" };
+
+export interface RunSessionsQueryState {
+  /** The last successful payload — absent while first loading, and after a first load that failed. */
+  readonly attempts: readonly RunSessionAttempt[] | undefined;
+  readonly is_pending: boolean;
+  readonly is_error: boolean;
+}
+
+/**
+ * A query's three observable states as one value.
+ *
+ * A payload already in hand wins over a later failed poll: the attempts it
+ * describes did not stop existing because a refetch timed out, and dropping
+ * back to `unavailable` would make a pane arrangement flicker on every failed
+ * background refresh.
+ */
+export const selectRunSessionsRead = ({
+  attempts,
+  is_pending,
+  is_error,
+}: RunSessionsQueryState): RunSessionsRead => {
+  if (attempts !== undefined) return { kind: "loaded", attempts };
+  if (is_error) return { kind: "unavailable" };
+  if (is_pending) return { kind: "pending" };
+  return { kind: "loaded", attempts: [] };
+};
+
+/** The attempts a read has, or none — for surfaces that only render what exists. */
+export const attemptsOf = (read: RunSessionsRead): readonly RunSessionAttempt[] =>
+  read.kind === "loaded" ? read.attempts : [];
+
+/**
  * A unit's identity within a run. `unit_id` alone is not unique — a fan-out
  * stage mints unit ids per stage instance, so two stages can each have a unit
  * `"0"` — so the key is the pair.

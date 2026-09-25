@@ -10,12 +10,16 @@ import type { ArtifactId, Sid } from "../../lib/ids";
 import type {
   ParkedGate,
   RunDetail,
-  RunSessionAttempt,
   RunStatus,
   StageStatus,
   WorkOrderState,
 } from "../types";
-import { selectRunSessionRows, type RunSessionRow } from "./run-sessions";
+import {
+  attemptsOf,
+  selectRunSessionRows,
+  type RunSessionRow,
+  type RunSessionsRead,
+} from "./run-sessions";
 
 /** How many artifact releases the overview lists before "recent" stops meaning anything. */
 export const RECENT_SLOT_RELEASE_LIMIT = 8;
@@ -147,6 +151,15 @@ export const selectRunArtifacts = (run: RunDetail): readonly RunArtifactRef[] =>
 
 /** One attempt as the sidebar's Sessions section lists it. */
 export interface RunSidebarSessionRow {
+  /**
+   * The attempt's identity, and the only field on this row guaranteed unique
+   * within it. `session_id` is not: `executor_attachment.work_order_id` is the
+   * primary key, so nothing stops one session id being attached to two work
+   * orders — the backend treats that as unexpected but handles it rather than
+   * forbidding it (`find_run_for_session` takes the latest attachment). A list
+   * that is one row per work order therefore has to key on the work order.
+   */
+  readonly work_order_id: string;
   readonly session_id: Sid;
   readonly stage_key: string;
   readonly unit_id: string;
@@ -167,10 +180,15 @@ export interface RunSidebarSessionRow {
 export interface RunSidebarSessionsView {
   readonly rows: readonly RunSidebarSessionRow[];
   readonly is_action_state_known: boolean;
+  /**
+   * Whether the attempt list itself landed. No rows and a failed read look
+   * identical otherwise, and only one of them means "this run has no sessions".
+   */
+  readonly is_session_list_known: boolean;
 }
 
 export interface RunSidebarSessionsInput {
-  readonly sessions: readonly RunSessionAttempt[];
+  readonly sessions: RunSessionsRead;
   readonly gates: RunGatesRead;
   /**
    * Sids kbbl's inbox has reported purged server-side. Oakridge keeps listing
@@ -200,9 +218,11 @@ export const selectRunSidebarSessions = ({
     gates.kind === "loaded" ? selectUnitsAwaitingAction(gates.gates) : null;
   return {
     is_action_state_known: awaitingAction !== null,
-    rows: selectRunSessionRows(sessions)
+    is_session_list_known: sessions.kind === "loaded",
+    rows: selectRunSessionRows(attemptsOf(sessions))
       .filter((row) => !purgedSessionIds.has(row.attempt.session_id))
       .map((row) => ({
+        work_order_id: row.attempt.work_order_id,
         session_id: row.attempt.session_id as Sid,
         stage_key: row.attempt.stage_key,
         unit_id: row.attempt.unit_id,
@@ -249,13 +269,29 @@ export interface RunOverview {
   /** The attempt the run is live in right now, or null when nothing is executing. */
   readonly current_session: RunOverviewSessionRef | null;
   readonly gates: RunOverviewGates;
+  /**
+   * Whether the attempt list landed. Both session-derived readings — what is
+   * executing, and which sessions await a decision — are a `null` and an empty
+   * list when the read failed, indistinguishable from a quiet run, so this is
+   * what keeps the pane from reporting an outage as "nothing is happening".
+   *
+   * A boolean rather than a third `RunOverviewGates`-style union because the
+   * pane never sees a pending attempt read: `RunWorkspace` holds on "Loading
+   * run…" until the workspace state resolves, which already waits out `pending`.
+   */
+  readonly is_session_list_known: boolean;
   readonly recent_slot_releases: readonly RunArtifactRef[];
   readonly stage_progress: RunOverviewStageProgress;
 }
 
 export interface RunOverviewInput {
   readonly run: RunDetail;
-  readonly sessions: readonly RunSessionAttempt[];
+  /**
+   * The read itself, not the attempts it carries. The overview draws two
+   * conclusions from this list that an empty list states as confidently as a
+   * real one, so the distinction has to survive the call.
+   */
+  readonly sessions: RunSessionsRead;
   readonly gates: RunGatesRead;
 }
 
@@ -342,13 +378,14 @@ const selectOverviewGates = (
 
 /** Everything the overview pane renders, derived once. */
 export const selectRunOverview = ({ run, sessions, gates }: RunOverviewInput): RunOverview => {
-  const rows = selectRunSessionRows(sessions);
+  const rows = selectRunSessionRows(attemptsOf(sessions));
   return {
     status: run.status,
     is_stuck: run.is_stuck,
     parked_count: run.parked_count,
     current_session: selectCurrentSession(rows),
     gates: selectOverviewGates(rows, gates),
+    is_session_list_known: sessions.kind === "loaded",
     recent_slot_releases: selectRecentSlotReleases(run),
     stage_progress: selectStageProgress(run),
   };

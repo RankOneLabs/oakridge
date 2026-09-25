@@ -36,7 +36,11 @@ export function RunOverviewPane({ overview, onOpenPane }: RunOverviewPaneProps) 
 
       <section>
         <h4 className="or-run-overview__heading">Current session</h4>
-        {currentSession === null ? (
+        {!overview.is_session_list_known ? (
+          <SessionsNotice testId="or-overview-current-session-unavailable">
+            Session list is unavailable — this is not showing what is executing.
+          </SessionsNotice>
+        ) : currentSession === null ? (
           <p className="or-run-overview__empty" data-testid="or-overview-no-current-session">
             Nothing is executing.
           </p>
@@ -54,7 +58,11 @@ export function RunOverviewPane({ overview, onOpenPane }: RunOverviewPaneProps) 
 
       <section>
         <h4 className="or-run-overview__heading">Awaiting you</h4>
-        <AwaitingYou gates={overview.gates} onOpenSession={openSession} />
+        <AwaitingYou
+          gates={overview.gates}
+          isSessionListKnown={overview.is_session_list_known}
+          onOpenSession={openSession}
+        />
       </section>
 
       <section>
@@ -118,13 +126,54 @@ function GatesNotice({ gates, testIdPrefix }: GatesNoticeProps) {
   );
 }
 
+interface SessionsNoticeProps {
+  testId: string;
+  children: string;
+}
+
+/**
+ * What a session-derived section says when the attempt list did not land.
+ *
+ * Same shape and same reasoning as `GatesNotice`: an empty attempt list reads as
+ * a quiet run, and a quiet run is the one thing an outage must not be able to
+ * claim. Separate from `GatesNotice` because the two reads fail independently —
+ * gates can be fine while sessions are not, and naming the wrong one sends the
+ * operator to check the wrong thing.
+ */
+function SessionsNotice({ testId, children }: SessionsNoticeProps) {
+  return (
+    <p
+      className="m-0 text-sm text-[var(--amber-fg)]"
+      role="status"
+      data-testid={testId}
+    >
+      {children}
+    </p>
+  );
+}
+
 interface AwaitingYouProps {
   gates: RunOverviewGates;
+  /** Whether the attempt list landed. Without it, no session can be named here. */
+  isSessionListKnown: boolean;
   onOpenSession: (sessionId: Sid) => void;
 }
 
-function AwaitingYou({ gates, onOpenSession }: AwaitingYouProps) {
+/**
+ * The sessions waiting on a decision — which needs *both* reads, since it is the
+ * intersection of the open gates and the run's current attempts. The gate read
+ * is reported first because a missing gate list makes the question unanswerable
+ * outright, where a missing attempt list only costs the rows their identity.
+ */
+function AwaitingYou({ gates, isSessionListKnown, onOpenSession }: AwaitingYouProps) {
   if (gates.kind !== "known") return <GatesNotice gates={gates} testIdPrefix="or-overview-awaiting" />;
+  if (!isSessionListKnown) {
+    return (
+      <SessionsNotice testId="or-overview-awaiting-sessions-unavailable">
+        Session list is unavailable — this section is not showing what needs you.
+      </SessionsNotice>
+    );
+  }
   if (gates.sessions_awaiting_action.length === 0) {
     return (
       <p className="or-run-overview__empty" data-testid="or-overview-no-awaiting">

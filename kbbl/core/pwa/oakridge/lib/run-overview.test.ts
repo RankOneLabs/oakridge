@@ -67,13 +67,19 @@ const run = (overrides: Partial<RunDetail> = {}): RunDetail => ({
 
 interface OverviewInput {
   readonly run?: RunDetail;
+  /** The attempts the read produced; a read that produced none is exercised separately. */
   readonly sessions?: readonly RunSessionAttempt[];
   /** The gate list the read produced; the read itself is exercised separately. */
   readonly gates?: readonly ParkedGate[];
 }
 
-const overviewOf = ({ gates = [], ...input }: OverviewInput = {}): RunOverview =>
-  selectRunOverview({ run: run(), sessions: [], ...input, gates: { kind: "loaded", gates } });
+const overviewOf = ({ gates = [], sessions = [], ...input }: OverviewInput = {}): RunOverview =>
+  selectRunOverview({
+    run: run(),
+    ...input,
+    sessions: { kind: "loaded", attempts: sessions },
+    gates: { kind: "loaded", gates },
+  });
 
 /** The gate-derived half of an overview, or a failure naming what it got instead. */
 const knownGates = (overview: RunOverview): Extract<RunOverviewGates, { kind: "known" }> => {
@@ -201,7 +207,10 @@ describe("an unavailable gate read", () => {
   const unreadOverview = () =>
     selectRunOverview({
       run: run(),
-      sessions: [attempt({ work_order_id: "wo-1", session_id: "sid-1", unit_id: "c1" })],
+      sessions: {
+        kind: "loaded",
+        attempts: [attempt({ work_order_id: "wo-1", session_id: "sid-1", unit_id: "c1" })],
+      },
       gates: { kind: "unavailable" },
     });
 
@@ -218,7 +227,7 @@ describe("an unavailable gate read", () => {
 
   it("tells the sidebar its action markers are unknown rather than absent", () => {
     const view = selectRunSidebarSessions({
-      sessions: [attempt({ work_order_id: "wo-1", session_id: "sid-1", unit_id: "c1" })],
+      sessions: { kind: "loaded", attempts: [attempt({ work_order_id: "wo-1", session_id: "sid-1", unit_id: "c1" })] },
       gates: { kind: "unavailable" },
       purgedSessionIds: new Set(),
     });
@@ -228,13 +237,53 @@ describe("an unavailable gate read", () => {
   });
 });
 
+describe("an unavailable sessions read", () => {
+  const unreadOverview = (gates: readonly ParkedGate[] = []) =>
+    selectRunOverview({
+      run: run(),
+      sessions: { kind: "unavailable" },
+      gates: { kind: "loaded", gates },
+    });
+
+  it("says the attempt list is unknown rather than reporting an empty one", () => {
+    expect(unreadOverview().is_session_list_known).toBe(false);
+  });
+
+  it("marks the list unknown even when the gate read is the one that landed", () => {
+    // The two reads fail independently. A gate list arriving intact says nothing
+    // about whether the attempt list did, and the overview's session-derived
+    // sections have to be told which of the two is missing.
+    const overview = unreadOverview([gate({ id: "gate-1", unit_id: "c1" })]);
+
+    expect(overview.gates.kind).toBe("known");
+    expect(overview.is_session_list_known).toBe(false);
+  });
+
+  it("still reports the run's own status, which does not come from the attempt list", () => {
+    expect(unreadOverview().status).toBe("parked");
+  });
+
+  it("reports the list known for a read that landed carrying nothing", () => {
+    // The distinction the flag exists for: a run genuinely between sessions is
+    // an answer, and the overview is entitled to render it as one.
+    const overview = selectRunOverview({
+      run: run(),
+      sessions: { kind: "loaded", attempts: [] },
+      gates: { kind: "loaded", gates: [] },
+    });
+
+    expect(overview.is_session_list_known).toBe(true);
+    expect(overview.current_session).toBeNull();
+  });
+});
+
 describe("sidebar sessions", () => {
   it("marks the current attempt of a unit holding an actionable gate", () => {
     const view = selectRunSidebarSessions({
-      sessions: [
+      sessions: { kind: "loaded", attempts: [
         attempt({ work_order_id: "wo-1", session_id: "sid-1", unit_id: "c1" }),
         attempt({ work_order_id: "wo-2", session_id: "sid-2", unit_id: "c2" }),
-      ],
+      ] },
       gates: { kind: "loaded", gates: [gate({ id: "gate-1", unit_id: "c2" })] },
       purgedSessionIds: new Set(),
     });
@@ -247,10 +296,10 @@ describe("sidebar sessions", () => {
 
   it("drops a purged session, since the run keeps listing its work order", () => {
     const view = selectRunSidebarSessions({
-      sessions: [
+      sessions: { kind: "loaded", attempts: [
         attempt({ work_order_id: "wo-1", session_id: "sid-1", unit_id: "c1" }),
         attempt({ work_order_id: "wo-2", session_id: "sid-2", unit_id: "c2" }),
-      ],
+      ] },
       gates: { kind: "loaded", gates: [] },
       purgedSessionIds: new Set(["sid-1"]),
     });
@@ -260,7 +309,7 @@ describe("sidebar sessions", () => {
 
   it("leaves a surviving attempt's number alone when an earlier attempt is purged", () => {
     const view = selectRunSidebarSessions({
-      sessions: [
+      sessions: { kind: "loaded", attempts: [
         attempt({
           work_order_id: "wo-1",
           session_id: "sid-1",
@@ -275,7 +324,7 @@ describe("sidebar sessions", () => {
           created_at: "2026-09-01T10:00:00Z",
           reason: "operator_retry",
         }),
-      ],
+      ] },
       gates: { kind: "loaded", gates: [] },
       purgedSessionIds: new Set(["sid-1"]),
     });
@@ -283,6 +332,47 @@ describe("sidebar sessions", () => {
     // The purge took the transcript, not the attempt that produced it — the
     // retry is still the unit's second try and says so.
     expect(view.rows.map((row) => row.attempt_label)).toEqual(["attempt 2 of 2"]);
+  });
+
+  it("gives two attempts sharing a session id distinct row identities", () => {
+    // `executor_attachment.work_order_id` is the primary key, so a session id
+    // reattached to a second work order is unexpected but not prevented. A row
+    // list keyed on `session_id` would collapse the two.
+    const view = selectRunSidebarSessions({
+      sessions: {
+        kind: "loaded",
+        attempts: [
+          attempt({ work_order_id: "wo-1", session_id: "sid-1", unit_id: "c1", work_order_state: "abandoned" }),
+          attempt({ work_order_id: "wo-2", session_id: "sid-1", unit_id: "c1", reason: "operator_retry" }),
+        ],
+      },
+      gates: { kind: "loaded", gates: [] },
+      purgedSessionIds: new Set(),
+    });
+
+    expect(view.rows.map((row) => row.work_order_id)).toEqual(["wo-1", "wo-2"]);
+  });
+
+  it("says the list is unknown rather than showing a failed read as no sessions", () => {
+    const view = selectRunSidebarSessions({
+      sessions: { kind: "unavailable" },
+      gates: { kind: "loaded", gates: [] },
+      purgedSessionIds: new Set(),
+    });
+
+    expect(view.is_session_list_known).toBe(false);
+    expect(view.rows).toEqual([]);
+  });
+
+  it("reports a genuinely empty run as known and empty", () => {
+    const view = selectRunSidebarSessions({
+      sessions: { kind: "loaded", attempts: [] },
+      gates: { kind: "loaded", gates: [] },
+      purgedSessionIds: new Set(),
+    });
+
+    expect(view.is_session_list_known).toBe(true);
+    expect(view.rows).toEqual([]);
   });
 });
 

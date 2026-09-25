@@ -21,8 +21,15 @@
 //    the only moment a pane goes stale: the inbox can report a session purged
 //    while a pane is holding it, and that is the same shape of problem with the
 //    same answer.
+//
+//    The rule only drops what it can *disprove*. Validating against a read that
+//    failed is not validation — it concludes the run contains nothing and takes
+//    the arrangement with it, permanently, because the same pass prunes the
+//    store. So the index says whether it knows the run's sessions at all, and
+//    an unknown session half leaves session panes standing.
 
-import type { RunDetail, RunSessionAttempt } from "../types";
+import type { RunDetail } from "../types";
+import { attemptsOf, type RunSessionsRead } from "./run-sessions";
 import {
   DEFAULT_RUN_WORKSPACE_STATE,
   OVERVIEW_PANE,
@@ -33,22 +40,43 @@ import {
 } from "./run-workspace";
 
 /**
+ * The sessions a run is known to contain — or the fact that the attempt read
+ * did not land, which is a different thing from the run containing none.
+ *
+ * Validation can only drop what it can disprove. With the attempt list absent,
+ * the stage sids alone are an incomplete picture of the run's sessions, and
+ * treating them as the whole picture is what turns a transient 5xx into a
+ * pruned arrangement.
+ */
+export type RunSessionIndex =
+  | { readonly kind: "known"; readonly ids: ReadonlySet<string> }
+  | { readonly kind: "unknown" };
+
+/**
  * The entity ids a run currently contains. Built once per resolution so pane
  * validation is a set lookup rather than a scan per pane.
  */
 export interface RunEntityIndex {
-  readonly session_ids: ReadonlySet<string>;
+  readonly sessions: RunSessionIndex;
+  /**
+   * Sids kbbl's inbox has reported gone server-side. Held apart from the index
+   * rather than subtracted into it because the two are different kinds of
+   * knowledge: the index says what the run's reads listed, this says what is
+   * positively gone. A purge stays authoritative even when the attempt read
+   * failed, so it cannot be subtracted from a set that may not exist.
+   */
+  readonly purged_session_ids: ReadonlySet<string>;
   readonly artifact_ids: ReadonlySet<string>;
 }
 
 export interface RunEntityIndexInput {
   readonly run: RunDetail;
-  readonly sessions: readonly RunSessionAttempt[];
+  readonly sessions: RunSessionsRead;
   /**
    * Sids kbbl's inbox has reported gone server-side. Oakridge's own reads keep
    * listing a purged session — the work order it belongs to is a durable
    * record — so the run's data alone cannot tell that the transcript behind it
-   * no longer exists. Subtracting them here makes a purge the same kind of
+   * no longer exists. Carrying them here makes a purge the same kind of
    * staleness as a deleted run or a stale artifact, resolved by one rule.
    */
   readonly purgedSessionIds: ReadonlySet<string>;
@@ -60,16 +88,18 @@ export interface RunEntityIndexInput {
  * Sessions come from the attempt list *and* from the stages' own sids: a
  * session the run displays anywhere is one a pane may legitimately name, and
  * indexing only the attempt list would refuse to restore a pane the list view
- * can still link to.
+ * can still link to. When the attempt read has not landed the session half is
+ * `unknown` rather than a partial set — artifacts still index, because they
+ * come from the run read, which did land.
  */
 export const indexRunEntities = ({
   run,
   sessions,
   purgedSessionIds,
 }: RunEntityIndexInput): RunEntityIndex => {
-  const session_ids = new Set<string>();
   const artifact_ids = new Set<string>();
-  for (const attempt of sessions) session_ids.add(attempt.session_id);
+  const session_ids = new Set<string>();
+  for (const attempt of attemptsOf(sessions)) session_ids.add(attempt.session_id);
   for (const stage of run.stages) {
     if (stage.delegated_kbbl_sid !== null) session_ids.add(stage.delegated_kbbl_sid);
     for (const unit of stage.units ?? []) {
@@ -77,14 +107,23 @@ export const indexRunEntities = ({
     }
     for (const artifact of stage.artifacts) artifact_ids.add(artifact.id);
   }
-  for (const purged of purgedSessionIds) session_ids.delete(purged);
-  return { session_ids, artifact_ids };
+  return {
+    sessions:
+      sessions.kind === "loaded" ? { kind: "known", ids: session_ids } : { kind: "unknown" },
+    purged_session_ids: purgedSessionIds,
+    artifact_ids,
+  };
 };
 
 /**
  * Whether a pane still names something the run contains. The two bodiless
  * panes — overview and list — derive from the run itself, so they always
  * resolve for a run that loaded at all.
+ *
+ * A session pane asks two questions in order, because the answers come from
+ * different places: a purge is positive knowledge that the transcript is gone
+ * and settles it on its own, and only then does the run's own list get a say —
+ * and only when that list actually loaded.
  */
 export const isPaneResolvable = (pane: RunWorkspacePane, index: RunEntityIndex): boolean => {
   switch (pane.kind) {
@@ -92,7 +131,9 @@ export const isPaneResolvable = (pane: RunWorkspacePane, index: RunEntityIndex):
     case "list":
       return true;
     case "session":
-      return index.session_ids.has(pane.session_id);
+      if (index.purged_session_ids.has(pane.session_id)) return false;
+      if (index.sessions.kind === "unknown") return true;
+      return index.sessions.ids.has(pane.session_id);
     case "artifact":
       return index.artifact_ids.has(pane.artifact_id);
   }
@@ -134,7 +175,7 @@ export interface RunWorkspaceResolutionInput {
   /** What `readStoredRunWorkspace` returned, or null when the caller has nothing. */
   readonly storedState: RunWorkspaceState | null;
   readonly run: RunDetail;
-  readonly sessions: readonly RunSessionAttempt[];
+  readonly sessions: RunSessionsRead;
   readonly purgedSessionIds: ReadonlySet<string>;
 }
 

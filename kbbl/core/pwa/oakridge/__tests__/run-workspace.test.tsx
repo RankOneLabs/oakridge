@@ -7,6 +7,7 @@ import { RunDetailView } from "../views/RunDetailView";
 import { ArtifactWorkspaceRedirectView } from "../views/ArtifactWorkspaceRedirectView";
 import { SessionWorkspaceRedirectView } from "../views/SessionWorkspaceRedirectView";
 import { runWorkspaceStorageKey } from "../lib/run-workspace-storage";
+import { EventSourceStub } from "./run-pane-fixtures";
 import type { ArtifactId, Sid } from "../../lib/ids";
 import type { ParkedGate, RunDetail, RunSessionAttempt } from "../types";
 
@@ -58,6 +59,22 @@ const RUN: RunDetail = {
 };
 
 const SESSIONS: RunSessionAttempt[] = [
+  // Only the attempt list knows this one: a unit's `sid` on the run is its
+  // current attempt, so a superseded attempt's transcript is reachable from
+  // nowhere else. It is the case that tells whether the list was read at all.
+  {
+    work_order_id: "wo-0",
+    session_id: "sid-c1-prior",
+    stage_instance_id: "si-build",
+    stage_key: "build",
+    unit_id: "c1",
+    reason: "initial",
+    work_order_state: "abandoned",
+    created_at: "2026-09-01T08:00:00Z",
+    completed_at: "2026-09-01T08:20:00Z",
+    executor_health_kind: null,
+    cleanup_state: "complete",
+  },
   {
     work_order_id: "wo-1",
     session_id: "sid-c1",
@@ -152,10 +169,18 @@ describe("the run route", () => {
   it("lists every session of the run with its state and attempt label", async () => {
     renderWorkspace();
 
-    expect((await screen.findByTestId("or-sidebar-session-state")).textContent).toBe("started");
-    expect(screen.getByTestId("or-sidebar-session-attempt").textContent).toBe("attempt 1");
-    expect(screen.getByTestId("or-sidebar-session-current")).toBeTruthy();
-    expect(screen.getByTestId("or-sidebar-session-action-required")).toBeTruthy();
+    await screen.findByTestId("or-sidebar-sessions");
+    expect(screen.getAllByTestId("or-sidebar-session-state").map((el) => el.textContent)).toEqual([
+      "abandoned",
+      "started",
+    ]);
+    expect(
+      screen.getAllByTestId("or-sidebar-session-attempt").map((el) => el.textContent),
+    ).toEqual(["attempt 1 of 2", "attempt 2 of 2"]);
+    // Only the current attempt is the unit, and only the unit can owe a decision.
+    expect(screen.getAllByTestId("or-sidebar-session-superseded")).toHaveLength(1);
+    expect(screen.getAllByTestId("or-sidebar-session-current")).toHaveLength(1);
+    expect(screen.getAllByTestId("or-sidebar-session-action-required")).toHaveLength(1);
   });
 });
 
@@ -299,6 +324,100 @@ describe("a read the workspace cannot complete", () => {
 
     expect(await screen.findByTestId("or-sidebar-sessions-gates-unavailable")).toBeTruthy();
     expect(screen.queryByTestId("or-sidebar-session-action-required")).toBeNull();
+  });
+
+  it("says the session list is unavailable rather than that the run has none", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(makeFetchWithout("/sessions"));
+
+    renderWorkspace();
+
+    expect(await screen.findByTestId("or-sidebar-sessions-unavailable")).toBeTruthy();
+    expect(screen.queryByTestId("or-sidebar-sessions-empty")).toBeNull();
+  });
+
+  it("says the overview cannot tell what is executing, rather than that nothing is", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(makeFetchWithout("/sessions"));
+
+    renderWorkspace();
+
+    expect(await screen.findByTestId("or-overview-current-session-unavailable")).toBeTruthy();
+    expect(screen.queryByTestId("or-overview-no-current-session")).toBeNull();
+  });
+
+  it("does not let an intact gate list claim nothing is waiting on a decision", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(makeFetchWithout("/sessions"));
+
+    renderWorkspace();
+
+    // The two sections would otherwise contradict each other on screen: the gate
+    // read landed, so "Active gates" lists an open gate, while "Awaiting you"
+    // derives from the attempt list and reports the run as settled.
+    expect(await screen.findByTestId("or-overview-gate")).toBeTruthy();
+    expect(screen.getByTestId("or-overview-awaiting-sessions-unavailable")).toBeTruthy();
+    expect(screen.queryByTestId("or-overview-no-awaiting")).toBeNull();
+  });
+
+  it("validates the arrangement once a failed sessions read recovers", async () => {
+    localStorage.setItem(
+      runWorkspaceStorageKey("run-1"),
+      JSON.stringify({ primary: { kind: "session", session_id: "sid-gone" }, secondary: null }),
+    );
+    vi.stubGlobal("EventSource", EventSourceStub);
+    let sessionsAnswer = false;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/gates")) return json(GATES);
+      if (url.includes("/sessions")) {
+        return sessionsAnswer ? json(SESSIONS) : json({ error: "backend unavailable" }, 500);
+      }
+      if (url.includes("/runs/")) return json(RUN);
+      return json([]);
+    });
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <RunDetailView runId="run-1" routePane={null} onBack={() => {}} />
+      </QueryClientProvider>,
+    );
+
+    // Blind, restore keeps the pane — it has nothing to disprove it with.
+    await waitFor(() => expect(screen.getByTestId("or-run-pane-primary")).toBeTruthy());
+    expect(screen.getByTestId("or-run-pane-primary").getAttribute("aria-label")).toBe(
+      "Session pane",
+    );
+
+    sessionsAnswer = true;
+    await client.refetchQueries({ queryKey: ["oakridge", "run", "run-1", "sessions"] });
+
+    // The restore effect cannot revisit this — `state` is set, so it returns at
+    // the first guard — which makes the recovered read the only pass that will
+    // ever get to find out the run does not contain `sid-gone`.
+    await waitFor(() => expect(screen.getByTestId("or-run-overview")).toBeTruthy());
+    expect(localStorage.getItem(runWorkspaceStorageKey("run-1"))).not.toContain("sid-gone");
+  });
+
+  it("keeps a stored session pane, and its storage entry, through a failed sessions read", async () => {
+    const stored = JSON.stringify({
+      primary: { kind: "session", session_id: "sid-c1-prior" },
+      secondary: null,
+    });
+    localStorage.setItem(runWorkspaceStorageKey("run-1"), stored);
+    // Restoring a session pane mounts the real session body, which opens a
+    // stream jsdom has no EventSource for.
+    vi.stubGlobal("EventSource", EventSourceStub);
+    vi.spyOn(globalThis, "fetch").mockImplementation(makeFetchWithout("/sessions"));
+
+    renderWorkspace();
+
+    // Read as an empty list, the failed read makes this pane unresolvable and
+    // the prune that follows outlives the outage — the operator's arrangement
+    // is gone for good once the next poll succeeds.
+    await waitFor(() => expect(screen.getByTestId("or-run-pane-primary")).toBeTruthy());
+    expect(screen.getByTestId("or-run-pane-primary").getAttribute("aria-label")).toBe(
+      "Session pane",
+    );
+    expect(localStorage.getItem(runWorkspaceStorageKey("run-1"))).toContain("sid-c1-prior");
   });
 });
 

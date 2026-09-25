@@ -2,7 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import type { ArtifactId, Sid } from "../../lib/ids";
 import type { RunDetail, RunSessionAttempt } from "../types";
-import { LIST_PANE, OVERVIEW_PANE, type RunWorkspacePane } from "./run-workspace";
+import type { RunSessionsRead } from "./run-sessions";
+import {
+  LIST_PANE,
+  OVERVIEW_PANE,
+  type RunWorkspacePane,
+  type RunWorkspaceState,
+} from "./run-workspace";
 import {
   indexRunEntities,
   isPaneResolvable,
@@ -48,7 +54,29 @@ const RUN: RunDetail = {
   ],
 };
 
+/**
+ * `sid-c1-prior` is the one session only the attempt list knows about.
+ *
+ * A unit's `sid` on the run is its *current* attempt, so every other session id
+ * here is reachable from the run read alone — which makes them useless for
+ * telling whether the attempt list was consulted at all. A superseded attempt's
+ * transcript exists only in this list, and a pane holding one is exactly what a
+ * failed read must not quietly discard.
+ */
 const SESSIONS: readonly RunSessionAttempt[] = [
+  {
+    work_order_id: "wo-0",
+    session_id: "sid-c1-prior",
+    stage_instance_id: "si-build",
+    stage_key: "build",
+    unit_id: "c1",
+    reason: "initial",
+    work_order_state: "abandoned",
+    created_at: "2026-09-01T08:00:00Z",
+    completed_at: "2026-09-01T08:20:00Z",
+    executor_health_kind: null,
+    cleanup_state: "complete",
+  },
   {
     work_order_id: "wo-1",
     session_id: "sid-c1",
@@ -80,16 +108,36 @@ const SESSIONS: readonly RunSessionAttempt[] = [
 const resolve = (
   routePane: Parameters<typeof resolveWorkspaceState>[0]["routePane"],
   storedState: Parameters<typeof resolveWorkspaceState>[0]["storedState"],
-) => resolveWorkspaceState({ routePane, storedState, run: RUN, sessions: SESSIONS, purgedSessionIds: NO_PURGED_SESSIONS });
+) => resolveWorkspaceState({ routePane, storedState, run: RUN, sessions: LOADED_SESSIONS, purgedSessionIds: NO_PURGED_SESSIONS });
 
 /** Nothing purged — the ordinary case, named so each call site says so. */
 const NO_PURGED_SESSIONS: ReadonlySet<string> = new Set();
 
+/** The attempt read having landed — the ordinary case for every test but its own. */
+const LOADED_SESSIONS: RunSessionsRead = { kind: "loaded", attempts: SESSIONS };
+
 describe("indexRunEntities", () => {
   it("indexes every session the run shows, from attempts and from stages alike", () => {
-    const index = indexRunEntities({ run: RUN, sessions: SESSIONS, purgedSessionIds: NO_PURGED_SESSIONS });
+    const index = indexRunEntities({ run: RUN, sessions: LOADED_SESSIONS, purgedSessionIds: NO_PURGED_SESSIONS });
 
-    expect(index.session_ids).toEqual(new Set(["sid-c1", "sid-c2", "sid-plan"]));
+    expect(index.sessions).toEqual({
+      kind: "known",
+      ids: new Set(["sid-c1-prior", "sid-c1", "sid-c2", "sid-plan"]),
+    });
+    expect(index.artifact_ids).toEqual(new Set(["art-plan", "art-build"]));
+  });
+
+  it("knows nothing about sessions when the attempt read did not land", () => {
+    const index = indexRunEntities({
+      run: RUN,
+      sessions: { kind: "unavailable" },
+      purgedSessionIds: NO_PURGED_SESSIONS,
+    });
+
+    // The stage sids are still in hand, but they are not the run's whole
+    // session list — reporting them as if they were is what lets validation
+    // mistake an outage for a run whose sessions are gone.
+    expect(index.sessions).toEqual({ kind: "unknown" });
     expect(index.artifact_ids).toEqual(new Set(["art-plan", "art-build"]));
   });
 });
@@ -97,15 +145,28 @@ describe("indexRunEntities", () => {
 describe("a session purged out from under a pane", () => {
   const purged: ReadonlySet<string> = new Set(["sid-c1"]);
 
-  it("leaves the index, even though the run still lists its work order", () => {
-    const index = indexRunEntities({ run: RUN, sessions: SESSIONS, purgedSessionIds: purged });
+  it("stops resolving, even though the run still lists its work order", () => {
+    const index = indexRunEntities({ run: RUN, sessions: LOADED_SESSIONS, purgedSessionIds: purged });
 
-    expect(index.session_ids.has("sid-c1")).toBe(false);
-    expect(index.session_ids.has("sid-c2")).toBe(true);
+    expect(isPaneResolvable(sessionPane("sid-c1"), index)).toBe(false);
+    expect(isPaneResolvable(sessionPane("sid-c2"), index)).toBe(true);
+  });
+
+  it("stays authoritative when the attempt read did not land", () => {
+    const index = indexRunEntities({
+      run: RUN,
+      sessions: { kind: "unavailable" },
+      purgedSessionIds: purged,
+    });
+
+    // An unknown session list is a reason not to judge, not a reason to forget
+    // what the inbox positively reported gone.
+    expect(isPaneResolvable(sessionPane("sid-c1"), index)).toBe(false);
+    expect(isPaneResolvable(sessionPane("sid-c1-prior"), index)).toBe(true);
   });
 
   it("drops the pane holding it back to the overview", () => {
-    const index = indexRunEntities({ run: RUN, sessions: SESSIONS, purgedSessionIds: purged });
+    const index = indexRunEntities({ run: RUN, sessions: LOADED_SESSIONS, purgedSessionIds: purged });
 
     const validated = validateWorkspacePanes(
       { primary: sessionPane("sid-c1"), secondary: LIST_PANE },
@@ -118,7 +179,7 @@ describe("a session purged out from under a pane", () => {
   });
 
   it("closes a twin holding it and leaves the primary alone", () => {
-    const index = indexRunEntities({ run: RUN, sessions: SESSIONS, purgedSessionIds: purged });
+    const index = indexRunEntities({ run: RUN, sessions: LOADED_SESSIONS, purgedSessionIds: purged });
 
     const validated = validateWorkspacePanes(
       { primary: LIST_PANE, secondary: sessionPane("sid-c1") },
@@ -131,7 +192,7 @@ describe("a session purged out from under a pane", () => {
   });
 
   it("reports nothing dropped when every pane still resolves", () => {
-    const index = indexRunEntities({ run: RUN, sessions: SESSIONS, purgedSessionIds: purged });
+    const index = indexRunEntities({ run: RUN, sessions: LOADED_SESSIONS, purgedSessionIds: purged });
 
     const validated = validateWorkspacePanes(
       { primary: sessionPane("sid-c2"), secondary: null },
@@ -145,14 +206,14 @@ describe("a session purged out from under a pane", () => {
 
 describe("isPaneResolvable", () => {
   it("always resolves the panes derived from the run itself", () => {
-    const index = indexRunEntities({ run: RUN, sessions: SESSIONS, purgedSessionIds: NO_PURGED_SESSIONS });
+    const index = indexRunEntities({ run: RUN, sessions: LOADED_SESSIONS, purgedSessionIds: NO_PURGED_SESSIONS });
 
     expect(isPaneResolvable(OVERVIEW_PANE, index)).toBe(true);
     expect(isPaneResolvable(LIST_PANE, index)).toBe(true);
   });
 
   it("resolves an entity pane only when the run still contains it", () => {
-    const index = indexRunEntities({ run: RUN, sessions: SESSIONS, purgedSessionIds: NO_PURGED_SESSIONS });
+    const index = indexRunEntities({ run: RUN, sessions: LOADED_SESSIONS, purgedSessionIds: NO_PURGED_SESSIONS });
 
     expect(isPaneResolvable(sessionPane("sid-c1"), index)).toBe(true);
     expect(isPaneResolvable(sessionPane("sid-purged"), index)).toBe(false);
@@ -238,5 +299,64 @@ describe("validating persisted state against the run", () => {
 
     expect(resolution.state).toEqual({ primary: OVERVIEW_PANE, secondary: null });
     expect(resolution.should_prune_stored).toBe(false);
+  });
+});
+
+describe("a sessions read that failed", () => {
+  const resolveWithoutSessions = (storedState: RunWorkspaceState) =>
+    resolveWorkspaceState({
+      routePane: null,
+      storedState,
+      run: RUN,
+      sessions: { kind: "unavailable" },
+      purgedSessionIds: NO_PURGED_SESSIONS,
+    });
+
+  it("keeps a stored session pane it cannot prove is stale", () => {
+    // Read as an empty list, a transient 5xx makes a prior attempt's pane
+    // unresolvable — and the prune that follows is permanent, so the
+    // arrangement does not come back when the next poll succeeds.
+    const resolution = resolveWithoutSessions({
+      primary: sessionPane("sid-c1-prior"),
+      secondary: sessionPane("sid-c2"),
+    });
+
+    expect(resolution.state).toEqual({
+      primary: sessionPane("sid-c1-prior"),
+      secondary: sessionPane("sid-c2"),
+    });
+  });
+
+  it("does not prune the stored arrangement", () => {
+    const resolution = resolveWithoutSessions({
+      primary: sessionPane("sid-c1-prior"),
+      secondary: null,
+    });
+
+    expect(resolution.should_prune_stored).toBe(false);
+  });
+
+  it("still drops a stored artifact pane, which the run read can disprove", () => {
+    // Only the session half is unknown. The run itself loaded, so its
+    // artifacts are as knowable as ever and staleness there is still staleness.
+    const resolution = resolveWithoutSessions({
+      primary: artifactPane("art-deleted"),
+      secondary: null,
+    });
+
+    expect(resolution.state).toEqual({ primary: OVERVIEW_PANE, secondary: null });
+    expect(resolution.should_prune_stored).toBe(true);
+  });
+
+  it("opens a route pane naming a session the failed read would have listed", () => {
+    const resolution = resolveWorkspaceState({
+      routePane: { kind: "session", session_id: "sid-c1-prior" as Sid },
+      storedState: { primary: LIST_PANE, secondary: null },
+      run: RUN,
+      sessions: { kind: "unavailable" },
+      purgedSessionIds: NO_PURGED_SESSIONS,
+    });
+
+    expect(resolution.state.primary).toEqual(sessionPane("sid-c1-prior"));
   });
 });

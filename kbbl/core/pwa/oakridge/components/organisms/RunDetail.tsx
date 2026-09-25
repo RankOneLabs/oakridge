@@ -36,11 +36,20 @@ const canRetryUnit = ({ isRunActive, isRunStuck, unitStatus }: UnitRetryFacts): 
 
 interface RunDetailProps {
   runId: string;
-  onBack: () => void;
+  /**
+   * Leave the run entirely, because it no longer exists. Only the delete path
+   * calls this: the stage list renders inside a workspace pane, so navigation
+   * away from the run belongs to the identity header's `← Runs` and disposing
+   * of the list itself belongs to the pane chrome's close. A Back control here
+   * would be a third answer to a question two controls already answer — and
+   * the wrong one, since it exits the whole command center rather than the pane
+   * the operator clicked in.
+   */
+  onRunDeleted: () => void;
   onSelectArtifact: (artifactId: string) => void;
 }
 
-export function RunDetail({ runId, onBack, onSelectArtifact }: RunDetailProps) {
+export function RunDetail({ runId, onRunDeleted, onSelectArtifact }: RunDetailProps) {
   const qc = useQueryClient();
   const query = useRun(runId);
   const cancelMutation = useCancelRun(runId);
@@ -58,7 +67,6 @@ export function RunDetail({ runId, onBack, onSelectArtifact }: RunDetailProps) {
   if (query.isError) {
     return (
       <div className="or-page or-page--wide" data-testid="or-run-detail">
-        <button type="button" className={secondaryButtonClass} onClick={onBack}>Back</button>
         <div
           className="rounded-md border border-[var(--danger-card-border)] bg-[var(--danger-bg)] px-4 py-3 text-sm text-[var(--danger-fg)]"
           role="alert"
@@ -73,7 +81,6 @@ export function RunDetail({ runId, onBack, onSelectArtifact }: RunDetailProps) {
   if (query.isPending || !query.data) {
     return (
       <div className="or-page or-page--wide" data-testid="or-run-detail">
-        <button type="button" className={secondaryButtonClass} onClick={onBack}>Back</button>
         <div className="py-6 text-sm text-[var(--text-muted)]">Loading run…</div>
       </div>
     );
@@ -86,8 +93,7 @@ export function RunDetail({ runId, onBack, onSelectArtifact }: RunDetailProps) {
 
   return (
     <div className="or-page or-page--wide" data-testid="or-run-detail">
-      <header className="or-page-header or-page-header--back">
-        <button type="button" className={secondaryButtonClass} onClick={onBack}>Back</button>
+      <header className="or-page-header">
         <div className="flex-1">
           <span className="or-page-kicker">Live workflow</span>
           <h2 className="or-page-title" data-testid="or-run-detail-title">
@@ -140,7 +146,7 @@ export function RunDetail({ runId, onBack, onSelectArtifact }: RunDetailProps) {
             className="inline-flex items-center gap-1.5 rounded-md border border-red-800 px-3 py-1.5 text-sm text-red-800 hover:bg-red-800 hover:text-white disabled:opacity-50 dark:border-red-400 dark:text-red-400 dark:hover:bg-red-400 dark:hover:text-black"
             onClick={() => {
               if (window.confirm("Delete this run permanently? This cannot be undone.")) {
-                void deleteMutation.mutate(undefined, { onSuccess: onBack });
+                void deleteMutation.mutate(undefined, { onSuccess: onRunDeleted });
               }
             }}
             disabled={deleteMutation.isPending}

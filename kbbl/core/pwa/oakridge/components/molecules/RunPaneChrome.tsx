@@ -46,7 +46,7 @@ export function RunPaneChrome({ slot, title, subtitle, actions, children }: RunP
           {actions.onOpenInOtherPane !== null && (
             <button
               type="button"
-              className="or-run-workspace__pane-action"
+              className="or-run-workspace__pane-action or-run-workspace__pane-action--move"
               onClick={actions.onOpenInOtherPane}
               data-testid={`or-run-pane-move-${slot}`}
             >

@@ -5,6 +5,7 @@ import { useRunGates } from "../../hooks/useRunGates";
 import { useRunSessions } from "../../hooks/useRunSessions";
 import { useRunWorkspaceState } from "../../hooks/useRunWorkspaceState";
 import { selectRunAccentClass } from "../../lib/run-accent";
+import { selectRunSessionsRead } from "../../lib/run-sessions";
 import {
   selectRunArtifacts,
   selectRunGatesRead,
@@ -51,12 +52,16 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   const run = runQuery.data;
-  // `data` is undefined both while the sessions read is in flight and after it
-  // fails, and restore waits on undefined — so a failed read would hold the
-  // workspace on "Loading run…" forever. `isPending` is what actually separates
-  // "still loading" from "there is no list": once the query has settled, an
-  // absent list is an empty one, and the run opens on its stored arrangement.
-  const sessions = sessionsQuery.isPending ? undefined : (sessionsQuery.data ?? []);
+  // A sessions read that failed is not a run with no sessions — the same
+  // distinction `selectRunGatesRead` draws, and it matters more here, because
+  // pane validation acts on the answer: read as "no sessions", an outage
+  // concludes every stored session pane is stale and prunes the operator's
+  // arrangement out of storage on the way past.
+  const sessions = selectRunSessionsRead({
+    attempts: sessionsQuery.data,
+    is_pending: sessionsQuery.isPending,
+    is_error: sessionsQuery.isError,
+  });
   // The inbox's record of what has been purged server-side. Oakridge keeps
   // listing the work order behind a purged session, so this is the only signal
   // that a pane holding one is showing a transcript that no longer exists.
@@ -92,10 +97,9 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
     is_pending: gatesQuery.isPending,
     is_error: gatesQuery.isError,
   });
-  const sessionRows = sessions ?? [];
-  const overview = selectRunOverview({ run, sessions: sessionRows, gates });
+  const overview = selectRunOverview({ run, sessions, gates });
   const sidebarSessions = selectRunSidebarSessions({
-    sessions: sessionRows,
+    sessions,
     gates,
     purgedSessionIds,
   });
@@ -118,7 +122,7 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
         <PaneBody
           pane={pane}
           runId={runId}
-          onBack={onBack}
+          onRunDeleted={onBack}
           onOpenPane={(next) => workspace.openPane(next, slot)}
           overview={overview}
         />
@@ -164,7 +168,8 @@ interface PaneBodyProps {
   pane: RunWorkspacePane;
   runId: string;
   overview: RunOverview;
-  onBack: () => void;
+  /** Leave the run because it was deleted from inside the list pane. */
+  onRunDeleted: () => void;
   onOpenPane: (pane: RunWorkspacePane) => void;
 }
 
@@ -179,7 +184,7 @@ interface PaneBodyProps {
  * would give one renderer two fetching paths, which is the duplication reuse
  * was meant to avoid.
  */
-function PaneBody({ pane, runId, overview, onBack, onOpenPane }: PaneBodyProps) {
+function PaneBody({ pane, runId, overview, onRunDeleted, onOpenPane }: PaneBodyProps) {
   switch (pane.kind) {
     case "overview":
       return <RunOverviewPane overview={overview} onOpenPane={onOpenPane} />;
@@ -187,7 +192,7 @@ function PaneBody({ pane, runId, overview, onBack, onOpenPane }: PaneBodyProps) 
       return (
         <RunDetail
           runId={runId}
-          onBack={onBack}
+          onRunDeleted={onRunDeleted}
           onSelectArtifact={(artifactId) =>
             onOpenPane({ kind: "artifact", artifact_id: artifactId as ArtifactId })
           }
