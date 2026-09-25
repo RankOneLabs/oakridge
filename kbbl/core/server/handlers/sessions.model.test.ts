@@ -21,6 +21,7 @@ import {
   TERMINAL_WAIT_MS_MAX,
 } from "./sessions";
 import { makeAcpTestService, type AcpTestHarness } from "../../acp/test-harness";
+import type { TurnKey } from "../../acp/types";
 import type { SessionManager } from "../../session/session-manager";
 
 let tmpRoot: string;
@@ -121,6 +122,28 @@ describe("GET /sessions", () => {
 });
 
 describe("POST /sessions resume_from (§17.3: worktree inheritance)", () => {
+  test("the resumed agent receives the parent's conversation as its first durable turn", async () => {
+    const app = makeApp();
+    const parent = await postSessions(app, { workdir: repoDir, name: "parent" });
+    const parentSid = parent.body.sid as string;
+    const sent = await harness.service.sendInput(parentSid, "Please remember the blue heron.");
+    expect(sent.ok).toBe(true);
+    if (!sent.ok) return;
+    const deadline = Date.now() + 5_000;
+    while (harness.store.getTurn(parentSid as never, sent.value.turn_key)?.status !== "succeeded") {
+      if (Date.now() > deadline) throw new Error("parent turn did not complete");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    await harness.service.closeSession(parentSid);
+
+    const child = await postSessions(app, { resume_from: parentSid, name: "child" });
+    expect(child.status).toBe(200);
+    const childSid = child.body.sid as string;
+    const initial = harness.store.getTurn(childSid as never, `initial:${childSid}` as TurnKey);
+    expect(initial?.payload).toContain("User: Please remember the blue heron.");
+    expect(initial?.payload).toContain("Assistant:");
+  });
+
   test("the child runs in a fresh worktree cut from the parent's, with lineage recorded", async () => {
     const app = makeApp();
     const parent = await postSessions(app, { workdir: repoDir, name: "parent" });

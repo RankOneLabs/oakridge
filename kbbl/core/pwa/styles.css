@@ -3362,56 +3362,79 @@ body {
   pointer-events: none;
 }
 
-/* Global pending-approval badge: fixed top-center so a parked tool-approval is
-   visible from any view, not just the session's own conversation. */
-.pending-approvals-badge {
+/* Pending permissions remain actionable from every view. */
+.pending-approvals {
   position: fixed;
-  /* Offset by the notch/status-bar inset on mobile so the badge clears it. */
   top: calc(0.75rem + env(safe-area-inset-top, 0px));
-  left: 50%;
-  transform: translateX(-50%);
-  /* Below the overlay layer (toasts / pickers at 1000) so modals stay on top. */
+  right: 0.75rem;
+  width: min(24rem, calc(100vw - 1.5rem));
+  max-height: calc(100vh - 1.5rem - env(safe-area-inset-top, 0px));
+  overflow-y: auto;
   z-index: 990;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.4rem 0.9rem;
-  border: none;
-  border-radius: 999px;
-  background: #b45309;
-  color: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.pending-approval-toast {
+  display: block;
+  padding: 0.8rem;
+  border: 1px solid var(--permission-border);
+  border-radius: 10px;
+  background: var(--permission-bg);
+  color: var(--text-primary);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+}
+
+.pending-approval-toast__session {
+  color: var(--permission-fg);
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin-bottom: 0.35rem;
+}
+
+.pending-approval-toast__title {
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+
+.pending-approval-toast__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.75rem;
+}
+
+.pending-approval-toast__actions button {
+  min-height: 40px;
+  padding: 0.45rem 0.7rem;
+  border: 0;
+  border-radius: 6px;
   font-size: 0.85rem;
   font-weight: 600;
   cursor: pointer;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
 }
 
-.pending-approvals-badge:hover {
-  background: #c2620a;
+.pending-approval-toast__actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
-.pending-approvals-badge:focus-visible {
-  outline: 2px solid #fde68a;
+.pending-approval-toast__link {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border-muted) !important;
+}
+
+.pending-approval-toast--loading {
+  text-align: left;
+  cursor: pointer;
+}
+
+.pending-approval-toast:focus-visible,
+.pending-approval-toast__actions button:focus-visible {
+  outline: 2px solid var(--permission-fg);
   outline-offset: 2px;
-}
-
-.pending-approvals-badge-dot {
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 50%;
-  background: #fde68a;
-  animation: pending-approvals-pulse 1.4s ease-in-out infinite;
-}
-
-@keyframes pending-approvals-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .pending-approvals-badge-dot {
-    animation: none;
-  }
 }
 
 .toast-item {

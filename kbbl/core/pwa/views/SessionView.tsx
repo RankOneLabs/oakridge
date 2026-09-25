@@ -23,7 +23,7 @@ import { ThinkingIndicator } from "../components/atoms/ThinkingIndicator";
 import { SkillRail } from "../components/organisms/SkillRail";
 import { CompactControl } from "../components/molecules/CompactControl";
 import { permissionCardAnchorId } from "../components/organisms/PermissionCard";
-import { readHashSessionTarget } from "../lib/hash";
+import { readHashPermissionTarget, readHashSessionTarget } from "../lib/hash";
 import {
   DOCUMENT_SESSION_SURFACE_LAYOUT,
   type SessionSurfaceChrome,
@@ -70,21 +70,28 @@ export function SessionView({
 
   const projection = useMemo(() => projectTimeline(events), [events]);
   const focusedPermissionRef = useRef<string | null>(null);
+  const [hashFocusVersion, setHashFocusVersion] = useState(0);
+
+  useEffect(() => {
+    const onHashChange = () => setHashFocusVersion((version) => version + 1);
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
 
   useEffect(() => {
     focusedPermissionRef.current = null;
   }, [sid]);
 
   useEffect(() => {
-    if (readHashSessionTarget() !== "pending-permission") return;
-    const request_id = projection.openPermissions[0]?.requestId;
-    if (!request_id || focusedPermissionRef.current === request_id) return;
+    const requestedId = readHashPermissionTarget();
+    const request_id = requestedId ?? (readHashSessionTarget() === "pending-permission" ? projection.openPermissions[0]?.requestId : null);
+    if (!request_id || focusedPermissionRef.current === `${request_id}:${hashFocusVersion}`) return;
     const card = document.getElementById(permissionCardAnchorId(request_id));
     if (!card) return;
-    focusedPermissionRef.current = request_id;
+    focusedPermissionRef.current = `${request_id}:${hashFocusVersion}`;
     card.scrollIntoView({ behavior: "smooth", block: "center" });
     card.focus({ preventScroll: true });
-  }, [projection.openPermissions]);
+  }, [projection.openPermissions, hashFocusVersion]);
   const compactMutation = useInvokeAgentCommand(sid);
 
   const sessionStatus = snapshot?.status ?? null;
