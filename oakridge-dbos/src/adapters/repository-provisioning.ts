@@ -78,7 +78,7 @@ export class RepositoryProvisioningAdapter implements ExecutorAdapter {
       const published = await this.dependencies.publish_work_order({ work_order_id: config.value.publication.work_order_id as WorkOrderId,
         capability: config.value.publication.capability, output_name: config.value.output_name, body: { ...provisioned.value },
         idempotency_key: `${request.execution_id}:${config.value.output_name}` });
-      if (published.kind !== "published" && published.kind !== "pending" && published.kind !== "already_applied") {
+      if (published.kind !== "published" && published.kind !== "pending" && published.kind !== "already_applied" && published.kind !== "changes_requested") {
         return failed(`emit_${published.kind}`, published.detail);
       }
       return { kind: "succeeded", metadata: { base_branch: provisioned.value.base_branch, base_head_sha: provisioned.value.base_head_sha } satisfies JsonValue };

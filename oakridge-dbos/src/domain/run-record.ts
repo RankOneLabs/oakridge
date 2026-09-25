@@ -280,6 +280,7 @@ export interface PublishWorkOrderArtifact {
 
 export type PublishWorkOrderArtifactResult =
   | { readonly kind: "published"; readonly artifact_id: ArtifactId; readonly run_id: WorkflowRunId; readonly record_version: RunRecordVersion }
+  | { readonly kind: "changes_requested"; readonly artifact_id: ArtifactId; readonly run_id: WorkflowRunId; readonly record_version: RunRecordVersion }
   /** A gated or handoff release policy: the artifact is recorded and its slot parked pending the opened wait's decision. */
   | { readonly kind: "pending"; readonly artifact_id: ArtifactId; readonly wait_id: WaitId; readonly run_id: WorkflowRunId; readonly record_version: RunRecordVersion }
   | { readonly kind: "already_applied"; readonly artifact_id: ArtifactId; readonly run_id: WorkflowRunId; readonly record_version: RunRecordVersion }

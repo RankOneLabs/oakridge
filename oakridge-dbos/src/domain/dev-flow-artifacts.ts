@@ -18,6 +18,18 @@ export type AssessmentVerdict = "pass" | "pass_with_notes" | "fail";
 export type CriterionStatus = "met" | "not_met" | "partial";
 export interface AssessmentFinding { readonly criterion: string | null; readonly status: CriterionStatus | null; readonly evidence: string | null; readonly description: string | null }
 export interface AssessmentBody { readonly verdict: AssessmentVerdict; readonly findings: readonly AssessmentFinding[]; readonly test_evidence: TestEvidence | null; readonly recommended_next_actions: readonly string[] }
+/** A failed assessment asks the builder for changes; it cannot satisfy the assessment gate. */
+export const failedAssessmentFeedback = (artifactType: string, body: unknown): string | null => {
+  if (artifactType !== "dev.assessment" || typeof body !== "object" || body === null || Array.isArray(body)) return null;
+  const assessment = body as { readonly verdict?: unknown; readonly recommended_next_actions?: unknown };
+  if (assessment.verdict !== "fail") return null;
+  const actions = Array.isArray(assessment.recommended_next_actions)
+    ? assessment.recommended_next_actions.filter((action): action is string => typeof action === "string" && action.trim() !== "")
+    : [];
+  return actions.length > 0 ? actions.join("\n") : "The assessment failed; address its findings before resubmitting the build.";
+};
+export const isFailedAssessment = (artifactType: string, body: unknown): boolean =>
+  failedAssessmentFeedback(artifactType, body) !== null;
 export type PrReviewStatus = "draft" | "ready" | "changes_requested" | "approved" | "merged" | "closed";
 export interface PrSummaryBody { readonly pr_url: string; readonly branch: string; readonly summary: string; readonly review_status: PrReviewStatus | null }
 /**

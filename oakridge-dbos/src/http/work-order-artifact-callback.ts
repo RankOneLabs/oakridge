@@ -14,6 +14,7 @@ export interface WorkOrderArtifactCallbackDependencies {
 
 const statusOf = (result: PublishWorkOrderArtifactResult): 200 | 201 | 202 | 401 | 404 | 409 => {
   if (result.kind === "published") return 201;
+  if (result.kind === "changes_requested") return 202;
   if (result.kind === "pending") return 202;
   if (result.kind === "already_applied") return 200;
   if (result.kind === "invalid_capability") return 401;
@@ -35,13 +36,14 @@ export const createWorkOrderArtifactCallbackApp = (dependencies: WorkOrderArtifa
     const result = await publishWorkOrderArtifact({ work_order_id: workOrderId, capability, output_name: context.req.param("outputName") ?? "",
       collection_key: collectionKey as OutputCollectionKey | null, body, idempotency_key: context.req.header("idempotency-key")?.trim() || null }, dependencies);
     const status = statusOf(result);
-    if (result.kind === "published" || result.kind === "already_applied" || result.kind === "pending") {
+    if (result.kind === "published" || result.kind === "already_applied" || result.kind === "pending" || result.kind === "changes_requested") {
       // A hint only ever tells the root "ask again" — sent fire-and-forget,
       // never on the response's critical path, and never required for the
       // publication itself to be correct.
       await dependencies.send_run_wake?.(result.run_id, `${result.kind}:${result.run_id}:${result.record_version}`).catch(() => undefined);
     }
     if (result.kind === "published" || result.kind === "already_applied") return context.json({ artifact_id: result.artifact_id, state: "released", record_version: result.record_version }, status);
+    if (result.kind === "changes_requested") return context.json({ artifact_id: result.artifact_id, state: "needs_changes", record_version: result.record_version }, status);
     if (result.kind === "pending") return context.json({ artifact_id: result.artifact_id, state: "pending", wait_id: result.wait_id, record_version: result.record_version }, status);
     const failure = result;
     return context.json({ error: failure.detail, code: failure.kind,
