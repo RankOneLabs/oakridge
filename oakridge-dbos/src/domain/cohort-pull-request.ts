@@ -30,6 +30,7 @@ export interface RunOwnedCohortHandoff {
   readonly unit_id: UnitId;
   readonly repository_key: string;
   readonly handoff_artifact_id: ArtifactId;
+  readonly handoff_slot_state: "empty" | "pending" | "released" | "invalidated";
   readonly handoff_body: JsonValue;
   readonly summary_body: JsonValue;
 }
@@ -55,6 +56,8 @@ export interface CohortPullRequestReconciliation {
   readonly stage_instance_id: StageInstanceId;
   readonly unit_id: UnitId;
   readonly repository_key: string;
+  /** Null only for rows written before handoff identity was persisted. */
+  readonly handoff_artifact_id: ArtifactId | null;
   readonly observation: PullRequestObservation;
   readonly mismatch: PullRequestMismatch | null;
   readonly completed_at: string | null;
@@ -76,6 +79,7 @@ export type CohortPullRequestOutcome =
 
 export interface ReconcileCohortPullRequestInput {
   readonly expected: ExpectedCohortPullRequest;
+  readonly handoff_artifact_id: ArtifactId;
   readonly observation: PullRequestObservation;
   readonly previous: CohortPullRequestReconciliation | null;
   readonly reconciled_at: string;
@@ -85,6 +89,16 @@ export interface ReconciledCohortPullRequest {
   readonly outcome: CohortPullRequestOutcome;
   readonly reconciliation: CohortPullRequestReconciliation;
 }
+
+/** A prior completion is historical only when a different handoff is pending. */
+export const reconciliationForHandoff = (
+  previous: CohortPullRequestReconciliation | null,
+  handoffArtifactId: ArtifactId,
+  slotState: RunOwnedCohortHandoff["handoff_slot_state"],
+): CohortPullRequestReconciliation | null =>
+  previous?.completed_at && slotState === "pending" && previous.handoff_artifact_id !== handoffArtifactId
+    ? { ...previous, completed_at: null }
+    : previous;
 
 /** The first expectation the observation fails, or null if it meets them all. */
 const findMismatch = (expected: ExpectedCohortPullRequest, observation: PullRequestObservation): PullRequestMismatch | null => {
@@ -129,7 +143,8 @@ const findMismatch = (expected: ExpectedCohortPullRequest, observation: PullRequ
 export const reconcileCohortPullRequest = (input: ReconcileCohortPullRequestInput): ReconciledCohortPullRequest => {
   const record = (mismatch: PullRequestMismatch | null): CohortPullRequestReconciliation => ({
     run_id: input.expected.run_id, stage_instance_id: input.expected.stage_instance_id, unit_id: input.expected.unit_id,
-    repository_key: input.expected.repository_key, observation: input.observation, mismatch,
+    repository_key: input.expected.repository_key, handoff_artifact_id: input.handoff_artifact_id,
+    observation: input.observation, mismatch,
     completed_at: input.previous?.completed_at ?? null, updated_at: input.reconciled_at,
   });
 

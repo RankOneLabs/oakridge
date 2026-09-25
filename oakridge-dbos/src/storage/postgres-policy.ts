@@ -96,7 +96,7 @@ export class PostgresCohortPullRequestRepository implements CohortPullRequestRep
 
   async find(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<CohortPullRequestReconciliation | null> {
     const rows = await this.sql.query<CohortReconciliationRow>(
-      `SELECT workflow_run_id::text, stage_instance_id::text, unit_id, repository_key, observation, mismatch,
+      `SELECT workflow_run_id::text, stage_instance_id::text, unit_id, repository_key, handoff_artifact_id::text, observation, mismatch,
               completed_at::text, updated_at::text
        FROM oakridge.cohort_pull_request_reconciliation
        WHERE stage_instance_id = $1 AND unit_id = $2`, [stage_instance_id, unit_id]);
@@ -106,17 +106,22 @@ export class PostgresCohortPullRequestRepository implements CohortPullRequestRep
   async upsert(reconciliation: CohortPullRequestReconciliation): Promise<void> {
     await this.sql.query(
       `INSERT INTO oakridge.cohort_pull_request_reconciliation
-         (workflow_run_id, stage_instance_id, unit_id, repository_key, observation, mismatch, observed_at, completed_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7::timestamptz,$8::timestamptz,$9::timestamptz)
+         (workflow_run_id, stage_instance_id, unit_id, repository_key, handoff_artifact_id, observation, mismatch, observed_at, completed_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5::uuid,$6::jsonb,$7::jsonb,$8::timestamptz,$9::timestamptz,$10::timestamptz)
        ON CONFLICT (stage_instance_id, unit_id) DO UPDATE SET
          repository_key = EXCLUDED.repository_key,
+         handoff_artifact_id = EXCLUDED.handoff_artifact_id,
          observation = EXCLUDED.observation,
          mismatch = EXCLUDED.mismatch,
          observed_at = EXCLUDED.observed_at,
-         completed_at = COALESCE(oakridge.cohort_pull_request_reconciliation.completed_at, EXCLUDED.completed_at),
+         completed_at = CASE
+           WHEN oakridge.cohort_pull_request_reconciliation.handoff_artifact_id IS DISTINCT FROM EXCLUDED.handoff_artifact_id
+             THEN EXCLUDED.completed_at
+           ELSE COALESCE(oakridge.cohort_pull_request_reconciliation.completed_at, EXCLUDED.completed_at)
+         END,
          updated_at = EXCLUDED.updated_at
        WHERE EXCLUDED.observed_at >= oakridge.cohort_pull_request_reconciliation.observed_at`,
-      [reconciliation.run_id, reconciliation.stage_instance_id, reconciliation.unit_id, reconciliation.repository_key,
+      [reconciliation.run_id, reconciliation.stage_instance_id, reconciliation.unit_id, reconciliation.repository_key, reconciliation.handoff_artifact_id,
         JSON.stringify(reconciliation.observation), reconciliation.mismatch === null ? null : JSON.stringify(reconciliation.mismatch),
         reconciliation.observation.observed_at, reconciliation.completed_at, reconciliation.updated_at],
     );
@@ -134,6 +139,7 @@ const decodeCohortReconciliation = (row: CohortReconciliationRow): CohortPullReq
   stage_instance_id: row.stage_instance_id as StageInstanceId,
   unit_id: row.unit_id as UnitId,
   repository_key: row.repository_key,
+  handoff_artifact_id: row.handoff_artifact_id as ArtifactId | null,
   observation: row.observation,
   mismatch: row.mismatch,
   completed_at: row.completed_at,

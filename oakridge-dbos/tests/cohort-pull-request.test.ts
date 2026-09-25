@@ -1,11 +1,14 @@
 import { expect, test } from "bun:test";
 
 import {
-  operatorMergedObservation, reconcileCohortPullRequest, withCompletion,
+  operatorMergedObservation, reconcileCohortPullRequest, reconciliationForHandoff, withCompletion,
   type CohortPullRequestReconciliation, type ExpectedCohortPullRequest,
 } from "../src/domain/cohort-pull-request";
 import type { PullRequestObservation } from "../src/domain/pull-request";
-import type { StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
+import type { ArtifactId, StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
+
+const firstHandoffId = "00000000-0000-4000-8000-000000000003" as ArtifactId;
+const secondHandoffId = "00000000-0000-4000-8000-000000000004" as ArtifactId;
 
 const expected: ExpectedCohortPullRequest = {
   run_id: "00000000-0000-4000-8000-000000000001" as WorkflowRunId,
@@ -29,6 +32,7 @@ const observation = (overrides: Partial<PullRequestObservation> = {}): PullReque
 const reconcile = (input: { observation?: PullRequestObservation; previous?: CohortPullRequestReconciliation | null; expected?: ExpectedCohortPullRequest } = {}) =>
   reconcileCohortPullRequest({
     expected: input.expected ?? expected,
+    handoff_artifact_id: firstHandoffId,
     observation: input.observation ?? observation(),
     previous: input.previous ?? null,
     reconciled_at: "2026-08-18T12:00:01.000Z",
@@ -131,6 +135,27 @@ test("a cohort already reconciled as merged stays merged", () => {
   const result = reconcile({ previous, observation: observation({ state: "open", merged_at: null, observed_at: "2026-08-19T00:00:00.000Z" }) });
   expect(result.outcome).toEqual({ kind: "already_completed" });
   expect(result.reconciliation).toEqual(previous);
+});
+
+test("a new open handoff can reconcile a merge after an earlier handoff completed", () => {
+  const previous = withCompletion(reconcile().reconciliation, "2026-08-18T12:00:02.000Z");
+  const current = reconciliationForHandoff(previous, secondHandoffId, "pending");
+  const result = reconcileCohortPullRequest({ expected, handoff_artifact_id: secondHandoffId,
+    previous: current, observation: observation({ observed_at: "2026-08-19T00:00:00.000Z" }), reconciled_at: "2026-08-19T00:00:00.000Z" });
+  expect(result.outcome).toEqual({ kind: "merged" });
+  expect(result.reconciliation.handoff_artifact_id).toBe(secondHandoffId);
+  expect(result.reconciliation.completed_at).toBeNull();
+  expect(withCompletion(result.reconciliation, "2026-08-19T00:00:01.000Z").completed_at).toBe("2026-08-19T00:00:01.000Z");
+});
+
+test("a released handoff keeps its completed reconciliation", () => {
+  const previous = withCompletion(reconcile().reconciliation, "2026-08-18T12:00:02.000Z");
+  expect(reconciliationForHandoff(previous, firstHandoffId, "released")).toEqual(previous);
+});
+
+test("an invalidated handoff does not reset an earlier completion", () => {
+  const previous = withCompletion(reconcile().reconciliation, "2026-08-18T12:00:02.000Z");
+  expect(reconciliationForHandoff(previous, secondHandoffId, "invalidated")).toEqual(previous);
 });
 
 /**
