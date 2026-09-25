@@ -1,7 +1,8 @@
 import type { Ref } from "react";
 
-import type { SessionSnapshot, Status, Theme } from "../../types";
+import type { SessionSnapshot, Status } from "../../types";
 import type { UsageState } from "../../lib/acp-timeline";
+import type { SessionSurfaceChrome } from "../../lib/session-surface";
 import { formatTokens, prettyEffortLabel, prettyModelLabel } from "../../lib/format";
 import { sessionLabelTitle, workdirBasename } from "../../lib/session";
 
@@ -18,9 +19,7 @@ export function SessionTopBar({
   streamStatus,
   inboxStatus,
   usage,
-  theme,
-  onToggleTheme,
-  onBack,
+  chrome,
 }: {
   ref?: Ref<HTMLElement>;
   sid: string;
@@ -28,9 +27,12 @@ export function SessionTopBar({
   streamStatus: Status;
   inboxStatus: Status;
   usage: UsageState | null;
-  theme: Theme;
-  onToggleTheme: () => void;
-  onBack: () => void;
+  /**
+   * What the host contributes. Session identity — sid, status, stream status,
+   * usage — is the bar's own and renders for both; back and theme belong to
+   * the route host alone.
+   */
+  chrome: SessionSurfaceChrome;
 }) {
   const isOpen =
     snapshot !== null &&
@@ -44,16 +46,18 @@ export function SessionTopBar({
   const usageText = usage !== null ? usageLabel(usage) : null;
 
   return (
-    <header className="top-bar" ref={ref}>
-      <button
-        type="button"
-        className="back-button"
-        onClick={onBack}
-        aria-label="Back to session list"
-        title="Back to session list"
-      >
-        ←
-      </button>
+    <header className="top-bar" ref={ref} data-chrome={chrome.kind}>
+      {chrome.kind === "route" && (
+        <button
+          type="button"
+          className="back-button"
+          onClick={chrome.onBack}
+          aria-label="Back to session list"
+          title="Back to session list"
+        >
+          ←
+        </button>
+      )}
       <span className={`status status-${shownStatus}`}>{shownStatus}</span>
       {usageText !== null && (
         <span
@@ -67,17 +71,19 @@ export function SessionTopBar({
           {usageText}
         </span>
       )}
-      <button
-        type="button"
-        className="theme-toggle"
-        onClick={onToggleTheme}
-        title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-        aria-label={
-          theme === "dark" ? "Switch to light mode" : "Switch to dark mode"
-        }
-      >
-        {theme === "dark" ? "LIGHT" : "DARK"}
-      </button>
+      {chrome.kind === "route" && (
+        <button
+          type="button"
+          className="theme-toggle"
+          onClick={chrome.onToggleTheme}
+          title={chrome.theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          aria-label={
+            chrome.theme === "dark" ? "Switch to light mode" : "Switch to dark mode"
+          }
+        >
+          {chrome.theme === "dark" ? "LIGHT" : "DARK"}
+        </button>
+      )}
       <span
         className="session-label"
         title={snapshot ? sessionLabelTitle(snapshot, sid) : `session ${sid}`}

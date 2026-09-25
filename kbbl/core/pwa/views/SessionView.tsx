@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import type { SessionSnapshot, Status, Theme } from "../types";
+import type { SessionSnapshot, Status } from "../types";
 import { useAcpSession } from "../hooks/useAcpSession";
 import { usePendingSends } from "../hooks/usePendingSends";
 import { useElapsedSeconds } from "../hooks/useElapsedSeconds";
@@ -24,23 +24,32 @@ import { SkillRail } from "../components/organisms/SkillRail";
 import { CompactControl } from "../components/molecules/CompactControl";
 import { permissionCardAnchorId } from "../components/organisms/PermissionCard";
 import { readHashSessionTarget } from "../lib/hash";
+import {
+  DOCUMENT_SESSION_SURFACE_LAYOUT,
+  type SessionSurfaceChrome,
+  type SessionSurfaceLayout,
+} from "../lib/session-surface";
 
 export function SessionView({
   sid,
   snapshot,
   inboxStatus,
-  theme,
-  onToggleTheme,
-  onBack,
+  chrome,
   onResume,
+  layout = DOCUMENT_SESSION_SURFACE_LAYOUT,
 }: {
   sid: string;
   snapshot: SessionSnapshot | null;
   inboxStatus: Status;
-  theme: Theme;
-  onToggleTheme: () => void;
-  onBack: () => void;
+  /** Which app-level affordances the host contributes to the top bar. */
+  chrome: SessionSurfaceChrome;
   onResume: (parentSid: string) => Promise<string | null>;
+  /**
+   * Which host this view scrolls and where its input bar anchors. Defaults to
+   * the document/viewport layout, so the standalone route renders exactly as
+   * it did before anchoring became injectable.
+   */
+  layout?: SessionSurfaceLayout;
 }) {
   const appRef = useRef<HTMLDivElement>(null);
   const topBarRef = useRef<HTMLElement>(null);
@@ -123,12 +132,19 @@ export function SessionView({
     appRef,
     topBarRef,
     bottomBarRef,
+    layout,
   });
 
   const canInput = snapshot !== null && !isLegacyArchive && !sessionClosed;
 
+  // Anchoring is a scoped class rather than an inline style object: the bar's
+  // viewport-fixed rules and the sticky override both belong to the stylesheet
+  // that owns .bottom-stack, and one system is what keeps the safe-area
+  // padding and the desktop max-width in a single place.
+  const surfaceClassName = layout.barAnchor === "surface" ? "app session-surface--embedded" : "app";
+
   return (
-    <div className="app" ref={appRef}>
+    <div className={surfaceClassName} ref={appRef}>
       <SessionTopBar
         ref={topBarRef}
         sid={sid}
@@ -136,9 +152,7 @@ export function SessionView({
         streamStatus={streamStatus}
         inboxStatus={inboxStatus}
         usage={projection.usage}
-        theme={theme}
-        onToggleTheme={onToggleTheme}
-        onBack={onBack}
+        chrome={chrome}
       />
       {isLegacyArchive ? (
         <div className="session-ended-banner">

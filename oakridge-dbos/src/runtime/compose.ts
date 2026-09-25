@@ -184,7 +184,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     admission: { records: runRecords, now },
     operator_retry: { records: runRecords, now, send_run_wake: sendRunWakeHint },
     run_lifecycle: { records: runRecords },
-    domain_reads: { stages, artifacts, session_holds: projections },
+    domain_reads: { stages, artifacts, session_holds: projections, session_run_locations: projections },
     final_pull_requests: { final_pull_requests: finalPullRequests, now },
     work_order_artifact_callback: { records: runRecords, now, send_run_wake: sendRunWakeHint },
     gate_resume: { records: runRecords, now, send_run_wake: sendRunWakeHint },

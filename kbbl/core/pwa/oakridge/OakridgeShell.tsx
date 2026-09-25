@@ -2,14 +2,16 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useOakridgeConfig } from "./hooks/useOakridgeConfig";
 import { RunListView } from "./views/RunListView";
 import { RunDetailView } from "./views/RunDetailView";
-import { ArtifactReviewView } from "./views/ArtifactReviewView";
+import { ArtifactWorkspaceRedirectView } from "./views/ArtifactWorkspaceRedirectView";
 import { NewRunView } from "./views/NewRunView";
 import { CreateProjectView } from "./views/CreateProjectView";
 import { WorkflowDefListView } from "./views/WorkflowDefListView";
 import { WorkflowDefEditorView } from "./views/WorkflowDefEditorView";
 import { WorkflowDefDetailView } from "./views/WorkflowDefDetailView";
 import { ReviewInboxView } from "./views/ReviewInboxView";
-import type { OakridgeSubRoute } from "../lib/hash";
+import { SessionWorkspaceRedirectView } from "./views/SessionWorkspaceRedirectView";
+import { formatRunWorkspaceHash, type OakridgeSubRoute } from "../lib/hash";
+import type { ArtifactId } from "../lib/ids";
 import type { WorkflowDefSummary } from "./types";
 import { useOakridgeInvalidationStream } from "./hooks/useOakridgeInvalidationStream";
 
@@ -52,7 +54,7 @@ function OakridgeShellInner({ route, onBack, onNavigate }: OakridgeShellInnerPro
     );
   }
 
-  const navigateToRun = (id: string) => onNavigate(`oakridge/run/${encodeURIComponent(id)}`);
+  const navigateToRun = (id: string) => onNavigate(formatRunWorkspaceHash(id, null));
   const navigateToArtifact = (id: string) => onNavigate(`oakridge/artifact/${encodeURIComponent(id)}`);
   const navigateToRuns = () => onNavigate("oakridge");
   const navigateToNewRun = () => onNavigate("oakridge/new-run");
@@ -86,15 +88,21 @@ function OakridgeShellInner({ route, onBack, onNavigate }: OakridgeShellInnerPro
       break;
     case "run":
       content = (
-        <RunDetailView
-          runId={route.id}
-          onBack={navigateToRuns}
-          onSelectArtifact={navigateToArtifact}
-        />
+        <RunDetailView runId={route.id} routePane={route.pane} onBack={navigateToRuns} />
+      );
+      break;
+    case "session":
+      content = (
+        <SessionWorkspaceRedirectView sessionId={route.session_id} onBack={navigateToRuns} />
       );
       break;
     case "artifact":
-      content = <ArtifactReviewView artifactId={route.id} onBack={navigateToRuns} />;
+      content = (
+        <ArtifactWorkspaceRedirectView
+          artifactId={route.id as ArtifactId}
+          onBack={navigateToRuns}
+        />
+      );
       break;
     case "new-run":
       content = (

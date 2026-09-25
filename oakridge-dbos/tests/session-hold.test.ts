@@ -21,8 +21,13 @@ const hold: SessionHold = {
   unit_id: "0" as SessionHold["unit_id"],
 };
 
+// `session_run_locations` is the sibling navigation read (`/sessions/:id/run`),
+// stubbed to "no run" here so these cases exercise the hold route alone — the
+// two answer different questions off different predicates and must not be
+// allowed to drift into each other.
 const appWith = (session_holds: SessionHoldRepository) => new Hono().route("/", createDomainReadApp({
   stages: {} as never, artifacts: {} as never, session_holds,
+  session_run_locations: { async find_run_for_session() { return null; } },
 }));
 
 test("a session a live execution still needs is reported as held", async () => {
@@ -183,4 +188,88 @@ test("a session no attachment names holds nothing", async () => {
   await seedWorkOrder(sql, { work_state: "started", attach_session_id: null, dbos_status: "PENDING", dbos_application_version: EXECUTOR_VERSION });
   const repository = new PostgresOperatorProjectionRepository(sql, EXECUTOR_VERSION);
   expect(await repository.find_session_hold(`session-${randomUUID()}`)).toBeNull();
+});
+
+// --- list_run_sessions / find_run_for_session, against real Postgres ---
+
+/**
+ * A second attempt at a unit the run already worked: its own `work_order` row
+ * (`reason = 'operator_retry'`) with its own `executor_attachment`, exactly as
+ * `retry_unit` would leave it. `executor_attachment.work_order_id` is a
+ * PRIMARY KEY, so this is what makes the per-attempt session history durable
+ * rather than the attachment being overwritten in place.
+ */
+const seedRetryAttempt = async (
+  sqlExecutor: PgPostgresExecutor,
+  seeded: SeededWorkOrder,
+  options: { readonly session_id: string; readonly work_state: "started" | "completed"; readonly created_at: string },
+): Promise<WorkOrderId> => {
+  const retryId = randomUUID() as WorkOrderId;
+  const runUnitRows = await sqlExecutor.query<{ readonly id: string }>(
+    "SELECT run_unit_id::text AS id FROM oakridge.work_order WHERE id = $1", [seeded.work_order_id]);
+  const runUnitId = runUnitRows[0]?.id;
+  if (!runUnitId) throw new Error("seeded work order has no run unit");
+  const completedAt = options.work_state === "completed" ? options.created_at : null;
+  await sqlExecutor.query(
+    `INSERT INTO oakridge.work_order (id, run_unit_id, reason, input_snapshot, input_fingerprint, state, workflow_id,
+       request_idempotency_key, capability_hash, created_at, completed_at)
+     VALUES ($1,$2,'operator_retry','[]'::jsonb,'empty',$3,$4,$5,$6,$7::timestamptz,$8::timestamptz)`,
+    [retryId, runUnitId, options.work_state, `v2-work:${retryId}`, `retry-${retryId}`,
+      createHash("sha256").update(retryId).digest("hex"), options.created_at, completedAt]);
+  const records = new PostgresRunRecordRepository(sqlExecutor);
+  await records.ensure_executor_attachment(retryId, "delegated_session", options.created_at);
+  await records.attach_external(retryId, { kind: "kbbl_session", session_id: options.session_id }, options.created_at);
+  return retryId;
+};
+
+test("every attempt at a unit keeps its own session, so the run lists the whole history", async () => {
+  if (!sql) { console.warn("run sessions PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  const initialSession = `session-${randomUUID()}`;
+  const retrySession = `session-${randomUUID()}`;
+  const seeded = await seedWorkOrder(sql, { work_state: "completed", attach_session_id: initialSession, dbos_status: "SUCCESS", dbos_application_version: EXECUTOR_VERSION });
+  await seedRetryAttempt(sql, seeded, { session_id: retrySession, work_state: "started", created_at: new Date(Date.now() + 1_000).toISOString() });
+
+  const repository = new PostgresOperatorProjectionRepository(sql, EXECUTOR_VERSION);
+  const attempts = await repository.list_run_sessions(seeded.run_id);
+
+  expect(attempts.map((attempt) => attempt.session_id)).toEqual([initialSession, retrySession]);
+  expect(attempts.map((attempt) => attempt.reason)).toEqual(["initial", "operator_retry"]);
+  expect(attempts.map((attempt) => attempt.work_order_state)).toEqual(["completed", "started"]);
+  expect(attempts.every((attempt) => attempt.unit_id === seeded.unit_id && attempt.stage_key === "review")).toBe(true);
+  expect(attempts[0]?.completed_at).not.toBeNull();
+  expect(attempts[1]?.completed_at).toBeNull();
+  expect(attempts[1]?.cleanup_state).toBe("not_needed");
+});
+
+test("a run whose work opened no session lists nothing", async () => {
+  if (!sql) { console.warn("run sessions PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  const seeded = await seedWorkOrder(sql, { work_state: "started", attach_session_id: null, dbos_status: "PENDING", dbos_application_version: EXECUTOR_VERSION });
+  const repository = new PostgresOperatorProjectionRepository(sql, EXECUTOR_VERSION);
+  expect(await repository.list_run_sessions(seeded.run_id)).toEqual([]);
+});
+
+/**
+ * The case that separates navigation from close-safety: this exact row shape
+ * makes `find_session_hold` return null (the work order is completed and its
+ * cleanup finished), and it must still resolve to its run — otherwise kbbl
+ * could not navigate from a finished session back to the run that opened it.
+ */
+test("a finished, cleaned-up session still resolves to its run even though nothing holds it", async () => {
+  if (!sql) { console.warn("session run PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  const sessionId = `session-${randomUUID()}`;
+  const seeded = await seedWorkOrder(sql, { work_state: "completed", attach_session_id: sessionId, dbos_status: "SUCCESS", dbos_application_version: EXECUTOR_VERSION });
+  await sql.query("UPDATE oakridge.executor_attachment SET cleanup_state = 'complete' WHERE work_order_id = $1", [seeded.work_order_id]);
+  const repository = new PostgresOperatorProjectionRepository(sql, EXECUTOR_VERSION);
+
+  expect(await repository.find_session_hold(sessionId)).toBeNull();
+  expect(await repository.find_run_for_session(sessionId)).toEqual({
+    run_id: seeded.run_id, stage_instance_id: seeded.stage_instance_id, stage_key: "review",
+    unit_id: seeded.unit_id, work_order_id: seeded.work_order_id,
+  });
+});
+
+test("a session no attachment names resolves to no run", async () => {
+  if (!sql) { console.warn("session run PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  const repository = new PostgresOperatorProjectionRepository(sql, EXECUTOR_VERSION);
+  expect(await repository.find_run_for_session(`session-${randomUUID()}`)).toBeNull();
 });

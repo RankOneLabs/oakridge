@@ -1377,6 +1377,42 @@ body {
   z-index: 10;
 }
 
+/* Bar anchoring is injected per surface — see core/pwa/lib/session-surface.ts.
+   The viewport-fixed default above is the standalone mobile path, where the
+   bar must span the window and carry its own safe-area inset. A session
+   mounted inside a pane scrolls its own element, so a viewport-fixed bar would
+   float over unrelated chrome and ignore the pane's bounds; sticky keeps it
+   flush to the bottom of the surface instead. Specificity carries this over
+   the desktop max-width override further down. */
+.session-surface--embedded .bottom-stack {
+  position: sticky;
+  bottom: 0;
+  left: auto;
+  right: auto;
+  max-width: none;
+  /* `margin-top: auto` is what holds the bar at the foot of a *short*
+     transcript: sticky only pins once the content overflows, so without it a
+     session with three messages would leave its input bar floating mid-pane. */
+  margin: auto 0 0;
+}
+
+/* The embedded surface itself. The 800px reading column and the bottom
+   clearance both belong to the standalone route, where the window is the
+   surface and the bar is out of flow; in a pane the bar is in flow and the
+   pane's own body padding is the only gutter that should apply. */
+.session-surface--embedded {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  max-width: none;
+  padding: 0;
+}
+
+/* No notch to clear inside a pane — the safe-area inset is the window's. */
+.session-surface--embedded .top-bar {
+  padding-top: 0.5rem;
+}
+
 .input-bar {
   /* .bottom-stack is the fixed viewport anchor. Keeping the input itself in
      normal flow lets the skill rail sit above it and be included in the same
@@ -5058,6 +5094,173 @@ a:focus-visible {
   padding: clamp(2rem, 5vw, 5rem) clamp(1rem, 4vw, 4rem) 6rem;
 }
 
+/* ── run command center ─────────────────────────────────────────────────────
+   The workspace fills .or-shell__content rather than scrolling inside it: the
+   shell is already a 100dvh flex column with a flex: 1 content area, so the
+   run route hands its scrolling to the panes instead. No split-pane or
+   persistent-sidebar precedent existed in the PWA shell, so these are new
+   primitives rather than reuse. */
+.or-shell__content:has(> .or-run-workspace) {
+  padding: 0;
+  overflow: hidden;
+}
+
+.or-run-workspace {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.or-run-identity {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1.25rem;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+}
+
+/* The accent reads as a bar rather than as text colour, so the run is
+   recognisable without depending on colour alone to carry meaning. */
+.or-run-identity__accent {
+  width: 0.25rem;
+  height: 2.25rem;
+  border-radius: 999px;
+  background: var(--or-run-accent, var(--border-muted));
+}
+
+.or-run-identity__names {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.or-run-identity__sidebar-toggle {
+  display: none;
+  background: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.45rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+  min-height: 2.5rem;
+  padding: 0.25rem 0.65rem;
+}
+
+.or-run-workspace__body {
+  display: grid;
+  grid-template-columns: 17rem minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+}
+
+.or-run-workspace__sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 1rem;
+  border-right: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+}
+
+.or-run-sidebar__section { display: flex; flex-direction: column; gap: 0.4rem; }
+.or-run-sidebar__heading { margin: 0; color: var(--text-muted); font-size: 0.6875rem; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; }
+.or-run-sidebar__empty { margin: 0; color: var(--text-faint); font-size: 0.8125rem; }
+.or-run-sidebar__list { display: flex; flex-direction: column; gap: 0.2rem; list-style: none; margin: 0; padding: 0; }
+.or-run-sidebar__row { display: flex; align-items: stretch; gap: 0.25rem; }
+.or-run-sidebar__row-open { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.15rem; padding: 0.4rem 0.5rem; border: 1px solid transparent; border-radius: 0.4rem; background: none; color: var(--text-secondary); cursor: pointer; font: inherit; text-align: left; }
+.or-run-sidebar__row-open:hover { background: var(--bg-elevated); }
+.or-run-sidebar__row-open--active { border-color: var(--or-run-accent, var(--accent-blue)); background: var(--bg-elevated); }
+.or-run-sidebar__row-title { display: flex; align-items: baseline; gap: 0.35rem; overflow: hidden; color: var(--text-primary); font-size: 0.8125rem; text-overflow: ellipsis; white-space: nowrap; }
+.or-run-sidebar__row-unit { color: var(--text-muted); font-family: ui-monospace, monospace; font-size: 0.6875rem; }
+.or-run-sidebar__row-meta { display: flex; flex-wrap: wrap; gap: 0.4rem; color: var(--text-muted); font-size: 0.6875rem; }
+.or-run-sidebar__row-twin { flex: 0 0 auto; border: 1px solid var(--border-subtle); border-radius: 0.4rem; background: none; color: var(--text-muted); cursor: pointer; font-size: 0.75rem; padding: 0 0.4rem; }
+.or-run-sidebar__collapse { margin-top: 0.35rem; border: 1px solid var(--border-subtle); border-radius: 0.4rem; background: none; color: var(--text-secondary); cursor: pointer; font: inherit; font-size: 0.75rem; padding: 0.3rem 0.5rem; }
+
+.or-run-workspace__panes {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 0;
+}
+
+/* Twin view is exactly two equal columns. Not a window manager: no resize, no
+   drag, no z-ordering. */
+.or-run-workspace__panes--twin {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+/* Each pane is its own scroll container — the element c3 hands to the session
+   surface layout. */
+.or-run-workspace__pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.or-run-workspace__pane--secondary { border-left: 1px solid var(--border-subtle); }
+
+.or-run-workspace__pane-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem 0.9rem;
+  border-bottom: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--bg-app) 92%, transparent);
+  backdrop-filter: blur(12px);
+}
+
+.or-run-workspace__pane-action { border: 1px solid var(--border-subtle); border-radius: 0.4rem; background: none; color: var(--text-muted); cursor: pointer; font: inherit; font-size: 0.75rem; padding: 0.2rem 0.45rem; }
+.or-run-workspace__pane-body { flex: 1; min-height: 0; padding: 0.9rem; }
+
+/* The element a session pane hands to `SessionSurfaceLayout` as its scroll
+   host. It is bounded by the pane body rather than by the window, which is
+   what makes two session panes scroll independently — and, because it never
+   overflows its own pane, the enclosing `.or-run-workspace__pane` scrollport
+   stays out of it. */
+.or-run-pane-session {
+  height: 100%;
+  overflow-y: auto;
+}
+.or-run-overview__heading { margin: 0 0 0.4rem; color: var(--text-muted); font-size: 0.6875rem; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; }
+.or-run-overview__empty { margin: 0; color: var(--text-faint); font-size: 0.8125rem; }
+.or-run-overview__list { display: flex; flex-direction: column; gap: 0.3rem; list-style: none; margin: 0; padding: 0; }
+
+/* Per-run accent palette. `selectRunAccentClass` (oakridge/lib/run-accent.ts)
+   hashes a run id into exactly one of these eight classes, so the same run
+   wears the same colour everywhere. Each sets one custom property; components
+   read it as text-[var(--or-run-accent)] / border-[var(--or-run-accent)].
+   Enumerated rather than computed because Tailwind cannot generate a class from
+   a runtime value and inline style objects are out. */
+.or-run-accent--0 { --or-run-accent: #7dd890; }
+.or-run-accent--1 { --or-run-accent: #67d4de; }
+.or-run-accent--2 { --or-run-accent: #7fb0f5; }
+.or-run-accent--3 { --or-run-accent: #b39ef0; }
+.or-run-accent--4 { --or-run-accent: #e58ac8; }
+.or-run-accent--5 { --or-run-accent: #ef8f8f; }
+.or-run-accent--6 { --or-run-accent: #f5b050; }
+.or-run-accent--7 { --or-run-accent: #c3dd6a; }
+
+/* Light theme needs its own values: the dark set is tuned against #0c100f and
+   drops below the AA contrast floor on white. */
+[data-theme="light"] .or-run-accent--0 { --or-run-accent: #157f4a; }
+[data-theme="light"] .or-run-accent--1 { --or-run-accent: #0f6f7a; }
+[data-theme="light"] .or-run-accent--2 { --or-run-accent: #1f5fd0; }
+[data-theme="light"] .or-run-accent--3 { --or-run-accent: #6b41c9; }
+[data-theme="light"] .or-run-accent--4 { --or-run-accent: #a8267f; }
+[data-theme="light"] .or-run-accent--5 { --or-run-accent: #b0342f; }
+[data-theme="light"] .or-run-accent--6 { --or-run-accent: #8a5a06; }
+[data-theme="light"] .or-run-accent--7 { --or-run-accent: #4f6a12; }
+
 /* Shared v2 route composition. Every Oakridge route uses these primitives so
    navigation, hierarchy, reading width, and form density remain consistent. */
 .or-page {
@@ -5378,6 +5581,25 @@ a:focus-visible {
   .or-shell__breadcrumb { display: none; }
   .or-shell__nav-item { flex: 0 0 auto; min-height: 2.5rem; padding: 0.45rem 0.7rem; }
   .or-shell__content { padding: 1rem 0.85rem 2rem; }
+  /* Below the breakpoint the sidebar collapses behind the header toggle and only
+     the primary pane is visible. The secondary is hidden, not closed — it stays
+     in workspace state and in storage, so widening the viewport brings the
+     operator's arrangement back instead of having silently discarded half of it. */
+  .or-run-identity__sidebar-toggle { display: inline-flex; align-items: center; }
+  .or-run-workspace__body { grid-template-columns: minmax(0, 1fr); }
+  .or-run-workspace__sidebar { display: none; }
+  .or-run-workspace__sidebar--open { display: flex; border-right: 0; border-bottom: 1px solid var(--border-subtle); max-height: 45dvh; }
+  .or-run-workspace__panes--twin { grid-template-columns: minmax(0, 1fr); }
+  .or-run-workspace__pane--secondary { display: none; }
+  /* Hiding the secondary pane has to take the controls that target it with it.
+     Both send the operator somewhere they cannot see: "Send right →" moves the
+     pane being read into the hidden slot and lets the overview take its place,
+     and the sidebar's ⧉ opens into the hidden slot while the visible pane does
+     not change — which reads as a dead button. Their targets still exist in
+     workspace state, so widening the viewport brings both the arrangement and
+     these controls back. */
+  .or-run-sidebar__row-twin { display: none; }
+  .or-run-workspace__pane-action--move { display: none; }
   .or-repository-fields, .or-role-grid { grid-template-columns: minmax(0, 1fr); }
   .or-repository-fields button { width: 100%; }
   .or-review-workspace { gap: 2rem; }
