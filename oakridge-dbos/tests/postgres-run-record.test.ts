@@ -302,7 +302,7 @@ test("an upstream-targeted revision closes both waits and creates upstream corre
   expect(correctionOrders[0]?.expected_artifacts.map((artifact) => artifact.output_name).sort()).toEqual(["metadata", "result"]);
 });
 
-test("a failed assessment immediately requests build changes without an operator gate decision", async () => {
+test("a failed assessment with a terminal fail action requests changes and replays the same result", async () => {
   const setup = await setupGatedRun();
   if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
   const upstreamConfig = { rendered_prompt: "build the candidate", publication: { base_url: "http://oakridge.test", work_order_id: setup.workOrderId, capability: "gate-secret" } };
@@ -329,7 +329,7 @@ test("a failed assessment immediately requests build changes without an operator
     work_order_capability_hash: assessorCapability, resolved_config: {}, parameters: {}, input_snapshot: inputs,
     input_fingerprint: "auto-fail-assessment" as InputFingerprint,
     outputs: [{ name: "assessment", artifact_type: "dev.assessment", required: true, release: { kind: "gate",
-      steps: [{ type: "artifact_approval", actions: [{ name: "approve", disposition: "release" }, { name: "request_revision", disposition: "revise" }] }],
+      steps: [{ type: "artifact_approval", actions: [{ name: "approve", disposition: "release" }, { name: "fail", disposition: "terminal" }] }],
       requires_zero_open_review_items: false, revision_target: "upstream_handoff" } }], created_at: setup.now });
   await setup.records.decide_run(setup.runId, setup.now);
   const body = { verdict: "fail", recommended_next_actions: ["Fix durable selection"] };

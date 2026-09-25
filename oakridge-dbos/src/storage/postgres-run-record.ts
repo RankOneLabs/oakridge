@@ -948,7 +948,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         if (isFailedAssessment(row.artifact_type, request.body)) {
           const decisions = await transaction.query<{ readonly action: string | null }>(`SELECT outcome->>'action' AS action FROM oakridge.wait
             WHERE artifact_revision_id=$1 AND status='closed' AND kind='gate' ORDER BY closed_at DESC LIMIT 1`, [replay[0].artifact_id]);
-          if (row.release_policy.kind === "gate" && row.release_policy.steps.some((step) => step.actions.some((action) => action.name === decisions[0]?.action && action.disposition === "revise"))) {
+          if (row.release_policy.kind === "gate" && row.release_policy.steps.some((step) => step.actions.some((action) => action.name === decisions[0]?.action && selectArtifactGateDisposition(row.artifact_type, action.disposition) === "revise"))) {
             return { kind: "changes_requested", artifact_id: replay[0].artifact_id as ArtifactId, run_id: row.run_id as WorkflowRunId, record_version: version };
           }
         }
