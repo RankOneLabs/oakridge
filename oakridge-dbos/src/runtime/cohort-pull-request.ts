@@ -98,7 +98,7 @@ const selectExpectedBaseBranch = (profile: EpicWorkflowProfile | null, runContex
 interface CohortHandoff {
   readonly expected: ExpectedCohortPullRequest;
   readonly handoff_artifact_id: ArtifactId;
-  readonly is_handoff_released: boolean;
+  readonly handoff_slot_state: "empty" | "pending" | "released" | "invalidated";
 }
 
 /** Everything the run already knows about this cohort's pull request. */
@@ -124,7 +124,7 @@ const loadCohortHandoff = async (
 
   return ok({
     handoff_artifact_id: record.handoff_artifact_id,
-    is_handoff_released: record.is_handoff_released,
+    handoff_slot_state: record.handoff_slot_state,
     expected: {
       run_id: record.run_id, stage_instance_id: record.stage_instance_id, unit_id: record.unit_id,
       repository_key: repositoryKey, url, head_branch: headBranch,
@@ -152,15 +152,15 @@ export const reconcileCohortEvidence = async (
 ): Promise<Result<ResolvedCohortPullRequest, CohortPullRequestError>> => {
   const loaded = await loadCohortHandoff(dependencies, stageInstanceId, unitId);
   if (!loaded.ok) return loaded;
-  const { expected, handoff_artifact_id: handoffArtifactId, is_handoff_released: isHandoffReleased } = loaded.value;
+  const { expected, handoff_artifact_id: handoffArtifactId, handoff_slot_state: handoffSlotState } = loaded.value;
 
   const now = dependencies.now();
   const observation = evidence.kind === "observation" ? evidence.observation : operatorMergedObservation(expected, now);
   if (!observation) return failure("missing_pull_request_evidence", "the cohort's reported pull request URL is not a canonical GitHub URL");
 
   const previous = reconciliationForHandoff(
-    await dependencies.reconciliations.find(expected.stage_instance_id, expected.unit_id), isHandoffReleased);
-  const reconciled = reconcileCohortPullRequest({ expected, observation, previous, reconciled_at: now });
+    await dependencies.reconciliations.find(expected.stage_instance_id, expected.unit_id), handoffArtifactId, handoffSlotState);
+  const reconciled = reconcileCohortPullRequest({ expected, handoff_artifact_id: handoffArtifactId, observation, previous, reconciled_at: now });
   const outcome: CohortPullRequestOutcome = reconciled.outcome;
 
   if (outcome.kind === "mismatch") {

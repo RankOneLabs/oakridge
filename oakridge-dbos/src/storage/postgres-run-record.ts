@@ -188,10 +188,10 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
 
   async find_cohort_handoff(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<RunOwnedCohortHandoff | null> {
     const rows = await this.sql.query<{ readonly run_id: string; readonly stage_instance_id: string; readonly unit_id: string;
-      readonly repository_key: string; readonly handoff_artifact_id: string; readonly is_handoff_released: boolean; readonly handoff_body: JsonValue; readonly summary_body: JsonValue }>(
+      readonly repository_key: string; readonly handoff_artifact_id: string; readonly handoff_slot_state: RunOwnedCohortHandoff["handoff_slot_state"]; readonly handoff_body: JsonValue; readonly summary_body: JsonValue }>(
       `SELECT unit.run_id::text,unit.stage_instance_id::text,unit.unit_id,
               COALESCE(handoff.body->>'repository_key',unit.unit_id) AS repository_key,
-              handoff.id::text AS handoff_artifact_id,slot.state='released' AS is_handoff_released,
+              handoff.id::text AS handoff_artifact_id,slot.state AS handoff_slot_state,
               handoff.body AS handoff_body,summary.body AS summary_body
        FROM oakridge.run_unit unit
        JOIN oakridge.run_output_slot slot ON slot.run_unit_id=unit.id AND slot.release_policy->>'kind'='handoff'
@@ -205,7 +205,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
     const row = rows[0];
     return row ? { run_id: row.run_id as WorkflowRunId, stage_instance_id: row.stage_instance_id as StageInstanceId,
       unit_id: row.unit_id as UnitId, repository_key: row.repository_key, handoff_artifact_id: row.handoff_artifact_id as ArtifactId,
-      is_handoff_released: row.is_handoff_released, handoff_body: row.handoff_body, summary_body: row.summary_body } : null;
+      handoff_slot_state: row.handoff_slot_state, handoff_body: row.handoff_body, summary_body: row.summary_body } : null;
   }
 
   async initialize_straight_through(input: InitializeStraightThroughRun): Promise<void> {
