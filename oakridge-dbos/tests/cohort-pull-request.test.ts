@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 
 import {
-  operatorMergedObservation, reconcileCohortPullRequest, withCompletion,
+  operatorMergedObservation, reconcileCohortPullRequest, reconciliationForHandoff, withCompletion,
   type CohortPullRequestReconciliation, type ExpectedCohortPullRequest,
 } from "../src/domain/cohort-pull-request";
 import type { PullRequestObservation } from "../src/domain/pull-request";
@@ -131,6 +131,20 @@ test("a cohort already reconciled as merged stays merged", () => {
   const result = reconcile({ previous, observation: observation({ state: "open", merged_at: null, observed_at: "2026-08-19T00:00:00.000Z" }) });
   expect(result.outcome).toEqual({ kind: "already_completed" });
   expect(result.reconciliation).toEqual(previous);
+});
+
+test("a new open handoff can reconcile a merge after an earlier handoff completed", () => {
+  const previous = withCompletion(reconcile().reconciliation, "2026-08-18T12:00:02.000Z");
+  const current = reconciliationForHandoff(previous, false);
+  const result = reconcile({ previous: current, observation: observation({ observed_at: "2026-08-19T00:00:00.000Z" }) });
+  expect(result.outcome).toEqual({ kind: "merged" });
+  expect(result.reconciliation.completed_at).toBeNull();
+  expect(withCompletion(result.reconciliation, "2026-08-19T00:00:01.000Z").completed_at).toBe("2026-08-19T00:00:01.000Z");
+});
+
+test("a released handoff keeps its completed reconciliation", () => {
+  const previous = withCompletion(reconcile().reconciliation, "2026-08-18T12:00:02.000Z");
+  expect(reconciliationForHandoff(previous, true)).toEqual(previous);
 });
 
 /**

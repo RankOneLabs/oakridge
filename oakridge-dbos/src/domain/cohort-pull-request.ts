@@ -30,6 +30,7 @@ export interface RunOwnedCohortHandoff {
   readonly unit_id: UnitId;
   readonly repository_key: string;
   readonly handoff_artifact_id: ArtifactId;
+  readonly is_handoff_released: boolean;
   readonly handoff_body: JsonValue;
   readonly summary_body: JsonValue;
 }
@@ -85,6 +86,13 @@ export interface ReconciledCohortPullRequest {
   readonly outcome: CohortPullRequestOutcome;
   readonly reconciliation: CohortPullRequestReconciliation;
 }
+
+/** A previous completion belongs to an earlier artifact when the current handoff is open again. */
+export const reconciliationForHandoff = (
+  previous: CohortPullRequestReconciliation | null,
+  isHandoffReleased: boolean,
+): CohortPullRequestReconciliation | null =>
+  previous?.completed_at && !isHandoffReleased ? { ...previous, completed_at: null } : previous;
 
 /** The first expectation the observation fails, or null if it meets them all. */
 const findMismatch = (expected: ExpectedCohortPullRequest, observation: PullRequestObservation): PullRequestMismatch | null => {

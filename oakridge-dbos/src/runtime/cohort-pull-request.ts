@@ -16,7 +16,7 @@
  * through here.
  */
 import {
-  operatorMergedObservation, reconcileCohortPullRequest, withCompletion,
+  operatorMergedObservation, reconcileCohortPullRequest, reconciliationForHandoff, withCompletion,
   type CohortPullRequestOutcome, type CohortPullRequestReconciliation, type ExpectedCohortPullRequest,
 } from "../domain/cohort-pull-request";
 import type { BuildResultBody, PrSummaryBody } from "../domain/dev-flow-artifacts";
@@ -98,6 +98,7 @@ const selectExpectedBaseBranch = (profile: EpicWorkflowProfile | null, runContex
 interface CohortHandoff {
   readonly expected: ExpectedCohortPullRequest;
   readonly handoff_artifact_id: ArtifactId;
+  readonly is_handoff_released: boolean;
 }
 
 /** Everything the run already knows about this cohort's pull request. */
@@ -123,6 +124,7 @@ const loadCohortHandoff = async (
 
   return ok({
     handoff_artifact_id: record.handoff_artifact_id,
+    is_handoff_released: record.is_handoff_released,
     expected: {
       run_id: record.run_id, stage_instance_id: record.stage_instance_id, unit_id: record.unit_id,
       repository_key: repositoryKey, url, head_branch: headBranch,
@@ -150,13 +152,14 @@ export const reconcileCohortEvidence = async (
 ): Promise<Result<ResolvedCohortPullRequest, CohortPullRequestError>> => {
   const loaded = await loadCohortHandoff(dependencies, stageInstanceId, unitId);
   if (!loaded.ok) return loaded;
-  const { expected, handoff_artifact_id: handoffArtifactId } = loaded.value;
+  const { expected, handoff_artifact_id: handoffArtifactId, is_handoff_released: isHandoffReleased } = loaded.value;
 
   const now = dependencies.now();
   const observation = evidence.kind === "observation" ? evidence.observation : operatorMergedObservation(expected, now);
   if (!observation) return failure("missing_pull_request_evidence", "the cohort's reported pull request URL is not a canonical GitHub URL");
 
-  const previous = await dependencies.reconciliations.find(expected.stage_instance_id, expected.unit_id);
+  const previous = reconciliationForHandoff(
+    await dependencies.reconciliations.find(expected.stage_instance_id, expected.unit_id), isHandoffReleased);
   const reconciled = reconcileCohortPullRequest({ expected, observation, previous, reconciled_at: now });
   const outcome: CohortPullRequestOutcome = reconciled.outcome;
 
