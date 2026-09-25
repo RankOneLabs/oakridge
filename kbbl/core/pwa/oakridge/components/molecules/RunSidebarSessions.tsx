@@ -6,6 +6,8 @@ interface RunSidebarSessionsProps {
   rows: readonly RunSidebarSessionRow[];
   /** Whether the gate read answered. When it did not, no row can carry "needs you". */
   isActionStateKnown: boolean;
+  /** Whether the attempt read answered. When it did not, no row exists to show. */
+  isSessionListKnown: boolean;
   /** Sessions currently on screen in either slot, so the list can mark them. */
   openSessionIds: ReadonlySet<string>;
   onOpen: (sessionId: Sid, slot: RunWorkspaceSlot) => void;
@@ -26,6 +28,7 @@ interface RunSidebarSessionsProps {
 export function RunSidebarSessions({
   rows,
   isActionStateKnown,
+  isSessionListKnown,
   openSessionIds,
   onOpen,
 }: RunSidebarSessionsProps) {
@@ -41,7 +44,16 @@ export function RunSidebarSessions({
           Gate status unavailable
         </p>
       )}
-      {rows.length === 0 && (
+      {!isSessionListKnown && (
+        <p
+          className="or-run-sidebar__empty text-[var(--amber-fg)]"
+          role="status"
+          data-testid="or-sidebar-sessions-unavailable"
+        >
+          Session list unavailable
+        </p>
+      )}
+      {isSessionListKnown && rows.length === 0 && (
         <p className="or-run-sidebar__empty" data-testid="or-sidebar-sessions-empty">
           No sessions yet.
         </p>

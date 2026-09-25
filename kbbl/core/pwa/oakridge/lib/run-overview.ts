@@ -15,7 +15,12 @@ import type {
   StageStatus,
   WorkOrderState,
 } from "../types";
-import { selectRunSessionRows, type RunSessionRow } from "./run-sessions";
+import {
+  attemptsOf,
+  selectRunSessionRows,
+  type RunSessionRow,
+  type RunSessionsRead,
+} from "./run-sessions";
 
 /** How many artifact releases the overview lists before "recent" stops meaning anything. */
 export const RECENT_SLOT_RELEASE_LIMIT = 8;
@@ -176,10 +181,15 @@ export interface RunSidebarSessionRow {
 export interface RunSidebarSessionsView {
   readonly rows: readonly RunSidebarSessionRow[];
   readonly is_action_state_known: boolean;
+  /**
+   * Whether the attempt list itself landed. No rows and a failed read look
+   * identical otherwise, and only one of them means "this run has no sessions".
+   */
+  readonly is_session_list_known: boolean;
 }
 
 export interface RunSidebarSessionsInput {
-  readonly sessions: readonly RunSessionAttempt[];
+  readonly sessions: RunSessionsRead;
   readonly gates: RunGatesRead;
   /**
    * Sids kbbl's inbox has reported purged server-side. Oakridge keeps listing
@@ -209,7 +219,8 @@ export const selectRunSidebarSessions = ({
     gates.kind === "loaded" ? selectUnitsAwaitingAction(gates.gates) : null;
   return {
     is_action_state_known: awaitingAction !== null,
-    rows: selectRunSessionRows(sessions)
+    is_session_list_known: sessions.kind === "loaded",
+    rows: selectRunSessionRows(attemptsOf(sessions))
       .filter((row) => !purgedSessionIds.has(row.attempt.session_id))
       .map((row) => ({
         work_order_id: row.attempt.work_order_id,

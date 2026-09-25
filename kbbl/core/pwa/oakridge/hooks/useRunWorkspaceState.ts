@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { RunDetail, RunSessionAttempt } from "../types";
+import type { RunDetail } from "../types";
+import type { RunSessionsRead } from "../lib/run-sessions";
 import {
   closePane,
   collapseToSingle,
@@ -27,8 +28,15 @@ export interface RunWorkspaceStateInput {
   readonly routePane: RoutePaneTarget | null;
   /** Undefined until `GET /runs/:id` resolves; restore waits for it. */
   readonly run: RunDetail | undefined;
-  /** Undefined until `GET /runs/:id/sessions` resolves; restore waits for it. */
-  readonly sessions: readonly RunSessionAttempt[] | undefined;
+  /**
+   * What `GET /runs/:id/sessions` knows. Restore waits while it is `pending`
+   * but not while it is `unavailable`: a read that failed is never going to
+   * answer on its own, and holding the workspace on "Loading run…" until it
+   * does would make a session outage cost the operator the whole run view.
+   * `unavailable` opens the arrangement and declines to validate against a
+   * list nobody has.
+   */
+  readonly sessions: RunSessionsRead;
   /**
    * Sids kbbl's inbox has reported gone. Oakridge keeps listing the work
    * order behind a purged session, so nothing in the run's own reads says the
@@ -56,9 +64,11 @@ const routePaneKeyOf = (pane: RoutePaneTarget | null): string => {
  * Owns the run's pane arrangement: restore on mount, apply later route changes,
  * persist every change.
  *
- * Restore waits for both reads because validating a pane against half-loaded
- * data would drop panes that are perfectly valid. The caller is expected to
- * mount this keyed by run id, so moving between runs starts a fresh restore
+ * Restore waits for both reads to settle because validating a pane against
+ * half-loaded data would drop panes that are perfectly valid. Settled is not
+ * the same as successful: a read that failed lets restore proceed, and says so,
+ * so validation can decline to judge what it cannot see. The caller is expected
+ * to mount this keyed by run id, so moving between runs starts a fresh restore
  * rather than carrying one run's arrangement into another.
  */
 export function useRunWorkspaceState({
@@ -76,7 +86,7 @@ export function useRunWorkspaceState({
   const appliedRouteKey = useRef<string | null>(null);
 
   useEffect(() => {
-    if (state !== null || run === undefined || sessions === undefined) return;
+    if (state !== null || run === undefined || sessions.kind === "pending") return;
     const resolution = resolveWorkspaceState({
       routePane,
       storedState: readStoredRunWorkspace(runId),
@@ -94,7 +104,7 @@ export function useRunWorkspaceState({
   // one. Guarded on `dropped_a_pane` so an unchanged arrangement never restates
   // itself — this runs on every inbox frame that removes anything, for any run.
   useEffect(() => {
-    if (state === null || run === undefined || sessions === undefined) return;
+    if (state === null || run === undefined || sessions.kind === "pending") return;
     if (purgedSessionIds.size === 0) return;
     const validated = validateWorkspacePanes(
       state,

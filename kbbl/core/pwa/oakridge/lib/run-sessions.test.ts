@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { RunSessionAttempt } from "../types";
-import { runUnitKeyOf, selectRunSessionRows } from "./run-sessions";
+import { runUnitKeyOf, selectRunSessionRows, selectRunSessionsRead } from "./run-sessions";
 
 // Timestamps are written the way the route actually sends them — Postgres
 // `timestamptz::text`, so a space separator and a numeric offset, not ISO-8601
@@ -110,5 +110,31 @@ describe("runUnitKeyOf", () => {
     const assess = attempt({ work_order_id: "work-2", created_at: "2026-09-02 00:00:00+00", stage_instance_id: "stage-2", unit_id: "0" });
     expect(runUnitKeyOf(build)).not.toBe(runUnitKeyOf(assess));
     expect(currentWorkOrderIds([build, assess])).toEqual(["work-1", "work-2"]);
+  });
+});
+
+describe("selectRunSessionsRead", () => {
+  const ATTEMPTS = [attempt({ work_order_id: "work-1", created_at: "2026-09-01 00:00:00+00" })];
+
+  it("is pending rather than empty while the first read is in flight", () => {
+    expect(selectRunSessionsRead({ attempts: undefined, is_pending: true, is_error: false }))
+      .toEqual({ kind: "pending" });
+  });
+
+  it("is unavailable when the read failed before producing anything", () => {
+    expect(selectRunSessionsRead({ attempts: undefined, is_pending: false, is_error: true }))
+      .toEqual({ kind: "unavailable" });
+  });
+
+  it("keeps a payload it already has when a later poll fails", () => {
+    // The attempts did not stop existing because a background refetch timed
+    // out, and dropping to unavailable would flicker the pane arrangement.
+    expect(selectRunSessionsRead({ attempts: ATTEMPTS, is_pending: false, is_error: true }))
+      .toEqual({ kind: "loaded", attempts: ATTEMPTS });
+  });
+
+  it("reads a settled empty response as a run with no sessions", () => {
+    expect(selectRunSessionsRead({ attempts: [], is_pending: false, is_error: false }))
+      .toEqual({ kind: "loaded", attempts: [] });
   });
 });
