@@ -34,7 +34,7 @@ export interface RunWorkspaceStateInput {
    * answer on its own, and holding the workspace on "Loading run…" until it
    * does would make a session outage cost the operator the whole run view.
    * `unavailable` opens the arrangement and declines to validate against a
-   * list nobody has.
+   * list nobody has — then validates once, late, if a retry supplies one.
    */
   readonly sessions: RunSessionsRead;
   /**
@@ -84,6 +84,11 @@ export function useRunWorkspaceState({
   // seen twice: without this, every unrelated re-render would re-assert the
   // route pane and undo whatever the operator just opened.
   const appliedRouteKey = useRef<string | null>(null);
+  // Whether the arrangement has yet been judged against an attempt list that
+  // actually landed. Restore runs on an `unavailable` read rather than hanging
+  // the view, and deliberately keeps every session pane — so until a read
+  // succeeds, nothing has checked whether those panes name anything real.
+  const hasValidatedKnownSessions = useRef(false);
 
   useEffect(() => {
     if (state !== null || run === undefined || sessions.kind === "pending") return;
@@ -96,6 +101,7 @@ export function useRunWorkspaceState({
     });
     if (resolution.should_prune_stored) pruneStoredRunWorkspace(runId);
     appliedRouteKey.current = routePaneKey;
+    hasValidatedKnownSessions.current = sessions.kind === "loaded";
     setState(resolution.state);
   }, [state, run, sessions, purgedSessionIds, routePane, routePaneKey, runId]);
 
@@ -103,9 +109,19 @@ export function useRunWorkspaceState({
   // arriving late, so it goes through the same transform rather than a second
   // one. Guarded on `dropped_a_pane` so an unchanged arrangement never restates
   // itself — this runs on every inbox frame that removes anything, for any run.
+  //
+  // A read that recovers is the same rule arriving late for the same reason: a
+  // restore that ran blind kept every session pane, and the first list to land
+  // is the first thing able to disprove one. Without this the restore effect
+  // cannot revisit it — `state` is set, so it returns immediately — and a pane
+  // naming a session the run does not have would sit in storage indefinitely.
+  // Once a list has been seen, the purge guard is what keeps this off the inbox's
+  // hot path again.
   useEffect(() => {
     if (state === null || run === undefined || sessions.kind === "pending") return;
-    if (purgedSessionIds.size === 0) return;
+    const isFirstKnownSessionList = sessions.kind === "loaded" && !hasValidatedKnownSessions.current;
+    if (purgedSessionIds.size === 0 && !isFirstKnownSessionList) return;
+    if (sessions.kind === "loaded") hasValidatedKnownSessions.current = true;
     const validated = validateWorkspacePanes(
       state,
       indexRunEntities({ run, sessions, purgedSessionIds }),

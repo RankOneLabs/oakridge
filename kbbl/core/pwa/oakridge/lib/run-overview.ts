@@ -10,7 +10,6 @@ import type { ArtifactId, Sid } from "../../lib/ids";
 import type {
   ParkedGate,
   RunDetail,
-  RunSessionAttempt,
   RunStatus,
   StageStatus,
   WorkOrderState,
@@ -270,13 +269,29 @@ export interface RunOverview {
   /** The attempt the run is live in right now, or null when nothing is executing. */
   readonly current_session: RunOverviewSessionRef | null;
   readonly gates: RunOverviewGates;
+  /**
+   * Whether the attempt list landed. Both session-derived readings — what is
+   * executing, and which sessions await a decision — are a `null` and an empty
+   * list when the read failed, indistinguishable from a quiet run, so this is
+   * what keeps the pane from reporting an outage as "nothing is happening".
+   *
+   * A boolean rather than a third `RunOverviewGates`-style union because the
+   * pane never sees a pending attempt read: `RunWorkspace` holds on "Loading
+   * run…" until the workspace state resolves, which already waits out `pending`.
+   */
+  readonly is_session_list_known: boolean;
   readonly recent_slot_releases: readonly RunArtifactRef[];
   readonly stage_progress: RunOverviewStageProgress;
 }
 
 export interface RunOverviewInput {
   readonly run: RunDetail;
-  readonly sessions: readonly RunSessionAttempt[];
+  /**
+   * The read itself, not the attempts it carries. The overview draws two
+   * conclusions from this list that an empty list states as confidently as a
+   * real one, so the distinction has to survive the call.
+   */
+  readonly sessions: RunSessionsRead;
   readonly gates: RunGatesRead;
 }
 
@@ -363,13 +378,14 @@ const selectOverviewGates = (
 
 /** Everything the overview pane renders, derived once. */
 export const selectRunOverview = ({ run, sessions, gates }: RunOverviewInput): RunOverview => {
-  const rows = selectRunSessionRows(sessions);
+  const rows = selectRunSessionRows(attemptsOf(sessions));
   return {
     status: run.status,
     is_stuck: run.is_stuck,
     parked_count: run.parked_count,
     current_session: selectCurrentSession(rows),
     gates: selectOverviewGates(rows, gates),
+    is_session_list_known: sessions.kind === "loaded",
     recent_slot_releases: selectRecentSlotReleases(run),
     stage_progress: selectStageProgress(run),
   };

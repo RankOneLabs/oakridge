@@ -67,13 +67,19 @@ const run = (overrides: Partial<RunDetail> = {}): RunDetail => ({
 
 interface OverviewInput {
   readonly run?: RunDetail;
+  /** The attempts the read produced; a read that produced none is exercised separately. */
   readonly sessions?: readonly RunSessionAttempt[];
   /** The gate list the read produced; the read itself is exercised separately. */
   readonly gates?: readonly ParkedGate[];
 }
 
-const overviewOf = ({ gates = [], ...input }: OverviewInput = {}): RunOverview =>
-  selectRunOverview({ run: run(), sessions: [], ...input, gates: { kind: "loaded", gates } });
+const overviewOf = ({ gates = [], sessions = [], ...input }: OverviewInput = {}): RunOverview =>
+  selectRunOverview({
+    run: run(),
+    ...input,
+    sessions: { kind: "loaded", attempts: sessions },
+    gates: { kind: "loaded", gates },
+  });
 
 /** The gate-derived half of an overview, or a failure naming what it got instead. */
 const knownGates = (overview: RunOverview): Extract<RunOverviewGates, { kind: "known" }> => {
@@ -201,7 +207,10 @@ describe("an unavailable gate read", () => {
   const unreadOverview = () =>
     selectRunOverview({
       run: run(),
-      sessions: [attempt({ work_order_id: "wo-1", session_id: "sid-1", unit_id: "c1" })],
+      sessions: {
+        kind: "loaded",
+        attempts: [attempt({ work_order_id: "wo-1", session_id: "sid-1", unit_id: "c1" })],
+      },
       gates: { kind: "unavailable" },
     });
 
@@ -225,6 +234,46 @@ describe("an unavailable gate read", () => {
 
     expect(view.is_action_state_known).toBe(false);
     expect(view.rows.map((row) => row.requires_operator_action)).toEqual([false]);
+  });
+});
+
+describe("an unavailable sessions read", () => {
+  const unreadOverview = (gates: readonly ParkedGate[] = []) =>
+    selectRunOverview({
+      run: run(),
+      sessions: { kind: "unavailable" },
+      gates: { kind: "loaded", gates },
+    });
+
+  it("says the attempt list is unknown rather than reporting an empty one", () => {
+    expect(unreadOverview().is_session_list_known).toBe(false);
+  });
+
+  it("marks the list unknown even when the gate read is the one that landed", () => {
+    // The two reads fail independently. A gate list arriving intact says nothing
+    // about whether the attempt list did, and the overview's session-derived
+    // sections have to be told which of the two is missing.
+    const overview = unreadOverview([gate({ id: "gate-1", unit_id: "c1" })]);
+
+    expect(overview.gates.kind).toBe("known");
+    expect(overview.is_session_list_known).toBe(false);
+  });
+
+  it("still reports the run's own status, which does not come from the attempt list", () => {
+    expect(unreadOverview().status).toBe("parked");
+  });
+
+  it("reports the list known for a read that landed carrying nothing", () => {
+    // The distinction the flag exists for: a run genuinely between sessions is
+    // an answer, and the overview is entitled to render it as one.
+    const overview = selectRunOverview({
+      run: run(),
+      sessions: { kind: "loaded", attempts: [] },
+      gates: { kind: "loaded", gates: [] },
+    });
+
+    expect(overview.is_session_list_known).toBe(true);
+    expect(overview.current_session).toBeNull();
   });
 });
 

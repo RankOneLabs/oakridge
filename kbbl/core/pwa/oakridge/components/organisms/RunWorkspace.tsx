@@ -5,7 +5,7 @@ import { useRunGates } from "../../hooks/useRunGates";
 import { useRunSessions } from "../../hooks/useRunSessions";
 import { useRunWorkspaceState } from "../../hooks/useRunWorkspaceState";
 import { selectRunAccentClass } from "../../lib/run-accent";
-import { attemptsOf, selectRunSessionsRead } from "../../lib/run-sessions";
+import { selectRunSessionsRead } from "../../lib/run-sessions";
 import {
   selectRunArtifacts,
   selectRunGatesRead,
@@ -97,7 +97,7 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
     is_pending: gatesQuery.isPending,
     is_error: gatesQuery.isError,
   });
-  const overview = selectRunOverview({ run, sessions: attemptsOf(sessions), gates });
+  const overview = selectRunOverview({ run, sessions, gates });
   const sidebarSessions = selectRunSidebarSessions({
     sessions,
     gates,
