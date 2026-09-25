@@ -17,6 +17,10 @@ export type GateOutcome = "pass" | "fail" | "rerun";
  */
 export type GateDisposition = "release" | "revise" | "terminal";
 
+/** Assessment rejection always asks its upstream build for changes. */
+export const selectArtifactGateDisposition = (artifactType: string, disposition: GateDisposition): GateDisposition =>
+  artifactType === "dev.assessment" && disposition === "terminal" ? "revise" : disposition;
+
 export interface GateAction {
   readonly name: string;
   readonly disposition: GateDisposition;

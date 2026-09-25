@@ -137,6 +137,8 @@ export interface RebindWorkOrderPublicationInput {
   readonly capability_seed: string;
   readonly missing: readonly MissingOutputSlot[];
   readonly rejected_outputs?: readonly RejectedOutputContext[];
+  /** The previous writer's checkout is the retry's base when that writer reached kbbl. */
+  readonly retry_workspace_source?: ExecutionRequest["workspace_source"];
 }
 
 export interface ReboundWorkOrderPublication {
@@ -179,11 +181,17 @@ export const rebindWorkOrderPublication = (input: RebindWorkOrderPublicationInpu
   const reboundConfig = { ...config,
     ...(typeof config.session_name === "string" ? { session_name: input.work_order_id } : {}),
     publication: { ...publication, work_order_id: input.work_order_id, capability } };
+  // A named cohort branch is still owned by the previous session. A retry
+  // inherits that session's checkout and must not ask kbbl to create the same
+  // branch a second time.
+  const retryConfig: { [key: string]: JsonValue } = { ...reboundConfig };
+  if (input.retry_workspace_source) delete retryConfig.worktree;
   const resolved_config: JsonValue = rejected.length > 0 && typeof config.rendered_prompt === "string"
-    ? { ...reboundConfig, rendered_prompt: `${config.rendered_prompt}\n\n## Requested output corrections\n\nThe previous writer is being replaced. Revise these stored outputs according to the operator feedback; preserve the remaining scope. Publish using the new work-order instructions below.\n\n${JSON.stringify(rejected, null, 2)}` }
-    : reboundConfig;
+    ? { ...retryConfig, rendered_prompt: `${config.rendered_prompt}\n\n## Requested output corrections\n\nThe previous writer is being replaced. Revise these stored outputs according to the operator feedback; preserve the remaining scope. Publish using the new work-order instructions below.\n\n${JSON.stringify(rejected, null, 2)}` }
+    : retryConfig;
   return {
     capability_hash: capabilityHash(capability),
-    request: { ...input.basis, execution_id: input.work_order_id as unknown as ExecutionRequest["execution_id"], resolved_config, expected_artifacts },
+    request: { ...input.basis, execution_id: input.work_order_id as unknown as ExecutionRequest["execution_id"], resolved_config, expected_artifacts,
+      ...(input.retry_workspace_source ? { workspace_source: input.retry_workspace_source } : {}) },
   };
 };

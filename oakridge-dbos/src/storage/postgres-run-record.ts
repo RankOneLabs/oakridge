@@ -8,10 +8,12 @@ import { rebindWorkOrderPublication, resolveWorkOrder, type ResolveWorkOrderDepe
 import { effectiveArtifactPredicate } from "./sql-fragments";
 import type { CompiledStageContract, CompiledWorkflowDefinition, OutputReleaseContract } from "../domain/compiled-workflow";
 import type { ArtifactEnvelope, ExecutionRequest, ExternalExecutionReference } from "../domain/execution";
-import { err, ok, type ArtifactId, type InputFingerprint, type JsonValue, type OutputCollectionKey, type OutputSlotVersion, type Result, type RunRecordVersion, type RunTransitionId, type RunUnitId, type StageInstanceId, type UnitId, type WaitId, type WorkflowDefinitionId, type WorkflowRunId, type WorkOrderId } from "../domain/primitives";
+import { err, ok, type ArtifactId, type ExecutionId, type InputFingerprint, type JsonValue, type OutputCollectionKey, type OutputSlotVersion, type Result, type RunRecordVersion, type RunTransitionId, type RunUnitId, type StageInstanceId, type UnitId, type WaitId, type WorkflowDefinitionId, type WorkflowRunId, type WorkOrderId } from "../domain/primitives";
 import type { CancelRunRecord, CancelRunRecordResult, CloseRunOutputWait, CloseRunOutputWaitResult, CompleteHandoffArtifact, DecideGateWait, ExecutorAttachment, ExecutorHealthObservation, InitializeStraightThroughRun, MaterializedRunOutput, PersistMaterializedStage, PublishWorkOrderArtifact, PublishWorkOrderArtifactResult, RetryRunUnit, RetryRunUnitResult, RetryRunUnitTarget, ReviseRunUnitInput, ReviseRunUnitInputResult, RunOutputSlot, RunOutputWaitDisposition, RunStage, RunTransitionOperation, RunUnit, UnitState, WorkflowRun, WorkOrder, WorkOrderExecution } from "../domain/run-record";
 import type { WaitClosesOn, WaitOutcome } from "../domain/wait";
 import type { StageOutcome } from "../domain/workflow";
+import { failedAssessmentFeedback, isFailedAssessment } from "../domain/dev-flow-artifacts";
+import { selectArtifactGateDisposition } from "../domain/gates";
 import type { WorkflowDefinition } from "../domain/workflow";
 import type { AdmitStageUnitRequest, AdmitStageUnitResult } from "../domain/runs";
 import type { DeleteRunResult } from "../domain/runs";
@@ -538,12 +540,21 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         WHERE slot.run_unit_id=$1 AND slot.required AND slot.state='invalidated'
           AND slot.invalidation_reason->>'kind'='operator'
         ORDER BY slot.output_name,slot.collection_key`, [runUnitId]);
+      const priorWriters = await transaction.query<{ readonly work_order_id: string; readonly external_reference: ExternalExecutionReference }>(`SELECT work.id::text AS work_order_id,attachment.external_reference
+        FROM oakridge.work_order work JOIN oakridge.executor_attachment attachment ON attachment.work_order_id=work.id
+        WHERE work.run_unit_id=$1 AND attachment.external_reference IS NOT NULL
+        ORDER BY work.created_at DESC,work.id DESC LIMIT 1 FOR UPDATE OF work`, [runUnitId]);
+      const priorWriter = priorWriters[0];
+      const retryWorkspaceSource = priorWriter?.external_reference.kind === "kbbl_session"
+        ? { execution_id: priorWriter.work_order_id as ExecutionId, external_reference: priorWriter.external_reference }
+        : undefined;
       // The new order gets publication authority minted for itself — the
       // basis's URL would point the agent at the abandoned order, and its
       // capability must not authenticate a second work order.
       const rebound = rebindWorkOrderPublication({ basis: basis.execution_request, work_order_id: workOrderId,
         capability_seed: await this.load_work_order_capability_seed_tx(transaction),
         rejected_outputs: rejectedOutputs,
+        ...(retryWorkspaceSource ? { retry_workspace_source: retryWorkspaceSource } : {}),
         missing: missing.map((slot) => ({ output_name: slot.output_name, collection_key: slot.collection_key as OutputCollectionKey | null })) });
       if (!rebound) return { kind: "no_execution_basis", detail: `run unit '${runUnitId}' has no publication authority to rebind for a retry` };
       await transaction.query("UPDATE oakridge.work_order SET state='abandoned',completed_at=$2::timestamptz WHERE run_unit_id=$1 AND state IN ('available','started')", [runUnitId, retried_at]);
@@ -934,6 +945,13 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       if (replay[0]) {
         if (replay[0].emission_payload_hash !== request.payload_hash) return { kind: "idempotency_conflict", artifact_id: replay[0].artifact_id as ArtifactId, detail: "idempotency key was already used with a different payload" };
         const version = await currentVersion(transaction, row.run_id as WorkflowRunId);
+        if (isFailedAssessment(row.artifact_type, request.body)) {
+          const decisions = await transaction.query<{ readonly action: string | null }>(`SELECT outcome->>'action' AS action FROM oakridge.wait
+            WHERE artifact_revision_id=$1 AND status='closed' AND kind='gate' ORDER BY closed_at DESC LIMIT 1`, [replay[0].artifact_id]);
+          if (row.release_policy.kind === "gate" && row.release_policy.steps.some((step) => step.actions.some((action) => action.name === decisions[0]?.action && selectArtifactGateDisposition(row.artifact_type, action.disposition) === "revise"))) {
+            return { kind: "changes_requested", artifact_id: replay[0].artifact_id as ArtifactId, run_id: row.run_id as WorkflowRunId, record_version: version };
+          }
+        }
         return { kind: "already_applied", artifact_id: replay[0].artifact_id as ArtifactId, run_id: row.run_id as WorkflowRunId, record_version: version };
       }
       if (row.work_state === "abandoned") return { kind: "work_abandoned", detail: `work order '${request.work_order_id}' is abandoned` };
@@ -1014,6 +1032,15 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       const resultingVersion = Number(versions[0]?.record_version ?? 0) as RunRecordVersion;
       await insertTransition(transaction, { run_id: row.run_id as WorkflowRunId, run_unit_id: row.run_unit_id as RunUnitId, work_order_id: request.work_order_id, wait_id: waitId, output_name: request.output_name, collection_key: request.collection_key ?? null,
         operation: "slot_pending", actor: `work_order:${request.work_order_id}`, prior_record_version: (resultingVersion - 1) as RunRecordVersion, resulting_record_version: resultingVersion, detail: { ...publicationDetail, release_kind: release.kind }, created_at: request.published_at });
+      const feedback = failedAssessmentFeedback(row.artifact_type, request.body);
+      if (feedback !== null && release.kind === "gate") {
+        const revise = release.steps[0]?.actions.find((action) => selectArtifactGateDisposition(row.artifact_type, action.disposition) === "revise");
+        if (!revise) throw new Error("failed assessment has no revision action");
+        const revised = await this.decideGateWaitTransaction(transaction, { wait_id: waitId, action: revise.name,
+          actor: "system:assessment", detail: feedback, decided_at: request.published_at });
+        if (revised.kind !== "invalidated") throw new Error(`failed assessment could not request changes: ${JSON.stringify(revised)}`);
+        return { kind: "changes_requested", artifact_id: request.artifact_id, run_id: row.run_id as WorkflowRunId, record_version: revised.record_version };
+      }
       return { kind: "pending", artifact_id: request.artifact_id, wait_id: waitId, run_id: row.run_id as WorkflowRunId, record_version: resultingVersion };
     });
   }
@@ -1093,12 +1120,11 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         : { kind: "invalidated", run_id: wait.run_id as WorkflowRunId, record_version: resultingVersion };
   }
 
-  async decide_gate_wait(request: DecideGateWait): Promise<CloseRunOutputWaitResult> {
-    try {
-      return await this.sql.transaction(async (transaction) => {
-        const rows = await transaction.query<{ readonly run_unit_id: string; readonly release_policy: OutputReleaseContract; readonly closes_on: WaitClosesOn }>(`SELECT wait.run_unit_id::text,slot.release_policy,wait.closes_on
+  private async decideGateWaitTransaction(transaction: SqlExecutor, request: DecideGateWait): Promise<CloseRunOutputWaitResult> {
+        const rows = await transaction.query<{ readonly run_unit_id: string; readonly release_policy: OutputReleaseContract; readonly closes_on: WaitClosesOn; readonly artifact_type: string; readonly body: JsonValue }>(`SELECT wait.run_unit_id::text,slot.release_policy,wait.closes_on,artifact.artifact_type,artifact.body
           FROM oakridge.wait wait JOIN oakridge.run_output_slot slot ON slot.run_unit_id=wait.run_unit_id
             AND slot.output_name=wait.output_name AND slot.collection_key IS NOT DISTINCT FROM wait.collection_key
+          JOIN oakridge.artifact artifact ON artifact.id=wait.artifact_revision_id
           WHERE wait.id=$1 AND wait.kind='gate' AND wait.run_unit_id IS NOT NULL`, [request.wait_id]);
         const subject = rows[0]; const release = subject?.release_policy;
         if (!subject || !release || release.kind !== "gate") return { kind: "wait_not_found", detail: `v2 gate wait '${request.wait_id}' was not found` };
@@ -1106,9 +1132,13 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         const pendingStep = gateClose ? release.steps.find((step) => step.type === gateClose.gate_step) : undefined;
         const action = pendingStep?.actions.find((candidate) => gateClose?.actions.includes(candidate.name) && candidate.name === request.action);
         if (!action) return { kind: "wait_conflict", detail: `action '${request.action}' is not allowed for wait '${request.wait_id}'` };
-        const disposition: RunOutputWaitDisposition = action.disposition === "release" ? "release" : action.disposition === "revise" ? "invalidate" : "fail";
+        const gateDisposition = selectArtifactGateDisposition(subject.artifact_type, action.disposition);
+        if (gateDisposition === "release" && isFailedAssessment(subject.artifact_type, subject.body)) {
+          return { kind: "wait_conflict", detail: "a failed assessment requires changes before it can be approved" };
+        }
+        const disposition: RunOutputWaitDisposition = gateDisposition === "release" ? "release" : gateDisposition === "revise" ? "invalidate" : "fail";
         const own = await this.closeOutputWaitTransaction(transaction, { ...request, disposition,
-          retain_producer: action.disposition === "revise" && release.revision_target === "self_stage" });
+          retain_producer: gateDisposition === "revise" && release.revision_target === "self_stage" });
         if (own.kind === "wait_conflict" || own.kind === "wait_not_found") throw new GateCoordinationConflict(own);
         // A replay of the gate decision also replays the transaction that
         // created any upstream correction work. Do not look for the now-closed
@@ -1134,7 +1164,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
                 disposition: "invalidate", action: request.action, actor: request.actor, detail: request.detail, decided_at: request.decided_at });
               if (result.kind === "wait_conflict" || result.kind === "wait_not_found") throw new GateCoordinationConflict(result);
             }
-            if (action.disposition !== "revise") continue;
+            if (gateDisposition !== "revise") continue;
             const retry = await this.retryUnitTransaction(transaction, {
               target: { kind: "run_unit", run_unit_id: runUnitId as RunUnitId },
               idempotency_key: `gate_revision:${request.wait_id}:${runUnitId}`,
@@ -1147,7 +1177,11 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
           }
         }
         return coordinated;
-      });
+  }
+
+  async decide_gate_wait(request: DecideGateWait): Promise<CloseRunOutputWaitResult> {
+    try {
+      return await this.sql.transaction((transaction) => this.decideGateWaitTransaction(transaction, request));
     } catch (cause) {
       if (cause instanceof GateCoordinationConflict) return cause.result;
       throw cause;

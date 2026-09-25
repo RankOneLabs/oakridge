@@ -8,6 +8,7 @@ import type { OutputReleaseContract } from "../src/domain/compiled-workflow";
 import type { MaterializedRunOutput, PersistMaterializedStage } from "../src/domain/run-record";
 import { applyMigrations } from "../src/storage/migrate";
 import { PostgresArtifactRevisionRepository } from "../src/storage/postgres-domain";
+import { PostgresOperatorProjectionRepository } from "../src/storage/postgres-operators";
 import { PostgresRunRecordRepository } from "../src/storage/postgres-run-record";
 import type { RunRecordRepositoryError } from "../src/storage/repositories";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
@@ -216,10 +217,12 @@ test("an authored v2 gate action selects its persisted disposition, including te
 test("an upstream-targeted revision closes both waits and creates upstream correction work in one transaction", async () => {
   const setup = await setupGatedRun();
   if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
-  const upstreamResolvedConfig = { rendered_prompt: "build the candidate", publication: { base_url: "http://oakridge.test", work_order_id: setup.workOrderId, capability: "gate-secret" } };
+  const upstreamResolvedConfig = { rendered_prompt: "build the candidate", worktree: { branchName: "cohort/epic/C01", worktreeSubdir: "epic" }, publication: { base_url: "http://oakridge.test", work_order_id: setup.workOrderId, capability: "gate-secret" } };
   await sql!.query("UPDATE oakridge.work_order SET execution_request=jsonb_set(execution_request,'{resolved_config}',$2::jsonb) WHERE id=$1", [
     setup.workOrderId, upstreamResolvedConfig,
   ]);
+  await setup.records.ensure_executor_attachment(setup.workOrderId, "delegated_session", setup.now);
+  await setup.records.attach_external(setup.workOrderId, { kind: "kbbl_session", session_id: "11111111-1111-4111-8111-111111111111" }, setup.now);
   const upstreamArtifactId = randomUUID() as ArtifactId;
   const upstreamMetadataId = randomUUID() as ArtifactId;
   const upstreamBody = { build: "candidate" };
@@ -255,12 +258,11 @@ test("an upstream-targeted revision closes both waits and creates upstream corre
       steps: [{ type: "artifact_approval", actions: [{ name: "approve", disposition: "release" }, { name: "request_revision", disposition: "revise" }] }],
       requires_zero_open_review_items: false, revision_target: "upstream_handoff" } }], created_at: setup.now });
   await setup.records.decide_run(setup.runId, setup.now);
-  const assessmentBody = { verdict: "revise" };
+  const assessmentBody = { verdict: "pass_with_notes" };
   const assessment = await setup.records.publish_artifact({ artifact_id: randomUUID() as ArtifactId, work_order_id: downstreamWorkId,
     output_name: "result", body: assessmentBody, capability_hash: downstreamCapability, idempotency_key: "assessment-gate",
     payload_hash: createHash("sha256").update(JSON.stringify(assessmentBody)).digest("hex"), published_at: setup.now });
   if (assessment.kind !== "pending") throw new Error(`expected pending assessment gate, got ${assessment.kind}`);
-
   // A gate response must not commit half the correction loop. If the upstream
   // execution cannot be rebound, both waits and slots remain pending so the
   // operator can retry the same decision after the underlying issue is fixed.
@@ -292,8 +294,59 @@ test("an upstream-targeted revision closes both waits and creates upstream corre
     state: "available",
     request_idempotency_key: `operator_retry:gate_revision:${assessment.wait_id}:${setup.runUnitId}`,
   }));
+  const correctionRequest = (await sql!.query<{ readonly execution_request: ExecutionRequest }>(
+    "SELECT execution_request FROM oakridge.work_order WHERE run_unit_id=$1 AND reason='operator_retry'", [setup.runUnitId]))[0]?.execution_request;
+  expect(correctionRequest?.workspace_source?.external_reference).toEqual({ kind: "kbbl_session", session_id: "11111111-1111-4111-8111-111111111111" });
+  expect((correctionRequest?.resolved_config as { readonly worktree?: unknown } | undefined)?.worktree).toBeUndefined();
   expect(correctionOrders[0]?.rendered_prompt).toContain("revise upstream");
   expect(correctionOrders[0]?.expected_artifacts.map((artifact) => artifact.output_name).sort()).toEqual(["metadata", "result"]);
+});
+
+test("a failed assessment with a terminal fail action requests changes and replays the same result", async () => {
+  const setup = await setupGatedRun();
+  if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  const upstreamConfig = { rendered_prompt: "build the candidate", publication: { base_url: "http://oakridge.test", work_order_id: setup.workOrderId, capability: "gate-secret" } };
+  await sql!.query("UPDATE oakridge.work_order SET execution_request=jsonb_set(execution_request,'{resolved_config}',$2::jsonb) WHERE id=$1",
+    [setup.workOrderId, upstreamConfig]);
+  const buildArtifactId = randomUUID() as ArtifactId;
+  const buildBody = { build: "candidate" };
+  const build = await setup.records.publish_artifact({ artifact_id: buildArtifactId, work_order_id: setup.workOrderId,
+    output_name: "result", body: buildBody, capability_hash: setup.capabilityHash, idempotency_key: "auto-fail-build",
+    payload_hash: payloadHashOf(buildBody), published_at: setup.now });
+  if (build.kind !== "pending") throw new Error(`expected pending build, got ${build.kind}`);
+  await sql!.query("UPDATE oakridge.run_output_slot SET release_policy=$2::jsonb WHERE run_unit_id=$1 AND output_name='result'",
+    [setup.runUnitId, { kind: "handoff", downstream_role: "assessment", external_wait_kind: "github_review" }]);
+  await sql!.query("UPDATE oakridge.wait SET kind='handoff_external',closes_on=$2::jsonb WHERE id=$1",
+    [build.wait_id, { kind: "handoff_external", external_wait_kind: "github_review", decision_artifact_id: buildArtifactId }]);
+
+  const assessorUnitId = randomUUID() as RunUnitId;
+  const assessorWorkId = randomUUID() as WorkOrderId;
+  const assessorCapability = createHash("sha256").update("assessor-secret").digest("hex");
+  const inputs = [{ artifact_id: buildArtifactId, artifact_type: "dev.result", output_name: "result", unit_id: "unit-1" as UnitId, body: buildBody }];
+  await setup.records.initialize_straight_through({ run_id: setup.runId, stage_instance_id: randomUUID() as StageInstanceId,
+    run_unit_id: assessorUnitId, unit_id: "unit-1" as UnitId, work_order_id: assessorWorkId,
+    work_order_workflow_id: `v2-work:${assessorWorkId}`, stage_key: "assessor", executor_type: "delegated_session",
+    work_order_capability_hash: assessorCapability, resolved_config: {}, parameters: {}, input_snapshot: inputs,
+    input_fingerprint: "auto-fail-assessment" as InputFingerprint,
+    outputs: [{ name: "assessment", artifact_type: "dev.assessment", required: true, release: { kind: "gate",
+      steps: [{ type: "artifact_approval", actions: [{ name: "approve", disposition: "release" }, { name: "fail", disposition: "terminal" }] }],
+      requires_zero_open_review_items: false, revision_target: "upstream_handoff" } }], created_at: setup.now });
+  await setup.records.decide_run(setup.runId, setup.now);
+  const body = { verdict: "fail", recommended_next_actions: ["Fix durable selection"] };
+  const published = await setup.records.publish_artifact({ artifact_id: randomUUID() as ArtifactId,
+    work_order_id: assessorWorkId, output_name: "assessment", body, capability_hash: assessorCapability,
+    idempotency_key: "auto-fail-assessment", payload_hash: payloadHashOf(body), published_at: setup.now });
+  expect(published.kind).toBe("changes_requested");
+  const replayed = await setup.records.publish_artifact({ artifact_id: randomUUID() as ArtifactId,
+    work_order_id: assessorWorkId, output_name: "assessment", body, capability_hash: assessorCapability,
+    idempotency_key: "auto-fail-assessment", payload_hash: payloadHashOf(body), published_at: setup.now });
+  expect(replayed.kind).toBe("changes_requested");
+  const slots = await sql!.query<{ state: string }>("SELECT state FROM oakridge.run_output_slot WHERE run_unit_id=ANY($1::uuid[]) ORDER BY run_unit_id",
+    [[setup.runUnitId, assessorUnitId]]);
+  expect(slots.map((slot) => slot.state)).toEqual(["invalidated", "invalidated"]);
+  const retry = await sql!.query<{ state: string }>("SELECT state FROM oakridge.work_order WHERE run_unit_id=$1 AND reason='operator_retry'", [setup.runUnitId]);
+  expect(retry[0]?.state).toBe("available");
+  expect(await new PostgresOperatorProjectionRepository(sql!, "test").list_pending_gates(setup.runId)).toEqual([]);
 });
 
 test("a rejected gate invalidates the slot and abandons the work order that produced it, instead of releasing", async () => {
@@ -527,6 +580,29 @@ test("each repeated operator retry replaces the previous correction context", as
   expect(prompt).not.toContain("use two cohorts");
   expect(prompt).not.toContain(first.artifact_id);
   expect(prompt.split("## Requested output corrections")).toHaveLength(2);
+});
+
+test("assessment feedback retry inherits the previous build checkout instead of recreating its cohort branch", async () => {
+  const setup = await setupMaterializedRun(4, false, false);
+  if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  const fixture = await materializeSingleUnitStage(setup, "build-feedback-retry", "C01", [{ identity: { kind: "scalar", output_name: "build_result" }, artifact_type: "dev.build_result", required: true, release: GATE_RELEASE }]);
+  await sql!.query("UPDATE oakridge.work_order SET execution_request=jsonb_set(execution_request,'{resolved_config,worktree}',$2::jsonb) WHERE id=$1",
+    [fixture.workOrderId, JSON.stringify({ branchName: "cohort/epic/C01", worktreeSubdir: "epic" })]);
+  await setup.records.ensure_executor_attachment(fixture.workOrderId, "delegated_session", fixture.at);
+  await setup.records.attach_external(fixture.workOrderId, { kind: "kbbl_session", session_id: "11111111-1111-4111-8111-111111111111" }, fixture.at);
+  const body = { summary: "needs changes" };
+  const published = await setup.records.publish_artifact({ artifact_id: randomUUID() as ArtifactId, work_order_id: fixture.workOrderId,
+    capability_hash: fixture.capabilityHash, output_name: "build_result", body, idempotency_key: "build-feedback",
+    payload_hash: payloadHashOf(body), published_at: fixture.at });
+  if (published.kind !== "pending") throw new Error(`expected pending, got ${published.kind}`);
+  await setup.records.close_output_wait({ wait_id: published.wait_id, disposition: "invalidate", actor: "operator", detail: "revise build", decided_at: fixture.at });
+
+  const retried = await setup.records.retry_unit({ target: { kind: "run_unit", run_unit_id: fixture.runUnitId }, idempotency_key: "assessment-feedback", actor: "operator" }, fixture.at);
+  if (retried.kind !== "created") throw new Error(`expected created, got ${retried.kind}`);
+  const request = (await storedWorkOrder(retried.work_order.id)).execution_request;
+  expect(request.workspace_source).toEqual({ execution_id: fixture.workOrderId as unknown as ExecutionId,
+    external_reference: { kind: "kbbl_session", session_id: "11111111-1111-4111-8111-111111111111" } });
+  expect((request.resolved_config as { readonly worktree?: unknown }).worktree).toBeUndefined();
 });
 
 test("self-stage revision retains the writer across repeated corrections and preserves the artifact chain", async () => {
