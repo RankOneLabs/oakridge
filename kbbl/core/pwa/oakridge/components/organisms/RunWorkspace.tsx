@@ -118,7 +118,7 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
         <PaneBody
           pane={pane}
           runId={runId}
-          onBack={onBack}
+          onRunDeleted={onBack}
           onOpenPane={(next) => workspace.openPane(next, slot)}
           overview={overview}
         />
@@ -164,7 +164,8 @@ interface PaneBodyProps {
   pane: RunWorkspacePane;
   runId: string;
   overview: RunOverview;
-  onBack: () => void;
+  /** Leave the run because it was deleted from inside the list pane. */
+  onRunDeleted: () => void;
   onOpenPane: (pane: RunWorkspacePane) => void;
 }
 
@@ -179,7 +180,7 @@ interface PaneBodyProps {
  * would give one renderer two fetching paths, which is the duplication reuse
  * was meant to avoid.
  */
-function PaneBody({ pane, runId, overview, onBack, onOpenPane }: PaneBodyProps) {
+function PaneBody({ pane, runId, overview, onRunDeleted, onOpenPane }: PaneBodyProps) {
   switch (pane.kind) {
     case "overview":
       return <RunOverviewPane overview={overview} onOpenPane={onOpenPane} />;
@@ -187,7 +188,7 @@ function PaneBody({ pane, runId, overview, onBack, onOpenPane }: PaneBodyProps) 
       return (
         <RunDetail
           runId={runId}
-          onBack={onBack}
+          onRunDeleted={onRunDeleted}
           onSelectArtifact={(artifactId) =>
             onOpenPane({ kind: "artifact", artifact_id: artifactId as ArtifactId })
           }

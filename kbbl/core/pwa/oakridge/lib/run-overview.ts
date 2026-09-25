@@ -147,6 +147,15 @@ export const selectRunArtifacts = (run: RunDetail): readonly RunArtifactRef[] =>
 
 /** One attempt as the sidebar's Sessions section lists it. */
 export interface RunSidebarSessionRow {
+  /**
+   * The attempt's identity, and the only field on this row guaranteed unique
+   * within it. `session_id` is not: `executor_attachment.work_order_id` is the
+   * primary key, so nothing stops one session id being attached to two work
+   * orders — the backend treats that as unexpected but handles it rather than
+   * forbidding it (`find_run_for_session` takes the latest attachment). A list
+   * that is one row per work order therefore has to key on the work order.
+   */
+  readonly work_order_id: string;
   readonly session_id: Sid;
   readonly stage_key: string;
   readonly unit_id: string;
@@ -203,6 +212,7 @@ export const selectRunSidebarSessions = ({
     rows: selectRunSessionRows(sessions)
       .filter((row) => !purgedSessionIds.has(row.attempt.session_id))
       .map((row) => ({
+        work_order_id: row.attempt.work_order_id,
         session_id: row.attempt.session_id as Sid,
         stage_key: row.attempt.stage_key,
         unit_id: row.attempt.unit_id,

@@ -284,6 +284,22 @@ describe("sidebar sessions", () => {
     // retry is still the unit's second try and says so.
     expect(view.rows.map((row) => row.attempt_label)).toEqual(["attempt 2 of 2"]);
   });
+
+  it("gives two attempts sharing a session id distinct row identities", () => {
+    // `executor_attachment.work_order_id` is the primary key, so a session id
+    // reattached to a second work order is unexpected but not prevented. A row
+    // list keyed on `session_id` would collapse the two.
+    const view = selectRunSidebarSessions({
+      sessions: [
+        attempt({ work_order_id: "wo-1", session_id: "sid-1", unit_id: "c1", work_order_state: "abandoned" }),
+        attempt({ work_order_id: "wo-2", session_id: "sid-1", unit_id: "c1", reason: "operator_retry" }),
+      ],
+      gates: { kind: "loaded", gates: [] },
+      purgedSessionIds: new Set(),
+    });
+
+    expect(view.rows.map((row) => row.work_order_id)).toEqual(["wo-1", "wo-2"]);
+  });
 });
 
 describe("recent slot releases", () => {

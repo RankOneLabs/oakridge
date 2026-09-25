@@ -5591,6 +5591,15 @@ a:focus-visible {
   .or-run-workspace__sidebar--open { display: flex; border-right: 0; border-bottom: 1px solid var(--border-subtle); max-height: 45dvh; }
   .or-run-workspace__panes--twin { grid-template-columns: minmax(0, 1fr); }
   .or-run-workspace__pane--secondary { display: none; }
+  /* Hiding the secondary pane has to take the controls that target it with it.
+     Both send the operator somewhere they cannot see: "Send right →" moves the
+     pane being read into the hidden slot and lets the overview take its place,
+     and the sidebar's ⧉ opens into the hidden slot while the visible pane does
+     not change — which reads as a dead button. Their targets still exist in
+     workspace state, so widening the viewport brings both the arrangement and
+     these controls back. */
+  .or-run-sidebar__row-twin { display: none; }
+  .or-run-workspace__pane-action--move { display: none; }
   .or-repository-fields, .or-role-grid { grid-template-columns: minmax(0, 1fr); }
   .or-repository-fields button { width: 100%; }
   .or-review-workspace { gap: 2rem; }

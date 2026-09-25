@@ -48,7 +48,7 @@ export function RunSidebarSessions({
       )}
       <ul className="or-run-sidebar__list">
         {rows.map((row) => (
-          <li key={row.session_id} className="or-run-sidebar__row">
+          <li key={row.work_order_id} className="or-run-sidebar__row">
             <button
               type="button"
               className={`or-run-sidebar__row-open ${openSessionIds.has(row.session_id) ? "or-run-sidebar__row-open--active" : ""}`}
