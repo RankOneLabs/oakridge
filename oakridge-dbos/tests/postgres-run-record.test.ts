@@ -57,7 +57,7 @@ test("one released run-owned slot completes a straight-through run after reposit
     work_order_id: workOrderId, work_order_workflow_id: `v2-work:${workOrderId}`, stage_key: "build", executor_type: "delegated_session",
     work_order_capability_hash: capabilityHash,
     resolved_config: {}, parameters: {}, input_snapshot: [], input_fingerprint: "empty" as InputFingerprint,
-    outputs: [{ name: "result", artifact_type: "dev.result", required: true, release: { kind: "immediate" } }], created_at: now } as const;
+    outputs: [{ name: "result", artifact_type: "dev.result", required: true, release: { kind: "immediate" }, attention: "optional" }], created_at: now } as const;
   await records.initialize_straight_through(initialization);
   await records.initialize_straight_through(initialization);
   expect((await sql.query<{ readonly record_version: string }>("SELECT record_version::text FROM oakridge.workflow_run WHERE id = $1", [runId]))[0]?.record_version).toBe("1");
@@ -85,6 +85,14 @@ test("one released run-owned slot completes a straight-through run after reposit
     .toEqual({ kind: "invalid_capability", detail: "work-order capability was not accepted" });
   expect(await records.publish_artifact({ artifact_id: artifactId, work_order_id: workOrderId, output_name: "result", body,
     capability_hash: capabilityHash, idempotency_key: "result-1", payload_hash: payloadHash, published_at: now })).toEqual(expect.objectContaining({ kind: "published", artifact_id: artifactId }));
+  const releaseFact = (await sql.query<{ readonly release_policy: unknown; readonly detail: unknown }>(`SELECT slot.release_policy, transition.detail
+    FROM oakridge.run_output_slot slot JOIN oakridge.run_transition transition
+      ON transition.run_unit_id=slot.run_unit_id AND transition.output_name=slot.output_name
+    WHERE slot.run_unit_id=$1 AND transition.operation='slot_released'`, [runUnitId]))[0];
+  expect(releaseFact).toEqual({
+    release_policy: { kind: "immediate", attention: "optional" },
+    detail: { artifact_id: artifactId, attention: "optional", continuation: "continuing" },
+  });
   const replay = { artifact_id: randomUUID() as ArtifactId, work_order_id: workOrderId, output_name: "result", body,
     capability_hash: capabilityHash, idempotency_key: "result-1", payload_hash: payloadHash, published_at: new Date().toISOString() };
   expect(await records.publish_artifact(replay)).toEqual(expect.objectContaining({ kind: "already_applied", artifact_id: artifactId }));

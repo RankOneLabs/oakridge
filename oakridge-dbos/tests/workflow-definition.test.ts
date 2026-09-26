@@ -43,6 +43,14 @@ describe("versioned workflow definition compatibility", () => {
     expect(result.value.graph.stages.build?.inputs.find((input) => input.name === "repository_refs")?.collect).toBe(true);
   });
 
+  test("parses a declared output attention while keeping it optional", async () => {
+    const source = await Bun.file(new URL("../../workflow-config/definitions/dev_flow_v14.json", import.meta.url)).json();
+    source.graph.stages.provision_refs.outputs[0].attention = "optional";
+    const result = parseWorkflowDefinition(source);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.graph.stages.provision_refs?.outputs[0]?.attention).toBe("optional");
+  });
+
   test("rejects a provisioning stage whose output is not the refs artifact", () => {
     const result = parseWorkflowDefinition({
       id: "ef2b47a4-d1bd-44ee-840a-e4f7b27570db", name: "bad-provisioning", version: 1, created_at: "2026-08-14T00:00:00Z",

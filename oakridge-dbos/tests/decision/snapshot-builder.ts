@@ -134,7 +134,7 @@ export const workOrder = (options: { readonly state: WorkOrder["state"]; readonl
 const baseSlot = (state: RunOutputSlot["state"], options?: { readonly output_name?: string; readonly run_unit_id?: RunUnitId }): RunOutputSlot => ({
   run_unit_id: options?.run_unit_id ?? (localStableUuid("placeholder-run-unit") as RunUnitId),
   identity: { kind: "scalar", output_name: options?.output_name ?? "result" }, output_name: options?.output_name ?? "result",
-  artifact_type: "dev.build_result", required: true, release: { kind: "immediate" }, state,
+  artifact_type: "dev.build_result", required: true, release: { kind: "immediate" }, attention: "none", state,
   updated_by_work_order_id: null, version: 1 as OutputSlotVersion,
 });
 
