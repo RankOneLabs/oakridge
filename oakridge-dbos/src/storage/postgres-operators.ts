@@ -16,6 +16,7 @@ import type { StageKey } from "../domain/workflow";
 import { selectSessionHoldClaim, type SessionHold } from "../domain/session-hold";
 import type { SessionHoldRepository, SessionRunLocationRepository } from "./repositories";
 import { runRecordWorkflowId } from "../domain/workflow-ids";
+import { projectRunEvent, type RunEvent, type RunEventRow } from "../domain/run-event";
 
 interface GateProjectionRow {
   readonly run_id: string;
@@ -56,6 +57,7 @@ export interface OperatorProjectionRepository {
   list_run_sessions(run_id: WorkflowRunId): Promise<readonly OperatorRunSessionAttempt[]>;
   set_run_archived(id: WorkflowRunId, archived: boolean): Promise<boolean>;
   get_invalidation_cursor(): Promise<string>;
+  list_run_events(after_sequence: string | null, limit: number): Promise<readonly RunEvent[]>;
   list_application_versions(): Promise<readonly OperatorApplicationVersionInventory[]>;
   /** The v2 run-record projection — null when the run itself does not exist; a v2-empty run (nothing materialized under it yet) is an empty `units` array, not null. */
   get_run_record_detail(run_id: WorkflowRunId): Promise<OperatorRunRecordDetail | null>;
@@ -313,8 +315,28 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
          COALESCE((SELECT max(updated_at)::text FROM oakridge.executor_attachment), '0'),
          COALESCE((SELECT max(updated_at)::text FROM oakridge.epic_workflow_profile), '0'),
          COALESCE((SELECT max(created_at)::text FROM oakridge.collaboration_message), '0'),
-         COALESCE((SELECT max(created_at)::text FROM oakridge.review_item), '0')) AS cursor`, []);
+         COALESCE((SELECT max(created_at)::text FROM oakridge.review_item), '0'),
+         COALESCE((SELECT max(sequence)::text FROM oakridge.run_transition), '0')) AS cursor`, []);
     return rows[0]?.cursor ?? "0";
+  }
+
+  /** Best-effort notification feed. Durable UI state is always re-read by invalidation. */
+  async list_run_events(after_sequence: string | null, limit: number): Promise<readonly RunEvent[]> {
+    const rows = await this.sql.query<RunEventRow>(
+      `SELECT transition.sequence::text,transition.operation,transition.run_id::text,
+              transition.run_unit_id::text,unit.stage_instance_id::text,stage.stage_key,unit.unit_id,
+              transition.work_order_id::text,transition.wait_id::text,transition.output_name,transition.collection_key,
+              COALESCE(NULLIF(transition.detail->>'artifact_id','')::uuid,wait.artifact_revision_id)::text AS artifact_revision_id,
+              CASE WHEN transition.detail->>'attention' IN ('required','optional','none') THEN transition.detail->>'attention' ELSE NULL END AS attention,
+              CASE WHEN transition.detail->>'continuation' IN ('waiting','continuing') THEN transition.detail->>'continuation' ELSE NULL END AS continuation,
+              transition.detail,transition.created_at::text
+       FROM oakridge.run_transition transition
+       LEFT JOIN oakridge.run_unit unit ON unit.id=transition.run_unit_id
+       LEFT JOIN oakridge.stage_instance stage ON stage.id=unit.stage_instance_id
+       LEFT JOIN oakridge.wait wait ON wait.id=transition.wait_id
+       WHERE ($1::bigint IS NULL OR transition.sequence > $1::bigint)
+       ORDER BY transition.sequence ASC LIMIT $2`, [after_sequence, limit]);
+    return rows.map(projectRunEvent);
   }
 
   async list_application_versions(): Promise<readonly OperatorApplicationVersionInventory[]> {

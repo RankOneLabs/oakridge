@@ -86,6 +86,8 @@ test("GET /runs/:id exposes the v2 run-record projection with every required fie
     created_at: now,
   });
   await records.decide_run(runId, now);
+  const eventBaseline = (await sql.query<{ readonly sequence: string }>(
+    "SELECT COALESCE(max(sequence),0)::text AS sequence FROM oakridge.run_transition", []))[0]?.sequence ?? "0";
   const body = { plan: "draft" };
   const payloadHash = createHash("sha256").update(JSON.stringify(body)).digest("hex");
   const published = await records.publish_artifact({ artifact_id: randomUUID() as ArtifactId, work_order_id: gatedWorkOrderId, output_name: "plan",
@@ -142,6 +144,24 @@ test("GET /runs/:id exposes the v2 run-record projection with every required fie
     expect(transition.resulting_record_version).toBeGreaterThanOrEqual(transition.prior_record_version);
   }
   expect(runRecord.recent_transitions.some((transition) => transition.operation === "slot_pending")).toBe(true);
+
+  const events = await (await app.request(`/run_events?after=${eventBaseline}&limit=100`)).json() as readonly {
+    readonly sequence: string; readonly operation: string; readonly payload: { readonly run_id: string; readonly stage_instance_id: string | null;
+      readonly unit_id: string | null; readonly output_name: string | null; readonly artifact_revision_id: string | null;
+      readonly attention: string | null; readonly continuation: string | null };
+  }[];
+  expect(events.map((event) => BigInt(event.sequence))).toEqual([...events].map((event) => BigInt(event.sequence)).sort((left, right) => left < right ? -1 : 1));
+  expect(events.find((event) => event.operation === "gate_opened")).toEqual(expect.objectContaining({ payload: expect.objectContaining({
+    run_id: runId, stage_instance_id: gatedStageId, unit_id: "unit-gated", output_name: "plan",
+    artifact_revision_id: published.artifact_id, attention: "required", continuation: "waiting",
+  }) }));
+  const projection = new PostgresOperatorProjectionRepository(sql, "test-app-version");
+  const cursorBeforeTransition = await projection.get_invalidation_cursor();
+  await sql.query(`INSERT INTO oakridge.run_transition
+    (id,run_id,operation,actor,prior_record_version,resulting_record_version,detail,created_at)
+    SELECT $1,id,'pull_request_observed','test',record_version,record_version,'{}'::jsonb,$3::timestamptz
+    FROM oakridge.workflow_run WHERE id=$2`, [randomUUID(), runId, new Date(Date.parse(now) + 1).toISOString()]);
+  expect(await projection.get_invalidation_cursor()).not.toBe(cursorBeforeTransition);
 
   const gates = await (await app.request(`/runs/${runId}/gates`)).json() as readonly { readonly id: string; readonly stage_instance_id: string; readonly artifact_revision_id: string }[];
   expect(gates).toEqual([expect.objectContaining({ id: published.wait_id, stage_instance_id: gatedStageId, artifact_revision_id: published.artifact_id })]);

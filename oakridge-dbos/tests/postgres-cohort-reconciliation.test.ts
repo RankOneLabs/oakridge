@@ -18,6 +18,7 @@ test("a replacement handoff records its own merge completion after an earlier ha
   const definitionId = randomUUID();
   const runId = randomUUID() as WorkflowRunId;
   const stageId = randomUUID() as StageInstanceId;
+  const runUnitId = randomUUID();
   const firstArtifactId = randomUUID() as ArtifactId;
   const secondArtifactId = randomUUID() as ArtifactId;
   const unitId = "builder" as UnitId;
@@ -31,6 +32,10 @@ test("a replacement handoff records its own merge completion after an earlier ha
     (id,run_id,stage_key,stage_type,stage_contract,coordinator_workflow_id,started_at)
     VALUES ($1,$2,'build','delegated_session','{}'::jsonb,$3,$4::timestamptz)`,
   [stageId, runId, `cohort-reconciliation:${stageId}`, firstCompletion]);
+  await sql.query(`INSERT INTO oakridge.run_unit
+    (id,run_id,stage_instance_id,unit_id,parameters,input_snapshot,input_fingerprint,state,created_at)
+    VALUES ($1,$2,$3,$4,'{}'::jsonb,'[]'::jsonb,'empty','ready',$5::timestamptz)`,
+  [runUnitId, runId, stageId, unitId, firstCompletion]);
   for (const [artifactId, outputName] of [[firstArtifactId, "first"], [secondArtifactId, "second"]] as const) {
     await sql.query(`INSERT INTO oakridge.artifact
       (id,chain_id,run_id,stage_instance_id,execution_id,unit_id,output_name,artifact_type,body,version,emission_idempotency_key,emission_payload_hash,created_at)
@@ -53,4 +58,10 @@ test("a replacement handoff records its own merge completion after an earlier ha
   const completed = await repository.find(stageId, unitId);
   expect(completed?.handoff_artifact_id).toBe(secondArtifactId);
   expect(new Date(completed!.completed_at!).toISOString()).toBe(secondCompletion);
+  const events = await sql.query<{ readonly operation: string; readonly detail: { readonly repository_key: string; readonly pull_request_url: string } }>(
+    "SELECT operation,detail FROM oakridge.run_transition WHERE run_id=$1 AND operation LIKE 'pull_request_%' ORDER BY sequence", [runId]);
+  expect(events.map((event) => event.operation)).toEqual([
+    "pull_request_merge_confirmed", "pull_request_observed", "pull_request_merge_confirmed",
+  ]);
+  expect(events[2]?.detail).toEqual(expect.objectContaining({ repository_key: "scout", pull_request_url: "https://github.com/RankOneLabs/scout/pull/47" }));
 });
