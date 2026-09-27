@@ -11,6 +11,10 @@ export interface AppState {
    * (the stream never carries them).
    */
   sessions: Map<Sid, SessionSnapshot>;
+  /** False until /inbox supplies a complete ACP inventory, including an empty one. */
+  hasInboxSnapshot: boolean;
+  /** True only after the archive seed succeeds, including an empty response. */
+  hasSessionSeed: boolean;
   inboxStatus: Status;
   currentSid: Sid | null;
   /** Sids removed server-side; blocks a late seed from resurrecting them. */
@@ -31,6 +35,8 @@ export interface AppState {
 
 export const useStore = create<AppState>()((set) => ({
   sessions: new Map(),
+  hasInboxSnapshot: false,
+  hasSessionSeed: false,
   inboxStatus: "connecting",
   currentSid: null,
   removedSids: new Set(),
@@ -61,10 +67,13 @@ export const useStore = create<AppState>()((set) => ({
       const sessions = new Map(state.sessions);
       for (const snapshot of snapshots) {
         const sid = snapshot.sid as Sid;
+        // Once the live inventory has arrived, this older request may only
+        // supply legacy sessions (which are not part of the inbox stream).
+        if (state.hasInboxSnapshot && snapshot.source !== "legacy_archive") continue;
         if (state.removedSids.has(sid)) continue;
         if (!sessions.has(sid)) sessions.set(sid, snapshot);
       }
-      return { sessions };
+      return { sessions, hasSessionSeed: true };
     }),
 
   applySnapshot: (snapshots) => {
@@ -98,7 +107,7 @@ export const useStore = create<AppState>()((set) => ({
       const removedSids = new Set(state.removedSids);
       for (const sid of incoming.keys()) removedSids.delete(sid);
       for (const sid of removed) removedSids.add(sid);
-      return { sessions, removedSids };
+      return { sessions, removedSids, hasInboxSnapshot: true };
     });
     return removed;
   },
