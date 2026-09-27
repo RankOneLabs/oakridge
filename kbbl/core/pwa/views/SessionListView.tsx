@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQueries, useQuery } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 
 
 import type {
@@ -8,9 +8,10 @@ import type {
 import type { RuntimeId } from "../../runtime-interface";
 import {
   compareSessionsByDisplayedActivity,
-  groupSessionsByCohort,
+  groupSessionsByRun,
   selectNextJustNowExpiryDelay,
 } from "../../acp/pwa-session-order";
+import type { SessionRunGroup } from "../../acp/pwa-session-order";
 
 import { SessionRow } from "../components/organisms/SessionRow";
 import { SessionCohortHeading } from "../components/molecules/SessionCohortHeading";
@@ -19,7 +20,8 @@ import {
   type NewSessionFormValues,
 } from "../components/organisms/NewSessionForm";
 import { useUrlPrefill } from "../hooks/useUrlPrefill";
-import { fetchRun, fetchRuns } from "../oakridge/client";
+import { useRun } from "../oakridge/hooks/useRun";
+import { useRuns } from "../oakridge/hooks/useRuns";
 import {
   selectSessionRunTitle,
   selectSessionStageName,
@@ -54,6 +56,52 @@ function SessionRowList({ sessions, onSelect, onResume, resumeDisabled }: Sessio
         />
       ))}
     </ul>
+  );
+}
+
+interface SessionRunSectionProps {
+  run: SessionRunGroup;
+  title: string | null;
+  onSelect: (sid: string) => void;
+  onResume: (sid: string) => void;
+  resumeDisabled: boolean;
+}
+
+function SessionRunSection({
+  run,
+  title,
+  onSelect,
+  onResume,
+  resumeDisabled,
+}: SessionRunSectionProps) {
+  const runQuery = useRun(run.runId);
+
+  return (
+    <section
+      className="session-run-group"
+      data-testid={`session-run-${run.runId}`}
+    >
+      <h2 className="session-cohort-heading session-cohort-heading--plain">
+        {title ?? "Run"}
+      </h2>
+      {run.groups.map((group) => (
+        <section key={group.key} className="session-cohort-group">
+          <SessionCohortHeading
+            title={group.kind === "cohort"
+              ? group.title
+              : selectSessionStageName(group.stageInstanceId, runQuery.data) ?? "Stage"}
+            secondaryId={group.kind === "cohort" ? group.unitId : undefined}
+            repositoryKey={group.repositoryKey}
+          />
+          <SessionRowList
+            sessions={group.sessions}
+            onSelect={onSelect}
+            onResume={onResume}
+            resumeDisabled={resumeDisabled}
+          />
+        </section>
+      ))}
+    </section>
   );
 }
 
@@ -94,25 +142,13 @@ export function SessionListView({
   const prefill = useUrlPrefill();
 
   const grouping = useMemo(
-    () => groupSessionsByCohort(
+    () => groupSessionsByRun(
       [...sessions.values()],
       compareSessionsByDisplayedActivity(Date.now()),
     ),
     [orderingTick, sessions],
   );
-  const runsQuery = useQuery({
-    queryKey: ["oakridge", "runs", ""],
-    queryFn: () => fetchRuns(),
-    refetchInterval: 10_000,
-    enabled: grouping.runs.length > 0,
-  });
-  const runDetailQueries = useQueries({
-    queries: grouping.runs.map((run) => ({
-      queryKey: ["oakridge", "run", run.runId],
-      queryFn: () => fetchRun(run.runId),
-      refetchInterval: 10_000,
-    })),
-  });
+  const runsQuery = useRuns(undefined, grouping.runs.length > 0);
   const totalCount = sessions.size;
 
   const startMutation = useMutation({
@@ -231,40 +267,19 @@ export function SessionListView({
         <div className="session-list-empty">No sessions yet.</div>
       ) : (
         <div className="session-cohort-groups">
-          {grouping.runs.map((run, runIndex) => (
-            <section
+          {grouping.runs.map((run) => (
+            <SessionRunSection
               key={run.runId}
-              className="session-run-group"
-              data-testid={`session-run-${run.runId}`}
-            >
-              <h2 className="session-cohort-heading session-cohort-heading--plain">
-                {selectSessionRunTitle(run.runId, runsQuery.data ?? [])}
-              </h2>
-              {run.groups.map((group) => (
-                <section key={group.key} className="session-cohort-group">
-                  <SessionCohortHeading
-                    title={group.kind === "cohort"
-                      ? group.title
-                      : selectSessionStageName(
-                        group.stageInstanceId,
-                        runDetailQueries[runIndex]?.data,
-                      )}
-                    unitId={group.kind === "cohort" ? group.unitId : group.stageInstanceId}
-                    repositoryKey={group.repositoryKey}
-                  />
-                  <SessionRowList
-                    sessions={group.sessions}
-                    onSelect={onSelect}
-                    onResume={(sid) => void startSession(undefined, sid)}
-                    resumeDisabled={startMutation.isPending}
-                  />
-                </section>
-              ))}
-            </section>
+              run={run}
+              title={selectSessionRunTitle(run.runId, runsQuery.data ?? [])}
+              onSelect={onSelect}
+              onResume={(sid) => void startSession(undefined, sid)}
+              resumeDisabled={startMutation.isPending}
+            />
           ))}
           {grouping.unattached.length > 0 && (
             <section
-              className="session-cohort-group session-cohort-group--ungrouped"
+              className="session-cohort-group session-cohort-group--unattached"
               data-testid="unattached-sessions"
             >
               <h2 className="session-cohort-heading session-cohort-heading--plain">

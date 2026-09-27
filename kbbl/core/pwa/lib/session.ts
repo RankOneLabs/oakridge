@@ -77,16 +77,16 @@ export function sortSessions(sessions: Map<string, SessionSnapshot>): SessionSna
 export function selectSessionRunTitle(
   runId: string,
   runs: readonly RunSummary[],
-): string {
-  return runs.find((run) => run.id === runId)?.title ?? runId;
+): string | null {
+  return runs.find((run) => run.id === runId)?.title ?? null;
 }
 
 export function selectSessionStageName(
   stageInstanceId: string,
   run: RunDetail | undefined,
-): string {
+): string | null {
   return run?.stages.find((stage) => stage.stage_instance_id === stageInstanceId)?.name
-    ?? stageInstanceId;
+    ?? null;
 }
 
 export async function resumeSession(

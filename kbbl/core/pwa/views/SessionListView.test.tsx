@@ -199,7 +199,7 @@ describe("SessionListView grouping", () => {
       expect(screen.getByText("Cohort One")).toBeTruthy();
       expect(screen.getByText("cohort-one")).toBeTruthy();
       expect(await within(run).findByText("Plan the work")).toBeTruthy();
-      expect(within(run).getByText("stage-plan")).toBeTruthy();
+      expect(within(run).queryByText("stage-plan")).toBeNull();
       expect(within(run).getByText("planning-0")).toBeTruthy();
       expect(screen.getByText("oakridge")).toBeTruthy();
       expect(screen.getByText("build")).toBeTruthy();

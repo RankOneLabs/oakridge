@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import {
   compareSessionsByActivity,
   compareSessionsByDisplayedActivity,
-  groupSessionsByCohort,
+  groupSessionsByRun,
   selectNextJustNowExpiryDelay,
 } from "./pwa-session-order";
 import type { PwaSessionSnapshot, PwaSessionWorkflowIdentity } from "./pwa-wire";
@@ -95,7 +95,7 @@ test("a build session and an assessor session sharing a run and unit land in one
     sid: "assess-1",
     workflow: workflow({ operatorRole: "assessment", stageInstanceId: "stage-assess" }),
   });
-  const grouping = groupSessionsByCohort([build, assess]);
+  const grouping = groupSessionsByRun([build, assess]);
   expect(grouping.runs).toHaveLength(1);
   expect(grouping.runs[0]?.groups[0]?.sessions.map((s) => s.sid).sort()).toEqual(["assess-1", "build-1"]);
   expect(grouping.unattached).toEqual([]);
@@ -112,13 +112,13 @@ test("the build member's cohort title wins when the assessor member carries none
     lastActivityTs: "2026-01-02T00:00:00.000Z",
     workflow: workflow({ operatorRole: "assessment", cohortTitle: null }),
   });
-  const grouping = groupSessionsByCohort([build, assess]);
+  const grouping = groupSessionsByRun([build, assess]);
   expect(grouping.runs[0]?.groups[0]).toMatchObject({ title: "Targets spec contract" });
 });
 
 test("a group with no titled member falls back to the unit id", () => {
   const build = makeSnapshot({ sid: "build-1", workflow: workflow({ cohortTitle: null }) });
-  const grouping = groupSessionsByCohort([build]);
+  const grouping = groupSessionsByRun([build]);
   expect(grouping.runs[0]?.groups[0]).toMatchObject({ title: "cohort-a" });
 });
 
@@ -128,20 +128,20 @@ test("the group's repositoryKey is the first non-null one among its members", ()
     sid: "assess-1",
     workflow: workflow({ operatorRole: "assessment", repositoryKey: "pipefitter" }),
   });
-  const grouping = groupSessionsByCohort([build, assess]);
+  const grouping = groupSessionsByRun([build, assess]);
   expect(grouping.runs[0]?.groups[0]?.repositoryKey).toBe("pipefitter");
 });
 
 test("a null workflow is unattached and never creates a run", () => {
   const handStarted = makeSnapshot({ sid: "hand-1", workflow: null });
-  const grouping = groupSessionsByCohort([handStarted]);
+  const grouping = groupSessionsByRun([handStarted]);
   expect(grouping.runs).toEqual([]);
   expect(grouping.unattached.map((s) => s.sid)).toEqual(["hand-1"]);
 });
 
 test("unitId '0' stays attached to its run as a stage group", () => {
   const scalar = makeSnapshot({ sid: "scalar-1", workflow: workflow({ unitId: "0" }) });
-  const grouping = groupSessionsByCohort([scalar]);
+  const grouping = groupSessionsByRun([scalar]);
   expect(grouping.runs[0]?.groups[0]).toMatchObject({
     kind: "stage",
     stageInstanceId: "stage-build",
@@ -167,7 +167,7 @@ test("runs and groups order by their most recent member; members use the same or
     sid: "newer-only", lastActivityTs: "2026-01-05T00:00:00.000Z",
     workflow: workflow({ runId: "run-2", unitId: "cohort-new" }),
   });
-  const grouping = groupSessionsByCohort([olderGroupOld, olderGroupNew, middleGroup, newerGroup]);
+  const grouping = groupSessionsByRun([olderGroupOld, olderGroupNew, middleGroup, newerGroup]);
   expect(grouping.runs.map((run) => run.runId)).toEqual(["run-2", "run-1"]);
   expect(grouping.runs[1]?.groups.map((group) => group.sessions[0]?.sid)).toEqual([
     "middle-only",
@@ -179,6 +179,6 @@ test("runs and groups order by their most recent member; members use the same or
 test("the unattached section is sorted by activity, newest first", () => {
   const older = makeSnapshot({ sid: "a", lastActivityTs: "2026-01-01T00:00:00.000Z", workflow: null });
   const newer = makeSnapshot({ sid: "b", lastActivityTs: "2026-01-02T00:00:00.000Z", workflow: null });
-  const grouping = groupSessionsByCohort([older, newer]);
+  const grouping = groupSessionsByRun([older, newer]);
   expect(grouping.unattached.map((s) => s.sid)).toEqual(["b", "a"]);
 });

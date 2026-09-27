@@ -105,7 +105,7 @@ function firstNonNull(
  * group. Scalar stages use their stage-instance id because their minted unit
  * id is always "0" and carries no grouping identity of its own.
  */
-export function groupSessionsByCohort(
+export function groupSessionsByRun(
   sessions: readonly PwaSessionSnapshot[],
   compare_activity: SessionActivityComparator = compareSessionsByActivity,
 ): SessionRunGrouping {
