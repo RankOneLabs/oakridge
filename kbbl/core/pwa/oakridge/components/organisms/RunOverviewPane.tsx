@@ -1,10 +1,12 @@
 import type { ArtifactId, Sid } from "../../../lib/ids";
 import type { RunOverview, RunOverviewGates } from "../../lib/run-overview";
 import type { RunWorkspacePane } from "../../lib/run-workspace";
+import type { RunActivityRead } from "../../lib/run-activity";
 import { StatusBadge } from "../atoms/StatusBadge";
 
 interface RunOverviewPaneProps {
   overview: RunOverview;
+  activity: RunActivityRead;
   onOpenPane: (pane: RunWorkspacePane) => void;
 }
 
@@ -16,7 +18,7 @@ const rowButtonClass =
  * nothing itself — every value is derived by the selector and handed down, so
  * this file stays markup and the derivations stay unit-tested.
  */
-export function RunOverviewPane({ overview, onOpenPane }: RunOverviewPaneProps) {
+export function RunOverviewPane({ overview, activity, onOpenPane }: RunOverviewPaneProps) {
   const openSession = (sessionId: Sid) => onOpenPane({ kind: "session", session_id: sessionId });
   const openArtifact = (artifactId: ArtifactId) =>
     onOpenPane({ kind: "artifact", artifact_id: artifactId });
@@ -68,6 +70,42 @@ export function RunOverviewPane({ overview, onOpenPane }: RunOverviewPaneProps) 
       <section>
         <h4 className="or-run-overview__heading">Active gates</h4>
         <ActiveGates gates={overview.gates} />
+      </section>
+
+      <section>
+        <h4 className="or-run-overview__heading">Activity</h4>
+        {activity.kind === "pending" ? (
+          <p className="or-run-overview__empty">Loading activity…</p>
+        ) : activity.kind === "unavailable" ? (
+          <p className="m-0 text-sm text-[var(--amber-fg)]" role="status">
+            Run activity is unavailable.
+          </p>
+        ) : activity.items.length === 0 ? (
+          <p className="or-run-overview__empty" data-testid="or-overview-no-activity">
+            No activity recorded yet.
+          </p>
+        ) : (
+          <ol className="or-run-overview__list" data-testid="or-run-activity">
+            {activity.items.map((item) => (
+              <li key={item.sequence} className="rounded-md border border-[var(--border-subtle)] px-3 py-2 text-sm">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[var(--text-primary)]">{item.summary}</span>
+                  {item.is_optional_attention && (
+                    <span className="rounded border border-[var(--accent-blue)] px-1.5 py-0.5 text-xs text-[var(--accent-blue)]" data-testid="or-activity-optional-attention">
+                      optional attention
+                    </span>
+                  )}
+                </div>
+                {item.context !== null && <div className="text-xs text-[var(--text-muted)]">{item.context}</div>}
+                {item.pull_request_url !== null && (
+                  <a className="text-xs text-[var(--accent-blue)] underline" href={item.pull_request_url} target="_blank" rel="noreferrer">
+                    Open pull request
+                  </a>
+                )}
+              </li>
+            ))}
+          </ol>
+        )}
       </section>
 
       <section>

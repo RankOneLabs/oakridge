@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 
 import { useRun } from "../../hooks/useRun";
 import { useRunGates } from "../../hooks/useRunGates";
@@ -30,6 +31,7 @@ import { RunOverviewPane } from "./RunOverviewPane";
 import { RunSessionPane } from "./RunSessionPane";
 import { RunWorkspaceSidebar } from "./RunWorkspaceSidebar";
 import { RunDetail } from "./RunDetail";
+import { fetchRunEvents, selectRunActivity, type RunActivityRead } from "../../lib/run-activity";
 
 interface RunWorkspaceProps {
   runId: string;
@@ -49,6 +51,11 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
   const runQuery = useRun(runId);
   const gatesQuery = useRunGates(runId);
   const sessionsQuery = useRunSessions(runId);
+  const activityQuery = useQuery({
+    queryKey: ["oakridge", "run", runId, "activity"],
+    queryFn: fetchRunEvents,
+    refetchInterval: 10_000,
+  });
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   const run = runQuery.data;
@@ -104,6 +111,11 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
     purgedSessionIds,
   });
   const sidebarArtifacts = selectRunArtifacts(run);
+  const activity: RunActivityRead = activityQuery.data !== undefined
+    ? { kind: "loaded", items: selectRunActivity(activityQuery.data, runId) }
+    : activityQuery.isError && !activityQuery.isPending
+      ? { kind: "unavailable" }
+      : { kind: "pending" };
 
   const renderPane = (slot: RunWorkspaceSlot, pane: RunWorkspacePane) => {
     const heading = describePane(pane);
@@ -125,6 +137,7 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
           onRunDeleted={onBack}
           onOpenPane={(next) => workspace.openPane(next, slot)}
           overview={overview}
+          activity={activity}
         />
       </RunPaneChrome>
     );
@@ -168,6 +181,7 @@ interface PaneBodyProps {
   pane: RunWorkspacePane;
   runId: string;
   overview: RunOverview;
+  activity: RunActivityRead;
   /** Leave the run because it was deleted from inside the list pane. */
   onRunDeleted: () => void;
   onOpenPane: (pane: RunWorkspacePane) => void;
@@ -184,10 +198,10 @@ interface PaneBodyProps {
  * would give one renderer two fetching paths, which is the duplication reuse
  * was meant to avoid.
  */
-function PaneBody({ pane, runId, overview, onRunDeleted, onOpenPane }: PaneBodyProps) {
+function PaneBody({ pane, runId, overview, activity, onRunDeleted, onOpenPane }: PaneBodyProps) {
   switch (pane.kind) {
     case "overview":
-      return <RunOverviewPane overview={overview} onOpenPane={onOpenPane} />;
+      return <RunOverviewPane overview={overview} activity={activity} onOpenPane={onOpenPane} />;
     case "list":
       return (
         <RunDetail
