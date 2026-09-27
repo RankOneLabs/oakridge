@@ -111,3 +111,54 @@ test("a handoff output retains the established cohort projection byte for byte",
     updated_at: "2026-09-26 12:00:00+00",
   }));
 });
+
+test("run summary stage totals match run detail without compiling the list", async () => {
+  if (!sql) { console.warn("operator projection stage progress test SKIPPED: no PostgreSQL reachable"); return; }
+  const definitionId = randomUUID() as WorkflowDefinitionId;
+  const runId = randomUUID() as WorkflowRunId;
+  const stageInstanceId = randomUUID() as StageInstanceId;
+  const now = "2026-09-26T13:00:00.000Z";
+  const stage = (name: string) => ({
+    stage_type: "delegated_session",
+    operator_role: null,
+    config: {
+      runtime: "codex",
+      prompt_template_path: "dev-flow/build_v2.md",
+      slot_bindings: {},
+      workdir: { from: "literal" as const, value: "/workspace" },
+      session_name: name,
+    },
+    inputs: [],
+    outputs: [{ name, artifact_type: `dev.${name}`, attention: "none" as const }],
+  });
+  const definition = {
+    id: definitionId,
+    name: `stage-progress-${runId}`,
+    version: 1,
+    graph: { stages: { build: stage("build_result"), document: stage("documentation") }, edges: [] },
+    created_at: now,
+    archived: false,
+  } satisfies WorkflowDefinition;
+
+  await sql.query(
+    "INSERT INTO oakridge.workflow_definition (id,name,version,definition,archived,created_at) VALUES ($1,$2,1,$3::jsonb,false,$4::timestamptz)",
+    [definitionId, definition.name, JSON.stringify(definition), now],
+  );
+  await sql.query(
+    "INSERT INTO oakridge.workflow_run (id,workflow_definition_id,context,created_at) VALUES ($1,$2,'{}'::jsonb,$3::timestamptz)",
+    [runId, definitionId, now],
+  );
+  await sql.query(
+    `INSERT INTO oakridge.stage_instance
+       (id,run_id,stage_key,stage_type,stage_contract,coordinator_workflow_id,started_at,ended_at,outcome,attempt_root_workflow_id,state)
+     VALUES ($1,$2,'build','delegated_session',$3::jsonb,$4,$5::timestamptz,$5::timestamptz,'{"kind":"succeeded"}'::jsonb,NULL,'succeeded')`,
+    [stageInstanceId, runId, JSON.stringify({ operator_role: null, outputs: [{ name: "build_result", artifact_type: "dev.build_result", release: { kind: "immediate" }, attention: "none" }] }), `v2-stage:${stageInstanceId}`, now],
+  );
+
+  const repository = new PostgresOperatorProjectionRepository(sql, "test-app-version");
+  const summary = (await repository.list_runs("all")).find((candidate) => candidate.id === runId);
+  const detail = await repository.get_run(runId);
+
+  expect(summary?.stage_total).toBe(detail?.stages.length);
+  expect(summary?.stage_complete).toBe(1);
+});

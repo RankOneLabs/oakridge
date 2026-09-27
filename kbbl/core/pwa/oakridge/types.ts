@@ -190,6 +190,8 @@ export interface RunSummary {
   workflow_name: string;
   status: RunStatus;
   current_stage: string | null;
+  stage_total: number;
+  stage_complete: number;
   parked_count: number;
   updated_at: string;
   is_stuck: boolean;
