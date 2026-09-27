@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 
 import { parseOakridgeRunEventFrame } from "../client";
-import type { RunEvent } from "../types";
+import type { RunEventFrame } from "../types";
 
 type StreamEventName = "invalidate" | "run_event";
 type StreamListener = (event: MessageEvent<string>) => void;
@@ -37,17 +37,17 @@ export const subscribeOakridgeStream = (name: StreamEventName, listener: StreamL
 };
 
 /**
- * Best-effort, toast-only run events. Replayed frames are deliberately dropped;
- * durable state always comes from projections refreshed by `invalidate`.
+ * Best-effort, toast-only run-event frames. The subscriber owns replay policy
+ * so the production notification selector is the one that suppresses them.
  */
-export function useOakridgeRunEventStream(isEnabled: boolean, subscriber: (event: RunEvent) => void): void {
+export function useOakridgeRunEventStream(isEnabled: boolean, subscriber: (frame: RunEventFrame) => void): void {
   const subscriberRef = useRef(subscriber);
   subscriberRef.current = subscriber;
   useEffect(() => {
     if (!isEnabled) return;
     return subscribeOakridgeStream("run_event", (message) => {
       const frame = parseOakridgeRunEventFrame(message.data);
-      if (frame && !frame.replayed) subscriberRef.current(frame);
+      if (frame) subscriberRef.current(frame);
     });
   }, [isEnabled]);
 }

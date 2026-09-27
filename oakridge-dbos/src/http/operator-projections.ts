@@ -23,9 +23,16 @@ export const createOperatorProjectionApp = (projections: OperatorProjectionRepos
   app.get("/run_events", async (http) => {
     const after = http.req.query("after") ?? null;
     if (after !== null && !/^\d+$/.test(after)) return http.json({ error: "after must be a sequence" }, 400);
+    const requestedRunId = http.req.query("run_id") ?? null;
+    const runId = requestedRunId === null ? null : parseUuidId<WorkflowRunId>(requestedRunId);
+    if (requestedRunId !== null && runId === null) return http.json({ error: "run_id must be a UUID" }, 400);
     const requestedLimit = Number(http.req.query("limit") ?? "100");
     if (!Number.isInteger(requestedLimit) || requestedLimit < 1) return http.json({ error: "limit must be a positive integer" }, 400);
-    return http.json(await projections.list_run_events(after, Math.min(requestedLimit, 500)));
+    return http.json(await projections.list_run_events({
+      after_sequence: after,
+      limit: Math.min(requestedLimit, 500),
+      run_id: runId,
+    }));
   });
   app.get("/runs/:id/gates", async (http) => {
     const id = parseUuidId<WorkflowRunId>(http.req.param("id"));

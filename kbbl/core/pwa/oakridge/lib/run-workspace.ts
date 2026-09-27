@@ -102,6 +102,10 @@ export const panesOf = (state: RunWorkspaceState): readonly RunWorkspacePane[] =
 
 export const isTwinView = (state: RunWorkspaceState): boolean => state.secondary !== null;
 
+/** Activity is rendered only by the overview, so its read follows that pane's visibility. */
+export const shouldReadRunActivity = (state: RunWorkspaceState): boolean =>
+  panesOf(state).some((pane) => pane.kind === "overview");
+
 export interface OpenEntityIds {
   readonly session_ids: ReadonlySet<string>;
   readonly artifact_ids: ReadonlySet<string>;

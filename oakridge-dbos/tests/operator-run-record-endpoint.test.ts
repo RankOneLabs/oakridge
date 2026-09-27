@@ -179,11 +179,12 @@ test("GET /runs/:id exposes the v2 run-record projection with every required fie
   await reconciliations.upsert(merged);
   await reconciliations.upsert({ ...merged, completed_at: now });
 
-  const events = await (await app.request(`/run_events?after=${eventBaseline}&limit=100`)).json() as readonly {
+  const events = await (await app.request(`/run_events?after=${eventBaseline}&limit=100&run_id=${runId}`)).json() as readonly {
     readonly sequence: string; readonly operation: string; readonly payload: { readonly run_id: string; readonly stage_instance_id: string | null;
       readonly unit_id: string | null; readonly output_name: string | null; readonly artifact_revision_id: string | null;
       readonly attention: string | null; readonly continuation: string | null };
   }[];
+  expect(events.every((event) => event.payload.run_id === runId)).toBe(true);
   expect(events.map((event) => BigInt(event.sequence))).toEqual([...events].map((event) => BigInt(event.sequence)).sort((left, right) => left < right ? -1 : 1));
   expect(events.find((event) => event.operation === "gate_opened")).toEqual(expect.objectContaining({ payload: expect.objectContaining({
     run_id: runId, stage_instance_id: gatedStageId, unit_id: "unit-gated", output_name: "plan",

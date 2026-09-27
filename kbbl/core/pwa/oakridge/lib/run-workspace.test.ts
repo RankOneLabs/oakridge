@@ -15,6 +15,7 @@ import {
   openInPane,
   panesOf,
   selectOpenEntityIds,
+  shouldReadRunActivity,
   type RunWorkspacePane,
   type RunWorkspaceState,
 } from "./run-workspace";
@@ -192,5 +193,14 @@ describe("panesOf", () => {
 
     expect(panesOf(state)).toEqual([LIST_PANE, OVERVIEW_PANE]);
     expect(isTwinView(state)).toBe(true);
+  });
+});
+
+describe("shouldReadRunActivity", () => {
+  it("reads activity only while an overview pane is visible", () => {
+    expect(shouldReadRunActivity(DEFAULT_RUN_WORKSPACE_STATE)).toBe(true);
+    expect(shouldReadRunActivity(twin(LIST_PANE, OVERVIEW_PANE))).toBe(true);
+    expect(shouldReadRunActivity({ primary: LIST_PANE, secondary: null })).toBe(false);
+    expect(shouldReadRunActivity(twin(sessionPane("sid-1"), artifactPane("art-1")))).toBe(false);
   });
 });

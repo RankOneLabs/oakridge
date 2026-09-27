@@ -9,6 +9,7 @@
 import type { ArtifactId, Sid } from "../../lib/ids";
 import type {
   ParkedGate,
+  ReviewInboxItem,
   RunDetail,
   RunStatus,
   StageStatus,
@@ -76,6 +77,28 @@ export type UnitActionKey = string & { readonly __brand: "UnitActionKey" };
 
 export const unitActionKeyOf = (stageKey: string, unitId: string): UnitActionKey =>
   `${stageKey}:${unitId}` as UnitActionKey;
+
+export interface PullRequestMergeWaitInput {
+  readonly items: readonly ReviewInboxItem[];
+  readonly runId: string;
+  readonly stageInstanceId: string;
+  readonly unitId: string;
+}
+
+/** Whether this cohort currently exposes the same merge action as the Attention surface. */
+export const hasOpenPullRequestMergeWait = ({
+  items,
+  runId,
+  stageInstanceId,
+  unitId,
+}: PullRequestMergeWaitInput): boolean =>
+  items.some((item) =>
+    item.kind === "pull_request_merge"
+    && item.state === "actionable"
+    && item.run_id === runId
+    && item.stage_instance_id === stageInstanceId
+    && item.unit_id === unitId
+    && item.resume_actions.includes("confirm_merged"));
 
 /**
  * The units where the run is waiting on a person. A gate that is no longer

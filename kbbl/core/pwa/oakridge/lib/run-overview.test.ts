@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import type { ParkedGate, RunDetail, RunSessionAttempt, StageDetail } from "../types";
+import type { ParkedGate, ReviewInboxItem, RunDetail, RunSessionAttempt, StageDetail } from "../types";
 import {
   RECENT_SLOT_RELEASE_LIMIT,
+  hasOpenPullRequestMergeWait,
   selectRunGatesRead,
   selectRunOverview,
   selectRunSidebarSessions,
@@ -11,6 +12,36 @@ import {
   type RunOverview,
   type RunOverviewGates,
 } from "./run-overview";
+
+const mergeWait = (overrides: Partial<ReviewInboxItem> = {}): ReviewInboxItem => ({
+  id: "stage-1:unit-1:pull_request_merge",
+  kind: "pull_request_merge",
+  state: "actionable",
+  run_id: "run-1",
+  workflow_name: "dev_flow_v2",
+  stage_instance_id: "stage-1",
+  stage_name: "build",
+  unit_id: "unit-1",
+  lifecycle: "github_review",
+  resume_actions: ["confirm_merged"],
+  blocked_by: [],
+  ...overrides,
+});
+
+describe("pull request merge waits", () => {
+  const input = { runId: "run-1", stageInstanceId: "stage-1", unitId: "unit-1" };
+
+  it("opens the cohort action for its actionable confirm-merged inbox item", () => {
+    expect(hasOpenPullRequestMergeWait({ ...input, items: [mergeWait()] })).toBe(true);
+  });
+
+  it("does not open the action for another cohort or a blocked item", () => {
+    expect(hasOpenPullRequestMergeWait({
+      ...input,
+      items: [mergeWait({ unit_id: "unit-2" }), mergeWait({ state: "blocked" })],
+    })).toBe(false);
+  });
+});
 
 const stage = (overrides: Partial<StageDetail> & Pick<StageDetail, "name" | "status">): StageDetail => ({
   stage_instance_id: `si-${overrides.name}`,

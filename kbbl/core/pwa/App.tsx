@@ -22,6 +22,7 @@ import { useOakridgeInvalidationStream } from "./oakridge/hooks/useOakridgeInval
 import { useOakridgeRunEventStream } from "./oakridge/hooks/useOakridgeRunEventStream";
 import { useReviewInbox } from "./oakridge/hooks/useReviewInbox";
 import { selectRunAttentionCounts } from "./oakridge/lib/run-attention";
+import { selectRunFrameNotification } from "./oakridge/lib/run-notifications";
 
 export function App() {
   const route = useHashRoute();
@@ -38,11 +39,9 @@ export function App() {
   // surfaces keeps the shared query cache current and the single EventSource
   // connected. The hooks multiplex through the same browser connection.
   useOakridgeInvalidationStream(isOakridgeAvailable);
-  useOakridgeRunEventStream(isOakridgeAvailable, (event) => {
-    pushToast({
-      kind: event.operation === "materialization_failed" ? "error" : "info",
-      message: event.operation.replaceAll("_", " "),
-    });
+  useOakridgeRunEventStream(isOakridgeAvailable, (frame) => {
+    const notification = selectRunFrameNotification(frame);
+    if (notification !== null) pushToast(notification);
   });
 
   // SSE subscription: writes inbox snapshots + status into the store.

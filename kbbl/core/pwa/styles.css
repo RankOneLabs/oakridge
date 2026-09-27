@@ -3515,6 +3515,11 @@ body {
   color: var(--accent-blue);
 }
 
+.toast-item__link {
+  color: inherit;
+  text-decoration: underline;
+}
+
 .toast-item__dismiss {
   background: none;
   border: none;

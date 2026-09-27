@@ -5,6 +5,7 @@ import React from "react";
 
 import { useInbox } from "./useInbox";
 import { useStore } from "../state/store";
+import { useToastStore } from "./useToast";
 
 // jsdom has no EventSource; capture instances so tests can push frames.
 class MockEventSource {
@@ -56,6 +57,7 @@ describe("useInbox EventSource revival and parse guards", () => {
       }),
     );
     useStore.setState({ inboxStatus: "connecting", sessions: new Map(), removedSids: new Set() });
+    useToastStore.setState({ toasts: [] });
   });
 
   afterEach(() => {
@@ -153,6 +155,41 @@ describe("useInbox EventSource revival and parse guards", () => {
     });
     expect(useStore.getState().sessions.has(snapshot.sid as never)).toBe(false);
     expect(removed).toEqual([snapshot.sid]);
+  });
+
+  it("uses the first snapshot as a permission baseline without announcing old blockers", () => {
+    renderHook(() => useInbox(), { wrapper: makeWrapper() });
+    const pending = {
+      sid: "aaaaaaaa-bbbb-4ccc-8ddd-000000000001",
+      name: "one",
+      agentProfile: "claude-code",
+      status: "idle",
+      source: "acp",
+      lastActivityTs: "2026-01-01T00:00:00.000Z",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      artifactId: null,
+      projectWorkdir: "/repo",
+      worktreePath: "/repo",
+      worktreeBranch: null,
+      worktreeBaseRef: null,
+      requestedModel: null,
+      requestedEffort: null,
+      endReason: null,
+      fencedBy: null,
+      pendingPermissionCount: 1,
+    };
+
+    act(() => {
+      MockEventSource.last!.dispatch("snapshot", JSON.stringify({ sessions: [pending] }));
+    });
+    expect(useToastStore.getState().toasts).toEqual([]);
+
+    act(() => {
+      MockEventSource.last!.dispatch("snapshot", JSON.stringify({
+        sessions: [{ ...pending, pendingPermissionCount: 2 }],
+      }));
+    });
+    expect(useToastStore.getState().toasts).toHaveLength(1);
   });
 
   it("keeps existing session positions when a snapshot arrives in a new timestamp order", () => {

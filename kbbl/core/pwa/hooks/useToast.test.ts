@@ -1,6 +1,28 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { useToastStore } from "./useToast";
+import type { SessionSnapshot } from "../types";
+import { selectPendingPermissionToasts, useToastStore } from "./useToast";
+
+const snapshot = (pendingPermissionCount: number): SessionSnapshot => ({
+  sid: "sid-1",
+  name: "Build session",
+  agentProfile: "codex",
+  status: "idle",
+  source: "acp",
+  lastActivityTs: "2026-09-27T10:00:00Z",
+  createdAt: "2026-09-27T10:00:00Z",
+  artifactId: null,
+  projectWorkdir: "/repo",
+  worktreePath: "/repo",
+  worktreeBranch: null,
+  worktreeBaseRef: null,
+  requestedModel: null,
+  requestedEffort: null,
+  endReason: null,
+  fencedBy: null,
+  pendingPermissionCount,
+  workflow: null,
+});
 
 describe("useToast store", () => {
   beforeEach(() => {
@@ -38,5 +60,15 @@ describe("useToast store", () => {
     useToastStore.getState().pushToast({ kind: "error", message: "Failed", ttlMs: 1000 });
     vi.advanceTimersByTime(999);
     expect(useToastStore.getState().toasts).toHaveLength(1);
+  });
+
+  it("creates a blocker toast only when the inbox permission count rises", () => {
+    expect(selectPendingPermissionToasts([snapshot(1)], [snapshot(2)])).toEqual([{
+      kind: "info",
+      message: "2 approvals pending · Build session",
+      href: "#sid=sid-1&focus=pending-permission",
+    }]);
+    expect(selectPendingPermissionToasts([snapshot(2)], [snapshot(2)])).toEqual([]);
+    expect(selectPendingPermissionToasts([snapshot(2)], [snapshot(0)])).toEqual([]);
   });
 });
