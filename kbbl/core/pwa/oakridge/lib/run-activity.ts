@@ -81,12 +81,12 @@ export const selectRunActivity = (
       return leftSequence === rightSequence ? 0 : leftSequence > rightSequence ? -1 : 1;
     });
 
-/** Read the durable ledger to exhaustion; `/run_events` is ascending and paged. */
-export async function fetchRunEvents(): Promise<readonly RunEvent[]> {
+/** Read one run's durable ledger to exhaustion; `/run_events` is ascending and paged. */
+export async function fetchRunEvents(runId: string): Promise<readonly RunEvent[]> {
   const events: RunEvent[] = [];
   let after: string | null = null;
   while (true) {
-    const query = new URLSearchParams({ limit: String(PAGE_SIZE) });
+    const query = new URLSearchParams({ limit: String(PAGE_SIZE), run_id: runId });
     if (after !== null) query.set("after", after);
     const response = await fetch(`/oakridge/api/run_events?${query.toString()}`);
     if (!response.ok) throw new Error(`run activity: ${response.status}`);

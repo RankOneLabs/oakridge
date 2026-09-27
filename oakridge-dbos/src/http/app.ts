@@ -59,7 +59,11 @@ export const createApp = (dependencies: OakridgeHttpDependencies): Hono => {
   app.route("/", createArtifactDetailApp(dependencies.artifact_detail));
   app.route("/", createInvalidationEventApp({
     current_cursor: sharedCursor(() => dependencies.operator_projections.get_invalidation_cursor()),
-    list_run_events: (after, limit) => dependencies.operator_projections.list_run_events(after, limit),
+    list_run_events: (after, limit) => dependencies.operator_projections.list_run_events({
+      after_sequence: after,
+      limit,
+      run_id: null,
+    }),
   }));
   app.route("/", createRerunApp(dependencies.rerun));
   app.route("/", createRunLaunchApp(dependencies.run_launch));

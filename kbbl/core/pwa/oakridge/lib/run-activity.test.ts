@@ -1,7 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { RunEvent, WorkflowRunId } from "../types";
-import { selectRunActivity } from "./run-activity";
+import { fetchRunEvents, selectRunActivity } from "./run-activity";
+
+afterEach(() => vi.unstubAllGlobals());
 
 const event = (overrides: Partial<RunEvent> & Pick<RunEvent, "sequence" | "operation">): RunEvent => {
   const { sequence, operation, ...rest } = overrides;
@@ -63,5 +65,16 @@ describe("selectRunActivity", () => {
     expect(selectRunActivity([
       event({ sequence: "30", operation: "work_started" }),
     ], "run-1")).toEqual([]);
+  });
+});
+
+describe("fetchRunEvents", () => {
+  it("bounds every ledger page to the requested run", async () => {
+    const request = vi.fn(async () => new Response(JSON.stringify([]), { status: 200 }));
+    vi.stubGlobal("fetch", request);
+
+    await fetchRunEvents("run/one");
+
+    expect(request).toHaveBeenCalledWith("/oakridge/api/run_events?limit=500&run_id=run%2Fone");
   });
 });

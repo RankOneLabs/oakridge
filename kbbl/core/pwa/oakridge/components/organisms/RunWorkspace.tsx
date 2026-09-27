@@ -53,7 +53,7 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
   const sessionsQuery = useRunSessions(runId);
   const activityQuery = useQuery({
     queryKey: ["oakridge", "run", runId, "activity"],
-    queryFn: fetchRunEvents,
+    queryFn: () => fetchRunEvents(runId),
     refetchInterval: 10_000,
   });
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);

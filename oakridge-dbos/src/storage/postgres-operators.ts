@@ -57,10 +57,17 @@ export interface OperatorProjectionRepository {
   list_run_sessions(run_id: WorkflowRunId): Promise<readonly OperatorRunSessionAttempt[]>;
   set_run_archived(id: WorkflowRunId, archived: boolean): Promise<boolean>;
   get_invalidation_cursor(): Promise<string>;
-  list_run_events(after_sequence: string | null, limit: number): Promise<readonly RunEvent[]>;
+  list_run_events(input: ListRunEventsInput): Promise<readonly RunEvent[]>;
   list_application_versions(): Promise<readonly OperatorApplicationVersionInventory[]>;
   /** The v2 run-record projection — null when the run itself does not exist; a v2-empty run (nothing materialized under it yet) is an empty `units` array, not null. */
   get_run_record_detail(run_id: WorkflowRunId): Promise<OperatorRunRecordDetail | null>;
+}
+
+export interface ListRunEventsInput {
+  readonly after_sequence: string | null;
+  readonly limit: number;
+  /** Null keeps the global ordering used by the SSE stream. */
+  readonly run_id: WorkflowRunId | null;
 }
 
 interface V2RunProjectionRow { readonly id: string; readonly title: string | null; readonly repository_keys: readonly string[]; readonly workflow_name: string; readonly state: RunState; readonly current_stage: string | null; readonly stage_total: string; readonly stage_complete: string; readonly parked_count: string; readonly updated_at: string; readonly is_stuck: boolean; readonly archived: boolean; readonly has_materialized_stage: boolean }
@@ -325,7 +332,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
   }
 
   /** Best-effort notification feed. Durable UI state is always re-read by invalidation. */
-  async list_run_events(after_sequence: string | null, limit: number): Promise<readonly RunEvent[]> {
+  async list_run_events({ after_sequence, limit, run_id }: ListRunEventsInput): Promise<readonly RunEvent[]> {
     const rows = await this.sql.query<RunEventRow>(
       `SELECT transition.sequence::text,transition.operation,transition.run_id::text,
               transition.run_unit_id::text,unit.stage_instance_id::text,stage.stage_key,unit.unit_id,
@@ -339,7 +346,8 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
        LEFT JOIN oakridge.stage_instance stage ON stage.id=unit.stage_instance_id
        LEFT JOIN oakridge.wait wait ON wait.id=transition.wait_id
        WHERE ($1::bigint IS NULL OR transition.sequence > $1::bigint)
-       ORDER BY transition.sequence ASC LIMIT $2`, [after_sequence, limit]);
+         AND ($2::uuid IS NULL OR transition.run_id = $2::uuid)
+       ORDER BY transition.sequence ASC LIMIT $3`, [after_sequence, run_id, limit]);
     return rows.map(projectRunEvent);
   }
 
