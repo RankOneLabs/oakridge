@@ -19,7 +19,7 @@ export function writeHashSid(sid: string | null): void {
     // user viewed or falling through to the default Runs surface.
     history.replaceState(null, "", `${window.location.pathname}${window.location.search}#sessions`);
     // replaceState doesn't fire hashchange — dispatch manually so sibling
-    // hash hooks (useHashRoute, etc.) re-read the now-empty hash.
+    // hash hooks (useHashRoute, etc.) re-read the explicit Sessions hash.
     window.dispatchEvent(new Event("hashchange"));
   } else {
     window.location.hash = `sid=${encodeURIComponent(sid)}`;

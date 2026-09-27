@@ -16,33 +16,12 @@ import { SessionListView } from "./views/SessionListView";
 import { SessionView } from "./views/SessionView";
 import { ToastViewport } from "./components/organisms/ToastViewport";
 import { PendingApprovalsBadge } from "./components/organisms/PendingApprovalsBadge";
+import { PrimaryNav, type PrimarySurface } from "./components/molecules/PrimaryNav";
 import { useOakridgeConfig } from "./oakridge/hooks/useOakridgeConfig";
 import { useOakridgeInvalidationStream } from "./oakridge/hooks/useOakridgeInvalidationStream";
 import { useOakridgeRunEventStream } from "./oakridge/hooks/useOakridgeRunEventStream";
 import { useReviewInbox } from "./oakridge/hooks/useReviewInbox";
 import { selectRunAttentionCounts } from "./oakridge/lib/run-attention";
-
-type PrimarySurface = "runs" | "sessions" | "attention";
-
-interface PrimaryNavProps {
-  activeSurface: PrimarySurface;
-  attentionCount: number;
-}
-
-function PrimaryNav({ activeSurface, attentionCount }: PrimaryNavProps) {
-  const navigate = (hash: string) => { window.location.hash = hash; };
-  return (
-    <nav className="app-surface-nav" aria-label="Primary">
-      <span className="app-surface-nav__brand">oakridge</span>
-      <button type="button" className={activeSurface === "runs" ? "app-surface-nav__item app-surface-nav__item--active" : "app-surface-nav__item"} onClick={() => navigate("oakridge")}>Runs</button>
-      <button type="button" className={activeSurface === "sessions" ? "app-surface-nav__item app-surface-nav__item--active" : "app-surface-nav__item"} onClick={() => navigate("sessions")}>Sessions</button>
-      <button type="button" className={activeSurface === "attention" ? "app-surface-nav__item app-surface-nav__item--active" : "app-surface-nav__item"} onClick={() => navigate("oakridge/review-inbox")}>
-        Attention
-        {attentionCount > 0 && <span className="app-surface-nav__count">{attentionCount}</span>}
-      </button>
-    </nav>
-  );
-}
 
 export function App() {
   const route = useHashRoute();
@@ -96,6 +75,13 @@ export function App() {
     : route?.view === "oakridge" && route.route.sub === "review-inbox"
       ? "attention"
       : "runs";
+  const navigateToSurface = (surface: PrimarySurface) => {
+    window.location.hash = surface === "runs"
+      ? "oakridge"
+      : surface === "sessions"
+        ? "sessions"
+        : "oakridge/review-inbox";
+  };
 
   // Workflow routes take precedence over session hashes.
   let view: React.ReactNode;
@@ -136,7 +122,11 @@ export function App() {
 
   return (
     <>
-      <PrimaryNav activeSurface={activeSurface} attentionCount={attentionCount} />
+      <PrimaryNav
+        activeSurface={activeSurface}
+        attentionCount={attentionCount}
+        onNavigate={navigateToSurface}
+      />
       {view}
       <PendingApprovalsBadge />
       <ToastViewport />

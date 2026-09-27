@@ -49,7 +49,6 @@ function OakridgeShellInner({ route, runAttentionCounts, onNavigate }: OakridgeS
   const navigateToArtifact = (id: string) => onNavigate(`oakridge/artifact/${encodeURIComponent(id)}`);
   const navigateToRuns = () => onNavigate("oakridge");
   const navigateToNewRun = () => onNavigate("oakridge/new-run");
-  const navigateToReviewInbox = () => onNavigate("oakridge/review-inbox");
   const navigateToCreateProject = () => onNavigate("oakridge/create-project");
   const navigateToDefs = () => onNavigate("oakridge/defs");
   const navigateToDef = (id: string) => onNavigate(`oakridge/def/${encodeURIComponent(id)}`);
@@ -64,7 +63,7 @@ function OakridgeShellInner({ route, runAttentionCounts, onNavigate }: OakridgeS
           onSelectRun={navigateToRun}
           onNewRun={navigateToNewRun}
           onNewProject={navigateToCreateProject}
-          onReviewInbox={navigateToReviewInbox}
+          onWorkflows={navigateToDefs}
           onSelectArtifact={navigateToArtifact}
           runAttentionCounts={runAttentionCounts}
         />
@@ -164,8 +163,6 @@ function OakridgeShellInner({ route, runAttentionCounts, onNavigate }: OakridgeS
 interface OakridgeShellProps {
   route: OakridgeSubRoute;
   runAttentionCounts?: ReadonlyMap<string, number>;
-  /** Retained for embedders compiled against the prior shell API; peer navigation owns routing now. */
-  onBack?: () => void;
 }
 
 export function OakridgeShell({ route, runAttentionCounts = new Map() }: OakridgeShellProps) {

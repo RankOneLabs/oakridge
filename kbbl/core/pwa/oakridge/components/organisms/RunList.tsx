@@ -43,7 +43,7 @@ interface RunListProps {
   onSelectRun: (id: string) => void;
   onNewRun: () => void;
   onNewProject: () => void;
-  onReviewInbox?: () => void;
+  onWorkflows?: () => void;
   onSelectArtifact?: (id: string) => void;
   runAttentionCounts?: ReadonlyMap<string, number>;
 }
@@ -56,7 +56,7 @@ const FILTER_TABS: { key: FilterTab; label: string }[] = [
   { key: "archived", label: "Archived" },
 ];
 
-export function RunList({ onSelectRun, onNewRun, onNewProject, onReviewInbox, onSelectArtifact, runAttentionCounts = new Map() }: RunListProps) {
+export function RunList({ onSelectRun, onNewRun, onNewProject, onWorkflows, onSelectArtifact, runAttentionCounts = new Map() }: RunListProps) {
   const [activeTab, setActiveTab] = useState<FilterTab>("all");
   const qc = useQueryClient();
   const apiFilter = activeTab === "archived" ? "archived" : undefined;
@@ -82,7 +82,7 @@ export function RunList({ onSelectRun, onNewRun, onNewProject, onReviewInbox, on
         summary="Monitor active work, review parked decisions, and inspect completed workflows."
         actions={
           <>
-            {onReviewInbox && <Button onClick={onReviewInbox} data-testid="or-review-inbox-btn">Review inbox</Button>}
+            {onWorkflows && <Button onClick={onWorkflows} data-testid="or-workflows-btn">Workflows</Button>}
             <Button onClick={onNewProject} data-testid="or-new-project-btn">+ Project</Button>
             <Button onClick={onNewRun} data-testid="or-new-run-btn">+ New Run</Button>
             <Button onClick={onRefresh} aria-label="Refresh runs">Refresh</Button>
