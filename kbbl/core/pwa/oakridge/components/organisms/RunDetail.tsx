@@ -6,6 +6,7 @@ import { useArchiveRun } from "../../hooks/useArchiveRun";
 import { useUnarchiveRun } from "../../hooks/useUnarchiveRun";
 import { useDeleteRun } from "../../hooks/useDeleteRun";
 import { useAdmitStageUnit } from "../../hooks/useAdmitStageUnit";
+import { useConfirmCohortMerged } from "../../hooks/useConfirmCohortMerged";
 import type { StageDetail } from "../../types";
 import { RunParkedGateList } from "../../ParkedGateList";
 import { RunStageRow, RunUnitRow } from "../molecules/RunStageRows";
@@ -58,6 +59,7 @@ export function RunDetail({ runId, onRunDeleted, onSelectArtifact }: RunDetailPr
   const unarchiveMutation = useUnarchiveRun(runId);
   const deleteMutation = useDeleteRun(runId);
   const admitMutation = useAdmitStageUnit(runId);
+  const confirmMergeMutation = useConfirmCohortMerged(runId);
 
   const onRefresh = () => {
     void qc.invalidateQueries({ queryKey: ["oakridge", "run", runId] });
@@ -186,6 +188,7 @@ export function RunDetail({ runId, onRunDeleted, onSelectArtifact }: RunDetailPr
                 const units = stage.units;
                 if (units != null && isFannedOut(stage)) {
                   return units.map((unit) => {
+                    const cohortId = `${stage.stage_instance_id}:${unit.unit_id}`;
                     const unitArtifacts = stage.artifacts.filter(
                       (a) => a.label === unit.unit_id,
                     );
@@ -214,6 +217,20 @@ export function RunDetail({ runId, onRunDeleted, onSelectArtifact }: RunDetailPr
                           ? (retryMutation.error instanceof Error ? retryMutation.error.message : "Retry failed")
                           : undefined}
                         canRetry={canRetryUnit({ isRunActive, isRunStuck: run.is_stuck, unitStatus: unit.status })}
+                        confirmMerge={{
+                          onConfirm: () => confirmMergeMutation.mutate({
+                            cohortId,
+                            operatorComment: "Operator confirmed the pull request merged from the run workspace",
+                          }),
+                          isConfirming: confirmMergeMutation.isPending
+                            && confirmMergeMutation.variables?.cohortId === cohortId,
+                          error: confirmMergeMutation.isError
+                            && confirmMergeMutation.variables?.cohortId === cohortId
+                            ? (confirmMergeMutation.error instanceof Error
+                              ? confirmMergeMutation.error.message
+                              : "Could not confirm the merge")
+                            : undefined,
+                        }}
                       />
                     );
                   });
