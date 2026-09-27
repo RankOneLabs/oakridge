@@ -14,6 +14,7 @@ export interface CompiledInputContract {
 export interface CompiledOutputContract {
   readonly name: string;
   readonly artifact_type: ArtifactTypeId;
+  readonly attention?: OutputAttention;
   readonly release: OutputReleaseContract;
 }
 
@@ -32,6 +33,9 @@ export type OutputReleaseContract =
   | { readonly kind: "immediate" }
   | { readonly kind: "gate"; readonly steps: readonly CompiledGateStep[]; readonly requires_zero_open_review_items: boolean; readonly revision_target: GateRevisionTarget }
   | { readonly kind: "handoff"; readonly downstream_role: StageOperatorRole; readonly external_wait_kind: string };
+
+export type OutputAttention = "required" | "optional" | "none";
+export type OutputContinuation = "waiting" | "continuing";
 
 export type MaterializationContract =
   | { readonly kind: "scalar" }

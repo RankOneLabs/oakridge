@@ -1,4 +1,5 @@
 import type { JsonValue, StageInstanceId, WorkflowDefinitionId, WorkflowRunId } from "./primitives";
+import type { OutputAttention } from "./compiled-workflow";
 
 export type StageKey = string;
 export type StageTypeId = string;
@@ -17,6 +18,7 @@ export interface InputSlot {
 export interface OutputSlot {
   readonly name: string;
   readonly artifact_type: ArtifactTypeId;
+  readonly attention?: OutputAttention;
 }
 
 export interface EdgeEndpoint { readonly stage: StageKey; readonly slot: string }

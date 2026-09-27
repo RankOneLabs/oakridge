@@ -1,4 +1,4 @@
-import type { OutputReleaseContract } from "./compiled-workflow";
+import type { OutputAttention, OutputReleaseContract } from "./compiled-workflow";
 import type { ArtifactEnvelope, ExecutorTerminalObservation, ExternalExecutionReference } from "./execution";
 import type {
   ArtifactId,
@@ -97,6 +97,8 @@ export interface RunOutputSlot {
   readonly required: boolean;
   /** Declared at unit creation; decides whether publication releases the slot directly or parks it pending a wait. */
   readonly release: OutputReleaseContract;
+  /** Resolved at unit creation so publication does not need the workflow definition. */
+  readonly attention: OutputAttention;
   readonly state: RunOutputSlotState;
   readonly updated_by_work_order_id: WorkOrderId | null;
   readonly version: OutputSlotVersion;
@@ -136,6 +138,7 @@ export interface StraightThroughOutput {
   readonly artifact_type: ArtifactTypeId;
   readonly required: boolean;
   readonly release: OutputReleaseContract;
+  readonly attention?: OutputAttention;
 }
 
 export interface MaterializedRunOutput {
@@ -143,6 +146,7 @@ export interface MaterializedRunOutput {
   readonly artifact_type: ArtifactTypeId;
   readonly required: boolean;
   readonly release: OutputReleaseContract;
+  readonly attention?: OutputAttention;
 }
 
 export interface MaterializedWorkOrder {
