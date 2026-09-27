@@ -60,12 +60,18 @@ const RUN_EVENT_OPERATIONS: ReadonlySet<string> = new Set<RunEventOperation>([
 ]);
 
 const nullableString = (value: unknown): value is string | null => value === null || typeof value === "string";
+const isGateRunEventOperation = (operation: string): boolean => operation === "gate_opened" || operation === "gate_decided";
+const isPullRequestRunEventOperation = (operation: string): boolean =>
+  operation === "pull_request_observed" || operation === "pull_request_merge_confirmed";
 
 const isJsonValue = (value: unknown): value is import("./types").JsonValue => {
   if (value === null || typeof value === "string" || typeof value === "boolean" || typeof value === "number") return true;
   if (Array.isArray(value)) return value.every(isJsonValue);
   return typeof value === "object" && Object.values(value).every(isJsonValue);
 };
+
+const isJsonObject = (value: unknown): value is { readonly [key: string]: import("./types").JsonValue } =>
+  typeof value === "object" && value !== null && !Array.isArray(value) && Object.values(value).every(isJsonValue);
 
 /** Parse one server frame without allowing malformed stream data into UI subscribers. */
 export const parseOakridgeRunEventFrame = (data: string): RunEventFrame | null => {
@@ -83,6 +89,18 @@ export const parseOakridgeRunEventFrame = (data: string): RunEventFrame | null =
       || !(payload.attention === null || payload.attention === "required" || payload.attention === "optional" || payload.attention === "none")
       || !(payload.continuation === null || payload.continuation === "waiting" || payload.continuation === "continuing")
       || !isJsonValue(payload.detail)) return null;
+  if (isGateRunEventOperation(event.operation)
+      && (payload.run_unit_id === null || payload.stage_instance_id === null || payload.stage_key === null
+        || payload.unit_id === null || payload.wait_id === null || payload.output_name === null
+        || payload.artifact_revision_id === null || payload.attention === null || payload.continuation === null)) return null;
+  if (isPullRequestRunEventOperation(event.operation)) {
+    const detail = payload.detail;
+    if (payload.run_unit_id === null || payload.stage_instance_id === null || payload.stage_key === null
+        || payload.unit_id === null || payload.artifact_revision_id === null || !isJsonObject(detail)
+        || typeof detail.repository_key !== "string"
+        || typeof detail.pull_request_url !== "string" || typeof detail.state !== "string" || typeof detail.source !== "string"
+        || !(detail.merged_at === null || typeof detail.merged_at === "string")) return null;
+  }
   return event as RunEventFrame;
 };
 

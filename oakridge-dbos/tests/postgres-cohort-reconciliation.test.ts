@@ -54,6 +54,8 @@ test("a replacement handoff records its own merge completion after an earlier ha
   await repository.upsert(reconciliation(firstArtifactId, "2026-09-24T12:01:00.000Z", firstCompletion));
   await repository.upsert(reconciliation(secondArtifactId, "2026-09-25T11:59:00.000Z", null));
   expect(await repository.find(stageId, unitId)).toEqual(expect.objectContaining({ handoff_artifact_id: secondArtifactId, completed_at: null }));
+  await repository.upsert(reconciliation(secondArtifactId, "2026-09-25T11:59:30.000Z", null));
+  expect(new Date((await repository.find(stageId, unitId))!.updated_at).toISOString()).toBe("2026-09-25T11:59:30.000Z");
   await repository.upsert(reconciliation(secondArtifactId, secondCompletion, secondCompletion));
   const completed = await repository.find(stageId, unitId);
   expect(completed?.handoff_artifact_id).toBe(secondArtifactId);

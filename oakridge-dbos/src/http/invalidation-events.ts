@@ -68,7 +68,8 @@ export const createInvalidationEventApp = (dependencies: InvalidationEventDepend
     const lastEventId = http.req.header("last-event-id");
     const liveCursor = await liveCursorPromise;
     let cursor = selectBaselineCursor(lastEventId, liveCursor);
-    let eventSequence = lastEventId && /^\d+$/.test(lastEventId) ? lastEventId : sequenceFromCursor(liveCursor);
+    let eventSequence = lastEventId ? sequenceFromCursor(lastEventId) : null;
+    eventSequence ??= sequenceFromCursor(liveCursor);
     if (lastEventId && eventSequence && dependencies.list_run_events) {
       eventSequence = await writeAvailableRunEvents(stream, dependencies.list_run_events, eventSequence, true);
     }

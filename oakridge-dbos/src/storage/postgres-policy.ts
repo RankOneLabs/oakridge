@@ -107,7 +107,11 @@ export class PostgresCohortPullRequestRepository implements CohortPullRequestRep
 
   async upsert(reconciliation: CohortPullRequestReconciliation): Promise<void> {
     await this.sql.query(
-      `WITH changed AS (INSERT INTO oakridge.cohort_pull_request_reconciliation
+      `WITH prior AS MATERIALIZED (
+         SELECT handoff_artifact_id,observation,completed_at
+         FROM oakridge.cohort_pull_request_reconciliation
+         WHERE stage_instance_id=$2 AND unit_id=$3
+       ), changed AS (INSERT INTO oakridge.cohort_pull_request_reconciliation
          (workflow_run_id, stage_instance_id, unit_id, repository_key, handoff_artifact_id, observation, mismatch, observed_at, completed_at, updated_at)
        VALUES ($1,$2,$3,$4,$5::uuid,$6::jsonb,$7::jsonb,$8::timestamptz,$9::timestamptz,$10::timestamptz)
        ON CONFLICT (stage_instance_id, unit_id) DO UPDATE SET
@@ -122,12 +126,7 @@ export class PostgresCohortPullRequestRepository implements CohortPullRequestRep
            ELSE COALESCE(oakridge.cohort_pull_request_reconciliation.completed_at, EXCLUDED.completed_at)
          END,
          updated_at = EXCLUDED.updated_at
-       WHERE EXCLUDED.observed_at > oakridge.cohort_pull_request_reconciliation.observed_at
-          OR (EXCLUDED.observed_at = oakridge.cohort_pull_request_reconciliation.observed_at AND (
-            oakridge.cohort_pull_request_reconciliation.handoff_artifact_id IS DISTINCT FROM EXCLUDED.handoff_artifact_id
-            OR oakridge.cohort_pull_request_reconciliation.observation IS DISTINCT FROM EXCLUDED.observation
-            OR oakridge.cohort_pull_request_reconciliation.mismatch IS DISTINCT FROM EXCLUDED.mismatch
-            OR oakridge.cohort_pull_request_reconciliation.completed_at IS DISTINCT FROM EXCLUDED.completed_at))
+       WHERE EXCLUDED.observed_at >= oakridge.cohort_pull_request_reconciliation.observed_at
        RETURNING workflow_run_id, stage_instance_id, unit_id)
        INSERT INTO oakridge.run_transition
          (id, run_id, run_unit_id, work_order_id, wait_id, output_name, collection_key, operation, actor,
@@ -136,11 +135,18 @@ export class PostgresCohortPullRequestRepository implements CohortPullRequestRep
          CASE WHEN $9::timestamptz IS NULL THEN 'pull_request_observed' ELSE 'pull_request_merge_confirmed' END,
          CASE WHEN $12 = 'manual_recheck' THEN 'operator' ELSE 'poller:github' END,
          run.record_version, run.record_version,
-         jsonb_build_object('repository_key', $4::text, 'pull_request_url', $13::text,
+         jsonb_build_object('repository_key', $4::text, 'pull_request_url', $13::text, 'artifact_id', $5::text,
            'state', $14::text, 'source', $12::text, 'merged_at', $15::text), $10::timestamptz
        FROM changed
        JOIN oakridge.run_unit unit ON unit.stage_instance_id=changed.stage_instance_id AND unit.unit_id=changed.unit_id
-       JOIN oakridge.workflow_run run ON run.id=changed.workflow_run_id`,
+       JOIN oakridge.workflow_run run ON run.id=changed.workflow_run_id
+       LEFT JOIN prior ON true
+       WHERE CASE WHEN $9::timestamptz IS NULL
+         THEN prior.observation IS NULL
+           OR prior.handoff_artifact_id IS DISTINCT FROM $5::uuid
+           OR prior.observation->>'state' IS DISTINCT FROM $14::text
+           OR prior.observation->>'url' IS DISTINCT FROM $13::text
+         ELSE prior.completed_at IS NULL END`,
       [reconciliation.run_id, reconciliation.stage_instance_id, reconciliation.unit_id, reconciliation.repository_key, reconciliation.handoff_artifact_id,
         JSON.stringify(reconciliation.observation), reconciliation.mismatch === null ? null : JSON.stringify(reconciliation.mismatch),
         reconciliation.observation.observed_at, reconciliation.completed_at, reconciliation.updated_at, randomUUID(),

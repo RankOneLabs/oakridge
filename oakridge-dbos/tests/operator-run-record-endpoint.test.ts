@@ -9,11 +9,13 @@
 import { afterAll, expect, test } from "bun:test";
 import { createHash, randomUUID } from "node:crypto";
 
+import type { CohortPullRequestReconciliation } from "../src/domain/cohort-pull-request";
 import type { ArtifactId, InputFingerprint, RunUnitId, StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId, WorkOrderId } from "../src/domain/primitives";
 import type { WorkflowDefinition } from "../src/domain/workflow";
 import { createOperatorProjectionApp } from "../src/http/operator-projections";
 import { applyMigrations } from "../src/storage/migrate";
 import { PostgresOperatorProjectionRepository } from "../src/storage/postgres-operators";
+import { PostgresCohortPullRequestRepository } from "../src/storage/postgres-policy";
 import { PostgresRunRecordRepository } from "../src/storage/postgres-run-record";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
 import { ensureDbosSystemSchema } from "./support/dbos-system-schema";
@@ -145,21 +147,11 @@ test("GET /runs/:id exposes the v2 run-record projection with every required fie
   }
   expect(runRecord.recent_transitions.some((transition) => transition.operation === "slot_pending")).toBe(true);
 
-  const events = await (await app.request(`/run_events?after=${eventBaseline}&limit=100`)).json() as readonly {
-    readonly sequence: string; readonly operation: string; readonly payload: { readonly run_id: string; readonly stage_instance_id: string | null;
-      readonly unit_id: string | null; readonly output_name: string | null; readonly artifact_revision_id: string | null;
-      readonly attention: string | null; readonly continuation: string | null };
-  }[];
-  expect(events.map((event) => BigInt(event.sequence))).toEqual([...events].map((event) => BigInt(event.sequence)).sort((left, right) => left < right ? -1 : 1));
-  expect(events.find((event) => event.operation === "gate_opened")).toEqual(expect.objectContaining({ payload: expect.objectContaining({
-    run_id: runId, stage_instance_id: gatedStageId, unit_id: "unit-gated", output_name: "plan",
-    artifact_revision_id: published.artifact_id, attention: "required", continuation: "waiting",
-  }) }));
   const projection = new PostgresOperatorProjectionRepository(sql, "test-app-version");
   const cursorBeforeTransition = await projection.get_invalidation_cursor();
   await sql.query(`INSERT INTO oakridge.run_transition
     (id,run_id,operation,actor,prior_record_version,resulting_record_version,detail,created_at)
-    SELECT $1,id,'pull_request_observed','test',record_version,record_version,'{}'::jsonb,$3::timestamptz
+    SELECT $1,id,'run_cancelled','test',record_version,record_version,'{}'::jsonb,$3::timestamptz
     FROM oakridge.workflow_run WHERE id=$2`, [randomUUID(), runId, new Date(Date.parse(now) + 1).toISOString()]);
   expect(await projection.get_invalidation_cursor()).not.toBe(cursorBeforeTransition);
 
@@ -175,6 +167,34 @@ test("GET /runs/:id exposes the v2 run-record projection with every required fie
   // Requesting corrections must not erase the operator's route back to the draft.
   await records.close_output_wait({ wait_id: published.wait_id, disposition: "invalidate", actor: "operator",
     detail: "Use one cohort", decided_at: now });
+  const reconciliations = new PostgresCohortPullRequestRepository(sql);
+  const merged: CohortPullRequestReconciliation = {
+    run_id: runId, stage_instance_id: gatedStageId, unit_id: "unit-gated" as UnitId, repository_key: "oakridge",
+    handoff_artifact_id: published.artifact_id,
+    observation: { provider: "github", owner: "RankOneLabs", name: "oakridge", number: 506,
+      url: "https://github.com/RankOneLabs/oakridge/pull/506", head_branch: "cohort/typed-feed", base_branch: "epic/ux-cleanup",
+      head_sha: "abc123", state: "merged", source: "poll", observed_at: now, merged_at: now },
+    mismatch: null, completed_at: null, updated_at: now,
+  };
+  await reconciliations.upsert(merged);
+  await reconciliations.upsert({ ...merged, completed_at: now });
+
+  const events = await (await app.request(`/run_events?after=${eventBaseline}&limit=100`)).json() as readonly {
+    readonly sequence: string; readonly operation: string; readonly payload: { readonly run_id: string; readonly stage_instance_id: string | null;
+      readonly unit_id: string | null; readonly output_name: string | null; readonly artifact_revision_id: string | null;
+      readonly attention: string | null; readonly continuation: string | null };
+  }[];
+  expect(events.map((event) => BigInt(event.sequence))).toEqual([...events].map((event) => BigInt(event.sequence)).sort((left, right) => left < right ? -1 : 1));
+  expect(events.find((event) => event.operation === "gate_opened")).toEqual(expect.objectContaining({ payload: expect.objectContaining({
+    run_id: runId, stage_instance_id: gatedStageId, unit_id: "unit-gated", output_name: "plan",
+    artifact_revision_id: published.artifact_id, attention: "required", continuation: "waiting",
+  }) }));
+  expect(events.find((event) => event.operation === "gate_decided")).toEqual(expect.objectContaining({ payload: expect.objectContaining({
+    artifact_revision_id: published.artifact_id, attention: "required", continuation: "waiting",
+  }) }));
+  expect(events.find((event) => event.operation === "pull_request_merge_confirmed")).toEqual(expect.objectContaining({ payload: expect.objectContaining({
+    run_id: runId, stage_instance_id: gatedStageId, unit_id: "unit-gated", artifact_revision_id: published.artifact_id,
+  }) }));
   const revised = await new PostgresOperatorProjectionRepository(sql, "test-app-version").get_run(runId);
   expect(revised?.stages.find((stage) => stage.stage_instance_id === gatedStageId)?.artifacts)
     .toEqual([expect.objectContaining({ id: published.artifact_id, type_id: "dev.plan" })]);

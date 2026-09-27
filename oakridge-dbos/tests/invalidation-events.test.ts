@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { createInvalidationEventApp, selectBaselineCursor } from "../src/http/invalidation-events";
 import type { RunEvent } from "../src/domain/run-event";
+import type { WorkflowRunId } from "../src/domain/primitives";
 
 /** Read frames until `predicate` is satisfied or the stream runs dry. */
 const readUntil = async (body: ReadableStream<Uint8Array> | null, predicate: (text: string) => boolean): Promise<string> => {
@@ -56,11 +57,11 @@ test("a fresh connection baselines on the live cursor and an absent header never
 });
 
 const runEvent = (sequence: string): RunEvent => ({
-  sequence, operation: "pull_request_observed", occurred_at: "2026-09-26T12:00:00.000Z",
-  payload: { run_id: "00000000-0000-4000-8000-000000000001", run_unit_id: null, stage_instance_id: null,
+  sequence, operation: "run_cancelled", occurred_at: "2026-09-26T12:00:00.000Z",
+  payload: { run_id: "00000000-0000-4000-8000-000000000001" as WorkflowRunId, run_unit_id: null, stage_instance_id: null,
     stage_key: null, unit_id: null, work_order_id: null, wait_id: null, output_name: null, collection_key: null,
     artifact_revision_id: null, attention: null, continuation: null, detail: {} },
-} as RunEvent);
+});
 
 test("a numeric Last-Event-ID replays only later run events and marks them replayed", async () => {
   const events = [runEvent("10"), runEvent("11"), runEvent("12")];
@@ -71,6 +72,17 @@ test("a numeric Last-Event-ID replays only later run events and marks them repla
   expect(text.match(/event: run_event/g)).toHaveLength(2);
   expect(text).not.toContain('"sequence":"10"');
   expect(text).toContain('"replayed":true');
+});
+
+test("a reconnect extracts the run sequence from an invalidate frame id before falling back to live", async () => {
+  const events = [runEvent("10"), runEvent("11"), runEvent("12")];
+  const app = createInvalidationEventApp({ current_cursor: async () => "cursor:12", poll_interval_ms: 60_000,
+    list_run_events: async (after) => events.filter((event) => BigInt(event.sequence) > BigInt(after ?? "0")) });
+  const response = await app.request("/events", { headers: { "last-event-id": "dbos:artifacts:10" } });
+  const text = await readUntil(response.body, (frames) => frames.includes('"sequence":"12"'));
+  expect(text.match(/event: run_event/g)).toHaveLength(2);
+  expect(text).toContain('"sequence":"11"');
+  expect(text).toContain('"sequence":"12"');
 });
 
 test("a fresh connection does not replay historical run events", async () => {

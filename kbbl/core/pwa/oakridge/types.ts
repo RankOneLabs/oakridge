@@ -93,14 +93,49 @@ export interface RunEventPayload {
   readonly detail: JsonValue;
 }
 
-export type RunEvent = {
-  readonly [Operation in RunEventOperation]: {
-    readonly sequence: string;
-    readonly operation: Operation;
-    readonly payload: RunEventPayload;
-    readonly occurred_at: string;
-  }
-}[RunEventOperation];
+type GateRunEventOperation = "gate_opened" | "gate_decided";
+type PullRequestRunEventOperation = "pull_request_observed" | "pull_request_merge_confirmed";
+type OtherRunEventOperation = Exclude<RunEventOperation, GateRunEventOperation | PullRequestRunEventOperation>;
+
+export interface GateRunEventPayload extends RunEventPayload {
+  readonly run_unit_id: string;
+  readonly stage_instance_id: string;
+  readonly stage_key: string;
+  readonly unit_id: string;
+  readonly wait_id: string;
+  readonly output_name: string;
+  readonly artifact_revision_id: string;
+  readonly attention: "required" | "optional" | "none";
+  readonly continuation: "waiting" | "continuing";
+}
+
+export interface PullRequestRunEventPayload extends RunEventPayload {
+  readonly run_unit_id: string;
+  readonly stage_instance_id: string;
+  readonly stage_key: string;
+  readonly unit_id: string;
+  readonly artifact_revision_id: string;
+  readonly detail: {
+    readonly [key: string]: JsonValue;
+    readonly repository_key: string;
+    readonly pull_request_url: string;
+    readonly state: string;
+    readonly source: string;
+    readonly merged_at: string | null;
+  };
+}
+
+interface RunEventEnvelope<Operation extends RunEventOperation, Payload extends RunEventPayload> {
+  readonly sequence: string;
+  readonly operation: Operation;
+  readonly payload: Payload;
+  readonly occurred_at: string;
+}
+
+export type RunEvent =
+  | RunEventEnvelope<GateRunEventOperation, GateRunEventPayload>
+  | RunEventEnvelope<PullRequestRunEventOperation, PullRequestRunEventPayload>
+  | RunEventEnvelope<OtherRunEventOperation, RunEventPayload>;
 
 export type RunEventFrame = RunEvent & { readonly replayed: boolean };
 
