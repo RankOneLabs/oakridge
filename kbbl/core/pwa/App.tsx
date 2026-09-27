@@ -28,7 +28,8 @@ export function App() {
   const [sid, navigate] = useHashSid();
   const [theme, toggleTheme] = useTheme();
   const oakridgeConfig = useOakridgeConfig();
-  const reviewInbox = useReviewInbox();
+  const isOakridgeAvailable = oakridgeConfig.data?.available === true;
+  const reviewInbox = useReviewInbox(isOakridgeAvailable);
   const pushToast = useToastStore((state) => state.pushToast);
   const runAttentionCounts = selectRunAttentionCounts(reviewInbox.data?.items ?? []);
   const attentionCount = [...runAttentionCounts.values()].reduce((total, count) => total + count, 0);
@@ -36,7 +37,6 @@ export function App() {
   // Both Oakridge subscriptions live above the route branch so changing
   // surfaces keeps the shared query cache current and the single EventSource
   // connected. The hooks multiplex through the same browser connection.
-  const isOakridgeAvailable = oakridgeConfig.data?.available === true;
   useOakridgeInvalidationStream(isOakridgeAvailable);
   useOakridgeRunEventStream(isOakridgeAvailable, (event) => {
     pushToast({

@@ -8,10 +8,11 @@ function inboxItem(
   runId: string,
   state: ReviewInboxItem["state"],
   blockedBy: string[] = [],
+  kind: ReviewInboxItem["kind"] = "cohort_blocked",
 ): ReviewInboxItem {
   return {
     id,
-    kind: "cohort_blocked",
+    kind,
     state,
     run_id: runId,
     workflow_name: "spec_to_ship",
@@ -41,5 +42,13 @@ describe("selectRunAttentionCounts", () => {
     ]);
 
     expect(counts.get("run-a")).toBeUndefined();
+  });
+
+  it("counts a pull request mismatch even when its backend state is blocked", () => {
+    const counts = selectRunAttentionCounts([
+      inboxItem("mismatch", "run-a", "blocked", [], "pull_request_mismatch"),
+    ]);
+
+    expect(counts.get("run-a")).toBe(1);
   });
 });
