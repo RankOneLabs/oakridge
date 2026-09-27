@@ -8,7 +8,11 @@ interface Props {
 export function ToastItem({ toast, onDismiss }: Props) {
   return (
     <div className={`toast-item toast-item--${toast.kind}`} role="status">
-      <span>{toast.message}</span>
+      {toast.href === null ? (
+        <span>{toast.message}</span>
+      ) : (
+        <a className="toast-item__link" href={toast.href}>{toast.message}</a>
+      )}
       <button
         type="button"
         className="toast-item__dismiss"

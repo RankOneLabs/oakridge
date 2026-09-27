@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { useStore } from "../state/store";
 import type { SessionSnapshot } from "../types";
+import { selectPendingPermissionToasts, useToastStore } from "./useToast";
 
 interface SessionsListResponse {
   sessions: SessionSnapshot[];
@@ -75,7 +76,12 @@ export function useInbox(opts: { onSessionRemoved?: (sid: string) => void } = {}
       es.addEventListener("snapshot", (e) => {
         try {
           const data = JSON.parse((e as MessageEvent).data) as SessionsListResponse;
+          const permissionToasts = selectPendingPermissionToasts(
+            [...useStore.getState().sessions.values()],
+            data.sessions,
+          );
           const removed = applySnapshot(data.sessions);
+          for (const toast of permissionToasts) useToastStore.getState().pushToast(toast);
           // Fire consumer callbacks AFTER the store mutation so any
           // navigate(null) they trigger lands on the same React batch as
           // the map drop.
