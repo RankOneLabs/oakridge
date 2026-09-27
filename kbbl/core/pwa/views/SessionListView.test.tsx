@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, test, vi } from "vitest";
 
@@ -66,6 +66,51 @@ function renderList(sessions: Map<string, SessionSnapshot>) {
 }
 
 describe("SessionListView grouping", () => {
+  test("prefill autostart creates a session from a no-hash URL", async () => {
+    history.replaceState(null, "", "/?workdir=%2Ftmp%2Fx&autostart=true");
+    const created = makeSnapshot({ sid: "autostart-session", projectWorkdir: "/tmp/x" });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(created), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const onSelect = vi.fn();
+    const onHydrateSession = vi.fn();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+
+    try {
+      render(
+        <QueryClientProvider client={client}>
+          <SessionListView
+            sessions={new Map()}
+            inboxStatus="connected"
+            theme="dark"
+            defaultWorkdir="/repo"
+            defaultRuntimeId="claude-code"
+            runtimes={runtimes}
+            onToggleTheme={() => {}}
+            onSelect={onSelect}
+            onHydrateSession={onHydrateSession}
+          />
+        </QueryClientProvider>,
+      );
+
+      expect(screen.getByLabelText("Workdir for new session")).toHaveProperty("value", "/tmp/x");
+      await waitFor(() => expect(fetchSpy).toHaveBeenCalledOnce());
+      const request = fetchSpy.mock.calls[0];
+      expect(request[0]).toBe("/sessions");
+      expect(JSON.parse(String(request[1]?.body))).toMatchObject({ workdir: "/tmp/x" });
+      await waitFor(() => expect(onHydrateSession).toHaveBeenCalledWith(created));
+      expect(onSelect).toHaveBeenCalledWith("autostart-session");
+      expect(window.location.search).toBe("");
+      expect(window.location.hash).toBe("#sessions");
+    } finally {
+      history.replaceState(null, "", "/");
+      vi.restoreAllMocks();
+    }
+  });
+
   test("renders one section per cohort group plus a trailing Other sessions section", () => {
     const build = makeSnapshot({ sid: "build-1", name: "build-stage-1-cohort-one", workflow: workflow() });
     const assess = makeSnapshot({

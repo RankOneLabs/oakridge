@@ -142,6 +142,55 @@ body {
   min-height: 100%;
 }
 
+.app-surface-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 4.5rem;
+  padding: 0 clamp(1rem, 4vw, 4rem);
+  border-bottom: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--bg-app) 92%, transparent);
+}
+
+.app-surface-nav__brand {
+  margin-right: auto;
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.app-surface-nav__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 2.75rem;
+  padding: 0.35rem 0.75rem;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+.app-surface-nav__item--active {
+  border-bottom-color: var(--accent-blue);
+  color: var(--accent-blue);
+}
+
+.app-surface-nav__count {
+  min-width: 1.25rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 999px;
+  background: var(--amber-bg);
+  color: var(--amber-fg);
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-align: center;
+}
+
 .app {
   max-width: 800px;
   margin: 0 auto;
@@ -5057,7 +5106,7 @@ a:focus-visible {
 .or-shell {
   display: flex;
   flex-direction: column;
-  height: 100dvh;
+  height: calc(100dvh - 4.5rem);
   background: var(--bg-app);
   color: var(--text-primary);
 }
@@ -5115,6 +5164,40 @@ a:focus-visible {
   flex: 1;
   overflow-y: auto;
   padding: clamp(2rem, 5vw, 5rem) clamp(1rem, 4vw, 4rem) 6rem;
+}
+
+.or-run-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+.or-run-progress progress {
+  width: 5rem;
+  height: 0.35rem;
+  accent-color: var(--accent-blue);
+}
+
+.or-run-attention {
+  display: inline-flex;
+  min-width: 1.5rem;
+  min-height: 1.5rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--amber-bg);
+  color: var(--amber-fg);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.or-run-waits {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  white-space: nowrap;
 }
 
 /* ── run command center ─────────────────────────────────────────────────────

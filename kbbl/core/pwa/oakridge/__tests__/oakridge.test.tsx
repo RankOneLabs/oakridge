@@ -146,12 +146,12 @@ const RUN_DETAIL_FIXTURE: RunDetail = {
 // ──────────────────────────────────────────────────────────────────────────────
 
 describe("RunListView", () => {
-  it("offers a visible review inbox entry point", async () => {
+  it("offers a visible workflow definitions entry point", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json([]));
-    const onReviewInbox = vi.fn();
-    wrap(<RunListView onSelectRun={() => {}} onNewRun={() => {}} onNewProject={() => {}} onReviewInbox={onReviewInbox} />);
-    fireEvent.click(await screen.findByTestId("or-review-inbox-btn"));
-    expect(onReviewInbox).toHaveBeenCalledOnce();
+    const onWorkflows = vi.fn();
+    wrap(<RunListView onSelectRun={() => {}} onNewRun={() => {}} onNewProject={() => {}} onWorkflows={onWorkflows} />);
+    fireEvent.click(await screen.findByTestId("or-workflows-btn"));
+    expect(onWorkflows).toHaveBeenCalledOnce();
   });
 
   it("shows loading state while runs are pending", () => {
@@ -592,9 +592,7 @@ describe("OakridgeShell unavailable state", () => {
   it("shows unavailable notice when config returns available=false", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ available: false }));
     const { OakridgeShell } = await import("../OakridgeShell");
-    wrap(
-      <OakridgeShell route={{ sub: "runs" }} onBack={() => {}} />,
-    );
+    wrap(<OakridgeShell route={{ sub: "runs" }} />);
     expect(await screen.findByTestId("or-unavailable")).toBeTruthy();
   });
 });

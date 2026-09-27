@@ -15,10 +15,11 @@ export function readHashSid(): string | null {
 export function writeHashSid(sid: string | null): void {
   if (sid === null) {
     // history.replaceState so hitting Back from a SessionView returns to the
-    // prior tab/page rather than chaining through every sid the user viewed.
-    history.replaceState(null, "", window.location.pathname + window.location.search);
+    // explicit Sessions surface rather than chaining through every sid the
+    // user viewed or falling through to the default Runs surface.
+    history.replaceState(null, "", `${window.location.pathname}${window.location.search}#sessions`);
     // replaceState doesn't fire hashchange — dispatch manually so sibling
-    // hash hooks (useHashRoute, etc.) re-read the now-empty hash.
+    // hash hooks (useHashRoute, etc.) re-read the explicit Sessions hash.
     window.dispatchEvent(new Event("hashchange"));
   } else {
     window.location.hash = `sid=${encodeURIComponent(sid)}`;
@@ -74,6 +75,7 @@ export type OakridgeSubRoute =
   | { sub: "def-edit"; id: string };
 
 export type HashRoute =
+  | { view: "sessions"; route: { sub: "sessions" } }
   | { view: "oakridge"; route: OakridgeSubRoute };
 
 function tryDecode(s: string): string {
@@ -132,8 +134,12 @@ export function replaceHashRoute(hash: string): void {
   window.dispatchEvent(new Event("hashchange"));
 }
 
-export function readHashRoute(): HashRoute | null {
-  const hash = window.location.hash.slice(1);
+export function readHashRoute(
+  rawHash = window.location.hash,
+  search = window.location.search,
+): HashRoute | null {
+  const hash = rawHash.startsWith("#") ? rawHash.slice(1) : rawHash;
+  if (hash === "sessions") return { view: "sessions", route: { sub: "sessions" } };
   if (hash === "oakridge" || hash.startsWith("oakridge/")) {
     const rest = hash.slice("oakridge".length);
     if (rest === "" || rest === "/") {
@@ -187,6 +193,13 @@ export function readHashRoute(): HashRoute | null {
         const id = tryDecode(raw);
         return { view: "oakridge", route: { sub: "def-edit", id } };
       }
+    }
+    return { view: "oakridge", route: { sub: "runs" } };
+  }
+  if (hash === "") {
+    const params = new URLSearchParams(search);
+    if (params.has("workdir") || params.get("autostart") === "true") {
+      return { view: "sessions", route: { sub: "sessions" } };
     }
     return { view: "oakridge", route: { sub: "runs" } };
   }
