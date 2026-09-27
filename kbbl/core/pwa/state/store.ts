@@ -11,8 +11,10 @@ export interface AppState {
    * (the stream never carries them).
    */
   sessions: Map<Sid, SessionSnapshot>;
-  /** False until /inbox supplies a complete server inventory, including an empty one. */
+  /** False until /inbox supplies a complete ACP inventory, including an empty one. */
   hasInboxSnapshot: boolean;
+  /** True only after the archive seed succeeds, including an empty response. */
+  hasSessionSeed: boolean;
   inboxStatus: Status;
   currentSid: Sid | null;
   /** Sids removed server-side; blocks a late seed from resurrecting them. */
@@ -34,6 +36,7 @@ export interface AppState {
 export const useStore = create<AppState>()((set) => ({
   sessions: new Map(),
   hasInboxSnapshot: false,
+  hasSessionSeed: false,
   inboxStatus: "connecting",
   currentSid: null,
   removedSids: new Set(),
@@ -70,7 +73,7 @@ export const useStore = create<AppState>()((set) => ({
         if (state.removedSids.has(sid)) continue;
         if (!sessions.has(sid)) sessions.set(sid, snapshot);
       }
-      return { sessions };
+      return { sessions, hasSessionSeed: true };
     }),
 
   applySnapshot: (snapshots) => {

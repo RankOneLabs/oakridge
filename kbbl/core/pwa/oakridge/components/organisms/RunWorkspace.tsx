@@ -64,11 +64,12 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
   });
   const inventorySessions = useStore((state) => state.sessions);
   const hasInboxSnapshot = useStore((state) => state.hasInboxSnapshot);
+  const hasSessionSeed = useStore((state) => state.hasSessionSeed);
   const removedSids = useStore((state) => state.removedSids);
   const purgedSessionIds = selectPurgedRunSessionIds({
     run,
     sessions,
-    inventory: { sessions: inventorySessions, hasInboxSnapshot, removedSids },
+    inventory: { sessions: inventorySessions, hasInboxSnapshot, hasSessionSeed, removedSids },
   });
   const workspace = useRunWorkspaceState({ runId, routePane, run, sessions, purgedSessionIds });
 

@@ -18,14 +18,14 @@ import type { Sid } from "../../lib/ids";
 export interface RunSessionAvailabilityInput {
   readonly run: RunDetail | undefined;
   readonly sessions: RunSessionsRead;
-  readonly inventory: Pick<AppState, "sessions" | "hasInboxSnapshot" | "removedSids">;
+  readonly inventory: Pick<AppState, "sessions" | "hasInboxSnapshot" | "hasSessionSeed" | "removedSids">;
 }
 
 /** Historical attempt rows outlive their transcripts. Check the server's full
- * inventory, not only deletions witnessed by this browser. Before the first
- * snapshot, absence is unknown and must not discard restored panes. */
+ * inventory, not only deletions witnessed by this browser. Until both the ACP
+ * snapshot and legacy archive seed arrive, absence must not discard panes. */
 export const selectPurgedRunSessionIds = ({ run, sessions, inventory }: RunSessionAvailabilityInput): ReadonlySet<string> => {
-  if (!inventory.hasInboxSnapshot) return inventory.removedSids;
+  if (!inventory.hasInboxSnapshot || !inventory.hasSessionSeed) return inventory.removedSids;
   const candidates = new Set(attemptsOf(sessions).map((attempt) => attempt.session_id));
   for (const stage of run?.stages ?? []) {
     if (stage.delegated_kbbl_sid !== null) candidates.add(stage.delegated_kbbl_sid);

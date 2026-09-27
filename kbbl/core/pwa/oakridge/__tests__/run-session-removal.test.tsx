@@ -31,6 +31,7 @@ const existing: SessionSnapshot = {
 beforeEach(() => {
   useStore.setState(useStore.getInitialState());
   localStorage.clear();
+  useStore.getState().seedSessions([]);
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
     const body = url.endsWith("/sessions") ? attempts : url.endsWith("/gates") ? [] : run;
