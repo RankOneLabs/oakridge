@@ -75,7 +75,7 @@ export type OakridgeSubRoute =
   | { sub: "def-edit"; id: string };
 
 export type HashRoute =
-  | { view: "sessions" }
+  | { view: "sessions"; route: { sub: "sessions" } }
   | { view: "oakridge"; route: OakridgeSubRoute };
 
 function tryDecode(s: string): string {
@@ -139,7 +139,7 @@ export function readHashRoute(
   search = window.location.search,
 ): HashRoute | null {
   const hash = rawHash.startsWith("#") ? rawHash.slice(1) : rawHash;
-  if (hash === "sessions") return { view: "sessions" };
+  if (hash === "sessions") return { view: "sessions", route: { sub: "sessions" } };
   if (hash === "oakridge" || hash.startsWith("oakridge/")) {
     const rest = hash.slice("oakridge".length);
     if (rest === "" || rest === "/") {
@@ -199,7 +199,7 @@ export function readHashRoute(
   if (hash === "") {
     const params = new URLSearchParams(search);
     if (params.has("workdir") || params.get("autostart") === "true") {
-      return { view: "sessions" };
+      return { view: "sessions", route: { sub: "sessions" } };
     }
     return { view: "oakridge", route: { sub: "runs" } };
   }

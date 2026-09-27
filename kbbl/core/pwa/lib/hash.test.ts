@@ -26,12 +26,16 @@ describe("readHashRoute oakridge routes", () => {
   });
 
   it("routes #sessions to the explicit Sessions surface", () => {
-    expect(readHashRoute("#sessions", "")).toEqual({ view: "sessions" });
+    expect(readHashRoute("#sessions", "")).toEqual({
+      view: "sessions",
+      route: { sub: "sessions" },
+    });
   });
 
   it("routes a prefill autostart deep link to Sessions", () => {
     expect(readHashRoute("", "?workdir=%2Ftmp%2Fx&autostart=true")).toEqual({
       view: "sessions",
+      route: { sub: "sessions" },
     });
   });
 
@@ -126,7 +130,10 @@ describe("session targets", () => {
     writeHashSid(null);
 
     expect(window.location.hash).toBe("#sessions");
-    expect(readHashRoute()).toEqual({ view: "sessions" });
+    expect(readHashRoute()).toEqual({
+      view: "sessions",
+      route: { sub: "sessions" },
+    });
   });
 
   it("links a pending-approval alert to the approval location in its session", () => {
