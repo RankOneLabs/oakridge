@@ -4951,7 +4951,7 @@ a:focus-visible {
   margin: 0;
 }
 
-.session-cohort-group--ungrouped {
+.session-cohort-group--unattached {
   padding-top: 0.5rem;
   border-top: 1px solid var(--border-subtle);
 }
