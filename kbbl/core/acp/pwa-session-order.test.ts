@@ -96,9 +96,9 @@ test("a build session and an assessor session sharing a run and unit land in one
     workflow: workflow({ operatorRole: "assessment", stageInstanceId: "stage-assess" }),
   });
   const grouping = groupSessionsByCohort([build, assess]);
-  expect(grouping.groups).toHaveLength(1);
-  expect(grouping.groups[0]?.sessions.map((s) => s.sid).sort()).toEqual(["assess-1", "build-1"]);
-  expect(grouping.ungrouped).toEqual([]);
+  expect(grouping.runs).toHaveLength(1);
+  expect(grouping.runs[0]?.groups[0]?.sessions.map((s) => s.sid).sort()).toEqual(["assess-1", "build-1"]);
+  expect(grouping.unattached).toEqual([]);
 });
 
 test("the build member's cohort title wins when the assessor member carries none", () => {
@@ -113,13 +113,13 @@ test("the build member's cohort title wins when the assessor member carries none
     workflow: workflow({ operatorRole: "assessment", cohortTitle: null }),
   });
   const grouping = groupSessionsByCohort([build, assess]);
-  expect(grouping.groups[0]?.title).toBe("Targets spec contract");
+  expect(grouping.runs[0]?.groups[0]).toMatchObject({ title: "Targets spec contract" });
 });
 
 test("a group with no titled member falls back to the unit id", () => {
   const build = makeSnapshot({ sid: "build-1", workflow: workflow({ cohortTitle: null }) });
   const grouping = groupSessionsByCohort([build]);
-  expect(grouping.groups[0]?.title).toBe("cohort-a");
+  expect(grouping.runs[0]?.groups[0]).toMatchObject({ title: "cohort-a" });
 });
 
 test("the group's repositoryKey is the first non-null one among its members", () => {
@@ -129,24 +129,28 @@ test("the group's repositoryKey is the first non-null one among its members", ()
     workflow: workflow({ operatorRole: "assessment", repositoryKey: "pipefitter" }),
   });
   const grouping = groupSessionsByCohort([build, assess]);
-  expect(grouping.groups[0]?.repositoryKey).toBe("pipefitter");
+  expect(grouping.runs[0]?.groups[0]?.repositoryKey).toBe("pipefitter");
 });
 
-test("a null workflow lands in ungrouped and never creates a group", () => {
+test("a null workflow is unattached and never creates a run", () => {
   const handStarted = makeSnapshot({ sid: "hand-1", workflow: null });
   const grouping = groupSessionsByCohort([handStarted]);
-  expect(grouping.groups).toEqual([]);
-  expect(grouping.ungrouped.map((s) => s.sid)).toEqual(["hand-1"]);
+  expect(grouping.runs).toEqual([]);
+  expect(grouping.unattached.map((s) => s.sid)).toEqual(["hand-1"]);
 });
 
-test("unitId '0' lands in ungrouped and never creates a group", () => {
+test("unitId '0' stays attached to its run as a stage group", () => {
   const scalar = makeSnapshot({ sid: "scalar-1", workflow: workflow({ unitId: "0" }) });
   const grouping = groupSessionsByCohort([scalar]);
-  expect(grouping.groups).toEqual([]);
-  expect(grouping.ungrouped.map((s) => s.sid)).toEqual(["scalar-1"]);
+  expect(grouping.runs[0]?.groups[0]).toMatchObject({
+    kind: "stage",
+    stageInstanceId: "stage-build",
+    sessions: [{ sid: "scalar-1" }],
+  });
+  expect(grouping.unattached).toEqual([]);
 });
 
-test("groups order by their most recent member's activity, descending; members order the same way within a group", () => {
+test("runs and groups order by their most recent member; members use the same ordering", () => {
   const olderGroupOld = makeSnapshot({
     sid: "older-old", lastActivityTs: "2026-01-01T00:00:00.000Z",
     workflow: workflow({ unitId: "cohort-old" }),
@@ -155,18 +159,26 @@ test("groups order by their most recent member's activity, descending; members o
     sid: "older-new", lastActivityTs: "2026-01-03T00:00:00.000Z",
     workflow: workflow({ unitId: "cohort-old", operatorRole: "assessment" }),
   });
+  const middleGroup = makeSnapshot({
+    sid: "middle-only", lastActivityTs: "2026-01-04T00:00:00.000Z",
+    workflow: workflow({ unitId: "cohort-middle" }),
+  });
   const newerGroup = makeSnapshot({
     sid: "newer-only", lastActivityTs: "2026-01-05T00:00:00.000Z",
-    workflow: workflow({ unitId: "cohort-new" }),
+    workflow: workflow({ runId: "run-2", unitId: "cohort-new" }),
   });
-  const grouping = groupSessionsByCohort([olderGroupOld, olderGroupNew, newerGroup]);
-  expect(grouping.groups.map((g) => g.unitId)).toEqual(["cohort-new", "cohort-old"]);
-  expect(grouping.groups[1]?.sessions.map((s) => s.sid)).toEqual(["older-new", "older-old"]);
+  const grouping = groupSessionsByCohort([olderGroupOld, olderGroupNew, middleGroup, newerGroup]);
+  expect(grouping.runs.map((run) => run.runId)).toEqual(["run-2", "run-1"]);
+  expect(grouping.runs[1]?.groups.map((group) => group.sessions[0]?.sid)).toEqual([
+    "middle-only",
+    "older-new",
+  ]);
+  expect(grouping.runs[1]?.groups[1]?.sessions.map((s) => s.sid)).toEqual(["older-new", "older-old"]);
 });
 
-test("the ungrouped section is sorted by activity, newest first", () => {
+test("the unattached section is sorted by activity, newest first", () => {
   const older = makeSnapshot({ sid: "a", lastActivityTs: "2026-01-01T00:00:00.000Z", workflow: null });
   const newer = makeSnapshot({ sid: "b", lastActivityTs: "2026-01-02T00:00:00.000Z", workflow: null });
   const grouping = groupSessionsByCohort([older, newer]);
-  expect(grouping.ungrouped.map((s) => s.sid)).toEqual(["b", "a"]);
+  expect(grouping.unattached.map((s) => s.sid)).toEqual(["b", "a"]);
 });

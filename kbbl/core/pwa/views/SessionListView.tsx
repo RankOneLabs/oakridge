@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery } from "@tanstack/react-query";
 
 
 import type {
@@ -19,6 +19,11 @@ import {
   type NewSessionFormValues,
 } from "../components/organisms/NewSessionForm";
 import { useUrlPrefill } from "../hooks/useUrlPrefill";
+import { fetchRun, fetchRuns } from "../oakridge/client";
+import {
+  selectSessionRunTitle,
+  selectSessionStageName,
+} from "../lib/session";
 
 interface StartSessionBody {
   resume_from?: string;
@@ -95,6 +100,19 @@ export function SessionListView({
     ),
     [orderingTick, sessions],
   );
+  const runsQuery = useQuery({
+    queryKey: ["oakridge", "runs", ""],
+    queryFn: () => fetchRuns(),
+    refetchInterval: 10_000,
+    enabled: grouping.runs.length > 0,
+  });
+  const runDetailQueries = useQueries({
+    queries: grouping.runs.map((run) => ({
+      queryKey: ["oakridge", "run", run.runId],
+      queryFn: () => fetchRun(run.runId),
+      refetchInterval: 10_000,
+    })),
+  });
   const totalCount = sessions.size;
 
   const startMutation = useMutation({
@@ -213,28 +231,47 @@ export function SessionListView({
         <div className="session-list-empty">No sessions yet.</div>
       ) : (
         <div className="session-cohort-groups">
-          {grouping.groups.map((group) => (
-            <section key={group.key} className="session-cohort-group">
-              <SessionCohortHeading
-                title={group.title}
-                unitId={group.unitId}
-                repositoryKey={group.repositoryKey}
-              />
-              <SessionRowList
-                sessions={group.sessions}
-                onSelect={onSelect}
-                onResume={(sid) => void startSession(undefined, sid)}
-                resumeDisabled={startMutation.isPending}
-              />
+          {grouping.runs.map((run, runIndex) => (
+            <section
+              key={run.runId}
+              className="session-run-group"
+              data-testid={`session-run-${run.runId}`}
+            >
+              <h2 className="session-cohort-heading session-cohort-heading--plain">
+                {selectSessionRunTitle(run.runId, runsQuery.data ?? [])}
+              </h2>
+              {run.groups.map((group) => (
+                <section key={group.key} className="session-cohort-group">
+                  <SessionCohortHeading
+                    title={group.kind === "cohort"
+                      ? group.title
+                      : selectSessionStageName(
+                        group.stageInstanceId,
+                        runDetailQueries[runIndex]?.data,
+                      )}
+                    unitId={group.kind === "cohort" ? group.unitId : group.stageInstanceId}
+                    repositoryKey={group.repositoryKey}
+                  />
+                  <SessionRowList
+                    sessions={group.sessions}
+                    onSelect={onSelect}
+                    onResume={(sid) => void startSession(undefined, sid)}
+                    resumeDisabled={startMutation.isPending}
+                  />
+                </section>
+              ))}
             </section>
           ))}
-          {grouping.ungrouped.length > 0 && (
-            <section className="session-cohort-group session-cohort-group--ungrouped">
+          {grouping.unattached.length > 0 && (
+            <section
+              className="session-cohort-group session-cohort-group--ungrouped"
+              data-testid="unattached-sessions"
+            >
               <h2 className="session-cohort-heading session-cohort-heading--plain">
-                Other sessions
+                Unattached sessions
               </h2>
               <SessionRowList
-                sessions={grouping.ungrouped}
+                sessions={grouping.unattached}
                 onSelect={onSelect}
                 onResume={(sid) => void startSession(undefined, sid)}
                 resumeDisabled={startMutation.isPending}
