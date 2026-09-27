@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { confirmFinalPullRequest, createRun, fetchRun, fetchRunSessions, fetchSessionRun } from "./client";
+import { confirmFinalPullRequest, createRun, fetchRun, fetchRunSessions, fetchSessionRun, parseOakridgeRunEventFrame } from "./client";
 import { parseRepositoryKey } from "./repository-inputs";
 import type { CreateRunRequest, RepositoryKey } from "./types";
 
@@ -25,6 +25,15 @@ const createRunRequest = (): CreateRunRequest => ({
 });
 
 describe("Oakridge response parsing", () => {
+  it("rejects a gate event that omits its required slot continuation", () => {
+    expect(parseOakridgeRunEventFrame(JSON.stringify({
+      sequence: "7", operation: "gate_decided", occurred_at: "2026-09-26T12:00:00.000Z", replayed: false,
+      payload: { run_id: "run", run_unit_id: "run-unit", stage_instance_id: "stage", stage_key: "build", unit_id: "unit",
+        work_order_id: null, wait_id: "wait", output_name: "build_result", collection_key: null, artifact_revision_id: "artifact",
+        attention: "required", continuation: null, detail: {} },
+    }))).toBeNull();
+  });
+
   it("sends the caller-owned run idempotency key", async () => {
     const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ id: "run-1" }));
     await createRun(createRunRequest(), "launch-1");

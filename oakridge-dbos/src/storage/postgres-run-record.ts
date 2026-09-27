@@ -1054,6 +1054,11 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       const resultingVersion = Number(versions[0]?.record_version ?? 0) as RunRecordVersion;
       await insertTransition(transaction, { run_id: row.run_id as WorkflowRunId, run_unit_id: row.run_unit_id as RunUnitId, work_order_id: request.work_order_id, wait_id: waitId, output_name: request.output_name, collection_key: request.collection_key ?? null,
         operation: "slot_pending", actor: `work_order:${request.work_order_id}`, prior_record_version: (resultingVersion - 1) as RunRecordVersion, resulting_record_version: resultingVersion, detail: { ...publicationDetail, release_kind: release.kind }, created_at: request.published_at });
+      if (release.kind === "gate") {
+        await insertTransition(transaction, { run_id: row.run_id as WorkflowRunId, run_unit_id: row.run_unit_id as RunUnitId, work_order_id: request.work_order_id, wait_id: waitId, output_name: request.output_name, collection_key: request.collection_key ?? null,
+          operation: "gate_opened", actor: `work_order:${request.work_order_id}`, prior_record_version: (resultingVersion - 1) as RunRecordVersion, resulting_record_version: resultingVersion,
+          detail: { ...publicationDetail, gate_step: closesOn.kind === "gate" ? closesOn.gate_step : "review" }, created_at: request.published_at });
+      }
       const feedback = failedAssessmentFeedback(row.artifact_type, request.body);
       if (feedback !== null && release.kind === "gate") {
         const revise = release.steps[0]?.actions.find((action) => selectArtifactGateDisposition(row.artifact_type, action.disposition) === "revise");
@@ -1139,6 +1144,11 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         operation: request.disposition === "release" ? "slot_released" : "slot_invalidated", actor: request.actor,
         prior_record_version: (resultingVersion - 1) as RunRecordVersion, resulting_record_version: resultingVersion,
         detail: { via: "wait_close", attention: releasePolicy.attention, continuation: releasePolicy.continuation }, created_at: request.decided_at });
+      if (wait.kind === "gate") {
+        await insertTransition(transaction, { run_id: wait.run_id as WorkflowRunId, run_unit_id: wait.run_unit_id as RunUnitId, work_order_id: null, wait_id: request.wait_id, output_name: wait.output_name, collection_key: wait.collection_key as OutputCollectionKey | null,
+          operation: "gate_decided", actor: request.actor, prior_record_version: (resultingVersion - 1) as RunRecordVersion, resulting_record_version: resultingVersion,
+          detail: { action: request.action ?? null, disposition: request.disposition, attention: releasePolicy.attention, continuation: releasePolicy.continuation }, created_at: request.decided_at });
+      }
       return request.disposition === "release"
         ? { kind: "released", artifact_id: slot.artifact_revision_id as ArtifactId, run_id: wait.run_id as WorkflowRunId, record_version: resultingVersion }
         : { kind: "invalidated", run_id: wait.run_id as WorkflowRunId, record_version: resultingVersion };

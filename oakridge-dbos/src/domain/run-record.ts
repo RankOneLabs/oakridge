@@ -359,7 +359,11 @@ export type RunTransitionOperation =
   | "slot_pending"
   | "slot_invalidated"
   | "unit_satisfied"
-  | "work_started";
+  | "work_started"
+  | "gate_opened"
+  | "gate_decided"
+  | "pull_request_observed"
+  | "pull_request_merge_confirmed";
 
 export interface RunTransition {
   readonly id: RunTransitionId;

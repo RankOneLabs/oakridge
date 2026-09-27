@@ -201,6 +201,37 @@ test("the branch-roles migration accepts bindings that all take the implicit def
   }
 }, 60_000);
 
+test("0022 sequences existing 0018 transition rows and accepts the four feed operations", async () => {
+  const scratch = await createScratchDatabase("oakridge_transition_feed_migration_test");
+  if (!scratch.ok) {
+    if (scratch.error.operation !== "reach_admin_endpoint") throw new Error(`${scratch.error.operation}: ${scratch.error.detail}`);
+    console.warn("transition-feed migration SKIPPED: no PostgreSQL reachable");
+    return;
+  }
+  scratches.push(scratch.value);
+  const sql = PgPostgresExecutor.connect(scratch.value.url);
+  const before = await migrationsBefore("0022_run_transition_sequence_and_operations.sql");
+  try {
+    await applyMigrations(sql, before);
+    await seedRun(sql);
+    await sql.query(`INSERT INTO oakridge.run_transition
+      (id,run_id,operation,actor,prior_record_version,resulting_record_version,detail,created_at)
+      VALUES ('00000000-0000-4000-8000-000000000004','00000000-0000-4000-8000-000000000002',
+        'run_cancelled','operator',0,0,'{}'::jsonb,now())`, []);
+    expect(await applyMigrations(sql, MIGRATIONS)).toContain("0022_run_transition_sequence_and_operations.sql");
+    const rows = await sql.query<{ readonly sequence: string }>("SELECT sequence::text FROM oakridge.run_transition", []);
+    expect(rows[0]?.sequence).toBe("1");
+    for (const operation of ["gate_opened", "gate_decided", "pull_request_observed", "pull_request_merge_confirmed"]) {
+      await sql.query(`INSERT INTO oakridge.run_transition
+        (id,run_id,operation,actor,prior_record_version,resulting_record_version,detail,created_at)
+        VALUES (gen_random_uuid(),'00000000-0000-4000-8000-000000000002',$1,'test',0,0,'{}'::jsonb,now())`, [operation]);
+    }
+  } finally {
+    await sql.close();
+    await rm(before, { recursive: true, force: true });
+  }
+}, 60_000);
+
 /**
  * The validator sits before any DDL, so its refusal has to travel the same way
  * every other setup failure does. It threw past the `Result` its caller
