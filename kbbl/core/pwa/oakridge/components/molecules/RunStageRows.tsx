@@ -56,7 +56,7 @@ interface RunUnitRowProps {
   retrying: boolean;
   retryError?: string;
   canRetry: boolean;
-  confirmMerge: {
+  confirmMerge?: {
     readonly onConfirm: () => void;
     readonly isConfirming: boolean;
     readonly error?: string;
@@ -84,7 +84,7 @@ export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelect
         {unit.admission_required && unit.admitted && <span className="text-xs text-emerald-500" data-testid="or-unit-admitted">Admitted</span>}
         {canRetry && <button type="button" className="rounded border border-red-500 px-2 py-0.5 text-xs text-red-500 hover:bg-red-500 hover:text-white disabled:opacity-50" onClick={() => onRetry(unit.unit_id)} disabled={retrying} data-testid="or-retry-unit-btn">{retrying ? "Retrying…" : "Retry"}</button>}
         {retryError && <span role="alert" className="text-xs text-red-500">{retryError}</span>}
-        {brief !== null && (
+        {confirmMerge && (
           <button
             type="button"
             className="rounded border border-[var(--accent-blue)] px-2 py-0.5 text-xs text-[var(--accent-blue)] disabled:opacity-50"
@@ -95,7 +95,7 @@ export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelect
             {confirmMerge.isConfirming ? "Confirming…" : "It’s merged — continue"}
           </button>
         )}
-        {confirmMerge.error && <span role="alert" className="text-xs text-red-500">{confirmMerge.error}</span>}
+        {confirmMerge?.error && <span role="alert" className="text-xs text-red-500">{confirmMerge.error}</span>}
       </div></td>
       <ArtifactCell artifacts={unitArtifacts} onSelectArtifact={onSelectArtifact} />
       <SessionCell sid={unit.sid} />

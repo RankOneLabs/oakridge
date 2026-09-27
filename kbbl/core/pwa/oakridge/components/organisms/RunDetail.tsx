@@ -7,6 +7,8 @@ import { useUnarchiveRun } from "../../hooks/useUnarchiveRun";
 import { useDeleteRun } from "../../hooks/useDeleteRun";
 import { useAdmitStageUnit } from "../../hooks/useAdmitStageUnit";
 import { useConfirmCohortMerged } from "../../hooks/useConfirmCohortMerged";
+import { useReviewInbox } from "../../hooks/useReviewInbox";
+import { hasOpenPullRequestMergeWait } from "../../lib/run-overview";
 import type { StageDetail } from "../../types";
 import { RunParkedGateList } from "../../ParkedGateList";
 import { RunStageRow, RunUnitRow } from "../molecules/RunStageRows";
@@ -60,6 +62,7 @@ export function RunDetail({ runId, onRunDeleted, onSelectArtifact }: RunDetailPr
   const deleteMutation = useDeleteRun(runId);
   const admitMutation = useAdmitStageUnit(runId);
   const confirmMergeMutation = useConfirmCohortMerged(runId);
+  const reviewInboxQuery = useReviewInbox();
 
   const onRefresh = () => {
     void qc.invalidateQueries({ queryKey: ["oakridge", "run", runId] });
@@ -189,6 +192,12 @@ export function RunDetail({ runId, onRunDeleted, onSelectArtifact }: RunDetailPr
                 if (units != null && isFannedOut(stage)) {
                   return units.map((unit) => {
                     const cohortId = `${stage.stage_instance_id}:${unit.unit_id}`;
+                    const canConfirmMerge = hasOpenPullRequestMergeWait({
+                      items: reviewInboxQuery.data?.items ?? [],
+                      runId,
+                      stageInstanceId: stage.stage_instance_id,
+                      unitId: unit.unit_id,
+                    });
                     const unitArtifacts = stage.artifacts.filter(
                       (a) => a.label === unit.unit_id,
                     );
@@ -217,7 +226,7 @@ export function RunDetail({ runId, onRunDeleted, onSelectArtifact }: RunDetailPr
                           ? (retryMutation.error instanceof Error ? retryMutation.error.message : "Retry failed")
                           : undefined}
                         canRetry={canRetryUnit({ isRunActive, isRunStuck: run.is_stuck, unitStatus: unit.status })}
-                        confirmMerge={{
+                        confirmMerge={canConfirmMerge ? {
                           onConfirm: () => confirmMergeMutation.mutate({
                             cohortId,
                             operatorComment: "Operator confirmed the pull request merged from the run workspace",
@@ -230,7 +239,7 @@ export function RunDetail({ runId, onRunDeleted, onSelectArtifact }: RunDetailPr
                               ? confirmMergeMutation.error.message
                               : "Could not confirm the merge")
                             : undefined,
-                        }}
+                        } : undefined}
                       />
                     );
                   });
