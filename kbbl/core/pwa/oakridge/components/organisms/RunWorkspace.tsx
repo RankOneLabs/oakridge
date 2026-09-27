@@ -5,7 +5,7 @@ import { useRunGates } from "../../hooks/useRunGates";
 import { useRunSessions } from "../../hooks/useRunSessions";
 import { useRunWorkspaceState } from "../../hooks/useRunWorkspaceState";
 import { selectRunAccentClass } from "../../lib/run-accent";
-import { selectRunSessionsRead } from "../../lib/run-sessions";
+import { selectPurgedRunSessionIds, selectRunSessionsRead } from "../../lib/run-sessions";
 import {
   selectRunArtifacts,
   selectRunGatesRead,
@@ -62,10 +62,14 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
     is_pending: sessionsQuery.isPending,
     is_error: sessionsQuery.isError,
   });
-  // The inbox's record of what has been purged server-side. Oakridge keeps
-  // listing the work order behind a purged session, so this is the only signal
-  // that a pane holding one is showing a transcript that no longer exists.
-  const purgedSessionIds = useStore((state) => state.removedSids);
+  const inventorySessions = useStore((state) => state.sessions);
+  const hasInboxSnapshot = useStore((state) => state.hasInboxSnapshot);
+  const removedSids = useStore((state) => state.removedSids);
+  const purgedSessionIds = selectPurgedRunSessionIds({
+    run,
+    sessions,
+    inventory: { sessions: inventorySessions, hasInboxSnapshot, removedSids },
+  });
   const workspace = useRunWorkspaceState({ runId, routePane, run, sessions, purgedSessionIds });
 
   if (runQuery.isError) {

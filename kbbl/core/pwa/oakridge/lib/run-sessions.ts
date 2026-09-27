@@ -11,7 +11,33 @@
 // transforms know which attempt is newest, and a caller that re-sorts the list
 // before passing it here will get the wrong current attempt.
 
-import type { RunSessionAttempt } from "../types";
+import type { RunDetail, RunSessionAttempt } from "../types";
+import type { AppState } from "../../state/store";
+import type { Sid } from "../../lib/ids";
+
+export interface RunSessionAvailabilityInput {
+  readonly run: RunDetail | undefined;
+  readonly sessions: RunSessionsRead;
+  readonly inventory: Pick<AppState, "sessions" | "hasInboxSnapshot" | "removedSids">;
+}
+
+/** Historical attempt rows outlive their transcripts. Check the server's full
+ * inventory, not only deletions witnessed by this browser. Before the first
+ * snapshot, absence is unknown and must not discard restored panes. */
+export const selectPurgedRunSessionIds = ({ run, sessions, inventory }: RunSessionAvailabilityInput): ReadonlySet<string> => {
+  if (!inventory.hasInboxSnapshot) return inventory.removedSids;
+  const candidates = new Set(attemptsOf(sessions).map((attempt) => attempt.session_id));
+  for (const stage of run?.stages ?? []) {
+    if (stage.delegated_kbbl_sid !== null) candidates.add(stage.delegated_kbbl_sid);
+    for (const unit of stage.units ?? []) {
+      if (unit.sid !== null) candidates.add(unit.sid);
+    }
+  }
+  return new Set([
+    ...inventory.removedSids,
+    ...[...candidates].filter((sid) => !inventory.sessions.has(sid as Sid)),
+  ]);
+};
 
 /**
  * What the run's attempt-list read currently knows.
