@@ -5166,6 +5166,40 @@ a:focus-visible {
   padding: clamp(2rem, 5vw, 5rem) clamp(1rem, 4vw, 4rem) 6rem;
 }
 
+.or-run-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+.or-run-progress progress {
+  width: 5rem;
+  height: 0.35rem;
+  accent-color: var(--accent-blue);
+}
+
+.or-run-attention {
+  display: inline-flex;
+  min-width: 1.5rem;
+  min-height: 1.5rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--amber-bg);
+  color: var(--amber-fg);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.or-run-waits {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
 /* ── run command center ─────────────────────────────────────────────────────
    The workspace fills .or-shell__content rather than scrolling inside it: the
    shell is already a 100dvh flex column with a flex: 1 content area, so the

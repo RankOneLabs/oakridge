@@ -45,6 +45,7 @@ interface RunListProps {
   onNewProject: () => void;
   onReviewInbox?: () => void;
   onSelectArtifact?: (id: string) => void;
+  runAttentionCounts?: ReadonlyMap<string, number>;
 }
 
 const FILTER_TABS: { key: FilterTab; label: string }[] = [
@@ -55,7 +56,7 @@ const FILTER_TABS: { key: FilterTab; label: string }[] = [
   { key: "archived", label: "Archived" },
 ];
 
-export function RunList({ onSelectRun, onNewRun, onNewProject, onReviewInbox, onSelectArtifact }: RunListProps) {
+export function RunList({ onSelectRun, onNewRun, onNewProject, onReviewInbox, onSelectArtifact, runAttentionCounts = new Map() }: RunListProps) {
   const [activeTab, setActiveTab] = useState<FilterTab>("all");
   const qc = useQueryClient();
   const apiFilter = activeTab === "archived" ? "archived" : undefined;
@@ -130,14 +131,16 @@ export function RunList({ onSelectRun, onNewRun, onNewProject, onReviewInbox, on
               <th className={tableHeaderClass}>Run</th>
               <th className={tableHeaderClass}>Repositories</th>
               <th className={tableHeaderClass}>Status</th>
-              <th className={tableHeaderClass}>Stage</th>
-              <th className={tableHeaderClass}>Parked</th>
+              <th className={tableHeaderClass}>Progress</th>
+              <th className={tableHeaderClass}>Attention</th>
+              <th className={tableHeaderClass}>Waits</th>
               <th className={tableHeaderClass}>Updated</th>
             </tr>
           </thead>
           <tbody>
             {visibleRuns.map((run) => {
               const status = displayStatus(run);
+              const attentionCount = runAttentionCounts.get(run.id) ?? 0;
               return (
                 <tr
                   key={run.id}
@@ -166,15 +169,24 @@ export function RunList({ onSelectRun, onNewRun, onNewProject, onReviewInbox, on
                     <span className={statusChipClass(status)}>{status}</span>
                   </td>
                   <td className={`${tableCellClass} text-[var(--text-secondary)]`}>
-                    {run.current_stage ?? "-"}
+                    <div>{run.current_stage ?? "-"}</div>
+                    <div className="or-run-progress">
+                      <progress value={run.stage_complete} max={Math.max(1, run.stage_total)} aria-label={`${run.stage_complete} of ${run.stage_total} stages complete`} />
+                      <span>{run.stage_complete}/{run.stage_total}</span>
+                    </div>
+                  </td>
+                  <td className={tableCellClass}>
+                    {attentionCount > 0 && (
+                      <span className="or-run-attention" data-testid="or-run-attention-count">
+                        {attentionCount}
+                      </span>
+                    )}
                   </td>
                   <td className={tableCellClass}>
                     {run.parked_count > 0 && (
-                      <span
-                        className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 text-[11px] font-semibold text-black"
-                        data-testid="or-parked-count"
-                      >
-                        {run.parked_count}
+                      <span className="or-run-waits">
+                        <span data-testid="or-parked-count">{run.parked_count}</span>
+                        {run.parked_count === 1 ? " wait" : " waits"}
                       </span>
                     )}
                   </td>

@@ -14,10 +14,11 @@ import type { ArtifactId } from "../lib/ids";
 import type { WorkflowDefSummary } from "./types";
 interface OakridgeShellInnerProps {
   route: OakridgeSubRoute;
+  runAttentionCounts: ReadonlyMap<string, number>;
   onNavigate: (hash: string) => void;
 }
 
-function OakridgeShellInner({ route, onNavigate }: OakridgeShellInnerProps) {
+function OakridgeShellInner({ route, runAttentionCounts, onNavigate }: OakridgeShellInnerProps) {
   const configQuery = useOakridgeConfig();
 
   // Show loading while the availability check is in flight
@@ -65,6 +66,7 @@ function OakridgeShellInner({ route, onNavigate }: OakridgeShellInnerProps) {
           onNewProject={navigateToCreateProject}
           onReviewInbox={navigateToReviewInbox}
           onSelectArtifact={navigateToArtifact}
+          runAttentionCounts={runAttentionCounts}
         />
       );
       break;
@@ -161,14 +163,15 @@ function OakridgeShellInner({ route, onNavigate }: OakridgeShellInnerProps) {
 
 interface OakridgeShellProps {
   route: OakridgeSubRoute;
+  runAttentionCounts?: ReadonlyMap<string, number>;
   /** Retained for embedders compiled against the prior shell API; peer navigation owns routing now. */
   onBack?: () => void;
 }
 
-export function OakridgeShell({ route }: OakridgeShellProps) {
+export function OakridgeShell({ route, runAttentionCounts = new Map() }: OakridgeShellProps) {
   const onNavigate = (hash: string) => {
     window.location.hash = hash;
   };
 
-  return <OakridgeShellInner route={route} onNavigate={onNavigate} />;
+  return <OakridgeShellInner route={route} runAttentionCounts={runAttentionCounts} onNavigate={onNavigate} />;
 }

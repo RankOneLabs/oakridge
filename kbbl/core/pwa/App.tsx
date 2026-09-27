@@ -19,6 +19,8 @@ import { PendingApprovalsBadge } from "./components/organisms/PendingApprovalsBa
 import { useOakridgeConfig } from "./oakridge/hooks/useOakridgeConfig";
 import { useOakridgeInvalidationStream } from "./oakridge/hooks/useOakridgeInvalidationStream";
 import { useOakridgeRunEventStream } from "./oakridge/hooks/useOakridgeRunEventStream";
+import { useReviewInbox } from "./oakridge/hooks/useReviewInbox";
+import { selectRunAttentionCounts } from "./oakridge/lib/run-attention";
 
 type PrimarySurface = "runs" | "sessions" | "attention";
 
@@ -47,7 +49,10 @@ export function App() {
   const [sid, navigate] = useHashSid();
   const [theme, toggleTheme] = useTheme();
   const oakridgeConfig = useOakridgeConfig();
+  const reviewInbox = useReviewInbox();
   const pushToast = useToastStore((state) => state.pushToast);
+  const runAttentionCounts = selectRunAttentionCounts(reviewInbox.data?.items ?? []);
+  const attentionCount = [...runAttentionCounts.values()].reduce((total, count) => total + count, 0);
 
   // Both Oakridge subscriptions live above the route branch so changing
   // surfaces keeps the shared query cache current and the single EventSource
@@ -95,7 +100,7 @@ export function App() {
   // Workflow routes take precedence over session hashes.
   let view: React.ReactNode;
   if (route?.view === "oakridge") {
-    view = <OakridgeShell route={route.route} />;
+    view = <OakridgeShell route={route.route} runAttentionCounts={runAttentionCounts} />;
   } else if (sid !== null) {
     view = (
       <SessionView
@@ -126,12 +131,12 @@ export function App() {
       />
     );
   } else {
-    view = <OakridgeShell route={{ sub: "runs" }} />;
+    view = <OakridgeShell route={{ sub: "runs" }} runAttentionCounts={runAttentionCounts} />;
   }
 
   return (
     <>
-      <PrimaryNav activeSurface={activeSurface} attentionCount={0} />
+      <PrimaryNav activeSurface={activeSurface} attentionCount={attentionCount} />
       {view}
       <PendingApprovalsBadge />
       <ToastViewport />
