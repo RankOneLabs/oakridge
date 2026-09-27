@@ -7,6 +7,7 @@ import {
   readHashSessionTarget,
   readHashPermissionTarget,
   writeHashPermissionTarget,
+  writeHashSid,
   writeHashSessionTarget,
 } from "./hash";
 import type { RoutePaneTarget } from "../oakridge/lib/run-workspace";
@@ -17,6 +18,23 @@ function withHash(hash: string) {
 }
 
 describe("readHashRoute oakridge routes", () => {
+  it("uses Runs as the empty-hash default", () => {
+    expect(readHashRoute("", "")).toEqual({
+      view: "oakridge",
+      route: { sub: "runs" },
+    });
+  });
+
+  it("routes #sessions to the explicit Sessions surface", () => {
+    expect(readHashRoute("#sessions", "")).toEqual({ view: "sessions" });
+  });
+
+  it("routes a prefill autostart deep link to Sessions", () => {
+    expect(readHashRoute("", "?workdir=%2Ftmp%2Fx&autostart=true")).toEqual({
+      view: "sessions",
+    });
+  });
+
   it.each(["plan", "brief", "cohort", "repo", "epic"])("does not expose the retired %s route", (view) => {
     expect(withHash(`#${view}/old-id`)).toBeNull();
   });
@@ -103,6 +121,14 @@ describe("run workspace pane routes", () => {
 });
 
 describe("session targets", () => {
+  it("returns from a session to the explicit Sessions surface", () => {
+    window.location.hash = "#sid=session-one";
+    writeHashSid(null);
+
+    expect(window.location.hash).toBe("#sessions");
+    expect(readHashRoute()).toEqual({ view: "sessions" });
+  });
+
   it("links a pending-approval alert to the approval location in its session", () => {
     writeHashSessionTarget("sid/one", "pending-permission");
 

@@ -14,11 +14,10 @@ import type { ArtifactId } from "../lib/ids";
 import type { WorkflowDefSummary } from "./types";
 interface OakridgeShellInnerProps {
   route: OakridgeSubRoute;
-  onBack: () => void;
   onNavigate: (hash: string) => void;
 }
 
-function OakridgeShellInner({ route, onBack, onNavigate }: OakridgeShellInnerProps) {
+function OakridgeShellInner({ route, onNavigate }: OakridgeShellInnerProps) {
   const configQuery = useOakridgeConfig();
 
   // Show loading while the availability check is in flight
@@ -34,7 +33,6 @@ function OakridgeShellInner({ route, onBack, onNavigate }: OakridgeShellInnerPro
   if (!configQuery.data?.available) {
     return (
       <div className="or-shell" data-testid="or-shell">
-        <button type="button" className="or-btn or-btn--secondary" onClick={onBack}>← Back</button>
         <div className="or-unavailable" data-testid="or-unavailable">
           <h2>Oakridge backend not configured</h2>
           <p>
@@ -154,38 +152,6 @@ function OakridgeShellInner({ route, onBack, onNavigate }: OakridgeShellInnerPro
 
   return (
     <div className="or-shell" data-testid="or-shell">
-      <nav className="or-shell__nav">
-        <button
-          type="button"
-          className="or-shell__back"
-          onClick={onBack}
-          aria-label="Back to kbbl"
-        >
-          ← kbbl
-        </button>
-        <span className="or-shell__brand"><i>O</i><span><strong>oakridge</strong><small>workflow operations</small></span></span>
-        <button
-          type="button"
-          className={`or-shell__nav-item ${route.sub === "runs" ? "or-shell__nav-item--active" : ""}`}
-          onClick={navigateToRuns}
-        >
-          Runs
-        </button>
-        <button
-          type="button"
-          className={`or-shell__nav-item ${route.sub === "review-inbox" ? "or-shell__nav-item--active" : ""}`}
-          onClick={navigateToReviewInbox}
-        >
-          Review inbox
-        </button>
-        <button
-          type="button"
-          className={`or-shell__nav-item ${route.sub === "defs" || route.sub === "def" || route.sub === "def-new" || route.sub === "def-edit" ? "or-shell__nav-item--active" : ""}`}
-          onClick={navigateToDefs}
-        >
-          Workflows
-        </button>
-      </nav>
       <main className="or-shell__content">
         {content}
       </main>
@@ -195,13 +161,14 @@ function OakridgeShellInner({ route, onBack, onNavigate }: OakridgeShellInnerPro
 
 interface OakridgeShellProps {
   route: OakridgeSubRoute;
-  onBack: () => void;
+  /** Retained for embedders compiled against the prior shell API; peer navigation owns routing now. */
+  onBack?: () => void;
 }
 
-export function OakridgeShell({ route, onBack }: OakridgeShellProps) {
+export function OakridgeShell({ route }: OakridgeShellProps) {
   const onNavigate = (hash: string) => {
     window.location.hash = hash;
   };
 
-  return <OakridgeShellInner route={route} onBack={onBack} onNavigate={onNavigate} />;
+  return <OakridgeShellInner route={route} onNavigate={onNavigate} />;
 }

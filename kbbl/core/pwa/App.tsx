@@ -20,6 +20,28 @@ import { useOakridgeConfig } from "./oakridge/hooks/useOakridgeConfig";
 import { useOakridgeInvalidationStream } from "./oakridge/hooks/useOakridgeInvalidationStream";
 import { useOakridgeRunEventStream } from "./oakridge/hooks/useOakridgeRunEventStream";
 
+type PrimarySurface = "runs" | "sessions" | "attention";
+
+interface PrimaryNavProps {
+  activeSurface: PrimarySurface;
+  attentionCount: number;
+}
+
+function PrimaryNav({ activeSurface, attentionCount }: PrimaryNavProps) {
+  const navigate = (hash: string) => { window.location.hash = hash; };
+  return (
+    <nav className="app-surface-nav" aria-label="Primary">
+      <span className="app-surface-nav__brand">oakridge</span>
+      <button type="button" className={activeSurface === "runs" ? "app-surface-nav__item app-surface-nav__item--active" : "app-surface-nav__item"} onClick={() => navigate("oakridge")}>Runs</button>
+      <button type="button" className={activeSurface === "sessions" ? "app-surface-nav__item app-surface-nav__item--active" : "app-surface-nav__item"} onClick={() => navigate("sessions")}>Sessions</button>
+      <button type="button" className={activeSurface === "attention" ? "app-surface-nav__item app-surface-nav__item--active" : "app-surface-nav__item"} onClick={() => navigate("oakridge/review-inbox")}>
+        Attention
+        {attentionCount > 0 && <span className="app-surface-nav__count">{attentionCount}</span>}
+      </button>
+    </nav>
+  );
+}
+
 export function App() {
   const route = useHashRoute();
   const [sid, navigate] = useHashSid();
@@ -64,15 +86,16 @@ export function App() {
 
   const config = useServerConfig();
 
+  const activeSurface: PrimarySurface = sid !== null || route?.view === "sessions"
+    ? "sessions"
+    : route?.view === "oakridge" && route.route.sub === "review-inbox"
+      ? "attention"
+      : "runs";
+
   // Workflow routes take precedence over session hashes.
   let view: React.ReactNode;
   if (route?.view === "oakridge") {
-    view = (
-      <OakridgeShell
-        route={route.route}
-        onBack={() => { window.location.hash = ""; }}
-      />
-    );
+    view = <OakridgeShell route={route.route} />;
   } else if (sid !== null) {
     view = (
       <SessionView
@@ -88,7 +111,7 @@ export function App() {
         onResume={(parentSid) => resumeSession(parentSid, hydrateSession, navigate)}
       />
     );
-  } else {
+  } else if (route?.view === "sessions") {
     view = (
       <SessionListView
         sessions={sessions}
@@ -102,10 +125,13 @@ export function App() {
         onHydrateSession={hydrateSession}
       />
     );
+  } else {
+    view = <OakridgeShell route={{ sub: "runs" }} />;
   }
 
   return (
     <>
+      <PrimaryNav activeSurface={activeSurface} attentionCount={0} />
       {view}
       <PendingApprovalsBadge />
       <ToastViewport />

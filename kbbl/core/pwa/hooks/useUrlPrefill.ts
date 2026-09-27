@@ -32,7 +32,8 @@ export function useUrlPrefill(): UrlPrefill {
 
   useEffect(() => {
     if (!initial.hadParams) return;
-    history.replaceState(null, "", window.location.pathname + window.location.hash);
+    const destinationHash = window.location.hash || "#sessions";
+    history.replaceState(null, "", window.location.pathname + destinationHash);
   }, []);
 
   return {
