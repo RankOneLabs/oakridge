@@ -229,7 +229,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     return this.listV2PendingGates(run_id);
   }
 
-  private async listV2PendingGates(run_id?: WorkflowRunId): Promise<readonly OperatorParkedGate[]> {
+  private async listV2PendingGates(run_id?: WorkflowRunId, requiredAttentionOnly = false): Promise<readonly OperatorParkedGate[]> {
     // No `run.state='active'` filter — spec §1 rule 9 / §3.7: an open wait is
     // listed whatever the run's state, and `actionable` (derived below from
     // `run_state`) says whether a decision on it can still take effect. A
@@ -249,7 +249,13 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
        JOIN oakridge.artifact artifact ON artifact.id=wait.artifact_revision_id
        WHERE wait.kind='gate' AND wait.status='open' AND run.archived=false
          AND artifact.lifecycle_state='current' AND ($1::uuid IS NULL OR run.id=$1::uuid)
-       ORDER BY wait.opened_at,wait.id`, [run_id ?? null]);
+         AND (NOT $2::boolean OR EXISTS (
+           SELECT 1 FROM oakridge.run_output_slot slot
+           WHERE slot.run_unit_id=wait.run_unit_id AND slot.output_name=wait.output_name
+             AND slot.collection_key IS NOT DISTINCT FROM wait.collection_key
+             AND COALESCE(slot.release_policy->>'attention','required')='required'
+         ))
+       ORDER BY wait.opened_at,wait.id`, [run_id ?? null, requiredAttentionOnly]);
     return rows.map((row) => ({ id: row.wait_id, stage_instance_id: row.stage_instance_id as import("../domain/primitives").StageInstanceId, gate_type: row.gate_step, run_id: row.run_id as WorkflowRunId,
       stage_name: row.stage_name, unit_id: row.unit_id as UnitId, repository_key: row.repository_key,
       artifact_revision_id: row.artifact_revision_id as ArtifactId, gate_step: row.gate_step, worktree: null,
@@ -549,7 +555,9 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
   }
 
   async get_review_inbox(): Promise<OperatorReviewInbox> {
-    const [allGates, runs, projectedCohorts] = await Promise.all([this.list_pending_gates(), this.list_runs(), this.list_cohorts()]);
+    const [allGates, runs, projectedCohorts] = await Promise.all([this.listV2PendingGates(undefined, true), this.list_runs(), this.list_cohorts()]);
+    // Omitted attention on legacy gate slots defaults to required. Optional
+    // and silent gates remain visible on the run through list_pending_gates.
     // The inbox is the operator's decision queue. A gate stranded by a run
     // that has ended is still listed by `list_pending_gates` (spec §3.7) and
     // rendered on the run, but no decision on it can take effect, so it is
@@ -557,7 +565,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     const gates = allGates.filter((gate) => gate.actionable);
     const names = new Map(runs.map((run) => [run.id, run.workflow_name]));
     const cohorts = projectedCohorts.map((cohort): OperatorCohortSummary => {
-      const gate = gates.find((candidate) => candidate.run_id === cohort.run_id && candidate.unit_id === cohort.unit_id);
+      const gate = gates.find((candidate) => candidate.run_id === cohort.run_id && candidate.stage_instance_id === cohort.stage_instance_id && candidate.unit_id === cohort.unit_id);
       if (!gate) return cohort;
       const lifecycle: OperatorCohortLifecycle = gate.gate_step === "merge_confirmation" ? "merge_confirmation" : "artifact_review";
       return { ...cohort, lifecycle, artifact_revision_id: gate.artifact_revision_id ?? cohort.artifact_revision_id,
@@ -566,7 +574,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     });
     const items: OperatorReviewInboxItem[] = gates.map((gate) => {
       const isMerge = gate.gate_step === "merge_confirmation";
-      const cohort = cohorts.find((candidate) => candidate.run_id === gate.run_id && candidate.unit_id === gate.unit_id);
+      const cohort = cohorts.find((candidate) => candidate.run_id === gate.run_id && candidate.stage_instance_id === gate.stage_instance_id && candidate.unit_id === gate.unit_id);
       return {
         id: `gate:${gate.id}:${gate.artifact_revision_id ?? "none"}:${gate.gate_step ?? "unknown"}`,
         kind: isMerge ? "merge_confirmation" : "artifact_gate", state: "actionable", run_id: gate.run_id,

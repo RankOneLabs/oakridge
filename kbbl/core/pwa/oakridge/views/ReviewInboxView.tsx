@@ -1,5 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 
+import { selectReviewCohortKey } from "../lib/run-attention";
 import { GateDecisionActions } from "../GateDecisionActions";
 import { useReviewInbox } from "../hooks/useReviewInbox";
 import { useAdmitStageUnit } from "../hooks/useAdmitStageUnit";
@@ -23,10 +24,6 @@ const LIFECYCLE_LABELS: Record<CohortLifecycle, string> = {
   complete: "Complete",
   failed: "Needs recovery",
 };
-
-function cohortKey(runId: string, unitId: string): string {
-  return `${runId}:${unitId}`;
-}
 
 function lifecycleLabel(cohort: CohortLifecycleSummary): string {
   if (cohort.lifecycle === "complete" && cohort.pull_request_reconciliation?.completed_at) {
@@ -162,13 +159,13 @@ export function ReviewInboxView({ onSelectRun, onSelectArtifact }: ReviewInboxVi
   if (query.isError) return <div role="alert" className="or-review-state or-review-state--error" data-testid="or-review-inbox-error">{query.error instanceof Error ? query.error.message : "Could not load review work."}</div>;
   if (query.isPending || !query.data) return <div className="or-review-state" data-testid="or-review-inbox-loading">Loading review work…</div>;
 
-  const cohortsByKey = new Map(query.data.cohorts.map((cohort) => [cohortKey(cohort.run_id, cohort.unit_id), cohort]));
-  const cohortFor = (item: ReviewInboxItem) => cohortsByKey.get(cohortKey(item.run_id, item.unit_id));
+  const cohortsByKey = new Map(query.data.cohorts.map((cohort) => [selectReviewCohortKey(cohort), cohort]));
+  const cohortFor = (item: ReviewInboxItem) => cohortsByKey.get(selectReviewCohortKey(item));
   const visibleItems = query.data.items.filter((item) => item.kind !== "admission" || cohortFor(item)?.admission.required === true);
   const actionable = visibleItems.filter((item) => item.state === "actionable" || item.kind === "pull_request_mismatch");
   const blocked = visibleItems.filter((item) => item.state === "blocked" && item.kind !== "pull_request_mismatch");
-  const attentionKeys = new Set([...actionable, ...blocked].map((item) => cohortKey(item.run_id, item.unit_id)));
-  const underway = query.data.cohorts.filter((cohort) => cohort.lifecycle !== "complete" && !attentionKeys.has(cohortKey(cohort.run_id, cohort.unit_id)));
+  const attentionKeys = new Set([...actionable, ...blocked].map((item) => selectReviewCohortKey(item)));
+  const underway = query.data.cohorts.filter((cohort) => cohort.lifecycle !== "complete" && !attentionKeys.has(selectReviewCohortKey(cohort)));
   const finished = query.data.cohorts.filter((cohort) => cohort.lifecycle === "complete");
 
   return (

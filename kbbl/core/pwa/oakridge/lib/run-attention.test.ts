@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ReviewInboxItem } from "../types";
-import { selectRunAttentionCounts } from "./run-attention";
+import { selectReviewCohortKey, selectRunAttentionCounts } from "./run-attention";
 
 function inboxItem(
   id: string,
@@ -51,4 +51,17 @@ describe("selectRunAttentionCounts", () => {
 
     expect(counts.get("run-a")).toBe(1);
   });
+});
+
+it("keeps scalar admission and gate identities separate across stages", () => {
+  const gate = inboxItem("gate", "run-a", "actionable");
+  gate.unit_id = "0";
+  const admission = { ...gate, stage_instance_id: "stage-2", kind: "admission" as const };
+  const cohorts = new Map([
+    [selectReviewCohortKey(gate), "gate stage"],
+    [selectReviewCohortKey(admission), "admission stage"],
+  ]);
+
+  expect([cohorts.get(selectReviewCohortKey(gate)), cohorts.get(selectReviewCohortKey(admission))])
+    .toEqual(["gate stage", "admission stage"]);
 });
