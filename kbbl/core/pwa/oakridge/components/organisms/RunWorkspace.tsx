@@ -18,6 +18,7 @@ import {
   canMoveToOtherSlot,
   describePane,
   isTwinView,
+  shouldReadRunActivity,
   type RoutePaneTarget,
   type RunWorkspacePane,
   type RunWorkspaceSlot,
@@ -51,11 +52,6 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
   const runQuery = useRun(runId);
   const gatesQuery = useRunGates(runId);
   const sessionsQuery = useRunSessions(runId);
-  const activityQuery = useQuery({
-    queryKey: ["oakridge", "run", runId, "activity"],
-    queryFn: () => fetchRunEvents(runId),
-    refetchInterval: 10_000,
-  });
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   const run = runQuery.data;
@@ -74,6 +70,12 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
   // that a pane holding one is showing a transcript that no longer exists.
   const purgedSessionIds = useStore((state) => state.removedSids);
   const workspace = useRunWorkspaceState({ runId, routePane, run, sessions, purgedSessionIds });
+  const activityQuery = useQuery({
+    queryKey: ["oakridge", "run", runId, "activity"],
+    queryFn: () => fetchRunEvents(runId),
+    enabled: workspace.state !== null && shouldReadRunActivity(workspace.state),
+    refetchInterval: 10_000,
+  });
 
   if (runQuery.isError) {
     return (
