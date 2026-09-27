@@ -69,6 +69,75 @@ export type RepositoryKey = string & { readonly __brand: "RepositoryKey" };
 export type CohortId = string & { readonly __brand: "CohortId" };
 export type EpicProfileId = string & { readonly __brand: "EpicProfileId" };
 export type WorkflowRunId = string & { readonly __brand: "WorkflowRunId" };
+export type JsonValue = null | boolean | number | string | readonly JsonValue[] | { readonly [key: string]: JsonValue };
+
+export type RunEventOperation =
+  | "stage_materialized" | "materialization_closed" | "materialization_failed" | "run_cancelled"
+  | "unit_admitted" | "operator_retry_created" | "input_revised" | "slot_released" | "slot_pending"
+  | "slot_invalidated" | "unit_satisfied" | "work_started" | "gate_opened" | "gate_decided"
+  | "pull_request_observed" | "pull_request_merge_confirmed";
+
+export interface RunEventPayload {
+  readonly run_id: WorkflowRunId;
+  readonly run_unit_id: string | null;
+  readonly stage_instance_id: string | null;
+  readonly stage_key: string | null;
+  readonly unit_id: string | null;
+  readonly work_order_id: string | null;
+  readonly wait_id: string | null;
+  readonly output_name: string | null;
+  readonly collection_key: string | null;
+  readonly artifact_revision_id: string | null;
+  readonly attention: "required" | "optional" | "none" | null;
+  readonly continuation: "waiting" | "continuing" | null;
+  readonly detail: JsonValue;
+}
+
+type GateRunEventOperation = "gate_opened" | "gate_decided";
+type PullRequestRunEventOperation = "pull_request_observed" | "pull_request_merge_confirmed";
+type OtherRunEventOperation = Exclude<RunEventOperation, GateRunEventOperation | PullRequestRunEventOperation>;
+
+export interface GateRunEventPayload extends RunEventPayload {
+  readonly run_unit_id: string;
+  readonly stage_instance_id: string;
+  readonly stage_key: string;
+  readonly unit_id: string;
+  readonly wait_id: string;
+  readonly output_name: string;
+  readonly artifact_revision_id: string;
+  readonly attention: "required" | "optional" | "none";
+  readonly continuation: "waiting" | "continuing";
+}
+
+export interface PullRequestRunEventPayload extends RunEventPayload {
+  readonly run_unit_id: string;
+  readonly stage_instance_id: string;
+  readonly stage_key: string;
+  readonly unit_id: string;
+  readonly artifact_revision_id: string;
+  readonly detail: {
+    readonly [key: string]: JsonValue;
+    readonly repository_key: string;
+    readonly pull_request_url: string;
+    readonly state: string;
+    readonly source: string;
+    readonly merged_at: string | null;
+  };
+}
+
+interface RunEventEnvelope<Operation extends RunEventOperation, Payload extends RunEventPayload> {
+  readonly sequence: string;
+  readonly operation: Operation;
+  readonly payload: Payload;
+  readonly occurred_at: string;
+}
+
+export type RunEvent =
+  | RunEventEnvelope<GateRunEventOperation, GateRunEventPayload>
+  | RunEventEnvelope<PullRequestRunEventOperation, PullRequestRunEventPayload>
+  | RunEventEnvelope<OtherRunEventOperation, RunEventPayload>;
+
+export type RunEventFrame = RunEvent & { readonly replayed: boolean };
 
 export interface RepositoryInputDraft {
   key: string;
@@ -190,6 +259,8 @@ export interface RunSummary {
   workflow_name: string;
   status: RunStatus;
   current_stage: string | null;
+  stage_total: number;
+  stage_complete: number;
   parked_count: number;
   updated_at: string;
   is_stuck: boolean;
@@ -476,7 +547,7 @@ export type ReviewInboxItemKind =
   | "pull_request_merge"
   | "gate_decision";
 
-export type ReviewInboxItemState = "actionable" | "blocked" | "completed";
+export type ReviewInboxItemState = "actionable" | "blocked";
 
 export interface ReviewInboxItem {
   id: string;
@@ -497,9 +568,9 @@ export interface ReviewInboxItem {
   resume_actions: string[];
   blocked_by: string[];
   pr_url?: string | null;
-  completed_at?: string | null;
 }
 
+/** The items list is the required-attention decision queue; completed and optional-attention history lives outside the inbox. */
 export interface ReviewInbox {
   cohorts: CohortLifecycleSummary[];
   items: ReviewInboxItem[];

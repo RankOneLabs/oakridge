@@ -69,6 +69,8 @@ const RUN_SUMMARY_FIXTURE: RunSummary = {
   workflow_name: "v2_spec_to_ship",
   status: "running",
   current_stage: "build",
+  stage_total: 5,
+  stage_complete: 2,
   parked_count: 0,
   updated_at: "2026-07-01T10:00:00Z",
   is_stuck: false,
@@ -82,6 +84,8 @@ const PARKED_RUN_SUMMARY: RunSummary = {
   workflow_name: "v2_hotfix",
   status: "parked",
   current_stage: "approve",
+  stage_total: 4,
+  stage_complete: 1,
   parked_count: 2,
   updated_at: "2026-07-01T09:00:00Z",
   is_stuck: false,
@@ -142,12 +146,12 @@ const RUN_DETAIL_FIXTURE: RunDetail = {
 // ──────────────────────────────────────────────────────────────────────────────
 
 describe("RunListView", () => {
-  it("offers a visible review inbox entry point", async () => {
+  it("offers a visible workflow definitions entry point", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json([]));
-    const onReviewInbox = vi.fn();
-    wrap(<RunListView onSelectRun={() => {}} onNewRun={() => {}} onNewProject={() => {}} onReviewInbox={onReviewInbox} />);
-    fireEvent.click(await screen.findByTestId("or-review-inbox-btn"));
-    expect(onReviewInbox).toHaveBeenCalledOnce();
+    const onWorkflows = vi.fn();
+    wrap(<RunListView onSelectRun={() => {}} onNewRun={() => {}} onNewProject={() => {}} onWorkflows={onWorkflows} />);
+    fireEvent.click(await screen.findByTestId("or-workflows-btn"));
+    expect(onWorkflows).toHaveBeenCalledOnce();
   });
 
   it("shows loading state while runs are pending", () => {
@@ -588,9 +592,7 @@ describe("OakridgeShell unavailable state", () => {
   it("shows unavailable notice when config returns available=false", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ available: false }));
     const { OakridgeShell } = await import("../OakridgeShell");
-    wrap(
-      <OakridgeShell route={{ sub: "runs" }} onBack={() => {}} />,
-    );
+    wrap(<OakridgeShell route={{ sub: "runs" }} />);
     expect(await screen.findByTestId("or-unavailable")).toBeTruthy();
   });
 });

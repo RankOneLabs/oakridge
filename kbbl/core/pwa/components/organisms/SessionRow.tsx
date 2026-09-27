@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
-import { useMutation } from "@tanstack/react-query";
 
 import type { SessionSnapshot } from "../../types";
 import { useRelativeTime } from "../../hooks/useRelativeTime";
+import { useRemoveSession } from "../../hooks/useRemoveSession";
 import { prettyEffortLabel, prettyModelLabel } from "../../lib/format";
-import { refusalOf, sessionCloseError } from "../../lib/session-close";
 import { resumeTitle, selectSessionCohortLabel } from "../../lib/session";
 
 export function SessionRow({
@@ -27,27 +26,7 @@ export function SessionRow({
       snapshot.status === "fenced" ||
       snapshot.status === "failed");
   const [confirmRemove, setConfirmRemove] = useState(false);
-
-  // Server pushes a fresh /inbox snapshot after the purge drops the row,
-  // so there is no optimistic UI. A failure has to be rendered though: the
-  // execution-hold refusal is deterministic, so a silent failure left the
-  // operator tapping Remove forever with nothing to read and no way past.
-  const removeMutation = useMutation({
-    mutationFn: async ({ force }: { force: boolean }) => {
-      const query = force ? "?purge=true&force=1" : "?purge=true";
-      const res = await fetch(`/sessions/${encodeURIComponent(snapshot.sid)}${query}`, {
-        method: "DELETE",
-      });
-      if (!res.ok) throw await sessionCloseError(res);
-    },
-  });
-  const refusal = removeMutation.isError ? refusalOf(removeMutation.error) : null;
-  const removeError = removeMutation.isError
-    ? (refusal?.message ??
-      (removeMutation.error instanceof Error
-        ? removeMutation.error.message
-        : "Could not remove the session."))
-    : null;
+  const { mutation: removeMutation, refusal, error: removeError } = useRemoveSession(snapshot.sid);
 
   // Auto-clear the confirm-pending state after a few seconds so a stray
   // first tap doesn't leave a primed Remove button waiting indefinitely.

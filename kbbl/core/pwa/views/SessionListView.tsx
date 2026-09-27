@@ -8,9 +8,10 @@ import type {
 import type { RuntimeId } from "../../runtime-interface";
 import {
   compareSessionsByDisplayedActivity,
-  groupSessionsByCohort,
+  groupSessionsByRun,
   selectNextJustNowExpiryDelay,
 } from "../../acp/pwa-session-order";
+import type { SessionRunGroup } from "../../acp/pwa-session-order";
 
 import { SessionRow } from "../components/organisms/SessionRow";
 import { SessionCohortHeading } from "../components/molecules/SessionCohortHeading";
@@ -19,6 +20,12 @@ import {
   type NewSessionFormValues,
 } from "../components/organisms/NewSessionForm";
 import { useUrlPrefill } from "../hooks/useUrlPrefill";
+import { useRun } from "../oakridge/hooks/useRun";
+import { useRuns } from "../oakridge/hooks/useRuns";
+import {
+  selectSessionRunTitle,
+  selectSessionStageName,
+} from "../lib/session";
 
 interface StartSessionBody {
   resume_from?: string;
@@ -49,6 +56,53 @@ function SessionRowList({ sessions, onSelect, onResume, resumeDisabled }: Sessio
         />
       ))}
     </ul>
+  );
+}
+
+interface SessionRunSectionProps {
+  run: SessionRunGroup;
+  title: string | null;
+  onSelect: (sid: string) => void;
+  onResume: (sid: string) => void;
+  resumeDisabled: boolean;
+}
+
+function SessionRunSection({
+  run,
+  title,
+  onSelect,
+  onResume,
+  resumeDisabled,
+}: SessionRunSectionProps) {
+  const hasStageGroup = run.groups.some((group) => group.kind === "stage");
+  const runQuery = useRun(run.runId, hasStageGroup);
+
+  return (
+    <section
+      className="session-run-group"
+      data-testid={`session-run-${run.runId}`}
+    >
+      <h2 className="session-cohort-heading session-cohort-heading--plain">
+        {title ?? "Run"}
+      </h2>
+      {run.groups.map((group) => (
+        <section key={group.key} className="session-cohort-group">
+          <SessionCohortHeading
+            title={group.kind === "cohort"
+              ? group.title
+              : selectSessionStageName(group.stageInstanceId, runQuery.data) ?? "Stage"}
+            secondaryId={group.kind === "cohort" ? group.unitId : undefined}
+            repositoryKey={group.repositoryKey}
+          />
+          <SessionRowList
+            sessions={group.sessions}
+            onSelect={onSelect}
+            onResume={onResume}
+            resumeDisabled={resumeDisabled}
+          />
+        </section>
+      ))}
+    </section>
   );
 }
 
@@ -89,12 +143,13 @@ export function SessionListView({
   const prefill = useUrlPrefill();
 
   const grouping = useMemo(
-    () => groupSessionsByCohort(
+    () => groupSessionsByRun(
       [...sessions.values()],
       compareSessionsByDisplayedActivity(Date.now()),
     ),
     [orderingTick, sessions],
   );
+  const runsQuery = useRuns("all", grouping.runs.length > 0);
   const totalCount = sessions.size;
 
   const startMutation = useMutation({
@@ -177,14 +232,6 @@ export function SessionListView({
         </div>
         <button
           type="button"
-          className="workspace-nav-link"
-          onClick={() => { window.location.hash = "oakridge"; }}
-        >
-          <span>Oakridge</span>
-          <small>Workflows</small>
-        </button>
-        <button
-          type="button"
           className="theme-toggle"
           onClick={onToggleTheme}
           title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
@@ -221,28 +268,26 @@ export function SessionListView({
         <div className="session-list-empty">No sessions yet.</div>
       ) : (
         <div className="session-cohort-groups">
-          {grouping.groups.map((group) => (
-            <section key={group.key} className="session-cohort-group">
-              <SessionCohortHeading
-                title={group.title}
-                unitId={group.unitId}
-                repositoryKey={group.repositoryKey}
-              />
-              <SessionRowList
-                sessions={group.sessions}
-                onSelect={onSelect}
-                onResume={(sid) => void startSession(undefined, sid)}
-                resumeDisabled={startMutation.isPending}
-              />
-            </section>
+          {grouping.runs.map((run) => (
+            <SessionRunSection
+              key={run.runId}
+              run={run}
+              title={selectSessionRunTitle(run.runId, runsQuery.data ?? [])}
+              onSelect={onSelect}
+              onResume={(sid) => void startSession(undefined, sid)}
+              resumeDisabled={startMutation.isPending}
+            />
           ))}
-          {grouping.ungrouped.length > 0 && (
-            <section className="session-cohort-group session-cohort-group--ungrouped">
+          {grouping.unattached.length > 0 && (
+            <section
+              className="session-cohort-group session-cohort-group--unattached"
+              data-testid="unattached-sessions"
+            >
               <h2 className="session-cohort-heading session-cohort-heading--plain">
-                Other sessions
+                Unattached sessions
               </h2>
               <SessionRowList
-                sessions={grouping.ungrouped}
+                sessions={grouping.unattached}
                 onSelect={onSelect}
                 onResume={(sid) => void startSession(undefined, sid)}
                 resumeDisabled={startMutation.isPending}

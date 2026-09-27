@@ -16,6 +16,7 @@ import type { SlotBinding } from "../domain/delegated-session";
 import type { ArtifactEnvelope } from "../domain/execution";
 import { err, ok, type ArtifactId, type InputFingerprint, type JsonValue, type OutputCollectionKey, type Result, type RunUnitId, type StageInstanceId, type UnitId, type WorkflowRunId } from "../domain/primitives";
 import type { MaterializedRunOutput } from "../domain/run-record";
+import { selectOutputReleasePolicy } from "../domain/output-release-policy";
 import type { StageKey, StageOutcome } from "../domain/workflow";
 import { resolveBindingValue, type BindingEnvironment } from "../compiler/resolve-execution";
 import { readJsonPointer } from "../domain/json-pointer";
@@ -89,13 +90,15 @@ const selectInputsForUnit = (stage: CompiledStageContract, inputs: StageInputSet
 const outputSlots = (contract: CompiledStageContract, unit: MaterializedExecutionUnit): Result<readonly MaterializedRunOutput[], { readonly path: string; readonly detail: string }> => {
   const materialization = contract.materialization;
   if (materialization.kind !== "artifact_collection") {
-    return ok(contract.outputs.map((output) => ({ identity: { kind: "scalar" as const, output_name: output.name }, artifact_type: output.artifact_type, required: true, release: output.release })));
+    return ok(contract.outputs.map((output) => ({ identity: { kind: "scalar" as const, output_name: output.name }, artifact_type: output.artifact_type, required: true,
+      release: output.release, attention: selectOutputReleasePolicy(output.release, output.attention ?? null).attention })));
   }
   const outputs: MaterializedRunOutput[] = [];
   for (const item of unit.parameters as readonly JsonValue[]) {
     const key = readJsonPointer(item, materialization.id_path);
     if (typeof key !== "string" || key.length === 0) return err({ path: materialization.id_path, detail: `artifact collection key '${materialization.id_path}' must be a non-empty string` });
-    for (const output of contract.outputs) outputs.push({ identity: { kind: "collection_member" as const, output_name: output.name, collection_key: key as OutputCollectionKey }, artifact_type: output.artifact_type, required: true, release: output.release });
+    for (const output of contract.outputs) outputs.push({ identity: { kind: "collection_member" as const, output_name: output.name, collection_key: key as OutputCollectionKey }, artifact_type: output.artifact_type, required: true,
+      release: output.release, attention: selectOutputReleasePolicy(output.release, output.attention ?? null).attention });
   }
   return ok(outputs);
 };

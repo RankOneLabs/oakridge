@@ -52,6 +52,11 @@ export function RunIdentityHeader({
         <span className="text-xs text-[var(--text-muted)]" data-testid="or-run-identity-workflow">
           {run.workflow_name}
         </span>
+        {run.repository_keys.length > 0 && (
+          <span className="text-xs text-[var(--text-secondary)]" data-testid="or-run-identity-repositories">
+            {run.repository_keys.join(" · ")}
+          </span>
+        )}
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <StatusBadge status={run.status} testId="or-run-identity-status" />

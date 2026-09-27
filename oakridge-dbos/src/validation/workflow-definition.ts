@@ -17,7 +17,11 @@ const inputSlotSchema = z.object({
   delivery: z.enum(["producer_complete", "unit_complete"]).default("producer_complete"),
 });
 
-const outputSlotSchema = z.object({ name: z.string().min(1), artifact_type: z.string().min(1) });
+const outputSlotSchema = z.object({
+  name: z.string().min(1),
+  artifact_type: z.string().min(1),
+  attention: z.enum(["required", "optional", "none"]).optional(),
+});
 const endpointSchema = z.object({ stage: z.string().min(1), slot: z.string().min(1) });
 const stageSchema = z.object({
   stage_type: z.string().min(1),

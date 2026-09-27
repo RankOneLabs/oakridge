@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { AskResult } from "../src/decision/commands";
 import type { ExecutionRequest } from "../src/domain/execution";
 import type { ArtifactId, ExecutionId, InputFingerprint, OutputCollectionKey, Result, RunUnitId, StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId, WorkOrderId } from "../src/domain/primitives";
-import type { OutputReleaseContract } from "../src/domain/compiled-workflow";
+import type { OutputAttention, OutputReleaseContract } from "../src/domain/compiled-workflow";
 import type { MaterializedRunOutput, PersistMaterializedStage } from "../src/domain/run-record";
 import { applyMigrations } from "../src/storage/migrate";
 import { PostgresArtifactRevisionRepository } from "../src/storage/postgres-domain";
@@ -57,7 +57,7 @@ test("one released run-owned slot completes a straight-through run after reposit
     work_order_id: workOrderId, work_order_workflow_id: `v2-work:${workOrderId}`, stage_key: "build", executor_type: "delegated_session",
     work_order_capability_hash: capabilityHash,
     resolved_config: {}, parameters: {}, input_snapshot: [], input_fingerprint: "empty" as InputFingerprint,
-    outputs: [{ name: "result", artifact_type: "dev.result", required: true, release: { kind: "immediate" } }], created_at: now } as const;
+    outputs: [{ name: "result", artifact_type: "dev.result", required: true, release: { kind: "immediate" }, attention: "optional" }], created_at: now } as const;
   await records.initialize_straight_through(initialization);
   await records.initialize_straight_through(initialization);
   expect((await sql.query<{ readonly record_version: string }>("SELECT record_version::text FROM oakridge.workflow_run WHERE id = $1", [runId]))[0]?.record_version).toBe("1");
@@ -85,6 +85,14 @@ test("one released run-owned slot completes a straight-through run after reposit
     .toEqual({ kind: "invalid_capability", detail: "work-order capability was not accepted" });
   expect(await records.publish_artifact({ artifact_id: artifactId, work_order_id: workOrderId, output_name: "result", body,
     capability_hash: capabilityHash, idempotency_key: "result-1", payload_hash: payloadHash, published_at: now })).toEqual(expect.objectContaining({ kind: "published", artifact_id: artifactId }));
+  const releaseFact = (await sql.query<{ readonly release_policy: unknown; readonly detail: unknown }>(`SELECT slot.release_policy, transition.detail
+    FROM oakridge.run_output_slot slot JOIN oakridge.run_transition transition
+      ON transition.run_unit_id=slot.run_unit_id AND transition.output_name=slot.output_name
+    WHERE slot.run_unit_id=$1 AND transition.operation='slot_released'`, [runUnitId]))[0];
+  expect(releaseFact).toEqual({
+    release_policy: { kind: "immediate", attention: "optional" },
+    detail: { artifact_id: artifactId, attention: "optional", continuation: "continuing" },
+  });
   const replay = { artifact_id: randomUUID() as ArtifactId, work_order_id: workOrderId, output_name: "result", body,
     capability_hash: capabilityHash, idempotency_key: "result-1", payload_hash: payloadHash, published_at: new Date().toISOString() };
   expect(await records.publish_artifact(replay)).toEqual(expect.objectContaining({ kind: "already_applied", artifact_id: artifactId }));
@@ -103,7 +111,7 @@ test("one released run-owned slot completes a straight-through run after reposit
 });
 
 /** One straight-through run with a single gated output, for the pending/close tests below. */
-const setupGatedRun = async (): Promise<{
+const setupGatedRun = async (attention?: OutputAttention): Promise<{
   readonly records: PostgresRunRecordRepository; readonly runId: WorkflowRunId; readonly runUnitId: RunUnitId; readonly workOrderId: WorkOrderId;
   readonly capabilityHash: string; readonly now: string;
 } | null> => {
@@ -125,7 +133,7 @@ const setupGatedRun = async (): Promise<{
     run_id: runId, stage_instance_id: stageId, run_unit_id: runUnitId, unit_id: unitId,
     work_order_id: workOrderId, work_order_workflow_id: `v2-work:${workOrderId}`, stage_key: "build", executor_type: "delegated_session",
     work_order_capability_hash: capabilityHash, resolved_config: {}, parameters: {}, input_snapshot: [], input_fingerprint: "empty" as InputFingerprint,
-    outputs: [{ name: "result", artifact_type: "dev.result", required: true,
+    outputs: [{ name: "result", artifact_type: "dev.result", required: true, attention,
       release: { kind: "gate", steps: [{ type: "artifact_approval", actions: [{ name: "approve", disposition: "release" }, { name: "request_revision", disposition: "revise" }] }], requires_zero_open_review_items: false, revision_target: "self_stage" } } ],
     created_at: now,
   });
@@ -154,8 +162,8 @@ test("a gated publication parks the slot pending and opens its wait, atomically 
   const artifactRow = await sql!.query<{ readonly lifecycle_state: string; readonly released_at: string | null }>("SELECT lifecycle_state, released_at FROM oakridge.artifact WHERE id = $1", [artifactId]);
   expect(artifactRow[0]).toEqual({ lifecycle_state: "current", released_at: null });
   const transition = await sql!.query<{ readonly operation: string; readonly wait_id: string; readonly resulting_record_version: string; readonly prior_record_version: string }>(
-    "SELECT operation, wait_id::text, resulting_record_version::text, prior_record_version::text FROM oakridge.run_transition WHERE wait_id = $1", [published.wait_id]);
-  expect(transition[0]?.operation).toBe("slot_pending");
+    "SELECT operation, wait_id::text, resulting_record_version::text, prior_record_version::text FROM oakridge.run_transition WHERE wait_id = $1 ORDER BY sequence", [published.wait_id]);
+  expect(transition.map((row) => row.operation)).toEqual(["slot_pending", "gate_opened"]);
   expect(Number(transition[0]?.resulting_record_version)).toBeGreaterThan(Number(transition[0]?.prior_record_version));
 
   // A wait still open means the run is waiting, not stuck and not satisfied —
@@ -183,6 +191,9 @@ test("the owning gate command releases the wait and the slot atomically; the run
   expect(slot[0]).toEqual({ state: "released", release_wait_id: null });
   const artifactRow = await sql!.query<{ readonly lifecycle_state: string }>("SELECT lifecycle_state FROM oakridge.artifact WHERE id = $1", [artifactId]);
   expect(artifactRow[0]?.lifecycle_state).toBe("released");
+  const gateTransitions = await sql!.query<{ readonly operation: string }>(
+    "SELECT operation FROM oakridge.run_transition WHERE wait_id=$1 ORDER BY sequence", [published.wait_id]);
+  expect(gateTransitions.map((row) => row.operation)).toEqual(["slot_pending", "gate_opened", "slot_released", "gate_decided"]);
 
   // Retrying the same disposition is absorbed, not reapplied.
   expect(await records.close_output_wait({ wait_id: published.wait_id, disposition: "release", actor: "operator:sam", detail: "looks good", decided_at: now }))
@@ -1121,4 +1132,38 @@ test("deletion racing the first executor reservation cannot delete a successfull
   }
   // If deletion wins, ensure fails before the workflow can call start_or_attach.
   await expect(setup.records.ensure_executor_attachment(workId, "test", setup.input.materialized_at)).rejects.toThrow("was not found");
+});
+
+
+test.each(["optional", "none"] as const)("a gate declaring %s attention remains on the run but outside the decision queue", async (attention) => {
+  const setup = await setupGatedRun(attention);
+  if (!setup || !sql) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  await setup.records.publish_artifact({ artifact_id: randomUUID() as ArtifactId, work_order_id: setup.workOrderId, output_name: "result", body: {},
+    capability_hash: setup.capabilityHash, idempotency_key: "attention-projection", payload_hash: "attention-projection", published_at: setup.now });
+  const repository = new PostgresOperatorProjectionRepository(sql, "test");
+  expect(await repository.list_pending_gates(setup.runId)).toHaveLength(1);
+  const inbox = await repository.get_review_inbox();
+  expect(inbox.items.filter(item => item.run_id === setup.runId)).toHaveLength(0);
+});
+
+test("a gate in one scalar stage does not hide another scalar stage admission", async () => {
+  const setup = await setupGatedRun();
+  if (!setup || !sql) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  const secondStageId = randomUUID();
+  // Legacy slots have no attention field; gates must still default to required.
+  await sql.query(`UPDATE oakridge.run_output_slot SET release_policy=release_policy - 'attention' WHERE run_unit_id=$1`, [setup.runUnitId]);
+  await sql.query(`UPDATE oakridge.run_unit SET unit_id='0' WHERE id=$1`, [setup.runUnitId]);
+  await setup.records.publish_artifact({ artifact_id: randomUUID() as ArtifactId, work_order_id: setup.workOrderId, output_name: "result", body: {},
+    capability_hash: setup.capabilityHash, idempotency_key: "attention-projection", payload_hash: "attention-projection", published_at: setup.now });
+  await sql.query(`INSERT INTO oakridge.stage_instance (id,run_id,stage_key,stage_type,stage_contract,coordinator_workflow_id,started_at,attempt_root_workflow_id)
+    VALUES ($1,$2,'other','delegated_session','{"outputs":[{"name":"result","artifact_type":"dev.result","release":{"kind":"immediate"},"attention":"optional"}]}'::jsonb,$3,$4,NULL)`,
+    [secondStageId,setup.runId,`v2-stage:${secondStageId}`,setup.now]);
+  await sql.query(`INSERT INTO oakridge.run_stage_scheduling_policy (stage_instance_id,max_parallel,manual_admission,materialization_fingerprint) VALUES ($1,1,true,'fixture')`, [secondStageId]);
+  await sql.query(`INSERT INTO oakridge.run_unit (id,run_id,stage_instance_id,unit_id,parameters,input_snapshot,input_fingerprint,state,admitted,created_at)
+    VALUES ($1,$2,$3,'0','{}'::jsonb,'[]'::jsonb,'empty','working',false,$4)`, [randomUUID(),setup.runId,secondStageId,setup.now]);
+  const repo = new PostgresOperatorProjectionRepository(sql, "test");
+  expect((await repo.list_cohorts()).find(c => c.stage_instance_id === secondStageId)?.lifecycle).toBe("waiting_admission");
+  const inbox = await repo.get_review_inbox();
+  expect(inbox.items.filter(item => item.stage_instance_id === secondStageId && item.kind === "admission")).toHaveLength(1);
+  expect(inbox.items.filter(item => item.run_id === setup.runId && item.kind === "artifact_gate")).toHaveLength(1);
 });

@@ -81,3 +81,32 @@ test("accepts a non-session executor through the stage-type compiler registry", 
   expect(compiled.ok).toBe(true);
   if (compiled.ok) expect(compiled.value.stages.only?.executor.executor_type).toBe("headless_agent");
 });
+
+test("rejects required attention on an immediate output", async () => {
+  const loaded = await loadDevFlowV14();
+  if (!loaded.ok) throw new Error(loaded.error.detail);
+  const provision = loaded.value.graph.stages.provision_refs!;
+  const definition = {
+    ...loaded.value,
+    graph: { ...loaded.value.graph, stages: { ...loaded.value.graph.stages,
+      provision_refs: { ...provision, outputs: provision.outputs.map((output) => ({ ...output, attention: "required" as const })) } } },
+  };
+  expect(compileWorkflowDefinition(definition)).toEqual({ ok: false, error: {
+    operation: "compile_workflow", stage_key: "provision_refs",
+    detail: "output 'repository_refs' declares required attention but continues immediately",
+  } });
+});
+
+test("accepts no attention on a waiting handoff", async () => {
+  const loaded = await loadDevFlowV14();
+  if (!loaded.ok) throw new Error(loaded.error.detail);
+  const build = loaded.value.graph.stages.build!;
+  const definition = {
+    ...loaded.value,
+    graph: { ...loaded.value.graph, stages: { ...loaded.value.graph.stages,
+      build: { ...build, outputs: build.outputs.map((output) => output.name === "build_result" ? { ...output, attention: "none" as const } : output) } } },
+  };
+  const compiled = compileWorkflowDefinition(definition);
+  expect(compiled.ok).toBe(true);
+  if (compiled.ok) expect(compiled.value.stages.build?.outputs.find((output) => output.name === "build_result")?.attention).toBe("none");
+});

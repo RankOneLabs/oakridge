@@ -1,9 +1,10 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, test, vi } from "vitest";
 
 import type { RuntimeDescriptor, SessionSnapshot } from "../types";
 import type { PwaSessionWorkflowIdentity } from "../../acp/pwa-wire";
+import type { RunDetail, RunSummary } from "../oakridge/types";
 import { SessionListView } from "./SessionListView";
 
 const runtimes: RuntimeDescriptor[] = [
@@ -46,8 +47,52 @@ function makeSnapshot(overrides: Partial<SessionSnapshot> = {}): SessionSnapshot
   };
 }
 
-function renderList(sessions: Map<string, SessionSnapshot>) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+const runSummary: RunSummary = {
+  id: "run-1",
+  title: "Persisted run title",
+  repository_keys: ["oakridge"],
+  workflow_name: "development",
+  status: "running",
+  current_stage: "Build",
+  stage_total: 2,
+  stage_complete: 0,
+  parked_count: 0,
+  updated_at: "2026-01-01T00:00:00.000Z",
+  is_stuck: false,
+  is_failed: false,
+};
+
+const runDetail: RunDetail = {
+  id: "run-1",
+  title: "Persisted run title",
+  repository_keys: ["oakridge"],
+  workflow_name: "development",
+  status: "running",
+  stages: [{
+    stage_instance_id: "stage-plan",
+    name: "Plan the work",
+    type: "scalar",
+    status: "running",
+    artifacts: [],
+    delegated_kbbl_sid: null,
+    worktree: null,
+  }],
+  parked_count: 0,
+  updated_at: "2026-01-01T00:00:00.000Z",
+  is_stuck: false,
+};
+
+function renderList(
+  sessions: Map<string, SessionSnapshot>,
+  seedRunData = true,
+) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Infinity }, mutations: { retry: false } },
+  });
+  if (seedRunData) {
+    client.setQueryData(["oakridge", "runs", "all"], [runSummary]);
+    client.setQueryData(["oakridge", "run", "run-1"], runDetail);
+  }
   return render(
     <QueryClientProvider client={client}>
       <SessionListView
@@ -66,29 +111,134 @@ function renderList(sessions: Map<string, SessionSnapshot>) {
 }
 
 describe("SessionListView grouping", () => {
-  test("renders one section per cohort group plus a trailing Other sessions section", () => {
+  test("prefill autostart creates a session from a no-hash URL", async () => {
+    history.replaceState(null, "", "/?workdir=%2Ftmp%2Fx&autostart=true");
+    const created = makeSnapshot({ sid: "autostart-session", projectWorkdir: "/tmp/x" });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(created), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const onSelect = vi.fn();
+    const onHydrateSession = vi.fn();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+
+    try {
+      render(
+        <QueryClientProvider client={client}>
+          <SessionListView
+            sessions={new Map()}
+            inboxStatus="connected"
+            theme="dark"
+            defaultWorkdir="/repo"
+            defaultRuntimeId="claude-code"
+            runtimes={runtimes}
+            onToggleTheme={() => {}}
+            onSelect={onSelect}
+            onHydrateSession={onHydrateSession}
+          />
+        </QueryClientProvider>,
+      );
+
+      expect(screen.getByLabelText("Workdir for new session")).toHaveProperty("value", "/tmp/x");
+      await waitFor(() => expect(fetchSpy).toHaveBeenCalledOnce());
+      const request = fetchSpy.mock.calls[0];
+      expect(request[0]).toBe("/sessions");
+      expect(JSON.parse(String(request[1]?.body))).toMatchObject({ workdir: "/tmp/x" });
+      await waitFor(() => expect(onHydrateSession).toHaveBeenCalledWith(created));
+      expect(onSelect).toHaveBeenCalledWith("autostart-session");
+      expect(window.location.search).toBe("");
+      expect(window.location.hash).toBe("#sessions");
+    } finally {
+      history.replaceState(null, "", "/");
+      vi.restoreAllMocks();
+    }
+  });
+
+  test("loads persisted run and stage labels and renders a trailing unattached section", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === "/oakridge/api/runs?filter=all") {
+        return new Response(JSON.stringify([runSummary]), { status: 200 });
+      }
+      if (url === "/oakridge/api/runs/run-1") {
+        return new Response(JSON.stringify(runDetail), { status: 200 });
+      }
+      return new Response(null, { status: 404 });
+    });
     const build = makeSnapshot({ sid: "build-1", name: "build-stage-1-cohort-one", workflow: workflow() });
     const assess = makeSnapshot({
       sid: "assess-1",
       name: "assessor-stage-2-cohort-one",
       workflow: workflow({ operatorRole: "assessment", stageInstanceId: "stage-assess", cohortTitle: null }),
     });
+    const scalar = makeSnapshot({
+      sid: "plan-1",
+      name: "planner-stage-plan-0",
+      workflow: workflow({
+        stageInstanceId: "stage-plan",
+        unitId: "0",
+        operatorRole: "planning",
+        cohortTitle: null,
+        repositoryKey: null,
+      }),
+    });
     const handStarted = makeSnapshot({ sid: "hand-1", name: "hand-started-session", workflow: null });
 
-    const { container } = renderList(new Map([
-      [build.sid, build],
-      [assess.sid, assess],
-      [handStarted.sid, handStarted],
-    ]));
+    try {
+      const { container } = renderList(new Map([
+        [build.sid, build],
+        [assess.sid, assess],
+        [scalar.sid, scalar],
+        [handStarted.sid, handStarted],
+      ]), false);
 
-    expect(screen.getByText("Cohort One")).toBeTruthy();
-    expect(screen.getByText("cohort-one")).toBeTruthy();
-    expect(screen.getByText("oakridge")).toBeTruthy();
-    expect(screen.getByText("build")).toBeTruthy();
-    expect(screen.getByText("assessment")).toBeTruthy();
-    expect(screen.getByText("Other sessions")).toBeTruthy();
-    expect(container.querySelectorAll(".session-cohort-group")).toHaveLength(2);
-    expect(screen.queryByText("No sessions yet.")).toBeNull();
+      const run = screen.getByTestId("session-run-run-1");
+      expect(await within(run).findByText("Persisted run title")).toBeTruthy();
+      expect(screen.getByText("Cohort One")).toBeTruthy();
+      expect(screen.getByText("cohort-one")).toBeTruthy();
+      expect(await within(run).findByText("Plan the work")).toBeTruthy();
+      expect(within(run).queryByText("stage-plan")).toBeNull();
+      expect(within(run).getByText("planning-0")).toBeTruthy();
+      expect(screen.getByText("oakridge")).toBeTruthy();
+      expect(screen.getByText("build")).toBeTruthy();
+      expect(screen.getByText("assessment")).toBeTruthy();
+      expect(screen.getByText("Unattached sessions")).toBeTruthy();
+      expect(screen.getByTestId("unattached-sessions")).toBeTruthy();
+      expect(container.querySelectorAll(".session-cohort-group")).toHaveLength(3);
+      expect(screen.queryByText("No sessions yet.")).toBeNull();
+      expect(fetchSpy).toHaveBeenCalledWith("/oakridge/api/runs?filter=all");
+      expect(fetchSpy).toHaveBeenCalledWith("/oakridge/api/runs/run-1");
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  test("does not load run detail when every subgroup is a cohort", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === "/oakridge/api/runs?filter=all") {
+        return new Response(JSON.stringify([runSummary]), { status: 200 });
+      }
+      return new Response(null, { status: 404 });
+    });
+    const build = makeSnapshot({
+      sid: "build-1",
+      name: "build-stage-1-cohort-one",
+      workflow: workflow(),
+    });
+
+    try {
+      renderList(new Map([[build.sid, build]]), false);
+
+      expect(await screen.findByText("Persisted run title")).toBeTruthy();
+      expect(screen.getByText("Cohort One")).toBeTruthy();
+      expect(fetchSpy).toHaveBeenCalledWith("/oakridge/api/runs?filter=all");
+      expect(fetchSpy).not.toHaveBeenCalledWith("/oakridge/api/runs/run-1");
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 
   test("renders the empty state only when there are no sessions at all", () => {
@@ -117,7 +267,7 @@ describe("SessionListView grouping", () => {
     rerender(view(new Map([[handStarted.sid, handStarted]])));
 
     expect(screen.queryByText("No sessions yet.")).toBeNull();
-    expect(screen.getByText("Other sessions")).toBeTruthy();
+    expect(screen.getByText("Unattached sessions")).toBeTruthy();
   });
 
   test("returns to newest-first order when the just-now bucket expires", () => {

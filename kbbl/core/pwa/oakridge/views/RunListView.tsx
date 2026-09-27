@@ -4,8 +4,9 @@ interface RunListViewProps {
   onSelectRun: (id: string) => void;
   onNewRun: () => void;
   onNewProject: () => void;
-  onReviewInbox?: () => void;
+  onWorkflows?: () => void;
   onSelectArtifact?: (id: string) => void;
+  runAttentionCounts?: ReadonlyMap<string, number>;
 }
 
 export function RunListView(props: RunListViewProps) {

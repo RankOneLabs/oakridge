@@ -7,6 +7,7 @@ import { repositoryProvisioningDefinitionSchema } from "../validation/repository
 import { selectBuiltInGateDisposition } from "../domain/gates";
 import { readOwn } from "../domain/records";
 import { PROVISION_REPOSITORY_REFS_STAGE_TYPE, RUN_CONTEXT_REPOSITORY_KEY_POINTER, type RepositoryProvisioningDefinitionConfig } from "../domain/repository-refs";
+import { selectOutputReleasePolicy } from "../domain/output-release-policy";
 
 export interface CompileWorkflowError {
   readonly operation: "compile_workflow";
@@ -114,7 +115,16 @@ const compileStage = (stageKey: string, node: StageNodeDefinition, registry: Sta
   if (!compiler) return err({ operation: "compile_workflow", stage_key: stageKey, detail: `unregistered stage type '${node.stage_type}'` });
   const compiledConfig = compiler.compile(stageKey, node.config);
   if (!compiledConfig.ok) return compiledConfig;
-  const outputs: readonly CompiledOutputContract[] = node.outputs.map((output) => ({ ...output, release: compiledConfig.value.output_release(output.name) }));
+  const outputs: CompiledOutputContract[] = [];
+  for (const output of node.outputs) {
+    const release = compiledConfig.value.output_release(output.name);
+    const policy = selectOutputReleasePolicy(release, output.attention ?? null);
+    if (policy.attention === "required" && policy.continuation === "continuing") {
+      return err({ operation: "compile_workflow", stage_key: stageKey,
+        detail: `output '${output.name}' declares required attention but continues immediately` });
+    }
+    outputs.push({ ...output, release });
+  }
   return ok({
     stage_key: stageKey,
     stage_type: node.stage_type,
