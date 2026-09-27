@@ -61,7 +61,7 @@ export interface OperatorProjectionRepository {
   get_run_record_detail(run_id: WorkflowRunId): Promise<OperatorRunRecordDetail | null>;
 }
 
-interface V2RunProjectionRow { readonly id: string; readonly title: string | null; readonly repository_keys: readonly string[]; readonly workflow_name: string; readonly state: RunState; readonly current_stage: string | null; readonly parked_count: string; readonly updated_at: string; readonly is_stuck: boolean; readonly archived: boolean; readonly has_materialized_stage: boolean }
+interface V2RunProjectionRow { readonly id: string; readonly title: string | null; readonly repository_keys: readonly string[]; readonly workflow_name: string; readonly state: RunState; readonly current_stage: string | null; readonly stage_total: string; readonly stage_complete: string; readonly parked_count: string; readonly updated_at: string; readonly is_stuck: boolean; readonly archived: boolean; readonly has_materialized_stage: boolean }
 interface OperatorExecutorReference { readonly kind?: string; readonly session_id?: string; readonly worktree_base_sha?: string }
 interface V2StageProjectionRow { readonly stage_instance_id: string; readonly name: string; readonly stage_type: string; readonly operator_role: string | null; readonly state: RunState; readonly has_open_wait: boolean }
 interface V2UnitProjectionRow { readonly stage_instance_id: string; readonly unit_id: string; readonly params: OperatorStageUnit["params"]; readonly state: UnitState; readonly external_reference: OperatorExecutorReference | null; readonly executor_health_kind: string | null; readonly gate_step: string | null; readonly has_open_wait: boolean; readonly has_missing_required_output: boolean; readonly has_invalidated_required_output: boolean; readonly admission_required: boolean; readonly admitted: boolean; readonly admission_blocked_by: readonly string[] }
@@ -78,7 +78,7 @@ interface EpicProfileRow extends Omit<EpicWorkflowProfile, "id" | "workflow_run_
  */
 interface CohortUnitParameters { readonly artifact?: { readonly repository_key?: string; readonly title?: string } | null }
 interface CohortProjectionRow { readonly run_id: string; readonly workflow_name: string; readonly stage_instance_id: string; readonly stage_name: string; readonly unit_id: string; readonly params: CohortUnitParameters | null; readonly dbos_status: string; readonly artifact_revision_id: string | null; readonly handoff_wait_kind: HandoffWaitKind | null; readonly handoff_wait_status: Wait["status"]["kind"] | null; readonly handoff_outcome_kind: WaitOutcome["kind"] | null; readonly summary_pr_url: string | null; readonly reconciliation: OperatorCohortSummary["pull_request_reconciliation"]; readonly updated_at_epoch_ms: string; readonly admission_required: boolean; readonly admitted: boolean; readonly admission_eligible: boolean; readonly admission_blocked_by: readonly string[] }
-interface V2CohortProjectionRow extends Omit<CohortProjectionRow, "dbos_status" | "updated_at_epoch_ms"> { readonly unit_state: UnitState; readonly handoff_slot_state: RunOutputSlotState["kind"] | null; readonly handoff_invalidation_kind: string | null; readonly updated_at: string }
+interface V2CohortProjectionRow extends Omit<CohortProjectionRow, "dbos_status" | "updated_at_epoch_ms"> { readonly unit_state: UnitState; readonly operator_slot_state: RunOutputSlotState["kind"] | null; readonly operator_invalidation_kind: string | null; readonly updated_at: string }
 
 /**
  * `params.artifact.repository_key` off a fan-out item this run minted
@@ -265,7 +265,10 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
                 '[]'::jsonb
               ) AS repository_keys,
               definition.name AS workflow_name,run.state,
-              current_stage.stage_key AS current_stage,COALESCE(waits.parked_count,0)::text AS parked_count,
+              current_stage.stage_key AS current_stage,
+              (SELECT count(*) FROM jsonb_object_keys(definition.definition->'graph'->'stages'))::text AS stage_total,
+              (SELECT count(*) FROM oakridge.stage_instance stage WHERE stage.run_id=run.id AND stage.attempt_root_workflow_id IS NULL AND stage.state='succeeded')::text AS stage_complete,
+              COALESCE(waits.parked_count,0)::text AS parked_count,
               GREATEST(run.created_at,COALESCE(run.ended_at,run.created_at),COALESCE(progress.updated_at,run.created_at))::text AS updated_at,
               EXISTS (SELECT 1 FROM oakridge.stage_instance stage WHERE stage.run_id=run.id AND stage.attempt_root_workflow_id IS NULL) AS has_materialized_stage,
               run.state='active'
@@ -287,7 +290,8 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
       const status = selectV2RunStatus({ state: row.state, parked_count, has_materialized_stage: row.has_materialized_stage });
       return { id: row.id as WorkflowRunId, title: row.title, repository_keys: row.repository_keys, workflow_name: row.workflow_name,
         current_attempt_root_workflow_id: runRecordWorkflowId(row.id as WorkflowRunId), status, current_stage: row.current_stage,
-        parked_count, updated_at: row.updated_at, is_stuck: row.is_stuck, is_failed: status === "failed", archived: row.archived };
+        stage_total: Number(row.stage_total), stage_complete: Number(row.stage_complete), parked_count,
+        updated_at: row.updated_at, is_stuck: row.is_stuck, is_failed: status === "failed", archived: row.archived };
     });
   }
 
@@ -540,7 +544,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
         stage_name: gate.stage_name, unit_id: gate.unit_id, repository_key: cohort?.repository_key ?? gate.repository_key, title: cohort?.title ?? null,
         lifecycle: isMerge ? "merge_confirmation" : "artifact_review", artifact_revision_id: gate.artifact_revision_id,
         artifact_url: gate.artifact_revision_id ? `/artifact_details/${gate.artifact_revision_id}` : null,
-        gate_id: gate.id, gate_url: `/oakridge/gates/${gate.id}`, resume_actions: gate.resume_actions, blocked_by: [], pr_url: gate.pr_url, completed_at: null,
+        gate_id: gate.id, gate_url: `/oakridge/gates/${gate.id}`, resume_actions: gate.resume_actions, blocked_by: [], pr_url: gate.pr_url,
       };
     });
     for (const cohort of cohorts) {
@@ -549,7 +553,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
           run_id: cohort.run_id, workflow_name: cohort.workflow_name, stage_instance_id: cohort.stage_instance_id,
           stage_name: cohort.stage_name, unit_id: cohort.unit_id, repository_key: cohort.repository_key, title: cohort.title,
           lifecycle: cohort.lifecycle, artifact_revision_id: null, artifact_url: null, gate_id: null, gate_url: null,
-          resume_actions: cohort.admission.eligible ? ["admit"] : [], blocked_by: cohort.admission.blocked_by, pr_url: cohort.pr_url, completed_at: null });
+          resume_actions: cohort.admission.eligible ? ["admit"] : [], blocked_by: cohort.admission.blocked_by, pr_url: cohort.pr_url });
       }
       const kind = cohort.lifecycle === "pull_request_mismatch" ? "pull_request_mismatch" : cohort.lifecycle === "failed" ? "cohort_failed" : null;
       if (!kind) continue;
@@ -557,7 +561,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
         stage_instance_id: cohort.stage_instance_id, stage_name: cohort.stage_name, unit_id: cohort.unit_id,
         repository_key: cohort.repository_key, title: cohort.title, lifecycle: cohort.lifecycle,
         artifact_revision_id: cohort.artifact_revision_id, artifact_url: cohort.artifact_url, gate_id: cohort.gate_id,
-        gate_url: cohort.gate_url, resume_actions: [], blocked_by: cohort.admission.blocked_by, pr_url: cohort.pr_url, completed_at: null });
+        gate_url: cohort.gate_url, resume_actions: [], blocked_by: cohort.admission.blocked_by, pr_url: cohort.pr_url });
     }
     // A cohort waiting on its pull request to merge is work, and it used to
     // appear nowhere in this list — the run sat on an external wait that no
@@ -569,7 +573,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
         workflow_name: cohort.workflow_name, stage_instance_id: cohort.stage_instance_id, stage_name: cohort.stage_name,
         unit_id: cohort.unit_id, repository_key: cohort.repository_key, title: cohort.title, lifecycle: cohort.lifecycle,
         artifact_revision_id: cohort.artifact_revision_id, artifact_url: cohort.artifact_url, gate_id: null,
-        gate_url: null, resume_actions: ["confirm_merged"], blocked_by: [], pr_url: cohort.pr_url, completed_at: null });
+        gate_url: null, resume_actions: ["confirm_merged"], blocked_by: [], pr_url: cohort.pr_url });
     }
     return { cohorts, items };
   }
@@ -585,22 +589,28 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
       NOT EXISTS (SELECT 1 FROM oakridge.run_unit_dependency edge LEFT JOIN oakridge.run_unit dependency ON dependency.stage_instance_id=edge.stage_instance_id AND dependency.unit_id=edge.depends_on_unit_id WHERE edge.stage_instance_id=unit.stage_instance_id AND edge.unit_id=unit.unit_id AND (dependency.id IS NULL OR dependency.state<>'satisfied')) AS admission_eligible,
       COALESCE(ARRAY(SELECT edge.depends_on_unit_id FROM oakridge.run_unit_dependency edge LEFT JOIN oakridge.run_unit dependency ON dependency.stage_instance_id=edge.stage_instance_id AND dependency.unit_id=edge.depends_on_unit_id WHERE edge.stage_instance_id=unit.stage_instance_id AND edge.unit_id=unit.unit_id AND (dependency.id IS NULL OR dependency.state<>'satisfied')),ARRAY[]::text[]) AS admission_blocked_by,
       handoff.kind AS handoff_wait_kind,handoff.status AS handoff_wait_status,handoff.outcome_kind AS handoff_outcome_kind,
-      handoff_slot.state AS handoff_slot_state,handoff_slot.invalidation_reason->>'kind' AS handoff_invalidation_kind,
+      operator_slot.state AS operator_slot_state,operator_slot.invalidation_reason->>'kind' AS operator_invalidation_kind,
       summary.pr_url AS summary_pr_url,CASE WHEN reconciliation.stage_instance_id IS NULL THEN NULL ELSE jsonb_build_object('repository_key',reconciliation.repository_key,'observation',reconciliation.observation,'mismatch',reconciliation.mismatch,'completed_at',reconciliation.completed_at,'updated_at',reconciliation.updated_at) END AS reconciliation,
       GREATEST(unit.created_at,COALESCE(unit.ended_at,unit.created_at),COALESCE(artifact.created_at,unit.created_at))::text AS updated_at
       FROM oakridge.run_unit unit JOIN oakridge.stage_instance stage ON stage.id=unit.stage_instance_id
       JOIN oakridge.workflow_run run ON run.id=unit.run_id JOIN oakridge.workflow_definition definition ON definition.id=run.workflow_definition_id
       JOIN oakridge.run_stage_scheduling_policy policy ON policy.stage_instance_id=stage.id
-      CROSS JOIN LATERAL (SELECT output.value->>'name' AS output_name FROM jsonb_array_elements(stage.stage_contract->'outputs') output(value) WHERE output.value->'release'->>'kind'='handoff' ORDER BY output.value->>'name' LIMIT 1) handoff_output
-      LEFT JOIN oakridge.run_output_slot handoff_slot ON handoff_slot.run_unit_id=unit.id AND handoff_slot.output_name=handoff_output.output_name AND handoff_slot.collection_key IS NULL
-      LEFT JOIN LATERAL (SELECT candidate.* FROM oakridge.artifact candidate WHERE candidate.stage_instance_id=stage.id AND candidate.unit_id=unit.unit_id AND candidate.output_name=handoff_output.output_name AND ${effectiveArtifactPredicate("candidate")} LIMIT 1) artifact ON true
+      LEFT JOIN LATERAL (
+        SELECT output.value->>'name' AS output_name
+        FROM jsonb_array_elements(stage.stage_contract->'outputs') output(value)
+        WHERE output.value->'release'->>'kind'='handoff' OR output.value->>'attention'<>'none'
+        ORDER BY (output.value->'release'->>'kind'='handoff') DESC,output.value->>'name'
+        LIMIT 1
+      ) operator_output ON true
+      LEFT JOIN oakridge.run_output_slot operator_slot ON operator_slot.run_unit_id=unit.id AND operator_slot.output_name=operator_output.output_name AND operator_slot.collection_key IS NULL
+      LEFT JOIN LATERAL (SELECT candidate.* FROM oakridge.artifact candidate WHERE candidate.stage_instance_id=stage.id AND candidate.unit_id=unit.unit_id AND candidate.output_name=operator_output.output_name AND ${effectiveArtifactPredicate("candidate")} LIMIT 1) artifact ON true
       LEFT JOIN LATERAL (SELECT wait.kind,wait.status,wait.outcome->>'kind' AS outcome_kind FROM oakridge.wait wait WHERE wait.artifact_revision_id=artifact.id AND wait.kind IN ('handoff_downstream','handoff_external') ORDER BY (wait.kind='handoff_external') DESC LIMIT 1) handoff ON true
       LEFT JOIN LATERAL (SELECT candidate.body->>'pr_url' AS pr_url FROM oakridge.artifact candidate WHERE candidate.stage_instance_id=stage.id AND candidate.unit_id=unit.unit_id AND candidate.artifact_type='${PR_SUMMARY_ARTIFACT_TYPE}' AND ${effectiveArtifactPredicate("candidate")} LIMIT 1) summary ON true
       LEFT JOIN oakridge.cohort_pull_request_reconciliation reconciliation ON reconciliation.stage_instance_id=stage.id AND reconciliation.unit_id=unit.unit_id
       WHERE run.archived=false AND stage.attempt_root_workflow_id IS NULL ORDER BY updated_at DESC`, []);
     return rows.map((row) => {
       const handoffStatus = row.handoff_outcome_kind === "cancelled" ? null : row.handoff_wait_kind && row.handoff_wait_status ? selectHandoffStatusFromWait(row.handoff_wait_kind, row.handoff_wait_status, row.handoff_outcome_kind) : null;
-      const lifecycle: OperatorCohortLifecycle = row.unit_state === "failed" || row.unit_state === "cancelled" ? "failed" : row.handoff_slot_state === "invalidated" && row.handoff_invalidation_kind === "operator" ? "revision_requested" : row.reconciliation?.mismatch ? "pull_request_mismatch" : handoffStatus === "released" ? "complete" : handoffStatus === "awaiting_external" ? "github_review" : handoffStatus === "revision_requested" ? "revision_requested" : handoffStatus === "awaiting_downstream" ? "assessing" : row.admission_required && !row.admitted ? "waiting_admission" : "building";
+      const lifecycle: OperatorCohortLifecycle = row.unit_state === "failed" || row.unit_state === "cancelled" ? "failed" : row.operator_slot_state === "invalidated" && row.operator_invalidation_kind === "operator" ? "revision_requested" : row.reconciliation?.mismatch ? "pull_request_mismatch" : handoffStatus === "released" ? "complete" : handoffStatus === "awaiting_external" ? "github_review" : handoffStatus === "revision_requested" ? "revision_requested" : handoffStatus === "awaiting_downstream" ? "assessing" : row.unit_state === "satisfied" ? "complete" : row.admission_required && !row.admitted ? "waiting_admission" : "building";
       const artifact = row.artifact_revision_id as ArtifactId | null; const cohort = row.params?.artifact ?? null;
       return { id: `${row.stage_instance_id}:${row.unit_id}`,run_id: row.run_id as WorkflowRunId,workflow_name: row.workflow_name,stage_instance_id: row.stage_instance_id as import("../domain/primitives").StageInstanceId,stage_name: row.stage_name,unit_id: row.unit_id as UnitId,repository_key: selectStageUnitRepositoryKey(row.params),title: cohort?.title ?? null,lifecycle,completion: { build_complete: artifact !== null, assessment_complete: lifecycle === "complete" },admission: { required: row.admission_required, admitted: row.admitted, eligible: row.admission_eligible, blocked_by: row.admission_blocked_by },artifact_revision_id: artifact,artifact_url: artifact ? `/artifact_details/${artifact}` : null,gate_id: null,gate_url: null,pr_url: row.reconciliation?.observation.url ?? row.summary_pr_url ?? null,pull_request_reconciliation: row.reconciliation,updated_at: row.updated_at };
     });

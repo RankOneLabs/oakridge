@@ -190,6 +190,8 @@ export interface RunSummary {
   workflow_name: string;
   status: RunStatus;
   current_stage: string | null;
+  stage_total: number;
+  stage_complete: number;
   parked_count: number;
   updated_at: string;
   is_stuck: boolean;
@@ -476,7 +478,7 @@ export type ReviewInboxItemKind =
   | "pull_request_merge"
   | "gate_decision";
 
-export type ReviewInboxItemState = "actionable" | "blocked" | "completed";
+export type ReviewInboxItemState = "actionable" | "blocked";
 
 export interface ReviewInboxItem {
   id: string;
@@ -497,9 +499,9 @@ export interface ReviewInboxItem {
   resume_actions: string[];
   blocked_by: string[];
   pr_url?: string | null;
-  completed_at?: string | null;
 }
 
+/** The items list is the required-attention decision queue; completed and optional-attention history lives outside the inbox. */
 export interface ReviewInbox {
   cohorts: CohortLifecycleSummary[];
   items: ReviewInboxItem[];
