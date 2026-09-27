@@ -5,6 +5,7 @@ import { useHashSid } from "./hooks/useHashSid";
 import { useServerConfig } from "./hooks/useServerConfig";
 import { useTheme } from "./hooks/useTheme";
 import { useInbox } from "./hooks/useInbox";
+import { useToastStore } from "./hooks/useToast";
 import { resumeSession } from "./lib/session";
 import { useStore } from "./state/store";
 import type { Sid } from "./lib/ids";
@@ -15,11 +16,28 @@ import { SessionListView } from "./views/SessionListView";
 import { SessionView } from "./views/SessionView";
 import { ToastViewport } from "./components/organisms/ToastViewport";
 import { PendingApprovalsBadge } from "./components/organisms/PendingApprovalsBadge";
+import { useOakridgeConfig } from "./oakridge/hooks/useOakridgeConfig";
+import { useOakridgeInvalidationStream } from "./oakridge/hooks/useOakridgeInvalidationStream";
+import { useOakridgeRunEventStream } from "./oakridge/hooks/useOakridgeRunEventStream";
 
 export function App() {
   const route = useHashRoute();
   const [sid, navigate] = useHashSid();
   const [theme, toggleTheme] = useTheme();
+  const oakridgeConfig = useOakridgeConfig();
+  const pushToast = useToastStore((state) => state.pushToast);
+
+  // Both Oakridge subscriptions live above the route branch so changing
+  // surfaces keeps the shared query cache current and the single EventSource
+  // connected. The hooks multiplex through the same browser connection.
+  const isOakridgeAvailable = oakridgeConfig.data?.available === true;
+  useOakridgeInvalidationStream(isOakridgeAvailable);
+  useOakridgeRunEventStream(isOakridgeAvailable, (event) => {
+    pushToast({
+      kind: event.operation === "materialization_failed" ? "error" : "info",
+      message: event.operation.replaceAll("_", " "),
+    });
+  });
 
   // SSE subscription: writes inbox snapshots + status into the store.
   // When the active session is purged from another client, drop back to

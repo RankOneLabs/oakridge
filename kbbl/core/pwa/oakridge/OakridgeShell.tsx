@@ -1,4 +1,3 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useOakridgeConfig } from "./hooks/useOakridgeConfig";
 import { RunListView } from "./views/RunListView";
 import { RunDetailView } from "./views/RunDetailView";
@@ -13,12 +12,6 @@ import { SessionWorkspaceRedirectView } from "./views/SessionWorkspaceRedirectVi
 import { formatRunWorkspaceHash, type OakridgeSubRoute } from "../lib/hash";
 import type { ArtifactId } from "../lib/ids";
 import type { WorkflowDefSummary } from "./types";
-import { useOakridgeInvalidationStream } from "./hooks/useOakridgeInvalidationStream";
-
-// The oakridge shell gets its own QueryClient so it doesn't collide with the
-// main app's client when mounted independently under the oakridge hash route.
-// In practice both clients co-exist inside QueryClientProvider from main.tsx,
-// but separating them keeps cache isolation simple.
 interface OakridgeShellInnerProps {
   route: OakridgeSubRoute;
   onBack: () => void;
@@ -27,7 +20,6 @@ interface OakridgeShellInnerProps {
 
 function OakridgeShellInner({ route, onBack, onNavigate }: OakridgeShellInnerProps) {
   const configQuery = useOakridgeConfig();
-  useOakridgeInvalidationStream(configQuery.data?.available === true);
 
   // Show loading while the availability check is in flight
   if (configQuery.isPending) {
@@ -201,10 +193,6 @@ function OakridgeShellInner({ route, onBack, onNavigate }: OakridgeShellInnerPro
   );
 }
 
-const shellQueryClient = new QueryClient({
-  defaultOptions: { queries: { retry: 1 } },
-});
-
 interface OakridgeShellProps {
   route: OakridgeSubRoute;
   onBack: () => void;
@@ -215,9 +203,5 @@ export function OakridgeShell({ route, onBack }: OakridgeShellProps) {
     window.location.hash = hash;
   };
 
-  return (
-    <QueryClientProvider client={shellQueryClient}>
-      <OakridgeShellInner route={route} onBack={onBack} onNavigate={onNavigate} />
-    </QueryClientProvider>
-  );
+  return <OakridgeShellInner route={route} onBack={onBack} onNavigate={onNavigate} />;
 }
