@@ -162,7 +162,7 @@ test("a gated publication parks the slot pending and opens its wait, atomically 
   const artifactRow = await sql!.query<{ readonly lifecycle_state: string; readonly released_at: string | null }>("SELECT lifecycle_state, released_at FROM oakridge.artifact WHERE id = $1", [artifactId]);
   expect(artifactRow[0]).toEqual({ lifecycle_state: "current", released_at: null });
   const transition = await sql!.query<{ readonly operation: string; readonly wait_id: string; readonly resulting_record_version: string; readonly prior_record_version: string }>(
-    "SELECT operation, wait_id::text, resulting_record_version::text, prior_record_version::text FROM oakridge.run_transition WHERE wait_id = $1", [published.wait_id]);
+    "SELECT operation, wait_id::text, resulting_record_version::text, prior_record_version::text FROM oakridge.run_transition WHERE wait_id = $1 ORDER BY sequence", [published.wait_id]);
   expect(transition.map((row) => row.operation)).toEqual(["slot_pending", "gate_opened"]);
   expect(Number(transition[0]?.resulting_record_version)).toBeGreaterThan(Number(transition[0]?.prior_record_version));
 
