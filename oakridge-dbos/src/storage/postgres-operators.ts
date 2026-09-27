@@ -544,7 +544,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
         stage_name: gate.stage_name, unit_id: gate.unit_id, repository_key: cohort?.repository_key ?? gate.repository_key, title: cohort?.title ?? null,
         lifecycle: isMerge ? "merge_confirmation" : "artifact_review", artifact_revision_id: gate.artifact_revision_id,
         artifact_url: gate.artifact_revision_id ? `/artifact_details/${gate.artifact_revision_id}` : null,
-        gate_id: gate.id, gate_url: `/oakridge/gates/${gate.id}`, resume_actions: gate.resume_actions, blocked_by: [], pr_url: gate.pr_url, completed_at: null,
+        gate_id: gate.id, gate_url: `/oakridge/gates/${gate.id}`, resume_actions: gate.resume_actions, blocked_by: [], pr_url: gate.pr_url,
       };
     });
     for (const cohort of cohorts) {
@@ -553,7 +553,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
           run_id: cohort.run_id, workflow_name: cohort.workflow_name, stage_instance_id: cohort.stage_instance_id,
           stage_name: cohort.stage_name, unit_id: cohort.unit_id, repository_key: cohort.repository_key, title: cohort.title,
           lifecycle: cohort.lifecycle, artifact_revision_id: null, artifact_url: null, gate_id: null, gate_url: null,
-          resume_actions: cohort.admission.eligible ? ["admit"] : [], blocked_by: cohort.admission.blocked_by, pr_url: cohort.pr_url, completed_at: null });
+          resume_actions: cohort.admission.eligible ? ["admit"] : [], blocked_by: cohort.admission.blocked_by, pr_url: cohort.pr_url });
       }
       const kind = cohort.lifecycle === "pull_request_mismatch" ? "pull_request_mismatch" : cohort.lifecycle === "failed" ? "cohort_failed" : null;
       if (!kind) continue;
@@ -561,7 +561,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
         stage_instance_id: cohort.stage_instance_id, stage_name: cohort.stage_name, unit_id: cohort.unit_id,
         repository_key: cohort.repository_key, title: cohort.title, lifecycle: cohort.lifecycle,
         artifact_revision_id: cohort.artifact_revision_id, artifact_url: cohort.artifact_url, gate_id: cohort.gate_id,
-        gate_url: cohort.gate_url, resume_actions: [], blocked_by: cohort.admission.blocked_by, pr_url: cohort.pr_url, completed_at: null });
+        gate_url: cohort.gate_url, resume_actions: [], blocked_by: cohort.admission.blocked_by, pr_url: cohort.pr_url });
     }
     // A cohort waiting on its pull request to merge is work, and it used to
     // appear nowhere in this list — the run sat on an external wait that no
@@ -573,7 +573,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
         workflow_name: cohort.workflow_name, stage_instance_id: cohort.stage_instance_id, stage_name: cohort.stage_name,
         unit_id: cohort.unit_id, repository_key: cohort.repository_key, title: cohort.title, lifecycle: cohort.lifecycle,
         artifact_revision_id: cohort.artifact_revision_id, artifact_url: cohort.artifact_url, gate_id: null,
-        gate_url: null, resume_actions: ["confirm_merged"], blocked_by: [], pr_url: cohort.pr_url, completed_at: null });
+        gate_url: null, resume_actions: ["confirm_merged"], blocked_by: [], pr_url: cohort.pr_url });
     }
     return { cohorts, items };
   }
