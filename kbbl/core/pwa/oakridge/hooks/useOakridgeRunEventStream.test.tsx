@@ -5,7 +5,7 @@ import { afterEach, expect, test, vi } from "vitest";
 
 import { useOakridgeInvalidationStream } from "./useOakridgeInvalidationStream";
 import { useOakridgeRunEventStream } from "./useOakridgeRunEventStream";
-import type { RunEvent } from "../types";
+import type { RunEventFrame } from "../types";
 
 class EventSourceStub {
   static instances: EventSourceStub[] = [];
@@ -23,11 +23,11 @@ class EventSourceStub {
 
 afterEach(() => { vi.unstubAllGlobals(); EventSourceStub.instances = []; });
 
-test("invalidation and typed run-event hooks share one EventSource and replayed events stay silent", () => {
+test("invalidation and typed run-event hooks share one EventSource and deliver replay metadata", () => {
   vi.stubGlobal("EventSource", EventSourceStub);
   const client = new QueryClient();
   const wrapper = ({ children }: PropsWithChildren) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
-  const received: RunEvent[] = [];
+  const received: RunEventFrame[] = [];
   const hook = renderHook(() => {
     useOakridgeInvalidationStream(true);
     useOakridgeRunEventStream(true, (event) => received.push(event));
@@ -40,6 +40,9 @@ test("invalidation and typed run-event hooks share one EventSource and replayed 
       attention: "required", continuation: "waiting", detail: {} } };
   act(() => { source?.emit("run_event", JSON.stringify({ ...frame, replayed: true })); });
   act(() => { source?.emit("run_event", JSON.stringify({ ...frame, sequence: "8", replayed: false })); });
-  expect(received.map((event) => event.sequence)).toEqual(["8"]);
+  expect(received.map((event) => [event.sequence, event.replayed])).toEqual([
+    ["7", true],
+    ["8", false],
+  ]);
   hook.unmount();
 });
