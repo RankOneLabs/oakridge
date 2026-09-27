@@ -45,11 +45,46 @@ import type {
   SessionRunLocation,
   WorkOrderReason,
   WorkOrderState,
+  RunEventFrame,
+  RunEventOperation,
 } from "./types";
 import type { Result } from "../lib/result";
 import { parseRepositoryKey } from "./repository-inputs";
 
 const API = "/oakridge/api";
+
+const RUN_EVENT_OPERATIONS: ReadonlySet<string> = new Set<RunEventOperation>([
+  "stage_materialized", "materialization_closed", "materialization_failed", "run_cancelled", "unit_admitted",
+  "operator_retry_created", "input_revised", "slot_released", "slot_pending", "slot_invalidated", "unit_satisfied",
+  "work_started", "gate_opened", "gate_decided", "pull_request_observed", "pull_request_merge_confirmed",
+]);
+
+const nullableString = (value: unknown): value is string | null => value === null || typeof value === "string";
+
+const isJsonValue = (value: unknown): value is import("./types").JsonValue => {
+  if (value === null || typeof value === "string" || typeof value === "boolean" || typeof value === "number") return true;
+  if (Array.isArray(value)) return value.every(isJsonValue);
+  return typeof value === "object" && Object.values(value).every(isJsonValue);
+};
+
+/** Parse one server frame without allowing malformed stream data into UI subscribers. */
+export const parseOakridgeRunEventFrame = (data: string): RunEventFrame | null => {
+  let value: unknown;
+  try { value = JSON.parse(data); } catch { return null; }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const event = value as Partial<RunEventFrame>;
+  if (typeof event.sequence !== "string" || !/^\d+$/.test(event.sequence) || typeof event.operation !== "string"
+      || !RUN_EVENT_OPERATIONS.has(event.operation) || typeof event.occurred_at !== "string" || typeof event.replayed !== "boolean") return null;
+  const payload = event.payload;
+  if (!payload || typeof payload !== "object" || typeof payload.run_id !== "string"
+      || !nullableString(payload.run_unit_id) || !nullableString(payload.stage_instance_id) || !nullableString(payload.stage_key)
+      || !nullableString(payload.unit_id) || !nullableString(payload.work_order_id) || !nullableString(payload.wait_id)
+      || !nullableString(payload.output_name) || !nullableString(payload.collection_key) || !nullableString(payload.artifact_revision_id)
+      || !(payload.attention === null || payload.attention === "required" || payload.attention === "optional" || payload.attention === "none")
+      || !(payload.continuation === null || payload.continuation === "waiting" || payload.continuation === "continuing")
+      || !isJsonValue(payload.detail)) return null;
+  return event as RunEventFrame;
+};
 
 type RawStageUnit = Omit<StageUnit, "repository_key"> & { repository_key?: string | null };
 type RawStageDetail = Omit<StageDetail, "units"> & { units?: RawStageUnit[] };

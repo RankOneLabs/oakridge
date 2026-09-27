@@ -69,6 +69,40 @@ export type RepositoryKey = string & { readonly __brand: "RepositoryKey" };
 export type CohortId = string & { readonly __brand: "CohortId" };
 export type EpicProfileId = string & { readonly __brand: "EpicProfileId" };
 export type WorkflowRunId = string & { readonly __brand: "WorkflowRunId" };
+export type JsonValue = null | boolean | number | string | readonly JsonValue[] | { readonly [key: string]: JsonValue };
+
+export type RunEventOperation =
+  | "stage_materialized" | "materialization_closed" | "materialization_failed" | "run_cancelled"
+  | "unit_admitted" | "operator_retry_created" | "input_revised" | "slot_released" | "slot_pending"
+  | "slot_invalidated" | "unit_satisfied" | "work_started" | "gate_opened" | "gate_decided"
+  | "pull_request_observed" | "pull_request_merge_confirmed";
+
+export interface RunEventPayload {
+  readonly run_id: WorkflowRunId;
+  readonly run_unit_id: string | null;
+  readonly stage_instance_id: string | null;
+  readonly stage_key: string | null;
+  readonly unit_id: string | null;
+  readonly work_order_id: string | null;
+  readonly wait_id: string | null;
+  readonly output_name: string | null;
+  readonly collection_key: string | null;
+  readonly artifact_revision_id: string | null;
+  readonly attention: "required" | "optional" | "none" | null;
+  readonly continuation: "waiting" | "continuing" | null;
+  readonly detail: JsonValue;
+}
+
+export type RunEvent = {
+  readonly [Operation in RunEventOperation]: {
+    readonly sequence: string;
+    readonly operation: Operation;
+    readonly payload: RunEventPayload;
+    readonly occurred_at: string;
+  }
+}[RunEventOperation];
+
+export type RunEventFrame = RunEvent & { readonly replayed: boolean };
 
 export interface RepositoryInputDraft {
   key: string;
