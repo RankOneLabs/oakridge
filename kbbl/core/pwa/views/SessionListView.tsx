@@ -74,7 +74,8 @@ function SessionRunSection({
   onResume,
   resumeDisabled,
 }: SessionRunSectionProps) {
-  const runQuery = useRun(run.runId);
+  const hasStageGroup = run.groups.some((group) => group.kind === "stage");
+  const runQuery = useRun(run.runId, hasStageGroup);
 
   return (
     <section
@@ -148,7 +149,7 @@ export function SessionListView({
     ),
     [orderingTick, sessions],
   );
-  const runsQuery = useRuns(undefined, grouping.runs.length > 0);
+  const runsQuery = useRuns("all", grouping.runs.length > 0);
   const totalCount = sessions.size;
 
   const startMutation = useMutation({

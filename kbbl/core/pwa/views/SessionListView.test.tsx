@@ -90,7 +90,7 @@ function renderList(
     defaultOptions: { queries: { retry: false, staleTime: Infinity }, mutations: { retry: false } },
   });
   if (seedRunData) {
-    client.setQueryData(["oakridge", "runs", ""], [runSummary]);
+    client.setQueryData(["oakridge", "runs", "all"], [runSummary]);
     client.setQueryData(["oakridge", "run", "run-1"], runDetail);
   }
   return render(
@@ -159,7 +159,7 @@ describe("SessionListView grouping", () => {
   test("loads persisted run and stage labels and renders a trailing unattached section", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
-      if (url === "/oakridge/api/runs") {
+      if (url === "/oakridge/api/runs?filter=all") {
         return new Response(JSON.stringify([runSummary]), { status: 200 });
       }
       if (url === "/oakridge/api/runs/run-1") {
@@ -208,8 +208,34 @@ describe("SessionListView grouping", () => {
       expect(screen.getByTestId("unattached-sessions")).toBeTruthy();
       expect(container.querySelectorAll(".session-cohort-group")).toHaveLength(3);
       expect(screen.queryByText("No sessions yet.")).toBeNull();
-      expect(fetchSpy).toHaveBeenCalledWith("/oakridge/api/runs");
+      expect(fetchSpy).toHaveBeenCalledWith("/oakridge/api/runs?filter=all");
       expect(fetchSpy).toHaveBeenCalledWith("/oakridge/api/runs/run-1");
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  test("does not load run detail when every subgroup is a cohort", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === "/oakridge/api/runs?filter=all") {
+        return new Response(JSON.stringify([runSummary]), { status: 200 });
+      }
+      return new Response(null, { status: 404 });
+    });
+    const build = makeSnapshot({
+      sid: "build-1",
+      name: "build-stage-1-cohort-one",
+      workflow: workflow(),
+    });
+
+    try {
+      renderList(new Map([[build.sid, build]]), false);
+
+      expect(await screen.findByText("Persisted run title")).toBeTruthy();
+      expect(screen.getByText("Cohort One")).toBeTruthy();
+      expect(fetchSpy).toHaveBeenCalledWith("/oakridge/api/runs?filter=all");
+      expect(fetchSpy).not.toHaveBeenCalledWith("/oakridge/api/runs/run-1");
     } finally {
       fetchSpy.mockRestore();
     }
