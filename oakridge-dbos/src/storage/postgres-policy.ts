@@ -143,10 +143,9 @@ export class PostgresCohortPullRequestRepository implements CohortPullRequestRep
        LEFT JOIN prior ON true
        WHERE CASE WHEN $9::timestamptz IS NULL
          THEN prior.observation IS NULL
-           OR prior.handoff_artifact_id IS DISTINCT FROM $5::uuid
            OR prior.observation->>'state' IS DISTINCT FROM $14::text
            OR prior.observation->>'url' IS DISTINCT FROM $13::text
-         ELSE prior.completed_at IS NULL END`,
+         ELSE prior.handoff_artifact_id IS DISTINCT FROM $5::uuid OR prior.completed_at IS NULL END`,
       [reconciliation.run_id, reconciliation.stage_instance_id, reconciliation.unit_id, reconciliation.repository_key, reconciliation.handoff_artifact_id,
         JSON.stringify(reconciliation.observation), reconciliation.mismatch === null ? null : JSON.stringify(reconciliation.mismatch),
         reconciliation.observation.observed_at, reconciliation.completed_at, reconciliation.updated_at, randomUUID(),

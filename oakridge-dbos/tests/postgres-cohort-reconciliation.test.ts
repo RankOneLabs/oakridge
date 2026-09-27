@@ -63,7 +63,7 @@ test("a replacement handoff records its own merge completion after an earlier ha
   const events = await sql.query<{ readonly operation: string; readonly detail: { readonly repository_key: string; readonly pull_request_url: string } }>(
     "SELECT operation,detail FROM oakridge.run_transition WHERE run_id=$1 AND operation LIKE 'pull_request_%' ORDER BY sequence", [runId]);
   expect(events.map((event) => event.operation)).toEqual([
-    "pull_request_merge_confirmed", "pull_request_observed", "pull_request_merge_confirmed",
+    "pull_request_merge_confirmed", "pull_request_merge_confirmed",
   ]);
-  expect(events[2]?.detail).toEqual(expect.objectContaining({ repository_key: "scout", pull_request_url: "https://github.com/RankOneLabs/scout/pull/47" }));
+  expect(events[1]?.detail).toEqual(expect.objectContaining({ repository_key: "scout", pull_request_url: "https://github.com/RankOneLabs/scout/pull/47" }));
 });
