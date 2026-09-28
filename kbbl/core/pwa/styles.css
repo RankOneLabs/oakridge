@@ -5442,7 +5442,7 @@ a:focus-visible {
   gap: 0.6rem;
 }
 
-:where(.or-shell) :where(button) {
+:where(.or-shell) :where(button:not(.or-tw-button)) {
   min-height: 2.5rem;
   padding: 0.45rem 0.8rem;
   border: 1px solid var(--border-muted);
@@ -5454,12 +5454,10 @@ a:focus-visible {
   font-size: 0.85rem;
 }
 
-:where(.or-shell) :where(button:hover:not(:disabled)) { border-color: var(--border-hover); color: var(--text-primary); }
-:where(.or-shell) :where(button:disabled) { cursor: not-allowed; opacity: 0.5; }
-:where(.or-shell) :where(button.or-shell__back, button.or-shell__nav-item, button.or-link, button.or-def-list__link) { min-height: 0; }
+:where(.or-shell) :where(button:not(.or-tw-button):hover:not(:disabled)) { border-color: var(--border-hover); color: var(--text-primary); }
+:where(.or-shell) :where(button:not(.or-tw-button):disabled) { cursor: not-allowed; opacity: 0.5; }
+:where(.or-shell) :where(button:not(.or-tw-button).or-shell__back, button:not(.or-tw-button).or-shell__nav-item, button:not(.or-tw-button).or-link, button:not(.or-tw-button).or-def-list__link) { min-height: 0; }
 
-.or-page-actions button[data-testid="or-new-run-btn"],
-.or-page-actions button[data-testid="or-def-new-btn"],
 .or-form-card button[type="submit"],
 [data-testid="or-def-submit"] {
   border-color: var(--accent-blue);
@@ -5468,14 +5466,12 @@ a:focus-visible {
   font-weight: 700;
 }
 
-[data-theme="light"] .or-page-actions button[data-testid="or-new-run-btn"],
-[data-theme="light"] .or-page-actions button[data-testid="or-def-new-btn"],
 [data-theme="light"] .or-form-card button[type="submit"],
 [data-theme="light"] [data-testid="or-def-submit"] { color: #fff; }
 
-.or-page-actions button,
-.or-page-header > button,
-.or-form-card button {
+.or-page-actions button:not(.or-tw-button),
+.or-page-header > button:not(.or-tw-button),
+.or-form-card button:not(.or-tw-button) {
   min-height: 2.65rem;
   border-radius: 0.5rem;
 }
@@ -5712,7 +5708,7 @@ a:focus-visible {
   .or-run-sidebar__row-twin { display: none; }
   .or-run-workspace__pane-action--move { display: none; }
   .or-repository-fields, .or-role-grid { grid-template-columns: minmax(0, 1fr); }
-  .or-repository-fields button { width: 100%; }
+  .or-repository-fields button:not(.or-tw-button) { width: 100%; }
   .or-review-workspace { gap: 2rem; }
   .or-review-workspace__header { align-items: stretch; flex-direction: column; gap: 1rem; }
   .or-review-refresh { align-self: flex-start; }
@@ -5728,7 +5724,9 @@ a:focus-visible {
   .or-page-header, .or-page-header--back { flex-direction: column; gap: 1rem; }
   .or-page-title { font-size: 2.5rem; }
   .or-page-actions { width: 100%; justify-content: flex-start; }
-  .or-page-actions button { flex: 1 1 auto; }
+  .or-page-actions button:not(.or-tw-button) { flex: 1 1 auto; }
+  /* Flex sizing belongs to the action layout even when the button skin is Tailwind. */
+  .or-page-actions button.or-tw-button { flex: 1 1 auto; }
   [data-testid="or-def-editor"] > div.grid { grid-template-columns: minmax(0, 1fr); }
   .or-data-table, .or-page > table { min-width: 42rem; }
   .or-page:has(> .or-data-table), .or-page:has(> table) { overflow-x: auto; }

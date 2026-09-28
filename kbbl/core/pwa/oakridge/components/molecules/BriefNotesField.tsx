@@ -3,7 +3,7 @@ import type { ChangeEvent } from "react";
 import { TEXT_DOCUMENT_FILE_ACCEPT } from "../../../lib/text-document-accept";
 import type { BriefNotesSource } from "../../lib/brief-notes";
 import { formControlClass } from "./FormField";
-import { Button } from "../atoms/Button";
+import { Button } from "../../../components/atoms/Button";
 
 interface BriefNotesFieldProps {
   notes: string;

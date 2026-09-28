@@ -248,6 +248,7 @@ export interface CreateRunRequest {
 }
 
 export type RunStatus = "pending" | "running" | "parked" | "failed" | "complete" | "cancelled";
+export type RunDisplayStatus = RunStatus | "stuck";
 
 /** The run's own persisted lifecycle state, distinct from the derived `RunStatus` above — carried on a gate row so a stranded gate can say what happened to its run. */
 export type RunState = "active" | "succeeded" | "failed" | "cancelled";
@@ -275,6 +276,7 @@ export interface WorktreeMetadata {
 }
 
 export type StageStatus = "pending" | "running" | "complete" | "failed" | "parked";
+export type StageUnitStatus = StageStatus;
 
 export interface StageArtifact {
   id: string;
@@ -397,11 +399,18 @@ export interface SessionRunLocation {
 
 export interface ArtifactRevision {
   id: string;
-  status: "draft" | "approved" | "rejected";
+  status: ArtifactRevisionStatus;
   created_at: string;
   body: unknown;
   validation: unknown;
 }
+
+/** Mirrors the revision status returned by the artifact API. */
+export type ArtifactRevisionStatus = "draft" | "approved" | "rejected";
+/** Mirrors `FindingSeverity` in oakridge-dbos/src/domain/dev-flow-artifacts.ts. */
+export type FindingSeverity = "blocking" | "warning" | "info";
+/** Mirrors `AssessmentVerdict` in oakridge-dbos/src/domain/dev-flow-artifacts.ts. */
+export type AssessmentVerdict = "pass" | "pass_with_notes" | "fail";
 
 export interface ArtifactCapabilities {
   reviewable: boolean;
