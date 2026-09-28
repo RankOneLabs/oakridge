@@ -3,7 +3,6 @@ import { formatRelative } from "../../../lib/time";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
 import { selectStatusTone } from "../../lib/status-tone";
-import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 
 interface ArtifactRevisionNavigationProps {
   revisions: readonly ArtifactRevision[];
@@ -33,7 +32,7 @@ export function ArtifactRevisionNavigation({
           data-testid={`or-rev-tab-${index}`}
         >
           <Chip tone={selectStatusTone(revision.status)}>{revision.status}</Chip>
-          <FeedbackMessage className="py-0!">{formatRelative(revision.created_at)}</FeedbackMessage>
+          <span className="text-sm text-[var(--text-muted)]">{formatRelative(revision.created_at)}</span>
         </Button>
       ))}
     </nav>
