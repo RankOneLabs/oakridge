@@ -5725,6 +5725,8 @@ a:focus-visible {
   .or-page-title { font-size: 2.5rem; }
   .or-page-actions { width: 100%; justify-content: flex-start; }
   .or-page-actions button:not(.or-tw-button) { flex: 1 1 auto; }
+  /* Flex sizing belongs to the action layout even when the button skin is Tailwind. */
+  .or-page-actions button.or-tw-button { flex: 1 1 auto; }
   [data-testid="or-def-editor"] > div.grid { grid-template-columns: minmax(0, 1fr); }
   .or-data-table, .or-page > table { min-width: 42rem; }
   .or-page:has(> .or-data-table), .or-page:has(> table) { overflow-x: auto; }
