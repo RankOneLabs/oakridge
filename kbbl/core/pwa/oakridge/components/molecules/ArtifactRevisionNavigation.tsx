@@ -1,5 +1,9 @@
 import type { ArtifactRevision } from "../../types";
 import { formatRelative } from "../../../lib/time";
+import { Button } from "../../../components/atoms/Button";
+import { Chip } from "../../../components/atoms/Chip";
+import { selectStatusTone } from "../../lib/status-tone";
+import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 
 interface ArtifactRevisionNavigationProps {
   revisions: readonly ArtifactRevision[];
@@ -21,16 +25,16 @@ export function ArtifactRevisionNavigation({
   return (
     <nav className="or-artifact-detail__rev-nav">
       {revisions.map((revision, index) => (
-        <button
+        <Button
           key={revision.id}
-          type="button"
-          className={`or-btn or-btn--sm ${index === selectedIndex ? "or-btn--primary" : "or-btn--secondary"}`}
+          size="small"
+          variant={index === selectedIndex ? "primary" : "secondary"}
           onClick={() => onSelect(index)}
           data-testid={`or-rev-tab-${index}`}
         >
-          <span className={`or-chip or-chip--${revision.status}`}>{revision.status}</span>
-          <span className="or-muted">{formatRelative(revision.created_at)}</span>
-        </button>
+          <Chip tone={selectStatusTone(revision.status)}>{revision.status}</Chip>
+          <FeedbackMessage className="py-0!">{formatRelative(revision.created_at)}</FeedbackMessage>
+        </Button>
       ))}
     </nav>
   );

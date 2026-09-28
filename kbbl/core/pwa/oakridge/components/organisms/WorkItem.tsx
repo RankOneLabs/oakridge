@@ -1,6 +1,6 @@
 import { Button } from "../../../components/atoms/Button";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
-import { GateDecisionActions } from "../../GateDecisionActions";
+import { GateDecisionActions } from "./GateDecisionActions";
 import { useAdmitStageUnit } from "../../hooks/useAdmitStageUnit";
 import { useConfirmCohortMerged } from "../../hooks/useConfirmCohortMerged";
 import type { CohortLifecycleSummary, ParkedGate, ReviewInboxItem } from "../../types";

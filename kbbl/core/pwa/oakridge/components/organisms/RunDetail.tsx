@@ -10,7 +10,7 @@ import { useConfirmCohortMerged } from "../../hooks/useConfirmCohortMerged";
 import { useReviewInbox } from "../../hooks/useReviewInbox";
 import { hasOpenPullRequestMergeWait } from "../../lib/run-overview";
 import type { StageDetail } from "../../types";
-import { RunParkedGateList } from "../../ParkedGateList";
+import { RunParkedGateList } from "./ParkedGateList";
 import { RunStageRow, RunUnitRow } from "../molecules/RunStageRows";
 import { StatusBadge } from "../atoms/StatusBadge";
 import { Button } from "../../../components/atoms/Button";

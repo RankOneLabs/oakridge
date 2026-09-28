@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useGates } from "./hooks/useGates";
-import { useRunGates } from "./hooks/useRunGates";
-import type { ParkedGate } from "./types";
+import { useGates } from "../../hooks/useGates";
+import { useRunGates } from "../../hooks/useRunGates";
+import type { ParkedGate } from "../../types";
 import { GateDecisionActions } from "./GateDecisionActions";
 
 const secondaryButtonClass =

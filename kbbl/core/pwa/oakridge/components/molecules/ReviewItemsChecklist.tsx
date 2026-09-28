@@ -1,5 +1,8 @@
 import { useState } from "react";
-import type { ReviewItem } from "./types";
+import type { ReviewItem } from "../../types";
+import { Button } from "../../../components/atoms/Button";
+import { Chip } from "../../../components/atoms/Chip";
+import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 
 interface ReviewItemRowProps {
   item: ReviewItem;
@@ -34,7 +37,7 @@ function ReviewItemRow({ item, onResolve, onWaive }: ReviewItemRowProps) {
         </div>
       )}
       {item.status !== "open" && (
-        <span className={`or-chip or-chip--${item.status}`}>{item.status}</span>
+        <Chip tone="neutral">{item.status}</Chip>
       )}
       {isOpen && (
         <div className="or-review-item__actions">
@@ -46,20 +49,20 @@ function ReviewItemRow({ item, onResolve, onWaive }: ReviewItemRowProps) {
             value={resolution}
             onChange={(e) => setResolution(e.target.value)}
           />
-          <button
-            type="button"
-            className="or-btn or-btn--sm or-btn--primary"
+          <Button
+            size="small"
+            variant="primary"
             onClick={() => onResolve(item.id, resolution)}
           >
             Resolve
-          </button>
-          <button
-            type="button"
-            className="or-btn or-btn--sm or-btn--secondary"
+          </Button>
+          <Button
+            size="small"
+            variant="secondary"
             onClick={() => onWaive(item.id, resolution)}
           >
             Waive
-          </button>
+          </Button>
         </div>
       )}
     </div>
@@ -84,14 +87,14 @@ export function ReviewItemsChecklist({
       <div className="or-review-items__header">
         <span className="or-label">Review Items</span>
         {openCount > 0 && (
-          <span className="or-chip or-chip--open">{openCount} open</span>
+          <Chip tone="neutral">{openCount} open</Chip>
         )}
         {openCount === 0 && items.length > 0 && (
-          <span className="or-chip or-chip--resolved">all resolved</span>
+          <Chip tone="neutral">all resolved</Chip>
         )}
       </div>
       {items.length === 0 && (
-        <div className="or-empty">No review items.</div>
+        <FeedbackMessage>No review items.</FeedbackMessage>
       )}
       {items.map((item) => (
         <ReviewItemRow
