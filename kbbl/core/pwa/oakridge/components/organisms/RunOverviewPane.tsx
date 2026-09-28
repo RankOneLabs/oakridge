@@ -1,3 +1,4 @@
+import { Button } from "../../../components/atoms/Button";
 import type { ArtifactId, Sid } from "../../../lib/ids";
 import type { RunOverview, RunOverviewGates } from "../../lib/run-overview";
 import type { RunWorkspacePane } from "../../lib/run-workspace";
@@ -47,14 +48,14 @@ export function RunOverviewPane({ overview, activity, onOpenPane }: RunOverviewP
             Nothing is executing.
           </p>
         ) : (
-          <button
+          <Button variant="secondary"
             type="button"
             className={rowButtonClass}
             onClick={() => openSession(currentSession.session_id)}
             data-testid="or-overview-current-session"
           >
             {currentSession.stage_key} · {currentSession.unit_id} · {currentSession.attempt_label}
-          </button>
+          </Button>
         )}
       </section>
 
@@ -118,7 +119,7 @@ export function RunOverviewPane({ overview, activity, onOpenPane }: RunOverviewP
           <ul className="or-run-overview__list">
             {overview.recent_slot_releases.map((release) => (
               <li key={release.artifact_id}>
-                <button
+                <Button variant="secondary"
                   type="button"
                   className={rowButtonClass}
                   onClick={() => openArtifact(release.artifact_id)}
@@ -126,7 +127,7 @@ export function RunOverviewPane({ overview, activity, onOpenPane }: RunOverviewP
                 >
                   {release.type_id} v{release.version} · {release.stage_name}
                   {release.label !== null && ` · ${release.label}`}
-                </button>
+                </Button>
               </li>
             ))}
           </ul>
@@ -223,14 +224,14 @@ function AwaitingYou({ gates, isSessionListKnown, onOpenSession }: AwaitingYouPr
     <ul className="or-run-overview__list">
       {gates.sessions_awaiting_action.map((session) => (
         <li key={session.session_id}>
-          <button
+          <Button variant="secondary"
             type="button"
             className={rowButtonClass}
             onClick={() => onOpenSession(session.session_id)}
             data-testid="or-overview-awaiting-session"
           >
             {session.stage_key} · {session.unit_id} · {session.attempt_label}
-          </button>
+          </Button>
         </li>
       ))}
     </ul>

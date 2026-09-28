@@ -1,3 +1,4 @@
+import { Button } from "../../../components/atoms/Button";
 import { useState } from "react";
 import type { ViewerProps } from "../../artifactRegistry";
 import { isBuildBrief } from "../../lib/build-brief";
@@ -33,9 +34,9 @@ function EditableBriefText({
   if (!edit?.enabled) return <>{value}</>;
   if (!isEditing) {
     return (
-      <button type="button" aria-label={`Edit ${anchor.slice(1).replaceAll("_", " ")}`} className="review-shell__tap-target structured-doc__edit-trigger" onClick={() => { setDraft(value); setIsEditing(true); }}>
+      <Button variant="secondary" type="button" aria-label={`Edit ${anchor.slice(1).replaceAll("_", " ")}`} className="review-shell__tap-target structured-doc__edit-trigger" onClick={() => { setDraft(value); setIsEditing(true); }}>
         {value}
-      </button>
+      </Button>
     );
   }
 

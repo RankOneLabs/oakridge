@@ -1,3 +1,4 @@
+import { Button } from "../../components/atoms/Button";
 import type { Thread } from "./types";
 
 interface AtomCommentAffordanceProps {
@@ -18,7 +19,7 @@ export function AtomCommentAffordance({
   ).length;
 
   return (
-    <button
+    <Button variant="secondary"
       type="button"
       className={`review-shell__tap-target atom-comment-affordance${openCount > 0 ? " atom-comment-affordance--has-threads" : ""}`}
       disabled={!!frozen}
@@ -26,6 +27,6 @@ export function AtomCommentAffordance({
       title={`${openCount} comment${openCount !== 1 ? "s" : ""} on ${anchor}`}
     >
       {openCount > 0 ? openCount : "+"}
-    </button>
+    </Button>
   );
 }

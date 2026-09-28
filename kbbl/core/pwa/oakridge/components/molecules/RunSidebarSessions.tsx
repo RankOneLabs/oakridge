@@ -1,3 +1,4 @@
+import { Button } from "../../../components/atoms/Button";
 import { useEffect, useState } from "react";
 
 import type { Sid } from "../../../lib/ids";
@@ -104,7 +105,7 @@ function RunSidebarSessionItem({ row, isOpen, onOpen }: RunSidebarSessionItemPro
 
   return (
     <li className="or-run-sidebar__row flex-wrap" data-testid="or-sidebar-session-item">
-      <button
+      <Button variant="secondary"
         type="button"
         className={`or-run-sidebar__row-open ${isOpen ? "or-run-sidebar__row-open--active" : ""}`}
         onClick={() => onOpen(row.session_id, "primary")}
@@ -137,8 +138,8 @@ function RunSidebarSessionItem({ row, isOpen, onOpen }: RunSidebarSessionItemPro
             </span>
           )}
         </span>
-      </button>
-      <button
+      </Button>
+      <Button variant="secondary"
         type="button"
         className="or-run-sidebar__row-twin"
         onClick={() => onOpen(row.session_id, "secondary")}
@@ -146,8 +147,8 @@ function RunSidebarSessionItem({ row, isOpen, onOpen }: RunSidebarSessionItemPro
         data-testid="or-sidebar-session-twin"
       >
         ⧉
-      </button>
-      <button
+      </Button>
+      <Button variant="secondary"
         type="button"
         className="or-run-sidebar__row-twin"
         disabled={mutation.isPending}
@@ -159,12 +160,12 @@ function RunSidebarSessionItem({ row, isOpen, onOpen }: RunSidebarSessionItemPro
         data-testid="or-sidebar-session-remove"
       >
         {mutation.isPending ? "…" : confirmRemove ? "✓" : "×"}
-      </button>
+      </Button>
       {error && (
         <div className="basis-full px-2 pb-2 text-xs text-red-500" role="alert">
           <span>{error}</span>
           {refusal?.kind === "held_by_execution" && (
-            <button
+            <Button variant="secondary"
               type="button"
               className="ml-2 underline disabled:opacity-50"
               disabled={mutation.isPending}
@@ -173,7 +174,7 @@ function RunSidebarSessionItem({ row, isOpen, onOpen }: RunSidebarSessionItemPro
               data-testid="or-sidebar-session-remove-force"
             >
               Remove anyway
-            </button>
+            </Button>
           )}
         </div>
       )}

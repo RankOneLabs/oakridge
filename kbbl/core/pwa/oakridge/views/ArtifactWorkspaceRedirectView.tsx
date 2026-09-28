@@ -1,3 +1,4 @@
+import { Button } from "../../components/atoms/Button";
 import { useEffect } from "react";
 
 import { useArtifact } from "../hooks/useArtifact";
@@ -37,9 +38,9 @@ export function ArtifactWorkspaceRedirectView({
           {query.error instanceof Error ? query.error.message : "Failed to load artifact"}
         </div>
         <div>
-          <button type="button" className="or-shell__back" onClick={onBack}>
+          <Button variant="secondary" type="button" className="or-shell__back" onClick={onBack}>
             Back to runs
-          </button>
+          </Button>
         </div>
       </div>
     );

@@ -1,3 +1,4 @@
+import { Button } from "../../../components/atoms/Button";
 import type { RunDetail } from "../../types";
 import type { RunAccentClass } from "../../lib/run-accent";
 import { StatusBadge } from "../atoms/StatusBadge";
@@ -28,7 +29,7 @@ export function RunIdentityHeader({
 }: RunIdentityHeaderProps) {
   return (
     <header className={`or-run-identity ${accentClass}`} data-testid="or-run-identity">
-      <button
+      <Button variant="secondary"
         type="button"
         className="or-run-identity__sidebar-toggle"
         onClick={onToggleSidebar}
@@ -37,10 +38,10 @@ export function RunIdentityHeader({
         data-testid="or-sidebar-toggle"
       >
         ☰
-      </button>
-      <button type="button" className="or-shell__back" onClick={onBack}>
+      </Button>
+      <Button variant="secondary" type="button" className="or-shell__back" onClick={onBack}>
         ← Runs
-      </button>
+      </Button>
       <span className="or-run-identity__accent" aria-hidden="true" />
       <div className="or-run-identity__names">
         <h2

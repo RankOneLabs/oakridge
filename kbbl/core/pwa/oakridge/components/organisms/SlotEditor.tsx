@@ -1,3 +1,4 @@
+import { Button } from "../../../components/atoms/Button";
 import type { InputSlotDef, OutputSlotDef } from "../../types";
 import { updateInputSlot } from "../../../lib/input-slots";
 
@@ -45,9 +46,9 @@ export function InputSlotEditor({
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
         <span className={labelClass}>Input slots</span>
-        <button type="button" className={addBtnClass} onClick={addSlot} disabled={disabled || artifactTypes.length === 0}>
+        <Button variant="secondary" type="button" className={addBtnClass} onClick={addSlot} disabled={disabled || artifactTypes.length === 0}>
           + Add
-        </button>
+        </Button>
       </div>
       {slots.length === 0 && (
         <p className="text-xs text-[var(--text-muted)]">No input slots.</p>
@@ -94,7 +95,7 @@ export function InputSlotEditor({
               Collect producer units
             </label>
           </div>
-          <button
+          <Button variant="secondary"
             type="button"
             className={dangerBtnClass}
             onClick={() => removeSlot(i)}
@@ -102,7 +103,7 @@ export function InputSlotEditor({
             aria-label={`Remove input slot ${i + 1}`}
           >
             ✕
-          </button>
+          </Button>
         </div>
       ))}
     </div>
@@ -132,9 +133,9 @@ export function OutputSlotEditor({
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
         <span className={labelClass}>Output slots</span>
-        <button type="button" className={addBtnClass} onClick={addSlot} disabled={disabled || artifactTypes.length === 0}>
+        <Button variant="secondary" type="button" className={addBtnClass} onClick={addSlot} disabled={disabled || artifactTypes.length === 0}>
           + Add
-        </button>
+        </Button>
       </div>
       {slots.length === 0 && (
         <p className="text-xs text-[var(--text-muted)]">No output slots.</p>
@@ -163,7 +164,7 @@ export function OutputSlotEditor({
               ))}
             </select>
           </div>
-          <button
+          <Button variant="secondary"
             type="button"
             className={dangerBtnClass}
             onClick={() => removeSlot(i)}
@@ -171,7 +172,7 @@ export function OutputSlotEditor({
             aria-label={`Remove output slot ${i + 1}`}
           >
             ✕
-          </button>
+          </Button>
         </div>
       ))}
     </div>

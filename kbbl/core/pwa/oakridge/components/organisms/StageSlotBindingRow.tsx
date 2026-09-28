@@ -1,3 +1,4 @@
+import { Button } from "../../../components/atoms/Button";
 import type { SlotBinding } from "../../types";
 import { BindingEditor } from "./BindingEditor";
 
@@ -22,7 +23,7 @@ export function StageSlotBindingRow({ bindingKey, binding, onChangeKey, onChange
         <input type="text" className={inputClass} value={bindingKey}
           onChange={(event) => onChangeKey(bindingKey, event.target.value)}
           disabled={disabled} placeholder="SLOT_NAME" aria-label="Slot binding key" />
-        <button type="button" className={dangerBtnClass} onClick={() => onRemove(bindingKey)} disabled={disabled}>✕</button>
+        <Button variant="secondary" type="button" className={dangerBtnClass} onClick={() => onRemove(bindingKey)} disabled={disabled}>✕</Button>
       </div>
       <BindingEditor label="binding" value={binding}
         onChange={(next) => onChangeValue(bindingKey, next)} disabled={disabled} />

@@ -1,3 +1,4 @@
+import { Button } from "../../components/atoms/Button";
 import { useState } from "react";
 import type { Thread, Message } from "./types";
 
@@ -38,20 +39,20 @@ export function ThreadView({
         <div className="thread-view__actions">
           {isOpen && !frozen && (
             <>
-              <button
+              <Button variant="secondary"
                 type="button"
                 className="review-shell__tap-target thread-view__action-btn"
                 onClick={onPing}
               >
                 Ping
-              </button>
-              <button
+              </Button>
+              <Button variant="secondary"
                 type="button"
                 className="review-shell__tap-target thread-view__action-btn"
                 onClick={onResolve}
               >
                 Resolve
-              </button>
+              </Button>
             </>
           )}
           {!isOpen && (
@@ -85,14 +86,14 @@ export function ThreadView({
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleSend();
             }}
           />
-          <button
+          <Button variant="secondary"
             type="button"
             className="review-shell__tap-target thread-view__send-btn"
             onClick={handleSend}
             disabled={!reply.trim()}
           >
             Send
-          </button>
+          </Button>
         </div>
       )}
     </div>

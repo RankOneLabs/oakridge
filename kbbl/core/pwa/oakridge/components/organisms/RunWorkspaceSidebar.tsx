@@ -1,3 +1,4 @@
+import { Button } from "../../../components/atoms/Button";
 import type { ArtifactId, Sid } from "../../../lib/ids";
 import type { RunArtifactRef, RunSidebarSessionsView } from "../../lib/run-overview";
 import {
@@ -67,7 +68,7 @@ export function RunWorkspaceSidebar({
         <ul className="or-run-sidebar__list">
           {PANE_SHORTCUTS.map((shortcut) => (
             <li key={shortcut.testId} className="or-run-sidebar__row">
-              <button
+              <Button variant="secondary"
                 type="button"
                 className={`or-run-sidebar__row-open ${
                   arePanesEqual(workspace.primary, shortcut.pane) ||
@@ -79,8 +80,8 @@ export function RunWorkspaceSidebar({
                 data-testid={shortcut.testId}
               >
                 <span className="or-run-sidebar__row-title">{shortcut.label}</span>
-              </button>
-              <button
+              </Button>
+              <Button variant="secondary"
                 type="button"
                 className="or-run-sidebar__row-twin"
                 onClick={() => onOpenPane(shortcut.pane, "secondary")}
@@ -88,19 +89,19 @@ export function RunWorkspaceSidebar({
                 data-testid={`${shortcut.testId}-twin`}
               >
                 ⧉
-              </button>
+              </Button>
             </li>
           ))}
         </ul>
         {isTwinView(workspace) && (
-          <button
+          <Button variant="secondary"
             type="button"
             className="or-run-sidebar__collapse"
             onClick={onCollapse}
             data-testid="or-sidebar-collapse"
           >
             Collapse to one pane
-          </button>
+          </Button>
         )}
       </section>
 

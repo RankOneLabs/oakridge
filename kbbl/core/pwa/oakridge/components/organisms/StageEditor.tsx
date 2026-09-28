@@ -1,3 +1,4 @@
+import { Button } from "../../../components/atoms/Button";
 import { useState } from "react";
 import type { DelegatedSessionStageConfig, SlotBinding } from "../../types";
 import type { RuntimeModelOption } from "../../../types";
@@ -94,14 +95,14 @@ export function StageEditor({
     <div className="flex flex-col gap-0 rounded-md border border-[var(--border-muted)]" data-testid="or-stage-editor">
       {/* Header */}
       <div className="flex items-center gap-2 border-b border-[var(--border-subtle)] px-3 py-2">
-        <button
+        <Button variant="secondary"
           type="button"
           className="text-xs text-[var(--text-muted)]"
           onClick={() => setCollapsed((c) => !c)}
           aria-label={collapsed ? "Expand stage" : "Collapse stage"}
         >
           {collapsed ? "▶" : "▼"}
-        </button>
+        </Button>
         <input
           type="text"
           className="flex-1 rounded border border-[var(--border-muted)] bg-[var(--bg-surface)] px-2 py-0.5 text-sm font-mono font-medium text-[var(--text-primary)]"
@@ -114,7 +115,7 @@ export function StageEditor({
         <span className="rounded bg-[var(--bg-elevated)] px-2 py-0.5 text-xs text-[var(--text-muted)]">
           delegated_session
         </span>
-        <button
+        <Button variant="secondary"
           type="button"
           className={dangerBtnClass}
           onClick={onRemove}
@@ -122,7 +123,7 @@ export function StageEditor({
           aria-label="Remove stage"
         >
           Remove
-        </button>
+        </Button>
       </div>
 
       {!collapsed && (
@@ -210,9 +211,9 @@ export function StageEditor({
           <div className={sectionClass}>
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold uppercase text-[var(--text-muted)]">Slot Bindings</span>
-              <button type="button" className={addBtnClass} onClick={addSlotBinding} disabled={disabled}>
+              <Button variant="secondary" type="button" className={addBtnClass} onClick={addSlotBinding} disabled={disabled}>
                 + Add
-              </button>
+              </Button>
             </div>
             {slotBindingEntries.length === 0 && (
               <p className="text-xs text-[var(--text-muted)]">No slot bindings.</p>
