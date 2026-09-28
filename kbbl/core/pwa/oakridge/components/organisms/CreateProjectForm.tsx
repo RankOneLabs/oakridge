@@ -4,7 +4,7 @@ import { useProjects } from "../../hooks/useProjects";
 import { useUpdateProject } from "../../hooks/useUpdateProject";
 import type { ProjectId, ProjectWriteInput } from "../../types";
 import { Button } from "../../../components/atoms/Button";
-import { FeedbackMessage } from "../atoms/FeedbackMessage";
+import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import { FormField, formControlClass } from "../molecules/FormField";
 import { PageHeader } from "../molecules/PageHeader";
 

@@ -5,7 +5,7 @@ import type { EpicRepositoryBinding, EpicWorkflowProfile } from "../../types";
 import { randomUuid } from "../../../lib/random-uuid";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
-import { FeedbackMessage } from "../atoms/FeedbackMessage";
+import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 
 const stateLabels = {
   pending: "Waiting for final PR",

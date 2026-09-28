@@ -1,6 +1,6 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
-type ButtonVariant = "primary" | "secondary" | "danger" | "accent-outline" | "danger-strong" | "link" | "bare";
+type ButtonVariant = "primary" | "secondary" | "danger" | "armed" | "accent-outline" | "danger-strong" | "link" | "bare";
 type ButtonSize = "xsmall" | "small" | "medium";
 
 const BASE_CLASS =
@@ -12,6 +12,7 @@ const VARIANT_CLASS: Record<ButtonVariant, string> = {
     "border border-[var(--border-muted)] bg-[var(--bg-surface)] font-normal text-[var(--text-secondary)] hover:border-[var(--border-hover)] hover:text-[var(--text-primary)]",
   danger:
     "border border-red-500 bg-transparent text-red-500 hover:bg-red-500 hover:text-white",
+  armed: "border border-[var(--danger-fg)] bg-[var(--danger-bg)] font-semibold text-[var(--danger-fg)]",
   "accent-outline": "border border-[var(--accent-blue)] bg-transparent text-[var(--accent-blue)] hover:bg-[var(--accent-blue)] hover:text-white",
   "danger-strong": "border border-red-400 bg-transparent text-red-400 hover:bg-red-400 hover:text-black [[data-theme=light]_&]:border-red-800 [[data-theme=light]_&]:text-red-800 [[data-theme=light]_&]:hover:bg-red-800 [[data-theme=light]_&]:hover:text-white",
   link: "border-0 bg-transparent p-0 text-[var(--accent-blue)] underline hover:text-[var(--text-primary)]",

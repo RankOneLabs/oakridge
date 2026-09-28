@@ -6,7 +6,7 @@ import { formatRelative } from "../../../lib/time";
 import { GlobalParkedGateList } from "../../ParkedGateList";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
-import { FeedbackMessage } from "../atoms/FeedbackMessage";
+import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import { selectStatusTone } from "../../lib/status-tone";
 import { PageHeader } from "../molecules/PageHeader";
 

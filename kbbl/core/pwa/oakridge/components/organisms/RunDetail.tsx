@@ -15,7 +15,7 @@ import { RunStageRow, RunUnitRow } from "../molecules/RunStageRows";
 import { StatusBadge } from "../atoms/StatusBadge";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
-import { FeedbackMessage } from "../atoms/FeedbackMessage";
+import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import { FinalIntegrationPanel } from "./FinalIntegrationPanel";
 
 const tableHeaderClass =

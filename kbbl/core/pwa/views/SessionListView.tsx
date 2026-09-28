@@ -14,6 +14,8 @@ import {
 import type { SessionRunGroup } from "../../acp/pwa-session-order";
 
 import { SessionRow } from "../components/organisms/SessionRow";
+import { Button } from "../components/atoms/Button";
+import { FeedbackMessage } from "../components/atoms/FeedbackMessage";
 import { SessionCohortHeading } from "../components/molecules/SessionCohortHeading";
 import {
   NewSessionForm,
@@ -230,8 +232,10 @@ export function SessionListView({
             {totalCount} {totalCount === 1 ? "session" : "sessions"}
           </span>
         </div>
-        <button
+        <Button
           type="button"
+          variant="secondary"
+          size="xsmall"
           className="theme-toggle"
           onClick={onToggleTheme}
           title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
@@ -240,7 +244,7 @@ export function SessionListView({
           }
         >
           {theme === "dark" ? "LIGHT" : "DARK"}
-        </button>
+        </Button>
       </header>
       <div className="session-list-intro">
         <div>
@@ -257,15 +261,16 @@ export function SessionListView({
           initialWorkdir={prefill.initialWorkdir}
           workdirTouchedInitial={prefill.workdirTouchedInitial}
           pending={startMutation.isPending}
-          pendingError={pendingError}
+          pendingError={null}
           autostartPending={prefill.autostartPending}
           onAutostartConsumed={() => prefill.setAutostartPending(false)}
           resetSignal={resetSignal}
           onSubmit={(values) => { void startSession(values); }}
         />
+        {pendingError && <FeedbackMessage tone="danger" className="input-error">error: {pendingError}</FeedbackMessage>}
       </div>
       {totalCount === 0 ? (
-        <div className="session-list-empty">No sessions yet.</div>
+        <FeedbackMessage tone="empty" className="session-list-empty">No sessions yet.</FeedbackMessage>
       ) : (
         <div className="session-cohort-groups">
           {grouping.runs.map((run) => (
