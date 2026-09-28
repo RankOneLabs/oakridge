@@ -5,8 +5,6 @@ import { useRunGates } from "../../hooks/useRunGates";
 import type { ParkedGate } from "../../types";
 import { GateDecisionActions } from "./GateDecisionActions";
 
-const secondaryButtonClass =
-  "inline-flex items-center gap-1.5 rounded-md border border-[var(--border-muted)] bg-transparent px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:border-[var(--border-hover)]";
 const chipClass =
   "inline-block rounded border border-[var(--border-muted)] bg-[var(--bg-surface)] px-2 py-0.5 text-xs font-medium text-[var(--text-secondary)]";
 const labelClass = "text-[11px] font-semibold uppercase tracking-wide text-[var(--text-muted)]";
@@ -117,7 +115,6 @@ export function GlobalParkedGateList({ onNavigateRun, onNavigateArtifact }: { on
         <h2 className="m-0 text-lg font-semibold text-[var(--text-primary)]">Needs attention</h2>
         <Button variant="secondary"
           type="button"
-          className={secondaryButtonClass}
           onClick={() => { void qc.invalidateQueries({ queryKey: ["oakridge", "gates"] }); }}
         >
           Refresh

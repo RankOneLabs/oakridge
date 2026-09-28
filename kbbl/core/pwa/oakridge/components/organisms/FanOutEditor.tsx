@@ -5,10 +5,6 @@ import { BindableEditor, BindingEditor } from "./BindingEditor";
 const inputClass =
   "w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-3 py-1.5 text-sm text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none";
 const labelClass = "block text-xs font-medium text-[var(--text-muted)] mb-1";
-const addBtnClass =
-  "rounded border border-[var(--border-muted)] px-2 py-0.5 text-xs text-[var(--text-secondary)] hover:border-[var(--border-hover)]";
-const dangerBtnClass =
-  "rounded border border-red-400 px-2 py-0.5 text-xs text-red-400 hover:bg-red-400 hover:text-white";
 
 function defaultFanOut(): FanOutConfig {
   return {
@@ -36,7 +32,7 @@ export function FanOutEditor({ value, onChange, disabled = false }: FanOutEditor
   if (!enabled) {
     return (
       <div className="flex items-center gap-2">
-        <Button variant="secondary" type="button" className={addBtnClass} onClick={toggle} disabled={disabled}>
+        <Button variant="secondary" size="xsmall" onClick={toggle} disabled={disabled}>
           + Enable fan_out
         </Button>
         <span className="text-xs text-[var(--text-muted)]">N=1 single unit (default)</span>
@@ -88,7 +84,7 @@ export function FanOutEditor({ value, onChange, disabled = false }: FanOutEditor
     <div className="flex flex-col gap-3 rounded-md border border-[var(--border-subtle)] p-3">
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold uppercase text-[var(--text-muted)]">Fan Out</span>
-        <Button variant="secondary" type="button" className={dangerBtnClass} onClick={toggle} disabled={disabled}>
+        <Button variant="danger" size="xsmall" onClick={toggle} disabled={disabled}>
           Remove
         </Button>
       </div>
@@ -139,7 +135,7 @@ export function FanOutEditor({ value, onChange, disabled = false }: FanOutEditor
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between">
           <span className={labelClass}>item_bindings</span>
-          <Button variant="secondary" type="button" className={addBtnClass} onClick={addItemBinding} disabled={disabled}>
+          <Button variant="secondary" size="xsmall" onClick={addItemBinding} disabled={disabled}>
             + Add
           </Button>
         </div>
@@ -155,9 +151,8 @@ export function FanOutEditor({ value, onChange, disabled = false }: FanOutEditor
                 placeholder="slot key (e.g. BRIEF)"
                 aria-label="Item binding slot key"
               />
-              <Button variant="secondary"
-                type="button"
-                className={dangerBtnClass}
+              <Button variant="danger"
+                size="xsmall"
                 onClick={() => removeItemBinding(key)}
                 disabled={disabled}
               >
@@ -179,8 +174,7 @@ export function FanOutEditor({ value, onChange, disabled = false }: FanOutEditor
         <div className="flex items-center gap-2">
           <span className={labelClass}>Per-unit workdir</span>
           <Button variant="secondary"
-            type="button"
-            className={addBtnClass}
+            size="xsmall"
             onClick={() => update({
               workdir: fo.workdir
                 ? null
@@ -206,8 +200,7 @@ export function FanOutEditor({ value, onChange, disabled = false }: FanOutEditor
         <div className="flex items-center gap-2">
           <span className={labelClass}>Worktree template</span>
           <Button variant="secondary"
-            type="button"
-            className={addBtnClass}
+            size="xsmall"
             onClick={() =>
               update({
                 worktree: hasWorktree

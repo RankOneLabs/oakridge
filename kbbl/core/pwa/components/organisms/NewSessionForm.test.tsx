@@ -49,7 +49,6 @@ function renderForm(onSubmit: (values: NewSessionFormValues) => void): void {
       initialWorkdir={null}
       workdirTouchedInitial={false}
       pending={false}
-      pendingError={null}
       autostartPending={false}
       onAutostartConsumed={() => {}}
       resetSignal={0}

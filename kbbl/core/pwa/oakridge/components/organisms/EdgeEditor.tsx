@@ -3,10 +3,6 @@ import type { EdgeDef } from "../../types";
 
 const inputClass =
   "rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-3 py-1.5 text-sm text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none";
-const dangerBtnClass =
-  "rounded border border-red-400 px-2 py-0.5 text-xs text-red-400 hover:bg-red-400 hover:text-white";
-const addBtnClass =
-  "rounded border border-[var(--border-muted)] px-2 py-0.5 text-xs text-[var(--text-secondary)] hover:border-[var(--border-hover)]";
 const labelClass = "block text-xs font-medium text-[var(--text-muted)] mb-0.5";
 
 function defaultEdge(): EdgeDef {
@@ -30,7 +26,7 @@ export function EdgeEditor({ edges, stageKeys, onChange, disabled = false }: Edg
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold uppercase text-[var(--text-muted)]">Edges</span>
-        <Button variant="secondary" type="button" className={addBtnClass} onClick={addEdge} disabled={disabled}>
+        <Button variant="secondary" size="xsmall" onClick={addEdge} disabled={disabled}>
           + Add edge
         </Button>
       </div>
@@ -104,9 +100,9 @@ export function EdgeEditor({ edges, stageKeys, onChange, disabled = false }: Edg
             />
           </div>
 
-          <Button variant="secondary"
-            type="button"
-            className={`${dangerBtnClass} mb-0.5`}
+          <Button variant="danger"
+            size="xsmall"
+            className="mb-0.5"
             onClick={() => removeEdge(i)}
             disabled={disabled}
             aria-label={`Remove edge ${i + 1}`}

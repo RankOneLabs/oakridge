@@ -91,16 +91,29 @@ Tailwind utilities are the default layer for component styling. Semantic CSS
 variables remain the token layer for colors and surfaces. Keep custom CSS
 deliberately for workspace and pane layout, responsive pane behavior,
 animation and pseudo-elements, and shell layout. Also retain the
-`or-run-accent--*` palette in `core/pwa/styles.css` (lines 5348–5373): it is a
+`or-run-accent--*` palette in `core/pwa/styles.css`: it is a
 documented Tailwind workaround whose light-theme colors are tuned for AA
 contrast. Do not migrate CSS merely to maximize a Tailwind percentage.
 
 Reuse `core/pwa/components/atoms/Button.tsx` and `Chip.tsx` for shared controls
 and status labels. `core/pwa/oakridge/lib/status-tone.ts` maps Oakridge status
-values to Chip tones. `StatusBadge` and `FeedbackMessage` remain under
-`core/pwa/oakridge/components/atoms/` until a non-Oakridge consumer needs them.
+values to Chip tones. `FeedbackMessage` lives beside them in
+`core/pwa/components/atoms/`; `StatusBadge` stays under
+`core/pwa/oakridge/components/atoms/` until a non-Oakridge consumer needs it.
 The convention is kbbl-scoped: `lbc-dashboard/pwa/components/atoms/` is a known
 exclusion with its own vocabulary.
+
+Choose a control's look with `variant` and `size`, not `className`. kbbl has no
+class-merging step, so when `className` carries a utility for a property the
+variant or size already sets (padding, font size or weight, text or border
+color), the one that wins is whichever Tailwind emits later in the stylesheet,
+not the one you passed. Use `className` for layout (margin, width, flex,
+position) and for classes the atom does not set. When an override is genuinely
+needed, mark it important (`py-2!`) so the intent survives the sort order.
+Rules in `styles.css` are unlayered and beat every utility. That includes the
+global `button, input, select, textarea { font: inherit }`, so a `text-*` size
+or `font-*` weight on a button only applies when marked important; `Button`'s
+`size` prop sets padding, not type size.
 
 ## kbbl-local overrides to shared standards
 
@@ -120,7 +133,10 @@ repository; do not edit them from this checkout.
 
 ## Styling PR checklist
 
-- Does the change reuse an existing atom instead of hand-rolling one?
+- Does the change reuse an existing atom instead of hand-rolling one? Wrapping
+  a hand-rolled class string in `<Button className={...}>` does not count.
+- Does any `className` on an atom repeat a property its variant or size sets
+  without a `!`?
 - If a primitive is added, which two or more call sites justify it?
 - Are all existing `data-testid` values preserved?
 - Were the surface's `or-*` rules deleted, or explicitly retained with a stated reason?

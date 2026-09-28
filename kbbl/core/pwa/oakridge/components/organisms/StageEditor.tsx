@@ -12,10 +12,6 @@ import type { StageFormEntry } from "../../lib/stage-form";
 const inputClass =
   "w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-3 py-1.5 text-sm text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none";
 const labelClass = "block text-xs font-medium text-[var(--text-muted)] mb-1";
-const dangerBtnClass =
-  "rounded border border-red-400 px-2 py-0.5 text-xs text-red-400 hover:bg-red-400 hover:text-white";
-const addBtnClass =
-  "rounded border border-[var(--border-muted)] px-2 py-0.5 text-xs text-[var(--text-secondary)] hover:border-[var(--border-hover)]";
 const sectionClass =
   "flex flex-col gap-3 rounded-md border border-[var(--border-subtle)] p-3";
 
@@ -96,8 +92,8 @@ export function StageEditor({
       {/* Header */}
       <div className="flex items-center gap-2 border-b border-[var(--border-subtle)] px-3 py-2">
         <Button variant="secondary"
-          type="button"
-          className="text-xs text-[var(--text-muted)]"
+          size="xsmall"
+          className="text-[var(--text-muted)]!"
           onClick={() => setCollapsed((c) => !c)}
           aria-label={collapsed ? "Expand stage" : "Collapse stage"}
         >
@@ -115,9 +111,8 @@ export function StageEditor({
         <span className="rounded bg-[var(--bg-elevated)] px-2 py-0.5 text-xs text-[var(--text-muted)]">
           delegated_session
         </span>
-        <Button variant="secondary"
-          type="button"
-          className={dangerBtnClass}
+        <Button variant="danger"
+          size="xsmall"
           onClick={onRemove}
           disabled={disabled}
           aria-label="Remove stage"
@@ -211,7 +206,7 @@ export function StageEditor({
           <div className={sectionClass}>
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold uppercase text-[var(--text-muted)]">Slot Bindings</span>
-              <Button variant="secondary" type="button" className={addBtnClass} onClick={addSlotBinding} disabled={disabled}>
+              <Button variant="secondary" size="xsmall" onClick={addSlotBinding} disabled={disabled}>
                 + Add
               </Button>
             </div>

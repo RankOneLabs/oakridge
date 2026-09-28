@@ -26,7 +26,6 @@ export interface NewSessionFormProps {
   initialWorkdir: string | null;
   workdirTouchedInitial: boolean;
   pending: boolean;
-  pendingError: string | null;
   autostartPending: boolean;
   onAutostartConsumed: () => void;
   resetSignal: number;
@@ -40,7 +39,6 @@ export function NewSessionForm({
   initialWorkdir,
   workdirTouchedInitial,
   pending,
-  pendingError,
   autostartPending,
   onAutostartConsumed,
   resetSignal,
@@ -249,11 +247,6 @@ export function NewSessionForm({
           {pending ? "starting…" : "+ New"}
         </button>
       </form>
-      {pendingError && (
-        <div className="input-error" role="alert">
-          error: {pendingError}
-        </div>
-      )}
     </>
   );
 }

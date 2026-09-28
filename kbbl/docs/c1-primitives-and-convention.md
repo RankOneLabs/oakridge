@@ -14,6 +14,21 @@ here so the visual review evidence remains available with the PR.
 
 ## Decisions for later cohorts
 
+All three were settled by later cohorts on `epic/atomic-refact`; the notes below
+are kept as the record of what was open at c1. As built:
+
+- `danger-strong` is an outline that fills on hover, matching the original
+  RunDetail Delete button, so its migration was visual parity.
+- `RunList` keeps the previous status hexes (amber-400 for `stuck`,
+  `var(--text-muted)` borders for `cancelled` and `pending`) through a local
+  override on `Chip`. Status chips elsewhere use the Tailwind palette through
+  `selectStatusTone`, so the same status can differ slightly between the runs
+  list and other surfaces.
+- `danger-strong` switches on `[data-theme=light]` rather than `dark:`, so it
+  follows the app's theme toggle.
+
+What c1 recorded:
+
 - **c3, before migrating RunDetail's Delete button:** The existing control at
   `RunDetail.tsx:151` has a transparent background, red-800 outline and text,
   and fills on hover. The shared `danger-strong` variant has a solid red-800

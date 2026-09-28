@@ -261,7 +261,6 @@ export function SessionListView({
           initialWorkdir={prefill.initialWorkdir}
           workdirTouchedInitial={prefill.workdirTouchedInitial}
           pending={startMutation.isPending}
-          pendingError={null}
           autostartPending={prefill.autostartPending}
           onAutostartConsumed={() => prefill.setAutostartPending(false)}
           resetSignal={resetSignal}

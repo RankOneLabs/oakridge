@@ -3,8 +3,6 @@ import type { DelegatedSessionStageConfig } from "../../types";
 
 const inputClass = "w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-3 py-1.5 text-sm text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none";
 const labelClass = "block text-xs font-medium text-[var(--text-muted)] mb-1";
-const dangerButtonClass = "rounded border border-red-400 px-2 py-0.5 text-xs text-red-400 hover:bg-red-400 hover:text-white";
-const addButtonClass = "rounded border border-[var(--border-muted)] px-2 py-0.5 text-xs text-[var(--text-secondary)] hover:border-[var(--border-hover)]";
 const sectionClass = "flex flex-col gap-3 rounded-md border border-[var(--border-subtle)] p-3";
 
 interface StageAdvancedSettingsProps {
@@ -19,7 +17,7 @@ export function StageAdvancedSettings({ config, onChange, isDisabled }: StageAdv
   return <>
     <div className={sectionClass}>
       <div className="flex items-center justify-between"><span className="text-xs font-semibold uppercase text-[var(--text-muted)]">Worktree Identity</span>
-        <Button variant="secondary" type="button" className={addButtonClass} onClick={() => onChange({ worktree: config.worktree ? null : { branchName: "", worktreeSubdir: "", baseRef: null } })} disabled={isDisabled}>{config.worktree ? "Remove" : "+ Add"}</Button>
+        <Button variant="secondary" size="xsmall" onClick={() => onChange({ worktree: config.worktree ? null : { branchName: "", worktreeSubdir: "", baseRef: null } })} disabled={isDisabled}>{config.worktree ? "Remove" : "+ Add"}</Button>
       </div>
       {config.worktree && <div className="flex flex-col gap-2">
         <label className="flex flex-col gap-1"><span className={labelClass}>branchName</span><input type="text" className={inputClass} value={config.worktree.branchName} onChange={(event) => onChange({ worktree: { ...config.worktree!, branchName: event.target.value } })} disabled={isDisabled} placeholder="cohort/{{UNIT_ID}}" /></label>
@@ -28,9 +26,9 @@ export function StageAdvancedSettings({ config, onChange, isDisabled }: StageAdv
       </div>}
     </div>
     <div className={sectionClass}>
-      <div className="flex items-center justify-between"><span className="text-xs font-semibold uppercase text-[var(--text-muted)]">Pre-authorized Tools</span><Button variant="secondary" type="button" className={addButtonClass} onClick={() => onChange({ pre_authorized_tools: [...tools, ""] })} disabled={isDisabled}>+ Add</Button></div>
+      <div className="flex items-center justify-between"><span className="text-xs font-semibold uppercase text-[var(--text-muted)]">Pre-authorized Tools</span><Button variant="secondary" size="xsmall" onClick={() => onChange({ pre_authorized_tools: [...tools, ""] })} disabled={isDisabled}>+ Add</Button></div>
       {tools.length === 0 && <p className="text-xs text-[var(--text-muted)]">No pre-authorized tools.</p>}
-      {tools.map((tool, index) => <div key={index} className="flex items-center gap-2"><input type="text" className={inputClass} value={tool} onChange={(event) => updateTool(index, event.target.value)} disabled={isDisabled} placeholder="Bash" aria-label={`Pre-authorized tool ${index + 1}`} /><Button variant="secondary" type="button" className={dangerButtonClass} onClick={() => onChange({ pre_authorized_tools: tools.filter((_, toolIndex) => toolIndex !== index) })} disabled={isDisabled} aria-label={`Remove pre-authorized tool ${index + 1}`}>✕</Button></div>)}
+      {tools.map((tool, index) => <div key={index} className="flex items-center gap-2"><input type="text" className={inputClass} value={tool} onChange={(event) => updateTool(index, event.target.value)} disabled={isDisabled} placeholder="Bash" aria-label={`Pre-authorized tool ${index + 1}`} /><Button variant="danger" size="xsmall" onClick={() => onChange({ pre_authorized_tools: tools.filter((_, toolIndex) => toolIndex !== index) })} disabled={isDisabled} aria-label={`Remove pre-authorized tool ${index + 1}`}>✕</Button></div>)}
     </div>
   </>;
 }

@@ -15,15 +15,9 @@ import { EdgeEditor } from "./EdgeEditor";
 import { buildWorkflowGraph, validateWorkflowDefinition, workflowDefinitionToFormState } from "../../lib/workflow-definition-form";
 import { WorkflowJsonPreview } from "../molecules/WorkflowJsonPreview";
 
-const secondaryButtonClass =
-  "inline-flex items-center gap-1.5 rounded-md border border-[var(--border-muted)] bg-transparent px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:border-[var(--border-hover)]";
-const primaryButtonClass =
-  "inline-flex items-center gap-1.5 rounded-md bg-[var(--accent-blue)] px-4 py-2 text-sm font-bold text-[#0b130d] [[data-theme=light]_&]:text-white hover:opacity-90 disabled:opacity-50";
 const inputClass =
   "w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-3 py-1.5 text-sm text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none";
 const labelClass = "block text-xs font-medium text-[var(--text-muted)] mb-1";
-const addBtnClass =
-  "inline-flex items-center gap-1.5 rounded-md border border-[var(--border-muted)] bg-transparent px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:border-[var(--border-hover)]";
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -169,7 +163,7 @@ export function WorkflowDefEditor({ cloneFromId, onBack, onCreated }: WorkflowDe
   return (
     <div className="or-page or-page--wide" data-testid="or-def-editor">
       <header className="or-page-header or-page-header--back">
-        <Button variant="secondary" type="button" className={secondaryButtonClass} onClick={onBack}>
+        <Button variant="secondary" type="button" onClick={onBack}>
           Back
         </Button>
         <div><span className="or-page-kicker">Workflow authoring</span><h2 className="or-page-title">{title}</h2><p className="or-page-summary">Define typed stages, bindings, transitions, and fan-out behavior.</p></div>
@@ -215,7 +209,6 @@ export function WorkflowDefEditor({ cloneFromId, onBack, onCreated }: WorkflowDe
               <h3 className="m-0 text-sm font-semibold text-[var(--text-primary)]">Stages</h3>
               <Button variant="secondary"
                 type="button"
-                className={addBtnClass}
                 onClick={addStage}
                 disabled={pending}
               >
@@ -278,7 +271,6 @@ export function WorkflowDefEditor({ cloneFromId, onBack, onCreated }: WorkflowDe
           <div className="flex justify-end gap-3">
             <Button variant="secondary"
               type="button"
-              className={secondaryButtonClass}
               onClick={onBack}
               disabled={pending}
             >
@@ -286,7 +278,6 @@ export function WorkflowDefEditor({ cloneFromId, onBack, onCreated }: WorkflowDe
             </Button>
             <Button variant="primary"
               type="submit"
-              className={primaryButtonClass}
               disabled={pending || validationErrors.length > 0 || stages.length === 0}
               data-testid="or-def-submit"
             >

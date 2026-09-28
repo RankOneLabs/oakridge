@@ -11,8 +11,9 @@ interface RunOverviewPaneProps {
   onOpenPane: (pane: RunWorkspacePane) => void;
 }
 
-const rowButtonClass =
-  "w-full rounded-md border border-[var(--border-subtle)] px-3 py-2 text-left text-sm text-[var(--text-secondary)] hover:border-[var(--border-hover)]";
+// Full-width list rows on the secondary Button: the atom centres its content
+// and uses the muted border, so the row geometry is overridden explicitly.
+const rowButtonClass = "w-full justify-start! border-[var(--border-subtle)]! py-2! text-left";
 
 /**
  * Where the run stands, rendered from `selectRunOverview` output. It reads

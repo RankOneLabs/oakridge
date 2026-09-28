@@ -1,11 +1,12 @@
 import { Chip } from "../../../components/atoms/Chip";
-import { selectStatusTone, type StatusToneSource } from "../../lib/status-tone";
+import { selectStatusTone } from "../../lib/status-tone";
+import type { PrReviewStatus } from "../../types";
 
 interface PrSummaryBody {
   pr_url?: string;
   branch?: string;
   summary?: string;
-  review_status?: string;
+  review_status?: PrReviewStatus | null;
 }
 
 function isSafeUrl(url: string): boolean {
@@ -44,7 +45,7 @@ export function PrSummaryViewer({ body }: Props) {
               <span className="or-code" data-testid="or-pr-url">{data.pr_url}</span>
             )}
             {data.review_status && (
-              <Chip tone={selectStatusTone(data.review_status as StatusToneSource)}>
+              <Chip tone={selectStatusTone(data.review_status)}>
                 {data.review_status}
               </Chip>
             )}

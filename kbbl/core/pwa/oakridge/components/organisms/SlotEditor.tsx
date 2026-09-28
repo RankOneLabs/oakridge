@@ -5,10 +5,6 @@ import { updateInputSlot } from "../../../lib/input-slots";
 const inputClass =
   "w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-3 py-1.5 text-sm text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none";
 const labelClass = "block text-xs font-medium text-[var(--text-muted)] mb-1";
-const dangerBtnClass =
-  "rounded border border-red-400 px-2 py-0.5 text-xs text-red-400 hover:bg-red-400 hover:text-white";
-const addBtnClass =
-  "rounded border border-[var(--border-muted)] px-2 py-0.5 text-xs text-[var(--text-secondary)] hover:border-[var(--border-hover)]";
 
 interface ArtifactTypeOption {
   value: string;
@@ -46,7 +42,7 @@ export function InputSlotEditor({
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
         <span className={labelClass}>Input slots</span>
-        <Button variant="secondary" type="button" className={addBtnClass} onClick={addSlot} disabled={disabled || artifactTypes.length === 0}>
+        <Button variant="secondary" size="xsmall" onClick={addSlot} disabled={disabled || artifactTypes.length === 0}>
           + Add
         </Button>
       </div>
@@ -95,9 +91,8 @@ export function InputSlotEditor({
               Collect producer units
             </label>
           </div>
-          <Button variant="secondary"
-            type="button"
-            className={dangerBtnClass}
+          <Button variant="danger"
+            size="xsmall"
             onClick={() => removeSlot(i)}
             disabled={disabled}
             aria-label={`Remove input slot ${i + 1}`}
@@ -133,7 +128,7 @@ export function OutputSlotEditor({
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
         <span className={labelClass}>Output slots</span>
-        <Button variant="secondary" type="button" className={addBtnClass} onClick={addSlot} disabled={disabled || artifactTypes.length === 0}>
+        <Button variant="secondary" size="xsmall" onClick={addSlot} disabled={disabled || artifactTypes.length === 0}>
           + Add
         </Button>
       </div>
@@ -164,9 +159,8 @@ export function OutputSlotEditor({
               ))}
             </select>
           </div>
-          <Button variant="secondary"
-            type="button"
-            className={dangerBtnClass}
+          <Button variant="danger"
+            size="xsmall"
             onClick={() => removeSlot(i)}
             disabled={disabled}
             aria-label={`Remove output slot ${i + 1}`}

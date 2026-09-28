@@ -411,6 +411,8 @@ export type ArtifactRevisionStatus = "draft" | "approved" | "rejected";
 export type FindingSeverity = "blocking" | "warning" | "info";
 /** Mirrors `AssessmentVerdict` in oakridge-dbos/src/domain/dev-flow-artifacts.ts. */
 export type AssessmentVerdict = "pass" | "pass_with_notes" | "fail";
+/** Mirrors `PrReviewStatus` in oakridge-dbos/src/domain/dev-flow-artifacts.ts. */
+export type PrReviewStatus = "draft" | "ready" | "changes_requested" | "approved" | "merged" | "closed";
 
 export interface ArtifactCapabilities {
   reviewable: boolean;

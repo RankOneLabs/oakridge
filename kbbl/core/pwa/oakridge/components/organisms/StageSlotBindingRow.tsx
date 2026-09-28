@@ -13,8 +13,6 @@ interface StageSlotBindingRowProps {
 
 const inputClass =
   "w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-3 py-1.5 text-sm text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none";
-const dangerBtnClass =
-  "rounded border border-red-400 px-2 py-0.5 text-xs text-red-400 hover:bg-red-400 hover:text-white";
 
 export function StageSlotBindingRow({ bindingKey, binding, onChangeKey, onChangeValue, onRemove, disabled }: StageSlotBindingRowProps) {
   return (
@@ -23,7 +21,7 @@ export function StageSlotBindingRow({ bindingKey, binding, onChangeKey, onChange
         <input type="text" className={inputClass} value={bindingKey}
           onChange={(event) => onChangeKey(bindingKey, event.target.value)}
           disabled={disabled} placeholder="SLOT_NAME" aria-label="Slot binding key" />
-        <Button variant="secondary" type="button" className={dangerBtnClass} onClick={() => onRemove(bindingKey)} disabled={disabled}>✕</Button>
+        <Button variant="danger" size="xsmall" onClick={() => onRemove(bindingKey)} disabled={disabled}>✕</Button>
       </div>
       <BindingEditor label="binding" value={binding}
         onChange={(next) => onChangeValue(bindingKey, next)} disabled={disabled} />
