@@ -155,6 +155,28 @@ describe("ReviewInboxView", () => {
     expect(screen.getByRole("link", { name: "Open pull request" })).toBeTruthy();
   });
 
+  it("keeps a decided item in place so newly arrived work never slides under the pointer", async () => {
+    const briefGate = (id: string, title: string) => ({ ...inbox.items[1], id, unit_id: id, title, gate_id: id, artifact_revision_id: `revision-${id}` });
+    const briefA = briefGate("brief-a", "Brief A");
+    const briefB = briefGate("brief-b", "Brief B");
+    const assessment = briefGate("assessment", "Assessment");
+    let decided = false;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      if (init?.method === "POST") {
+        decided = true;
+        return json({ gate_id: "brief-a", resumed: true });
+      }
+      return json({ cohorts: [], items: decided ? [assessment, briefB] : [briefA, briefB] });
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={() => {}} onSelectArtifact={() => {}} /></QueryClientProvider>);
+    fireEvent.click((await screen.findAllByTestId("or-decision-approve"))[0]);
+    await screen.findByTestId("or-review-inbox-settled-item");
+    const rows = screen.getAllByTestId(/^or-review-inbox-(settled-)?item$/)
+      .map((row) => `${row.dataset.testid === "or-review-inbox-settled-item" ? "settled" : "live"}:${row.querySelector("h3")?.textContent}`);
+    expect(rows).toEqual(["settled:Brief A", "live:Brief B", "live:Assessment"]);
+  });
+
   it("shows automatic merged completion from durable reconciliation", async () => {
     renderInbox({
       items: [],

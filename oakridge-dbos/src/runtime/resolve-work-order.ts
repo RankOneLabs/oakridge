@@ -27,6 +27,7 @@ import type { StageInputSet } from "../decision/commands";
 import { workOrderIdFor, workOrderWorkflowId } from "../decision/ids";
 import type { CompiledStageContract, MaterializedExecutionUnit } from "../domain/compiled-workflow";
 import type { DelegatedSessionDefinitionConfig } from "../domain/delegated-session";
+import type { AssessmentRevisionContext } from "../domain/dev-flow-artifacts";
 import type { ArtifactEnvelope, ExecutionRequest, ExternalExecutionReference } from "../domain/execution";
 import type { ArtifactId, JsonValue, OutputCollectionKey, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "../domain/primitives";
 import { PROVISION_REPOSITORY_REFS_STAGE_TYPE, parseBaseBranch, parseRunContextRepository, type RepositoryProvisioningDefinitionConfig, type ResolvedRepositoryProvisioningConfig } from "../domain/repository-refs";
@@ -137,6 +138,8 @@ export interface RebindWorkOrderPublicationInput {
   readonly capability_seed: string;
   readonly missing: readonly MissingOutputSlot[];
   readonly rejected_outputs?: readonly RejectedOutputContext[];
+  /** The assessment the operator sent back, rendered beside the rejected outputs. */
+  readonly review?: AssessmentRevisionContext;
   /** The previous writer's checkout is the retry's base when that writer reached kbbl. */
   readonly retry_workspace_source?: ExecutionRequest["workspace_source"];
 }
@@ -148,6 +151,17 @@ export interface ReboundWorkOrderPublication {
 
 const isJsonObject = (value: JsonValue): value is { readonly [key: string]: JsonValue } =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * The section a retry's prompt gains: the rejected outputs with the operator's
+ * feedback, then, when an assessment was sent back, its open findings and
+ * recommendations, subordinate to that feedback.
+ */
+const selectCorrectionSection = (rejected: readonly RejectedOutputContext[], review: AssessmentRevisionContext | null): string => {
+  const corrections = `## Requested output corrections\n\nThe previous writer is being replaced. Revise these stored outputs according to the operator feedback; preserve the remaining scope. Publish using the new work-order instructions below.\n\n${JSON.stringify(rejected, null, 2)}`;
+  if (!review) return corrections;
+  return `${corrections}\n\n## Assessment sent back by the operator\n\nThe assessor reviewed the previous build and the operator sent it back for changes. Address its open findings and recommended next actions below; where the operator feedback above differs from them, follow the operator feedback.\n\n${JSON.stringify(review, null, 2)}`;
+};
 
 /**
  * Derives a retry's execution request from the basis request. Everything that
@@ -187,7 +201,7 @@ export const rebindWorkOrderPublication = (input: RebindWorkOrderPublicationInpu
   const retryConfig: { [key: string]: JsonValue } = { ...reboundConfig };
   if (input.retry_workspace_source) delete retryConfig.worktree;
   const resolved_config: JsonValue = rejected.length > 0 && typeof config.rendered_prompt === "string"
-    ? { ...retryConfig, rendered_prompt: `${config.rendered_prompt}\n\n## Requested output corrections\n\nThe previous writer is being replaced. Revise these stored outputs according to the operator feedback; preserve the remaining scope. Publish using the new work-order instructions below.\n\n${JSON.stringify(rejected, null, 2)}` }
+    ? { ...retryConfig, rendered_prompt: `${config.rendered_prompt}\n\n${selectCorrectionSection(rejected, input.review ?? null)}` }
     : retryConfig;
   return {
     capability_hash: capabilityHash(capability),

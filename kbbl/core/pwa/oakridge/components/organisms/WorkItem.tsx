@@ -41,13 +41,13 @@ function workLabel(item: ReviewInboxItem): string {
   }
 }
 
-export function WorkItem({ item, cohort, onSelectRun, onSelectArtifact }: { item: ReviewInboxItem; cohort?: CohortLifecycleSummary; onSelectRun: (id: string) => void; onSelectArtifact: (id: string) => void }) {
-  const gate = itemToGate(item);
+export function WorkItem({ item, cohort, isSettled = false, onSelectRun, onSelectArtifact }: { item: ReviewInboxItem; cohort?: CohortLifecycleSummary; isSettled?: boolean; onSelectRun: (id: string) => void; onSelectArtifact: (id: string) => void }) {
+  const gate = isSettled ? null : itemToGate(item);
   const artifactRevisionId = item.artifact_revision_id;
   const mismatch = cohort?.pull_request_reconciliation?.mismatch;
 
   return (
-    <article className="or-work-item" data-testid="or-review-inbox-item">
+    <article className={isSettled ? "or-work-item or-work-item--settled" : "or-work-item"} data-testid={isSettled ? "or-review-inbox-settled-item" : "or-review-inbox-item"}>
       <div className="or-work-item__context">
         <span className="or-work-item__eyebrow">{workLabel(item)}</span>
         <h3>{item.title || item.unit_id}</h3>
@@ -60,11 +60,14 @@ export function WorkItem({ item, cohort, onSelectRun, onSelectArtifact }: { item
         </div>
       </div>
       <div className="or-work-item__decision">
+        {isSettled && <p data-testid="or-inbox-settled">No longer needs your decision.</p>}
+        {!isSettled && <>
         {gate && <GateDecisionActions gate={gate} />}
         {!gate && item.kind === "admission" && cohort && <AdmissionAction item={item} cohort={cohort} />}
         {!gate && item.kind === "pull_request_merge" && <PullRequestMergeAction item={item} />}
         {!gate && item.kind === "pull_request_mismatch" && <><p>{mismatch?.detail ?? "The observed pull request does not match this cohort’s durable configuration."}</p><p>Correct the pull request repository or branches, then Oakridge will reconcile it automatically.</p></>}
         {!gate && item.kind !== "pull_request_mismatch" && item.kind !== "pull_request_merge" && item.kind !== "admission" && <p>{item.kind === "cohort_failed" ? "Open the run to inspect the failure and retry the work." : "This work will continue automatically when its dependencies finish."}</p>}
+        </>}
       </div>
     </article>
   );
