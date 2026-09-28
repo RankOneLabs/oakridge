@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 
 import type { AskResult } from "../src/decision/commands";
 import type { ExecutionRequest } from "../src/domain/execution";
-import type { ArtifactId, ExecutionId, InputFingerprint, OutputCollectionKey, Result, RunUnitId, StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId, WorkOrderId } from "../src/domain/primitives";
+import type { ArtifactId, ExecutionId, InputFingerprint, JsonValue, OutputCollectionKey, Result, RunUnitId, StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId, WorkOrderId } from "../src/domain/primitives";
 import type { OutputAttention, OutputReleaseContract } from "../src/domain/compiled-workflow";
 import type { MaterializedRunOutput, PersistMaterializedStage } from "../src/domain/run-record";
 import { applyMigrations } from "../src/storage/migrate";
@@ -313,16 +313,17 @@ test("an upstream-targeted revision closes both waits and creates upstream corre
   expect(correctionOrders[0]?.expected_artifacts.map((artifact) => artifact.output_name).sort()).toEqual(["metadata", "result"]);
 });
 
-test("a failed assessment with a terminal fail action requests changes and replays the same result", async () => {
+/** A build parked on its GitHub handoff, and the assessor downstream of it having published `body`. */
+const publishAssessmentOverBuild = async (body: JsonValue) => {
   const setup = await setupGatedRun();
-  if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  if (!setup) return null;
   const upstreamConfig = { rendered_prompt: "build the candidate", publication: { base_url: "http://oakridge.test", work_order_id: setup.workOrderId, capability: "gate-secret" } };
   await sql!.query("UPDATE oakridge.work_order SET execution_request=jsonb_set(execution_request,'{resolved_config}',$2::jsonb) WHERE id=$1",
     [setup.workOrderId, upstreamConfig]);
   const buildArtifactId = randomUUID() as ArtifactId;
   const buildBody = { build: "candidate" };
   const build = await setup.records.publish_artifact({ artifact_id: buildArtifactId, work_order_id: setup.workOrderId,
-    output_name: "result", body: buildBody, capability_hash: setup.capabilityHash, idempotency_key: "auto-fail-build",
+    output_name: "result", body: buildBody, capability_hash: setup.capabilityHash, idempotency_key: "assessed-build",
     payload_hash: payloadHashOf(buildBody), published_at: setup.now });
   if (build.kind !== "pending") throw new Error(`expected pending build, got ${build.kind}`);
   await sql!.query("UPDATE oakridge.run_output_slot SET release_policy=$2::jsonb WHERE run_unit_id=$1 AND output_name='result'",
@@ -338,26 +339,58 @@ test("a failed assessment with a terminal fail action requests changes and repla
     run_unit_id: assessorUnitId, unit_id: "unit-1" as UnitId, work_order_id: assessorWorkId,
     work_order_workflow_id: `v2-work:${assessorWorkId}`, stage_key: "assessor", executor_type: "delegated_session",
     work_order_capability_hash: assessorCapability, resolved_config: {}, parameters: {}, input_snapshot: inputs,
-    input_fingerprint: "auto-fail-assessment" as InputFingerprint,
+    input_fingerprint: "assessment-over-build" as InputFingerprint,
     outputs: [{ name: "assessment", artifact_type: "dev.assessment", required: true, release: { kind: "gate",
       steps: [{ type: "artifact_approval", actions: [{ name: "approve", disposition: "release" }, { name: "fail", disposition: "terminal" }] }],
       requires_zero_open_review_items: false, revision_target: "upstream_handoff" } }], created_at: setup.now });
   await setup.records.decide_run(setup.runId, setup.now);
-  const body = { verdict: "fail", recommended_next_actions: ["Fix durable selection"] };
-  const published = await setup.records.publish_artifact({ artifact_id: randomUUID() as ArtifactId,
+  const assessment = await setup.records.publish_artifact({ artifact_id: randomUUID() as ArtifactId,
     work_order_id: assessorWorkId, output_name: "assessment", body, capability_hash: assessorCapability,
-    idempotency_key: "auto-fail-assessment", payload_hash: payloadHashOf(body), published_at: setup.now });
-  expect(published.kind).toBe("changes_requested");
-  const replayed = await setup.records.publish_artifact({ artifact_id: randomUUID() as ArtifactId,
-    work_order_id: assessorWorkId, output_name: "assessment", body, capability_hash: assessorCapability,
-    idempotency_key: "auto-fail-assessment", payload_hash: payloadHashOf(body), published_at: setup.now });
-  expect(replayed.kind).toBe("changes_requested");
-  const slots = await sql!.query<{ state: string }>("SELECT state FROM oakridge.run_output_slot WHERE run_unit_id=ANY($1::uuid[]) ORDER BY run_unit_id",
-    [[setup.runUnitId, assessorUnitId]]);
-  expect(slots.map((slot) => slot.state)).toEqual(["invalidated", "invalidated"]);
-  const retry = await sql!.query<{ state: string }>("SELECT state FROM oakridge.work_order WHERE run_unit_id=$1 AND reason='operator_retry'", [setup.runUnitId]);
-  expect(retry[0]?.state).toBe("available");
-  expect(await new PostgresOperatorProjectionRepository(sql!, "test").list_pending_gates(setup.runId)).toEqual([]);
+    idempotency_key: "assessment-over-build", payload_hash: payloadHashOf(body), published_at: setup.now });
+  return { ...setup, assessment };
+};
+
+const FAILED_ASSESSMENT = {
+  verdict: "fail",
+  findings: [
+    { criterion: "durable selection", status: "not_met", evidence: "src/select.ts:12", description: "selection is in memory" },
+    { criterion: "tests pass", status: "met", evidence: "42 passed", description: null },
+  ],
+  test_evidence: null,
+  recommended_next_actions: ["Fix durable selection"],
+};
+
+test("a failed assessment parks at its gate for the operator with every action offered", async () => {
+  const setup = await publishAssessmentOverBuild(FAILED_ASSESSMENT);
+  if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  if (setup.assessment.kind !== "pending") throw new Error(`expected pending assessment, got ${setup.assessment.kind}`);
+  const retries = await sql!.query("SELECT id FROM oakridge.work_order WHERE run_unit_id=$1 AND reason='operator_retry'", [setup.runUnitId]);
+  expect(retries).toEqual([]);
+  const gates = await new PostgresOperatorProjectionRepository(sql!, "test").list_pending_gates(setup.runId);
+  expect(gates.map((gate) => gate.resume_actions)).toEqual([["approve", "fail"]]);
+});
+
+test("an operator can approve a failed assessment", async () => {
+  const setup = await publishAssessmentOverBuild(FAILED_ASSESSMENT);
+  if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  if (setup.assessment.kind !== "pending") throw new Error(`expected pending assessment, got ${setup.assessment.kind}`);
+  const decided = await setup.records.decide_gate_wait({ wait_id: setup.assessment.wait_id, action: "approve", actor: "operator", detail: "accepted", decided_at: setup.now });
+  expect(decided.kind).toBe("released");
+});
+
+test("sending a failed assessment back retries the build with its open findings beside the operator's feedback", async () => {
+  const setup = await publishAssessmentOverBuild(FAILED_ASSESSMENT);
+  if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  if (setup.assessment.kind !== "pending") throw new Error(`expected pending assessment, got ${setup.assessment.kind}`);
+  await setup.records.decide_gate_wait({ wait_id: setup.assessment.wait_id, action: "fail", actor: "operator", detail: "skip the rename; fix selection only", decided_at: setup.now });
+  const retries = await sql!.query<{ readonly rendered_prompt: string }>(`SELECT execution_request->'resolved_config'->>'rendered_prompt' AS rendered_prompt
+    FROM oakridge.work_order WHERE run_unit_id=$1 AND reason='operator_retry'`, [setup.runUnitId]);
+  const prompt = retries[0]?.rendered_prompt ?? "";
+  const review = JSON.parse(prompt.slice(prompt.indexOf("{", prompt.indexOf("## Assessment sent back by the operator"))));
+  expect({ has_feedback: prompt.includes("skip the rename; fix selection only"), review }).toEqual({
+    has_feedback: true,
+    review: { verdict: "fail", open_findings: [FAILED_ASSESSMENT.findings[0]], recommended_next_actions: ["Fix durable selection"] },
+  });
 });
 
 test("a rejected gate invalidates the slot and abandons the work order that produced it, instead of releasing", async () => {
