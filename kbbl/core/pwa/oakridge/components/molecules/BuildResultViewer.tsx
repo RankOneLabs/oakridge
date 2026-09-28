@@ -1,3 +1,6 @@
+import { Chip } from "../../../components/atoms/Chip";
+import { selectStatusTone } from "../../lib/status-tone";
+
 interface Tests {
   passed?: number;
   failed?: number;
@@ -36,12 +39,12 @@ export function BuildResultViewer({ body }: Props) {
           <h3 className="or-viewer__section-title">Tests</h3>
           <div className="or-viewer__test-row">
             {passed !== undefined && (
-              <span className="or-chip or-chip--pass">{passed} passed</span>
+              <Chip tone={selectStatusTone("pass")}>{passed} passed</Chip>
             )}
             {failed !== undefined && (
-              <span className={`or-chip or-chip--${failed > 0 ? "fail" : "pass"}`}>
+              <Chip tone={selectStatusTone(failed > 0 ? "fail" : "pass")}>
                 {failed} failed
-              </span>
+              </Chip>
             )}
             {passed === undefined && failed === undefined && (
               <pre className="or-pre">{JSON.stringify(tests, null, 2)}</pre>

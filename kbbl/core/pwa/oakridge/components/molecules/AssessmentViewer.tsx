@@ -1,3 +1,7 @@
+import { Chip } from "../../../components/atoms/Chip";
+import { selectStatusTone } from "../../lib/status-tone";
+import type { AssessmentVerdict, FindingSeverity } from "../../types";
+
 interface Finding {
   description?: string;
   severity?: string;
@@ -23,9 +27,9 @@ export function AssessmentViewer({ body }: Props) {
       {data.verdict && (
         <section className="or-viewer__section">
           <h3 className="or-viewer__section-title">Verdict</h3>
-          <span className={`or-chip or-chip--${data.verdict}`} data-testid="or-assessment-verdict">
+          <Chip tone={selectStatusTone(data.verdict as AssessmentVerdict)} testId="or-assessment-verdict">
             {data.verdict}
-          </span>
+          </Chip>
         </section>
       )}
 
@@ -35,7 +39,7 @@ export function AssessmentViewer({ body }: Props) {
           <ul className="or-viewer__list">
             {data.findings.map((f, i) => (
               <li key={i} className="or-viewer__list-item">
-                {f.severity && <span className={`or-chip or-chip--${f.severity}`}>{f.severity}</span>}
+                {f.severity && <Chip tone={selectStatusTone(f.severity as FindingSeverity)}>{f.severity}</Chip>}
                 <span>{f.description ?? JSON.stringify(f)}</span>
               </li>
             ))}

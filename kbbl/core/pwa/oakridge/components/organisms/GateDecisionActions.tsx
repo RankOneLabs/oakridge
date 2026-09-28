@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 
-import { useResumeGate } from "./hooks/useResumeGate";
-import type { ParkedGate } from "./types";
-import { randomUuid } from "../lib/random-uuid";
+import { useResumeGate } from "../../hooks/useResumeGate";
+import type { ParkedGate } from "../../types";
+import { randomUuid } from "../../../lib/random-uuid";
+import { Button } from "../../../components/atoms/Button";
+
+const decisionButtonClass = "min-h-12 w-full rounded-lg! px-4! py-[0.65rem]! md:min-h-11 md:w-auto";
 
 interface GateDecisionActionsProps {
   gate: ParkedGate;
@@ -101,16 +104,16 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
           const needsFeedback = action === "request_revision" || action === "rerun" || action === "reject" || action === "fail";
           const isPrimary = action === "approve" || action === "confirm_merged" || action === "pass";
           return (
-            <button
+            <Button
               key={action}
-              type="button"
-              className={isPrimary ? "or-decision-button or-decision-button--primary" : "or-decision-button or-decision-button--secondary"}
+              variant={isPrimary ? "primary" : "secondary"}
+              className={`${decisionButtonClass} ${isPrimary ? "text-white!" : "text-[var(--text-primary)]!"}`}
               disabled={mutation.isPending || disabled}
               onClick={() => needsFeedback ? setFeedbackAction(action) : submit(action)}
               data-testid={`or-decision-${action}`}
             >
               {mutation.isPending && mutation.variables?.action === action ? "Saving…" : (actionLabels[action] ?? actionLabel(action))}
-            </button>
+            </Button>
           );
         })}
       </div>
@@ -127,8 +130,8 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
             placeholder="Give the builder specific, actionable feedback."
           />
           <div className="or-decision-feedback__buttons">
-            <button type="button" className="or-decision-button or-decision-button--secondary" onClick={() => setFeedbackAction(null)}>Cancel</button>
-            <button type="button" className="or-decision-button or-decision-button--danger" disabled={disabled || !feedback.trim() || mutation.isPending} onClick={() => submit(feedbackAction, feedback)}>Send feedback</button>
+            <Button variant="secondary" className={`${decisionButtonClass} text-[var(--text-primary)]!`} onClick={() => setFeedbackAction(null)}>Cancel</Button>
+            <Button variant="danger" className={`${decisionButtonClass} border-transparent! bg-[var(--danger-fg)]! text-white!`} disabled={disabled || !feedback.trim() || mutation.isPending} onClick={() => submit(feedbackAction, feedback)}>Send feedback</Button>
           </div>
         </div>
       )}

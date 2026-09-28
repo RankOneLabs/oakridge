@@ -1,3 +1,6 @@
+import { Chip } from "../../../components/atoms/Chip";
+import { selectStatusTone, type StatusToneSource } from "../../lib/status-tone";
+
 interface PrSummaryBody {
   pr_url?: string;
   branch?: string;
@@ -41,9 +44,9 @@ export function PrSummaryViewer({ body }: Props) {
               <span className="or-code" data-testid="or-pr-url">{data.pr_url}</span>
             )}
             {data.review_status && (
-              <span className={`or-chip or-chip--${data.review_status}`}>
+              <Chip tone={selectStatusTone(data.review_status as StatusToneSource)}>
                 {data.review_status}
-              </span>
+              </Chip>
             )}
           </div>
         </section>

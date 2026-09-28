@@ -1,5 +1,5 @@
-import type { InputSlotDef, OutputSlotDef } from "../../oakridge/types";
-import { updateInputSlot } from "../../lib/input-slots";
+import type { InputSlotDef, OutputSlotDef } from "../../types";
+import { updateInputSlot } from "../../../lib/input-slots";
 
 const inputClass =
   "w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-3 py-1.5 text-sm text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none";

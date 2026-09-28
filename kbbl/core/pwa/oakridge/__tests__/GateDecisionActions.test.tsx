@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { GateDecisionActions } from "../GateDecisionActions";
+import { GateDecisionActions } from "../components/organisms/GateDecisionActions";
 import type { ParkedGate, RepositoryKey, RunState } from "../types";
 
 function gate(id: string, revision: string, overrides: Partial<Pick<ParkedGate, "run_state" | "actionable">> = {}): ParkedGate {

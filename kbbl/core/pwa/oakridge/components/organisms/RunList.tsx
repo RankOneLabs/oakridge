@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useRuns } from "../../hooks/useRuns";
 import type { RunDisplayStatus, RunSummary } from "../../types";
 import { formatRelative } from "../../../lib/time";
-import { GlobalParkedGateList } from "../../ParkedGateList";
+import { GlobalParkedGateList } from "./ParkedGateList";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";

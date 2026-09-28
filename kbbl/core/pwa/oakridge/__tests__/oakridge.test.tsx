@@ -6,7 +6,7 @@ import type { ReactElement } from "react";
 import { RunListView } from "../views/RunListView";
 // Aliased: `RunDetail` is also the name of the run view-model type below.
 import { RunDetail as RunDetailOrganism } from "../components/organisms/RunDetail";
-import { GlobalParkedGateList } from "../ParkedGateList";
+import { GlobalParkedGateList } from "../components/organisms/ParkedGateList";
 import type { RunSummary, RunDetail, ParkedGate, RepositoryKey, CohortId, EpicProfileId, StageUnitParams, WorkflowRunId } from "../types";
 import type { BuildBrief } from "../lib/build-brief";
 

@@ -1,11 +1,11 @@
 import type { ComponentType } from "react";
 import type { ArtifactReviewDescriptor } from "./types";
-import { SpecAnalysisViewer } from "./viewers/SpecAnalysisViewer";
-import { PlanViewer } from "./viewers/PlanViewer";
-import { BuildResultViewer } from "./viewers/BuildResultViewer";
-import { AssessmentViewer } from "./viewers/AssessmentViewer";
-import { PrSummaryViewer } from "./viewers/PrSummaryViewer";
-import { BuildBriefViewer } from "./viewers/BuildBriefViewer";
+import { SpecAnalysisViewer } from "./components/molecules/SpecAnalysisViewer";
+import { PlanViewer } from "./components/molecules/PlanViewer";
+import { BuildResultViewer } from "./components/molecules/BuildResultViewer";
+import { AssessmentViewer } from "./components/molecules/AssessmentViewer";
+import { PrSummaryViewer } from "./components/molecules/PrSummaryViewer";
+import { BuildBriefViewer } from "./components/molecules/BuildBriefViewer";
 
 export interface ViewerProps {
   body: unknown;
