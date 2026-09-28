@@ -60,7 +60,7 @@ export function Button({
   return (
     <button
       type={type}
-      className={`or-tw-button ${variant === "bare" ? "" : `${BASE_CLASS} ${VARIANT_CLASS[variant]} ${variant === "link" ? "" : SIZE_CLASS[size]} ${primaryLabelClass}`} ${className}`.trim()}
+      className={`${variant === "bare" ? "" : `${BASE_CLASS} ${VARIANT_CLASS[variant]} ${variant === "link" ? "" : SIZE_CLASS[size]} ${primaryLabelClass}`} ${className}`.trim()}
       {...props}
     >
       {children}

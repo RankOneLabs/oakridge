@@ -4851,9 +4851,7 @@ a:focus-visible {
   font-weight: 700;
 }
 
-[data-theme="light"] .btn-new-session,
-[data-theme="light"] .or-btn--primary,
-[data-theme="light"] .or-decision-button--primary {
+[data-theme="light"] .btn-new-session {
   color: #fff;
 }
 
@@ -5351,39 +5349,6 @@ a:focus-visible {
   gap: 0.6rem;
 }
 
-:where(.or-shell) :where(button:not(.or-tw-button)) {
-  min-height: 2.5rem;
-  padding: 0.45rem 0.8rem;
-  border: 1px solid var(--border-muted);
-  border-radius: 0.45rem;
-  background: var(--bg-surface);
-  color: var(--text-secondary);
-  cursor: pointer;
-  font: inherit;
-  font-size: 0.85rem;
-}
-
-:where(.or-shell) :where(button:not(.or-tw-button):hover:not(:disabled)) { border-color: var(--border-hover); color: var(--text-primary); }
-:where(.or-shell) :where(button:not(.or-tw-button):disabled) { cursor: not-allowed; opacity: 0.5; }
-:where(.or-shell) :where(button:not(.or-tw-button).or-shell__back, button:not(.or-tw-button).or-shell__nav-item, button:not(.or-tw-button).or-link, button:not(.or-tw-button).or-def-list__link) { min-height: 0; }
-
-.or-form-card button[type="submit"],
-[data-testid="or-def-submit"] {
-  border-color: var(--accent-blue);
-  background: var(--accent-blue);
-  color: #0b130d;
-  font-weight: 700;
-}
-
-[data-theme="light"] .or-form-card button[type="submit"],
-[data-theme="light"] [data-testid="or-def-submit"] { color: #fff; }
-
-.or-page-actions button:not(.or-tw-button),
-.or-page-header > button:not(.or-tw-button),
-.or-form-card button:not(.or-tw-button) {
-  min-height: 2.65rem;
-  border-radius: 0.5rem;
-}
 
 .or-form-card {
   display: flex;
@@ -5497,9 +5462,6 @@ a:focus-visible {
 .or-repository-launch__heading { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
 .or-form-input { width: 100%; box-sizing: border-box; padding: 0.375rem 0.75rem; border: 1px solid var(--border-muted); border-radius: 0.375rem; background: var(--bg-surface); color: var(--text-primary); font: inherit; font-size: 0.875rem; }
 .or-form-input:focus { border-color: var(--accent-blue); outline: none; }
-.or-secondary-button { display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.375rem 0.75rem; border: 1px solid var(--border-muted); border-radius: 0.375rem; background: transparent; color: var(--text-secondary); font: inherit; font-size: 0.875rem; cursor: pointer; }
-.or-secondary-button:hover { border-color: var(--border-hover); }
-.or-secondary-button:disabled { cursor: default; opacity: 0.5; }
 .or-repository-fields {
   display: grid;
   grid-template-columns: minmax(7rem, 0.55fr) minmax(14rem, 1.5fr) minmax(8rem, 0.75fr) minmax(9rem, 0.85fr) minmax(7rem, 0.6fr) auto;
@@ -5555,14 +5517,9 @@ a:focus-visible {
 .or-work-item__decision { display: flex; flex-direction: column; justify-content: center; gap: 1rem; padding-left: clamp(1.25rem, 3vw, 2rem); border-left: 1px solid var(--border-subtle); }
 .or-work-item__blocker { margin-top: 1rem; padding: 0.75rem 1rem; border-radius: 0.5rem; background: var(--danger-bg); color: var(--text-primary); }
 .or-work-item__links { display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 1.25rem; }
-.or-work-item__links button, .or-work-item__links a { padding: 0; border: 0; background: none; color: var(--accent-blue); cursor: pointer; font: inherit; font-size: 0.875rem; text-decoration: underline; }
+.or-work-item__links a { padding: 0; border: 0; background: none; color: var(--accent-blue); cursor: pointer; font: inherit; font-size: 0.875rem; text-decoration: underline; }
 .or-decision-actions { display: flex; flex-direction: column; gap: 1rem; }
 .or-decision-actions__buttons, .or-decision-feedback__buttons { display: flex; flex-wrap: wrap; gap: 0.75rem; }
-.or-decision-button { min-height: 2.75rem; padding: 0.65rem 1rem; border: 1px solid transparent; border-radius: 0.5rem; cursor: pointer; font: inherit; font-weight: 650; }
-.or-decision-button:disabled { cursor: not-allowed; opacity: 0.55; }
-.or-decision-button--primary { background: var(--accent-blue); color: white; }
-.or-decision-button--secondary { border-color: var(--border-muted); background: var(--bg-surface); color: var(--text-primary); }
-.or-decision-button--danger { background: var(--danger-fg); color: white; }
 .or-decision-feedback { display: flex; flex-direction: column; gap: 0.65rem; }
 .or-decision-feedback label { font-size: 0.875rem; font-weight: 650; }
 .or-decision-feedback textarea { width: 100%; min-height: 7rem; resize: vertical; padding: 0.75rem; border: 1px solid var(--border-muted); border-radius: 0.5rem; background: var(--bg-surface); color: var(--text-primary); font: inherit; line-height: 1.45; }
@@ -5615,14 +5572,12 @@ a:focus-visible {
   .or-run-sidebar__row-twin { display: none; }
   .or-run-workspace__pane-action--move { display: none; }
   .or-repository-fields, .or-role-grid { grid-template-columns: minmax(0, 1fr); }
-  .or-repository-fields button:not(.or-tw-button) { width: 100%; }
   .or-review-workspace { gap: 2rem; }
   .or-review-workspace__header { align-items: stretch; flex-direction: column; gap: 1rem; }
   .or-review-refresh { align-self: flex-start; }
   .or-work-item { grid-template-columns: 1fr; gap: 1.25rem; padding: 1.1rem; }
   .or-work-item__decision { padding: 1.1rem 0 0; border-top: 1px solid var(--border-subtle); border-left: 0; }
   .or-decision-actions__buttons, .or-decision-feedback__buttons { flex-direction: column; }
-  .or-decision-button { width: 100%; min-height: 3rem; }
   .or-progress-row { grid-template-columns: auto minmax(0, 1fr) auto; gap: 0.75rem; }
   .or-progress-row__state { grid-column: 2 / -1; }
   .or-progress-row__open { grid-column: 3; grid-row: 1; }
@@ -5631,9 +5586,6 @@ a:focus-visible {
   .or-page-header, .or-page-header--back { flex-direction: column; gap: 1rem; }
   .or-page-title { font-size: 2.5rem; }
   .or-page-actions { width: 100%; justify-content: flex-start; }
-  .or-page-actions button:not(.or-tw-button) { flex: 1 1 auto; }
-  /* Flex sizing belongs to the action layout even when the button skin is Tailwind. */
-  .or-page-actions button.or-tw-button { flex: 1 1 auto; }
   [data-testid="or-def-editor"] > div.grid { grid-template-columns: minmax(0, 1fr); }
   .or-data-table, .or-page > table { min-width: 42rem; }
   .or-page:has(> .or-data-table), .or-page:has(> table) { overflow-x: auto; }
@@ -5652,72 +5604,6 @@ a:focus-visible {
 
 .or-unavailable h2 { color: var(--text-primary); margin: 0; }
 .or-unavailable p  { margin: 0; }
-
-/* shared primitives */
-.or-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-  padding: 0.375rem 0.875rem;
-  border-radius: 6px;
-  font: inherit;
-  font-size: 0.875rem;
-  cursor: pointer;
-  border: 1px solid transparent;
-}
-
-.or-btn--primary {
-  background: var(--accent-blue);
-  color: #fff;
-  border-color: var(--accent-blue);
-}
-
-.or-btn--primary:disabled {
-  background: var(--border-muted);
-  border-color: var(--border-muted);
-  color: var(--text-fainter);
-  cursor: not-allowed;
-}
-
-.or-btn--secondary {
-  background: none;
-  color: var(--text-secondary);
-  border-color: var(--border-muted);
-}
-
-.or-link {
-  background: none;
-  border: none;
-  color: var(--accent-blue);
-  cursor: pointer;
-  font: inherit;
-  font-size: inherit;
-  padding: 0;
-  text-decoration: underline;
-}
-
-.or-chip {
-  display: inline-block;
-  padding: 0.125rem 0.5rem;
-  border-radius: 4px;
-  font-size: 0.75rem;
-  font-weight: 500;
-  border: 1px solid var(--border-muted);
-  color: var(--text-secondary);
-  background: var(--bg-surface);
-}
-
-.or-chip--running   { border-color: #3b82f6; color: #3b82f6; }
-.or-chip--stuck     { border-color: #fbbf24; color: #fbbf24; }
-.or-chip--parked    { border-color: #f59e0b; color: #f59e0b; }
-.or-chip--failed    { border-color: #ef4444; color: #ef4444; }
-.or-chip--complete  { border-color: #10b981; color: #10b981; }
-.or-chip--cancelled { border-color: var(--text-muted); color: var(--text-muted); }
-.or-chip--pending   { border-color: var(--text-muted); color: var(--text-muted); }
-.or-chip--approved  { border-color: #10b981; color: #10b981; }
-.or-chip--rejected  { border-color: #ef4444; color: #ef4444; }
-.or-chip--draft     { border-color: #f59e0b; color: #f59e0b; }
-.or-chip--artifact  { cursor: pointer; }
 
 .or-badge {
   display: inline-flex;
