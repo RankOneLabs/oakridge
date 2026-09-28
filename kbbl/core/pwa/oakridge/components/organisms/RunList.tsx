@@ -89,10 +89,10 @@ export function RunList({ onSelectRun, onNewRun, onNewProject, onWorkflows, onSe
         summary="Monitor active work, review parked decisions, and inspect completed workflows."
         actions={
           <>
-            {onWorkflows && <Button onClick={onWorkflows} data-testid="or-workflows-btn">Workflows</Button>}
-            <Button onClick={onNewProject} data-testid="or-new-project-btn">+ Project</Button>
-            <Button variant="primary" onClick={onNewRun} data-testid="or-new-run-btn">+ New Run</Button>
-            <Button onClick={onRefresh} aria-label="Refresh runs">Refresh</Button>
+            {onWorkflows && <Button className="max-[767px]:flex-[1_1_auto]" onClick={onWorkflows} data-testid="or-workflows-btn">Workflows</Button>}
+            <Button className="max-[767px]:flex-[1_1_auto]" onClick={onNewProject} data-testid="or-new-project-btn">+ Project</Button>
+            <Button variant="primary" className="max-[767px]:flex-[1_1_auto]" onClick={onNewRun} data-testid="or-new-run-btn">+ New Run</Button>
+            <Button className="max-[767px]:flex-[1_1_auto]" onClick={onRefresh} aria-label="Refresh runs">Refresh</Button>
           </>
         }
       />

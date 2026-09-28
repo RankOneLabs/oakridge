@@ -35,7 +35,7 @@ export function PrSummaryViewer({ body }: Props) {
                 href={data.pr_url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="or-link"
+                className="text-[var(--accent-blue)] underline hover:text-[var(--text-primary)]"
                 data-testid="or-pr-url"
               >
                 {data.pr_url}

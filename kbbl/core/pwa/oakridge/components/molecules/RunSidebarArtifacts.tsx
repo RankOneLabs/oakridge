@@ -1,3 +1,4 @@
+import { Button } from "../../../components/atoms/Button";
 import type { ArtifactId } from "../../../lib/ids";
 import type { RunWorkspaceSlot } from "../../lib/run-workspace";
 import type { RunArtifactRef } from "../../lib/run-overview";
@@ -26,9 +27,9 @@ export function RunSidebarArtifacts({ rows, openArtifactIds, onOpen }: RunSideba
       <ul className="or-run-sidebar__list">
         {rows.map((row) => (
           <li key={row.artifact_id} className="or-run-sidebar__row">
-            <button
+            <Button variant="sidebar-row"
               type="button"
-              className={`or-run-sidebar__row-open ${openArtifactIds.has(row.artifact_id) ? "or-run-sidebar__row-open--active" : ""}`}
+              className={openArtifactIds.has(row.artifact_id) ? "border-[var(--or-run-accent,var(--accent-blue))]! bg-[var(--bg-elevated)]!" : ""}
               onClick={() => onOpen(row.artifact_id, "primary")}
               data-testid="or-sidebar-artifact"
               data-artifact-id={row.artifact_id}
@@ -41,8 +42,8 @@ export function RunSidebarArtifacts({ rows, openArtifactIds, onOpen }: RunSideba
                 <span>{row.stage_name}</span>
                 {row.label !== null && <span>{row.label}</span>}
               </span>
-            </button>
-            <button
+            </Button>
+            <Button variant="secondary"
               type="button"
               className="or-run-sidebar__row-twin"
               onClick={() => onOpen(row.artifact_id, "secondary")}
@@ -50,7 +51,7 @@ export function RunSidebarArtifacts({ rows, openArtifactIds, onOpen }: RunSideba
               data-testid="or-sidebar-artifact-twin"
             >
               ⧉
-            </button>
+            </Button>
           </li>
         ))}
       </ul>

@@ -1,3 +1,4 @@
+import { Button } from "../../../components/atoms/Button";
 import type { FanOutConfig, SlotBinding } from "../../types";
 import { BindableEditor, BindingEditor } from "./BindingEditor";
 
@@ -35,9 +36,9 @@ export function FanOutEditor({ value, onChange, disabled = false }: FanOutEditor
   if (!enabled) {
     return (
       <div className="flex items-center gap-2">
-        <button type="button" className={addBtnClass} onClick={toggle} disabled={disabled}>
+        <Button variant="secondary" type="button" className={addBtnClass} onClick={toggle} disabled={disabled}>
           + Enable fan_out
-        </button>
+        </Button>
         <span className="text-xs text-[var(--text-muted)]">N=1 single unit (default)</span>
       </div>
     );
@@ -87,9 +88,9 @@ export function FanOutEditor({ value, onChange, disabled = false }: FanOutEditor
     <div className="flex flex-col gap-3 rounded-md border border-[var(--border-subtle)] p-3">
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold uppercase text-[var(--text-muted)]">Fan Out</span>
-        <button type="button" className={dangerBtnClass} onClick={toggle} disabled={disabled}>
+        <Button variant="secondary" type="button" className={dangerBtnClass} onClick={toggle} disabled={disabled}>
           Remove
-        </button>
+        </Button>
       </div>
 
       <BindingEditor
@@ -138,9 +139,9 @@ export function FanOutEditor({ value, onChange, disabled = false }: FanOutEditor
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between">
           <span className={labelClass}>item_bindings</span>
-          <button type="button" className={addBtnClass} onClick={addItemBinding} disabled={disabled}>
+          <Button variant="secondary" type="button" className={addBtnClass} onClick={addItemBinding} disabled={disabled}>
             + Add
-          </button>
+          </Button>
         </div>
         {itemBindings.map(([key, binding], i) => (
           <div key={i} className="flex flex-col gap-1 rounded border border-[var(--border-subtle)] p-2">
@@ -154,14 +155,14 @@ export function FanOutEditor({ value, onChange, disabled = false }: FanOutEditor
                 placeholder="slot key (e.g. BRIEF)"
                 aria-label="Item binding slot key"
               />
-              <button
+              <Button variant="secondary"
                 type="button"
                 className={dangerBtnClass}
                 onClick={() => removeItemBinding(key)}
                 disabled={disabled}
               >
                 ✕
-              </button>
+              </Button>
             </div>
             <BindingEditor
               label="binding"
@@ -177,7 +178,7 @@ export function FanOutEditor({ value, onChange, disabled = false }: FanOutEditor
       <div className="flex flex-col gap-2">
         <div className="flex items-center gap-2">
           <span className={labelClass}>Per-unit workdir</span>
-          <button
+          <Button variant="secondary"
             type="button"
             className={addBtnClass}
             onClick={() => update({
@@ -188,7 +189,7 @@ export function FanOutEditor({ value, onChange, disabled = false }: FanOutEditor
             disabled={disabled}
           >
             {fo.workdir ? "Remove" : "+ Add"}
-          </button>
+          </Button>
         </div>
         {fo.workdir && (
           <BindingEditor
@@ -204,7 +205,7 @@ export function FanOutEditor({ value, onChange, disabled = false }: FanOutEditor
       <div className="flex flex-col gap-2">
         <div className="flex items-center gap-2">
           <span className={labelClass}>Worktree template</span>
-          <button
+          <Button variant="secondary"
             type="button"
             className={addBtnClass}
             onClick={() =>
@@ -217,7 +218,7 @@ export function FanOutEditor({ value, onChange, disabled = false }: FanOutEditor
             disabled={disabled}
           >
             {hasWorktree ? "Remove" : "+ Add"}
-          </button>
+          </Button>
         </div>
         {hasWorktree && fo.worktree && (
           <div className="flex flex-col gap-1 rounded border border-[var(--border-subtle)] p-2">

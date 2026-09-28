@@ -1,3 +1,4 @@
+import { Button } from "../../../components/atoms/Button";
 import type { EdgeDef } from "../../types";
 
 const inputClass =
@@ -29,9 +30,9 @@ export function EdgeEditor({ edges, stageKeys, onChange, disabled = false }: Edg
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold uppercase text-[var(--text-muted)]">Edges</span>
-        <button type="button" className={addBtnClass} onClick={addEdge} disabled={disabled}>
+        <Button variant="secondary" type="button" className={addBtnClass} onClick={addEdge} disabled={disabled}>
           + Add edge
-        </button>
+        </Button>
       </div>
 
       {edges.length === 0 && (
@@ -103,7 +104,7 @@ export function EdgeEditor({ edges, stageKeys, onChange, disabled = false }: Edg
             />
           </div>
 
-          <button
+          <Button variant="secondary"
             type="button"
             className={`${dangerBtnClass} mb-0.5`}
             onClick={() => removeEdge(i)}
@@ -111,7 +112,7 @@ export function EdgeEditor({ edges, stageKeys, onChange, disabled = false }: Edg
             aria-label={`Remove edge ${i + 1}`}
           >
             ✕
-          </button>
+          </Button>
         </div>
       ))}
     </div>
