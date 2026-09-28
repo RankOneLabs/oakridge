@@ -1,6 +1,6 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
-type ButtonVariant = "primary" | "secondary" | "danger" | "armed" | "accent-outline" | "danger-strong" | "link" | "bare";
+type ButtonVariant = "primary" | "secondary" | "danger" | "armed" | "accent-outline" | "danger-strong" | "link" | "sidebar-row" | "pane-action" | "progress-row" | "bare";
 type ButtonSize = "xsmall" | "small" | "medium";
 
 const BASE_CLASS =
@@ -16,29 +16,20 @@ const VARIANT_CLASS: Record<ButtonVariant, string> = {
   "accent-outline": "border border-[var(--accent-blue)] bg-transparent text-[var(--accent-blue)] hover:bg-[var(--accent-blue)] hover:text-white",
   "danger-strong": "border border-red-400 bg-transparent text-red-400 hover:bg-red-400 hover:text-black [[data-theme=light]_&]:border-red-800 [[data-theme=light]_&]:text-red-800 [[data-theme=light]_&]:hover:bg-red-800 [[data-theme=light]_&]:hover:text-white",
   link: "border-0 bg-transparent p-0 text-[var(--accent-blue)] underline hover:text-[var(--text-primary)]",
+  "sidebar-row": "flex flex-1 min-w-0 flex-col gap-[0.15rem] rounded-[0.4rem] border border-transparent bg-transparent px-2 py-[0.4rem] text-left text-[var(--text-secondary)] cursor-pointer hover:bg-[var(--bg-elevated)]",
+  "pane-action": "rounded-[0.4rem] border border-[var(--border-subtle)] bg-transparent px-[0.45rem] py-[0.2rem] text-xs! text-[var(--text-muted)] cursor-pointer",
+  "progress-row": "grid w-full grid-cols-[auto_minmax(0,1fr)_minmax(10rem,auto)_auto] items-center gap-4 min-h-[4.25rem] rounded-none border-0 border-b border-b-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-3 text-left text-[var(--text-primary)] cursor-pointer hover:bg-[var(--bg-elevated)] last:border-b-0 max-[767px]:grid-cols-[auto_minmax(0,1fr)_auto] max-[767px]:gap-3",
   bare: "",
 };
 
 const SIZE_CLASS: Record<ButtonSize, string> = {
   xsmall: "px-2 py-0.5 text-xs",
-  // The form's small source toggles inherited its old shell button reset.
-  small: [
-    "px-2.5 py-1 text-xs",
-    "[.or-form-card_&]:min-h-[2.65rem]! [.or-form-card_&]:rounded-[0.5rem]!",
-    "[.or-form-card_&]:border-[var(--border-muted)]! [.or-form-card_&]:bg-[var(--bg-surface)]!",
-    "[.or-form-card_&]:px-[0.8rem]! [.or-form-card_&]:py-[0.45rem]!",
-    "[.or-form-card_&]:text-[var(--text-secondary)]!",
-  ].join(" "),
-  // Preserve the shell's existing control geometry while its raw buttons migrate.
-  medium: [
-    "px-3 py-1.5 text-sm",
-    "[.or-shell_&]:min-h-10 [.or-shell_&]:rounded-[0.45rem]",
-    "[.or-shell_&]:px-[0.8rem] [.or-shell_&]:py-[0.45rem]",
-    "[.or-page-actions_&]:min-h-[2.65rem]! [.or-page-actions_&]:rounded-[0.5rem]!",
-    "[.or-page-header>_&]:min-h-[2.65rem]! [.or-page-header>_&]:rounded-[0.5rem]!",
-    "[.or-form-card_&]:min-h-[2.65rem]! [.or-form-card_&]:rounded-[0.5rem]!",
-  ].join(" "),
+  small: "px-2.5 py-1 text-xs",
+  medium: "px-3 py-1.5 text-sm",
 };
+
+// These surfaces own their complete button geometry in the utilities layer.
+const CUSTOM_SURFACE_VARIANTS: ReadonlySet<ButtonVariant> = new Set(["sidebar-row", "pane-action", "progress-row"]);
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   children: ReactNode;
@@ -60,7 +51,7 @@ export function Button({
   return (
     <button
       type={type}
-      className={`${variant === "bare" ? "" : `${BASE_CLASS} ${VARIANT_CLASS[variant]} ${variant === "link" ? "" : SIZE_CLASS[size]} ${primaryLabelClass}`} ${className}`.trim()}
+      className={`${variant === "bare" ? "" : CUSTOM_SURFACE_VARIANTS.has(variant) ? VARIANT_CLASS[variant] : `${BASE_CLASS} ${VARIANT_CLASS[variant]} ${variant === "link" ? "" : SIZE_CLASS[size]} ${primaryLabelClass}`} ${className}`.trim()}
       {...props}
     >
       {children}

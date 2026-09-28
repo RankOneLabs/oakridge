@@ -27,9 +27,9 @@ export function RunSidebarArtifacts({ rows, openArtifactIds, onOpen }: RunSideba
       <ul className="or-run-sidebar__list">
         {rows.map((row) => (
           <li key={row.artifact_id} className="or-run-sidebar__row">
-            <Button variant="secondary"
+            <Button variant="sidebar-row"
               type="button"
-              className={`or-run-sidebar__row-open ${openArtifactIds.has(row.artifact_id) ? "or-run-sidebar__row-open--active" : ""}`}
+              className={openArtifactIds.has(row.artifact_id) ? "border-[var(--or-run-accent,var(--accent-blue))]! bg-[var(--bg-elevated)]!" : ""}
               onClick={() => onOpen(row.artifact_id, "primary")}
               data-testid="or-sidebar-artifact"
               data-artifact-id={row.artifact_id}

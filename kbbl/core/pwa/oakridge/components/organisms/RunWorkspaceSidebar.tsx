@@ -68,14 +68,14 @@ export function RunWorkspaceSidebar({
         <ul className="or-run-sidebar__list">
           {PANE_SHORTCUTS.map((shortcut) => (
             <li key={shortcut.testId} className="or-run-sidebar__row">
-              <Button variant="secondary"
+              <Button variant="sidebar-row"
                 type="button"
-                className={`or-run-sidebar__row-open ${
+                className={
                   arePanesEqual(workspace.primary, shortcut.pane) ||
                   arePanesEqual(workspace.secondary, shortcut.pane)
-                    ? "or-run-sidebar__row-open--active"
+                    ? "border-[var(--or-run-accent,var(--accent-blue))]! bg-[var(--bg-elevated)]!"
                     : ""
-                }`}
+                }
                 onClick={() => onOpenPane(shortcut.pane, "primary")}
                 data-testid={shortcut.testId}
               >

@@ -684,10 +684,6 @@ body {
   background: var(--danger-bg);
   color: var(--danger-fg);
 }
-.btn-always {
-  background: var(--amber-bg);
-  color: var(--amber-fg);
-}
 .btn-approve {
   background: var(--accent-blue);
   color: #ffffff;
@@ -5190,9 +5186,6 @@ a:focus-visible {
 .or-run-sidebar__empty { margin: 0; color: var(--text-faint); font-size: 0.8125rem; }
 .or-run-sidebar__list { display: flex; flex-direction: column; gap: 0.2rem; list-style: none; margin: 0; padding: 0; }
 .or-run-sidebar__row { display: flex; align-items: stretch; gap: 0.25rem; }
-.or-run-sidebar__row-open { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.15rem; padding: 0.4rem 0.5rem; border: 1px solid transparent; border-radius: 0.4rem; background: none; color: var(--text-secondary); cursor: pointer; font: inherit; text-align: left; }
-.or-run-sidebar__row-open:hover { background: var(--bg-elevated); }
-.or-run-sidebar__row-open--active { border-color: var(--or-run-accent, var(--accent-blue)); background: var(--bg-elevated); }
 .or-run-sidebar__row-title { display: flex; align-items: baseline; gap: 0.35rem; overflow: hidden; color: var(--text-primary); font-size: 0.8125rem; text-overflow: ellipsis; white-space: nowrap; }
 .or-run-sidebar__row-unit { color: var(--text-muted); font-family: ui-monospace, monospace; font-size: 0.6875rem; }
 .or-run-sidebar__row-meta { display: flex; flex-wrap: wrap; gap: 0.4rem; color: var(--text-muted); font-size: 0.6875rem; }
@@ -5237,7 +5230,6 @@ a:focus-visible {
   backdrop-filter: blur(12px);
 }
 
-.or-run-workspace__pane-action { border: 1px solid var(--border-subtle); border-radius: 0.4rem; background: none; color: var(--text-muted); cursor: pointer; font: inherit; font-size: 0.75rem; padding: 0.2rem 0.45rem; }
 .or-run-workspace__pane-body { flex: 1; min-height: 0; padding: 0.9rem; }
 
 /* The element a session pane hands to `SessionSurfaceLayout` as its scroll
@@ -5526,9 +5518,6 @@ a:focus-visible {
 .or-decision-success { padding: 0.9rem 1rem; border: 1px solid var(--success-border, var(--accent-blue)); border-radius: 0.5rem; background: var(--success-bg, var(--accent-muted)); color: var(--text-primary); line-height: 1.45; }
 .or-decision-actions__stranded { padding: 0.75rem 1rem; border: 1px solid var(--border-muted); border-radius: 0.5rem; background: var(--bg-surface); color: var(--text-secondary); font-size: 0.875rem; line-height: 1.45; }
 .or-progress-list { overflow: hidden; border: 1px solid var(--border-subtle); border-radius: 0.75rem; }
-.or-progress-row { width: 100%; display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(10rem, auto) auto; align-items: center; gap: 1rem; min-height: 4.25rem; padding: 0.75rem 1rem; border: 0; border-bottom: 1px solid var(--border-subtle); background: var(--bg-surface); color: var(--text-primary); cursor: pointer; text-align: left; }
-.or-progress-row:last-child { border-bottom: 0; }
-.or-progress-row:hover { background: var(--bg-elevated); }
 .or-progress-row__dot { width: 0.65rem; height: 0.65rem; border-radius: 999px; background: var(--text-muted); }
 .or-progress-row__dot--building, .or-progress-row__dot--assessing, .or-progress-row__dot--github_review { background: var(--accent-blue); }
 .or-progress-row__dot--failed, .or-progress-row__dot--pull_request_mismatch { background: var(--danger-fg); }
@@ -5578,7 +5567,6 @@ a:focus-visible {
   .or-work-item { grid-template-columns: 1fr; gap: 1.25rem; padding: 1.1rem; }
   .or-work-item__decision { padding: 1.1rem 0 0; border-top: 1px solid var(--border-subtle); border-left: 0; }
   .or-decision-actions__buttons, .or-decision-feedback__buttons { flex-direction: column; }
-  .or-progress-row { grid-template-columns: auto minmax(0, 1fr) auto; gap: 0.75rem; }
   .or-progress-row__state { grid-column: 2 / -1; }
   .or-progress-row__open { grid-column: 3; grid-row: 1; }
   .or-artifact-decision-bar { position: static; align-items: stretch; flex-direction: column; gap: 1rem; }

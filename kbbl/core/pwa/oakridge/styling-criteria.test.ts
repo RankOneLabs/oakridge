@@ -3,7 +3,6 @@ import * as fs from "fs";
 import * as path from "path";
 
 const PWA_DIR = path.resolve(__dirname, "..");
-const BUTTON_ATOM = path.join(PWA_DIR, "components/atoms/Button.tsx");
 
 function collectSourceFiles(dir: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -21,7 +20,7 @@ const shellFiles = sourceFiles.filter((file) => {
 
 describe("Oakridge styling criteria", () => {
   it("renders raw buttons only in the Button atom", () => {
-    const offenders = shellFiles.filter((file) => file !== BUTTON_ATOM && /<button\b/.test(fs.readFileSync(file, "utf8")));
+    const offenders = shellFiles.filter((file) => /<button\b/.test(fs.readFileSync(file, "utf8")));
     expect(offenders.map((file) => path.relative(PWA_DIR, file))).toEqual([]);
   });
 
