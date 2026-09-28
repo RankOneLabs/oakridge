@@ -4,8 +4,7 @@ import type { RunOutputSlotState, WorkOrderReason } from "../domain/run-record";
 import type { SqlExecutor } from "./sql-executor";
 import { selectV2RunStatus, selectV2StageStatus, selectV2UnitStatus } from "../operators/select-status";
 import type { EpicWorkflowProfile } from "../domain/epic";
-import { isFailedAssessment, PR_SUMMARY_ARTIFACT_TYPE } from "../domain/dev-flow-artifacts";
-import { selectArtifactGateDisposition, selectBuiltInGateDisposition } from "../domain/gates";
+import { PR_SUMMARY_ARTIFACT_TYPE } from "../domain/dev-flow-artifacts";
 import { selectHandoffStatusFromWait, type HandoffWaitKind, type Wait, type WaitOutcome } from "../domain/wait";
 import type { RunState, UnitState } from "../domain/run-record";
 import { effectiveArtifactPredicate } from "./sql-fragments";
@@ -32,8 +31,6 @@ interface V2GateProjectionRow extends GateProjectionRow {
   readonly wait_id: string;
   readonly repository_key: string | null;
   readonly run_state: RunState;
-  readonly artifact_type: string;
-  readonly artifact_body: unknown;
 }
 
 export interface OperatorProjectionRepository {
@@ -241,7 +238,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
               COALESCE(wait.collection_key,wait.unit_id) AS unit_id,wait.artifact_revision_id::text,wait.closes_on->>'gate_step' AS gate_step,
               COALESCE(ARRAY(SELECT jsonb_array_elements_text(wait.closes_on->'actions')),ARRAY[]::text[]) AS actions,
               COALESCE(unit.parameters->'artifact'->>'repository_key',unit.parameters->>'repository_key') AS repository_key,
-              run.state AS run_state,artifact.artifact_type,artifact.body AS artifact_body
+              run.state AS run_state
        FROM oakridge.wait wait
        JOIN oakridge.run_unit unit ON unit.id=wait.run_unit_id
        JOIN oakridge.stage_instance stage ON stage.id=unit.stage_instance_id
@@ -259,9 +256,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     return rows.map((row) => ({ id: row.wait_id, stage_instance_id: row.stage_instance_id as import("../domain/primitives").StageInstanceId, gate_type: row.gate_step, run_id: row.run_id as WorkflowRunId,
       stage_name: row.stage_name, unit_id: row.unit_id as UnitId, repository_key: row.repository_key,
       artifact_revision_id: row.artifact_revision_id as ArtifactId, gate_step: row.gate_step, worktree: null,
-      resume_actions: isFailedAssessment(row.artifact_type, row.artifact_body)
-        ? row.actions.filter((action) => selectArtifactGateDisposition(row.artifact_type, selectBuiltInGateDisposition(action)) === "revise")
-        : row.actions,
+      resume_actions: row.actions,
       pr_url: null, run_state: row.run_state, actionable: selectGateActionability(row.run_state) }));
   }
 

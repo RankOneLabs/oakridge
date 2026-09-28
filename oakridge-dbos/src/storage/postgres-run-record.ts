@@ -13,7 +13,7 @@ import { err, ok, type ArtifactId, type ExecutionId, type InputFingerprint, type
 import type { CancelRunRecord, CancelRunRecordResult, CloseRunOutputWait, CloseRunOutputWaitResult, CompleteHandoffArtifact, DecideGateWait, ExecutorAttachment, ExecutorHealthObservation, InitializeStraightThroughRun, MaterializedRunOutput, PersistMaterializedStage, PublishWorkOrderArtifact, PublishWorkOrderArtifactResult, RetryRunUnit, RetryRunUnitResult, RetryRunUnitTarget, ReviseRunUnitInput, ReviseRunUnitInputResult, RunOutputSlot, RunOutputWaitDisposition, RunStage, RunTransitionOperation, RunUnit, UnitState, WorkflowRun, WorkOrder, WorkOrderExecution } from "../domain/run-record";
 import type { WaitClosesOn, WaitOutcome } from "../domain/wait";
 import type { StageOutcome } from "../domain/workflow";
-import { failedAssessmentFeedback, isFailedAssessment } from "../domain/dev-flow-artifacts";
+import { selectAssessmentRevisionContext, type AssessmentRevisionContext } from "../domain/dev-flow-artifacts";
 import { selectArtifactGateDisposition } from "../domain/gates";
 import type { WorkflowDefinition } from "../domain/workflow";
 import type { AdmitStageUnitRequest, AdmitStageUnitResult } from "../domain/runs";
@@ -510,7 +510,8 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
     });
   }
 
-  private async retryUnitTransaction(transaction: SqlExecutor, input: RetryRunUnit, retried_at: string): Promise<RetryRunUnitResult> {
+  /** `review` is the assessment an operator sent back, when the retry answers one. */
+  private async retryUnitTransaction(transaction: SqlExecutor, input: RetryRunUnit, retried_at: string, review: AssessmentRevisionContext | null = null): Promise<RetryRunUnitResult> {
       const target = await resolveRetryTarget(transaction, input.target);
       if (!target) return { kind: "unit_not_found", detail: `run unit ${describeRetryTarget(input.target)} was not found` };
       const runUnitId = target.run_unit_id;
@@ -573,6 +574,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       const rebound = rebindWorkOrderPublication({ basis: basis.execution_request, work_order_id: workOrderId,
         capability_seed: await this.load_work_order_capability_seed_tx(transaction),
         rejected_outputs: rejectedOutputs,
+        ...(review ? { review } : {}),
         ...(retryWorkspaceSource ? { retry_workspace_source: retryWorkspaceSource } : {}),
         missing: missing.map((slot) => ({ output_name: slot.output_name, collection_key: slot.collection_key as OutputCollectionKey | null })) });
       if (!rebound) return { kind: "no_execution_basis", detail: `run unit '${runUnitId}' has no publication authority to rebind for a retry` };
@@ -965,13 +967,6 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       if (replay[0]) {
         if (replay[0].emission_payload_hash !== request.payload_hash) return { kind: "idempotency_conflict", artifact_id: replay[0].artifact_id as ArtifactId, detail: "idempotency key was already used with a different payload" };
         const version = await currentVersion(transaction, row.run_id as WorkflowRunId);
-        if (isFailedAssessment(row.artifact_type, request.body)) {
-          const decisions = await transaction.query<{ readonly action: string | null }>(`SELECT outcome->>'action' AS action FROM oakridge.wait
-            WHERE artifact_revision_id=$1 AND status='closed' AND kind='gate' ORDER BY closed_at DESC LIMIT 1`, [replay[0].artifact_id]);
-          if (row.release_policy.kind === "gate" && row.release_policy.steps.some((step) => step.actions.some((action) => action.name === decisions[0]?.action && selectArtifactGateDisposition(row.artifact_type, action.disposition) === "revise"))) {
-            return { kind: "changes_requested", artifact_id: replay[0].artifact_id as ArtifactId, run_id: row.run_id as WorkflowRunId, record_version: version };
-          }
-        }
         return { kind: "already_applied", artifact_id: replay[0].artifact_id as ArtifactId, run_id: row.run_id as WorkflowRunId, record_version: version };
       }
       if (row.work_state === "abandoned") return { kind: "work_abandoned", detail: `work order '${request.work_order_id}' is abandoned` };
@@ -1058,15 +1053,6 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         await insertTransition(transaction, { run_id: row.run_id as WorkflowRunId, run_unit_id: row.run_unit_id as RunUnitId, work_order_id: request.work_order_id, wait_id: waitId, output_name: request.output_name, collection_key: request.collection_key ?? null,
           operation: "gate_opened", actor: `work_order:${request.work_order_id}`, prior_record_version: (resultingVersion - 1) as RunRecordVersion, resulting_record_version: resultingVersion,
           detail: { ...publicationDetail, gate_step: closesOn.kind === "gate" ? closesOn.gate_step : "review" }, created_at: request.published_at });
-      }
-      const feedback = failedAssessmentFeedback(row.artifact_type, request.body);
-      if (feedback !== null && release.kind === "gate") {
-        const revise = release.steps[0]?.actions.find((action) => selectArtifactGateDisposition(row.artifact_type, action.disposition) === "revise");
-        if (!revise) throw new Error("failed assessment has no revision action");
-        const revised = await this.decideGateWaitTransaction(transaction, { wait_id: waitId, action: revise.name,
-          actor: "system:assessment", detail: feedback, decided_at: request.published_at });
-        if (revised.kind !== "invalidated") throw new Error(`failed assessment could not request changes: ${JSON.stringify(revised)}`);
-        return { kind: "changes_requested", artifact_id: request.artifact_id, run_id: row.run_id as WorkflowRunId, record_version: revised.record_version };
       }
       return { kind: "pending", artifact_id: request.artifact_id, wait_id: waitId, run_id: row.run_id as WorkflowRunId, record_version: resultingVersion };
     });
@@ -1167,9 +1153,6 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         const action = pendingStep?.actions.find((candidate) => gateClose?.actions.includes(candidate.name) && candidate.name === request.action);
         if (!action) return { kind: "wait_conflict", detail: `action '${request.action}' is not allowed for wait '${request.wait_id}'` };
         const gateDisposition = selectArtifactGateDisposition(subject.artifact_type, action.disposition);
-        if (gateDisposition === "release" && isFailedAssessment(subject.artifact_type, subject.body)) {
-          return { kind: "wait_conflict", detail: "a failed assessment requires changes before it can be approved" };
-        }
         const disposition: RunOutputWaitDisposition = gateDisposition === "release" ? "release" : gateDisposition === "revise" ? "invalidate" : "fail";
         const own = await this.closeOutputWaitTransaction(transaction, { ...request, disposition,
           retain_producer: gateDisposition === "revise" && release.revision_target === "self_stage" });
@@ -1203,7 +1186,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
               target: { kind: "run_unit", run_unit_id: runUnitId as RunUnitId },
               idempotency_key: `gate_revision:${request.wait_id}:${runUnitId}`,
               actor: request.actor,
-            }, request.decided_at);
+            }, request.decided_at, selectAssessmentRevisionContext(subject.artifact_type, subject.body));
             if ("detail" in retry) {
               throw new GateCoordinationConflict({ kind: "wait_conflict", detail: `upstream revision could not create correction work: ${retry.detail}` });
             }

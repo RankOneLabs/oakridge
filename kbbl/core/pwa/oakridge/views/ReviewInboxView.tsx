@@ -1,11 +1,13 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 
+import { selectStableDecisionQueue, type DecisionQueueEntry } from "../lib/decision-queue";
 import { selectReviewCohortKey } from "../lib/run-attention";
 import { GateDecisionActions } from "../GateDecisionActions";
 import { useReviewInbox } from "../hooks/useReviewInbox";
 import { useAdmitStageUnit } from "../hooks/useAdmitStageUnit";
 import { useConfirmCohortMerged } from "../hooks/useConfirmCohortMerged";
-import type { CohortLifecycle, CohortLifecycleSummary, ParkedGate, ReviewInboxItem } from "../types";
+import type { CohortLifecycle, CohortLifecycleSummary, ParkedGate, ReviewInbox, ReviewInboxItem } from "../types";
 
 interface ReviewInboxViewProps {
   onSelectRun: (id: string) => void;
@@ -71,13 +73,13 @@ function workLabel(item: ReviewInboxItem): string {
   }
 }
 
-function WorkItem({ item, cohort, onSelectRun, onSelectArtifact }: { item: ReviewInboxItem; cohort?: CohortLifecycleSummary; onSelectRun: (id: string) => void; onSelectArtifact: (id: string) => void }) {
-  const gate = itemToGate(item);
+function WorkItem({ item, cohort, isSettled = false, onSelectRun, onSelectArtifact }: { item: ReviewInboxItem; cohort?: CohortLifecycleSummary; isSettled?: boolean; onSelectRun: (id: string) => void; onSelectArtifact: (id: string) => void }) {
+  const gate = isSettled ? null : itemToGate(item);
   const artifactRevisionId = item.artifact_revision_id;
   const mismatch = cohort?.pull_request_reconciliation?.mismatch;
 
   return (
-    <article className="or-work-item" data-testid="or-review-inbox-item">
+    <article className={isSettled ? "or-work-item or-work-item--settled" : "or-work-item"} data-testid={isSettled ? "or-review-inbox-settled-item" : "or-review-inbox-item"}>
       <div className="or-work-item__context">
         <span className="or-work-item__eyebrow">{workLabel(item)}</span>
         <h3>{item.title || item.unit_id}</h3>
@@ -90,11 +92,14 @@ function WorkItem({ item, cohort, onSelectRun, onSelectArtifact }: { item: Revie
         </div>
       </div>
       <div className="or-work-item__decision">
+        {isSettled && <p data-testid="or-inbox-settled">No longer needs your decision.</p>}
+        {!isSettled && <>
         {gate && <GateDecisionActions gate={gate} />}
         {!gate && item.kind === "admission" && cohort && <AdmissionAction item={item} cohort={cohort} />}
         {!gate && item.kind === "pull_request_merge" && <PullRequestMergeAction item={item} />}
         {!gate && item.kind === "pull_request_mismatch" && <><p>{mismatch?.detail ?? "The observed pull request does not match this cohort’s durable configuration."}</p><p>Correct the pull request repository or branches, then Oakridge will reconcile it automatically.</p></>}
         {!gate && item.kind !== "pull_request_mismatch" && item.kind !== "pull_request_merge" && item.kind !== "admission" && <p>{item.kind === "cohort_failed" ? "Open the run to inspect the failure and retry the work." : "This work will continue automatically when its dependencies finish."}</p>}
+        </>}
       </div>
     </article>
   );
@@ -152,17 +157,33 @@ function ProgressRow({ cohort, onSelectRun }: { cohort: CohortLifecycleSummary; 
   );
 }
 
+function selectVisibleItems(data: ReviewInbox): ReviewInboxItem[] {
+  const cohortsByKey = new Map(data.cohorts.map((cohort) => [selectReviewCohortKey(cohort), cohort]));
+  return data.items.filter((item) => item.kind !== "admission" || cohortsByKey.get(selectReviewCohortKey(item))?.admission.required === true);
+}
+
+const isActionable = (item: ReviewInboxItem): boolean => item.state === "actionable" || item.kind === "pull_request_mismatch";
+
+interface DecisionQueueState { readonly source: ReviewInbox | null; readonly entries: readonly DecisionQueueEntry[] }
+
 export function ReviewInboxView({ onSelectRun, onSelectArtifact }: ReviewInboxViewProps) {
   const client = useQueryClient();
   const query = useReviewInbox();
+  // Decisions are clicked in quick succession, so the list must not reflow
+  // under the pointer: each poll is merged into what is already on screen
+  // rather than replacing it. Refresh is the explicit way to compact it.
+  const [queue, setQueue] = useState<DecisionQueueState>({ source: null, entries: [] });
+  if (query.data && query.data !== queue.source) {
+    setQueue({ source: query.data, entries: selectStableDecisionQueue(queue.entries, selectVisibleItems(query.data).filter(isActionable)) });
+  }
 
   if (query.isError) return <div role="alert" className="or-review-state or-review-state--error" data-testid="or-review-inbox-error">{query.error instanceof Error ? query.error.message : "Could not load review work."}</div>;
   if (query.isPending || !query.data) return <div className="or-review-state" data-testid="or-review-inbox-loading">Loading review work…</div>;
 
   const cohortsByKey = new Map(query.data.cohorts.map((cohort) => [selectReviewCohortKey(cohort), cohort]));
   const cohortFor = (item: ReviewInboxItem) => cohortsByKey.get(selectReviewCohortKey(item));
-  const visibleItems = query.data.items.filter((item) => item.kind !== "admission" || cohortFor(item)?.admission.required === true);
-  const actionable = visibleItems.filter((item) => item.state === "actionable" || item.kind === "pull_request_mismatch");
+  const visibleItems = selectVisibleItems(query.data);
+  const actionable = visibleItems.filter(isActionable);
   const blocked = visibleItems.filter((item) => item.state === "blocked" && item.kind !== "pull_request_mismatch");
   const attentionKeys = new Set([...actionable, ...blocked].map((item) => selectReviewCohortKey(item)));
   const underway = query.data.cohorts.filter((cohort) => cohort.lifecycle !== "complete" && !attentionKeys.has(selectReviewCohortKey(cohort)));
@@ -172,12 +193,13 @@ export function ReviewInboxView({ onSelectRun, onSelectArtifact }: ReviewInboxVi
     <div className="or-review-workspace" data-testid="or-review-inbox">
       <header className="or-review-workspace__header">
         <div><span className="or-review-workspace__kicker">Oakridge</span><h1>Work requiring your attention</h1><p>Review decisions are first. Work already underway stays out of the way.</p></div>
-        <button type="button" className="or-review-refresh" onClick={() => void client.invalidateQueries({ queryKey: ["oakridge", "review-inbox"] })}>Refresh</button>
+        <button type="button" className="or-review-refresh" onClick={() => { setQueue({ source: null, entries: [] }); void client.invalidateQueries({ queryKey: ["oakridge", "review-inbox"] }); }}>Refresh</button>
       </header>
 
       <section className="or-review-section" aria-labelledby="review-decisions">
         <div className="or-review-section__heading"><h2 id="review-decisions">Needs your decision</h2><span>{actionable.length}</span></div>
-        {actionable.length === 0 ? <div className="or-review-empty" data-testid="or-review-inbox-empty">You’re caught up. Nothing needs a decision.</div> : actionable.map((item) => <WorkItem key={item.id} item={item} cohort={cohortFor(item)} onSelectRun={onSelectRun} onSelectArtifact={onSelectArtifact} />)}
+        {actionable.length === 0 && <div className="or-review-empty" data-testid="or-review-inbox-empty">You’re caught up. Nothing needs a decision.</div>}
+        {queue.entries.map((entry) => <WorkItem key={entry.item.id} item={entry.item} cohort={cohortFor(entry.item)} isSettled={entry.kind === "settled"} onSelectRun={onSelectRun} onSelectArtifact={onSelectArtifact} />)}
       </section>
 
       {blocked.length > 0 && <section className="or-review-section" aria-labelledby="review-blocked"><div className="or-review-section__heading"><h2 id="review-blocked">Blocked or failed</h2><span>{blocked.length}</span></div>{blocked.map((item) => <WorkItem key={item.id} item={item} cohort={cohortFor(item)} onSelectRun={onSelectRun} onSelectArtifact={onSelectArtifact} />)}</section>}

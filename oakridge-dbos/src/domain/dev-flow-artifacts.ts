@@ -18,18 +18,30 @@ export type AssessmentVerdict = "pass" | "pass_with_notes" | "fail";
 export type CriterionStatus = "met" | "not_met" | "partial";
 export interface AssessmentFinding { readonly criterion: string | null; readonly status: CriterionStatus | null; readonly evidence: string | null; readonly description: string | null }
 export interface AssessmentBody { readonly verdict: AssessmentVerdict; readonly findings: readonly AssessmentFinding[]; readonly test_evidence: TestEvidence | null; readonly recommended_next_actions: readonly string[] }
-/** A failed assessment asks the builder for changes; it cannot satisfy the assessment gate. */
-export const failedAssessmentFeedback = (artifactType: string, body: unknown): string | null => {
-  if (artifactType !== "dev.assessment" || typeof body !== "object" || body === null || Array.isArray(body)) return null;
-  const assessment = body as { readonly verdict?: unknown; readonly recommended_next_actions?: unknown };
-  if (assessment.verdict !== "fail") return null;
-  const actions = Array.isArray(assessment.recommended_next_actions)
-    ? assessment.recommended_next_actions.filter((action): action is string => typeof action === "string" && action.trim() !== "")
-    : [];
-  return actions.length > 0 ? actions.join("\n") : "The assessment failed; address its findings before resubmitting the build.";
+/**
+ * What a build revision carries from the assessment the operator sent back:
+ * the verdict, every finding not marked met, and the recommended next
+ * actions. The operator's own feedback travels beside it and takes precedence.
+ */
+export interface AssessmentRevisionContext { readonly verdict: AssessmentVerdict; readonly open_findings: readonly AssessmentFinding[]; readonly recommended_next_actions: readonly string[] }
+const ASSESSMENT_VERDICTS: readonly AssessmentVerdict[] = ["pass", "pass_with_notes", "fail"];
+const CRITERION_STATUSES: readonly CriterionStatus[] = ["met", "not_met", "partial"];
+const isRecord = (value: unknown): value is { readonly [key: string]: unknown } => typeof value === "object" && value !== null && !Array.isArray(value);
+const stringOrNull = (value: unknown): string | null => typeof value === "string" && value.trim() !== "" ? value : null;
+const selectAssessmentFinding = (value: unknown): AssessmentFinding | null => {
+  if (!isRecord(value)) return null;
+  const status = CRITERION_STATUSES.find((candidate) => candidate === value.status) ?? null;
+  return { criterion: stringOrNull(value.criterion), status, evidence: stringOrNull(value.evidence), description: stringOrNull(value.description) };
 };
-export const isFailedAssessment = (artifactType: string, body: unknown): boolean =>
-  failedAssessmentFeedback(artifactType, body) !== null;
+/** `null` for any artifact that is not a readable assessment. */
+export const selectAssessmentRevisionContext = (artifactType: string, body: unknown): AssessmentRevisionContext | null => {
+  if (artifactType !== "dev.assessment" || !isRecord(body)) return null;
+  const verdict = ASSESSMENT_VERDICTS.find((candidate) => candidate === body.verdict);
+  if (!verdict) return null;
+  const findings = Array.isArray(body.findings) ? body.findings.map(selectAssessmentFinding).filter((finding): finding is AssessmentFinding => finding !== null) : [];
+  const actions = Array.isArray(body.recommended_next_actions) ? body.recommended_next_actions.map(stringOrNull).filter((action): action is string => action !== null) : [];
+  return { verdict, open_findings: findings.filter((finding) => finding.status !== "met"), recommended_next_actions: actions };
+};
 export type PrReviewStatus = "draft" | "ready" | "changes_requested" | "approved" | "merged" | "closed";
 export interface PrSummaryBody { readonly pr_url: string; readonly branch: string; readonly summary: string; readonly review_status: PrReviewStatus | null }
 /**
