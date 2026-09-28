@@ -5,6 +5,7 @@ import { useRelativeTime } from "../../hooks/useRelativeTime";
 import { useRemoveSession } from "../../hooks/useRemoveSession";
 import { prettyEffortLabel, prettyModelLabel } from "../../lib/format";
 import { resumeTitle, selectSessionCohortLabel } from "../../lib/session";
+import { Button } from "../atoms/Button";
 
 export function SessionRow({
   snapshot,
@@ -56,7 +57,7 @@ export function SessionRow({
     snapshot.status !== "failed";
 
   return (
-    <li className="session-row-li">
+    <li className="session-row-li" data-can-resume={canResume || undefined}>
       {/* Anchors the absolutely-positioned Resume/Remove buttons to the row
           itself, so a refusal rendered underneath doesn't drag them off
           centre. */}
@@ -121,9 +122,10 @@ export function SessionRow({
           </div>
         </button>
         {canResume && (
-          <button
+          <Button
             type="button"
-            className="btn-resume"
+            variant="primary"
+            className="absolute right-[6.25rem] top-1/2 min-h-11 -translate-y-1/2 text-xs!"
             disabled={resumeDisabled}
             title={resumeTitle()}
             onClick={(e) => {
@@ -133,11 +135,12 @@ export function SessionRow({
             }}
           >
             Resume
-          </button>
+          </Button>
         )}
-        <button
+        <Button
           type="button"
-          className={`btn-remove${confirmRemove ? " is-confirming" : ""}`}
+          variant={confirmRemove ? "armed" : "danger"}
+          className="absolute right-3 top-1/2 min-h-11 -translate-y-1/2 whitespace-nowrap text-xs!"
           disabled={removeMutation.isPending}
           title={
             isOpen
@@ -158,7 +161,7 @@ export function SessionRow({
             : confirmRemove
               ? "tap to confirm"
               : "Remove"}
-        </button>
+        </Button>
       </div>
       {removeError && (
         <div className="session-row-remove-error" role="alert">
@@ -166,9 +169,10 @@ export function SessionRow({
           {/* Only a hold is overridable, and only once the operator has read
               why — which is exactly the authority the server grants ?force=1. */}
           {refusal?.kind === "held_by_execution" && (
-            <button
+            <Button
               type="button"
-              className="btn-remove-force"
+              variant="danger-strong"
+              className="min-h-11 shrink-0 whitespace-nowrap text-xs!"
               disabled={removeMutation.isPending}
               title="Removes the session anyway, abandoning the unit this run is waiting on."
               onClick={(e) => {
@@ -177,7 +181,7 @@ export function SessionRow({
               }}
             >
               Remove anyway
-            </button>
+            </Button>
           )}
         </div>
       )}

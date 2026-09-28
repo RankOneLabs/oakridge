@@ -1,5 +1,6 @@
 import { useWorkflowDef } from "../../hooks/useWorkflowDef";
 import { WorkflowGraph } from "../molecules/WorkflowGraph";
+import { Button } from "../../../components/atoms/Button";
 
 interface WorkflowDefDetailProps {
   definitionId: string;
@@ -30,13 +31,13 @@ export function WorkflowDefDetail({
     <div className="or-def-detail" data-testid="or-def-detail">
       <header className="or-def-detail__header">
         <div>
-          <button type="button" className="or-btn or-btn--secondary" onClick={onBack}>← Workflows</button>
+          <Button variant="secondary" onClick={onBack}>← Workflows</Button>
           <h2>{definition.name} <span>v{definition.version}</span></h2>
           <p>ID: <code>{definition.id}</code> · Created {new Date(definition.created_at).toLocaleString()}</p>
         </div>
-        <button type="button" className="or-btn or-btn--secondary" onClick={onClone}>
+        <Button variant="secondary" onClick={onClone}>
           Clone to new version
-        </button>
+        </Button>
       </header>
 
       <WorkflowGraph graph={definition.graph} />

@@ -2,8 +2,8 @@ import { useState } from "react";
 import { useWorkflowDefs } from "../../hooks/useWorkflowDefs";
 import { useSetWorkflowDefArchived } from "../../hooks/useSetWorkflowDefArchived";
 import type { WorkflowDefSummary } from "../../types";
-import { Button } from "../atoms/Button";
-import { FeedbackMessage } from "../atoms/FeedbackMessage";
+import { Button } from "../../../components/atoms/Button";
+import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import { PageHeader } from "../molecules/PageHeader";
 const tableHeaderClass =
   "border-b border-[var(--border-subtle)] px-3 py-2 text-left text-xs font-semibold uppercase text-[var(--text-muted)]";
@@ -45,7 +45,7 @@ export function WorkflowDefList({ onNew, onSelect, onClone }: WorkflowDefListPro
             />
             Show retired
           </label>
-          <Button variant="primary" onClick={onNew} data-testid="or-def-new-btn">
+          <Button variant="primary" className="max-[767px]:flex-[1_1_auto]" onClick={onNew} data-testid="or-def-new-btn">
             + New Definition
           </Button>
         </>}
@@ -89,14 +89,14 @@ export function WorkflowDefList({ onNew, onSelect, onClone }: WorkflowDefListPro
             {grouped.map((def) => (
               <tr key={def.id} className="hover:bg-[var(--bg-elevated)]" data-testid="or-def-row">
                 <td className={`${tableCellClass} font-medium text-[var(--text-primary)]`}>
-                  <button
+                  <Button variant="secondary"
                     type="button"
                     className="or-def-list__link"
                     onClick={() => onSelect(def)}
                     data-testid="or-def-view-btn"
                   >
                     {def.name}
-                  </button>
+                  </Button>
                 </td>
                 <td className={`${tableCellClass} text-[var(--text-secondary)]`}>
                   v{def.version}

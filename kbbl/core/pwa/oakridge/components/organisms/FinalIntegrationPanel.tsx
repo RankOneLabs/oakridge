@@ -3,6 +3,9 @@ import { useRef } from "react";
 import { useConfirmFinalPullRequest } from "../../hooks/useConfirmFinalPullRequest";
 import type { EpicRepositoryBinding, EpicWorkflowProfile } from "../../types";
 import { randomUuid } from "../../../lib/random-uuid";
+import { Button } from "../../../components/atoms/Button";
+import { Chip } from "../../../components/atoms/Chip";
+import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 
 const stateLabels = {
   pending: "Waiting for final PR",
@@ -34,9 +37,9 @@ function FinalRepositoryCard({ runId, policy, baseBranch, repository }: FinalRep
             <code>{baseBranch}</code> → <code>{repository.integration_branch}</code>
           </p>
         </div>
-        <span className="or-final-repository__state">
+        <Chip tone="neutral" className="or-final-repository__state">
           {stateLabels[repository.final_merge_state]}
-        </span>
+        </Chip>
       </div>
 
       {repository.final_pull_request ? (
@@ -57,22 +60,22 @@ function FinalRepositoryCard({ runId, policy, baseBranch, repository }: FinalRep
           <p className="or-final-repository__hint">
             Confirm only after this exact PR is merged. Oakridge verifies stored merged evidence; it does not merge the PR.
           </p>
-          <button
+          <Button
             type="button"
-            className="or-final-repository__confirm"
+            variant="accent-outline"
             disabled={confirmation.isPending}
             onClick={() => confirmation.mutate({ idempotency_key: confirmationKey.current })}
             data-testid={`or-confirm-final-${repository.repository_key}`}
           >
             {confirmation.isPending ? "Confirming…" : "Confirm external completion"}
-          </button>
+          </Button>
         </div>
       )}
 
       {confirmation.isError && (
-        <p className="or-final-repository__error" role="alert">
+        <FeedbackMessage tone="danger" className="or-final-repository__error">
           {confirmation.error instanceof Error ? confirmation.error.message : "Final confirmation failed"}
-        </p>
+        </FeedbackMessage>
       )}
     </article>
   );

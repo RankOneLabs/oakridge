@@ -1,3 +1,4 @@
+import { Button } from "../../components/atoms/Button";
 import { useEffect } from "react";
 
 import { useSessionRun } from "../hooks/useSessionRun";
@@ -52,9 +53,9 @@ export function SessionWorkspaceRedirectView({ sessionId, onBack }: SessionWorks
           {query.error instanceof Error ? query.error.message : "Failed to locate session"}
         </div>
         <div>
-          <button type="button" className="or-shell__back" onClick={onBack}>
+          <Button variant="secondary" type="button" className="or-shell__back" onClick={onBack}>
             Back to runs
-          </button>
+          </Button>
         </div>
       </div>
     );
@@ -83,9 +84,9 @@ export function SessionWorkspaceRedirectView({ sessionId, onBack }: SessionWorks
         </p>
       </div>
       <div>
-        <button type="button" className="or-shell__back" onClick={onBack}>
+        <Button variant="secondary" type="button" className="or-shell__back" onClick={onBack}>
           Back to runs
-        </button>
+        </Button>
       </div>
     </div>
   );

@@ -210,4 +210,17 @@ describe("WorkflowDefEditor", () => {
     const nameInput = screen.getByTestId("or-def-name") as HTMLInputElement;
     expect(nameInput.value).toBe(DEF_WITH_STAGES.name);
   });
+
+  it("keeps a slot binding row mounted while its name is edited", async () => {
+    const build = DEF_WITH_STAGES.graph.stages.build;
+    const def: WorkflowDefFull = {
+      ...DEF_WITH_STAGES,
+      graph: { ...DEF_WITH_STAGES.graph, stages: { build: { ...build, config: { ...build.config, slot_bindings: { SPEC: { from: "literal", value: "x" } } } } } },
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(makeEditorFetch({ def }));
+    wrap(<WorkflowDefEditorView cloneFromId="def-2" onBack={() => {}} onCreated={() => {}} />);
+    const keyInput = await screen.findByLabelText("Slot binding key");
+    fireEvent.change(keyInput, { target: { value: "SPECS" } });
+    expect(screen.getByLabelText("Slot binding key")).toBe(keyInput);
+  });
 });

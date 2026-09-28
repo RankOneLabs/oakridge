@@ -684,10 +684,6 @@ body {
   background: var(--danger-bg);
   color: var(--danger-fg);
 }
-.btn-always {
-  background: var(--amber-bg);
-  color: var(--amber-fg);
-}
 .btn-approve {
   background: var(--accent-blue);
   color: #ffffff;
@@ -1146,68 +1142,8 @@ body {
 .session-row-li .session-row {
   padding-right: 6.25rem;
 }
-.session-row-li:has(.btn-resume) .session-row {
+.session-row-li[data-can-resume] .session-row {
   padding-right: 11rem;
-}
-.btn-resume {
-  position: absolute;
-  top: 50%;
-  right: 6.25rem;
-  transform: translateY(-50%);
-  background: var(--accent-blue);
-  color: #ffffff;
-  border: none;
-  border-radius: 6px;
-  padding: 0.4rem 0.75rem;
-  font: inherit;
-  font-size: 0.8rem;
-  font-weight: 600;
-  cursor: pointer;
-  /* Match the 44px touch target the rest of the UI uses (theme toggle,
-     yolo toggle, approve/deny, send). Padding stays tight so the button
-     still reads as a secondary inline action inside the row. */
-  min-height: 44px;
-}
-.btn-resume:hover:not(:disabled) {
-  filter: brightness(1.08);
-}
-.btn-resume:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-/* Outlined danger affordance, sits at the row's far right. Two-tap
-   confirm — first tap primes (`.is-confirming` paints it solid red),
-   second tap fires the DELETE. Prevents a stray swipe from nuking work. */
-.btn-remove {
-  position: absolute;
-  top: 50%;
-  right: 0.75rem;
-  transform: translateY(-50%);
-  background: transparent;
-  color: var(--text-muted);
-  border: 1px solid var(--border-muted);
-  border-radius: 6px;
-  padding: 0.4rem 0.6rem;
-  font: inherit;
-  font-size: 0.8rem;
-  font-weight: 500;
-  cursor: pointer;
-  min-height: 44px;
-  white-space: nowrap;
-}
-.btn-remove:hover:not(:disabled) {
-  color: var(--danger-fg);
-  border-color: var(--danger-fg);
-}
-.btn-remove.is-confirming {
-  background: var(--danger-bg);
-  color: var(--danger-fg);
-  border-color: var(--danger-fg);
-  font-weight: 600;
-}
-.btn-remove:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 /* Why a remove didn't happen. In normal flow under the row (not absolutely
    positioned) so the message can wrap to whatever length the server sent. */
@@ -1227,27 +1163,6 @@ body {
 .session-row-remove-error__message {
   flex: 1 1 12rem;
   min-width: 0;
-}
-.btn-remove-force {
-  flex: 0 0 auto;
-  background: transparent;
-  color: var(--danger-fg);
-  border: 1px solid var(--danger-fg);
-  border-radius: 6px;
-  padding: 0.4rem 0.6rem;
-  font: inherit;
-  font-size: 0.8rem;
-  font-weight: 600;
-  cursor: pointer;
-  min-height: 44px;
-  white-space: nowrap;
-}
-.btn-remove-force:hover:not(:disabled) {
-  filter: brightness(1.15);
-}
-.btn-remove-force:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 .session-list-empty {
   text-align: center;
@@ -1395,12 +1310,6 @@ body {
 .session-ended-actions {
   display: flex;
   justify-content: center;
-}
-.btn-resume-banner {
-  position: static;
-  transform: none;
-  padding: 0.6rem 1.25rem;
-  font-size: 0.9rem;
 }
 .session-ended-error {
   color: var(--danger-fg);
@@ -1934,8 +1843,6 @@ body {
   color: var(--text-secondary);
 }
 .compacted-banner__open {
-  /* Reuses .btn-resume-banner sizing/colors via the className applied in
-     CompactedBanner; this rule just handles the inline-with-label layout. */
   margin-left: 0.25rem;
 }
 .compacted-banner__no-successor {
@@ -4934,17 +4841,13 @@ a:focus-visible {
   background: var(--bg-app);
 }
 
-.btn-new-session,
-.btn-resume {
+.btn-new-session {
   background: var(--accent-blue);
   color: #0b130d;
   font-weight: 700;
 }
 
-[data-theme="light"] .btn-new-session,
-[data-theme="light"] .btn-resume,
-[data-theme="light"] .or-btn--primary,
-[data-theme="light"] .or-decision-button--primary {
+[data-theme="light"] .btn-new-session {
   color: #fff;
 }
 
@@ -5283,9 +5186,6 @@ a:focus-visible {
 .or-run-sidebar__empty { margin: 0; color: var(--text-faint); font-size: 0.8125rem; }
 .or-run-sidebar__list { display: flex; flex-direction: column; gap: 0.2rem; list-style: none; margin: 0; padding: 0; }
 .or-run-sidebar__row { display: flex; align-items: stretch; gap: 0.25rem; }
-.or-run-sidebar__row-open { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.15rem; padding: 0.4rem 0.5rem; border: 1px solid transparent; border-radius: 0.4rem; background: none; color: var(--text-secondary); cursor: pointer; font: inherit; text-align: left; }
-.or-run-sidebar__row-open:hover { background: var(--bg-elevated); }
-.or-run-sidebar__row-open--active { border-color: var(--or-run-accent, var(--accent-blue)); background: var(--bg-elevated); }
 .or-run-sidebar__row-title { display: flex; align-items: baseline; gap: 0.35rem; overflow: hidden; color: var(--text-primary); font-size: 0.8125rem; text-overflow: ellipsis; white-space: nowrap; }
 .or-run-sidebar__row-unit { color: var(--text-muted); font-family: ui-monospace, monospace; font-size: 0.6875rem; }
 .or-run-sidebar__row-meta { display: flex; flex-wrap: wrap; gap: 0.4rem; color: var(--text-muted); font-size: 0.6875rem; }
@@ -5330,7 +5230,6 @@ a:focus-visible {
   backdrop-filter: blur(12px);
 }
 
-.or-run-workspace__pane-action { border: 1px solid var(--border-subtle); border-radius: 0.4rem; background: none; color: var(--text-muted); cursor: pointer; font: inherit; font-size: 0.75rem; padding: 0.2rem 0.45rem; }
 .or-run-workspace__pane-body { flex: 1; min-height: 0; padding: 0.9rem; }
 
 /* The element a session pane hands to `SessionSurfaceLayout` as its scroll
@@ -5442,43 +5341,6 @@ a:focus-visible {
   gap: 0.6rem;
 }
 
-:where(.or-shell) :where(button) {
-  min-height: 2.5rem;
-  padding: 0.45rem 0.8rem;
-  border: 1px solid var(--border-muted);
-  border-radius: 0.45rem;
-  background: var(--bg-surface);
-  color: var(--text-secondary);
-  cursor: pointer;
-  font: inherit;
-  font-size: 0.85rem;
-}
-
-:where(.or-shell) :where(button:hover:not(:disabled)) { border-color: var(--border-hover); color: var(--text-primary); }
-:where(.or-shell) :where(button:disabled) { cursor: not-allowed; opacity: 0.5; }
-:where(.or-shell) :where(button.or-shell__back, button.or-shell__nav-item, button.or-link, button.or-def-list__link) { min-height: 0; }
-
-.or-page-actions button[data-testid="or-new-run-btn"],
-.or-page-actions button[data-testid="or-def-new-btn"],
-.or-form-card button[type="submit"],
-[data-testid="or-def-submit"] {
-  border-color: var(--accent-blue);
-  background: var(--accent-blue);
-  color: #0b130d;
-  font-weight: 700;
-}
-
-[data-theme="light"] .or-page-actions button[data-testid="or-new-run-btn"],
-[data-theme="light"] .or-page-actions button[data-testid="or-def-new-btn"],
-[data-theme="light"] .or-form-card button[type="submit"],
-[data-theme="light"] [data-testid="or-def-submit"] { color: #fff; }
-
-.or-page-actions button,
-.or-page-header > button,
-.or-form-card button {
-  min-height: 2.65rem;
-  border-radius: 0.5rem;
-}
 
 .or-form-card {
   display: flex;
@@ -5592,9 +5454,6 @@ a:focus-visible {
 .or-repository-launch__heading { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
 .or-form-input { width: 100%; box-sizing: border-box; padding: 0.375rem 0.75rem; border: 1px solid var(--border-muted); border-radius: 0.375rem; background: var(--bg-surface); color: var(--text-primary); font: inherit; font-size: 0.875rem; }
 .or-form-input:focus { border-color: var(--accent-blue); outline: none; }
-.or-secondary-button { display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.375rem 0.75rem; border: 1px solid var(--border-muted); border-radius: 0.375rem; background: transparent; color: var(--text-secondary); font: inherit; font-size: 0.875rem; cursor: pointer; }
-.or-secondary-button:hover { border-color: var(--border-hover); }
-.or-secondary-button:disabled, .or-final-repository__confirm:disabled { cursor: default; opacity: 0.5; }
 .or-repository-fields {
   display: grid;
   grid-template-columns: minmax(7rem, 0.55fr) minmax(14rem, 1.5fr) minmax(8rem, 0.75fr) minmax(9rem, 0.85fr) minmax(7rem, 0.6fr) auto;
@@ -5614,7 +5473,6 @@ a:focus-visible {
 .or-final-repository__empty, .or-final-repository__pr-branches { color: var(--text-muted); }
 .or-final-repository__pr-branches { margin-left: 0.5rem; }
 .or-final-repository__confirmation { display: flex; flex-direction: column; align-items: flex-start; gap: 0.5rem; margin-top: 0.75rem; }
-.or-final-repository__confirm { padding: 0.375rem 0.75rem; border: 1px solid var(--accent-blue); border-radius: 0.375rem; background: transparent; color: var(--accent-blue); font: inherit; font-size: 0.875rem; cursor: pointer; }
 .or-final-repository__error { margin: 0.5rem 0 0; color: var(--danger-fg); font-size: 0.875rem; }
 .or-role-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; }
 .or-review-workspace {
@@ -5642,8 +5500,7 @@ a:focus-visible {
 .or-review-section__heading h2 { margin: 0; font-size: 1rem; }
 .or-review-section__heading span { display: inline-grid; place-items: center; min-width: 1.6rem; height: 1.6rem; padding: 0 0.4rem; border-radius: 999px; background: var(--bg-elevated); color: var(--text-muted); font-size: 0.75rem; }
 .or-review-section__note { margin: 0; color: var(--text-muted); }
-.or-review-empty, .or-review-state { padding: 2rem; border: 1px dashed var(--border-muted); border-radius: 0.75rem; color: var(--text-muted); text-align: center; }
-.or-review-state--error, .or-decision-error { color: var(--danger-fg); border-color: var(--danger-card-border); }
+.or-decision-error { color: var(--danger-fg); border-color: var(--danger-card-border); }
 .or-work-item { display: grid; grid-template-columns: minmax(0, 1fr) minmax(20rem, 0.8fr); gap: clamp(1.5rem, 4vw, 3.5rem); padding: clamp(1.25rem, 3vw, 2rem); border: 1px solid var(--border-subtle); border-radius: 0.85rem; background: var(--bg-elevated); box-shadow: 0 1px 2px rgb(0 0 0 / 8%); }
 .or-work-item__context, .or-work-item__decision { min-width: 0; }
 .or-work-item__eyebrow { color: var(--accent-blue); font-size: 0.75rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
@@ -5652,24 +5509,16 @@ a:focus-visible {
 .or-work-item__decision { display: flex; flex-direction: column; justify-content: center; gap: 1rem; padding-left: clamp(1.25rem, 3vw, 2rem); border-left: 1px solid var(--border-subtle); }
 .or-work-item__blocker { margin-top: 1rem; padding: 0.75rem 1rem; border-radius: 0.5rem; background: var(--danger-bg); color: var(--text-primary); }
 .or-work-item__links { display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 1.25rem; }
-.or-work-item__links button, .or-work-item__links a { padding: 0; border: 0; background: none; color: var(--accent-blue); cursor: pointer; font: inherit; font-size: 0.875rem; text-decoration: underline; }
+.or-work-item__links a { padding: 0; border: 0; background: none; color: var(--accent-blue); cursor: pointer; font: inherit; font-size: 0.875rem; text-decoration: underline; }
 .or-work-item--settled { opacity: 0.55; }
 .or-decision-actions { display: flex; flex-direction: column; gap: 1rem; }
 .or-decision-actions__buttons, .or-decision-feedback__buttons { display: flex; flex-wrap: wrap; gap: 0.75rem; }
-.or-decision-button { min-height: 2.75rem; padding: 0.65rem 1rem; border: 1px solid transparent; border-radius: 0.5rem; cursor: pointer; font: inherit; font-weight: 650; }
-.or-decision-button:disabled { cursor: not-allowed; opacity: 0.55; }
-.or-decision-button--primary { background: var(--accent-blue); color: white; }
-.or-decision-button--secondary { border-color: var(--border-muted); background: var(--bg-surface); color: var(--text-primary); }
-.or-decision-button--danger { background: var(--danger-fg); color: white; }
 .or-decision-feedback { display: flex; flex-direction: column; gap: 0.65rem; }
 .or-decision-feedback label { font-size: 0.875rem; font-weight: 650; }
 .or-decision-feedback textarea { width: 100%; min-height: 7rem; resize: vertical; padding: 0.75rem; border: 1px solid var(--border-muted); border-radius: 0.5rem; background: var(--bg-surface); color: var(--text-primary); font: inherit; line-height: 1.45; }
 .or-decision-success { padding: 0.9rem 1rem; border: 1px solid var(--success-border, var(--accent-blue)); border-radius: 0.5rem; background: var(--success-bg, var(--accent-muted)); color: var(--text-primary); line-height: 1.45; }
 .or-decision-actions__stranded { padding: 0.75rem 1rem; border: 1px solid var(--border-muted); border-radius: 0.5rem; background: var(--bg-surface); color: var(--text-secondary); font-size: 0.875rem; line-height: 1.45; }
 .or-progress-list { overflow: hidden; border: 1px solid var(--border-subtle); border-radius: 0.75rem; }
-.or-progress-row { width: 100%; display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(10rem, auto) auto; align-items: center; gap: 1rem; min-height: 4.25rem; padding: 0.75rem 1rem; border: 0; border-bottom: 1px solid var(--border-subtle); background: var(--bg-surface); color: var(--text-primary); cursor: pointer; text-align: left; }
-.or-progress-row:last-child { border-bottom: 0; }
-.or-progress-row:hover { background: var(--bg-elevated); }
 .or-progress-row__dot { width: 0.65rem; height: 0.65rem; border-radius: 999px; background: var(--text-muted); }
 .or-progress-row__dot--building, .or-progress-row__dot--assessing, .or-progress-row__dot--github_review { background: var(--accent-blue); }
 .or-progress-row__dot--failed, .or-progress-row__dot--pull_request_mismatch { background: var(--danger-fg); }
@@ -5713,15 +5562,12 @@ a:focus-visible {
   .or-run-sidebar__row-twin { display: none; }
   .or-run-workspace__pane-action--move { display: none; }
   .or-repository-fields, .or-role-grid { grid-template-columns: minmax(0, 1fr); }
-  .or-repository-fields button { width: 100%; }
   .or-review-workspace { gap: 2rem; }
   .or-review-workspace__header { align-items: stretch; flex-direction: column; gap: 1rem; }
   .or-review-refresh { align-self: flex-start; }
   .or-work-item { grid-template-columns: 1fr; gap: 1.25rem; padding: 1.1rem; }
   .or-work-item__decision { padding: 1.1rem 0 0; border-top: 1px solid var(--border-subtle); border-left: 0; }
   .or-decision-actions__buttons, .or-decision-feedback__buttons { flex-direction: column; }
-  .or-decision-button { width: 100%; min-height: 3rem; }
-  .or-progress-row { grid-template-columns: auto minmax(0, 1fr) auto; gap: 0.75rem; }
   .or-progress-row__state { grid-column: 2 / -1; }
   .or-progress-row__open { grid-column: 3; grid-row: 1; }
   .or-artifact-decision-bar { position: static; align-items: stretch; flex-direction: column; gap: 1rem; }
@@ -5729,7 +5575,6 @@ a:focus-visible {
   .or-page-header, .or-page-header--back { flex-direction: column; gap: 1rem; }
   .or-page-title { font-size: 2.5rem; }
   .or-page-actions { width: 100%; justify-content: flex-start; }
-  .or-page-actions button { flex: 1 1 auto; }
   [data-testid="or-def-editor"] > div.grid { grid-template-columns: minmax(0, 1fr); }
   .or-data-table, .or-page > table { min-width: 42rem; }
   .or-page:has(> .or-data-table), .or-page:has(> table) { overflow-x: auto; }
@@ -5748,72 +5593,6 @@ a:focus-visible {
 
 .or-unavailable h2 { color: var(--text-primary); margin: 0; }
 .or-unavailable p  { margin: 0; }
-
-/* shared primitives */
-.or-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-  padding: 0.375rem 0.875rem;
-  border-radius: 6px;
-  font: inherit;
-  font-size: 0.875rem;
-  cursor: pointer;
-  border: 1px solid transparent;
-}
-
-.or-btn--primary {
-  background: var(--accent-blue);
-  color: #fff;
-  border-color: var(--accent-blue);
-}
-
-.or-btn--primary:disabled {
-  background: var(--border-muted);
-  border-color: var(--border-muted);
-  color: var(--text-fainter);
-  cursor: not-allowed;
-}
-
-.or-btn--secondary {
-  background: none;
-  color: var(--text-secondary);
-  border-color: var(--border-muted);
-}
-
-.or-link {
-  background: none;
-  border: none;
-  color: var(--accent-blue);
-  cursor: pointer;
-  font: inherit;
-  font-size: inherit;
-  padding: 0;
-  text-decoration: underline;
-}
-
-.or-chip {
-  display: inline-block;
-  padding: 0.125rem 0.5rem;
-  border-radius: 4px;
-  font-size: 0.75rem;
-  font-weight: 500;
-  border: 1px solid var(--border-muted);
-  color: var(--text-secondary);
-  background: var(--bg-surface);
-}
-
-.or-chip--running   { border-color: #3b82f6; color: #3b82f6; }
-.or-chip--stuck     { border-color: #fbbf24; color: #fbbf24; }
-.or-chip--parked    { border-color: #f59e0b; color: #f59e0b; }
-.or-chip--failed    { border-color: #ef4444; color: #ef4444; }
-.or-chip--complete  { border-color: #10b981; color: #10b981; }
-.or-chip--cancelled { border-color: var(--text-muted); color: var(--text-muted); }
-.or-chip--pending   { border-color: var(--text-muted); color: var(--text-muted); }
-.or-chip--approved  { border-color: #10b981; color: #10b981; }
-.or-chip--rejected  { border-color: #ef4444; color: #ef4444; }
-.or-chip--draft     { border-color: #f59e0b; color: #f59e0b; }
-.or-chip--artifact  { cursor: pointer; }
 
 .or-badge {
   display: inline-flex;

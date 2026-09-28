@@ -1,3 +1,4 @@
+import { Button } from "../../../components/atoms/Button";
 import type { ReactNode } from "react";
 
 import type { RunWorkspaceSlot } from "../../lib/run-workspace";
@@ -44,24 +45,23 @@ export function RunPaneChrome({ slot, title, subtitle, actions, children }: RunP
         </div>
         <div className="flex items-center gap-1.5">
           {actions.onOpenInOtherPane !== null && (
-            <button
+            <Button variant="pane-action"
               type="button"
-              className="or-run-workspace__pane-action or-run-workspace__pane-action--move"
+              className="or-run-workspace__pane-action--move"
               onClick={actions.onOpenInOtherPane}
               data-testid={`or-run-pane-move-${slot}`}
             >
               {slot === "primary" ? "Send right →" : "← Send left"}
-            </button>
+            </Button>
           )}
-          <button
+          <Button variant="pane-action"
             type="button"
-            className="or-run-workspace__pane-action"
             onClick={actions.onClose}
             aria-label={`Close ${title} pane`}
             data-testid={`or-run-pane-close-${slot}`}
           >
             ✕
-          </button>
+          </Button>
         </div>
       </header>
       <div className="or-run-workspace__pane-body">{children}</div>

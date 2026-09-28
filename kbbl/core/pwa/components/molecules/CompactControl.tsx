@@ -20,6 +20,7 @@ export function CompactControl({
         </span>
       )}
       <Button
+        variant="bare"
         className="compact-control__action"
         disabled={isPending}
         onClick={onCompact}

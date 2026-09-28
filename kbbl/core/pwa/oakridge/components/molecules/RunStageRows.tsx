@@ -1,10 +1,11 @@
 import type { StageDetail, StageUnit } from "../../types";
 import { StatusBadge } from "../atoms/StatusBadge";
+import { Button } from "../../../components/atoms/Button";
+import { Chip } from "../../../components/atoms/Chip";
 import { Fragment } from "react";
 import { selectCohortBrief } from "../../lib/stage-unit-params";
 
 const tableCellClass = "border-b border-[var(--border-subtle)] px-3 py-2.5 align-middle";
-const chipBaseClass = "inline-block rounded border bg-[var(--bg-surface)] px-2 py-0.5 text-xs font-medium";
 const codeClass = "rounded bg-[var(--bg-code)] px-1.5 py-0.5 font-mono text-xs text-[var(--text-secondary)]";
 const mutedClass = "text-sm text-[var(--text-muted)]";
 
@@ -33,7 +34,7 @@ export function RunStageRow({ stage, onSelectArtifact, retry }: RunStageRowProps
       <td className={`${tableCellClass} text-[var(--text-secondary)]`}>{stage.type}</td>
       <td className={tableCellClass}><div className="flex items-center gap-2">
         <StatusBadge status={stage.status} />
-        {retry && <button type="button" className="rounded border border-red-500 px-2 py-0.5 text-xs text-red-500 hover:bg-red-500 hover:text-white disabled:opacity-50" onClick={retry.onRetry} disabled={retry.isRetrying} data-testid="or-retry-unit-btn">{retry.isRetrying ? "Retrying…" : "Retry"}</button>}
+        {retry && <Button size="xsmall" variant="danger" onClick={retry.onRetry} disabled={retry.isRetrying} data-testid="or-retry-unit-btn">{retry.isRetrying ? "Retrying…" : "Retry"}</Button>}
         {retry?.error && <span role="alert" className="text-xs text-red-500">{retry.error}</span>}
       </div></td>
       <ArtifactCell artifacts={stage.artifacts} onSelectArtifact={onSelectArtifact} />
@@ -73,27 +74,27 @@ export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelect
     <tr className={stageRowClass(unit.status)} data-testid="or-stage-row">
       <td className={`${tableCellClass} font-medium text-[var(--text-primary)]`} data-testid="or-stage-name">
         <span>{stageName}</span>
-        {unit.repository_key && <span className="ml-1.5 rounded border border-[var(--border-muted)] px-1.5 py-0.5 text-xs text-[var(--text-secondary)]">{unit.repository_key}</span>}
-        <span className="ml-1.5 rounded bg-[var(--bg-elevated)] px-1.5 py-0.5 text-xs font-mono text-[var(--text-muted)]">{unit.unit_id}</span>
+        {unit.repository_key && <Chip tone="neutral" className="ml-1.5">{unit.repository_key}</Chip>}
+        <Chip tone="muted" className="ml-1.5 font-mono">{unit.unit_id}</Chip>
         {brief?.title && <div className="mt-1 text-xs font-normal text-[var(--text-muted)]" data-testid="or-cohort-title">{brief.title}</div>}
       </td>
       <td className={`${tableCellClass} text-[var(--text-secondary)]`}>{stageType}</td>
       <td className={tableCellClass}><div className="flex items-center gap-2">
         <StatusBadge status={unit.status} />
-        {unit.gate && <span className="rounded border border-amber-400 px-1.5 py-0.5 text-xs text-amber-400">{unit.gate}</span>}
+        {unit.gate && <Chip tone="warning">{unit.gate}</Chip>}
         {unit.admission_required && unit.admitted && <span className="text-xs text-emerald-500" data-testid="or-unit-admitted">Admitted</span>}
-        {canRetry && <button type="button" className="rounded border border-red-500 px-2 py-0.5 text-xs text-red-500 hover:bg-red-500 hover:text-white disabled:opacity-50" onClick={() => onRetry(unit.unit_id)} disabled={retrying} data-testid="or-retry-unit-btn">{retrying ? "Retrying…" : "Retry"}</button>}
+        {canRetry && <Button size="xsmall" variant="danger" onClick={() => onRetry(unit.unit_id)} disabled={retrying} data-testid="or-retry-unit-btn">{retrying ? "Retrying…" : "Retry"}</Button>}
         {retryError && <span role="alert" className="text-xs text-red-500">{retryError}</span>}
         {confirmMerge && (
-          <button
-            type="button"
-            className="rounded border border-[var(--accent-blue)] px-2 py-0.5 text-xs text-[var(--accent-blue)] disabled:opacity-50"
+          <Button
+            size="xsmall"
+            variant="accent-outline"
             onClick={confirmMerge.onConfirm}
             disabled={confirmMerge.isConfirming}
             data-testid="or-confirm-cohort-merged-btn"
           >
             {confirmMerge.isConfirming ? "Confirming…" : "It’s merged — continue"}
-          </button>
+          </Button>
         )}
         {confirmMerge?.error && <span role="alert" className="text-xs text-red-500">{confirmMerge.error}</span>}
       </div></td>
@@ -111,12 +112,9 @@ export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelect
                 {dependencies.map((dependency) => {
                   const isBlocked = blockedBy.includes(dependency);
                   return (
-                    <span
-                      key={dependency}
-                      className={`rounded border px-1.5 py-0.5 ${isBlocked ? "border-amber-400 text-amber-500" : "border-emerald-500 text-emerald-500"}`}
-                    >
+                    <Chip key={dependency} tone={isBlocked ? "warning" : "success"}>
                       {dependency}: {isBlocked ? "waiting" : "complete"}
-                    </span>
+                    </Chip>
                   );
                 })}
               </div>
@@ -128,9 +126,9 @@ export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelect
                     Blocked by: {blockedBy.length > 0 ? blockedBy.join(", ") : "dependencies not yet complete"}
                   </div>
                 ) : (
-                  <button type="button" className="rounded-md border border-[var(--accent-blue)] px-3 py-1.5 text-sm text-[var(--accent-blue)] disabled:opacity-50" onClick={() => onAdmit(unit.unit_id)} disabled={admitting} data-testid="or-admit-unit-btn">
+                  <Button size="medium" variant="accent-outline" onClick={() => onAdmit(unit.unit_id)} disabled={admitting} data-testid="or-admit-unit-btn">
                     {admitting ? "Admitting…" : "Admit build"}
-                  </button>
+                  </Button>
                 )}
                 {admissionError && <span role="alert" className="text-sm text-red-500">{admissionError}</span>}
               </div>
@@ -151,7 +149,7 @@ interface ArtifactCellProps {
 function ArtifactCell({ artifacts, onSelectArtifact }: ArtifactCellProps) {
   return <td className={tableCellClass}>
     {artifacts.length === 0 && <span className={mutedClass}>-</span>}
-    <div className="flex flex-wrap gap-1.5">{artifacts.map((artifact) => onSelectArtifact ? <button key={artifact.id} type="button" className={`${chipBaseClass} border-[var(--accent-blue)] text-[var(--accent-blue)] underline`} onClick={() => onSelectArtifact(artifact.id)}>{artifact.type_id}</button> : <span key={artifact.id} className={`${chipBaseClass} border-[var(--border-muted)] text-[var(--text-secondary)]`}>{artifact.type_id}</span>)}</div>
+    <div className="flex flex-wrap gap-1.5">{artifacts.map((artifact) => onSelectArtifact ? <Button key={artifact.id} variant="link" onClick={() => onSelectArtifact(artifact.id)}><Chip tone="accent" className="underline">{artifact.type_id}</Chip></Button> : <Chip key={artifact.id} tone="neutral">{artifact.type_id}</Chip>)}</div>
   </td>;
 }
 

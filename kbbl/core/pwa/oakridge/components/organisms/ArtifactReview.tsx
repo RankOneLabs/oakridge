@@ -10,16 +10,19 @@ import { useRunGates } from "../../hooks/useRunGates";
 import { usePatchReviewItem } from "../../hooks/usePatchReviewItem";
 import { useAtomEdit } from "../../hooks/useAtomEdit";
 import { resolveViewer } from "../../artifactRegistry";
-import { ReviewItemsChecklist } from "../../ReviewItemsChecklist";
+import { ReviewItemsChecklist } from "../molecules/ReviewItemsChecklist";
 import type { ArtifactRevision } from "../../types";
 import { formatRelative } from "../../../lib/time";
 import { ThreadSidebar } from "../../../review/shared/ThreadSidebar";
 import { ThreadView } from "../../../review/shared/ThreadView";
 import type { Thread, Message } from "../../../review/shared/types";
-import { GateDecisionActions } from "../../GateDecisionActions";
+import { GateDecisionActions } from "./GateDecisionActions";
 import { ArtifactJsonRevisionPanel } from "../molecules/ArtifactJsonRevisionPanel";
 import { ArtifactRevisionNavigation } from "../molecules/ArtifactRevisionNavigation";
 import { ArtifactReviewShell } from "./ArtifactReviewShell";
+import { Chip } from "../../../components/atoms/Chip";
+import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
+import { selectStatusTone } from "../../lib/status-tone";
 
 /**
  * The review owns no navigation of its own.
@@ -72,9 +75,9 @@ export function ArtifactReview({ artifactId }: ArtifactReviewProps) {
   if (query.isError) {
     return (
       <div className="or-artifact-detail" data-testid="or-artifact-detail">
-        <div className="or-error" role="alert" data-testid="or-artifact-detail-error">
+        <FeedbackMessage tone="danger" testId="or-artifact-detail-error">
           {query.error instanceof Error ? query.error.message : "Failed to load artifact"}
-        </div>
+        </FeedbackMessage>
       </div>
     );
   }
@@ -82,7 +85,7 @@ export function ArtifactReview({ artifactId }: ArtifactReviewProps) {
   if (query.isPending || !query.data) {
     return (
       <div className="or-artifact-detail" data-testid="or-artifact-detail">
-        <div className="or-loading">Loading artifact…</div>
+        <FeedbackMessage>Loading artifact…</FeedbackMessage>
       </div>
     );
   }
@@ -190,10 +193,10 @@ export function ArtifactReview({ artifactId }: ArtifactReviewProps) {
           <div className="or-revision-panel__meta">
             <span className="or-label">Revision</span>
             <code className="or-code">{revision.id.slice(0, 8)}</code>
-            <span className={`or-chip or-chip--${revision.status}`} data-testid="or-revision-status">
+            <Chip tone={selectStatusTone(revision.status)} testId="or-revision-status">
               {revision.status}
-            </span>
-            <span className="or-muted">{formatRelative(revision.created_at)}</span>
+            </Chip>
+            <span className="text-sm text-[var(--text-muted)]">{formatRelative(revision.created_at)}</span>
           </div>
 
           {Viewer ? (
@@ -215,7 +218,7 @@ export function ArtifactReview({ artifactId }: ArtifactReviewProps) {
             <ArtifactJsonRevisionPanel revision={revision} descriptor={artifact.review} />
           )}
         </section>
-      ) : <div className="or-empty">No revisions.</div>;
+      ) : <FeedbackMessage>No revisions.</FeedbackMessage>;
 
       {/* ── Collab chrome: review items ─────────────────────────────────── */}
   const reviewItemsContent = hasReviewItems ? (
