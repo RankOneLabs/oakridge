@@ -3,7 +3,7 @@ import { useWorkflowDefs } from "../../hooks/useWorkflowDefs";
 import { useSetWorkflowDefArchived } from "../../hooks/useSetWorkflowDefArchived";
 import type { WorkflowDefSummary } from "../../types";
 import { Button } from "../../../components/atoms/Button";
-import { FeedbackMessage } from "../atoms/FeedbackMessage";
+import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import { PageHeader } from "../molecules/PageHeader";
 const tableHeaderClass =
   "border-b border-[var(--border-subtle)] px-3 py-2 text-left text-xs font-semibold uppercase text-[var(--text-muted)]";
