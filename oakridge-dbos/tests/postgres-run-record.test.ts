@@ -649,6 +649,52 @@ test("assessment feedback retry inherits the previous build checkout instead of 
   expect((request.resolved_config as { readonly worktree?: unknown }).worktree).toBeUndefined();
 });
 
+test("a retry on an inherited checkout is told to push to its cohort branch rather than open a new pull request", async () => {
+  const setup = await setupMaterializedRun(4, false, false);
+  if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  const fixture = await materializeSingleUnitStage(setup, "build-branch-continuation", "C01", [{ identity: { kind: "scalar", output_name: "build_result" }, artifact_type: "dev.build_result", required: true, release: GATE_RELEASE }]);
+  await sql!.query("UPDATE oakridge.work_order SET execution_request=jsonb_set(execution_request,'{resolved_config,worktree}',$2::jsonb) WHERE id=$1",
+    [fixture.workOrderId, JSON.stringify({ branchName: "cohort/epic/C01", worktreeSubdir: "epic" })]);
+  await setup.records.ensure_executor_attachment(fixture.workOrderId, "delegated_session", fixture.at);
+  await setup.records.attach_external(fixture.workOrderId, { kind: "kbbl_session", session_id: "11111111-1111-4111-8111-111111111111" }, fixture.at);
+  const body = { summary: "needs changes" };
+  const published = await setup.records.publish_artifact({ artifact_id: randomUUID() as ArtifactId, work_order_id: fixture.workOrderId,
+    capability_hash: fixture.capabilityHash, output_name: "build_result", body, idempotency_key: "build-branch-continuation",
+    payload_hash: payloadHashOf(body), published_at: fixture.at });
+  if (published.kind !== "pending") throw new Error(`expected pending, got ${published.kind}`);
+  await setup.records.close_output_wait({ wait_id: published.wait_id, disposition: "invalidate", actor: "operator", detail: "revise build", decided_at: fixture.at });
+
+  const retried = await setup.records.retry_unit({ target: { kind: "run_unit", run_unit_id: fixture.runUnitId }, idempotency_key: "branch-continuation", actor: "operator" }, fixture.at);
+  if (retried.kind !== "created") throw new Error(`expected created, got ${retried.kind}`);
+  const prompt = ((await storedWorkOrder(retried.work_order.id)).execution_request.resolved_config as { readonly rendered_prompt: string }).rendered_prompt;
+  const continuation = prompt.slice(prompt.indexOf("## Continue the cohort branch"));
+  expect({
+    after_corrections: prompt.indexOf("## Requested output corrections") < prompt.indexOf("## Continue the cohort branch"),
+    checks_out_cohort_branch: continuation.includes("git checkout --ignore-other-worktrees -B cohort/epic/C01"),
+    forbids_new_pull_request: continuation.includes("do not call `mcp__gated-review__open_pr`"),
+  }).toEqual({ after_corrections: true, checks_out_cohort_branch: true, forbids_new_pull_request: true });
+});
+
+test("a retry whose writer never reached kbbl keeps its cohort worktree and gets no continuation section", async () => {
+  const setup = await setupMaterializedRun(4, false, false);
+  if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }
+  const fixture = await materializeSingleUnitStage(setup, "build-no-checkout", "C01", [{ identity: { kind: "scalar", output_name: "build_result" }, artifact_type: "dev.build_result", required: true, release: GATE_RELEASE }]);
+  await sql!.query("UPDATE oakridge.work_order SET execution_request=jsonb_set(execution_request,'{resolved_config,worktree}',$2::jsonb) WHERE id=$1",
+    [fixture.workOrderId, JSON.stringify({ branchName: "cohort/epic/C01", worktreeSubdir: "epic" })]);
+  const body = { summary: "needs changes" };
+  const published = await setup.records.publish_artifact({ artifact_id: randomUUID() as ArtifactId, work_order_id: fixture.workOrderId,
+    capability_hash: fixture.capabilityHash, output_name: "build_result", body, idempotency_key: "build-no-checkout",
+    payload_hash: payloadHashOf(body), published_at: fixture.at });
+  if (published.kind !== "pending") throw new Error(`expected pending, got ${published.kind}`);
+  await setup.records.close_output_wait({ wait_id: published.wait_id, disposition: "invalidate", actor: "operator", detail: "revise build", decided_at: fixture.at });
+
+  const retried = await setup.records.retry_unit({ target: { kind: "run_unit", run_unit_id: fixture.runUnitId }, idempotency_key: "no-checkout", actor: "operator" }, fixture.at);
+  if (retried.kind !== "created") throw new Error(`expected created, got ${retried.kind}`);
+  const config = (await storedWorkOrder(retried.work_order.id)).execution_request.resolved_config as { readonly rendered_prompt: string; readonly worktree?: unknown };
+  expect({ keeps_worktree: config.worktree !== undefined, continues: config.rendered_prompt.includes("## Continue the cohort branch") })
+    .toEqual({ keeps_worktree: true, continues: false });
+});
+
 test("self-stage revision retains the writer across repeated corrections and preserves the artifact chain", async () => {
   const setup = await setupMaterializedRun(4, false, false);
   if (!setup) { console.warn("run-record PostgreSQL test SKIPPED: no PostgreSQL reachable"); return; }

@@ -23,6 +23,7 @@ Repository: `{{REPOSITORY_KEY}}`
 - Use only the supplied cohort build brief's acceptance criteria. Do not assess plan-level acceptance criteria or any other cohort.
 - Work belonging to dependent or later cohorts is intentionally absent and must not count as a gap.
 - Read the current cohort worktree to verify the implementation and tests against that brief.
+- Your worktree is a scratch fork of the builder's checkout, so its branch name (`kbbl/…`) and upstream say nothing about what was pushed or which pull request is open. Oakridge tracks the cohort's branch and pull request. Never report a pull request as missing or a branch as unpushed from local git state, and never recommend opening a new pull request. Where a criterion concerns the pull request itself (for example its body), assess it from the build result and say that you could not see the pull request.
 
 ## Your tasks
 

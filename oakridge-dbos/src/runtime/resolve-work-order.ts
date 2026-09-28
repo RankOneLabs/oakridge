@@ -163,6 +163,23 @@ const selectCorrectionSection = (rejected: readonly RejectedOutputContext[], rev
   return `${corrections}\n\n## Assessment sent back by the operator\n\nThe assessor reviewed the previous build and the operator sent it back for changes. Address its open findings and recommended next actions below; where the operator feedback above differs from them, follow the operator feedback.\n\n${JSON.stringify(review, null, 2)}`;
 };
 
+/** The cohort branch a basis request asked kbbl to create, when it named one. */
+const selectWorktreeBranchName = (config: { readonly [key: string]: JsonValue }): string | null => {
+  const worktree = config.worktree;
+  if (!isJsonObject(worktree)) return null;
+  return typeof worktree.branchName === "string" && worktree.branchName.length > 0 ? worktree.branchName : null;
+};
+
+/**
+ * A retry that inherits the previous writer's checkout starts on kbbl's
+ * scratch fork branch, while the rendered prompt still reads as a first build
+ * that pushes "the current branch" and opens a PR. This section moves the
+ * session back onto the cohort branch, whose PR is already open, so the
+ * correction lands on that PR instead of a new one.
+ */
+const selectCohortBranchContinuationSection = (branch: string): string =>
+  `## Continue the cohort branch\n\nThis session continues cohort branch \`${branch}\`. Your worktree starts from the previous session's last commit, but on a scratch branch. Before you commit anything, switch to the cohort branch at your current commit:\n\n\`\`\`sh\ngit checkout --ignore-other-worktrees -B ${branch}\n\`\`\`\n\nCommit your changes on \`${branch}\` and push it with \`mcp__gated-review__git_push\`. If the push is rejected as non-fast-forward, run \`mcp__gated-review__git_pull\`, resolve any conflict, and push again. Emit only the artifacts listed in the publication section below. When that list does not include \`pr_summary\`, the cohort's pull request is already open from this branch and picks up the push: do not call \`mcp__gated-review__open_pr\` and do not emit \`pr_summary\`. Only when the list asks for \`pr_summary\` is no pull request recorded yet; then open one from this branch as described above. This overrides the push, open-PR and emit-order steps above.`;
+
 /**
  * Derives a retry's execution request from the basis request. Everything that
  * names the work order is re-minted, never copied: the execution id, the
@@ -200,8 +217,13 @@ export const rebindWorkOrderPublication = (input: RebindWorkOrderPublicationInpu
   // branch a second time.
   const retryConfig: { [key: string]: JsonValue } = { ...reboundConfig };
   if (input.retry_workspace_source) delete retryConfig.worktree;
-  const resolved_config: JsonValue = rejected.length > 0 && typeof config.rendered_prompt === "string"
-    ? { ...retryConfig, rendered_prompt: `${config.rendered_prompt}\n\n${selectCorrectionSection(rejected, input.review ?? null)}` }
+  const cohortBranch = input.retry_workspace_source ? selectWorktreeBranchName(config) : null;
+  const sections = [
+    ...(rejected.length > 0 ? [selectCorrectionSection(rejected, input.review ?? null)] : []),
+    ...(cohortBranch ? [selectCohortBranchContinuationSection(cohortBranch)] : []),
+  ];
+  const resolved_config: JsonValue = sections.length > 0 && typeof config.rendered_prompt === "string"
+    ? { ...retryConfig, rendered_prompt: [config.rendered_prompt, ...sections].join("\n\n") }
     : retryConfig;
   return {
     capability_hash: capabilityHash(capability),
