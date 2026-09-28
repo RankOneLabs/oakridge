@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRuns } from "../../hooks/useRuns";
-import type { RunSummary } from "../../types";
+import type { RunDisplayStatus, RunSummary } from "../../types";
 import { formatRelative } from "../../../lib/time";
 import { GlobalParkedGateList } from "../../ParkedGateList";
-import { Button } from "../atoms/Button";
+import { Button } from "../../../components/atoms/Button";
 import { FeedbackMessage } from "../atoms/FeedbackMessage";
 import { PageHeader } from "../molecules/PageHeader";
 
@@ -18,8 +18,6 @@ function applyTabFilter(runs: RunSummary[], tab: FilterTab): RunSummary[] {
     default: return runs;
   }
 }
-
-type RunDisplayStatus = "failed" | "stuck" | RunSummary["status"];
 
 const tableHeaderClass =
   "border-b border-[var(--border-subtle)] px-3 py-2 text-left text-xs font-semibold uppercase text-[var(--text-muted)]";
@@ -84,7 +82,7 @@ export function RunList({ onSelectRun, onNewRun, onNewProject, onWorkflows, onSe
           <>
             {onWorkflows && <Button onClick={onWorkflows} data-testid="or-workflows-btn">Workflows</Button>}
             <Button onClick={onNewProject} data-testid="or-new-project-btn">+ Project</Button>
-            <Button onClick={onNewRun} data-testid="or-new-run-btn">+ New Run</Button>
+            <Button variant="primary" onClick={onNewRun} data-testid="or-new-run-btn">+ New Run</Button>
             <Button onClick={onRefresh} aria-label="Refresh runs">Refresh</Button>
           </>
         }

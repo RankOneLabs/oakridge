@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useWorkflowDefs } from "../../hooks/useWorkflowDefs";
 import { useSetWorkflowDefArchived } from "../../hooks/useSetWorkflowDefArchived";
 import type { WorkflowDefSummary } from "../../types";
-import { Button } from "../atoms/Button";
+import { Button } from "../../../components/atoms/Button";
 import { FeedbackMessage } from "../atoms/FeedbackMessage";
 import { PageHeader } from "../molecules/PageHeader";
 const tableHeaderClass =

@@ -1,11 +1,12 @@
 import type { ReactNode } from "react";
 
-type FeedbackTone = "danger" | "muted";
+type FeedbackTone = "danger" | "muted" | "empty";
 
 const TONE_CLASS: Record<FeedbackTone, string> = {
   danger:
     "rounded-md border border-[var(--danger-card-border)] bg-[var(--danger-bg)] px-4 py-3 text-sm text-[var(--danger-fg)]",
   muted: "py-6 text-sm text-[var(--text-muted)]",
+  empty: "rounded-xl border border-dashed border-[var(--border-muted)] px-8 py-8 text-center text-sm text-[var(--text-muted)]",
 };
 
 interface FeedbackMessageProps {

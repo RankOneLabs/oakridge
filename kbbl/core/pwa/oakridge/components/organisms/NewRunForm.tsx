@@ -24,7 +24,7 @@ import { randomUuid } from "../../../lib/random-uuid";
 import { RepositoryLaunchFields } from "../molecules/RepositoryLaunchFields";
 import { BriefNotesField } from "../molecules/BriefNotesField";
 import { readBriefNotesFile, selectMissingBriefNotesDetail, type BriefNotesSource } from "../../lib/brief-notes";
-import { Button } from "../atoms/Button";
+import { Button } from "../../../components/atoms/Button";
 import { FeedbackMessage } from "../atoms/FeedbackMessage";
 import { FormField, formControlClass } from "../molecules/FormField";
 import { PageHeader } from "../molecules/PageHeader";
