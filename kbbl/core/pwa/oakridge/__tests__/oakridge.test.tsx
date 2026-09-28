@@ -227,6 +227,12 @@ describe("RunDetail stage list", () => {
     });
   }
 
+  it("announces loading as a status", () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise(() => {}));
+    wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
+    expect(screen.getByText("Loading run…").getAttribute("role")).toBe("status");
+  });
+
   it("renders stage rows with name and status", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch());
     wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
@@ -260,7 +266,7 @@ describe("RunDetail stage list", () => {
   it("shows error state when run fetch fails", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ error: "not found" }, 404));
     wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
-    expect(await screen.findByTestId("or-run-detail-error")).toBeTruthy();
+    expect((await screen.findByTestId("or-run-detail-error")).getAttribute("role")).toBe("alert");
   });
 
   it("keeps full cohort briefs out of the stage list while rendering admission controls", async () => {

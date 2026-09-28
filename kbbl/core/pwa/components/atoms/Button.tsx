@@ -13,7 +13,7 @@ const VARIANT_CLASS: Record<ButtonVariant, string> = {
   danger:
     "border border-red-500 bg-transparent text-red-500 hover:bg-red-500 hover:text-white",
   "accent-outline": "border border-[var(--accent-blue)] bg-transparent text-[var(--accent-blue)] hover:bg-[var(--accent-blue)] hover:text-white",
-  "danger-strong": "border border-red-800 bg-red-800 text-white hover:bg-red-700 dark:border-red-400 dark:bg-red-400 dark:text-red-950 dark:hover:bg-red-300",
+  "danger-strong": "border border-red-400 bg-transparent text-red-400 hover:bg-red-400 hover:text-black [[data-theme=light]_&]:border-red-800 [[data-theme=light]_&]:text-red-800 [[data-theme=light]_&]:hover:bg-red-800 [[data-theme=light]_&]:hover:text-white",
   link: "border-0 bg-transparent p-0 text-[var(--accent-blue)] underline hover:text-[var(--text-primary)]",
   bare: "",
 };

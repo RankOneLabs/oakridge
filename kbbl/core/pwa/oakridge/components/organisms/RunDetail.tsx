@@ -13,10 +13,11 @@ import type { StageDetail } from "../../types";
 import { RunParkedGateList } from "../../ParkedGateList";
 import { RunStageRow, RunUnitRow } from "../molecules/RunStageRows";
 import { StatusBadge } from "../atoms/StatusBadge";
+import { Button } from "../../../components/atoms/Button";
+import { Chip } from "../../../components/atoms/Chip";
+import { FeedbackMessage } from "../atoms/FeedbackMessage";
 import { FinalIntegrationPanel } from "./FinalIntegrationPanel";
 
-const secondaryButtonClass =
-  "inline-flex items-center gap-1.5 rounded-md border border-[var(--border-muted)] bg-transparent px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:border-[var(--border-hover)]";
 const tableHeaderClass =
   "border-b border-[var(--border-subtle)] px-3 py-2 text-left text-xs font-semibold uppercase text-[var(--text-muted)]";
 
@@ -72,13 +73,9 @@ export function RunDetail({ runId, onRunDeleted, onSelectArtifact }: RunDetailPr
   if (query.isError) {
     return (
       <div className="or-page or-page--wide" data-testid="or-run-detail">
-        <div
-          className="rounded-md border border-[var(--danger-card-border)] bg-[var(--danger-bg)] px-4 py-3 text-sm text-[var(--danger-fg)]"
-          role="alert"
-          data-testid="or-run-detail-error"
-        >
+        <FeedbackMessage tone="danger" testId="or-run-detail-error">
           {query.error instanceof Error ? query.error.message : "Failed to load run"}
-        </div>
+        </FeedbackMessage>
       </div>
     );
   }
@@ -86,7 +83,7 @@ export function RunDetail({ runId, onRunDeleted, onSelectArtifact }: RunDetailPr
   if (query.isPending || !query.data) {
     return (
       <div className="or-page or-page--wide" data-testid="or-run-detail">
-        <div className="py-6 text-sm text-[var(--text-muted)]">Loading run…</div>
+        <FeedbackMessage>Loading run…</FeedbackMessage>
       </div>
     );
   }
@@ -107,48 +104,45 @@ export function RunDetail({ runId, onRunDeleted, onSelectArtifact }: RunDetailPr
           <div className="flex flex-wrap gap-2">
             <StatusBadge status={run.status} testId="or-run-detail-status" />
             {run.parked_count > 0 && (
-              <span
-                className="inline-flex h-5 items-center rounded-full bg-amber-500 px-2 text-[11px] font-semibold text-black"
-                data-testid="or-run-detail-parked"
-              >
+              <Chip tone="warning" testId="or-run-detail-parked">
                 {run.parked_count} parked
-              </span>
+              </Chip>
             )}
           </div>
         </div>
         <div className="flex items-center gap-2">
           {canCancel && (
-            <button
+            <Button
               type="button"
-              className="inline-flex items-center gap-1.5 rounded-md border border-red-500 px-3 py-1.5 text-sm text-red-500 hover:bg-red-500 hover:text-white disabled:opacity-50"
+              variant="danger"
               onClick={() => void cancelMutation.mutate()}
               disabled={cancelMutation.isPending}
               data-testid="or-cancel-run-btn"
             >
               {cancelMutation.isPending ? "Cancelling…" : "Cancel Run"}
-            </button>
+            </Button>
           )}
-          <button
+          <Button
             type="button"
-            className={secondaryButtonClass}
+            variant="secondary"
             onClick={() => void archiveMutation.mutate()}
             disabled={archiveMutation.isPending}
             data-testid="or-archive-run-btn"
           >
             {archiveMutation.isPending ? "…" : "Archive"}
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
-            className={secondaryButtonClass}
+            variant="secondary"
             onClick={() => void unarchiveMutation.mutate()}
             disabled={unarchiveMutation.isPending}
             data-testid="or-unarchive-run-btn"
           >
             {unarchiveMutation.isPending ? "…" : "Unarchive"}
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
-            className="inline-flex items-center gap-1.5 rounded-md border border-red-800 px-3 py-1.5 text-sm text-red-800 hover:bg-red-800 hover:text-white disabled:opacity-50 dark:border-red-400 dark:text-red-400 dark:hover:bg-red-400 dark:hover:text-black"
+            variant="danger-strong"
             onClick={() => {
               if (window.confirm("Delete this run permanently? This cannot be undone.")) {
                 void deleteMutation.mutate(undefined, { onSuccess: onRunDeleted });
@@ -158,15 +152,15 @@ export function RunDetail({ runId, onRunDeleted, onSelectArtifact }: RunDetailPr
             data-testid="or-delete-run-btn"
           >
             {deleteMutation.isPending ? "…" : "Delete"}
-          </button>
+          </Button>
           {deleteMutation.isError && (
             <span className="text-sm text-red-500" role="alert">
               {deleteMutation.error instanceof Error ? deleteMutation.error.message : "Delete failed"}
             </span>
           )}
-          <button type="button" className={secondaryButtonClass} onClick={onRefresh}>
+          <Button type="button" variant="secondary" onClick={onRefresh}>
             Refresh
-          </button>
+          </Button>
         </div>
       </header>
 

@@ -5590,7 +5590,7 @@ a:focus-visible {
 .or-form-input:focus { border-color: var(--accent-blue); outline: none; }
 .or-secondary-button { display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.375rem 0.75rem; border: 1px solid var(--border-muted); border-radius: 0.375rem; background: transparent; color: var(--text-secondary); font: inherit; font-size: 0.875rem; cursor: pointer; }
 .or-secondary-button:hover { border-color: var(--border-hover); }
-.or-secondary-button:disabled, .or-final-repository__confirm:disabled { cursor: default; opacity: 0.5; }
+.or-secondary-button:disabled { cursor: default; opacity: 0.5; }
 .or-repository-fields {
   display: grid;
   grid-template-columns: minmax(7rem, 0.55fr) minmax(14rem, 1.5fr) minmax(8rem, 0.75fr) minmax(9rem, 0.85fr) minmax(7rem, 0.6fr) auto;
@@ -5610,7 +5610,6 @@ a:focus-visible {
 .or-final-repository__empty, .or-final-repository__pr-branches { color: var(--text-muted); }
 .or-final-repository__pr-branches { margin-left: 0.5rem; }
 .or-final-repository__confirmation { display: flex; flex-direction: column; align-items: flex-start; gap: 0.5rem; margin-top: 0.75rem; }
-.or-final-repository__confirm { padding: 0.375rem 0.75rem; border: 1px solid var(--accent-blue); border-radius: 0.375rem; background: transparent; color: var(--accent-blue); font: inherit; font-size: 0.875rem; cursor: pointer; }
 .or-final-repository__error { margin: 0.5rem 0 0; color: var(--danger-fg); font-size: 0.875rem; }
 .or-role-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; }
 .or-review-workspace {

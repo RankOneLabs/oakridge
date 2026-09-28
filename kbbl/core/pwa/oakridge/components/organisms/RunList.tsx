@@ -5,7 +5,9 @@ import type { RunDisplayStatus, RunSummary } from "../../types";
 import { formatRelative } from "../../../lib/time";
 import { GlobalParkedGateList } from "../../ParkedGateList";
 import { Button } from "../../../components/atoms/Button";
+import { Chip } from "../../../components/atoms/Chip";
 import { FeedbackMessage } from "../atoms/FeedbackMessage";
+import { selectStatusTone } from "../../lib/status-tone";
 import { PageHeader } from "../molecules/PageHeader";
 
 type FilterTab = "all" | "active" | "parked" | "complete" | "archived";
@@ -33,9 +35,16 @@ function statusRowClass(status: RunDisplayStatus): string {
   return `or-run-row or-run-row--${status}`;
 }
 
-function statusChipClass(status: RunDisplayStatus): string {
-  return `or-chip or-chip--${status}`;
-}
+// Tailwind v4's palette tokens differ from the previous status hexes.
+const STATUS_COLOR_CLASS = {
+  running: "[&&]:border-[#3b82f6] [&&]:text-[#3b82f6]",
+  stuck: "[&&]:border-[#fbbf24] [&&]:text-[#fbbf24]",
+  parked: "[&&]:border-[#f59e0b] [&&]:text-[#f59e0b]",
+  failed: "[&&]:border-[#ef4444] [&&]:text-[#ef4444]",
+  complete: "[&&]:border-[#10b981] [&&]:text-[#10b981]",
+  cancelled: "[&&]:border-[var(--text-muted)]",
+  pending: "[&&]:border-[var(--text-muted)]",
+} satisfies Record<RunDisplayStatus, string>;
 
 interface RunListProps {
   onSelectRun: (id: string) => void;
@@ -90,21 +99,16 @@ export function RunList({ onSelectRun, onNewRun, onNewProject, onWorkflows, onSe
 
       <div className="mb-3 flex gap-1 border-b border-[var(--border-subtle)]" role="tablist">
         {FILTER_TABS.map((tab) => (
-          <button
+          <Button
             key={tab.key}
-            type="button"
+            variant="secondary"
             role="tab"
             aria-selected={activeTab === tab.key}
-            className={
-              activeTab === tab.key
-                ? "border-b-2 border-[var(--accent-blue)] px-3 py-1.5 text-sm font-medium text-[var(--accent-blue)]"
-                : "px-3 py-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
-            }
             onClick={() => setActiveTab(tab.key)}
             data-testid={`or-filter-tab-${tab.key}`}
           >
             {tab.label}
-          </button>
+          </Button>
         ))}
       </div>
 
@@ -164,7 +168,7 @@ export function RunList({ onSelectRun, onNewRun, onNewProject, onWorkflows, onSe
                     {run.repository_keys.length > 0 ? run.repository_keys.join(", ") : "-"}
                   </td>
                   <td className={tableCellClass}>
-                    <span className={statusChipClass(status)}>{status}</span>
+                    <Chip tone={selectStatusTone(status)} className={STATUS_COLOR_CLASS[status]}>{status}</Chip>
                   </td>
                   <td className={`${tableCellClass} text-[var(--text-secondary)]`}>
                     <div>{run.current_stage ?? "-"}</div>
