@@ -50,9 +50,9 @@ function GateCard({ gate, onNavigateRun, onNavigateArtifact }: GateCardProps) {
           </span>
         )}
         {onNavigateRun && (
-          <Button variant="secondary"
+          <Button variant="link"
             type="button"
-            className="border-0 bg-transparent p-0 text-sm text-[var(--accent-blue)] underline"
+            className="text-sm"
             onClick={() => onNavigateRun(gate.run_id)}
             data-testid="or-gate-run-link"
           >
@@ -90,9 +90,9 @@ function GateCard({ gate, onNavigateRun, onNavigateArtifact }: GateCardProps) {
         <div className="flex items-center gap-2">
           <span className={labelClass}>Revision</span>
           {onNavigateArtifact ? (
-            <Button variant="secondary"
+            <Button variant="link"
               type="button"
-              className="border-0 bg-transparent p-0 font-mono text-xs text-[var(--accent-blue)] underline"
+              className="font-mono text-xs"
               onClick={() => onNavigateArtifact(gate.artifact_revision_id!)}
               data-testid="or-gate-artifact-link"
             >

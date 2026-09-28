@@ -33,7 +33,7 @@ export function ThreadSidebar({
           <Button variant="secondary"
             key={t.id}
             type="button"
-            className={`review-shell__tap-target thread-sidebar__row${isSelected ? " thread-sidebar__row--selected" : ""}`}
+            className={`review-shell__tap-target thread-sidebar__row${isSelected ? " thread-sidebar__row--selected" : ""} flex-col items-stretch! gap-0!`}
             onClick={() => onSelect(t.id)}
           >
             <div className="thread-sidebar__row-anchor">
