@@ -22,6 +22,7 @@ conflate.
 - **DAG**: `reactflow@11` + `dagre` for plan-review cohort layout
 - **Markdown**: `react-markdown` with `rehype-sanitize`
 - **Styling**: Tailwind CSS v4 is imported by `core/pwa/styles.css`.
+  Shared DAG components still use `.cohort-node__*` classes.
 
 ## Frontend file organization
 
