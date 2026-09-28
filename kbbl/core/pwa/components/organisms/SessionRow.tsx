@@ -125,7 +125,7 @@ export function SessionRow({
           <Button
             type="button"
             variant="primary"
-            className="absolute right-[6.25rem] top-1/2 min-h-11 -translate-y-1/2 text-xs"
+            className="absolute right-[6.25rem] top-1/2 min-h-11 -translate-y-1/2 text-xs!"
             disabled={resumeDisabled}
             title={resumeTitle()}
             onClick={(e) => {
@@ -140,7 +140,7 @@ export function SessionRow({
         <Button
           type="button"
           variant={confirmRemove ? "armed" : "danger"}
-          className="absolute right-3 top-1/2 min-h-11 -translate-y-1/2 whitespace-nowrap text-xs"
+          className="absolute right-3 top-1/2 min-h-11 -translate-y-1/2 whitespace-nowrap text-xs!"
           disabled={removeMutation.isPending}
           title={
             isOpen
@@ -172,7 +172,7 @@ export function SessionRow({
             <Button
               type="button"
               variant="danger-strong"
-              className="min-h-11 shrink-0 whitespace-nowrap text-xs"
+              className="min-h-11 shrink-0 whitespace-nowrap text-xs!"
               disabled={removeMutation.isPending}
               title="Removes the session anyway, abandoning the unit this run is waiting on."
               onClick={(e) => {

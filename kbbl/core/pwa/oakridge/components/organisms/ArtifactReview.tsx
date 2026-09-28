@@ -196,7 +196,7 @@ export function ArtifactReview({ artifactId }: ArtifactReviewProps) {
             <Chip tone={selectStatusTone(revision.status)} testId="or-revision-status">
               {revision.status}
             </Chip>
-            <FeedbackMessage className="py-0!">{formatRelative(revision.created_at)}</FeedbackMessage>
+            <span className="text-sm text-[var(--text-muted)]">{formatRelative(revision.created_at)}</span>
           </div>
 
           {Viewer ? (

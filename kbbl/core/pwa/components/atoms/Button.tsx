@@ -4,7 +4,7 @@ type ButtonVariant = "primary" | "secondary" | "danger" | "armed" | "accent-outl
 type ButtonSize = "xsmall" | "small" | "medium";
 
 const BASE_CLASS =
-  "inline-flex items-center justify-center gap-1.5 rounded-md font-medium transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-blue)] disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-md font-medium transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-blue)] disabled:cursor-not-allowed disabled:opacity-50";
 
 const VARIANT_CLASS: Record<ButtonVariant, string> = {
   primary: "border border-[var(--accent-blue)] bg-[var(--accent-blue)] font-bold text-[#0b130d] hover:brightness-110 [[data-theme=light]_&]:text-white",

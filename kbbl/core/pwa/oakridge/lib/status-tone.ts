@@ -29,6 +29,7 @@ const STATUS_TONE: Record<StatusToneSource, ChipTone> = {
   ...STAGE_TONE, ...UNIT_TONE, ...DISPLAY_TONE, ...ARTIFACT_TONE, ...SEVERITY_TONE, ...VERDICT_TONE, ...PR_REVIEW_TONE,
 };
 
+// Artifact viewers cast JSON strings to these unions, so an unknown value can still arrive.
 export function selectStatusTone(status: StatusToneSource): ChipTone {
-  return STATUS_TONE[status];
+  return STATUS_TONE[status] ?? "muted";
 }

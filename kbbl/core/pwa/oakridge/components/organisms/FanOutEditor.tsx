@@ -155,6 +155,7 @@ export function FanOutEditor({ value, onChange, disabled = false }: FanOutEditor
                 size="xsmall"
                 onClick={() => removeItemBinding(key)}
                 disabled={disabled}
+                aria-label={`Remove item binding ${key}`}
               >
                 ✕
               </Button>

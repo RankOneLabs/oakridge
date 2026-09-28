@@ -213,8 +213,8 @@ export function StageEditor({
             {slotBindingEntries.length === 0 && (
               <p className="text-xs text-[var(--text-muted)]">No slot bindings.</p>
             )}
-            {slotBindingEntries.map(([key, binding]) => (
-              <StageSlotBindingRow key={key} bindingKey={key} binding={binding}
+            {slotBindingEntries.map(([key, binding], i) => (
+              <StageSlotBindingRow key={i} bindingKey={key} binding={binding}
                 onChangeKey={updateSlotBindingKey} onChangeValue={updateSlotBindingValue}
                 onRemove={removeSlotBinding} disabled={disabled} />
             ))}

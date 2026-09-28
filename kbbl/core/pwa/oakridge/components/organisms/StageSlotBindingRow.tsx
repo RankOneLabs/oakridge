@@ -21,7 +21,8 @@ export function StageSlotBindingRow({ bindingKey, binding, onChangeKey, onChange
         <input type="text" className={inputClass} value={bindingKey}
           onChange={(event) => onChangeKey(bindingKey, event.target.value)}
           disabled={disabled} placeholder="SLOT_NAME" aria-label="Slot binding key" />
-        <Button variant="danger" size="xsmall" onClick={() => onRemove(bindingKey)} disabled={disabled}>✕</Button>
+        <Button variant="danger" size="xsmall" onClick={() => onRemove(bindingKey)} disabled={disabled}
+          aria-label={`Remove slot binding ${bindingKey}`}>✕</Button>
       </div>
       <BindingEditor label="binding" value={binding}
         onChange={(next) => onChangeValue(bindingKey, next)} disabled={disabled} />

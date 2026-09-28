@@ -29,4 +29,8 @@ describe("selectStatusTone", () => {
       }
     }
   });
+
+  it("falls back to muted for a status string the API unions do not contain", () => {
+    expect(selectStatusTone("superseded" as StatusToneSource)).toBe("muted");
+  });
 });
