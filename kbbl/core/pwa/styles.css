@@ -1315,12 +1315,6 @@ body {
   display: flex;
   justify-content: center;
 }
-.btn-resume-banner {
-  position: static;
-  transform: none;
-  padding: 0.6rem 1.25rem;
-  font-size: 0.9rem;
-}
 .session-ended-error {
   color: var(--danger-fg);
   font-size: 0.8rem;
@@ -1853,8 +1847,6 @@ body {
   color: var(--text-secondary);
 }
 .compacted-banner__open {
-  /* Reuses .btn-resume-banner sizing/colors via the className applied in
-     CompactedBanner; this rule just handles the inline-with-label layout. */
   margin-left: 0.25rem;
 }
 .compacted-banner__no-successor {

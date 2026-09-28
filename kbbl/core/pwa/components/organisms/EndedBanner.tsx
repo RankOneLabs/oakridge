@@ -1,6 +1,7 @@
 import { type Ref } from "react";
 
 import { useResumeAction } from "../../hooks/useResumeAction";
+import { Button } from "../atoms/Button";
 
 export function EndedBanner({
   ref,
@@ -18,14 +19,15 @@ export function EndedBanner({
         Session ended · read-only transcript
       </div>
       <div className="session-ended-actions">
-        <button
+        <Button
           type="button"
-          className="btn-resume btn-resume-banner"
+          variant="primary"
+          className="!px-5 !py-[0.6rem] !text-[0.9rem]"
           disabled={pending}
           onClick={() => void trigger(sid)}
         >
           {pending ? "starting…" : "Resume in new session"}
-        </button>
+        </Button>
       </div>
       {error && (
         <div className="session-ended-error" role="alert">
