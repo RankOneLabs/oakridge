@@ -1,3 +1,7 @@
+import { Chip } from "../../../components/atoms/Chip";
+import { selectStatusTone } from "../../lib/status-tone";
+import type { FindingSeverity } from "../../types";
+
 interface Finding {
   id?: string;
   description?: string;
@@ -49,7 +53,7 @@ export function SpecAnalysisViewer({ body }: Props) {
             {data.findings.map((f, i) => (
               <li key={f.id ?? i} className="or-viewer__list-item">
                 {f.severity && (
-                  <span className={`or-chip or-chip--${f.severity}`}>{f.severity}</span>
+                  <Chip tone={selectStatusTone(f.severity as FindingSeverity)}>{f.severity}</Chip>
                 )}
                 <span>{f.description ?? JSON.stringify(f)}</span>
               </li>
@@ -64,7 +68,7 @@ export function SpecAnalysisViewer({ body }: Props) {
           <ul className="or-viewer__list">
             {data.requirements.map((r, i) => (
               <li key={r.id ?? i} className="or-viewer__list-item">
-                {r.status && <span className="or-chip">{r.status}</span>}
+                {r.status && <Chip tone="neutral">{r.status}</Chip>}
                 <span>{r.description ?? JSON.stringify(r)}</span>
               </li>
             ))}
@@ -78,7 +82,7 @@ export function SpecAnalysisViewer({ body }: Props) {
           <ul className="or-viewer__list">
             {data.risks.map((r, i) => (
               <li key={i} className="or-viewer__list-item">
-                {r.severity && <span className={`or-chip or-chip--${r.severity}`}>{r.severity}</span>}
+                {r.severity && <Chip tone={selectStatusTone(r.severity as FindingSeverity)}>{r.severity}</Chip>}
                 <span>{r.description ?? JSON.stringify(r)}</span>
               </li>
             ))}

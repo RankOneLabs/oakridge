@@ -1,6 +1,8 @@
 import { useState } from "react";
-import type { ViewerProps } from "../artifactRegistry";
-import { isBuildBrief } from "../lib/build-brief";
+import type { ViewerProps } from "../../artifactRegistry";
+import { isBuildBrief } from "../../lib/build-brief";
+
+const labelClass = "text-[0.6875rem] font-semibold uppercase tracking-[0.05em] text-[var(--text-muted)]";
 
 function TextList({ values, emptyLabel, anchor, edit }: { values: string[]; emptyLabel: string; anchor: string; edit: ViewerProps["edit"] }) {
   return values.length > 0 ? (
@@ -57,8 +59,8 @@ export function BuildBriefViewer({ body, edit }: ViewerProps) {
     <article className="or-viewer or-viewer--build-brief" data-testid="or-build-brief-viewer">
       <header className="or-viewer__section">
         <div className="or-artifact-detail__meta">
-          <span className="or-label">Cohort</span><code className="or-code">{body.cohort_id}</code>
-          <span className="or-label">Repository</span><code className="or-code">{body.repository_key}</code>
+          <span className={labelClass}>Cohort</span><code className="or-code">{body.cohort_id}</code>
+          <span className={labelClass}>Repository</span><code className="or-code">{body.repository_key}</code>
         </div>
         <h2 className="or-viewer__brief-title">{body.title}</h2>
         <p className="or-viewer__summary"><EditableBriefText anchor="/goal" value={body.goal} multiline edit={edit} /></p>

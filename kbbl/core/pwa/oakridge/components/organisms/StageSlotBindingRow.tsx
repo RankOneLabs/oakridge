@@ -1,0 +1,31 @@
+import type { SlotBinding } from "../../types";
+import { BindingEditor } from "./BindingEditor";
+
+interface StageSlotBindingRowProps {
+  bindingKey: string;
+  binding: SlotBinding;
+  onChangeKey: (oldKey: string, newKey: string) => void;
+  onChangeValue: (key: string, binding: SlotBinding) => void;
+  onRemove: (key: string) => void;
+  disabled: boolean;
+}
+
+const inputClass =
+  "w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-3 py-1.5 text-sm text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none";
+const dangerBtnClass =
+  "rounded border border-red-400 px-2 py-0.5 text-xs text-red-400 hover:bg-red-400 hover:text-white";
+
+export function StageSlotBindingRow({ bindingKey, binding, onChangeKey, onChangeValue, onRemove, disabled }: StageSlotBindingRowProps) {
+  return (
+    <div className="flex flex-col gap-1 rounded border border-[var(--border-subtle)] p-2">
+      <div className="flex items-center gap-2">
+        <input type="text" className={inputClass} value={bindingKey}
+          onChange={(event) => onChangeKey(bindingKey, event.target.value)}
+          disabled={disabled} placeholder="SLOT_NAME" aria-label="Slot binding key" />
+        <button type="button" className={dangerBtnClass} onClick={() => onRemove(bindingKey)} disabled={disabled}>✕</button>
+      </div>
+      <BindingEditor label="binding" value={binding}
+        onChange={(next) => onChangeValue(bindingKey, next)} disabled={disabled} />
+    </div>
+  );
+}

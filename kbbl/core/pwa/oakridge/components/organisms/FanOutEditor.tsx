@@ -1,4 +1,4 @@
-import type { FanOutConfig, SlotBinding } from "../../oakridge/types";
+import type { FanOutConfig, SlotBinding } from "../../types";
 import { BindableEditor, BindingEditor } from "./BindingEditor";
 
 const inputClass =

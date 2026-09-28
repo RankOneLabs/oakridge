@@ -1,11 +1,12 @@
 import { useState } from "react";
-import type { DelegatedSessionStageConfig, SlotBinding } from "../../oakridge/types";
-import type { RuntimeModelOption } from "../../types";
+import type { DelegatedSessionStageConfig, SlotBinding } from "../../types";
+import type { RuntimeModelOption } from "../../../types";
 import { BindingEditor, BindableEditor } from "./BindingEditor";
 import { InputSlotEditor, OutputSlotEditor } from "./SlotEditor";
 import { FanOutEditor } from "./FanOutEditor";
-import { StageAdvancedSettings } from "../components/molecules/StageAdvancedSettings";
-import type { StageFormEntry } from "./stage-form";
+import { StageAdvancedSettings } from "../molecules/StageAdvancedSettings";
+import { StageSlotBindingRow } from "./StageSlotBindingRow";
+import type { StageFormEntry } from "../../lib/stage-form";
 
 const inputClass =
   "w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-3 py-1.5 text-sm text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none";
@@ -216,34 +217,10 @@ export function StageEditor({
             {slotBindingEntries.length === 0 && (
               <p className="text-xs text-[var(--text-muted)]">No slot bindings.</p>
             )}
-            {slotBindingEntries.map(([key, binding], i) => (
-              <div key={i} className="flex flex-col gap-1 rounded border border-[var(--border-subtle)] p-2">
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    className={inputClass}
-                    value={key}
-                    onChange={(e) => updateSlotBindingKey(key, e.target.value)}
-                    disabled={disabled}
-                    placeholder="SLOT_NAME"
-                    aria-label="Slot binding key"
-                  />
-                  <button
-                    type="button"
-                    className={dangerBtnClass}
-                    onClick={() => removeSlotBinding(key)}
-                    disabled={disabled}
-                  >
-                    ✕
-                  </button>
-                </div>
-                <BindingEditor
-                  label="binding"
-                  value={binding}
-                  onChange={(b) => updateSlotBindingValue(key, b)}
-                  disabled={disabled}
-                />
-              </div>
+            {slotBindingEntries.map(([key, binding]) => (
+              <StageSlotBindingRow key={key} bindingKey={key} binding={binding}
+                onChangeKey={updateSlotBindingKey} onChangeValue={updateSlotBindingValue}
+                onRemove={removeSlotBinding} disabled={disabled} />
             ))}
           </div>
 

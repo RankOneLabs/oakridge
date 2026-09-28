@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { DagEditor } from "../../review/plan/DagEditor";
-import type { Cohort, CohortDependency } from "../../review/plan/types";
-import type { ArtifactReviewDescriptor } from "../types";
+import { DagEditor } from "../../../review/plan/DagEditor";
+import type { Cohort, CohortDependency } from "../../../review/plan/types";
+import type { ArtifactReviewDescriptor } from "../../types";
 
 // dev.plan body shape (subset used for display)
 interface PlanBody {

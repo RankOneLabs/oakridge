@@ -8,9 +8,9 @@ import {
   useServerConfig,
 } from "../../../hooks/useServerConfig";
 import type { EdgeDef } from "../../types";
-import { StageEditor } from "../../authoring/StageEditor";
-import { defaultStageEntry, type StageFormEntry } from "../../authoring/stage-form";
-import { EdgeEditor } from "../../authoring/EdgeEditor";
+import { StageEditor } from "./StageEditor";
+import { defaultStageEntry, type StageFormEntry } from "../../lib/stage-form";
+import { EdgeEditor } from "./EdgeEditor";
 import { buildWorkflowGraph, validateWorkflowDefinition, workflowDefinitionToFormState } from "../../lib/workflow-definition-form";
 import { WorkflowJsonPreview } from "../molecules/WorkflowJsonPreview";
 

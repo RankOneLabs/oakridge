@@ -3,7 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
 
 import { BindableEditor, BindingEditor } from "./BindingEditor";
-import type { SlotBinding } from "../types";
+import type { SlotBinding } from "../../types";
 
 /**
  * The binding the seeded dev flow gives every cohort: which branch its pull
