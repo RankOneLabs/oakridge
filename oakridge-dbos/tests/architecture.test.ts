@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { ok, type JsonValue } from "../src/domain/primitives";
 import { AdapterRegistry } from "../src/runtime/executor-registry";
+import { cohortMachineAddress } from "../src/workflows/run-record-topology";
 
 const SOURCE = new URL("../src", import.meta.url).pathname;
 const FORBIDDEN_IDENTIFIERS = [
@@ -28,6 +29,14 @@ export const coreBoundaryViolations = (source: string): readonly string[] => {
 const decisionSources = async (): Promise<readonly string[]> => {
   const directory = join(SOURCE, "decision");
   return (await readdir(directory)).filter((name) => name.endsWith(".ts")).map((name) => join(directory, name));
+};
+
+const treeSources = async (directory: string): Promise<readonly string[]> => {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const nested = await Promise.all(entries.map((entry) => entry.isDirectory()
+    ? treeSources(join(directory, entry.name))
+    : Promise.resolve(entry.name.endsWith(".ts") ? [join(directory, entry.name)] : [])));
+  return nested.flat();
 };
 
 test("core decision sources contain no dev-flow payload, role, event, or sentinel identifiers", async () => {
@@ -84,4 +93,19 @@ test("operator and downstream roles are not closed over dev-flow names", async (
   const combined = sources.join("\n");
   expect(combined).not.toMatch(/StageOperatorRole\s*=\s*["'](?:spec|plan|brief|build|assessment|final_integration)/);
   expect(combined).not.toMatch(/z\.enum\(\[[^\]]*["'](?:spec|plan|brief|build|assessment|final_integration)["']/s);
+});
+
+test("lifecycle status SQL has one writer", async () => {
+  const files = await treeSources(SOURCE);
+  const writers = (await Promise.all(files.map(async (file) => ({ file, source: await readFile(file, "utf8") }))))
+    .filter((entry) => entry.source.includes("SET status="))
+    .map((entry) => entry.file.slice(SOURCE.length + 1));
+  expect(writers).toEqual(["storage/postgres-run-record.ts"]);
+});
+
+test("each cohort has one stable machine address", () => {
+  const first = "00000000-0000-4000-8000-000000000001" as import("../src/domain/primitives").CohortId;
+  const second = "00000000-0000-4000-8000-000000000002" as import("../src/domain/primitives").CohortId;
+  expect(cohortMachineAddress(first)).toEqual(cohortMachineAddress(first));
+  expect(cohortMachineAddress(first).workflow_id).not.toBe(cohortMachineAddress(second).workflow_id);
 });
