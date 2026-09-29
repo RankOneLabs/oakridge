@@ -66,3 +66,11 @@ test("source contains no second pending-effect store", async () => {
   const source = (await Promise.all(files.map((file) => readFile(file, "utf8")))).join("\n");
   expect(source).not.toMatch(/pending[_ -]?effects?|command[_ -]?outbox/i);
 });
+
+test("the baseline stores arbitrary registered effects without event-name checks", async () => {
+  const baseline = await readFile(join(SOURCE, "storage", "migrations", "0015_v15_baseline.sql"), "utf8");
+  expect(baseline).not.toContain("pull_request_observed");
+  expect(baseline).not.toContain("pull_request_merge_confirmed");
+  expect(baseline).toContain("effect_descriptor jsonb NOT NULL");
+  expect(baseline).toContain("effect_workflow_id text NOT NULL UNIQUE");
+});
