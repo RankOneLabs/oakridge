@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 
 import type { ArtifactRevision } from "../src/domain/artifacts";
-import type { CollaborationMessage, CollaborationThread, CollaborationThreadWithMessages, ReviewItem, SessionMessage, SessionMessageEnqueueResult, SessionMessageRecord } from "../src/domain/collaboration";
+import type { CollaborationMessage, CollaborationThread, CollaborationThreadWithMessages, DeliverSessionMessage, ReviewItem, SessionMessageEnqueueResult, SessionMessageRecord } from "../src/domain/collaboration";
 import type { ArtifactId, ExecutionId, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "../src/domain/primitives";
 import { createCollaborationApp, type CollaborationHttpDependencies } from "../src/http/collaboration";
 import type { CollaborationRepository } from "../src/storage/repositories";
@@ -14,7 +14,7 @@ const neverCalled = (name: string) => async () => { throw new Error(`${name} mus
 /** A `records` dependency stub for tests that never reach a work-order lookup. */
 const unusedRecords: CollaborationHttpDependencies["records"] = { find_work_order_attachment: neverCalled("find_work_order_attachment") };
 
-const fixture = (forceConflict = false) => {
+const fixture = (forceConflict = false, recipientFailure = false) => {
   const threads: CollaborationThread[] = []; const messages: CollaborationMessage[] = []; const items: ReviewItem[] = []; const sessionMessages: SessionMessageRecord[] = [];
   let sequence = 0;
   const repository: CollaborationRepository = {
@@ -27,7 +27,8 @@ const fixture = (forceConflict = false) => {
     update_review_item: async (id, status, resolution) => { const index = items.findIndex((item) => item.id === id); if (index >= 0) items[index] = { ...items[index]!, status, resolution }; },
     count_open_review_items: async (revision) => items.filter((item) => item.revision_id === revision && item.status === "open").length,
   };
-  const persistMessage = async (message: SessionMessage): Promise<SessionMessageEnqueueResult> => {
+  const persistMessage = async (input: DeliverSessionMessage): Promise<SessionMessageEnqueueResult> => {
+    const { message } = input;
     if (forceConflict) return { kind: "idempotency_conflict", detail: "message identity is already in use" };
     const existing = sessionMessages.find((candidate) => candidate.run_id === message.run_id && candidate.delivery_key === message.delivery_key);
     const identity = sessionMessages.find((candidate) => candidate.run_id === message.run_id && candidate.thread_id === message.thread_id && candidate.message_id === message.message_id);
@@ -36,7 +37,8 @@ const fixture = (forceConflict = false) => {
     if (!existing) sessionMessages.push(record);
     return { kind: "accepted" as const, message: record, workflow_id: `message:${message.run_id}:${message.delivery_key}` };
   };
-  const pingRequests: unknown[] = [];
+  const deliveryRequests: DeliverSessionMessage[] = [];
+  const deliver = async (input: DeliverSessionMessage) => { deliveryRequests.push(input); return persistMessage(input); };
   const app = createCollaborationApp({
     artifacts: { find_by_id: async () => artifact, find_current: async () => artifact, list_chain: async () => [artifact] },
     collaboration: repository,
@@ -45,11 +47,14 @@ const fixture = (forceConflict = false) => {
       find_by_delivery_key: async (runId, key) => sessionMessages.find((message) => message.run_id === runId && message.delivery_key === key) ?? null,
       list_for_run: async (runId, cohortId) => sessionMessages.filter((message) => message.run_id === runId && (cohortId === undefined || message.cohort_id === cohortId)),
     },
-    send_message: persistMessage,
-    ping_thread: async (input) => { pingRequests.push(input); return persistMessage(input.message); },
+    message_recipients: { resolve: async () => recipientFailure
+      ? { kind: "recipient_not_deliverable", detail: "recipient session is unavailable" }
+      : { kind: "resolved", target: { execution_id: artifact.execution_id, executor_type: attachment.executor_type, external_reference: attachment.external_reference } } },
+    send_message: deliver,
+    ping_thread: deliver,
     policy_for_artifact_type: () => ({ commentable: true, review_items: true, atom_editable: true }),
     now: () => "2026-08-14T12:30:00Z", new_id: () => `${String(++sequence).repeat(8)}-aaaa-4aaa-8aaa-aaaaaaaaaaaa` });
-  return { app, repository, threads, messages, items, sessionMessages, pingRequests };
+  return { app, repository, threads, messages, items, sessionMessages, deliveryRequests };
 };
 
 test("thread creation atomically creates its first message against the artifact chain", async () => {
@@ -73,7 +78,7 @@ test("ping durably targets the attached executor using the latest thread message
   await subject.app.request("/artifacts/11111111-1111-4111-8111-111111111111/threads", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ anchor: "/summary", body: "Please explain", author: "operator" }) });
   const response = await subject.app.request("/threads/11111111-aaaa-4aaa-8aaa-aaaaaaaaaaaa/ping", { method: "POST", headers: { "idempotency-key": "ping-request-1" } });
   expect(response.status).toBe(202);
-  expect(subject.pingRequests[0]).toEqual(expect.objectContaining({
+  expect(subject.deliveryRequests[0]).toEqual(expect.objectContaining({
     message: expect.objectContaining({ run_id: artifact.run_id, artifact_thread_id: "11111111-aaaa-4aaa-8aaa-aaaaaaaaaaaa", delivery_key: "ping-request-1" }),
     target: { execution_id: artifact.execution_id, executor_type: "delegated_session", external_reference: { kind: "kbbl_session", session_id: "session-1" } },
     prompt: expect.stringContaining("operator: Please explain"),
@@ -90,6 +95,11 @@ test("run messages need no artifact thread and are readable from their cohort vi
   });
   expect(response.status).toBe(202);
   expect(subject.sessionMessages[0]).toEqual(expect.objectContaining({ run_id: runId, cohort_id: cohortId, artifact_thread_id: null, sender_kind: "agent", sender_id: "builder", recipient_kind: "agent", recipient_id: "reviewer", delivery_key: "cross-stage-1" }));
+  expect(subject.deliveryRequests[0]).toEqual(expect.objectContaining({
+    message: expect.objectContaining({ run_id: runId, recipient: { kind: "agent", id: "reviewer" } }),
+    target: { execution_id: artifact.execution_id, executor_type: "delegated_session", external_reference: { kind: "kbbl_session", session_id: "session-1" } },
+    prompt: JSON.stringify({ text: "Please review" }),
+  }));
   const listed = await subject.app.request(`/runs/${runId}/messages?cohort_id=${cohortId}`);
   expect(await listed.json()).toEqual([expect.objectContaining({ message_id: "message-1", cohort_id: cohortId })]);
   const found = await subject.app.request(`/runs/${runId}/messages/cross-stage-1`);
@@ -106,6 +116,17 @@ test("a repeated message identity with a new durable key returns a typed conflic
   expect(await response.json()).toEqual({ error: "message identity is already in use", code: "idempotency_conflict" });
 });
 
+test("a run message returns a typed conflict when its recipient cannot be delivered", async () => {
+  const subject = fixture(false, true);
+  const response = await subject.app.request("/runs/33333333-3333-4333-8333-333333333333/messages", {
+    method: "POST", headers: { "content-type": "application/json", "idempotency-key": "delivery-1" },
+    body: JSON.stringify({ sender: { kind: "agent", id: "builder" }, recipient: { kind: "agent", id: "missing" }, thread_id: "build-review", body: "Review" }),
+  });
+  expect(response.status).toBe(409);
+  expect(await response.json()).toEqual({ error: "recipient session is unavailable", code: "recipient_not_deliverable" });
+  expect(subject.deliveryRequests).toEqual([]);
+});
+
 test("a modeled ping conflict returns 409", async () => {
   const subject = fixture(true);
   await subject.app.request("/artifacts/11111111-1111-4111-8111-111111111111/threads", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ body: "Please explain", author: "operator" }) });
@@ -119,7 +140,7 @@ test("ping rejects an unsafe durable request identity", async () => {
   await subject.app.request("/artifacts/11111111-1111-4111-8111-111111111111/threads", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ body: "Please explain", author: "operator" }) });
   const response = await subject.app.request("/threads/11111111-aaaa-4aaa-8aaa-aaaaaaaaaaaa/ping", { method: "POST", headers: { "idempotency-key": "unsafe/request" } });
   expect(response.status).toBe(400);
-  expect(subject.pingRequests).toEqual([]);
+  expect(subject.deliveryRequests).toEqual([]);
 });
 
 test("review items stay attached to the chain and can be resolved", async () => {

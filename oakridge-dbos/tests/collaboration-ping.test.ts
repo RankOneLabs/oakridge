@@ -3,13 +3,38 @@ import type { DBOSClient } from "@dbos-inc/dbos-sdk";
 
 import type { DeliverSessionMessage, SessionMessage, SessionMessageRecord, SessionMessageRepository, SessionThreadId, SessionThreadMessageId } from "../src/domain/collaboration";
 import type { DeliveryKey, ExecutionId, SessionMessageId, WorkflowRunId } from "../src/domain/primitives";
-import { DbosCollaborationPingClient, PostgresSessionMessageRepository } from "../src/runtime/collaboration-ping";
+import { DbosCollaborationPingClient, PostgresSessionMessageRecipientResolver, PostgresSessionMessageRepository } from "../src/runtime/collaboration-ping";
 import { applyMigrations } from "../src/storage/migrate";
-import { PgPostgresExecutor } from "../src/storage/sql-executor";
+import { PgPostgresExecutor, type SqlExecutor } from "../src/storage/sql-executor";
 import { createScratchDatabase, type ScratchDatabase } from "./support/durable-database";
 
 const scratches: ScratchDatabase[] = [];
 afterAll(async () => { for (const scratch of scratches) await scratch.drop(); });
+
+test("an agent recipient resolves to its attached session in the same run", async () => {
+  const runId = "22222222-2222-4222-8222-222222222222" as WorkflowRunId;
+  const sessionId = "44444444-4444-4444-8444-444444444444";
+  const queries: unknown[][] = [];
+  const sql: SqlExecutor = {
+    query: async <Row extends object>(_statement: string, parameters: readonly unknown[]) => {
+      queries.push([...parameters]);
+      return [{ execution_id: "execution-1" as ExecutionId, executor_type: "delegated_session", adapter_reference: { kind: "kbbl_session", session_id: "session-1" } }] as unknown as readonly Row[];
+    },
+  };
+  const resolver = new PostgresSessionMessageRecipientResolver(sql);
+  const message: SessionMessage = {
+    id: "11111111-1111-4111-8111-111111111111" as SessionMessageId, run_id: runId, cohort_id: null,
+    sender: { kind: "agent", id: "sender" }, recipient: { kind: "agent", id: sessionId },
+    thread_id: "thread-1" as SessionThreadId, message_id: "message-1" as SessionThreadMessageId,
+    artifact_thread_id: null, body: "Review", delivery_key: "request-1" as DeliveryKey, created_at: "2026-09-28T12:00:00Z",
+  };
+
+  expect(await resolver.resolve(message)).toEqual({
+    kind: "resolved",
+    target: { execution_id: "execution-1" as ExecutionId, executor_type: "delegated_session", external_reference: { kind: "kbbl_session", session_id: "session-1" } },
+  });
+  expect(queries).toEqual([[runId, sessionId]]);
+});
 
 test("collaboration ping uses a stable DBOS workflow identity for transport retries", async () => {
   const calls: unknown[] = [];
@@ -116,15 +141,29 @@ test("session message persistence makes delivery idempotent and readable by coho
     await sql.query(`INSERT INTO oakridge.cohort (id,run_id,stage_instance_id,cohort_key,status,stage_data)
       VALUES ('44444444-4444-4444-8444-444444444444','22222222-2222-4222-8222-222222222222',
         '33333333-3333-4333-8333-333333333333','build-1','active','{}')`, []);
+    await sql.query(`INSERT INTO oakridge.attempt
+      (id,run_id,stage_instance_id,cohort_id,attempt_number,status,adapter_type,request)
+      VALUES ('55555555-5555-4555-8555-555555555555','22222222-2222-4222-8222-222222222222',
+        '33333333-3333-4333-8333-333333333333','44444444-4444-4444-8444-444444444444',1,'active','delegated_session',
+        '{"execution_id":"execution-1"}')`, []);
+    await sql.query(`INSERT INTO oakridge.session
+      (id,run_id,stage_instance_id,attempt_id,status,kbbl_session_id,adapter_reference)
+      VALUES ('66666666-6666-4666-8666-666666666666','22222222-2222-4222-8222-222222222222',
+        '33333333-3333-4333-8333-333333333333','55555555-5555-4555-8555-555555555555','active','kbbl-1',
+        '{"kind":"kbbl_session","session_id":"kbbl-1"}')`, []);
     const repository = new PostgresSessionMessageRepository(sql);
     const message: SessionMessage = {
       id: "11111111-1111-4111-8111-111111111111" as SessionMessageId,
       run_id: "22222222-2222-4222-8222-222222222222" as WorkflowRunId,
       cohort_id: "44444444-4444-4444-8444-444444444444" as import("../src/domain/primitives").CohortId,
-      sender: { kind: "agent", id: "builder" }, recipient: { kind: "agent", id: "reviewer" },
+      sender: { kind: "agent", id: "builder" }, recipient: { kind: "agent", id: "66666666-6666-4666-8666-666666666666" },
       thread_id: "review" as SessionThreadId, message_id: "message-1" as SessionThreadMessageId, artifact_thread_id: null, body: { text: "review this" },
       delivery_key: "delivery-1" as DeliveryKey, created_at: "2026-09-28T12:00:00Z",
     };
+    expect(await new PostgresSessionMessageRecipientResolver(sql).resolve(message)).toEqual({
+      kind: "resolved",
+      target: { execution_id: "execution-1" as ExecutionId, executor_type: "delegated_session", external_reference: { kind: "kbbl_session", session_id: "kbbl-1" } },
+    });
     expect((await repository.put_pending(message)).kind).toBe("created");
     expect((await repository.put_pending({ ...message, id: "55555555-5555-4555-8555-555555555555" as SessionMessageId, created_at: "2026-09-28T12:01:00Z" })).kind).toBe("existing");
     expect(await repository.put_pending({ ...message, id: "66666666-6666-4666-8666-666666666666" as SessionMessageId, delivery_key: "delivery-2" as DeliveryKey })).toEqual({

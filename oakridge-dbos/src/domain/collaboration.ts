@@ -20,6 +20,14 @@ export interface SessionMessageDeliveryTarget {
   readonly external_reference: ExternalExecutionReference;
 }
 
+export type SessionMessageRecipientResolution =
+  | { readonly kind: "resolved"; readonly target: SessionMessageDeliveryTarget }
+  | { readonly kind: "recipient_not_deliverable"; readonly detail: string };
+
+export interface SessionMessageRecipientResolver {
+  resolve(message: SessionMessage): Promise<SessionMessageRecipientResolution>;
+}
+
 export interface SessionMessage {
   readonly id: SessionMessageId;
   readonly run_id: WorkflowRunId;

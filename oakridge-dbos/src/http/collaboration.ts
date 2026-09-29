@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { Hono } from "hono";
 
-import { renderCollaborationPingPrompt, renderSessionMessagePrompt, validateDeliveryKey, type CollaborationMessage, type CollaborationThread, type DeliverSessionMessage, type MessageId, type MessageParty, type ReviewItem, type ReviewItemId, type ReviewItemStatus, type SessionMessage, type SessionMessageEnqueueResult, type SessionMessageRepository, type SessionThreadId, type SessionThreadMessageId, type ThreadId, type ThreadStatus } from "../domain/collaboration";
+import { renderCollaborationPingPrompt, renderSessionMessagePrompt, validateDeliveryKey, type CollaborationMessage, type CollaborationThread, type DeliverSessionMessage, type MessageId, type MessageParty, type ReviewItem, type ReviewItemId, type ReviewItemStatus, type SessionMessage, type SessionMessageEnqueueResult, type SessionMessageRecipientResolver, type SessionMessageRepository, type SessionThreadId, type SessionThreadMessageId, type ThreadId, type ThreadStatus } from "../domain/collaboration";
 import { isJsonValue, parseUuidId, type ArtifactId, type CohortId, type SessionMessageId, type WorkflowRunId } from "../domain/primitives";
 import { workOrderIdOfArtifact, type ArtifactRevision } from "../domain/artifacts";
 import type { ArtifactRevisionRepository, CollaborationRepository, RunRecordRepository } from "../storage/repositories";
@@ -18,7 +18,8 @@ export interface CollaborationHttpDependencies {
   readonly policy_for_artifact_type: (artifact_type: string) => ArtifactCollaborationPolicy | null;
   readonly records: Pick<RunRecordRepository, "find_work_order_attachment">;
   readonly messages?: Pick<SessionMessageRepository, "find_by_delivery_key" | "list_for_run">;
-  readonly send_message?: (message: SessionMessage) => Promise<SessionMessageEnqueueResult>;
+  readonly message_recipients?: SessionMessageRecipientResolver;
+  readonly send_message?: (input: DeliverSessionMessage) => Promise<SessionMessageEnqueueResult>;
   readonly ping_thread: (input: DeliverSessionMessage) => Promise<SessionMessageEnqueueResult>;
   readonly now?: () => string;
   readonly new_id?: () => string;
@@ -65,7 +66,7 @@ export const createCollaborationApp = (dependencies: CollaborationHttpDependenci
     return message ? http.json(message) : http.json({ error: "message not found" }, 404);
   });
   app.post("/runs/:run_id/messages", async (http) => {
-    if (!dependencies.send_message) return http.json({ error: "session messaging is unavailable" }, 503);
+    if (!dependencies.send_message || !dependencies.message_recipients) return http.json({ error: "session messaging is unavailable" }, 503);
     const runId = parseUuidId<WorkflowRunId>(http.req.param("run_id"));
     if (!runId) return http.json({ error: "run id must be a UUID" }, 400);
     const key = validateDeliveryKey(http.req.header("idempotency-key") ?? "");
@@ -83,7 +84,9 @@ export const createCollaborationApp = (dependencies: CollaborationHttpDependenci
       thread_id: threadId, message_id: messageId, artifact_thread_id: artifactThreadId,
       body: body.body, delivery_key: key.delivery_key, created_at: now(),
     };
-    const result = await dependencies.send_message(message);
+    const resolution = await dependencies.message_recipients.resolve(message);
+    if (resolution.kind === "recipient_not_deliverable") return http.json({ error: resolution.detail, code: resolution.kind }, 409);
+    const result = await dependencies.send_message({ message, target: resolution.target, prompt: renderSessionMessagePrompt(message.body) });
     return result.kind === "idempotency_conflict" ? http.json({ error: result.detail, code: result.kind }, 409) : http.json(result, 202);
   });
 

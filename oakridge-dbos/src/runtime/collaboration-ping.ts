@@ -1,12 +1,59 @@
 import type { DBOSClient } from "@dbos-inc/dbos-sdk";
 
-import { isTerminalSessionMessageDelivery, type DeliverSessionMessage, type SessionMessage, type SessionMessageDeliveryResult, type SessionMessageEnqueueResult, type SessionMessageRecord, type SessionMessageRepository, type SessionThreadId, type SessionThreadMessageId } from "../domain/collaboration";
-import type { CohortId, DeliveryKey, SessionMessageId, WorkflowRunId } from "../domain/primitives";
-import type { TransactionalSqlExecutor } from "../storage/sql-executor";
+import { isTerminalSessionMessageDelivery, type DeliverSessionMessage, type SessionMessage, type SessionMessageDeliveryResult, type SessionMessageEnqueueResult, type SessionMessageRecipientResolution, type SessionMessageRecipientResolver, type SessionMessageRecord, type SessionMessageRepository, type SessionThreadId, type SessionThreadMessageId } from "../domain/collaboration";
+import type { ExternalExecutionReference } from "../domain/execution";
+import { parseUuidId, type CohortId, type DeliveryKey, type ExecutionId, type JsonValue, type SessionId, type SessionMessageId, type WorkflowRunId } from "../domain/primitives";
+import type { SqlExecutor, TransactionalSqlExecutor } from "../storage/sql-executor";
 import { registerSessionMessageRepository } from "../workflows/collaboration-responder";
 
 export interface CollaborationPingClient {
   enqueue(input: DeliverSessionMessage): Promise<SessionMessageEnqueueResult>;
+}
+
+interface SessionMessageRecipientRow {
+  readonly execution_id: ExecutionId | null;
+  readonly executor_type: string;
+  readonly adapter_reference: JsonValue;
+}
+
+const deliverableReference = (value: JsonValue): ExternalExecutionReference | null => {
+  if (!value || typeof value !== "object" || Array.isArray(value) || !("kind" in value)) return null;
+  if (value.kind === "kbbl_session" && typeof value.session_id === "string") {
+    return { kind: "kbbl_session", session_id: value.session_id, ...(typeof value.worktree_base_sha === "string" ? { worktree_base_sha: value.worktree_base_sha } : {}) };
+  }
+  if (value.kind === "headless_run" && typeof value.run_ref === "string") return { kind: "headless_run", run_ref: value.run_ref };
+  return null;
+};
+
+/** Resolves an agent recipient (a v15 session id) to its same-run executor target. */
+export class PostgresSessionMessageRecipientResolver implements SessionMessageRecipientResolver {
+  constructor(private readonly sql: SqlExecutor) {}
+
+  async resolve(message: SessionMessage): Promise<SessionMessageRecipientResolution> {
+    if (message.recipient.kind !== "agent" || message.recipient.id === null) {
+      return { kind: "recipient_not_deliverable", detail: "only an agent recipient with a session id can receive a session message" };
+    }
+    const sessionId = parseUuidId<SessionId>(message.recipient.id);
+    if (!sessionId) return { kind: "recipient_not_deliverable", detail: "agent recipient id must be a session UUID" };
+    const rows = await this.sql.query<SessionMessageRecipientRow>(`SELECT attempt.request->>'execution_id' AS execution_id,
+      attempt.adapter_type AS executor_type,session.adapter_reference
+      FROM oakridge.session session JOIN oakridge.attempt attempt ON attempt.id=session.attempt_id
+      WHERE session.run_id=$1 AND session.id=$2`, [message.run_id, sessionId]);
+    const row = rows[0];
+    if (!row) return { kind: "recipient_not_deliverable", detail: `recipient session '${sessionId}' was not found in run '${message.run_id}'` };
+    const externalReference = deliverableReference(row.adapter_reference);
+    if (!row.execution_id || !externalReference) {
+      return { kind: "recipient_not_deliverable", detail: `recipient session '${sessionId}' has no deliverable executor reference` };
+    }
+    return {
+      kind: "resolved",
+      target: {
+        execution_id: row.execution_id,
+        executor_type: row.executor_type,
+        external_reference: externalReference,
+      },
+    };
+  }
 }
 
 interface SessionMessageRow {
