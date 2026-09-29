@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 
 import { Hono } from "hono";
 
-import { renderCollaborationPingPrompt, validateCollaborationPingRequestId, type CollaborationMessage, type CollaborationPingAccepted, type CollaborationThread, type MessageId, type ReviewItem, type ReviewItemId, type ReviewItemStatus, type ThreadId, type ThreadStatus } from "../domain/collaboration";
-import { parseUuidId, type ArtifactId } from "../domain/primitives";
+import { renderCollaborationPingPrompt, renderSessionMessagePrompt, validateDeliveryKey, type CollaborationMessage, type CollaborationThread, type DeliverSessionMessage, type MessageId, type MessageParty, type ReviewItem, type ReviewItemId, type ReviewItemStatus, type SessionMessage, type SessionMessageEnqueueResult, type SessionMessageRecipientResolver, type SessionMessageRepository, type SessionThreadId, type SessionThreadMessageId, type ThreadId, type ThreadStatus } from "../domain/collaboration";
+import { isJsonValue, parseUuidId, type ArtifactId, type CohortId, type SessionMessageId, type WorkflowRunId } from "../domain/primitives";
 import { workOrderIdOfArtifact, type ArtifactRevision } from "../domain/artifacts";
 import type { ArtifactRevisionRepository, CollaborationRepository, RunRecordRepository } from "../storage/repositories";
 
@@ -17,7 +17,10 @@ export interface CollaborationHttpDependencies {
   readonly collaboration: CollaborationRepository;
   readonly policy_for_artifact_type: (artifact_type: string) => ArtifactCollaborationPolicy | null;
   readonly records: Pick<RunRecordRepository, "find_work_order_attachment">;
-  readonly ping_thread: (input: import("../domain/collaboration").CollaborationPingRequest) => Promise<CollaborationPingAccepted>;
+  readonly messages?: Pick<SessionMessageRepository, "find_by_delivery_key" | "list_for_run">;
+  readonly message_recipients?: SessionMessageRecipientResolver;
+  readonly send_message?: (input: DeliverSessionMessage) => Promise<SessionMessageEnqueueResult>;
+  readonly ping_thread: (input: DeliverSessionMessage) => Promise<SessionMessageEnqueueResult>;
   readonly now?: () => string;
   readonly new_id?: () => string;
 }
@@ -27,12 +30,65 @@ const objectBody = async (request: Request): Promise<Record<string, unknown> | n
   catch { return null; }
 };
 const nonempty = (value: unknown): string | null => typeof value === "string" && value.trim() ? value.trim() : null;
+const PARTY_KINDS = new Set<MessageParty["kind"]>(["core", "agent", "service", "operator"]);
+const messageParty = (value: unknown): MessageParty | null => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const candidate = value as { readonly kind?: unknown; readonly id?: unknown };
+  if (typeof candidate.kind !== "string" || !PARTY_KINDS.has(candidate.kind as MessageParty["kind"])) return null;
+  if (candidate.id !== null && typeof candidate.id !== "string") return null;
+  return { kind: candidate.kind as MessageParty["kind"], id: candidate.id };
+};
+const sessionThreadId = (value: unknown): SessionThreadId | null => nonempty(value) as SessionThreadId | null;
+const sessionThreadMessageId = (value: unknown): SessionThreadMessageId | null => nonempty(value) as SessionThreadMessageId | null;
 
 export const createCollaborationApp = (dependencies: CollaborationHttpDependencies): Hono => {
   const app = new Hono();
   const now = () => (dependencies.now ?? (() => new Date().toISOString()))();
   const newId = () => (dependencies.new_id ?? randomUUID)();
   const isMutable = (artifact: ArtifactRevision): boolean => artifact.lifecycle.kind === "current";
+
+  app.get("/runs/:run_id/messages", async (http) => {
+    if (!dependencies.messages) return http.json({ error: "session messaging is unavailable" }, 503);
+    const runId = parseUuidId<WorkflowRunId>(http.req.param("run_id"));
+    if (!runId) return http.json({ error: "run id must be a UUID" }, 400);
+    const rawCohortId = http.req.query("cohort_id");
+    const cohortId: CohortId | undefined = rawCohortId === undefined ? undefined : parseUuidId<CohortId>(rawCohortId) ?? undefined;
+    if (rawCohortId !== undefined && !cohortId) return http.json({ error: "cohort id must be a UUID" }, 400);
+    return http.json(await dependencies.messages.list_for_run(runId, cohortId));
+  });
+  app.get("/runs/:run_id/messages/:delivery_key", async (http) => {
+    if (!dependencies.messages) return http.json({ error: "session messaging is unavailable" }, 503);
+    const runId = parseUuidId<WorkflowRunId>(http.req.param("run_id"));
+    if (!runId) return http.json({ error: "run id must be a UUID" }, 400);
+    const key = validateDeliveryKey(http.req.param("delivery_key"));
+    if (key.kind === "invalid") return http.json({ error: key.detail }, 400);
+    const message = await dependencies.messages.find_by_delivery_key(runId, key.delivery_key);
+    return message ? http.json(message) : http.json({ error: "message not found" }, 404);
+  });
+  app.post("/runs/:run_id/messages", async (http) => {
+    if (!dependencies.send_message || !dependencies.message_recipients) return http.json({ error: "session messaging is unavailable" }, 503);
+    const runId = parseUuidId<WorkflowRunId>(http.req.param("run_id"));
+    if (!runId) return http.json({ error: "run id must be a UUID" }, 400);
+    const key = validateDeliveryKey(http.req.header("idempotency-key") ?? "");
+    if (key.kind === "invalid") return http.json({ error: key.detail }, 400);
+    const body = await objectBody(http.req.raw);
+    const sender = messageParty(body?.sender); const recipient = messageParty(body?.recipient);
+    const threadId = sessionThreadId(body?.thread_id); const messageId = sessionThreadMessageId(body?.message_id) ?? sessionThreadMessageId(key.delivery_key)!;
+    const cohortId = body?.cohort_id === undefined || body.cohort_id === null ? null : parseUuidId<CohortId>(String(body.cohort_id));
+    const artifactThreadId = body?.artifact_thread_id === undefined || body.artifact_thread_id === null ? null : parseUuidId<ThreadId>(String(body.artifact_thread_id));
+    if (!body || !sender || !recipient || !threadId || !isJsonValue(body.body) || (body.cohort_id !== undefined && body.cohort_id !== null && !cohortId) || (body.artifact_thread_id !== undefined && body.artifact_thread_id !== null && !artifactThreadId)) {
+      return http.json({ error: "sender, recipient, thread_id, and JSON body are required; cohort_id and artifact_thread_id must be UUIDs or null" }, 400);
+    }
+    const message: SessionMessage = {
+      id: newId() as SessionMessageId, run_id: runId, cohort_id: cohortId, sender, recipient,
+      thread_id: threadId, message_id: messageId, artifact_thread_id: artifactThreadId,
+      body: body.body, delivery_key: key.delivery_key, created_at: now(),
+    };
+    const resolution = await dependencies.message_recipients.resolve(message);
+    if (resolution.kind === "recipient_not_deliverable") return http.json({ error: resolution.detail, code: resolution.kind }, 409);
+    const result = await dependencies.send_message({ message, target: resolution.target, prompt: renderSessionMessagePrompt(message.body) });
+    return result.kind === "idempotency_conflict" ? http.json({ error: result.detail, code: result.kind }, 409) : http.json(result, 202);
+  });
 
   app.get("/artifacts/:id/threads", async (http) => {
     const artifactId = parseUuidId<ArtifactId>(http.req.param("id"));
@@ -87,19 +143,28 @@ export const createCollaborationApp = (dependencies: CollaborationHttpDependenci
     const threads = await dependencies.collaboration.list_threads(thread.artifact_id);
     const fullThread = threads.find((candidate) => candidate.id === threadId);
     if (!fullThread || !fullThread.messages.length) return http.json({ error: "thread has no durable messages" }, 409);
-    const requestIdResult = validateCollaborationPingRequestId(http.req.header("idempotency-key") ?? randomUUID());
-    if (requestIdResult.kind === "invalid") return http.json({ error: requestIdResult.detail }, 400);
-    const requestId = requestIdResult.request_id;
+    const key = validateDeliveryKey(http.req.header("idempotency-key") ?? randomUUID());
+    if (key.kind === "invalid") return http.json({ error: key.detail }, 400);
     const workOrderId = workOrderIdOfArtifact(threadRevision);
     if (!workOrderId) return http.json({ error: "thread artifact was not produced by a work order" }, 409);
     const attachment = await dependencies.records.find_work_order_attachment(workOrderId);
     if (!attachment || attachment.external_reference === null) return http.json({ error: "thread executor is not attached" }, 409);
+    const prompt = renderCollaborationPingPrompt(fullThread);
+    const createdAt = now();
+    const message: SessionMessage = {
+      id: newId() as SessionMessageId, run_id: threadRevision.run_id, cohort_id: null,
+      sender: { kind: "operator", id: "operator" }, recipient: { kind: "agent", id: String(threadRevision.execution_id) },
+      thread_id: sessionThreadId(threadId)!, message_id: sessionThreadMessageId(key.delivery_key)!, artifact_thread_id: threadId,
+      body: prompt, delivery_key: key.delivery_key, created_at: createdAt,
+    };
     const accepted = await dependencies.ping_thread({
-      thread_id: threadId, request_id: requestId, execution_id: threadRevision.execution_id,
-      executor_type: attachment.executor_type, external_reference: attachment.external_reference,
-      prompt: renderCollaborationPingPrompt(fullThread),
+      message,
+      target: { execution_id: threadRevision.execution_id, executor_type: attachment.executor_type, external_reference: attachment.external_reference },
+      prompt: renderSessionMessagePrompt(message.body),
     });
-    return http.json({ ok: true, ...accepted }, 202);
+    return accepted.kind === "idempotency_conflict"
+      ? http.json({ error: accepted.detail, code: accepted.kind }, 409)
+      : http.json({ ok: true, ...accepted }, 202);
   });
   /**
    * v1's `emit_revision` superseded an artifact's pending revision in place;

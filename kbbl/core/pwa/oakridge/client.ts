@@ -25,6 +25,9 @@ import type {
   ReviewItem,
   PostThreadRequest,
   PostMessageRequest,
+  PostSessionMessageRequest,
+  SessionMessageAccepted,
+  SessionMessageRecord,
   PostAtomEditRequest,
   PostReviewItemRequest,
   PatchReviewItemRequest,
@@ -623,6 +626,19 @@ export function pingThread(threadId: string, idempotencyKey: string): Promise<{ 
 
 export function resolveThread(threadId: string): Promise<{ thread_id: string; status: string }> {
   return oakridgePatch(`/threads/${encodeURIComponent(threadId)}`, { status: "resolved" });
+}
+
+export function fetchSessionMessages(runId: string, cohortId?: string): Promise<SessionMessageRecord[]> {
+  const query = cohortId ? `?cohort_id=${encodeURIComponent(cohortId)}` : "";
+  return oakridgeGet<SessionMessageRecord[]>(`/runs/${encodeURIComponent(runId)}/messages${query}`);
+}
+
+export function fetchSessionMessageDelivery(runId: string, deliveryKey: string): Promise<SessionMessageRecord> {
+  return oakridgeGet<SessionMessageRecord>(`/runs/${encodeURIComponent(runId)}/messages/${encodeURIComponent(deliveryKey)}`);
+}
+
+export function postSessionMessage(runId: string, deliveryKey: string, request: PostSessionMessageRequest): Promise<SessionMessageAccepted> {
+  return oakridgePost(`/runs/${encodeURIComponent(runId)}/messages`, request, { idempotency_key: deliveryKey });
 }
 
 // ── Collab: atom edits ────────────────────────────────────────────────────────
