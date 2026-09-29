@@ -15,6 +15,7 @@ import type { WorkflowDefinition } from "../src/domain/workflow";
 
 import { applyMigrations } from "../src/storage/migrate";
 import { PostgresOperatorProjectionRepository } from "../src/storage/postgres-operators";
+import { createDevFlowAdapterRegistry } from "../src/adapters/dev-flow";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
 import { ensureDbosSystemSchema } from "./support/dbos-system-schema";
 import { findTestDatabaseUrl } from "./support/durable-database";
@@ -65,7 +66,7 @@ projectionTest("a build unit's repository_key on run detail matches the cohort p
     [runUnitId, runId, stageInstanceId, JSON.stringify(cohortParams), now],
   );
 
-  const repository = new PostgresOperatorProjectionRepository(sql, "test-app-version");
+  const repository = new PostgresOperatorProjectionRepository(sql, "test-app-version", createDevFlowAdapterRegistry());
   const detail = await repository.get_run(runId);
   const unit = detail?.stages.find((stage) => stage.stage_instance_id === stageInstanceId)?.units.find((candidate) => candidate.unit_id === "targets_spec_contract");
   expect(unit?.repository_key).toBe("pipefitter");

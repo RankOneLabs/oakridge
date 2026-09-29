@@ -57,10 +57,14 @@ test("a fresh connection baselines on the live cursor and an absent header never
 });
 
 const runEvent = (sequence: string): RunEvent => ({
-  sequence, operation: "run_cancelled", occurred_at: "2026-09-26T12:00:00.000Z",
-  payload: { run_id: "00000000-0000-4000-8000-000000000001" as WorkflowRunId, run_unit_id: null, stage_instance_id: null,
-    stage_key: null, unit_id: null, work_order_id: null, wait_id: null, output_name: null, collection_key: null,
-    artifact_revision_id: null, attention: null, continuation: null, detail: {} },
+  sequence,
+  transition_id: "00000000-0000-4000-8000-000000000002" as import("../src/domain/primitives").RunTransitionId,
+  run_id: "00000000-0000-4000-8000-000000000001" as WorkflowRunId,
+  owner: { kind: "run", id: "00000000-0000-4000-8000-000000000001" as WorkflowRunId },
+  launch_reason: "operator", prior_owner_version: 3, resulting_owner_version: 4,
+  operation: "run_cancelled", effect: { kind: "run_cancelled" },
+  effect_workflow_id: "v15-effect:run:00000000-0000-4000-8000-000000000001:4",
+  actor: "operator", occurred_at: "2026-09-26T12:00:00.000Z",
 });
 
 test("a numeric Last-Event-ID replays only later run events and marks them replayed", async () => {

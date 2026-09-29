@@ -28,12 +28,15 @@ export type TransitionOwner =
   | { readonly kind: "run"; readonly id: WorkflowRunId }
   | { readonly kind: "stage_instance"; readonly id: StageInstanceId }
   | { readonly kind: "cohort"; readonly id: import("./primitives").CohortId };
-export type TransitionEffectDescriptor =
-  | { readonly kind: "start_stage"; readonly stage_instance_id: StageInstanceId }
-  | { readonly kind: "start_attempt"; readonly attempt_id: import("./primitives").AttemptId }
-  | { readonly kind: "deliver_message"; readonly message_id: import("./primitives").SessionMessageId }
-  | { readonly kind: "resume_wait"; readonly wait_id: WaitId }
-  | { readonly kind: "none" };
+/**
+ * A durable effect selected by core or an adapter. The name is validated by
+ * the application registry before a transition is committed; keeping it out
+ * of a SQL enum/check lets adapters add effects without a core migration.
+ */
+export interface TransitionEffectDescriptor {
+  readonly kind: string;
+  readonly [key: string]: JsonValue;
+}
 
 /** Named row type for oakridge.run_transition. */
 export interface RunTransitionRecord {
@@ -377,23 +380,8 @@ export type CloseRunOutputWaitResult =
  * path reads instead of inferring history from executor observations or DBOS
  * event payloads.
  */
-export type RunTransitionOperation =
-  | "stage_materialized"
-  | "materialization_closed"
-  | "materialization_failed"
-  | "run_cancelled"
-  | "unit_admitted"
-  | "operator_retry_created"
-  | "input_revised"
-  | "slot_released"
-  | "slot_pending"
-  | "slot_invalidated"
-  | "unit_satisfied"
-  | "work_started"
-  | "gate_opened"
-  | "gate_decided"
-  | "pull_request_observed"
-  | "pull_request_merge_confirmed";
+/** Adapter-owned event name, validated by the application registry. */
+export type RunTransitionOperation = string;
 
 export interface RunTransition {
   readonly id: RunTransitionId;

@@ -7,6 +7,7 @@ import type { WorkflowDefinition } from "../src/domain/workflow";
 
 import { applyMigrations } from "../src/storage/migrate";
 import { PostgresOperatorProjectionRepository } from "../src/storage/postgres-operators";
+import { createDevFlowAdapterRegistry } from "../src/adapters/dev-flow";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
 import { ensureDbosSystemSchema } from "./support/dbos-system-schema";
 import { findTestDatabaseUrl } from "./support/durable-database";
@@ -69,7 +70,7 @@ const seedCohort = async (
 projectionTest("an immediate output with declared attention keeps its cohort and admission item", async () => {
   if (!sql) { console.warn("operator projection cohort test SKIPPED: no PostgreSQL reachable"); return; }
   const seeded = await seedCohort(sql, { release: { kind: "immediate" }, attention: "optional", manual_admission: true });
-  const repository = new PostgresOperatorProjectionRepository(sql, "test-app-version");
+  const repository = new PostgresOperatorProjectionRepository(sql, "test-app-version", createDevFlowAdapterRegistry());
 
   const cohort = (await repository.list_cohorts()).find((candidate) => candidate.run_id === seeded.run_id && candidate.unit_id === seeded.unit_id);
   expect(cohort).toEqual(expect.objectContaining({ lifecycle: "waiting_admission", artifact_revision_id: null }));
@@ -90,7 +91,7 @@ projectionTest("a handoff output retains the established cohort projection byte 
     attention: "optional",
     manual_admission: false,
   });
-  const repository = new PostgresOperatorProjectionRepository(sql, "test-app-version");
+  const repository = new PostgresOperatorProjectionRepository(sql, "test-app-version", createDevFlowAdapterRegistry());
   const cohort = (await repository.list_cohorts()).find((candidate) => candidate.run_id === seeded.run_id && candidate.unit_id === seeded.unit_id);
 
   expect(JSON.stringify(cohort)).toBe(JSON.stringify({
@@ -158,7 +159,7 @@ projectionTest("run summary stage totals match run detail without compiling the 
     [stageInstanceId, runId, JSON.stringify({ operator_role: null, outputs: [{ name: "build_result", artifact_type: "dev.build_result", release: { kind: "immediate" }, attention: "none" }] }), `v2-stage:${stageInstanceId}`, now],
   );
 
-  const repository = new PostgresOperatorProjectionRepository(sql, "test-app-version");
+  const repository = new PostgresOperatorProjectionRepository(sql, "test-app-version", createDevFlowAdapterRegistry());
   const summary = (await repository.list_runs("all")).find((candidate) => candidate.id === runId);
   const detail = await repository.get_run(runId);
 

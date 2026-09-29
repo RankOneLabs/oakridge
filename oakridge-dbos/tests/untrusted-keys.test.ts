@@ -13,6 +13,7 @@ import { createDomainReadApp } from "../src/http/domain-reads";
 import { createOperatorProjectionApp } from "../src/http/operator-projections";
 import type { OperatorProjectionRepository } from "../src/storage/postgres-operators";
 import { parseWorkflowDefinition } from "../src/validation/workflow-definition";
+import { createDevFlowAdapterRegistry } from "../src/adapters/dev-flow";
 import { delegatedSessionDefinitionSchema } from "../src/validation/delegated-session";
 
 const INHERITED = ["constructor", "toString", "__proto__"] as const;
@@ -34,7 +35,7 @@ test("an edge naming an inherited stage is rejected rather than crashing the par
       stages: { build: { stage_type: "stub", config: {}, inputs: [], outputs: [{ name: "result", artifact_type: "dev.result" }] } },
       edges: [{ from: { stage: "constructor", slot: "result" }, to: { stage: "build", slot: "input" } }],
     },
-  });
+  }, createDevFlowAdapterRegistry());
   expect(parsed.ok).toBe(false);
   if (parsed.ok) return;
   expect(parsed.error.detail).toContain("edge references unknown stage");

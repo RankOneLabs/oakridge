@@ -1,0 +1,101 @@
+import { afterAll, expect, test } from "bun:test";
+
+import { ok, type CohortId, type JsonValue, type RunRecordVersion, type StageInstanceId, type WorkflowRunId } from "../src/domain/primitives";
+import { AdapterRegistry } from "../src/runtime/executor-registry";
+import { applyMigrations } from "../src/storage/migrate";
+import { PostgresRunRecordWriter } from "../src/storage/postgres-run-record";
+import { PgPostgresExecutor } from "../src/storage/sql-executor";
+import { createScratchDatabase, type ScratchDatabase } from "./support/durable-database";
+
+const RUN_ID = "00000000-0000-4000-8100-000000000001" as WorkflowRunId;
+const STAGE_ID = "00000000-0000-4000-8100-000000000002" as StageInstanceId;
+const cohortId = (index: number): CohortId =>
+  `00000000-0000-4000-8100-${String(index + 10).padStart(12, "0")}` as CohortId;
+
+const scratches: ScratchDatabase[] = [];
+afterAll(async () => { for (const scratch of scratches) await scratch.drop(); });
+
+test("four sibling cohort machines commit concurrently on owner-local versions without retry", async () => {
+  const scratch = await createScratchDatabase("oakridge_v15_cohort_contention");
+  if (!scratch.ok) {
+    if (scratch.error.operation !== "reach_admin_endpoint") throw new Error(`${scratch.error.operation}: ${scratch.error.detail}`);
+    console.warn("cohort contention PostgreSQL check SKIPPED: no PostgreSQL reachable");
+    return;
+  }
+  scratches.push(scratch.value);
+  const sql = PgPostgresExecutor.connect(scratch.value.url);
+  try {
+    await applyMigrations(sql);
+    await sql.query(`INSERT INTO oakridge.workflow_definition (id,name,version,definition)
+      VALUES ('00000000-0000-4000-8100-000000000000','contention',1,'{}')`, []);
+    await sql.query(`INSERT INTO oakridge.workflow_run (id,workflow_definition_id,context,bundle_pin,status)
+      VALUES ($1,'00000000-0000-4000-8100-000000000000','{}',
+        '{"definition_version":1,"prompt_bundle_hash":"test","adapter_version":"test","artifact_schema_version":"test"}','active')`, [RUN_ID]);
+    await sql.query(`INSERT INTO oakridge.stage_instance (id,run_id,stage_key,stage_type,stage_contract,status)
+      VALUES ($1,$2,'worker','example','{}','active')`, [STAGE_ID, RUN_ID]);
+    for (let index = 0; index < 4; index += 1) await sql.query(
+      `INSERT INTO oakridge.cohort (id,run_id,stage_instance_id,cohort_key,status) VALUES ($1,$2,$3,$4,'active')`,
+      [cohortId(index), RUN_ID, STAGE_ID, `cohort-${index}`]);
+
+    const registry = new AdapterRegistry();
+    const customEvent = "example_adapter_finished";
+    registry.register_decision<{ readonly output_id: string }>({
+      name: customEvent,
+      decode(value: JsonValue) {
+        if (typeof value === "object" && value !== null && !Array.isArray(value)
+          && "output_id" in value && typeof value.output_id === "string") return ok({ output_id: value.output_id });
+        return { ok: false, error: "output_id is required" };
+      },
+      guard: () => ok(undefined),
+      effect: (context, payload) => ({ kind: context.event_name, output_id: payload.output_id }),
+    });
+    const writer = new PostgresRunRecordWriter(sql, registry);
+    const results = await Promise.all(Array.from({ length: 4 }, (_, index) => writer.commit({
+      run_id: RUN_ID,
+      owner: { kind: "cohort", id: cohortId(index) },
+      expected_version: 0,
+      launch_reason: "artifact_accepted",
+      change: { status: "complete", blocked_reason: null, next_actor: null, outcome: { kind: "succeeded" } },
+      effect: index === 0 ? { kind: customEvent, output_id: "artifact-1" } : { kind: "none" },
+      actor: "test",
+      changed_at: "2026-09-28T12:00:00.000Z",
+    })));
+
+    expect(results.every((result) => result.ok && result.value.prior_owner_version === 0 && result.value.resulting_owner_version === 1)).toBe(true);
+    const versions = await sql.query<{ readonly cohort_versions: string; readonly stage_version: string; readonly run_version: string; readonly transitions: string }>(`SELECT
+      (SELECT string_agg(durable_version::text,',' ORDER BY cohort_key) FROM oakridge.cohort WHERE stage_instance_id=$1) AS cohort_versions,
+      (SELECT durable_version::text FROM oakridge.stage_instance WHERE id=$1) AS stage_version,
+      (SELECT record_version::text FROM oakridge.workflow_run WHERE id=$2) AS run_version,
+      (SELECT count(*)::text FROM oakridge.run_transition WHERE run_id=$2) AS transitions`, [STAGE_ID, RUN_ID]);
+    expect(versions[0]).toEqual({ cohort_versions: "1,1,1,1", stage_version: "0", run_version: "0", transitions: "4" });
+    const effects = await sql.query<{ readonly effect_name: string; readonly workflow_count: string }>(`SELECT
+      effect_descriptor->>'kind' AS effect_name,count(DISTINCT effect_workflow_id)::text AS workflow_count
+      FROM oakridge.run_transition WHERE run_id=$1 GROUP BY effect_descriptor->>'kind' ORDER BY effect_name`, [RUN_ID]);
+    expect(effects).toEqual([
+      { effect_name: customEvent, workflow_count: "1" },
+      { effect_name: "none", workflow_count: "3" },
+    ]);
+
+    const stageDecision = await writer.decide({
+      load_snapshot: async () => ({
+        run: { id: RUN_ID, status: "active", record_version: 0 as RunRecordVersion, outcome: null },
+        stages: [{ id: STAGE_ID, status: "active", blocked_reason: null, next_actor: "core", durable_version: 0,
+          dependency_stage_instance_ids: [], accepted_artifact_ids: [], outcome: null,
+          cohorts: Array.from({ length: 4 }, (_, index) => ({ id: cohortId(index), status: "complete" as const,
+            blocked_reason: null, next_actor: null, durable_version: 1, accepted_artifact_ids: [], outcome: { kind: "succeeded" } })) }],
+      }),
+      launch_reason: "dependency_satisfied",
+      actor: "core",
+      decided_at: "2026-09-28T12:01:00.000Z",
+    });
+    expect(stageDecision.ok && stageDecision.value.transitions[0]).toMatchObject({
+      owner: { kind: "stage_instance", id: STAGE_ID }, prior_owner_version: 0, resulting_owner_version: 1,
+    });
+    expect((await sql.query<{ readonly run_version: string; readonly stage_version: string }>(`SELECT
+      (SELECT record_version::text FROM oakridge.workflow_run WHERE id=$1) AS run_version,
+      (SELECT durable_version::text FROM oakridge.stage_instance WHERE id=$2) AS stage_version`, [RUN_ID, STAGE_ID]))[0])
+      .toEqual({ run_version: "0", stage_version: "1" });
+  } finally {
+    await sql.close();
+  }
+}, 60_000);

@@ -25,7 +25,7 @@ const outputSlotSchema = z.object({
 const endpointSchema = z.object({ stage: z.string().min(1), slot: z.string().min(1) });
 const stageSchema = z.object({
   stage_type: z.string().min(1),
-  operator_role: z.enum(["spec", "plan", "brief", "build", "assessment", "final_integration"]).nullable().optional().transform((value) => value ?? null),
+  operator_role: z.string().min(1).nullable().optional().transform((value) => value ?? null),
   config: z.json(),
   inputs: z.array(inputSlotSchema),
   outputs: z.array(outputSlotSchema),
@@ -40,7 +40,7 @@ const workflowDefinitionSchema = z.object({
     edges: z.array(z.object({ from: endpointSchema, to: endpointSchema })),
     transitions: z.array(z.object({
       trigger: z.object({ kind: z.enum(["stage_output", "assessment_outcome", "operator"]), stage: z.string().min(1), item: z.string().min(1) }),
-      launch: z.object({ stage: z.string().min(1), session_role: z.enum(["spec", "plan", "brief", "build", "assessment", "final_integration"]),
+      launch: z.object({ stage: z.string().min(1), session_role: z.string().min(1),
         launch_reason: z.enum(["initial", "operator_retry", "input_revision"]) }),
     })).optional(),
   }),
@@ -55,6 +55,10 @@ const legacyRoleForStage = (stageKey: string): import("../domain/workflow").Stag
 export interface DefinitionValidationError {
   readonly operation: "parse_workflow_definition" | "validate_workflow_graph";
   readonly detail: string;
+}
+
+export interface AdapterRoleRegistry {
+  has_role(name: string): boolean;
 }
 
 /**
@@ -133,7 +137,27 @@ const validateGraphReferences = (definition: WorkflowDefinition): Result<Workflo
   return ok(definition);
 };
 
-export const parseWorkflowDefinition = (input: unknown): Result<WorkflowDefinition, DefinitionValidationError> => {
+const validateRegisteredRoles = (
+  definition: WorkflowDefinition,
+  registry: AdapterRoleRegistry,
+): Result<WorkflowDefinition, DefinitionValidationError> => {
+  const roles = new Set<string>();
+  for (const stage of Object.values(definition.graph.stages)) {
+    if (stage.operator_role) roles.add(stage.operator_role);
+    if (stage.stage_type !== "delegated_session") continue;
+    const config = delegatedSessionDefinitionSchema.safeParse(stage.config);
+    if (!config.success) continue;
+    for (const entry of config.data.prompt_matrix) roles.add(entry.session_role);
+    for (const entry of config.data.role_configs) roles.add(entry.session_role);
+    for (const handoff of config.data.handoffs) roles.add(handoff.downstream_role);
+  }
+  for (const transition of definition.graph.transitions ?? []) roles.add(transition.launch.session_role);
+  const unknown = [...roles].filter((role) => !registry.has_role(role)).sort();
+  return unknown.length === 0 ? ok(definition) : err({ operation: "validate_workflow_graph",
+    detail: `workflow references unregistered adapter role(s): ${unknown.join(", ")}` });
+};
+
+export const parseWorkflowDefinition = (input: unknown, adapter_roles: AdapterRoleRegistry): Result<WorkflowDefinition, DefinitionValidationError> => {
   const parsed = workflowDefinitionSchema.safeParse(input);
   if (!parsed.success) return err({ operation: "parse_workflow_definition", detail: z.prettifyError(parsed.error) });
   const legacyTransitions = Object.entries(parsed.data.graph.stages).flatMap(([stageKey, stage]) => {
@@ -159,5 +183,7 @@ export const parseWorkflowDefinition = (input: unknown): Result<WorkflowDefiniti
       ...(transitions.length > 0 ? { transitions } : {}) },
     id: parsed.data.id as WorkflowDefinitionId,
   };
-  return validateGraphReferences(definition);
+  const graph = validateGraphReferences(definition);
+  if (!graph.ok) return graph;
+  return validateRegisteredRoles(graph.value, adapter_roles);
 };

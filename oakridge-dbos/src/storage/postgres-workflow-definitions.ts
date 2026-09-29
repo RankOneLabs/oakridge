@@ -1,6 +1,6 @@
 import type { WorkflowDefinitionId } from "../domain/primitives";
 import type { PromptBundle, WorkflowDefinition } from "../domain/workflow";
-import { parseWorkflowDefinition } from "../validation/workflow-definition";
+import { parseWorkflowDefinition, type AdapterRoleRegistry } from "../validation/workflow-definition";
 import type { WorkflowDefinitionRepository } from "./repositories";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 import { compileWorkflowManifest } from "../compiler/compile-workflow";
@@ -26,8 +26,8 @@ const bindPromptBundle = async (sql: SqlExecutor, definition_id: WorkflowDefinit
   );
 };
 
-const decodeDefinition = (row: DefinitionRow): WorkflowDefinition => {
-  const parsed = parseWorkflowDefinition(row.definition);
+const decodeDefinition = (row: DefinitionRow, adapterRoles: AdapterRoleRegistry): WorkflowDefinition => {
+  const parsed = parseWorkflowDefinition(row.definition, adapterRoles);
   if (!parsed.ok) throw new Error(`stored workflow definition is invalid: ${parsed.error.detail}`);
   return parsed.value;
 };
@@ -42,15 +42,15 @@ const decodeDefinition = (row: DefinitionRow): WorkflowDefinition => {
  * so the launcher offered the operator nothing at all rather than everything
  * that still works.
  */
-const decodeListedDefinition = (row: DefinitionRow): WorkflowDefinition | null => {
-  const parsed = parseWorkflowDefinition(row.definition);
+const decodeListedDefinition = (row: DefinitionRow, adapterRoles: AdapterRoleRegistry): WorkflowDefinition | null => {
+  const parsed = parseWorkflowDefinition(row.definition, adapterRoles);
   if (parsed.ok) return parsed.value;
   console.warn(`oakridge: omitting a stored workflow definition that no longer parses: ${parsed.error.detail}`);
   return null;
 };
 
 export class PostgresWorkflowDefinitionRepository implements WorkflowDefinitionRepository {
-  constructor(private readonly sql: TransactionalSqlExecutor) {}
+  constructor(private readonly sql: TransactionalSqlExecutor, private readonly adapter_roles: AdapterRoleRegistry) {}
 
   async insert_immutable(definition: WorkflowDefinition, promptBundle: PromptBundle): Promise<WorkflowDefinition> {
     const compiled = compileWorkflowManifest(definition, promptBundle, { adapter_version: "delegated-session-v1", artifact_schema_version: "v1" });
@@ -67,7 +67,7 @@ export class PostgresWorkflowDefinitionRepository implements WorkflowDefinitionR
       );
       const row = rows[0];
       if (!row) throw new Error(`workflow definition ${definition.name}@${definition.version} conflicts with immutable stored content`);
-      const stored = decodeDefinition(row);
+      const stored = decodeDefinition(row, this.adapter_roles);
       await insertPromptBundle(transaction, promptBundle);
       await bindPromptBundle(transaction, stored.id, promptBundle.hash);
       return stored;
@@ -104,7 +104,7 @@ export class PostgresWorkflowDefinitionRepository implements WorkflowDefinitionR
       "SELECT definition FROM oakridge.workflow_definition WHERE id = $1",
       [id],
     );
-    return rows[0] ? decodeDefinition(rows[0]) : null;
+    return rows[0] ? decodeDefinition(rows[0], this.adapter_roles) : null;
   }
 
   async find_by_name_version(name: string, version: number): Promise<WorkflowDefinition | null> {
@@ -112,7 +112,7 @@ export class PostgresWorkflowDefinitionRepository implements WorkflowDefinitionR
       "SELECT definition FROM oakridge.workflow_definition WHERE name = $1 AND version = $2",
       [name, version],
     );
-    return rows[0] ? decodeDefinition(rows[0]) : null;
+    return rows[0] ? decodeDefinition(rows[0], this.adapter_roles) : null;
   }
 
   async list(include_archived = false): Promise<readonly WorkflowDefinition[]> {
@@ -120,7 +120,8 @@ export class PostgresWorkflowDefinitionRepository implements WorkflowDefinitionR
       "SELECT definition FROM oakridge.workflow_definition WHERE $1::boolean OR NOT archived ORDER BY name, version DESC",
       [include_archived],
     );
-    return rows.map(decodeListedDefinition).filter((definition): definition is WorkflowDefinition => definition !== null);
+    return rows.map((row) => decodeListedDefinition(row, this.adapter_roles))
+      .filter((definition): definition is WorkflowDefinition => definition !== null);
   }
 
   async set_archived(id: WorkflowDefinitionId, archived: boolean): Promise<WorkflowDefinition | null> {
@@ -131,6 +132,6 @@ export class PostgresWorkflowDefinitionRepository implements WorkflowDefinitionR
        RETURNING definition`,
       [id, archived],
     );
-    return rows[0] ? decodeDefinition(rows[0]) : null;
+    return rows[0] ? decodeDefinition(rows[0], this.adapter_roles) : null;
   }
 }

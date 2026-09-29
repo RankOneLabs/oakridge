@@ -6,7 +6,11 @@ export type StageKey = string;
 export type StageTypeId = string;
 export type ArtifactTypeId = string;
 export type InputDelivery = "producer_complete" | "unit_complete";
-export type StageOperatorRole = "spec" | "plan" | "brief" | "build" | "assessment" | "final_integration";
+/**
+ * An adapter-owned role name. Core carries this value through configuration
+ * and durable records; the adapter registry decides whether it is supported.
+ */
+export type StageOperatorRole = string;
 
 export interface InputSlot {
   readonly name: string;

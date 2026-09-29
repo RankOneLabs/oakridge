@@ -6,6 +6,7 @@ import { PostgresProjectRepository } from "../src/storage/postgres-projects";
 import { PostgresWorkflowDefinitionRepository } from "../src/storage/postgres-workflow-definitions";
 import type { SqlExecutor, TransactionalSqlExecutor } from "../src/storage/sql-executor";
 import { loadDevFlowV15 } from "../src/seed/dev-flow-v15";
+import { createDevFlowAdapterRegistry } from "../src/adapters/dev-flow";
 import { createPromptBundle } from "../src/runtime/prompt-template";
 
 class StubSql implements TransactionalSqlExecutor {
@@ -36,7 +37,7 @@ test("project repository updates the mutable project fields", async () => {
 
 test("workflow definition list passes explicit archival policy to SQL", async () => {
   const sql = new StubSql([]);
-  await new PostgresWorkflowDefinitionRepository(sql).list(true);
+  await new PostgresWorkflowDefinitionRepository(sql, createDevFlowAdapterRegistry()).list(true);
   expect(sql.calls[0]?.parameters).toEqual([true]);
   expect(sql.calls[0]?.statement).toContain("$1::boolean OR NOT archived");
 });
@@ -44,7 +45,7 @@ test("workflow definition list passes explicit archival policy to SQL", async ()
 test("workflow definition archival updates the query column and stored domain document", async () => {
   const definition: WorkflowDefinition = { id: "00000000-0000-4000-8000-000000000002" as WorkflowDefinitionId, name: "flow", version: 1, graph: { stages: {}, edges: [] }, archived: true, created_at: "2026-08-15T12:00:00Z" };
   const sql = new StubSql([{ definition }]);
-  const updated = await new PostgresWorkflowDefinitionRepository(sql).set_archived(definition.id, true);
+  const updated = await new PostgresWorkflowDefinitionRepository(sql, createDevFlowAdapterRegistry()).set_archived(definition.id, true);
   expect(updated?.archived).toBe(true);
   expect(sql.calls[0]?.statement).toContain("jsonb_set");
   expect(sql.calls[0]?.parameters).toEqual([definition.id, true]);
@@ -53,7 +54,7 @@ test("workflow definition archival updates the query column and stored domain do
 test("immutable reseeding ignores archive state and preserves the stored archive value", async () => {
   const stored: WorkflowDefinition = { id: "00000000-0000-4000-8000-000000000002" as WorkflowDefinitionId, name: "flow", version: 1, graph: { stages: {}, edges: [] }, archived: true, created_at: "2026-08-15T12:00:00Z" };
   const sql = new StubSql([{ definition: stored }]);
-  const result = await new PostgresWorkflowDefinitionRepository(sql).insert_immutable({ ...stored, archived: false }, { version: 1, hash: "empty", matrix: [] });
+  const result = await new PostgresWorkflowDefinitionRepository(sql, createDevFlowAdapterRegistry()).insert_immutable({ ...stored, archived: false }, { version: 1, hash: "empty", matrix: [] });
   expect(result.archived).toBe(true);
   expect(sql.transaction_calls).toBe(1);
   expect(sql.calls).toHaveLength(3);
@@ -65,6 +66,6 @@ test("definition registration runs prompt-body placeholder validation before sto
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const bundle = await createPromptBundle(loaded.value, { load: async (path) => path === "dev-flow/build_v2.md" ? "{{MISSPELLED_SLOT}}" : "valid" });
   const sql = new StubSql([]);
-  await expect(new PostgresWorkflowDefinitionRepository(sql).insert_immutable(loaded.value, bundle)).rejects.toThrow("unbound_placeholder");
+  await expect(new PostgresWorkflowDefinitionRepository(sql, createDevFlowAdapterRegistry()).insert_immutable(loaded.value, bundle)).rejects.toThrow("unbound_placeholder");
   expect(sql.calls).toHaveLength(0);
 });

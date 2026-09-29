@@ -5,6 +5,7 @@ import type { ProjectId, WorkflowDefinitionId } from "../src/domain/primitives";
 import type { WorkflowDefinition } from "../src/domain/workflow";
 import { createConfigurationApp } from "../src/http/configuration";
 import type { ProjectRepository, WorkflowDefinitionRepository } from "../src/storage/repositories";
+import { createDevFlowAdapterRegistry } from "../src/adapters/dev-flow";
 
 const project: Project = { id: "00000000-0000-4000-8000-000000000001" as ProjectId, name: "Oakridge", repo_dir: "/code/oakridge", created_at: "2026-08-15T12:00:00Z", forge_repository: null, base_branch: null };
 const definition: WorkflowDefinition = { id: "00000000-0000-4000-8000-000000000002" as WorkflowDefinitionId, name: "flow", version: 1, archived: false, created_at: "2026-08-15T12:00:00Z", graph: { stages: {}, edges: [] } };
@@ -26,6 +27,7 @@ const fixture = (generatedId = project.id as string, identity: Project["forge_re
     set_archived: async (id, archived) => { const index = definitions.findIndex((candidate) => candidate.id === id); if (index < 0) return null; definitions[index] = { ...definitions[index]!, archived }; return definitions[index]!; },
   };
   const app = createConfigurationApp({ projects: projectRepository, definitions: definitionRepository,
+    adapter_roles: createDevFlowAdapterRegistry(),
     prompt_templates: { load: async (path) => `Prompt ${path}` },
     project_identity: { resolve: async () => identity ? { forge_repository: identity, base_branch: baseBranch } : null }, now: () => "2026-08-15T12:00:00Z", new_id: () => generatedId });
   return { app, projects, definitions };
@@ -68,6 +70,18 @@ test("workflow definition creation owns identifiers and normalizes the legacy de
   const response = await subject.app.request("/workflow_defs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "flow", version: 1, graph: { stages: { review: { stage_type: "stub", config: {}, inputs: [{ name: "input", artifact_type: "dev.input", delivery: "stage_complete" }], outputs: [{ name: "review", artifact_type: "dev.review" }] } }, edges: [] } }) });
   expect(response.status).toBe(201);
   expect(await response.json()).toEqual(expect.objectContaining({ id: definition.id, name: "flow", version: 1, archived: false, graph: { stages: { review: expect.objectContaining({ inputs: [expect.objectContaining({ delivery: "producer_complete" })] }) }, edges: [] } }));
+});
+
+test("workflow definition creation rejects an unregistered adapter role", async () => {
+  const subject = fixture(definition.id);
+  const response = await subject.app.request("/workflow_defs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({
+    name: "flow", version: 1, graph: { stages: {
+      review: { stage_type: "stub", operator_role: "misspelled_role", config: {}, inputs: [], outputs: [{ name: "review", artifact_type: "dev.review" }] },
+    }, edges: [] },
+  }) });
+  expect(response.status).toBe(400);
+  expect(await response.json()).toEqual({ error: "workflow references unregistered adapter role(s): misspelled_role" });
+  expect(subject.definitions).toEqual([]);
 });
 
 test("definition listing hides archived definitions unless explicitly requested", async () => {
