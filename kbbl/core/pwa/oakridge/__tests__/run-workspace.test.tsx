@@ -394,7 +394,7 @@ describe("a read the workspace cannot complete", () => {
     // the first guard — which makes the recovered read the only pass that will
     // ever get to find out the run does not contain `sid-gone`.
     await waitFor(() => expect(screen.getByTestId("or-run-overview")).toBeTruthy());
-    expect(localStorage.getItem(runWorkspaceStorageKey("run-1"))).not.toContain("sid-gone");
+    expect(localStorage.getItem(runWorkspaceStorageKey("run-1")) ?? "").not.toContain("sid-gone");
   });
 
   it("keeps a stored session pane, and its storage entry, through a failed sessions read", async () => {
@@ -456,6 +456,6 @@ describe("restoring an arrangement", () => {
     renderWorkspace();
 
     expect(await screen.findByTestId("or-run-overview")).toBeTruthy();
-    expect(localStorage.getItem(runWorkspaceStorageKey("run-1"))).not.toContain("art-deleted");
+    expect(localStorage.getItem(runWorkspaceStorageKey("run-1")) ?? "").not.toContain("art-deleted");
   });
 });
