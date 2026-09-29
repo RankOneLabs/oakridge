@@ -1,23 +1,100 @@
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import type { DBOSClient } from "@dbos-inc/dbos-sdk";
 
-import type { CollaborationPingRequest, CollaborationPingRequestId, ThreadId } from "../src/domain/collaboration";
-import type { ExecutionId } from "../src/domain/primitives";
-import { DbosCollaborationPingClient } from "../src/runtime/collaboration-ping";
+import type { DeliverSessionMessage, SessionMessage, SessionMessageRecord, SessionMessageRepository } from "../src/domain/collaboration";
+import type { DeliveryKey, ExecutionId, SessionMessageId, WorkflowRunId } from "../src/domain/primitives";
+import { DbosCollaborationPingClient, PostgresSessionMessageRepository } from "../src/runtime/collaboration-ping";
+import { applyMigrations } from "../src/storage/migrate";
+import { PgPostgresExecutor } from "../src/storage/sql-executor";
+import { createScratchDatabase, type ScratchDatabase } from "./support/durable-database";
+
+const scratches: ScratchDatabase[] = [];
+afterAll(async () => { for (const scratch of scratches) await scratch.drop(); });
 
 test("collaboration ping uses a stable DBOS workflow identity for transport retries", async () => {
   const calls: unknown[] = [];
   const dbos = { enqueuePortable: async (target: unknown, args: unknown[]) => { calls.push({ target, args }); } } as unknown as DBOSClient;
-  const client = new DbosCollaborationPingClient(dbos, "app-v1");
-  const input: CollaborationPingRequest = {
-    thread_id: "thread-1" as ThreadId,
-    request_id: "request-1" as CollaborationPingRequestId,
-    execution_id: "execution-1" as ExecutionId,
-    executor_type: "delegated_session",
-    external_reference: { kind: "kbbl_session", session_id: "session-1" },
+  const message: SessionMessage = {
+    id: "11111111-1111-4111-8111-111111111111" as SessionMessageId,
+    run_id: "22222222-2222-4222-8222-222222222222" as WorkflowRunId,
+    cohort_id: null, sender: { kind: "operator", id: "operator" }, recipient: { kind: "agent", id: "worker" },
+    thread_id: "thread-1", message_id: "message-1", artifact_thread_id: null, body: "Respond to the thread",
+    delivery_key: "request-1" as DeliveryKey, created_at: "2026-09-28T12:00:00Z",
+  };
+  const pending: SessionMessageRecord = { ...message, sender_kind: "operator", sender_id: "operator", recipient_kind: "agent", recipient_id: "worker", delivery_status: "pending", delivery_result: null, delivered_at: null };
+  const messages: SessionMessageRepository = {
+    put_pending: async () => ({ kind: "created", message: pending }),
+    find_by_delivery_key: async () => pending,
+    record_delivery_result: async () => pending,
+    list_for_run: async () => [pending],
+  };
+  const client = new DbosCollaborationPingClient(dbos, "app-v1", messages);
+  const input: DeliverSessionMessage = {
+    message,
+    target: { execution_id: "execution-1" as ExecutionId, executor_type: "delegated_session", external_reference: { kind: "kbbl_session", session_id: "session-1" } },
     prompt: "Respond to the thread",
   };
   const result = await client.enqueue(input);
-  expect(result).toEqual({ kind: "accepted", request_id: input.request_id, workflow_id: "oakridge-collaboration-ping:thread-1:request-1" });
-  expect(calls).toEqual([{ target: expect.objectContaining({ workflowName: "oakridgeCollaborationResponderWorkflow", workflowID: "oakridge-collaboration-ping:thread-1:request-1", appVersion: "app-v1" }), args: [input] }]);
+  expect(result).toEqual({ kind: "accepted", message: pending, workflow_id: "oakridge-session-message:22222222-2222-4222-8222-222222222222:request-1" });
+  expect(calls).toEqual([{ target: expect.objectContaining({ workflowName: "oakridgeCollaborationResponderWorkflow", workflowID: "oakridge-session-message:22222222-2222-4222-8222-222222222222:request-1", appVersion: "app-v1" }), args: [input] }]);
 });
+
+test("a completed durable key is readable and is not enqueued again", async () => {
+  const calls: unknown[] = [];
+  const dbos = { enqueuePortable: async (...args: unknown[]) => { calls.push(args); } } as unknown as DBOSClient;
+  const message: SessionMessage = {
+    id: "11111111-1111-4111-8111-111111111111" as SessionMessageId, run_id: "22222222-2222-4222-8222-222222222222" as WorkflowRunId,
+    cohort_id: null, sender: { kind: "operator", id: "operator" }, recipient: { kind: "agent", id: "worker" }, thread_id: "thread-1", message_id: "message-1",
+    artifact_thread_id: null, body: "go", delivery_key: "request-1" as DeliveryKey, created_at: "2026-09-28T12:00:00Z",
+  };
+  const delivered: SessionMessageRecord = { ...message, sender_kind: "operator", sender_id: "operator", recipient_kind: "agent", recipient_id: "worker", delivery_status: "delivered", delivery_result: { kind: "delivered" }, delivered_at: "2026-09-28T12:01:00Z" };
+  const messages: SessionMessageRepository = {
+    put_pending: async () => ({ kind: "existing", message: delivered }), find_by_delivery_key: async () => delivered,
+    record_delivery_result: async () => delivered, list_for_run: async () => [delivered],
+  };
+  const client = new DbosCollaborationPingClient(dbos, "app-v1", messages);
+  const result = await client.enqueue({ message, target: { execution_id: "execution-1" as ExecutionId, executor_type: "delegated_session", external_reference: { kind: "kbbl_session", session_id: "session-1" } }, prompt: "go" });
+  expect(result.message).toEqual(delivered);
+  expect(calls).toEqual([]);
+});
+
+test("session message persistence makes delivery idempotent and readable by cohort", async () => {
+  const scratch = await createScratchDatabase("oakridge_session_message_test");
+  if (!scratch.ok) {
+    if (scratch.error.operation !== "reach_admin_endpoint") throw new Error(`${scratch.error.operation}: ${scratch.error.detail}`);
+    console.warn("session message PostgreSQL check SKIPPED: no PostgreSQL reachable");
+    return;
+  }
+  scratches.push(scratch.value);
+  const sql = PgPostgresExecutor.connect(scratch.value.url);
+  try {
+    await applyMigrations(sql);
+    await sql.query(`INSERT INTO oakridge.workflow_definition (id,name,version,definition)
+      VALUES ('00000000-0000-4000-8000-000000000001','messages',1,'{}')`, []);
+    await sql.query(`INSERT INTO oakridge.workflow_run (id,workflow_definition_id,context,bundle_pin,status)
+      VALUES ('22222222-2222-4222-8222-222222222222','00000000-0000-4000-8000-000000000001','{}',
+        '{"definition_version":1,"prompt_bundle_hash":"test","adapter_version":"test","artifact_schema_version":"test"}','active')`, []);
+    await sql.query(`INSERT INTO oakridge.stage_instance (id,run_id,stage_key,stage_type,stage_contract,status)
+      VALUES ('33333333-3333-4333-8333-333333333333','22222222-2222-4222-8222-222222222222','build','test','{}','active')`, []);
+    await sql.query(`INSERT INTO oakridge.cohort (id,run_id,stage_instance_id,cohort_key,status,stage_data)
+      VALUES ('44444444-4444-4444-8444-444444444444','22222222-2222-4222-8222-222222222222',
+        '33333333-3333-4333-8333-333333333333','build-1','active','{}')`, []);
+    const repository = new PostgresSessionMessageRepository(sql);
+    const message: SessionMessage = {
+      id: "11111111-1111-4111-8111-111111111111" as SessionMessageId,
+      run_id: "22222222-2222-4222-8222-222222222222" as WorkflowRunId,
+      cohort_id: "44444444-4444-4444-8444-444444444444" as import("../src/domain/primitives").CohortId,
+      sender: { kind: "agent", id: "builder" }, recipient: { kind: "agent", id: "reviewer" },
+      thread_id: "review", message_id: "message-1", artifact_thread_id: null, body: { text: "review this" },
+      delivery_key: "delivery-1" as DeliveryKey, created_at: "2026-09-28T12:00:00Z",
+    };
+    expect((await repository.put_pending(message)).kind).toBe("created");
+    expect((await repository.put_pending({ ...message, id: "55555555-5555-4555-8555-555555555555" as SessionMessageId, created_at: "2026-09-28T12:01:00Z" })).kind).toBe("existing");
+    const delivered = await repository.record_delivery_result(message.id, { kind: "delivered" }, "2026-09-28T12:02:00Z");
+    expect(delivered).toEqual(expect.objectContaining({ delivery_status: "delivered", delivery_result: { kind: "delivered" }, delivered_at: expect.any(String) }));
+    expect(await repository.find_by_delivery_key(message.run_id, message.delivery_key)).toEqual(delivered);
+    expect(await repository.list_for_run(message.run_id, message.cohort_id ?? undefined)).toEqual([delivered]);
+  } finally {
+    await sql.close();
+  }
+}, 60_000);
