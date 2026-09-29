@@ -107,6 +107,19 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
       (SELECT durable_version::text FROM oakridge.stage_instance WHERE id='00000000-0000-4000-8000-000000000003') AS stage_version,
       (SELECT record_version::text FROM oakridge.workflow_run WHERE id='00000000-0000-4000-8000-000000000002') AS run_version`, []))[0])
       .toEqual({ cohort_version: "1", stage_version: "0", run_version: "0" });
+
+    await sql.transaction(async (tx) => {
+      await tx.query("UPDATE oakridge.stage_instance SET durable_version=durable_version+1 WHERE id='00000000-0000-4000-8000-000000000003'", []);
+      await tx.query(`INSERT INTO oakridge.run_transition
+        (id,run_id,owner_kind,owner_stage_instance_id,launch_reason,prior_owner_version,resulting_owner_version,effect_descriptor,effect_workflow_id,actor)
+        VALUES ('00000000-0000-4000-8000-000000000041','00000000-0000-4000-8000-000000000002','stage_instance',
+          '00000000-0000-4000-8000-000000000003','recovery',0,1,'{"kind":"none"}','effect:stage-test','system')`, []);
+    });
+    expect((await sql.query<{ readonly cohort_version: string; readonly stage_version: string; readonly run_version: string }>(`SELECT
+      (SELECT durable_version::text FROM oakridge.cohort WHERE id='00000000-0000-4000-8000-000000000005') AS cohort_version,
+      (SELECT durable_version::text FROM oakridge.stage_instance WHERE id='00000000-0000-4000-8000-000000000003') AS stage_version,
+      (SELECT record_version::text FROM oakridge.workflow_run WHERE id='00000000-0000-4000-8000-000000000002') AS run_version`, []))[0])
+      .toEqual({ cohort_version: "1", stage_version: "1", run_version: "0" });
   } finally {
     await sql.close();
   }
