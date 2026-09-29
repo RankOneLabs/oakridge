@@ -64,7 +64,7 @@ test("immutable reseeding ignores archive state and preserves the stored archive
 test("definition registration runs prompt-body placeholder validation before storage", async () => {
   const loaded = await loadDevFlowV15();
   if (!loaded.ok) throw new Error(loaded.error.detail);
-  const bundle = await createPromptBundle(loaded.value, { load: async (path) => path === "dev-flow/build_v2.md" ? "{{MISSPELLED_SLOT}}" : "valid" });
+  const bundle = await createPromptBundle(loaded.value, { load: async (path) => path === "dev-flow/v15/build/build/initial_build.md" ? "{{MISSPELLED_SLOT}}" : "valid" });
   const sql = new StubSql([]);
   await expect(new PostgresWorkflowDefinitionRepository(sql, createDevFlowAdapterRegistry()).insert_immutable(loaded.value, bundle)).rejects.toThrow("unbound_placeholder");
   expect(sql.calls).toHaveLength(0);

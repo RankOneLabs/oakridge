@@ -21,6 +21,28 @@ test("seeds unmodified v15 through the immutable repository boundary", async () 
   expect(inserted[0]?.graph.stages.provision_refs?.stage_type).toBe("provision_repository_refs");
 });
 
+test("a second boot seeds the same v15 definition idempotently", async () => {
+  const stored = new Map<string, WorkflowDefinition>();
+  const repository: WorkflowDefinitionRepository = {
+    async insert_immutable(definition) {
+      const existing = stored.get(definition.id);
+      if (existing && JSON.stringify(existing) !== JSON.stringify(definition)) throw new Error("immutable definition changed");
+      stored.set(definition.id, definition);
+      return definition;
+    },
+    async find_by_id(id) { return stored.get(id) ?? null; },
+    async find_by_name_version(name, version) {
+      return [...stored.values()].find((definition) => definition.name === name && definition.version === version) ?? null;
+    },
+    async list() { return [...stored.values()]; },
+    async set_archived() { return null; },
+  };
+
+  await seedBuiltins(repository);
+  await expect(seedBuiltins(repository)).resolves.toBeUndefined();
+  expect(stored.size).toBe(1);
+});
+
 test("seeding inserts a changed prompt bundle without mutating immutable definition content", async () => {
   const definitions: WorkflowDefinition[] = [];
   const bundleHashes: string[] = ["prior-bundle"];

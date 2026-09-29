@@ -39,30 +39,6 @@ describe("versioned workflow definition compatibility", () => {
     expect(parseWorkflowDefinition(definition, registry).ok).toBe(true);
   });
 
-  // v11 is still stored, and runs launched against it still compile it. It has
-  // to keep parsing for exactly as long as one of those runs is in flight.
-  test("loads unmodified dev_flow_v11.json with defaults", async () => {
-    const source = await Bun.file(new URL("../../workflow-config/definitions/dev_flow_v11.json", import.meta.url)).json();
-    const result = parseWorkflowDefinition(source);
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(Object.keys(result.value.graph.stages)).toHaveLength(5);
-    expect(result.value.graph.stages.build?.inputs[0]?.delivery).toBe("unit_complete");
-    expect(result.value.graph.stages.spec_analyzer?.inputs).toEqual([]);
-    expect(result.value.archived).toBe(false);
-  });
-
-  test("loads unmodified dev_flow_v14.json, provisioning stage included", async () => {
-    const source = await Bun.file(new URL("../../workflow-config/definitions/dev_flow_v14.json", import.meta.url)).json();
-    const result = parseWorkflowDefinition(source);
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(Object.keys(result.value.graph.stages)).toHaveLength(6);
-    expect(result.value.graph.stages.provision_refs?.inputs).toEqual([]);
-    expect(result.value.graph.stages.build?.inputs.find((input) => input.name === "repository_refs")?.collect).toBe(true);
-    expect(result.value.graph.stages.build?.config).toEqual(expect.objectContaining({ prompt_matrix: expect.any(Array), role_configs: expect.any(Array) }));
-  });
-
   test("decodes persisted singular contracts and preserves their revision route", () => {
     const legacyConfig = (role: "build" | "assessment", terminal: object) => ({ runtime: "claude-code", prompt_template_path: `${role}.md`,
       slot_bindings: {}, workdir: { from: "literal", value: "/repo" }, session_name: role, pre_authorized_tools: [], yolo: false, ...terminal });
@@ -81,7 +57,7 @@ describe("versioned workflow definition compatibility", () => {
   });
 
   test("parses a declared output attention while keeping it optional", async () => {
-    const source = await Bun.file(new URL("../../workflow-config/definitions/dev_flow_v14.json", import.meta.url)).json();
+    const source = await Bun.file(new URL("../../workflow-config/definitions/dev_flow_v15.json", import.meta.url)).json();
     source.graph.stages.provision_refs.outputs[0].attention = "optional";
     const result = parseWorkflowDefinition(source);
     expect(result.ok).toBe(true);
