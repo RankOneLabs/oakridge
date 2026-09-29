@@ -13,8 +13,9 @@ import { ensureDbosSystemSchema } from "./support/dbos-system-schema";
 import { findTestDatabaseUrl } from "./support/durable-database";
 
 // postgres-operators still targets the v14 runtime schema; c8 replaces it.
-const projectionTest = test.skip;
-const databaseUrl = await findTestDatabaseUrl();
+const areProjectionTestsEnabled = false;
+const projectionTest = areProjectionTestsEnabled ? test : test.skip;
+const databaseUrl = areProjectionTestsEnabled ? await findTestDatabaseUrl() : null;
 const sql = databaseUrl ? PgPostgresExecutor.connect(databaseUrl) : null;
 if (sql && databaseUrl) await ensureDbosSystemSchema(databaseUrl);
 if (sql) await applyMigrations(sql);
