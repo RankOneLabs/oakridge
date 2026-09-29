@@ -2,7 +2,7 @@ import { selectOutputAttention, type CompiledEdge, type CompiledGateStep, type C
 import type { DelegatedSessionDefinitionConfig } from "../domain/delegated-session";
 import { err, ok, type JsonValue, type Result } from "../domain/primitives";
 import type { PromptBundle, StageNodeDefinition, WorkflowDefinition } from "../domain/workflow";
-import { delegatedSessionDefinitionSchema, validateDelegatedSessionCardinality, validateDelegatedSessionContracts, type DelegatedSessionDiagnostic } from "../validation/delegated-session";
+import { delegatedSessionDefinitionSchema, validateDelegatedSessionCardinality, validateDelegatedSessionContracts, validatePromptBundleBindings, type DelegatedSessionDiagnostic } from "../validation/delegated-session";
 import { repositoryProvisioningDefinitionSchema } from "../validation/repository-provisioning";
 import { selectBuiltInGateDisposition } from "../domain/gates";
 import { readOwn } from "../domain/records";
@@ -147,14 +147,13 @@ export const compileWorkflowDefinition = (definition: WorkflowDefinition, regist
   for (const [stageKey, node] of Object.entries(definition.graph.stages)) {
     if (node.stage_type !== "delegated_session") continue;
     const parsed = delegatedSessionDefinitionSchema.safeParse(node.config);
-    if (!parsed.success) continue;
+    if (!parsed.success) {
+      diagnostics.push({ kind: "invalid_stage_config", stage_key: stageKey, session_role: node.operator_role,
+        contract_item: "config", issues: parsed.error.issues.map((issue) => issue.message) });
+      continue;
+    }
     diagnostics.push(...validateDelegatedSessionCardinality(stageKey, node.operator_role, parsed.data));
     diagnostics.push(...validateDelegatedSessionContracts(stageKey, node.operator_role, node.outputs.map((output) => output.name), parsed.data));
-  }
-  for (const transition of definition.graph.transitions ?? []) {
-    if (transition.trigger.kind !== "assessment_outcome") continue;
-    diagnostics.push({ kind: "automated_assessment_transition", stage_key: transition.launch.stage,
-      session_role: transition.launch.session_role, contract_item: transition.trigger.item, trigger: transition.trigger.item });
   }
   if (diagnostics.length > 0) return err({ operation: "compile_workflow", stage_key: diagnostics[0]?.stage_key ?? null,
     detail: diagnostics.map((diagnostic) => `${diagnostic.kind}: ${diagnostic.stage_key}.${diagnostic.contract_item}`).join("\n"), diagnostics });
@@ -172,7 +171,10 @@ export const compileWorkflowDefinition = (definition: WorkflowDefinition, regist
   });
   const blockedByRequiredEdge = new Set(edges.filter((edge) => !readOwn(stages, edge.consumer_stage)?.inputs.find((input) => input.name === edge.consumer_input)?.optional).map((edge) => edge.consumer_stage));
   const source_stages = Object.keys(stages).filter((stageKey) => !blockedByRequiredEdge.has(stageKey)).sort();
-  return ok({ manifest_version: 1, stages, edges, source_stages });
+  const flags = (definition.graph.transitions ?? []).filter((transition) => transition.trigger.kind === "assessment_outcome")
+    .map((transition) => ({ kind: "automated_assessment_transition" as const, stage_key: transition.launch.stage,
+      session_role: transition.launch.session_role, contract_item: transition.trigger.item, trigger: transition.trigger.item }));
+  return ok({ manifest_version: 1, stages, edges, source_stages, flags });
 };
 
 export interface CompileManifestVersions {
@@ -188,7 +190,22 @@ export const compileWorkflowManifest = (
   registry: StageTypeCompilerRegistry = builtInStageTypeCompilers,
 ): Result<CompiledWorkflowDefinition, CompileWorkflowError> => {
   const compiled = compileWorkflowDefinition(definition, registry);
-  return compiled.ok ? ok({ ...compiled.value, bundle_pin: { definition_version: definition.version,
+  const promptDiagnostics: DelegatedSessionDiagnostic[] = [];
+  for (const [stageKey, node] of Object.entries(definition.graph.stages)) {
+    if (node.stage_type !== "delegated_session") continue;
+    const parsed = delegatedSessionDefinitionSchema.safeParse(node.config);
+    if (!parsed.success) continue;
+    const cells = promptBundle.matrix.filter((entry) => parsed.data.prompt_matrix.some((declared) =>
+      declared.session_role === entry.session_role && declared.launch_reason === entry.launch_reason && declared.template_path === entry.template_path));
+    promptDiagnostics.push(...validatePromptBundleBindings(stageKey, parsed.data, cells));
+  }
+  if (!compiled.ok || promptDiagnostics.length > 0) {
+    const diagnostics = [...(compiled.ok ? [] : compiled.error.diagnostics ?? []), ...promptDiagnostics];
+    if (diagnostics.length === 0 && !compiled.ok) return compiled;
+    return err({ operation: "compile_workflow", stage_key: diagnostics[0]?.stage_key ?? (compiled.ok ? null : compiled.error.stage_key),
+      detail: diagnostics.map((diagnostic) => `${diagnostic.kind}: ${diagnostic.stage_key}.${diagnostic.contract_item}`).join("\n"), diagnostics });
+  }
+  return ok({ ...compiled.value, bundle_pin: { definition_version: definition.version,
     prompt_bundle_hash: promptBundle.hash, adapter_version: versions.adapter_version,
-    artifact_schema_version: versions.artifact_schema_version } }) : compiled;
+    artifact_schema_version: versions.artifact_schema_version } });
 };

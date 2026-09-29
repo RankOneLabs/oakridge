@@ -96,6 +96,7 @@ export const delegatedSessionDefinitionSchema = z.object({
 });
 
 export type DelegatedSessionDiagnostic =
+  | { readonly kind: "invalid_stage_config"; readonly stage_key: string; readonly session_role: StageOperatorRole | null; readonly contract_item: "config"; readonly issues: readonly string[] }
   | { readonly kind: "duplicate_key"; readonly stage_key: string; readonly session_role: StageOperatorRole | null; readonly contract_item: string; readonly array: string; readonly key: string }
   | { readonly kind: "prompt_not_total"; readonly stage_key: string; readonly session_role: StageOperatorRole; readonly contract_item: string; readonly launch_reason: SessionLaunchReason; readonly matches: number }
   | { readonly kind: "gate_without_closer"; readonly stage_key: string; readonly session_role: StageOperatorRole | null; readonly contract_item: string; readonly gate: string }
@@ -136,6 +137,23 @@ export const validateDelegatedSessionCardinality = (
 ];
 
 const placeholdersOf = (value: string): readonly string[] => [...value.matchAll(/\{\{([^{}]+)\}\}/g)].map((match) => match[1] ?? "");
+
+export const validatePromptBundleBindings = (
+  stage_key: string,
+  config: DelegatedSessionDefinitionConfig,
+  promptContents: readonly { readonly session_role: StageOperatorRole; readonly launch_reason: SessionLaunchReason; readonly content: string }[],
+): readonly DelegatedSessionDiagnostic[] => {
+  const bound = new Set([...Object.keys(config.slot_bindings), ...Object.keys(config.fan_out?.item_bindings ?? {}), "UNIT_ID", "STAGE_INSTANCE_ID"]);
+  const diagnostics: DelegatedSessionDiagnostic[] = [];
+  for (const prompt of promptContents) {
+    for (const placeholder of placeholdersOf(prompt.content)) {
+      if (bound.has(placeholder)) continue;
+      diagnostics.push({ kind: "unbound_placeholder", stage_key, session_role: prompt.session_role,
+        contract_item: `${prompt.session_role}:${prompt.launch_reason}:${placeholder}`, placeholder });
+    }
+  }
+  return diagnostics;
+};
 
 /** Steps 3–5: totality, contract bindings, and executor capability. */
 export const validateDelegatedSessionContracts = (

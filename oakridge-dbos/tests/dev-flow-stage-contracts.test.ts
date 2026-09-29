@@ -148,3 +148,32 @@ test("seeded assessor resolves its real prompt, pairing only the matching build 
   if (execution.ok) expect(execution.value.rendered_prompt).not.toContain("base works");
   expect(assessor.outputs[0]?.release).toEqual(expect.objectContaining({ kind: "gate", gate_name: "assessment_gate" }));
 });
+
+test("every spec prompt matrix cell renders the generated contract for valid and invalid slots", async () => {
+  const workflow = await loadCompiled();
+  const stage = workflow.stages.spec_analyzer!;
+  const definition = stage.executor.definition_config as DelegatedSessionDefinitionConfig;
+  const inputs = { repository_refs: repositoryRefs };
+  for (const cell of definition.prompt_matrix) {
+    const template = await Bun.file(new URL(`../../workflow-config/prompts/${cell.template_path}`, import.meta.url)).text();
+    const representative = resolveDelegatedExecution({ definition, environment: { inputs, context, item: null }, unit: scalarUnit,
+      stage_instance_id: stageInstanceId, prompt_template: template, run_id: runId, operator_role: cell.session_role, launch_reason: cell.launch_reason });
+    expect(representative.ok).toBe(true);
+    if (representative.ok) {
+      expect(representative.value.rendered_prompt).toContain("## Generated session contract");
+      expect(representative.value.rendered_prompt).toContain(`Launch reason: ${cell.launch_reason}`);
+    }
+
+    // A failed resolution is not dispatchable, but carries a diagnostic prompt
+    // preview with the same contract block so every matrix cell remains
+    // inspectable when a slot is absent or invalid.
+    const invalid = resolveDelegatedExecution({ definition,
+      environment: { inputs, context: { ...context, brief_notes: undefined } as unknown as JsonValue, item: null }, unit: scalarUnit,
+      stage_instance_id: stageInstanceId, prompt_template: template, run_id: runId, operator_role: cell.session_role, launch_reason: cell.launch_reason });
+    expect(invalid.ok).toBe(false);
+    if (!invalid.ok) {
+      expect(invalid.error.rendered_prompt).toContain("## Generated session contract");
+      expect(invalid.error.rendered_prompt).toContain(`Launch reason: ${cell.launch_reason}`);
+    }
+  }
+});

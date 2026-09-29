@@ -19,3 +19,15 @@ test("prompt bundle hash covers template content without changing the definition
     definition_version: 14, prompt_bundle_hash: second.hash, adapter_version: "adapter-7", artifact_schema_version: "artifacts-3",
   } }) });
 });
+
+test("manifest compilation validates placeholders inside prompt bundle content", async () => {
+  const loaded = await loadDevFlowV14();
+  if (!loaded.ok) throw new Error(loaded.error.detail);
+  const bundle = await createPromptBundle(loaded.value, { load: async (path) => path === "dev-flow/build_v2.md" ? "Build {{TYPO_SLOT}}" : "valid" });
+  const manifest = compileWorkflowManifest(loaded.value, bundle, { adapter_version: "adapter-7", artifact_schema_version: "artifacts-3" });
+  expect(manifest.ok).toBe(false);
+  if (manifest.ok) return;
+  expect(manifest.error.diagnostics).toContainEqual(expect.objectContaining({
+    kind: "unbound_placeholder", stage_key: "build", session_role: "build", placeholder: "TYPO_SLOT",
+  }));
+});

@@ -68,6 +68,9 @@ export interface CompiledEdge {
 export interface CompiledWorkflowDefinition {
   readonly manifest_version: 1;
   readonly bundle_pin?: WorkflowRunBundlePin;
+  /** Policy findings preserved for operator review without making the definition structurally invalid. */
+  readonly flags?: readonly { readonly kind: "automated_assessment_transition"; readonly stage_key: StageKey;
+    readonly session_role: StageOperatorRole | null; readonly contract_item: string; readonly trigger: string }[];
   readonly stages: Readonly<Record<StageKey, CompiledStageContract>>;
   readonly edges: readonly CompiledEdge[];
   readonly source_stages: readonly StageKey[];

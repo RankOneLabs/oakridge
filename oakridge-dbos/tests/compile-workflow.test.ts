@@ -128,3 +128,33 @@ test("the manifest pipeline reports placeholder, output, and tool failures toget
     expect.objectContaining({ kind: "unavailable_tool", stage_key: "build", tool: "forge" }),
   ]));
 });
+
+test("a schema-invalid stage config joins the all-at-once diagnostic report", async () => {
+  const loaded = await loadDevFlowV14();
+  if (!loaded.ok) throw new Error(loaded.error.detail);
+  const build = structuredClone(loaded.value.graph.stages.build!) as any;
+  build.config.role_configs[0].session_name = "build-{{MISSING}}";
+  const assessor = structuredClone(loaded.value.graph.stages.assessor!) as any;
+  delete assessor.config.prompt_matrix;
+  const compiled = compileWorkflowDefinition({ ...loaded.value, graph: { ...loaded.value.graph,
+    stages: { ...loaded.value.graph.stages, build, assessor } } });
+  expect(compiled.ok).toBe(false);
+  if (compiled.ok) return;
+  expect(compiled.error.diagnostics).toEqual(expect.arrayContaining([
+    expect.objectContaining({ kind: "unbound_placeholder", stage_key: "build", placeholder: "MISSING" }),
+    expect.objectContaining({ kind: "invalid_stage_config", stage_key: "assessor", contract_item: "config" }),
+  ]));
+});
+
+test("automated assessment transitions are visible manifest flags without rejecting compilation", async () => {
+  const loaded = await loadDevFlowV14();
+  if (!loaded.ok) throw new Error(loaded.error.detail);
+  const transition = { trigger: { kind: "assessment_outcome" as const, stage: "assessor", item: "approved" },
+    launch: { stage: "build", session_role: "build" as const, launch_reason: "input_revision" as const } };
+  const compiled = compileWorkflowDefinition({ ...loaded.value, graph: { ...loaded.value.graph, transitions: [transition] } });
+  expect(compiled.ok).toBe(true);
+  if (!compiled.ok) return;
+  expect(compiled.value.flags).toContainEqual(expect.objectContaining({
+    kind: "automated_assessment_transition", stage_key: "build", trigger: "approved",
+  }));
+});

@@ -95,3 +95,21 @@ test("two gates and two handoffs are valid plural terminal policies", () => {
   });
   expect(parsed.success).toBe(true);
 });
+
+test("a required output with no authorized producer reports its stage and output", () => {
+  const parsed = delegatedSessionDefinitionSchema.parse({ ...fanOutDefinition({}),
+    role_configs: [{ session_role: "build", runtime: "claude-code", session_name: "example", authorized_outputs: [] }],
+  }) as DelegatedSessionDefinitionConfig;
+  expect(validateDelegatedSessionContracts("build", "build", ["result"], parsed)).toContainEqual(expect.objectContaining({
+    kind: "output_producer_count", stage_key: "build", output: "result", producers: 0,
+  }));
+});
+
+test("a handoff wait with no closing event reports the handoff", () => {
+  const parsed = delegatedSessionDefinitionSchema.parse({ ...fanOutDefinition({}),
+    handoffs: [{ name: "review", outputs: ["result"], downstream_role: "assessment", approved_wait: { kind: "github_review", close_events: [] } }],
+  }) as DelegatedSessionDefinitionConfig;
+  expect(validateDelegatedSessionContracts("build", "build", ["result"], parsed)).toContainEqual(expect.objectContaining({
+    kind: "wait_without_closing_event", stage_key: "build", wait: "review",
+  }));
+});
