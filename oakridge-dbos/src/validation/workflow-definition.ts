@@ -41,7 +41,7 @@ const workflowDefinitionSchema = z.object({
     transitions: z.array(z.object({
       trigger: z.object({ kind: z.enum(["stage_output", "assessment_outcome", "operator"]), stage: z.string().min(1), item: z.string().min(1) }),
       launch: z.object({ stage: z.string().min(1), session_role: z.string().min(1),
-        launch_reason: z.enum(["initial", "operator_retry", "input_revision"]) }),
+        launch_reason: z.string().min(1) }),
     })).optional(),
   }),
   created_at: z.iso.datetime({ offset: true }),

@@ -78,8 +78,11 @@ export interface OutputHandoffDefinition {
   readonly approved_wait: { readonly kind: string; readonly close_events: readonly string[] };
 }
 
-/** Why the scheduler is starting or resuming a delegated role. */
-export type SessionLaunchReason = "initial" | "operator_retry" | "input_revision";
+/**
+ * Adapter-owned name for why a role is being launched. Core carries the name
+ * but does not close over an adapter's vocabulary.
+ */
+export type SessionLaunchReason = string;
 
 /** One cell in the role × launch-reason prompt matrix. */
 export interface PromptMatrixEntry {
