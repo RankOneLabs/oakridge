@@ -1,244 +1,113 @@
 import { afterAll, expect, test } from "bun:test";
-import { mkdtemp, readdir, rm, copyFile, mkdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readdir } from "node:fs/promises";
 
 import { applyMigrations, migrationNames } from "../src/storage/migrate";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
 import { createScratchDatabase, type ScratchDatabase } from "./support/durable-database";
 
-test("migration discovery accepts only numbered SQL files in deterministic order", () => {
-  expect(migrationNames(["notes.md", "0004_projects.sql", "0003_artifact_lifecycle.sql", "0002_workflow_attempt.sql", "0001_domain.sql", "1_bad.sql", "0003-UP.sql"]))
-    .toEqual(["0001_domain.sql", "0002_workflow_attempt.sql", "0003_artifact_lifecycle.sql", "0004_projects.sql"]);
-});
-
 const MIGRATIONS = new URL("../src/storage/migrations", import.meta.url).pathname;
-const BEFORE_BRANCH_ROLES = "0008_epic_base_branch.sql";
+const BASELINE = "0015_v15_baseline.sql";
 
-/** The migrations that ran before the one under test, in their own directory. */
-const migrationsBefore = async (excluded: string): Promise<string> => {
-  const directory = await mkdtemp(join(tmpdir(), "oakridge-migrations-"));
-  await mkdir(directory, { recursive: true });
-  for (const name of migrationNames(await readdir(MIGRATIONS))) {
-    if (name >= excluded) continue;
-    await copyFile(join(MIGRATIONS, name), join(directory, name));
-  }
-  return directory;
-};
+test("v15 is the only migration", async () => {
+  expect(migrationNames(await readdir(MIGRATIONS))).toEqual([BASELINE]);
+});
 
 const scratches: ScratchDatabase[] = [];
 afterAll(async () => { for (const scratch of scratches) await scratch.drop(); });
 
-/** A database with every migration before the branch-roles one applied. */
-const databaseBeforeBranchRoles = async (name: string) => {
-  const scratch = await createScratchDatabase(name);
-  if (!scratch.ok) {
-    // A missing PostgreSQL is a skip; a refused CREATE DATABASE is not, and a
-    // caller that treated them alike would report a broken environment green.
-    if (scratch.error.operation !== "reach_admin_endpoint") throw new Error(`${scratch.error.operation}: ${scratch.error.detail}`);
-    return null;
-  }
-  scratches.push(scratch.value);
-  const sql = PgPostgresExecutor.connect(scratch.value.url);
-  const before = await migrationsBefore(BEFORE_BRANCH_ROLES);
-  await applyMigrations(sql, before);
-  await rm(before, { recursive: true, force: true });
-  return sql;
-};
-
-/** A run, so an epic profile has something to hang off. */
-const seedRun = async (sql: PgPostgresExecutor): Promise<void> => {
-  await sql.query(`INSERT INTO oakridge.workflow_definition (id, name, version, definition, archived, created_at)
-    VALUES ('00000000-0000-4000-8000-000000000001', 'dev-flow', 12, '{}'::jsonb, false, now())`, []);
-  await sql.query(`INSERT INTO oakridge.workflow_run (id, workflow_definition_id, context)
-    VALUES ('00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000001', '{}'::jsonb)`, []);
-};
-
-/**
- * The branch-roles migration, run against rows written before it.
- *
- * It rewrites data an operator owns: an epic's branch bindings, in jsonb. A
- * migration that only ever runs against an empty test database proves that it
- * parses, not that it moves anything — and the thing it moves here is which
- * branch every build unit's pull request will target.
- */
-test("the branch-roles migration promotes the epic branch and renames the integration one", async () => {
-  const sql = await databaseBeforeBranchRoles("oakridge_migration_test");
-  if (!sql) {
-    console.warn("migration backfill SKIPPED: no PostgreSQL reachable");
-    return;
-  }
-  try {
-    // A run and an epic profile exactly as the pre-rename code wrote them: the
-    // epic's branch repeated inside every repository binding, and `base_branch`
-    // meaning `main`.
-    await seedRun(sql);
-    await sql.query(`INSERT INTO oakridge.epic_workflow_profile
-        (id, workflow_run_id, title, slug, lifecycle_state, final_merge_policy, repositories, created_at, updated_at)
-      VALUES ('00000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000002',
-        'Tiers page', 'tiers-page', 'active', 'guarded',
-        '[{"repository_key":"api","repository_path":"/repos/api","base_branch":"main","epic_branch":"epic/tiers-page","final_merge_state":"pending"},
-          {"repository_key":"web","repository_path":"/repos/web","base_branch":"trunk","epic_branch":"epic/tiers-page","final_merge_state":"pending"}]'::jsonb,
-        now(), now())`, []);
-
-    const applied = await applyMigrations(sql, MIGRATIONS);
-    expect(applied).toContain(BEFORE_BRANCH_ROLES);
-
-    const rows = await sql.query<{ readonly base_branch: string; readonly repositories: readonly { readonly repository_key: string; readonly integration_branch: string; readonly base_branch?: string; readonly epic_branch?: string }[] }>(
-      "SELECT base_branch, repositories FROM oakridge.epic_workflow_profile", []);
-    const profile = rows[0];
-
-    // The epic's branch is promoted out of the bindings, once.
-    expect(profile?.base_branch).toBe("epic/tiers-page");
-    // Each repository keeps its own integration branch — they differ here on
-    // purpose, because a rewrite that collapsed them would look correct against
-    // the usual all-`main` case.
-    expect(profile?.repositories.map((repository) => [repository.repository_key, repository.integration_branch]))
-      .toEqual([["api", "main"], ["web", "trunk"]]);
-    // And the words that meant two branches are gone.
-    for (const repository of profile?.repositories ?? []) {
-      expect(repository.epic_branch).toBeUndefined();
-      expect(repository.base_branch).toBeUndefined();
-    }
-  } finally {
-    await sql.close();
-  }
-}, 60_000);
-
-/**
- * An epic whose bindings named different epic branches cannot become one base
- * branch, and picking the first would drop the others silently and
- * unrecoverably. It should never occur — `epic_branch` defaulted to
- * `epic/<slug>` for every repository and the launcher never sent it — but a
- * migration that guesses on data it cannot convert is worse than one that
- * stops.
- */
-test("the branch-roles migration refuses an epic that carries more than one epic branch", async () => {
-  const sql = await databaseBeforeBranchRoles("oakridge_migration_divergent_test");
-  if (!sql) {
-    console.warn("divergent-migration check SKIPPED: no PostgreSQL reachable");
-    return;
-  }
-  try {
-    await seedRun(sql);
-    await sql.query(`INSERT INTO oakridge.epic_workflow_profile
-        (id, workflow_run_id, title, slug, lifecycle_state, final_merge_policy, repositories, created_at, updated_at)
-      VALUES ('00000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000002',
-        'Split epic', 'split-epic', 'active', 'guarded',
-        '[{"repository_key":"api","base_branch":"main","epic_branch":"epic/api"},
-          {"repository_key":"web","base_branch":"main","epic_branch":"epic/web"}]'::jsonb,
-        now(), now())`, []);
-
-    await expect(applyMigrations(sql, MIGRATIONS)).rejects.toThrow(/more than one epic_branch/);
-
-    // And it stopped before touching anything: the bindings are as they were.
-    const rows = await sql.query<{ readonly repositories: readonly { readonly epic_branch?: string }[] }>(
-      "SELECT repositories FROM oakridge.epic_workflow_profile", []);
-    expect(rows[0]?.repositories.map((repository) => repository.epic_branch)).toEqual(["epic/api", "epic/web"]);
-  } finally {
-    await sql.close();
-  }
-}, 60_000);
-
-/**
- * The case the divergence check first missed: one binding with no `epic_branch`
- * and one with an explicit non-default value.
- *
- * An absent `epic_branch` was not "no opinion" — it *meant* `epic/<slug>`, the
- * same default `selectEpicBranch` applied. Counting only the explicit values
- * saw one distinct branch here and let the row through, and the promotion then
- * took `repositories->0`, which is the absent one, and dropped `epic/custom`.
- */
-test("the branch-roles migration refuses an implicit default beside an explicit branch", async () => {
-  const sql = await databaseBeforeBranchRoles("oakridge_migration_mixed_test");
-  if (!sql) {
-    console.warn("mixed-migration check SKIPPED: no PostgreSQL reachable");
-    return;
-  }
-  try {
-    await seedRun(sql);
-    await sql.query(`INSERT INTO oakridge.epic_workflow_profile
-        (id, workflow_run_id, title, slug, lifecycle_state, final_merge_policy, repositories, created_at, updated_at)
-      VALUES ('00000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000002',
-        'Mixed epic', 'mixed-epic', 'active', 'guarded',
-        '[{"repository_key":"api","base_branch":"main"},
-          {"repository_key":"web","base_branch":"main","epic_branch":"epic/custom"}]'::jsonb,
-        now(), now())`, []);
-
-    await expect(applyMigrations(sql, MIGRATIONS)).rejects.toThrow(/more than one epic_branch/);
-
-    const rows = await sql.query<{ readonly repositories: readonly { readonly epic_branch?: string }[] }>(
-      "SELECT repositories FROM oakridge.epic_workflow_profile", []);
-    expect(rows[0]?.repositories.map((repository) => repository.epic_branch)).toEqual([undefined, "epic/custom"]);
-  } finally {
-    await sql.close();
-  }
-}, 60_000);
-
-/** Every binding leaving `epic_branch` unset agrees on `epic/<slug>`, so it migrates. */
-test("the branch-roles migration accepts bindings that all take the implicit default", async () => {
-  const sql = await databaseBeforeBranchRoles("oakridge_migration_implicit_test");
-  if (!sql) {
-    console.warn("implicit-migration check SKIPPED: no PostgreSQL reachable");
-    return;
-  }
-  try {
-    await seedRun(sql);
-    await sql.query(`INSERT INTO oakridge.epic_workflow_profile
-        (id, workflow_run_id, title, slug, lifecycle_state, final_merge_policy, repositories, created_at, updated_at)
-      VALUES ('00000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000002',
-        'Implicit epic', 'implicit-epic', 'active', 'guarded',
-        '[{"repository_key":"api","base_branch":"main"},
-          {"repository_key":"web","base_branch":"main"}]'::jsonb,
-        now(), now())`, []);
-
-    expect(await applyMigrations(sql, MIGRATIONS)).toContain(BEFORE_BRANCH_ROLES);
-    const rows = await sql.query<{ readonly base_branch: string }>(
-      "SELECT base_branch FROM oakridge.epic_workflow_profile", []);
-    expect(rows[0]?.base_branch).toBe("epic/implicit-epic");
-  } finally {
-    await sql.close();
-  }
-}, 60_000);
-
-test("0022 sequences existing 0018 transition rows and accepts the four feed operations", async () => {
-  const scratch = await createScratchDatabase("oakridge_transition_feed_migration_test");
+test("v15 baseline represents import artifacts, multi-slot gates, messages, and owner-local versions", async () => {
+  const scratch = await createScratchDatabase("oakridge_v15_baseline_test");
   if (!scratch.ok) {
     if (scratch.error.operation !== "reach_admin_endpoint") throw new Error(`${scratch.error.operation}: ${scratch.error.detail}`);
-    console.warn("transition-feed migration SKIPPED: no PostgreSQL reachable");
+    console.warn("v15 baseline PostgreSQL check SKIPPED: no PostgreSQL reachable");
     return;
   }
   scratches.push(scratch.value);
   const sql = PgPostgresExecutor.connect(scratch.value.url);
-  const before = await migrationsBefore("0022_run_transition_sequence_and_operations.sql");
   try {
-    await applyMigrations(sql, before);
-    await seedRun(sql);
-    await sql.query(`INSERT INTO oakridge.run_transition
-      (id,run_id,operation,actor,prior_record_version,resulting_record_version,detail,created_at)
-      VALUES ('00000000-0000-4000-8000-000000000004','00000000-0000-4000-8000-000000000002',
-        'run_cancelled','operator',0,0,'{}'::jsonb,now())`, []);
-    expect(await applyMigrations(sql, MIGRATIONS)).toContain("0022_run_transition_sequence_and_operations.sql");
-    const rows = await sql.query<{ readonly sequence: string }>("SELECT sequence::text FROM oakridge.run_transition", []);
-    expect(rows[0]?.sequence).toBe("1");
-    for (const operation of ["gate_opened", "gate_decided", "pull_request_observed", "pull_request_merge_confirmed"]) {
-      await sql.query(`INSERT INTO oakridge.run_transition
-        (id,run_id,operation,actor,prior_record_version,resulting_record_version,detail,created_at)
-        VALUES (gen_random_uuid(),'00000000-0000-4000-8000-000000000002',$1,'test',0,0,'{}'::jsonb,now())`, [operation]);
+    expect(await applyMigrations(sql)).toEqual([BASELINE]);
+    await sql.query(`INSERT INTO oakridge.workflow_definition (id,name,version,definition)
+      VALUES ('00000000-0000-4000-8000-000000000001','v15-test',15,'{}')`, []);
+    await sql.query(`INSERT INTO oakridge.workflow_run (id,workflow_definition_id,context,status)
+      VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000001','{}','active')`, []);
+    for (const [id, key] of [
+      ["00000000-0000-4000-8000-000000000003", "build"],
+      ["00000000-0000-4000-8000-000000000004", "assess"],
+    ] as const) await sql.query(`INSERT INTO oakridge.stage_instance
+      (id,run_id,stage_key,stage_type,stage_contract,status)
+      VALUES ($1,'00000000-0000-4000-8000-000000000002',$2,'test','{}','active')`, [id, key]);
+    await sql.query(`INSERT INTO oakridge.cohort
+      (id,run_id,stage_instance_id,cohort_key,status,stage_data)
+      VALUES ('00000000-0000-4000-8000-000000000005','00000000-0000-4000-8000-000000000002',
+        '00000000-0000-4000-8000-000000000003','core','active','{"version":1}')`, []);
+    await sql.query(`INSERT INTO oakridge.attempt
+      (id,run_id,stage_instance_id,cohort_id,attempt_number,status,adapter_type,request)
+      VALUES ('00000000-0000-4000-8000-000000000006','00000000-0000-4000-8000-000000000002',
+        '00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000005',1,'active','kbbl','{}')`, []);
+    await sql.query(`INSERT INTO oakridge.session
+      (id,run_id,stage_instance_id,attempt_id,status,kbbl_session_id,adapter_reference)
+      VALUES ('00000000-0000-4000-8000-000000000007','00000000-0000-4000-8000-000000000002',
+        '00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000006','pending',NULL,'{"kind":"kbbl_session"}')`, []);
+    expect((await sql.query<{ readonly kbbl_session_id: string | null }>(
+      "SELECT kbbl_session_id FROM oakridge.session WHERE attempt_id='00000000-0000-4000-8000-000000000006'", []))[0])
+      .toEqual({ kbbl_session_id: null });
+
+    const artifactIds = [
+      "00000000-0000-4000-8000-000000000010",
+      "00000000-0000-4000-8000-000000000011",
+      "00000000-0000-4000-8000-000000000012",
+    ];
+    for (const [index, artifactId] of artifactIds.entries()) {
+      await sql.query(`INSERT INTO oakridge.artifact
+        (id,chain_id,revision,artifact_type,body) VALUES ($1,$1,1,'test.output',$2::jsonb)`, [artifactId, JSON.stringify({ index })]);
+      await sql.query(`INSERT INTO oakridge.artifact_owner (artifact_id,run_id)
+        VALUES ($1,'00000000-0000-4000-8000-000000000002')`, [artifactId]);
+      await sql.query(`INSERT INTO oakridge.artifact_provenance (artifact_id,kind,run_id,import_source)
+        VALUES ($1,'import','00000000-0000-4000-8000-000000000002',$2::jsonb)`, [artifactId, JSON.stringify({ source: "fixture" })]);
     }
+    expect((await sql.query<{ readonly kind: string; readonly session_id: string | null }>(
+      "SELECT kind,session_id::text FROM oakridge.artifact_provenance WHERE artifact_id=$1", [artifactIds[0]]))[0])
+      .toEqual({ kind: "import", session_id: null });
+
+    const gateId = "00000000-0000-4000-8000-000000000020";
+    await sql.query(`INSERT INTO oakridge.wait_gate
+      (id,run_id,kind,closes_on,command_workflow_id) VALUES ($1,'00000000-0000-4000-8000-000000000002','gate','{}','gate:test')`, [gateId]);
+    for (const artifactId of artifactIds) await sql.query(
+      "INSERT INTO oakridge.wait_gate_artifact_revision (wait_gate_id,artifact_id,run_id) VALUES ($1,$2,'00000000-0000-4000-8000-000000000002')", [gateId, artifactId]);
+    await sql.query(`INSERT INTO oakridge.wait_gate_output_slot
+      (wait_gate_id,run_id,receiving_stage_instance_id,output_name,collection_key) VALUES
+      ($1,'00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000003','result',NULL),
+      ($1,'00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000003','report','a'),
+      ($1,'00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000004','assessment',NULL)`, [gateId]);
+    await sql.query(`INSERT INTO oakridge.wait_gate
+      (id,run_id,kind,closes_on,command_workflow_id) VALUES
+      ('00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000002','external','{}','wait:no-artifact')`, []);
+    expect((await sql.query<{ readonly revisions: string; readonly slots: string }>(`SELECT
+      (SELECT count(*)::text FROM oakridge.wait_gate_artifact_revision WHERE wait_gate_id=$1) AS revisions,
+      (SELECT count(*)::text FROM oakridge.wait_gate_output_slot WHERE wait_gate_id=$1) AS slots`, [gateId]))[0])
+      .toEqual({ revisions: "3", slots: "3" });
+
+    await sql.query(`INSERT INTO oakridge.session_message
+      (id,run_id,sender_kind,sender_id,recipient_kind,recipient_id,thread_id,message_id,body,delivery_key)
+      VALUES ('00000000-0000-4000-8000-000000000030','00000000-0000-4000-8000-000000000002',
+        'operator','operator','agent','worker','thread-1','message-1','{"text":"go"}','delivery-1')`, []);
+    expect((await sql.query<{ readonly cohort_id: string | null; readonly artifact_thread_id: string | null }>(
+      "SELECT cohort_id::text,artifact_thread_id::text FROM oakridge.session_message WHERE delivery_key='delivery-1'", []))[0])
+      .toEqual({ cohort_id: null, artifact_thread_id: null });
+
+    await sql.transaction(async (tx) => {
+      await tx.query("UPDATE oakridge.cohort SET durable_version=durable_version+1 WHERE id='00000000-0000-4000-8000-000000000005'", []);
+      await tx.query(`INSERT INTO oakridge.run_transition
+        (id,run_id,owner_kind,owner_cohort_id,launch_reason,prior_owner_version,resulting_owner_version,effect_descriptor,effect_workflow_id,actor)
+        VALUES ('00000000-0000-4000-8000-000000000040','00000000-0000-4000-8000-000000000002','cohort',
+          '00000000-0000-4000-8000-000000000005','operator',0,1,'{"kind":"none"}','effect:test','operator')`, []);
+    });
+    expect((await sql.query<{ readonly cohort_version: string; readonly stage_version: string; readonly run_version: string }>(`SELECT
+      (SELECT durable_version::text FROM oakridge.cohort WHERE id='00000000-0000-4000-8000-000000000005') AS cohort_version,
+      (SELECT durable_version::text FROM oakridge.stage_instance WHERE id='00000000-0000-4000-8000-000000000003') AS stage_version,
+      (SELECT record_version::text FROM oakridge.workflow_run WHERE id='00000000-0000-4000-8000-000000000002') AS run_version`, []))[0])
+      .toEqual({ cohort_version: "1", stage_version: "0", run_version: "0" });
   } finally {
     await sql.close();
-    await rm(before, { recursive: true, force: true });
   }
 }, 60_000);
-
-/**
- * The validator sits before any DDL, so its refusal has to travel the same way
- * every other setup failure does. It threw past the `Result` its caller
- * declares — the one thing an early guard should not do.
- */
-test("a scratch database name that is not a safe identifier is an Err, not a throw", async () => {
-  const refused = await createScratchDatabase('evil"; DROP DATABASE oakridge; --');
-  expect(refused).toEqual({ ok: false, error: expect.objectContaining({
-    operation: "validate_scratch_database_name", database_name: 'evil"; DROP DATABASE oakridge; --' }) });
-});

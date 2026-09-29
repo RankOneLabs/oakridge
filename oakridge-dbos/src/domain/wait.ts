@@ -7,7 +7,7 @@
  * closing a provably dead owner's row on its behalf), and always about one
  * artifact revision. The row is the record; DBOS `recv` remains the mechanism.
  */
-import type { ArtifactId, RunUnitId, StageInstanceId, UnitId, WaitId } from "./primitives";
+import type { ArtifactId, CohortId, OutputCollectionKey, RunUnitId, StageInstanceId, UnitId, WaitId, WorkflowRunId } from "./primitives";
 
 export type WaitKind = "gate" | "handoff_downstream" | "handoff_external";
 
@@ -110,3 +110,32 @@ export const selectHandoffStatusFromWait = (
   if (outcome === "decided") return "revision_requested";
   throw new Error(`a closed handoff wait carries no outcome (kind '${kind}')`);
 };
+
+/** One durable wait or gate. Subjects and covered slots live in join rows. */
+export interface WaitGateRecord {
+  readonly id: WaitId;
+  readonly run_id: WorkflowRunId;
+  readonly stage_instance_id: StageInstanceId | null;
+  readonly cohort_id: CohortId | null;
+  readonly kind: "gate" | "handoff" | "external";
+  readonly status: "open" | "closed" | "cancelled";
+  readonly closes_on: import("./primitives").JsonValue;
+  readonly outcome: import("./primitives").JsonValue | null;
+  readonly command_workflow_id: string;
+  readonly opened_at: string;
+  readonly closed_at: string | null;
+}
+
+export interface WaitGateArtifactRevisionRecord {
+  readonly wait_gate_id: WaitId;
+  readonly artifact_id: ArtifactId;
+  readonly run_id: WorkflowRunId;
+}
+
+export interface WaitGateOutputSlotRecord {
+  readonly wait_gate_id: WaitId;
+  readonly run_id: WorkflowRunId;
+  readonly receiving_stage_instance_id: StageInstanceId;
+  readonly output_name: string;
+  readonly collection_key: OutputCollectionKey | null;
+}

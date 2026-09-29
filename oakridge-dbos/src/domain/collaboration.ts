@@ -1,5 +1,5 @@
 import type { ExternalExecutionReference } from "./execution";
-import type { ArtifactId, Brand, ExecutionId } from "./primitives";
+import type { ArtifactId, Brand, CohortId, DeliveryKey, ExecutionId, JsonValue, SessionMessageId, WorkflowRunId } from "./primitives";
 
 export type ThreadId = Brand<string, "ThreadId">;
 export type MessageId = Brand<string, "MessageId">;
@@ -47,3 +47,28 @@ export const renderCollaborationPingPrompt = (thread: CollaborationThreadWithMes
   const transcript = thread.messages.map((message) => `${message.author}: ${message.body}`).join("\n\n");
   return `An operator requested your response to collaboration thread ${thread.id}${anchor}. Review the discussion and respond by posting a message to the same thread.\n\n${transcript}`;
 };
+
+export interface MessageParty {
+  readonly kind: "core" | "agent" | "service" | "operator";
+  readonly id: string | null;
+}
+
+/** Run-scoped durable delivery record; artifact_thread_id is an optional link. */
+export interface SessionMessageRecord {
+  readonly id: SessionMessageId;
+  readonly run_id: WorkflowRunId;
+  readonly cohort_id: CohortId | null;
+  readonly sender_kind: MessageParty["kind"];
+  readonly sender_id: string | null;
+  readonly recipient_kind: MessageParty["kind"];
+  readonly recipient_id: string | null;
+  readonly thread_id: string;
+  readonly message_id: string;
+  readonly artifact_thread_id: ThreadId | null;
+  readonly body: JsonValue;
+  readonly delivery_key: DeliveryKey;
+  readonly delivery_status: "pending" | "delivered" | "failed";
+  readonly delivery_result: JsonValue | null;
+  readonly created_at: string;
+  readonly delivered_at: string | null;
+}

@@ -23,6 +23,36 @@ export type UnitState = "ready" | "working" | "waiting" | "satisfied" | "failed"
 export type WorkOrderState = "available" | "started" | "completed" | "abandoned";
 export type WorkOrderReason = "initial" | "operator_retry" | "input_revision";
 
+export type TransitionLaunchReason = "initial" | "dependency_satisfied" | "artifact_accepted" | "gate_decided" | "operator" | "retry" | "recovery";
+export type TransitionOwner =
+  | { readonly kind: "run"; readonly id: WorkflowRunId }
+  | { readonly kind: "stage_instance"; readonly id: StageInstanceId }
+  | { readonly kind: "cohort"; readonly id: import("./primitives").CohortId };
+export type TransitionEffectDescriptor =
+  | { readonly kind: "start_stage"; readonly stage_instance_id: StageInstanceId }
+  | { readonly kind: "start_attempt"; readonly attempt_id: import("./primitives").AttemptId }
+  | { readonly kind: "deliver_message"; readonly message_id: import("./primitives").SessionMessageId }
+  | { readonly kind: "resume_wait"; readonly wait_id: WaitId }
+  | { readonly kind: "none" };
+
+/** Named row type for oakridge.run_transition. */
+export interface RunTransitionRecord {
+  readonly id: RunTransitionId;
+  readonly sequence: number;
+  readonly run_id: WorkflowRunId;
+  readonly owner_kind: TransitionOwner["kind"];
+  readonly owner_run_id: WorkflowRunId | null;
+  readonly owner_stage_instance_id: StageInstanceId | null;
+  readonly owner_cohort_id: import("./primitives").CohortId | null;
+  readonly launch_reason: TransitionLaunchReason;
+  readonly prior_owner_version: number;
+  readonly resulting_owner_version: number;
+  readonly effect_descriptor: TransitionEffectDescriptor;
+  readonly effect_workflow_id: string;
+  readonly actor: string;
+  readonly created_at: string;
+}
+
 export interface WorkflowRun {
   readonly id: WorkflowRunId;
   readonly workflow_definition_id: WorkflowDefinitionId;

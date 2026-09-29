@@ -33,7 +33,6 @@ import { PostgresCohortPullRequestRepository, PostgresCollaborationRepository, P
 import { PostgresProjectRepository } from "../storage/postgres-projects";
 import { PostgresWorkflowDefinitionRepository } from "../storage/postgres-workflow-definitions";
 import { PgPostgresExecutor } from "../storage/sql-executor";
-import { requireV2CutoverDatabase } from "../storage/cutover";
 import { findExecutorAdapter, registerExecutorAdapter } from "./executor-registry";
 import { registerRunRecordWorkflowServices } from "../workflows/run-record-topology";
 import "../workflows/collaboration-responder";
@@ -104,11 +103,6 @@ export interface OakridgeRuntime {
 export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Promise<OakridgeRuntime> => {
   const now = config.now ?? (() => new Date().toISOString());
   const sql = PgPostgresExecutor.connect(config.database_url);
-  const cutover = await requireV2CutoverDatabase(sql);
-  if (!cutover.ok) {
-    await sql.close();
-    throw new Error(cutover.error.detail);
-  }
   const client = await DBOSClient.create({ systemDatabaseUrl: config.database_url });
 
   const definitions = new PostgresWorkflowDefinitionRepository(sql);

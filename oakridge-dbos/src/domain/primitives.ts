@@ -35,6 +35,12 @@ export type OutputSlotVersion = Brand<number, "OutputSlotVersion">;
 export type OutputCollectionKey = Brand<string, "OutputCollectionKey">;
 export type InputFingerprint = Brand<string, "InputFingerprint">;
 export type RunTransitionId = Brand<string, "RunTransitionId">;
+export type CohortId = Brand<string, "CohortId">;
+export type AttemptId = Brand<string, "AttemptId">;
+export type SessionId = Brand<string, "SessionId">;
+export type KbblSessionId = Brand<string, "KbblSessionId">;
+export type SessionMessageId = Brand<string, "SessionMessageId">;
+export type DeliveryKey = Brand<string, "DeliveryKey">;
 
 /**
  * One attempt at an execution — the ID of the workflow running it. A rerun
