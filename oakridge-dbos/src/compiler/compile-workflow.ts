@@ -7,6 +7,8 @@ import { repositoryProvisioningDefinitionSchema } from "../validation/repository
 import { selectBuiltInGateDisposition } from "../domain/gates";
 import { readOwn } from "../domain/records";
 import { PROVISION_REPOSITORY_REFS_STAGE_TYPE, RUN_CONTEXT_REPOSITORY_KEY_POINTER, type RepositoryProvisioningDefinitionConfig } from "../domain/repository-refs";
+import { createDevFlowAdapterRegistry } from "../adapters/dev-flow";
+import type { AdapterRoleRegistry } from "../validation/workflow-definition";
 
 export interface CompileWorkflowError {
   readonly operation: "compile_workflow";
@@ -142,7 +144,11 @@ const compileStage = (stageKey: string, node: StageNodeDefinition, registry: Sta
   });
 };
 
-export const compileWorkflowDefinition = (definition: WorkflowDefinition, registry: StageTypeCompilerRegistry = builtInStageTypeCompilers): Result<CompiledWorkflowDefinition, CompileWorkflowError> => {
+export const compileWorkflowDefinition = (
+  definition: WorkflowDefinition,
+  registry: StageTypeCompilerRegistry = builtInStageTypeCompilers,
+  adapterRegistry: AdapterRoleRegistry = createDevFlowAdapterRegistry(),
+): Result<CompiledWorkflowDefinition, CompileWorkflowError> => {
   const diagnostics: DelegatedSessionDiagnostic[] = [];
   for (const [stageKey, node] of Object.entries(definition.graph.stages)) {
     if (node.stage_type !== "delegated_session") continue;
@@ -153,7 +159,16 @@ export const compileWorkflowDefinition = (definition: WorkflowDefinition, regist
       continue;
     }
     diagnostics.push(...validateDelegatedSessionCardinality(stageKey, node.operator_role, parsed.data));
-    diagnostics.push(...validateDelegatedSessionContracts(stageKey, node.operator_role, node.outputs.map((output) => output.name), parsed.data));
+    // Immutable pre-v15 definitions use the former initial/retry/revision
+    // vocabulary. Their exact declared cells remain their compatibility
+    // contract; current adapter registration applies to the v15 build cohort,
+    // identified by its required build set.
+    const launchReasonRegistry = parsed.data.required_build_set ? adapterRegistry : {
+      launch_reasons_for: (role: string) => parsed.data.prompt_matrix
+        .filter((cell) => cell.session_role === role).map((cell) => cell.launch_reason),
+    };
+    diagnostics.push(...validateDelegatedSessionContracts(stageKey, node.operator_role,
+      node.outputs.map((output) => output.name), parsed.data, launchReasonRegistry));
   }
   if (diagnostics.length > 0) return err({ operation: "compile_workflow", stage_key: diagnostics[0]?.stage_key ?? null,
     detail: diagnostics.map((diagnostic) => `${diagnostic.kind}: ${diagnostic.stage_key}.${diagnostic.contract_item}`).join("\n"), diagnostics });
@@ -188,8 +203,9 @@ export const compileWorkflowManifest = (
   promptBundle: PromptBundle,
   versions: CompileManifestVersions,
   registry: StageTypeCompilerRegistry = builtInStageTypeCompilers,
+  adapterRegistry: AdapterRoleRegistry = createDevFlowAdapterRegistry(),
 ): Result<CompiledWorkflowDefinition, CompileWorkflowError> => {
-  const compiled = compileWorkflowDefinition(definition, registry);
+  const compiled = compileWorkflowDefinition(definition, registry, adapterRegistry);
   const promptDiagnostics: DelegatedSessionDiagnostic[] = [];
   for (const [stageKey, node] of Object.entries(definition.graph.stages)) {
     if (node.stage_type !== "delegated_session") continue;

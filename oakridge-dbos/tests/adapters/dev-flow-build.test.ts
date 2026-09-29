@@ -157,7 +157,8 @@ test("the shipped c2 prompt bundle resolves all eight build-stage cells exactly 
   });
   const build = loaded.value.graph.stages.build!;
   const config = build.config as unknown as DelegatedSessionDefinitionConfig;
-  const validated = createBuildCohortMachine({ required_build_set: ["pr_summary", "build_result"],
+  expect(config.required_build_set).toEqual(["pr_summary", "build_result"]);
+  const validated = createBuildCohortMachine({ required_build_set: config.required_build_set ?? [],
     prompts: bundle.matrix.filter((entry) => entry.stage_key === "build") });
   expect(validated.ok).toBe(true);
   expect(config.prompt_matrix).toHaveLength(8);

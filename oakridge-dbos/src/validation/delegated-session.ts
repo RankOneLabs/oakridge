@@ -3,6 +3,7 @@ import { BUILT_IN_GATE_DISPOSITIONS, isBuiltInGateAction } from "../domain/gates
 import type { DelegatedSessionDefinitionConfig, SessionLaunchReasonName } from "../domain/delegated-session";
 import type { JsonValue } from "../domain/primitives";
 import type { StageOperatorRole } from "../domain/workflow";
+import type { AdapterRoleRegistry } from "./workflow-definition";
 
 export const slotBindingSchema = z.discriminatedUnion("from", [
   z.object({ from: z.literal("input"), input_name: z.string().min(1), path: z.string().nullable().default(null) }),
@@ -118,6 +119,7 @@ export const delegatedSessionDefinitionSchema = z.object({
     authorized_outputs: z.array(z.string().min(1)),
     yolo: z.boolean().default(false),
   })).min(1),
+  required_build_set: z.array(z.string().min(1)).min(1).optional(),
   slot_bindings: z.record(z.string(), slotBindingSchema),
   workdir: slotBindingSchema,
   fan_out: z.object({
@@ -140,6 +142,13 @@ export const delegatedSessionDefinitionSchema = z.object({
   })).default([]),
 }).superRefine((config, context) => {
   if (config.fan_out && config.artifact_productions.length > 0) context.addIssue({ code: "custom", message: "fan_out and artifact_productions are mutually exclusive" });
+  if (config.prompt_matrix.some((cell) => cell.session_role === "build" && cell.launch_reason === "initial_build")
+    && !config.required_build_set) {
+    context.addIssue({ code: "custom", message: "the build cohort requires required_build_set" });
+  }
+  if (config.required_build_set && new Set(config.required_build_set).size !== config.required_build_set.length) {
+    context.addIssue({ code: "custom", message: "required_build_set entries must be unique" });
+  }
 });
 
 /** Decode immutable pre-plural rows into the named plural domain model. */
@@ -250,15 +259,19 @@ export const validateDelegatedSessionContracts = (
   session_role: StageOperatorRole | null,
   declared_outputs: readonly string[],
   config: DelegatedSessionDefinitionConfig,
+  registry: Pick<AdapterRoleRegistry, "launch_reasons_for">,
 ): readonly DelegatedSessionDiagnostic[] => {
   const diagnostics: DelegatedSessionDiagnostic[] = [];
   if (session_role === null || !config.role_configs.some((role) => role.session_role === session_role)) diagnostics.push({
     kind: "selected_role_missing", stage_key, session_role, contract_item: "operator_role",
   });
   for (const roleConfig of config.role_configs) {
-    const promptCount = config.prompt_matrix.filter((entry) => entry.session_role === roleConfig.session_role).length;
-    if (promptCount === 0) diagnostics.push({ kind: "prompt_not_total", stage_key, session_role: roleConfig.session_role,
-      contract_item: `${roleConfig.session_role}:registered`, launch_reason: "registered", matches: 0 });
+    for (const launchReason of registry.launch_reasons_for(roleConfig.session_role)) {
+      const matches = config.prompt_matrix.filter((entry) => entry.session_role === roleConfig.session_role
+        && entry.launch_reason === launchReason).length;
+      if (matches !== 1) diagnostics.push({ kind: "prompt_not_total", stage_key, session_role: roleConfig.session_role,
+        contract_item: `${roleConfig.session_role}:${launchReason}`, launch_reason: launchReason, matches });
+    }
     const available = new Set(roleConfig.pre_authorized_tools ?? []);
     for (const tool of roleConfig.required_tools ?? []) if (!available.has(tool)) diagnostics.push({
       kind: "unavailable_tool", stage_key, session_role: roleConfig.session_role, contract_item: tool, tool,

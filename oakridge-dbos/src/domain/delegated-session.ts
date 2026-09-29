@@ -122,6 +122,8 @@ export interface DelegatedSessionRoleConfig {
 export interface DelegatedSessionDefinitionConfig {
   readonly prompt_matrix: readonly PromptMatrixEntry[];
   readonly role_configs: readonly DelegatedSessionRoleConfig[];
+  /** Adapter configuration for the build cohort's set-valued review gate. */
+  readonly required_build_set?: readonly string[];
   readonly slot_bindings: Readonly<Record<string, SlotBinding>>;
   readonly workdir: SlotBinding;
   readonly fan_out?: FanOutDefinition;

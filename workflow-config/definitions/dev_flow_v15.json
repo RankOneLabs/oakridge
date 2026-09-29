@@ -446,6 +446,10 @@
               "yolo": false
             }
           ],
+          "required_build_set": [
+            "pr_summary",
+            "build_result"
+          ],
           "slot_bindings": {
             "OAKRIDGE_URL": {
               "from": "context",
