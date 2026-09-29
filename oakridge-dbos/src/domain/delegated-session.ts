@@ -82,12 +82,18 @@ export interface OutputHandoffDefinition {
  * Adapter-owned name for why a role is being launched. Core carries the name
  * but does not close over an adapter's vocabulary.
  */
-export type SessionLaunchReason = string;
+export type SessionLaunchReasonName = string;
+
+/** Durable reference from a session to the transition that launched it. */
+export interface SessionLaunchReason {
+  readonly transition_id: import("./primitives").RunTransitionId;
+  readonly name: SessionLaunchReasonName;
+}
 
 /** One cell in the role × launch-reason prompt matrix. */
 export interface PromptMatrixEntry {
   readonly session_role: StageOperatorRole;
-  readonly launch_reason: SessionLaunchReason;
+  readonly launch_reason: SessionLaunchReasonName;
   readonly template_path: string;
 }
 

@@ -1,5 +1,5 @@
 import type { MaterializedExecutionUnit } from "../domain/compiled-workflow";
-import { isDelegatedRuntimeId, type Bindable, type DelegatedSessionDefinitionConfig, type ResolvedExecutorConfig, type SessionIdentity, type SessionLaunchReason, type SlotBinding } from "../domain/delegated-session";
+import { isDelegatedRuntimeId, type Bindable, type DelegatedSessionDefinitionConfig, type ResolvedExecutorConfig, type SessionIdentity, type SessionLaunchReasonName, type SlotBinding } from "../domain/delegated-session";
 import type { ArtifactEnvelope } from "../domain/execution";
 import { err, ok, type JsonValue, type Result, type StageInstanceId, type WorkflowRunId } from "../domain/primitives";
 import { readJsonPointer } from "../domain/json-pointer";
@@ -24,7 +24,7 @@ export interface ResolveDelegatedExecutionInput {
   readonly prompt_template: string;
   readonly run_id: WorkflowRunId;
   readonly operator_role: StageOperatorRole | null;
-  readonly launch_reason?: SessionLaunchReason;
+  readonly launch_reason?: SessionLaunchReasonName;
 }
 
 

@@ -26,7 +26,7 @@ import { resolveBinding, resolveBindingValue, resolveDelegatedExecution } from "
 import type { StageInputSet } from "../decision/commands";
 import { workOrderIdFor, workOrderWorkflowId } from "../decision/ids";
 import type { CompiledStageContract, MaterializedExecutionUnit } from "../domain/compiled-workflow";
-import type { DelegatedSessionDefinitionConfig, SessionLaunchReason } from "../domain/delegated-session";
+import type { DelegatedSessionDefinitionConfig, SessionLaunchReasonName } from "../domain/delegated-session";
 import type { PromptBundle, WorkflowRunBundlePin } from "../domain/workflow";
 import type { AssessmentRevisionContext } from "../domain/dev-flow-artifacts";
 import type { ArtifactEnvelope, ExecutionRequest, ExternalExecutionReference } from "../domain/execution";
@@ -53,7 +53,7 @@ export interface ResolveWorkOrderInput {
   readonly identity: string;
   readonly capability_seed: string;
   /** Selected by the transition that launched this work, independent of its idempotency identity. */
-  readonly launch_reason: SessionLaunchReason;
+  readonly launch_reason: SessionLaunchReasonName;
   readonly bundle_pin: WorkflowRunBundlePin;
 }
 

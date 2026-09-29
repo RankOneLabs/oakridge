@@ -41,14 +41,22 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
       (id,run_id,stage_instance_id,cohort_key,status,stage_data)
       VALUES ('00000000-0000-4000-8000-000000000005','00000000-0000-4000-8000-000000000002',
         '00000000-0000-4000-8000-000000000003','core','active','{"version":1}')`, []);
+    await sql.transaction(async (tx) => {
+      await tx.query("UPDATE oakridge.cohort SET durable_version=durable_version+1 WHERE id='00000000-0000-4000-8000-000000000005'", []);
+      await tx.query(`INSERT INTO oakridge.run_transition
+        (id,run_id,owner_kind,owner_cohort_id,launch_reason,prior_owner_version,resulting_owner_version,effect_descriptor,effect_workflow_id,actor)
+        VALUES ('00000000-0000-4000-8000-000000000040','00000000-0000-4000-8000-000000000002','cohort',
+          '00000000-0000-4000-8000-000000000005','operator',0,1,'{"kind":"start_attempt"}','effect:test','operator')`, []);
+    });
     await sql.query(`INSERT INTO oakridge.attempt
       (id,run_id,stage_instance_id,cohort_id,attempt_number,status,adapter_type,request)
       VALUES ('00000000-0000-4000-8000-000000000006','00000000-0000-4000-8000-000000000002',
         '00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000005',1,'active','kbbl','{}')`, []);
     await sql.query(`INSERT INTO oakridge.session
-      (id,run_id,stage_instance_id,attempt_id,status,kbbl_session_id,adapter_reference)
+      (id,run_id,stage_instance_id,attempt_id,launch_transition_id,status,kbbl_session_id,adapter_reference)
       VALUES ('00000000-0000-4000-8000-000000000007','00000000-0000-4000-8000-000000000002',
-        '00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000006','pending',NULL,'{"kind":"kbbl_session"}')`, []);
+        '00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000006',
+        '00000000-0000-4000-8000-000000000040','pending',NULL,'{"kind":"kbbl_session"}')`, []);
     expect((await sql.query<{ readonly kbbl_session_id: string | null }>(
       "SELECT kbbl_session_id FROM oakridge.session WHERE attempt_id='00000000-0000-4000-8000-000000000006'", []))[0])
       .toEqual({ kbbl_session_id: null });
@@ -104,13 +112,6 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
       "SELECT cohort_id::text,artifact_thread_id::text FROM oakridge.session_message WHERE delivery_key='delivery-1'", []))[0])
       .toEqual({ cohort_id: null, artifact_thread_id: null });
 
-    await sql.transaction(async (tx) => {
-      await tx.query("UPDATE oakridge.cohort SET durable_version=durable_version+1 WHERE id='00000000-0000-4000-8000-000000000005'", []);
-      await tx.query(`INSERT INTO oakridge.run_transition
-        (id,run_id,owner_kind,owner_cohort_id,launch_reason,prior_owner_version,resulting_owner_version,effect_descriptor,effect_workflow_id,actor)
-        VALUES ('00000000-0000-4000-8000-000000000040','00000000-0000-4000-8000-000000000002','cohort',
-          '00000000-0000-4000-8000-000000000005','operator',0,1,'{"kind":"none"}','effect:test','operator')`, []);
-    });
     expect((await sql.query<{ readonly cohort_version: string; readonly stage_version: string; readonly run_version: string }>(`SELECT
       (SELECT durable_version::text FROM oakridge.cohort WHERE id='00000000-0000-4000-8000-000000000005') AS cohort_version,
       (SELECT durable_version::text FROM oakridge.stage_instance WHERE id='00000000-0000-4000-8000-000000000003') AS stage_version,

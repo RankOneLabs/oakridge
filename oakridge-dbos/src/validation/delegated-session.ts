@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { BUILT_IN_GATE_DISPOSITIONS, isBuiltInGateAction } from "../domain/gates";
-import type { DelegatedSessionDefinitionConfig, SessionLaunchReason } from "../domain/delegated-session";
+import type { DelegatedSessionDefinitionConfig, SessionLaunchReasonName } from "../domain/delegated-session";
 import type { JsonValue } from "../domain/primitives";
 import type { StageOperatorRole } from "../domain/workflow";
 
@@ -182,7 +182,7 @@ export const normalizeDelegatedSessionDefinition = (
 export type DelegatedSessionDiagnostic =
   | { readonly kind: "invalid_stage_config"; readonly stage_key: string; readonly session_role: StageOperatorRole | null; readonly contract_item: "config"; readonly issues: readonly string[] }
   | { readonly kind: "duplicate_key"; readonly stage_key: string; readonly session_role: StageOperatorRole | null; readonly contract_item: string; readonly array: string; readonly key: string }
-  | { readonly kind: "prompt_not_total"; readonly stage_key: string; readonly session_role: StageOperatorRole; readonly contract_item: string; readonly launch_reason: SessionLaunchReason; readonly matches: number }
+  | { readonly kind: "prompt_not_total"; readonly stage_key: string; readonly session_role: StageOperatorRole; readonly contract_item: string; readonly launch_reason: SessionLaunchReasonName; readonly matches: number }
   | { readonly kind: "gate_without_closer"; readonly stage_key: string; readonly session_role: StageOperatorRole | null; readonly contract_item: string; readonly gate: string }
   | { readonly kind: "output_producer_count"; readonly stage_key: string; readonly session_role: StageOperatorRole | null; readonly contract_item: string; readonly output: string; readonly producers: number }
   | { readonly kind: "wait_without_closing_event"; readonly stage_key: string; readonly session_role: StageOperatorRole | null; readonly contract_item: string; readonly wait: string }
@@ -190,10 +190,10 @@ export type DelegatedSessionDiagnostic =
   | { readonly kind: "undeclared_output"; readonly stage_key: string; readonly session_role: StageOperatorRole | null; readonly contract_item: string; readonly output: string }
   | { readonly kind: "unavailable_tool"; readonly stage_key: string; readonly session_role: StageOperatorRole; readonly contract_item: string; readonly tool: string }
   | { readonly kind: "selected_role_missing"; readonly stage_key: string; readonly session_role: StageOperatorRole | null; readonly contract_item: "operator_role" }
-  | { readonly kind: "prompt_bundle_cell_count"; readonly stage_key: string; readonly session_role: StageOperatorRole; readonly contract_item: string; readonly launch_reason: SessionLaunchReason; readonly matches: number }
+  | { readonly kind: "prompt_bundle_cell_count"; readonly stage_key: string; readonly session_role: StageOperatorRole; readonly contract_item: string; readonly launch_reason: SessionLaunchReasonName; readonly matches: number }
   | { readonly kind: "automated_assessment_transition"; readonly stage_key: string; readonly session_role: StageOperatorRole | null; readonly contract_item: string; readonly trigger: string };
 
-const LAUNCH_REASONS: readonly SessionLaunchReason[] = ["initial", "operator_retry", "input_revision"];
+const LAUNCH_REASONS: readonly SessionLaunchReasonName[] = ["initial", "operator_retry", "input_revision"];
 
 const duplicateDiagnostics = (
   stage_key: string,
@@ -227,7 +227,7 @@ const placeholdersOf = (value: string): readonly string[] => [...value.matchAll(
 export const validatePromptBundleBindings = (
   stage_key: string,
   config: DelegatedSessionDefinitionConfig,
-  promptContents: readonly { readonly session_role: StageOperatorRole; readonly launch_reason: SessionLaunchReason; readonly content: string }[],
+  promptContents: readonly { readonly session_role: StageOperatorRole; readonly launch_reason: SessionLaunchReasonName; readonly content: string }[],
 ): readonly DelegatedSessionDiagnostic[] => {
   const bound = new Set([...Object.keys(config.slot_bindings), ...Object.keys(config.fan_out?.item_bindings ?? {}), "UNIT_ID", "STAGE_INSTANCE_ID"]);
   const diagnostics: DelegatedSessionDiagnostic[] = [];

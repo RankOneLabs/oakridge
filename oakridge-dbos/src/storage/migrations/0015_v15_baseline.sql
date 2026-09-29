@@ -159,6 +159,7 @@ CREATE TABLE oakridge.session (
   run_id uuid NOT NULL,
   stage_instance_id uuid NOT NULL,
   attempt_id uuid NOT NULL,
+  launch_transition_id uuid NOT NULL,
   status oakridge.session_status NOT NULL DEFAULT 'pending',
   kbbl_session_id text,
   adapter_reference jsonb NOT NULL,
@@ -381,6 +382,10 @@ CREATE INDEX run_transition_stage_owner_idx ON oakridge.run_transition (owner_st
   WHERE owner_stage_instance_id IS NOT NULL;
 CREATE INDEX run_transition_cohort_owner_idx ON oakridge.run_transition (owner_cohort_id, resulting_owner_version)
   WHERE owner_cohort_id IS NOT NULL;
+
+ALTER TABLE oakridge.session
+  ADD CONSTRAINT session_launch_transition_fk
+  FOREIGN KEY (launch_transition_id) REFERENCES oakridge.run_transition(id);
 
 CREATE FUNCTION oakridge.validate_transition_owner_version()
 RETURNS trigger

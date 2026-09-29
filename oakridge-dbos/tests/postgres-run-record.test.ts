@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 
 import { ok, type CohortId, type JsonValue, type RunRecordVersion, type StageInstanceId, type WorkflowRunId } from "../src/domain/primitives";
-import { AdapterRegistry } from "../src/runtime/executor-registry";
+import { createDevFlowAdapterRegistry } from "../src/adapters/dev-flow";
 import { applyMigrations } from "../src/storage/migrate";
 import { PostgresRunRecordWriter } from "../src/storage/postgres-run-record";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
@@ -37,7 +37,7 @@ test("four sibling cohort machines commit concurrently on owner-local versions w
       `INSERT INTO oakridge.cohort (id,run_id,stage_instance_id,cohort_key,status) VALUES ($1,$2,$3,$4,'active')`,
       [cohortId(index), RUN_ID, STAGE_ID, `cohort-${index}`]);
 
-    const registry = new AdapterRegistry();
+    const registry = createDevFlowAdapterRegistry();
     const customEvent = "example_adapter_finished";
     registry.register_decision<{ readonly output_id: string }>({
       name: customEvent,
@@ -56,7 +56,11 @@ test("four sibling cohort machines commit concurrently on owner-local versions w
       expected_version: 0,
       launch_reason: "artifact_accepted",
       change: { status: "complete", blocked_reason: null, next_actor: null, outcome: { kind: "succeeded" } },
-      effect: index === 0 ? { kind: customEvent, output_id: "artifact-1" } : { kind: "none" },
+      effect: index === 0 ? { kind: "dev_flow_build_cohort_transition", event: { kind: "pull_request_merged", pull_request_url: "https://example.test/pull/1" },
+        disposition: "transitioned", stage_data: { phase: "complete" },
+        projected_status: { status: "complete", blocked_reason: null, next_actor: null, outcome: { kind: "succeeded" } }, session_launch: null }
+        : index === 1 ? { kind: customEvent, output_id: "artifact-1" } : { kind: "none" },
+      ...(index === 0 ? { cohort_stage_data: { phase: "complete" } } : {}),
       actor: "test",
       changed_at: "2026-09-28T12:00:00.000Z",
     })));
@@ -72,9 +76,16 @@ test("four sibling cohort machines commit concurrently on owner-local versions w
       effect_descriptor->>'kind' AS effect_name,count(DISTINCT effect_workflow_id)::text AS workflow_count
       FROM oakridge.run_transition WHERE run_id=$1 GROUP BY effect_descriptor->>'kind' ORDER BY effect_name`, [RUN_ID]);
     expect(effects).toEqual([
+      { effect_name: "dev_flow_build_cohort_transition", workflow_count: "1" },
       { effect_name: customEvent, workflow_count: "1" },
-      { effect_name: "none", workflow_count: "3" },
+      { effect_name: "none", workflow_count: "2" },
     ]);
+    const projected = await sql.query<{ readonly status: string; readonly phase: string; readonly projected_status: string }>(`SELECT
+      cohort.status::text AS status,cohort.stage_data->>'phase' AS phase,
+      transition.effect_descriptor->'projected_status'->>'status' AS projected_status
+      FROM oakridge.cohort AS cohort JOIN oakridge.run_transition AS transition ON transition.owner_cohort_id=cohort.id
+      WHERE cohort.id=$1`, [cohortId(0)]);
+    expect(projected[0]).toEqual({ status: "complete", phase: "complete", projected_status: "complete" });
 
     const stageDecision = await writer.decide({
       load_snapshot: async () => ({

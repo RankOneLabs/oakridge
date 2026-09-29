@@ -67,7 +67,7 @@ export interface CompiledEdge {
 
 export interface CompiledTransition {
   readonly trigger: { readonly kind: "stage_output" | "assessment_outcome" | "operator"; readonly stage: StageKey; readonly item: string };
-  readonly launch: { readonly stage: StageKey; readonly session_role: StageOperatorRole; readonly launch_reason: import("./delegated-session").SessionLaunchReason };
+  readonly launch: { readonly stage: StageKey; readonly session_role: StageOperatorRole; readonly launch_reason: import("./delegated-session").SessionLaunchReasonName };
 }
 
 export interface CompiledWorkflowDefinition {
