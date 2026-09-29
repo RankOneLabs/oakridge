@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
-import { parseWorkflowDefinition } from "../src/validation/workflow-definition";
+import { parseWorkflowDefinition as parseDefinition, type AdapterRoleRegistry } from "../src/validation/workflow-definition";
 import { AdapterRegistry } from "../src/runtime/executor-registry";
+import { createDevFlowAdapterRegistry } from "../src/adapters/dev-flow";
+
+const adapterRoles = createDevFlowAdapterRegistry();
+const parseWorkflowDefinition = (input: unknown, registry: AdapterRoleRegistry = adapterRoles) => parseDefinition(input, registry);
 
 /** A minimal delegated-session config; tests override only what they exercise. */
 const delegatedConfig = (fan_out: unknown) => ({

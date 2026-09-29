@@ -3,15 +3,17 @@ import { resolve } from "node:path";
 import { compileWorkflowManifest } from "../compiler/compile-workflow";
 import { createPromptBundle, createPromptTemplateLoader } from "../runtime/prompt-template";
 import { parseWorkflowDefinition } from "./workflow-definition";
+import { createDevFlowAdapterRegistry } from "../adapters/dev-flow";
 
 const repositoryRoot = resolve(import.meta.dir, "../../..");
 const definitionsRoot = resolve(repositoryRoot, "workflow-config/definitions");
 const promptLoader = createPromptTemplateLoader(resolve(repositoryRoot, "workflow-config/prompts"));
 const failures: string[] = [];
+const adapterRoles = createDevFlowAdapterRegistry();
 
 for await (const relativePath of new Bun.Glob("*.json").scan({ cwd: definitionsRoot })) {
   const source = await Bun.file(resolve(definitionsRoot, relativePath)).json();
-  const parsed = parseWorkflowDefinition(source);
+  const parsed = parseWorkflowDefinition(source, adapterRoles);
   if (!parsed.ok) {
     failures.push(`${relativePath}: ${parsed.error.detail}`);
     continue;

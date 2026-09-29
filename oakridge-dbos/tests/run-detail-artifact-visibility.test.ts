@@ -26,6 +26,7 @@ import type { WorkflowDefinition } from "../src/domain/workflow";
 
 import { applyMigrations } from "../src/storage/migrate";
 import { PostgresOperatorProjectionRepository } from "../src/storage/postgres-operators";
+import { createDevFlowAdapterRegistry } from "../src/adapters/dev-flow";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
 import { ensureDbosSystemSchema } from "./support/dbos-system-schema";
 import { findTestDatabaseUrl } from "./support/durable-database";
@@ -104,7 +105,7 @@ const seedOutput = async (executor: PgPostgresExecutor, slotState: SeededSlotSta
 };
 
 const projectedArtifactIds = async (executor: PgPostgresExecutor, seeded: SeededOutput): Promise<string[]> => {
-  const detail = await new PostgresOperatorProjectionRepository(executor, "test-app-version").get_run(seeded.run_id);
+  const detail = await new PostgresOperatorProjectionRepository(executor, "test-app-version", createDevFlowAdapterRegistry()).get_run(seeded.run_id);
   const stage = detail?.stages.find((candidate) => candidate.stage_instance_id === seeded.stage_instance_id);
   return (stage?.artifacts ?? []).map((artifact) => artifact.id);
 };

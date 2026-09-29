@@ -1,5 +1,5 @@
 import { err, ok, type JsonValue, type Result } from "../domain/primitives";
-import type { AdapterDecisionContext, AdapterDecisionHandler, AdapterRegistry } from "../runtime/executor-registry";
+import { AdapterRegistry, type AdapterDecisionContext, type AdapterDecisionHandler } from "../runtime/executor-registry";
 
 interface PullRequestPayload {
   readonly repository_key: string;
@@ -43,4 +43,10 @@ export const registerDevFlowAdapter = (registry: AdapterRegistry): void => {
   for (const role of ["spec", "plan", "brief", "build", "assessment", "final_integration"]) registry.register_role(role);
   registry.register_decision(pullRequestHandler("pull_request_observed"));
   registry.register_decision(pullRequestHandler("pull_request_merge_confirmed"));
+};
+
+export const createDevFlowAdapterRegistry = (): AdapterRegistry => {
+  const registry = new AdapterRegistry();
+  registerDevFlowAdapter(registry);
+  return registry;
 };

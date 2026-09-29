@@ -7,7 +7,7 @@ import { parseUuidId, type JsonValue, type ProjectId, type WorkflowDefinitionId 
 import type { CreateWorkflowDefinition, WorkflowGraph } from "../domain/workflow";
 import type { ProjectRepository, WorkflowDefinitionRepository } from "../storage/repositories";
 import type { ProjectRepositoryIdentityResolver } from "../domain/projects";
-import { parseWorkflowDefinition } from "../validation/workflow-definition";
+import { parseWorkflowDefinition, type AdapterRoleRegistry } from "../validation/workflow-definition";
 import { createPromptBundle, type PromptTemplateLoader } from "../runtime/prompt-template";
 
 export interface ConfigurationHttpDependencies {
@@ -16,6 +16,7 @@ export interface ConfigurationHttpDependencies {
   readonly project_identity: ProjectRepositoryIdentityResolver;
   readonly now: () => string;
   readonly prompt_templates: PromptTemplateLoader;
+  readonly adapter_roles: AdapterRoleRegistry;
   readonly new_id?: () => string;
 }
 
@@ -82,7 +83,7 @@ export const createConfigurationApp = (dependencies: ConfigurationHttpDependenci
     const parsed = createDefinitionSchema.safeParse(await http.req.json().catch(() => null));
     if (!parsed.success) return http.json({ error: "invalid workflow definition" }, 400);
     const request: CreateWorkflowDefinition = { ...parsed.data, graph: normalizePublicGraph(parsed.data.graph) as unknown as WorkflowGraph };
-    const definition = parseWorkflowDefinition({ ...request, id: newId(), created_at: dependencies.now(), archived: false });
+    const definition = parseWorkflowDefinition({ ...request, id: newId(), created_at: dependencies.now(), archived: false }, dependencies.adapter_roles);
     if (!definition.ok) return http.json({ error: definition.error.detail }, 400);
     try {
       const bundle = await createPromptBundle(definition.value, dependencies.prompt_templates);

@@ -2,6 +2,7 @@ import { parseWorkflowDefinition } from "../validation/workflow-definition";
 import type { DefinitionValidationError } from "../validation/workflow-definition";
 import type { Result } from "../domain/primitives";
 import type { WorkflowDefinition } from "../domain/workflow";
+import { createDevFlowAdapterRegistry } from "../adapters/dev-flow";
 
 /**
  * v15 publishes the plural delegated-session contract and explicit revision
@@ -43,5 +44,5 @@ export const loadDevFlowV15 = async (): Promise<Result<WorkflowDefinition, Defin
     return { ok: false, error: { operation: "parse_workflow_definition",
       detail: `built-in dev-flow v15 could not be read from ${SOURCE.pathname}: ${error instanceof Error ? error.message : String(error)}` } };
   }
-  return parseWorkflowDefinition(source);
+  return parseWorkflowDefinition(source, createDevFlowAdapterRegistry());
 };

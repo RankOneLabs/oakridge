@@ -9,7 +9,7 @@ import { selectHandoffStatusFromWait, type HandoffWaitKind, type Wait, type Wait
 import type { RunState, UnitState } from "../domain/run-record";
 import { effectiveArtifactPredicate } from "./sql-fragments";
 import { compileWorkflowDefinition } from "../compiler/compile-workflow";
-import { parseWorkflowDefinition } from "../validation/workflow-definition";
+import { parseWorkflowDefinition, type AdapterRoleRegistry } from "../validation/workflow-definition";
 import { stageInstanceIdFor } from "../decision/ids";
 import type { StageKey } from "../domain/workflow";
 import { selectSessionHoldClaim, type SessionHold } from "../domain/session-hold";
@@ -117,6 +117,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
   constructor(
     private readonly sql: SqlExecutor,
     private readonly executor_application_version: string,
+    private readonly adapter_roles: AdapterRoleRegistry,
   ) {}
 
   /**
@@ -532,7 +533,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
       // Definitions are validated when seeded (immutable per name+version), so
       // a stored definition that fails to parse or compile here is an
       // exception, not a value this projection degrades gracefully around.
-      const parsedDefinition = parseWorkflowDefinition(definitionJson);
+      const parsedDefinition = parseWorkflowDefinition(definitionJson, this.adapter_roles);
       if (!parsedDefinition.ok) throw new Error(`run ${id}'s stored workflow definition is invalid: ${parsedDefinition.error.detail}`);
       const compiled = compileWorkflowDefinition(parsedDefinition.value);
       if (!compiled.ok) throw new Error(`run ${id}'s stored workflow definition does not compile: ${compiled.error.detail}`);

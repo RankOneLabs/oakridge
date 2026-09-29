@@ -157,7 +157,7 @@ const validateRegisteredRoles = (
     detail: `workflow references unregistered adapter role(s): ${unknown.join(", ")}` });
 };
 
-export const parseWorkflowDefinition = (input: unknown, adapter_roles?: AdapterRoleRegistry): Result<WorkflowDefinition, DefinitionValidationError> => {
+export const parseWorkflowDefinition = (input: unknown, adapter_roles: AdapterRoleRegistry): Result<WorkflowDefinition, DefinitionValidationError> => {
   const parsed = workflowDefinitionSchema.safeParse(input);
   if (!parsed.success) return err({ operation: "parse_workflow_definition", detail: z.prettifyError(parsed.error) });
   const legacyTransitions = Object.entries(parsed.data.graph.stages).flatMap(([stageKey, stage]) => {
@@ -184,6 +184,6 @@ export const parseWorkflowDefinition = (input: unknown, adapter_roles?: AdapterR
     id: parsed.data.id as WorkflowDefinitionId,
   };
   const graph = validateGraphReferences(definition);
-  if (!graph.ok || !adapter_roles) return graph;
+  if (!graph.ok) return graph;
   return validateRegisteredRoles(graph.value, adapter_roles);
 };
