@@ -47,8 +47,9 @@ const RUN: RunDetail = {
   title: "Ship the run command center",
   repository_keys: ["oakridge"],
   workflow_name: "dev_flow_v2",
-  status: "parked",
-  is_stuck: false,
+  status: "blocked",
+  blocked_reason: "gate",
+  next_actor: "operator",
   parked_count: 1,
   updated_at: "2026-09-01T10:00:00Z",
   stages: [
@@ -56,13 +57,15 @@ const RUN: RunDetail = {
       stage_instance_id: "si-build",
       name: "build",
       type: "delegated_session",
-      status: "running",
+      status: "blocked",
+      blocked_reason: "gate",
+      next_actor: "operator",
       artifacts: [{ id: "art-build", type_id: "dev.build_result", version: 1, created_at: "2026-09-01T09:00:00Z" }],
       delegated_kbbl_sid: null,
       worktree: null,
       units: [
-        { unit_id: "c1", sid: "sid-c1", worktree: null, status: "running", gate: null },
-        { unit_id: "c2", sid: "sid-c2", worktree: null, status: "running", gate: null },
+        { cohort_id: "c1", unit_id: "c1", sid: "sid-c1", worktree: null, status: "blocked", blocked_reason: "gate", next_actor: "operator", gate: "artifact_review" },
+        { cohort_id: "c2", unit_id: "c2", sid: "sid-c2", worktree: null, status: "active", blocked_reason: null, next_actor: "agent", gate: null },
       ],
     },
   ],
@@ -168,6 +171,16 @@ export const makeFetch = (): FetchHandler =>
     if (url.includes("/review_items")) return json(REVIEW_ITEMS);
     if (url.includes("/threads")) return json([]);
     if (url.includes("/artifact_details/")) return json(ARTIFACT);
+    if (url.includes("/runs/") && url.includes("/diagnosis")) return json({
+      run: RUN,
+      sessions: SESSIONS.map((attempt) => ({ session_id: attempt.session_id, stage_key: attempt.stage_key,
+        cohort_id: attempt.unit_id, attempt_number: 1, attempt_count: 1, status: "active" })),
+      current_session: { session_id: "sid-c2", stage_key: "build", cohort_id: "c2", attempt_number: 1, attempt_count: 1, status: "active" },
+      sessions_awaiting_action: [{ session_id: "sid-c1", stage_key: "build", cohort_id: "c1", attempt_number: 1, attempt_count: 1, status: "blocked" }],
+      active_gates: GATES.map((gate) => ({ ...gate, cohort_id: gate.unit_id })),
+      recent_artifacts: [{ artifact_id: "art-build", type_id: "dev.build_result", revision: 1, stage_name: "build", label: null, created_at: "2026-09-01T09:00:00Z" }],
+      stage_progress: { total: 1, pending: 0, active: 0, blocked: 1, complete: 0, failed: 0, cancelled: 0 },
+    });
     if (url.includes("/gates")) return json(GATES);
     // Narrower than `/sessions`: kbbl's own per-session reads (skills, stream)
     // live under `/sessions/:sid/...` and must not be answered with the run's
@@ -176,4 +189,3 @@ export const makeFetch = (): FetchHandler =>
     if (url.includes("/runs/")) return json(RUN);
     return json([]);
   });
-

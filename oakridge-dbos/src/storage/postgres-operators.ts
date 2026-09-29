@@ -1,13 +1,9 @@
 import type { ArtifactId, ExecutionId, RunUnitId, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "../domain/primitives";
-import { selectGateActionability, selectPendingStageOrder, selectRunRecordUnitDecision, type OperatorApplicationVersionInventory, type OperatorCohortLifecycle, type OperatorCohortSummary, type OperatorParkedGate, type OperatorReviewInbox, type OperatorReviewInboxItem, type OperatorRunDetail, type OperatorRunRecordDetail, type OperatorRunRecordSlot, type OperatorRunRecordTransition, type OperatorRunRecordUnit, type OperatorRunRecordUnitFacts, type OperatorRunRecordWait, type OperatorRunRecordWorkOrder, type OperatorRunSessionAttempt, type OperatorRunSummary, type OperatorSessionRunLocation, type OperatorStageArtifact, type OperatorStageDetail, type OperatorStageUnit } from "../domain/operator-projections";
+import { selectGateActionability, selectPendingStageOrder, selectRunRecordUnitDecision, type OperatorApplicationVersionInventory, type OperatorCohortSummary, type OperatorParkedGate, type OperatorReviewInbox, type OperatorReviewInboxItem, type OperatorRunDetail, type OperatorRunDiagnosis, type OperatorRunDiagnosisSession, type OperatorRunRecordDetail, type OperatorRunRecordSlot, type OperatorRunRecordTransition, type OperatorRunRecordUnit, type OperatorRunRecordUnitFacts, type OperatorRunRecordWait, type OperatorRunRecordWorkOrder, type OperatorRunSessionAttempt, type OperatorRunSummary, type OperatorSessionRunLocation, type OperatorStageArtifact, type OperatorStageDetail, type OperatorStageUnit } from "../domain/operator-projections";
 import type { RunOutputSlotState } from "../domain/run-record";
 import type { SessionLaunchReasonName } from "../domain/delegated-session";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
-import { selectV2RunStatus, selectV2StageStatus, selectV2UnitStatus } from "../operators/select-status";
-import type { EpicWorkflowProfile } from "../domain/epic";
-import { selectHandoffStatusFromWait, type HandoffWaitKind, type Wait, type WaitOutcome } from "../domain/wait";
-import type { RunState, UnitState } from "../domain/run-record";
-import { effectiveArtifactPredicate } from "./sql-fragments";
+import type { BlockedReason, CoreStatus, NextActor } from "../domain/records";
 import { compileWorkflowDefinition } from "../compiler/compile-workflow";
 import { parseWorkflowDefinition, type AdapterRoleRegistry } from "../validation/workflow-definition";
 import { stageInstanceIdFor } from "../decision/ids";
@@ -27,7 +23,7 @@ interface GateProjectionRow {
   readonly stage_name: string;
   readonly stage_instance_id: string;
   readonly unit_id: string;
-  readonly artifact_revision_id: string;
+  readonly artifact_revision_id: string | null;
   readonly gate_step: string;
   readonly actions: readonly string[];
 }
@@ -234,13 +230,14 @@ export class PostgresDevFlowPullRequestRepository implements DevFlowPullRequestR
 interface V2GateProjectionRow extends GateProjectionRow {
   readonly wait_id: string;
   readonly repository_key: string | null;
-  readonly run_state: RunState;
+  readonly run_state: CoreStatus;
 }
 
 export interface OperatorProjectionRepository {
   list_pending_gates(run_id?: WorkflowRunId): Promise<readonly OperatorParkedGate[]>;
   list_runs(filter?: "active" | "archived" | "all"): Promise<readonly OperatorRunSummary[]>;
   get_run(id: WorkflowRunId): Promise<OperatorRunDetail | null>;
+  get_run_diagnosis(id: WorkflowRunId): Promise<OperatorRunDiagnosis | null>;
   get_review_inbox(): Promise<OperatorReviewInbox>;
   /**
    * The raw cohort projection, without the review inbox's gate overlay. The
@@ -271,12 +268,11 @@ export interface ListRunEventsInput {
   readonly run_id: WorkflowRunId | null;
 }
 
-interface V2RunProjectionRow { readonly id: string; readonly title: string | null; readonly repository_keys: readonly string[]; readonly workflow_name: string; readonly state: RunState; readonly current_stage: string | null; readonly stage_total: string; readonly stage_complete: string; readonly parked_count: string; readonly updated_at: string; readonly is_stuck: boolean; readonly archived: boolean; readonly has_materialized_stage: boolean }
-interface OperatorExecutorReference { readonly kind?: string; readonly session_id?: string; readonly worktree_base_sha?: string }
-interface V2StageProjectionRow { readonly stage_instance_id: string; readonly name: string; readonly stage_type: string; readonly operator_role: string | null; readonly state: RunState; readonly has_open_wait: boolean }
-interface V2UnitProjectionRow { readonly stage_instance_id: string; readonly unit_id: string; readonly params: OperatorStageUnit["params"]; readonly state: UnitState; readonly external_reference: OperatorExecutorReference | null; readonly executor_health_kind: string | null; readonly gate_step: string | null; readonly has_open_wait: boolean; readonly has_missing_required_output: boolean; readonly has_invalidated_required_output: boolean; readonly admission_required: boolean; readonly admitted: boolean; readonly admission_blocked_by: readonly string[] }
+interface V2RunProjectionRow { readonly id: string; readonly title: string | null; readonly repository_keys: readonly string[]; readonly workflow_name: string; readonly status: CoreStatus; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null; readonly current_stage: string | null; readonly stage_total: string; readonly stage_complete: string; readonly attention_count: string; readonly parked_count: string; readonly updated_at: string; readonly archived: boolean }
+interface V2StageProjectionRow { readonly stage_instance_id: string; readonly name: string; readonly stage_type: string; readonly operator_role: string | null; readonly status: CoreStatus; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null }
+interface V2UnitProjectionRow { readonly cohort_id: string; readonly stage_instance_id: string; readonly unit_id: string; readonly params: OperatorStageUnit["params"]; readonly status: CoreStatus; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null; readonly session_id: string | null; readonly gate_step: string | null }
 interface StageArtifactRow { readonly stage_instance_id: string; readonly id: string; readonly type_id: string; readonly version: number; readonly label: string | null; readonly created_at: string }
-interface EpicProfileRow extends Omit<EpicWorkflowProfile, "id" | "workflow_run_id"> { readonly id: string; readonly workflow_run_id: string }
+interface DiagnosisSessionRow { readonly session_id: string; readonly stage_key: string; readonly cohort_id: string; readonly attempt_number: number; readonly attempt_count: number; readonly status: CoreStatus; readonly created_at: string }
 /**
  * A fan-out unit's parameters are the item the stage fanned out over, wrapped.
  *
@@ -287,8 +283,7 @@ interface EpicProfileRow extends Omit<EpicWorkflowProfile, "id" | "workflow_run_
  * test agreed with each other and both disagreed with every real row.
  */
 interface CohortUnitParameters { readonly artifact?: { readonly repository_key?: string; readonly title?: string } | null }
-interface CohortProjectionRow { readonly run_id: string; readonly workflow_name: string; readonly stage_instance_id: string; readonly stage_name: string; readonly unit_id: string; readonly params: CohortUnitParameters | null; readonly dbos_status: string; readonly artifact_revision_id: string | null; readonly handoff_wait_kind: HandoffWaitKind | null; readonly handoff_wait_status: Wait["status"]["kind"] | null; readonly handoff_outcome_kind: WaitOutcome["kind"] | null; readonly verified_pr_url: string | null; readonly reconciliation: OperatorCohortSummary["pull_request_reconciliation"]; readonly updated_at_epoch_ms: string; readonly admission_required: boolean; readonly admitted: boolean; readonly admission_eligible: boolean; readonly admission_blocked_by: readonly string[] }
-interface V2CohortProjectionRow extends Omit<CohortProjectionRow, "dbos_status" | "updated_at_epoch_ms"> { readonly unit_state: UnitState; readonly operator_slot_state: RunOutputSlotState["kind"] | null; readonly operator_invalidation_kind: string | null; readonly updated_at: string }
+interface V2CohortProjectionRow { readonly cohort_id: string; readonly run_id: string; readonly workflow_name: string; readonly stage_instance_id: string; readonly stage_name: string; readonly unit_id: string; readonly params: CohortUnitParameters | null; readonly status: CoreStatus; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null; readonly artifact_revision_id: string | null; readonly verified_pr_url: string | null; readonly reconciliation: OperatorCohortSummary["pull_request_reconciliation"]; readonly updated_at: string }
 
 /**
  * `params.artifact.repository_key` off a fan-out item this run minted
@@ -384,18 +379,20 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
    */
   async list_run_sessions(run_id: WorkflowRunId): Promise<readonly OperatorRunSessionAttempt[]> {
     const rows = await this.sql.query<RunSessionAttemptRow>(
-      `SELECT work.id::text AS work_order_id,
-              attachment.external_reference->>'session_id' AS session_id,
-              unit.stage_instance_id::text AS stage_instance_id, stage.stage_key, unit.unit_id,
-              work.reason, work.state AS work_order_state,
-              work.created_at::text AS created_at, work.completed_at::text AS completed_at,
-              attachment.health->>'kind' AS executor_health_kind, attachment.cleanup_state
-       FROM oakridge.run_unit unit
-       JOIN oakridge.work_order work ON work.run_unit_id = unit.id
-       JOIN oakridge.executor_attachment attachment ON attachment.work_order_id = work.id
-       JOIN oakridge.stage_instance stage ON stage.id = unit.stage_instance_id
-       WHERE unit.run_id = $1 AND attachment.external_reference->>'session_id' IS NOT NULL
-       ORDER BY work.created_at, work.id`, [run_id]);
+      `SELECT attempt.id::text AS work_order_id,session.kbbl_session_id AS session_id,
+              attempt.stage_instance_id::text AS stage_instance_id,stage.stage_key,cohort.cohort_key AS unit_id,
+              transition.launch_reason::text AS reason,
+              CASE session.status WHEN 'pending' THEN 'available' WHEN 'active' THEN 'started'
+                WHEN 'blocked' THEN 'started' WHEN 'complete' THEN 'completed' ELSE 'abandoned' END AS work_order_state,
+              session.created_at::text AS created_at,session.ended_at::text AS completed_at,
+              NULL::text AS executor_health_kind,'not_needed'::text AS cleanup_state
+       FROM oakridge.session session
+       JOIN oakridge.attempt attempt ON attempt.id=session.attempt_id
+       JOIN oakridge.cohort cohort ON cohort.id=attempt.cohort_id
+       JOIN oakridge.stage_instance stage ON stage.id=attempt.stage_instance_id
+       JOIN oakridge.run_transition transition ON transition.id=session.launch_transition_id
+       WHERE session.run_id=$1 AND session.kbbl_session_id IS NOT NULL
+       ORDER BY session.created_at,session.id`, [run_id]);
     return rows.map((row) => ({
       work_order_id: row.work_order_id as WorkOrderId, session_id: row.session_id,
       stage_instance_id: row.stage_instance_id as StageInstanceId, stage_key: row.stage_key,
@@ -413,14 +410,14 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
    */
   async find_run_for_session(session_id: string): Promise<OperatorSessionRunLocation | null> {
     const rows = await this.sql.query<SessionRunLocationRow>(
-      `SELECT unit.run_id::text AS run_id, unit.stage_instance_id::text AS stage_instance_id,
-              stage.stage_key, unit.unit_id, work.id::text AS work_order_id
-       FROM oakridge.executor_attachment attachment
-       JOIN oakridge.work_order work ON work.id = attachment.work_order_id
-       JOIN oakridge.run_unit unit ON unit.id = work.run_unit_id
-       JOIN oakridge.stage_instance stage ON stage.id = unit.stage_instance_id
-       WHERE attachment.external_reference->>'session_id' = $1
-       ORDER BY attachment.updated_at DESC LIMIT 1`, [session_id]);
+      `SELECT session.run_id::text AS run_id,session.stage_instance_id::text AS stage_instance_id,
+              stage.stage_key,cohort.cohort_key AS unit_id,attempt.id::text AS work_order_id
+       FROM oakridge.session session
+       JOIN oakridge.attempt attempt ON attempt.id=session.attempt_id
+       JOIN oakridge.cohort cohort ON cohort.id=attempt.cohort_id
+       JOIN oakridge.stage_instance stage ON stage.id=session.stage_instance_id
+       WHERE session.kbbl_session_id=$1
+       ORDER BY session.created_at DESC LIMIT 1`, [session_id]);
     const row = rows[0];
     if (!row) return null;
     return { run_id: row.run_id as WorkflowRunId, stage_instance_id: row.stage_instance_id as StageInstanceId,
@@ -439,28 +436,27 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     // out per cohort) reports its `collection_key` as `unit_id` instead of the
     // owning unit's own id, so an operator can tell cohort gates apart.
     const rows = await this.sql.query<V2GateProjectionRow>(
-      `SELECT wait.id::text AS wait_id,stage.run_id::text,stage.stage_key AS stage_name,wait.stage_instance_id::text,
-              COALESCE(wait.collection_key,wait.unit_id) AS unit_id,wait.artifact_revision_id::text,wait.closes_on->>'gate_step' AS gate_step,
+      `SELECT wait.id::text AS wait_id,run.id::text AS run_id,stage.stage_key AS stage_name,
+              wait.stage_instance_id::text,cohort.cohort_key AS unit_id,revision.artifact_id::text AS artifact_revision_id,
+              wait.closes_on->>'gate_step' AS gate_step,
               COALESCE(ARRAY(SELECT jsonb_array_elements_text(wait.closes_on->'actions')),ARRAY[]::text[]) AS actions,
-              COALESCE(unit.parameters->'artifact'->>'repository_key',unit.parameters->>'repository_key') AS repository_key,
-              run.state AS run_state
-       FROM oakridge.wait wait
-       JOIN oakridge.run_unit unit ON unit.id=wait.run_unit_id
-       JOIN oakridge.stage_instance stage ON stage.id=unit.stage_instance_id
-       JOIN oakridge.workflow_run run ON run.id=unit.run_id
-       JOIN oakridge.artifact artifact ON artifact.id=wait.artifact_revision_id
+              build_cohort.repository_key,run.status AS run_state
+       FROM oakridge.wait_gate wait
+       JOIN oakridge.workflow_run run ON run.id=wait.run_id
+       LEFT JOIN oakridge.stage_instance stage ON stage.id=wait.stage_instance_id
+       LEFT JOIN oakridge.cohort cohort ON cohort.id=wait.cohort_id
+       LEFT JOIN oakridge.dev_flow_build_cohort build_cohort ON build_cohort.cohort_id=cohort.id
+       LEFT JOIN LATERAL (
+         SELECT linked.artifact_id FROM oakridge.wait_gate_artifact_revision linked
+         WHERE linked.wait_gate_id=wait.id ORDER BY linked.artifact_id LIMIT 1
+       ) revision ON true
        WHERE wait.kind='gate' AND wait.status='open' AND run.archived=false
-         AND artifact.lifecycle_state='current' AND ($1::uuid IS NULL OR run.id=$1::uuid)
-         AND (NOT $2::boolean OR EXISTS (
-           SELECT 1 FROM oakridge.run_output_slot slot
-           WHERE slot.run_unit_id=wait.run_unit_id AND slot.output_name=wait.output_name
-             AND slot.collection_key IS NOT DISTINCT FROM wait.collection_key
-             AND COALESCE(slot.release_policy->>'attention','required')='required'
-         ))
+         AND ($1::uuid IS NULL OR run.id=$1::uuid)
+         AND (NOT $2::boolean OR cohort.next_actor='operator')
        ORDER BY wait.opened_at,wait.id`, [run_id ?? null, requiredAttentionOnly]);
     return rows.map((row) => ({ id: row.wait_id, stage_instance_id: row.stage_instance_id as import("../domain/primitives").StageInstanceId, gate_type: row.gate_step, run_id: row.run_id as WorkflowRunId,
       stage_name: row.stage_name, unit_id: row.unit_id as UnitId, repository_key: row.repository_key,
-      artifact_revision_id: row.artifact_revision_id as ArtifactId, gate_step: row.gate_step, worktree: null,
+      artifact_revision_id: row.artifact_revision_id as ArtifactId | null, gate_step: row.gate_step, worktree: null,
       resume_actions: row.actions,
       pr_url: null, run_state: row.run_state, actionable: selectGateActionability(row.run_state) }));
   }
@@ -471,42 +467,34 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
 
   private async listV2RunSummaries(filter: "active" | "archived" | "all", run_id: WorkflowRunId | null): Promise<readonly OperatorRunSummary[]> {
     const rows = await this.sql.query<V2RunProjectionRow>(
-      `SELECT run.id::text,profile.title,
+      `SELECT run.id::text,run.context->>'title' AS title,
               COALESCE(
-                (SELECT jsonb_agg(repository.value->>'repository_key' ORDER BY repository.ordinality)
-                   FROM jsonb_array_elements(profile.repositories) WITH ORDINALITY repository(value, ordinality)),
                 (SELECT jsonb_agg(repository.value->>'key' ORDER BY repository.ordinality)
                    FROM jsonb_array_elements(CASE WHEN jsonb_typeof(run.context->'repositories')='array' THEN run.context->'repositories' ELSE '[]'::jsonb END) WITH ORDINALITY repository(value, ordinality)),
                 '[]'::jsonb
               ) AS repository_keys,
-              definition.name AS workflow_name,run.state,
+              definition.name AS workflow_name,run.status,run.blocked_reason,run.next_actor,
               current_stage.stage_key AS current_stage,
               (SELECT count(*) FROM jsonb_object_keys(definition.definition->'graph'->'stages'))::text AS stage_total,
-              (SELECT count(*) FROM oakridge.stage_instance stage WHERE stage.run_id=run.id AND stage.attempt_root_workflow_id IS NULL AND stage.state='succeeded')::text AS stage_complete,
+              (SELECT count(*) FROM oakridge.stage_instance stage WHERE stage.run_id=run.id AND stage.status='complete')::text AS stage_complete,
+              (SELECT count(*) FROM oakridge.cohort cohort WHERE cohort.run_id=run.id AND cohort.next_actor='operator')::text AS attention_count,
               COALESCE(waits.parked_count,0)::text AS parked_count,
               GREATEST(run.created_at,COALESCE(run.ended_at,run.created_at),COALESCE(progress.updated_at,run.created_at))::text AS updated_at,
-              EXISTS (SELECT 1 FROM oakridge.stage_instance stage WHERE stage.run_id=run.id AND stage.attempt_root_workflow_id IS NULL) AS has_materialized_stage,
-              run.state='active'
-                AND EXISTS (SELECT 1 FROM oakridge.run_unit unit WHERE unit.run_id=run.id AND unit.state NOT IN ('satisfied','failed','cancelled'))
-                AND NOT EXISTS (SELECT 1 FROM oakridge.wait wait JOIN oakridge.run_unit unit ON unit.id=wait.run_unit_id WHERE unit.run_id=run.id AND wait.status='open')
-                AND NOT EXISTS (SELECT 1 FROM oakridge.work_order work JOIN oakridge.run_unit unit ON unit.id=work.run_unit_id WHERE unit.run_id=run.id AND work.state IN ('available','started'))
-                AND NOT EXISTS (SELECT 1 FROM oakridge.run_unit unit WHERE unit.run_id=run.id AND unit.admitted=false) AS is_stuck,
               run.archived
        FROM oakridge.workflow_run run
        JOIN oakridge.workflow_definition definition ON definition.id=run.workflow_definition_id
-       LEFT JOIN oakridge.epic_workflow_profile profile ON profile.workflow_run_id=run.id
-       LEFT JOIN LATERAL (SELECT stage.stage_key FROM oakridge.stage_instance stage WHERE stage.run_id=run.id AND stage.attempt_root_workflow_id IS NULL AND stage.state='active' ORDER BY stage.started_at DESC LIMIT 1) current_stage ON true
-       LEFT JOIN LATERAL (SELECT count(*) AS parked_count FROM oakridge.wait wait JOIN oakridge.run_unit unit ON unit.id=wait.run_unit_id WHERE unit.run_id=run.id AND wait.status='open') waits ON true
+       LEFT JOIN LATERAL (SELECT stage.stage_key FROM oakridge.stage_instance stage WHERE stage.run_id=run.id AND stage.status IN ('active','blocked') ORDER BY stage.started_at DESC NULLS LAST,stage.created_at DESC LIMIT 1) current_stage ON true
+       LEFT JOIN LATERAL (SELECT count(*) AS parked_count FROM oakridge.wait_gate wait WHERE wait.run_id=run.id AND wait.status='open') waits ON true
        LEFT JOIN LATERAL (SELECT max(transition.created_at) AS updated_at FROM oakridge.run_transition transition WHERE transition.run_id=run.id) progress ON true
        WHERE ($1::boolean IS NULL OR run.archived=$1::boolean) AND ($2::uuid IS NULL OR run.id=$2::uuid)
        ORDER BY updated_at DESC`, [filter === "all" ? null : filter === "archived", run_id]);
     return rows.map((row) => {
-      const parked_count = Number(row.parked_count);
-      const status = selectV2RunStatus({ state: row.state, parked_count, has_materialized_stage: row.has_materialized_stage });
       return { id: row.id as WorkflowRunId, title: row.title, repository_keys: row.repository_keys, workflow_name: row.workflow_name,
-        current_attempt_root_workflow_id: runRecordWorkflowId(row.id as WorkflowRunId), status, current_stage: row.current_stage,
-        stage_total: Number(row.stage_total), stage_complete: Number(row.stage_complete), parked_count,
-        updated_at: row.updated_at, is_stuck: row.is_stuck, is_failed: status === "failed", archived: row.archived };
+        current_attempt_root_workflow_id: runRecordWorkflowId(row.id as WorkflowRunId), status: row.status,
+        blocked_reason: row.blocked_reason, next_actor: row.next_actor, current_stage: row.current_stage,
+        stage_total: Number(row.stage_total), stage_complete: Number(row.stage_complete),
+        attention_count: Number(row.attention_count), parked_count: Number(row.parked_count),
+        updated_at: row.updated_at, archived: row.archived };
     });
   }
 
@@ -674,54 +662,47 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     if (!summary) return null;
     const stageRows = await this.sql.query<V2StageProjectionRow>(
       `SELECT stage.id::text AS stage_instance_id,stage.stage_key AS name,stage.stage_type,
-              stage.stage_contract->>'operator_role' AS operator_role,stage.state,
-              EXISTS (SELECT 1 FROM oakridge.wait wait JOIN oakridge.run_unit unit ON unit.id=wait.run_unit_id WHERE unit.stage_instance_id=stage.id AND wait.status='open') AS has_open_wait
-       FROM oakridge.stage_instance stage WHERE stage.run_id=$1 AND stage.attempt_root_workflow_id IS NULL ORDER BY stage.started_at,stage.stage_key`, [id]);
+              stage.stage_contract->>'operator_role' AS operator_role,stage.status,stage.blocked_reason,stage.next_actor
+       FROM oakridge.stage_instance stage WHERE stage.run_id=$1 ORDER BY stage.created_at,stage.stage_key`, [id]);
     const unitRows = await this.sql.query<V2UnitProjectionRow>(
-      `SELECT unit.stage_instance_id::text,unit.unit_id,unit.parameters AS params,unit.state,attachment.external_reference,
-              attachment.health->>'kind' AS executor_health_kind,
-              gate.gate_step,EXISTS (SELECT 1 FROM oakridge.wait wait WHERE wait.run_unit_id=unit.id AND wait.status='open') AS has_open_wait,
-              EXISTS (SELECT 1 FROM oakridge.run_output_slot slot WHERE slot.run_unit_id=unit.id AND slot.required AND slot.state IN ('empty','invalidated')) AS has_missing_required_output,
-              EXISTS (SELECT 1 FROM oakridge.run_output_slot slot WHERE slot.run_unit_id=unit.id AND slot.required AND slot.state='invalidated') AS has_invalidated_required_output,
-              policy.manual_admission AS admission_required,unit.admitted,
-              COALESCE(ARRAY(SELECT edge.depends_on_unit_id FROM oakridge.run_unit_dependency edge
-                LEFT JOIN oakridge.run_unit dependency ON dependency.stage_instance_id=edge.stage_instance_id AND dependency.unit_id=edge.depends_on_unit_id
-                WHERE edge.stage_instance_id=unit.stage_instance_id AND edge.unit_id=unit.unit_id AND (dependency.id IS NULL OR dependency.state<>'satisfied') ORDER BY edge.depends_on_unit_id),ARRAY[]::text[]) AS admission_blocked_by
-       FROM oakridge.run_unit unit
-       JOIN oakridge.run_stage_scheduling_policy policy ON policy.stage_instance_id=unit.stage_instance_id
-       LEFT JOIN LATERAL (SELECT executor.external_reference,executor.health FROM oakridge.work_order work JOIN oakridge.executor_attachment executor ON executor.work_order_id=work.id WHERE work.run_unit_id=unit.id ORDER BY work.created_at DESC LIMIT 1) attachment ON true
-       LEFT JOIN LATERAL (SELECT wait.closes_on->>'gate_step' AS gate_step FROM oakridge.wait wait WHERE wait.run_unit_id=unit.id AND wait.kind='gate' AND wait.status='open' ORDER BY wait.opened_at LIMIT 1) gate ON true
-       WHERE unit.run_id=$1 ORDER BY unit.stage_instance_id,unit.unit_id`, [id]);
+      `SELECT cohort.id::text AS cohort_id,cohort.stage_instance_id::text,cohort.cohort_key AS unit_id,
+              cohort.stage_data AS params,cohort.status,cohort.blocked_reason,cohort.next_actor,
+              current_session.kbbl_session_id AS session_id,gate.gate_step
+       FROM oakridge.cohort cohort
+       LEFT JOIN LATERAL (
+         SELECT session.kbbl_session_id FROM oakridge.attempt attempt
+         JOIN oakridge.session session ON session.attempt_id=attempt.id
+         WHERE attempt.cohort_id=cohort.id ORDER BY attempt.attempt_number DESC LIMIT 1
+       ) current_session ON true
+       LEFT JOIN LATERAL (
+         SELECT wait.closes_on->>'gate_step' AS gate_step FROM oakridge.wait_gate wait
+         WHERE wait.cohort_id=cohort.id AND wait.kind='gate' AND wait.status='open'
+         ORDER BY wait.opened_at LIMIT 1
+       ) gate ON true
+       WHERE cohort.run_id=$1 ORDER BY cohort.stage_instance_id,cohort.cohort_key`, [id]);
     const artifactRows = await this.sql.query<StageArtifactRow>(
-      `SELECT DISTINCT ON (artifact.stage_instance_id,artifact.unit_id,artifact.output_name,artifact.collection_key)
-              artifact.stage_instance_id::text,artifact.id::text,artifact.artifact_type AS type_id,artifact.version,artifact.label,
+      `SELECT owner.stage_instance_id::text,artifact.id::text,artifact.artifact_type AS type_id,artifact.revision AS version,artifact.label,
               artifact.created_at::text AS created_at
-       FROM oakridge.artifact artifact WHERE artifact.run_id=$1
-         AND EXISTS (SELECT 1 FROM oakridge.run_output_slot visible_slot WHERE visible_slot.artifact_revision_id=artifact.id)
-       ORDER BY artifact.stage_instance_id,artifact.unit_id,artifact.output_name,artifact.collection_key,artifact.version DESC`, [id]);
+       FROM oakridge.artifact artifact JOIN oakridge.artifact_owner owner ON owner.artifact_id=artifact.id
+       WHERE owner.run_id=$1 AND owner.stage_instance_id IS NOT NULL AND artifact.lifecycle IN ('current','released')
+       ORDER BY owner.stage_instance_id,artifact.created_at,artifact.id`, [id]);
     const stages: OperatorStageDetail[] = stageRows.map((stage) => {
       const units: OperatorStageUnit[] = unitRows.filter((unit) => unit.stage_instance_id === stage.stage_instance_id).map((unit) => ({
-        unit_id: unit.unit_id as UnitId, repository_key: selectStageUnitRepositoryKey(unit.params), params: unit.params,
-        sid: unit.external_reference?.kind === "kbbl_session" ? unit.external_reference.session_id ?? null : null,
-        worktree: null, base_sha: unit.external_reference?.worktree_base_sha ?? null,
-        status: selectV2UnitStatus(unit.state, unit.has_open_wait,
-          unit.executor_health_kind === "ended_succeeded" || unit.executor_health_kind === "ended_failed"
-            || unit.executor_health_kind === "ended_cancelled" || unit.executor_health_kind === "unresponsive",
-          unit.has_missing_required_output, unit.has_invalidated_required_output), gate: unit.gate_step,
-        admission_required: unit.admission_required, admitted: unit.admitted,
-        admission_eligible: unit.admission_blocked_by.length === 0, admission_blocked_by: unit.admission_blocked_by,
+        cohort_id: unit.cohort_id as CohortId, unit_id: unit.unit_id as UnitId,
+        repository_key: selectStageUnitRepositoryKey(unit.params), params: unit.params,
+        sid: unit.session_id,
+        worktree: null, base_sha: null,
+        status: unit.status, blocked_reason: unit.blocked_reason, next_actor: unit.next_actor,
+        gate: unit.gate_step, admission_required: false, admitted: true,
+        admission_eligible: true, admission_blocked_by: [],
       }));
       const artifacts = artifactRows.filter((artifact) => artifact.stage_instance_id === stage.stage_instance_id)
         .map((artifact): OperatorStageArtifact => ({ id: artifact.id as ArtifactId, type_id: artifact.type_id, version: artifact.version, label: artifact.label, created_at: artifact.created_at }));
       return { stage_instance_id: stage.stage_instance_id as import("../domain/primitives").StageInstanceId,
         name: stage.name, type: stage.stage_type, operator_role: stage.operator_role,
-        status: selectV2StageStatus(stage.state, stage.has_open_wait), artifacts,
+        status: stage.status, blocked_reason: stage.blocked_reason, next_actor: stage.next_actor, artifacts,
         delegated_kbbl_sid: units.find((unit) => unit.sid)?.sid ?? null, worktree: null, units };
     });
-    const profileRows = await this.sql.query<EpicProfileRow>(`SELECT id::text,workflow_run_id::text,title,slug,lifecycle_state,final_merge_policy,
-      repositories,created_at::text,updated_at::text FROM oakridge.epic_workflow_profile WHERE workflow_run_id=$1`, [id]);
-    const profile = profileRows[0];
-    const epic_profile: EpicWorkflowProfile | null = profile ? { ...profile, id: profile.id as EpicWorkflowProfile["id"], workflow_run_id: profile.workflow_run_id as WorkflowRunId } : null;
     // spec §3.6: a stage's `stage_instance` row exists only once it is ready,
     // so `detail.stages` synthesizes a `"pending"` entry for every definition
     // stage that has none yet — a dedicated single-row lookup, not folded into
@@ -746,12 +727,51 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
         const contract = compiled.value.stages[stage_key];
         if (!contract) continue; // selectPendingStageOrder only yields definition stage keys; defensive only.
         pendingStages.push({ stage_instance_id: stageInstanceIdFor(id, stage_key), name: stage_key, type: contract.stage_type,
-          operator_role: contract.operator_role, status: "pending", artifacts: [], delegated_kbbl_sid: null, worktree: null, units: [] });
+          operator_role: contract.operator_role, status: "pending", blocked_reason: null, next_actor: "core",
+          artifacts: [], delegated_kbbl_sid: null, worktree: null, units: [] });
       }
     }
     return { id: summary.id, title: summary.title, repository_keys: summary.repository_keys, workflow_name: summary.workflow_name, current_attempt_root_workflow_id: summary.current_attempt_root_workflow_id,
-      attempts: [], status: summary.status, stages: [...stages, ...pendingStages], parked_count: summary.parked_count, updated_at: summary.updated_at,
-      is_stuck: summary.is_stuck, epic_profile, run_record: await this.get_run_record_detail(id) };
+      attempts: [], status: summary.status, blocked_reason: summary.blocked_reason, next_actor: summary.next_actor,
+      stages: [...stages, ...pendingStages], parked_count: summary.parked_count, updated_at: summary.updated_at,
+      epic_profile: null, run_record: null };
+  }
+
+  async get_run_diagnosis(id: WorkflowRunId): Promise<OperatorRunDiagnosis | null> {
+    const run = await this.getV2Run(id);
+    if (!run) return null;
+    const sessionRows = await this.sql.query<DiagnosisSessionRow>(
+      `SELECT session.kbbl_session_id AS session_id,stage.stage_key,attempt.cohort_id::text,
+              attempt.attempt_number,count(*) OVER (PARTITION BY attempt.cohort_id)::int AS attempt_count,
+              session.status,session.created_at::text
+       FROM oakridge.session session
+       JOIN oakridge.attempt attempt ON attempt.id=session.attempt_id
+       JOIN oakridge.stage_instance stage ON stage.id=session.stage_instance_id
+       WHERE session.run_id=$1 AND session.kbbl_session_id IS NOT NULL
+       ORDER BY session.created_at,session.id`, [id]);
+    const sessions: OperatorRunDiagnosisSession[] = sessionRows.map((row) => ({
+      session_id: row.session_id, stage_key: row.stage_key, cohort_id: row.cohort_id as CohortId,
+      attempt_number: Number(row.attempt_number), attempt_count: Number(row.attempt_count), status: row.status,
+    }));
+    const current_session = [...sessions].reverse().find((session) => session.status === "active") ?? null;
+    const operatorCohorts = new Set(run.stages.flatMap((stage) => stage.units
+      .filter((unit) => unit.status === "blocked" && unit.next_actor === "operator")
+      .map((unit) => String(unit.cohort_id))));
+    const sessions_awaiting_action = sessions.filter((session) => operatorCohorts.has(String(session.cohort_id))
+      && session.attempt_number === session.attempt_count);
+    const gates = await this.listV2PendingGates(id);
+    const active_gates = gates.filter((gate) => gate.actionable).map((gate) => {
+      const stage = run.stages.find((candidate) => candidate.stage_instance_id === gate.stage_instance_id);
+      const cohort_id = stage?.units.find((unit) => unit.unit_id === gate.unit_id)?.cohort_id ?? null;
+      return { ...gate, cohort_id };
+    });
+    const recent_artifacts = run.stages.flatMap((stage) => stage.artifacts.map((artifact) => ({
+      artifact_id: artifact.id, type_id: artifact.type_id, revision: artifact.version, stage_name: stage.name,
+      label: artifact.label, created_at: artifact.created_at,
+    }))).sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at)).slice(0, 8);
+    const progress = { total: run.stages.length, pending: 0, active: 0, blocked: 0, complete: 0, failed: 0, cancelled: 0 };
+    for (const stage of run.stages) progress[stage.status] += 1;
+    return { run, sessions, current_session, sessions_awaiting_action, active_gates, recent_artifacts, stage_progress: progress };
   }
 
   async get_review_inbox(): Promise<OperatorReviewInbox> {
@@ -767,8 +787,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     const cohorts = projectedCohorts.map((cohort): OperatorCohortSummary => {
       const gate = gates.find((candidate) => candidate.run_id === cohort.run_id && candidate.stage_instance_id === cohort.stage_instance_id && candidate.unit_id === cohort.unit_id);
       if (!gate) return cohort;
-      const lifecycle: OperatorCohortLifecycle = gate.gate_step === "merge_confirmation" ? "merge_confirmation" : "artifact_review";
-      return { ...cohort, lifecycle, artifact_revision_id: gate.artifact_revision_id ?? cohort.artifact_revision_id,
+      return { ...cohort, artifact_revision_id: gate.artifact_revision_id ?? cohort.artifact_revision_id,
         artifact_url: gate.artifact_revision_id ? `/artifact_details/${gate.artifact_revision_id}` : cohort.artifact_url,
         gate_id: gate.id, gate_url: `/gates/${gate.id}/resume`, pr_url: gate.pr_url };
     });
@@ -780,24 +799,20 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
         kind: isMerge ? "merge_confirmation" : "artifact_gate", state: "actionable", run_id: gate.run_id,
         workflow_name: names.get(gate.run_id) ?? "unknown", stage_instance_id: gate.stage_instance_id ?? gate.id.slice(0, gate.id.indexOf(":")) as import("../domain/primitives").StageInstanceId,
         stage_name: gate.stage_name, unit_id: gate.unit_id, repository_key: cohort?.repository_key ?? gate.repository_key, title: cohort?.title ?? null,
-        lifecycle: isMerge ? "merge_confirmation" : "artifact_review", artifact_revision_id: gate.artifact_revision_id,
+        lifecycle: cohort?.lifecycle ?? "blocked", blocked_reason: cohort?.blocked_reason ?? "gate", next_actor: cohort?.next_actor ?? "operator",
+        artifact_revision_id: gate.artifact_revision_id,
         artifact_url: gate.artifact_revision_id ? `/artifact_details/${gate.artifact_revision_id}` : null,
         gate_id: gate.id, gate_url: `/oakridge/gates/${gate.id}`, resume_actions: gate.resume_actions, blocked_by: [], pr_url: gate.pr_url,
       };
     });
     for (const cohort of cohorts) {
-      if (cohort.lifecycle === "waiting_admission") {
-        items.push({ id: `${cohort.id}:admission`, kind: "admission", state: cohort.admission.eligible ? "actionable" : "blocked",
-          run_id: cohort.run_id, workflow_name: cohort.workflow_name, stage_instance_id: cohort.stage_instance_id,
-          stage_name: cohort.stage_name, unit_id: cohort.unit_id, repository_key: cohort.repository_key, title: cohort.title,
-          lifecycle: cohort.lifecycle, artifact_revision_id: null, artifact_url: null, gate_id: null, gate_url: null,
-          resume_actions: cohort.admission.eligible ? ["admit"] : [], blocked_by: cohort.admission.blocked_by, pr_url: cohort.pr_url });
-      }
-      const kind = cohort.lifecycle === "pull_request_mismatch" ? "pull_request_mismatch" : cohort.lifecycle === "failed" ? "cohort_failed" : null;
+      const kind = cohort.lifecycle === "failed" ? "cohort_failed"
+        : cohort.lifecycle === "blocked" && cohort.next_actor !== "operator" && cohort.next_actor !== "external" ? "cohort_blocked" : null;
       if (!kind) continue;
       items.push({ id: `${cohort.id}:${kind}`, kind, state: "blocked", run_id: cohort.run_id, workflow_name: cohort.workflow_name,
         stage_instance_id: cohort.stage_instance_id, stage_name: cohort.stage_name, unit_id: cohort.unit_id,
         repository_key: cohort.repository_key, title: cohort.title, lifecycle: cohort.lifecycle,
+        blocked_reason: cohort.blocked_reason, next_actor: cohort.next_actor,
         artifact_revision_id: cohort.artifact_revision_id, artifact_url: cohort.artifact_url, gate_id: cohort.gate_id,
         gate_url: cohort.gate_url, resume_actions: [], blocked_by: cohort.admission.blocked_by, pr_url: cohort.pr_url });
     }
@@ -806,14 +821,15 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     // surface offered a way to close. The poller normally closes it; the item
     // is `actionable` because an operator has to be able to when it cannot.
     for (const cohort of cohorts) {
-      if (cohort.lifecycle !== "github_review") continue;
+      if (cohort.lifecycle !== "blocked" || cohort.next_actor !== "external" || cohort.pr_url === null) continue;
       items.push({ id: `${cohort.id}:pull_request_merge`, kind: "pull_request_merge", state: "actionable", run_id: cohort.run_id,
         workflow_name: cohort.workflow_name, stage_instance_id: cohort.stage_instance_id, stage_name: cohort.stage_name,
         unit_id: cohort.unit_id, repository_key: cohort.repository_key, title: cohort.title, lifecycle: cohort.lifecycle,
+        blocked_reason: cohort.blocked_reason, next_actor: cohort.next_actor,
         artifact_revision_id: cohort.artifact_revision_id, artifact_url: cohort.artifact_url, gate_id: null,
         gate_url: null, resume_actions: ["confirm_merged"], blocked_by: [], pr_url: cohort.pr_url });
     }
-    return { cohorts, items };
+    return { cohorts, items, attention_count: items.filter((item) => item.state === "actionable").length };
   }
 
   async list_cohorts(): Promise<readonly OperatorCohortSummary[]> {
@@ -821,13 +837,10 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
   }
 
   private async listV2Cohorts(): Promise<readonly OperatorCohortSummary[]> {
-    const rows = await this.sql.query<V2CohortProjectionRow>(`SELECT stage.run_id::text,definition.name AS workflow_name,stage.id::text AS stage_instance_id,
-      stage.stage_key AS stage_name,unit.unit_id,unit.parameters AS params,unit.state AS unit_state,artifact.id::text AS artifact_revision_id,
-      policy.manual_admission AS admission_required,unit.admitted,
-      NOT EXISTS (SELECT 1 FROM oakridge.run_unit_dependency edge LEFT JOIN oakridge.run_unit dependency ON dependency.stage_instance_id=edge.stage_instance_id AND dependency.unit_id=edge.depends_on_unit_id WHERE edge.stage_instance_id=unit.stage_instance_id AND edge.unit_id=unit.unit_id AND (dependency.id IS NULL OR dependency.state<>'satisfied')) AS admission_eligible,
-      COALESCE(ARRAY(SELECT edge.depends_on_unit_id FROM oakridge.run_unit_dependency edge LEFT JOIN oakridge.run_unit dependency ON dependency.stage_instance_id=edge.stage_instance_id AND dependency.unit_id=edge.depends_on_unit_id WHERE edge.stage_instance_id=unit.stage_instance_id AND edge.unit_id=unit.unit_id AND (dependency.id IS NULL OR dependency.state<>'satisfied')),ARRAY[]::text[]) AS admission_blocked_by,
-      handoff.kind AS handoff_wait_kind,handoff.status AS handoff_wait_status,handoff.outcome_kind AS handoff_outcome_kind,
-      operator_slot.state AS operator_slot_state,operator_slot.invalidation_reason->>'kind' AS operator_invalidation_kind,
+    const rows = await this.sql.query<V2CohortProjectionRow>(`SELECT cohort.id::text AS cohort_id,run.id::text AS run_id,
+      definition.name AS workflow_name,stage.id::text AS stage_instance_id,stage.stage_key AS stage_name,
+      cohort.cohort_key AS unit_id,cohort.stage_data AS params,cohort.status,cohort.blocked_reason,cohort.next_actor,
+      artifact.id::text AS artifact_revision_id,
       pull_request.url AS verified_pr_url,CASE WHEN pull_request.id IS NULL THEN NULL ELSE jsonb_build_object(
         'repository_key',build_cohort.repository_key,
         'observation',jsonb_build_object('provider',pull_request.provider,'owner',pull_request.owner,'name',pull_request.name,
@@ -835,33 +848,24 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
           'base_branch',observation.base_ref,'head_sha',observation.head_sha,'state',observation.state,
           'source',observation.source,'observed_at',observation.observed_at,'merged_at',observation.merged_at),
         'mismatch',NULL,'completed_at',merge_closure.confirmed_at,'updated_at',observation.recorded_at) END AS reconciliation,
-      GREATEST(unit.created_at,COALESCE(unit.ended_at,unit.created_at),COALESCE(artifact.created_at,unit.created_at))::text AS updated_at
-      FROM oakridge.run_unit unit JOIN oakridge.stage_instance stage ON stage.id=unit.stage_instance_id
-      JOIN oakridge.workflow_run run ON run.id=unit.run_id JOIN oakridge.workflow_definition definition ON definition.id=run.workflow_definition_id
-      JOIN oakridge.run_stage_scheduling_policy policy ON policy.stage_instance_id=stage.id
-      LEFT JOIN LATERAL (
-        SELECT output.value->>'name' AS output_name
-        FROM jsonb_array_elements(stage.stage_contract->'outputs') output(value)
-        WHERE output.value->'release'->>'kind'='handoff' OR output.value->>'attention'<>'none'
-        ORDER BY (output.value->'release'->>'kind'='handoff') DESC,output.value->>'name'
-        LIMIT 1
-      ) operator_output ON true
-      LEFT JOIN oakridge.run_output_slot operator_slot ON operator_slot.run_unit_id=unit.id AND operator_slot.output_name=operator_output.output_name AND operator_slot.collection_key IS NULL
-      LEFT JOIN LATERAL (SELECT candidate.* FROM oakridge.artifact candidate WHERE candidate.stage_instance_id=stage.id AND candidate.unit_id=unit.unit_id AND candidate.output_name=operator_output.output_name AND ${effectiveArtifactPredicate("candidate")} LIMIT 1) artifact ON true
-      LEFT JOIN LATERAL (SELECT wait.kind,wait.status,wait.outcome->>'kind' AS outcome_kind FROM oakridge.wait wait WHERE wait.artifact_revision_id=artifact.id AND wait.kind IN ('handoff_downstream','handoff_external') ORDER BY (wait.kind='handoff_external') DESC LIMIT 1) handoff ON true
-      LEFT JOIN oakridge.dev_flow_build_cohort build_cohort ON build_cohort.stage_instance_id=stage.id AND build_cohort.cohort_key=unit.unit_id
+      GREATEST(cohort.created_at,COALESCE(cohort.ended_at,cohort.created_at),COALESCE(artifact.created_at,cohort.created_at))::text AS updated_at
+      FROM oakridge.cohort cohort JOIN oakridge.stage_instance stage ON stage.id=cohort.stage_instance_id
+      JOIN oakridge.workflow_run run ON run.id=cohort.run_id JOIN oakridge.workflow_definition definition ON definition.id=run.workflow_definition_id
+      LEFT JOIN LATERAL (SELECT candidate.* FROM oakridge.artifact candidate
+        JOIN oakridge.artifact_owner owner ON owner.artifact_id=candidate.id
+        WHERE owner.cohort_id=cohort.id AND candidate.lifecycle IN ('current','released')
+        ORDER BY candidate.created_at DESC LIMIT 1) artifact ON true
+      LEFT JOIN oakridge.dev_flow_build_cohort build_cohort ON build_cohort.cohort_id=cohort.id
       LEFT JOIN oakridge.pull_request_verification verification ON verification.id=build_cohort.current_verified_pull_request_id AND verification.invalidated_at IS NULL
       LEFT JOIN oakridge.pull_request pull_request ON pull_request.id=verification.pull_request_id
       LEFT JOIN LATERAL (SELECT latest.* FROM oakridge.pull_request_observation latest
         WHERE latest.pull_request_id=verification.pull_request_id AND latest.head_sha=verification.verified_head_sha
         ORDER BY latest.observed_at DESC,latest.recorded_at DESC,latest.id DESC LIMIT 1) observation ON true
       LEFT JOIN oakridge.pull_request_merge_closure merge_closure ON merge_closure.cohort_id=build_cohort.cohort_id
-      WHERE run.archived=false AND stage.attempt_root_workflow_id IS NULL ORDER BY updated_at DESC`, []);
+      WHERE run.archived=false ORDER BY updated_at DESC`, []);
     return rows.map((row) => {
-      const handoffStatus = row.handoff_outcome_kind === "cancelled" ? null : row.handoff_wait_kind && row.handoff_wait_status ? selectHandoffStatusFromWait(row.handoff_wait_kind, row.handoff_wait_status, row.handoff_outcome_kind) : null;
-      const lifecycle: OperatorCohortLifecycle = row.unit_state === "failed" || row.unit_state === "cancelled" ? "failed" : row.operator_slot_state === "invalidated" && row.operator_invalidation_kind === "operator" ? "revision_requested" : row.reconciliation?.mismatch ? "pull_request_mismatch" : handoffStatus === "released" ? "complete" : handoffStatus === "awaiting_external" ? "github_review" : handoffStatus === "revision_requested" ? "revision_requested" : handoffStatus === "awaiting_downstream" ? "assessing" : row.unit_state === "satisfied" ? "complete" : row.admission_required && !row.admitted ? "waiting_admission" : "building";
       const artifact = row.artifact_revision_id as ArtifactId | null; const cohort = row.params?.artifact ?? null;
-      return { id: `${row.stage_instance_id}:${row.unit_id}`,run_id: row.run_id as WorkflowRunId,workflow_name: row.workflow_name,stage_instance_id: row.stage_instance_id as import("../domain/primitives").StageInstanceId,stage_name: row.stage_name,unit_id: row.unit_id as UnitId,repository_key: selectStageUnitRepositoryKey(row.params),title: cohort?.title ?? null,lifecycle,completion: { build_complete: artifact !== null, assessment_complete: lifecycle === "complete" },admission: { required: row.admission_required, admitted: row.admitted, eligible: row.admission_eligible, blocked_by: row.admission_blocked_by },artifact_revision_id: artifact,artifact_url: artifact ? `/artifact_details/${artifact}` : null,gate_id: null,gate_url: null,pr_url: row.verified_pr_url,pull_request_reconciliation: row.reconciliation,updated_at: row.updated_at };
+      return { id: row.cohort_id,run_id: row.run_id as WorkflowRunId,workflow_name: row.workflow_name,stage_instance_id: row.stage_instance_id as import("../domain/primitives").StageInstanceId,stage_name: row.stage_name,unit_id: row.unit_id as UnitId,repository_key: selectStageUnitRepositoryKey(row.params),title: cohort?.title ?? null,lifecycle: row.status,blocked_reason: row.blocked_reason,next_actor: row.next_actor,completion: { build_complete: artifact !== null, assessment_complete: row.status === "complete" },admission: { required: false, admitted: true, eligible: true, blocked_by: [] },artifact_revision_id: artifact,artifact_url: artifact ? `/artifact_details/${artifact}` : null,gate_id: null,gate_url: null,pr_url: row.verified_pr_url,pull_request_reconciliation: row.reconciliation,updated_at: row.updated_at };
     });
   }
 }

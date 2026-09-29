@@ -13,12 +13,15 @@ import assessorParams from "./__fixtures__/run-fd23c8b3-assessor-params.json";
 
 function makeUnit(params: StageUnit["params"]): StageUnit {
   return {
+    cohort_id: "acceptance-and-browser",
     unit_id: "acceptance-and-browser",
     repository_key: null,
     params,
     sid: null,
     worktree: null,
     status: "complete",
+    blocked_reason: null,
+    next_actor: null,
     gate: null,
   };
 }

@@ -52,6 +52,7 @@ interface KbblResolvedSessionIdentity {
   readonly run_id: string;
   readonly stage_instance_id: string;
   readonly unit_id: string;
+  readonly cohort_id: string | null;
   readonly operator_role: string | null;
   readonly cohort_title: string | null;
   readonly repository_key: string | null;
@@ -121,14 +122,14 @@ const parseResolvedConfig = (value: JsonValue): KbblResolvedConfig => {
  */
 const parseSessionIdentity = (value: JsonValue): KbblResolvedSessionIdentity => {
   if (!isObject(value)) throw new Error("kbbl resolved config is missing session_identity");
-  const { run_id, stage_instance_id, unit_id, operator_role, cohort_title, repository_key } = value;
+  const { run_id, stage_instance_id, unit_id, cohort_id, operator_role, cohort_title, repository_key } = value;
   if (typeof run_id !== "string" || run_id.length === 0
     || typeof stage_instance_id !== "string" || stage_instance_id.length === 0
     || typeof unit_id !== "string" || unit_id.length === 0) {
     throw new Error("kbbl resolved config session_identity is missing required fields");
   }
   return {
-    run_id, stage_instance_id, unit_id,
+    run_id, stage_instance_id, unit_id, cohort_id: typeof cohort_id === "string" ? cohort_id : null,
     operator_role: typeof operator_role === "string" ? operator_role : null,
     cohort_title: typeof cohort_title === "string" ? cohort_title : null,
     repository_key: typeof repository_key === "string" ? repository_key : null,
@@ -251,6 +252,7 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
           workflow_run_id: config.session_identity.run_id,
           stage_instance_id: config.session_identity.stage_instance_id,
           unit_id: config.session_identity.unit_id,
+          ...(config.session_identity.cohort_id ? { cohort_id: config.session_identity.cohort_id } : {}),
           ...(config.session_identity.operator_role ? { operator_role: config.session_identity.operator_role } : {}),
           ...(config.session_identity.cohort_title ? { cohort_title: config.session_identity.cohort_title } : {}),
           ...(config.session_identity.repository_key ? { repository_key: config.session_identity.repository_key } : {}),

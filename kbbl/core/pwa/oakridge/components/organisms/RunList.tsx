@@ -10,12 +10,12 @@ import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import { selectStatusTone } from "../../lib/status-tone";
 import { PageHeader } from "../molecules/PageHeader";
 
-type FilterTab = "all" | "active" | "parked" | "complete" | "archived";
+type FilterTab = "all" | "active" | "blocked" | "complete" | "archived";
 
 function applyTabFilter(runs: RunSummary[], tab: FilterTab): RunSummary[] {
   switch (tab) {
-    case "active": return runs.filter((r) => r.status === "pending" || r.status === "running" || r.status === "parked");
-    case "parked": return runs.filter((r) => r.status === "parked");
+    case "active": return runs.filter((r) => r.status === "pending" || r.status === "active" || r.status === "blocked");
+    case "blocked": return runs.filter((r) => r.status === "blocked");
     case "complete": return runs.filter((r) => r.status === "complete" || r.status === "failed" || r.status === "cancelled");
     default: return runs;
   }
@@ -26,8 +26,6 @@ const tableHeaderClass =
 const tableCellClass =
   "border-b border-[var(--border-subtle)] px-3 py-2.5 align-middle";
 function displayStatus(run: RunSummary): RunDisplayStatus {
-  if (run.is_failed || run.status === "failed") return "failed";
-  if (run.is_stuck) return "stuck";
   return run.status;
 }
 
@@ -37,9 +35,8 @@ function statusRowClass(status: RunDisplayStatus): string {
 
 // Tailwind v4's palette tokens differ from the previous status hexes.
 const STATUS_COLOR_CLASS = {
-  running: "[&&]:border-[#3b82f6] [&&]:text-[#3b82f6]",
-  stuck: "[&&]:border-[#fbbf24] [&&]:text-[#fbbf24]",
-  parked: "[&&]:border-[#f59e0b] [&&]:text-[#f59e0b]",
+  active: "[&&]:border-[#3b82f6] [&&]:text-[#3b82f6]",
+  blocked: "[&&]:border-[#f59e0b] [&&]:text-[#f59e0b]",
   failed: "[&&]:border-[#ef4444] [&&]:text-[#ef4444]",
   complete: "[&&]:border-[#10b981] [&&]:text-[#10b981]",
   cancelled: "[&&]:border-[var(--text-muted)]",
@@ -52,18 +49,17 @@ interface RunListProps {
   onNewProject: () => void;
   onWorkflows?: () => void;
   onSelectArtifact?: (id: string) => void;
-  runAttentionCounts?: ReadonlyMap<string, number>;
 }
 
 const FILTER_TABS: { key: FilterTab; label: string }[] = [
   { key: "all", label: "All" },
   { key: "active", label: "Active" },
-  { key: "parked", label: "Parked" },
+  { key: "blocked", label: "Blocked" },
   { key: "complete", label: "Complete" },
   { key: "archived", label: "Archived" },
 ];
 
-export function RunList({ onSelectRun, onNewRun, onNewProject, onWorkflows, onSelectArtifact, runAttentionCounts = new Map() }: RunListProps) {
+export function RunList({ onSelectRun, onNewRun, onNewProject, onWorkflows, onSelectArtifact }: RunListProps) {
   const [activeTab, setActiveTab] = useState<FilterTab>("all");
   const qc = useQueryClient();
   const apiFilter = activeTab === "archived" ? "archived" : undefined;
@@ -142,7 +138,7 @@ export function RunList({ onSelectRun, onNewRun, onNewProject, onWorkflows, onSe
           <tbody>
             {visibleRuns.map((run) => {
               const status = displayStatus(run);
-              const attentionCount = runAttentionCounts.get(run.id) ?? 0;
+              const attentionCount = run.attention_count;
               return (
                 <tr
                   key={run.id}

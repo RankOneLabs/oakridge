@@ -113,6 +113,8 @@ export interface AcpSessionWorkflowIdentity {
   workflow_run_id: string;
   stage_instance_id: string;
   unit_id: string;
+  /** Durable v15 cohort id. Null for sessions launched outside a cohort. */
+  cohort_id?: string | null;
   operator_role: string | null;
   cohort_title: string | null;
   repository_key: string | null;

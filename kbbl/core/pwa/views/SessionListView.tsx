@@ -93,7 +93,7 @@ function SessionRunSection({
             title={group.kind === "cohort"
               ? group.title
               : selectSessionStageName(group.stageInstanceId, runQuery.data) ?? "Stage"}
-            secondaryId={group.kind === "cohort" ? group.unitId : undefined}
+            secondaryId={group.kind === "cohort" ? group.cohortId : undefined}
             repositoryKey={group.repositoryKey}
           />
           <SessionRowList

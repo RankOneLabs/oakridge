@@ -1,5 +1,4 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useRun } from "../../hooks/useRun";
 import { useCancelRun } from "../../hooks/useCancelRun";
 import { useRetryStuck } from "../../hooks/useRetryStuck";
 import { useArchiveRun } from "../../hooks/useArchiveRun";
@@ -7,15 +6,12 @@ import { useUnarchiveRun } from "../../hooks/useUnarchiveRun";
 import { useDeleteRun } from "../../hooks/useDeleteRun";
 import { useAdmitStageUnit } from "../../hooks/useAdmitStageUnit";
 import { useConfirmCohortMerged } from "../../hooks/useConfirmCohortMerged";
-import { useReviewInbox } from "../../hooks/useReviewInbox";
-import { hasOpenPullRequestMergeWait } from "../../lib/run-overview";
-import type { StageDetail } from "../../types";
+import type { RunDiagnosisGate, RunDetail as RunDetailRecord, StageDetail } from "../../types";
 import { RunParkedGateList } from "./ParkedGateList";
 import { RunStageRow, RunUnitRow } from "../molecules/RunStageRows";
 import { StatusBadge } from "../atoms/StatusBadge";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
-import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import { FinalIntegrationPanel } from "./FinalIntegrationPanel";
 
 const tableHeaderClass =
@@ -31,15 +27,17 @@ function isFannedOut(stage: StageDetail): boolean {
 
 interface UnitRetryFacts {
   readonly isRunActive: boolean;
-  readonly isRunStuck: boolean;
+  readonly isRunBlocked: boolean;
   readonly unitStatus: NonNullable<StageDetail["units"]>[number]["status"];
 }
 
-const canRetryUnit = ({ isRunActive, isRunStuck, unitStatus }: UnitRetryFacts): boolean =>
-  isRunActive && (unitStatus === "failed" || (isRunStuck && unitStatus !== "complete"));
+const canRetryUnit = ({ isRunActive, isRunBlocked, unitStatus }: UnitRetryFacts): boolean =>
+  isRunActive && (unitStatus === "failed" || (isRunBlocked && unitStatus !== "complete"));
 
 interface RunDetailProps {
   runId: string;
+  run: RunDetailRecord;
+  activeGates: readonly RunDiagnosisGate[];
   /**
    * Leave the run entirely, because it no longer exists. Only the delete path
    * calls this: the stage list renders inside a workspace pane, so navigation
@@ -53,9 +51,8 @@ interface RunDetailProps {
   onSelectArtifact: (artifactId: string) => void;
 }
 
-export function RunDetail({ runId, onRunDeleted, onSelectArtifact }: RunDetailProps) {
+export function RunDetail({ runId, run, activeGates, onRunDeleted, onSelectArtifact }: RunDetailProps) {
   const qc = useQueryClient();
-  const query = useRun(runId);
   const cancelMutation = useCancelRun(runId);
   const retryMutation = useRetryStuck(runId);
   const archiveMutation = useArchiveRun(runId);
@@ -63,35 +60,14 @@ export function RunDetail({ runId, onRunDeleted, onSelectArtifact }: RunDetailPr
   const deleteMutation = useDeleteRun(runId);
   const admitMutation = useAdmitStageUnit(runId);
   const confirmMergeMutation = useConfirmCohortMerged(runId);
-  const reviewInboxQuery = useReviewInbox();
 
   const onRefresh = () => {
     void qc.invalidateQueries({ queryKey: ["oakridge", "run", runId] });
     void qc.invalidateQueries({ queryKey: ["oakridge", "run", runId, "gates"] });
   };
 
-  if (query.isError) {
-    return (
-      <div className="or-page or-page--wide" data-testid="or-run-detail">
-        <FeedbackMessage tone="danger" testId="or-run-detail-error">
-          {query.error instanceof Error ? query.error.message : "Failed to load run"}
-        </FeedbackMessage>
-      </div>
-    );
-  }
-
-  if (query.isPending || !query.data) {
-    return (
-      <div className="or-page or-page--wide" data-testid="or-run-detail">
-        <FeedbackMessage>Loading run…</FeedbackMessage>
-      </div>
-    );
-  }
-
-  const run = query.data;
-
-  const canCancel = run.status === "running" || run.status === "parked";
-  const isRunActive = run.status === "running" || run.status === "parked";
+  const canCancel = run.status === "active" || run.status === "blocked";
+  const isRunActive = run.status === "active" || run.status === "blocked";
 
   return (
     <div className="or-page or-page--wide" data-testid="or-run-detail">
@@ -103,6 +79,11 @@ export function RunDetail({ runId, onRunDeleted, onSelectArtifact }: RunDetailPr
           </h2>
           <div className="flex flex-wrap gap-2">
             <StatusBadge status={run.status} testId="or-run-detail-status" />
+            {run.status === "blocked" && (
+              <Chip tone="warning" testId="or-run-detail-blocked-reason">
+                {run.blocked_reason} · next: {run.next_actor}
+              </Chip>
+            )}
             {run.parked_count > 0 && (
               <Chip tone="warning" testId="or-run-detail-parked">
                 {run.parked_count} parked
@@ -185,13 +166,9 @@ export function RunDetail({ runId, onRunDeleted, onSelectArtifact }: RunDetailPr
                 const units = stage.units;
                 if (units != null && isFannedOut(stage)) {
                   return units.map((unit) => {
-                    const cohortId = `${stage.stage_instance_id}:${unit.unit_id}`;
-                    const canConfirmMerge = hasOpenPullRequestMergeWait({
-                      items: reviewInboxQuery.data?.items ?? [],
-                      runId,
-                      stageInstanceId: stage.stage_instance_id,
-                      unitId: unit.unit_id,
-                    });
+                    const cohortId = unit.cohort_id;
+                    const canConfirmMerge = activeGates.some((gate) => gate.cohort_id === cohortId
+                      && gate.resume_actions.includes("confirm_merged"));
                     const unitArtifacts = stage.artifacts.filter(
                       (a) => a.label === unit.unit_id,
                     );
@@ -219,7 +196,7 @@ export function RunDetail({ runId, onRunDeleted, onSelectArtifact }: RunDetailPr
                           && retryMutation.variables.unitId === unit.unit_id
                           ? (retryMutation.error instanceof Error ? retryMutation.error.message : "Retry failed")
                           : undefined}
-                        canRetry={canRetryUnit({ isRunActive, isRunStuck: run.is_stuck, unitStatus: unit.status })}
+                        canRetry={canRetryUnit({ isRunActive, isRunBlocked: run.status === "blocked", unitStatus: unit.status })}
                         confirmMerge={canConfirmMerge ? {
                           onConfirm: () => confirmMergeMutation.mutate({
                             cohortId,
@@ -240,7 +217,7 @@ export function RunDetail({ runId, onRunDeleted, onSelectArtifact }: RunDetailPr
                 }
                 const unit = units?.length === 1 ? units[0] : undefined;
                 const shouldOfferRetry = unit !== undefined
-                  && canRetryUnit({ isRunActive, isRunStuck: run.is_stuck, unitStatus: unit.status });
+                  && canRetryUnit({ isRunActive, isRunBlocked: run.status === "blocked", unitStatus: unit.status });
                 return [
             <RunStageRow
                     key={stage.name}
@@ -265,7 +242,7 @@ export function RunDetail({ runId, onRunDeleted, onSelectArtifact }: RunDetailPr
         </div>
       </section>
 
-      <RunParkedGateList runId={runId} />
+      <RunParkedGateList gates={activeGates} />
     </div>
   );
 }

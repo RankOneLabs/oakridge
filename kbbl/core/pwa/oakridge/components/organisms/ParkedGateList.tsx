@@ -1,7 +1,6 @@
 import { Button } from "../../../components/atoms/Button";
 import { useQueryClient } from "@tanstack/react-query";
 import { useGates } from "../../hooks/useGates";
-import { useRunGates } from "../../hooks/useRunGates";
 import type { ParkedGate } from "../../types";
 import { GateDecisionActions } from "./GateDecisionActions";
 
@@ -148,16 +147,13 @@ export function GlobalParkedGateList({ onNavigateRun, onNavigateArtifact }: { on
   );
 }
 
-export function RunParkedGateList({ runId }: { runId: string }) {
-  const query = useRunGates(runId);
-
-  if (query.isPending && !query.data) return null;
-  if (!query.data || query.data.length === 0) return null;
+export function RunParkedGateList({ gates }: { gates: readonly ParkedGate[] }) {
+  if (gates.length === 0) return null;
 
   return (
     <div className="mt-6 flex flex-col gap-3" data-testid="or-run-gate-list">
       <h3 className="mb-2 mt-0 text-sm font-semibold text-[var(--text-secondary)]">Needs attention</h3>
-      {query.data.map((gate: ParkedGate) => (
+      {gates.map((gate: ParkedGate) => (
         <GateCard key={gate.id} gate={gate} />
       ))}
     </div>

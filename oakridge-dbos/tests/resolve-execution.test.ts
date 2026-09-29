@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { resolveBinding, resolveDelegatedExecution } from "../src/compiler/resolve-execution";
 import type { Bindable, DelegatedSessionDefinitionConfig, FanOutDefinition, SlotBinding } from "../src/domain/delegated-session";
 import type { StageOperatorRole } from "../src/domain/workflow";
-import type { StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
+import type { CohortId, StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
 import { loadDevFlowV15 } from "../src/seed/dev-flow-v15";
 import { delegatedSessionDefinitionSchema } from "../src/validation/delegated-session";
 
@@ -74,10 +74,11 @@ test("session_identity carries the run/stage/unit identity and the cohort title 
   const result = resolveDelegatedExecution({
     definition, environment: { inputs: {}, context: { worker_runtime: "claude-code", worker_model: "opus" }, item: null },
     unit: { unit_id: "web" as UnitId, depends_on: [], parameters: { artifact: { title: "Build web", repository_key: "web" } } },
-    stage_instance_id: "stage-1" as StageInstanceId, prompt_template: "build", run_id: RUN_ID, operator_role: "build",
+    stage_instance_id: "stage-1" as StageInstanceId, prompt_template: "build", run_id: RUN_ID,
+    cohort_id: "00000000-0000-4000-8000-000000000003" as CohortId, operator_role: "build",
   });
   expect(result).toEqual({ ok: true, value: expect.objectContaining({
-    session_identity: { run_id: "run-1", stage_instance_id: "stage-1", unit_id: "web", operator_role: "build", cohort_title: "Build web", repository_key: "web" },
+    session_identity: { run_id: "run-1", stage_instance_id: "stage-1", unit_id: "web", cohort_id: "00000000-0000-4000-8000-000000000003", operator_role: "build", cohort_title: "Build web", repository_key: "web" },
   }) });
 });
 
@@ -96,7 +97,7 @@ test("session_identity's cohort_title is null when the stage binds no COHORT_TIT
     stage_instance_id: "assessment-stage" as StageInstanceId, prompt_template: "assess", run_id: RUN_ID, operator_role: "assessment",
   });
   expect(result).toEqual({ ok: true, value: expect.objectContaining({
-    session_identity: { run_id: "run-1", stage_instance_id: "assessment-stage", unit_id: "web", operator_role: "assessment", cohort_title: null, repository_key: "web" },
+    session_identity: { run_id: "run-1", stage_instance_id: "assessment-stage", unit_id: "web", cohort_id: null, operator_role: "assessment", cohort_title: null, repository_key: "web" },
   }) });
 });
 

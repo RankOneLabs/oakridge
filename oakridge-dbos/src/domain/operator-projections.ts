@@ -1,13 +1,14 @@
-import type { ArtifactId, JsonValue, RunUnitId, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "./primitives";
+import type { ArtifactId, CohortId, JsonValue, RunUnitId, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "./primitives";
 import type { EpicWorkflowProfile } from "./epic";
-import type { RunOutputSlotState, RunState, WorkOrderState } from "./run-record";
+import type { RunOutputSlotState, WorkOrderState } from "./run-record";
 import type { SessionLaunchReasonName } from "./delegated-session";
 import type { CompiledWorkflowDefinition } from "./compiled-workflow";
 import type { StageKey } from "./workflow";
+import type { BlockedReason, CoreStatus, NextActor } from "./records";
 
-export type OperatorRunStatus = "pending" | "running" | "parked" | "failed" | "complete" | "cancelled";
-export type OperatorStageStatus = "pending" | "running" | "complete" | "failed" | "parked";
-export interface OperatorRunSummary { readonly id: WorkflowRunId; readonly title: string | null; readonly repository_keys: readonly string[]; readonly workflow_name: string; readonly current_attempt_root_workflow_id: string; readonly status: OperatorRunStatus; readonly current_stage: string | null; readonly stage_total: number; readonly stage_complete: number; readonly parked_count: number; readonly updated_at: string; readonly is_stuck: boolean; readonly is_failed: boolean; readonly archived: boolean }
+export type OperatorRunStatus = CoreStatus;
+export type OperatorStageStatus = CoreStatus;
+export interface OperatorRunSummary { readonly id: WorkflowRunId; readonly title: string | null; readonly repository_keys: readonly string[]; readonly workflow_name: string; readonly current_attempt_root_workflow_id: string; readonly status: OperatorRunStatus; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null; readonly current_stage: string | null; readonly stage_total: number; readonly stage_complete: number; readonly attention_count: number; readonly parked_count: number; readonly updated_at: string; readonly archived: boolean }
 export interface OperatorWorkflowAttempt { readonly root_workflow_id: string; readonly forked_from_root_workflow_id: string | null; readonly status: OperatorRunStatus; readonly created_at: string }
 /**
  * `created_at` is when this version was written, not when the chain began. The
@@ -81,10 +82,10 @@ export interface OperatorSessionRunLocation {
   /** `oakridge.work_order.id` (0011:67) — the attempt whose attachment named the session. */
   readonly work_order_id: WorkOrderId;
 }
-export interface OperatorStageUnit { readonly unit_id: UnitId; readonly repository_key: string | null; readonly params: JsonValue | null; readonly sid: string | null; readonly worktree: { readonly branch: string; readonly path: string; readonly base_ref: string } | null; readonly base_sha: string | null; readonly status: OperatorStageStatus; readonly gate: string | null; readonly admission_required: boolean; readonly admitted: boolean; readonly admission_eligible: boolean; readonly admission_blocked_by: readonly string[] }
-export interface OperatorStageDetail { readonly stage_instance_id: StageInstanceId; readonly name: string; readonly type: string; readonly operator_role: string | null; readonly status: OperatorStageStatus; readonly artifacts: readonly OperatorStageArtifact[]; readonly delegated_kbbl_sid: string | null; readonly worktree: OperatorStageUnit["worktree"]; readonly units: readonly OperatorStageUnit[] }
+export interface OperatorStageUnit { readonly cohort_id: CohortId; readonly unit_id: UnitId; readonly repository_key: string | null; readonly params: JsonValue | null; readonly sid: string | null; readonly worktree: { readonly branch: string; readonly path: string; readonly base_ref: string } | null; readonly base_sha: string | null; readonly status: OperatorStageStatus; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null; readonly gate: string | null; readonly admission_required: boolean; readonly admitted: boolean; readonly admission_eligible: boolean; readonly admission_blocked_by: readonly string[] }
+export interface OperatorStageDetail { readonly stage_instance_id: StageInstanceId; readonly name: string; readonly type: string; readonly operator_role: string | null; readonly status: OperatorStageStatus; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null; readonly artifacts: readonly OperatorStageArtifact[]; readonly delegated_kbbl_sid: string | null; readonly worktree: OperatorStageUnit["worktree"]; readonly units: readonly OperatorStageUnit[] }
 /** `run_record` is the v2 run-record projection (see below) for a run that has any `run_unit` rows; null for a run still running only under the old topology. */
-export interface OperatorRunDetail { readonly id: WorkflowRunId; readonly title: string | null; readonly repository_keys: readonly string[]; readonly workflow_name: string; readonly current_attempt_root_workflow_id: string; readonly attempts: readonly OperatorWorkflowAttempt[]; readonly status: OperatorRunStatus; readonly stages: readonly OperatorStageDetail[]; readonly parked_count: number; readonly updated_at: string; readonly is_stuck: boolean; readonly epic_profile: EpicWorkflowProfile | null; readonly run_record: OperatorRunRecordDetail | null }
+export interface OperatorRunDetail { readonly id: WorkflowRunId; readonly title: string | null; readonly repository_keys: readonly string[]; readonly workflow_name: string; readonly current_attempt_root_workflow_id: string; readonly attempts: readonly OperatorWorkflowAttempt[]; readonly status: OperatorRunStatus; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null; readonly stages: readonly OperatorStageDetail[]; readonly parked_count: number; readonly updated_at: string; readonly epic_profile: EpicWorkflowProfile | null; readonly run_record: OperatorRunRecordDetail | null }
 /**
  * A gate that is open is listed whatever its run's state (spec §1 rule 9 —
  * the operator projection never hides a fact because of the state of its
@@ -92,20 +93,51 @@ export interface OperatorRunDetail { readonly id: WorkflowRunId; readonly title:
  * an operator's decision on this gate can still take effect, so kbbl can
  * render a gate stranded by a failed or cancelled run instead of hiding it.
  */
-export interface OperatorParkedGate { readonly id: string; readonly stage_instance_id?: StageInstanceId; readonly gate_type: string; readonly run_id: WorkflowRunId; readonly stage_name: string; readonly unit_id: UnitId; readonly repository_key: string | null; readonly artifact_revision_id: ArtifactId | null; readonly gate_step: string | null; readonly worktree: OperatorStageUnit["worktree"]; readonly resume_actions: readonly string[]; readonly pr_url: string | null; readonly run_state: RunState; readonly actionable: boolean }
+export interface OperatorParkedGate { readonly id: string; readonly stage_instance_id?: StageInstanceId; readonly gate_type: string; readonly run_id: WorkflowRunId; readonly stage_name: string; readonly unit_id: UnitId; readonly repository_key: string | null; readonly artifact_revision_id: ArtifactId | null; readonly gate_step: string | null; readonly worktree: OperatorStageUnit["worktree"]; readonly resume_actions: readonly string[]; readonly pr_url: string | null; readonly run_state: CoreStatus; readonly actionable: boolean }
+
+export interface OperatorRunDiagnosisSession {
+  readonly session_id: string;
+  readonly stage_key: string;
+  readonly cohort_id: CohortId;
+  readonly attempt_number: number;
+  readonly attempt_count: number;
+  readonly status: CoreStatus;
+}
+export interface OperatorRunDiagnosisGate extends OperatorParkedGate { readonly cohort_id: CohortId | null }
+export interface OperatorRunDiagnosisArtifact { readonly artifact_id: ArtifactId; readonly type_id: string; readonly revision: number; readonly stage_name: string; readonly label: string | null; readonly created_at: string }
+export interface OperatorRunDiagnosisProgress { readonly total: number; readonly pending: number; readonly active: number; readonly blocked: number; readonly complete: number; readonly failed: number; readonly cancelled: number }
+/**
+ * One committed diagnosis read used by every run-workspace view.
+ *
+ * Inventory of the retired read-time answers: the run/stage/unit selectors
+ * produced lifecycle status; the cohort projection produced lifecycle,
+ * admission, gate, artifact, pull-request and completion facts; run-attention
+ * counted actionable gates and stuck work; run-overview joined run identity,
+ * session attempts, current/actionable sessions, gates, artifacts and stage
+ * progress. These named members preserve every distinct fact in one payload.
+ */
+export interface OperatorRunDiagnosis {
+  readonly run: OperatorRunDetail;
+  readonly sessions: readonly OperatorRunDiagnosisSession[];
+  readonly current_session: OperatorRunDiagnosisSession | null;
+  readonly sessions_awaiting_action: readonly OperatorRunDiagnosisSession[];
+  readonly active_gates: readonly OperatorRunDiagnosisGate[];
+  readonly recent_artifacts: readonly OperatorRunDiagnosisArtifact[];
+  readonly stage_progress: OperatorRunDiagnosisProgress;
+}
 
 /** A gate's decision only takes effect while its run is still active. */
-export const selectGateActionability = (run_state: RunState): boolean => run_state === "active";
+export const selectGateActionability = (run_state: CoreStatus): boolean => run_state === "active" || run_state === "blocked";
 export interface OperatorArtifactRevision { readonly id: ArtifactId; readonly status: "draft" | "approved" | "rejected"; readonly lifecycle: "current" | "superseded" | "withdrawn" | "released"; readonly created_at: string; readonly body: JsonValue; readonly validation: JsonValue }
 export interface OperatorArtifactDetail { readonly id: ArtifactId; readonly requested_revision_id: ArtifactId; readonly current_revision_id: ArtifactId | null; readonly type_id: string; readonly component_id: string | null; readonly capabilities: { readonly reviewable: boolean; readonly commentable: boolean; readonly atom_editable: boolean; readonly review_items: boolean } | null; readonly anchor_schema: readonly string[] | null; readonly review: JsonValue | null; readonly run_id: WorkflowRunId; readonly producing_stage: string; readonly label: string | null; readonly revisions: readonly OperatorArtifactRevision[] }
-export type OperatorCohortLifecycle = "waiting_admission" | "building" | "artifact_review" | "revision_requested" | "merge_confirmation" | "assessing" | "github_review" | "pull_request_mismatch" | "complete" | "failed";
+export type OperatorCohortLifecycle = CoreStatus;
 export interface OperatorPullRequestObservation { readonly owner: string; readonly name: string; readonly number: number; readonly url: string; readonly head_branch: string; readonly base_branch: string; readonly state: "open" | "merged" | "closed_unmerged"; readonly observed_at: string }
 export interface OperatorPullRequestMismatch { readonly kind: "missing_repository_identity" | "repository_mismatch" | "pull_request_mismatch" | "head_branch_mismatch" | "base_branch_mismatch" | "closed_without_merge" | "stale_observation"; readonly detail: string }
 export interface OperatorCohortPullRequestReconciliation { readonly repository_key: string; readonly observation: OperatorPullRequestObservation; readonly mismatch: OperatorPullRequestMismatch | null; readonly completed_at: string | null; readonly updated_at: string }
-export interface OperatorReviewInboxItem { readonly id: string; readonly kind: "admission" | "artifact_gate" | "merge_confirmation" | "cohort_blocked" | "cohort_failed" | "pull_request_mismatch" | "pull_request_merge" | "gate_decision"; readonly state: "actionable" | "blocked"; readonly run_id: WorkflowRunId; readonly workflow_name: string; readonly stage_instance_id: StageInstanceId; readonly stage_name: string; readonly unit_id: UnitId; readonly repository_key: string | null; readonly title: string | null; readonly lifecycle: OperatorCohortLifecycle; readonly artifact_revision_id: ArtifactId | null; readonly artifact_url: string | null; readonly gate_id: string | null; readonly gate_url: string | null; readonly resume_actions: readonly string[]; readonly blocked_by: readonly string[]; readonly pr_url: string | null }
-export interface OperatorCohortSummary { readonly id: string; readonly run_id: WorkflowRunId; readonly workflow_name: string; readonly stage_instance_id: StageInstanceId; readonly stage_name: string; readonly unit_id: UnitId; readonly repository_key: string | null; readonly title: string | null; readonly lifecycle: OperatorCohortLifecycle; readonly completion: { readonly build_complete: boolean; readonly assessment_complete: boolean }; readonly admission: { readonly required: boolean; readonly admitted: boolean; readonly eligible: boolean; readonly blocked_by: readonly string[] }; readonly artifact_revision_id: ArtifactId | null; readonly artifact_url: string | null; readonly gate_id: string | null; readonly gate_url: string | null; readonly pr_url: string | null; readonly pull_request_reconciliation: OperatorCohortPullRequestReconciliation | null; readonly updated_at: string }
+export interface OperatorReviewInboxItem { readonly id: string; readonly kind: "admission" | "artifact_gate" | "merge_confirmation" | "cohort_blocked" | "cohort_failed" | "pull_request_mismatch" | "pull_request_merge" | "gate_decision"; readonly state: "actionable" | "blocked"; readonly run_id: WorkflowRunId; readonly workflow_name: string; readonly stage_instance_id: StageInstanceId; readonly stage_name: string; readonly unit_id: UnitId; readonly repository_key: string | null; readonly title: string | null; readonly lifecycle: OperatorCohortLifecycle; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null; readonly artifact_revision_id: ArtifactId | null; readonly artifact_url: string | null; readonly gate_id: string | null; readonly gate_url: string | null; readonly resume_actions: readonly string[]; readonly blocked_by: readonly string[]; readonly pr_url: string | null }
+export interface OperatorCohortSummary { readonly id: string; readonly run_id: WorkflowRunId; readonly workflow_name: string; readonly stage_instance_id: StageInstanceId; readonly stage_name: string; readonly unit_id: UnitId; readonly repository_key: string | null; readonly title: string | null; readonly lifecycle: OperatorCohortLifecycle; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null; readonly completion: { readonly build_complete: boolean; readonly assessment_complete: boolean }; readonly admission: { readonly required: boolean; readonly admitted: boolean; readonly eligible: boolean; readonly blocked_by: readonly string[] }; readonly artifact_revision_id: ArtifactId | null; readonly artifact_url: string | null; readonly gate_id: string | null; readonly gate_url: string | null; readonly pr_url: string | null; readonly pull_request_reconciliation: OperatorCohortPullRequestReconciliation | null; readonly updated_at: string }
 /** The items list is the required-attention decision queue; completed and optional-attention history lives outside the inbox. */
-export interface OperatorReviewInbox { readonly cohorts: readonly OperatorCohortSummary[]; readonly items: readonly OperatorReviewInboxItem[] }
+export interface OperatorReviewInbox { readonly cohorts: readonly OperatorCohortSummary[]; readonly items: readonly OperatorReviewInboxItem[]; readonly attention_count: number }
 export interface OperatorApplicationVersionInventory { readonly application_version: string | null; readonly run_count: number; readonly pending_run_count: number; readonly gated_run_count: number; readonly oldest_pending_at: string | null }
 
 /**

@@ -21,7 +21,6 @@ import { useOakridgeConfig } from "./oakridge/hooks/useOakridgeConfig";
 import { useOakridgeInvalidationStream } from "./oakridge/hooks/useOakridgeInvalidationStream";
 import { useOakridgeRunEventStream } from "./oakridge/hooks/useOakridgeRunEventStream";
 import { useReviewInbox } from "./oakridge/hooks/useReviewInbox";
-import { selectRunAttentionCounts } from "./oakridge/lib/run-attention";
 import { selectRunFrameNotification } from "./oakridge/lib/run-notifications";
 
 export function App() {
@@ -32,8 +31,7 @@ export function App() {
   const isOakridgeAvailable = oakridgeConfig.data?.available === true;
   const reviewInbox = useReviewInbox(isOakridgeAvailable);
   const pushToast = useToastStore((state) => state.pushToast);
-  const runAttentionCounts = selectRunAttentionCounts(reviewInbox.data?.items ?? []);
-  const attentionCount = [...runAttentionCounts.values()].reduce((total, count) => total + count, 0);
+  const attentionCount = reviewInbox.data?.attention_count ?? 0;
 
   // Both Oakridge subscriptions live above the route branch so changing
   // surfaces keeps the shared query cache current and the single EventSource
@@ -85,7 +83,7 @@ export function App() {
   // Workflow routes take precedence over session hashes.
   let view: React.ReactNode;
   if (route?.view === "oakridge") {
-    view = <OakridgeShell route={route.route} runAttentionCounts={runAttentionCounts} />;
+    view = <OakridgeShell route={route.route} />;
   } else if (sid !== null) {
     view = (
       <SessionView
@@ -116,7 +114,7 @@ export function App() {
       />
     );
   } else {
-    view = <OakridgeShell route={{ sub: "runs" }} runAttentionCounts={runAttentionCounts} />;
+    view = <OakridgeShell route={{ sub: "runs" }} />;
   }
 
   return (

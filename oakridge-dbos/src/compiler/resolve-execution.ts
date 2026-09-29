@@ -1,7 +1,7 @@
 import type { MaterializedExecutionUnit } from "../domain/compiled-workflow";
 import { isDelegatedRuntimeId, type Bindable, type DelegatedSessionDefinitionConfig, type ResolvedExecutorConfig, type SessionIdentity, type SessionLaunchReasonName, type SlotBinding } from "../domain/delegated-session";
 import type { ArtifactEnvelope } from "../domain/execution";
-import { err, ok, type JsonValue, type Result, type StageInstanceId, type WorkflowRunId } from "../domain/primitives";
+import { err, ok, type CohortId, type JsonValue, type Result, type StageInstanceId, type WorkflowRunId } from "../domain/primitives";
 import { readJsonPointer } from "../domain/json-pointer";
 import type { StageOperatorRole } from "../domain/workflow";
 
@@ -23,6 +23,7 @@ export interface ResolveDelegatedExecutionInput {
   readonly stage_instance_id: StageInstanceId;
   readonly prompt_template: string;
   readonly run_id: WorkflowRunId;
+  readonly cohort_id?: CohortId | null;
   readonly operator_role: StageOperatorRole | null;
   readonly launch_reason?: SessionLaunchReasonName;
   readonly existing_pull_request?: string | null;
@@ -177,6 +178,7 @@ export const resolveDelegatedExecution = (input: ResolveDelegatedExecutionInput)
     run_id: input.run_id,
     stage_instance_id: input.stage_instance_id,
     unit_id: input.unit.unit_id,
+    cohort_id: input.cohort_id ?? null,
     operator_role: input.operator_role,
     cohort_title: stringSlot(slots, COHORT_TITLE_SLOT),
     repository_key: stringSlot(slots, REPOSITORY_KEY_SLOT),

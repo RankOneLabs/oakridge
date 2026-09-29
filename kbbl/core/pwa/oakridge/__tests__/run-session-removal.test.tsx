@@ -11,7 +11,7 @@ import type { Sid } from "../../lib/ids";
 
 const run: RunDetail = {
   id: "run-removal", title: "Removal regression", repository_keys: [],
-  workflow_name: "dev_flow_v2", status: "parked", is_stuck: false,
+  workflow_name: "dev_flow_v2", status: "blocked", blocked_reason: "gate", next_actor: "operator",
   parked_count: 0, updated_at: "2026-09-01T00:00:00Z", stages: [],
 };
 const attempts: RunSessionAttempt[] = ["deleted", "existing"].map((session_id, index) => ({
@@ -34,7 +34,13 @@ beforeEach(() => {
   useStore.getState().seedSessions([]);
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
-    const body = url.endsWith("/sessions") ? attempts : url.endsWith("/gates") ? [] : run;
+    const body = url.endsWith("/diagnosis") ? {
+      run,
+      sessions: attempts.map((attempt, index) => ({ session_id: attempt.session_id, stage_key: attempt.stage_key,
+        cohort_id: attempt.unit_id, attempt_number: index + 1, attempt_count: attempts.length, status: "complete" })),
+      current_session: null, sessions_awaiting_action: [], active_gates: [], recent_artifacts: [],
+      stage_progress: { total: 0, pending: 0, active: 0, blocked: 0, complete: 0, failed: 0, cancelled: 0 },
+    } : [];
     return new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
   });
 });

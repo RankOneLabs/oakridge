@@ -50,6 +50,7 @@ import type {
   WorkOrderState,
   RunEventFrame,
   RunEventOperation,
+  RunDiagnosis,
 } from "./types";
 import type { Result } from "../lib/result";
 import { parseRepositoryKey } from "./repository-inputs";
@@ -128,6 +129,7 @@ type RawReviewInboxItem = Omit<ReviewInboxItem, "repository_key"> & { repository
 interface RawReviewInbox {
   cohorts: RawCohortLifecycleSummary[];
   items: RawReviewInboxItem[];
+  attention_count: number;
 }
 
 interface ResponseParseError {
@@ -251,7 +253,7 @@ function parseReviewInbox(inbox: RawReviewInbox): Result<ReviewInbox, ResponsePa
     if (!repositoryKey.ok) return repositoryKey;
     items.push({ ...item, repository_key: repositoryKey.value });
   }
-  return ok({ cohorts, items });
+  return ok({ cohorts, items, attention_count: inbox.attention_count });
 }
 
 const FINAL_OUTCOMES = new Set(["waiting", "completed", "already_completed", "mismatch", "ignored_stale", "awaiting_external_confirmation"]);
@@ -434,6 +436,11 @@ export function fetchRuns(filter?: string): Promise<RunSummary[]> {
 export function fetchRun(id: string): Promise<RunDetail> {
   const path = `/runs/${encodeURIComponent(id)}`;
   return oakridgeGet<RawRunDetail>(path).then((value) => unwrapResponse(path, parseRunDetail(value)));
+}
+
+export function fetchRunDiagnosis(id: string): Promise<RunDiagnosis> {
+  const path = `/runs/${encodeURIComponent(id)}/diagnosis`;
+  return oakridgeGet<RunDiagnosis>(path);
 }
 
 export function fetchRunGates(runId: string): Promise<ParkedGate[]> {

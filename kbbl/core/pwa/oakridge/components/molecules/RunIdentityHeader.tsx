@@ -61,14 +61,6 @@ export function RunIdentityHeader({
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <StatusBadge status={run.status} testId="or-run-identity-status" />
-        {run.is_stuck && (
-          <span
-            className="inline-flex h-5 items-center rounded-full border border-red-500 px-2 text-[11px] font-semibold text-red-500"
-            data-testid="or-run-identity-stuck"
-          >
-            stuck
-          </span>
-        )}
         {run.parked_count > 0 && (
           <span
             className="inline-flex h-5 items-center rounded-full bg-amber-500 px-2 text-[11px] font-semibold text-black"

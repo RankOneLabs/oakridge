@@ -14,11 +14,10 @@ import type { ArtifactId } from "../lib/ids";
 import type { WorkflowDefSummary } from "./types";
 interface OakridgeShellInnerProps {
   route: OakridgeSubRoute;
-  runAttentionCounts: ReadonlyMap<string, number>;
   onNavigate: (hash: string) => void;
 }
 
-function OakridgeShellInner({ route, runAttentionCounts, onNavigate }: OakridgeShellInnerProps) {
+function OakridgeShellInner({ route, onNavigate }: OakridgeShellInnerProps) {
   const configQuery = useOakridgeConfig();
 
   // Show loading while the availability check is in flight
@@ -65,7 +64,6 @@ function OakridgeShellInner({ route, runAttentionCounts, onNavigate }: OakridgeS
           onNewProject={navigateToCreateProject}
           onWorkflows={navigateToDefs}
           onSelectArtifact={navigateToArtifact}
-          runAttentionCounts={runAttentionCounts}
         />
       );
       break;
@@ -162,13 +160,12 @@ function OakridgeShellInner({ route, runAttentionCounts, onNavigate }: OakridgeS
 
 interface OakridgeShellProps {
   route: OakridgeSubRoute;
-  runAttentionCounts?: ReadonlyMap<string, number>;
 }
 
-export function OakridgeShell({ route, runAttentionCounts = new Map() }: OakridgeShellProps) {
+export function OakridgeShell({ route }: OakridgeShellProps) {
   const onNavigate = (hash: string) => {
     window.location.hash = hash;
   };
 
-  return <OakridgeShellInner route={route} runAttentionCounts={runAttentionCounts} onNavigate={onNavigate} />;
+  return <OakridgeShellInner route={route} onNavigate={onNavigate} />;
 }

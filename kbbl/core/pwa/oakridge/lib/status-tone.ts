@@ -2,19 +2,19 @@ import type { ChipTone } from "../../components/atoms/Chip";
 import type { AssessmentVerdict, ArtifactRevisionStatus, FindingSeverity, PrReviewStatus, RunDisplayStatus, RunStatus, StageStatus, StageUnitStatus } from "../types";
 
 const RUN_TONE = {
-  pending: "muted", running: "info", parked: "warning", failed: "danger",
+  pending: "muted", active: "info", blocked: "warning", failed: "danger",
   complete: "success", cancelled: "muted",
 } satisfies Record<RunStatus, ChipTone>;
 
 const STAGE_TONE = {
-  pending: "muted", running: "info", parked: "warning", failed: "danger", complete: "success",
+  pending: "muted", active: "info", blocked: "warning", failed: "danger", complete: "success", cancelled: "muted",
 } satisfies Record<StageStatus, ChipTone>;
 
 const UNIT_TONE = {
-  pending: "muted", running: "info", parked: "warning", failed: "danger", complete: "success",
+  pending: "muted", active: "info", blocked: "warning", failed: "danger", complete: "success", cancelled: "muted",
 } satisfies Record<StageUnitStatus, ChipTone>;
 
-const DISPLAY_TONE = { ...RUN_TONE, stuck: "warning" } satisfies Record<RunDisplayStatus, ChipTone>;
+const DISPLAY_TONE = { ...RUN_TONE } satisfies Record<RunDisplayStatus, ChipTone>;
 const ARTIFACT_TONE = { draft: "warning", approved: "success", rejected: "danger" } satisfies Record<ArtifactRevisionStatus, ChipTone>;
 const SEVERITY_TONE = { blocking: "danger", warning: "warning", info: "info" } satisfies Record<FindingSeverity, ChipTone>;
 const VERDICT_TONE = { pass: "success", pass_with_notes: "warning", fail: "danger" } satisfies Record<AssessmentVerdict, ChipTone>;

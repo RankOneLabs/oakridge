@@ -12,7 +12,7 @@ const mutedClass = "text-sm text-[var(--text-muted)]";
 function stageRowClass(status: string): string {
   const base = "transition-colors hover:bg-[var(--bg-elevated)]";
   if (status === "failed") return `${base} opacity-80`;
-  if (status === "parked") return `${base} border-l-2 border-l-amber-500`;
+  if (status === "blocked") return `${base} border-l-2 border-l-amber-500`;
   return base;
 }
 

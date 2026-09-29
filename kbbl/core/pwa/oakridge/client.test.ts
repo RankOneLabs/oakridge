@@ -44,20 +44,23 @@ describe("Oakridge response parsing", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json({
       id: "run-1",
       workflow_name: "legacy",
-      status: "running",
+      status: "active",
+      blocked_reason: null,
+      next_actor: "agent",
       stages: [{
         stage_instance_id: "stage-1",
         name: "build",
         type: "delegated_session",
         status: "pending",
+        blocked_reason: null,
+        next_actor: "core",
         artifacts: [],
         delegated_kbbl_sid: null,
         worktree: null,
-        units: [{ unit_id: "api", repository_key: "  ", sid: null, worktree: null, status: "pending", gate: null }],
+        units: [{ cohort_id: "cohort-api", unit_id: "api", repository_key: "  ", sid: null, worktree: null, status: "pending", blocked_reason: null, next_actor: "core", gate: null }],
       }],
       parked_count: 0,
       updated_at: "2026-08-08T00:00:00Z",
-      is_stuck: false,
     }));
 
     await expect(fetchRun("run-1")).rejects.toThrow("oakridge /runs/run-1: parse repository key");
