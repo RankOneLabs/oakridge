@@ -43,6 +43,24 @@ describe("versioned workflow definition compatibility", () => {
     expect(Object.keys(result.value.graph.stages)).toHaveLength(6);
     expect(result.value.graph.stages.provision_refs?.inputs).toEqual([]);
     expect(result.value.graph.stages.build?.inputs.find((input) => input.name === "repository_refs")?.collect).toBe(true);
+    expect(result.value.graph.stages.build?.config).toEqual(expect.objectContaining({ prompt_matrix: expect.any(Array), role_configs: expect.any(Array) }));
+  });
+
+  test("decodes persisted singular contracts and preserves their revision route", () => {
+    const legacyConfig = (role: "build" | "assessment", terminal: object) => ({ runtime: "claude-code", prompt_template_path: `${role}.md`,
+      slot_bindings: {}, workdir: { from: "literal", value: "/repo" }, session_name: role, pre_authorized_tools: [], yolo: false, ...terminal });
+    const result = parseWorkflowDefinition({ id: "ef2b47a4-d1bd-44ee-840a-e4f7b27570db", name: "legacy", version: 14,
+      created_at: "2026-08-14T00:00:00Z", graph: { stages: {
+        build: { stage_type: "delegated_session", operator_role: "build", inputs: [], outputs: [{ name: "result", artifact_type: "build" }],
+          config: legacyConfig("build", { output_handoff: { output: "result", downstream_role: "assessment", approved_wait: { kind: "review" } } }) },
+        assessor: { stage_type: "delegated_session", operator_role: "assessment", inputs: [], outputs: [{ name: "assessment", artifact_type: "assessment" }],
+          config: legacyConfig("assessment", { output_gate: { output: "assessment", steps: [{ type: "artifact_approval", actions: ["approve", "request_revision"] }], revision_target: "upstream_handoff" } }) },
+      }, edges: [] } });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.graph.stages.assessor?.config).toEqual(expect.objectContaining({ prompt_matrix: expect.any(Array), role_configs: expect.any(Array) }));
+    expect(result.value.graph.transitions).toContainEqual({ trigger: { kind: "operator", stage: "assessor", item: "request_revision" },
+      launch: { stage: "build", session_role: "build", launch_reason: "input_revision" } });
   });
 
   test("parses a declared output attention while keeping it optional", async () => {

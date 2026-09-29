@@ -5,7 +5,7 @@ import type { WorkflowDefinition } from "../src/domain/workflow";
 import { seedBuiltins } from "../src/seed/seed-builtins";
 import type { WorkflowDefinitionRepository } from "../src/storage/repositories";
 
-test("seeds unmodified v14 through the immutable repository boundary", async () => {
+test("seeds unmodified v15 through the immutable repository boundary", async () => {
   const inserted: WorkflowDefinition[] = [];
   const repository: WorkflowDefinitionRepository = {
     async insert_immutable(definition) { inserted.push(definition); return definition; },
@@ -16,7 +16,7 @@ test("seeds unmodified v14 through the immutable repository boundary", async () 
   };
   await seedBuiltins(repository);
   expect(inserted).toHaveLength(1);
-  expect(inserted[0]?.version).toBe(14);
+  expect(inserted[0]?.version).toBe(15);
   expect(inserted[0]?.graph.stages.build?.stage_type).toBe("delegated_session");
   expect(inserted[0]?.graph.stages.provision_refs?.stage_type).toBe("provision_repository_refs");
 });
@@ -32,7 +32,7 @@ test("seeding inserts a changed prompt bundle without mutating immutable definit
   await seedBuiltins(repository);
   expect(bundleHashes).toHaveLength(2);
   expect(definitions).toHaveLength(1);
-  expect(definitions[0]?.version).toBe(14);
+  expect(definitions[0]?.version).toBe(15);
 });
 
 /**

@@ -33,6 +33,7 @@ const body = { workflow_def_id: definition.id, project_id: project.id, context, 
 
 const mountedFixture = (options: { readonly archived?: boolean; readonly start_run_result?: "ok" | "err" } = {}) => {
   let stored: PersistWorkflowRunLaunch | null = null;
+  let boundPromptBundle = promptBundle;
   const starts: RunStartRequest[] = [];
   const summary = { id: deterministicRunId("launch-1"), title: null, repository_keys: [], workflow_name: "flow", status: "running" as const,
     current_attempt_root_workflow_id: "root", current_stage: null, parked_count: 0, updated_at: "2026-08-15T00:00:00Z",
@@ -40,7 +41,7 @@ const mountedFixture = (options: { readonly archived?: boolean; readonly start_r
   const dependencies = {
     definitions: {
       async find_by_id() { return { ...definition, archived: options.archived ?? false }; },
-      async find_bound_prompt_bundle() { return promptBundle; },
+      async find_bound_prompt_bundle() { return boundPromptBundle; },
     },
     projects: { async find_by_id() { return project; } },
     runs: {
@@ -62,7 +63,8 @@ const mountedFixture = (options: { readonly archived?: boolean; readonly start_r
     application_version: "pr2", now: () => "2026-08-15T00:00:00Z",
     adapter_version: "kbbl-v2", artifact_schema_version: "artifacts-v1",
   } as unknown as LaunchRunDependencies;
-  return { app: createRunLaunchApp(dependencies), dependencies, stored: () => stored, starts: () => starts };
+  return { app: createRunLaunchApp(dependencies), dependencies, stored: () => stored, starts: () => starts,
+    bindPromptBundle: (bundle: PromptBundle) => { boundPromptBundle = bundle; } };
 };
 
 const request = (app: ReturnType<typeof createRunLaunchApp>, value: unknown = body) => app.request("/workflow_runs", {
@@ -88,6 +90,14 @@ test("workflow run POST replays the same idempotent launch without a second logi
   expect(replay.status).toBe(201);
   expect((await replay.json()).id).toBe(deterministicRunId("launch-1"));
   expect(subject.starts()).toHaveLength(2);
+});
+
+test("an idempotent replay keeps the run's original bundle pin after prompts change", async () => {
+  const subject = mountedFixture();
+  expect((await request(subject.app)).status).toBe(201);
+  subject.bindPromptBundle({ ...promptBundle, hash: "new-prompt-bundle" });
+  expect((await request(subject.app)).status).toBe(201);
+  expect(subject.stored()?.run.bundle_pin.prompt_bundle_hash).toBe(promptBundle.hash);
 });
 
 test("workflow run POST reports an immutable replay conflict", async () => {

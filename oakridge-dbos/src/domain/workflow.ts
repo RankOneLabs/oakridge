@@ -52,7 +52,11 @@ export interface WorkflowDefinition {
   readonly archived: boolean;
 }
 
-export interface PromptBundleEntry extends PromptMatrixEntry { readonly content: string }
+export interface PromptBundleEntry extends PromptMatrixEntry {
+  /** Stage identity prevents equal role/reason cells in different stages from colliding. */
+  readonly stage_key?: StageKey;
+  readonly content: string;
+}
 export interface PromptBundle {
   readonly version: 1;
   readonly hash: string;

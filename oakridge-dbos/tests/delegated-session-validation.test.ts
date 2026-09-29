@@ -113,3 +113,10 @@ test("a handoff wait with no closing event reports the handoff", () => {
     kind: "wait_without_closing_event", stage_key: "build", wait: "review",
   }));
 });
+
+test("the selected operator role must have a runtime and prompt contract", () => {
+  const parsed = delegatedSessionDefinitionSchema.parse(fanOutDefinition({})) as DelegatedSessionDefinitionConfig;
+  expect(validateDelegatedSessionContracts("build", "assessment", ["result"], parsed)).toContainEqual(expect.objectContaining({
+    kind: "selected_role_missing", stage_key: "build", session_role: "assessment", contract_item: "operator_role",
+  }));
+});

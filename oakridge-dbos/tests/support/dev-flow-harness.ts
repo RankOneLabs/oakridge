@@ -31,7 +31,7 @@ import type { StageOperatorRole, WorkflowDefinition } from "../../src/domain/wor
 import { createOakridgeRuntime, type OakridgeRuntime } from "../../src/runtime/compose";
 import { applyMigrations } from "../../src/storage/migrate";
 import { PgPostgresExecutor } from "../../src/storage/sql-executor";
-import { loadDevFlowV14 } from "../../src/seed/dev-flow-v14";
+import { loadDevFlowV15 } from "../../src/seed/dev-flow-v15";
 
 /**
  * How an execution behaves, for the scenario currently running.
@@ -370,7 +370,7 @@ export const installIntegrationRuntime = async (databaseUrl: string, options: In
     await applyMigrations(migrationSql);
   } finally { await migrationSql.close(); }
 
-  const loaded = await loadDevFlowV14();
+  const loaded = await loadDevFlowV15();
   if (!loaded.ok) throw new Error(loaded.error.detail);
 
   const applicationVersion = `e2e-${crypto.randomUUID()}`;

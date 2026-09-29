@@ -2,10 +2,10 @@ import { expect, test } from "bun:test";
 
 import { compileWorkflowDefinition, type StageTypeCompiler } from "../src/compiler/compile-workflow";
 import { ok } from "../src/domain/primitives";
-import { loadDevFlowV14 } from "../src/seed/dev-flow-v14";
+import { loadDevFlowV15 } from "../src/seed/dev-flow-v15";
 
-test("compiles unchanged v14 into executor-independent materialization contracts", async () => {
-  const loaded = await loadDevFlowV14();
+test("compiles plural v15 into executor-independent materialization contracts", async () => {
+  const loaded = await loadDevFlowV15();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const compiled = compileWorkflowDefinition(loaded.value);
   expect(compiled.ok).toBe(true);
@@ -19,6 +19,8 @@ test("compiles unchanged v14 into executor-independent materialization contracts
   expect(compiled.value.stages.build?.materialization.kind).toBe("fan_out");
   expect(compiled.value.stages.build?.outputs.find((output) => output.name === "build_result")?.release.kind).toBe("handoff");
   expect(compiled.value.edges.find((edge) => edge.consumer_stage === "build" && edge.consumer_input === "brief")?.delivery).toBe("unit_complete");
+  expect(compiled.value.transitions).toContainEqual({ trigger: { kind: "operator", stage: "assessor", item: "request_revision" },
+    launch: { stage: "build", session_role: "build", launch_reason: "input_revision" } });
 });
 
 /**
@@ -27,7 +29,7 @@ test("compiles unchanged v14 into executor-independent materialization contracts
  * which is the contract by which the registered adapter is found.
  */
 test("compiles the provisioning stage into one unreviewed unit per repository", async () => {
-  const loaded = await loadDevFlowV14();
+  const loaded = await loadDevFlowV15();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const compiled = compileWorkflowDefinition(loaded.value);
   if (!compiled.ok) throw new Error(compiled.error.detail);
@@ -43,7 +45,7 @@ test("compiles the provisioning stage into one unreviewed unit per repository", 
  * orders provisioning before it. This edge is the whole fix in one assertion.
  */
 test("build declares the provisioned refs as a required input", async () => {
-  const loaded = await loadDevFlowV14();
+  const loaded = await loadDevFlowV15();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const compiled = compileWorkflowDefinition(loaded.value);
   if (!compiled.ok) throw new Error(compiled.error.detail);
@@ -54,7 +56,7 @@ test("build declares the provisioned refs as a required input", async () => {
 });
 
 test("accepts a non-session executor through the stage-type compiler registry", async () => {
-  const loaded = await loadDevFlowV14();
+  const loaded = await loadDevFlowV15();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const headlessCompiler: StageTypeCompiler = {
     compile: (_stageKey, config) => ok({
@@ -83,7 +85,7 @@ test("accepts a non-session executor through the stage-type compiler registry", 
 });
 
 test("rejects required attention on an immediate output", async () => {
-  const loaded = await loadDevFlowV14();
+  const loaded = await loadDevFlowV15();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const provision = loaded.value.graph.stages.provision_refs!;
   const definition = {
@@ -98,7 +100,7 @@ test("rejects required attention on an immediate output", async () => {
 });
 
 test("accepts no attention on a waiting handoff", async () => {
-  const loaded = await loadDevFlowV14();
+  const loaded = await loadDevFlowV15();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const build = loaded.value.graph.stages.build!;
   const definition = {
@@ -112,7 +114,7 @@ test("accepts no attention on a waiting handoff", async () => {
 });
 
 test("the manifest pipeline reports placeholder, output, and tool failures together", async () => {
-  const loaded = await loadDevFlowV14();
+  const loaded = await loadDevFlowV15();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const build = structuredClone(loaded.value.graph.stages.build!) as any;
   build.config.role_configs[0].session_name = "build-{{MISSING}}";
@@ -130,7 +132,7 @@ test("the manifest pipeline reports placeholder, output, and tool failures toget
 });
 
 test("a schema-invalid stage config joins the all-at-once diagnostic report", async () => {
-  const loaded = await loadDevFlowV14();
+  const loaded = await loadDevFlowV15();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const build = structuredClone(loaded.value.graph.stages.build!) as any;
   build.config.role_configs[0].session_name = "build-{{MISSING}}";
@@ -147,7 +149,7 @@ test("a schema-invalid stage config joins the all-at-once diagnostic report", as
 });
 
 test("automated assessment transitions are visible manifest flags without rejecting compilation", async () => {
-  const loaded = await loadDevFlowV14();
+  const loaded = await loadDevFlowV15();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const transition = { trigger: { kind: "assessment_outcome" as const, stage: "assessor", item: "approved" },
     launch: { stage: "build", session_role: "build" as const, launch_reason: "input_revision" as const } };

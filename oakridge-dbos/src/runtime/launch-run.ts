@@ -57,16 +57,21 @@ export const deterministicRunId = (idempotencyKey: string): WorkflowRunId => {
 export const launchRun = async (request: RunLaunchRequest, dependencies: LaunchRunDependencies): Promise<Result<OperatorRunSummary, RunLaunchError>> => {
   const definition = await dependencies.definitions.find_by_id(request.workflow_def_id);
   if (!definition) return launchFailure("definition_not_found", `workflow definition '${request.workflow_def_id}' was not found`);
-  const promptBundle = await dependencies.definitions.find_bound_prompt_bundle(definition.id);
-  if (!promptBundle) return launchFailure("definition_invalid", `workflow definition '${request.workflow_def_id}' has no bound prompt bundle`);
-  const compiled = compileWorkflowManifest(definition, promptBundle, {
-    adapter_version: dependencies.adapter_version,
-    artifact_schema_version: dependencies.artifact_schema_version,
-  });
-  if (!compiled.ok) return launchFailure("definition_invalid", `workflow definition '${request.workflow_def_id}' does not compile: ${compiled.error.detail}`);
   const runId = request.idempotency_key ? deterministicRunId(request.idempotency_key) : (dependencies.new_id ?? randomUUID)() as WorkflowRunId;
   const existing = await dependencies.runs.find_launch_by_id(runId);
   if (definition.archived && !existing) return launchFailure("definition_archived", `workflow definition '${request.workflow_def_id}' is archived`);
+  let bundlePin = existing?.bundle_pin ?? null;
+  if (!bundlePin) {
+    const promptBundle = await dependencies.definitions.find_bound_prompt_bundle(definition.id);
+    if (!promptBundle) return launchFailure("definition_invalid", `workflow definition '${request.workflow_def_id}' has no bound prompt bundle`);
+    const compiled = compileWorkflowManifest(definition, promptBundle, {
+      adapter_version: dependencies.adapter_version,
+      artifact_schema_version: dependencies.artifact_schema_version,
+    });
+    if (!compiled.ok) return launchFailure("definition_invalid", `workflow definition '${request.workflow_def_id}' does not compile: ${compiled.error.detail}`);
+    bundlePin = compiled.value.bundle_pin ?? null;
+  }
+  if (!bundlePin) return launchFailure("definition_invalid", `workflow definition '${request.workflow_def_id}' did not produce a bundle pin`);
   const project = request.project_id ? await dependencies.projects.find_by_id(request.project_id) : null;
   if (request.project_id && !project) return launchFailure("project_not_found", `project '${request.project_id}' was not found`);
   const context = prepareRunContext({ caller_context: request.context, project, epic_profile: request.epic_profile });
@@ -92,7 +97,7 @@ export const launchRun = async (request: RunLaunchRequest, dependencies: LaunchR
   const epicProfile = request.epic_profile ? createEpicProfile({ id: runId as unknown as EpicWorkflowProfileId,
     workflow_run_id: runId, config: request.epic_profile, created_at: createdAt }) : null;
   const persisted = await dependencies.runs.create_run({
-    run: { id: runId, workflow_definition_id: definition.id, project_id: request.project_id, context, bundle_pin: compiled.value.bundle_pin!,
+    run: { id: runId, workflow_definition_id: definition.id, project_id: request.project_id, context, bundle_pin: bundlePin,
       archived: false, created_at: createdAt },
     epic_profile: epicProfile, workflow_definition_version: definition.version,
   });

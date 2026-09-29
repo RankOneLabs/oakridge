@@ -1,6 +1,6 @@
 import type { WorkflowDefinitionRepository } from "../storage/repositories";
 import type { WorkflowDefinition } from "../domain/workflow";
-import { loadDevFlowV14 } from "./dev-flow-v14";
+import { loadDevFlowV15 } from "./dev-flow-v15";
 import { createPromptBundle, createPromptTemplateLoader } from "../runtime/prompt-template";
 import { resolve } from "node:path";
 
@@ -35,6 +35,7 @@ const SHIPPED_DEV_FLOW_IDS: ReadonlySet<string> = new Set([
   "6d1e9a52-3c74-4c1f-9a3e-2f5b8c0d41a7", // v12
   "7c4a1f38-9b52-4d6e-8a17-3e0c5b9d24f1", // v13
   "3f7b2c95-6d41-4e88-9a52-c1e0f4b7d206", // v14
+  "5a8c3d16-7e42-4f99-8b63-d2f1a6c8e307", // v15
 ]);
 
 /**
@@ -60,8 +61,8 @@ const supersededBuiltIns = (
     SHIPPED_DEV_FLOW_IDS.has(candidate.id) && candidate.version < current.version);
 
 export const seedBuiltins = async (repository: WorkflowDefinitionRepository): Promise<void> => {
-  const definition = await loadDevFlowV14();
-  if (!definition.ok) throw new Error(`built-in dev-flow v14 is invalid: ${definition.error.detail}`);
+  const definition = await loadDevFlowV15();
+  if (!definition.ok) throw new Error(`built-in dev-flow v15 is invalid: ${definition.error.detail}`);
   const bundle = await createPromptBundle(definition.value,
     createPromptTemplateLoader(resolve(import.meta.dir, "../../../workflow-config/prompts")));
   await repository.insert_immutable(definition.value, bundle);

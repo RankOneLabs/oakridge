@@ -4,14 +4,16 @@ import type { ProjectId, WorkflowDefinitionId } from "../src/domain/primitives";
 import type { WorkflowDefinition } from "../src/domain/workflow";
 import { PostgresProjectRepository } from "../src/storage/postgres-projects";
 import { PostgresWorkflowDefinitionRepository } from "../src/storage/postgres-workflow-definitions";
-import type { SqlExecutor } from "../src/storage/sql-executor";
-import { loadDevFlowV14 } from "../src/seed/dev-flow-v14";
+import type { SqlExecutor, TransactionalSqlExecutor } from "../src/storage/sql-executor";
+import { loadDevFlowV15 } from "../src/seed/dev-flow-v15";
 import { createPromptBundle } from "../src/runtime/prompt-template";
 
-class StubSql implements SqlExecutor {
+class StubSql implements TransactionalSqlExecutor {
   readonly calls: Array<{ statement: string; parameters: readonly unknown[] }> = [];
+  transaction_calls = 0;
   constructor(private readonly rows: readonly object[]) {}
   async query<Row extends object>(statement: string, parameters: readonly unknown[]): Promise<readonly Row[]> { this.calls.push({ statement, parameters }); return this.rows as readonly Row[]; }
+  transaction<Value>(operation: (transaction: SqlExecutor) => Promise<Value>): Promise<Value> { this.transaction_calls += 1; return operation(this); }
 }
 
 test("project repository persists and decodes the public project model", async () => {
@@ -53,11 +55,13 @@ test("immutable reseeding ignores archive state and preserves the stored archive
   const sql = new StubSql([{ definition: stored }]);
   const result = await new PostgresWorkflowDefinitionRepository(sql).insert_immutable({ ...stored, archived: false }, { version: 1, hash: "empty", matrix: [] });
   expect(result.archived).toBe(true);
+  expect(sql.transaction_calls).toBe(1);
+  expect(sql.calls).toHaveLength(3);
   expect(sql.calls[0]?.statement).toContain("definition - 'archived' = EXCLUDED.definition - 'archived'");
 });
 
 test("definition registration runs prompt-body placeholder validation before storage", async () => {
-  const loaded = await loadDevFlowV14();
+  const loaded = await loadDevFlowV15();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const bundle = await createPromptBundle(loaded.value, { load: async (path) => path === "dev-flow/build_v2.md" ? "{{MISSPELLED_SLOT}}" : "valid" });
   const sql = new StubSql([]);

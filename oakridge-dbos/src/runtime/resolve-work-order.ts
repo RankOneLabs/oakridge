@@ -87,7 +87,9 @@ const executionRequest = async (input: ExecutionRequestInput, dependencies: Reso
     if (!prompt) throw new Error(`stage '${input.stage.stage_key}' has no prompt for ${input.stage.operator_role}:${launchReason}`);
     const bundle = await dependencies.load_prompt_bundle(input.bundle_pin.prompt_bundle_hash);
     if (!bundle || bundle.hash !== input.bundle_pin.prompt_bundle_hash) throw new Error(`run '${input.run_id}' prompt bundle '${input.bundle_pin.prompt_bundle_hash}' was not found`);
-    const template = bundle.matrix.find((entry) => entry.session_role === input.stage.operator_role && entry.launch_reason === launchReason && entry.template_path === prompt.template_path);
+    const candidates = bundle.matrix.filter((entry) => entry.session_role === input.stage.operator_role && entry.launch_reason === launchReason
+      && entry.template_path === prompt.template_path && (entry.stage_key === undefined || entry.stage_key === input.stage.stage_key));
+    const template = candidates.find((entry) => entry.stage_key === input.stage.stage_key) ?? (candidates.length === 1 ? candidates[0] : undefined);
     if (!template) throw new Error(`prompt bundle '${bundle.hash}' has no content for ${input.stage.operator_role}:${launchReason}`);
     const planned = resolveDelegatedExecution({ definition, environment: { inputs: unitInputs, context: input.context, item: input.unit.parameters }, unit: input.unit,
       stage_instance_id: input.stage_instance_id, prompt_template: template.content,

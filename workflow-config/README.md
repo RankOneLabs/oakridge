@@ -3,7 +3,7 @@
 Shared data for the TypeScript backend in `oakridge-dbos/`:
 
 - `definitions/` contains versioned JSON workflow definitions. The current
-  built-in seed loads `dev_flow_v14.json`; older definitions are retained for
+  built-in seed loads `dev_flow_v15.json`; older definitions are retained for
   reference and compatibility tests, not automatically offered as new runs.
 - `prompts/` contains Markdown templates. Each delegated stage declares a
   `prompt_matrix` keyed by session role and launch reason; template paths are

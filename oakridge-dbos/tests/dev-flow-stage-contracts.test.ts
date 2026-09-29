@@ -7,7 +7,7 @@ import type { CompiledStageContract, MaterializedExecutionUnit } from "../src/do
 import type { DelegatedSessionDefinitionConfig } from "../src/domain/delegated-session";
 import type { ArtifactEnvelope } from "../src/domain/execution";
 import type { ArtifactId, JsonValue, StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
-import { loadDevFlowV14 } from "../src/seed/dev-flow-v14";
+import { loadDevFlowV15 } from "../src/seed/dev-flow-v15";
 
 const stageInstanceId = "stage-1" as StageInstanceId;
 const runId = "run-1" as WorkflowRunId;
@@ -38,7 +38,7 @@ const repositoryRefs = [envelope("refs-1", "dev.repository_refs", "repository_re
 })];
 
 const loadCompiled = async () => {
-  const loaded = await loadDevFlowV14();
+  const loaded = await loadDevFlowV15();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const compiled = compileWorkflowDefinition(loaded.value);
   if (!compiled.ok) throw new Error(compiled.error.detail);

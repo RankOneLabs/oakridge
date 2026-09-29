@@ -3,7 +3,7 @@ import { resolveBinding, resolveDelegatedExecution } from "../src/compiler/resol
 import type { Bindable, DelegatedSessionDefinitionConfig, FanOutDefinition, SlotBinding } from "../src/domain/delegated-session";
 import type { StageOperatorRole } from "../src/domain/workflow";
 import type { StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
-import { loadDevFlowV14 } from "../src/seed/dev-flow-v14";
+import { loadDevFlowV15 } from "../src/seed/dev-flow-v15";
 import { delegatedSessionDefinitionSchema } from "../src/validation/delegated-session";
 
 const RUN_ID = "run-1" as WorkflowRunId;
@@ -146,7 +146,7 @@ test("a definition cannot rebind the slots that identify the execution", () => {
  * definition binds no identity slot, and the address it renders is the unit.
  */
 test("the seeded build stage addresses the unit it is running", async () => {
-  const seeded = await loadDevFlowV14();
+  const seeded = await loadDevFlowV15();
   if (!seeded.ok) throw new Error(`seed did not load: ${seeded.error.detail}`);
 
   const build = seeded.value.graph.stages.build;

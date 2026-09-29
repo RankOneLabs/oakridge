@@ -174,7 +174,7 @@ export const compileWorkflowDefinition = (definition: WorkflowDefinition, regist
   const flags = (definition.graph.transitions ?? []).filter((transition) => transition.trigger.kind === "assessment_outcome")
     .map((transition) => ({ kind: "automated_assessment_transition" as const, stage_key: transition.launch.stage,
       session_role: transition.launch.session_role, contract_item: transition.trigger.item, trigger: transition.trigger.item }));
-  return ok({ manifest_version: 1, stages, edges, source_stages, flags });
+  return ok({ manifest_version: 1, stages, edges, transitions: definition.graph.transitions ?? [], source_stages, flags });
 };
 
 export interface CompileManifestVersions {
@@ -195,8 +195,9 @@ export const compileWorkflowManifest = (
     if (node.stage_type !== "delegated_session") continue;
     const parsed = delegatedSessionDefinitionSchema.safeParse(node.config);
     if (!parsed.success) continue;
-    const cells = promptBundle.matrix.filter((entry) => parsed.data.prompt_matrix.some((declared) =>
-      declared.session_role === entry.session_role && declared.launch_reason === entry.launch_reason && declared.template_path === entry.template_path));
+    const cells = promptBundle.matrix.filter((entry) => (entry.stage_key === undefined || entry.stage_key === stageKey)
+      && parsed.data.prompt_matrix.some((declared) => declared.session_role === entry.session_role
+        && declared.launch_reason === entry.launch_reason && declared.template_path === entry.template_path));
     promptDiagnostics.push(...validatePromptBundleBindings(stageKey, parsed.data, cells));
   }
   if (!compiled.ok || promptDiagnostics.length > 0) {
