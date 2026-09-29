@@ -4,6 +4,10 @@ The v15 migration is a destructive baseline. It has no upgrade path from the
 22-file schema and no application code reads the backup. The backup preserves
 the provenance of old run IDs and cited artifacts.
 
+Run this procedure after the v15 epic has merged and been deployed, as a deploy
+step on the application host. Never run it during a workflow run because the
+application database holds that run's own control-plane state.
+
 Run these commands from the Oakridge checkout on the application host. The
 always-on hub is `willie`; dumps live at
 `willie:/srv/oakridge/backups/v15/`. Replace the service commands only when the

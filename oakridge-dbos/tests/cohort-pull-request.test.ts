@@ -345,16 +345,17 @@ test("cohort HTTP exposes the verification id needed to authorize replacement", 
 });
 
 test("repository-specific cohort refs drive both storage and prompt contracts", () => {
-  const api = selectCohortBranchRoles("api", { base_branch: "epic/api" });
-  const web = selectCohortBranchRoles("web", { base_branch: "release/web" });
-  expect(api).toEqual({ canonical_ref: "cohort/api", expected_pr_base: "epic/api" });
-  expect(web).toEqual({ canonical_ref: "cohort/web", expected_pr_base: "release/web" });
+  const api = selectCohortBranchRoles("stage-one" as StageInstanceId, "api", { base_branch: "epic/api" });
+  const web = selectCohortBranchRoles("stage-two" as StageInstanceId, "web", { base_branch: "release/web" });
+  expect(api).toEqual({ canonical_ref: "cohort/stage-one/api", expected_pr_base: "epic/api" });
+  expect(web).toEqual({ canonical_ref: "cohort/stage-two/web", expected_pr_base: "release/web" });
   expect(renderCohortBranchContract(web)).toContain("Pull request base: release/web");
 });
 
 test("cohort preparation creates the canonical ref and persists the roles rendered for the agent", async () => {
   const fixture = await createGitRepositoryFixture();
   try {
+    const canonicalRef = `cohort/${expected.stage_instance_id}/foundation`;
     let stored: DevFlowBuildCohort | null = null;
     const repository = {
       async find_cohort_for_unit() { return stored; },
@@ -369,9 +370,9 @@ test("cohort preparation creates the canonical ref and persists the roles render
       prepared_at: "2026-09-29T00:00:00Z",
     });
     expect(result.ok).toBe(true);
-    expect(stored).toEqual(expect.objectContaining({ canonical_ref: "cohort/foundation", expected_pr_base: "epic/tiers" }));
-    expect(result.ok && result.value.branch_contract).toContain("Canonical cohort ref: cohort/foundation");
-    expect(await fixture.origin_branch_sha("cohort/foundation")).toBe(baseHead);
+    expect(stored).toEqual(expect.objectContaining({ canonical_ref: canonicalRef, expected_pr_base: "epic/tiers" }));
+    expect(result.ok && result.value.branch_contract).toContain(`Canonical cohort ref: ${canonicalRef}`);
+    expect(await fixture.origin_branch_sha(canonicalRef)).toBe(baseHead);
   } finally {
     await fixture.remove();
   }
@@ -410,7 +411,7 @@ test("stored cohort advance recovers when origin already has the requested head"
 });
 
 test("cohort preparation refuses a deleted stored canonical ref", async () => {
-  const cohort = storedCohort("/repo", "old-head");
+  const cohort = { ...storedCohort("/repo", "old-head"), canonical_ref: `cohort/${expected.stage_instance_id}/foundation` };
   const repository = { async find_cohort_for_unit() { return cohort; } } as unknown as DevFlowPullRequestRepository;
   const git = { async run() { return { exit_code: 0, stdout: "", stderr: "" }; } };
   const result = await prepareDevFlowBuildCohort({ pull_requests: repository, git }, {

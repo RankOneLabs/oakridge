@@ -10,7 +10,7 @@ test("prompt bundle hash covers template content without changing the definition
   const contents = new Map<string, string>();
   const loader: PromptTemplateLoader = { load: async (path) => contents.get(path) ?? path };
   const first = await createPromptBundle(loaded.value, loader);
-  contents.set("dev-flow/build_v2.md", "edited build prompt");
+  contents.set("dev-flow/v15/build/build/initial_build.md", "edited build prompt");
   const second = await createPromptBundle(loaded.value, loader);
   expect(second.hash).not.toBe(first.hash);
   expect(loaded.value.version).toBe(15);
@@ -23,7 +23,7 @@ test("prompt bundle hash covers template content without changing the definition
 test("manifest compilation validates placeholders inside prompt bundle content", async () => {
   const loaded = await loadDevFlowV15();
   if (!loaded.ok) throw new Error(loaded.error.detail);
-  const bundle = await createPromptBundle(loaded.value, { load: async (path) => path === "dev-flow/build_v2.md" ? "Build {{TYPO_SLOT}}" : "valid" });
+  const bundle = await createPromptBundle(loaded.value, { load: async (path) => path === "dev-flow/v15/build/build/initial_build.md" ? "Build {{TYPO_SLOT}}" : "valid" });
   const manifest = compileWorkflowManifest(loaded.value, bundle, { adapter_version: "adapter-7", artifact_schema_version: "artifacts-3" });
   expect(manifest.ok).toBe(false);
   if (manifest.ok) return;

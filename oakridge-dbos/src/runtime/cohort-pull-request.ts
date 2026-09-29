@@ -64,7 +64,7 @@ export const prepareDevFlowBuildCohort = async (
   dependencies: { readonly pull_requests: DevFlowPullRequestRepository; readonly git: GitCommandRunner },
   input: PrepareDevFlowBuildCohortInput,
 ): Promise<Result<PreparedDevFlowBuildCohort, PrepareDevFlowBuildCohortError>> => {
-  const roles = selectCohortBranchRoles(input.cohort_key, input.repository);
+  const roles = selectCohortBranchRoles(input.stage_instance_id, input.cohort_key, input.repository);
   const existing = await dependencies.pull_requests.find_cohort_for_unit(input.stage_instance_id, input.cohort_key as UnitId);
   if (existing && (existing.cohort_id !== input.cohort_id || existing.repository_key !== input.repository.repository_key
       || existing.repository_path !== input.repository.repository_path || existing.canonical_ref !== roles.canonical_ref

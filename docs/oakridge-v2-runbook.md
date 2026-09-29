@@ -135,17 +135,16 @@ an intentional new submission after confirmed success receives a new identity.
 The standard flow is:
 
 ```text
-spec → plan → build (runtime-N children) → assessment/gates → review/final integration
-provision refs ──────────────┘
+provision refs → spec → plan → brief → build (builder/assessor loop) → final integration
 ```
 
-`provision refs` runs from the start of the run, alongside spec analysis, and
-costs no wall-clock: it only has to finish before `build`. One unit per
-repository guarantees that repository's epic branch exists on origin — seeding
-it from the base branch when it does not — and emits the refs as a
-`dev.repository_refs` artifact. `build` declares that artifact as an input and
-resolves each cohort's working copy and worktree base from it, so a cohort can
-only ever be branched from a ref a stage has established.
+`provision refs` is the source stage. One unit per repository guarantees that
+repository's epic branch exists on origin, seeding it from the integration
+branch when needed, and emits a `dev.repository_refs` artifact. Every later
+stage that uses repository topology declares those refs as an input. The build
+stage owns both builder and assessor sessions for each cohort; after every
+cohort PR has passed both review gates and merged, `final integration` opens one
+PR per repository from the run's base branch to its integration branch.
 
 A repository that cannot be provisioned (a path that is not a git repository, a
 base branch origin does not have, a push origin refuses) fails as an ordinary
