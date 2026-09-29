@@ -634,7 +634,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
         delegated_kbbl_sid: units.find((unit) => unit.sid)?.sid ?? null, worktree: null, units };
     });
     const profileRows = await this.sql.query<EpicProfileRow>(`SELECT id::text,workflow_run_id::text,title,slug,lifecycle_state,final_merge_policy,
-      base_branch,repositories,created_at::text,updated_at::text FROM oakridge.epic_workflow_profile WHERE workflow_run_id=$1`, [id]);
+      repositories,created_at::text,updated_at::text FROM oakridge.epic_workflow_profile WHERE workflow_run_id=$1`, [id]);
     const profile = profileRows[0];
     const epic_profile: EpicWorkflowProfile | null = profile ? { ...profile, id: profile.id as EpicWorkflowProfile["id"], workflow_run_id: profile.workflow_run_id as WorkflowRunId } : null;
     // spec §3.6: a stage's `stage_instance` row exists only once it is ready,

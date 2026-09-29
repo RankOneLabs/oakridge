@@ -119,7 +119,7 @@ export const observeFinalPullRequest = (
   const reference = repository.final_pull_request ?? {
     number: urlIdentity.number,
     url: input.observation.url,
-    head_branch: input.profile.base_branch,
+    head_branch: input.observation.head_branch,
     base_branch: repository.integration_branch,
   };
   let finding: PullRequestMismatch | null = null;
@@ -129,8 +129,6 @@ export const observeFinalPullRequest = (
     finding = pullRequestMismatch("repository_mismatch", "observed pull request belongs to another repository");
   } else if (!pullRequestReferencesMatch(reference, input.observation)) {
     finding = pullRequestMismatch("pull_request_mismatch", "observed pull request does not match the build's durable PR identity");
-  } else if (input.observation.head_branch !== input.profile.base_branch) {
-    finding = pullRequestMismatch("head_branch_mismatch", "observed pull request head branch does not match the epic's base branch");
   } else if (input.observation.base_branch !== repository.integration_branch) {
     finding = pullRequestMismatch("base_branch_mismatch", "observed pull request base branch does not match the repository integration branch");
   } else if (input.observation.state === "closed_unmerged") {

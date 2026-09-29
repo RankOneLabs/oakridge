@@ -14,7 +14,6 @@ const profile = (policy: EpicWorkflowProfile["final_merge_policy"] = "external_c
   id: "00000000-0000-0000-0000-000000000001" as EpicWorkflowProfileId,
   workflow_run_id: "00000000-0000-0000-0000-000000000002" as WorkflowRunId,
   title: "Epic", slug: "epic", lifecycle_state: "final_integration", final_merge_policy: policy,
-  base_branch: "epic/parity",
   repositories: ["api", "web"].map((repository_key) => ({
     repository_key, repository_path: `/repos/${repository_key}`, integration_branch: "main",
     forge_repository: { provider: "github", owner: "acme", name: repository_key }, final_pull_request: null, final_merge_state: "pending",

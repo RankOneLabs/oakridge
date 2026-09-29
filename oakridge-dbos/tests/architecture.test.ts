@@ -105,6 +105,16 @@ test("operator and downstream roles are not closed over dev-flow names", async (
   expect(combined).not.toMatch(/z\.enum\(\[[^\]]*["'](?:spec|plan|brief|build|assessment|final_integration)["']/s);
 });
 
+test("core never reads final integration branch or merge policy", async () => {
+  const files = [...await decisionSources(), join(SOURCE, "domain", "records.ts")];
+  const core = (await Promise.all(files.map((file) => readFile(file, "utf8")))).join("\n");
+  expect(core).not.toContain(".integration_branch");
+  expect(core).not.toContain(".final_merge_policy");
+  const adapter = await readFile(join(SOURCE, "domain", "final-pull-request.ts"), "utf8");
+  expect(adapter).toContain("repository.integration_branch");
+  expect(adapter).toContain("profile.final_merge_policy");
+});
+
 test("lifecycle status SQL has one writer", async () => {
   const files = await treeSources(SOURCE);
   const writers = (await Promise.all(files.map(async (file) => ({ file, source: await readFile(file, "utf8") }))))
