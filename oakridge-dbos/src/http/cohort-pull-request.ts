@@ -80,9 +80,12 @@ export const createCohortPullRequestApp = (dependencies: CohortPullRequestHttpDe
     const result = await reconcileCohortEvidence(dependencies, stageInstanceId, unitId, evidence);
     if (!result.ok) {
       const status = result.error.kind === "cohort_not_found" ? 404 : result.error.kind === "mismatch" ? 409 : 409;
-      return http.json({ error: result.error.detail, code: result.error.kind, ...(result.error.reconciliation ? { reconciliation: result.error.reconciliation } : {}) }, status);
+      return http.json({ error: result.error.detail, code: result.error.kind,
+        ...(result.error.current_verification_id ? { current_verification_id: result.error.current_verification_id } : {}),
+        ...(result.error.reconciliation ? { reconciliation: result.error.reconciliation } : {}) }, status);
     }
-    return http.json({ cohort_id: compositeId, outcome: result.value.resolution, reconciliation: result.value.reconciliation }, 202);
+    return http.json({ cohort_id: compositeId, outcome: result.value.resolution,
+      verification_id: result.value.verification_id, reconciliation: result.value.reconciliation }, 202);
   });
   return app;
 };

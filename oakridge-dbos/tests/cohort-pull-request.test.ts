@@ -7,9 +7,10 @@ import {
 import { invalidatePullRequestForReplacement, type PullRequestApproval, type PullRequestObservation, type PullRequestObservationId, type PullRequestId, type PullRequestVerificationId, type VerifiedPullRequestLink } from "../src/domain/pull-request";
 import type { ArtifactId, CohortId, StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
 import { renderCohortBranchContract, selectCohortBranchRoles } from "../src/domain/repository-refs";
-import { advanceCohortRef, advanceStoredCohortRef, prepareDevFlowBuildCohort, verifyCohortPullRequest } from "../src/runtime/cohort-pull-request";
+import { advanceCohortRef, advanceStoredCohortRef, prepareDevFlowBuildCohort, verifyAndBindCohortPullRequest, verifyCohortPullRequest } from "../src/runtime/cohort-pull-request";
 import { BunGitCommandRunner } from "../src/runtime/git-command-runner";
 import type { DevFlowPullRequestRepository } from "../src/storage/repositories";
+import { createCohortPullRequestApp } from "../src/http/cohort-pull-request";
 import { createGitRepositoryFixture } from "./support/dev-flow-harness";
 
 const firstHandoffId = "00000000-0000-4000-8000-000000000003" as ArtifactId;
@@ -213,6 +214,20 @@ test("verification refuses a forge head commit that is not the pushed head", asy
   }
 });
 
+test("independent verification failure emits the corrective build event", async () => {
+  const cohort = storedCohort("/repo", "pushed-head");
+  const events: { readonly kind: string }[] = [];
+  const result = await verifyAndBindCohortPullRequest({ pull_requests: {} as DevFlowPullRequestRepository,
+    reader: { async read() { return observation({ state: "open", merged_at: null, head_sha: "claimed-head" }); } },
+    git: { async run() { return { exit_code: 0, stdout: "pushed-head\trefs/heads/cohort/foundation\n", stderr: "" }; } },
+    now: () => "2026-09-29T01:00:00Z", async record_build_event(_id, event) { events.push(event); } }, {
+    cohort, forge_repository: { owner: "RankOneLabs", name: "oakridge" }, candidate_url: expected.url,
+    replace_verification_id: null,
+  });
+  expect(result).toEqual({ ok: false, error: expect.objectContaining({ kind: "head_commit_mismatch" }) });
+  expect(events.map((event) => event.kind)).toEqual(["pull_request_mismatch"]);
+});
+
 test("a drifted origin refuses a builder retry before it can reset the cohort ref", async () => {
   const fixture = await createGitRepositoryFixture();
   try {
@@ -242,6 +257,91 @@ test("replacing a pull request invalidates approvals tied to its old head", () =
   const replaced = invalidatePullRequestForReplacement(verification, approvals, "2026-08-18T12:00:00Z");
   expect(replaced.previous_verification.invalidation_reason).toBe("replaced");
   expect(replaced.approvals[0]?.invalidated_at).toBe("2026-08-18T12:00:00Z");
+});
+
+test("a successful replacement resets review state before verifying the new head", async () => {
+  const cohort = { ...storedCohort("/repo", "new-head"),
+    current_verified_pull_request_id: "00000000-0000-4000-8000-000000000020" as PullRequestVerificationId };
+  const oldPullRequestId = "00000000-0000-4000-8000-000000000021" as PullRequestId;
+  const newPullRequestId = "00000000-0000-4000-8000-000000000023" as PullRequestId;
+  const events: { readonly kind: string }[] = [];
+  const repository = {
+    async find_current_for_unit() { return { cohort, pull_request: { id: oldPullRequestId, provider: "github" as const,
+      owner: "RankOneLabs", name: "oakridge", forge_pull_request_id: 440, url: expected.url, created_at: "2026-09-29T00:00:00Z" },
+      observation: { ...observation({ state: "open", merged_at: null, head_sha: "old-head" }), id: "00000000-0000-4000-8000-000000000022" as PullRequestObservationId,
+        pull_request_id: oldPullRequestId, recorded_at: "2026-09-29T00:00:00Z" } }; },
+    async observe() { return { pull_request_id: newPullRequestId, observation_id: "00000000-0000-4000-8000-000000000024" as PullRequestObservationId }; },
+    async bind_verified() { return { ok: true as const, value: "00000000-0000-4000-8000-000000000025" as PullRequestVerificationId }; },
+  } as unknown as DevFlowPullRequestRepository;
+  const replacement = observation({ number: 441, url: "https://github.com/RankOneLabs/oakridge/pull/441",
+    state: "open", merged_at: null, head_sha: "new-head" });
+  const result = await verifyAndBindCohortPullRequest({ pull_requests: repository,
+    reader: { async read() { return replacement; } },
+    git: { async run() { return { exit_code: 0, stdout: "new-head\trefs/heads/cohort/foundation\n", stderr: "" }; } },
+    now: () => "2026-09-29T01:00:00Z", async record_build_event(_id, event) { events.push(event); } }, {
+    cohort, forge_repository: { owner: "RankOneLabs", name: "oakridge" }, candidate_url: replacement.url,
+    replace_verification_id: cohort.current_verified_pull_request_id,
+  });
+  expect(result.ok && result.value.binding).toBe("replaced");
+  expect(events.map((event) => event.kind)).toEqual(["replacement_pull_request_required", "pull_request_verified"]);
+});
+
+test("replacement-required verification exposes the current verification id", async () => {
+  const currentVerificationId = "00000000-0000-4000-8000-000000000020" as PullRequestVerificationId;
+  const cohort = { ...storedCohort("/repo", "new-head"), current_verified_pull_request_id: currentVerificationId };
+  const pullRequestId = "00000000-0000-4000-8000-000000000021" as PullRequestId;
+  const repository = {
+    async find_current_for_unit() { return { cohort, pull_request: { id: pullRequestId, provider: "github" as const,
+      owner: "RankOneLabs", name: "oakridge", forge_pull_request_id: 440, url: expected.url, created_at: "2026-09-29T00:00:00Z" },
+      observation: { ...observation({ state: "open", merged_at: null, head_sha: "old-head" }), id: "00000000-0000-4000-8000-000000000022" as PullRequestObservationId,
+        pull_request_id: pullRequestId, recorded_at: "2026-09-29T00:00:00Z" } }; },
+    async observe() { return { pull_request_id: "00000000-0000-4000-8000-000000000023" as PullRequestId,
+      observation_id: "00000000-0000-4000-8000-000000000024" as PullRequestObservationId }; },
+    async bind_verified() { return { ok: false as const, error: { kind: "replacement_required" as const, detail: "replacement required" } }; },
+  } as unknown as DevFlowPullRequestRepository;
+  const candidate = observation({ number: 441, url: "https://github.com/RankOneLabs/oakridge/pull/441",
+    state: "open", merged_at: null, head_sha: "new-head" });
+  const result = await verifyAndBindCohortPullRequest({ pull_requests: repository,
+    reader: { async read() { return candidate; } },
+    git: { async run() { return { exit_code: 0, stdout: "new-head\trefs/heads/cohort/foundation\n", stderr: "" }; } },
+    now: () => "2026-09-29T01:00:00Z", async record_build_event() {} }, {
+    cohort, forge_repository: { owner: "RankOneLabs", name: "oakridge" }, candidate_url: candidate.url,
+    replace_verification_id: null,
+  });
+  expect(result).toEqual({ ok: false, error: expect.objectContaining({ kind: "replacement_required", current_verification_id: currentVerificationId }) });
+});
+
+test("cohort HTTP exposes the verification id needed to authorize replacement", async () => {
+  const currentVerificationId = "00000000-0000-4000-8000-000000000020" as PullRequestVerificationId;
+  const cohort = { ...storedCohort("/repo", "new-head"), current_verified_pull_request_id: currentVerificationId };
+  const pullRequestId = "00000000-0000-4000-8000-000000000021" as PullRequestId;
+  const candidate = observation({ number: 441, url: "https://github.com/RankOneLabs/oakridge/pull/441",
+    state: "open", merged_at: null, head_sha: "new-head" });
+  const app = createCohortPullRequestApp({
+    pull_requests: {
+      async find_cohort_for_unit() { return cohort; },
+      async find_current_for_unit() { return { cohort, pull_request: { id: pullRequestId, provider: "github" as const,
+        owner: "RankOneLabs", name: "oakridge", forge_pull_request_id: 440, url: expected.url, created_at: "2026-09-29T00:00:00Z" },
+        observation: { ...observation({ state: "open", merged_at: null, head_sha: "old-head" }), id: "00000000-0000-4000-8000-000000000022" as PullRequestObservationId,
+          pull_request_id: pullRequestId, recorded_at: "2026-09-29T00:00:00Z" } }; },
+      async observe() { return { pull_request_id: "00000000-0000-4000-8000-000000000023" as PullRequestId,
+        observation_id: "00000000-0000-4000-8000-000000000024" as PullRequestObservationId }; },
+      async bind_verified() { return { ok: false as const, error: { kind: "replacement_required" as const, detail: "replacement required" } }; },
+    } as unknown as DevFlowPullRequestRepository,
+    epic_profiles: { async find_by_run_id() { return { repositories: [{ repository_key: "oakridge",
+      forge_repository: { provider: "github", owner: "RankOneLabs", name: "oakridge" } }] }; } } as never,
+    records: { async find_cohort_handoff() { return { run_id: expected.run_id, stage_instance_id: expected.stage_instance_id,
+      unit_id: expected.unit_id, repository_key: "oakridge", handoff_artifact_id: firstHandoffId,
+      handoff_slot_state: "pending", handoff_body: {} }; } } as never,
+    reader: { async read() { return candidate; } },
+    git: { async run() { return { exit_code: 0, stdout: "new-head\trefs/heads/cohort/foundation\n", stderr: "" }; } },
+    now: () => "2026-09-29T01:00:00Z", async record_build_event() {},
+  });
+  const response = await app.request(`/cohorts/${expected.stage_instance_id}:${expected.unit_id}/pull_request`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: "observation", observation: candidate }),
+  });
+  expect(response.status).toBe(409);
+  expect(await response.json()).toEqual(expect.objectContaining({ current_verification_id: currentVerificationId }));
 });
 
 test("repository-specific cohort refs drive both storage and prompt contracts", () => {
@@ -285,9 +385,39 @@ test("stored cohort advance records the same guarded head that was pushed", asyn
     if (args[0] === "ls-remote") return { exit_code: 0, stdout: "old-head\trefs/heads/cohort/foundation\n", stderr: "" };
     return { exit_code: 0, stdout: "", stderr: "" };
   } };
-  const repository = { async advance_cohort_head() { return { ok: true as const, value: { ...cohort, recorded_head_sha: "new-head" } }; } } as unknown as DevFlowPullRequestRepository;
+  const repository = { async begin_cohort_advance() { return { ok: true as const, value: undefined }; },
+    async advance_cohort_head() { return { ok: true as const, value: { ...cohort, recorded_head_sha: "new-head" } }; } } as unknown as DevFlowPullRequestRepository;
   const result = await advanceStoredCohortRef({ pull_requests: repository, git, now: () => "2026-09-29T00:00:00Z" },
     { cohort, next_head_sha: "new-head" });
   expect(result.ok && result.value.recorded_head_sha).toBe("new-head");
   expect(commands.map((command) => command[0])).toEqual(["ls-remote", "merge-base", "push"]);
+});
+
+test("stored cohort advance recovers when origin already has the requested head", async () => {
+  const cohort = storedCohort("/repo", "old-head");
+  const commands: string[][] = [];
+  const git = { async run(_cwd: string, args: readonly string[]) {
+    commands.push([...args]);
+    if (args[0] === "ls-remote") return { exit_code: 0, stdout: "new-head\trefs/heads/cohort/foundation\n", stderr: "" };
+    return { exit_code: 0, stdout: "", stderr: "" };
+  } };
+  const repository = { async begin_cohort_advance() { return { ok: true as const, value: undefined }; },
+    async advance_cohort_head() { return { ok: true as const, value: { ...cohort, recorded_head_sha: "new-head" } }; } } as unknown as DevFlowPullRequestRepository;
+  const result = await advanceStoredCohortRef({ pull_requests: repository, git, now: () => "2026-09-29T00:00:00Z" },
+    { cohort, next_head_sha: "new-head" });
+  expect(result.ok && result.value.recorded_head_sha).toBe("new-head");
+  expect(commands.map((command) => command[0])).toEqual(["ls-remote", "merge-base"]);
+});
+
+test("cohort preparation refuses a deleted stored canonical ref", async () => {
+  const cohort = storedCohort("/repo", "old-head");
+  const repository = { async find_cohort_for_unit() { return cohort; } } as unknown as DevFlowPullRequestRepository;
+  const git = { async run() { return { exit_code: 0, stdout: "", stderr: "" }; } };
+  const result = await prepareDevFlowBuildCohort({ pull_requests: repository, git }, {
+    cohort_id: cohort.cohort_id, stage_instance_id: cohort.stage_instance_id, cohort_key: cohort.cohort_key,
+    repository: { repository_key: cohort.repository_key, repository_path: cohort.repository_path,
+      integration_branch: "main", base_branch: cohort.expected_pr_base, base_head_sha: cohort.recorded_head_sha },
+    prepared_at: "2026-09-29T00:00:00Z",
+  });
+  expect(result).toEqual({ ok: false, error: expect.objectContaining({ kind: "ref_lease_mismatch", detail: expect.stringContaining("missing") }) });
 });

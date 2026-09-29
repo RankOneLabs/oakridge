@@ -28,7 +28,7 @@ const cohort = { cohort_id: cohortId, stage_instance_id: stageInstanceId, cohort
 
 const current = {
   cohort: { ...cohort, current_verified_pull_request_id: verificationId },
-  pull_request: { id: pullRequestId, repository_key: "api", provider: "github" as const, owner: "acme", name: "api",
+  pull_request: { id: pullRequestId, provider: "github" as const, owner: "acme", name: "api",
     forge_pull_request_id: 42, url: observation.url, created_at: "2026-08-15T00:00:00Z" },
   observation: { ...observation, id: observationId, pull_request_id: pullRequestId, recorded_at: "2026-08-15T01:00:01Z" },
 };
@@ -39,13 +39,14 @@ interface DependencyFixture {
   readonly final_events: FinalPullRequestEvent[];
 }
 
-const dependencyFixture = (existing: typeof current | null = null): DependencyFixture => {
+const dependencyFixture = (existing: typeof current | null = null, mergePolicy: "guarded" | "external_confirmation" = "external_confirmation"): DependencyFixture => {
   let currentValue = existing;
   let closure: PullRequestMergeClosure | null = null;
   const build_events: BuildCohortEvent[] = [];
   const final_events: FinalPullRequestEvent[] = [];
   const pullRequests: DevFlowPullRequestRepository = {
     async create_cohort(value) { return value; },
+    async begin_cohort_advance() { return { ok: false, error: { kind: "cohort_not_found", detail: "not used" } }; },
     async advance_cohort_head() { return { ok: false, error: { kind: "cohort_not_found", detail: "not used" } }; },
     async find_cohort_for_unit() { return cohort; },
     async find_current_for_unit() { return currentValue; },
@@ -67,7 +68,7 @@ const dependencyFixture = (existing: typeof current | null = null): DependencyFi
   };
   return { build_events, final_events, dependencies: {
     pull_requests: pullRequests,
-    final_targets: { async find() { return { cohort, forge_repository: { owner: "acme", name: "api" } }; } },
+    final_targets: { async find() { return { cohort, forge_repository: { owner: "acme", name: "api" }, merge_policy: mergePolicy }; } },
     pull_request_reader: { async read() { return observation; } },
     git: { async run() { return { exit_code: 0, stdout: "abc\trefs/heads/epic/work\n", stderr: "" }; } },
     async record_build_event(_cohortId, event) { build_events.push(event); },
@@ -102,6 +103,15 @@ test("final confirmation reports a real replay from the shared merge closure", a
   expect(replay.status).toBe(200);
   expect((await replay.json()).confirmation).toBe("replayed");
   expect(fixture.final_events.map((event) => event.kind === "pull_request_merge_confirmed" ? event.confirmation : null)).toEqual(["created", "replayed"]);
+});
+
+test("guarded final merge policy refuses explicit confirmation", async () => {
+  const app = createFinalPullRequestApp(dependencyFixture(current, "guarded").dependencies);
+  const response = await app.request(`/workflow_runs/${runId}/final_pull_requests/api/confirm`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ idempotency_key: "confirm-42" }),
+  });
+  expect(response.status).toBe(409);
+  expect(await response.json()).toEqual(expect.objectContaining({ code: "invalid_policy" }));
 });
 
 test("final pull request HTTP rejects malformed observation input", async () => {

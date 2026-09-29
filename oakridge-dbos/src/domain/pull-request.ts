@@ -36,7 +36,6 @@ export interface PullRequestObservation {
 /** Durable forge identity. Observations are append-only children of this row. */
 export interface PullRequest {
   readonly id: PullRequestId;
-  readonly repository_key: string;
   readonly provider: "github";
   readonly owner: string;
   readonly name: string;

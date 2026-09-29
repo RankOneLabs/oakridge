@@ -87,13 +87,26 @@ export class PostgresDevFlowPullRequestRepository implements DevFlowPullRequestR
 
   async advance_cohort_head(input: { readonly cohort_id: CohortId; readonly expected_head_sha: string; readonly next_head_sha: string; readonly advanced_at: string }): Promise<Result<DevFlowBuildCohort, { readonly kind: "cohort_not_found" | "ref_lease_mismatch"; readonly detail: string }>> {
     const rows = await this.sql.query<BuildCohortRow>(`UPDATE oakridge.dev_flow_build_cohort
-      SET recorded_head_sha=$3,updated_at=$4 WHERE cohort_id=$1 AND recorded_head_sha=$2
+      SET recorded_head_sha=$3,pending_head_sha=NULL,updated_at=$4
+      WHERE cohort_id=$1 AND recorded_head_sha=$2 AND pending_head_sha=$3
       RETURNING ${BUILD_COHORT_COLUMNS}`, [input.cohort_id, input.expected_head_sha, input.next_head_sha, input.advanced_at]);
     if (rows[0]) return ok(buildCohortFromRow(rows[0]));
     const current = await this.sql.query<{ readonly recorded_head_sha: string }>(
       "SELECT recorded_head_sha FROM oakridge.dev_flow_build_cohort WHERE cohort_id=$1", [input.cohort_id]);
     if (!current[0]) return err({ kind: "cohort_not_found", detail: `build cohort '${input.cohort_id}' was not found` });
     return err({ kind: "ref_lease_mismatch", detail: `stored cohort head moved from '${input.expected_head_sha}' to '${current[0].recorded_head_sha}'` });
+  }
+
+  async begin_cohort_advance(input: { readonly cohort_id: CohortId; readonly expected_head_sha: string; readonly next_head_sha: string; readonly prepared_at: string }): Promise<Result<void, { readonly kind: "cohort_not_found" | "ref_lease_mismatch"; readonly detail: string }>> {
+    const rows = await this.sql.query<{ readonly cohort_id: string }>(`UPDATE oakridge.dev_flow_build_cohort
+      SET pending_head_sha=$3,updated_at=$4
+      WHERE cohort_id=$1 AND recorded_head_sha=$2 AND (pending_head_sha IS NULL OR pending_head_sha=$3)
+      RETURNING cohort_id::text`, [input.cohort_id, input.expected_head_sha, input.next_head_sha, input.prepared_at]);
+    if (rows[0]) return ok(undefined);
+    const current = await this.sql.query<{ readonly recorded_head_sha: string }>(
+      "SELECT recorded_head_sha FROM oakridge.dev_flow_build_cohort WHERE cohort_id=$1", [input.cohort_id]);
+    if (!current[0]) return err({ kind: "cohort_not_found", detail: `build cohort '${input.cohort_id}' was not found` });
+    return err({ kind: "ref_lease_mismatch", detail: "another cohort ref advance is already pending or the stored head changed" });
   }
 
   async find_cohort_for_unit(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<DevFlowBuildCohort | null> {
@@ -130,7 +143,7 @@ export class PostgresDevFlowPullRequestRepository implements DevFlowPullRequestR
       created_at: row.cohort_created_at, updated_at: row.cohort_updated_at,
     };
     const pull_request: PullRequest = {
-      id: row.pull_request_id as PullRequestId, repository_key: row.repository_key, provider: row.provider,
+      id: row.pull_request_id as PullRequestId, provider: row.provider,
       owner: row.owner, name: row.name, forge_pull_request_id: Number(row.forge_pull_request_id), url: row.url,
       created_at: row.pull_request_created_at,
     };
@@ -143,13 +156,13 @@ export class PostgresDevFlowPullRequestRepository implements DevFlowPullRequestR
     return { cohort, pull_request, observation };
   }
 
-  async observe(input: { readonly repository_key: string; readonly observation: PullRequestObservation; readonly recorded_at: string }): Promise<{ readonly pull_request_id: PullRequestId; readonly observation_id: PullRequestObservationId }> {
+  async observe(input: { readonly observation: PullRequestObservation; readonly recorded_at: string }): Promise<{ readonly pull_request_id: PullRequestId; readonly observation_id: PullRequestObservationId }> {
     return this.sql.transaction(async (tx) => {
       const pullRequests = await tx.query<{ readonly id: string }>(`INSERT INTO oakridge.pull_request
-        (id,repository_key,provider,owner,name,forge_pull_request_id,url,created_at)
-        VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7)
-        ON CONFLICT (repository_key,forge_pull_request_id) DO UPDATE SET url=EXCLUDED.url
-        RETURNING id::text`, [input.repository_key, input.observation.provider, input.observation.owner,
+        (id,provider,owner,name,forge_pull_request_id,url,created_at)
+        VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,$6)
+        ON CONFLICT (provider,lower(owner),lower(name),forge_pull_request_id) DO UPDATE SET url=EXCLUDED.url
+        RETURNING id::text`, [input.observation.provider, input.observation.owner,
         input.observation.name, input.observation.number, input.observation.url, input.recorded_at]);
       const pullRequestId = pullRequests[0]!.id as PullRequestId;
       const observations = await tx.query<{ readonly id: string }>(`INSERT INTO oakridge.pull_request_observation
@@ -182,9 +195,11 @@ export class PostgresDevFlowPullRequestRepository implements DevFlowPullRequestR
     });
   }
 
-  async confirm_merge(input: { readonly cohort_id: CohortId; readonly pull_request_id: PullRequestId; readonly idempotency_key: string; readonly merged_at: string; readonly confirmed_at: string }): Promise<Result<{ readonly kind: "created" | "replayed"; readonly closure: PullRequestMergeClosure }, { readonly kind: "idempotency_conflict"; readonly detail: string }>> {
+  async confirm_merge(input: { readonly cohort_id: CohortId; readonly pull_request_id: PullRequestId; readonly idempotency_key: string; readonly merged_at: string; readonly confirmed_at: string }): Promise<Result<{ readonly kind: "created" | "replayed"; readonly closure: PullRequestMergeClosure }, { readonly kind: "idempotency_conflict" | "pull_request_not_current" | "missing_merged_evidence"; readonly detail: string }>> {
     return this.sql.transaction(async (tx) => {
-      await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1::text,0))", [input.cohort_id]);
+      const cohorts = await tx.query<{ readonly current_verified_pull_request_id: string | null }>(
+        "SELECT current_verified_pull_request_id::text FROM oakridge.dev_flow_build_cohort WHERE cohort_id=$1 FOR UPDATE", [input.cohort_id]);
+      if (!cohorts[0]?.current_verified_pull_request_id) return err({ kind: "pull_request_not_current", detail: "cohort has no current verified pull request" });
       const existing = await tx.query<{ readonly id: string; readonly cohort_id: string; readonly pull_request_id: string; readonly idempotency_key: string; readonly merged_at: string; readonly confirmed_at: string }>(
         "SELECT id::text,cohort_id::text,pull_request_id::text,idempotency_key,merged_at::text,confirmed_at::text FROM oakridge.pull_request_merge_closure WHERE cohort_id=$1 FOR UPDATE", [input.cohort_id]);
       const row = existing[0];
@@ -193,12 +208,25 @@ export class PostgresDevFlowPullRequestRepository implements DevFlowPullRequestR
         return ok({ kind: "replayed", closure: { id: row.id as PullRequestMergeClosureId, cohort_id: row.cohort_id as CohortId,
           pull_request_id: row.pull_request_id as PullRequestId, idempotency_key: row.idempotency_key, merged_at: row.merged_at, confirmed_at: row.confirmed_at } });
       }
+      const evidence = await tx.query<{ readonly pull_request_id: string; readonly merged_at: string | null }>(`SELECT
+        verification.pull_request_id::text,observation.merged_at::text
+        FROM oakridge.pull_request_verification verification
+        JOIN LATERAL (SELECT latest.merged_at FROM oakridge.pull_request_observation latest
+          WHERE latest.pull_request_id=verification.pull_request_id AND latest.head_sha=verification.verified_head_sha
+          ORDER BY latest.observed_at DESC,latest.recorded_at DESC,latest.id DESC LIMIT 1) observation ON true
+        WHERE verification.id=$1 AND verification.cohort_id=$2 AND verification.invalidated_at IS NULL`,
+      [cohorts[0].current_verified_pull_request_id, input.cohort_id]);
+      if (evidence[0]?.pull_request_id !== input.pull_request_id) {
+        return err({ kind: "pull_request_not_current", detail: "pull request is no longer the cohort's current verified link" });
+      }
+      if (!evidence[0].merged_at) return err({ kind: "missing_merged_evidence", detail: "current verified pull request has no merged observation" });
+      const mergedAt = evidence[0].merged_at;
       const inserted = await tx.query<{ readonly id: string }>(`INSERT INTO oakridge.pull_request_merge_closure
         (id,cohort_id,pull_request_id,idempotency_key,merged_at,confirmed_at)
         VALUES (gen_random_uuid(),$1,$2,$3,$4,$5) RETURNING id::text`,
-      [input.cohort_id, input.pull_request_id, input.idempotency_key, input.merged_at, input.confirmed_at]);
+      [input.cohort_id, input.pull_request_id, input.idempotency_key, mergedAt, input.confirmed_at]);
       return ok({ kind: "created", closure: { id: inserted[0]!.id as PullRequestMergeClosureId, cohort_id: input.cohort_id,
-        pull_request_id: input.pull_request_id, idempotency_key: input.idempotency_key, merged_at: input.merged_at, confirmed_at: input.confirmed_at } });
+        pull_request_id: input.pull_request_id, idempotency_key: input.idempotency_key, merged_at: mergedAt, confirmed_at: input.confirmed_at } });
     });
   }
 }
@@ -824,7 +852,9 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
       LEFT JOIN oakridge.dev_flow_build_cohort build_cohort ON build_cohort.stage_instance_id=stage.id AND build_cohort.cohort_key=unit.unit_id
       LEFT JOIN oakridge.pull_request_verification verification ON verification.id=build_cohort.current_verified_pull_request_id AND verification.invalidated_at IS NULL
       LEFT JOIN oakridge.pull_request pull_request ON pull_request.id=verification.pull_request_id
-      LEFT JOIN oakridge.pull_request_observation observation ON observation.id=verification.observation_id
+      LEFT JOIN LATERAL (SELECT latest.* FROM oakridge.pull_request_observation latest
+        WHERE latest.pull_request_id=verification.pull_request_id AND latest.head_sha=verification.verified_head_sha
+        ORDER BY latest.observed_at DESC,latest.recorded_at DESC,latest.id DESC LIMIT 1) observation ON true
       LEFT JOIN oakridge.pull_request_merge_closure merge_closure ON merge_closure.cohort_id=build_cohort.cohort_id
       WHERE run.archived=false AND stage.attempt_root_workflow_id IS NULL ORDER BY updated_at DESC`, []);
     return rows.map((row) => {

@@ -11,6 +11,7 @@ CREATE TABLE oakridge.dev_flow_build_cohort (
   canonical_ref text NOT NULL CHECK (length(btrim(canonical_ref)) > 0),
   expected_pr_base text NOT NULL CHECK (length(btrim(expected_pr_base)) > 0),
   recorded_head_sha text NOT NULL CHECK (length(btrim(recorded_head_sha)) > 0),
+  pending_head_sha text CHECK (pending_head_sha IS NULL OR length(btrim(pending_head_sha)) > 0),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (stage_instance_id, cohort_key),
@@ -19,15 +20,15 @@ CREATE TABLE oakridge.dev_flow_build_cohort (
 
 CREATE TABLE oakridge.pull_request (
   id uuid PRIMARY KEY,
-  repository_key text NOT NULL CHECK (length(btrim(repository_key)) > 0),
   provider text NOT NULL CHECK (provider = 'github'),
   owner text NOT NULL CHECK (length(btrim(owner)) > 0),
   name text NOT NULL CHECK (length(btrim(name)) > 0),
   forge_pull_request_id bigint NOT NULL CHECK (forge_pull_request_id > 0),
   url text NOT NULL CHECK (length(btrim(url)) > 0),
-  created_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (repository_key, forge_pull_request_id)
+  created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE UNIQUE INDEX pull_request_forge_identity_unique_idx
+  ON oakridge.pull_request (provider, lower(owner), lower(name), forge_pull_request_id);
 
 CREATE TABLE oakridge.pull_request_observation (
   id uuid PRIMARY KEY,
@@ -70,7 +71,7 @@ CREATE TABLE oakridge.pull_request_merge_closure (
   id uuid PRIMARY KEY,
   cohort_id uuid NOT NULL UNIQUE REFERENCES oakridge.cohort(id) ON DELETE CASCADE,
   pull_request_id uuid NOT NULL REFERENCES oakridge.pull_request(id) ON DELETE RESTRICT,
-  idempotency_key text NOT NULL UNIQUE CHECK (length(btrim(idempotency_key)) > 0),
+  idempotency_key text NOT NULL CHECK (length(btrim(idempotency_key)) > 0),
   merged_at timestamptz NOT NULL,
   confirmed_at timestamptz NOT NULL DEFAULT now()
 );

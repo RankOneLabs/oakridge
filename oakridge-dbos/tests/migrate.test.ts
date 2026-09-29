@@ -68,24 +68,28 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
     const observed = (head_sha: string) => ({ provider: "github" as const, owner: "RankOneLabs", name: "oakridge", number: 42,
       url: "https://github.com/RankOneLabs/oakridge/pull/42", head_branch: "cohort/core", base_branch: "epic/oakridge",
       head_sha, state: "open" as const, source: "poll" as const, observed_at: "2026-09-29T10:00:00Z", merged_at: null });
-    const firstObservation = await pullRequests.observe({ repository_key: "oakridge", observation: observed("head-one"), recorded_at: "2026-09-29T10:00:01Z" });
+    const firstObservation = await pullRequests.observe({ observation: observed("head-one"), recorded_at: "2026-09-29T10:00:01Z" });
     const firstBinding = await pullRequests.bind_verified({ cohort_id: cohortId, ...firstObservation, verified_head_sha: "head-one",
       verified_at: "2026-09-29T10:00:02Z", replace_verification_id: null });
     expect(firstBinding.ok).toBe(true);
     if (!firstBinding.ok) throw new Error(firstBinding.error.detail);
     await sql.query(`INSERT INTO oakridge.pull_request_approval (id,cohort_id,verification_id,approval_kind,approved_at)
       VALUES ('00000000-0000-4000-8000-000000000060',$1,$2,'assessment_review','2026-09-29T10:00:03Z')`, [cohortId, firstBinding.value]);
-    const secondObservation = await pullRequests.observe({ repository_key: "oakridge", observation: observed("head-two"), recorded_at: "2026-09-29T11:00:01Z" });
+    const replacementObservation = { ...observed("head-two"), number: 43, url: "https://github.com/RankOneLabs/oakridge/pull/43" };
+    const secondObservation = await pullRequests.observe({ observation: replacementObservation, recorded_at: "2026-09-29T11:00:01Z" });
     expect((await pullRequests.bind_verified({ cohort_id: cohortId, ...secondObservation, verified_head_sha: "head-two",
       verified_at: "2026-09-29T11:00:02Z", replace_verification_id: null })).ok).toBe(false);
     const replacement = await pullRequests.bind_verified({ cohort_id: cohortId, ...secondObservation, verified_head_sha: "head-two",
       verified_at: "2026-09-29T11:00:02Z", replace_verification_id: firstBinding.value });
     expect(replacement.ok).toBe(true);
-    await pullRequests.observe({ repository_key: "oakridge", observation: { ...observed("head-two"), state: "merged",
+    await pullRequests.observe({ observation: { ...replacementObservation, state: "merged",
       observed_at: "2026-09-29T12:00:00Z", merged_at: "2026-09-29T12:00:00Z" }, recorded_at: "2026-09-29T12:00:01Z" });
     expect((await pullRequests.find_current_for_unit(
       "00000000-0000-4000-8000-000000000003" as import("../src/domain/primitives").StageInstanceId,
       "core" as import("../src/domain/primitives").UnitId))?.observation.state).toBe("merged");
+    expect(await pullRequests.confirm_merge({ cohort_id: cohortId, pull_request_id: firstObservation.pull_request_id,
+      idempotency_key: "stale-pr", merged_at: "2026-09-29T12:00:00Z", confirmed_at: "2026-09-29T12:00:01Z" }))
+      .toEqual({ ok: false, error: expect.objectContaining({ kind: "pull_request_not_current" }) });
     expect((await sql.query<{ readonly observations: string; readonly invalidated_approvals: string }>(`SELECT
       (SELECT count(*)::text FROM oakridge.pull_request_observation) AS observations,
       (SELECT count(*)::text FROM oakridge.pull_request_approval WHERE invalidated_at IS NOT NULL) AS invalidated_approvals`, []))[0])
@@ -97,6 +101,20 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
     expect(replay.ok && replay.value.kind).toBe("replayed");
     const conflict = await pullRequests.confirm_merge({ ...confirmation, idempotency_key: "different" });
     expect(conflict).toEqual({ ok: false, error: expect.objectContaining({ kind: "idempotency_conflict" }) });
+
+    const webCohortId = "00000000-0000-4000-8000-000000000055" as CohortId;
+    const webObservation = await pullRequests.observe({ observation: {
+      provider: "github", owner: "RankOneLabs", name: "web", number: 42,
+      url: "https://github.com/RankOneLabs/web/pull/42", head_branch: "cohort/web", base_branch: "release/web",
+      head_sha: "head-web", state: "merged", source: "poll", observed_at: "2026-09-29T12:10:00Z", merged_at: "2026-09-29T12:10:00Z",
+    }, recorded_at: "2026-09-29T12:10:01Z" });
+    expect(webObservation.pull_request_id).not.toBe(secondObservation.pull_request_id);
+    expect((await pullRequests.bind_verified({ cohort_id: webCohortId, ...webObservation, verified_head_sha: "head-web",
+      verified_at: "2026-09-29T12:10:02Z", replace_verification_id: null })).ok).toBe(true);
+    const sameKeyOtherCohort = await pullRequests.confirm_merge({ cohort_id: webCohortId,
+      pull_request_id: webObservation.pull_request_id, idempotency_key: "merge-core",
+      merged_at: "2026-09-29T12:10:00Z", confirmed_at: "2026-09-29T12:10:03Z" });
+    expect(sameKeyOtherCohort.ok && sameKeyOtherCohort.value.kind).toBe("created");
     await sql.transaction(async (tx) => {
       await tx.query("UPDATE oakridge.cohort SET durable_version=durable_version+1 WHERE id='00000000-0000-4000-8000-000000000005'", []);
       await tx.query(`INSERT INTO oakridge.run_transition

@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { BuildCohortEvent } from "../adapters/dev-flow-build";
 import { selectFinalPullRequestObservationOutcome, type FinalPullRequestEvent } from "../domain/final-pull-request";
 import type { DevFlowBuildCohort } from "../domain/cohort-pull-request";
+import type { FinalMergePolicy } from "../domain/epic";
 import { parseUuidId, type CohortId, type UnitId, type WorkflowRunId } from "../domain/primitives";
 import type { PullRequestVerificationId } from "../domain/pull-request";
 import type { GitCommandRunner } from "../domain/repository-provisioning";
@@ -13,6 +14,7 @@ import type { DevFlowPullRequestRepository } from "../storage/repositories";
 export interface FinalPullRequestTarget {
   readonly cohort: DevFlowBuildCohort;
   readonly forge_repository: { readonly owner: string; readonly name: string };
+  readonly merge_policy: FinalMergePolicy;
 }
 
 export interface FinalPullRequestTargetRepository {
@@ -72,6 +74,9 @@ export const createFinalPullRequestApp = (dependencies: FinalPullRequestHttpDepe
     if (!runId) return http.json({ error: "workflow run was not found" }, 404);
     const target = await dependencies.final_targets.find(runId, http.req.param("repositoryKey"));
     if (!target) return http.json({ error: "final pull request target was not found", code: "profile_not_found" }, 404);
+    if (target.merge_policy !== "external_confirmation") {
+      return http.json({ error: "explicit confirmation is only valid for external_confirmation policy", code: "invalid_policy" }, 409);
+    }
     const current = await dependencies.pull_requests.find_current_for_unit(target.cohort.stage_instance_id, target.cohort.cohort_key as UnitId);
     if (!current || current.observation.state !== "merged" || !current.observation.merged_at) {
       return http.json({ error: "final pull request has no verified merged observation", code: "missing_merged_evidence" }, 409);
