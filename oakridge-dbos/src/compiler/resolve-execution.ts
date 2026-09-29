@@ -1,5 +1,5 @@
 import type { MaterializedExecutionUnit } from "../domain/compiled-workflow";
-import { isDelegatedRuntimeId, type Bindable, type DelegatedSessionDefinitionConfig, type ResolvedExecutorConfig, type SessionIdentity, type SlotBinding } from "../domain/delegated-session";
+import { isDelegatedRuntimeId, type Bindable, type DelegatedSessionDefinitionConfig, type ResolvedExecutorConfig, type SessionIdentity, type SessionLaunchReason, type SlotBinding } from "../domain/delegated-session";
 import type { ArtifactEnvelope } from "../domain/execution";
 import { err, ok, type JsonValue, type Result, type StageInstanceId, type WorkflowRunId } from "../domain/primitives";
 import { readJsonPointer } from "../domain/json-pointer";
@@ -19,6 +19,7 @@ export interface ResolveDelegatedExecutionInput {
   readonly prompt_template: string;
   readonly run_id: WorkflowRunId;
   readonly operator_role: StageOperatorRole | null;
+  readonly launch_reason?: SessionLaunchReason;
 }
 
 
@@ -131,6 +132,9 @@ const stringSlot = (slots: Readonly<Record<string, string>>, name: string): stri
 };
 
 export const resolveDelegatedExecution = (input: ResolveDelegatedExecutionInput): Result<ResolvedExecutorConfig, ResolveExecutionError> => {
+  if (!input.operator_role) return err({ operation: "resolve_execution", detail: "delegated session has no operator role" });
+  const roleConfig = input.definition.role_configs.find((candidate) => candidate.session_role === input.operator_role);
+  if (!roleConfig) return err({ operation: "resolve_execution", detail: `session role '${input.operator_role}' has no runtime config` });
   const environment = { ...input.environment, item: input.unit.parameters };
   const slots: Record<string, string> = {};
   for (const [name, binding] of Object.entries(input.definition.slot_bindings)) {
@@ -158,9 +162,9 @@ export const resolveDelegatedExecution = (input: ResolveDelegatedExecutionInput)
   };
   const prompt = renderPrompt(input.prompt_template, slots);
   if (!prompt.ok) return prompt;
-  const runtime = resolveBindable(input.definition.runtime, environment);
-  const model = resolveBindable(input.definition.model, environment);
-  const effort = resolveBindable(input.definition.effort, environment);
+  const runtime = resolveBindable(roleConfig.runtime, environment);
+  const model = resolveBindable(roleConfig.model, environment);
+  const effort = resolveBindable(roleConfig.effort, environment);
   const workdirBinding = input.definition.fan_out?.workdir ?? input.definition.workdir;
   const workdir = resolveBinding(workdirBinding, environment);
   if (!runtime.ok) return runtime;
@@ -168,7 +172,7 @@ export const resolveDelegatedExecution = (input: ResolveDelegatedExecutionInput)
   if (!effort.ok) return effort;
   if (!workdir.ok) return workdir;
   if (!isDelegatedRuntimeId(runtime.value)) return err({ operation: "resolve_execution", detail: `unsupported delegated runtime '${runtime.value}'` });
-  const worktreeTemplate = input.definition.fan_out?.worktree;
+  const worktreeTemplate = roleConfig.worktree;
   const substituteIdentity = (value: string): string => value.replaceAll("{{UNIT_ID}}", input.unit.unit_id).replaceAll("{{STAGE_INSTANCE_ID}}", input.stage_instance_id);
   let worktree: ResolvedExecutorConfig["worktree"];
   if (worktreeTemplate) {
@@ -183,8 +187,8 @@ export const resolveDelegatedExecution = (input: ResolveDelegatedExecutionInput)
       ...(baseRef.value ? { baseRef: substituteIdentity(baseRef.value) } : {}) };
   }
   return ok({ executor_type: "delegated_session", runtime: runtime.value, rendered_prompt: prompt.value, workdir: workdir.value,
-    session_name: substituteIdentity(input.definition.session_name),
+    session_name: substituteIdentity(roleConfig.session_name),
     model: model.value, effort: effort.value, ...(worktree ? { worktree } : {}),
-    executor_options: { pre_authorized_tools: input.definition.pre_authorized_tools ?? [], yolo: input.definition.yolo ?? false },
+    executor_options: { pre_authorized_tools: roleConfig.pre_authorized_tools ?? [], yolo: roleConfig.yolo ?? false },
     session_identity });
 };

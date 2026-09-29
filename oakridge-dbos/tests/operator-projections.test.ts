@@ -15,6 +15,7 @@ const edge = (producer_stage: string, consumer_stage: string): CompiledEdge => (
 });
 
 const definitionOf = (stage_keys: readonly string[], edges: readonly CompiledEdge[], source_stages: readonly string[]): CompiledWorkflowDefinition => ({
+  manifest_version: 1,
   stages: Object.fromEntries(stage_keys.map((key) => [key, stage(key)])),
   edges,
   source_stages: source_stages as readonly StageKey[],

@@ -83,8 +83,9 @@ const validateGraphReferences = (definition: WorkflowDefinition): Result<Workflo
     if (stage.stage_type === "delegated_session") {
       const config = delegatedSessionDefinitionSchema.safeParse(stage.config);
       if (!config.success) return err({ operation: "validate_workflow_graph", detail: `stage '${stageKey}' config invalid: ${z.prettifyError(config.error)}` });
-      const terminalOutput = config.data.gate_output ?? config.data.output_gate?.output ?? config.data.output_handoff?.output;
-      if (terminalOutput && !stage.outputs.some((output) => output.name === terminalOutput)) {
+      const terminalOutputs = [...config.data.gates.flatMap((gate) => gate.outputs), ...config.data.handoffs.flatMap((handoff) => handoff.outputs)];
+      const terminalOutput = terminalOutputs.find((name) => !stage.outputs.some((output) => output.name === name));
+      if (terminalOutput) {
         return err({ operation: "validate_workflow_graph", detail: `stage '${stageKey}' terminal output '${terminalOutput}' is not declared` });
       }
       fanOut = config.data.fan_out ?? null;

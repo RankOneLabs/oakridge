@@ -31,11 +31,47 @@
         "stage_type": "delegated_session",
         "operator_role": "spec",
         "config": {
-          "runtime": {
-            "from": "context",
-            "path": "/planner_runtime"
-          },
-          "prompt_template_path": "dev-flow/spec_analyzer_v2.md",
+          "prompt_matrix": [
+            {
+              "session_role": "spec",
+              "launch_reason": "initial",
+              "template_path": "dev-flow/spec_analyzer_v2.md"
+            },
+            {
+              "session_role": "spec",
+              "launch_reason": "operator_retry",
+              "template_path": "dev-flow/spec_analyzer_v2.md"
+            },
+            {
+              "session_role": "spec",
+              "launch_reason": "input_revision",
+              "template_path": "dev-flow/spec_analyzer_v2.md"
+            }
+          ],
+          "role_configs": [
+            {
+              "session_role": "spec",
+              "runtime": {
+                "from": "context",
+                "path": "/planner_runtime"
+              },
+              "session_name": "spec-analyzer-{{STAGE_INSTANCE_ID}}",
+              "model": {
+                "from": "context",
+                "path": "/planner_model"
+              },
+              "effort": {
+                "from": "context",
+                "path": "/planner_effort"
+              },
+              "pre_authorized_tools": [],
+              "required_tools": [],
+              "authorized_outputs": [
+                "spec_analysis"
+              ],
+              "yolo": false
+            }
+          ],
           "slot_bindings": {
             "BRIEF_NOTES": {
               "from": "context",
@@ -55,30 +91,26 @@
             "input_name": "repository_refs",
             "path": "/0/artifact/repository_path"
           },
-          "session_name": "spec-analyzer-{{STAGE_INSTANCE_ID}}",
-          "model": {
-            "from": "context",
-            "path": "/planner_model"
-          },
-          "effort": {
-            "from": "context",
-            "path": "/planner_effort"
-          },
-          "pre_authorized_tools": [],
-          "yolo": false,
-          "output_gate": {
-            "output": "spec_analysis",
-            "steps": [
-              {
-                "type": "artifact_approval",
-                "actions": [
-                  "approve",
-                  "request_revision"
-                ]
-              }
-            ],
-            "requires_zero_open_review_items": true
-          }
+          "artifact_productions": [],
+          "gates": [
+            {
+              "name": "spec_analysis_gate",
+              "outputs": [
+                "spec_analysis"
+              ],
+              "steps": [
+                {
+                  "type": "artifact_approval",
+                  "actions": [
+                    "approve",
+                    "request_revision"
+                  ]
+                }
+              ],
+              "requires_zero_open_review_items": true
+            }
+          ],
+          "handoffs": []
         },
         "inputs": [
           {
@@ -99,11 +131,47 @@
         "stage_type": "delegated_session",
         "operator_role": "plan",
         "config": {
-          "runtime": {
-            "from": "context",
-            "path": "/planner_runtime"
-          },
-          "prompt_template_path": "dev-flow/plan_writer_v2.md",
+          "prompt_matrix": [
+            {
+              "session_role": "plan",
+              "launch_reason": "initial",
+              "template_path": "dev-flow/plan_writer_v2.md"
+            },
+            {
+              "session_role": "plan",
+              "launch_reason": "operator_retry",
+              "template_path": "dev-flow/plan_writer_v2.md"
+            },
+            {
+              "session_role": "plan",
+              "launch_reason": "input_revision",
+              "template_path": "dev-flow/plan_writer_v2.md"
+            }
+          ],
+          "role_configs": [
+            {
+              "session_role": "plan",
+              "runtime": {
+                "from": "context",
+                "path": "/planner_runtime"
+              },
+              "session_name": "plan-writer-{{STAGE_INSTANCE_ID}}",
+              "model": {
+                "from": "context",
+                "path": "/planner_model"
+              },
+              "effort": {
+                "from": "context",
+                "path": "/planner_effort"
+              },
+              "pre_authorized_tools": [],
+              "required_tools": [],
+              "authorized_outputs": [
+                "plan"
+              ],
+              "yolo": false
+            }
+          ],
           "slot_bindings": {
             "SPEC_ANALYSIS": {
               "from": "input",
@@ -124,30 +192,26 @@
             "input_name": "repository_refs",
             "path": "/0/artifact/repository_path"
           },
-          "session_name": "plan-writer-{{STAGE_INSTANCE_ID}}",
-          "model": {
-            "from": "context",
-            "path": "/planner_model"
-          },
-          "effort": {
-            "from": "context",
-            "path": "/planner_effort"
-          },
-          "pre_authorized_tools": [],
-          "yolo": false,
-          "output_gate": {
-            "output": "plan",
-            "steps": [
-              {
-                "type": "artifact_approval",
-                "actions": [
-                  "approve",
-                  "request_revision"
-                ]
-              }
-            ],
-            "requires_zero_open_review_items": false
-          }
+          "artifact_productions": [],
+          "gates": [
+            {
+              "name": "plan_gate",
+              "outputs": [
+                "plan"
+              ],
+              "steps": [
+                {
+                  "type": "artifact_approval",
+                  "actions": [
+                    "approve",
+                    "request_revision"
+                  ]
+                }
+              ],
+              "requires_zero_open_review_items": false
+            }
+          ],
+          "handoffs": []
         },
         "inputs": [
           {
@@ -172,11 +236,47 @@
         "stage_type": "delegated_session",
         "operator_role": "brief",
         "config": {
-          "runtime": {
-            "from": "context",
-            "path": "/planner_runtime"
-          },
-          "prompt_template_path": "dev-flow/brief_writer.md",
+          "prompt_matrix": [
+            {
+              "session_role": "brief",
+              "launch_reason": "initial",
+              "template_path": "dev-flow/brief_writer.md"
+            },
+            {
+              "session_role": "brief",
+              "launch_reason": "operator_retry",
+              "template_path": "dev-flow/brief_writer.md"
+            },
+            {
+              "session_role": "brief",
+              "launch_reason": "input_revision",
+              "template_path": "dev-flow/brief_writer.md"
+            }
+          ],
+          "role_configs": [
+            {
+              "session_role": "brief",
+              "runtime": {
+                "from": "context",
+                "path": "/planner_runtime"
+              },
+              "session_name": "brief-writer-{{STAGE_INSTANCE_ID}}",
+              "model": {
+                "from": "context",
+                "path": "/planner_model"
+              },
+              "effort": {
+                "from": "context",
+                "path": "/planner_effort"
+              },
+              "pre_authorized_tools": [],
+              "required_tools": [],
+              "authorized_outputs": [
+                "brief"
+              ],
+              "yolo": false
+            }
+          ],
           "slot_bindings": {
             "PLAN": {
               "from": "input",
@@ -193,38 +293,35 @@
             "input_name": "repository_refs",
             "path": "/0/artifact/repository_path"
           },
-          "session_name": "brief-writer-{{STAGE_INSTANCE_ID}}",
-          "model": {
-            "from": "context",
-            "path": "/planner_model"
-          },
-          "effort": {
-            "from": "context",
-            "path": "/planner_effort"
-          },
-          "pre_authorized_tools": [],
-          "yolo": false,
-          "output_gate": {
-            "output": "brief",
-            "steps": [
-              {
-                "type": "artifact_approval",
-                "actions": [
-                  "approve",
-                  "request_revision"
-                ]
-              }
-            ],
-            "requires_zero_open_review_items": false
-          },
-          "artifacts": {
-            "over": {
-              "from": "input",
-              "input_name": "plan",
-              "path": "/cohorts"
-            },
-            "id_path": "/id"
-          }
+          "artifact_productions": [
+            {
+              "over": {
+                "from": "input",
+                "input_name": "plan",
+                "path": "/cohorts"
+              },
+              "id_path": "/id"
+            }
+          ],
+          "gates": [
+            {
+              "name": "brief_gate",
+              "outputs": [
+                "brief"
+              ],
+              "steps": [
+                {
+                  "type": "artifact_approval",
+                  "actions": [
+                    "approve",
+                    "request_revision"
+                  ]
+                }
+              ],
+              "requires_zero_open_review_items": false
+            }
+          ],
+          "handoffs": []
         },
         "inputs": [
           {
@@ -249,11 +346,59 @@
         "stage_type": "delegated_session",
         "operator_role": "build",
         "config": {
-          "runtime": {
-            "from": "context",
-            "path": "/worker_runtime"
-          },
-          "prompt_template_path": "dev-flow/build_v2.md",
+          "prompt_matrix": [
+            {
+              "session_role": "build",
+              "launch_reason": "initial",
+              "template_path": "dev-flow/build_v2.md"
+            },
+            {
+              "session_role": "build",
+              "launch_reason": "operator_retry",
+              "template_path": "dev-flow/build_v2.md"
+            },
+            {
+              "session_role": "build",
+              "launch_reason": "input_revision",
+              "template_path": "dev-flow/build_v2.md"
+            }
+          ],
+          "role_configs": [
+            {
+              "session_role": "build",
+              "runtime": {
+                "from": "context",
+                "path": "/worker_runtime"
+              },
+              "session_name": "build-{{STAGE_INSTANCE_ID}}-{{UNIT_ID}}",
+              "model": {
+                "from": "context",
+                "path": "/worker_model"
+              },
+              "effort": {
+                "from": "context",
+                "path": "/worker_effort"
+              },
+              "worktree": {
+                "branch_name": "cohort/{{STAGE_INSTANCE_ID}}/{{UNIT_ID}}",
+                "worktree_subdir": "{{STAGE_INSTANCE_ID}}/{{UNIT_ID}}",
+                "base_ref": {
+                  "from": "input_lookup",
+                  "input_name": "repository_refs",
+                  "collection_key_path": "/artifact/repository_key",
+                  "item_key_path": "/artifact/repository_key",
+                  "value_path": "/artifact/base_branch"
+                }
+              },
+              "pre_authorized_tools": [],
+              "required_tools": [],
+              "authorized_outputs": [
+                "pr_summary",
+                "build_result"
+              ],
+              "yolo": false
+            }
+          ],
           "slot_bindings": {
             "OAKRIDGE_URL": {
               "from": "context",
@@ -263,24 +408,6 @@
           "workdir": {
             "from": "literal",
             "value": "/"
-          },
-          "session_name": "build-{{STAGE_INSTANCE_ID}}-{{UNIT_ID}}",
-          "model": {
-            "from": "context",
-            "path": "/worker_model"
-          },
-          "effort": {
-            "from": "context",
-            "path": "/worker_effort"
-          },
-          "pre_authorized_tools": [],
-          "yolo": false,
-          "output_handoff": {
-            "output": "build_result",
-            "downstream_role": "assessment",
-            "approved_wait": {
-              "kind": "github_review"
-            }
           },
           "fan_out": {
             "over": {
@@ -345,19 +472,25 @@
               "collection_key_path": "/artifact/repository_key",
               "item_key_path": "/artifact/repository_key",
               "value_path": "/artifact/repository_path"
-            },
-            "worktree": {
-              "branch_name": "cohort/{{STAGE_INSTANCE_ID}}/{{UNIT_ID}}",
-              "worktree_subdir": "{{STAGE_INSTANCE_ID}}/{{UNIT_ID}}",
-              "base_ref": {
-                "from": "input_lookup",
-                "input_name": "repository_refs",
-                "collection_key_path": "/artifact/repository_key",
-                "item_key_path": "/artifact/repository_key",
-                "value_path": "/artifact/base_branch"
+            }
+          },
+          "artifact_productions": [],
+          "gates": [],
+          "handoffs": [
+            {
+              "name": "build_result_handoff",
+              "outputs": [
+                "build_result"
+              ],
+              "downstream_role": "assessment",
+              "approved_wait": {
+                "kind": "github_review",
+                "close_events": [
+                  "approved"
+                ]
               }
             }
-          }
+          ]
         },
         "inputs": [
           {
@@ -387,11 +520,47 @@
         "stage_type": "delegated_session",
         "operator_role": "assessment",
         "config": {
-          "runtime": {
-            "from": "context",
-            "path": "/planner_runtime"
-          },
-          "prompt_template_path": "dev-flow/assessor_v2.md",
+          "prompt_matrix": [
+            {
+              "session_role": "assessment",
+              "launch_reason": "initial",
+              "template_path": "dev-flow/assessor_v2.md"
+            },
+            {
+              "session_role": "assessment",
+              "launch_reason": "operator_retry",
+              "template_path": "dev-flow/assessor_v2.md"
+            },
+            {
+              "session_role": "assessment",
+              "launch_reason": "input_revision",
+              "template_path": "dev-flow/assessor_v2.md"
+            }
+          ],
+          "role_configs": [
+            {
+              "session_role": "assessment",
+              "runtime": {
+                "from": "context",
+                "path": "/planner_runtime"
+              },
+              "session_name": "assessor-{{STAGE_INSTANCE_ID}}-{{UNIT_ID}}",
+              "model": {
+                "from": "context",
+                "path": "/planner_model"
+              },
+              "effort": {
+                "from": "context",
+                "path": "/planner_effort"
+              },
+              "pre_authorized_tools": [],
+              "required_tools": [],
+              "authorized_outputs": [
+                "assessment"
+              ],
+              "yolo": false
+            }
+          ],
           "slot_bindings": {
             "BUILD_RESULT": {
               "from": "input",
@@ -413,31 +582,6 @@
             "input_name": "repository_refs",
             "path": "/0/artifact/repository_path"
           },
-          "session_name": "assessor-{{STAGE_INSTANCE_ID}}-{{UNIT_ID}}",
-          "model": {
-            "from": "context",
-            "path": "/planner_model"
-          },
-          "effort": {
-            "from": "context",
-            "path": "/planner_effort"
-          },
-          "pre_authorized_tools": [],
-          "yolo": false,
-          "output_gate": {
-            "output": "assessment",
-            "steps": [
-              {
-                "type": "artifact_approval",
-                "actions": [
-                  "approve",
-                  "request_revision"
-                ]
-              }
-            ],
-            "requires_zero_open_review_items": false,
-            "revision_target": "upstream_handoff"
-          },
           "fan_out": {
             "over": {
               "from": "input",
@@ -453,7 +597,27 @@
               }
             },
             "inherit_worktree_from": "build_result"
-          }
+          },
+          "artifact_productions": [],
+          "gates": [
+            {
+              "name": "assessment_gate",
+              "outputs": [
+                "assessment"
+              ],
+              "steps": [
+                {
+                  "type": "artifact_approval",
+                  "actions": [
+                    "approve",
+                    "request_revision"
+                  ]
+                }
+              ],
+              "requires_zero_open_review_items": false
+            }
+          ],
+          "handoffs": []
         },
         "inputs": [
           {

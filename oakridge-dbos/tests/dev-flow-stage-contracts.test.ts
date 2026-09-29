@@ -53,7 +53,9 @@ const loadCompiled = async () => {
  */
 const resolveStage = async (stage: CompiledStageContract, unit: MaterializedExecutionUnit, inputs: StageInputSet) => {
   const definition = stage.executor.definition_config as DelegatedSessionDefinitionConfig;
-  const template = await Bun.file(new URL(`../../workflow-config/prompts/${definition.prompt_template_path}`, import.meta.url)).text();
+  const prompt = definition.prompt_matrix.find((entry) => entry.session_role === stage.operator_role && entry.launch_reason === "initial");
+  if (!prompt) throw new Error(`missing initial prompt for ${stage.stage_key}`);
+  const template = await Bun.file(new URL(`../../workflow-config/prompts/${prompt.template_path}`, import.meta.url)).text();
   return resolveDelegatedExecution({ definition, environment: { inputs, context, item: null }, unit, stage_instance_id: stageInstanceId, prompt_template: template,
     run_id: runId, operator_role: stage.operator_role });
 };
@@ -144,5 +146,5 @@ test("seeded assessor resolves its real prompt, pairing only the matching build 
   const execution = await resolveStage(assessor, web, inputs);
   expect(execution).toEqual({ ok: true, value: expect.objectContaining({ rendered_prompt: expect.stringContaining("ui works") }) });
   if (execution.ok) expect(execution.value.rendered_prompt).not.toContain("base works");
-  expect(assessor.outputs[0]?.release).toEqual(expect.objectContaining({ kind: "gate", revision_target: "upstream_handoff" }));
+  expect(assessor.outputs[0]?.release).toEqual(expect.objectContaining({ kind: "gate", gate_name: "assessment_gate" }));
 });

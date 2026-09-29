@@ -26,7 +26,7 @@ import { resolveBinding, resolveBindingValue, resolveDelegatedExecution } from "
 import type { StageInputSet } from "../decision/commands";
 import { workOrderIdFor, workOrderWorkflowId } from "../decision/ids";
 import type { CompiledStageContract, MaterializedExecutionUnit } from "../domain/compiled-workflow";
-import type { DelegatedSessionDefinitionConfig } from "../domain/delegated-session";
+import type { DelegatedSessionDefinitionConfig, SessionLaunchReason } from "../domain/delegated-session";
 import type { AssessmentRevisionContext } from "../domain/dev-flow-artifacts";
 import type { ArtifactEnvelope, ExecutionRequest, ExternalExecutionReference } from "../domain/execution";
 import type { ArtifactId, JsonValue, OutputCollectionKey, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "../domain/primitives";
@@ -77,9 +77,14 @@ const executionRequest = async (input: ExecutionRequestInput, dependencies: Reso
       publication: { work_order_id: input.work_order_id, capability: input.capability } } satisfies ResolvedRepositoryProvisioningConfig as unknown as JsonValue;
   } else if (input.stage.executor.executor_type === "delegated_session") {
     const definition = input.stage.executor.definition_config as DelegatedSessionDefinitionConfig;
+    if (!input.stage.operator_role) throw new Error(`stage '${input.stage.stage_key}' has no delegated session role`);
+    const launchReason: SessionLaunchReason = input.identity.startsWith("revision:") ? "input_revision"
+      : input.identity.startsWith("retry:") ? "operator_retry" : "initial";
+    const prompt = definition.prompt_matrix.find((entry) => entry.session_role === input.stage.operator_role && entry.launch_reason === launchReason);
+    if (!prompt) throw new Error(`stage '${input.stage.stage_key}' has no prompt for ${input.stage.operator_role}:${launchReason}`);
     const planned = resolveDelegatedExecution({ definition, environment: { inputs: unitInputs, context: input.context, item: input.unit.parameters }, unit: input.unit,
-      stage_instance_id: input.stage_instance_id, prompt_template: await dependencies.load_prompt_template(definition.prompt_template_path),
-      run_id: input.run_id, operator_role: input.stage.operator_role });
+      stage_instance_id: input.stage_instance_id, prompt_template: await dependencies.load_prompt_template(prompt.template_path),
+      run_id: input.run_id, operator_role: input.stage.operator_role, launch_reason: launchReason });
     if (!planned.ok) throw new Error(`${planned.error.operation}:${planned.error.detail}`);
     const urlBinding = definition.slot_bindings.OAKRIDGE_URL;
     const url = urlBinding ? resolveBinding(urlBinding, { inputs: unitInputs, context: input.context, item: input.unit.parameters }) : null;

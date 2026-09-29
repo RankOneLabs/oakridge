@@ -49,7 +49,7 @@ const stageInputs = (stage_key: StageKey, definition: CompiledWorkflowDefinition
   for (const edge of definition.edges.filter((candidate) => candidate.consumer_stage === stage_key)) {
     const values = snapshot.available_artifacts.filter((artifact) => artifact.producer_stage_key === edge.producer_stage && artifact.output_name === edge.producer_output);
     const input = stage.inputs.find((candidate) => candidate.name === edge.consumer_input);
-    const driver = stage.materialization.kind !== "scalar" && stage.materialization.kind !== "artifact_collection"
+    const driver = stage.materialization.kind === "fan_out"
       && stage.materialization.over.from === "input" && stage.materialization.over.input_name === edge.consumer_input;
     if (edge.delivery === "unit_complete" || input?.collect === true || driver) result[edge.consumer_input] = values;
     else if (values[0]) result[edge.consumer_input] = values[0];
@@ -87,14 +87,14 @@ const selectInputsForUnit = (stage: CompiledStageContract, inputs: StageInputSet
 /** One per `contract.outputs` for fan_out/scalar; one per (item key × output), `collection_member`, for artifact_collection. */
 const outputSlots = (contract: CompiledStageContract, unit: MaterializedExecutionUnit): Result<readonly MaterializedRunOutput[], { readonly path: string; readonly detail: string }> => {
   const materialization = contract.materialization;
-  if (materialization.kind !== "artifact_collection") {
+  if (materialization.kind !== "artifact_collections") {
     return ok(contract.outputs.map((output) => ({ identity: { kind: "scalar" as const, output_name: output.name }, artifact_type: output.artifact_type, required: true,
       release: output.release, attention: selectOutputAttention(output) })));
   }
   const outputs: MaterializedRunOutput[] = [];
   for (const item of unit.parameters as readonly JsonValue[]) {
-    const key = readJsonPointer(item, materialization.id_path);
-    if (typeof key !== "string" || key.length === 0) return err({ path: materialization.id_path, detail: `artifact collection key '${materialization.id_path}' must be a non-empty string` });
+    const key = readJsonPointer(item, "/collection_key");
+    if (typeof key !== "string" || key.length === 0) return err({ path: "/collection_key", detail: "artifact collection key must be a non-empty string" });
     for (const output of contract.outputs) outputs.push({ identity: { kind: "collection_member" as const, output_name: output.name, collection_key: key as OutputCollectionKey }, artifact_type: output.artifact_type, required: true,
       release: output.release, attention: selectOutputAttention(output) });
   }
@@ -185,13 +185,23 @@ const mintUnits = (contract: CompiledStageContract, inputs: StageInputSet, conte
 
   if (materialization.kind === "scalar") return finalizeMintedUnits(contract, inputs, [{ unit: { unit_id: "0" as UnitId, parameters: {}, depends_on: [] }, source_artifact_id: null }]);
 
-  if (materialization.kind === "artifact_collection") {
-    const sourceId = sourceArtifactId(materialization.over, inputs);
-    const path = bindingPath(materialization.over);
-    const over = resolveBindingValue(materialization.over, environment);
-    if (!over.ok) return err({ kind: "malformed_driver_artifact", stage_key: contract.stage_key, artifact_id: sourceId, path, detail: over.error.detail });
-    if (!Array.isArray(over.value)) return err({ kind: "malformed_driver_artifact", stage_key: contract.stage_key, artifact_id: sourceId, path, detail: `${materialization.kind}.over must resolve to an array` });
-    return finalizeMintedUnits(contract, inputs, [{ unit: { unit_id: "0" as UnitId, parameters: over.value, depends_on: [] }, source_artifact_id: sourceId }]);
+  if (materialization.kind === "artifact_collections") {
+    const members: JsonValue[] = [];
+    let sourceId: ArtifactId | null = null;
+    for (const production of materialization.productions) {
+      sourceId ??= sourceArtifactId(production.over, inputs);
+      const path = bindingPath(production.over);
+      const over = resolveBindingValue(production.over, environment);
+      if (!over.ok) return err({ kind: "malformed_driver_artifact", stage_key: contract.stage_key, artifact_id: sourceId, path, detail: over.error.detail });
+      if (!Array.isArray(over.value)) return err({ kind: "malformed_driver_artifact", stage_key: contract.stage_key, artifact_id: sourceId, path, detail: `${materialization.kind}.over must resolve to an array` });
+      for (const item of over.value) {
+        const key = readJsonPointer(item, production.id_path);
+        if (typeof key !== "string" || key.length === 0) return err({ kind: "malformed_driver_artifact", stage_key: contract.stage_key, artifact_id: sourceId,
+          path: production.id_path, detail: `artifact collection key '${production.id_path}' must be a non-empty string` });
+        members.push({ collection_key: key });
+      }
+    }
+    return finalizeMintedUnits(contract, inputs, [{ unit: { unit_id: "0" as UnitId, parameters: members, depends_on: [] }, source_artifact_id: sourceId }]);
   }
 
   // fan_out

@@ -9,11 +9,12 @@ const RUN_ID = "11111111-1111-4111-8111-111111111111" as WorkflowRunId;
 const STAGE_INSTANCE_ID = "22222222-2222-4222-8222-222222222222" as StageInstanceId;
 
 const definition: DelegatedSessionDefinitionConfig = {
-  runtime: { from: "literal", value: "claude-code" },
-  prompt_template_path: "build.md",
+  prompt_matrix: (["initial", "operator_retry", "input_revision"] as const).map((launch_reason) => ({ session_role: "build" as const, launch_reason, template_path: "build.md" })),
+  role_configs: [{ session_role: "build", runtime: { from: "literal", value: "claude-code" }, session_name: "build-{{STAGE_INSTANCE_ID}}-{{UNIT_ID}}",
+    authorized_outputs: ["result"], pre_authorized_tools: [], required_tools: [] }],
   slot_bindings: { OAKRIDGE_URL: { from: "literal", value: "http://oakridge.test" } },
   workdir: { from: "literal", value: "/repo" },
-  session_name: "build-{{STAGE_INSTANCE_ID}}-{{UNIT_ID}}",
+  artifact_productions: [], gates: [], handoffs: [],
 };
 
 const stage: CompiledStageContract = {

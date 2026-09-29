@@ -15,7 +15,7 @@ test("compiles unchanged v14 into executor-independent materialization contracts
   // directory; it declares the provisioned refs now, so the branch a planner
   // reasons about is guaranteed to exist before the planner does.
   expect(compiled.value.source_stages).toEqual(["provision_refs"]);
-  expect(compiled.value.stages.brief_writer?.materialization.kind).toBe("artifact_collection");
+  expect(compiled.value.stages.brief_writer?.materialization.kind).toBe("artifact_collections");
   expect(compiled.value.stages.build?.materialization.kind).toBe("fan_out");
   expect(compiled.value.stages.build?.outputs.find((output) => output.name === "build_result")?.release.kind).toBe("handoff");
   expect(compiled.value.edges.find((edge) => edge.consumer_stage === "build" && edge.consumer_input === "brief")?.delivery).toBe("unit_complete");

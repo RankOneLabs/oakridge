@@ -32,10 +32,11 @@ export const run = (options?: { readonly context?: JsonValue; readonly state?: W
   record_version: (options?.record_version ?? 1) as RunRecordVersion, created_at: NOW, ended_at: null,
 });
 
-export const emptyDefinition = (): CompiledWorkflowDefinition => ({ stages: {}, edges: [], source_stages: [] });
+export const emptyDefinition = (): CompiledWorkflowDefinition => ({ manifest_version: 1, stages: {}, edges: [], source_stages: [] });
 
 /** One stage per key, `scalar` materialization — enough for run-completion (§D) tests that only care about stage membership. */
 export const scalarStageDefinition = (stage_keys: readonly string[]): CompiledWorkflowDefinition => ({
+  manifest_version: 1,
   stages: Object.fromEntries(stage_keys.map((key): [string, CompiledStageContract] => [key, {
     stage_key: key as StageKey, stage_type: "delegated_session", operator_role: null, inputs: [], outputs: [],
     materialization: { kind: "scalar" }, executor: { executor_type: "delegated_session", definition_config: {} },
@@ -68,6 +69,7 @@ export const fanOutDefinition = (options: { readonly stage_key: string; readonly
     executor: { executor_type: "delegated_session", definition_config: {} },
   };
   return {
+    manifest_version: 1,
     stages: { [options.stage_key]: consumer },
     edges: [{ producer_stage: PRODUCER_STAGE_KEY, producer_output: PRODUCER_OUTPUT_NAME, consumer_stage: options.stage_key as StageKey, consumer_input: options.over_input, delivery: "unit_complete" }],
     source_stages: [],

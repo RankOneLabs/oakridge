@@ -20,19 +20,10 @@ export interface CompiledOutputContract {
 
 export interface CompiledGateStep { readonly type: string; readonly actions: readonly GateAction[] }
 
-/**
- * Who a rejection at this gate sends back to work.
- *
- * `self_stage` is the unit that produced the artifact. `upstream_handoff` is the
- * unit whose output this stage was handed — an assessor rejecting an assessment
- * is asking the *build* for changes, not itself.
- */
-export type GateRevisionTarget = "self_stage" | "upstream_handoff";
-
 export type OutputReleaseContract =
   | { readonly kind: "immediate" }
-  | { readonly kind: "gate"; readonly steps: readonly CompiledGateStep[]; readonly requires_zero_open_review_items: boolean; readonly revision_target: GateRevisionTarget }
-  | { readonly kind: "handoff"; readonly downstream_role: StageOperatorRole; readonly external_wait_kind: string };
+  | { readonly kind: "gate"; readonly gate_name: string; readonly steps: readonly CompiledGateStep[]; readonly requires_zero_open_review_items: boolean }
+  | { readonly kind: "handoff"; readonly handoff_name: string; readonly downstream_role: StageOperatorRole; readonly external_wait_kind: string; readonly close_events: readonly string[] };
 
 export type OutputAttention = "required" | "optional" | "none";
 export type OutputContinuation = "waiting" | "continuing";
@@ -48,7 +39,7 @@ export const selectOutputAttention = (
 
 export type MaterializationContract =
   | { readonly kind: "scalar" }
-  | { readonly kind: "artifact_collection"; readonly over: SlotBinding; readonly id_path: string }
+  | { readonly kind: "artifact_collections"; readonly productions: readonly { readonly over: SlotBinding; readonly id_path: string }[] }
   | { readonly kind: "fan_out"; readonly over: SlotBinding; readonly unit_id_path: string; readonly depends_on_path: string | null; readonly max_parallel: number; readonly manual_admission: boolean };
 
 export interface CompiledExecutorSelection {
@@ -75,6 +66,7 @@ export interface CompiledEdge {
 }
 
 export interface CompiledWorkflowDefinition {
+  readonly manifest_version: 1;
   readonly stages: Readonly<Record<StageKey, CompiledStageContract>>;
   readonly edges: readonly CompiledEdge[];
   readonly source_stages: readonly StageKey[];

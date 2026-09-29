@@ -60,41 +60,58 @@ export interface FanOutDefinition {
   readonly manual_admission?: boolean;
   readonly item_bindings?: Readonly<Record<string, SlotBinding>>;
   readonly workdir?: SlotBinding;
-  readonly worktree?: WorktreeTemplate;
   readonly inherit_worktree_from?: string;
 }
 
 export interface ArtifactCollectionDefinition { readonly over: SlotBinding; readonly id_path: string }
 export interface OutputGateStep { readonly type: "artifact_approval" | "merge_confirmation"; readonly actions: readonly string[] }
 export interface OutputGateDefinition {
-  readonly output: string;
+  readonly name: string;
+  readonly outputs: readonly string[];
   readonly steps: readonly OutputGateStep[];
   readonly requires_zero_open_review_items?: boolean;
-  readonly revision_target?: "self_stage" | "upstream_handoff";
 }
 export interface OutputHandoffDefinition {
-  readonly output: string;
+  readonly name: string;
+  readonly outputs: readonly string[];
   readonly downstream_role: StageOperatorRole;
-  readonly approved_wait: { readonly kind: string };
+  readonly approved_wait: { readonly kind: string; readonly close_events: readonly string[] };
+}
+
+/** Why the scheduler is starting or resuming a delegated role. */
+export type SessionLaunchReason = "initial" | "operator_retry" | "input_revision";
+
+/** One cell in the role × launch-reason prompt matrix. */
+export interface PromptMatrixEntry {
+  readonly session_role: StageOperatorRole;
+  readonly launch_reason: SessionLaunchReason;
+  readonly template_path: string;
+}
+
+/** Runtime policy belongs to a session role, including its worktree. */
+export interface DelegatedSessionRoleConfig {
+  readonly session_role: StageOperatorRole;
+  readonly runtime: Bindable;
+  readonly session_name: string;
+  readonly model?: Bindable;
+  readonly effort?: Bindable;
+  readonly worktree?: WorktreeTemplate;
+  readonly pre_authorized_tools?: readonly string[];
+  readonly required_tools?: readonly string[];
+  readonly authorized_outputs: readonly string[];
+  readonly yolo?: boolean;
 }
 
 /** Exact definition-time JSON contract retained from Rust v2. */
 export interface DelegatedSessionDefinitionConfig {
-  readonly runtime: Bindable;
-  readonly prompt_template_path: string;
+  readonly prompt_matrix: readonly PromptMatrixEntry[];
+  readonly role_configs: readonly DelegatedSessionRoleConfig[];
   readonly slot_bindings: Readonly<Record<string, SlotBinding>>;
   readonly workdir: SlotBinding;
-  readonly session_name: string;
-  readonly model?: Bindable;
-  readonly effort?: Bindable;
-  readonly worktree?: WorktreeIdentity;
-  readonly pre_authorized_tools?: readonly string[];
-  readonly yolo?: boolean;
   readonly fan_out?: FanOutDefinition;
-  readonly artifacts?: ArtifactCollectionDefinition;
-  readonly gate_output?: string;
-  readonly output_gate?: OutputGateDefinition;
-  readonly output_handoff?: OutputHandoffDefinition;
+  readonly artifact_productions: readonly ArtifactCollectionDefinition[];
+  readonly gates: readonly OutputGateDefinition[];
+  readonly handoffs: readonly OutputHandoffDefinition[];
 }
 
 export interface ResolvedExecutorConfig {
