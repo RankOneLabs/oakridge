@@ -8,8 +8,8 @@ import type { SessionHold } from "../domain/session-hold";
 import type { OperatorSessionRunLocation } from "../domain/operator-projections";
 import type { CreateProject, Project, UpdateProject } from "../domain/projects";
 import type { AdmitStageUnitRequest, AdmitStageUnitResult, CreateWorkflowRunResult, DeleteRunResult, PersistWorkflowRunLaunch, SetRunArchiveResult, UnstartedRun, WorkflowRunLaunchRecord, WorkflowRunListFilter } from "../domain/runs";
-import type { ConfirmFinalPullRequestRequest, FinalPullRequestDomainError, FinalPullRequestProjection, PullRequestObservation } from "../domain/final-pull-request";
-import type { CohortPullRequestReconciliation, RunOwnedCohortHandoff } from "../domain/cohort-pull-request";
+import type { DevFlowBuildCohort, RunOwnedCohortHandoff } from "../domain/cohort-pull-request";
+import type { PullRequest, PullRequestId, PullRequestMergeClosure, PullRequestObservation, PullRequestObservationId, PullRequestVerificationId, StoredPullRequestObservation } from "../domain/pull-request";
 import type { ExternalExecutionReference } from "../domain/execution";
 import type { Result } from "../domain/primitives";
 import type { CancelRunRecord, CancelRunRecordResult, CloseRunOutputWait, CloseRunOutputWaitResult, CompleteHandoffArtifact, DecideGateWait, ExecutorAttachment, ExecutorHealthObservation, InitializeStraightThroughRun, PersistMaterializedStage, PublishWorkOrderArtifact, PublishWorkOrderArtifactResult, RetryRunUnit, RetryRunUnitResult, ReviseRunUnitInput, ReviseRunUnitInputResult, WorkOrderExecution } from "../domain/run-record";
@@ -153,33 +153,22 @@ export interface EpicWorkflowProfileRepository {
   find_by_run_id(run_id: WorkflowRunId): Promise<EpicWorkflowProfile | null>;
 }
 
-/**
- * The durable record of whether a cohort's pull request merged, keyed by the
- * unit that opened it. Written by whatever observed the forge — the poller, or
- * an operator confirming by hand — and read by the operator projections.
- */
-export interface CohortPullRequestRepository {
-  find(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<CohortPullRequestReconciliation | null>;
-  upsert(reconciliation: CohortPullRequestReconciliation): Promise<void>;
+export interface CurrentVerifiedCohortPullRequest {
+  readonly cohort: DevFlowBuildCohort;
+  readonly pull_request: PullRequest;
+  readonly observation: StoredPullRequestObservation;
 }
 
-export interface PersistFinalPullRequestObservation {
-  readonly run_id: WorkflowRunId;
-  readonly repository_key: string;
-  readonly observation: PullRequestObservation;
-  readonly updated_at: string;
-}
-
-export interface PersistFinalPullRequestConfirmation {
-  readonly run_id: WorkflowRunId;
-  readonly repository_key: string;
-  readonly request: ConfirmFinalPullRequestRequest;
-  readonly confirmed_at: string;
-}
-
-export interface FinalPullRequestRepository {
-  observe(input: PersistFinalPullRequestObservation): Promise<Result<FinalPullRequestProjection, FinalPullRequestDomainError>>;
-  confirm(input: PersistFinalPullRequestConfirmation): Promise<Result<FinalPullRequestProjection, FinalPullRequestDomainError>>;
+/** Storage boundary shared by cohort and final-stage adapters. */
+export interface DevFlowPullRequestRepository {
+  create_cohort(cohort: DevFlowBuildCohort): Promise<DevFlowBuildCohort>;
+  begin_cohort_advance(input: { readonly cohort_id: import("../domain/primitives").CohortId; readonly expected_head_sha: string; readonly next_head_sha: string; readonly prepared_at: string }): Promise<Result<void, { readonly kind: "cohort_not_found" | "ref_lease_mismatch"; readonly detail: string }>>;
+  advance_cohort_head(input: { readonly cohort_id: import("../domain/primitives").CohortId; readonly expected_head_sha: string; readonly next_head_sha: string; readonly advanced_at: string }): Promise<Result<DevFlowBuildCohort, { readonly kind: "cohort_not_found" | "ref_lease_mismatch"; readonly detail: string }>>;
+  find_cohort_for_unit(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<DevFlowBuildCohort | null>;
+  find_current_for_unit(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<CurrentVerifiedCohortPullRequest | null>;
+  observe(input: { readonly observation: PullRequestObservation; readonly recorded_at: string }): Promise<{ readonly pull_request_id: PullRequestId; readonly observation_id: PullRequestObservationId }>;
+  bind_verified(input: { readonly cohort_id: import("../domain/primitives").CohortId; readonly pull_request_id: PullRequestId; readonly observation_id: PullRequestObservationId; readonly verified_head_sha: string; readonly verified_at: string; readonly replace_verification_id: PullRequestVerificationId | null }): Promise<Result<PullRequestVerificationId, { readonly kind: "replacement_required" | "replacement_conflict"; readonly detail: string }>>;
+  confirm_merge(input: { readonly cohort_id: import("../domain/primitives").CohortId; readonly pull_request_id: PullRequestId; readonly idempotency_key: string; readonly merged_at: string; readonly confirmed_at: string }): Promise<Result<{ readonly kind: "created" | "replayed"; readonly closure: PullRequestMergeClosure }, { readonly kind: "idempotency_conflict" | "pull_request_not_current" | "missing_merged_evidence"; readonly detail: string }>>;
 }
 
 export interface CollaborationRepository {

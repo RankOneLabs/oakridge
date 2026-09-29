@@ -25,10 +25,6 @@ export const createEpicProfile = (input: CreateEpicProfileInput): EpicWorkflowPr
   slug: input.config.slug,
   lifecycle_state: "active",
   final_merge_policy: input.config.final_merge_policy,
-  // One branch for the whole epic. It used to be per repository, so a two-repo
-  // epic could carry two different names for the one thing every stage calls
-  // "the base branch".
-  base_branch: selectBaseBranch(input.config.base_branch, input.config.slug),
   repositories: input.config.repositories.map((repository) => ({
     repository_key: repository.repository_key,
     repository_path: repository.repository_path,

@@ -7,21 +7,35 @@
  * is that the cohort's work landed, so the evidence has to be checked against
  * what the build itself reported opening.
  *
- * The check is deliberately graded rather than all-or-nothing. Identity — the
- * pull request URL and the head branch — comes from the cohort's own
- * `pr_summary` artifact and is always available, so it is always checked; those
- * two are what stop a merge of some other branch being accepted here. The forge
- * binding and the expected base branch come from an Epic profile, which not
- * every run has. v1 refused outright without one. Refusing means a run launched
- * without an Epic can never finish, so an absent expectation is skipped and
- * recorded as skipped instead.
+ * Identity comes from the independently verified PR link and the stored cohort
+ * refs. Agent-authored artifact bodies are never used as PR evidence.
  */
 import type { ForgeRepositoryIdentity } from "./epic";
-import type { ArtifactId, JsonValue, StageInstanceId, UnitId, WorkflowRunId } from "./primitives";
+import type { ArtifactId, CohortId, JsonValue, StageInstanceId, UnitId, WorkflowRunId } from "./primitives";
+import type { PullRequestVerificationId } from "./pull-request";
 import {
   parseGithubPullRequestIdentity, pullRequestMismatch, pullRequestUrlsMatch, repositoriesMatch,
   type PullRequestMismatch, type PullRequestObservation,
 } from "./pull-request";
+
+/**
+ * Adapter-owned build identity. `cohort_key` is unique only inside its stage;
+ * the repository and both branch roles are persisted once and reused by the
+ * prompt and PR verifier.
+ */
+export interface DevFlowBuildCohort {
+  readonly cohort_id: CohortId;
+  readonly stage_instance_id: StageInstanceId;
+  readonly cohort_key: string;
+  readonly repository_key: string;
+  readonly repository_path: string;
+  readonly canonical_ref: string;
+  readonly expected_pr_base: string;
+  readonly recorded_head_sha: string;
+  readonly current_verified_pull_request_id: PullRequestVerificationId | null;
+  readonly created_at: string;
+  readonly updated_at: string;
+}
 
 /** The run-owned facts required to reconcile one cohort's external handoff. */
 export interface RunOwnedCohortHandoff {
@@ -32,7 +46,6 @@ export interface RunOwnedCohortHandoff {
   readonly handoff_artifact_id: ArtifactId;
   readonly handoff_slot_state: "empty" | "pending" | "released" | "invalidated";
   readonly handoff_body: JsonValue;
-  readonly summary_body: JsonValue;
 }
 
 /** What the run expects this cohort's pull request to be. */
@@ -41,9 +54,9 @@ export interface ExpectedCohortPullRequest {
   readonly stage_instance_id: StageInstanceId;
   readonly unit_id: UnitId;
   readonly repository_key: string;
-  /** Where the build reported opening the pull request. */
+  /** Canonical URL read from the independently verified PR entity. */
   readonly url: string;
-  /** The branch the build reported pushing. */
+  /** Canonical ref persisted for this cohort. */
   readonly head_branch: string;
   /** The branch a cohort PR must target, when the run declares one. */
   readonly base_branch: string | null;
@@ -104,7 +117,7 @@ export const reconciliationForHandoff = (
 const findMismatch = (expected: ExpectedCohortPullRequest, observation: PullRequestObservation): PullRequestMismatch | null => {
   const identity = parseGithubPullRequestIdentity(expected.url);
   if (!identity) {
-    return pullRequestMismatch("pull_request_mismatch", "the cohort's pr_summary URL is not a canonical GitHub pull request URL");
+    return pullRequestMismatch("pull_request_mismatch", "the cohort's verified pull request URL is not a canonical GitHub pull request URL");
   }
   if (!pullRequestUrlsMatch(expected.url, observation.url)) {
     return pullRequestMismatch("pull_request_mismatch", "observed pull request is not the one the build reported opening");

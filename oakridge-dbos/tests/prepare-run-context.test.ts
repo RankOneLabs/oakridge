@@ -45,6 +45,6 @@ test("Epic profile construction owns domain defaults independently of execution"
       { repository_key: "oakridge", repository_path: "/codes/oakridge", integration_branch: "main", forge_repository: null },
     ] },
   });
-  expect(profile).toEqual(expect.objectContaining({ lifecycle_state: "active", base_branch: "epic/safe-artifacts",
+  expect(profile).toEqual(expect.objectContaining({ lifecycle_state: "active",
     repositories: [expect.objectContaining({ integration_branch: "main", final_pull_request: null, final_merge_state: "pending" })] }));
 });

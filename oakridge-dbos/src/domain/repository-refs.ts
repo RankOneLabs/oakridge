@@ -69,6 +69,26 @@ export interface RepositoryRefs {
   readonly base_head_sha: string;
 }
 
+/** The one source used for both persisted cohort data and agent instructions. */
+export interface CohortBranchRoles {
+  readonly canonical_ref: string;
+  readonly expected_pr_base: string;
+}
+
+export const selectCohortBranchRoles = (
+  cohortKey: string,
+  repository: Pick<RepositoryRefs, "base_branch">,
+): CohortBranchRoles => ({
+  canonical_ref: `cohort/${cohortKey}`,
+  expected_pr_base: repository.base_branch,
+});
+
+export const renderCohortBranchContract = (roles: CohortBranchRoles): string => [
+  "## Repository refs",
+  `Canonical cohort ref: ${roles.canonical_ref}`,
+  `Pull request base: ${roles.expected_pr_base}`,
+].join("\n");
+
 export interface RunContextRepositoryError {
   readonly operation: "parse_run_context_repository";
   readonly detail: string;
