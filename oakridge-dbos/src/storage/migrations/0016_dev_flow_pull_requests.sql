@@ -34,7 +34,7 @@ CREATE TABLE oakridge.pull_request_observation (
   pull_request_id uuid NOT NULL REFERENCES oakridge.pull_request(id) ON DELETE CASCADE,
   head_ref text NOT NULL CHECK (length(btrim(head_ref)) > 0),
   base_ref text NOT NULL CHECK (length(btrim(base_ref)) > 0),
-  head_sha text NOT NULL CHECK (length(btrim(head_sha)) > 0),
+  head_sha text CHECK (head_sha IS NULL OR length(btrim(head_sha)) > 0),
   state text NOT NULL CHECK (state IN ('open', 'merged', 'closed_unmerged')),
   source text NOT NULL CHECK (source IN ('poll', 'webhook', 'manual_recheck')),
   observed_at timestamptz NOT NULL,

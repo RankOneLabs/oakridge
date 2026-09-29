@@ -2,10 +2,9 @@ import type { ArtifactId, ExecutionId, RunUnitId, StageInstanceId, UnitId, Workf
 import { selectGateActionability, selectPendingStageOrder, selectRunRecordUnitDecision, type OperatorApplicationVersionInventory, type OperatorCohortLifecycle, type OperatorCohortSummary, type OperatorParkedGate, type OperatorReviewInbox, type OperatorReviewInboxItem, type OperatorRunDetail, type OperatorRunRecordDetail, type OperatorRunRecordSlot, type OperatorRunRecordTransition, type OperatorRunRecordUnit, type OperatorRunRecordUnitFacts, type OperatorRunRecordWait, type OperatorRunRecordWorkOrder, type OperatorRunSessionAttempt, type OperatorRunSummary, type OperatorSessionRunLocation, type OperatorStageArtifact, type OperatorStageDetail, type OperatorStageUnit } from "../domain/operator-projections";
 import type { RunOutputSlotState } from "../domain/run-record";
 import type { SessionLaunchReasonName } from "../domain/delegated-session";
-import type { SqlExecutor } from "./sql-executor";
+import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 import { selectV2RunStatus, selectV2StageStatus, selectV2UnitStatus } from "../operators/select-status";
 import type { EpicWorkflowProfile } from "../domain/epic";
-import { PR_SUMMARY_ARTIFACT_TYPE } from "../domain/dev-flow-artifacts";
 import { selectHandoffStatusFromWait, type HandoffWaitKind, type Wait, type WaitOutcome } from "../domain/wait";
 import type { RunState, UnitState } from "../domain/run-record";
 import { effectiveArtifactPredicate } from "./sql-fragments";
@@ -17,6 +16,11 @@ import { selectSessionHoldClaim, type SessionHold } from "../domain/session-hold
 import type { SessionHoldRepository, SessionRunLocationRepository } from "./repositories";
 import { runRecordWorkflowId } from "../domain/workflow-ids";
 import { projectRunEvent, type RunEvent, type RunEventRow } from "../domain/run-event";
+import type { CohortId } from "../domain/primitives";
+import type { DevFlowBuildCohort } from "../domain/cohort-pull-request";
+import type { PullRequest, PullRequestId, PullRequestMergeClosure, PullRequestMergeClosureId, PullRequestObservation, PullRequestObservationId, PullRequestVerificationId, StoredPullRequestObservation } from "../domain/pull-request";
+import { err, ok, type Result } from "../domain/primitives";
+import type { CurrentVerifiedCohortPullRequest, DevFlowPullRequestRepository } from "./repositories";
 
 interface GateProjectionRow {
   readonly run_id: string;
@@ -26,6 +30,120 @@ interface GateProjectionRow {
   readonly artifact_revision_id: string;
   readonly gate_step: string;
   readonly actions: readonly string[];
+}
+
+interface CurrentPullRequestRow {
+  readonly cohort_id: string; readonly stage_instance_id: string; readonly cohort_key: string;
+  readonly repository_key: string; readonly repository_path: string; readonly canonical_ref: string;
+  readonly expected_pr_base: string; readonly recorded_head_sha: string; readonly verification_id: string;
+  readonly cohort_created_at: string; readonly cohort_updated_at: string;
+  readonly pull_request_id: string; readonly provider: "github"; readonly owner: string; readonly name: string;
+  readonly forge_pull_request_id: string; readonly url: string; readonly pull_request_created_at: string;
+  readonly observation_id: string; readonly head_ref: string; readonly base_ref: string; readonly head_sha: string | null;
+  readonly state: PullRequestObservation["state"]; readonly source: PullRequestObservation["source"];
+  readonly observed_at: string; readonly merged_at: string | null; readonly recorded_at: string;
+}
+
+/** PostgreSQL implementation of the shared cohort/final-stage PR entity. */
+export class PostgresDevFlowPullRequestRepository implements DevFlowPullRequestRepository {
+  constructor(private readonly sql: TransactionalSqlExecutor) {}
+
+  async find_current_for_unit(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<CurrentVerifiedCohortPullRequest | null> {
+    const rows = await this.sql.query<CurrentPullRequestRow>(`SELECT
+      cohort.cohort_id::text,cohort.stage_instance_id::text,cohort.cohort_key,cohort.repository_key,cohort.repository_path,
+      cohort.canonical_ref,cohort.expected_pr_base,cohort.recorded_head_sha,cohort.current_verified_pull_request_id::text AS verification_id,
+      cohort.created_at::text AS cohort_created_at,cohort.updated_at::text AS cohort_updated_at,
+      pull_request.id::text AS pull_request_id,pull_request.provider,pull_request.owner,pull_request.name,
+      pull_request.forge_pull_request_id::text,pull_request.url,pull_request.created_at::text AS pull_request_created_at,
+      observation.id::text AS observation_id,observation.head_ref,observation.base_ref,observation.head_sha,
+      observation.state,observation.source,observation.observed_at::text,observation.merged_at::text,observation.recorded_at::text
+      FROM oakridge.dev_flow_build_cohort cohort
+      JOIN oakridge.pull_request_verification verification
+        ON verification.id=cohort.current_verified_pull_request_id AND verification.invalidated_at IS NULL
+      JOIN oakridge.pull_request pull_request ON pull_request.id=verification.pull_request_id
+      JOIN oakridge.pull_request_observation observation ON observation.id=verification.observation_id
+      WHERE cohort.stage_instance_id=$1 AND cohort.cohort_key=$2`, [stage_instance_id, unit_id]);
+    const row = rows[0];
+    if (!row) return null;
+    const cohort: DevFlowBuildCohort = {
+      cohort_id: row.cohort_id as CohortId, stage_instance_id: row.stage_instance_id as StageInstanceId,
+      cohort_key: row.cohort_key, repository_key: row.repository_key, repository_path: row.repository_path,
+      canonical_ref: row.canonical_ref, expected_pr_base: row.expected_pr_base, recorded_head_sha: row.recorded_head_sha,
+      current_verified_pull_request_id: row.verification_id as PullRequestVerificationId,
+      created_at: row.cohort_created_at, updated_at: row.cohort_updated_at,
+    };
+    const pull_request: PullRequest = {
+      id: row.pull_request_id as PullRequestId, repository_key: row.repository_key, provider: row.provider,
+      owner: row.owner, name: row.name, forge_pull_request_id: Number(row.forge_pull_request_id), url: row.url,
+      created_at: row.pull_request_created_at,
+    };
+    const observation: StoredPullRequestObservation = {
+      id: row.observation_id as PullRequestObservationId, pull_request_id: pull_request.id, provider: row.provider,
+      owner: row.owner, name: row.name, number: Number(row.forge_pull_request_id), url: row.url,
+      head_branch: row.head_ref, base_branch: row.base_ref, head_sha: row.head_sha,
+      state: row.state, source: row.source, observed_at: row.observed_at, merged_at: row.merged_at, recorded_at: row.recorded_at,
+    };
+    return { cohort, pull_request, observation };
+  }
+
+  async observe(input: { readonly repository_key: string; readonly observation: PullRequestObservation; readonly recorded_at: string }): Promise<{ readonly pull_request_id: PullRequestId; readonly observation_id: PullRequestObservationId }> {
+    return this.sql.transaction(async (tx) => {
+      const pullRequests = await tx.query<{ readonly id: string }>(`INSERT INTO oakridge.pull_request
+        (id,repository_key,provider,owner,name,forge_pull_request_id,url,created_at)
+        VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7)
+        ON CONFLICT (repository_key,forge_pull_request_id) DO UPDATE SET url=EXCLUDED.url
+        RETURNING id::text`, [input.repository_key, input.observation.provider, input.observation.owner,
+        input.observation.name, input.observation.number, input.observation.url, input.recorded_at]);
+      const pullRequestId = pullRequests[0]!.id as PullRequestId;
+      const observations = await tx.query<{ readonly id: string }>(`INSERT INTO oakridge.pull_request_observation
+        (id,pull_request_id,head_ref,base_ref,head_sha,state,source,observed_at,merged_at,recorded_at)
+        VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id::text`,
+      [pullRequestId, input.observation.head_branch, input.observation.base_branch, input.observation.head_sha,
+        input.observation.state, input.observation.source, input.observation.observed_at, input.observation.merged_at, input.recorded_at]);
+      return { pull_request_id: pullRequestId, observation_id: observations[0]!.id as PullRequestObservationId };
+    });
+  }
+
+  async bind_verified(input: { readonly cohort_id: CohortId; readonly pull_request_id: PullRequestId; readonly observation_id: PullRequestObservationId; readonly verified_head_sha: string; readonly verified_at: string; readonly replace_verification_id: PullRequestVerificationId | null }): Promise<Result<PullRequestVerificationId, { readonly kind: "replacement_required" | "replacement_conflict"; readonly detail: string }>> {
+    return this.sql.transaction(async (tx) => {
+      const rows = await tx.query<{ readonly current_verified_pull_request_id: string | null }>(
+        "SELECT current_verified_pull_request_id::text FROM oakridge.dev_flow_build_cohort WHERE cohort_id=$1 FOR UPDATE", [input.cohort_id]);
+      const current = rows[0]?.current_verified_pull_request_id ?? null;
+      if (current !== null && input.replace_verification_id === null) return err({ kind: "replacement_required", detail: "cohort already has a verified pull request; replacement must name it" });
+      if (current !== null && current !== input.replace_verification_id) return err({ kind: "replacement_conflict", detail: "current verified pull request changed before replacement" });
+      if (current !== null) {
+        await tx.query("UPDATE oakridge.pull_request_verification SET invalidated_at=$2,invalidation_reason='replaced' WHERE id=$1 AND invalidated_at IS NULL", [current, input.verified_at]);
+        await tx.query("UPDATE oakridge.pull_request_approval SET invalidated_at=$2 WHERE verification_id=$1 AND invalidated_at IS NULL", [current, input.verified_at]);
+      }
+      const inserted = await tx.query<{ readonly id: string }>(`INSERT INTO oakridge.pull_request_verification
+        (id,cohort_id,pull_request_id,observation_id,verified_head_sha,verified_at)
+        VALUES (gen_random_uuid(),$1,$2,$3,$4,$5) RETURNING id::text`,
+      [input.cohort_id, input.pull_request_id, input.observation_id, input.verified_head_sha, input.verified_at]);
+      const id = inserted[0]!.id as PullRequestVerificationId;
+      await tx.query("UPDATE oakridge.dev_flow_build_cohort SET current_verified_pull_request_id=$2,updated_at=$3 WHERE cohort_id=$1", [input.cohort_id, id, input.verified_at]);
+      return ok(id);
+    });
+  }
+
+  async confirm_merge(input: { readonly cohort_id: CohortId; readonly pull_request_id: PullRequestId; readonly idempotency_key: string; readonly merged_at: string; readonly confirmed_at: string }): Promise<Result<{ readonly kind: "created" | "replayed"; readonly closure: PullRequestMergeClosure }, { readonly kind: "idempotency_conflict"; readonly detail: string }>> {
+    return this.sql.transaction(async (tx) => {
+      await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1::text,0))", [input.cohort_id]);
+      const existing = await tx.query<{ readonly id: string; readonly cohort_id: string; readonly pull_request_id: string; readonly idempotency_key: string; readonly merged_at: string; readonly confirmed_at: string }>(
+        "SELECT id::text,cohort_id::text,pull_request_id::text,idempotency_key,merged_at::text,confirmed_at::text FROM oakridge.pull_request_merge_closure WHERE cohort_id=$1 FOR UPDATE", [input.cohort_id]);
+      const row = existing[0];
+      if (row) {
+        if (row.idempotency_key !== input.idempotency_key) return err({ kind: "idempotency_conflict", detail: "cohort merge was already confirmed with a different idempotency key" });
+        return ok({ kind: "replayed", closure: { id: row.id as PullRequestMergeClosureId, cohort_id: row.cohort_id as CohortId,
+          pull_request_id: row.pull_request_id as PullRequestId, idempotency_key: row.idempotency_key, merged_at: row.merged_at, confirmed_at: row.confirmed_at } });
+      }
+      const inserted = await tx.query<{ readonly id: string }>(`INSERT INTO oakridge.pull_request_merge_closure
+        (id,cohort_id,pull_request_id,idempotency_key,merged_at,confirmed_at)
+        VALUES (gen_random_uuid(),$1,$2,$3,$4,$5) RETURNING id::text`,
+      [input.cohort_id, input.pull_request_id, input.idempotency_key, input.merged_at, input.confirmed_at]);
+      return ok({ kind: "created", closure: { id: inserted[0]!.id as PullRequestMergeClosureId, cohort_id: input.cohort_id,
+        pull_request_id: input.pull_request_id, idempotency_key: input.idempotency_key, merged_at: input.merged_at, confirmed_at: input.confirmed_at } });
+    });
+  }
 }
 
 interface V2GateProjectionRow extends GateProjectionRow {
@@ -84,7 +202,7 @@ interface EpicProfileRow extends Omit<EpicWorkflowProfile, "id" | "workflow_run_
  * test agreed with each other and both disagreed with every real row.
  */
 interface CohortUnitParameters { readonly artifact?: { readonly repository_key?: string; readonly title?: string } | null }
-interface CohortProjectionRow { readonly run_id: string; readonly workflow_name: string; readonly stage_instance_id: string; readonly stage_name: string; readonly unit_id: string; readonly params: CohortUnitParameters | null; readonly dbos_status: string; readonly artifact_revision_id: string | null; readonly handoff_wait_kind: HandoffWaitKind | null; readonly handoff_wait_status: Wait["status"]["kind"] | null; readonly handoff_outcome_kind: WaitOutcome["kind"] | null; readonly summary_pr_url: string | null; readonly reconciliation: OperatorCohortSummary["pull_request_reconciliation"]; readonly updated_at_epoch_ms: string; readonly admission_required: boolean; readonly admitted: boolean; readonly admission_eligible: boolean; readonly admission_blocked_by: readonly string[] }
+interface CohortProjectionRow { readonly run_id: string; readonly workflow_name: string; readonly stage_instance_id: string; readonly stage_name: string; readonly unit_id: string; readonly params: CohortUnitParameters | null; readonly dbos_status: string; readonly artifact_revision_id: string | null; readonly handoff_wait_kind: HandoffWaitKind | null; readonly handoff_wait_status: Wait["status"]["kind"] | null; readonly handoff_outcome_kind: WaitOutcome["kind"] | null; readonly verified_pr_url: string | null; readonly reconciliation: OperatorCohortSummary["pull_request_reconciliation"]; readonly updated_at_epoch_ms: string; readonly admission_required: boolean; readonly admitted: boolean; readonly admission_eligible: boolean; readonly admission_blocked_by: readonly string[] }
 interface V2CohortProjectionRow extends Omit<CohortProjectionRow, "dbos_status" | "updated_at_epoch_ms"> { readonly unit_state: UnitState; readonly operator_slot_state: RunOutputSlotState["kind"] | null; readonly operator_invalidation_kind: string | null; readonly updated_at: string }
 
 /**
@@ -625,7 +743,13 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
       COALESCE(ARRAY(SELECT edge.depends_on_unit_id FROM oakridge.run_unit_dependency edge LEFT JOIN oakridge.run_unit dependency ON dependency.stage_instance_id=edge.stage_instance_id AND dependency.unit_id=edge.depends_on_unit_id WHERE edge.stage_instance_id=unit.stage_instance_id AND edge.unit_id=unit.unit_id AND (dependency.id IS NULL OR dependency.state<>'satisfied')),ARRAY[]::text[]) AS admission_blocked_by,
       handoff.kind AS handoff_wait_kind,handoff.status AS handoff_wait_status,handoff.outcome_kind AS handoff_outcome_kind,
       operator_slot.state AS operator_slot_state,operator_slot.invalidation_reason->>'kind' AS operator_invalidation_kind,
-      summary.pr_url AS summary_pr_url,CASE WHEN reconciliation.stage_instance_id IS NULL THEN NULL ELSE jsonb_build_object('repository_key',reconciliation.repository_key,'observation',reconciliation.observation,'mismatch',reconciliation.mismatch,'completed_at',reconciliation.completed_at,'updated_at',reconciliation.updated_at) END AS reconciliation,
+      pull_request.url AS verified_pr_url,CASE WHEN pull_request.id IS NULL THEN NULL ELSE jsonb_build_object(
+        'repository_key',build_cohort.repository_key,
+        'observation',jsonb_build_object('provider',pull_request.provider,'owner',pull_request.owner,'name',pull_request.name,
+          'number',pull_request.forge_pull_request_id,'url',pull_request.url,'head_branch',observation.head_ref,
+          'base_branch',observation.base_ref,'head_sha',observation.head_sha,'state',observation.state,
+          'source',observation.source,'observed_at',observation.observed_at,'merged_at',observation.merged_at),
+        'mismatch',NULL,'completed_at',merge_closure.confirmed_at,'updated_at',observation.recorded_at) END AS reconciliation,
       GREATEST(unit.created_at,COALESCE(unit.ended_at,unit.created_at),COALESCE(artifact.created_at,unit.created_at))::text AS updated_at
       FROM oakridge.run_unit unit JOIN oakridge.stage_instance stage ON stage.id=unit.stage_instance_id
       JOIN oakridge.workflow_run run ON run.id=unit.run_id JOIN oakridge.workflow_definition definition ON definition.id=run.workflow_definition_id
@@ -640,14 +764,17 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
       LEFT JOIN oakridge.run_output_slot operator_slot ON operator_slot.run_unit_id=unit.id AND operator_slot.output_name=operator_output.output_name AND operator_slot.collection_key IS NULL
       LEFT JOIN LATERAL (SELECT candidate.* FROM oakridge.artifact candidate WHERE candidate.stage_instance_id=stage.id AND candidate.unit_id=unit.unit_id AND candidate.output_name=operator_output.output_name AND ${effectiveArtifactPredicate("candidate")} LIMIT 1) artifact ON true
       LEFT JOIN LATERAL (SELECT wait.kind,wait.status,wait.outcome->>'kind' AS outcome_kind FROM oakridge.wait wait WHERE wait.artifact_revision_id=artifact.id AND wait.kind IN ('handoff_downstream','handoff_external') ORDER BY (wait.kind='handoff_external') DESC LIMIT 1) handoff ON true
-      LEFT JOIN LATERAL (SELECT candidate.body->>'pr_url' AS pr_url FROM oakridge.artifact candidate WHERE candidate.stage_instance_id=stage.id AND candidate.unit_id=unit.unit_id AND candidate.artifact_type='${PR_SUMMARY_ARTIFACT_TYPE}' AND ${effectiveArtifactPredicate("candidate")} LIMIT 1) summary ON true
-      LEFT JOIN oakridge.cohort_pull_request_reconciliation reconciliation ON reconciliation.stage_instance_id=stage.id AND reconciliation.unit_id=unit.unit_id
+      LEFT JOIN oakridge.dev_flow_build_cohort build_cohort ON build_cohort.stage_instance_id=stage.id AND build_cohort.cohort_key=unit.unit_id
+      LEFT JOIN oakridge.pull_request_verification verification ON verification.id=build_cohort.current_verified_pull_request_id AND verification.invalidated_at IS NULL
+      LEFT JOIN oakridge.pull_request pull_request ON pull_request.id=verification.pull_request_id
+      LEFT JOIN oakridge.pull_request_observation observation ON observation.id=verification.observation_id
+      LEFT JOIN oakridge.pull_request_merge_closure merge_closure ON merge_closure.cohort_id=build_cohort.cohort_id
       WHERE run.archived=false AND stage.attempt_root_workflow_id IS NULL ORDER BY updated_at DESC`, []);
     return rows.map((row) => {
       const handoffStatus = row.handoff_outcome_kind === "cancelled" ? null : row.handoff_wait_kind && row.handoff_wait_status ? selectHandoffStatusFromWait(row.handoff_wait_kind, row.handoff_wait_status, row.handoff_outcome_kind) : null;
       const lifecycle: OperatorCohortLifecycle = row.unit_state === "failed" || row.unit_state === "cancelled" ? "failed" : row.operator_slot_state === "invalidated" && row.operator_invalidation_kind === "operator" ? "revision_requested" : row.reconciliation?.mismatch ? "pull_request_mismatch" : handoffStatus === "released" ? "complete" : handoffStatus === "awaiting_external" ? "github_review" : handoffStatus === "revision_requested" ? "revision_requested" : handoffStatus === "awaiting_downstream" ? "assessing" : row.unit_state === "satisfied" ? "complete" : row.admission_required && !row.admitted ? "waiting_admission" : "building";
       const artifact = row.artifact_revision_id as ArtifactId | null; const cohort = row.params?.artifact ?? null;
-      return { id: `${row.stage_instance_id}:${row.unit_id}`,run_id: row.run_id as WorkflowRunId,workflow_name: row.workflow_name,stage_instance_id: row.stage_instance_id as import("../domain/primitives").StageInstanceId,stage_name: row.stage_name,unit_id: row.unit_id as UnitId,repository_key: selectStageUnitRepositoryKey(row.params),title: cohort?.title ?? null,lifecycle,completion: { build_complete: artifact !== null, assessment_complete: lifecycle === "complete" },admission: { required: row.admission_required, admitted: row.admitted, eligible: row.admission_eligible, blocked_by: row.admission_blocked_by },artifact_revision_id: artifact,artifact_url: artifact ? `/artifact_details/${artifact}` : null,gate_id: null,gate_url: null,pr_url: row.reconciliation?.observation.url ?? row.summary_pr_url ?? null,pull_request_reconciliation: row.reconciliation,updated_at: row.updated_at };
+      return { id: `${row.stage_instance_id}:${row.unit_id}`,run_id: row.run_id as WorkflowRunId,workflow_name: row.workflow_name,stage_instance_id: row.stage_instance_id as import("../domain/primitives").StageInstanceId,stage_name: row.stage_name,unit_id: row.unit_id as UnitId,repository_key: selectStageUnitRepositoryKey(row.params),title: cohort?.title ?? null,lifecycle,completion: { build_complete: artifact !== null, assessment_complete: lifecycle === "complete" },admission: { required: row.admission_required, admitted: row.admitted, eligible: row.admission_eligible, blocked_by: row.admission_blocked_by },artifact_revision_id: artifact,artifact_url: artifact ? `/artifact_details/${artifact}` : null,gate_id: null,gate_url: null,pr_url: row.verified_pr_url,pull_request_reconciliation: row.reconciliation,updated_at: row.updated_at };
     });
   }
 }

@@ -52,7 +52,6 @@ export interface RunOwnedCohortHandoff {
   readonly handoff_artifact_id: ArtifactId;
   readonly handoff_slot_state: "empty" | "pending" | "released" | "invalidated";
   readonly handoff_body: JsonValue;
-  readonly summary_body: JsonValue;
 }
 
 /** What the run expects this cohort's pull request to be. */
@@ -61,9 +60,9 @@ export interface ExpectedCohortPullRequest {
   readonly stage_instance_id: StageInstanceId;
   readonly unit_id: UnitId;
   readonly repository_key: string;
-  /** Where the build reported opening the pull request. */
+  /** Canonical URL read from the independently verified PR entity. */
   readonly url: string;
-  /** The branch the build reported pushing. */
+  /** Canonical ref persisted for this cohort. */
   readonly head_branch: string;
   /** The branch a cohort PR must target, when the run declares one. */
   readonly base_branch: string | null;

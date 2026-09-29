@@ -74,6 +74,31 @@ export interface PullRequestMergeClosure {
   readonly confirmed_at: string;
 }
 
+export interface PullRequestApproval {
+  readonly cohort_id: CohortId;
+  readonly verification_id: PullRequestVerificationId;
+  readonly approval_kind: "build_review" | "assessment_review";
+  readonly approved_at: string;
+  readonly invalidated_at: string | null;
+}
+
+export interface PullRequestReplacement {
+  readonly previous_verification: VerifiedPullRequestLink;
+  readonly approvals: readonly PullRequestApproval[];
+}
+
+/** Replacement is explicit and makes every approval of the old head unusable. */
+export const invalidatePullRequestForReplacement = (
+  current: VerifiedPullRequestLink,
+  approvals: readonly PullRequestApproval[],
+  invalidatedAt: string,
+): PullRequestReplacement => ({
+  previous_verification: { ...current, invalidated_at: invalidatedAt, invalidation_reason: "replaced" },
+  approvals: approvals.map((approval) => approval.verification_id === current.id && approval.invalidated_at === null
+    ? { ...approval, invalidated_at: invalidatedAt }
+    : approval),
+});
+
 export type MergeClosureResult =
   | { readonly kind: "created"; readonly closure: PullRequestMergeClosure }
   | { readonly kind: "replayed"; readonly closure: PullRequestMergeClosure };

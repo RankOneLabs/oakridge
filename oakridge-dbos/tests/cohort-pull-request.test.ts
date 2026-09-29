@@ -2,10 +2,14 @@ import { expect, test } from "bun:test";
 
 import {
   operatorMergedObservation, reconcileCohortPullRequest, reconciliationForHandoff, withCompletion,
-  type CohortPullRequestReconciliation, type ExpectedCohortPullRequest,
+  type CohortPullRequestReconciliation, type DevFlowBuildCohort, type ExpectedCohortPullRequest,
 } from "../src/domain/cohort-pull-request";
-import type { PullRequestObservation } from "../src/domain/pull-request";
-import type { ArtifactId, StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
+import { invalidatePullRequestForReplacement, type PullRequestApproval, type PullRequestObservation, type PullRequestObservationId, type PullRequestId, type PullRequestVerificationId, type VerifiedPullRequestLink } from "../src/domain/pull-request";
+import type { ArtifactId, CohortId, StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
+import { renderCohortBranchContract, selectCohortBranchRoles } from "../src/domain/repository-refs";
+import { advanceCohortRef, verifyCohortPullRequest } from "../src/runtime/cohort-pull-request";
+import { BunGitCommandRunner } from "../src/runtime/git-command-runner";
+import { createGitRepositoryFixture } from "./support/dev-flow-harness";
 
 const firstHandoffId = "00000000-0000-4000-8000-000000000003" as ArtifactId;
 const secondHandoffId = "00000000-0000-4000-8000-000000000004" as ArtifactId;
@@ -172,4 +176,77 @@ test("an operator confirmation reconciles as a manually sourced merge", () => {
 
 test("an operator cannot confirm a cohort whose reported URL is not a pull request", () => {
   expect(operatorMergedObservation({ ...expected, url: "https://example.test/nope" }, "2026-08-18T13:00:00.000Z")).toBeNull();
+});
+
+const storedCohort = (repositoryPath: string, head: string): DevFlowBuildCohort => ({
+  cohort_id: "00000000-0000-4000-8000-000000000010" as CohortId,
+  stage_instance_id: expected.stage_instance_id,
+  cohort_key: "foundation",
+  repository_key: "oakridge",
+  repository_path: repositoryPath,
+  canonical_ref: "cohort/foundation",
+  expected_pr_base: "epic/tiers",
+  recorded_head_sha: head,
+  current_verified_pull_request_id: null,
+  created_at: "2026-08-18T10:00:00Z",
+  updated_at: "2026-08-18T10:00:00Z",
+});
+
+test("verification refuses a forge head commit that is not the pushed head", async () => {
+  const fixture = await createGitRepositoryFixture();
+  try {
+    const git = new BunGitCommandRunner();
+    const seeded = await git.run(fixture.path, ["push", "origin", `${fixture.integration_branch}:refs/heads/cohort/foundation`]);
+    expect(seeded.exit_code).toBe(0);
+    const pushedHead = await fixture.origin_branch_sha("cohort/foundation");
+    if (!pushedHead) throw new Error("fixture cohort branch was not pushed");
+    const reader = { async read() { return observation({ state: "open", merged_at: null, head_sha: `${pushedHead}bad` }); } };
+    const result = await verifyCohortPullRequest({ reader, git }, {
+      cohort: storedCohort(fixture.path, pushedHead),
+      forge_repository: { owner: "RankOneLabs", name: "oakridge" },
+      candidate_url: expected.url,
+    });
+    expect(result).toEqual({ ok: false, error: expect.objectContaining({ kind: "head_commit_mismatch" }) });
+  } finally {
+    await fixture.remove();
+  }
+});
+
+test("a drifted origin refuses a builder retry before it can reset the cohort ref", async () => {
+  const fixture = await createGitRepositoryFixture();
+  try {
+    const git = new BunGitCommandRunner();
+    expect((await git.run(fixture.path, ["push", "origin", `${fixture.integration_branch}:refs/heads/cohort/foundation`])).exit_code).toBe(0);
+    const recordedHead = await fixture.origin_branch_sha("cohort/foundation");
+    if (!recordedHead) throw new Error("fixture cohort branch was not pushed");
+    const driftedHead = await fixture.advance_origin_branch("cohort/foundation", "assessor drift");
+    const result = await advanceCohortRef(git, { cohort: storedCohort(fixture.path, recordedHead), next_head_sha: driftedHead });
+    expect(result).toEqual({ ok: false, error: expect.objectContaining({ kind: "ref_lease_mismatch" }) });
+    expect(await fixture.origin_branch_sha("cohort/foundation")).toBe(driftedHead);
+  } finally {
+    await fixture.remove();
+  }
+});
+
+test("replacing a pull request invalidates approvals tied to its old head", () => {
+  const verification: VerifiedPullRequestLink = {
+    id: "00000000-0000-4000-8000-000000000020" as PullRequestVerificationId,
+    cohort_id: "00000000-0000-4000-8000-000000000010" as CohortId,
+    pull_request_id: "00000000-0000-4000-8000-000000000021" as PullRequestId,
+    observation_id: "00000000-0000-4000-8000-000000000022" as PullRequestObservationId,
+    verified_head_sha: "abc", verified_at: "2026-08-18T10:00:00Z", invalidated_at: null, invalidation_reason: null,
+  };
+  const approvals: PullRequestApproval[] = [{ cohort_id: verification.cohort_id, verification_id: verification.id,
+    approval_kind: "assessment_review", approved_at: "2026-08-18T11:00:00Z", invalidated_at: null }];
+  const replaced = invalidatePullRequestForReplacement(verification, approvals, "2026-08-18T12:00:00Z");
+  expect(replaced.previous_verification.invalidation_reason).toBe("replaced");
+  expect(replaced.approvals[0]?.invalidated_at).toBe("2026-08-18T12:00:00Z");
+});
+
+test("repository-specific cohort refs drive both storage and prompt contracts", () => {
+  const api = selectCohortBranchRoles("api", { base_branch: "epic/api" });
+  const web = selectCohortBranchRoles("web", { base_branch: "release/web" });
+  expect(api).toEqual({ canonical_ref: "cohort/api", expected_pr_base: "epic/api" });
+  expect(web).toEqual({ canonical_ref: "cohort/web", expected_pr_base: "release/web" });
+  expect(renderCohortBranchContract(web)).toContain("Pull request base: release/web");
 });

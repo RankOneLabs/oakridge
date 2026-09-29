@@ -3,6 +3,8 @@ import { readdir } from "node:fs/promises";
 
 import { applyMigrations, migrationNames } from "../src/storage/migrate";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
+import { PostgresDevFlowPullRequestRepository } from "../src/storage/postgres-operators";
+import type { CohortId } from "../src/domain/primitives";
 import { createScratchDatabase, type ScratchDatabase } from "./support/durable-database";
 
 const MIGRATIONS = new URL("../src/storage/migrations", import.meta.url).pathname;
@@ -43,6 +45,49 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
       (id,run_id,stage_instance_id,cohort_key,status,stage_data)
       VALUES ('00000000-0000-4000-8000-000000000005','00000000-0000-4000-8000-000000000002',
         '00000000-0000-4000-8000-000000000003','core','active','{"version":1}')`, []);
+    const cohortId = "00000000-0000-4000-8000-000000000005" as CohortId;
+    await sql.query(`INSERT INTO oakridge.dev_flow_build_cohort
+      (cohort_id,stage_instance_id,cohort_key,repository_key,repository_path,canonical_ref,expected_pr_base,recorded_head_sha)
+      VALUES ($1,'00000000-0000-4000-8000-000000000003','core','oakridge','/repo/oakridge','cohort/core','epic/oakridge','head-one')`, [cohortId]);
+    await sql.query(`INSERT INTO oakridge.cohort
+      (id,run_id,stage_instance_id,cohort_key,status,stage_data)
+      VALUES ('00000000-0000-4000-8000-000000000055','00000000-0000-4000-8000-000000000002',
+        '00000000-0000-4000-8000-000000000003','web','active','{}')`, []);
+    await sql.query(`INSERT INTO oakridge.dev_flow_build_cohort
+      (cohort_id,stage_instance_id,cohort_key,repository_key,repository_path,canonical_ref,expected_pr_base,recorded_head_sha)
+      VALUES ('00000000-0000-4000-8000-000000000055','00000000-0000-4000-8000-000000000003','web','web','/repo/web','cohort/web','release/web','head-web')`, []);
+    expect(await sql.query<{ readonly repository_key: string; readonly expected_pr_base: string }>(
+      "SELECT repository_key,expected_pr_base FROM oakridge.dev_flow_build_cohort ORDER BY cohort_key", []))
+      .toEqual([{ repository_key: "oakridge", expected_pr_base: "epic/oakridge" }, { repository_key: "web", expected_pr_base: "release/web" }]);
+
+    const pullRequests = new PostgresDevFlowPullRequestRepository(sql);
+    const observed = (head_sha: string) => ({ provider: "github" as const, owner: "RankOneLabs", name: "oakridge", number: 42,
+      url: "https://github.com/RankOneLabs/oakridge/pull/42", head_branch: "cohort/core", base_branch: "epic/oakridge",
+      head_sha, state: "open" as const, source: "poll" as const, observed_at: "2026-09-29T10:00:00Z", merged_at: null });
+    const firstObservation = await pullRequests.observe({ repository_key: "oakridge", observation: observed("head-one"), recorded_at: "2026-09-29T10:00:01Z" });
+    const firstBinding = await pullRequests.bind_verified({ cohort_id: cohortId, ...firstObservation, verified_head_sha: "head-one",
+      verified_at: "2026-09-29T10:00:02Z", replace_verification_id: null });
+    expect(firstBinding.ok).toBe(true);
+    if (!firstBinding.ok) throw new Error(firstBinding.error.detail);
+    await sql.query(`INSERT INTO oakridge.pull_request_approval (id,cohort_id,verification_id,approval_kind,approved_at)
+      VALUES ('00000000-0000-4000-8000-000000000060',$1,$2,'assessment_review','2026-09-29T10:00:03Z')`, [cohortId, firstBinding.value]);
+    const secondObservation = await pullRequests.observe({ repository_key: "oakridge", observation: observed("head-two"), recorded_at: "2026-09-29T11:00:01Z" });
+    expect((await pullRequests.bind_verified({ cohort_id: cohortId, ...secondObservation, verified_head_sha: "head-two",
+      verified_at: "2026-09-29T11:00:02Z", replace_verification_id: null })).ok).toBe(false);
+    const replacement = await pullRequests.bind_verified({ cohort_id: cohortId, ...secondObservation, verified_head_sha: "head-two",
+      verified_at: "2026-09-29T11:00:02Z", replace_verification_id: firstBinding.value });
+    expect(replacement.ok).toBe(true);
+    expect((await sql.query<{ readonly observations: string; readonly invalidated_approvals: string }>(`SELECT
+      (SELECT count(*)::text FROM oakridge.pull_request_observation) AS observations,
+      (SELECT count(*)::text FROM oakridge.pull_request_approval WHERE invalidated_at IS NOT NULL) AS invalidated_approvals`, []))[0])
+      .toEqual({ observations: "2", invalidated_approvals: "1" });
+    const confirmation = { cohort_id: cohortId, pull_request_id: secondObservation.pull_request_id, idempotency_key: "merge-core",
+      merged_at: "2026-09-29T12:00:00Z", confirmed_at: "2026-09-29T12:00:01Z" };
+    expect((await pullRequests.confirm_merge(confirmation)).ok).toBe(true);
+    const replay = await pullRequests.confirm_merge({ ...confirmation, confirmed_at: "2026-09-29T13:00:00Z" });
+    expect(replay.ok && replay.value.kind).toBe("replayed");
+    const conflict = await pullRequests.confirm_merge({ ...confirmation, idempotency_key: "different" });
+    expect(conflict).toEqual({ ok: false, error: expect.objectContaining({ kind: "idempotency_conflict" }) });
     await sql.transaction(async (tx) => {
       await tx.query("UPDATE oakridge.cohort SET durable_version=durable_version+1 WHERE id='00000000-0000-4000-8000-000000000005'", []);
       await tx.query(`INSERT INTO oakridge.run_transition
