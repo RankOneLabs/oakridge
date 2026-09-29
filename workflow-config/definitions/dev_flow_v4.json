@@ -410,7 +410,8 @@
                 "from": "item",
                 "path": "/artifact/repository_key"
               }
-            }
+            },
+            "inherit_worktree_from": "build_result"
           },
           "artifact_productions": [],
           "gates": [],
