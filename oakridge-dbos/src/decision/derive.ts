@@ -1,6 +1,6 @@
 import { err, ok, type ArtifactId, type Result, type StageInstanceId } from "../domain/primitives";
 import type { Command, Contradiction, Derivation, StatusChange } from "./commands";
-import type { RunSnapshot, StageSnapshot } from "./snapshot";
+import type { CohortSnapshot, RunSnapshot, StageSnapshot } from "./snapshot";
 
 const byId = <Value extends { readonly id: string }>(left: Value, right: Value): number =>
   left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
@@ -39,6 +39,31 @@ const terminalRunCommand = (snapshot: RunSnapshot, failed: StageSnapshot): Comma
   };
 };
 
+const terminalStageCommand = (snapshot: RunSnapshot, stage: StageSnapshot, cohort: CohortSnapshot): Command => {
+  const status = cohort.status === "cancelled" ? "cancelled" : "failed";
+  return {
+    kind: "transition_stage",
+    run_id: snapshot.run.id,
+    stage_instance_id: stage.id,
+    expected_version: stage.durable_version,
+    change: { status, blocked_reason: null, next_actor: null,
+      outcome: cohort.outcome ?? { kind: status, cohort_id: cohort.id } },
+    effect: noEffect,
+  };
+};
+
+const stageWithTerminalCohort = (
+  stages: readonly StageSnapshot[],
+  status: "cancelled" | "failed",
+): { readonly stage: StageSnapshot; readonly cohort: CohortSnapshot } | null => {
+  for (const stage of stages) {
+    if (stage.status !== "active") continue;
+    const cohort = [...stage.cohorts].sort(byId).find((candidate) => candidate.status === status);
+    if (cohort) return { stage, cohort };
+  }
+  return null;
+};
+
 /**
  * The whole core decision, evaluated once over a transaction-consistent run
  * snapshot. Adapters have already decoded payloads into committed statuses and
@@ -57,6 +82,11 @@ export const derive = (snapshot: RunSnapshot): Result<Derivation, Contradiction>
   if (cancelled) return ok({ commands: [terminalRunCommand(snapshot, cancelled)], observed_artifact_ids });
   const failed = stages.find((stage) => stage.status === "failed");
   if (failed) return ok({ commands: [terminalRunCommand(snapshot, failed)], observed_artifact_ids });
+
+  const cancelledCohort = stageWithTerminalCohort(stages, "cancelled");
+  if (cancelledCohort) return ok({ commands: [terminalStageCommand(snapshot, cancelledCohort.stage, cancelledCohort.cohort)], observed_artifact_ids });
+  const failedCohort = stageWithTerminalCohort(stages, "failed");
+  if (failedCohort) return ok({ commands: [terminalStageCommand(snapshot, failedCohort.stage, failedCohort.cohort)], observed_artifact_ids });
 
   const commands: Command[] = [];
   for (const stage of stages) {

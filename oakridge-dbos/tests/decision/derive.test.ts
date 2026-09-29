@@ -49,6 +49,32 @@ test("all complete cohorts complete their stage on the stage version", () => {
   });
 });
 
+test("a cancelled cohort deterministically cancels its active stage", () => {
+  const value = stage(1, { status: "active", durable_version: 6, cohorts: [
+    cohort(2, { status: "failed", outcome: { reason: "failed" } }),
+    cohort(1, { status: "cancelled", outcome: { reason: "operator" } }),
+  ] });
+  const result = derive(snapshot([value]));
+  expect(result.ok && result.value.commands).toEqual([{
+    kind: "transition_stage",
+    run_id: RUN_ID,
+    stage_instance_id: value.id,
+    expected_version: 6,
+    change: { status: "cancelled", blocked_reason: null, next_actor: null, outcome: { reason: "operator" } },
+    effect: { kind: "none" },
+  }]);
+});
+
+test("a failed cohort fails its active stage", () => {
+  const value = stage(1, { status: "active", durable_version: 3, cohorts: [cohort(1, { status: "failed" })] });
+  const result = derive(snapshot([value]));
+  expect(result.ok && result.value.commands[0]).toMatchObject({
+    kind: "transition_stage",
+    expected_version: 3,
+    change: { status: "failed", outcome: { kind: "failed", cohort_id: value.cohorts[0]?.id } },
+  });
+});
+
 test("completed stages complete the run against the run record version", () => {
   const result = derive(snapshot([stage(1, { status: "complete" }), stage(2, { status: "complete" })], { record_version: 12 }));
   expect(result.ok && result.value.commands[0]).toEqual({
