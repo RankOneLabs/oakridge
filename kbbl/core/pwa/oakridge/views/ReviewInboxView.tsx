@@ -2,9 +2,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { selectStableDecisionQueue, type DecisionQueueEntry } from "../lib/decision-queue";
-import { selectReviewCohortKey } from "../lib/run-attention";
 import { useReviewInbox } from "../hooks/useReviewInbox";
-import type { ReviewInbox, ReviewInboxItem } from "../types";
+import type { CohortLifecycleSummary, ReviewInbox, ReviewInboxItem } from "../types";
 import { Button } from "../../components/atoms/Button";
 import { FeedbackMessage } from "../../components/atoms/FeedbackMessage";
 import { WorkItem } from "../components/organisms/WorkItem";
@@ -15,9 +14,12 @@ interface ReviewInboxViewProps {
   onSelectArtifact: (id: string) => void;
 }
 
+const cohortKey = (value: Pick<CohortLifecycleSummary, "run_id" | "stage_instance_id" | "unit_id">): string =>
+  `${value.run_id}:${value.stage_instance_id}:${value.unit_id}`;
+
 function selectVisibleItems(data: ReviewInbox): ReviewInboxItem[] {
-  const cohortsByKey = new Map(data.cohorts.map((cohort) => [selectReviewCohortKey(cohort), cohort]));
-  return data.items.filter((item) => item.kind !== "admission" || cohortsByKey.get(selectReviewCohortKey(item))?.admission.required === true);
+  const cohortsByKey = new Map(data.cohorts.map((cohort) => [cohortKey(cohort), cohort]));
+  return data.items.filter((item) => item.kind !== "admission" || cohortsByKey.get(cohortKey(item))?.admission.required === true);
 }
 
 const isActionable = (item: ReviewInboxItem): boolean => item.state === "actionable" || item.kind === "pull_request_mismatch";
@@ -38,14 +40,14 @@ export function ReviewInboxView({ onSelectRun, onSelectArtifact }: ReviewInboxVi
   if (query.isError) return <FeedbackMessage tone="danger" testId="or-review-inbox-error">{query.error instanceof Error ? query.error.message : "Could not load review work."}</FeedbackMessage>;
   if (query.isPending || !query.data) return <FeedbackMessage testId="or-review-inbox-loading">Loading review work…</FeedbackMessage>;
 
-  const cohortsByKey = new Map(query.data.cohorts.map((cohort) => [selectReviewCohortKey(cohort), cohort]));
-  const cohortFor = (item: ReviewInboxItem) => cohortsByKey.get(selectReviewCohortKey(item));
+  const cohortsByKey = new Map(query.data.cohorts.map((cohort) => [cohortKey(cohort), cohort]));
+  const cohortFor = (item: ReviewInboxItem) => cohortsByKey.get(cohortKey(item));
   const visibleItems = selectVisibleItems(query.data);
   const actionable = visibleItems.filter(isActionable);
   const blocked = visibleItems.filter((item) => item.state === "blocked" && item.kind !== "pull_request_mismatch");
-  const attentionKeys = new Set([...actionable, ...blocked].map((item) => selectReviewCohortKey(item)));
-  const underway = query.data.cohorts.filter((cohort) => cohort.lifecycle !== "complete" && !attentionKeys.has(selectReviewCohortKey(cohort)));
-  const finished = query.data.cohorts.filter((cohort) => cohort.lifecycle === "complete");
+  const attentionKeys = new Set([...actionable, ...blocked].map((item) => cohortKey(item)));
+  const underway = query.data.cohorts.filter((cohort) => !["complete", "failed", "cancelled"].includes(cohort.lifecycle) && !attentionKeys.has(cohortKey(cohort)));
+  const finished = query.data.cohorts.filter((cohort) => ["complete", "failed", "cancelled"].includes(cohort.lifecycle));
 
   return (
     <div className="or-review-workspace" data-testid="or-review-inbox">

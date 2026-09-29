@@ -99,7 +99,8 @@ const executionRequest = async (input: ExecutionRequestInput): Promise<Execution
     if (declared.length !== 1) throw new Error(`stage '${input.stage.stage_key}' does not declare committed prompt ${committed.session_role}:${committed.reason.name}`);
     const planned = resolveDelegatedExecution({ definition, environment: { inputs: unitInputs, context: input.context, item: input.unit.parameters }, unit: input.unit,
       stage_instance_id: input.stage_instance_id, prompt_template: committed.prompt.content,
-      run_id: input.run_id, operator_role: committed.session_role, launch_reason: committed.reason.name,
+      run_id: input.run_id, cohort_id: input.build_cohort?.cohort_id ?? null,
+      operator_role: committed.session_role, launch_reason: committed.reason.name,
       existing_pull_request: committed.existing_pull_request });
     if (!planned.ok) throw new Error(`${planned.error.operation}:${planned.error.detail}`);
     const urlBinding = definition.slot_bindings.OAKRIDGE_URL;

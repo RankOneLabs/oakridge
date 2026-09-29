@@ -8,6 +8,8 @@ const cohort = (unitId: string, lifecycle: OperatorCohortLifecycle): OperatorCoh
   id: `stage:${unitId}`, run_id: "00000000-0000-4000-8000-000000000001" as WorkflowRunId, workflow_name: "dev flow",
   stage_instance_id: "00000000-0000-4000-8000-000000000002" as StageInstanceId, stage_name: "build", unit_id: unitId as UnitId,
   repository_key: "oakridge", title: unitId, lifecycle,
+  blocked_reason: lifecycle === "blocked" ? "external" : null,
+  next_actor: lifecycle === "blocked" ? "external" : null,
   completion: { build_complete: true, assessment_complete: false },
   admission: { required: false, admitted: true, eligible: true, blocked_by: [] },
   artifact_revision_id: null, artifact_url: null, gate_id: null, gate_url: null, pr_url: null,
@@ -16,8 +18,8 @@ const cohort = (unitId: string, lifecycle: OperatorCohortLifecycle): OperatorCoh
 
 test("only cohorts parked on their pull request are polled", () => {
   const selected = selectCohortsAwaitingReview([
-    cohort("foundation", "github_review"), cohort("web", "building"),
-    cohort("api", "assessing"), cohort("cli", "complete"),
+    cohort("foundation", "blocked"), cohort("web", "active"),
+    cohort("api", "pending"), cohort("cli", "complete"),
   ]);
   expect(selected.map((candidate) => String(candidate.unit_id))).toEqual(["foundation"]);
 });

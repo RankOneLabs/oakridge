@@ -13,18 +13,21 @@ function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-function renderInbox(data: ReviewInbox, onSelectRun = vi.fn(), onSelectArtifact = vi.fn()) {
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(json(data));
+type InboxFixture = Omit<ReviewInbox, "attention_count"> & Partial<Pick<ReviewInbox, "attention_count">>;
+
+function renderInbox(data: InboxFixture, onSelectRun = vi.fn(), onSelectArtifact = vi.fn()) {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ attention_count: data.items.length, ...data }));
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={onSelectRun} onSelectArtifact={onSelectArtifact} /></QueryClientProvider>);
   return { onSelectRun, onSelectArtifact };
 }
 
 const inbox: ReviewInbox = {
-  cohorts: [{ id: "run-1:api", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "api", title: "Build API", lifecycle: "waiting_admission", completion: { build_complete: false, assessment_complete: false }, admission: { required: true, admitted: false, eligible: true, blocked_by: [] }, artifact_revision_id: null, updated_at: "2026-08-07T00:00:00Z" },
-    { id: "run-1:web", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "web", title: "Build UI", lifecycle: "artifact_review", completion: { build_complete: true, assessment_complete: false }, admission: { required: true, admitted: true, eligible: true, blocked_by: [] }, artifact_revision_id: "revision-web", updated_at: "2026-08-07T01:00:00Z" }],
-  items: [{ id: "admit-api", kind: "admission", state: "actionable", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "api", lifecycle: "waiting_admission", title: "Build API", resume_actions: [], blocked_by: [] },
-    { id: "review-web", kind: "artifact_gate", state: "actionable", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "web", lifecycle: "artifact_review", title: "Build UI", artifact_revision_id: "revision-web", gate_id: "stage-build:web", resume_actions: ["approve", "request_revision"], blocked_by: [] }],
+  cohorts: [{ id: "run-1:api", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "api", title: "Build API", lifecycle: "pending", blocked_reason: null, next_actor: "operator", completion: { build_complete: false, assessment_complete: false }, admission: { required: true, admitted: false, eligible: true, blocked_by: [] }, artifact_revision_id: null, updated_at: "2026-08-07T00:00:00Z" },
+    { id: "run-1:web", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "web", title: "Build UI", lifecycle: "blocked", blocked_reason: "gate", next_actor: "operator", completion: { build_complete: true, assessment_complete: false }, admission: { required: true, admitted: true, eligible: true, blocked_by: [] }, artifact_revision_id: "revision-web", updated_at: "2026-08-07T01:00:00Z" }],
+  items: [{ id: "admit-api", kind: "admission", state: "actionable", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "api", lifecycle: "pending", blocked_reason: null, next_actor: "operator", title: "Build API", resume_actions: [], blocked_by: [] },
+    { id: "review-web", kind: "artifact_gate", state: "actionable", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "web", lifecycle: "blocked", blocked_reason: "gate", next_actor: "operator", title: "Build UI", artifact_revision_id: "revision-web", gate_id: "stage-build:web", resume_actions: ["approve", "request_revision"], blocked_by: [] }],
+  attention_count: 2,
 };
 
 afterEach(() => vi.restoreAllMocks());
@@ -98,13 +101,13 @@ describe("ReviewInboxView", () => {
       admission: { required: false, admitted: true, eligible: true, blocked_by: [] },
     };
     renderInbox({ cohorts: [automatic], items: [inbox.items[0]] });
-    expect(await screen.findByText("Brief approved · queued automatically")).toBeTruthy();
+    expect(await screen.findByText("Queued")).toBeTruthy();
     expect(screen.queryByTestId("or-inbox-admit-btn")).toBeNull();
   });
 
-  it("names every lifecycle state in operator language", async () => {
-    const states: CohortLifecycle[] = ["waiting_admission", "building", "artifact_review", "revision_requested", "merge_confirmation", "assessing", "github_review", "pull_request_mismatch", "complete", "failed"];
-    const labels = ["Brief approved · awaiting admission", "Building", "Waiting for your review", "Changes requested", "Waiting for merge confirmation", "Checking the result", "Waiting for GitHub review or merge", "Pull request needs attention", "Needs recovery"];
+  it("names every committed lifecycle state in operator language", async () => {
+    const states: CohortLifecycle[] = ["pending", "active", "blocked", "complete", "failed", "cancelled"];
+    const labels = ["Brief approved · awaiting admission", "Active", "Blocked: gate · next: operator", "Needs recovery", "Cancelled"];
     renderInbox({
       items: [],
       cohorts: states.map((lifecycle, index) => ({
@@ -113,11 +116,13 @@ describe("ReviewInboxView", () => {
         unit_id: `cohort-${index}`,
         title: `Cohort ${index}`,
         lifecycle,
+        blocked_reason: lifecycle === "blocked" ? "gate" : null,
+        next_actor: lifecycle === "blocked" ? "operator" : null,
       })),
     });
     await screen.findByTestId("or-review-inbox");
     for (const label of labels) expect(screen.getByText(label)).toBeTruthy();
-    fireEvent.click(screen.getByText("Finished recently (1)"));
+    fireEvent.click(screen.getByText("Finished recently (3)"));
     expect(screen.getByText("Complete")).toBeTruthy();
   });
 
@@ -128,7 +133,9 @@ describe("ReviewInboxView", () => {
         ...inbox.items[1],
         id: "merge-web",
         kind: "merge_confirmation",
-        lifecycle: "merge_confirmation",
+        lifecycle: "blocked",
+        blocked_reason: "gate",
+        next_actor: "operator",
         resume_actions: ["confirm_merged"],
       }],
     });
@@ -140,7 +147,9 @@ describe("ReviewInboxView", () => {
   it("surfaces pull request mismatches as actionable with reconciliation detail", async () => {
     const mismatchCohort = {
       ...inbox.cohorts[1],
-      lifecycle: "pull_request_mismatch" as const,
+      lifecycle: "blocked" as const,
+      blocked_reason: "external" as const,
+      next_actor: "operator" as const,
       pull_request_reconciliation: {
         repository_key: WEB_REPOSITORY_KEY,
         observation: { owner: "wrong", name: "web", number: 42, url: "https://github.com/wrong/web/pull/42", head_branch: "cohort/web", base_branch: "main", state: "open" as const, observed_at: "2026-08-08T00:00:00Z" },
@@ -149,7 +158,7 @@ describe("ReviewInboxView", () => {
         updated_at: "2026-08-08T00:00:00Z",
       },
     };
-    renderInbox({ cohorts: [mismatchCohort], items: [{ ...inbox.items[1], id: "mismatch-web", kind: "pull_request_mismatch", state: "blocked", lifecycle: "pull_request_mismatch", pr_url: mismatchCohort.pull_request_reconciliation.observation.url }] });
+    renderInbox({ cohorts: [mismatchCohort], items: [{ ...inbox.items[1], id: "mismatch-web", kind: "pull_request_mismatch", state: "blocked", lifecycle: "blocked", blocked_reason: "external", next_actor: "operator", pr_url: mismatchCohort.pull_request_reconciliation.observation.url }] });
     expect(await screen.findByText("Pull request needs attention")).toBeTruthy();
     expect(screen.getByText("observed pull request belongs to another repository")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Open pull request" })).toBeTruthy();

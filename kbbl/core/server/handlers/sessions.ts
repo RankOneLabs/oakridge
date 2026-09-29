@@ -172,6 +172,7 @@ export function parseWorkflowIdentity(
     workflow_run_id?: unknown;
     stage_instance_id?: unknown;
     unit_id?: unknown;
+    cohort_id?: unknown;
     operator_role?: unknown;
     cohort_title?: unknown;
     repository_key?: unknown;
@@ -197,7 +198,7 @@ export function parseWorkflowIdentity(
     name: string,
     maxLength: number,
   ): { value: string | null } | { error: string } => {
-    if (field === undefined) return { value: null };
+    if (field === undefined || field === null) return { value: null };
     if (typeof field !== "string") return { error: `workflow.${name} must be a string` };
     const trimmed = field.trim();
     if (trimmed.length > maxLength) {
@@ -211,12 +212,15 @@ export function parseWorkflowIdentity(
   if ("error" in cohortTitle) return cohortTitle;
   const repositoryKey = optionalField(value.repository_key, "repository_key", 200);
   if ("error" in repositoryKey) return repositoryKey;
+  const cohortId = optionalField(value.cohort_id, "cohort_id", 200);
+  if ("error" in cohortId) return cohortId;
 
   return {
     value: {
       workflow_run_id: (value.workflow_run_id as string).trim(),
       stage_instance_id: (value.stage_instance_id as string).trim(),
       unit_id: (value.unit_id as string).trim(),
+      cohort_id: cohortId.value,
       operator_role: operatorRole.value,
       cohort_title: cohortTitle.value,
       repository_key: repositoryKey.value,

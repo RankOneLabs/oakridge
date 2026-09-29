@@ -22,6 +22,7 @@ export interface PwaSessionWorkflowIdentity {
   runId: string;
   stageInstanceId: string;
   unitId: string;
+  cohortId: string | null;
   operatorRole: string | null;
   cohortTitle: string | null;
   repositoryKey: string | null;
@@ -57,6 +58,7 @@ function toPwaWorkflowIdentity(
         runId: workflow.workflow_run_id,
         stageInstanceId: workflow.stage_instance_id,
         unitId: workflow.unit_id,
+        cohortId: workflow.cohort_id ?? null,
         operatorRole: workflow.operator_role,
         cohortTitle: workflow.cohort_title,
         repositoryKey: workflow.repository_key,

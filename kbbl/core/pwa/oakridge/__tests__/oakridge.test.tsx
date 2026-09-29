@@ -7,10 +7,7 @@ import { RunListView } from "../views/RunListView";
 // Aliased: `RunDetail` is also the name of the run view-model type below.
 import { RunDetail as RunDetailOrganism } from "../components/organisms/RunDetail";
 import { GlobalParkedGateList } from "../components/organisms/ParkedGateList";
-import type { RunSummary, RunDetail, ParkedGate, RepositoryKey, CohortId, EpicProfileId, StageUnitParams, WorkflowRunId } from "../types";
-import type { BuildBrief } from "../lib/build-brief";
-
-type FetchHandler = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+import type { RunSummary, RunDetail, ParkedGate } from "../types";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Test helpers
@@ -41,23 +38,6 @@ afterEach(() => vi.restoreAllMocks());
  * `selectCohortBrief`'s `isBuildBrief` guard accepts them the way it accepts
  * a real one.
  */
-function buildBriefParams(overrides: Partial<BuildBrief> = {}): StageUnitParams {
-  const artifact: BuildBrief = {
-    cohort_id: "cohort-a" as CohortId,
-    repository_key: "oakridge" as RepositoryKey,
-    title: "Untitled cohort",
-    depends_on: [],
-    goal: "",
-    files_in_scope: [],
-    decisions_made: [],
-    approaches_rejected: [],
-    acceptance_criteria: [],
-    next_action: "",
-    ...overrides,
-  };
-  return { unit_id: artifact.cohort_id, artifact };
-}
-
 // ──────────────────────────────────────────────────────────────────────────────
 // Fixtures
 // ──────────────────────────────────────────────────────────────────────────────
@@ -67,14 +47,15 @@ const RUN_SUMMARY_FIXTURE: RunSummary = {
   title: "Ship the operator console",
   repository_keys: ["oakridge"],
   workflow_name: "v2_spec_to_ship",
-  status: "running",
+  status: "active",
+  blocked_reason: null,
+  next_actor: null,
   current_stage: "build",
   stage_total: 5,
   stage_complete: 2,
+  attention_count: 0,
   parked_count: 0,
   updated_at: "2026-07-01T10:00:00Z",
-  is_stuck: false,
-  is_failed: false,
 };
 
 const PARKED_RUN_SUMMARY: RunSummary = {
@@ -82,14 +63,15 @@ const PARKED_RUN_SUMMARY: RunSummary = {
   title: "Repair production auth",
   repository_keys: ["kbbl", "oakridge"],
   workflow_name: "v2_hotfix",
-  status: "parked",
+  status: "blocked",
+  blocked_reason: "gate",
+  next_actor: "operator",
   current_stage: "approve",
   stage_total: 4,
   stage_complete: 1,
+  attention_count: 2,
   parked_count: 2,
   updated_at: "2026-07-01T09:00:00Z",
-  is_stuck: false,
-  is_failed: false,
 };
 
 const PARKED_GATE_FIXTURE: ParkedGate = {
@@ -111,14 +93,17 @@ const RUN_DETAIL_FIXTURE: RunDetail = {
   title: "Ship the operator console",
   repository_keys: ["oakridge"],
   workflow_name: "v2_spec_to_ship",
-  status: "running",
-  is_stuck: false,
+  status: "active",
+  blocked_reason: null,
+  next_actor: "core",
   stages: [
     {
       stage_instance_id: "si-1",
       name: "spec",
       type: "spec_generation",
       status: "complete",
+      blocked_reason: null,
+      next_actor: null,
       artifacts: [{ id: "art-spec-1", type_id: "spec_v2", version: 1 }],
       delegated_kbbl_sid: null,
       worktree: null,
@@ -127,7 +112,9 @@ const RUN_DETAIL_FIXTURE: RunDetail = {
       stage_instance_id: "si-2",
       name: "build",
       type: "build_agent",
-      status: "running",
+      status: "active",
+      blocked_reason: null,
+      next_actor: "agent",
       artifacts: [{ id: "art-build-1", type_id: "build_output", version: 1 }],
       delegated_kbbl_sid: "aaaabbbbccccdddd",
       worktree: {
@@ -181,12 +168,12 @@ describe("RunListView", () => {
     expect(badge.textContent).toBe("2");
   });
 
-  it("uses one status precedence for the visible run state", async () => {
+  it("renders the committed blocked run state", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      json([{ ...PARKED_RUN_SUMMARY, is_stuck: true }]),
+      json([PARKED_RUN_SUMMARY]),
     );
     wrap(<RunListView onSelectRun={() => {}} onNewRun={() => {}} onNewProject={() => {}} />);
-    expect(await screen.findByText("stuck")).toBeTruthy();
+    expect(await screen.findByText("blocked")).toBeTruthy();
   });
 
   it("shows empty state when no runs", async () => {
@@ -217,326 +204,66 @@ describe("RunListView", () => {
 // Run detail view
 // ──────────────────────────────────────────────────────────────────────────────
 
-describe("RunDetail stage list", () => {
-  function makeFetch(detail = RUN_DETAIL_FIXTURE, gates: ParkedGate[] = []): FetchHandler {
-    return vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.includes("/gates")) return json(gates);
-      if (url.includes("/runs/")) return json(detail);
-      return json([]);
-    });
-  }
-
-  it("announces loading as a status", () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise(() => {}));
-    wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
-    expect(screen.getByText("Loading run…").getAttribute("role")).toBe("status");
-  });
-
-  it("renders stage rows with name and status", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch());
-    wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
-    const rows = await screen.findAllByTestId("or-stage-row");
-    expect(rows).toHaveLength(2);
-  });
-
-  it("shows delegated session link for stages with a kbbl sid", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch());
-    wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
-    const link = await screen.findByTestId("or-delegated-session-link");
-    expect(link.getAttribute("href")).toContain("aaaabbbbccccdddd");
-  });
-
-  it("shows branch and path when worktree metadata is present", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch());
-    wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
-    const branches = await screen.findAllByTestId("or-stage-branch");
-    expect(branches.some((b) => b.textContent?.includes("cohort/v2_readiness/3-minimum_v2"))).toBe(true);
-    const paths = await screen.findAllByTestId("or-stage-path");
-    expect(paths.some((p) => p.textContent?.includes("/code/oakridge"))).toBe(true);
-  });
-
-  it("shows parked gates section when gates exist", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch(RUN_DETAIL_FIXTURE, [PARKED_GATE_FIXTURE]));
-    wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
-    expect(await screen.findByTestId("or-run-gate-list")).toBeTruthy();
-    expect(await screen.findByTestId("or-gate-card")).toBeTruthy();
-  });
-
-  it("shows error state when run fetch fails", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ error: "not found" }, 404));
-    wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
-    expect((await screen.findByTestId("or-run-detail-error")).getAttribute("role")).toBe("alert");
-  });
-
-  it("keeps full cohort briefs out of the stage list while rendering admission controls", async () => {
-    const detail: RunDetail = {
-      ...RUN_DETAIL_FIXTURE,
-      stages: [{
-        stage_instance_id: "build-stage-1",
-        name: "build",
-        type: "build_agent",
-        status: "pending",
-        artifacts: [],
-        delegated_kbbl_sid: null,
-        worktree: null,
-        units: [{
-          unit_id: "cohort-a",
-          repository_key: null,
-          sid: null,
-          worktree: null,
-          status: "pending",
-          gate: null,
-          admission_required: true,
-          admitted: false,
-          admission_eligible: true,
-          admission_blocked_by: [],
-          params: buildBriefParams({
-            title: "Build the cohort UI",
-            goal: "Operator workflow",
-            next_action: "Expose the materialized cohort brief.",
-            files_in_scope: ["kbbl/core/pwa/oakridge"],
-            decisions_made: [{ decision: "Reuse the run table", rationale: "Avoids a second table" }],
-            acceptance_criteria: ["Admission is explicit"],
-            depends_on: ["spec"],
-            repository_key: "oakridge" as RepositoryKey,
-          }),
-        }],
-      }],
-    };
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.includes("/gates")) return json([]);
-      if (url.includes("/runs/")) return json(detail);
-      return json([]);
-    });
-    vi.spyOn(globalThis, "fetch").mockImplementation(fetchMock);
-
-    wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
-
-    expect(await screen.findByText("Build the cohort UI")).toBeTruthy();
-    expect(screen.queryByText("Operator workflow")).toBeNull();
-    expect(screen.queryByText("kbbl/core/pwa/oakridge")).toBeNull();
-    expect(screen.queryByText("Admission is explicit")).toBeNull();
-    expect(screen.getByTestId("or-admit-unit-btn")).toBeTruthy();
-  });
-
-  it("shows the exact dependencies blocking build admission", async () => {
-    const buildUnit = {
-      unit_id: "cohort-b",
-      repository_key: null,
-      sid: null,
-      worktree: null,
-      status: "pending" as const,
-      gate: null,
-      admission_required: true,
-      admitted: false,
-      admission_eligible: false,
-      admission_blocked_by: ["cohort-a", "schema-review"],
-      params: buildBriefParams({ title: "Blocked cohort", depends_on: ["cohort-a", "schema-review"] }),
-    };
-    const detail: RunDetail = {
-      ...RUN_DETAIL_FIXTURE,
-      stages: [{
-        stage_instance_id: "build-stage-1", name: "build", type: "build_agent",
-        status: "pending", artifacts: [], delegated_kbbl_sid: null, worktree: null,
-        units: [buildUnit],
-      }],
-    };
-    vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch(detail));
-    wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
-
-    expect((await screen.findByTestId("or-dependency-status")).textContent).toContain("cohort-a: waiting");
-    expect(screen.queryByTestId("or-admit-unit-btn")).toBeNull();
-  });
-
-  it("retries a failed build unit without restarting the run", async () => {
-    const detail: RunDetail = {
-      ...RUN_DETAIL_FIXTURE,
-      status: "parked",
-      is_stuck: false,
-      stages: [{
-        stage_instance_id: "build-stage-1", name: "build", type: "delegated_session",
-        status: "parked", artifacts: [], delegated_kbbl_sid: null, worktree: null,
-        units: [{
-          unit_id: "cohort-a", repository_key: "oakridge" as RepositoryKey, sid: null, worktree: null,
-          status: "failed", gate: null, params: buildBriefParams({ title: "Failed build" }),
-        }],
-      }],
-    };
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.includes("/units/cohort-a/retry")) return json({ work_order: { id: "retry-1" } }, 202);
-      if (url.includes("/gates")) return json([]);
-      return json(detail);
-    });
-    vi.spyOn(globalThis, "fetch").mockImplementation(fetchMock);
-    wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
-
-    fireEvent.click(await screen.findByTestId("or-retry-unit-btn"));
-
-    // Oakridge's operator retry is per unit, addressed by stage instance + unit id, idempotent on its header.
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/oakridge/api/stage_instances/build-stage-1/units/cohort-a/retry",
-      expect.objectContaining({ method: "PUT", headers: expect.objectContaining({ "Idempotency-Key": expect.any(String) }) }),
-    ));
-  });
-
-  it("offers unit retry for a stuck run's unfinished unit even when nothing is parked", async () => {
-    const detail: RunDetail = {
-      ...RUN_DETAIL_FIXTURE,
-      status: "running",
-      is_stuck: true,
-      stages: [{
-        stage_instance_id: "build-stage-1", name: "build", type: "delegated_session",
-        status: "running", artifacts: [], delegated_kbbl_sid: null, worktree: null,
-        units: [{
-          unit_id: "cohort-a", repository_key: "oakridge" as RepositoryKey, sid: null, worktree: null,
-          status: "running", gate: null, params: buildBriefParams({ title: "Rejected build" }),
-        }],
-      }],
-    };
-    vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch(detail));
-    wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
-
-    await screen.findByText("Rejected build");
-    expect(screen.queryByTestId("or-retry-unit-btn")).not.toBeNull();
-  });
-
-  it("retries the single unit hidden behind a collapsed stage row", async () => {
-    const detail: RunDetail = {
-      ...RUN_DETAIL_FIXTURE,
-      status: "running",
-      is_stuck: true,
-      stages: [{
-        stage_instance_id: "brief-writer-stage", name: "brief_writer", type: "artifact_collection",
-        status: "running", artifacts: [], delegated_kbbl_sid: null, worktree: null,
-        units: [{ unit_id: "0", repository_key: null, sid: null, worktree: null, status: "running", gate: null, params: null }],
-      }],
-    };
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.includes("/units/0/retry")) return json({ work_order: { id: "retry-brief-writer" } }, 202);
-      if (url.includes("/gates")) return json([]);
-      return json(detail);
-    });
-    vi.spyOn(globalThis, "fetch").mockImplementation(fetchMock);
-    wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
-
-    fireEvent.click(await screen.findByTestId("or-retry-unit-btn"));
-
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/oakridge/api/stage_instances/brief-writer-stage/units/0/retry",
-      expect.objectContaining({ method: "PUT", headers: expect.objectContaining({ "Idempotency-Key": expect.any(String) }) }),
-    ));
-  });
-
-  it("offers unit retry when executor startup failed before the stage could park", async () => {
-    const detail: RunDetail = {
-      ...RUN_DETAIL_FIXTURE,
-      status: "running",
-      is_stuck: false,
-      stages: [{
-        stage_instance_id: "build-stage-1", name: "build", type: "delegated_session",
-        status: "running", artifacts: [], delegated_kbbl_sid: null, worktree: null,
-        units: [{
-          unit_id: "cohort-a", repository_key: "oakridge" as RepositoryKey, sid: null, worktree: null,
-          status: "failed", gate: null, params: buildBriefParams({ title: "Failed build" }),
-        }],
-      }],
-    };
-    vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch(detail));
-    wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
-
-    await screen.findByText("Failed build");
-    expect(screen.queryByTestId("or-retry-unit-btn")).not.toBeNull();
-  });
-
-  it("does not offer unit retry after the run is terminal", async () => {
-    const detail: RunDetail = {
-      ...RUN_DETAIL_FIXTURE,
-      status: "failed",
-      is_stuck: false,
-      stages: [{
-        stage_instance_id: "build-stage-1", name: "build", type: "delegated_session",
-        status: "failed", artifacts: [], delegated_kbbl_sid: null, worktree: null,
-        units: [{
-          unit_id: "cohort-a", repository_key: "oakridge" as RepositoryKey, sid: null, worktree: null,
-          status: "failed", gate: null, params: buildBriefParams({ title: "Failed build" }),
-        }],
-      }],
-    };
-    vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch(detail));
-    wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
-
-    await screen.findByText("Failed build");
-    expect(screen.queryByTestId("or-retry-unit-btn")).toBeNull();
-  });
-
-  it("shows final integration and explicitly confirms external completion", async () => {
-    const repositoryKey = "oakridge" as RepositoryKey;
-    const detail: RunDetail = {
-      ...RUN_DETAIL_FIXTURE,
-      epic_profile: {
-        id: "epic-1" as EpicProfileId,
-        workflow_run_id: "run-1" as WorkflowRunId,
-        title: "V2 parity",
-        slug: "v2-parity",
-        lifecycle_state: "final_integration",
-        final_merge_policy: "external_confirmation",
-        base_branch: "epic/v2-parity",
-        repositories: [{
-          repository_key: repositoryKey,
-          repository_path: "/code/oakridge",
-          integration_branch: "main",
-          forge_repository: { provider: "github", owner: "RankOneLabs", name: "oakridge" },
-          final_pull_request: {
-            number: 402,
-            url: "https://github.com/RankOneLabs/oakridge/pull/402",
-            head_branch: "epic/v2-parity",
-            base_branch: "main",
-          },
-          final_merge_state: "awaiting_confirmation",
-        }, {
-          repository_key: "docs" as RepositoryKey,
-          repository_path: "/code/docs",
-          integration_branch: "main",
-          forge_repository: { provider: "github", owner: "RankOneLabs", name: "docs" },
-          final_pull_request: {
-            number: 17,
-            url: "https://github.com/RankOneLabs/docs/pull/17",
-            head_branch: "epic/v2-parity",
-            base_branch: "main",
-          },
-          final_merge_state: "pull_request_open",
-        }],
-        created_at: "2026-08-08T10:00:00Z",
-        updated_at: "2026-08-08T11:00:00Z",
+describe("RunDetail committed diagnosis", () => {
+  const detail: RunDetail = {
+    ...RUN_DETAIL_FIXTURE,
+    status: "blocked",
+    blocked_reason: "gate",
+    next_actor: "operator",
+    stages: [
+      {
+        ...RUN_DETAIL_FIXTURE.stages[0],
+        status: "blocked",
+        blocked_reason: "gate",
+        next_actor: "operator",
       },
-    };
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url.includes("/final_pull_requests/") && url.endsWith("/confirm")) {
-        expect(init?.method).toBe("POST");
-        return json({ outcome: "completed", profile: { ...detail.epic_profile, lifecycle_state: "completed" } });
-      }
-      if (url.includes("/gates")) return json([]);
-      if (url.includes("/runs/")) return json(detail);
-      return json([]);
-    });
-    vi.spyOn(globalThis, "fetch").mockImplementation(fetchMock);
+      {
+        ...RUN_DETAIL_FIXTURE.stages[1],
+        status: "cancelled",
+        blocked_reason: null,
+        next_actor: null,
+      },
+    ],
+  };
 
-    wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
+  it("renders typed blocked facts without deriving them", () => {
+    wrap(<RunDetailOrganism runId="run-1" run={detail} activeGates={[]} onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
+    expect(screen.getByTestId("or-run-detail-blocked-reason").textContent).toContain("gate · next: operator");
+    expect(screen.getByTestId("or-stage-blocked-reason").textContent).toContain("gate · next: operator");
+  });
 
-    expect(await screen.findByTestId("or-final-integration")).toBeTruthy();
-    expect(screen.getAllByText("epic/v2-parity")).toHaveLength(2);
-    expect(screen.getAllByText("main")).toHaveLength(2);
-    expect(screen.queryByTestId("or-confirm-final-docs")).toBeNull();
-    fireEvent.click(screen.getByTestId("or-confirm-final-oakridge"));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/oakridge/api/workflow_runs/run-1/final_pull_requests/oakridge/confirm",
-      expect.objectContaining({ method: "POST" }),
-    ));
+  it("keeps a cancelled stage cancelled", () => {
+    wrap(<RunDetailOrganism runId="run-1" run={detail} activeGates={[]} onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
+    expect(screen.getAllByText("cancelled").length).toBeGreaterThan(0);
+  });
+
+  it("offers retry only for the committed retry reason", () => {
+    const units = [
+      { cohort_id: "cohort-gate", unit_id: "gate", sid: null, worktree: null, status: "blocked" as const, blocked_reason: "gate" as const, next_actor: "operator" as const, gate: "artifact_review" },
+      { cohort_id: "cohort-retry", unit_id: "retry", sid: null, worktree: null, status: "blocked" as const, blocked_reason: "retry" as const, next_actor: "operator" as const, gate: null },
+    ];
+    const retryDetail: RunDetail = { ...detail, stages: [{ ...detail.stages[0]!, units }] };
+
+    wrap(<RunDetailOrganism runId="run-1" run={retryDetail} activeGates={[]} onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
+
+    expect(screen.getAllByTestId("or-retry-unit-btn")).toHaveLength(1);
+  });
+
+  it("addresses merge confirmation with the route's stage and unit identity", async () => {
+    const unit = { cohort_id: "durable-cohort-uuid", unit_id: "web", sid: null, worktree: null, status: "blocked" as const, blocked_reason: "gate" as const, next_actor: "operator" as const, gate: "merge_confirmation" };
+    const companion = { ...unit, cohort_id: "other-cohort", unit_id: "api", gate: null };
+    const mergeDetail: RunDetail = { ...detail, stages: [{ ...detail.stages[0]!, stage_instance_id: "stage-build", units: [unit, companion] }] };
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ cohort_id: "stage-build:web", outcome: "accepted" }, 202));
+
+    wrap(<RunDetailOrganism runId="run-1" run={mergeDetail} activeGates={[{
+      id: "merge-gate", gate_type: "merge_confirmation", gate_step: "merge_confirmation", run_id: "run-1",
+      stage_name: "build", unit_id: "web", cohort_id: "durable-cohort-uuid", artifact_revision_id: null,
+      worktree: null, resume_actions: ["confirm_merged"], run_state: "blocked", actionable: true,
+    }]} onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
+    fireEvent.click(screen.getByTestId("or-confirm-cohort-merged-btn"));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/cohorts/stage-build%3Aweb/pull_request");
   });
 });
 

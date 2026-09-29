@@ -17,17 +17,17 @@ const legacy: SessionSnapshot = {
 };
 const run: RunDetail = {
   id: "run", title: "Archive inventory", repository_keys: [],
-  workflow_name: "dev_flow_v2", status: "parked", is_stuck: false,
+  workflow_name: "dev_flow_v2", status: "blocked", blocked_reason: "gate", next_actor: "operator",
   parked_count: 0, updated_at: "2026-09-01T00:00:00Z", stages: [],
 };
 const sessions: RunSessionsRead = {
   kind: "loaded",
-  attempts: ["legacy", "deleted"].map((session_id) => ({
+  sessions: ["legacy", "deleted"].map((session_id) => ({
     work_order_id: session_id, session_id, stage_instance_id: "stage",
     stage_key: "build", unit_id: "unit", reason: "initial",
     work_order_state: "completed", created_at: "2026-09-01T00:00:00Z",
     completed_at: null, executor_health_kind: null, cleanup_state: "complete",
-  })),
+  })) as never,
 };
 const storedState: RunWorkspaceState = {
   primary: { kind: "session", session_id: "legacy" as Sid }, secondary: null,

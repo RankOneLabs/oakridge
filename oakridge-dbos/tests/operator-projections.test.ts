@@ -22,9 +22,10 @@ const definitionOf = (stage_keys: readonly string[], edges: readonly CompiledEdg
   source_stages: source_stages as readonly StageKey[],
 });
 
-test("a gate is actionable only while its run is active", () => {
+test("a gate is actionable while its committed run diagnosis can accept a decision", () => {
   expect(selectGateActionability("active")).toBe(true);
-  expect(selectGateActionability("succeeded")).toBe(false);
+  expect(selectGateActionability("blocked")).toBe(true);
+  expect(selectGateActionability("complete")).toBe(false);
   expect(selectGateActionability("failed")).toBe(false);
   expect(selectGateActionability("cancelled")).toBe(false);
 });

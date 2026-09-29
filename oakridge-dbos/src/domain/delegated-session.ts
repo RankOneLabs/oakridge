@@ -14,6 +14,7 @@ export interface SessionIdentity {
   readonly run_id: string;
   readonly stage_instance_id: string;
   readonly unit_id: string;
+  readonly cohort_id: string | null;
   readonly operator_role: StageOperatorRole | null;
   readonly cohort_title: string | null;
   readonly repository_key: string | null;

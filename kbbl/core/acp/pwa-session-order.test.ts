@@ -12,7 +12,8 @@ function workflow(overrides: Partial<PwaSessionWorkflowIdentity> = {}): PwaSessi
   return {
     runId: "run-1",
     stageInstanceId: "stage-build",
-    unitId: "cohort-a",
+    unitId: "unit-a",
+    cohortId: "cohort-a",
     operatorRole: "build",
     cohortTitle: null,
     repositoryKey: null,
@@ -139,8 +140,8 @@ test("a null workflow is unattached and never creates a run", () => {
   expect(grouping.unattached.map((s) => s.sid)).toEqual(["hand-1"]);
 });
 
-test("unitId '0' stays attached to its run as a stage group", () => {
-  const scalar = makeSnapshot({ sid: "scalar-1", workflow: workflow({ unitId: "0" }) });
+test("a session with no cohort stays attached to its run as a stage group", () => {
+  const scalar = makeSnapshot({ sid: "scalar-1", workflow: workflow({ cohortId: null }) });
   const grouping = groupSessionsByRun([scalar]);
   expect(grouping.runs[0]?.groups[0]).toMatchObject({
     kind: "stage",
@@ -153,19 +154,19 @@ test("unitId '0' stays attached to its run as a stage group", () => {
 test("runs and groups order by their most recent member; members use the same ordering", () => {
   const olderGroupOld = makeSnapshot({
     sid: "older-old", lastActivityTs: "2026-01-01T00:00:00.000Z",
-    workflow: workflow({ unitId: "cohort-old" }),
+    workflow: workflow({ cohortId: "cohort-old" }),
   });
   const olderGroupNew = makeSnapshot({
     sid: "older-new", lastActivityTs: "2026-01-03T00:00:00.000Z",
-    workflow: workflow({ unitId: "cohort-old", operatorRole: "assessment" }),
+    workflow: workflow({ cohortId: "cohort-old", operatorRole: "assessment" }),
   });
   const middleGroup = makeSnapshot({
     sid: "middle-only", lastActivityTs: "2026-01-04T00:00:00.000Z",
-    workflow: workflow({ unitId: "cohort-middle" }),
+    workflow: workflow({ cohortId: "cohort-middle" }),
   });
   const newerGroup = makeSnapshot({
     sid: "newer-only", lastActivityTs: "2026-01-05T00:00:00.000Z",
-    workflow: workflow({ runId: "run-2", unitId: "cohort-new" }),
+    workflow: workflow({ runId: "run-2", cohortId: "cohort-new" }),
   });
   const grouping = groupSessionsByRun([olderGroupOld, olderGroupNew, middleGroup, newerGroup]);
   expect(grouping.runs.map((run) => run.runId)).toEqual(["run-2", "run-1"]);

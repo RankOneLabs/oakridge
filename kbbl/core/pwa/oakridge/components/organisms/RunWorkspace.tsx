@@ -1,16 +1,12 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
-import { useRun } from "../../hooks/useRun";
-import { useRunGates } from "../../hooks/useRunGates";
-import { useRunSessions } from "../../hooks/useRunSessions";
+import { useRunDiagnosis } from "../../hooks/useRunDiagnosis";
 import { useRunWorkspaceState } from "../../hooks/useRunWorkspaceState";
 import { selectRunAccentClass } from "../../lib/run-accent";
-import { selectPurgedRunSessionIds, selectRunSessionsRead } from "../../lib/run-sessions";
+import { selectPurgedRunSessionIds, type RunSessionsRead } from "../../lib/run-sessions";
 import {
   selectRunArtifacts,
-  selectRunGatesRead,
-  selectRunOverview,
   selectRunSidebarSessions,
   type RunOverview,
 } from "../../lib/run-overview";
@@ -24,6 +20,7 @@ import {
   type RunWorkspaceSlot,
 } from "../../lib/run-workspace";
 import type { ArtifactId, Sid } from "../../../lib/ids";
+import type { RunDetail as RunDetailRecord } from "../../types";
 import { useStore } from "../../../state/store";
 import { RunIdentityHeader } from "../molecules/RunIdentityHeader";
 import { RunPaneChrome } from "../molecules/RunPaneChrome";
@@ -44,27 +41,18 @@ interface RunWorkspaceProps {
  * The run command center: identity header, persistent sidebar, and a workspace
  * of one or two panes.
  *
- * This is the only component here that reads — `useRun`, `useRunGates` and
- * `useRunSessions` — and the only one that owns workspace state. Everything
- * below it takes derived values as props.
+ * This is the only component here that reads the run diagnosis and owns
+ * workspace state. Everything below it receives committed facts as props.
  */
 export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
-  const runQuery = useRun(runId);
-  const gatesQuery = useRunGates(runId);
-  const sessionsQuery = useRunSessions(runId);
+  const diagnosisQuery = useRunDiagnosis(runId);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-  const run = runQuery.data;
-  // A sessions read that failed is not a run with no sessions — the same
-  // distinction `selectRunGatesRead` draws, and it matters more here, because
-  // pane validation acts on the answer: read as "no sessions", an outage
-  // concludes every stored session pane is stale and prunes the operator's
-  // arrangement out of storage on the way past.
-  const sessions = selectRunSessionsRead({
-    attempts: sessionsQuery.data,
-    is_pending: sessionsQuery.isPending,
-    is_error: sessionsQuery.isError,
-  });
+  const diagnosis = diagnosisQuery.data;
+  const run = diagnosis?.run;
+  const sessions: RunSessionsRead = diagnosis
+    ? { kind: "loaded", sessions: diagnosis.sessions }
+    : diagnosisQuery.isError ? { kind: "unavailable" } : { kind: "pending" };
   const inventorySessions = useStore((state) => state.sessions);
   const hasInboxSnapshot = useStore((state) => state.hasInboxSnapshot);
   const hasSessionSeed = useStore((state) => state.hasSessionSeed);
@@ -82,20 +70,20 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
     refetchInterval: 10_000,
   });
 
-  if (runQuery.isError) {
+  if (diagnosisQuery.isError) {
     return (
       <div className="or-page or-page--wide" data-testid="or-run-workspace-error">
         <div
           className="rounded-md border border-[var(--danger-card-border)] bg-[var(--danger-bg)] px-4 py-3 text-sm text-[var(--danger-fg)]"
           role="alert"
         >
-          {runQuery.error instanceof Error ? runQuery.error.message : "Failed to load run"}
+          {diagnosisQuery.error instanceof Error ? diagnosisQuery.error.message : "Failed to load run"}
         </div>
       </div>
     );
   }
 
-  if (run === undefined || workspace.state === null) {
+  if (diagnosis === undefined || run === undefined || workspace.state === null) {
     return (
       <div className="or-page or-page--wide" data-testid="or-run-workspace-loading">
         <div className="py-6 text-sm text-[var(--text-muted)]">Loading run…</div>
@@ -104,19 +92,8 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
   }
 
   const state = workspace.state;
-  // A gate read that never landed is not an empty gate list — `selectRunGatesRead`
-  // keeps the two apart so neither surface can render an outage as "nothing needs you".
-  const gates = selectRunGatesRead({
-    gates: gatesQuery.data,
-    is_pending: gatesQuery.isPending,
-    is_error: gatesQuery.isError,
-  });
-  const overview = selectRunOverview({ run, sessions, gates });
-  const sidebarSessions = selectRunSidebarSessions({
-    sessions,
-    gates,
-    purgedSessionIds,
-  });
+  const overview = diagnosis;
+  const sidebarSessions = selectRunSidebarSessions(diagnosis, purgedSessionIds);
   const sidebarArtifacts = selectRunArtifacts(run);
   const activity: RunActivityRead = activityQuery.data !== undefined
     ? { kind: "loaded", items: selectRunActivity(activityQuery.data, runId) }
@@ -141,6 +118,7 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
         <PaneBody
           pane={pane}
           runId={runId}
+          run={run}
           onRunDeleted={onBack}
           onOpenPane={(next) => workspace.openPane(next, slot)}
           overview={overview}
@@ -187,6 +165,7 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
 interface PaneBodyProps {
   pane: RunWorkspacePane;
   runId: string;
+  run: RunDetailRecord;
   overview: RunOverview;
   activity: RunActivityRead;
   /** Leave the run because it was deleted from inside the list pane. */
@@ -205,7 +184,7 @@ interface PaneBodyProps {
  * would give one renderer two fetching paths, which is the duplication reuse
  * was meant to avoid.
  */
-function PaneBody({ pane, runId, overview, activity, onRunDeleted, onOpenPane }: PaneBodyProps) {
+function PaneBody({ pane, runId, run, overview, activity, onRunDeleted, onOpenPane }: PaneBodyProps) {
   switch (pane.kind) {
     case "overview":
       return <RunOverviewPane overview={overview} activity={activity} onOpenPane={onOpenPane} />;
@@ -213,6 +192,8 @@ function PaneBody({ pane, runId, overview, activity, onRunDeleted, onOpenPane }:
       return (
         <RunDetail
           runId={runId}
+          run={run}
+          activeGates={overview.active_gates}
           onRunDeleted={onRunDeleted}
           onSelectArtifact={(artifactId) =>
             onOpenPane({ kind: "artifact", artifact_id: artifactId as ArtifactId })
@@ -220,7 +201,7 @@ function PaneBody({ pane, runId, overview, activity, onRunDeleted, onOpenPane }:
         />
       );
     case "artifact":
-      return <ArtifactReview artifactId={pane.artifact_id} />;
+      return <ArtifactReview artifactId={pane.artifact_id} gates={overview.active_gates} />;
     case "session":
       return (
         <RunSessionPane

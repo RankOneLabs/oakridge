@@ -247,11 +247,14 @@ export interface CreateRunRequest {
   epic_profile: EpicProfileConfig;
 }
 
-export type RunStatus = "pending" | "running" | "parked" | "failed" | "complete" | "cancelled";
-export type RunDisplayStatus = RunStatus | "stuck";
+export type CoreStatus = "pending" | "active" | "blocked" | "complete" | "failed" | "cancelled";
+export type BlockedReason = "dependency" | "gate" | "capacity" | "external" | "operator" | "retry";
+export type NextActor = "core" | "agent" | "service" | "operator" | "external";
+export type RunStatus = CoreStatus;
+export type RunDisplayStatus = RunStatus;
 
-/** The run's own persisted lifecycle state, distinct from the derived `RunStatus` above — carried on a gate row so a stranded gate can say what happened to its run. */
-export type RunState = "active" | "succeeded" | "failed" | "cancelled";
+/** The run's committed lifecycle status carried on a gate row. */
+export type RunState = CoreStatus;
 
 export interface RunSummary {
   id: string;
@@ -259,13 +262,14 @@ export interface RunSummary {
   repository_keys: string[];
   workflow_name: string;
   status: RunStatus;
+  blocked_reason: BlockedReason | null;
+  next_actor: NextActor | null;
   current_stage: string | null;
   stage_total: number;
   stage_complete: number;
+  attention_count: number;
   parked_count: number;
   updated_at: string;
-  is_stuck: boolean;
-  is_failed: boolean;
   archived?: boolean;
 }
 
@@ -275,7 +279,7 @@ export interface WorktreeMetadata {
   base_ref: string;
 }
 
-export type StageStatus = "pending" | "running" | "complete" | "failed" | "parked";
+export type StageStatus = CoreStatus;
 export type StageUnitStatus = StageStatus;
 
 export interface StageArtifact {
@@ -293,6 +297,7 @@ export interface StageArtifact {
 }
 
 export interface StageUnit {
+  cohort_id: string;
   unit_id: string;
   repository_key?: RepositoryKey | null;
   params?: StageUnitParams | null;
@@ -300,6 +305,8 @@ export interface StageUnit {
   worktree: WorktreeMetadata | null;
   base_sha?: string | null;
   status: StageStatus;
+  blocked_reason: BlockedReason | null;
+  next_actor: NextActor | null;
   gate: string | null;
   admission_required?: boolean;
   admitted?: boolean;
@@ -325,6 +332,8 @@ export interface StageDetail {
   name: string;
   type: string;
   status: StageStatus;
+  blocked_reason: BlockedReason | null;
+  next_actor: NextActor | null;
   artifacts: StageArtifact[];
   delegated_kbbl_sid: string | null;
   worktree: WorktreeMetadata | null;
@@ -337,11 +346,42 @@ export interface RunDetail {
   repository_keys: string[];
   workflow_name: string;
   status: RunStatus;
+  blocked_reason: BlockedReason | null;
+  next_actor: NextActor | null;
   stages: StageDetail[];
   parked_count: number;
   updated_at: string;
-  is_stuck: boolean;
   epic_profile?: EpicWorkflowProfile | null;
+}
+
+export interface RunDiagnosisSession {
+  session_id: string;
+  stage_key: string;
+  cohort_id: string;
+  attempt_number: number;
+  attempt_count: number;
+  status: CoreStatus;
+}
+
+export interface RunDiagnosisGate extends ParkedGate { cohort_id: string | null }
+
+export interface RunDiagnosisArtifact {
+  artifact_id: string;
+  type_id: string;
+  revision: number;
+  stage_name: string;
+  label: string | null;
+  created_at: string;
+}
+
+export interface RunDiagnosis {
+  run: RunDetail;
+  sessions: RunDiagnosisSession[];
+  current_session: RunDiagnosisSession | null;
+  sessions_awaiting_action: RunDiagnosisSession[];
+  active_gates: RunDiagnosisGate[];
+  recent_artifacts: RunDiagnosisArtifact[];
+  stage_progress: Record<CoreStatus, number> & { total: number };
 }
 
 /**
@@ -503,17 +543,7 @@ export interface CohortPullRequestResponse {
   outcome: { kind: CohortPullRequestOutcomeKind };
 }
 
-export type CohortLifecycle =
-  | "waiting_admission"
-  | "building"
-  | "artifact_review"
-  | "revision_requested"
-  | "merge_confirmation"
-  | "assessing"
-  | "github_review"
-  | "pull_request_mismatch"
-  | "complete"
-  | "failed";
+export type CohortLifecycle = CoreStatus;
 
 export interface CohortCompletion {
   build_complete: boolean;
@@ -537,6 +567,8 @@ export interface CohortLifecycleSummary {
   repository_key?: RepositoryKey | null;
   title?: string | null;
   lifecycle: CohortLifecycle;
+  blocked_reason: BlockedReason | null;
+  next_actor: NextActor | null;
   completion: CohortCompletion;
   admission: CohortAdmission;
   artifact_revision_id?: string | null;
@@ -571,6 +603,8 @@ export interface ReviewInboxItem {
   unit_id: string;
   repository_key?: RepositoryKey | null;
   lifecycle: CohortLifecycle;
+  blocked_reason: BlockedReason | null;
+  next_actor: NextActor | null;
   title?: string | null;
   artifact_revision_id?: string | null;
   artifact_url?: string | null;
@@ -585,6 +619,7 @@ export interface ReviewInboxItem {
 export interface ReviewInbox {
   cohorts: CohortLifecycleSummary[];
   items: ReviewInboxItem[];
+  attention_count: number;
 }
 
 export interface PullRequestObservation {

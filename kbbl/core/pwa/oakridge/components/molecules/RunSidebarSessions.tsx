@@ -65,7 +65,7 @@ export function RunSidebarSessions({
       <ul className="or-run-sidebar__list">
         {rows.map((row) => (
           <RunSidebarSessionItem
-            key={row.work_order_id}
+            key={row.session_id}
             row={row}
             isOpen={openSessionIds.has(row.session_id)}
             onOpen={onOpen}
@@ -118,7 +118,7 @@ function RunSidebarSessionItem({ row, isOpen, onOpen }: RunSidebarSessionItemPro
           <span className="or-run-sidebar__row-unit">{row.unit_id}</span>
         </span>
         <span className="or-run-sidebar__row-meta">
-          <span data-testid="or-sidebar-session-state">{row.work_order_state}</span>
+          <span data-testid="or-sidebar-session-state">{row.status}</span>
           <span data-testid="or-sidebar-session-attempt">{row.attempt_label}</span>
           {row.is_current ? (
             <span className="text-[var(--success-fg)]" data-testid="or-sidebar-session-current">

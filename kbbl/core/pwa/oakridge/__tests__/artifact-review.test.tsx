@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
 
 import { ArtifactReview } from "../components/organisms/ArtifactReview";
-import type { ArtifactDetail, ParkedGate } from "../types";
+import type { ArtifactDetail, ParkedGate, RunDiagnosisGate } from "../types";
 
 // Split out of oakridge.test.tsx when the chrome union landed: the review
 // organism now has two hosts, and its cases outgrew the shared file.
@@ -36,6 +36,7 @@ const PARKED_GATE_FIXTURE: ParkedGate = {
   run_state: "active",
   actionable: true,
 };
+const DIAGNOSIS_GATE: RunDiagnosisGate = { ...PARKED_GATE_FIXTURE, cohort_id: null };
 
 const ARTIFACT_FIXTURE: ArtifactDetail = {
   id: "art-1",
@@ -59,7 +60,7 @@ const ARTIFACT_FIXTURE: ArtifactDetail = {
 describe("ArtifactReview", () => {
   it("renders artifact type, producing stage, and revision body", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json(ARTIFACT_FIXTURE));
-    wrap(<ArtifactReview artifactId="art-1" />);
+    wrap(<ArtifactReview artifactId="art-1" gates={[]} />);
 
     expect(await screen.findByTestId("or-artifact-type")).toBeTruthy();
     expect(screen.getByTestId("or-artifact-type").textContent).toBe("spec_v2");
@@ -74,7 +75,7 @@ describe("ArtifactReview", () => {
 
   it("shows revision status chip", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json(ARTIFACT_FIXTURE));
-    wrap(<ArtifactReview artifactId="art-1" />);
+    wrap(<ArtifactReview artifactId="art-1" gates={[]} />);
     const status = await screen.findByTestId("or-revision-status");
     expect(status.textContent).toBe("approved");
   });
@@ -98,7 +99,7 @@ describe("ArtifactReview", () => {
       if (url.includes("/gates")) return json([{ ...PARKED_GATE_FIXTURE, artifact_revision_id: "rev-1", resume_actions: ["approve"] }]);
       return json(described);
     });
-    wrap(<ArtifactReview artifactId="art-1" />);
+    wrap(<ArtifactReview artifactId="art-1" gates={[{ ...DIAGNOSIS_GATE, artifact_revision_id: "rev-1", resume_actions: ["approve"] }]} />);
 
     await waitFor(() => expect(screen.getByTestId("or-artifact-detail").getAttribute("data-review-layout")).toBe("report"));
     expect(await screen.findByTestId("or-artifact-gate-actions")).toBeTruthy();
@@ -107,7 +108,7 @@ describe("ArtifactReview", () => {
     expect(sections.map((section) => section.getAttribute("data-artifact-section"))).toEqual(["summary", "details"]);
   });
 
-  it("loads run-scoped gates and only offers actions for the selected revision", async () => {
+  it("uses diagnosis gates and only offers actions for the selected revision", async () => {
     const artifact: ArtifactDetail = {
       ...ARTIFACT_FIXTURE,
       revisions: [
@@ -122,13 +123,13 @@ describe("ArtifactReview", () => {
       }
       return json(artifact);
     });
-    wrap(<ArtifactReview artifactId="art-1" />);
+    wrap(<ArtifactReview artifactId="art-1" gates={[{ ...DIAGNOSIS_GATE, artifact_revision_id: "rev-2" }]} />);
 
     await screen.findByTestId("or-artifact-type");
     expect(await screen.findByTestId("or-artifact-gate-actions")).toBeTruthy();
     fireEvent.click(screen.getByTestId("or-rev-tab-0"));
     expect(screen.queryByTestId("or-artifact-gate-actions")).toBeNull();
-    expect(fetchSpy.mock.calls.some(([input]) => String(input).includes("/runs/run-1/gates"))).toBe(true);
+    expect(fetchSpy.mock.calls.some(([input]) => String(input).includes("/runs/run-1/gates"))).toBe(false);
   });
 
   it("renders configured plan scope and risks", async () => {
@@ -148,7 +149,7 @@ describe("ArtifactReview", () => {
     };
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
       String(input).includes("/gates") ? json([]) : json(plan));
-    wrap(<ArtifactReview artifactId="art-1" />);
+    wrap(<ArtifactReview artifactId="art-1" gates={[]} />);
 
     expect(await screen.findByText("Scope")).toBeTruthy();
     expect(screen.getByText("Risks")).toBeTruthy();
@@ -157,7 +158,7 @@ describe("ArtifactReview", () => {
 
   it("shows error state when artifact fetch fails", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ error: "not found" }, 404));
-    wrap(<ArtifactReview artifactId="bad-id" />);
+    wrap(<ArtifactReview artifactId="bad-id" gates={[]} />);
     expect(await screen.findByTestId("or-artifact-detail-error")).toBeTruthy();
   });
 });
@@ -168,7 +169,7 @@ describe("navigation inside the review", () => {
   // would sit directly under those and mean something different from them.
   it("offers none of its own, so the pane frame stays the only frame", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json(ARTIFACT_FIXTURE));
-    wrap(<ArtifactReview artifactId="art-1" />);
+    wrap(<ArtifactReview artifactId="art-1" gates={[]} />);
 
     await screen.findByTestId("or-artifact-type");
     expect(screen.queryByText("← Back")).toBeNull();

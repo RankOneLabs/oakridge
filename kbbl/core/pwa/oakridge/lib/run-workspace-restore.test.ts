@@ -24,8 +24,9 @@ const RUN: RunDetail = {
   title: "Ship the run command center",
   repository_keys: ["oakridge"],
   workflow_name: "dev_flow_v2",
-  status: "running",
-  is_stuck: false,
+  status: "active",
+  blocked_reason: null,
+  next_actor: "core",
   parked_count: 0,
   updated_at: "2026-09-01T10:00:00Z",
   stages: [
@@ -34,6 +35,8 @@ const RUN: RunDetail = {
       name: "plan",
       type: "delegated_session",
       status: "complete",
+      blocked_reason: null,
+      next_actor: null,
       artifacts: [{ id: "art-plan", type_id: "dev.plan", version: 1 }],
       delegated_kbbl_sid: "sid-plan",
       worktree: null,
@@ -42,13 +45,15 @@ const RUN: RunDetail = {
       stage_instance_id: "si-build",
       name: "build",
       type: "delegated_session",
-      status: "running",
+      status: "active",
+      blocked_reason: null,
+      next_actor: "agent",
       artifacts: [{ id: "art-build", type_id: "dev.build_result", version: 1 }],
       delegated_kbbl_sid: null,
       worktree: null,
       units: [
-        { unit_id: "c1", sid: "sid-c1", worktree: null, status: "complete", gate: null },
-        { unit_id: "c2", sid: "sid-c2", worktree: null, status: "running", gate: null },
+        { cohort_id: "c1", unit_id: "c1", sid: "sid-c1", worktree: null, status: "complete", blocked_reason: null, next_actor: null, gate: null },
+        { cohort_id: "c2", unit_id: "c2", sid: "sid-c2", worktree: null, status: "active", blocked_reason: null, next_actor: "agent", gate: null },
       ],
     },
   ],
@@ -114,7 +119,7 @@ const resolve = (
 const NO_PURGED_SESSIONS: ReadonlySet<string> = new Set();
 
 /** The attempt read having landed — the ordinary case for every test but its own. */
-const LOADED_SESSIONS: RunSessionsRead = { kind: "loaded", attempts: SESSIONS };
+const LOADED_SESSIONS: RunSessionsRead = { kind: "loaded", sessions: SESSIONS as never };
 
 describe("indexRunEntities", () => {
   it("indexes every session the run shows, from attempts and from stages alike", () => {

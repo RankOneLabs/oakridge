@@ -6,8 +6,6 @@
 
 import type { PwaSessionSnapshot } from "./pwa-wire";
 
-/** The unit id minted for a scalar stage. */
-const SCALAR_STAGE_UNIT_ID = "0";
 /** Must match the label boundary in `core/pwa/lib/time.ts`. */
 export const JUST_NOW_WINDOW_MS = 5_000;
 
@@ -19,7 +17,7 @@ export type SessionActivityComparator = (
 export interface SessionCohortGroup {
   kind: "cohort";
   key: string;
-  unitId: string;
+  cohortId: string;
   title: string | null;
   repositoryKey: string | null;
   sessions: PwaSessionSnapshot[];
@@ -100,10 +98,8 @@ function firstNonNull(
 }
 
 /**
- * Groups workflow-owned sessions by run, then by fan-out unit or scalar
- * stage. A cohort's build and assessment sessions share one run-scoped unit
- * group. Scalar stages use their stage-instance id because their minted unit
- * id is always "0" and carries no grouping identity of its own.
+ * Groups workflow-owned sessions by run, then by durable cohort id. A session
+ * without a cohort belongs to its stage-instance group.
  */
 export function groupSessionsByRun(
   sessions: readonly PwaSessionSnapshot[],
@@ -120,9 +116,9 @@ export function groupSessionsByRun(
     }
     const runGroups = byRun.get(workflow.runId) ?? new Map<string, PwaSessionSnapshot[]>();
     byRun.set(workflow.runId, runGroups);
-    const key = workflow.unitId === SCALAR_STAGE_UNIT_ID
+    const key = workflow.cohortId == null
       ? `stage:${workflow.stageInstanceId}`
-      : `unit:${workflow.unitId}`;
+      : `cohort:${workflow.cohortId}`;
     const existing = runGroups.get(key);
     if (existing === undefined) runGroups.set(key, [session]);
     else existing.push(session);
@@ -135,7 +131,7 @@ export function groupSessionsByRun(
       // above, so the first member carries the group's stable identifiers.
       const workflow = sorted[0].workflow as NonNullable<PwaSessionSnapshot["workflow"]>;
       const repositoryKey = firstNonNull(sorted, (session) => session.workflow?.repositoryKey ?? null);
-      if (workflow.unitId === SCALAR_STAGE_UNIT_ID) {
+      if (workflow.cohortId == null) {
         return {
           kind: "stage",
           key,
@@ -145,11 +141,11 @@ export function groupSessionsByRun(
         };
       }
       const title = firstNonNull(sorted, (session) => session.workflow?.cohortTitle ?? null)
-        ?? workflow.unitId;
+        ?? workflow.cohortId;
       return {
         kind: "cohort",
         key,
-        unitId: workflow.unitId,
+        cohortId: workflow.cohortId,
         title,
         repositoryKey,
         sessions: sorted,

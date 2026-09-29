@@ -5,7 +5,7 @@ import type { ReviewInboxItem } from "../types";
 
 function gate(id: string): ReviewInboxItem {
   return { id, kind: "artifact_gate", state: "actionable", run_id: "run-1", workflow_name: "dev_flow_v14", stage_instance_id: "stage", stage_name: "brief_writer",
-    unit_id: id, lifecycle: "artifact_review", artifact_revision_id: `revision-${id}`, gate_id: id, resume_actions: ["approve", "request_revision"], blocked_by: [] };
+    unit_id: id, lifecycle: "blocked", blocked_reason: "gate", next_actor: "operator", artifact_revision_id: `revision-${id}`, gate_id: id, resume_actions: ["approve", "request_revision"], blocked_by: [] };
 }
 
 const live = (id: string): DecisionQueueEntry => ({ kind: "live", item: gate(id) });

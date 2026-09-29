@@ -8,14 +8,15 @@ const runSummary: RunSummary = {
   title: "Persisted run title",
   repository_keys: ["oakridge"],
   workflow_name: "development",
-  status: "running",
+  status: "active",
+  blocked_reason: null,
+  next_actor: null,
   current_stage: "Plan",
   stage_total: 1,
   stage_complete: 0,
   parked_count: 0,
   updated_at: "2026-01-01T00:00:00.000Z",
-  is_stuck: false,
-  is_failed: false,
+  attention_count: 0,
 };
 
 const runDetail: RunDetail = {
@@ -23,19 +24,22 @@ const runDetail: RunDetail = {
   title: "Persisted run title",
   repository_keys: ["oakridge"],
   workflow_name: "development",
-  status: "running",
+  status: "active",
+  blocked_reason: null,
+  next_actor: null,
   stages: [{
     stage_instance_id: "stage-plan",
     name: "Plan the work",
     type: "scalar",
-    status: "running",
+    status: "active",
+    blocked_reason: null,
+    next_actor: null,
     artifacts: [],
     delegated_kbbl_sid: null,
     worktree: null,
   }],
   parked_count: 0,
   updated_at: "2026-01-01T00:00:00.000Z",
-  is_stuck: false,
 };
 
 describe("session run label selectors", () => {

@@ -93,7 +93,7 @@ export interface CohortPollOutcome {
 
 /** Cohorts whose handoff is parked on the external review, and nothing else. */
 export const selectCohortsAwaitingReview = (cohorts: readonly OperatorCohortSummary[]): readonly OperatorCohortSummary[] =>
-  cohorts.filter((cohort) => cohort.lifecycle === "github_review");
+  cohorts.filter((cohort) => cohort.lifecycle === "blocked" && cohort.blocked_reason === "external");
 
 /**
  * One sweep. Errors are per-cohort: a pull request that cannot be read, or a

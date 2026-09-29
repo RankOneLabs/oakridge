@@ -6,7 +6,6 @@ interface RunListViewProps {
   onNewProject: () => void;
   onWorkflows?: () => void;
   onSelectArtifact?: (id: string) => void;
-  runAttentionCounts?: ReadonlyMap<string, number>;
 }
 
 export function RunListView(props: RunListViewProps) {

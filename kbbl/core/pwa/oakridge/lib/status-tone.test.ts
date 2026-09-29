@@ -4,16 +4,16 @@ import type { AssessmentVerdict, ArtifactRevisionStatus, FindingSeverity, PrRevi
 import { selectStatusTone, type StatusToneSource } from "./status-tone";
 
 const run = {
-  pending: "muted", running: "info", parked: "warning", failed: "danger",
+  pending: "muted", active: "info", blocked: "warning", failed: "danger",
   complete: "success", cancelled: "muted",
 } satisfies Record<RunStatus, ChipTone>;
 const stage = {
-  pending: "muted", running: "info", parked: "warning", failed: "danger", complete: "success",
+  pending: "muted", active: "info", blocked: "warning", failed: "danger", complete: "success", cancelled: "muted",
 } satisfies Record<StageStatus, ChipTone>;
 const unit = {
-  pending: "muted", running: "info", parked: "warning", failed: "danger", complete: "success",
+  pending: "muted", active: "info", blocked: "warning", failed: "danger", complete: "success", cancelled: "muted",
 } satisfies Record<StageUnitStatus, ChipTone>;
-const display = { ...run, stuck: "warning" } satisfies Record<RunDisplayStatus, ChipTone>;
+const display = { ...run } satisfies Record<RunDisplayStatus, ChipTone>;
 const artifact = { draft: "warning", approved: "success", rejected: "danger" } satisfies Record<ArtifactRevisionStatus, ChipTone>;
 const severity = { blocking: "danger", warning: "warning", info: "info" } satisfies Record<FindingSeverity, ChipTone>;
 const verdict = { pass: "success", pass_with_notes: "warning", fail: "danger" } satisfies Record<AssessmentVerdict, ChipTone>;

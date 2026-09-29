@@ -12,7 +12,7 @@ const mutedClass = "text-sm text-[var(--text-muted)]";
 function stageRowClass(status: string): string {
   const base = "transition-colors hover:bg-[var(--bg-elevated)]";
   if (status === "failed") return `${base} opacity-80`;
-  if (status === "parked") return `${base} border-l-2 border-l-amber-500`;
+  if (status === "blocked") return `${base} border-l-2 border-l-amber-500`;
   return base;
 }
 
@@ -34,6 +34,9 @@ export function RunStageRow({ stage, onSelectArtifact, retry }: RunStageRowProps
       <td className={`${tableCellClass} text-[var(--text-secondary)]`}>{stage.type}</td>
       <td className={tableCellClass}><div className="flex items-center gap-2">
         <StatusBadge status={stage.status} />
+        {stage.status === "blocked" && <Chip tone="warning" testId="or-stage-blocked-reason">
+          {stage.blocked_reason} · next: {stage.next_actor}
+        </Chip>}
         {retry && <Button size="xsmall" variant="danger" onClick={retry.onRetry} disabled={retry.isRetrying} data-testid="or-retry-unit-btn">{retry.isRetrying ? "Retrying…" : "Retry"}</Button>}
         {retry?.error && <span role="alert" className="text-xs text-red-500">{retry.error}</span>}
       </div></td>
@@ -81,6 +84,9 @@ export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelect
       <td className={`${tableCellClass} text-[var(--text-secondary)]`}>{stageType}</td>
       <td className={tableCellClass}><div className="flex items-center gap-2">
         <StatusBadge status={unit.status} />
+        {unit.status === "blocked" && <Chip tone="warning" testId="or-unit-blocked-reason">
+          {unit.blocked_reason} · next: {unit.next_actor}
+        </Chip>}
         {unit.gate && <Chip tone="warning">{unit.gate}</Chip>}
         {unit.admission_required && unit.admitted && <span className="text-xs text-emerald-500" data-testid="or-unit-admitted">Admitted</span>}
         {canRetry && <Button size="xsmall" variant="danger" onClick={() => onRetry(unit.unit_id)} disabled={retrying} data-testid="or-retry-unit-btn">{retrying ? "Retrying…" : "Retry"}</Button>}

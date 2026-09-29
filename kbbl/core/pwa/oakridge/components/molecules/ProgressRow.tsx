@@ -2,24 +2,23 @@ import { Button } from "../../../components/atoms/Button";
 import type { CohortLifecycle, CohortLifecycleSummary } from "../../types";
 
 const LIFECYCLE_LABELS: Record<CohortLifecycle, string> = {
-  waiting_admission: "Brief approved · queued automatically",
-  building: "Building",
-  artifact_review: "Waiting for your review",
-  revision_requested: "Changes requested",
-  merge_confirmation: "Waiting for merge confirmation",
-  assessing: "Checking the result",
-  github_review: "Waiting for GitHub review or merge",
-  pull_request_mismatch: "Pull request needs attention",
+  pending: "Queued",
+  active: "Active",
+  blocked: "Blocked",
   complete: "Complete",
   failed: "Needs recovery",
+  cancelled: "Cancelled",
 };
 
 function lifecycleLabel(cohort: CohortLifecycleSummary): string {
   if (cohort.lifecycle === "complete" && cohort.pull_request_reconciliation?.completed_at) {
     return "Merged · complete";
   }
-  if (cohort.lifecycle === "waiting_admission" && cohort.admission.required && !cohort.admission.admitted) {
+  if (cohort.lifecycle === "pending" && cohort.admission.required && !cohort.admission.admitted) {
     return cohort.admission.eligible ? "Brief approved · awaiting admission" : "Brief approved · waiting on dependencies";
+  }
+  if (cohort.lifecycle === "blocked" && cohort.blocked_reason && cohort.next_actor) {
+    return `Blocked: ${cohort.blocked_reason} · next: ${cohort.next_actor}`;
   }
   return LIFECYCLE_LABELS[cohort.lifecycle];
 }

@@ -18,6 +18,11 @@ export const createOperatorProjectionApp = (projections: OperatorProjectionRepos
     const run = id && await projections.get_run(id);
     return run ? http.json(run) : http.json({ error: "run not found" }, 404);
   });
+  app.get("/runs/:id/diagnosis", async (http) => {
+    const id = parseUuidId<WorkflowRunId>(http.req.param("id"));
+    const diagnosis = id && await projections.get_run_diagnosis(id);
+    return diagnosis ? http.json(diagnosis) : http.json({ error: "run not found" }, 404);
+  });
   app.get("/review_inbox", async (http) => http.json(await projections.get_review_inbox()));
   app.get("/application_versions", async (http) => http.json(await projections.list_application_versions()));
   app.get("/run_events", async (http) => {

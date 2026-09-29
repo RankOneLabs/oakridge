@@ -6,12 +6,11 @@ import { usePostMessage } from "../../hooks/usePostMessage";
 import { usePingThread } from "../../hooks/usePingThread";
 import { useResolveThread } from "../../hooks/useResolveThread";
 import { useReviewItems } from "../../hooks/useReviewItems";
-import { useRunGates } from "../../hooks/useRunGates";
 import { usePatchReviewItem } from "../../hooks/usePatchReviewItem";
 import { useAtomEdit } from "../../hooks/useAtomEdit";
 import { resolveViewer } from "../../artifactRegistry";
 import { ReviewItemsChecklist } from "../molecules/ReviewItemsChecklist";
-import type { ArtifactRevision } from "../../types";
+import type { ArtifactRevision, RunDiagnosisGate } from "../../types";
 import { formatRelative } from "../../../lib/time";
 import { ThreadSidebar } from "../../../review/shared/ThreadSidebar";
 import { ThreadView } from "../../../review/shared/ThreadView";
@@ -37,9 +36,10 @@ import { selectStatusTone } from "../../lib/status-tone";
  */
 interface ArtifactReviewProps {
   artifactId: string;
+  gates: readonly RunDiagnosisGate[];
 }
 
-export function ArtifactReview({ artifactId }: ArtifactReviewProps) {
+export function ArtifactReview({ artifactId, gates }: ArtifactReviewProps) {
   const query = useArtifact(artifactId);
   const [selectedRevIdx, setSelectedRevIdx] = useState<number | null>(null);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
@@ -57,8 +57,6 @@ export function ArtifactReview({ artifactId }: ArtifactReviewProps) {
     : Math.min(selectedRevIdx, Math.max(0, revisions.length - 1));
   const revision = revisions[revIdx] as ArtifactRevision | undefined;
   const atomEdit = useAtomEdit(revision?.id ?? artifactId, artifactId);
-  const gatesQuery = useRunGates(query.data?.run_id ?? "", Boolean(query.data?.run_id));
-  const gates = Array.isArray(gatesQuery.data) ? gatesQuery.data : [];
   const revisionIds = new Set(revisions.map((candidate) => candidate.id));
   const artifactGate = gates.find((gate) => gate.artifact_revision_id !== null && revisionIds.has(gate.artifact_revision_id));
 
