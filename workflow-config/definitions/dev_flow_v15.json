@@ -179,8 +179,9 @@
               "path": null
             },
             "REPOSITORIES": {
-              "from": "context",
-              "path": "/repositories"
+              "from": "input",
+              "input_name": "repository_refs",
+              "path": null
             },
             "OAKRIDGE_URL": {
               "from": "context",
@@ -405,7 +406,7 @@
                 "path": "/worker_effort"
               },
               "worktree": {
-                "branch_name": "cohort/{{UNIT_ID}}",
+                "branch_name": "cohort/{{STAGE_INSTANCE_ID}}/{{UNIT_ID}}",
                 "worktree_subdir": "{{STAGE_INSTANCE_ID}}/{{UNIT_ID}}",
                 "base_ref": {
                   "from": "input_lookup",
@@ -451,6 +452,10 @@
             "build_result"
           ],
           "slot_bindings": {
+            "BUILD_OUTPUT_CONTRACTS": {
+              "from": "literal",
+              "value": "## Required output payloads\n\n`pr_summary`:\n\n```ts\n{\n  pr_url: string;\n  branch: string;\n  base_branch: string;\n  repository_key: string;\n  summary: string;\n}\n```\n\n`build_result`:\n\n```ts\n{\n  summary: string;\n  repository_key: string;\n  changed_files: string[];\n  tests: {\n    passed: number;\n    failed: number;\n    output: string;\n  };\n  delegated_session_metadata: {\n    cohort_id: string;\n  };\n  known_issues: Array<{\n    description: string;\n    severity: \"blocking\" | \"warning\" | \"info\";\n  }>;\n}\n```"
+            },
             "OAKRIDGE_URL": {
               "from": "context",
               "path": "/oakridge_url"

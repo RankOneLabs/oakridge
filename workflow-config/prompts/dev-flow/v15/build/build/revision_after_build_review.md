@@ -14,4 +14,6 @@ Revise the existing cohort implementation and existing pull request to address t
 - Acceptance criteria: {{COHORT_ACCEPTANCE}}
 - Integration branch: {{EXPECTED_FINAL_BASE}}
 
+{{BUILD_OUTPUT_CONTRACTS}}
+
 Update the existing PR named in the generated contract; do not open a second PR. Publish corrected `pr_summary` first and `build_result` second using the appended Oakridge work order contract. Stop only after both PUTs to `{{OAKRIDGE_URL}}` are confirmed.

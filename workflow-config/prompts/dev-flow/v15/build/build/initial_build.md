@@ -14,4 +14,6 @@ Implement exactly this cohort in the prepared worktree. Create focused commits, 
 - Acceptance criteria: {{COHORT_ACCEPTANCE}}
 - Integration branch: {{EXPECTED_FINAL_BASE}}
 
+{{BUILD_OUTPUT_CONTRACTS}}
+
 Do not change scope or branch roles. After the PR exists, publish `pr_summary` first and `build_result` second using the Oakridge work order publication contract appended to this prompt. The result must list changed files, test counts and output, cohort metadata, and known issues. Stop only after both PUTs to `{{OAKRIDGE_URL}}` are confirmed.

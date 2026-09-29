@@ -14,4 +14,6 @@ The prior builder attempt ended without completing its contract. Inspect the inh
 - Acceptance criteria: {{COHORT_ACCEPTANCE}}
 - Integration branch: {{EXPECTED_FINAL_BASE}}
 
+{{BUILD_OUTPUT_CONTRACTS}}
+
 Reuse the existing PR named in the generated contract when present; otherwise open the required PR. Publish `pr_summary` first and `build_result` second using the appended Oakridge work order contract. Stop only after both PUTs to `{{OAKRIDGE_URL}}` are confirmed.

@@ -45,7 +45,7 @@ const buildCohort: DevFlowBuildCohort = {
   cohort_key: "web",
   repository_key: "oakridge",
   repository_path: "/repo/oakridge",
-  canonical_ref: "cohort/web",
+  canonical_ref: "cohort/stage-1/web",
   expected_pr_base: "epic/test",
   recorded_head_sha: "9a8b7c6",
   current_verified_pull_request_id: null,
@@ -95,6 +95,10 @@ test("seeded spec and plan stages resolve their real prompts and release contrac
   const planInputs = { spec_analysis: specArtifact, repository_refs: repositoryRefs };
   const planExecution = await resolveStage(plan, scalarUnit, planInputs);
   expect(planExecution).toEqual({ ok: true, value: expect.objectContaining({ rendered_prompt: expect.stringContaining('"requirements":["one"]') }) });
+  if (planExecution.ok) {
+    expect(planExecution.value.rendered_prompt).toContain('"base_branch":"epic/test"');
+    expect(planExecution.value.rendered_prompt).toContain('"integration_branch":"main"');
+  }
   expect(plan.outputs[0]?.release).toEqual(expect.objectContaining({ kind: "gate", requires_zero_open_review_items: false }));
 
   const brief = workflow.stages.brief_writer!;
@@ -110,7 +114,7 @@ test("seeded build stage resolves a cohort's real prompt, worktree, and release 
   const inputs = { brief: [brief], repository_refs: repositoryRefs };
   const execution = await resolveStage(build, web, inputs);
   expect(execution).toEqual({ ok: true, value: expect.objectContaining({ workdir: "/repo/oakridge", rendered_prompt: expect.stringContaining("- ID: web"),
-    worktree: { branchName: "cohort/web", worktreeSubdir: "stage-1/web", baseRef: "epic/test" } }) });
+    worktree: { branchName: "cohort/stage-1/web", worktreeSubdir: "stage-1/web", baseRef: "epic/test" } }) });
   expect(build.outputs.find((output) => output.name === "build_result")?.release).toEqual(expect.objectContaining({ kind: "gate", gate_name: "build_review" }));
   expect(build.outputs.find((output) => output.name === "assessment")?.release).toEqual(expect.objectContaining({ kind: "gate", gate_name: "assessment_review" }));
   const buildDefinition = build.executor.definition_config as DelegatedSessionDefinitionConfig;
@@ -273,7 +277,12 @@ test("all eight build loop prompt cells render the persisted cohort branch contr
     expect(resolved.rendered_prompt).toContain(`Launch reason: ${cell.launch_reason}`);
     expect(resolved.rendered_prompt).toContain(`Canonical cohort ref: ${buildCohort.canonical_ref}`);
     expect(resolved.rendered_prompt).toContain(`Pull request base: ${buildCohort.expected_pr_base}`);
-    if (cell.session_role === "build") expect(resolved.worktree?.branchName).toBe(buildCohort.canonical_ref);
+    if (cell.session_role === "build") {
+      expect(resolved.worktree?.branchName).toBe(buildCohort.canonical_ref);
+      expect(resolved.rendered_prompt).toContain("pr_url: string;");
+      expect(resolved.rendered_prompt).toContain("delegated_session_metadata:");
+      expect(resolved.rendered_prompt).toContain('severity: "blocking" | "warning" | "info";');
+    }
   }
 });
 

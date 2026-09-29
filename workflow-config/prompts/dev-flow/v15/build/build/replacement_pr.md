@@ -14,4 +14,6 @@ The existing pull request cannot continue and Oakridge has authorized a replacem
 - Acceptance criteria: {{COHORT_ACCEPTANCE}}
 - Integration branch: {{EXPECTED_FINAL_BASE}}
 
+{{BUILD_OUTPUT_CONTRACTS}}
+
 Change implementation only if needed to restore the accepted revision. Publish the replacement `pr_summary` first and `build_result` second using the appended Oakridge work order contract, clearly identifying the new PR. Stop only after both PUTs to `{{OAKRIDGE_URL}}` are confirmed.

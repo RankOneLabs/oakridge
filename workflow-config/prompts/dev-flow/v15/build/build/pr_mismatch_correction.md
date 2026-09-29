@@ -14,4 +14,6 @@ The implementation exists, but the recorded pull request does not match the cano
 - Acceptance criteria: {{COHORT_ACCEPTANCE}}
 - Integration branch: {{EXPECTED_FINAL_BASE}}
 
+{{BUILD_OUTPUT_CONTRACTS}}
+
 Keep the existing PR when it can be corrected. Publish `pr_summary` first and `build_result` second using the appended Oakridge work order contract, describing the correction and verification. Stop only after both PUTs to `{{OAKRIDGE_URL}}` are confirmed.

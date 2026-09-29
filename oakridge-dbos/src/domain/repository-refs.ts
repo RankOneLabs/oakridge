@@ -1,4 +1,4 @@
-import type { JsonValue } from "./primitives";
+import type { JsonValue, StageInstanceId } from "./primitives";
 import { err, ok, type Result } from "./primitives";
 import { readJsonPointer } from "./json-pointer";
 import type { SlotBinding } from "./delegated-session";
@@ -76,10 +76,11 @@ export interface CohortBranchRoles {
 }
 
 export const selectCohortBranchRoles = (
+  stageInstanceId: StageInstanceId,
   cohortKey: string,
   repository: Pick<RepositoryRefs, "base_branch">,
 ): CohortBranchRoles => ({
-  canonical_ref: `cohort/${cohortKey}`,
+  canonical_ref: `cohort/${stageInstanceId}/${cohortKey}`,
   expected_pr_base: repository.base_branch,
 });
 
