@@ -65,6 +65,14 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
       await sql.query(`INSERT INTO oakridge.artifact_provenance (artifact_id,kind,run_id,import_source)
         VALUES ($1,'import','00000000-0000-4000-8000-000000000002',$2::jsonb)`, [artifactId, JSON.stringify({ source: "fixture" })]);
     }
+    await expect(sql.query(`INSERT INTO oakridge.artifact
+      (id,chain_id,revision,parent_artifact_id,artifact_type,body,lifecycle)
+      VALUES ('00000000-0000-4000-8000-000000000013','00000000-0000-4000-8000-000000000099',2,$1,
+        'test.output','{}','superseded')`, [artifactIds[0]])).rejects.toThrow("invalid parent");
+    await expect(sql.query(`INSERT INTO oakridge.artifact
+      (id,chain_id,revision,parent_artifact_id,artifact_type,body)
+      VALUES ('00000000-0000-4000-8000-000000000014',$1,2,$1,'test.output','{}')`,
+      [artifactIds[0]])).rejects.toThrow();
     expect((await sql.query<{ readonly kind: string; readonly session_id: string | null }>(
       "SELECT kind,session_id::text FROM oakridge.artifact_provenance WHERE artifact_id=$1", [artifactIds[0]]))[0])
       .toEqual({ kind: "import", session_id: null });
@@ -120,6 +128,12 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
       (SELECT durable_version::text FROM oakridge.stage_instance WHERE id='00000000-0000-4000-8000-000000000003') AS stage_version,
       (SELECT record_version::text FROM oakridge.workflow_run WHERE id='00000000-0000-4000-8000-000000000002') AS run_version`, []))[0])
       .toEqual({ cohort_version: "1", stage_version: "1", run_version: "0" });
+
+    await expect(sql.query(`INSERT INTO oakridge.run_transition
+      (id,run_id,owner_kind,owner_stage_instance_id,launch_reason,prior_owner_version,resulting_owner_version,effect_descriptor,effect_workflow_id,actor)
+      VALUES ('00000000-0000-4000-8000-000000000042','00000000-0000-4000-8000-000000000002','stage_instance',
+        '00000000-0000-4000-8000-000000000003','recovery',41,42,'{"kind":"none"}','effect:invalid-version','system')`,
+    [])).rejects.toThrow("does not match persisted version");
   } finally {
     await sql.close();
   }

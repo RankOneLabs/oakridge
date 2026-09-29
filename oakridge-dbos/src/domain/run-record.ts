@@ -38,7 +38,7 @@ export type TransitionEffectDescriptor =
 /** Named row type for oakridge.run_transition. */
 export interface RunTransitionRecord {
   readonly id: RunTransitionId;
-  readonly sequence: number;
+  readonly sequence: string;
   readonly run_id: WorkflowRunId;
   readonly owner_kind: TransitionOwner["kind"];
   readonly owner_run_id: WorkflowRunId | null;

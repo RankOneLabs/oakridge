@@ -182,6 +182,41 @@ CREATE TABLE oakridge.artifact (
 );
 CREATE INDEX artifact_chain_idx ON oakridge.artifact (chain_id, revision DESC);
 CREATE INDEX artifact_type_idx ON oakridge.artifact (artifact_type);
+CREATE UNIQUE INDEX artifact_chain_current_unique_idx
+  ON oakridge.artifact (chain_id) WHERE lifecycle = 'current';
+
+CREATE FUNCTION oakridge.validate_artifact_revision_parent()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  parent oakridge.artifact%ROWTYPE;
+BEGIN
+  IF NEW.parent_artifact_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT * INTO parent
+  FROM oakridge.artifact
+  WHERE id = NEW.parent_artifact_id;
+
+  IF NOT FOUND
+    OR parent.chain_id <> NEW.chain_id
+    OR parent.artifact_type <> NEW.artifact_type
+    OR parent.revision + 1 <> NEW.revision
+  THEN
+    RAISE EXCEPTION 'artifact revision % has an invalid parent %', NEW.id, NEW.parent_artifact_id
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE CONSTRAINT TRIGGER artifact_revision_parent_check
+AFTER INSERT OR UPDATE OF parent_artifact_id, chain_id, artifact_type, revision
+ON oakridge.artifact
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION oakridge.validate_artifact_revision_parent();
 
 -- Ownership says whose durable state contains the artifact. A null cohort is
 -- a run-owned artifact; MATCH FULL rejects half-populated cohort identity.
@@ -333,6 +368,40 @@ CREATE INDEX run_transition_stage_owner_idx ON oakridge.run_transition (owner_st
   WHERE owner_stage_instance_id IS NOT NULL;
 CREATE INDEX run_transition_cohort_owner_idx ON oakridge.run_transition (owner_cohort_id, resulting_owner_version)
   WHERE owner_cohort_id IS NOT NULL;
+
+CREATE FUNCTION oakridge.validate_transition_owner_version()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  persisted_version bigint;
+BEGIN
+  CASE NEW.owner_kind
+    WHEN 'run' THEN
+      SELECT record_version INTO persisted_version
+      FROM oakridge.workflow_run WHERE id = NEW.owner_run_id;
+    WHEN 'stage_instance' THEN
+      SELECT durable_version INTO persisted_version
+      FROM oakridge.stage_instance WHERE id = NEW.owner_stage_instance_id;
+    WHEN 'cohort' THEN
+      SELECT durable_version INTO persisted_version
+      FROM oakridge.cohort WHERE id = NEW.owner_cohort_id;
+  END CASE;
+
+  IF persisted_version IS DISTINCT FROM NEW.resulting_owner_version THEN
+    RAISE EXCEPTION 'transition % resulting owner version % does not match persisted version %',
+      NEW.id, NEW.resulting_owner_version, persisted_version
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE CONSTRAINT TRIGGER run_transition_owner_version_check
+AFTER INSERT OR UPDATE OF owner_kind, owner_run_id, owner_stage_instance_id, owner_cohort_id, resulting_owner_version
+ON oakridge.run_transition
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION oakridge.validate_transition_owner_version();
 
 CREATE TABLE oakridge.session_message (
   id uuid PRIMARY KEY,

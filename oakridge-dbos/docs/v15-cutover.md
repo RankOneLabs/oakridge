@@ -9,6 +9,12 @@ always-on hub is `willie`; dumps live at
 `willie:/srv/oakridge/backups/v15/`. Replace the service commands only when the
 deployment uses a different supervisor.
 
+Before starting, put Oakridge in write-free maintenance mode: prevent new work
+from being admitted and wait for every in-flight database writer to finish.
+Keep that condition in place from before `pg_dump` until the workers are
+stopped. This preserves the required dump-before-stop sequence without allowing
+writes after the dump snapshot.
+
 ```bash
 set -euo pipefail
 dump_name="oakridge-pre-v15-$(date -u +%Y%m%dT%H%M%SZ).dump"
