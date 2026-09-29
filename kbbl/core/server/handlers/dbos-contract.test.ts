@@ -270,7 +270,7 @@ test("a DBOS worktree identity produces the requested branch from the requested 
   expect(reference.worktree_base_sha).toBe(row?.worktree_base_ref ?? "");
 });
 
-test("inherited worktrees chain through workspace_source, and the sha still reaches DBOS", async () => {
+test("workspace_source does not couple a new role to another session's worktree", async () => {
   makeHarness();
   const parent = await adapter.start_or_attach(
     makeRequest({ execution_id: "exec-8" }),
@@ -287,11 +287,11 @@ test("inherited worktrees chain through workspace_source, and the sha still reac
   );
   if (child.kind !== "kbbl_session") throw new Error("expected session");
   const childRow = harness.store.getSession(child.session_id as KbblSessionId);
-  expect(childRow?.parent_sid).toBe(parent.session_id as KbblSessionId);
+  expect(childRow?.parent_sid).toBeNull();
   expect(child.worktree_base_sha).toMatch(/^[0-9a-f]{40}$/);
 });
 
-test("an inherited workspace carries the producer's committed work, in a fresh worktree", async () => {
+test("a new role uses its committed workspace instead of a producer session's worktree", async () => {
   makeHarness();
   const producer = await adapter.start_or_attach(
     makeRequest({ execution_id: "exec-10" }),
@@ -301,8 +301,8 @@ test("an inherited workspace carries the producer's committed work, in a fresh w
   const producerRow = harness.store.getSession(producer.session_id as KbblSessionId);
   if (!producerRow) throw new Error("producer row missing");
 
-  // The producer's output: a file committed in its worktree. Inheriting the
-  // workspace means the consumer starts from this state, not the project base.
+  // A producer commit must not become an implicit workspace choice for the
+  // next role. Its stage transition commits that role's worktree selection.
   await Bun.write(join(producerRow.worktree_path, "produced.txt"), "the artifact\n");
   for (const args of [["add", "produced.txt"], ["commit", "-q", "-m", "producer output"]]) {
     const p = Bun.spawn({ cmd: ["git", "-C", producerRow.worktree_path, ...args], stdout: "ignore", stderr: "pipe" });
@@ -324,15 +324,12 @@ test("an inherited workspace carries the producer's committed work, in a fresh w
   if (consumer.kind !== "kbbl_session") throw new Error("expected session");
   const consumerRow = harness.store.getSession(consumer.session_id as KbblSessionId);
   if (!consumerRow) throw new Error("consumer row missing");
-  // A NEW worktree cut from the parent's — never the same directory two
-  // agents would then race in — sitting on the parent's committed HEAD,
-  // not a copy of its working tree.
   expect(consumerRow.worktree_path).not.toBe(producerRow.worktree_path);
   const consumerHead = Bun.spawnSync({ cmd: ["git", "-C", consumerRow.worktree_path, "rev-parse", "HEAD"] })
     .stdout.toString()
     .trim();
-  expect(consumerHead).toBe(producerHead);
-  expect(await Bun.file(join(consumerRow.worktree_path, "produced.txt")).exists()).toBe(true);
+  expect(consumerHead).not.toBe(producerHead);
+  expect(await Bun.file(join(consumerRow.worktree_path, "produced.txt")).exists()).toBe(false);
 }, 20000);
 
 test("the same session key with a different start spec conflicts instead of hijacking the session", async () => {
