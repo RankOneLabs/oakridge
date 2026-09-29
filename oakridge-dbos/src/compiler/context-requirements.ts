@@ -2,7 +2,7 @@ import { readJsonPointer } from "../domain/json-pointer";
 import type { JsonValue } from "../domain/primitives";
 import type { RunContext } from "../domain/run-context";
 import type { StageKey, WorkflowGraph } from "../domain/workflow";
-import { slotBindingSchema } from "../validation/slot-binding";
+import { slotBindingSchema } from "../validation/delegated-session";
 
 /**
  * What a workflow definition demands of the run context it is launched with.

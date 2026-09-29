@@ -1,4 +1,4 @@
-import type { CompiledEdge, CompiledGateStep, CompiledOutputContract, CompiledStageContract, CompiledWorkflowDefinition, MaterializationContract, OutputReleaseContract } from "../domain/compiled-workflow";
+import { selectOutputAttention, type CompiledEdge, type CompiledGateStep, type CompiledOutputContract, type CompiledStageContract, type CompiledWorkflowDefinition, type MaterializationContract, type OutputReleaseContract } from "../domain/compiled-workflow";
 import type { DelegatedSessionDefinitionConfig } from "../domain/delegated-session";
 import { err, ok, type JsonValue, type Result } from "../domain/primitives";
 import type { StageNodeDefinition, WorkflowDefinition } from "../domain/workflow";
@@ -7,7 +7,6 @@ import { repositoryProvisioningDefinitionSchema } from "../validation/repository
 import { selectBuiltInGateDisposition } from "../domain/gates";
 import { readOwn } from "../domain/records";
 import { PROVISION_REPOSITORY_REFS_STAGE_TYPE, RUN_CONTEXT_REPOSITORY_KEY_POINTER, type RepositoryProvisioningDefinitionConfig } from "../domain/repository-refs";
-import { selectOutputReleasePolicy } from "../domain/output-release-policy";
 
 export interface CompileWorkflowError {
   readonly operation: "compile_workflow";
@@ -118,8 +117,8 @@ const compileStage = (stageKey: string, node: StageNodeDefinition, registry: Sta
   const outputs: CompiledOutputContract[] = [];
   for (const output of node.outputs) {
     const release = compiledConfig.value.output_release(output.name);
-    const policy = selectOutputReleasePolicy(release, output.attention ?? null);
-    if (policy.attention === "required" && policy.continuation === "continuing") {
+    const attention = selectOutputAttention({ attention: output.attention, release });
+    if (attention === "required" && release.kind === "immediate") {
       return err({ operation: "compile_workflow", stage_key: stageKey,
         detail: `output '${output.name}' declares required attention but continues immediately` });
     }

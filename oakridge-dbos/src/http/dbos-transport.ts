@@ -1,6 +1,7 @@
-import { RUN_RECORD_WAKE_TOPIC } from "../workflows/run-record-topology";
 import { runRecordWorkflowId } from "../domain/workflow-ids";
 import type { WorkflowRunId } from "../domain/primitives";
+
+const RUN_RECORD_WAKE_TOPIC = "oakridge-v2-run-record-wake";
 
 export interface DbosTransportClient {
   send(destination_id: string, message: unknown, topic?: string, idempotency_key?: string): Promise<void>;

@@ -37,6 +37,15 @@ export type OutputReleaseContract =
 export type OutputAttention = "required" | "optional" | "none";
 export type OutputContinuation = "waiting" | "continuing";
 
+/** Derive the operator attention implied by an output's release contract. */
+export const selectOutputAttention = (
+  output: Pick<CompiledOutputContract, "attention" | "release">,
+): OutputAttention => output.attention ?? (output.release.kind === "gate"
+  ? "required"
+  : output.release.kind === "handoff" && output.release.external_wait_kind.length > 0
+    ? "optional"
+    : "none");
+
 export type MaterializationContract =
   | { readonly kind: "scalar" }
   | { readonly kind: "artifact_collection"; readonly over: SlotBinding; readonly id_path: string }

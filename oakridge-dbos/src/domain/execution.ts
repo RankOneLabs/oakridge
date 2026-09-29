@@ -1,4 +1,4 @@
-import type { ArtifactId, ExecutionId, ExecutorOperationId, JsonValue, StageInstanceId, UnitId } from "./primitives";
+import type { ArtifactId, AttemptId, CohortId, ExecutionId, ExecutorOperationId, JsonValue, SessionId, StageInstanceId, UnitId, WorkflowRunId } from "./primitives";
 import type { ArtifactTypeId } from "./workflow";
 
 export interface ArtifactEnvelope {
@@ -96,4 +96,12 @@ export interface ExecutorAdapter {
   observe_terminal(execution_id: ExecutionId, external_reference: ExternalExecutionReference): Promise<ExecutorObservationAttempt>;
   deliver_input(execution_id: ExecutionId, delivery_key: string, input: string, external_reference: ExternalExecutionReference): Promise<void>;
   cancel_or_fence(execution_id: ExecutionId, external_reference: ExternalExecutionReference): Promise<void>;
+}
+
+export interface AttemptExecutionContext {
+  readonly run_id: WorkflowRunId;
+  readonly stage_instance_id: StageInstanceId;
+  readonly cohort_id: CohortId;
+  readonly attempt_id: AttemptId;
+  readonly session_id: SessionId | null;
 }
