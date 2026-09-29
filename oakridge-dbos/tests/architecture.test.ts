@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { ok, type JsonValue } from "../src/domain/primitives";
 import { AdapterRegistry } from "../src/runtime/executor-registry";
 import { cohortMachineAddress } from "../src/workflows/run-record-topology";
+import { BUILD_LAUNCH_REASONS } from "../src/adapters/dev-flow-build";
 
 const SOURCE = new URL("../src", import.meta.url).pathname;
 const FORBIDDEN_IDENTIFIERS = [
@@ -82,6 +83,15 @@ test("the baseline stores arbitrary registered effects without event-name checks
   expect(baseline).not.toContain("pull_request_merge_confirmed");
   expect(baseline).toContain("effect_descriptor jsonb NOT NULL");
   expect(baseline).toContain("effect_workflow_id text NOT NULL UNIQUE");
+});
+
+test("adapter launch reason names require no core decision or migration edit", async () => {
+  const decision = (await Promise.all((await decisionSources()).map((file) => readFile(file, "utf8")))).join("\n");
+  const baseline = await readFile(join(SOURCE, "storage", "migrations", "0015_v15_baseline.sql"), "utf8");
+  for (const reason of Object.values(BUILD_LAUNCH_REASONS).flat()) {
+    expect(decision).not.toContain(reason);
+    expect(baseline).not.toContain(reason);
+  }
 });
 
 test("operator and downstream roles are not closed over dev-flow names", async () => {

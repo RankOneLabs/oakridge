@@ -48,6 +48,7 @@ export interface DispatchedAdapterDecision {
  */
 export class AdapterRegistry {
   private readonly roles = new Set<string>();
+  private readonly launch_reasons = new Map<string, Set<string>>();
   private readonly decision_handlers = new Map<string, StoredDecisionHandler>();
 
   register_role(name: string): void {
@@ -57,6 +58,19 @@ export class AdapterRegistry {
   }
 
   has_role(name: string): boolean { return this.roles.has(name); }
+
+  register_launch_reason(role: string, name: string): void {
+    if (!this.roles.has(role)) throw new Error(`adapter role '${role}' must be registered before its launch reasons`);
+    if (name.trim().length === 0) throw new Error("adapter launch reason name must be non-empty");
+    const names = this.launch_reasons.get(role) ?? new Set<string>();
+    if (names.has(name)) throw new Error(`adapter launch reason '${role}:${name}' is already registered`);
+    names.add(name);
+    this.launch_reasons.set(role, names);
+  }
+
+  has_launch_reason(role: string, name: string): boolean { return this.launch_reasons.get(role)?.has(name) ?? false; }
+
+  launch_reasons_for(role: string): readonly string[] { return [...(this.launch_reasons.get(role) ?? [])]; }
 
   register_decision<Payload>(handler: AdapterDecisionHandler<Payload>): void {
     if (handler.name.trim().length === 0) throw new Error("adapter event name must be non-empty");

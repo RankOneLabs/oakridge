@@ -1,8 +1,9 @@
 import { z } from "zod";
 import { BUILT_IN_GATE_DISPOSITIONS, isBuiltInGateAction } from "../domain/gates";
-import type { DelegatedSessionDefinitionConfig, SessionLaunchReason } from "../domain/delegated-session";
+import type { DelegatedSessionDefinitionConfig, SessionLaunchReasonName } from "../domain/delegated-session";
 import type { JsonValue } from "../domain/primitives";
 import type { StageOperatorRole } from "../domain/workflow";
+import type { AdapterRoleRegistry } from "./workflow-definition";
 
 export const slotBindingSchema = z.discriminatedUnion("from", [
   z.object({ from: z.literal("input"), input_name: z.string().min(1), path: z.string().nullable().default(null) }),
@@ -29,7 +30,7 @@ export const bindableSchema = z.union([z.string(), slotBindingSchema]);
 
 /** Role vocabulary is supplied by the selected adapter, not by core schema. */
 const roleSchema = z.string().min(1);
-const launchReasonSchema = z.enum(["initial", "operator_retry", "input_revision"]);
+const launchReasonSchema = z.string().min(1);
 
 const outputGateSchema = z.object({
   name: z.string().min(1),
@@ -74,8 +75,7 @@ const legacyDelegatedSessionDefinitionSchema = z.object({
   fan_out: z.object({ over: slotBindingSchema, unit_id_path: z.string().min(1), session_mode: z.enum(["per_unit", "shared"]).default("per_unit"),
     depends_on_path: z.string().nullable().optional(), max_parallel: z.number().int().positive().default(8), manual_admission: z.boolean().default(false),
     item_bindings: z.record(z.string(), slotBindingSchema).default({}), workdir: slotBindingSchema.optional(),
-    worktree: z.object({ branch_name: bindableSchema, worktree_subdir: bindableSchema, base_ref: bindableSchema.optional() }).optional(),
-    inherit_worktree_from: z.string().optional() }).optional(),
+    worktree: z.object({ branch_name: bindableSchema, worktree_subdir: bindableSchema, base_ref: bindableSchema.optional() }).optional() }).optional(),
   artifacts: z.object({ over: slotBindingSchema, id_path: z.string().min(1) }).optional(),
   gate_output: z.string().optional(), output_gate: legacyOutputGateSchema.optional(),
   output_handoff: z.object({ output: z.string().min(1), downstream_role: roleSchema,
@@ -119,6 +119,7 @@ export const delegatedSessionDefinitionSchema = z.object({
     authorized_outputs: z.array(z.string().min(1)),
     yolo: z.boolean().default(false),
   })).min(1),
+  required_build_set: z.array(z.string().min(1)).min(1).optional(),
   slot_bindings: z.record(z.string(), slotBindingSchema),
   workdir: slotBindingSchema,
   fan_out: z.object({
@@ -130,7 +131,6 @@ export const delegatedSessionDefinitionSchema = z.object({
     manual_admission: z.boolean().default(false),
     item_bindings: z.record(z.string(), slotBindingSchema).default({}),
     workdir: slotBindingSchema.optional(),
-    inherit_worktree_from: z.string().optional(),
   }).optional(),
   artifact_productions: z.array(z.object({ over: slotBindingSchema, id_path: z.string().min(1) })).default([]),
   gates: z.array(outputGateSchema).default([]),
@@ -142,6 +142,13 @@ export const delegatedSessionDefinitionSchema = z.object({
   })).default([]),
 }).superRefine((config, context) => {
   if (config.fan_out && config.artifact_productions.length > 0) context.addIssue({ code: "custom", message: "fan_out and artifact_productions are mutually exclusive" });
+  if (config.prompt_matrix.some((cell) => cell.session_role === "build" && cell.launch_reason === "initial_build")
+    && !config.required_build_set) {
+    context.addIssue({ code: "custom", message: "the build cohort requires required_build_set" });
+  }
+  if (config.required_build_set && new Set(config.required_build_set).size !== config.required_build_set.length) {
+    context.addIssue({ code: "custom", message: "required_build_set entries must be unique" });
+  }
 });
 
 /** Decode immutable pre-plural rows into the named plural domain model. */
@@ -158,7 +165,7 @@ export const normalizeDelegatedSessionDefinition = (
     branch_name: legacy.worktree.branchName, worktree_subdir: legacy.worktree.worktreeSubdir, base_ref: legacy.worktree.baseRef,
   } : undefined);
   return {
-    prompt_matrix: LAUNCH_REASONS.map((launch_reason) => ({ session_role: sessionRole, launch_reason, template_path: legacy.prompt_template_path })),
+    prompt_matrix: LEGACY_LAUNCH_REASONS.map((launch_reason) => ({ session_role: sessionRole, launch_reason, template_path: legacy.prompt_template_path })),
     role_configs: [{ session_role: sessionRole, runtime: legacy.runtime, session_name: legacy.session_name, model: legacy.model,
       effort: legacy.effort, worktree: roleWorktree, pre_authorized_tools: legacy.pre_authorized_tools, required_tools: [],
       authorized_outputs: declaredOutputs, yolo: legacy.yolo }],
@@ -182,7 +189,7 @@ export const normalizeDelegatedSessionDefinition = (
 export type DelegatedSessionDiagnostic =
   | { readonly kind: "invalid_stage_config"; readonly stage_key: string; readonly session_role: StageOperatorRole | null; readonly contract_item: "config"; readonly issues: readonly string[] }
   | { readonly kind: "duplicate_key"; readonly stage_key: string; readonly session_role: StageOperatorRole | null; readonly contract_item: string; readonly array: string; readonly key: string }
-  | { readonly kind: "prompt_not_total"; readonly stage_key: string; readonly session_role: StageOperatorRole; readonly contract_item: string; readonly launch_reason: SessionLaunchReason; readonly matches: number }
+  | { readonly kind: "prompt_not_total"; readonly stage_key: string; readonly session_role: StageOperatorRole; readonly contract_item: string; readonly launch_reason: SessionLaunchReasonName; readonly matches: number }
   | { readonly kind: "gate_without_closer"; readonly stage_key: string; readonly session_role: StageOperatorRole | null; readonly contract_item: string; readonly gate: string }
   | { readonly kind: "output_producer_count"; readonly stage_key: string; readonly session_role: StageOperatorRole | null; readonly contract_item: string; readonly output: string; readonly producers: number }
   | { readonly kind: "wait_without_closing_event"; readonly stage_key: string; readonly session_role: StageOperatorRole | null; readonly contract_item: string; readonly wait: string }
@@ -190,10 +197,10 @@ export type DelegatedSessionDiagnostic =
   | { readonly kind: "undeclared_output"; readonly stage_key: string; readonly session_role: StageOperatorRole | null; readonly contract_item: string; readonly output: string }
   | { readonly kind: "unavailable_tool"; readonly stage_key: string; readonly session_role: StageOperatorRole; readonly contract_item: string; readonly tool: string }
   | { readonly kind: "selected_role_missing"; readonly stage_key: string; readonly session_role: StageOperatorRole | null; readonly contract_item: "operator_role" }
-  | { readonly kind: "prompt_bundle_cell_count"; readonly stage_key: string; readonly session_role: StageOperatorRole; readonly contract_item: string; readonly launch_reason: SessionLaunchReason; readonly matches: number }
+  | { readonly kind: "prompt_bundle_cell_count"; readonly stage_key: string; readonly session_role: StageOperatorRole; readonly contract_item: string; readonly launch_reason: SessionLaunchReasonName; readonly matches: number }
   | { readonly kind: "automated_assessment_transition"; readonly stage_key: string; readonly session_role: StageOperatorRole | null; readonly contract_item: string; readonly trigger: string };
 
-const LAUNCH_REASONS: readonly SessionLaunchReason[] = ["initial", "operator_retry", "input_revision"];
+const LEGACY_LAUNCH_REASONS: readonly SessionLaunchReasonName[] = ["initial", "operator_retry", "input_revision"];
 
 const duplicateDiagnostics = (
   stage_key: string,
@@ -227,7 +234,7 @@ const placeholdersOf = (value: string): readonly string[] => [...value.matchAll(
 export const validatePromptBundleBindings = (
   stage_key: string,
   config: DelegatedSessionDefinitionConfig,
-  promptContents: readonly { readonly session_role: StageOperatorRole; readonly launch_reason: SessionLaunchReason; readonly content: string }[],
+  promptContents: readonly { readonly session_role: StageOperatorRole; readonly launch_reason: SessionLaunchReasonName; readonly content: string }[],
 ): readonly DelegatedSessionDiagnostic[] => {
   const bound = new Set([...Object.keys(config.slot_bindings), ...Object.keys(config.fan_out?.item_bindings ?? {}), "UNIT_ID", "STAGE_INSTANCE_ID"]);
   const diagnostics: DelegatedSessionDiagnostic[] = [];
@@ -252,16 +259,18 @@ export const validateDelegatedSessionContracts = (
   session_role: StageOperatorRole | null,
   declared_outputs: readonly string[],
   config: DelegatedSessionDefinitionConfig,
+  registry: Pick<AdapterRoleRegistry, "launch_reasons_for">,
 ): readonly DelegatedSessionDiagnostic[] => {
   const diagnostics: DelegatedSessionDiagnostic[] = [];
   if (session_role === null || !config.role_configs.some((role) => role.session_role === session_role)) diagnostics.push({
     kind: "selected_role_missing", stage_key, session_role, contract_item: "operator_role",
   });
   for (const roleConfig of config.role_configs) {
-    for (const launch_reason of LAUNCH_REASONS) {
-      const matches = config.prompt_matrix.filter((entry) => entry.session_role === roleConfig.session_role && entry.launch_reason === launch_reason).length;
+    for (const launchReason of registry.launch_reasons_for(roleConfig.session_role)) {
+      const matches = config.prompt_matrix.filter((entry) => entry.session_role === roleConfig.session_role
+        && entry.launch_reason === launchReason).length;
       if (matches !== 1) diagnostics.push({ kind: "prompt_not_total", stage_key, session_role: roleConfig.session_role,
-        contract_item: `${roleConfig.session_role}:${launch_reason}`, launch_reason, matches });
+        contract_item: `${roleConfig.session_role}:${launchReason}`, launch_reason: launchReason, matches });
     }
     const available = new Set(roleConfig.pre_authorized_tools ?? []);
     for (const tool of roleConfig.required_tools ?? []) if (!available.has(tool)) diagnostics.push({

@@ -1,6 +1,7 @@
 import type { ArtifactId, ExecutionId, RunUnitId, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "../domain/primitives";
 import { selectGateActionability, selectPendingStageOrder, selectRunRecordUnitDecision, type OperatorApplicationVersionInventory, type OperatorCohortLifecycle, type OperatorCohortSummary, type OperatorParkedGate, type OperatorReviewInbox, type OperatorReviewInboxItem, type OperatorRunDetail, type OperatorRunRecordDetail, type OperatorRunRecordSlot, type OperatorRunRecordTransition, type OperatorRunRecordUnit, type OperatorRunRecordUnitFacts, type OperatorRunRecordWait, type OperatorRunRecordWorkOrder, type OperatorRunSessionAttempt, type OperatorRunSummary, type OperatorSessionRunLocation, type OperatorStageArtifact, type OperatorStageDetail, type OperatorStageUnit } from "../domain/operator-projections";
-import type { RunOutputSlotState, WorkOrderReason } from "../domain/run-record";
+import type { RunOutputSlotState } from "../domain/run-record";
+import type { SessionLaunchReasonName } from "../domain/delegated-session";
 import type { SqlExecutor } from "./sql-executor";
 import { selectV2RunStatus, selectV2StageStatus, selectV2UnitStatus } from "../operators/select-status";
 import type { EpicWorkflowProfile } from "../domain/epic";
@@ -103,7 +104,7 @@ function selectStageUnitRepositoryKey(params: unknown): string | null {
 
 interface RunSessionAttemptRow {
   readonly work_order_id: string; readonly session_id: string; readonly stage_instance_id: string;
-  readonly stage_key: string; readonly unit_id: string; readonly reason: WorkOrderReason;
+  readonly stage_key: string; readonly unit_id: string; readonly reason: SessionLaunchReasonName;
   readonly work_order_state: OperatorRunSessionAttempt["work_order_state"]; readonly created_at: string;
   readonly completed_at: string | null; readonly executor_health_kind: string | null; readonly cleanup_state: string;
 }

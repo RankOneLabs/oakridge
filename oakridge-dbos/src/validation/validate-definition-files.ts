@@ -20,7 +20,8 @@ for await (const relativePath of new Bun.Glob("*.json").scan({ cwd: definitionsR
   }
   try {
     const bundle = await createPromptBundle(parsed.value, promptLoader);
-    const compiled = compileWorkflowManifest(parsed.value, bundle, { adapter_version: "delegated-session-v1", artifact_schema_version: "v1" });
+    const compiled = compileWorkflowManifest(parsed.value, bundle,
+      { adapter_version: "delegated-session-v1", artifact_schema_version: "v1" }, undefined, adapterRoles);
     if (!compiled.ok) failures.push(`${relativePath}: ${compiled.error.detail}`);
   } catch (error) {
     failures.push(`${relativePath}: ${error instanceof Error ? error.message : String(error)}`);

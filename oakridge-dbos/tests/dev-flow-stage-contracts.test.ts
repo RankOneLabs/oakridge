@@ -6,8 +6,9 @@ import type { StageInputSet } from "../src/decision/commands";
 import type { CompiledStageContract, MaterializedExecutionUnit } from "../src/domain/compiled-workflow";
 import type { DelegatedSessionDefinitionConfig } from "../src/domain/delegated-session";
 import type { ArtifactEnvelope } from "../src/domain/execution";
-import type { ArtifactId, JsonValue, StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
+import type { ArtifactId, JsonValue, RunTransitionId, StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
 import { loadDevFlowV15 } from "../src/seed/dev-flow-v15";
+import { resolveWorkOrder } from "../src/runtime/resolve-work-order";
 
 const stageInstanceId = "stage-1" as StageInstanceId;
 const runId = "run-1" as WorkflowRunId;
@@ -51,13 +52,14 @@ const loadCompiled = async () => {
  * `selectInputsForUnit`) is not re-run here, since the caller hands over
  * exactly what production would.
  */
-const resolveStage = async (stage: CompiledStageContract, unit: MaterializedExecutionUnit, inputs: StageInputSet) => {
+const resolveStage = async (stage: CompiledStageContract, unit: MaterializedExecutionUnit, inputs: StageInputSet,
+  role = stage.operator_role, reason?: string) => {
   const definition = stage.executor.definition_config as DelegatedSessionDefinitionConfig;
-  const prompt = definition.prompt_matrix.find((entry) => entry.session_role === stage.operator_role && entry.launch_reason === "initial");
+  const prompt = definition.prompt_matrix.find((entry) => entry.session_role === role && (reason === undefined || entry.launch_reason === reason));
   if (!prompt) throw new Error(`missing initial prompt for ${stage.stage_key}`);
   const template = await Bun.file(new URL(`../../workflow-config/prompts/${prompt.template_path}`, import.meta.url)).text();
   return resolveDelegatedExecution({ definition, environment: { inputs, context, item: null }, unit, stage_instance_id: stageInstanceId, prompt_template: template,
-    run_id: runId, operator_role: stage.operator_role });
+    run_id: runId, operator_role: role, launch_reason: prompt.launch_reason });
 };
 
 const scalarUnit: MaterializedExecutionUnit = { unit_id: "0" as UnitId, parameters: {}, depends_on: [] };
@@ -94,7 +96,12 @@ test("seeded build stage resolves a cohort's real prompt, worktree, and release 
   const execution = await resolveStage(build, web, inputs);
   expect(execution).toEqual({ ok: true, value: expect.objectContaining({ workdir: "/repo/oakridge", rendered_prompt: expect.stringContaining("**ID:** web"),
     worktree: { branchName: "cohort/stage-1/web", worktreeSubdir: "stage-1/web", baseRef: "epic/test" } }) });
-  expect(build.outputs.find((output) => output.name === "build_result")?.release).toEqual(expect.objectContaining({ kind: "handoff", downstream_role: "assessment", external_wait_kind: "github_review" }));
+  expect(build.outputs.find((output) => output.name === "build_result")?.release).toEqual(expect.objectContaining({ kind: "gate", gate_name: "build_review" }));
+  expect(build.outputs.find((output) => output.name === "assessment")?.release).toEqual(expect.objectContaining({ kind: "gate", gate_name: "assessment_review" }));
+  const buildDefinition = build.executor.definition_config as DelegatedSessionDefinitionConfig;
+  expect(buildDefinition.gates.find((gate) => gate.name === "build_review")?.steps).toEqual([
+    { type: "artifact_approval", actions: ["approve", "request_revision"] },
+  ]);
 });
 
 /**
@@ -136,17 +143,27 @@ test("a build unit whose repository was never provisioned resolves to a named fa
   expect(execution).toEqual({ ok: false, error: expect.objectContaining({ detail: expect.stringContaining("input lookup key 'absent' matched 0 entries") }) });
 });
 
-test("seeded assessor resolves its real prompt, pairing only the matching build result and brief", async () => {
+test("the build stage's assessor role resolves its prompt in the same cohort", async () => {
   const workflow = await loadCompiled();
-  const assessor = workflow.stages.assessor!;
-  const brief = envelope("brief-2", "dev.build_brief", "brief", "web", { repository_key: "oakridge", acceptance_criteria: ["ui works"] });
+  const build = workflow.stages.build!;
+  const briefBody = { cohort_id: "web", repository_key: "oakridge", title: "Web", goal: "ui", files_in_scope: [], next_action: "build", decisions_made: [], acceptance_criteria: ["ui works"], depends_on: [] };
+  const brief = envelope("brief-2", "dev.build_brief", "brief", "web", briefBody);
   const result = envelope("result-2", "dev.build_result", "build_result", "web", { repository_key: "oakridge", summary: "web done" });
-  const web: MaterializedExecutionUnit = { unit_id: "web" as UnitId, parameters: { unit_id: "web", artifact: result.body }, depends_on: [] };
-  const inputs = { brief: [brief], build_result: [result], repository_refs: repositoryRefs };
-  const execution = await resolveStage(assessor, web, inputs);
-  expect(execution).toEqual({ ok: true, value: expect.objectContaining({ rendered_prompt: expect.stringContaining("ui works") }) });
-  if (execution.ok) expect(execution.value.rendered_prompt).not.toContain("base works");
-  expect(assessor.outputs[0]?.release).toEqual(expect.objectContaining({ kind: "gate", gate_name: "assessment_gate" }));
+  const web: MaterializedExecutionUnit = { unit_id: "web" as UnitId, parameters: { unit_id: "web", artifact: briefBody }, depends_on: [] };
+  const definition = build.executor.definition_config as DelegatedSessionDefinitionConfig;
+  const prompt = definition.prompt_matrix.find((entry) => entry.session_role === "assessment" && entry.launch_reason === "initial_assessment");
+  if (!prompt) throw new Error("missing initial assessor prompt");
+  const template = await Bun.file(new URL(`../../workflow-config/prompts/${prompt.template_path}`, import.meta.url)).text();
+  const workOrder = await resolveWorkOrder({ run_id: runId, stage: build, stage_instance_id: stageInstanceId, unit: web,
+    inputs: { brief: [brief], repository_refs: repositoryRefs }, accepted_cohort_outputs: [result], context, outputs: [],
+    identity: "assessment:initial", capability_seed: "test-seed",
+    session_launch: { reason: { transition_id: "11111111-1111-4111-8111-111111111111" as RunTransitionId, name: "initial_assessment" },
+      session_role: "assessment", prompt: { template_path: prompt.template_path, content: template }, existing_pull_request: "https://example.test/pull/7" } });
+  const rendered = (workOrder.request.resolved_config as { readonly rendered_prompt: string }).rendered_prompt;
+  expect(rendered).toContain("ui works");
+  expect(rendered).toContain("web done");
+  expect(rendered).not.toContain("base works");
+  expect(build.outputs.find((output) => output.name === "assessment")?.release).toEqual(expect.objectContaining({ kind: "gate", gate_name: "assessment_review" }));
 });
 
 test("every spec prompt matrix cell renders the generated contract for valid and invalid slots", async () => {

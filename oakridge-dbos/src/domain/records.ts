@@ -124,6 +124,8 @@ export interface SessionRecord {
   readonly run_id: WorkflowRunId;
   readonly stage_instance_id: StageInstanceId;
   readonly attempt_id: AttemptId;
+  /** The auditable decision that selected this session's role, reason and prompt. */
+  readonly launch_transition_id: import("./primitives").RunTransitionId;
   readonly status: CoreStatus;
   readonly kbbl_session_id: import("./primitives").KbblSessionId | null;
   readonly adapter_reference: JsonValue;

@@ -16,6 +16,8 @@ export interface CommitTransitionInput {
   readonly launch_reason: TransitionLaunchReason;
   readonly change: StatusChange;
   readonly effect: TransitionEffectDescriptor;
+  /** Adapter-owned cohort state committed under the same owner version. */
+  readonly cohort_stage_data?: import("../domain/primitives").JsonValue;
   readonly actor: string;
   readonly changed_at: string;
 }
@@ -36,6 +38,8 @@ export interface CommittedTransition {
 
 export interface DecideTransactionInput {
   readonly load_snapshot: (transaction: SqlExecutor) => Promise<RunSnapshot>;
+  /** Adapter composition may supply its own pure decision over the locked snapshot. */
+  readonly decide_snapshot?: (snapshot: RunSnapshot) => Result<Derivation, Contradiction>;
   readonly launch_reason: TransitionLaunchReason;
   readonly actor: string;
   readonly decided_at: string;
@@ -74,14 +78,18 @@ const updateOwner = async (
   const target = ownerTable(input.owner);
   const runPredicate = input.owner.kind === "run" ? "" : " AND run_id=$8";
   const parameters = [input.owner.id, input.expected_version, input.change.status, input.change.blocked_reason,
-    input.change.next_actor, JSON.stringify(input.change.outcome), input.changed_at];
+    input.change.next_actor, input.change.outcome === null ? null : JSON.stringify(input.change.outcome), input.changed_at];
   if (input.owner.kind !== "run") parameters.push(input.run_id);
+  if (input.owner.kind === "cohort") parameters.push(JSON.stringify(input.cohort_stage_data ?? null));
+  const stageDataAssignment = input.owner.kind === "cohort"
+    ? ",stage_data=COALESCE($9::jsonb,stage_data)"
+    : "";
   const rows = await tx.query<VersionRow>(
     `UPDATE oakridge.${target.table}
      SET status=$3::oakridge.core_status,blocked_reason=$4::oakridge.blocked_reason,next_actor=$5::oakridge.next_actor,outcome=$6::jsonb,
          started_at=CASE WHEN $3::oakridge.core_status='active' THEN COALESCE(started_at,$7::timestamptz) ELSE started_at END,
          ended_at=CASE WHEN $3::oakridge.core_status IN ('complete','failed','cancelled') THEN $7::timestamptz ELSE NULL END,
-         ${target.version_column}=${target.version_column}+1
+         ${target.version_column}=${target.version_column}+1${stageDataAssignment}
      WHERE id=$1 AND ${target.version_column}=$2${runPredicate}
      RETURNING ${target.version_column}::text AS version`,
     parameters,
@@ -129,6 +137,7 @@ const transitionInputFor = (command: Command, input: DecideTransactionInput): Co
   return {
     run_id: command.run_id, owner: { kind: "cohort", id: command.cohort_id }, expected_version: command.expected_version,
     launch_reason: input.launch_reason, change: command.change, effect: command.effect, actor: input.actor, changed_at: input.decided_at,
+    ...(command.stage_data === undefined ? {} : { cohort_stage_data: command.stage_data }),
   };
 };
 
@@ -154,7 +163,8 @@ export class PostgresRunRecordWriter {
   async decide(input: DecideTransactionInput): Promise<Result<CommittedDecision, DecideTransactionError>> {
     try {
       return await this.sql.transaction(async (tx) => {
-        const derivation = derive(await input.load_snapshot(tx));
+        const snapshot = await input.load_snapshot(tx);
+        const derivation = (input.decide_snapshot ?? derive)(snapshot);
         if (!derivation.ok) return derivation;
         const commits = derivation.value.commands.map((command) => transitionInputFor(command, input));
         const effects = commits.map((commit) => checkedEffect(this.registry, commit.effect, commit.actor));

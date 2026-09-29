@@ -56,12 +56,12 @@ test("manifest compilation rejects a declared prompt cell missing from the bundl
   const loaded = await loadDevFlowV15();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const bundle = await createPromptBundle(loaded.value, { load: async () => "valid" });
-  const missing = { ...bundle, matrix: bundle.matrix.filter((entry) => !(entry.stage_key === "build" && entry.launch_reason === "input_revision")) };
+  const missing = { ...bundle, matrix: bundle.matrix.filter((entry) => !(entry.stage_key === "build" && entry.launch_reason === "revision_after_assessment")) };
   const manifest = compileWorkflowManifest(loaded.value, missing, { adapter_version: "adapter-7", artifact_schema_version: "artifacts-3" });
   expect(manifest.ok).toBe(false);
   if (manifest.ok) return;
   expect(manifest.error.diagnostics).toContainEqual(expect.objectContaining({
-    kind: "prompt_bundle_cell_count", stage_key: "build", session_role: "build", launch_reason: "input_revision", matches: 0,
+    kind: "prompt_bundle_cell_count", stage_key: "build", session_role: "build", launch_reason: "revision_after_assessment", matches: 0,
   }));
 });
 
@@ -69,12 +69,12 @@ test("manifest compilation rejects duplicate bundle matches for a declared cell"
   const loaded = await loadDevFlowV15();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const bundle = await createPromptBundle(loaded.value, { load: async () => "valid" });
-  const cell = bundle.matrix.find((entry) => entry.stage_key === "build" && entry.launch_reason === "initial")!;
+  const cell = bundle.matrix.find((entry) => entry.stage_key === "build" && entry.launch_reason === "initial_build")!;
   const manifest = compileWorkflowManifest(loaded.value, { ...bundle, matrix: [...bundle.matrix, cell] },
     { adapter_version: "adapter-7", artifact_schema_version: "artifacts-3" });
   expect(manifest.ok).toBe(false);
   if (manifest.ok) return;
   expect(manifest.error.diagnostics).toContainEqual(expect.objectContaining({
-    kind: "prompt_bundle_cell_count", stage_key: "build", session_role: "build", launch_reason: "initial", matches: 2,
+    kind: "prompt_bundle_cell_count", stage_key: "build", session_role: "build", launch_reason: "initial_build", matches: 2,
   }));
 });

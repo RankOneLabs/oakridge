@@ -53,7 +53,8 @@ export class PostgresWorkflowDefinitionRepository implements WorkflowDefinitionR
   constructor(private readonly sql: TransactionalSqlExecutor, private readonly adapter_roles: AdapterRoleRegistry) {}
 
   async insert_immutable(definition: WorkflowDefinition, promptBundle: PromptBundle): Promise<WorkflowDefinition> {
-    const compiled = compileWorkflowManifest(definition, promptBundle, { adapter_version: "delegated-session-v1", artifact_schema_version: "v1" });
+    const compiled = compileWorkflowManifest(definition, promptBundle,
+      { adapter_version: "delegated-session-v1", artifact_schema_version: "v1" }, undefined, this.adapter_roles);
     if (!compiled.ok) throw new Error(`workflow definition does not compile: ${compiled.error.detail}`);
     return this.sql.transaction(async (transaction) => {
       const rows = await transaction.query<DefinitionRow>(

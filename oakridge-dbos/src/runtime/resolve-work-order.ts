@@ -26,13 +26,12 @@ import { resolveBinding, resolveBindingValue, resolveDelegatedExecution } from "
 import type { StageInputSet } from "../decision/commands";
 import { workOrderIdFor, workOrderWorkflowId } from "../decision/ids";
 import type { CompiledStageContract, MaterializedExecutionUnit } from "../domain/compiled-workflow";
-import type { DelegatedSessionDefinitionConfig, SessionLaunchReason } from "../domain/delegated-session";
-import type { PromptBundle, WorkflowRunBundlePin } from "../domain/workflow";
+import type { CommittedSessionLaunch, DelegatedSessionDefinitionConfig } from "../domain/delegated-session";
 import type { AssessmentRevisionContext } from "../domain/dev-flow-artifacts";
-import type { ArtifactEnvelope, ExecutionRequest, ExternalExecutionReference } from "../domain/execution";
+import type { ArtifactEnvelope, ExecutionRequest } from "../domain/execution";
 import type { ArtifactId, JsonValue, OutputCollectionKey, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "../domain/primitives";
 import { PROVISION_REPOSITORY_REFS_STAGE_TYPE, parseBaseBranch, parseRunContextRepository, type RepositoryProvisioningDefinitionConfig, type ResolvedRepositoryProvisioningConfig } from "../domain/repository-refs";
-import type { ExecutorAttachment, MaterializedRunOutput, MaterializedWorkOrder } from "../domain/run-record";
+import type { MaterializedRunOutput, MaterializedWorkOrder } from "../domain/run-record";
 
 const capabilityFor = (seed: string, workOrderId: WorkOrderId): string => createHash("sha256").update(seed).update(":").update(workOrderId).digest("base64url");
 const capabilityHash = (capability: string): string => createHash("sha256").update(capability).digest("hex");
@@ -47,25 +46,35 @@ export interface ResolveWorkOrderInput {
   readonly unit: MaterializedExecutionUnit;
   /** Already per-unit — `derive`'s own `selectInputsForUnit`, not re-filtered here. */
   readonly inputs: StageInputSet;
+  /**
+   * Accepted outputs already persisted for this cohort and unit. The build
+   * adapter's c8 composition loads these from run_output_slot before launching
+   * a later role; keeping them separate prevents same-stage outputs from being
+   * mistaken for graph inputs.
+   */
+  readonly accepted_cohort_outputs?: readonly ArtifactEnvelope[];
   readonly context: JsonValue;
   readonly outputs: readonly MaterializedRunOutput[];
   /** `"initial"` or `"revision:<fingerprint>"` — spec §13. */
   readonly identity: string;
   readonly capability_seed: string;
-  /** Selected by the transition that launched this work, independent of its idempotency identity. */
-  readonly launch_reason: SessionLaunchReason;
-  readonly bundle_pin: WorkflowRunBundlePin;
-}
-
-export interface ResolveWorkOrderDependencies {
-  load_prompt_bundle(hash: string): Promise<PromptBundle | null>;
-  find_work_order_attachment(id: WorkOrderId): Promise<ExecutorAttachment | null>;
+  /** Role, reason and prompt selected atomically by the launch transition. */
+  readonly session_launch: CommittedSessionLaunch;
 }
 
 interface ExecutionRequestInput extends ResolveWorkOrderInput { readonly work_order_id: WorkOrderId; readonly capability: string }
 
-const executionRequest = async (input: ExecutionRequestInput, dependencies: ResolveWorkOrderDependencies): Promise<ExecutionRequest> => {
-  const unitInputs = input.inputs;
+const inputsForSessionLaunch = (input: ExecutionRequestInput): StageInputSet => {
+  if (input.session_launch.session_role !== "assessment") return input.inputs;
+  const accepted = (input.accepted_cohort_outputs ?? []).filter((artifact) => artifact.unit_id === input.unit.unit_id);
+  if (accepted.length === 0) return input.inputs;
+  const grouped: Record<string, ArtifactEnvelope[]> = {};
+  for (const artifact of accepted) (grouped[artifact.output_name] ??= []).push(artifact);
+  return { ...input.inputs, ...grouped };
+};
+
+const executionRequest = async (input: ExecutionRequestInput): Promise<ExecutionRequest> => {
+  const unitInputs = input.stage.executor.executor_type === "delegated_session" ? inputsForSessionLaunch(input) : input.inputs;
   let resolved: JsonValue;
   if (input.stage.executor.executor_type === PROVISION_REPOSITORY_REFS_STAGE_TYPE) {
     const output = input.stage.outputs[0];
@@ -81,19 +90,14 @@ const executionRequest = async (input: ExecutionRequestInput, dependencies: Reso
       publication: { work_order_id: input.work_order_id, capability: input.capability } } satisfies ResolvedRepositoryProvisioningConfig as unknown as JsonValue;
   } else if (input.stage.executor.executor_type === "delegated_session") {
     const definition = input.stage.executor.definition_config as DelegatedSessionDefinitionConfig;
-    if (!input.stage.operator_role) throw new Error(`stage '${input.stage.stage_key}' has no delegated session role`);
-    const launchReason = input.launch_reason;
-    const prompt = definition.prompt_matrix.find((entry) => entry.session_role === input.stage.operator_role && entry.launch_reason === launchReason);
-    if (!prompt) throw new Error(`stage '${input.stage.stage_key}' has no prompt for ${input.stage.operator_role}:${launchReason}`);
-    const bundle = await dependencies.load_prompt_bundle(input.bundle_pin.prompt_bundle_hash);
-    if (!bundle || bundle.hash !== input.bundle_pin.prompt_bundle_hash) throw new Error(`run '${input.run_id}' prompt bundle '${input.bundle_pin.prompt_bundle_hash}' was not found`);
-    const candidates = bundle.matrix.filter((entry) => entry.session_role === input.stage.operator_role && entry.launch_reason === launchReason
-      && entry.template_path === prompt.template_path && (entry.stage_key === undefined || entry.stage_key === input.stage.stage_key));
-    const template = candidates.find((entry) => entry.stage_key === input.stage.stage_key) ?? (candidates.length === 1 ? candidates[0] : undefined);
-    if (!template) throw new Error(`prompt bundle '${bundle.hash}' has no content for ${input.stage.operator_role}:${launchReason}`);
+    const committed = input.session_launch;
+    const declared = definition.prompt_matrix.filter((entry) => entry.session_role === committed.session_role
+      && entry.launch_reason === committed.reason.name && entry.template_path === committed.prompt.template_path);
+    if (declared.length !== 1) throw new Error(`stage '${input.stage.stage_key}' does not declare committed prompt ${committed.session_role}:${committed.reason.name}`);
     const planned = resolveDelegatedExecution({ definition, environment: { inputs: unitInputs, context: input.context, item: input.unit.parameters }, unit: input.unit,
-      stage_instance_id: input.stage_instance_id, prompt_template: template.content,
-      run_id: input.run_id, operator_role: input.stage.operator_role, launch_reason: launchReason });
+      stage_instance_id: input.stage_instance_id, prompt_template: committed.prompt.content,
+      run_id: input.run_id, operator_role: committed.session_role, launch_reason: committed.reason.name,
+      existing_pull_request: committed.existing_pull_request });
     if (!planned.ok) throw new Error(`${planned.error.operation}:${planned.error.detail}`);
     const urlBinding = definition.slot_bindings.OAKRIDGE_URL;
     const url = urlBinding ? resolveBinding(urlBinding, { inputs: unitInputs, context: input.context, item: input.unit.parameters }) : null;
@@ -103,33 +107,19 @@ const executionRequest = async (input: ExecutionRequestInput, dependencies: Reso
   } else {
     throw new Error(`executor '${input.stage.executor.executor_type}' has no v2 resolver`);
   }
-  let workspace_source: ExecutionRequest["workspace_source"];
-  if (input.stage.executor.executor_type === "delegated_session") {
-    const definition = input.stage.executor.definition_config as DelegatedSessionDefinitionConfig;
-    const inherited = definition.fan_out?.inherit_worktree_from;
-    if (inherited) {
-      const value = unitInputs[inherited];
-      const candidates = value === undefined ? [] : Array.isArray(value) ? value : [value as ArtifactEnvelope];
-      const source = candidates.length === 1 ? candidates[0] : null;
-      if (!source?.producer_execution_id) throw new Error(`workspace input '${inherited}' for unit '${input.unit.unit_id}' has no unique producer`);
-      const attachment = await dependencies.find_work_order_attachment(source.producer_execution_id as unknown as WorkOrderId);
-      if (!attachment?.external_reference) throw new Error(`workspace source '${source.producer_execution_id}' has no executor attachment`);
-      workspace_source = { execution_id: source.producer_execution_id, external_reference: attachment.external_reference as ExternalExecutionReference };
-    }
-  }
   return { execution_id: input.work_order_id as unknown as ExecutionRequest["execution_id"], stage_instance_id: input.stage_instance_id, unit_id: input.unit.unit_id,
     executor_type: input.stage.executor.executor_type, resolved_config: resolved, inputs: envelopes(unitInputs),
     declared_outputs: input.stage.outputs.map((output) => ({ name: output.name, artifact_type: output.artifact_type, required: true })),
     expected_artifacts: input.outputs.map((output) => ({
       unit_id: output.identity.kind === "collection_member" ? (output.identity.collection_key as unknown as UnitId) : input.unit.unit_id,
       output_name: output.identity.output_name, artifact_type: output.artifact_type,
-    })), ...(workspace_source ? { workspace_source } : {}) };
+    })), ...(input.stage.executor.executor_type === "delegated_session" ? { session_launch: input.session_launch } : {}) };
 };
 
-export const resolveWorkOrder = async (input: ResolveWorkOrderInput, dependencies: ResolveWorkOrderDependencies): Promise<MaterializedWorkOrder> => {
+export const resolveWorkOrder = async (input: ResolveWorkOrderInput): Promise<MaterializedWorkOrder> => {
   const id = workOrderIdFor(input.run_id, input.stage.stage_key, input.unit.unit_id, input.identity);
   const capability = capabilityFor(input.capability_seed, id);
-  return { id, workflow_id: workOrderWorkflowId(id), capability_hash: capabilityHash(capability), request: await executionRequest({ ...input, work_order_id: id, capability }, dependencies) };
+  return { id, workflow_id: workOrderWorkflowId(id), capability_hash: capabilityHash(capability), request: await executionRequest({ ...input, work_order_id: id, capability }) };
 };
 
 /** One required output slot a retried unit still owes, as `retry_unit` reads it off `run_output_slot`. */

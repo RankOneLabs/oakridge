@@ -21,7 +21,6 @@ import type { ArtifactTypeId, StageKey, StageOutcome, WorkflowRunBundlePin } fro
 export type RunState = "active" | "succeeded" | "failed" | "cancelled";
 export type UnitState = "ready" | "working" | "waiting" | "satisfied" | "failed" | "cancelled";
 export type WorkOrderState = "available" | "started" | "completed" | "abandoned";
-export type WorkOrderReason = "initial" | "operator_retry" | "input_revision";
 
 export type TransitionLaunchReason = "initial" | "dependency_satisfied" | "artifact_accepted" | "gate_decided" | "operator" | "retry" | "recovery";
 export type TransitionOwner =
@@ -141,7 +140,7 @@ export interface RunOutputSlot {
 export interface WorkOrder {
   readonly id: WorkOrderId;
   readonly run_unit_id: RunUnitId;
-  readonly reason: WorkOrderReason;
+  readonly launch_reason: import("./delegated-session").SessionLaunchReason;
   readonly input_snapshot: readonly ArtifactEnvelope[];
   readonly input_fingerprint: InputFingerprint;
   readonly state: WorkOrderState;

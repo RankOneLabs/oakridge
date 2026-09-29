@@ -1,6 +1,7 @@
 import type { ArtifactId, JsonValue, RunUnitId, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "./primitives";
 import type { EpicWorkflowProfile } from "./epic";
-import type { RunOutputSlotState, RunState, WorkOrderReason, WorkOrderState } from "./run-record";
+import type { RunOutputSlotState, RunState, WorkOrderState } from "./run-record";
+import type { SessionLaunchReasonName } from "./delegated-session";
 import type { CompiledWorkflowDefinition } from "./compiled-workflow";
 import type { StageKey } from "./workflow";
 
@@ -46,8 +47,8 @@ export interface OperatorRunSessionAttempt {
   readonly stage_key: string;
   /** `oakridge.run_unit.unit_id`. */
   readonly unit_id: UnitId;
-  /** `oakridge.work_order.reason` (0011:69) — the attempt's label, written by the path that created it. */
-  readonly reason: WorkOrderReason;
+  /** Adapter-owned reason name projected from the work order's launch transition. */
+  readonly reason: SessionLaunchReasonName;
   /** `oakridge.work_order.state` (0011:72). */
   readonly work_order_state: WorkOrderState;
   /** `oakridge.work_order.created_at` (0011:75). */

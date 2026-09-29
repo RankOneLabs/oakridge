@@ -60,7 +60,6 @@ export interface FanOutDefinition {
   readonly manual_admission?: boolean;
   readonly item_bindings?: Readonly<Record<string, SlotBinding>>;
   readonly workdir?: SlotBinding;
-  readonly inherit_worktree_from?: string;
 }
 
 export interface ArtifactCollectionDefinition { readonly over: SlotBinding; readonly id_path: string }
@@ -78,13 +77,30 @@ export interface OutputHandoffDefinition {
   readonly approved_wait: { readonly kind: string; readonly close_events: readonly string[] };
 }
 
-/** Why the scheduler is starting or resuming a delegated role. */
-export type SessionLaunchReason = "initial" | "operator_retry" | "input_revision";
+/**
+ * Adapter-owned name for why a role is being launched. Core carries the name
+ * but does not close over an adapter's vocabulary.
+ */
+export type SessionLaunchReasonName = string;
+
+/** Durable reference from a session to the transition that launched it. */
+export interface SessionLaunchReason {
+  readonly transition_id: import("./primitives").RunTransitionId;
+  readonly name: SessionLaunchReasonName;
+}
+
+/** Immutable launch material selected by, and readable from, one transition. */
+export interface CommittedSessionLaunch {
+  readonly reason: SessionLaunchReason;
+  readonly session_role: StageOperatorRole;
+  readonly prompt: { readonly template_path: string; readonly content: string };
+  readonly existing_pull_request: string | null;
+}
 
 /** One cell in the role × launch-reason prompt matrix. */
 export interface PromptMatrixEntry {
   readonly session_role: StageOperatorRole;
-  readonly launch_reason: SessionLaunchReason;
+  readonly launch_reason: SessionLaunchReasonName;
   readonly template_path: string;
 }
 
@@ -106,6 +122,8 @@ export interface DelegatedSessionRoleConfig {
 export interface DelegatedSessionDefinitionConfig {
   readonly prompt_matrix: readonly PromptMatrixEntry[];
   readonly role_configs: readonly DelegatedSessionRoleConfig[];
+  /** Adapter configuration for the build cohort's set-valued review gate. */
+  readonly required_build_set?: readonly string[];
   readonly slot_bindings: Readonly<Record<string, SlotBinding>>;
   readonly workdir: SlotBinding;
   readonly fan_out?: FanOutDefinition;

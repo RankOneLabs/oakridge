@@ -37,6 +37,8 @@ export type Command =
       readonly expected_version: number;
       readonly change: StatusChange;
       readonly effect: TransitionEffectDescriptor;
+      /** Opaque adapter state written with the projected core status. */
+      readonly stage_data?: JsonValue;
     };
 
 export type Contradiction =
