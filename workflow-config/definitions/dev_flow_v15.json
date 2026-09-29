@@ -349,18 +349,43 @@
           "prompt_matrix": [
             {
               "session_role": "build",
-              "launch_reason": "initial",
+              "launch_reason": "initial_build",
               "template_path": "dev-flow/build_v2.md"
             },
             {
               "session_role": "build",
-              "launch_reason": "operator_retry",
+              "launch_reason": "revision_after_build_review",
               "template_path": "dev-flow/build_v2.md"
             },
             {
               "session_role": "build",
-              "launch_reason": "input_revision",
+              "launch_reason": "revision_after_assessment",
               "template_path": "dev-flow/build_v2.md"
+            },
+            {
+              "session_role": "build",
+              "launch_reason": "pr_mismatch_correction",
+              "template_path": "dev-flow/build_v2.md"
+            },
+            {
+              "session_role": "build",
+              "launch_reason": "retry_after_lost_attempt",
+              "template_path": "dev-flow/build_v2.md"
+            },
+            {
+              "session_role": "build",
+              "launch_reason": "replacement_pr",
+              "template_path": "dev-flow/build_v2.md"
+            },
+            {
+              "session_role": "assessment",
+              "launch_reason": "initial_assessment",
+              "template_path": "dev-flow/assessor_v2.md"
+            },
+            {
+              "session_role": "assessment",
+              "launch_reason": "retry_after_lost_attempt",
+              "template_path": "dev-flow/assessor_v2.md"
             }
           ],
           "role_configs": [
@@ -397,12 +422,44 @@
                 "build_result"
               ],
               "yolo": false
+            },
+            {
+              "session_role": "assessment",
+              "runtime": {
+                "from": "context",
+                "path": "/planner_runtime"
+              },
+              "session_name": "assessor-{{STAGE_INSTANCE_ID}}-{{UNIT_ID}}",
+              "model": {
+                "from": "context",
+                "path": "/planner_model"
+              },
+              "effort": {
+                "from": "context",
+                "path": "/planner_effort"
+              },
+              "pre_authorized_tools": [],
+              "required_tools": [],
+              "authorized_outputs": [
+                "assessment"
+              ],
+              "yolo": false
             }
           ],
           "slot_bindings": {
             "OAKRIDGE_URL": {
               "from": "context",
               "path": "/oakridge_url"
+            },
+            "BRIEF": {
+              "from": "input",
+              "input_name": "brief",
+              "path": null
+            },
+            "BUILD_RESULT": {
+              "from": "input",
+              "input_name": "build_result",
+              "path": null
             }
           },
           "workdir": {
@@ -475,22 +532,49 @@
             }
           },
           "artifact_productions": [],
-          "gates": [],
-          "handoffs": [
+          "gates": [
             {
-              "name": "build_result_handoff",
+              "name": "build_review",
               "outputs": [
+                "pr_summary",
                 "build_result"
               ],
-              "downstream_role": "assessment",
-              "approved_wait": {
-                "kind": "github_review",
-                "close_events": [
-                  "approved"
-                ]
-              }
+              "steps": [
+                {
+                  "type": "artifact_approval",
+                  "actions": [
+                    "approve",
+                    "request_revision"
+                  ]
+                },
+                {
+                  "type": "merge_confirmation",
+                  "actions": [
+                    "confirm_merged",
+                    "closed_without_merge"
+                  ]
+                }
+              ],
+              "requires_zero_open_review_items": true
+            },
+            {
+              "name": "assessment_review",
+              "outputs": [
+                "assessment"
+              ],
+              "steps": [
+                {
+                  "type": "artifact_approval",
+                  "actions": [
+                    "approve",
+                    "request_revision"
+                  ]
+                }
+              ],
+              "requires_zero_open_review_items": false
             }
-          ]
+          ],
+          "handoffs": []
         },
         "inputs": [
           {
@@ -513,131 +597,7 @@
           {
             "name": "build_result",
             "artifact_type": "dev.build_result"
-          }
-        ]
-      },
-      "assessor": {
-        "stage_type": "delegated_session",
-        "operator_role": "assessment",
-        "config": {
-          "prompt_matrix": [
-            {
-              "session_role": "assessment",
-              "launch_reason": "initial",
-              "template_path": "dev-flow/assessor_v2.md"
-            },
-            {
-              "session_role": "assessment",
-              "launch_reason": "operator_retry",
-              "template_path": "dev-flow/assessor_v2.md"
-            },
-            {
-              "session_role": "assessment",
-              "launch_reason": "input_revision",
-              "template_path": "dev-flow/assessor_v2.md"
-            }
-          ],
-          "role_configs": [
-            {
-              "session_role": "assessment",
-              "runtime": {
-                "from": "context",
-                "path": "/planner_runtime"
-              },
-              "session_name": "assessor-{{STAGE_INSTANCE_ID}}-{{UNIT_ID}}",
-              "model": {
-                "from": "context",
-                "path": "/planner_model"
-              },
-              "effort": {
-                "from": "context",
-                "path": "/planner_effort"
-              },
-              "pre_authorized_tools": [],
-              "required_tools": [],
-              "authorized_outputs": [
-                "assessment"
-              ],
-              "yolo": false
-            }
-          ],
-          "slot_bindings": {
-            "BUILD_RESULT": {
-              "from": "input",
-              "input_name": "build_result",
-              "path": null
-            },
-            "BRIEF": {
-              "from": "input",
-              "input_name": "brief",
-              "path": null
-            },
-            "OAKRIDGE_URL": {
-              "from": "context",
-              "path": "/oakridge_url"
-            }
           },
-          "workdir": {
-            "from": "input",
-            "input_name": "repository_refs",
-            "path": "/0/artifact/repository_path"
-          },
-          "fan_out": {
-            "over": {
-              "from": "input",
-              "input_name": "build_result"
-            },
-            "unit_id_path": "/unit_id",
-            "depends_on_path": null,
-            "max_parallel": 4,
-            "item_bindings": {
-              "REPOSITORY_KEY": {
-                "from": "item",
-                "path": "/artifact/repository_key"
-              }
-            },
-            "inherit_worktree_from": "build_result"
-          },
-          "artifact_productions": [],
-          "gates": [
-            {
-              "name": "assessment_gate",
-              "outputs": [
-                "assessment"
-              ],
-              "steps": [
-                {
-                  "type": "artifact_approval",
-                  "actions": [
-                    "approve",
-                    "request_revision"
-                  ]
-                }
-              ],
-              "requires_zero_open_review_items": false
-            }
-          ],
-          "handoffs": []
-        },
-        "inputs": [
-          {
-            "name": "build_result",
-            "artifact_type": "dev.build_result",
-            "delivery": "unit_complete"
-          },
-          {
-            "name": "brief",
-            "artifact_type": "dev.build_brief",
-            "delivery": "unit_complete"
-          },
-          {
-            "name": "repository_refs",
-            "artifact_type": "dev.repository_refs",
-            "collect": true,
-            "delivery": "producer_complete"
-          }
-        ],
-        "outputs": [
           {
             "name": "assessment",
             "artifact_type": "dev.assessment"
@@ -688,26 +648,6 @@
       },
       {
         "from": {
-          "stage": "brief_writer",
-          "slot": "brief"
-        },
-        "to": {
-          "stage": "assessor",
-          "slot": "brief"
-        }
-      },
-      {
-        "from": {
-          "stage": "build",
-          "slot": "build_result"
-        },
-        "to": {
-          "stage": "assessor",
-          "slot": "build_result"
-        }
-      },
-      {
-        "from": {
           "stage": "provision_refs",
           "slot": "repository_refs"
         },
@@ -733,16 +673,6 @@
         },
         "to": {
           "stage": "brief_writer",
-          "slot": "repository_refs"
-        }
-      },
-      {
-        "from": {
-          "stage": "provision_refs",
-          "slot": "repository_refs"
-        },
-        "to": {
-          "stage": "assessor",
           "slot": "repository_refs"
         }
       }
@@ -781,18 +711,6 @@
         "launch": {
           "stage": "brief_writer",
           "session_role": "brief",
-          "launch_reason": "input_revision"
-        }
-      },
-      {
-        "trigger": {
-          "kind": "operator",
-          "stage": "assessor",
-          "item": "request_revision"
-        },
-        "launch": {
-          "stage": "build",
-          "session_role": "build",
           "launch_reason": "input_revision"
         }
       }

@@ -220,7 +220,7 @@ test("kbbl adapter falls back to the exit code when the failure sidecar is malfo
     .toEqual({ kind: "terminal", observation: { kind: "failed", code: "executor_exit_nonzero", detail: "kbbl runtime exited with code 1" } });
 });
 
-test("kbbl adapter requests a fresh session inheriting the producer workspace", async () => {
+test("kbbl adapter starts another role without a cross-stage worktree field", async () => {
   let body: unknown = null;
   const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl.test", executor_function_identity: "assessor-v1", fetch: async (_input, init) => {
     body = JSON.parse(String(init?.body));
@@ -233,11 +233,11 @@ test("kbbl adapter requests a fresh session inheriting the producer workspace", 
     inputs: [], declared_outputs: [], expected_artifacts: [], workspace_source: { execution_id: "build-execution" as ExecutionId,
       external_reference: { kind: "kbbl_session", session_id: "build-session" } },
   }, attempt("run:1:stage:assess:unit:web"));
-  expect(body).toEqual({ initial_prompt: "Assess", workdir: "/repo", name: "assessor", runtime: "claude-code", inherit_worktree_from: "build-session",
+  expect(body).toEqual({ initial_prompt: "Assess", workdir: "/repo", name: "assessor", runtime: "claude-code",
     workflow: { workflow_run_id: "run-1", stage_instance_id: "assessment-stage", unit_id: "web", operator_role: "assessment", repository_key: "pipefitter" } });
 });
 
-test("kbbl adapter refuses to both cut and inherit a worktree", async () => {
+test("kbbl adapter uses the role's committed worktree selection", async () => {
   let called = false;
   const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl.test", executor_function_identity: "assessor-v1", fetch: async () => {
     called = true;
@@ -250,8 +250,8 @@ test("kbbl adapter refuses to both cut and inherit a worktree", async () => {
     inputs: [], declared_outputs: [], expected_artifacts: [], workspace_source: { execution_id: "build-execution" as ExecutionId,
       external_reference: { kind: "kbbl_session", session_id: "build-session" } },
   };
-  await expect(adapter.start_or_attach(request, attempt("run:1:stage:assess:unit:web"))).rejects.toThrow("mutually exclusive");
-  expect(called).toBe(false);
+  await adapter.start_or_attach(request, attempt("run:1:stage:assess:unit:web"));
+  expect(called).toBe(true);
 });
 
 test("kbbl adapter delivers workflow input through a persisted session", async () => {

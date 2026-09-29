@@ -233,13 +233,6 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
     } catch (error) {
       throw new ExecutorStartRejectedError(error instanceof Error ? error.message : String(error));
     }
-    const inheritedSessionId = request.workspace_source?.external_reference.kind === "kbbl_session"
-      ? request.workspace_source.external_reference.session_id : null;
-    // Definition-time validation should have caught this; failing here keeps the
-    // message actionable instead of surfacing as an opaque kbbl 400.
-    if (config.worktree && inheritedSessionId) {
-      throw new ExecutorStartRejectedError(`execution ${request.execution_id} resolves its own worktree and inherits one from ${inheritedSessionId}; these are mutually exclusive`);
-    }
     const sessionKey = sessionKeyFor(operation_id, this.options.executor_function_identity);
     const response = await this.fetch(`${this.options.base_url}/sessions/resumable/${encodeURIComponent(sessionKey)}`, {
       method: "PUT",
@@ -254,7 +247,6 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
         ...(config.artifact_id ? { artifact_id: config.artifact_id } : {}),
         ...(config.worktree ? { worktree: { branch_name: config.worktree.branchName, worktree_subdir: config.worktree.worktreeSubdir,
           ...(config.worktree.baseRef ? { base_ref: selectRemoteWorktreeBase(config.worktree.baseRef) } : {}) } } : {}),
-        ...(inheritedSessionId ? { inherit_worktree_from: inheritedSessionId } : {}),
         workflow: {
           workflow_run_id: config.session_identity.run_id,
           stage_instance_id: config.session_identity.stage_instance_id,

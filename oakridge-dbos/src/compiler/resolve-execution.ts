@@ -137,6 +137,12 @@ const stringSlot = (slots: Readonly<Record<string, string>>, name: string): stri
   return typeof value === "string" && value.length > 0 ? value : null;
 };
 
+const selectedSlotNames = (input: ResolveDelegatedExecutionInput): ReadonlySet<string> => new Set([
+  ...[...input.prompt_template.matchAll(/\{\{([^{}]+)\}\}/g)].map((match) => match[1] ?? ""),
+  COHORT_TITLE_SLOT,
+  REPOSITORY_KEY_SLOT,
+]);
+
 export const resolveDelegatedExecution = (input: ResolveDelegatedExecutionInput): Result<ResolvedExecutorConfig, ResolveExecutionError> => {
   if (!input.operator_role) return err({ operation: "resolve_execution", detail: "delegated session has no operator role" });
   const roleConfig = input.definition.role_configs.find((candidate) => candidate.session_role === input.operator_role);
@@ -149,12 +155,15 @@ export const resolveDelegatedExecution = (input: ResolveDelegatedExecutionInput)
     rendered_prompt: `${failure.rendered_prompt ?? input.prompt_template}\n\n${contractBlock}` });
   const environment = { ...input.environment, item: input.unit.parameters };
   const slots: Record<string, string> = {};
+  const selectedSlots = selectedSlotNames(input);
   for (const [name, binding] of Object.entries(input.definition.slot_bindings)) {
+    if (!selectedSlots.has(name)) continue;
     const value = resolveBinding(binding, environment);
     if (!value.ok) return failed(value.error);
     slots[name] = value.value;
   }
   for (const [name, binding] of Object.entries(input.definition.fan_out?.item_bindings ?? {})) {
+    if (!selectedSlots.has(name)) continue;
     const value = resolveBinding(binding, environment);
     if (!value.ok) return failed(value.error);
     slots[name] = value.value;

@@ -62,17 +62,6 @@ const fanOutDefinition = (fanOut: Record<string, unknown>) => ({
   fan_out: { over: { from: "input" as const, input_name: "units" }, unit_id_path: "/id", ...fanOut },
 });
 
-test("delegated session validation accepts per-role worktree with inherited input configured separately", () => {
-  const result = delegatedSessionDefinitionSchema.safeParse(fanOutDefinition({
-    inherit_worktree_from: "build",
-  }));
-  expect(result.success).toBe(true);
-});
-
-test("delegated session validation accepts a unit that inherits a worktree without cutting one", () => {
-  expect(delegatedSessionDefinitionSchema.safeParse(fanOutDefinition({ inherit_worktree_from: "build" })).success).toBe(true);
-});
-
 test("plural contracts report duplicate keys and every missing prompt in one pass", () => {
   const parsed = delegatedSessionDefinitionSchema.parse({ ...definition,
     prompt_matrix: [{ session_role: "build", launch_reason: "initial", template_path: "one.md" },
@@ -82,7 +71,7 @@ test("plural contracts report duplicate keys and every missing prompt in one pas
   const diagnostics = [...validateDelegatedSessionCardinality("build", "build", parsed),
     ...validateDelegatedSessionContracts("build", "build", ["result"], parsed)];
   expect(diagnostics).toContainEqual(expect.objectContaining({ kind: "duplicate_key", array: "prompt_matrix", key: "build:initial" }));
-  expect(diagnostics).toContainEqual(expect.objectContaining({ kind: "prompt_not_total", session_role: "build", launch_reason: "operator_retry" }));
+  expect(diagnostics).not.toContainEqual(expect.objectContaining({ kind: "prompt_not_total", session_role: "build" }));
   expect(diagnostics.filter((diagnostic) => diagnostic.kind === "gate_without_closer")).toHaveLength(2);
 });
 

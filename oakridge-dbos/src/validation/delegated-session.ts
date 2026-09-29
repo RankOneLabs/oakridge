@@ -74,8 +74,7 @@ const legacyDelegatedSessionDefinitionSchema = z.object({
   fan_out: z.object({ over: slotBindingSchema, unit_id_path: z.string().min(1), session_mode: z.enum(["per_unit", "shared"]).default("per_unit"),
     depends_on_path: z.string().nullable().optional(), max_parallel: z.number().int().positive().default(8), manual_admission: z.boolean().default(false),
     item_bindings: z.record(z.string(), slotBindingSchema).default({}), workdir: slotBindingSchema.optional(),
-    worktree: z.object({ branch_name: bindableSchema, worktree_subdir: bindableSchema, base_ref: bindableSchema.optional() }).optional(),
-    inherit_worktree_from: z.string().optional() }).optional(),
+    worktree: z.object({ branch_name: bindableSchema, worktree_subdir: bindableSchema, base_ref: bindableSchema.optional() }).optional() }).optional(),
   artifacts: z.object({ over: slotBindingSchema, id_path: z.string().min(1) }).optional(),
   gate_output: z.string().optional(), output_gate: legacyOutputGateSchema.optional(),
   output_handoff: z.object({ output: z.string().min(1), downstream_role: roleSchema,
@@ -130,7 +129,6 @@ export const delegatedSessionDefinitionSchema = z.object({
     manual_admission: z.boolean().default(false),
     item_bindings: z.record(z.string(), slotBindingSchema).default({}),
     workdir: slotBindingSchema.optional(),
-    inherit_worktree_from: z.string().optional(),
   }).optional(),
   artifact_productions: z.array(z.object({ over: slotBindingSchema, id_path: z.string().min(1) })).default([]),
   gates: z.array(outputGateSchema).default([]),
@@ -158,7 +156,7 @@ export const normalizeDelegatedSessionDefinition = (
     branch_name: legacy.worktree.branchName, worktree_subdir: legacy.worktree.worktreeSubdir, base_ref: legacy.worktree.baseRef,
   } : undefined);
   return {
-    prompt_matrix: LAUNCH_REASONS.map((launch_reason) => ({ session_role: sessionRole, launch_reason, template_path: legacy.prompt_template_path })),
+    prompt_matrix: LEGACY_LAUNCH_REASONS.map((launch_reason) => ({ session_role: sessionRole, launch_reason, template_path: legacy.prompt_template_path })),
     role_configs: [{ session_role: sessionRole, runtime: legacy.runtime, session_name: legacy.session_name, model: legacy.model,
       effort: legacy.effort, worktree: roleWorktree, pre_authorized_tools: legacy.pre_authorized_tools, required_tools: [],
       authorized_outputs: declaredOutputs, yolo: legacy.yolo }],
@@ -193,7 +191,7 @@ export type DelegatedSessionDiagnostic =
   | { readonly kind: "prompt_bundle_cell_count"; readonly stage_key: string; readonly session_role: StageOperatorRole; readonly contract_item: string; readonly launch_reason: SessionLaunchReasonName; readonly matches: number }
   | { readonly kind: "automated_assessment_transition"; readonly stage_key: string; readonly session_role: StageOperatorRole | null; readonly contract_item: string; readonly trigger: string };
 
-const LAUNCH_REASONS: readonly SessionLaunchReasonName[] = ["initial", "operator_retry", "input_revision"];
+const LEGACY_LAUNCH_REASONS: readonly SessionLaunchReasonName[] = ["initial", "operator_retry", "input_revision"];
 
 const duplicateDiagnostics = (
   stage_key: string,
@@ -258,11 +256,9 @@ export const validateDelegatedSessionContracts = (
     kind: "selected_role_missing", stage_key, session_role, contract_item: "operator_role",
   });
   for (const roleConfig of config.role_configs) {
-    for (const launch_reason of LAUNCH_REASONS) {
-      const matches = config.prompt_matrix.filter((entry) => entry.session_role === roleConfig.session_role && entry.launch_reason === launch_reason).length;
-      if (matches !== 1) diagnostics.push({ kind: "prompt_not_total", stage_key, session_role: roleConfig.session_role,
-        contract_item: `${roleConfig.session_role}:${launch_reason}`, launch_reason, matches });
-    }
+    const promptCount = config.prompt_matrix.filter((entry) => entry.session_role === roleConfig.session_role).length;
+    if (promptCount === 0) diagnostics.push({ kind: "prompt_not_total", stage_key, session_role: roleConfig.session_role,
+      contract_item: `${roleConfig.session_role}:registered`, launch_reason: "registered", matches: 0 });
     const available = new Set(roleConfig.pre_authorized_tools ?? []);
     for (const tool of roleConfig.required_tools ?? []) if (!available.has(tool)) diagnostics.push({
       kind: "unavailable_tool", stage_key, session_role: roleConfig.session_role, contract_item: tool, tool,

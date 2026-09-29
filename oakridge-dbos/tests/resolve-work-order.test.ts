@@ -44,8 +44,6 @@ test("a delegated work order uses the prompt and reason committed by its launch 
       existing_pull_request: "https://example.test/pull/7",
     },
     capability_seed: "test-seed",
-  }, {
-    find_work_order_attachment: async () => null,
   });
 
   expect((workOrder.request.resolved_config as { readonly session_name?: string }).session_name).toBe(workOrder.id);

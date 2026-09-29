@@ -17,10 +17,11 @@ test("compiles plural v15 into executor-independent materialization contracts", 
   expect(compiled.value.source_stages).toEqual(["provision_refs"]);
   expect(compiled.value.stages.brief_writer?.materialization.kind).toBe("artifact_collections");
   expect(compiled.value.stages.build?.materialization.kind).toBe("fan_out");
-  expect(compiled.value.stages.build?.outputs.find((output) => output.name === "build_result")?.release.kind).toBe("handoff");
+  expect(compiled.value.stages.build?.outputs.find((output) => output.name === "build_result")?.release.kind).toBe("gate");
+  expect(compiled.value.stages.build?.outputs.find((output) => output.name === "assessment")?.release.kind).toBe("gate");
+  expect(compiled.value.stages.assessor).toBeUndefined();
   expect(compiled.value.edges.find((edge) => edge.consumer_stage === "build" && edge.consumer_input === "brief")?.delivery).toBe("unit_complete");
-  expect(compiled.value.transitions).toContainEqual({ trigger: { kind: "operator", stage: "assessor", item: "request_revision" },
-    launch: { stage: "build", session_role: "build", launch_reason: "input_revision" } });
+  expect(compiled.value.transitions).not.toContainEqual(expect.objectContaining({ trigger: expect.objectContaining({ stage: "assessor" }) }));
 });
 
 /**
@@ -99,7 +100,7 @@ test("rejects required attention on an immediate output", async () => {
   } });
 });
 
-test("accepts no attention on a waiting handoff", async () => {
+test("accepts no attention on a waiting build-review gate", async () => {
   const loaded = await loadDevFlowV15();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const build = loaded.value.graph.stages.build!;
@@ -136,15 +137,15 @@ test("a schema-invalid stage config joins the all-at-once diagnostic report", as
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const build = structuredClone(loaded.value.graph.stages.build!) as any;
   build.config.role_configs[0].session_name = "build-{{MISSING}}";
-  const assessor = structuredClone(loaded.value.graph.stages.assessor!) as any;
+  const assessor = structuredClone(loaded.value.graph.stages.build!) as any;
   delete assessor.config.prompt_matrix;
   const compiled = compileWorkflowDefinition({ ...loaded.value, graph: { ...loaded.value.graph,
-    stages: { ...loaded.value.graph.stages, build, assessor } } });
+    stages: { ...loaded.value.graph.stages, build, invalid_build: assessor } } });
   expect(compiled.ok).toBe(false);
   if (compiled.ok) return;
   expect(compiled.error.diagnostics).toEqual(expect.arrayContaining([
     expect.objectContaining({ kind: "unbound_placeholder", stage_key: "build", placeholder: "MISSING" }),
-    expect.objectContaining({ kind: "invalid_stage_config", stage_key: "assessor", contract_item: "config" }),
+    expect.objectContaining({ kind: "invalid_stage_config", stage_key: "invalid_build", contract_item: "config" }),
   ]));
 });
 

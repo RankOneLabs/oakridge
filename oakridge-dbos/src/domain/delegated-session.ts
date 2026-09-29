@@ -60,7 +60,6 @@ export interface FanOutDefinition {
   readonly manual_admission?: boolean;
   readonly item_bindings?: Readonly<Record<string, SlotBinding>>;
   readonly workdir?: SlotBinding;
-  readonly inherit_worktree_from?: string;
 }
 
 export interface ArtifactCollectionDefinition { readonly over: SlotBinding; readonly id_path: string }
