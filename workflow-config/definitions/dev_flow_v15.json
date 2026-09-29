@@ -550,13 +550,6 @@
                     "approve",
                     "request_revision"
                   ]
-                },
-                {
-                  "type": "merge_confirmation",
-                  "actions": [
-                    "confirm_merged",
-                    "closed_without_merge"
-                  ]
                 }
               ],
               "requires_zero_open_review_items": true

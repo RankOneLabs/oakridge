@@ -229,7 +229,9 @@ const transitioned = (state: BuildCohortState, sessionLaunch: BuildSessionLaunch
 const applyEvent = (machine: BuildCohortMachine, state: BuildCohortState, event: BuildCohortEvent): AppliedEvent => {
   if (state.phase === "complete") return recorded(state);
   if (event.kind === "pull_request_merged") {
-    if (state.phase === "awaiting_merge") return transitioned({ ...state, phase: "complete", is_pull_request_merged: true });
+    if (state.phase === "awaiting_merge" && state.verified_pull_request?.url === event.pull_request_url) {
+      return transitioned({ ...state, phase: "complete", is_pull_request_merged: true });
+    }
     return recorded({ ...state, is_pull_request_merged: state.verified_pull_request?.url === event.pull_request_url || state.is_pull_request_merged });
   }
   if (event.kind === "stage_started" && state.phase === "pending") {
@@ -252,7 +254,7 @@ const applyEvent = (machine: BuildCohortMachine, state: BuildCohortState, event:
     return transitioned(next, launch(machine, state, "build", "pr_mismatch_correction"));
   }
   if (event.kind === "replacement_pull_request_required" && state.phase !== "pending") {
-    const next = restartBuilder(state);
+    const next = { ...restartBuilder(state), verified_pull_request: null };
     return transitioned(next, launch(machine, state, "build", "replacement_pr"));
   }
   if (state.phase === "build_review") {

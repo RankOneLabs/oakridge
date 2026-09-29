@@ -198,3 +198,21 @@ test("revision after assessment commits the revision prompt and names the existi
     prompt: { content: "build:revision_after_assessment" } });
   expect(result.launch?.contract_block).toContain("Existing PR: https://example.test/pull/7");
 });
+
+test("awaiting merge completes only for the verified pull request", () => {
+  const current = state("awaiting_merge");
+  const mismatched = applyBuildCohortEvent(machine.value, current,
+    { kind: "pull_request_merged", pull_request_url: "https://example.test/pull/99" });
+  expect(mismatched).toMatchObject({ disposition: "recorded_only", state: { phase: "awaiting_merge", is_pull_request_merged: false } });
+  const verified = applyBuildCohortEvent(machine.value, current,
+    { kind: "pull_request_merged", pull_request_url: "https://example.test/pull/7" });
+  expect(verified).toMatchObject({ disposition: "transitioned", state: { phase: "complete", is_pull_request_merged: true } });
+});
+
+test("replacement PR work names the old PR but cannot reuse its verification", () => {
+  const result = applyBuildCohortEvent(machine.value, state("build_review"),
+    { kind: "replacement_pull_request_required", pull_request_url: "https://example.test/pull/8" });
+  expect(result.launch).toMatchObject({ session_role: "build", launch_reason: "replacement_pr" });
+  expect(result.launch?.contract_block).toContain("Existing PR: https://example.test/pull/7");
+  expect(result.state).toMatchObject({ phase: "builder_active", verified_pull_request: null });
+});
