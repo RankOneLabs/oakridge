@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { slotBindingSchema } from "./slot-binding";
+import { slotBindingSchema } from "./delegated-session";
 
 /**
  * The provisioning stage's definition-time config: where its repositories are,

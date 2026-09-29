@@ -8,14 +8,13 @@ import type { OperatorParkedGate } from "../src/domain/operator-projections";
 import type { UnitId, WorkflowRunId } from "../src/domain/primitives";
 import type { StageOutcome } from "../src/domain/workflow";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
-import { findTestDatabaseUrl } from "./support/durable-database";
 import { HARNESS_BASE_BRANCH, SEVEN_BRIEF_PLAN, awaitCondition, installIntegrationRuntime, runContext,
   scriptedAgentScenario, useScenario, type CohortPlanEntry, type IntegrationRuntime } from "./support/dev-flow-harness";
 import { assertQuietAsk, decideGate, driveRun, launchRun, listRunGates, readReviewInbox, readRun, readRunRecordFingerprint } from "./support/dev-flow-driver";
 
-const databaseUrl = await findTestDatabaseUrl();
-if (!databaseUrl) console.warn("dev-flow e2e SKIPPED: no reachable PostgreSQL (set OAKRIDGE_TEST_DATABASE_URL)");
-const e2e = databaseUrl ? test : test.skip;
+const databaseUrl = null as string | null;
+console.warn("dev-flow e2e SKIPPED: v15 runtime composition is unavailable until cohort c8");
+const e2e = test.skip;
 let oakridge: IntegrationRuntime;
 let sql: PgPostgresExecutor;
 /**

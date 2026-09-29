@@ -16,7 +16,6 @@ import type { SlotBinding } from "../domain/delegated-session";
 import type { ArtifactEnvelope } from "../domain/execution";
 import { err, ok, type ArtifactId, type InputFingerprint, type JsonValue, type OutputCollectionKey, type Result, type RunUnitId, type StageInstanceId, type UnitId, type WorkflowRunId } from "../domain/primitives";
 import type { MaterializedRunOutput } from "../domain/run-record";
-import { selectOutputReleasePolicy } from "../domain/output-release-policy";
 import type { StageKey, StageOutcome } from "../domain/workflow";
 import { resolveBindingValue, type BindingEnvironment } from "../compiler/resolve-execution";
 import { readJsonPointer } from "../domain/json-pointer";
@@ -27,6 +26,12 @@ import type { RunSnapshot, StagePolicy, StageSnapshot, UnitSnapshot } from "./sn
 const TERMINAL_UNIT_STATES = new Set<UnitSnapshot["state"]>(["satisfied", "failed", "cancelled"]);
 
 const byString = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+const outputAttention = (output: CompiledStageContract["outputs"][number]) =>
+  output.attention ?? (output.release.kind === "gate"
+    ? "required"
+    : output.release.kind === "handoff" && output.release.external_wait_kind.length > 0
+      ? "optional"
+      : "none");
 
 // ---------------------------------------------------------------------------
 // A. Child outcome facts
@@ -91,14 +96,14 @@ const outputSlots = (contract: CompiledStageContract, unit: MaterializedExecutio
   const materialization = contract.materialization;
   if (materialization.kind !== "artifact_collection") {
     return ok(contract.outputs.map((output) => ({ identity: { kind: "scalar" as const, output_name: output.name }, artifact_type: output.artifact_type, required: true,
-      release: output.release, attention: selectOutputReleasePolicy(output.release, output.attention ?? null).attention })));
+      release: output.release, attention: outputAttention(output) })));
   }
   const outputs: MaterializedRunOutput[] = [];
   for (const item of unit.parameters as readonly JsonValue[]) {
     const key = readJsonPointer(item, materialization.id_path);
     if (typeof key !== "string" || key.length === 0) return err({ path: materialization.id_path, detail: `artifact collection key '${materialization.id_path}' must be a non-empty string` });
     for (const output of contract.outputs) outputs.push({ identity: { kind: "collection_member" as const, output_name: output.name, collection_key: key as OutputCollectionKey }, artifact_type: output.artifact_type, required: true,
-      release: output.release, attention: selectOutputReleasePolicy(output.release, output.attention ?? null).attention });
+      release: output.release, attention: outputAttention(output) });
   }
   return ok(outputs);
 };
