@@ -229,6 +229,7 @@ describe("RunDetail committed diagnosis", () => {
   it("renders typed blocked facts without deriving them", () => {
     wrap(<RunDetailOrganism runId="run-1" run={detail} activeGates={[]} onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
     expect(screen.getByTestId("or-run-detail-blocked-reason").textContent).toContain("gate · next: operator");
+    expect(screen.getByTestId("or-stage-blocked-reason").textContent).toContain("gate · next: operator");
   });
 
   it("keeps a cancelled stage cancelled", () => {
