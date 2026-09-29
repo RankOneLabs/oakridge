@@ -1,7 +1,6 @@
 import type { Project } from "../domain/projects";
 import type { JsonValue } from "../domain/primitives";
 import type { RunContext } from "../domain/run-context";
-import type { EpicWorkflowProfile, EpicWorkflowProfileId } from "../domain/epic";
 import type { CreateEpicProfileRequest } from "../domain/runs";
 import { selectBaseBranch } from "../domain/repository-refs";
 
@@ -11,42 +10,25 @@ export interface PrepareRunContextInput {
   readonly epic_profile: CreateEpicProfileRequest | null;
 }
 
-export interface CreateEpicProfileInput {
-  readonly id: EpicWorkflowProfileId;
-  readonly workflow_run_id: EpicWorkflowProfile["workflow_run_id"];
-  readonly config: CreateEpicProfileRequest;
-  readonly created_at: string;
-}
-
-export const createEpicProfile = (input: CreateEpicProfileInput): EpicWorkflowProfile => ({
-  id: input.id,
-  workflow_run_id: input.workflow_run_id,
-  title: input.config.title,
-  slug: input.config.slug,
-  lifecycle_state: "active",
-  final_merge_policy: input.config.final_merge_policy,
-  repositories: input.config.repositories.map((repository) => ({
-    repository_key: repository.repository_key,
-    repository_path: repository.repository_path,
-    integration_branch: repository.integration_branch,
-    forge_repository: repository.forge_repository,
-    final_pull_request: null,
-    final_merge_state: "pending",
-  })),
-  created_at: input.created_at,
-  updated_at: input.created_at,
-});
-
 /**
  * The context a run actually launches with: what the caller sent, plus what the
- * project and epic profile contribute.
+ * project and epic configuration contribute.
  *
- * Total, not fallible. It used to refuse a caller context that was not a JSON
- * object — the only shape check anywhere on the path — but it could only do so
- * when a project or epic profile happened to be configured, so the same bad
- * context sailed through a plain launch. The check belongs to the boundary that
- * parses the request, and now lives there; by the time a context reaches this
- * transform it is a `RunContext` and there is nothing left to say no to.
+ * This is where the epic profile went. `oakridge.epic_workflow_profile` does not
+ * exist in v15, and 0016's own comment records that the profile "is never
+ * consulted by core" — it was launch configuration wearing a table. Four of its
+ * fields were already written here; `forge_repository` and `final_merge_policy`
+ * join them, so every stage reads epic configuration from the one place it
+ * already reads `base_branch` and `repositories` from.
+ *
+ * `forge_repository` belongs on the repository entry rather than on the project
+ * row: `oakridge.project.forge_repository` is one identity per project, which
+ * cannot express a multi-repository epic. It has to stay launch configuration
+ * and not an artifact, because it is the independent authority a candidate pull
+ * request URL is checked against.
+ *
+ * Total, not fallible. The one shape check on the path — that a context is a
+ * JSON object — belongs to the boundary that parses the request and lives there.
  */
 export const prepareRunContext = (input: PrepareRunContextInput): RunContext => {
   const projectContext: Record<string, JsonValue> = input.project
@@ -61,14 +43,24 @@ export const prepareRunContext = (input: PrepareRunContextInput): RunContext => 
 
   return {
     ...callerWins,
+    title: epicProfile.title,
+    slug: epicProfile.slug,
+    // How the final epic pull request is allowed to complete. Read only by the
+    // final-integration adapter (`selectFinalPullRequestStageConfig`); core
+    // never looks at it.
+    final_merge_policy: epicProfile.final_merge_policy,
     // The run's one base branch, beside the repositories rather than repeated
     // inside each of them: the provisioning stage guarantees this branch in
     // every repository, and every build unit targets it.
     base_branch: selectBaseBranch(epicProfile.base_branch, epicProfile.slug),
-    repositories: epicProfile.repositories.map((repository) => ({
+    repositories: epicProfile.repositories.map((repository): JsonValue => ({
       key: repository.repository_key,
       path: repository.repository_path,
       integration_branch: repository.integration_branch,
+      forge_repository: repository.forge_repository === null
+        ? null
+        : { provider: repository.forge_repository.provider, owner: repository.forge_repository.owner,
+          name: repository.forge_repository.name },
     })),
   };
 };

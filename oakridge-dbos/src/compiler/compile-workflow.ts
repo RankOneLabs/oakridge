@@ -44,12 +44,7 @@ const compileGateStep = (step: { readonly type: string; readonly actions: readon
 
 const outputRelease = (outputName: string, config: DelegatedSessionDefinitionConfig): OutputReleaseContract => {
   const gate = config.gates.find((candidate) => candidate.outputs.includes(outputName));
-  if (gate) return {
-    kind: "gate",
-    gate_name: gate.name,
-    steps: gate.steps.map(compileGateStep),
-    requires_zero_open_review_items: gate.requires_zero_open_review_items ?? false,
-  };
+  if (gate) return { kind: "gate", gate_name: gate.name, steps: gate.steps.map(compileGateStep) };
   const handoff = config.handoffs.find((candidate) => candidate.outputs.includes(outputName));
   if (handoff) return {
     kind: "handoff",

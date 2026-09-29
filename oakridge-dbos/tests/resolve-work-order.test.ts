@@ -35,7 +35,7 @@ test("a delegated work order uses the prompt and reason committed by its launch 
     unit: { unit_id: "cohort-one" as UnitId, parameters: null, depends_on: [] },
     inputs: {},
     context: {},
-    outputs: [{ identity: { kind: "scalar", output_name: "result" }, artifact_type: "dev.result", required: true, release: { kind: "immediate" } }],
+    outputs: [{ output_name: "result", artifact_type: "dev.result", release: { kind: "immediate" }, attention: "none" }],
     identity: "revision:fingerprint",
     session_launch: {
       reason: { transition_id: "33333333-3333-4333-8333-333333333333" as RunTransitionId, name: "revision_after_assessment" },
@@ -84,7 +84,7 @@ test("an assessor work order injects its cohort's persisted build result", async
       artifact_type: "dev.build_result", output_name: "build_result", unit_id: "cohort-one" as UnitId,
       body: { repository_key: "oakridge", summary: "built from persisted output" } }],
     context: {},
-    outputs: [{ identity: { kind: "scalar", output_name: "assessment" }, artifact_type: "dev.assessment", required: true, release: { kind: "immediate" } }],
+    outputs: [{ output_name: "assessment", artifact_type: "dev.assessment", release: { kind: "immediate" }, attention: "none" }],
     identity: "assessment:initial",
     session_launch: {
       reason: { transition_id: "55555555-5555-4555-8555-555555555555" as RunTransitionId, name: "initial_assessment" },

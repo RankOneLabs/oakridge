@@ -14,7 +14,7 @@ test("the public handoff route executes only the run-owned completion command", 
   const kinds: string[] = [];
   const app = createHandoffCompleteApp({ records: { async complete_handoff_artifact(command) {
     kinds.push(command.external_kind);
-    return { kind: "released", artifact_id: artifactId, run_id: runId, record_version: 4 as RunRecordVersion };
+    return { kind: "released", artifact_id: artifactId, run_id: runId, cohort_id: null, record_version: 4 as RunRecordVersion };
   } } });
   expect((await complete(app)).status).toBe(202);
   expect(kinds).toEqual(["github_review"]);
@@ -22,7 +22,7 @@ test("the public handoff route executes only the run-owned completion command", 
 
 test("handoff completion replay succeeds without a workflow command", async () => {
   const app = createHandoffCompleteApp({ records: { async complete_handoff_artifact() {
-    return { kind: "already_applied" as const, run_id: runId, record_version: 4 as RunRecordVersion };
+    return { kind: "already_applied" as const, run_id: runId, cohort_id: null, record_version: 4 as RunRecordVersion };
   } } });
   expect((await complete(app)).status).toBe(202);
 });

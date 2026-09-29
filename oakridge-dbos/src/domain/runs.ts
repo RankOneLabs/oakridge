@@ -1,5 +1,5 @@
-import type { EpicWorkflowProfile } from "./epic";
-import type { JsonValue, ProjectId, Result, RootWorkflowId, StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId } from "./primitives";
+import type { FinalMergePolicy, ForgeRepositoryIdentity } from "./epic";
+import type { ProjectId, Result, RootWorkflowId, WorkflowDefinitionId, WorkflowRunId } from "./primitives";
 import type { RunContext } from "./run-context";
 import type { WorkflowRunBundlePin } from "./workflow";
 
@@ -10,10 +10,16 @@ export interface CreateWorkflowRunRequest {
   readonly epic_profile: CreateEpicProfileRequest | null;
 }
 
+/**
+ * The epic configuration a launch carries. Unchanged as a *request* shape — it
+ * is the external contract `POST /workflow_runs` accepts — but it is no longer
+ * persisted as a row: `prepareRunContext` folds every field of it into the
+ * run's own context, which is the one thing every stage already reads.
+ */
 export interface CreateEpicProfileRequest {
   readonly title: string;
   readonly slug: string;
-  readonly final_merge_policy: EpicWorkflowProfile["final_merge_policy"];
+  readonly final_merge_policy: FinalMergePolicy;
   /** The one branch this epic builds on; `epic/<slug>` when unset. */
   readonly base_branch: string | null;
   readonly repositories: readonly CreateEpicRepositoryRequest[];
@@ -24,7 +30,7 @@ export interface CreateEpicRepositoryRequest {
   readonly repository_path: string;
   /** Where this repository's base branch is cut from, and where its work merges back. */
   readonly integration_branch: string;
-  readonly forge_repository: EpicWorkflowProfile["repositories"][number]["forge_repository"];
+  readonly forge_repository: ForgeRepositoryIdentity | null;
 }
 
 export interface WorkflowRunLaunchRecord {
@@ -45,7 +51,6 @@ export interface WorkflowRunLaunchRecord {
  */
 export interface PersistWorkflowRunLaunch {
   readonly run: Omit<WorkflowRunLaunchRecord, "root_workflow_id">;
-  readonly epic_profile: EpicWorkflowProfile | null;
   readonly workflow_definition_version: number;
 }
 
@@ -64,7 +69,6 @@ export interface WorkflowRunListFilter {
 export type CreateWorkflowRunResult = Result<{
   readonly kind: "created" | "replayed";
   readonly run: WorkflowRunLaunchRecord;
-  readonly epic_profile: EpicWorkflowProfile | null;
 }, {
   readonly operation: "create_workflow_run";
   readonly kind: "definition_not_found" | "definition_archived" | "project_not_found" | "invalid_context" | "idempotency_conflict";
@@ -78,38 +82,3 @@ export type SetRunArchiveResult =
 export type DeleteRunResult =
   | { readonly kind: "deleted" | "already_deleted"; readonly run_id: WorkflowRunId }
   | { readonly kind: "active_conflict" | "cancellation_pending" | "external_execution_conflict"; readonly run_id: WorkflowRunId; readonly detail: string };
-
-export interface AdmitStageUnitRequest {
-  readonly stage_instance_id: StageInstanceId;
-  readonly unit_id: UnitId;
-  readonly idempotency_key: string;
-}
-
-export type AdmitStageUnitResult =
-  | { readonly kind: "admitted" | "already_admitted"; readonly stage_instance_id: StageInstanceId; readonly unit_id: UnitId }
-  | { readonly kind: "stage_not_found" | "unit_not_found" | "not_manual" | "not_pending"; readonly stage_instance_id: StageInstanceId; readonly unit_id: UnitId }
-  | { readonly kind: "idempotency_conflict"; readonly stage_instance_id: StageInstanceId; readonly unit_id: UnitId };
-
-export interface StageAdmissionUnitState {
-  readonly unit_id: UnitId;
-  readonly parameters: JsonValue;
-  readonly admitted: boolean;
-  readonly eligible: boolean;
-  readonly blocked_by: readonly UnitId[];
-}
-
-export interface StageAdmissionState {
-  readonly stage_instance_id: StageInstanceId;
-  readonly status: "waiting" | "closed";
-  readonly manual_admission: boolean;
-  readonly units: readonly StageAdmissionUnitState[];
-}
-
-export interface RetryStuckRequest {
-  readonly stage_instance_id: StageInstanceId;
-  readonly unit_id: UnitId | null;
-}
-
-export type RetryStuckResult =
-  | { readonly kind: "accepted_unit" | "accepted_stage" | "already_accepted"; readonly stage_instance_id: StageInstanceId; readonly unit_id: UnitId | null }
-  | { readonly kind: "stage_not_found" | "unit_not_found" | "not_stuck" | "active_conflict"; readonly stage_instance_id: StageInstanceId; readonly unit_id: UnitId | null; readonly detail: string };

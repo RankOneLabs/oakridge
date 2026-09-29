@@ -32,10 +32,34 @@ import type { DevFlowBuildCohort } from "../domain/cohort-pull-request";
 import type { ArtifactEnvelope, ExecutionRequest } from "../domain/execution";
 import type { ArtifactId, JsonValue, OutputCollectionKey, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "../domain/primitives";
 import { PROVISION_REPOSITORY_REFS_STAGE_TYPE, parseBaseBranch, parseRunContextRepository, renderCohortBranchContract, type RepositoryProvisioningDefinitionConfig, type ResolvedRepositoryProvisioningConfig } from "../domain/repository-refs";
-import type { MaterializedRunOutput, MaterializedWorkOrder } from "../domain/run-record";
+import type { DeclaredOutputSlot } from "../domain/run-record";
 
-const capabilityFor = (seed: string, workOrderId: WorkOrderId): string => createHash("sha256").update(seed).update(":").update(workOrderId).digest("base64url");
-const capabilityHash = (capability: string): string => createHash("sha256").update(capability).digest("hex");
+/**
+ * A resolved execution and the authority it publishes under.
+ *
+ * v14 called this a materialized work order. v15's unit of execution is an
+ * attempt; the shape is the same because what a resolver produces has not
+ * changed — an id, the durable workflow that drives it, the hash of the
+ * capability it was issued, and the request itself.
+ */
+export interface ResolvedAttemptExecution {
+  readonly id: WorkOrderId;
+  readonly workflow_id: string;
+  readonly capability_hash: string;
+  readonly request: ExecutionRequest;
+}
+
+/**
+ * The publication capability one execution holds.
+ *
+ * Derived from the durable seed and the execution's own id rather than stored,
+ * so a capability issued to one attempt can never authenticate another, and a
+ * replayed resolution mints the identical value. The storage boundary derives
+ * the expected hash the same way when it checks an incoming publication — there
+ * is no `capability_hash` column for the two to disagree about.
+ */
+export const capabilityFor = (seed: string, workOrderId: WorkOrderId): string => createHash("sha256").update(seed).update(":").update(workOrderId).digest("base64url");
+export const capabilityHash = (capability: string): string => createHash("sha256").update(capability).digest("hex");
 
 const envelopes = (inputs: StageInputSet): readonly ArtifactEnvelope[] =>
   Object.values(inputs).flatMap((value) => (Array.isArray(value) ? value : [value as ArtifactEnvelope]));
@@ -55,12 +79,16 @@ export interface ResolveWorkOrderInput {
    */
   readonly accepted_cohort_outputs?: readonly ArtifactEnvelope[];
   readonly context: JsonValue;
-  readonly outputs: readonly MaterializedRunOutput[];
+  /** The slots this execution is expected to fill, read off the stage's pinned contract. */
+  readonly outputs: readonly DeclaredOutputSlot[];
   /** `"initial"` or `"revision:<fingerprint>"` — spec §13. */
   readonly identity: string;
   readonly capability_seed: string;
-  /** Role, reason and prompt selected atomically by the launch transition. */
-  readonly session_launch: CommittedSessionLaunch;
+  /**
+   * Role, reason and prompt selected atomically by the launch transition.
+   * Absent for a deterministic stage, which has no session and no role to pick.
+   */
+  readonly session_launch?: CommittedSessionLaunch;
   /** Stored adapter row used verbatim for the build/assessment branch contract. */
   readonly build_cohort?: DevFlowBuildCohort;
 }
@@ -68,7 +96,7 @@ export interface ResolveWorkOrderInput {
 interface ExecutionRequestInput extends ResolveWorkOrderInput { readonly work_order_id: WorkOrderId; readonly capability: string }
 
 const inputsForSessionLaunch = (input: ExecutionRequestInput): StageInputSet => {
-  if (input.session_launch.session_role !== "assessment") return input.inputs;
+  if (input.session_launch?.session_role !== "assessment") return input.inputs;
   const accepted = (input.accepted_cohort_outputs ?? []).filter((artifact) => artifact.unit_id === input.unit.unit_id);
   if (accepted.length === 0) return input.inputs;
   const grouped: Record<string, ArtifactEnvelope[]> = {};
@@ -94,6 +122,7 @@ const executionRequest = async (input: ExecutionRequestInput): Promise<Execution
   } else if (input.stage.executor.executor_type === "delegated_session") {
     const definition = input.stage.executor.definition_config as DelegatedSessionDefinitionConfig;
     const committed = input.session_launch;
+    if (!committed) throw new Error(`stage '${input.stage.stage_key}' is a delegated session with no committed launch`);
     const declared = definition.prompt_matrix.filter((entry) => entry.session_role === committed.session_role
       && entry.launch_reason === committed.reason.name && entry.template_path === committed.prompt.template_path);
     if (declared.length !== 1) throw new Error(`stage '${input.stage.stage_key}' does not declare committed prompt ${committed.session_role}:${committed.reason.name}`);
@@ -118,15 +147,29 @@ const executionRequest = async (input: ExecutionRequestInput): Promise<Execution
     executor_type: input.stage.executor.executor_type, resolved_config: resolved, inputs: envelopes(unitInputs),
     declared_outputs: input.stage.outputs.map((output) => ({ name: output.name, artifact_type: output.artifact_type, required: true })),
     expected_artifacts: input.outputs.map((output) => ({
-      unit_id: output.identity.kind === "collection_member" ? (output.identity.collection_key as unknown as UnitId) : input.unit.unit_id,
-      output_name: output.identity.output_name, artifact_type: output.artifact_type,
+      unit_id: input.unit.unit_id, output_name: output.output_name, artifact_type: output.artifact_type,
     })), ...(input.stage.executor.executor_type === "delegated_session" ? { session_launch: input.session_launch } : {}) };
 };
 
-export const resolveWorkOrder = async (input: ResolveWorkOrderInput): Promise<MaterializedWorkOrder> => {
+/**
+ * Resolves the execution one attempt will run, under an id the caller supplies.
+ *
+ * The id is the attempt's, minted by `attemptIdFor` from the cohort and attempt
+ * number so a replayed launch dispatch resolves the identical request — the
+ * capability included, since it is derived from the id rather than generated.
+ */
+export const resolveAttemptExecution = async (
+  input: ResolveWorkOrderInput & { readonly attempt_id: WorkOrderId; readonly attempt_workflow_id: string },
+): Promise<ResolvedAttemptExecution> => {
+  const capability = capabilityFor(input.capability_seed, input.attempt_id);
+  return { id: input.attempt_id, workflow_id: input.attempt_workflow_id, capability_hash: capabilityHash(capability),
+    request: await executionRequest({ ...input, work_order_id: input.attempt_id, capability }) };
+};
+
+/** The v14 entry point, retained for callers that still mint their own id. */
+export const resolveWorkOrder = async (input: ResolveWorkOrderInput): Promise<ResolvedAttemptExecution> => {
   const id = workOrderIdFor(input.run_id, input.stage.stage_key, input.unit.unit_id, input.identity);
-  const capability = capabilityFor(input.capability_seed, id);
-  return { id, workflow_id: workOrderWorkflowId(id), capability_hash: capabilityHash(capability), request: await executionRequest({ ...input, work_order_id: id, capability }) };
+  return resolveAttemptExecution({ ...input, attempt_id: id, attempt_workflow_id: workOrderWorkflowId(id) });
 };
 
 /** One required output slot a retried unit still owes, as `retry_unit` reads it off `run_output_slot`. */

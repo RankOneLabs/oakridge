@@ -18,21 +18,24 @@ class StubSql implements TransactionalSqlExecutor {
 }
 
 test("project repository persists and decodes the public project model", async () => {
-  const row = { id: "00000000-0000-4000-8000-000000000001", name: "Oakridge", repo_dir: "/code/oakridge", created_at: "2026-08-15T12:00:00Z", forge_repository: null, base_branch: null };
+  const row = { id: "00000000-0000-4000-8000-000000000001", name: "Oakridge", repo_dir: "/code/oakridge", created_at: "2026-08-15T12:00:00Z", forge_repository: null, integration_branch: null };
   const sql = new StubSql([row]);
-  const created = await new PostgresProjectRepository(sql).insert({ id: row.id as ProjectId, name: row.name, repo_dir: row.repo_dir, created_at: row.created_at, forge_repository: null, base_branch: null });
+  const created = await new PostgresProjectRepository(sql).insert({ id: row.id as ProjectId, name: row.name, repo_dir: row.repo_dir, created_at: row.created_at, forge_repository: null, integration_branch: null });
   expect(created).toEqual({ ...row, id: row.id as ProjectId });
   expect(sql.calls[0]?.statement).toContain("INSERT INTO oakridge.project");
-  expect(sql.calls[0]?.parameters).toEqual([row.id, row.name, row.repo_dir, row.created_at, null, null]);
+  // The forge identity is serialised before it is bound: `pg` renders a JS value
+  // for a `::jsonb` parameter by its own rules, and only a string is guaranteed
+  // to arrive as the JSON that was meant.
+  expect(sql.calls[0]?.parameters).toEqual([row.id, row.name, row.repo_dir, row.created_at, "null", null]);
 });
 
 test("project repository updates the mutable project fields", async () => {
-  const stored = { id: "00000000-0000-4000-8000-000000000001", name: "Old Scout", repo_dir: "/code/personal/scout", created_at: "2026-08-15T12:00:00Z", forge_repository: null, base_branch: "trunk" };
-  const updated = { name: "Scout", repo_dir: "/code/rol/scout", forge_repository: { provider: "github" as const, owner: "RankOneLabs", name: "scout" }, base_branch: "main" };
+  const stored = { id: "00000000-0000-4000-8000-000000000001", name: "Old Scout", repo_dir: "/code/personal/scout", created_at: "2026-08-15T12:00:00Z", forge_repository: null, integration_branch: "trunk" };
+  const updated = { name: "Scout", repo_dir: "/code/rol/scout", forge_repository: { provider: "github" as const, owner: "RankOneLabs", name: "scout" }, integration_branch: "main" };
   const persisted = { ...stored, ...updated };
   const sql = new StubSql([persisted]);
   expect(await new PostgresProjectRepository(sql).update(stored.id as ProjectId, updated)).toEqual({ ...persisted, id: stored.id as ProjectId });
-  expect(sql.calls[0]?.parameters).toEqual([stored.id, updated.name, updated.repo_dir, updated.forge_repository, updated.base_branch]);
+  expect(sql.calls[0]?.parameters).toEqual([stored.id, updated.name, updated.repo_dir, JSON.stringify(updated.forge_repository), updated.integration_branch]);
 });
 
 test("workflow definition list passes explicit archival policy to SQL", async () => {

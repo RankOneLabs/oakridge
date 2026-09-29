@@ -37,7 +37,7 @@ export class GitProjectRepositoryIdentityResolver implements ProjectRepositoryId
     const forgeRepository = githubIdentityFromRemote(remote);
     if (!forgeRepository) return null;
     const symbolicHead = await this.git_output(repoDir, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]);
-    const baseBranch = symbolicHead?.startsWith("origin/") ? symbolicHead.slice("origin/".length) || null : null;
-    return { forge_repository: forgeRepository, base_branch: baseBranch };
+    const integrationBranch = symbolicHead?.startsWith("origin/") ? symbolicHead.slice("origin/".length) || null : null;
+    return { forge_repository: forgeRepository, integration_branch: integrationBranch };
   }
 }

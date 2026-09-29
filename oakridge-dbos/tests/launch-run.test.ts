@@ -47,10 +47,10 @@ const mountedFixture = (options: { readonly archived?: boolean; readonly start_r
     runs: {
       async find_launch_by_id() { return stored?.run ? { ...stored.run, root_workflow_id: runRecordWorkflowId(stored.run.id) } : null; },
       async create_run(input: PersistWorkflowRunLaunch) {
-        if (!stored) { stored = input; return { ok: true as const, value: { kind: "created" as const, run: { ...input.run, root_workflow_id: runRecordWorkflowId(input.run.id) }, epic_profile: input.epic_profile } }; }
+        if (!stored) { stored = input; return { ok: true as const, value: { kind: "created" as const, run: { ...input.run, root_workflow_id: runRecordWorkflowId(input.run.id) } } }; }
         const matches = JSON.stringify(stored) === JSON.stringify(input);
         return matches
-          ? { ok: true as const, value: { kind: "replayed" as const, run: { ...input.run, root_workflow_id: runRecordWorkflowId(input.run.id) }, epic_profile: input.epic_profile } }
+          ? { ok: true as const, value: { kind: "replayed" as const, run: { ...input.run, root_workflow_id: runRecordWorkflowId(input.run.id) } } }
           : { ok: false as const, error: { operation: "create_workflow_run" as const, kind: "idempotency_conflict" as const, detail: "conflicting replay" } };
       },
     },
@@ -172,7 +172,13 @@ test("a launch declaring repositories proceeds without checking their branches",
     // One base branch for the epic, defaulted from its slug, beside the
     // repositories rather than repeated inside each of them.
     base_branch: "epic/tiers-page",
-    repositories: [{ key: "pipefitter", path: "/repos/pipefitter", integration_branch: "main" }],
+    // The epic's own configuration lands here too: v15 has no profile row, so
+    // the merge policy and each repository's forge identity travel on the
+    // context every stage already reads.
+    title: "Tiers page",
+    slug: "tiers-page",
+    final_merge_policy: "guarded",
+    repositories: [{ key: "pipefitter", path: "/repos/pipefitter", integration_branch: "main", forge_repository: null }],
   }));
   expect(subject.starts()).toHaveLength(1);
 });

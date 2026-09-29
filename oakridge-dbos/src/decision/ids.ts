@@ -6,7 +6,7 @@
  */
 import { createHash } from "node:crypto";
 
-import type { CohortId, InputFingerprint, RunTransitionId, RunUnitId, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "../domain/primitives";
+import type { ArtifactId, AttemptId, CohortId, InputFingerprint, RunTransitionId, RunUnitId, SessionId, StageInstanceId, UnitId, WaitId, WorkflowRunId, WorkOrderId } from "../domain/primitives";
 import type { TransitionOwner } from "../domain/run-record";
 import type { StageKey } from "../domain/workflow";
 
@@ -41,3 +41,28 @@ export const transitionIdFor = (owner: TransitionOwner, resulting_version: numbe
 /** The one durable address for the effect recorded on a transition row. */
 export const transitionEffectWorkflowId = (owner: TransitionOwner, resulting_version: number): string =>
   `v15-effect:${ownerIdentity(owner)}:${resulting_version}`;
+
+/**
+ * An attempt and the session that runs it, both named by the transition that
+ * launched them and the attempt number it selected. Deterministic so a replayed
+ * dispatch of the same launch transition finds the rows it already made.
+ */
+export const attemptIdFor = (cohort_id: CohortId, attempt_number: number): AttemptId =>
+  stableUuid(`v15-attempt:${cohort_id}:${attempt_number}`) as AttemptId;
+
+export const sessionIdFor = (attempt_id: AttemptId): SessionId =>
+  stableUuid(`v15-session:${attempt_id}`) as SessionId;
+
+export const attemptWorkflowId = (attempt_id: AttemptId): string => `v15-attempt:${attempt_id}`;
+
+/**
+ * The wait a parked output slot opens, named by the revision it holds.
+ *
+ * One revision parks one slot, so the revision is the wait's natural key: a
+ * retried publication of the same body under the same attempt replays onto the
+ * same wait rather than opening a second one for the operator to decide twice.
+ */
+export const waitGateIdFor = (artifact_id: ArtifactId): WaitId =>
+  stableUuid(`v15-wait:${artifact_id}`) as WaitId;
+
+export const waitGateCommandWorkflowId = (artifact_id: ArtifactId): string => `v15-wait:${artifact_id}`;

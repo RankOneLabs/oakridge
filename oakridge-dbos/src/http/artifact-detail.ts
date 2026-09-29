@@ -3,10 +3,10 @@ import { Hono } from "hono";
 import type { OperatorArtifactDetail, OperatorArtifactRevision } from "../domain/operator-projections";
 import type { ArtifactTypeDefinition } from "../domain/artifact-types";
 import { parseUuidId, type ArtifactId } from "../domain/primitives";
-import type { ArtifactRevisionRepository, GateDecisionAuditRepository, StageInstanceRepository } from "../storage/repositories";
+import type { ArtifactRevisionRepository, GateDecisionReadRepository, StageInstanceRepository } from "../storage/repositories";
 import { selectBuiltInGateDisposition } from "../domain/gates";
 
-/** An audit row records the action name only, so its disposition comes from the shared vocabulary. */
+/** A decided wait records the action name only, so its disposition comes from the shared vocabulary. */
 const isReleaseAction = (action: string): boolean => selectBuiltInGateDisposition(action) === "release";
 
 export interface ArtifactTypePresentation {
@@ -18,7 +18,13 @@ export interface ArtifactTypePresentation {
 export interface ArtifactDetailDependencies {
   readonly artifacts: ArtifactRevisionRepository;
   readonly stages: StageInstanceRepository;
-  readonly audits: GateDecisionAuditRepository;
+  /**
+   * Per-revision draft/approved/rejected, read from the wait that decided it.
+   * v14 read a `gate_decision_audit` row here; v15 writes the decision to
+   * `wait_gate.outcome` and the transition ledger, so the label comes from the
+   * wait and the response body is unchanged.
+   */
+  readonly audits: GateDecisionReadRepository;
   readonly presentation_for_type: (artifact_type: string) => ArtifactTypePresentation | null;
   readonly artifact_types?: readonly ArtifactTypeDefinition[];
 }

@@ -50,7 +50,7 @@ export const createConfigurationApp = (dependencies: ConfigurationHttpDependenci
     if (!parsed.success) return http.json({ error: "name and repo_dir are required" }, 400);
     try {
       const identity = await dependencies.project_identity.resolve(parsed.data.repo_dir);
-      const project = await dependencies.projects.insert({ id: newId() as ProjectId, ...parsed.data, created_at: dependencies.now(), forge_repository: identity?.forge_repository ?? null, base_branch: identity?.base_branch ?? null });
+      const project = await dependencies.projects.insert({ id: newId() as ProjectId, ...parsed.data, created_at: dependencies.now(), forge_repository: identity?.forge_repository ?? null, integration_branch: identity?.integration_branch ?? null });
       return http.json(project, 201);
     } catch (error) {
       return http.json({ error: error instanceof Error ? error.message : "project creation failed" }, 500);
@@ -63,7 +63,7 @@ export const createConfigurationApp = (dependencies: ConfigurationHttpDependenci
     if (!parsed.success) return http.json({ error: "name and repo_dir are required" }, 400);
     try {
       const identity = await dependencies.project_identity.resolve(parsed.data.repo_dir);
-      const project = await dependencies.projects.update(projectId, { ...parsed.data, forge_repository: identity?.forge_repository ?? null, base_branch: identity?.base_branch ?? null });
+      const project = await dependencies.projects.update(projectId, { ...parsed.data, forge_repository: identity?.forge_repository ?? null, integration_branch: identity?.integration_branch ?? null });
       return project ? http.json(project) : http.json({ error: "project not found" }, 404);
     } catch (error) {
       return http.json({ error: error instanceof Error ? error.message : "project update failed" }, 500);

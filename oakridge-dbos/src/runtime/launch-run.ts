@@ -1,13 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 
-import type { EpicWorkflowProfileId } from "../domain/epic";
 import type { OperatorRunSummary } from "../domain/operator-projections";
 import { err, ok, type Result, type WorkflowRunId } from "../domain/primitives";
 import type { CreateWorkflowRunRequest } from "../domain/runs";
 import { runRecordWorkflowId } from "../domain/workflow-ids";
 import { contextRequirementsOf, describeUnsatisfiedRequirements, unsatisfiedContextRequirements } from "../compiler/context-requirements";
 import { compileWorkflowManifest } from "../compiler/compile-workflow";
-import { createEpicProfile, prepareRunContext } from "./prepare-run-context";
+import { prepareRunContext } from "./prepare-run-context";
 import type { RunStartError, RunStartRequest } from "./run-launch-dispatch";
 import type { OperatorProjectionRepository } from "../storage/postgres-operators";
 import type { ProjectRepository, PromptBundleRepository, WorkflowDefinitionRepository, WorkflowRunRepository } from "../storage/repositories";
@@ -94,12 +93,12 @@ export const launchRun = async (request: RunLaunchRequest, dependencies: LaunchR
   // owner, and it is not the participant that can only ever say no.
 
   const createdAt = existing?.created_at ?? dependencies.now();
-  const epicProfile = request.epic_profile ? createEpicProfile({ id: runId as unknown as EpicWorkflowProfileId,
-    workflow_run_id: runId, config: request.epic_profile, created_at: createdAt }) : null;
+  // The epic configuration is already folded into `context` by
+  // `prepareRunContext`; there is no profile row to persist beside the run.
   const persisted = await dependencies.runs.create_run({
     run: { id: runId, workflow_definition_id: definition.id, project_id: request.project_id, context, bundle_pin: bundlePin,
       archived: false, created_at: createdAt },
-    epic_profile: epicProfile, workflow_definition_version: definition.version,
+    workflow_definition_version: definition.version,
   });
   if (!persisted.ok) return launchFailure("idempotency_conflict", persisted.error.detail);
   // The run row is the durable intent; a failed start here is not a launch

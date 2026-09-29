@@ -41,6 +41,7 @@ export interface DevFlowBuildCohort {
 export interface RunOwnedCohortHandoff {
   readonly run_id: WorkflowRunId;
   readonly stage_instance_id: StageInstanceId;
+  readonly cohort_id: CohortId;
   readonly unit_id: UnitId;
   readonly repository_key: string;
   readonly handoff_artifact_id: ArtifactId;

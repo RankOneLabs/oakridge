@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 
 import type { ArtifactRevision } from "../src/domain/artifacts";
-import type { ArtifactId, ExecutionId, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "../src/domain/primitives";
+import type { ArtifactId, AttemptId, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "../src/domain/primitives";
 import type { OperatorSessionRunLocation } from "../src/domain/operator-projections";
 import { createDomainReadApp } from "../src/http/domain-reads";
 import type { DomainReadHttpDependencies } from "../src/http/domain-reads";
@@ -11,7 +11,8 @@ const stageId = "00000000-0000-4000-8000-000000000002" as StageInstanceId;
 const rootId = "00000000-0000-4000-8000-000000000003" as ArtifactId;
 const revisionId = "00000000-0000-4000-8000-000000000004" as ArtifactId;
 const artifact: ArtifactRevision = { id: revisionId, chain_id: rootId, run_id: runId, stage_instance_id: stageId,
-  execution_id: "execution" as ExecutionId, unit_id: "unit" as UnitId, output_name: "result", artifact_type: "dev.result",
+  cohort_id: null, attempt_id: "00000000-0000-4000-8000-00000000000a" as AttemptId, session_id: null,
+  unit_id: "unit" as UnitId, output_name: "result", artifact_type: "dev.result",
   label: null, body: {}, version: 2, parent_artifact_id: rootId, lifecycle: { kind: "current" }, created_at: "2026-08-15T00:00:00Z" };
 
 const location: OperatorSessionRunLocation = { run_id: runId, stage_instance_id: stageId, stage_key: "build",

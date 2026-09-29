@@ -12,7 +12,6 @@ import { createRerunApp, type RerunHttpDependencies } from "./rerun";
 import { createRunLaunchApp } from "./run-launch";
 import type { LaunchRunDependencies } from "../runtime/launch-run";
 import { createConfigurationApp, type ConfigurationHttpDependencies } from "./configuration";
-import { createAdmissionApp, type AdmissionHttpDependencies } from "./admission";
 import { createRunLifecycleApp, type RunLifecycleHttpDependencies } from "./run-lifecycle";
 import { createDomainReadApp, type DomainReadHttpDependencies } from "./domain-reads";
 import { createFinalPullRequestApp, type FinalPullRequestHttpDependencies } from "./final-pull-request";
@@ -23,7 +22,6 @@ import { createOperatorRetryApp, type OperatorRetryHttpDependencies } from "./op
 
 export interface OakridgeHttpDependencies {
   readonly configuration: ConfigurationHttpDependencies;
-  readonly admission: AdmissionHttpDependencies;
   readonly operator_retry: OperatorRetryHttpDependencies;
   readonly run_lifecycle: RunLifecycleHttpDependencies;
   readonly domain_reads: DomainReadHttpDependencies;
@@ -45,7 +43,6 @@ export const createApp = (dependencies: OakridgeHttpDependencies): Hono => {
   const app = new Hono();
   if (dependencies.control_token) app.use("*", controlTokenMiddleware(dependencies.control_token));
   app.route("/", createConfigurationApp(dependencies.configuration));
-  app.route("/", createAdmissionApp(dependencies.admission));
   app.route("/", createOperatorRetryApp(dependencies.operator_retry));
   app.route("/", createRunLifecycleApp(dependencies.run_lifecycle));
   app.route("/", createDomainReadApp(dependencies.domain_reads));

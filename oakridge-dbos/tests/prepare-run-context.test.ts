@@ -1,8 +1,7 @@
 import { expect, test } from "bun:test";
 
-import type { EpicWorkflowProfileId } from "../src/domain/epic";
-import type { ProjectId, WorkflowRunId } from "../src/domain/primitives";
-import { createEpicProfile, prepareRunContext } from "../src/runtime/prepare-run-context";
+import type { ProjectId } from "../src/domain/primitives";
+import { prepareRunContext } from "../src/runtime/prepare-run-context";
 
 const project = {
   id: "00000000-0000-0000-0000-000000000001" as ProjectId,
@@ -10,7 +9,7 @@ const project = {
   repo_dir: "/codes/oakridge",
   created_at: "2026-08-15T00:00:00Z",
   forge_repository: null,
-  base_branch: null,
+  integration_branch: null,
 };
 
 test("project context is injected before caller keys override it", () => {
@@ -25,7 +24,9 @@ test("epic configuration derives repository context without coupling it to execu
     base_branch: null,
     repositories: [{ repository_key: "oakridge", repository_path: "/codes/oakridge", integration_branch: "main", forge_repository: null }],
   } });
-  expect(result).toEqual({ base_branch: "epic/safe-artifacts", repositories: [{ key: "oakridge", path: "/codes/oakridge", integration_branch: "main" }] });
+  expect(result).toEqual({ title: "Epic", slug: "safe-artifacts", final_merge_policy: "guarded",
+    base_branch: "epic/safe-artifacts",
+    repositories: [{ key: "oakridge", path: "/codes/oakridge", integration_branch: "main", forge_repository: null }] });
 });
 
 // A non-object caller context used to be refused here, and only when a project
@@ -36,15 +37,31 @@ test("a context with no project and no epic profile passes through untouched", (
   expect(prepareRunContext({ caller_context: caller, project: null, epic_profile: null })).toEqual(caller);
 });
 
-test("Epic profile construction owns domain defaults independently of execution", () => {
-  const profile = createEpicProfile({
-    id: "00000000-0000-0000-0000-000000000002" as EpicWorkflowProfileId,
-    workflow_run_id: "00000000-0000-0000-0000-000000000003" as WorkflowRunId,
-    created_at: "2026-08-15T01:00:00Z",
-    config: { title: "Epic", slug: "safe-artifacts", final_merge_policy: "guarded", base_branch: null, repositories: [
-      { repository_key: "oakridge", repository_path: "/codes/oakridge", integration_branch: "main", forge_repository: null },
-    ] },
+/**
+ * Epic configuration is folded into the run context rather than persisted as a
+ * profile row: v15 has no `epic_workflow_profile`, and every field of it is read
+ * from the context every other stage already reads. `forge_repository` and
+ * `final_merge_policy` are the two that had nowhere else to go.
+ */
+test("epic configuration becomes run context, forge identity and merge policy included", () => {
+  const context = prepareRunContext({ caller_context: {}, project: null, epic_profile: {
+    title: "Epic", slug: "safe-artifacts", final_merge_policy: "external_confirmation", base_branch: null,
+    repositories: [{ repository_key: "oakridge", repository_path: "/codes/oakridge", integration_branch: "main",
+      forge_repository: { provider: "github", owner: "RankOneLabs", name: "oakridge" } }],
+  } });
+  expect(context).toEqual({
+    title: "Epic", slug: "safe-artifacts", final_merge_policy: "external_confirmation",
+    base_branch: "epic/safe-artifacts",
+    repositories: [{ key: "oakridge", path: "/codes/oakridge", integration_branch: "main",
+      forge_repository: { provider: "github", owner: "RankOneLabs", name: "oakridge" } }],
   });
-  expect(profile).toEqual(expect.objectContaining({ lifecycle_state: "active",
-    repositories: [expect.objectContaining({ integration_branch: "main", final_pull_request: null, final_merge_state: "pending" })] }));
+});
+
+test("a repository with no configured forge carries a null identity rather than an absent key", () => {
+  const context = prepareRunContext({ caller_context: {}, project: null, epic_profile: {
+    title: "Epic", slug: "safe-artifacts", final_merge_policy: "guarded", base_branch: "epic/custom",
+    repositories: [{ repository_key: "oakridge", repository_path: "/codes/oakridge", integration_branch: "main", forge_repository: null }],
+  } });
+  expect(context.base_branch).toBe("epic/custom");
+  expect(context.repositories).toEqual([{ key: "oakridge", path: "/codes/oakridge", integration_branch: "main", forge_repository: null }]);
 });

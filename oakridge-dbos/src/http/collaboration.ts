@@ -2,21 +2,19 @@ import { randomUUID } from "node:crypto";
 
 import { Hono } from "hono";
 
-import { renderCollaborationPingPrompt, renderSessionMessagePrompt, validateDeliveryKey, type CollaborationMessage, type CollaborationThread, type DeliverSessionMessage, type MessageId, type MessageParty, type ReviewItem, type ReviewItemId, type ReviewItemStatus, type SessionMessage, type SessionMessageEnqueueResult, type SessionMessageRecipientResolver, type SessionMessageRepository, type SessionThreadId, type SessionThreadMessageId, type ThreadId, type ThreadStatus } from "../domain/collaboration";
+import { renderCollaborationPingPrompt, renderSessionMessagePrompt, validateDeliveryKey, type CollaborationMessage, type CollaborationThread, type DeliverSessionMessage, type MessageId, type MessageParty, type SessionMessage, type SessionMessageEnqueueResult, type SessionMessageRecipientResolver, type SessionMessageRepository, type SessionThreadId, type SessionThreadMessageId, type ThreadId, type ThreadStatus } from "../domain/collaboration";
 import { isJsonValue, parseUuidId, type ArtifactId, type CohortId, type SessionMessageId, type WorkflowRunId } from "../domain/primitives";
-import { workOrderIdOfArtifact, type ArtifactRevision } from "../domain/artifacts";
-import type { ArtifactRevisionRepository, CollaborationRepository, RunRecordRepository } from "../storage/repositories";
+import type { ArtifactRevision } from "../domain/artifacts";
+import type { ArtifactRevisionRepository, CollaborationRepository } from "../storage/repositories";
 
 export interface ArtifactCollaborationPolicy {
   readonly commentable: boolean;
-  readonly review_items: boolean;
   readonly atom_editable?: boolean;
 }
 export interface CollaborationHttpDependencies {
   readonly artifacts: ArtifactRevisionRepository;
   readonly collaboration: CollaborationRepository;
   readonly policy_for_artifact_type: (artifact_type: string) => ArtifactCollaborationPolicy | null;
-  readonly records: Pick<RunRecordRepository, "find_work_order_attachment">;
   readonly messages?: Pick<SessionMessageRepository, "find_by_delivery_key" | "list_for_run">;
   readonly message_recipients?: SessionMessageRecipientResolver;
   readonly send_message?: (input: DeliverSessionMessage) => Promise<SessionMessageEnqueueResult>;
@@ -145,22 +143,24 @@ export const createCollaborationApp = (dependencies: CollaborationHttpDependenci
     if (!fullThread || !fullThread.messages.length) return http.json({ error: "thread has no durable messages" }, 409);
     const key = validateDeliveryKey(http.req.header("idempotency-key") ?? randomUUID());
     if (key.kind === "invalid") return http.json({ error: key.detail }, 400);
-    const workOrderId = workOrderIdOfArtifact(threadRevision);
-    if (!workOrderId) return http.json({ error: "thread artifact was not produced by a work order" }, 409);
-    const attachment = await dependencies.records.find_work_order_attachment(workOrderId);
-    if (!attachment || attachment.external_reference === null) return http.json({ error: "thread executor is not attached" }, 409);
+    if (!dependencies.message_recipients) return http.json({ error: "session messaging is unavailable" }, 503);
+    // The agent to ping is the session that produced the revision. v14 went
+    // through the work order's executor attachment; v15's session *is* that
+    // attachment, and one resolver already turns a session id into a delivery
+    // target for every sender.
+    if (!threadRevision.session_id) return http.json({ error: "thread artifact was not produced by an agent session" }, 409);
     const prompt = renderCollaborationPingPrompt(fullThread);
     const createdAt = now();
     const message: SessionMessage = {
-      id: newId() as SessionMessageId, run_id: threadRevision.run_id, cohort_id: null,
-      sender: { kind: "operator", id: "operator" }, recipient: { kind: "agent", id: String(threadRevision.execution_id) },
+      id: newId() as SessionMessageId, run_id: threadRevision.run_id, cohort_id: threadRevision.cohort_id,
+      sender: { kind: "operator", id: "operator" }, recipient: { kind: "agent", id: threadRevision.session_id },
       thread_id: sessionThreadId(threadId)!, message_id: sessionThreadMessageId(key.delivery_key)!, artifact_thread_id: threadId,
       body: prompt, delivery_key: key.delivery_key, created_at: createdAt,
     };
+    const resolution = await dependencies.message_recipients.resolve(message);
+    if (resolution.kind === "recipient_not_deliverable") return http.json({ error: resolution.detail, code: resolution.kind }, 409);
     const accepted = await dependencies.ping_thread({
-      message,
-      target: { execution_id: threadRevision.execution_id, executor_type: attachment.executor_type, external_reference: attachment.external_reference },
-      prompt: renderSessionMessagePrompt(message.body),
+      message, target: resolution.target, prompt: renderSessionMessagePrompt(message.body),
     });
     return accepted.kind === "idempotency_conflict"
       ? http.json({ error: accepted.detail, code: accepted.kind }, 409)
@@ -168,19 +168,18 @@ export const createCollaborationApp = (dependencies: CollaborationHttpDependenci
   });
   /**
    * v1's `emit_revision` superseded an artifact's pending revision in place;
-   * the v2 run record has no equivalent operation. `publish_artifact`
-   * (`storage/postgres-run-record.ts`) hands one artifact to an output slot
-   * and refuses a second publication against the same slot in every state a
-   * `current` artifact can be found in: `slot_pending` while the artifact
-   * awaits its gate, `slot_already_released` or `slot_invalidated` once the
-   * gate has decided. There is nothing here left to build a body edit
-   * on top of — no route can construct a publish call that would succeed.
-   * `tests/postgres-run-record.test.ts` records the missing operation itself
-   * as a deferred "later slice"; building it is a decision-layer change the
-   * operator makes separately. The route stays mounted because kbbl's
-   * direct-edit UI still calls it and surfaces the `error` string to the
-   * operator; 501 is the honest status for that — "not implemented", not a
-   * conflict this request could ever resolve by retrying.
+   * the v15 run record has no equivalent operation. `publish_artifact`
+   * (`storage/postgres-run-record-repository.ts`) hands one artifact to a
+   * declared slot and refuses a second publication against that slot in every
+   * state a `current` artifact can be found in: `slot_pending` while the
+   * artifact awaits its gate, `slot_already_released` once the gate let it
+   * through. A replacement after a rejection is a *different attempt's* to
+   * publish, which is what makes the revision chain a chain. There is nothing
+   * here left to build a body edit on top of — no route can construct a publish
+   * call that would succeed. The route stays mounted because kbbl's direct-edit
+   * UI still calls it and surfaces the `error` string to the operator; 501 is
+   * the honest status for that — "not implemented", not a conflict this request
+   * could ever resolve by retrying.
    */
   app.post("/artifacts/:id/edits", async (http) => {
     const artifactId = parseUuidId<ArtifactId>(http.req.param("id"));
@@ -190,36 +189,6 @@ export const createCollaborationApp = (dependencies: CollaborationHttpDependenci
     const policy = dependencies.policy_for_artifact_type(artifact.artifact_type);
     if (!policy?.atom_editable) return http.json({ error: `artifact type '${artifact.artifact_type}' does not support 'atom_editable'` }, 400);
     return http.json({ error: "operator edits are not supported: a run-owned artifact has no revision operation — a published output slot holds one artifact until its gate decides", code: "revision_unsupported" }, 501);
-  });
-  app.get("/artifacts/:id/review_items", async (http) => {
-    const artifactId = parseUuidId<ArtifactId>(http.req.param("id"));
-    const artifact = artifactId && await dependencies.artifacts.find_by_id(artifactId);
-    if (!artifact) return http.json({ error: "artifact not found" }, 404);
-    if (!dependencies.policy_for_artifact_type(artifact.artifact_type)?.review_items) return http.json({ error: `artifact type '${artifact.artifact_type}' does not support 'review_items'` }, 400);
-    return http.json(await dependencies.collaboration.list_review_items(artifact.chain_id));
-  });
-  app.post("/artifacts/:id/review_items", async (http) => {
-    const artifactId = parseUuidId<ArtifactId>(http.req.param("id"));
-    const artifact = artifactId && await dependencies.artifacts.find_by_id(artifactId);
-    if (!artifact) return http.json({ error: "artifact not found" }, 404);
-    if (!isMutable(artifact)) return http.json({ error: "artifact revision is not current", code: artifact.lifecycle.kind }, 409);
-    if (!dependencies.policy_for_artifact_type(artifact.artifact_type)?.review_items) return http.json({ error: `artifact type '${artifact.artifact_type}' does not support 'review_items'` }, 400);
-    const body = await objectBody(http.req.raw); const anchor = nonempty(body?.anchor); const claim = nonempty(body?.claim); const reality = nonempty(body?.reality);
-    if (!anchor || !claim || !reality) return http.json({ error: "anchor, claim, and reality are required" }, 400);
-    const item: ReviewItem = { id: newId() as ReviewItemId, artifact_id: artifact.chain_id, revision_id: artifact.id, anchor, claim, reality, status: "open", resolution: null, created_at: now() };
-    await dependencies.collaboration.insert_review_item(item); return http.json(item, 201);
-  });
-  app.patch("/review_items/:id", async (http) => {
-    const id = parseUuidId<ReviewItemId>(http.req.param("id"));
-    const existingItem = id && await dependencies.collaboration.find_review_item(id); if (!existingItem) return http.json({ error: "review item not found" }, 404);
-    const itemRevision = await dependencies.artifacts.find_by_id(existingItem.revision_id);
-    if (!itemRevision || !isMutable(itemRevision)) return http.json({ error: "review-item artifact revision is not current", code: itemRevision?.lifecycle.kind ?? "not_found" }, 409);
-    const body = await objectBody(http.req.raw); const status = body?.status;
-    if (status !== "open" && status !== "resolved" && status !== "waived") return http.json({ error: "invalid review-item status" }, 400);
-    const resolution = body?.resolution === null || body?.resolution === undefined ? null : nonempty(body.resolution);
-    if (body?.resolution !== null && body?.resolution !== undefined && !resolution) return http.json({ error: "resolution must be a non-empty string or null" }, 400);
-    await dependencies.collaboration.update_review_item(id, status as ReviewItemStatus, resolution);
-    const updated = await dependencies.collaboration.find_review_item(id); return http.json(updated!);
   });
   return app;
 };

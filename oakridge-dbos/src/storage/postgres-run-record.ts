@@ -2,12 +2,16 @@ import type { Command, Contradiction, Derivation, StatusChange } from "../decisi
 import { derive } from "../decision/derive";
 import { transitionEffectWorkflowId, transitionIdFor } from "../decision/ids";
 import type { RunSnapshot } from "../decision/snapshot";
-import { err, ok, type Result, type RunTransitionId, type WorkflowRunId } from "../domain/primitives";
+import { err, ok, type Result, type RunTransitionId, type SessionId, type WorkflowRunId } from "../domain/primitives";
+import type { CoreStatus } from "../domain/records";
 import type { RunTransitionRecord, TransitionEffectDescriptor, TransitionLaunchReason, TransitionOwner } from "../domain/run-record";
 import type { AdapterRegistry } from "../runtime/executor-registry";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 
 const CORE_EFFECT_NAMES = new Set(["none", "start_stage", "start_attempt", "deliver_message", "resume_wait"]);
+
+/** `oakridge.session_status` and `oakridge.attempt_status` share this vocabulary. */
+export type SessionLifecycleStatus = CoreStatus;
 
 export interface CommitTransitionInput {
   readonly run_id: WorkflowRunId;
@@ -189,3 +193,53 @@ export class PostgresRunRecordWriter {
 
 /** Decode shape kept local to this boundary for future transition reads. */
 export const decodeTransitionRecord = (row: RunTransitionRecord): RunTransitionRecord => row;
+
+/**
+ * An attempt's and its session's status, written from what the adapter
+ * reported.
+ *
+ * These live here for the same reason the owner writer does: this module is the
+ * one place lifecycle status is written, and `tests/architecture.test.ts`
+ * asserts it stays that way. An attempt has no owner version — it is not a
+ * decision owner — so it takes no expected-version argument; the session/attempt
+ * pair moves together because there is exactly one session per attempt
+ * (`oakridge.session UNIQUE (attempt_id)`).
+ */
+export const writeSessionStatus = async (
+  tx: SqlExecutor,
+  input: { readonly session_id: SessionId; readonly status: SessionLifecycleStatus; readonly at: string },
+): Promise<void> => {
+  const terminal = input.status === "complete" || input.status === "failed" || input.status === "cancelled";
+  await tx.query(
+    `UPDATE oakridge.session
+     SET status=$2::oakridge.session_status,
+         started_at=CASE WHEN $2::text='active' THEN COALESCE(started_at,$3::timestamptz) ELSE started_at END,
+         ended_at=CASE WHEN $4::boolean THEN $3::timestamptz ELSE NULL END
+     WHERE id=$1`, [input.session_id, input.status, input.at, terminal]);
+  await tx.query(
+    `UPDATE oakridge.attempt
+     SET status=$2::oakridge.attempt_status,
+         started_at=CASE WHEN $2::text='active' THEN COALESCE(started_at,$3::timestamptz) ELSE started_at END,
+         ended_at=CASE WHEN $4::boolean THEN $3::timestamptz ELSE NULL END,
+         outcome=CASE WHEN $4::boolean THEN $5::jsonb ELSE NULL END
+     WHERE id=(SELECT attempt_id FROM oakridge.session WHERE id=$1)`,
+    [input.session_id, input.status, input.at, terminal,
+      terminal ? JSON.stringify({ kind: input.status === "complete" ? "succeeded" : input.status }) : null]);
+};
+
+/** Abandons every unfinished attempt of a cohort — what a retry replaces. */
+export const abandonCohortAttempts = async (
+  tx: SqlExecutor,
+  input: { readonly cohort_id: import("../domain/primitives").CohortId; readonly at: string; readonly reason: string },
+): Promise<void> => {
+  await tx.query(
+    `UPDATE oakridge.session
+     SET status='cancelled'::oakridge.session_status,ended_at=$2::timestamptz
+     WHERE ended_at IS NULL AND attempt_id IN (SELECT id FROM oakridge.attempt WHERE cohort_id=$1 AND ended_at IS NULL)`,
+    [input.cohort_id, input.at]);
+  await tx.query(
+    `UPDATE oakridge.attempt
+     SET status='cancelled'::oakridge.attempt_status,ended_at=$2::timestamptz,outcome=$3::jsonb
+     WHERE cohort_id=$1 AND ended_at IS NULL`,
+    [input.cohort_id, input.at, JSON.stringify({ kind: "cancelled", reason: input.reason })]);
+};

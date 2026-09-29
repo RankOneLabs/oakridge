@@ -7,7 +7,7 @@ import { createConfigurationApp } from "../src/http/configuration";
 import type { ProjectRepository, WorkflowDefinitionRepository } from "../src/storage/repositories";
 import { createDevFlowAdapterRegistry } from "../src/adapters/dev-flow";
 
-const project: Project = { id: "00000000-0000-4000-8000-000000000001" as ProjectId, name: "Oakridge", repo_dir: "/code/oakridge", created_at: "2026-08-15T12:00:00Z", forge_repository: null, base_branch: null };
+const project: Project = { id: "00000000-0000-4000-8000-000000000001" as ProjectId, name: "Oakridge", repo_dir: "/code/oakridge", created_at: "2026-08-15T12:00:00Z", forge_repository: null, integration_branch: null };
 const definition: WorkflowDefinition = { id: "00000000-0000-4000-8000-000000000002" as WorkflowDefinitionId, name: "flow", version: 1, archived: false, created_at: "2026-08-15T12:00:00Z", graph: { stages: {}, edges: [] } };
 
 const fixture = (generatedId = project.id as string, identity: Project["forge_repository"] = null, baseBranch: string | null = null, shouldFailProjectInsert = false) => {
@@ -29,7 +29,7 @@ const fixture = (generatedId = project.id as string, identity: Project["forge_re
   const app = createConfigurationApp({ projects: projectRepository, definitions: definitionRepository,
     adapter_roles: createDevFlowAdapterRegistry(),
     prompt_templates: { load: async (path) => `Prompt ${path}` },
-    project_identity: { resolve: async () => identity ? { forge_repository: identity, base_branch: baseBranch } : null }, now: () => "2026-08-15T12:00:00Z", new_id: () => generatedId });
+    project_identity: { resolve: async () => identity ? { forge_repository: identity, integration_branch: baseBranch } : null }, now: () => "2026-08-15T12:00:00Z", new_id: () => generatedId });
   return { app, projects, definitions };
 };
 
@@ -48,7 +48,7 @@ test("project update preserves identity and replaces repository metadata", async
   subject.projects.push(project);
   const response = await subject.app.request(`/projects/${project.id}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Scout", repo_dir: "/code/scout" }) });
   expect(response.status).toBe(200);
-  expect(await response.json()).toEqual({ ...project, name: "Scout", repo_dir: "/code/scout", forge_repository: identity, base_branch: "main" });
+  expect(await response.json()).toEqual({ ...project, name: "Scout", repo_dir: "/code/scout", forge_repository: identity, integration_branch: "main" });
 });
 
 test("unexpected project storage failures are server errors", async () => {
@@ -61,8 +61,8 @@ test("project creation persists resolved forge identity and base branch", async 
   const identity = { provider: "github" as const, owner: "RankOneLabs", name: "oakridge" };
   const subject = fixture(project.id, identity, "main");
   const response = await subject.app.request("/projects", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Oakridge", repo_dir: "/code/oakridge" }) });
-  expect(await response.json()).toEqual(expect.objectContaining({ forge_repository: identity, base_branch: "main" }));
-  expect(subject.projects[0]).toEqual(expect.objectContaining({ forge_repository: identity, base_branch: "main" }));
+  expect(await response.json()).toEqual(expect.objectContaining({ forge_repository: identity, integration_branch: "main" }));
+  expect(subject.projects[0]).toEqual(expect.objectContaining({ forge_repository: identity, integration_branch: "main" }));
 });
 
 test("workflow definition creation owns identifiers and normalizes the legacy delivery name", async () => {

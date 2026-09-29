@@ -115,12 +115,29 @@ test("core never reads final integration branch or merge policy", async () => {
   expect(adapter).toContain("profile.final_merge_policy");
 });
 
+/**
+ * Keyed on the *status enums* rather than the literal `SET status=`.
+ *
+ * `oakridge.core_status`, `attempt_status` and `session_status` are the three
+ * lifecycle vocabularies, and one module writes all of them — that is the
+ * invariant. The literal string also matched a closed wait and a resolved
+ * artifact thread, neither of which is a lifecycle owner and neither of which
+ * carries a durable version, so it flagged files that had not broken the rule.
+ */
+const LIFECYCLE_STATUS_WRITE = /status\s*=\s*\$\d+::oakridge\.(?:core|attempt|session)_status/;
+
 test("lifecycle status SQL has one writer", async () => {
   const files = await treeSources(SOURCE);
   const writers = (await Promise.all(files.map(async (file) => ({ file, source: await readFile(file, "utf8") }))))
-    .filter((entry) => entry.source.includes("SET status="))
+    .filter((entry) => LIFECYCLE_STATUS_WRITE.test(entry.source))
     .map((entry) => entry.file.slice(SOURCE.length + 1));
   expect(writers).toEqual(["storage/postgres-run-record.ts"]);
+});
+
+test("the lifecycle rule ignores a wait close and an artifact thread resolution", () => {
+  expect(LIFECYCLE_STATUS_WRITE.test("UPDATE oakridge.wait_gate SET status='closed' WHERE id=$1")).toBe(false);
+  expect(LIFECYCLE_STATUS_WRITE.test("UPDATE oakridge.artifact_thread SET status=$2 WHERE id=$1")).toBe(false);
+  expect(LIFECYCLE_STATUS_WRITE.test("SET status=$3::oakridge.core_status")).toBe(true);
 });
 
 test("each cohort has one stable machine address", () => {
