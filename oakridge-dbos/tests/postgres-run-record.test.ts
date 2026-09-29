@@ -58,7 +58,9 @@ test("four sibling cohort machines commit concurrently on owner-local versions w
       change: { status: "complete", blocked_reason: null, next_actor: null, outcome: { kind: "succeeded" } },
       effect: index === 0 ? { kind: "dev_flow_build_cohort_transition", event: { kind: "pull_request_merged", pull_request_url: "https://example.test/pull/1" },
         disposition: "transitioned", stage_data: { phase: "complete" },
-        projected_status: { status: "complete", blocked_reason: null, next_actor: null, outcome: { kind: "succeeded" } }, session_launch: null }
+        projected_status: { status: "complete", blocked_reason: null, next_actor: null, outcome: { kind: "succeeded" } },
+        session_launch: { session_role: "build", launch_reason: "initial_build",
+          prompt: { template_path: "dev-flow/build_v2.md", content: "Pinned build prompt" }, contract_block: "Role: build" } }
         : index === 1 ? { kind: customEvent, output_id: "artifact-1" } : { kind: "none" },
       ...(index === 0 ? { cohort_stage_data: { phase: "complete" } } : {}),
       actor: "test",
@@ -80,12 +82,16 @@ test("four sibling cohort machines commit concurrently on owner-local versions w
       { effect_name: customEvent, workflow_count: "1" },
       { effect_name: "none", workflow_count: "2" },
     ]);
-    const projected = await sql.query<{ readonly status: string; readonly phase: string; readonly projected_status: string }>(`SELECT
+    const projected = await sql.query<{ readonly status: string; readonly phase: string; readonly projected_status: string;
+      readonly launch_reason: string; readonly prompt_content: string }>(`SELECT
       cohort.status::text AS status,cohort.stage_data->>'phase' AS phase,
-      transition.effect_descriptor->'projected_status'->>'status' AS projected_status
+      transition.effect_descriptor->'projected_status'->>'status' AS projected_status,
+      transition.effect_descriptor->'session_launch'->>'launch_reason' AS launch_reason,
+      transition.effect_descriptor->'session_launch'->'prompt'->>'content' AS prompt_content
       FROM oakridge.cohort AS cohort JOIN oakridge.run_transition AS transition ON transition.owner_cohort_id=cohort.id
       WHERE cohort.id=$1`, [cohortId(0)]);
-    expect(projected[0]).toEqual({ status: "complete", phase: "complete", projected_status: "complete" });
+    expect(projected[0]).toEqual({ status: "complete", phase: "complete", projected_status: "complete",
+      launch_reason: "initial_build", prompt_content: "Pinned build prompt" });
 
     const stageDecision = await writer.decide({
       load_snapshot: async () => ({
