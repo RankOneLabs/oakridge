@@ -25,6 +25,7 @@ export interface ResolveDelegatedExecutionInput {
   readonly run_id: WorkflowRunId;
   readonly operator_role: StageOperatorRole | null;
   readonly launch_reason?: SessionLaunchReasonName;
+  readonly existing_pull_request?: string | null;
 }
 
 
@@ -141,7 +142,9 @@ export const resolveDelegatedExecution = (input: ResolveDelegatedExecutionInput)
   const roleConfig = input.definition.role_configs.find((candidate) => candidate.session_role === input.operator_role);
   if (!roleConfig) return err({ operation: "resolve_execution", detail: `session role '${input.operator_role}' has no runtime config` });
   const contractBlock = ["## Generated session contract", `Role: ${roleConfig.session_role}`,
-    `Launch reason: ${input.launch_reason ?? "initial"}`, `Authorized outputs: ${roleConfig.authorized_outputs.join(", ")}`].join("\n");
+    `Launch reason: ${input.launch_reason ?? "initial"}`,
+    ...(input.existing_pull_request ? [`Existing PR: ${input.existing_pull_request}`] : []),
+    `Authorized outputs: ${roleConfig.authorized_outputs.join(", ")}`].join("\n");
   const failed = (failure: ResolveExecutionError): Result<never, ResolveExecutionError> => err({ ...failure,
     rendered_prompt: `${failure.rendered_prompt ?? input.prompt_template}\n\n${contractBlock}` });
   const environment = { ...input.environment, item: input.unit.parameters };

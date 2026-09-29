@@ -90,6 +90,14 @@ export interface SessionLaunchReason {
   readonly name: SessionLaunchReasonName;
 }
 
+/** Immutable launch material selected by, and readable from, one transition. */
+export interface CommittedSessionLaunch {
+  readonly reason: SessionLaunchReason;
+  readonly session_role: StageOperatorRole;
+  readonly prompt: { readonly template_path: string; readonly content: string };
+  readonly existing_pull_request: string | null;
+}
+
 /** One cell in the role × launch-reason prompt matrix. */
 export interface PromptMatrixEntry {
   readonly session_role: StageOperatorRole;

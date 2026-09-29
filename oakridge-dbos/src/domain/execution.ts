@@ -1,5 +1,6 @@
 import type { ArtifactId, AttemptId, CohortId, ExecutionId, ExecutorOperationId, JsonValue, SessionId, StageInstanceId, UnitId, WorkflowRunId } from "./primitives";
 import type { ArtifactTypeId } from "./workflow";
+import type { CommittedSessionLaunch } from "./delegated-session";
 
 export interface ArtifactEnvelope {
   readonly artifact_id: ArtifactId;
@@ -35,6 +36,8 @@ export interface ExecutionRequest {
    * declared outputs alone cannot say what is outstanding.
    */
   readonly expected_artifacts: readonly ExpectedArtifactContract[];
+  /** Present for delegated sessions; selected and pinned by its launch transition. */
+  readonly session_launch?: CommittedSessionLaunch;
   readonly workspace_source?: { readonly execution_id: ExecutionId; readonly external_reference: ExternalExecutionReference };
 }
 

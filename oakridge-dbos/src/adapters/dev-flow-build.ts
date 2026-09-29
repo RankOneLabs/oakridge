@@ -1,6 +1,8 @@
 import type { BlockedReason, CoreStatus, NextActor } from "../domain/records";
 import { err, ok, type JsonValue, type Result } from "../domain/primitives";
 import type { PromptBundleEntry, StageOperatorRole } from "../domain/workflow";
+import type { CommittedSessionLaunch } from "../domain/delegated-session";
+import type { RunTransitionId } from "../domain/primitives";
 
 export const BUILD_LAUNCH_REASONS = {
   build: [
@@ -85,6 +87,18 @@ export interface BuildCohortEventResult {
   readonly launch: BuildSessionLaunch | null;
   readonly effect: BuildCohortTransitionEffect;
 }
+
+/** Attach the row identity after the transition has committed. */
+export const committedSessionLaunch = (
+  transition_id: RunTransitionId,
+  launch: BuildSessionLaunch,
+  existing_pull_request: string | null,
+): CommittedSessionLaunch => ({
+  reason: { transition_id, name: launch.launch_reason },
+  session_role: launch.session_role,
+  prompt: launch.prompt,
+  existing_pull_request,
+});
 
 export interface BuildCohortMachine {
   readonly required_build_set: readonly string[];

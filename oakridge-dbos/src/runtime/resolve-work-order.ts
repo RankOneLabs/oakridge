@@ -26,8 +26,7 @@ import { resolveBinding, resolveBindingValue, resolveDelegatedExecution } from "
 import type { StageInputSet } from "../decision/commands";
 import { workOrderIdFor, workOrderWorkflowId } from "../decision/ids";
 import type { CompiledStageContract, MaterializedExecutionUnit } from "../domain/compiled-workflow";
-import type { DelegatedSessionDefinitionConfig, SessionLaunchReasonName } from "../domain/delegated-session";
-import type { PromptBundle, WorkflowRunBundlePin } from "../domain/workflow";
+import type { CommittedSessionLaunch, DelegatedSessionDefinitionConfig } from "../domain/delegated-session";
 import type { AssessmentRevisionContext } from "../domain/dev-flow-artifacts";
 import type { ArtifactEnvelope, ExecutionRequest, ExternalExecutionReference } from "../domain/execution";
 import type { ArtifactId, JsonValue, OutputCollectionKey, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "../domain/primitives";
@@ -52,13 +51,11 @@ export interface ResolveWorkOrderInput {
   /** `"initial"` or `"revision:<fingerprint>"` — spec §13. */
   readonly identity: string;
   readonly capability_seed: string;
-  /** Selected by the transition that launched this work, independent of its idempotency identity. */
-  readonly launch_reason: SessionLaunchReasonName;
-  readonly bundle_pin: WorkflowRunBundlePin;
+  /** Role, reason and prompt selected atomically by the launch transition. */
+  readonly session_launch: CommittedSessionLaunch;
 }
 
 export interface ResolveWorkOrderDependencies {
-  load_prompt_bundle(hash: string): Promise<PromptBundle | null>;
   find_work_order_attachment(id: WorkOrderId): Promise<ExecutorAttachment | null>;
 }
 
@@ -81,19 +78,14 @@ const executionRequest = async (input: ExecutionRequestInput, dependencies: Reso
       publication: { work_order_id: input.work_order_id, capability: input.capability } } satisfies ResolvedRepositoryProvisioningConfig as unknown as JsonValue;
   } else if (input.stage.executor.executor_type === "delegated_session") {
     const definition = input.stage.executor.definition_config as DelegatedSessionDefinitionConfig;
-    if (!input.stage.operator_role) throw new Error(`stage '${input.stage.stage_key}' has no delegated session role`);
-    const launchReason = input.launch_reason;
-    const prompt = definition.prompt_matrix.find((entry) => entry.session_role === input.stage.operator_role && entry.launch_reason === launchReason);
-    if (!prompt) throw new Error(`stage '${input.stage.stage_key}' has no prompt for ${input.stage.operator_role}:${launchReason}`);
-    const bundle = await dependencies.load_prompt_bundle(input.bundle_pin.prompt_bundle_hash);
-    if (!bundle || bundle.hash !== input.bundle_pin.prompt_bundle_hash) throw new Error(`run '${input.run_id}' prompt bundle '${input.bundle_pin.prompt_bundle_hash}' was not found`);
-    const candidates = bundle.matrix.filter((entry) => entry.session_role === input.stage.operator_role && entry.launch_reason === launchReason
-      && entry.template_path === prompt.template_path && (entry.stage_key === undefined || entry.stage_key === input.stage.stage_key));
-    const template = candidates.find((entry) => entry.stage_key === input.stage.stage_key) ?? (candidates.length === 1 ? candidates[0] : undefined);
-    if (!template) throw new Error(`prompt bundle '${bundle.hash}' has no content for ${input.stage.operator_role}:${launchReason}`);
+    const committed = input.session_launch;
+    const declared = definition.prompt_matrix.filter((entry) => entry.session_role === committed.session_role
+      && entry.launch_reason === committed.reason.name && entry.template_path === committed.prompt.template_path);
+    if (declared.length !== 1) throw new Error(`stage '${input.stage.stage_key}' does not declare committed prompt ${committed.session_role}:${committed.reason.name}`);
     const planned = resolveDelegatedExecution({ definition, environment: { inputs: unitInputs, context: input.context, item: input.unit.parameters }, unit: input.unit,
-      stage_instance_id: input.stage_instance_id, prompt_template: template.content,
-      run_id: input.run_id, operator_role: input.stage.operator_role, launch_reason: launchReason });
+      stage_instance_id: input.stage_instance_id, prompt_template: committed.prompt.content,
+      run_id: input.run_id, operator_role: committed.session_role, launch_reason: committed.reason.name,
+      existing_pull_request: committed.existing_pull_request });
     if (!planned.ok) throw new Error(`${planned.error.operation}:${planned.error.detail}`);
     const urlBinding = definition.slot_bindings.OAKRIDGE_URL;
     const url = urlBinding ? resolveBinding(urlBinding, { inputs: unitInputs, context: input.context, item: input.unit.parameters }) : null;
@@ -123,7 +115,8 @@ const executionRequest = async (input: ExecutionRequestInput, dependencies: Reso
     expected_artifacts: input.outputs.map((output) => ({
       unit_id: output.identity.kind === "collection_member" ? (output.identity.collection_key as unknown as UnitId) : input.unit.unit_id,
       output_name: output.identity.output_name, artifact_type: output.artifact_type,
-    })), ...(workspace_source ? { workspace_source } : {}) };
+    })), ...(input.stage.executor.executor_type === "delegated_session" ? { session_launch: input.session_launch } : {}),
+    ...(workspace_source ? { workspace_source } : {}) };
 };
 
 export const resolveWorkOrder = async (input: ResolveWorkOrderInput, dependencies: ResolveWorkOrderDependencies): Promise<MaterializedWorkOrder> => {
