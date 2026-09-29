@@ -58,10 +58,10 @@ describe("versioned workflow definition compatibility", () => {
 
   test("parses a declared output attention while keeping it optional", async () => {
     const source = await Bun.file(new URL("../../workflow-config/definitions/dev_flow_v15.json", import.meta.url)).json();
-    source.graph.stages.provision_refs.outputs[0].attention = "optional";
+    source.graph.stages.provision_repository_refs.outputs[0].attention = "optional";
     const result = parseWorkflowDefinition(source);
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.value.graph.stages.provision_refs?.outputs[0]?.attention).toBe("optional");
+    if (result.ok) expect(result.value.graph.stages.provision_repository_refs?.outputs[0]?.attention).toBe("optional");
   });
 
   test("rejects a provisioning stage whose output is not the refs artifact", () => {

@@ -236,7 +236,7 @@ test("v15 has six stages and one prompt file for every stage, role, and reason c
   const loaded = await loadDevFlowV15();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   expect(Object.keys(loaded.value.graph.stages).sort()).toEqual([
-    "brief_writer", "build", "final_integration", "plan_writer", "provision_refs", "spec_analyzer",
+    "brief_writer", "build", "final_integration", "plan_writer", "provision_repository_refs", "spec_analyzer",
   ]);
   const cells = Object.values(loaded.value.graph.stages).flatMap((stage) => {
     if (stage.stage_type !== "delegated_session") return [];

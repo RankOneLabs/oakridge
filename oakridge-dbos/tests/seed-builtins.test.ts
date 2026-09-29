@@ -18,7 +18,7 @@ test("seeds unmodified v15 through the immutable repository boundary", async () 
   expect(inserted).toHaveLength(1);
   expect(inserted[0]?.version).toBe(15);
   expect(inserted[0]?.graph.stages.build?.stage_type).toBe("delegated_session");
-  expect(inserted[0]?.graph.stages.provision_refs?.stage_type).toBe("provision_repository_refs");
+  expect(inserted[0]?.graph.stages.provision_repository_refs?.stage_type).toBe("provision_repository_refs");
 });
 
 test("a second boot seeds the same v15 definition idempotently", async () => {

@@ -14,7 +14,7 @@ test("compiles plural v15 into executor-independent materialization contracts", 
   // Spec analysis used to start alongside it and index the run context for a
   // directory; it declares the provisioned refs now, so the branch a planner
   // reasons about is guaranteed to exist before the planner does.
-  expect(compiled.value.source_stages).toEqual(["provision_refs"]);
+  expect(compiled.value.source_stages).toEqual(["provision_repository_refs"]);
   expect(compiled.value.stages.brief_writer?.materialization.kind).toBe("artifact_collections");
   expect(compiled.value.stages.build?.materialization.kind).toBe("fan_out");
   expect(compiled.value.stages.build?.outputs.find((output) => output.name === "build_result")?.release.kind).toBe("gate");
@@ -34,7 +34,7 @@ test("compiles the provisioning stage into one unreviewed unit per repository", 
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const compiled = compileWorkflowDefinition(loaded.value);
   if (!compiled.ok) throw new Error(compiled.error.detail);
-  const provisioning = compiled.value.stages.provision_refs;
+  const provisioning = compiled.value.stages.provision_repository_refs;
   expect(provisioning?.executor.executor_type).toBe("provision_repository_refs");
   expect(provisioning?.materialization).toEqual({ kind: "fan_out", over: { from: "context", path: "/repositories" },
     unit_id_path: "/key", depends_on_path: null, max_parallel: 4, manual_admission: false });
@@ -52,7 +52,7 @@ test("build declares the provisioned refs as a required input", async () => {
   if (!compiled.ok) throw new Error(compiled.error.detail);
   expect(compiled.value.stages.build?.inputs.find((input) => input.name === "repository_refs"))
     .toEqual({ name: "repository_refs", artifact_type: "dev.repository_refs", optional: false, collect: true, delivery: "producer_complete" });
-  expect(compiled.value.edges).toContainEqual({ producer_stage: "provision_refs", producer_output: "repository_refs",
+  expect(compiled.value.edges).toContainEqual({ producer_stage: "provision_repository_refs", producer_output: "repository_refs",
     consumer_stage: "build", consumer_input: "repository_refs", delivery: "producer_complete" });
 });
 
@@ -88,14 +88,14 @@ test("accepts a non-session executor through the stage-type compiler registry", 
 test("rejects required attention on an immediate output", async () => {
   const loaded = await loadDevFlowV15();
   if (!loaded.ok) throw new Error(loaded.error.detail);
-  const provision = loaded.value.graph.stages.provision_refs!;
+  const provision = loaded.value.graph.stages.provision_repository_refs!;
   const definition = {
     ...loaded.value,
     graph: { ...loaded.value.graph, stages: { ...loaded.value.graph.stages,
-      provision_refs: { ...provision, outputs: provision.outputs.map((output) => ({ ...output, attention: "required" as const })) } } },
+      provision_repository_refs: { ...provision, outputs: provision.outputs.map((output) => ({ ...output, attention: "required" as const })) } } },
   };
   expect(compileWorkflowDefinition(definition)).toEqual({ ok: false, error: {
-    operation: "compile_workflow", stage_key: "provision_refs",
+    operation: "compile_workflow", stage_key: "provision_repository_refs",
     detail: "output 'repository_refs' declares required attention but continues immediately",
   } });
 });

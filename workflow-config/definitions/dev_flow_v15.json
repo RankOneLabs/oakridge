@@ -5,7 +5,7 @@
   "created_at": "2026-08-21T00:00:00Z",
   "graph": {
     "stages": {
-      "provision_refs": {
+      "provision_repository_refs": {
         "stage_type": "provision_repository_refs",
         "operator_role": null,
         "config": {
@@ -777,7 +777,7 @@
       },
       {
         "from": {
-          "stage": "provision_refs",
+          "stage": "provision_repository_refs",
           "slot": "repository_refs"
         },
         "to": {
@@ -787,7 +787,7 @@
       },
       {
         "from": {
-          "stage": "provision_refs",
+          "stage": "provision_repository_refs",
           "slot": "repository_refs"
         },
         "to": {
@@ -797,7 +797,7 @@
       },
       {
         "from": {
-          "stage": "provision_refs",
+          "stage": "provision_repository_refs",
           "slot": "repository_refs"
         },
         "to": {
@@ -807,7 +807,7 @@
       },
       {
         "from": {
-          "stage": "provision_refs",
+          "stage": "provision_repository_refs",
           "slot": "repository_refs"
         },
         "to": {
@@ -817,7 +817,7 @@
       },
       {
         "from": {
-          "stage": "provision_refs",
+          "stage": "provision_repository_refs",
           "slot": "repository_refs"
         },
         "to": {
