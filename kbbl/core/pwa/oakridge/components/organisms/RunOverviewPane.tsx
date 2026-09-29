@@ -71,7 +71,7 @@ export function RunOverviewPane({ overview, activity, onOpenPane }: RunOverviewP
       </section>
 
       <section>
-        <h4 className="or-run-overview__heading">Active gates</h4>
+        <h4 className="or-run-overview__heading">Open gates</h4>
         {overview.active_gates.length === 0 ? (
           <p className="or-run-overview__empty" data-testid="or-overview-no-gates">No gate is open.</p>
         ) : (
@@ -94,6 +94,7 @@ export function RunOverviewPane({ overview, activity, onOpenPane }: RunOverviewP
             <li key={item.sequence} className="rounded-md border border-[var(--border-subtle)] px-3 py-2 text-sm">
               <div className="flex flex-wrap items-center gap-2"><span>{item.summary}</span>{item.is_optional_attention && <span data-testid="or-activity-optional-attention">optional attention</span>}</div>
               {item.context !== null && <div className="text-xs text-[var(--text-muted)]">{item.context}</div>}
+              {item.pull_request_url !== null && <a href={item.pull_request_url} target="_blank" rel="noreferrer">Open pull request</a>}
             </li>
           ))}</ol>}
       </section>

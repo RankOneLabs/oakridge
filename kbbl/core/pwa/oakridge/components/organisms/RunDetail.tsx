@@ -27,12 +27,12 @@ function isFannedOut(stage: StageDetail): boolean {
 
 interface UnitRetryFacts {
   readonly isRunActive: boolean;
-  readonly isRunBlocked: boolean;
   readonly unitStatus: NonNullable<StageDetail["units"]>[number]["status"];
+  readonly blockedReason: NonNullable<StageDetail["units"]>[number]["blocked_reason"];
 }
 
-const canRetryUnit = ({ isRunActive, isRunBlocked, unitStatus }: UnitRetryFacts): boolean =>
-  isRunActive && (unitStatus === "failed" || (isRunBlocked && unitStatus !== "complete"));
+const canRetryUnit = ({ isRunActive, unitStatus, blockedReason }: UnitRetryFacts): boolean =>
+  isRunActive && (unitStatus === "failed" || (unitStatus === "blocked" && blockedReason === "retry"));
 
 interface RunDetailProps {
   runId: string;
@@ -167,6 +167,7 @@ export function RunDetail({ runId, run, activeGates, onRunDeleted, onSelectArtif
                 if (units != null && isFannedOut(stage)) {
                   return units.map((unit) => {
                     const cohortId = unit.cohort_id;
+                    const cohortRouteId = `${stage.stage_instance_id}:${unit.unit_id}`;
                     const canConfirmMerge = activeGates.some((gate) => gate.cohort_id === cohortId
                       && gate.resume_actions.includes("confirm_merged"));
                     const unitArtifacts = stage.artifacts.filter(
@@ -196,16 +197,16 @@ export function RunDetail({ runId, run, activeGates, onRunDeleted, onSelectArtif
                           && retryMutation.variables.unitId === unit.unit_id
                           ? (retryMutation.error instanceof Error ? retryMutation.error.message : "Retry failed")
                           : undefined}
-                        canRetry={canRetryUnit({ isRunActive, isRunBlocked: run.status === "blocked", unitStatus: unit.status })}
+                        canRetry={canRetryUnit({ isRunActive, unitStatus: unit.status, blockedReason: unit.blocked_reason })}
                         confirmMerge={canConfirmMerge ? {
                           onConfirm: () => confirmMergeMutation.mutate({
-                            cohortId,
+                            cohortId: cohortRouteId,
                             operatorComment: "Operator confirmed the pull request merged from the run workspace",
                           }),
                           isConfirming: confirmMergeMutation.isPending
-                            && confirmMergeMutation.variables?.cohortId === cohortId,
+                            && confirmMergeMutation.variables?.cohortId === cohortRouteId,
                           error: confirmMergeMutation.isError
-                            && confirmMergeMutation.variables?.cohortId === cohortId
+                            && confirmMergeMutation.variables?.cohortId === cohortRouteId
                             ? (confirmMergeMutation.error instanceof Error
                               ? confirmMergeMutation.error.message
                               : "Could not confirm the merge")
@@ -217,7 +218,7 @@ export function RunDetail({ runId, run, activeGates, onRunDeleted, onSelectArtif
                 }
                 const unit = units?.length === 1 ? units[0] : undefined;
                 const shouldOfferRetry = unit !== undefined
-                  && canRetryUnit({ isRunActive, isRunBlocked: run.status === "blocked", unitStatus: unit.status });
+                  && canRetryUnit({ isRunActive, unitStatus: unit.status, blockedReason: unit.blocked_reason });
                 return [
             <RunStageRow
                     key={stage.name}

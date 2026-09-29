@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
 
@@ -235,6 +235,35 @@ describe("RunDetail committed diagnosis", () => {
   it("keeps a cancelled stage cancelled", () => {
     wrap(<RunDetailOrganism runId="run-1" run={detail} activeGates={[]} onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
     expect(screen.getAllByText("cancelled").length).toBeGreaterThan(0);
+  });
+
+  it("offers retry only for the committed retry reason", () => {
+    const units = [
+      { cohort_id: "cohort-gate", unit_id: "gate", sid: null, worktree: null, status: "blocked" as const, blocked_reason: "gate" as const, next_actor: "operator" as const, gate: "artifact_review" },
+      { cohort_id: "cohort-retry", unit_id: "retry", sid: null, worktree: null, status: "blocked" as const, blocked_reason: "retry" as const, next_actor: "operator" as const, gate: null },
+    ];
+    const retryDetail: RunDetail = { ...detail, stages: [{ ...detail.stages[0]!, units }] };
+
+    wrap(<RunDetailOrganism runId="run-1" run={retryDetail} activeGates={[]} onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
+
+    expect(screen.getAllByTestId("or-retry-unit-btn")).toHaveLength(1);
+  });
+
+  it("addresses merge confirmation with the route's stage and unit identity", async () => {
+    const unit = { cohort_id: "durable-cohort-uuid", unit_id: "web", sid: null, worktree: null, status: "blocked" as const, blocked_reason: "gate" as const, next_actor: "operator" as const, gate: "merge_confirmation" };
+    const companion = { ...unit, cohort_id: "other-cohort", unit_id: "api", gate: null };
+    const mergeDetail: RunDetail = { ...detail, stages: [{ ...detail.stages[0]!, stage_instance_id: "stage-build", units: [unit, companion] }] };
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ cohort_id: "stage-build:web", outcome: "accepted" }, 202));
+
+    wrap(<RunDetailOrganism runId="run-1" run={mergeDetail} activeGates={[{
+      id: "merge-gate", gate_type: "merge_confirmation", gate_step: "merge_confirmation", run_id: "run-1",
+      stage_name: "build", unit_id: "web", cohort_id: "durable-cohort-uuid", artifact_revision_id: null,
+      worktree: null, resume_actions: ["confirm_merged"], run_state: "blocked", actionable: true,
+    }]} onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
+    fireEvent.click(screen.getByTestId("or-confirm-cohort-merged-btn"));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/cohorts/stage-build%3Aweb/pull_request");
   });
 });
 

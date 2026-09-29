@@ -477,7 +477,17 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
               current_stage.stage_key AS current_stage,
               (SELECT count(*) FROM jsonb_object_keys(definition.definition->'graph'->'stages'))::text AS stage_total,
               (SELECT count(*) FROM oakridge.stage_instance stage WHERE stage.run_id=run.id AND stage.status='complete')::text AS stage_complete,
-              (SELECT count(*) FROM oakridge.cohort cohort WHERE cohort.run_id=run.id AND cohort.next_actor='operator')::text AS attention_count,
+              ((SELECT count(*) FROM oakridge.wait_gate wait
+                  JOIN oakridge.cohort cohort ON cohort.id=wait.cohort_id
+                 WHERE wait.run_id=run.id AND wait.status='open' AND cohort.next_actor='operator'
+                   AND run.status IN ('active','blocked') AND run.archived=false)
+               + (SELECT count(*) FROM oakridge.cohort cohort
+                    JOIN oakridge.dev_flow_build_cohort build_cohort ON build_cohort.cohort_id=cohort.id
+                    JOIN oakridge.pull_request_verification verification
+                      ON verification.id=build_cohort.current_verified_pull_request_id AND verification.invalidated_at IS NULL
+                    JOIN oakridge.pull_request pull_request ON pull_request.id=verification.pull_request_id
+                   WHERE cohort.run_id=run.id AND cohort.status='blocked' AND cohort.next_actor='external'
+                     AND run.archived=false))::text AS attention_count,
               COALESCE(waits.parked_count,0)::text AS parked_count,
               GREATEST(run.created_at,COALESCE(run.ended_at,run.created_at),COALESCE(progress.updated_at,run.created_at))::text AS updated_at,
               run.archived
@@ -760,7 +770,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     const sessions_awaiting_action = sessions.filter((session) => operatorCohorts.has(String(session.cohort_id))
       && session.attempt_number === session.attempt_count);
     const gates = await this.listV2PendingGates(id);
-    const active_gates = gates.filter((gate) => gate.actionable).map((gate) => {
+    const active_gates = gates.map((gate) => {
       const stage = run.stages.find((candidate) => candidate.stage_instance_id === gate.stage_instance_id);
       const cohort_id = stage?.units.find((unit) => unit.unit_id === gate.unit_id)?.cohort_id ?? null;
       return { ...gate, cohort_id };

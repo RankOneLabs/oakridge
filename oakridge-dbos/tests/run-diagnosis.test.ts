@@ -49,11 +49,25 @@ interface SessionRow {
   readonly created_at: string;
 }
 
+interface GateRow {
+  readonly wait_id: string;
+  readonly run_id: string;
+  readonly stage_name: string;
+  readonly stage_instance_id: string;
+  readonly unit_id: string;
+  readonly artifact_revision_id: null;
+  readonly gate_step: string;
+  readonly actions: readonly string[];
+  readonly repository_key: null;
+  readonly run_state: CoreStatus;
+}
+
 interface DiagnosisFixture {
   readonly stages?: readonly StageRow[];
   readonly units?: readonly UnitRow[];
   readonly artifacts?: readonly ArtifactRow[];
   readonly sessions?: readonly SessionRow[];
+  readonly gates?: readonly GateRow[];
 }
 
 class DiagnosisSql implements TransactionalSqlExecutor {
@@ -62,6 +76,9 @@ class DiagnosisSql implements TransactionalSqlExecutor {
   async query<Row extends object>(statement: string, _parameters: readonly unknown[]): Promise<readonly Row[]> {
     let rows: readonly object[];
     if (statement.includes("AS stage_total")) {
+      if (!statement.includes("FROM oakridge.wait_gate wait") || !statement.includes("verification.invalidated_at IS NULL")) {
+        throw new Error("run attention_count must use the actionable inbox facts");
+      }
       rows = [{
         id: RUN_ID, title: "Diagnosis fixture", repository_keys: [], workflow_name: "test",
         status: "active", blocked_reason: null, next_actor: "core", current_stage: null,
@@ -79,7 +96,7 @@ class DiagnosisSql implements TransactionalSqlExecutor {
     } else if (statement.includes("FROM oakridge.session session") && statement.includes("attempt_count")) {
       rows = this.fixture.sessions ?? [];
     } else if (statement.includes("FROM oakridge.wait_gate wait")) {
-      rows = [];
+      rows = this.fixture.gates ?? [];
     } else {
       throw new Error(`unexpected diagnosis query: ${statement.slice(0, 80)}`);
     }
@@ -163,5 +180,16 @@ describe("get_run_diagnosis", () => {
     const diagnosis = await diagnosisOf({ stages: [] });
 
     expect(diagnosis?.stage_progress).toEqual({ total: 0, pending: 0, active: 0, blocked: 0, complete: 0, failed: 0, cancelled: 0 });
+  });
+
+  test("open gates remain visible when their run no longer allows a decision", async () => {
+    const ended = stage(1, "cancelled");
+    const diagnosis = await diagnosisOf({ stages: [ended], gates: [{
+      wait_id: "gate-stranded", run_id: RUN_ID, stage_name: ended.name,
+      stage_instance_id: ended.stage_instance_id, unit_id: "unit-1", artifact_revision_id: null,
+      gate_step: "artifact_review", actions: ["approve"], repository_key: null, run_state: "cancelled",
+    }] });
+
+    expect(diagnosis?.active_gates).toEqual([expect.objectContaining({ id: "gate-stranded", actionable: false })]);
   });
 });
