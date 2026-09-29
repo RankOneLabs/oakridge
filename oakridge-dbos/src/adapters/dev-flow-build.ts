@@ -17,6 +17,13 @@ export const BUILD_LAUNCH_REASONS = {
   assessment: ["initial_assessment", "retry_after_lost_attempt"],
 } as const;
 
+/**
+ * This cohort owns the pure machine and its committed effect. Cohort c8 owns
+ * runtime composition: decoding ingress events, constructing this machine
+ * from the pinned build-stage contract, and submitting its command through
+ * PostgresRunRecordWriter.decide.
+ */
+
 export type BuildSessionRole = keyof typeof BUILD_LAUNCH_REASONS;
 export type BuildLaunchReason = (typeof BUILD_LAUNCH_REASONS)[BuildSessionRole][number];
 export type BuildCohortPhase = "pending" | "builder_active" | "build_review" | "assessor_active" | "assessment_review" | "awaiting_merge" | "complete";

@@ -38,6 +38,8 @@ export interface CommittedTransition {
 
 export interface DecideTransactionInput {
   readonly load_snapshot: (transaction: SqlExecutor) => Promise<RunSnapshot>;
+  /** Adapter composition may supply its own pure decision over the locked snapshot. */
+  readonly decide_snapshot?: (snapshot: RunSnapshot) => Result<Derivation, Contradiction>;
   readonly launch_reason: TransitionLaunchReason;
   readonly actor: string;
   readonly decided_at: string;
@@ -76,7 +78,7 @@ const updateOwner = async (
   const target = ownerTable(input.owner);
   const runPredicate = input.owner.kind === "run" ? "" : " AND run_id=$8";
   const parameters = [input.owner.id, input.expected_version, input.change.status, input.change.blocked_reason,
-    input.change.next_actor, JSON.stringify(input.change.outcome), input.changed_at];
+    input.change.next_actor, input.change.outcome === null ? null : JSON.stringify(input.change.outcome), input.changed_at];
   if (input.owner.kind !== "run") parameters.push(input.run_id);
   if (input.owner.kind === "cohort") parameters.push(JSON.stringify(input.cohort_stage_data ?? null));
   const stageDataAssignment = input.owner.kind === "cohort"
@@ -161,7 +163,8 @@ export class PostgresRunRecordWriter {
   async decide(input: DecideTransactionInput): Promise<Result<CommittedDecision, DecideTransactionError>> {
     try {
       return await this.sql.transaction(async (tx) => {
-        const derivation = derive(await input.load_snapshot(tx));
+        const snapshot = await input.load_snapshot(tx);
+        const derivation = (input.decide_snapshot ?? derive)(snapshot);
         if (!derivation.ok) return derivation;
         const commits = derivation.value.commands.map((command) => transitionInputFor(command, input));
         const effects = commits.map((commit) => checkedEffect(this.registry, commit.effect, commit.actor));
