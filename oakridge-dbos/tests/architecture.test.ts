@@ -74,3 +74,14 @@ test("the baseline stores arbitrary registered effects without event-name checks
   expect(baseline).toContain("effect_descriptor jsonb NOT NULL");
   expect(baseline).toContain("effect_workflow_id text NOT NULL UNIQUE");
 });
+
+test("operator and downstream roles are not closed over dev-flow names", async () => {
+  const sources = await Promise.all([
+    join(SOURCE, "domain", "workflow.ts"),
+    join(SOURCE, "validation", "workflow-definition.ts"),
+    join(SOURCE, "validation", "delegated-session.ts"),
+  ].map((file) => readFile(file, "utf8")));
+  const combined = sources.join("\n");
+  expect(combined).not.toMatch(/StageOperatorRole\s*=\s*["'](?:spec|plan|brief|build|assessment|final_integration)/);
+  expect(combined).not.toMatch(/z\.enum\(\[[^\]]*["'](?:spec|plan|brief|build|assessment|final_integration)["']/s);
+});

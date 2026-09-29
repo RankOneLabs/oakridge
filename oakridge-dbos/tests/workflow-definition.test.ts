@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { parseWorkflowDefinition } from "../src/validation/workflow-definition";
+import { AdapterRegistry } from "../src/runtime/executor-registry";
 
 /** A minimal delegated-session config; tests override only what they exercise. */
 const delegatedConfig = (fan_out: unknown) => ({
@@ -22,6 +23,18 @@ const definitionWith = (consumerInput: string, stages: Record<string, unknown>) 
 const producer = { stage_type: "stub", config: {}, inputs: [], outputs: [{ name: "out", artifact_type: "a" }] };
 
 describe("versioned workflow definition compatibility", () => {
+  test("operator roles are adapter-registered names rather than a core enum", () => {
+    const definition = { id: "ef2b47a4-d1bd-44ee-840a-e4f7b27570db", name: "custom-role", version: 1,
+      created_at: "2026-08-14T00:00:00Z", graph: { stages: {
+        custom: { stage_type: "stub", operator_role: "custom_reviewer", config: {}, inputs: [], outputs: [{ name: "out", artifact_type: "a" }] },
+      }, edges: [] } };
+    const registry = new AdapterRegistry();
+    expect(parseWorkflowDefinition(definition, registry)).toEqual({ ok: false,
+      error: expect.objectContaining({ detail: expect.stringContaining("custom_reviewer") }) });
+    registry.register_role("custom_reviewer");
+    expect(parseWorkflowDefinition(definition, registry).ok).toBe(true);
+  });
+
   // v11 is still stored, and runs launched against it still compile it. It has
   // to keep parsing for exactly as long as one of those runs is in flight.
   test("loads unmodified dev_flow_v11.json with defaults", async () => {

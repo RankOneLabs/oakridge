@@ -27,7 +27,8 @@ export const slotBindingSchema = z.discriminatedUnion("from", [
 
 export const bindableSchema = z.union([z.string(), slotBindingSchema]);
 
-const roleSchema = z.enum(["spec", "plan", "brief", "build", "assessment", "final_integration"]);
+/** Role vocabulary is supplied by the selected adapter, not by core schema. */
+const roleSchema = z.string().min(1);
 const launchReasonSchema = z.enum(["initial", "operator_retry", "input_revision"]);
 
 const outputGateSchema = z.object({
