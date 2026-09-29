@@ -172,6 +172,7 @@ export interface CurrentVerifiedCohortPullRequest {
 
 /** Storage boundary shared by cohort and final-stage adapters. */
 export interface DevFlowPullRequestRepository {
+  find_cohort_for_unit(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<DevFlowBuildCohort | null>;
   find_current_for_unit(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<CurrentVerifiedCohortPullRequest | null>;
   observe(input: { readonly repository_key: string; readonly observation: PullRequestObservation; readonly recorded_at: string }): Promise<{ readonly pull_request_id: PullRequestId; readonly observation_id: PullRequestObservationId }>;
   bind_verified(input: { readonly cohort_id: import("../domain/primitives").CohortId; readonly pull_request_id: PullRequestId; readonly observation_id: PullRequestObservationId; readonly verified_head_sha: string; readonly verified_at: string; readonly replace_verification_id: PullRequestVerificationId | null }): Promise<Result<PullRequestVerificationId, { readonly kind: "replacement_required" | "replacement_conflict"; readonly detail: string }>>;

@@ -43,6 +43,7 @@ const current = {
 
 const dependencies = (finalPullRequests: FinalPullRequestRepository, existing: typeof current | null = null): FinalPullRequestHttpDependencies => {
   const pullRequests: DevFlowPullRequestRepository = {
+    async find_cohort_for_unit() { return target.cohort; },
     async find_current_for_unit() { return existing; },
     async observe() { return { pull_request_id: pullRequestId, observation_id: observationId }; },
     async bind_verified() { return { ok: true, value: verificationId }; },

@@ -8,8 +8,8 @@
  */
 import { Hono } from "hono";
 
-import type { StageInstanceId, UnitId } from "../domain/primitives";
-import type { ObservedPullRequestState, PullRequestObservation, PullRequestObservationSource } from "../domain/pull-request";
+import { parseUuidId, type StageInstanceId, type UnitId } from "../domain/primitives";
+import type { ObservedPullRequestState, PullRequestObservation, PullRequestObservationSource, PullRequestVerificationId } from "../domain/pull-request";
 import { reconcileCohortEvidence, type CohortPullRequestDependencies, type CohortPullRequestEvidence } from "../runtime/cohort-pull-request";
 
 export type CohortPullRequestHttpDependencies = CohortPullRequestDependencies;
@@ -46,7 +46,10 @@ const parseEvidence = (value: unknown): CohortPullRequestEvidence | null => {
   if (!isObject(value)) return null;
   if (value.kind === "observation") {
     const observation = parseObservation(value.observation);
-    return observation ? { kind: "observation", observation } : null;
+    const replacement = value.replace_verification_id === undefined || value.replace_verification_id === null
+      ? null : typeof value.replace_verification_id === "string" ? parseUuidId<PullRequestVerificationId>(value.replace_verification_id) : null;
+    if (value.replace_verification_id !== undefined && value.replace_verification_id !== null && replacement === null) return null;
+    return observation ? { kind: "observation", observation, replace_verification_id: replacement } : null;
   }
   if (value.kind === "operator_confirmation") {
     const idempotencyKey = trimmed(value.idempotency_key);

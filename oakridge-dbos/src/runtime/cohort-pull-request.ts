@@ -3,30 +3,31 @@
  * merged.
  *
  * A build unit's `build_result` is released through a handoff whose external
- * wait is `github_review`. Two participants can supply the evidence and both
- * arrive here: the poller, which reports what GitHub says, and an operator
- * confirming by hand when the poller cannot see the repository. They differ
- * only in the observation's `source` — the same expectations are checked
- * against both, so a human clicking a button is not a way around them.
+ * wait is `github_review`. The poller and operator recheck both arrive here,
+ * but neither supplies trusted state: each triggers a fresh forge read and
+ * origin ref check before reconciliation.
  *
  * The wait is named `github_review` and the evidence is a pull request. Its
  * identity comes from the cohort's current verified PR link; agent-authored
  * artifact bodies never become verification evidence.
  */
 import {
-  operatorMergedObservation, reconcileCohortPullRequest, reconciliationForHandoff, withCompletion,
+  reconcileCohortPullRequest, reconciliationForHandoff, withCompletion,
   type CohortPullRequestOutcome, type CohortPullRequestReconciliation, type DevFlowBuildCohort, type ExpectedCohortPullRequest,
 } from "../domain/cohort-pull-request";
 import { err, ok, type ArtifactId, type Result, type StageInstanceId, type UnitId, type WorkflowRunId } from "../domain/primitives";
 import type { PullRequestObservation } from "../domain/pull-request";
-import { parseGithubPullRequestIdentity, repositoriesMatch } from "../domain/pull-request";
+import { parseGithubPullRequestIdentity, repositoriesMatch, type PullRequestVerificationId } from "../domain/pull-request";
 import type { GitCommandRunner } from "../domain/repository-provisioning";
-import type { CohortPullRequestRepository, DevFlowPullRequestRepository, RunRecordRepository } from "../storage/repositories";
+import type { CohortPullRequestRepository, DevFlowPullRequestRepository, EpicWorkflowProfileRepository, RunRecordRepository } from "../storage/repositories";
 
 const GITHUB_REVIEW_WAIT = "github_review";
 
 export interface CohortPullRequestDependencies {
   readonly pull_requests: DevFlowPullRequestRepository;
+  readonly epic_profiles: EpicWorkflowProfileRepository;
+  readonly reader: PullRequestForgeReader;
+  readonly git: GitCommandRunner;
   readonly reconciliations: CohortPullRequestRepository;
   readonly records: Pick<RunRecordRepository, "find_cohort_handoff" | "complete_handoff_artifact">;
   readonly now: () => string;
@@ -121,7 +122,7 @@ export const advanceCohortRef = async (
 
 /** How the evidence arrived. Both kinds are reconciled identically. */
 export type CohortPullRequestEvidence =
-  | { readonly kind: "observation"; readonly observation: PullRequestObservation }
+  | { readonly kind: "observation"; readonly observation: PullRequestObservation; readonly replace_verification_id?: PullRequestVerificationId | null }
   | { readonly kind: "operator_confirmation"; readonly idempotency_key: string; readonly operator_comment: string };
 
 export interface CohortPullRequestError {
@@ -184,6 +185,36 @@ const loadCohortHandoff = async (
   });
 };
 
+const independentlyVerifyAndBind = async (
+  dependencies: CohortPullRequestDependencies,
+  stageInstanceId: StageInstanceId,
+  unitId: UnitId,
+  candidateUrl: string,
+  replaceVerificationId: PullRequestVerificationId | null,
+): Promise<Result<PullRequestObservation, CohortPullRequestError>> => {
+  const handoff = await dependencies.records.find_cohort_handoff(stageInstanceId, unitId);
+  const cohort = await dependencies.pull_requests.find_cohort_for_unit(stageInstanceId, unitId);
+  if (!handoff || !cohort) return failure("cohort_not_found", `no stored build cohort for stage '${stageInstanceId}' unit '${unitId}'`);
+  const profile = await dependencies.epic_profiles.find_by_run_id(handoff.run_id);
+  const forgeRepository = profile?.repositories.find((repository) => repository.repository_key === cohort.repository_key)?.forge_repository ?? null;
+  if (!forgeRepository) return failure("missing_pull_request_evidence", `repository '${cohort.repository_key}' has no forge identity`);
+  const verified = await verifyCohortPullRequest({ reader: dependencies.reader, git: dependencies.git }, {
+    cohort, forge_repository: forgeRepository, candidate_url: candidateUrl,
+  });
+  if (!verified.ok) return failure("mismatch", verified.error.detail);
+  const current = await dependencies.pull_requests.find_current_for_unit(stageInstanceId, unitId);
+  const stored = await dependencies.pull_requests.observe({ repository_key: cohort.repository_key,
+    observation: verified.value.observation, recorded_at: dependencies.now() });
+  const isSameVerifiedHead = current?.pull_request.id === stored.pull_request_id
+    && current.observation.head_sha === verified.value.pushed_head_sha;
+  if (!isSameVerifiedHead) {
+    const bound = await dependencies.pull_requests.bind_verified({ cohort_id: cohort.cohort_id, ...stored,
+      verified_head_sha: verified.value.pushed_head_sha, verified_at: dependencies.now(), replace_verification_id: replaceVerificationId });
+    if (!bound.ok) return failure("mismatch", bound.error.detail);
+  }
+  return ok(verified.value.observation);
+};
+
 /** The cohort's expectations, for a caller that wants to observe it. */
 export const findCohortPullRequestExpectation = async (
   dependencies: CohortPullRequestDependencies,
@@ -200,13 +231,24 @@ export const reconcileCohortEvidence = async (
   unitId: UnitId,
   evidence: CohortPullRequestEvidence,
 ): Promise<Result<ResolvedCohortPullRequest, CohortPullRequestError>> => {
+  let verifiedObservation: PullRequestObservation;
+  if (evidence.kind === "observation") {
+    const verified = await independentlyVerifyAndBind(dependencies, stageInstanceId, unitId, evidence.observation.url, evidence.replace_verification_id ?? null);
+    if (!verified.ok) return verified;
+    verifiedObservation = verified.value;
+  } else {
+    const current = await dependencies.pull_requests.find_current_for_unit(stageInstanceId, unitId);
+    if (!current) return failure("missing_pull_request_evidence", "cohort has no verified pull request to recheck");
+    const verified = await independentlyVerifyAndBind(dependencies, stageInstanceId, unitId, current.pull_request.url, null);
+    if (!verified.ok) return verified;
+    verifiedObservation = verified.value;
+  }
   const loaded = await loadCohortHandoff(dependencies, stageInstanceId, unitId);
   if (!loaded.ok) return loaded;
   const { expected, handoff_artifact_id: handoffArtifactId, handoff_slot_state: handoffSlotState } = loaded.value;
 
   const now = dependencies.now();
-  const observation = evidence.kind === "observation" ? evidence.observation : operatorMergedObservation(expected, now);
-  if (!observation) return failure("missing_pull_request_evidence", "the cohort's reported pull request URL is not a canonical GitHub URL");
+  const observation = verifiedObservation;
 
   const previous = reconciliationForHandoff(
     await dependencies.reconciliations.find(expected.stage_instance_id, expected.unit_id), handoffArtifactId, handoffSlotState);

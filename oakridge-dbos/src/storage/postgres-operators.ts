@@ -48,6 +48,18 @@ interface CurrentPullRequestRow {
 export class PostgresDevFlowPullRequestRepository implements DevFlowPullRequestRepository {
   constructor(private readonly sql: TransactionalSqlExecutor) {}
 
+  async find_cohort_for_unit(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<DevFlowBuildCohort | null> {
+    const rows = await this.sql.query<{ readonly cohort_id: string; readonly stage_instance_id: string; readonly cohort_key: string;
+      readonly repository_key: string; readonly repository_path: string; readonly canonical_ref: string; readonly expected_pr_base: string;
+      readonly recorded_head_sha: string; readonly current_verified_pull_request_id: string | null; readonly created_at: string; readonly updated_at: string }>(`SELECT
+      cohort_id::text,stage_instance_id::text,cohort_key,repository_key,repository_path,canonical_ref,expected_pr_base,recorded_head_sha,
+      current_verified_pull_request_id::text,created_at::text,updated_at::text
+      FROM oakridge.dev_flow_build_cohort WHERE stage_instance_id=$1 AND cohort_key=$2`, [stage_instance_id, unit_id]);
+    const row = rows[0];
+    return row ? { ...row, cohort_id: row.cohort_id as CohortId, stage_instance_id: row.stage_instance_id as StageInstanceId,
+      current_verified_pull_request_id: row.current_verified_pull_request_id as PullRequestVerificationId | null } : null;
+  }
+
   async find_current_for_unit(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<CurrentVerifiedCohortPullRequest | null> {
     const rows = await this.sql.query<CurrentPullRequestRow>(`SELECT
       cohort.cohort_id::text,cohort.stage_instance_id::text,cohort.cohort_key,cohort.repository_key,cohort.repository_path,
