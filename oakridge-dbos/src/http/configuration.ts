@@ -8,12 +8,14 @@ import type { CreateWorkflowDefinition, WorkflowGraph } from "../domain/workflow
 import type { ProjectRepository, WorkflowDefinitionRepository } from "../storage/repositories";
 import type { ProjectRepositoryIdentityResolver } from "../domain/projects";
 import { parseWorkflowDefinition } from "../validation/workflow-definition";
+import { createPromptBundle, type PromptTemplateLoader } from "../runtime/prompt-template";
 
 export interface ConfigurationHttpDependencies {
   readonly projects: ProjectRepository;
   readonly definitions: WorkflowDefinitionRepository;
   readonly project_identity: ProjectRepositoryIdentityResolver;
   readonly now: () => string;
+  readonly prompt_templates: PromptTemplateLoader;
   readonly new_id?: () => string;
 }
 
@@ -83,7 +85,8 @@ export const createConfigurationApp = (dependencies: ConfigurationHttpDependenci
     const definition = parseWorkflowDefinition({ ...request, id: newId(), created_at: dependencies.now(), archived: false });
     if (!definition.ok) return http.json({ error: definition.error.detail }, 400);
     try {
-      return http.json(await dependencies.definitions.insert_immutable(definition.value), 201);
+      const bundle = await createPromptBundle(definition.value, dependencies.prompt_templates);
+      return http.json(await dependencies.definitions.insert_immutable(definition.value, bundle), 201);
     } catch (error) {
       return http.json({ error: error instanceof Error ? error.message : "workflow definition conflicts with stored content" }, 409);
     }

@@ -16,7 +16,7 @@ import type {
   WorkflowRunId,
   WorkOrderId,
 } from "./primitives";
-import type { ArtifactTypeId, StageKey, StageOutcome } from "./workflow";
+import type { ArtifactTypeId, StageKey, StageOutcome, WorkflowRunBundlePin } from "./workflow";
 
 export type RunState = "active" | "succeeded" | "failed" | "cancelled";
 export type UnitState = "ready" | "working" | "waiting" | "satisfied" | "failed" | "cancelled";
@@ -57,6 +57,7 @@ export interface WorkflowRun {
   readonly id: WorkflowRunId;
   readonly workflow_definition_id: WorkflowDefinitionId;
   readonly workflow_definition_version: number;
+  readonly bundle_pin: WorkflowRunBundlePin;
   readonly context: JsonValue;
   readonly state: RunState;
   readonly outcome: StageOutcome | null;

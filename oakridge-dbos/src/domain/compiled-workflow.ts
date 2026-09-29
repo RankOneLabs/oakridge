@@ -1,5 +1,5 @@
 import type { JsonValue, UnitId } from "./primitives";
-import type { ArtifactTypeId, InputDelivery, StageKey, StageOperatorRole, StageTypeId } from "./workflow";
+import type { ArtifactTypeId, InputDelivery, StageKey, StageOperatorRole, StageTypeId, WorkflowRunBundlePin } from "./workflow";
 import type { DelegatedSessionDefinitionConfig, SlotBinding } from "./delegated-session";
 import type { GateAction } from "./gates";
 
@@ -20,19 +20,10 @@ export interface CompiledOutputContract {
 
 export interface CompiledGateStep { readonly type: string; readonly actions: readonly GateAction[] }
 
-/**
- * Who a rejection at this gate sends back to work.
- *
- * `self_stage` is the unit that produced the artifact. `upstream_handoff` is the
- * unit whose output this stage was handed — an assessor rejecting an assessment
- * is asking the *build* for changes, not itself.
- */
-export type GateRevisionTarget = "self_stage" | "upstream_handoff";
-
 export type OutputReleaseContract =
   | { readonly kind: "immediate" }
-  | { readonly kind: "gate"; readonly steps: readonly CompiledGateStep[]; readonly requires_zero_open_review_items: boolean; readonly revision_target: GateRevisionTarget }
-  | { readonly kind: "handoff"; readonly downstream_role: StageOperatorRole; readonly external_wait_kind: string };
+  | { readonly kind: "gate"; readonly gate_name: string; readonly steps: readonly CompiledGateStep[]; readonly requires_zero_open_review_items: boolean }
+  | { readonly kind: "handoff"; readonly handoff_name: string; readonly downstream_role: StageOperatorRole; readonly external_wait_kind: string; readonly close_events: readonly string[] };
 
 export type OutputAttention = "required" | "optional" | "none";
 export type OutputContinuation = "waiting" | "continuing";
@@ -48,7 +39,7 @@ export const selectOutputAttention = (
 
 export type MaterializationContract =
   | { readonly kind: "scalar" }
-  | { readonly kind: "artifact_collection"; readonly over: SlotBinding; readonly id_path: string }
+  | { readonly kind: "artifact_collections"; readonly productions: readonly { readonly over: SlotBinding; readonly id_path: string }[] }
   | { readonly kind: "fan_out"; readonly over: SlotBinding; readonly unit_id_path: string; readonly depends_on_path: string | null; readonly max_parallel: number; readonly manual_admission: boolean };
 
 export interface CompiledExecutorSelection {
@@ -74,9 +65,21 @@ export interface CompiledEdge {
   readonly delivery: InputDelivery;
 }
 
+export interface CompiledTransition {
+  readonly trigger: { readonly kind: "stage_output" | "assessment_outcome" | "operator"; readonly stage: StageKey; readonly item: string };
+  readonly launch: { readonly stage: StageKey; readonly session_role: StageOperatorRole; readonly launch_reason: import("./delegated-session").SessionLaunchReason };
+}
+
 export interface CompiledWorkflowDefinition {
+  readonly manifest_version: 1;
+  readonly bundle_pin?: WorkflowRunBundlePin;
+  /** Policy findings preserved for operator review without making the definition structurally invalid. */
+  readonly flags?: readonly { readonly kind: "automated_assessment_transition"; readonly stage_key: StageKey;
+    readonly session_role: StageOperatorRole | null; readonly contract_item: string; readonly trigger: string }[];
   readonly stages: Readonly<Record<StageKey, CompiledStageContract>>;
   readonly edges: readonly CompiledEdge[];
+  /** Named revision and retry routes retained for the decision runtime. */
+  readonly transitions: readonly CompiledTransition[];
   readonly source_stages: readonly StageKey[];
 }
 

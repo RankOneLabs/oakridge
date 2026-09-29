@@ -4,7 +4,7 @@ import { err, ok, type Result } from "../domain/primitives";
 import type { WorkflowDefinitionId } from "../domain/primitives";
 import type { FanOutDefinition } from "../domain/delegated-session";
 import type { InputSlot, WorkflowDefinition } from "../domain/workflow";
-import { delegatedSessionDefinitionSchema } from "./delegated-session";
+import { delegatedSessionDefinitionSchema, legacyHandoffRoleOf, legacyRevisionPolicyOf, normalizeDelegatedSessionDefinition } from "./delegated-session";
 import { repositoryProvisioningDefinitionSchema } from "./repository-provisioning";
 import { PROVISION_REPOSITORY_REFS_STAGE_TYPE, REPOSITORY_REFS_ARTIFACT_TYPE } from "../domain/repository-refs";
 import { readOwn } from "../domain/records";
@@ -32,16 +32,25 @@ const stageSchema = z.object({
 });
 
 const workflowDefinitionSchema = z.object({
-  id: z.uuid(),
+  id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, "Invalid UUID"),
   name: z.string().min(1),
   version: z.number().int().positive(),
   graph: z.object({
     stages: z.record(z.string(), stageSchema),
     edges: z.array(z.object({ from: endpointSchema, to: endpointSchema })),
+    transitions: z.array(z.object({
+      trigger: z.object({ kind: z.enum(["stage_output", "assessment_outcome", "operator"]), stage: z.string().min(1), item: z.string().min(1) }),
+      launch: z.object({ stage: z.string().min(1), session_role: z.enum(["spec", "plan", "brief", "build", "assessment", "final_integration"]),
+        launch_reason: z.enum(["initial", "operator_retry", "input_revision"]) }),
+    })).optional(),
   }),
   created_at: z.iso.datetime({ offset: true }),
   archived: z.boolean().default(false),
 });
+
+const legacyRoleForStage = (stageKey: string): import("../domain/workflow").StageOperatorRole | null => ({
+  spec_analyzer: "spec", plan_writer: "plan", brief_writer: "brief", build: "build", assessor: "assessment", final_integration: "final_integration",
+} as const)[stageKey as "spec_analyzer" | "plan_writer" | "brief_writer" | "build" | "assessor" | "final_integration"] ?? null;
 
 export interface DefinitionValidationError {
   readonly operation: "parse_workflow_definition" | "validate_workflow_graph";
@@ -83,8 +92,9 @@ const validateGraphReferences = (definition: WorkflowDefinition): Result<Workflo
     if (stage.stage_type === "delegated_session") {
       const config = delegatedSessionDefinitionSchema.safeParse(stage.config);
       if (!config.success) return err({ operation: "validate_workflow_graph", detail: `stage '${stageKey}' config invalid: ${z.prettifyError(config.error)}` });
-      const terminalOutput = config.data.gate_output ?? config.data.output_gate?.output ?? config.data.output_handoff?.output;
-      if (terminalOutput && !stage.outputs.some((output) => output.name === terminalOutput)) {
+      const terminalOutputs = [...config.data.gates.flatMap((gate) => gate.outputs), ...config.data.handoffs.flatMap((handoff) => handoff.outputs)];
+      const terminalOutput = terminalOutputs.find((name) => !stage.outputs.some((output) => output.name === name));
+      if (terminalOutput) {
         return err({ operation: "validate_workflow_graph", detail: `stage '${stageKey}' terminal output '${terminalOutput}' is not declared` });
       }
       fanOut = config.data.fan_out ?? null;
@@ -126,8 +136,27 @@ const validateGraphReferences = (definition: WorkflowDefinition): Result<Workflo
 export const parseWorkflowDefinition = (input: unknown): Result<WorkflowDefinition, DefinitionValidationError> => {
   const parsed = workflowDefinitionSchema.safeParse(input);
   if (!parsed.success) return err({ operation: "parse_workflow_definition", detail: z.prettifyError(parsed.error) });
+  const legacyTransitions = Object.entries(parsed.data.graph.stages).flatMap(([stageKey, stage]) => {
+    const policy = stage.stage_type === "delegated_session" ? legacyRevisionPolicyOf(stage.config) : null;
+    const stageRole = stage.operator_role ?? legacyRoleForStage(stageKey);
+    if (!policy || stageRole === null) return [];
+    const launchStage = policy.target === "self_stage" ? stageKey : Object.entries(parsed.data.graph.stages)
+      .find(([, candidate]) => legacyHandoffRoleOf(candidate.config) === stageRole)?.[0];
+    const launchNode = launchStage ? parsed.data.graph.stages[launchStage] : undefined;
+    const launchRole = launchStage && launchNode ? launchNode.operator_role ?? legacyRoleForStage(launchStage) : null;
+    if (!launchStage || !launchRole) return [];
+    return [{ trigger: { kind: "operator" as const, stage: stageKey, item: policy.action },
+      launch: { stage: launchStage, session_role: launchRole, launch_reason: "input_revision" as const } }];
+  });
+  const transitions = [...(parsed.data.graph.transitions ?? []), ...legacyTransitions];
   const definition: WorkflowDefinition = {
     ...parsed.data,
+    graph: { ...parsed.data.graph, stages: Object.fromEntries(Object.entries(parsed.data.graph.stages).map(([stageKey, stage]) => [stageKey,
+      stage.stage_type === "delegated_session" ? { ...stage, operator_role: stage.operator_role ?? legacyRoleForStage(stageKey),
+        config: normalizeDelegatedSessionDefinition(stage.config, stage.operator_role ?? legacyRoleForStage(stageKey), stage.outputs.map((output) => output.name)) }
+        : stage.stage_type === PROVISION_REPOSITORY_REFS_STAGE_TYPE && typeof stage.config === "object" && stage.config !== null && !Array.isArray(stage.config)
+          && !("base_branch" in stage.config) ? { ...stage, config: { ...stage.config, base_branch: { from: "context", path: "/base_branch" } } } : stage])),
+      ...(transitions.length > 0 ? { transitions } : {}) },
     id: parsed.data.id as WorkflowDefinitionId,
   };
   return validateGraphReferences(definition);

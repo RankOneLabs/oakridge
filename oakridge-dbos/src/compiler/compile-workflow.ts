@@ -1,8 +1,8 @@
 import { selectOutputAttention, type CompiledEdge, type CompiledGateStep, type CompiledOutputContract, type CompiledStageContract, type CompiledWorkflowDefinition, type MaterializationContract, type OutputReleaseContract } from "../domain/compiled-workflow";
 import type { DelegatedSessionDefinitionConfig } from "../domain/delegated-session";
 import { err, ok, type JsonValue, type Result } from "../domain/primitives";
-import type { StageNodeDefinition, WorkflowDefinition } from "../domain/workflow";
-import { delegatedSessionDefinitionSchema } from "../validation/delegated-session";
+import type { PromptBundle, StageNodeDefinition, WorkflowDefinition } from "../domain/workflow";
+import { delegatedSessionDefinitionSchema, validateDelegatedSessionCardinality, validateDelegatedSessionContracts, validatePromptBundleBindings, type DelegatedSessionDiagnostic } from "../validation/delegated-session";
 import { repositoryProvisioningDefinitionSchema } from "../validation/repository-provisioning";
 import { selectBuiltInGateDisposition } from "../domain/gates";
 import { readOwn } from "../domain/records";
@@ -12,7 +12,16 @@ export interface CompileWorkflowError {
   readonly operation: "compile_workflow";
   readonly stage_key: string | null;
   readonly detail: string;
+  readonly diagnostics?: readonly DelegatedSessionDiagnostic[];
 }
+
+export const WORKFLOW_VALIDATION_STEPS = [
+  "parse_and_graph",
+  "plural_key_cardinality",
+  "selection_totality",
+  "binding_and_output_contracts",
+  "executor_capabilities",
+] as const;
 
 export interface StageTypeCompilation {
   readonly definition_config: DelegatedSessionDefinitionConfig | JsonValue;
@@ -32,28 +41,26 @@ const compileGateStep = (step: { readonly type: string; readonly actions: readon
   ({ type: step.type, actions: step.actions.map((name) => ({ name, disposition: selectBuiltInGateDisposition(name) })) });
 
 const outputRelease = (outputName: string, config: DelegatedSessionDefinitionConfig): OutputReleaseContract => {
-  if (config.output_gate?.output === outputName) return {
+  const gate = config.gates.find((candidate) => candidate.outputs.includes(outputName));
+  if (gate) return {
     kind: "gate",
-    steps: config.output_gate.steps.map(compileGateStep),
-    requires_zero_open_review_items: config.output_gate.requires_zero_open_review_items ?? false,
-    revision_target: config.output_gate.revision_target ?? "self_stage",
+    gate_name: gate.name,
+    steps: gate.steps.map(compileGateStep),
+    requires_zero_open_review_items: gate.requires_zero_open_review_items ?? false,
   };
-  if (config.gate_output === outputName) return {
-    kind: "gate",
-    steps: [{ type: "artifact_approval", actions: ["approve", "request_revision"] }, { type: "merge_confirmation", actions: ["confirm_merged", "closed_without_merge"] }].map(compileGateStep),
-    requires_zero_open_review_items: true,
-    revision_target: "self_stage",
-  };
-  if (config.output_handoff?.output === outputName) return {
+  const handoff = config.handoffs.find((candidate) => candidate.outputs.includes(outputName));
+  if (handoff) return {
     kind: "handoff",
-    downstream_role: config.output_handoff.downstream_role,
-    external_wait_kind: config.output_handoff.approved_wait.kind,
+    handoff_name: handoff.name,
+    downstream_role: handoff.downstream_role,
+    external_wait_kind: handoff.approved_wait.kind,
+    close_events: handoff.approved_wait.close_events,
   };
   return { kind: "immediate" };
 };
 
 const materialization = (config: DelegatedSessionDefinitionConfig): MaterializationContract => {
-  if (config.artifacts) return { kind: "artifact_collection", over: config.artifacts.over, id_path: config.artifacts.id_path };
+  if (config.artifact_productions.length > 0) return { kind: "artifact_collections", productions: config.artifact_productions };
   if (config.fan_out) return {
     kind: "fan_out",
     over: config.fan_out.over,
@@ -136,6 +143,20 @@ const compileStage = (stageKey: string, node: StageNodeDefinition, registry: Sta
 };
 
 export const compileWorkflowDefinition = (definition: WorkflowDefinition, registry: StageTypeCompilerRegistry = builtInStageTypeCompilers): Result<CompiledWorkflowDefinition, CompileWorkflowError> => {
+  const diagnostics: DelegatedSessionDiagnostic[] = [];
+  for (const [stageKey, node] of Object.entries(definition.graph.stages)) {
+    if (node.stage_type !== "delegated_session") continue;
+    const parsed = delegatedSessionDefinitionSchema.safeParse(node.config);
+    if (!parsed.success) {
+      diagnostics.push({ kind: "invalid_stage_config", stage_key: stageKey, session_role: node.operator_role,
+        contract_item: "config", issues: parsed.error.issues.map((issue) => issue.message) });
+      continue;
+    }
+    diagnostics.push(...validateDelegatedSessionCardinality(stageKey, node.operator_role, parsed.data));
+    diagnostics.push(...validateDelegatedSessionContracts(stageKey, node.operator_role, node.outputs.map((output) => output.name), parsed.data));
+  }
+  if (diagnostics.length > 0) return err({ operation: "compile_workflow", stage_key: diagnostics[0]?.stage_key ?? null,
+    detail: diagnostics.map((diagnostic) => `${diagnostic.kind}: ${diagnostic.stage_key}.${diagnostic.contract_item}`).join("\n"), diagnostics });
   const stages: Record<string, CompiledStageContract> = {};
   for (const [stageKey, node] of Object.entries(definition.graph.stages)) {
     const compiled = compileStage(stageKey, node, registry);
@@ -150,5 +171,42 @@ export const compileWorkflowDefinition = (definition: WorkflowDefinition, regist
   });
   const blockedByRequiredEdge = new Set(edges.filter((edge) => !readOwn(stages, edge.consumer_stage)?.inputs.find((input) => input.name === edge.consumer_input)?.optional).map((edge) => edge.consumer_stage));
   const source_stages = Object.keys(stages).filter((stageKey) => !blockedByRequiredEdge.has(stageKey)).sort();
-  return ok({ stages, edges, source_stages });
+  const flags = (definition.graph.transitions ?? []).filter((transition) => transition.trigger.kind === "assessment_outcome")
+    .map((transition) => ({ kind: "automated_assessment_transition" as const, stage_key: transition.launch.stage,
+      session_role: transition.launch.session_role, contract_item: transition.trigger.item, trigger: transition.trigger.item }));
+  return ok({ manifest_version: 1, stages, edges, transitions: definition.graph.transitions ?? [], source_stages, flags });
+};
+
+export interface CompileManifestVersions {
+  readonly adapter_version: string;
+  readonly artifact_schema_version: string;
+}
+
+/** Compile the run-pinned manifest after its content-addressed prompt bundle exists. */
+export const compileWorkflowManifest = (
+  definition: WorkflowDefinition,
+  promptBundle: PromptBundle,
+  versions: CompileManifestVersions,
+  registry: StageTypeCompilerRegistry = builtInStageTypeCompilers,
+): Result<CompiledWorkflowDefinition, CompileWorkflowError> => {
+  const compiled = compileWorkflowDefinition(definition, registry);
+  const promptDiagnostics: DelegatedSessionDiagnostic[] = [];
+  for (const [stageKey, node] of Object.entries(definition.graph.stages)) {
+    if (node.stage_type !== "delegated_session") continue;
+    const parsed = delegatedSessionDefinitionSchema.safeParse(node.config);
+    if (!parsed.success) continue;
+    const cells = promptBundle.matrix.filter((entry) => (entry.stage_key === undefined || entry.stage_key === stageKey)
+      && parsed.data.prompt_matrix.some((declared) => declared.session_role === entry.session_role
+        && declared.launch_reason === entry.launch_reason && declared.template_path === entry.template_path));
+    promptDiagnostics.push(...validatePromptBundleBindings(stageKey, parsed.data, cells));
+  }
+  if (!compiled.ok || promptDiagnostics.length > 0) {
+    const diagnostics = [...(compiled.ok ? [] : compiled.error.diagnostics ?? []), ...promptDiagnostics];
+    if (diagnostics.length === 0 && !compiled.ok) return compiled;
+    return err({ operation: "compile_workflow", stage_key: diagnostics[0]?.stage_key ?? (compiled.ok ? null : compiled.error.stage_key),
+      detail: diagnostics.map((diagnostic) => `${diagnostic.kind}: ${diagnostic.stage_key}.${diagnostic.contract_item}`).join("\n"), diagnostics });
+  }
+  return ok({ ...compiled.value, bundle_pin: { definition_version: definition.version,
+    prompt_bundle_hash: promptBundle.hash, adapter_version: versions.adapter_version,
+    artifact_schema_version: versions.artifact_schema_version } });
 };

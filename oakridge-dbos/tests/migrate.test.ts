@@ -28,8 +28,9 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
     expect(await applyMigrations(sql)).toEqual([BASELINE]);
     await sql.query(`INSERT INTO oakridge.workflow_definition (id,name,version,definition)
       VALUES ('00000000-0000-4000-8000-000000000001','v15-test',15,'{}')`, []);
-    await sql.query(`INSERT INTO oakridge.workflow_run (id,workflow_definition_id,context,status)
-      VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000001','{}','active')`, []);
+    await sql.query(`INSERT INTO oakridge.workflow_run (id,workflow_definition_id,context,bundle_pin,status)
+      VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000001','{}',
+        '{"definition_version":15,"prompt_bundle_hash":"test","adapter_version":"test","artifact_schema_version":"test"}','active')`, []);
     for (const [id, key] of [
       ["00000000-0000-4000-8000-000000000003", "build"],
       ["00000000-0000-4000-8000-000000000004", "assess"],

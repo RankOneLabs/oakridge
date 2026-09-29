@@ -7,7 +7,7 @@ import type { CompiledStageContract, MaterializedExecutionUnit } from "../src/do
 import type { DelegatedSessionDefinitionConfig } from "../src/domain/delegated-session";
 import type { ArtifactEnvelope } from "../src/domain/execution";
 import type { ArtifactId, JsonValue, StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
-import { loadDevFlowV14 } from "../src/seed/dev-flow-v14";
+import { loadDevFlowV15 } from "../src/seed/dev-flow-v15";
 
 const stageInstanceId = "stage-1" as StageInstanceId;
 const runId = "run-1" as WorkflowRunId;
@@ -38,7 +38,7 @@ const repositoryRefs = [envelope("refs-1", "dev.repository_refs", "repository_re
 })];
 
 const loadCompiled = async () => {
-  const loaded = await loadDevFlowV14();
+  const loaded = await loadDevFlowV15();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const compiled = compileWorkflowDefinition(loaded.value);
   if (!compiled.ok) throw new Error(compiled.error.detail);
@@ -53,7 +53,9 @@ const loadCompiled = async () => {
  */
 const resolveStage = async (stage: CompiledStageContract, unit: MaterializedExecutionUnit, inputs: StageInputSet) => {
   const definition = stage.executor.definition_config as DelegatedSessionDefinitionConfig;
-  const template = await Bun.file(new URL(`../../workflow-config/prompts/${definition.prompt_template_path}`, import.meta.url)).text();
+  const prompt = definition.prompt_matrix.find((entry) => entry.session_role === stage.operator_role && entry.launch_reason === "initial");
+  if (!prompt) throw new Error(`missing initial prompt for ${stage.stage_key}`);
+  const template = await Bun.file(new URL(`../../workflow-config/prompts/${prompt.template_path}`, import.meta.url)).text();
   return resolveDelegatedExecution({ definition, environment: { inputs, context, item: null }, unit, stage_instance_id: stageInstanceId, prompt_template: template,
     run_id: runId, operator_role: stage.operator_role });
 };
@@ -144,5 +146,34 @@ test("seeded assessor resolves its real prompt, pairing only the matching build 
   const execution = await resolveStage(assessor, web, inputs);
   expect(execution).toEqual({ ok: true, value: expect.objectContaining({ rendered_prompt: expect.stringContaining("ui works") }) });
   if (execution.ok) expect(execution.value.rendered_prompt).not.toContain("base works");
-  expect(assessor.outputs[0]?.release).toEqual(expect.objectContaining({ kind: "gate", revision_target: "upstream_handoff" }));
+  expect(assessor.outputs[0]?.release).toEqual(expect.objectContaining({ kind: "gate", gate_name: "assessment_gate" }));
+});
+
+test("every spec prompt matrix cell renders the generated contract for valid and invalid slots", async () => {
+  const workflow = await loadCompiled();
+  const stage = workflow.stages.spec_analyzer!;
+  const definition = stage.executor.definition_config as DelegatedSessionDefinitionConfig;
+  const inputs = { repository_refs: repositoryRefs };
+  for (const cell of definition.prompt_matrix) {
+    const template = await Bun.file(new URL(`../../workflow-config/prompts/${cell.template_path}`, import.meta.url)).text();
+    const representative = resolveDelegatedExecution({ definition, environment: { inputs, context, item: null }, unit: scalarUnit,
+      stage_instance_id: stageInstanceId, prompt_template: template, run_id: runId, operator_role: cell.session_role, launch_reason: cell.launch_reason });
+    expect(representative.ok).toBe(true);
+    if (representative.ok) {
+      expect(representative.value.rendered_prompt).toContain("## Generated session contract");
+      expect(representative.value.rendered_prompt).toContain(`Launch reason: ${cell.launch_reason}`);
+    }
+
+    // A failed resolution is not dispatchable, but carries a diagnostic prompt
+    // preview with the same contract block so every matrix cell remains
+    // inspectable when a slot is absent or invalid.
+    const invalid = resolveDelegatedExecution({ definition,
+      environment: { inputs, context: { ...context, brief_notes: undefined } as unknown as JsonValue, item: null }, unit: scalarUnit,
+      stage_instance_id: stageInstanceId, prompt_template: template, run_id: runId, operator_role: cell.session_role, launch_reason: cell.launch_reason });
+    expect(invalid.ok).toBe(false);
+    if (!invalid.ok) {
+      expect(invalid.error.rendered_prompt).toContain("## Generated session contract");
+      expect(invalid.error.rendered_prompt).toContain(`Launch reason: ${cell.launch_reason}`);
+    }
+  }
 });

@@ -63,6 +63,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
+      - run: bun run --filter oakridge-dbos validate:definitions
       - run: bun run --filter oakridge-dbos test
 
   lbc-dashboard-tests:

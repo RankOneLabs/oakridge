@@ -1,7 +1,7 @@
 {
-  "id": "3f7b2c95-6d41-4e88-9a52-c1e0f4b7d206",
+  "id": "5a8c3d16-7e42-4f99-8b63-d2f1a6c8e307",
   "name": "dev-flow",
-  "version": 14,
+  "version": 15,
   "created_at": "2026-08-21T00:00:00Z",
   "graph": {
     "stages": {
@@ -744,6 +744,56 @@
         "to": {
           "stage": "assessor",
           "slot": "repository_refs"
+        }
+      }
+    ],
+    "transitions": [
+      {
+        "trigger": {
+          "kind": "operator",
+          "stage": "spec_analyzer",
+          "item": "request_revision"
+        },
+        "launch": {
+          "stage": "spec_analyzer",
+          "session_role": "spec",
+          "launch_reason": "input_revision"
+        }
+      },
+      {
+        "trigger": {
+          "kind": "operator",
+          "stage": "plan_writer",
+          "item": "request_revision"
+        },
+        "launch": {
+          "stage": "plan_writer",
+          "session_role": "plan",
+          "launch_reason": "input_revision"
+        }
+      },
+      {
+        "trigger": {
+          "kind": "operator",
+          "stage": "brief_writer",
+          "item": "request_revision"
+        },
+        "launch": {
+          "stage": "brief_writer",
+          "session_role": "brief",
+          "launch_reason": "input_revision"
+        }
+      },
+      {
+        "trigger": {
+          "kind": "operator",
+          "stage": "assessor",
+          "item": "request_revision"
+        },
+        "launch": {
+          "stage": "build",
+          "session_role": "build",
+          "launch_reason": "input_revision"
         }
       }
     ]

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 
 import type { ProjectId, WorkflowDefinitionId } from "../src/domain/primitives";
-import type { WorkflowDefinition } from "../src/domain/workflow";
+import type { PromptBundle, WorkflowDefinition } from "../src/domain/workflow";
 import type { PersistWorkflowRunLaunch } from "../src/domain/runs";
 import { runRecordWorkflowId } from "../src/domain/workflow-ids";
 import { createRunLaunchApp } from "../src/http/run-launch";
@@ -10,11 +10,21 @@ import type { RunStartRequest } from "../src/runtime/run-launch-dispatch";
 
 // A definition that reads the context, because a definition that reads nothing
 // cannot show whether the launch gate checks anything.
-const graph = { stages: { analyze: { stage_type: "delegated_session", operator_role: null, inputs: [], outputs: [{ name: "analysis", artifact_type: "dev.analysis" }],
-  config: { runtime: { from: "context", path: "/planner_runtime" }, effort: { from: "context", path: "/planner_effort" },
-    slot_bindings: { NOTES: { from: "context", path: "/brief_notes" }, URL: { from: "context", path: "/oakridge_url" } } } } }, edges: [] };
+const graph = { stages: { analyze: { stage_type: "delegated_session", operator_role: "spec", inputs: [], outputs: [{ name: "analysis", artifact_type: "dev.analysis" }],
+  config: {
+    prompt_matrix: ["initial", "operator_retry", "input_revision"].map((launch_reason) => ({ session_role: "spec", launch_reason, template_path: "analyze.md" })),
+    role_configs: [{ session_role: "spec", runtime: { from: "context", path: "/planner_runtime" }, effort: { from: "context", path: "/planner_effort" },
+      session_name: "analyze-{{STAGE_INSTANCE_ID}}", authorized_outputs: ["analysis"] }],
+    slot_bindings: { NOTES: { from: "context", path: "/brief_notes" }, URL: { from: "context", path: "/oakridge_url" } },
+    workdir: { from: "literal", value: "/repo" }, artifact_productions: [], gates: [], handoffs: [],
+  } } }, edges: [] };
 const definition = { id: "ef2b47a4-d1bd-44ee-840a-e4f7b27570db" as WorkflowDefinitionId, name: "flow", version: 11,
   graph, archived: false, created_at: "2026-08-15T00:00:00Z" } as unknown as WorkflowDefinition;
+const promptBundle: PromptBundle = { version: 1, hash: "prompt-bundle-11", matrix: [
+  { session_role: "spec", launch_reason: "initial", template_path: "analyze.md", content: "Analyze {{NOTES}}" },
+  { session_role: "spec", launch_reason: "operator_retry", template_path: "analyze.md", content: "Retry {{NOTES}}" },
+  { session_role: "spec", launch_reason: "input_revision", template_path: "analyze.md", content: "Revise {{NOTES}}" },
+] };
 const project = { id: "af2b47a4-d1bd-44ee-840a-e4f7b27570db" as ProjectId, name: "Oakridge", repo_dir: "/workspace/oakridge",
   forge_repository: null, base_branch: null, created_at: "2026-08-15T00:00:00Z" };
 // `planner_effort: null` is what the launcher sends for "the runtime's default".
@@ -23,12 +33,16 @@ const body = { workflow_def_id: definition.id, project_id: project.id, context, 
 
 const mountedFixture = (options: { readonly archived?: boolean; readonly start_run_result?: "ok" | "err" } = {}) => {
   let stored: PersistWorkflowRunLaunch | null = null;
+  let boundPromptBundle = promptBundle;
   const starts: RunStartRequest[] = [];
   const summary = { id: deterministicRunId("launch-1"), title: null, repository_keys: [], workflow_name: "flow", status: "running" as const,
     current_attempt_root_workflow_id: "root", current_stage: null, parked_count: 0, updated_at: "2026-08-15T00:00:00Z",
     is_stuck: false, is_failed: false, archived: false };
   const dependencies = {
-    definitions: { async find_by_id() { return { ...definition, archived: options.archived ?? false }; } },
+    definitions: {
+      async find_by_id() { return { ...definition, archived: options.archived ?? false }; },
+      async find_bound_prompt_bundle() { return boundPromptBundle; },
+    },
     projects: { async find_by_id() { return project; } },
     runs: {
       async find_launch_by_id() { return stored?.run ? { ...stored.run, root_workflow_id: runRecordWorkflowId(stored.run.id) } : null; },
@@ -47,8 +61,10 @@ const mountedFixture = (options: { readonly archived?: boolean; readonly start_r
       return { ok: true as const, value: undefined };
     },
     application_version: "pr2", now: () => "2026-08-15T00:00:00Z",
+    adapter_version: "kbbl-v2", artifact_schema_version: "artifacts-v1",
   } as unknown as LaunchRunDependencies;
-  return { app: createRunLaunchApp(dependencies), dependencies, stored: () => stored, starts: () => starts };
+  return { app: createRunLaunchApp(dependencies), dependencies, stored: () => stored, starts: () => starts,
+    bindPromptBundle: (bundle: PromptBundle) => { boundPromptBundle = bundle; } };
 };
 
 const request = (app: ReturnType<typeof createRunLaunchApp>, value: unknown = body) => app.request("/workflow_runs", {
@@ -61,7 +77,8 @@ test("workflow run POST persists, starts the root workflow, and returns the oper
   expect(response.status).toBe(201);
   expect(await response.json()).toEqual(expect.objectContaining({ id: deterministicRunId("launch-1"), workflow_name: "flow", status: "running" }));
   expect(subject.stored()).toEqual(expect.objectContaining({ workflow_definition_version: 11,
-    run: expect.objectContaining({ project_id: project.id, context: expect.objectContaining({ workdir: project.repo_dir }) }) }));
+    run: expect.objectContaining({ project_id: project.id, context: expect.objectContaining({ workdir: project.repo_dir }),
+      bundle_pin: { definition_version: 11, prompt_bundle_hash: promptBundle.hash, adapter_version: "kbbl-v2", artifact_schema_version: "artifacts-v1" } }) }));
   expect(subject.starts()).toHaveLength(1);
   expect(subject.starts()[0]).toEqual(expect.objectContaining({ workflow_id: runRecordWorkflowId(deterministicRunId("launch-1")), run_id: deterministicRunId("launch-1") }));
 });
@@ -73,6 +90,14 @@ test("workflow run POST replays the same idempotent launch without a second logi
   expect(replay.status).toBe(201);
   expect((await replay.json()).id).toBe(deterministicRunId("launch-1"));
   expect(subject.starts()).toHaveLength(2);
+});
+
+test("an idempotent replay keeps the run's original bundle pin after prompts change", async () => {
+  const subject = mountedFixture();
+  expect((await request(subject.app)).status).toBe(201);
+  subject.bindPromptBundle({ ...promptBundle, hash: "new-prompt-bundle" });
+  expect((await request(subject.app)).status).toBe(201);
+  expect(subject.stored()?.run.bundle_pin.prompt_bundle_hash).toBe(promptBundle.hash);
 });
 
 test("workflow run POST reports an immutable replay conflict", async () => {

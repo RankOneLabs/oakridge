@@ -1,11 +1,16 @@
 import type { MaterializedExecutionUnit } from "../domain/compiled-workflow";
-import { isDelegatedRuntimeId, type Bindable, type DelegatedSessionDefinitionConfig, type ResolvedExecutorConfig, type SessionIdentity, type SlotBinding } from "../domain/delegated-session";
+import { isDelegatedRuntimeId, type Bindable, type DelegatedSessionDefinitionConfig, type ResolvedExecutorConfig, type SessionIdentity, type SessionLaunchReason, type SlotBinding } from "../domain/delegated-session";
 import type { ArtifactEnvelope } from "../domain/execution";
 import { err, ok, type JsonValue, type Result, type StageInstanceId, type WorkflowRunId } from "../domain/primitives";
 import { readJsonPointer } from "../domain/json-pointer";
 import type { StageOperatorRole } from "../domain/workflow";
 
-export interface ResolveExecutionError { readonly operation: "resolve_execution"; readonly detail: string }
+export interface ResolveExecutionError {
+  readonly operation: "resolve_execution";
+  readonly detail: string;
+  /** A diagnostic rendering that is never dispatchable, but always shows the generated contract for a selected role. */
+  readonly rendered_prompt?: string;
+}
 export interface BindingEnvironment {
   readonly inputs: Readonly<Record<string, ArtifactEnvelope | readonly ArtifactEnvelope[]>>;
   readonly context: JsonValue;
@@ -19,6 +24,7 @@ export interface ResolveDelegatedExecutionInput {
   readonly prompt_template: string;
   readonly run_id: WorkflowRunId;
   readonly operator_role: StageOperatorRole | null;
+  readonly launch_reason?: SessionLaunchReason;
 }
 
 
@@ -89,7 +95,7 @@ const renderPrompt = (template: string, slots: Readonly<Record<string, string>>)
     if (value === undefined) { missing = key; return ""; }
     return value;
   });
-  return missing ? err({ operation: "resolve_execution", detail: `template slot '{{${missing}}}' has no binding` }) : ok(rendered);
+  return missing ? err({ operation: "resolve_execution", detail: `template slot '{{${missing}}}' has no binding`, rendered_prompt: rendered }) : ok(rendered);
 };
 
 /**
@@ -131,16 +137,23 @@ const stringSlot = (slots: Readonly<Record<string, string>>, name: string): stri
 };
 
 export const resolveDelegatedExecution = (input: ResolveDelegatedExecutionInput): Result<ResolvedExecutorConfig, ResolveExecutionError> => {
+  if (!input.operator_role) return err({ operation: "resolve_execution", detail: "delegated session has no operator role" });
+  const roleConfig = input.definition.role_configs.find((candidate) => candidate.session_role === input.operator_role);
+  if (!roleConfig) return err({ operation: "resolve_execution", detail: `session role '${input.operator_role}' has no runtime config` });
+  const contractBlock = ["## Generated session contract", `Role: ${roleConfig.session_role}`,
+    `Launch reason: ${input.launch_reason ?? "initial"}`, `Authorized outputs: ${roleConfig.authorized_outputs.join(", ")}`].join("\n");
+  const failed = (failure: ResolveExecutionError): Result<never, ResolveExecutionError> => err({ ...failure,
+    rendered_prompt: `${failure.rendered_prompt ?? input.prompt_template}\n\n${contractBlock}` });
   const environment = { ...input.environment, item: input.unit.parameters };
   const slots: Record<string, string> = {};
   for (const [name, binding] of Object.entries(input.definition.slot_bindings)) {
     const value = resolveBinding(binding, environment);
-    if (!value.ok) return value;
+    if (!value.ok) return failed(value.error);
     slots[name] = value.value;
   }
   for (const [name, binding] of Object.entries(input.definition.fan_out?.item_bindings ?? {})) {
     const value = resolveBinding(binding, environment);
-    if (!value.ok) return value;
+    if (!value.ok) return failed(value.error);
     slots[name] = value.value;
   }
   const identity = {
@@ -157,34 +170,34 @@ export const resolveDelegatedExecution = (input: ResolveDelegatedExecutionInput)
     repository_key: stringSlot(slots, REPOSITORY_KEY_SLOT),
   };
   const prompt = renderPrompt(input.prompt_template, slots);
-  if (!prompt.ok) return prompt;
-  const runtime = resolveBindable(input.definition.runtime, environment);
-  const model = resolveBindable(input.definition.model, environment);
-  const effort = resolveBindable(input.definition.effort, environment);
+  if (!prompt.ok) return failed(prompt.error);
+  const runtime = resolveBindable(roleConfig.runtime, environment);
+  const model = resolveBindable(roleConfig.model, environment);
+  const effort = resolveBindable(roleConfig.effort, environment);
   const workdirBinding = input.definition.fan_out?.workdir ?? input.definition.workdir;
   const workdir = resolveBinding(workdirBinding, environment);
-  if (!runtime.ok) return runtime;
-  if (!model.ok) return model;
-  if (!effort.ok) return effort;
-  if (!workdir.ok) return workdir;
-  if (!isDelegatedRuntimeId(runtime.value)) return err({ operation: "resolve_execution", detail: `unsupported delegated runtime '${runtime.value}'` });
-  const worktreeTemplate = input.definition.fan_out?.worktree;
+  if (!runtime.ok) return failed(runtime.error);
+  if (!model.ok) return failed(model.error);
+  if (!effort.ok) return failed(effort.error);
+  if (!workdir.ok) return failed(workdir.error);
+  if (!isDelegatedRuntimeId(runtime.value)) return failed({ operation: "resolve_execution", detail: `unsupported delegated runtime '${runtime.value}'`, rendered_prompt: prompt.value });
+  const worktreeTemplate = roleConfig.worktree;
   const substituteIdentity = (value: string): string => value.replaceAll("{{UNIT_ID}}", input.unit.unit_id).replaceAll("{{STAGE_INSTANCE_ID}}", input.stage_instance_id);
   let worktree: ResolvedExecutorConfig["worktree"];
   if (worktreeTemplate) {
     const branchName = resolveBindable(worktreeTemplate.branch_name, environment);
     const worktreeSubdir = resolveBindable(worktreeTemplate.worktree_subdir, environment);
     const baseRef = resolveBindable(worktreeTemplate.base_ref, environment);
-    if (!branchName.ok) return branchName;
-    if (!worktreeSubdir.ok) return worktreeSubdir;
-    if (!baseRef.ok) return baseRef;
-    if (!branchName.value || !worktreeSubdir.value) return err({ operation: "resolve_execution", detail: "worktree branch name and subdirectory must resolve to non-empty strings" });
+    if (!branchName.ok) return failed(branchName.error);
+    if (!worktreeSubdir.ok) return failed(worktreeSubdir.error);
+    if (!baseRef.ok) return failed(baseRef.error);
+    if (!branchName.value || !worktreeSubdir.value) return failed({ operation: "resolve_execution", detail: "worktree branch name and subdirectory must resolve to non-empty strings", rendered_prompt: prompt.value });
     worktree = { branchName: substituteIdentity(branchName.value), worktreeSubdir: substituteIdentity(worktreeSubdir.value),
       ...(baseRef.value ? { baseRef: substituteIdentity(baseRef.value) } : {}) };
   }
-  return ok({ executor_type: "delegated_session", runtime: runtime.value, rendered_prompt: prompt.value, workdir: workdir.value,
-    session_name: substituteIdentity(input.definition.session_name),
+  return ok({ executor_type: "delegated_session", runtime: runtime.value, rendered_prompt: `${prompt.value}\n\n${contractBlock}`, workdir: workdir.value,
+    session_name: substituteIdentity(roleConfig.session_name),
     model: model.value, effort: effort.value, ...(worktree ? { worktree } : {}),
-    executor_options: { pre_authorized_tools: input.definition.pre_authorized_tools ?? [], yolo: input.definition.yolo ?? false },
+    executor_options: { pre_authorized_tools: roleConfig.pre_authorized_tools ?? [], yolo: roleConfig.yolo ?? false },
     session_identity });
 };

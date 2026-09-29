@@ -28,19 +28,21 @@ const definitionId = "66666666-6666-4666-8666-666666666666" as WorkflowDefinitio
 
 export const run = (options?: { readonly context?: JsonValue; readonly state?: WorkflowRun["state"]; readonly outcome?: StageOutcome | null; readonly record_version?: number }): WorkflowRun => ({
   id: RUN_ID, workflow_definition_id: definitionId, workflow_definition_version: 1,
+  bundle_pin: { definition_version: 1, prompt_bundle_hash: "test-bundle", adapter_version: "test-adapter", artifact_schema_version: "test-artifacts" },
   context: options?.context ?? {}, state: options?.state ?? "active", outcome: options?.outcome ?? null,
   record_version: (options?.record_version ?? 1) as RunRecordVersion, created_at: NOW, ended_at: null,
 });
 
-export const emptyDefinition = (): CompiledWorkflowDefinition => ({ stages: {}, edges: [], source_stages: [] });
+export const emptyDefinition = (): CompiledWorkflowDefinition => ({ manifest_version: 1, stages: {}, edges: [], transitions: [], source_stages: [] });
 
 /** One stage per key, `scalar` materialization — enough for run-completion (§D) tests that only care about stage membership. */
 export const scalarStageDefinition = (stage_keys: readonly string[]): CompiledWorkflowDefinition => ({
+  manifest_version: 1,
   stages: Object.fromEntries(stage_keys.map((key): [string, CompiledStageContract] => [key, {
     stage_key: key as StageKey, stage_type: "delegated_session", operator_role: null, inputs: [], outputs: [],
     materialization: { kind: "scalar" }, executor: { executor_type: "delegated_session", definition_config: {} },
   }])),
-  edges: [], source_stages: stage_keys as StageKey[],
+  edges: [], transitions: [], source_stages: stage_keys as StageKey[],
 });
 
 /**
@@ -68,9 +70,10 @@ export const fanOutDefinition = (options: { readonly stage_key: string; readonly
     executor: { executor_type: "delegated_session", definition_config: {} },
   };
   return {
+    manifest_version: 1,
     stages: { [options.stage_key]: consumer },
     edges: [{ producer_stage: PRODUCER_STAGE_KEY, producer_output: PRODUCER_OUTPUT_NAME, consumer_stage: options.stage_key as StageKey, consumer_input: options.over_input, delivery: "unit_complete" }],
-    source_stages: [],
+    transitions: [], source_stages: [],
   };
 };
 

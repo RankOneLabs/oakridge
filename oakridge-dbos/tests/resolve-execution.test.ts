@@ -1,11 +1,24 @@
 import { expect, test } from "bun:test";
 import { resolveBinding, resolveDelegatedExecution } from "../src/compiler/resolve-execution";
-import type { DelegatedSessionDefinitionConfig } from "../src/domain/delegated-session";
+import type { Bindable, DelegatedSessionDefinitionConfig, FanOutDefinition, SlotBinding } from "../src/domain/delegated-session";
+import type { StageOperatorRole } from "../src/domain/workflow";
 import type { StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
-import { loadDevFlowV14 } from "../src/seed/dev-flow-v14";
+import { loadDevFlowV15 } from "../src/seed/dev-flow-v15";
 import { delegatedSessionDefinitionSchema } from "../src/validation/delegated-session";
 
 const RUN_ID = "run-1" as WorkflowRunId;
+
+interface LegacyFixture {
+  readonly runtime: Bindable; readonly prompt_template_path: string; readonly slot_bindings: Readonly<Record<string, SlotBinding>>;
+  readonly workdir: SlotBinding; readonly session_name: string; readonly model?: Bindable; readonly effort?: Bindable; readonly fan_out?: FanOutDefinition;
+}
+const sessionDefinition = (role: StageOperatorRole, fixture: LegacyFixture): DelegatedSessionDefinitionConfig => ({
+  prompt_matrix: (["initial", "operator_retry", "input_revision"] as const).map((launch_reason) => ({ session_role: role, launch_reason, template_path: fixture.prompt_template_path })),
+  role_configs: [{ session_role: role, runtime: fixture.runtime, session_name: fixture.session_name, model: fixture.model, effort: fixture.effort,
+    authorized_outputs: ["result"], pre_authorized_tools: [], required_tools: [] }],
+  slot_bindings: fixture.slot_bindings, workdir: fixture.workdir, ...(fixture.fan_out ? { fan_out: fixture.fan_out } : {}),
+  artifact_productions: [], gates: [], handoffs: [],
+});
 
 test("context lookup resolves repository workdir from the runtime fan-out item", () => {
   const result = resolveBinding({ from: "context_lookup", collection_path: "/repositories", collection_key_path: "/key", item_key_path: "/artifact/repository_key", value_path: "/path" }, {
@@ -39,25 +52,25 @@ test("input lookup names the input it could not find rather than resolving to no
 });
 
 test("production execution resolution retains v11 prompt and runtime semantics", () => {
-  const definition: DelegatedSessionDefinitionConfig = {
+  const definition = sessionDefinition("build", {
     runtime: { from: "context", path: "/worker_runtime" }, prompt_template_path: "dev-flow/build_v2.md",
     slot_bindings: { COHORT_TITLE: { from: "literal", value: "" } }, workdir: { from: "literal", value: "/" },
     session_name: "build-{{STAGE_INSTANCE_ID}}-{{UNIT_ID}}", model: { from: "context", path: "/worker_model" },
     fan_out: { over: { from: "input", input_name: "brief" }, unit_id_path: "/unit_id", item_bindings: { COHORT_TITLE: { from: "item", path: "/artifact/title" } }, workdir: { from: "context_lookup", collection_path: "/repositories", collection_key_path: "/key", item_key_path: "/artifact/repository_key", value_path: "/path" } },
-  };
+  });
   const result = resolveDelegatedExecution({ definition, environment: { inputs: {}, context: { worker_runtime: "claude-code", worker_model: "opus", repositories: [{ key: "web", path: "/repo/web" }] }, item: null }, unit: { unit_id: "web" as UnitId, depends_on: [], parameters: { artifact: { title: "Build web", repository_key: "web" } } }, stage_instance_id: "stage-1" as StageInstanceId, prompt_template: "{{COHORT_TITLE}} ({{UNIT_ID}})", run_id: RUN_ID, operator_role: "build" });
-  expect(result).toEqual({ ok: true, value: expect.objectContaining({ runtime: "claude-code", rendered_prompt: "Build web (web)", workdir: "/repo/web", session_name: "build-stage-1-web", model: "opus" }) });
+  expect(result).toEqual({ ok: true, value: expect.objectContaining({ runtime: "claude-code", rendered_prompt: expect.stringContaining("Build web (web)\n\n## Generated session contract"), workdir: "/repo/web", session_name: "build-stage-1-web", model: "opus" }) });
 });
 
 test("session_identity carries the run/stage/unit identity and the cohort title read back off the COHORT_TITLE slot", () => {
-  const definition: DelegatedSessionDefinitionConfig = {
+  const definition = sessionDefinition("build", {
     runtime: { from: "context", path: "/worker_runtime" }, prompt_template_path: "dev-flow/build_v2.md",
     slot_bindings: {}, workdir: { from: "literal", value: "/" },
     session_name: "build-{{STAGE_INSTANCE_ID}}-{{UNIT_ID}}", model: { from: "context", path: "/worker_model" },
     fan_out: { over: { from: "input", input_name: "brief" }, unit_id_path: "/unit_id",
       item_bindings: { COHORT_TITLE: { from: "item", path: "/artifact/title" }, REPOSITORY_KEY: { from: "item", path: "/artifact/repository_key" } },
       workdir: { from: "literal", value: "/repo/web" } },
-  };
+  });
   const result = resolveDelegatedExecution({
     definition, environment: { inputs: {}, context: { worker_runtime: "claude-code", worker_model: "opus" }, item: null },
     unit: { unit_id: "web" as UnitId, depends_on: [], parameters: { artifact: { title: "Build web", repository_key: "web" } } },
@@ -70,13 +83,13 @@ test("session_identity carries the run/stage/unit identity and the cohort title 
 
 /** The assessor stage binds no COHORT_TITLE, so its session_identity carries none — the client inherits one from the build sibling. */
 test("session_identity's cohort_title is null when the stage binds no COHORT_TITLE slot", () => {
-  const definition: DelegatedSessionDefinitionConfig = {
+  const definition = sessionDefinition("assessment", {
     runtime: { from: "context", path: "/planner_runtime" }, prompt_template_path: "dev-flow/assessor_v2.md",
     slot_bindings: {}, workdir: { from: "literal", value: "/repo/web" }, session_name: "assessor-{{STAGE_INSTANCE_ID}}-{{UNIT_ID}}",
     model: { from: "context", path: "/planner_model" },
     fan_out: { over: { from: "input", input_name: "build_result" }, unit_id_path: "/unit_id",
       item_bindings: { REPOSITORY_KEY: { from: "item", path: "/artifact/repository_key" } } },
-  };
+  });
   const result = resolveDelegatedExecution({
     definition, environment: { inputs: {}, context: { planner_runtime: "claude-code", planner_model: "opus" }, item: null },
     unit: { unit_id: "web" as UnitId, depends_on: [], parameters: { artifact: { repository_key: "web" } } },
@@ -100,7 +113,7 @@ test("session_identity's cohort_title is null when the stage binds no COHORT_TIT
  * substitute the unit id directly instead of going through the slot table.
  */
 test("a definition cannot rebind the slots that identify the execution", () => {
-  const definition: DelegatedSessionDefinitionConfig = {
+  const definition = sessionDefinition("build", {
     runtime: { from: "literal", value: "claude-code" }, prompt_template_path: "dev-flow/build_v2.md",
     slot_bindings: {
       UNIT_ID: { from: "literal", value: "0" },
@@ -109,7 +122,7 @@ test("a definition cannot rebind the slots that identify the execution", () => {
     },
     workdir: { from: "literal", value: "/" }, session_name: "build-{{STAGE_INSTANCE_ID}}-{{UNIT_ID}}",
     fan_out: { over: { from: "input", input_name: "brief" }, unit_id_path: "/unit_id", item_bindings: {}, workdir: { from: "literal", value: "/repo" } },
-  };
+  });
 
   const result = resolveDelegatedExecution({
     definition, environment: { inputs: {}, context: {}, item: null },
@@ -120,7 +133,7 @@ test("a definition cannot rebind the slots that identify the execution", () => {
   });
 
   expect(result).toEqual({ ok: true, value: expect.objectContaining({
-    rendered_prompt: "Stage instance: stage-1 Unit: targets_spec_contract\nPUT https://oakridge.test/work-orders/<work-order-id>/emit/pr_summary",
+    rendered_prompt: expect.stringContaining("Stage instance: stage-1 Unit: targets_spec_contract\nPUT https://oakridge.test/work-orders/<work-order-id>/emit/pr_summary\n\n## Generated session contract"),
   }) });
 });
 
@@ -133,7 +146,7 @@ test("a definition cannot rebind the slots that identify the execution", () => {
  * definition binds no identity slot, and the address it renders is the unit.
  */
 test("the seeded build stage addresses the unit it is running", async () => {
-  const seeded = await loadDevFlowV14();
+  const seeded = await loadDevFlowV15();
   if (!seeded.ok) throw new Error(`seed did not load: ${seeded.error.detail}`);
 
   const build = seeded.value.graph.stages.build;
@@ -184,16 +197,16 @@ test("the seeded build stage addresses the unit it is running", async () => {
   });
 
   expect(result).toEqual({ ok: true, value: expect.objectContaining({
-    rendered_prompt: "units/targets_spec_contract/emit/pr_summary",
+    rendered_prompt: expect.stringContaining("units/targets_spec_contract/emit/pr_summary\n\n## Generated session contract"),
   }) });
 });
 
 test("a null effort binding preserves the runtime default", () => {
-  const definition: DelegatedSessionDefinitionConfig = {
+  const definition = sessionDefinition("spec", {
     runtime: { from: "context", path: "/planner_runtime" }, prompt_template_path: "dev-flow/spec_analyzer_v2.md",
     slot_bindings: {}, workdir: { from: "literal", value: "/repo" }, session_name: "spec-{{STAGE_INSTANCE_ID}}",
     model: { from: "context", path: "/planner_model" }, effort: { from: "context", path: "/planner_effort" },
-  };
+  });
 
   const result = resolveDelegatedExecution({
     definition,

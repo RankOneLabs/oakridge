@@ -2,10 +2,10 @@ import { expect, test } from "bun:test";
 
 import { compileWorkflowDefinition, type StageTypeCompiler } from "../src/compiler/compile-workflow";
 import { ok } from "../src/domain/primitives";
-import { loadDevFlowV14 } from "../src/seed/dev-flow-v14";
+import { loadDevFlowV15 } from "../src/seed/dev-flow-v15";
 
-test("compiles unchanged v14 into executor-independent materialization contracts", async () => {
-  const loaded = await loadDevFlowV14();
+test("compiles plural v15 into executor-independent materialization contracts", async () => {
+  const loaded = await loadDevFlowV15();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const compiled = compileWorkflowDefinition(loaded.value);
   expect(compiled.ok).toBe(true);
@@ -15,10 +15,12 @@ test("compiles unchanged v14 into executor-independent materialization contracts
   // directory; it declares the provisioned refs now, so the branch a planner
   // reasons about is guaranteed to exist before the planner does.
   expect(compiled.value.source_stages).toEqual(["provision_refs"]);
-  expect(compiled.value.stages.brief_writer?.materialization.kind).toBe("artifact_collection");
+  expect(compiled.value.stages.brief_writer?.materialization.kind).toBe("artifact_collections");
   expect(compiled.value.stages.build?.materialization.kind).toBe("fan_out");
   expect(compiled.value.stages.build?.outputs.find((output) => output.name === "build_result")?.release.kind).toBe("handoff");
   expect(compiled.value.edges.find((edge) => edge.consumer_stage === "build" && edge.consumer_input === "brief")?.delivery).toBe("unit_complete");
+  expect(compiled.value.transitions).toContainEqual({ trigger: { kind: "operator", stage: "assessor", item: "request_revision" },
+    launch: { stage: "build", session_role: "build", launch_reason: "input_revision" } });
 });
 
 /**
@@ -27,7 +29,7 @@ test("compiles unchanged v14 into executor-independent materialization contracts
  * which is the contract by which the registered adapter is found.
  */
 test("compiles the provisioning stage into one unreviewed unit per repository", async () => {
-  const loaded = await loadDevFlowV14();
+  const loaded = await loadDevFlowV15();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const compiled = compileWorkflowDefinition(loaded.value);
   if (!compiled.ok) throw new Error(compiled.error.detail);
@@ -43,7 +45,7 @@ test("compiles the provisioning stage into one unreviewed unit per repository", 
  * orders provisioning before it. This edge is the whole fix in one assertion.
  */
 test("build declares the provisioned refs as a required input", async () => {
-  const loaded = await loadDevFlowV14();
+  const loaded = await loadDevFlowV15();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const compiled = compileWorkflowDefinition(loaded.value);
   if (!compiled.ok) throw new Error(compiled.error.detail);
@@ -54,7 +56,7 @@ test("build declares the provisioned refs as a required input", async () => {
 });
 
 test("accepts a non-session executor through the stage-type compiler registry", async () => {
-  const loaded = await loadDevFlowV14();
+  const loaded = await loadDevFlowV15();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const headlessCompiler: StageTypeCompiler = {
     compile: (_stageKey, config) => ok({
@@ -83,7 +85,7 @@ test("accepts a non-session executor through the stage-type compiler registry", 
 });
 
 test("rejects required attention on an immediate output", async () => {
-  const loaded = await loadDevFlowV14();
+  const loaded = await loadDevFlowV15();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const provision = loaded.value.graph.stages.provision_refs!;
   const definition = {
@@ -98,7 +100,7 @@ test("rejects required attention on an immediate output", async () => {
 });
 
 test("accepts no attention on a waiting handoff", async () => {
-  const loaded = await loadDevFlowV14();
+  const loaded = await loadDevFlowV15();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const build = loaded.value.graph.stages.build!;
   const definition = {
@@ -109,4 +111,52 @@ test("accepts no attention on a waiting handoff", async () => {
   const compiled = compileWorkflowDefinition(definition);
   expect(compiled.ok).toBe(true);
   if (compiled.ok) expect(compiled.value.stages.build?.outputs.find((output) => output.name === "build_result")?.attention).toBe("none");
+});
+
+test("the manifest pipeline reports placeholder, output, and tool failures together", async () => {
+  const loaded = await loadDevFlowV15();
+  if (!loaded.ok) throw new Error(loaded.error.detail);
+  const build = structuredClone(loaded.value.graph.stages.build!) as any;
+  build.config.role_configs[0].session_name = "build-{{MISSING}}";
+  build.config.role_configs[0].required_tools = ["forge"];
+  build.config.role_configs[0].authorized_outputs.push("ghost");
+  const compiled = compileWorkflowDefinition({ ...loaded.value, graph: { ...loaded.value.graph,
+    stages: { ...loaded.value.graph.stages, build } } });
+  expect(compiled.ok).toBe(false);
+  if (compiled.ok) return;
+  expect(compiled.error.diagnostics).toEqual(expect.arrayContaining([
+    expect.objectContaining({ kind: "unbound_placeholder", stage_key: "build", placeholder: "MISSING" }),
+    expect.objectContaining({ kind: "undeclared_output", stage_key: "build", output: "ghost" }),
+    expect.objectContaining({ kind: "unavailable_tool", stage_key: "build", tool: "forge" }),
+  ]));
+});
+
+test("a schema-invalid stage config joins the all-at-once diagnostic report", async () => {
+  const loaded = await loadDevFlowV15();
+  if (!loaded.ok) throw new Error(loaded.error.detail);
+  const build = structuredClone(loaded.value.graph.stages.build!) as any;
+  build.config.role_configs[0].session_name = "build-{{MISSING}}";
+  const assessor = structuredClone(loaded.value.graph.stages.assessor!) as any;
+  delete assessor.config.prompt_matrix;
+  const compiled = compileWorkflowDefinition({ ...loaded.value, graph: { ...loaded.value.graph,
+    stages: { ...loaded.value.graph.stages, build, assessor } } });
+  expect(compiled.ok).toBe(false);
+  if (compiled.ok) return;
+  expect(compiled.error.diagnostics).toEqual(expect.arrayContaining([
+    expect.objectContaining({ kind: "unbound_placeholder", stage_key: "build", placeholder: "MISSING" }),
+    expect.objectContaining({ kind: "invalid_stage_config", stage_key: "assessor", contract_item: "config" }),
+  ]));
+});
+
+test("automated assessment transitions are visible manifest flags without rejecting compilation", async () => {
+  const loaded = await loadDevFlowV15();
+  if (!loaded.ok) throw new Error(loaded.error.detail);
+  const transition = { trigger: { kind: "assessment_outcome" as const, stage: "assessor", item: "approved" },
+    launch: { stage: "build", session_role: "build" as const, launch_reason: "input_revision" as const } };
+  const compiled = compileWorkflowDefinition({ ...loaded.value, graph: { ...loaded.value.graph, transitions: [transition] } });
+  expect(compiled.ok).toBe(true);
+  if (!compiled.ok) return;
+  expect(compiled.value.flags).toContainEqual(expect.objectContaining({
+    kind: "automated_assessment_transition", stage_key: "build", trigger: "approved",
+  }));
 });
