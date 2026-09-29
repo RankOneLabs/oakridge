@@ -25,7 +25,9 @@ const fixture = (generatedId = project.id as string, identity: Project["forge_re
     list: async (includeArchived = false) => definitions.filter((candidate) => includeArchived || !candidate.archived),
     set_archived: async (id, archived) => { const index = definitions.findIndex((candidate) => candidate.id === id); if (index < 0) return null; definitions[index] = { ...definitions[index]!, archived }; return definitions[index]!; },
   };
-  const app = createConfigurationApp({ projects: projectRepository, definitions: definitionRepository, project_identity: { resolve: async () => identity ? { forge_repository: identity, base_branch: baseBranch } : null }, now: () => "2026-08-15T12:00:00Z", new_id: () => generatedId });
+  const app = createConfigurationApp({ projects: projectRepository, definitions: definitionRepository,
+    prompt_templates: { load: async (path) => `Prompt ${path}` },
+    project_identity: { resolve: async () => identity ? { forge_repository: identity, base_branch: baseBranch } : null }, now: () => "2026-08-15T12:00:00Z", new_id: () => generatedId });
   return { app, projects, definitions };
 };
 

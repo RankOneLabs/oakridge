@@ -64,6 +64,7 @@ CREATE TABLE oakridge.workflow_run (
   workflow_definition_id uuid NOT NULL REFERENCES oakridge.workflow_definition(id),
   project_id uuid REFERENCES oakridge.project(id),
   context jsonb NOT NULL,
+  bundle_pin jsonb NOT NULL,
   status oakridge.core_status NOT NULL DEFAULT 'pending',
   blocked_reason oakridge.blocked_reason,
   next_actor oakridge.next_actor,

@@ -28,6 +28,7 @@ import type {
   WorkflowDefinitionId,
   WorkflowRunId,
 } from "./primitives";
+import type { WorkflowRunBundlePin } from "./workflow";
 
 /** Shared durable status vocabulary for runs, stages, and cohorts. */
 export type CoreStatus = "pending" | "active" | "blocked" | "complete" | "failed" | "cancelled";
@@ -57,6 +58,7 @@ export interface WorkflowRunRecord {
   readonly workflow_definition_id: WorkflowDefinitionId;
   readonly project_id: ProjectId | null;
   readonly context: JsonValue;
+  readonly bundle_pin: WorkflowRunBundlePin;
   readonly status: CoreStatus;
   readonly blocked_reason: BlockedReason | null;
   readonly next_actor: NextActor | null;

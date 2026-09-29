@@ -17,7 +17,7 @@ import type { AskResult } from "../decision/commands";
 import type { WorkOrderId, WorkflowRunId as RunRecordWorkflowRunId } from "../domain/primitives";
 
 export interface WorkflowDefinitionRepository {
-  insert_immutable(definition: WorkflowDefinition): Promise<WorkflowDefinition>;
+  insert_immutable(definition: WorkflowDefinition, prompt_bundle: PromptBundle): Promise<WorkflowDefinition>;
   find_by_id(id: WorkflowDefinitionId): Promise<WorkflowDefinition | null>;
   find_by_name_version(name: string, version: number): Promise<WorkflowDefinition | null>;
   list(include_archived?: boolean): Promise<readonly WorkflowDefinition[]>;
@@ -28,6 +28,7 @@ export interface PromptBundleRepository {
   insert_prompt_bundle(bundle: PromptBundle): Promise<PromptBundle>;
   bind_prompt_bundle(definition_id: WorkflowDefinitionId, hash: string): Promise<void>;
   find_prompt_bundle(hash: string): Promise<PromptBundle | null>;
+  find_bound_prompt_bundle(definition_id: WorkflowDefinitionId): Promise<PromptBundle | null>;
 }
 
 export interface ProjectRepository {
@@ -41,6 +42,7 @@ export interface WorkflowRunLaunch {
   readonly id: WorkflowRunId;
   readonly workflow_definition_id: WorkflowDefinitionId;
   readonly context: JsonValue;
+  readonly bundle_pin: import("../domain/workflow").WorkflowRunBundlePin;
 }
 
 export interface WorkflowRunRecord extends WorkflowRunLaunch {

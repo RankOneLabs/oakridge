@@ -25,10 +25,7 @@ test("seeding inserts a changed prompt bundle without mutating immutable definit
   const definitions: WorkflowDefinition[] = [];
   const bundleHashes: string[] = ["prior-bundle"];
   const repository = {
-    async insert_immutable(definition: WorkflowDefinition) { definitions.push(definition); return definition; },
-    async insert_prompt_bundle(bundle: import("../src/domain/workflow").PromptBundle) { bundleHashes.push(bundle.hash); return bundle; },
-    async bind_prompt_bundle() {},
-    async find_prompt_bundle() { return null; },
+    async insert_immutable(definition: WorkflowDefinition, bundle: import("../src/domain/workflow").PromptBundle) { definitions.push(definition); bundleHashes.push(bundle.hash); return definition; },
     async find_by_id() { return null; }, async find_by_name_version() { return null; },
     async list() { return definitions; }, async set_archived() { return null; },
   };

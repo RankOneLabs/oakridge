@@ -1,6 +1,7 @@
 import type { EpicWorkflowProfile } from "./epic";
 import type { JsonValue, ProjectId, Result, RootWorkflowId, StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId } from "./primitives";
 import type { RunContext } from "./run-context";
+import type { WorkflowRunBundlePin } from "./workflow";
 
 export interface CreateWorkflowRunRequest {
   readonly workflow_def_id: WorkflowDefinitionId;
@@ -31,6 +32,7 @@ export interface WorkflowRunLaunchRecord {
   readonly workflow_definition_id: WorkflowDefinitionId;
   readonly project_id: ProjectId | null;
   readonly context: RunContext;
+  readonly bundle_pin: WorkflowRunBundlePin;
   readonly root_workflow_id: string;
   readonly archived: boolean;
   readonly created_at: string;

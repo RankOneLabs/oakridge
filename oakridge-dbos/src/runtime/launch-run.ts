@@ -6,23 +6,25 @@ import { err, ok, type Result, type WorkflowRunId } from "../domain/primitives";
 import type { CreateWorkflowRunRequest } from "../domain/runs";
 import { runRecordWorkflowId } from "../domain/workflow-ids";
 import { contextRequirementsOf, describeUnsatisfiedRequirements, unsatisfiedContextRequirements } from "../compiler/context-requirements";
-import { compileWorkflowDefinition } from "../compiler/compile-workflow";
+import { compileWorkflowManifest } from "../compiler/compile-workflow";
 import { createEpicProfile, prepareRunContext } from "./prepare-run-context";
 import type { RunStartError, RunStartRequest } from "./run-launch-dispatch";
 import type { OperatorProjectionRepository } from "../storage/postgres-operators";
-import type { ProjectRepository, WorkflowDefinitionRepository, WorkflowRunRepository } from "../storage/repositories";
+import type { ProjectRepository, PromptBundleRepository, WorkflowDefinitionRepository, WorkflowRunRepository } from "../storage/repositories";
 
 export interface RunLaunchRequest extends CreateWorkflowRunRequest {
   readonly idempotency_key: string | null;
 }
 
 export interface LaunchRunDependencies {
-  readonly definitions: WorkflowDefinitionRepository;
+  readonly definitions: WorkflowDefinitionRepository & Pick<PromptBundleRepository, "find_bound_prompt_bundle">;
   readonly projects: ProjectRepository;
   readonly runs: WorkflowRunRepository;
   readonly projections: Pick<OperatorProjectionRepository, "list_runs">;
   readonly start_run: (request: RunStartRequest) => Promise<Result<void, RunStartError>>;
   readonly application_version: string | null;
+  readonly adapter_version: string;
+  readonly artifact_schema_version: string;
   readonly now: () => string;
   readonly new_id?: () => string;
 }
@@ -55,7 +57,12 @@ export const deterministicRunId = (idempotencyKey: string): WorkflowRunId => {
 export const launchRun = async (request: RunLaunchRequest, dependencies: LaunchRunDependencies): Promise<Result<OperatorRunSummary, RunLaunchError>> => {
   const definition = await dependencies.definitions.find_by_id(request.workflow_def_id);
   if (!definition) return launchFailure("definition_not_found", `workflow definition '${request.workflow_def_id}' was not found`);
-  const compiled = compileWorkflowDefinition(definition);
+  const promptBundle = await dependencies.definitions.find_bound_prompt_bundle(definition.id);
+  if (!promptBundle) return launchFailure("definition_invalid", `workflow definition '${request.workflow_def_id}' has no bound prompt bundle`);
+  const compiled = compileWorkflowManifest(definition, promptBundle, {
+    adapter_version: dependencies.adapter_version,
+    artifact_schema_version: dependencies.artifact_schema_version,
+  });
   if (!compiled.ok) return launchFailure("definition_invalid", `workflow definition '${request.workflow_def_id}' does not compile: ${compiled.error.detail}`);
   const runId = request.idempotency_key ? deterministicRunId(request.idempotency_key) : (dependencies.new_id ?? randomUUID)() as WorkflowRunId;
   const existing = await dependencies.runs.find_launch_by_id(runId);
@@ -85,7 +92,7 @@ export const launchRun = async (request: RunLaunchRequest, dependencies: LaunchR
   const epicProfile = request.epic_profile ? createEpicProfile({ id: runId as unknown as EpicWorkflowProfileId,
     workflow_run_id: runId, config: request.epic_profile, created_at: createdAt }) : null;
   const persisted = await dependencies.runs.create_run({
-    run: { id: runId, workflow_definition_id: definition.id, project_id: request.project_id, context,
+    run: { id: runId, workflow_definition_id: definition.id, project_id: request.project_id, context, bundle_pin: compiled.value.bundle_pin!,
       archived: false, created_at: createdAt },
     epic_profile: epicProfile, workflow_definition_version: definition.version,
   });

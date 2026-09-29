@@ -3,7 +3,7 @@ import type { PromptBundle, WorkflowDefinition } from "../domain/workflow";
 import { parseWorkflowDefinition } from "../validation/workflow-definition";
 import type { WorkflowDefinitionRepository } from "./repositories";
 import type { SqlExecutor } from "./sql-executor";
-import { compileWorkflowDefinition } from "../compiler/compile-workflow";
+import { compileWorkflowManifest } from "../compiler/compile-workflow";
 
 interface DefinitionRow { readonly definition: unknown }
 
@@ -33,8 +33,8 @@ const decodeListedDefinition = (row: DefinitionRow): WorkflowDefinition | null =
 export class PostgresWorkflowDefinitionRepository implements WorkflowDefinitionRepository {
   constructor(private readonly sql: SqlExecutor) {}
 
-  async insert_immutable(definition: WorkflowDefinition): Promise<WorkflowDefinition> {
-    const compiled = compileWorkflowDefinition(definition);
+  async insert_immutable(definition: WorkflowDefinition, promptBundle: PromptBundle): Promise<WorkflowDefinition> {
+    const compiled = compileWorkflowManifest(definition, promptBundle, { adapter_version: "delegated-session-v1", artifact_schema_version: "v1" });
     if (!compiled.ok) throw new Error(`workflow definition does not compile: ${compiled.error.detail}`);
     const rows = await this.sql.query<DefinitionRow>(
       `INSERT INTO oakridge.workflow_definition (id, name, version, definition, archived, created_at)
@@ -47,7 +47,10 @@ export class PostgresWorkflowDefinitionRepository implements WorkflowDefinitionR
     );
     const row = rows[0];
     if (!row) throw new Error(`workflow definition ${definition.name}@${definition.version} conflicts with immutable stored content`);
-    return decodeDefinition(row);
+    const stored = decodeDefinition(row);
+    await this.insert_prompt_bundle(promptBundle);
+    await this.bind_prompt_bundle(stored.id, promptBundle.hash);
+    return stored;
   }
 
   async insert_prompt_bundle(bundle: PromptBundle): Promise<PromptBundle> {
@@ -72,6 +75,16 @@ export class PostgresWorkflowDefinitionRepository implements WorkflowDefinitionR
   async find_prompt_bundle(hash: string): Promise<PromptBundle | null> {
     const rows = await this.sql.query<{ readonly hash: string; readonly version: number; readonly matrix: PromptBundle["matrix"] }>(
       "SELECT hash,version,matrix FROM oakridge.prompt_bundle WHERE hash=$1", [hash]);
+    const row = rows[0];
+    return row ? { version: 1, hash: row.hash, matrix: row.matrix } : null;
+  }
+
+  async find_bound_prompt_bundle(definition_id: WorkflowDefinitionId): Promise<PromptBundle | null> {
+    const rows = await this.sql.query<{ readonly hash: string; readonly version: number; readonly matrix: PromptBundle["matrix"] }>(
+      `SELECT bundle.hash,bundle.version,bundle.matrix
+       FROM oakridge.workflow_definition_prompt_bundle binding
+       JOIN oakridge.prompt_bundle bundle ON bundle.hash=binding.prompt_bundle_hash
+       WHERE binding.workflow_definition_id=$1`, [definition_id]);
     const row = rows[0];
     return row ? { version: 1, hash: row.hash, matrix: row.matrix } : null;
   }

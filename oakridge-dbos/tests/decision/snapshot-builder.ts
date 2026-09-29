@@ -28,6 +28,7 @@ const definitionId = "66666666-6666-4666-8666-666666666666" as WorkflowDefinitio
 
 export const run = (options?: { readonly context?: JsonValue; readonly state?: WorkflowRun["state"]; readonly outcome?: StageOutcome | null; readonly record_version?: number }): WorkflowRun => ({
   id: RUN_ID, workflow_definition_id: definitionId, workflow_definition_version: 1,
+  bundle_pin: { definition_version: 1, prompt_bundle_hash: "test-bundle", adapter_version: "test-adapter", artifact_schema_version: "test-artifacts" },
   context: options?.context ?? {}, state: options?.state ?? "active", outcome: options?.outcome ?? null,
   record_version: (options?.record_version ?? 1) as RunRecordVersion, created_at: NOW, ended_at: null,
 });

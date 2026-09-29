@@ -1,4 +1,4 @@
-import type { PromptBundleRepository, WorkflowDefinitionRepository } from "../storage/repositories";
+import type { WorkflowDefinitionRepository } from "../storage/repositories";
 import type { WorkflowDefinition } from "../domain/workflow";
 import { loadDevFlowV14 } from "./dev-flow-v14";
 import { createPromptBundle, createPromptTemplateLoader } from "../runtime/prompt-template";
@@ -59,18 +59,12 @@ const supersededBuiltIns = (
   active.filter((candidate) =>
     SHIPPED_DEV_FLOW_IDS.has(candidate.id) && candidate.version < current.version);
 
-export const seedBuiltins = async (repository: WorkflowDefinitionRepository & Partial<PromptBundleRepository>): Promise<void> => {
+export const seedBuiltins = async (repository: WorkflowDefinitionRepository): Promise<void> => {
   const definition = await loadDevFlowV14();
   if (!definition.ok) throw new Error(`built-in dev-flow v14 is invalid: ${definition.error.detail}`);
   const bundle = await createPromptBundle(definition.value,
     createPromptTemplateLoader(resolve(import.meta.dir, "../../../workflow-config/prompts")));
-  if (repository.insert_prompt_bundle && repository.bind_prompt_bundle) {
-    await repository.insert_prompt_bundle(bundle);
-    await repository.insert_immutable(definition.value);
-    await repository.bind_prompt_bundle(definition.value.id, bundle.hash);
-  } else {
-    await repository.insert_immutable(definition.value);
-  }
+  await repository.insert_immutable(definition.value, bundle);
 
   // Archived, not deleted: `find_by_id` does not filter on it, so a run launched
   // against an older version still compiles the graph it was launched with.
