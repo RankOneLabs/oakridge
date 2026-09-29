@@ -17,11 +17,31 @@
  * recorded as skipped instead.
  */
 import type { ForgeRepositoryIdentity } from "./epic";
-import type { ArtifactId, JsonValue, StageInstanceId, UnitId, WorkflowRunId } from "./primitives";
+import type { ArtifactId, CohortId, JsonValue, StageInstanceId, UnitId, WorkflowRunId } from "./primitives";
+import type { PullRequestVerificationId } from "./pull-request";
 import {
   parseGithubPullRequestIdentity, pullRequestMismatch, pullRequestUrlsMatch, repositoriesMatch,
   type PullRequestMismatch, type PullRequestObservation,
 } from "./pull-request";
+
+/**
+ * Adapter-owned build identity. `cohort_key` is unique only inside its stage;
+ * the repository and both branch roles are persisted once and reused by the
+ * prompt and PR verifier.
+ */
+export interface DevFlowBuildCohort {
+  readonly cohort_id: CohortId;
+  readonly stage_instance_id: StageInstanceId;
+  readonly cohort_key: string;
+  readonly repository_key: string;
+  readonly repository_path: string;
+  readonly canonical_ref: string;
+  readonly expected_pr_base: string;
+  readonly recorded_head_sha: string;
+  readonly current_verified_pull_request_id: PullRequestVerificationId | null;
+  readonly created_at: string;
+  readonly updated_at: string;
+}
 
 /** The run-owned facts required to reconcile one cohort's external handoff. */
 export interface RunOwnedCohortHandoff {

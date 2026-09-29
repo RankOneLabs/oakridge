@@ -7,9 +7,11 @@ import { createScratchDatabase, type ScratchDatabase } from "./support/durable-d
 
 const MIGRATIONS = new URL("../src/storage/migrations", import.meta.url).pathname;
 const BASELINE = "0015_v15_baseline.sql";
+const DEV_FLOW_PULL_REQUESTS = "0016_dev_flow_pull_requests.sql";
+const MIGRATION_SET = [BASELINE, DEV_FLOW_PULL_REQUESTS];
 
-test("v15 is the only migration", async () => {
-  expect(migrationNames(await readdir(MIGRATIONS))).toEqual([BASELINE]);
+test("adapter migrations follow the v15 baseline", async () => {
+  expect(migrationNames(await readdir(MIGRATIONS))).toEqual(MIGRATION_SET);
 });
 
 const scratches: ScratchDatabase[] = [];
@@ -25,7 +27,7 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
   scratches.push(scratch.value);
   const sql = PgPostgresExecutor.connect(scratch.value.url);
   try {
-    expect(await applyMigrations(sql)).toEqual([BASELINE]);
+    expect(await applyMigrations(sql)).toEqual(MIGRATION_SET);
     await sql.query(`INSERT INTO oakridge.workflow_definition (id,name,version,definition)
       VALUES ('00000000-0000-4000-8000-000000000001','v15-test',15,'{}')`, []);
     await sql.query(`INSERT INTO oakridge.workflow_run (id,workflow_definition_id,context,bundle_pin,status)
