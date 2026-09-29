@@ -32,12 +32,17 @@ const stageSchema = z.object({
 });
 
 const workflowDefinitionSchema = z.object({
-  id: z.uuid(),
+  id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, "Invalid UUID"),
   name: z.string().min(1),
   version: z.number().int().positive(),
   graph: z.object({
     stages: z.record(z.string(), stageSchema),
     edges: z.array(z.object({ from: endpointSchema, to: endpointSchema })),
+    transitions: z.array(z.object({
+      trigger: z.object({ kind: z.enum(["stage_output", "assessment_outcome", "operator"]), stage: z.string().min(1), item: z.string().min(1) }),
+      launch: z.object({ stage: z.string().min(1), session_role: z.enum(["spec", "plan", "brief", "build", "assessment", "final_integration"]),
+        launch_reason: z.enum(["initial", "operator_retry", "input_revision"]) }),
+    })).optional(),
   }),
   created_at: z.iso.datetime({ offset: true }),
   archived: z.boolean().default(false),

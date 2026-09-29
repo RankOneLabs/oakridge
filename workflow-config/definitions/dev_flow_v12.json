@@ -13,6 +13,10 @@
             "from": "context",
             "path": "/repositories"
           },
+          "base_branch": {
+            "from": "context",
+            "path": "/base_branch"
+          },
           "max_parallel": 4
         },
         "inputs": [],

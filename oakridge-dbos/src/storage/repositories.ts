@@ -1,5 +1,5 @@
 import type { ArtifactId, JsonValue, StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId } from "../domain/primitives";
-import type { StageInstance, WorkflowDefinition } from "../domain/workflow";
+import type { PromptBundle, StageInstance, WorkflowDefinition } from "../domain/workflow";
 import type { EpicWorkflowProfile, EpicWorkflowProfileId } from "../domain/epic";
 import type { GateDecisionAudit, GateDecisionAuditId } from "../domain/gates";
 import type { CollaborationMessage, CollaborationThread, CollaborationThreadWithMessages, MessageId, ReviewItem, ReviewItemId, ReviewItemStatus, ThreadId, ThreadStatus } from "../domain/collaboration";
@@ -22,6 +22,12 @@ export interface WorkflowDefinitionRepository {
   find_by_name_version(name: string, version: number): Promise<WorkflowDefinition | null>;
   list(include_archived?: boolean): Promise<readonly WorkflowDefinition[]>;
   set_archived(id: WorkflowDefinitionId, archived: boolean): Promise<WorkflowDefinition | null>;
+}
+
+export interface PromptBundleRepository {
+  insert_prompt_bundle(bundle: PromptBundle): Promise<PromptBundle>;
+  bind_prompt_bundle(definition_id: WorkflowDefinitionId, hash: string): Promise<void>;
+  find_prompt_bundle(hash: string): Promise<PromptBundle | null>;
 }
 
 export interface ProjectRepository {

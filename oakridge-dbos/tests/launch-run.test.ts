@@ -10,9 +10,14 @@ import type { RunStartRequest } from "../src/runtime/run-launch-dispatch";
 
 // A definition that reads the context, because a definition that reads nothing
 // cannot show whether the launch gate checks anything.
-const graph = { stages: { analyze: { stage_type: "delegated_session", operator_role: null, inputs: [], outputs: [{ name: "analysis", artifact_type: "dev.analysis" }],
-  config: { runtime: { from: "context", path: "/planner_runtime" }, effort: { from: "context", path: "/planner_effort" },
-    slot_bindings: { NOTES: { from: "context", path: "/brief_notes" }, URL: { from: "context", path: "/oakridge_url" } } } } }, edges: [] };
+const graph = { stages: { analyze: { stage_type: "delegated_session", operator_role: "spec", inputs: [], outputs: [{ name: "analysis", artifact_type: "dev.analysis" }],
+  config: {
+    prompt_matrix: ["initial", "operator_retry", "input_revision"].map((launch_reason) => ({ session_role: "spec", launch_reason, template_path: "analyze.md" })),
+    role_configs: [{ session_role: "spec", runtime: { from: "context", path: "/planner_runtime" }, effort: { from: "context", path: "/planner_effort" },
+      session_name: "analyze-{{STAGE_INSTANCE_ID}}", authorized_outputs: ["analysis"] }],
+    slot_bindings: { NOTES: { from: "context", path: "/brief_notes" }, URL: { from: "context", path: "/oakridge_url" } },
+    workdir: { from: "literal", value: "/repo" }, artifact_productions: [], gates: [], handoffs: [],
+  } } }, edges: [] };
 const definition = { id: "ef2b47a4-d1bd-44ee-840a-e4f7b27570db" as WorkflowDefinitionId, name: "flow", version: 11,
   graph, archived: false, created_at: "2026-08-15T00:00:00Z" } as unknown as WorkflowDefinition;
 const project = { id: "af2b47a4-d1bd-44ee-840a-e4f7b27570db" as ProjectId, name: "Oakridge", repo_dir: "/workspace/oakridge",

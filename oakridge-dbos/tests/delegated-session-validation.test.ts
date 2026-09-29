@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 
-import { delegatedSessionDefinitionSchema } from "../src/validation/delegated-session";
+import { delegatedSessionDefinitionSchema, validateDelegatedSessionCardinality, validateDelegatedSessionContracts } from "../src/validation/delegated-session";
+import type { DelegatedSessionDefinitionConfig } from "../src/domain/delegated-session";
 
 const definition = {
   prompt_matrix: ["initial", "operator_retry", "input_revision"].map((launch_reason) => ({ session_role: "build", launch_reason, template_path: "prompts/example.md" })),
@@ -70,4 +71,27 @@ test("delegated session validation accepts per-role worktree with inherited inpu
 
 test("delegated session validation accepts a unit that inherits a worktree without cutting one", () => {
   expect(delegatedSessionDefinitionSchema.safeParse(fanOutDefinition({ inherit_worktree_from: "build" })).success).toBe(true);
+});
+
+test("plural contracts report duplicate keys and every missing prompt in one pass", () => {
+  const parsed = delegatedSessionDefinitionSchema.parse({ ...definition,
+    prompt_matrix: [{ session_role: "build", launch_reason: "initial", template_path: "one.md" },
+      { session_role: "build", launch_reason: "initial", template_path: "two.md" }],
+    gates: [{ name: "review", outputs: ["result"], steps: [] }, { name: "review", outputs: ["result"], steps: [] }],
+  }) as DelegatedSessionDefinitionConfig;
+  const diagnostics = [...validateDelegatedSessionCardinality("build", "build", parsed),
+    ...validateDelegatedSessionContracts("build", "build", ["result"], parsed)];
+  expect(diagnostics).toContainEqual(expect.objectContaining({ kind: "duplicate_key", array: "prompt_matrix", key: "build:initial" }));
+  expect(diagnostics).toContainEqual(expect.objectContaining({ kind: "prompt_not_total", session_role: "build", launch_reason: "operator_retry" }));
+  expect(diagnostics.filter((diagnostic) => diagnostic.kind === "gate_without_closer")).toHaveLength(2);
+});
+
+test("two gates and two handoffs are valid plural terminal policies", () => {
+  const parsed = delegatedSessionDefinitionSchema.safeParse({ ...definition,
+    gates: [{ name: "first", outputs: ["one"], steps: [{ type: "artifact_approval", actions: ["approve"] }] },
+      { name: "second", outputs: ["two"], steps: [{ type: "artifact_approval", actions: ["approve"] }] }],
+    handoffs: [{ name: "third", outputs: ["three"], downstream_role: "assessment", approved_wait: { kind: "review", close_events: ["approved"] } },
+      { name: "fourth", outputs: ["four"], downstream_role: "assessment", approved_wait: { kind: "review", close_events: ["approved"] } }],
+  });
+  expect(parsed.success).toBe(true);
 });

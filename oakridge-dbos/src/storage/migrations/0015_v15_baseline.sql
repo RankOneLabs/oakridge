@@ -47,6 +47,18 @@ CREATE TABLE oakridge.workflow_definition (
   UNIQUE (name, version)
 );
 
+CREATE TABLE oakridge.prompt_bundle (
+  hash text PRIMARY KEY,
+  version integer NOT NULL CHECK (version > 0),
+  matrix jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE oakridge.workflow_definition_prompt_bundle (
+  workflow_definition_id uuid PRIMARY KEY REFERENCES oakridge.workflow_definition(id),
+  prompt_bundle_hash text NOT NULL REFERENCES oakridge.prompt_bundle(hash)
+);
+
 CREATE TABLE oakridge.workflow_run (
   id uuid PRIMARY KEY,
   workflow_definition_id uuid NOT NULL REFERENCES oakridge.workflow_definition(id),

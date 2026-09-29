@@ -1,5 +1,5 @@
 import type { JsonValue, UnitId } from "./primitives";
-import type { ArtifactTypeId, InputDelivery, StageKey, StageOperatorRole, StageTypeId } from "./workflow";
+import type { ArtifactTypeId, InputDelivery, StageKey, StageOperatorRole, StageTypeId, WorkflowRunBundlePin } from "./workflow";
 import type { DelegatedSessionDefinitionConfig, SlotBinding } from "./delegated-session";
 import type { GateAction } from "./gates";
 
@@ -67,6 +67,7 @@ export interface CompiledEdge {
 
 export interface CompiledWorkflowDefinition {
   readonly manifest_version: 1;
+  readonly bundle_pin?: WorkflowRunBundlePin;
   readonly stages: Readonly<Record<StageKey, CompiledStageContract>>;
   readonly edges: readonly CompiledEdge[];
   readonly source_stages: readonly StageKey[];

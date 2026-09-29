@@ -21,6 +21,23 @@ test("seeds unmodified v14 through the immutable repository boundary", async () 
   expect(inserted[0]?.graph.stages.provision_refs?.stage_type).toBe("provision_repository_refs");
 });
 
+test("seeding inserts a changed prompt bundle without mutating immutable definition content", async () => {
+  const definitions: WorkflowDefinition[] = [];
+  const bundleHashes: string[] = ["prior-bundle"];
+  const repository = {
+    async insert_immutable(definition: WorkflowDefinition) { definitions.push(definition); return definition; },
+    async insert_prompt_bundle(bundle: import("../src/domain/workflow").PromptBundle) { bundleHashes.push(bundle.hash); return bundle; },
+    async bind_prompt_bundle() {},
+    async find_prompt_bundle() { return null; },
+    async find_by_id() { return null; }, async find_by_name_version() { return null; },
+    async list() { return definitions; }, async set_archived() { return null; },
+  };
+  await seedBuiltins(repository);
+  expect(bundleHashes).toHaveLength(2);
+  expect(definitions).toHaveLength(1);
+  expect(definitions[0]?.version).toBe(14);
+});
+
 /**
  * A stored definition, as the repository hands one back. Only the fields the
  * superseding rule reads are real; the graph is never looked at here.

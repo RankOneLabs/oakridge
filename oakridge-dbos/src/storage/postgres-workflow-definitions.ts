@@ -1,8 +1,9 @@
 import type { WorkflowDefinitionId } from "../domain/primitives";
-import type { WorkflowDefinition } from "../domain/workflow";
+import type { PromptBundle, WorkflowDefinition } from "../domain/workflow";
 import { parseWorkflowDefinition } from "../validation/workflow-definition";
 import type { WorkflowDefinitionRepository } from "./repositories";
 import type { SqlExecutor } from "./sql-executor";
+import { compileWorkflowDefinition } from "../compiler/compile-workflow";
 
 interface DefinitionRow { readonly definition: unknown }
 
@@ -33,6 +34,8 @@ export class PostgresWorkflowDefinitionRepository implements WorkflowDefinitionR
   constructor(private readonly sql: SqlExecutor) {}
 
   async insert_immutable(definition: WorkflowDefinition): Promise<WorkflowDefinition> {
+    const compiled = compileWorkflowDefinition(definition);
+    if (!compiled.ok) throw new Error(`workflow definition does not compile: ${compiled.error.detail}`);
     const rows = await this.sql.query<DefinitionRow>(
       `INSERT INTO oakridge.workflow_definition (id, name, version, definition, archived, created_at)
        VALUES ($1, $2, $3, $4::jsonb, $5, $6::timestamptz)
@@ -45,6 +48,32 @@ export class PostgresWorkflowDefinitionRepository implements WorkflowDefinitionR
     const row = rows[0];
     if (!row) throw new Error(`workflow definition ${definition.name}@${definition.version} conflicts with immutable stored content`);
     return decodeDefinition(row);
+  }
+
+  async insert_prompt_bundle(bundle: PromptBundle): Promise<PromptBundle> {
+    const rows = await this.sql.query<{ readonly hash: string; readonly version: number; readonly matrix: PromptBundle["matrix"] }>(
+      `INSERT INTO oakridge.prompt_bundle (hash,version,matrix) VALUES ($1,$2,$3::jsonb)
+       ON CONFLICT (hash) DO UPDATE SET hash=EXCLUDED.hash
+       WHERE oakridge.prompt_bundle.version=EXCLUDED.version AND oakridge.prompt_bundle.matrix=EXCLUDED.matrix
+       RETURNING hash,version,matrix`, [bundle.hash, bundle.version, bundle.matrix],
+    );
+    const row = rows[0];
+    if (!row) throw new Error(`prompt bundle '${bundle.hash}' conflicts with stored content`);
+    return { version: 1, hash: row.hash, matrix: row.matrix };
+  }
+
+  async bind_prompt_bundle(definition_id: WorkflowDefinitionId, hash: string): Promise<void> {
+    await this.sql.query(
+      `INSERT INTO oakridge.workflow_definition_prompt_bundle (workflow_definition_id,prompt_bundle_hash) VALUES ($1,$2)
+       ON CONFLICT (workflow_definition_id) DO UPDATE SET prompt_bundle_hash=EXCLUDED.prompt_bundle_hash`, [definition_id, hash],
+    );
+  }
+
+  async find_prompt_bundle(hash: string): Promise<PromptBundle | null> {
+    const rows = await this.sql.query<{ readonly hash: string; readonly version: number; readonly matrix: PromptBundle["matrix"] }>(
+      "SELECT hash,version,matrix FROM oakridge.prompt_bundle WHERE hash=$1", [hash]);
+    const row = rows[0];
+    return row ? { version: 1, hash: row.hash, matrix: row.matrix } : null;
   }
 
   async find_by_id(id: WorkflowDefinitionId): Promise<WorkflowDefinition | null> {

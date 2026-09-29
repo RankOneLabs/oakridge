@@ -110,3 +110,21 @@ test("accepts no attention on a waiting handoff", async () => {
   expect(compiled.ok).toBe(true);
   if (compiled.ok) expect(compiled.value.stages.build?.outputs.find((output) => output.name === "build_result")?.attention).toBe("none");
 });
+
+test("the manifest pipeline reports placeholder, output, and tool failures together", async () => {
+  const loaded = await loadDevFlowV14();
+  if (!loaded.ok) throw new Error(loaded.error.detail);
+  const build = structuredClone(loaded.value.graph.stages.build!) as any;
+  build.config.role_configs[0].session_name = "build-{{MISSING}}";
+  build.config.role_configs[0].required_tools = ["forge"];
+  build.config.role_configs[0].authorized_outputs.push("ghost");
+  const compiled = compileWorkflowDefinition({ ...loaded.value, graph: { ...loaded.value.graph,
+    stages: { ...loaded.value.graph.stages, build } } });
+  expect(compiled.ok).toBe(false);
+  if (compiled.ok) return;
+  expect(compiled.error.diagnostics).toEqual(expect.arrayContaining([
+    expect.objectContaining({ kind: "unbound_placeholder", stage_key: "build", placeholder: "MISSING" }),
+    expect.objectContaining({ kind: "undeclared_output", stage_key: "build", output: "ghost" }),
+    expect.objectContaining({ kind: "unavailable_tool", stage_key: "build", tool: "forge" }),
+  ]));
+});

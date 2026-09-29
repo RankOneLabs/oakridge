@@ -6,6 +6,7 @@ import { err, ok, type Result, type WorkflowRunId } from "../domain/primitives";
 import type { CreateWorkflowRunRequest } from "../domain/runs";
 import { runRecordWorkflowId } from "../domain/workflow-ids";
 import { contextRequirementsOf, describeUnsatisfiedRequirements, unsatisfiedContextRequirements } from "../compiler/context-requirements";
+import { compileWorkflowDefinition } from "../compiler/compile-workflow";
 import { createEpicProfile, prepareRunContext } from "./prepare-run-context";
 import type { RunStartError, RunStartRequest } from "./run-launch-dispatch";
 import type { OperatorProjectionRepository } from "../storage/postgres-operators";
@@ -29,6 +30,7 @@ export interface LaunchRunDependencies {
 export type RunLaunchFailureKind =
   | "definition_not_found"
   | "definition_archived"
+  | "definition_invalid"
   | "project_not_found"
   | "invalid_context"
   /** The context is well-formed but this definition reads keys it does not carry. */
@@ -53,6 +55,8 @@ export const deterministicRunId = (idempotencyKey: string): WorkflowRunId => {
 export const launchRun = async (request: RunLaunchRequest, dependencies: LaunchRunDependencies): Promise<Result<OperatorRunSummary, RunLaunchError>> => {
   const definition = await dependencies.definitions.find_by_id(request.workflow_def_id);
   if (!definition) return launchFailure("definition_not_found", `workflow definition '${request.workflow_def_id}' was not found`);
+  const compiled = compileWorkflowDefinition(definition);
+  if (!compiled.ok) return launchFailure("definition_invalid", `workflow definition '${request.workflow_def_id}' does not compile: ${compiled.error.detail}`);
   const runId = request.idempotency_key ? deterministicRunId(request.idempotency_key) : (dependencies.new_id ?? randomUUID)() as WorkflowRunId;
   const existing = await dependencies.runs.find_launch_by_id(runId);
   if (definition.archived && !existing) return launchFailure("definition_archived", `workflow definition '${request.workflow_def_id}' is archived`);

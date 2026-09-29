@@ -1,5 +1,6 @@
 import type { JsonValue, StageInstanceId, WorkflowDefinitionId, WorkflowRunId } from "./primitives";
 import type { OutputAttention } from "./compiled-workflow";
+import type { PromptMatrixEntry } from "./delegated-session";
 
 export type StageKey = string;
 export type StageTypeId = string;
@@ -23,6 +24,10 @@ export interface OutputSlot {
 
 export interface EdgeEndpoint { readonly stage: StageKey; readonly slot: string }
 export interface Edge { readonly from: EdgeEndpoint; readonly to: EdgeEndpoint }
+export interface WorkflowTransition {
+  readonly trigger: { readonly kind: "stage_output" | "assessment_outcome" | "operator"; readonly stage: StageKey; readonly item: string };
+  readonly launch: { readonly stage: StageKey; readonly session_role: StageOperatorRole; readonly launch_reason: import("./delegated-session").SessionLaunchReason };
+}
 
 export interface StageNodeDefinition {
   readonly stage_type: StageTypeId;
@@ -35,6 +40,7 @@ export interface StageNodeDefinition {
 export interface WorkflowGraph {
   readonly stages: Readonly<Record<StageKey, StageNodeDefinition>>;
   readonly edges: readonly Edge[];
+  readonly transitions?: readonly WorkflowTransition[];
 }
 
 export interface WorkflowDefinition {
@@ -44,6 +50,21 @@ export interface WorkflowDefinition {
   readonly graph: WorkflowGraph;
   readonly created_at: string;
   readonly archived: boolean;
+}
+
+export interface PromptBundleEntry extends PromptMatrixEntry { readonly content: string }
+export interface PromptBundle {
+  readonly version: 1;
+  readonly hash: string;
+  readonly matrix: readonly PromptBundleEntry[];
+}
+
+/** The immutable versions selected once for a run. */
+export interface WorkflowRunBundlePin {
+  readonly definition_version: number;
+  readonly prompt_bundle_hash: string;
+  readonly adapter_version: string;
+  readonly artifact_schema_version: string;
 }
 
 export interface CreateWorkflowDefinition {

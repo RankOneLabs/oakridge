@@ -59,7 +59,7 @@ test("production execution resolution retains v11 prompt and runtime semantics",
     fan_out: { over: { from: "input", input_name: "brief" }, unit_id_path: "/unit_id", item_bindings: { COHORT_TITLE: { from: "item", path: "/artifact/title" } }, workdir: { from: "context_lookup", collection_path: "/repositories", collection_key_path: "/key", item_key_path: "/artifact/repository_key", value_path: "/path" } },
   });
   const result = resolveDelegatedExecution({ definition, environment: { inputs: {}, context: { worker_runtime: "claude-code", worker_model: "opus", repositories: [{ key: "web", path: "/repo/web" }] }, item: null }, unit: { unit_id: "web" as UnitId, depends_on: [], parameters: { artifact: { title: "Build web", repository_key: "web" } } }, stage_instance_id: "stage-1" as StageInstanceId, prompt_template: "{{COHORT_TITLE}} ({{UNIT_ID}})", run_id: RUN_ID, operator_role: "build" });
-  expect(result).toEqual({ ok: true, value: expect.objectContaining({ runtime: "claude-code", rendered_prompt: "Build web (web)", workdir: "/repo/web", session_name: "build-stage-1-web", model: "opus" }) });
+  expect(result).toEqual({ ok: true, value: expect.objectContaining({ runtime: "claude-code", rendered_prompt: expect.stringContaining("Build web (web)\n\n## Generated session contract"), workdir: "/repo/web", session_name: "build-stage-1-web", model: "opus" }) });
 });
 
 test("session_identity carries the run/stage/unit identity and the cohort title read back off the COHORT_TITLE slot", () => {
@@ -133,7 +133,7 @@ test("a definition cannot rebind the slots that identify the execution", () => {
   });
 
   expect(result).toEqual({ ok: true, value: expect.objectContaining({
-    rendered_prompt: "Stage instance: stage-1 Unit: targets_spec_contract\nPUT https://oakridge.test/work-orders/<work-order-id>/emit/pr_summary",
+    rendered_prompt: expect.stringContaining("Stage instance: stage-1 Unit: targets_spec_contract\nPUT https://oakridge.test/work-orders/<work-order-id>/emit/pr_summary\n\n## Generated session contract"),
   }) });
 });
 
@@ -197,7 +197,7 @@ test("the seeded build stage addresses the unit it is running", async () => {
   });
 
   expect(result).toEqual({ ok: true, value: expect.objectContaining({
-    rendered_prompt: "units/targets_spec_contract/emit/pr_summary",
+    rendered_prompt: expect.stringContaining("units/targets_spec_contract/emit/pr_summary\n\n## Generated session contract"),
   }) });
 });
 

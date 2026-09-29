@@ -162,6 +162,8 @@ export const resolveDelegatedExecution = (input: ResolveDelegatedExecutionInput)
   };
   const prompt = renderPrompt(input.prompt_template, slots);
   if (!prompt.ok) return prompt;
+  const contractBlock = ["## Generated session contract", `Role: ${roleConfig.session_role}`,
+    `Launch reason: ${input.launch_reason ?? "initial"}`, `Authorized outputs: ${roleConfig.authorized_outputs.join(", ")}`].join("\n");
   const runtime = resolveBindable(roleConfig.runtime, environment);
   const model = resolveBindable(roleConfig.model, environment);
   const effort = resolveBindable(roleConfig.effort, environment);
@@ -186,7 +188,7 @@ export const resolveDelegatedExecution = (input: ResolveDelegatedExecutionInput)
     worktree = { branchName: substituteIdentity(branchName.value), worktreeSubdir: substituteIdentity(worktreeSubdir.value),
       ...(baseRef.value ? { baseRef: substituteIdentity(baseRef.value) } : {}) };
   }
-  return ok({ executor_type: "delegated_session", runtime: runtime.value, rendered_prompt: prompt.value, workdir: workdir.value,
+  return ok({ executor_type: "delegated_session", runtime: runtime.value, rendered_prompt: `${prompt.value}\n\n${contractBlock}`, workdir: workdir.value,
     session_name: substituteIdentity(roleConfig.session_name),
     model: model.value, effort: effort.value, ...(worktree ? { worktree } : {}),
     executor_options: { pre_authorized_tools: roleConfig.pre_authorized_tools ?? [], yolo: roleConfig.yolo ?? false },
