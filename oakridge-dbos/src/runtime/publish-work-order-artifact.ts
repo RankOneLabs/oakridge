@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 
-import type { ArtifactId, JsonValue, OutputCollectionKey, WorkOrderId } from "../domain/primitives";
+import type { ArtifactId, AttemptId, JsonValue, OutputCollectionKey } from "../domain/primitives";
 import type { PublishWorkOrderArtifactResult } from "../domain/run-record";
 import type { RunRecordRepository } from "../storage/repositories";
 
 export interface PublishWorkOrderArtifactCommand {
-  readonly work_order_id: WorkOrderId;
+  /** The attempt the capability was issued to — the `work_order_id` on the wire. */
+  readonly attempt_id: AttemptId;
   readonly capability: string;
   readonly output_name: string;
   readonly collection_key: OutputCollectionKey | null;
@@ -27,7 +28,7 @@ export const publishWorkOrderArtifact = async (
   const payloadHash = createHash("sha256").update(JSON.stringify(command.body)).digest("hex");
   return dependencies.records.publish_artifact({
     artifact_id: (dependencies.new_artifact_id ?? randomUUID)() as ArtifactId,
-    work_order_id: command.work_order_id,
+    attempt_id: command.attempt_id,
     capability_hash: createHash("sha256").update(command.capability).digest("hex"),
     output_name: command.output_name,
     collection_key: command.collection_key,

@@ -1,12 +1,13 @@
 import { Hono } from "hono";
 
-import { parseUuidId, type ArtifactId, type WorkflowRunId } from "../domain/primitives";
+import { parseUuidId, type ArtifactId, type CohortId, type WorkflowRunId } from "../domain/primitives";
 import type { RunRecordRepository } from "../storage/repositories";
 
 export interface HandoffCompleteDependencies {
   readonly records: Pick<RunRecordRepository, "complete_handoff_artifact">;
   readonly now?: () => string;
   readonly send_run_wake?: (run_id: WorkflowRunId, idempotency_key: string) => Promise<void>;
+  readonly send_cohort_wake?: (cohort_id: CohortId, idempotency_key: string) => Promise<void>;
 }
 
 interface ExternalCompletionRequest { readonly external_kind: string; readonly correlation_id: string }
@@ -31,7 +32,9 @@ export const createHandoffCompleteApp = (dependencies: HandoffCompleteDependenci
       correlation_id: request.correlation_id, decided_at: (dependencies.now ?? (() => new Date().toISOString()))() });
     if (result.kind === "wait_not_found") return http.json({ error: result.detail }, 404);
     if (result.kind === "wait_conflict") return http.json({ error: result.detail }, 409);
-    await dependencies.send_run_wake?.(result.run_id, `${result.kind}:${result.run_id}:${result.record_version}`).catch(() => undefined);
+    const key = `${result.kind}:${artifactId}:${result.record_version}`;
+    if (result.cohort_id !== null) await dependencies.send_cohort_wake?.(result.cohort_id, key).catch(() => undefined);
+    await dependencies.send_run_wake?.(result.run_id, key).catch(() => undefined);
     return http.json({ artifact_id: artifactId, completed: true }, 202);
   });
   return app;

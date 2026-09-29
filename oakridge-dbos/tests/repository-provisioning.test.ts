@@ -7,7 +7,7 @@ import { describeRepositoryProvisioningFailure, provisionRepositoryRefs, type Gi
 import { parseResolvedRepositoryProvisioningConfig, parseBaseBranch, parseRunContextRepository, selectBaseBranch, type RunContextRepository } from "../src/domain/repository-refs";
 import { runExclusive } from "../src/runtime/keyed-mutex";
 
-const repository: RunContextRepository = { key: "scout", path: "/repos/scout", integration_branch: "main" };
+const repository: RunContextRepository = { key: "scout", path: "/repos/scout", integration_branch: "main", forge_repository: null };
 const BASE_BRANCH = "epic/response-edits";
 const provision = (git: GitCommandRunner, overrides: { readonly integration_branch?: string } = {}) =>
   provisionRepositoryRefs({ repository: { ...repository, ...overrides }, base_branch: BASE_BRANCH }, git);
@@ -151,7 +151,8 @@ const adapterWith = (git: GitCommandRunner) => {
     git,
     async publish_work_order(request) {
       published.push(request);
-      return { kind: "published", artifact_id: "artifact-1" as never, run_id: "run-1" as never, record_version: 1 as never };
+      return { kind: "published", artifact_id: "artifact-1" as never, run_id: "run-1" as never,
+        cohort_id: "cohort-1" as never, record_version: 1 as never };
     },
   });
   return { adapter, published };
@@ -215,7 +216,14 @@ test("an observation with no completed reference says so rather than reporting s
 
 test("a run context repository is parsed, so a missing field is named where it is missing", () => {
   expect(parseRunContextRepository({ key: "scout", path: "/repos/scout", integration_branch: "main" }))
-    .toEqual({ ok: true, value: { key: "scout", path: "/repos/scout", integration_branch: "main" } });
+    .toEqual({ ok: true, value: { key: "scout", path: "/repos/scout", integration_branch: "main", forge_repository: null } });
+  expect(parseRunContextRepository({ key: "scout", path: "/repos/scout", integration_branch: "main",
+    forge_repository: { provider: "github", owner: "RankOneLabs", name: "scout" } }))
+    .toEqual({ ok: true, value: { key: "scout", path: "/repos/scout", integration_branch: "main",
+      forge_repository: { provider: "github", owner: "RankOneLabs", name: "scout" } } });
+  expect(parseRunContextRepository({ key: "scout", path: "/repos/scout", integration_branch: "main",
+    forge_repository: { provider: "github", owner: "RankOneLabs" } }))
+    .toEqual({ ok: false, error: expect.objectContaining({ detail: "repository 'forge_repository' must be {provider:'github',owner,name}" }) });
   expect(parseRunContextRepository({ key: "scout", path: "/repos/scout" }))
     .toEqual({ ok: false, error: expect.objectContaining({ detail: "repository 'integration_branch' must be a non-empty string" }) });
   expect(parseRunContextRepository([{ key: "scout" }]))

@@ -88,7 +88,13 @@ test("seeded spec and plan stages resolve their real prompts and release contrac
   const specExecution = await resolveStage(spec, scalarUnit, { repository_refs: repositoryRefs });
   expect(specExecution).toEqual({ ok: true, value: expect.objectContaining({ session_name: "spec-analyzer-stage-1",
     workdir: "/repo/oakridge", rendered_prompt: expect.stringContaining("Build the requested change") }) });
-  expect(spec.outputs[0]?.release).toEqual(expect.objectContaining({ kind: "gate", requires_zero_open_review_items: true }));
+  // `requires_zero_open_review_items` is gone from the compiled contract: no
+  // reader ever consulted it, in v15 or v14. What a gate release *does* carry is
+  // the actions its step offers, which is what the operator surface addresses.
+  expect(spec.outputs[0]?.release).toEqual({ kind: "gate", gate_name: "spec_analysis_gate",
+    steps: [{ type: "artifact_approval", actions: [{ name: "approve", disposition: "release" },
+      { name: "request_revision", disposition: "revise" }] }] });
+  expect(spec.outputs[0]?.release).not.toHaveProperty("requires_zero_open_review_items");
 
   const specArtifact = envelope("spec-1", "dev.spec_analysis", "spec_analysis", "0", { requirements: ["one"] });
   const plan = workflow.stages.plan_writer!;
@@ -99,7 +105,7 @@ test("seeded spec and plan stages resolve their real prompts and release contrac
     expect(planExecution.value.rendered_prompt).toContain('"base_branch":"epic/test"');
     expect(planExecution.value.rendered_prompt).toContain('"integration_branch":"main"');
   }
-  expect(plan.outputs[0]?.release).toEqual(expect.objectContaining({ kind: "gate", requires_zero_open_review_items: false }));
+  expect(plan.outputs[0]?.release).toEqual(expect.objectContaining({ kind: "gate", gate_name: "plan_gate" }));
 
   const brief = workflow.stages.brief_writer!;
   expect(brief.outputs[0]?.release.kind).toBe("gate");

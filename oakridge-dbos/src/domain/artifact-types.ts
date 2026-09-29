@@ -2,6 +2,13 @@ export interface ArtifactCapabilities {
   readonly reviewable: boolean;
   readonly commentable: boolean;
   readonly atom_editable: boolean;
+  /**
+   * Structured claim/reality review items. Retired, and false on every type:
+   * one type ever declared it, the gate flag that was supposed to act on them
+   * was never enforced, and artifact threads cover commenting on all six
+   * commentable types. The capability itself stays so the operator surface
+   * self-disables from the same flag it always read, with no component change.
+   */
   readonly review_items: boolean;
 }
 
@@ -28,7 +35,7 @@ const artifactType = (id: string, component_id: string, capabilities: ArtifactCa
 
 // Exact presentation/capability contract from the retained Rust v2 dev-flow registry.
 export const DEV_FLOW_ARTIFACT_TYPES: readonly ArtifactTypeDefinition[] = [
-  artifactType("dev.spec_analysis", "dev-spec-analysis-viewer", { reviewable: true, commentable: true, atom_editable: false, review_items: true }, null, "document", ["summary", "findings", "requirements", "risks"]),
+  artifactType("dev.spec_analysis", "dev-spec-analysis-viewer", { reviewable: true, commentable: true, atom_editable: false, review_items: false }, null, "document", ["summary", "findings", "requirements", "risks"]),
   artifactType("dev.build_brief", "dev-build-brief-viewer", { reviewable: true, commentable: true, atom_editable: true, review_items: false }, ["/goal", "/files_in_scope", "/decisions_made", "/approaches_rejected", "/acceptance_criteria", "/next_action"], "document", ["goal", "files_in_scope", "decisions_made", "approaches_rejected", "acceptance_criteria", "next_action"]),
   artifactType("dev.plan", "dev-plan-viewer", { reviewable: true, commentable: true, atom_editable: true, review_items: false }, ["/cohorts", "/dependency_order"], "dag", ["summary", "cohorts", "dependency_order", "scope", "acceptance_criteria", "risks"]),
   artifactType("dev.build_result", "dev-build-result-viewer", { reviewable: true, commentable: true, atom_editable: true, review_items: false }, ["/summary", "/changed_files", "/tests", "/known_issues"], "report", ["summary", "changed_files", "tests", "known_issues"]),

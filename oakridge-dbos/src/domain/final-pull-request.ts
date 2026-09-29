@@ -1,7 +1,7 @@
 import type { CohortId } from "./primitives";
 import type { MergeClosureResult, PullRequestObservation, PullRequestVerificationId } from "./pull-request";
-import type { EpicRepositoryBinding, EpicWorkflowProfile, FinalMergePolicy } from "./epic";
-import type { RepositoryRefs } from "./repository-refs";
+import type { FinalMergePolicy } from "./epic";
+import type { RepositoryRefs, RunContextRepository } from "./repository-refs";
 
 export interface ConfirmFinalPullRequestRequest {
   readonly idempotency_key: string;
@@ -23,10 +23,14 @@ export interface FinalPullRequestStageConfig {
   readonly merge_policy: FinalMergePolicy;
 }
 
-/** The final-stage adapter is the sole reader of integration policy and branch configuration. */
+/**
+ * The final-stage adapter is the sole reader of integration policy and branch
+ * configuration. Both now arrive from the run context — the epic profile table
+ * is gone — but the reading is still this adapter's alone.
+ */
 export const selectFinalPullRequestStageConfig = (
-  profile: Pick<EpicWorkflowProfile, "final_merge_policy">,
-  repository: Pick<EpicRepositoryBinding, "integration_branch">,
+  profile: { readonly final_merge_policy: FinalMergePolicy },
+  repository: Pick<RunContextRepository, "integration_branch">,
   refs: Pick<RepositoryRefs, "base_branch">,
 ): FinalPullRequestStageConfig => ({
   canonical_ref: refs.base_branch,

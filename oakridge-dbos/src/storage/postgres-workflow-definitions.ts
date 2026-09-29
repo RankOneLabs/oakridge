@@ -12,7 +12,12 @@ const insertPromptBundle = async (sql: SqlExecutor, bundle: PromptBundle): Promi
     `INSERT INTO oakridge.prompt_bundle (hash,version,matrix) VALUES ($1,$2,$3::jsonb)
      ON CONFLICT (hash) DO UPDATE SET hash=EXCLUDED.hash
      WHERE oakridge.prompt_bundle.version=EXCLUDED.version AND oakridge.prompt_bundle.matrix=EXCLUDED.matrix
-     RETURNING hash,version,matrix`, [bundle.hash, bundle.version, bundle.matrix],
+     RETURNING hash,version,matrix`,
+    // Serialised here, not handed over as an array: `pg` renders a JS array as a
+    // PostgreSQL *array* literal (`{"a","b"}`), which `::jsonb` then rejects as
+    // malformed JSON. The prompt matrix is the one jsonb column in this module
+    // whose value is an array, so it is the one that hit it.
+    [bundle.hash, bundle.version, JSON.stringify(bundle.matrix)],
   );
   const row = rows[0];
   if (!row) throw new Error(`prompt bundle '${bundle.hash}' conflicts with stored content`);

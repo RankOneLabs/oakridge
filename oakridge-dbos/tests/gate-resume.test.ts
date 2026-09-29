@@ -13,7 +13,7 @@ test("the public gate route executes only the run-owned gate command", async () 
   const app = createGateResumeApp({ records: { async decide_gate_wait(command) {
     actions.push(command.action);
     return { kind: "released", artifact_id: "77777777-7777-4777-8777-777777777777" as ArtifactId,
-      run_id: runId, record_version: 8 as RunRecordVersion };
+      run_id: runId, cohort_id: null, record_version: 8 as RunRecordVersion };
   } } });
   expect((await request(app)).status).toBe(202);
   expect(actions).toEqual(["approve"]);

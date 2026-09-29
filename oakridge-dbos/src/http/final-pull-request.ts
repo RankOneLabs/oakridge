@@ -3,23 +3,13 @@ import { z } from "zod";
 
 import type { BuildCohortEvent } from "../adapters/dev-flow-build";
 import { selectFinalPullRequestObservationOutcome, type FinalPullRequestEvent } from "../domain/final-pull-request";
-import type { DevFlowBuildCohort } from "../domain/cohort-pull-request";
-import type { FinalMergePolicy } from "../domain/epic";
 import { parseUuidId, type CohortId, type UnitId, type WorkflowRunId } from "../domain/primitives";
 import type { PullRequestVerificationId } from "../domain/pull-request";
 import type { GitCommandRunner } from "../domain/repository-provisioning";
 import { verifyAndBindCohortPullRequest, type PullRequestForgeReader } from "../runtime/cohort-pull-request";
-import type { DevFlowPullRequestRepository } from "../storage/repositories";
+import type { DevFlowPullRequestRepository, FinalPullRequestTargetRepository } from "../storage/repositories";
 
-export interface FinalPullRequestTarget {
-  readonly cohort: DevFlowBuildCohort;
-  readonly forge_repository: { readonly owner: string; readonly name: string };
-  readonly merge_policy: FinalMergePolicy;
-}
-
-export interface FinalPullRequestTargetRepository {
-  find(run_id: WorkflowRunId, repository_key: string): Promise<FinalPullRequestTarget | null>;
-}
+export type { FinalPullRequestTarget, FinalPullRequestTargetRepository } from "../storage/repositories";
 
 export interface FinalPullRequestHttpDependencies {
   readonly pull_requests: DevFlowPullRequestRepository;

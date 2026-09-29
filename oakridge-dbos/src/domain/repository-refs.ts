@@ -2,6 +2,7 @@ import type { JsonValue, StageInstanceId } from "./primitives";
 import { err, ok, type Result } from "./primitives";
 import { readJsonPointer } from "./json-pointer";
 import type { SlotBinding } from "./delegated-session";
+import type { FinalMergePolicy, ForgeRepositoryIdentity } from "./epic";
 
 /**
  * The branches a run works against, and how a stage comes to hold them.
@@ -46,12 +47,20 @@ export const REPOSITORY_REFS_ARTIFACT_TYPE = "dev.repository_refs";
  *
  * It carries no base branch. There is one for the whole run, and an entry that
  * could name its own was an entry that could disagree with its siblings.
+ *
+ * `forge_repository` moved here from `epic_workflow_profile`, which v15 does
+ * not have. It belongs to launch configuration and not to an artifact: it is
+ * the independent authority `verifyCohortPullRequest` checks an agent-supplied
+ * pull request URL against, so a value the agent could influence would defeat
+ * the check it exists for. Null where the operator configured no forge, which
+ * is a run whose pull requests are confirmed by hand.
  */
 export interface RunContextRepository {
   readonly key: string;
   readonly path: string;
   /** Where this repository's base branch is cut from, and where its work merges back. */
   readonly integration_branch: string;
+  readonly forge_repository: ForgeRepositoryIdentity | null;
 }
 
 /** Where a repository entry carries its key — the unit id the stage fans out on. */
@@ -116,8 +125,42 @@ export const parseRunContextRepository = (value: JsonValue): Result<RunContextRe
   if (!path.ok) return path;
   const integrationBranch = nonEmptyString(readJsonPointer(value, "/integration_branch"), "integration_branch");
   if (!integrationBranch.ok) return integrationBranch;
-  return ok({ key: key.value, path: path.value, integration_branch: integrationBranch.value });
+  const forge = parseForgeRepository(readJsonPointer(value, "/forge_repository"));
+  if (!forge.ok) return forge;
+  return ok({ key: key.value, path: path.value, integration_branch: integrationBranch.value, forge_repository: forge.value });
 };
+
+/**
+ * A forge identity, absent, or the reason it is neither. Parsed rather than
+ * cast: the value arrives inside an untyped run context, and the first place a
+ * half-populated one would otherwise surface is a URL comparison that silently
+ * matches nothing.
+ */
+export const parseForgeRepository = (value: JsonValue | undefined): Result<ForgeRepositoryIdentity | null, RunContextRepositoryError> => {
+  if (value === undefined || value === null) return ok(null);
+  if (typeof value !== "object" || Array.isArray(value)) {
+    return err({ operation: "parse_run_context_repository", detail: "repository 'forge_repository' must be an object or null" });
+  }
+  const provider = readJsonPointer(value, "/provider");
+  const owner = readJsonPointer(value, "/owner");
+  const name = readJsonPointer(value, "/name");
+  if (provider !== "github" || typeof owner !== "string" || owner.length === 0 || typeof name !== "string" || name.length === 0) {
+    return err({ operation: "parse_run_context_repository", detail: "repository 'forge_repository' must be {provider:'github',owner,name}" });
+  }
+  return ok({ provider: "github", owner, name });
+};
+
+/** Where the epic's merge policy sits on a prepared run context. */
+export const RUN_CONTEXT_FINAL_MERGE_POLICY_POINTER = "/final_merge_policy";
+
+/**
+ * The epic's merge policy, read back off the run context. `guarded` is the
+ * default because it is the policy that refuses an unverified merge: a context
+ * missing the key must not be read as permission to accept an operator's word
+ * for one.
+ */
+export const parseFinalMergePolicy = (value: JsonValue | undefined): FinalMergePolicy =>
+  value === "external_confirmation" ? "external_confirmation" : "guarded";
 
 /**
  * The one branch a run builds on, from its configured name or the epic's slug.

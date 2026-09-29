@@ -69,7 +69,6 @@ export interface OutputGateDefinition {
   readonly name: string;
   readonly outputs: readonly string[];
   readonly steps: readonly OutputGateStep[];
-  readonly requires_zero_open_review_items?: boolean;
 }
 export interface OutputHandoffDefinition {
   readonly name: string;

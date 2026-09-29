@@ -21,13 +21,20 @@ import type { PullRequestObservation } from "../domain/pull-request";
 import { parseGithubPullRequestIdentity, repositoriesMatch, type PullRequestVerificationId } from "../domain/pull-request";
 import type { GitCommandRunner } from "../domain/repository-provisioning";
 import { renderCohortBranchContract, selectCohortBranchRoles, type RepositoryRefs } from "../domain/repository-refs";
-import type { DevFlowPullRequestRepository, EpicWorkflowProfileRepository, RunRecordRepository } from "../storage/repositories";
+import type { DevFlowPullRequestRepository, FinalPullRequestTargetRepository, RunRecordRepository } from "../storage/repositories";
 
 const GITHUB_REVIEW_WAIT = "github_review";
 
 export interface CohortPullRequestDependencies {
   readonly pull_requests: DevFlowPullRequestRepository;
-  readonly epic_profiles: EpicWorkflowProfileRepository;
+  /**
+   * The forge identity a candidate pull request URL is checked against, read
+   * from the run's own context. It used to come from `epic_workflow_profile`,
+   * which v15 does not have; what matters for the check is unchanged — the
+   * identity is launch configuration, never a field an agent's artifact
+   * supplied.
+   */
+  readonly forge_targets: FinalPullRequestTargetRepository;
   readonly reader: PullRequestForgeReader;
   readonly git: GitCommandRunner;
   readonly records: Pick<RunRecordRepository, "find_cohort_handoff" | "complete_handoff_artifact">;
@@ -349,9 +356,9 @@ const independentlyVerifyAndBind = async (
   const handoff = await dependencies.records.find_cohort_handoff(stageInstanceId, unitId);
   const cohort = await dependencies.pull_requests.find_cohort_for_unit(stageInstanceId, unitId);
   if (!handoff || !cohort) return failure("cohort_not_found", `no stored build cohort for stage '${stageInstanceId}' unit '${unitId}'`);
-  const profile = await dependencies.epic_profiles.find_by_run_id(handoff.run_id);
-  const forgeRepository = profile?.repositories.find((repository) => repository.repository_key === cohort.repository_key)?.forge_repository ?? null;
-  if (!forgeRepository) return failure("missing_pull_request_evidence", `repository '${cohort.repository_key}' has no forge identity`);
+  const target = await dependencies.forge_targets.find(handoff.run_id, cohort.repository_key);
+  if (!target) return failure("missing_pull_request_evidence", `repository '${cohort.repository_key}' has no forge identity`);
+  const forgeRepository = target.forge_repository;
   const verified = await verifyAndBindCohortPullRequest({ pull_requests: dependencies.pull_requests,
     reader: dependencies.reader, git: dependencies.git, now: dependencies.now,
     record_build_event: dependencies.record_build_event }, {

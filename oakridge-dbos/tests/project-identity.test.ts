@@ -11,7 +11,7 @@ test("GitHub identity parser accepts the remote forms supported by Rust v2", () 
 
 test("git resolver derives forge identity and the origin default branch", async () => {
   const resolver = new GitProjectRepositoryIdentityResolver(async (_repoDir, args) => args[0] === "remote" ? "git@github.com:RankOneLabs/oakridge.git" : "origin/main");
-  expect(await resolver.resolve("/code/oakridge")).toEqual({ forge_repository: { provider: "github", owner: "RankOneLabs", name: "oakridge" }, base_branch: "main" });
+  expect(await resolver.resolve("/code/oakridge")).toEqual({ forge_repository: { provider: "github", owner: "RankOneLabs", name: "oakridge" }, integration_branch: "main" });
 });
 
 test("git resolver treats unavailable or unsupported identity as absent", async () => {

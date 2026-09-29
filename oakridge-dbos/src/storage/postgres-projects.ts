@@ -9,7 +9,7 @@ interface ProjectRow {
   readonly repo_dir: string;
   readonly created_at: string;
   readonly forge_repository: Project["forge_repository"];
-  readonly base_branch: string | null;
+  readonly integration_branch: string | null;
 }
 
 const decodeProject = (row: ProjectRow): Project => ({ ...row, id: row.id as ProjectId });
@@ -19,17 +19,17 @@ export class PostgresProjectRepository implements ProjectRepository {
 
   async insert(project: CreateProject): Promise<Project> {
     const rows = await this.sql.query<ProjectRow>(
-      `INSERT INTO oakridge.project (id, name, repo_dir, created_at, forge_repository, base_branch)
+      `INSERT INTO oakridge.project (id, name, repo_dir, created_at, forge_repository, integration_branch)
        VALUES ($1, $2, $3, $4::timestamptz, $5::jsonb, $6)
-       RETURNING id::text, name, repo_dir, created_at::text, forge_repository, base_branch`,
-      [project.id, project.name, project.repo_dir, project.created_at, project.forge_repository, project.base_branch],
+       RETURNING id::text, name, repo_dir, created_at::text, forge_repository, integration_branch`,
+      [project.id, project.name, project.repo_dir, project.created_at, JSON.stringify(project.forge_repository), project.integration_branch],
     );
     return decodeProject(rows[0]!);
   }
 
   async list(): Promise<readonly Project[]> {
     const rows = await this.sql.query<ProjectRow>(
-      "SELECT id::text, name, repo_dir, created_at::text, forge_repository, base_branch FROM oakridge.project ORDER BY created_at, id",
+      "SELECT id::text, name, repo_dir, created_at::text, forge_repository, integration_branch FROM oakridge.project ORDER BY created_at, id",
       [],
     );
     return rows.map(decodeProject);
@@ -37,16 +37,16 @@ export class PostgresProjectRepository implements ProjectRepository {
 
   async update(id: ProjectId, project: UpdateProject): Promise<Project | null> {
     const rows = await this.sql.query<ProjectRow>(
-      `UPDATE oakridge.project SET name=$2,repo_dir=$3,forge_repository=$4::jsonb,base_branch=$5
-       WHERE id=$1 RETURNING id::text,name,repo_dir,created_at::text,forge_repository,base_branch`,
-      [id, project.name, project.repo_dir, project.forge_repository, project.base_branch],
+      `UPDATE oakridge.project SET name=$2,repo_dir=$3,forge_repository=$4::jsonb,integration_branch=$5
+       WHERE id=$1 RETURNING id::text,name,repo_dir,created_at::text,forge_repository,integration_branch`,
+      [id, project.name, project.repo_dir, JSON.stringify(project.forge_repository), project.integration_branch],
     );
     return rows[0] ? decodeProject(rows[0]) : null;
   }
 
   async find_by_id(id: ProjectId): Promise<Project | null> {
     const rows = await this.sql.query<ProjectRow>(
-      "SELECT id::text, name, repo_dir, created_at::text, forge_repository, base_branch FROM oakridge.project WHERE id = $1",
+      "SELECT id::text, name, repo_dir, created_at::text, forge_repository, integration_branch FROM oakridge.project WHERE id = $1",
       [id],
     );
     return rows[0] ? decodeProject(rows[0]) : null;

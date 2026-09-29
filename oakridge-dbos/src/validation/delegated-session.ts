@@ -39,7 +39,11 @@ const outputGateSchema = z.object({
     type: z.enum(["artifact_approval", "merge_confirmation"]),
     actions: z.array(z.string().min(1)).min(1),
   })),
-  requires_zero_open_review_items: z.boolean().default(false),
+  // Accepted and discarded. No gate has ever enforced it — see
+  // `OutputReleaseContract` — so it is dropped here rather than compiled into a
+  // contract that nothing reads. Kept in the schema so authored definitions
+  // that still carry it keep parsing.
+  requires_zero_open_review_items: z.boolean().optional().transform(() => undefined),
 }).superRefine((gate, context) => {
   const seen = new Set<string>();
   for (const step of gate.steps) {
@@ -59,7 +63,7 @@ const LEGACY_REVISION_ROUTE_FIELD = ["revision", "target"].join("_");
 const legacyOutputGateSchema = z.object({
   output: z.string().min(1),
   steps: z.array(z.object({ type: z.enum(["artifact_approval", "merge_confirmation"]), actions: z.array(z.string().min(1)).min(1) })).min(1),
-  requires_zero_open_review_items: z.boolean().default(false),
+  requires_zero_open_review_items: z.boolean().optional().transform(() => undefined),
 }).passthrough().transform((gate) => ({ ...gate,
   legacy_revision_route: gate[LEGACY_REVISION_ROUTE_FIELD] === "upstream_handoff" ? "upstream_handoff" as const : "self_stage" as const }));
 
@@ -176,11 +180,10 @@ export const normalizeDelegatedSessionDefinition = (
     fan_out: legacy.fan_out ? { ...legacy.fan_out, worktree: undefined } : undefined,
     artifact_productions: legacy.artifacts ? [legacy.artifacts] : [],
     gates: legacy.output_gate ? [{ name: `${legacy.output_gate.output}_gate`, outputs: [legacy.output_gate.output],
-      steps: legacy.output_gate.steps, requires_zero_open_review_items: legacy.output_gate.requires_zero_open_review_items }]
+      steps: legacy.output_gate.steps }]
       : legacy.gate_output ? [{ name: `${legacy.gate_output}_gate`, outputs: [legacy.gate_output],
         steps: [{ type: "artifact_approval", actions: ["approve", "request_revision"] },
-          { type: "merge_confirmation", actions: ["confirm_merged", "closed_without_merge"] }],
-        requires_zero_open_review_items: true }] : [],
+          { type: "merge_confirmation", actions: ["confirm_merged", "closed_without_merge"] }] }] : [],
     handoffs: legacy.output_handoff ? [{ name: `${legacy.output_handoff.output}_handoff`, outputs: [legacy.output_handoff.output],
       downstream_role: legacy.output_handoff.downstream_role, approved_wait: { kind: legacy.output_handoff.approved_wait.kind, close_events: ["approved"] } }] : [],
   } as unknown as JsonValue;

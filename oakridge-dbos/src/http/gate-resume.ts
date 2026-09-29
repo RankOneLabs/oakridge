@@ -1,12 +1,18 @@
 import { Hono } from "hono";
 
-import { parseUuidId, type WaitId, type WorkflowRunId } from "../domain/primitives";
+import { parseUuidId, type CohortId, type WaitId, type WorkflowRunId } from "../domain/primitives";
 import type { RunRecordRepository } from "../storage/repositories";
 
 export interface GateResumeDependencies {
   readonly records: Pick<RunRecordRepository, "decide_gate_wait">;
   readonly now?: () => string;
   readonly send_run_wake?: (run_id: WorkflowRunId, idempotency_key: string) => Promise<void>;
+  /**
+   * The cohort whose machine turns this decision into its next transition.
+   * Closing the wait is durable on its own; the hint only saves the machine's
+   * bounded recheck.
+   */
+  readonly send_cohort_wake?: (cohort_id: CohortId, idempotency_key: string) => Promise<void>;
 }
 
 interface GateResumeRequest {
@@ -37,7 +43,9 @@ export const createGateResumeApp = (dependencies: GateResumeDependencies): Hono 
       decided_at: (dependencies.now ?? (() => new Date().toISOString()))() });
     if (result.kind === "wait_not_found") return http.json({ error: result.detail }, 404);
     if (result.kind === "wait_conflict") return http.json({ error: result.detail }, 409);
-    await dependencies.send_run_wake?.(result.run_id, `${result.kind}:${result.run_id}:${result.record_version}`).catch(() => undefined);
+    const key = `${result.kind}:${waitId}:${result.record_version}`;
+    if (result.cohort_id !== null) await dependencies.send_cohort_wake?.(result.cohort_id, key).catch(() => undefined);
+    await dependencies.send_run_wake?.(result.run_id, key).catch(() => undefined);
     return http.json({ gate_id: waitId, resumed: true }, 202);
   });
   return app;

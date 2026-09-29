@@ -1,30 +1,43 @@
-import type { ArtifactId, AttemptId, CohortId, ExecutionId, JsonValue, SessionId, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "./primitives";
-import { parseUuidId } from "./primitives";
+import type { ArtifactId, AttemptId, CohortId, JsonValue, OutputCollectionKey, SessionId, StageInstanceId, UnitId, WorkflowRunId } from "./primitives";
 import type { ArtifactTypeId } from "./workflow";
 
 /**
  * Where an artifact sits in the run graph — the natural key of its revision
  * chain. `ArtifactRevision` satisfies it structurally, so a caller holding a
- * revision passes the revision itself rather than unpacking four fields whose
- * order nothing checks.
+ * revision passes the revision itself rather than unpacking fields whose order
+ * nothing checks.
+ *
+ * v15 keys a slot on the receiving stage and the declared output name
+ * (`artifact_acceptance`), not on the execution that produced it: a retried
+ * attempt fills the same slot, and keying on the producer made every retry look
+ * like a new coordinate.
  */
 export interface ArtifactCoordinate {
   readonly stage_instance_id: StageInstanceId;
-  readonly execution_id: ExecutionId;
-  readonly unit_id: UnitId;
   readonly output_name: string;
-  readonly collection_key?: import("./primitives").OutputCollectionKey | null;
+  readonly collection_key?: OutputCollectionKey | null;
 }
 
+/**
+ * One revision, assembled from the four tables v15 splits an artifact across:
+ * `artifact` (the immutable body and its chain), `artifact_owner` (whose
+ * durable state contains it), `artifact_acceptance` (the receiving stage and
+ * declared slot), and `artifact_provenance` (what produced it).
+ */
 export interface ArtifactRevision {
-  readonly collection_key?: import("./primitives").OutputCollectionKey | null;
   readonly id: ArtifactId;
   readonly chain_id: ArtifactId;
   readonly run_id: WorkflowRunId;
   readonly stage_instance_id: StageInstanceId;
-  readonly execution_id: ExecutionId;
+  readonly cohort_id: CohortId | null;
+  /** The cohort key the revision belongs to; `"0"` for a scalar stage. */
   readonly unit_id: UnitId;
+  /** The attempt that produced it — absent for a service, operator or imported artifact. */
+  readonly attempt_id: AttemptId | null;
+  /** The agent session that produced it, when one had been ensured. */
+  readonly session_id: SessionId | null;
   readonly output_name: string;
+  readonly collection_key?: OutputCollectionKey | null;
   readonly artifact_type: ArtifactTypeId;
   readonly label: string | null;
   readonly body: JsonValue;
@@ -34,22 +47,16 @@ export interface ArtifactRevision {
   readonly created_at: string;
 }
 
+/**
+ * `oakridge.artifact.lifecycle`, with the one fact the bare enum cannot carry:
+ * which revision superseded this one. That is read off the chain
+ * (`parent_artifact_id = id`) rather than stored twice.
+ */
 export type ArtifactRevisionLifecycle =
   | { readonly kind: "current" }
-  | { readonly kind: "superseded"; readonly superseded_by_artifact_id: ArtifactId }
-  | { readonly kind: "withdrawn"; readonly actor: string; readonly reason: string; readonly withdrawn_at: string }
-  | { readonly kind: "released"; readonly released_at: string };
-
-/**
- * The work order that produced this revision, if any.
- *
- * v2's `publish_artifact` (`postgres-run-record.ts:890-894`) writes the work
- * order id into `artifact.execution_id` wherever v1 wrote a legacy execution
- * id — the shared `artifact` table was never given a second column for it. A
- * value that does not parse as a uuid is a pre-cutover (v1) row, not a v2
- * work order.
- */
-export const workOrderIdOfArtifact = (artifact: ArtifactRevision): WorkOrderId | null => parseUuidId<WorkOrderId>(artifact.execution_id);
+  | { readonly kind: "superseded"; readonly superseded_by_artifact_id: ArtifactId | null }
+  | { readonly kind: "withdrawn" }
+  | { readonly kind: "released" };
 
 /** The immutable revision payload stored in oakridge.artifact. */
 export interface ArtifactRecord {
@@ -79,7 +86,7 @@ export interface ArtifactAcceptanceRecord {
   readonly receiving_stage_instance_id: StageInstanceId;
   readonly output_name: string;
   readonly artifact_type: ArtifactTypeId;
-  readonly collection_key: import("./primitives").OutputCollectionKey | null;
+  readonly collection_key: OutputCollectionKey | null;
   readonly accepted_at: string;
 }
 

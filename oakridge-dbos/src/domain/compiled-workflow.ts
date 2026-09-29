@@ -20,9 +20,20 @@ export interface CompiledOutputContract {
 
 export interface CompiledGateStep { readonly type: string; readonly actions: readonly GateAction[] }
 
+/**
+ * `requires_zero_open_review_items` is deliberately absent.
+ *
+ * It was never enforced — not in v15 and not in v14 either: the compiler wrote
+ * it, the validator defaulted it, tests asserted it compiled, and no reader ever
+ * consulted it. Keeping the field would have made starting to enforce it look
+ * like restoring behaviour, when it would in fact have begun blocking the one
+ * spec gate operators have always been able to approve, on a path no test has
+ * run. The definition schema still accepts and discards the key so authored
+ * definitions keep parsing.
+ */
 export type OutputReleaseContract =
   | { readonly kind: "immediate" }
-  | { readonly kind: "gate"; readonly gate_name: string; readonly steps: readonly CompiledGateStep[]; readonly requires_zero_open_review_items: boolean }
+  | { readonly kind: "gate"; readonly gate_name: string; readonly steps: readonly CompiledGateStep[] }
   | { readonly kind: "handoff"; readonly handoff_name: string; readonly downstream_role: StageOperatorRole; readonly external_wait_kind: string; readonly close_events: readonly string[] };
 
 export type OutputAttention = "required" | "optional" | "none";
