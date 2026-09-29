@@ -28,9 +28,10 @@ import { workOrderIdFor, workOrderWorkflowId } from "../decision/ids";
 import type { CompiledStageContract, MaterializedExecutionUnit } from "../domain/compiled-workflow";
 import type { CommittedSessionLaunch, DelegatedSessionDefinitionConfig } from "../domain/delegated-session";
 import type { AssessmentRevisionContext } from "../domain/dev-flow-artifacts";
+import type { DevFlowBuildCohort } from "../domain/cohort-pull-request";
 import type { ArtifactEnvelope, ExecutionRequest } from "../domain/execution";
 import type { ArtifactId, JsonValue, OutputCollectionKey, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "../domain/primitives";
-import { PROVISION_REPOSITORY_REFS_STAGE_TYPE, parseBaseBranch, parseRunContextRepository, type RepositoryProvisioningDefinitionConfig, type ResolvedRepositoryProvisioningConfig } from "../domain/repository-refs";
+import { PROVISION_REPOSITORY_REFS_STAGE_TYPE, parseBaseBranch, parseRunContextRepository, renderCohortBranchContract, type RepositoryProvisioningDefinitionConfig, type ResolvedRepositoryProvisioningConfig } from "../domain/repository-refs";
 import type { MaterializedRunOutput, MaterializedWorkOrder } from "../domain/run-record";
 
 const capabilityFor = (seed: string, workOrderId: WorkOrderId): string => createHash("sha256").update(seed).update(":").update(workOrderId).digest("base64url");
@@ -60,6 +61,8 @@ export interface ResolveWorkOrderInput {
   readonly capability_seed: string;
   /** Role, reason and prompt selected atomically by the launch transition. */
   readonly session_launch: CommittedSessionLaunch;
+  /** Stored adapter row used verbatim for the build/assessment branch contract. */
+  readonly build_cohort?: DevFlowBuildCohort;
 }
 
 interface ExecutionRequestInput extends ResolveWorkOrderInput { readonly work_order_id: WorkOrderId; readonly capability: string }
@@ -102,7 +105,10 @@ const executionRequest = async (input: ExecutionRequestInput): Promise<Execution
     const urlBinding = definition.slot_bindings.OAKRIDGE_URL;
     const url = urlBinding ? resolveBinding(urlBinding, { inputs: unitInputs, context: input.context, item: input.unit.parameters }) : null;
     if (!url?.ok) throw new Error(`stage '${input.stage.stage_key}' must resolve OAKRIDGE_URL for work-order publication`);
-    resolved = { ...planned.value, session_name: input.work_order_id,
+    const renderedPrompt = input.build_cohort
+      ? `${planned.value.rendered_prompt}\n\n${renderCohortBranchContract(input.build_cohort)}`
+      : planned.value.rendered_prompt;
+    resolved = { ...planned.value, rendered_prompt: renderedPrompt, session_name: input.work_order_id,
       publication: { base_url: url.value, work_order_id: input.work_order_id, capability: input.capability } } as unknown as JsonValue;
   } else {
     throw new Error(`executor '${input.stage.executor.executor_type}' has no v2 resolver`);

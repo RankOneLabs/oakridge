@@ -44,20 +44,63 @@ interface CurrentPullRequestRow {
   readonly observed_at: string; readonly merged_at: string | null; readonly recorded_at: string;
 }
 
+interface BuildCohortRow {
+  readonly cohort_id: string; readonly stage_instance_id: string; readonly cohort_key: string;
+  readonly repository_key: string; readonly repository_path: string; readonly canonical_ref: string;
+  readonly expected_pr_base: string; readonly recorded_head_sha: string;
+  readonly current_verified_pull_request_id: string | null; readonly created_at: string; readonly updated_at: string;
+}
+
+const buildCohortFromRow = (row: BuildCohortRow): DevFlowBuildCohort => ({
+  ...row,
+  cohort_id: row.cohort_id as CohortId,
+  stage_instance_id: row.stage_instance_id as StageInstanceId,
+  current_verified_pull_request_id: row.current_verified_pull_request_id as PullRequestVerificationId | null,
+});
+
+const BUILD_COHORT_COLUMNS = `cohort_id::text,stage_instance_id::text,cohort_key,repository_key,repository_path,
+  canonical_ref,expected_pr_base,recorded_head_sha,current_verified_pull_request_id::text,created_at::text,updated_at::text`;
+
 /** PostgreSQL implementation of the shared cohort/final-stage PR entity. */
 export class PostgresDevFlowPullRequestRepository implements DevFlowPullRequestRepository {
   constructor(private readonly sql: TransactionalSqlExecutor) {}
 
+  async create_cohort(cohort: DevFlowBuildCohort): Promise<DevFlowBuildCohort> {
+    return this.sql.transaction(async (tx) => {
+      await tx.query(`INSERT INTO oakridge.dev_flow_build_cohort
+        (cohort_id,stage_instance_id,cohort_key,repository_key,repository_path,canonical_ref,expected_pr_base,recorded_head_sha,created_at,updated_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (cohort_id) DO NOTHING`,
+      [cohort.cohort_id, cohort.stage_instance_id, cohort.cohort_key, cohort.repository_key, cohort.repository_path,
+        cohort.canonical_ref, cohort.expected_pr_base, cohort.recorded_head_sha, cohort.created_at, cohort.updated_at]);
+      const rows = await tx.query<BuildCohortRow>(`SELECT ${BUILD_COHORT_COLUMNS}
+        FROM oakridge.dev_flow_build_cohort WHERE cohort_id=$1`, [cohort.cohort_id]);
+      const stored = rows[0];
+      if (!stored) throw new Error(`build cohort '${cohort.cohort_id}' was not stored`);
+      const result = buildCohortFromRow(stored);
+      const immutableMatches = result.stage_instance_id === cohort.stage_instance_id && result.cohort_key === cohort.cohort_key
+        && result.repository_key === cohort.repository_key && result.repository_path === cohort.repository_path
+        && result.canonical_ref === cohort.canonical_ref && result.expected_pr_base === cohort.expected_pr_base;
+      if (!immutableMatches) throw new Error(`build cohort '${cohort.cohort_id}' already exists with different branch roles`);
+      return result;
+    });
+  }
+
+  async advance_cohort_head(input: { readonly cohort_id: CohortId; readonly expected_head_sha: string; readonly next_head_sha: string; readonly advanced_at: string }): Promise<Result<DevFlowBuildCohort, { readonly kind: "cohort_not_found" | "ref_lease_mismatch"; readonly detail: string }>> {
+    const rows = await this.sql.query<BuildCohortRow>(`UPDATE oakridge.dev_flow_build_cohort
+      SET recorded_head_sha=$3,updated_at=$4 WHERE cohort_id=$1 AND recorded_head_sha=$2
+      RETURNING ${BUILD_COHORT_COLUMNS}`, [input.cohort_id, input.expected_head_sha, input.next_head_sha, input.advanced_at]);
+    if (rows[0]) return ok(buildCohortFromRow(rows[0]));
+    const current = await this.sql.query<{ readonly recorded_head_sha: string }>(
+      "SELECT recorded_head_sha FROM oakridge.dev_flow_build_cohort WHERE cohort_id=$1", [input.cohort_id]);
+    if (!current[0]) return err({ kind: "cohort_not_found", detail: `build cohort '${input.cohort_id}' was not found` });
+    return err({ kind: "ref_lease_mismatch", detail: `stored cohort head moved from '${input.expected_head_sha}' to '${current[0].recorded_head_sha}'` });
+  }
+
   async find_cohort_for_unit(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<DevFlowBuildCohort | null> {
-    const rows = await this.sql.query<{ readonly cohort_id: string; readonly stage_instance_id: string; readonly cohort_key: string;
-      readonly repository_key: string; readonly repository_path: string; readonly canonical_ref: string; readonly expected_pr_base: string;
-      readonly recorded_head_sha: string; readonly current_verified_pull_request_id: string | null; readonly created_at: string; readonly updated_at: string }>(`SELECT
-      cohort_id::text,stage_instance_id::text,cohort_key,repository_key,repository_path,canonical_ref,expected_pr_base,recorded_head_sha,
-      current_verified_pull_request_id::text,created_at::text,updated_at::text
+    const rows = await this.sql.query<BuildCohortRow>(`SELECT ${BUILD_COHORT_COLUMNS}
       FROM oakridge.dev_flow_build_cohort WHERE stage_instance_id=$1 AND cohort_key=$2`, [stage_instance_id, unit_id]);
     const row = rows[0];
-    return row ? { ...row, cohort_id: row.cohort_id as CohortId, stage_instance_id: row.stage_instance_id as StageInstanceId,
-      current_verified_pull_request_id: row.current_verified_pull_request_id as PullRequestVerificationId | null } : null;
+    return row ? buildCohortFromRow(row) : null;
   }
 
   async find_current_for_unit(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<CurrentVerifiedCohortPullRequest | null> {
@@ -73,7 +116,9 @@ export class PostgresDevFlowPullRequestRepository implements DevFlowPullRequestR
       JOIN oakridge.pull_request_verification verification
         ON verification.id=cohort.current_verified_pull_request_id AND verification.invalidated_at IS NULL
       JOIN oakridge.pull_request pull_request ON pull_request.id=verification.pull_request_id
-      JOIN oakridge.pull_request_observation observation ON observation.id=verification.observation_id
+      JOIN LATERAL (SELECT latest.* FROM oakridge.pull_request_observation latest
+        WHERE latest.pull_request_id=verification.pull_request_id AND latest.head_sha=verification.verified_head_sha
+        ORDER BY latest.observed_at DESC,latest.recorded_at DESC,latest.id DESC LIMIT 1) observation ON true
       WHERE cohort.stage_instance_id=$1 AND cohort.cohort_key=$2`, [stage_instance_id, unit_id]);
     const row = rows[0];
     if (!row) return null;

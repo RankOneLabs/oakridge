@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 
 import type { CompiledStageContract } from "../src/domain/compiled-workflow";
 import type { DelegatedSessionDefinitionConfig } from "../src/domain/delegated-session";
-import type { ArtifactId, RunTransitionId, StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
+import type { ArtifactId, CohortId, RunTransitionId, StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
 import { resolveWorkOrder } from "../src/runtime/resolve-work-order";
 
 const RUN_ID = "11111111-1111-4111-8111-111111111111" as WorkflowRunId;
@@ -44,11 +44,19 @@ test("a delegated work order uses the prompt and reason committed by its launch 
       existing_pull_request: "https://example.test/pull/7",
     },
     capability_seed: "test-seed",
+    build_cohort: {
+      cohort_id: "66666666-6666-4666-8666-666666666666" as CohortId, stage_instance_id: STAGE_INSTANCE_ID,
+      cohort_key: "cohort-one", repository_key: "oakridge", repository_path: "/repo",
+      canonical_ref: "cohort/cohort-one", expected_pr_base: "epic/work", recorded_head_sha: "abc",
+      current_verified_pull_request_id: null, created_at: "2026-09-29T00:00:00Z", updated_at: "2026-09-29T00:00:00Z",
+    },
   });
 
   expect((workOrder.request.resolved_config as { readonly session_name?: string }).session_name).toBe(workOrder.id);
   expect((workOrder.request.resolved_config as { readonly rendered_prompt?: string }).rendered_prompt).toContain("Revise cohort-one");
   expect((workOrder.request.resolved_config as { readonly rendered_prompt?: string }).rendered_prompt).toContain("Existing PR: https://example.test/pull/7");
+  expect((workOrder.request.resolved_config as { readonly rendered_prompt?: string }).rendered_prompt).toContain("Canonical cohort ref: cohort/cohort-one");
+  expect((workOrder.request.resolved_config as { readonly rendered_prompt?: string }).rendered_prompt).toContain("Pull request base: epic/work");
   expect(workOrder.request.session_launch?.reason).toEqual({ transition_id: "33333333-3333-4333-8333-333333333333" as RunTransitionId, name: "revision_after_assessment" });
 });
 

@@ -1,13 +1,14 @@
 import { Hono } from "hono";
 import { z } from "zod";
 
-import { parseUuidId, type UnitId, type WorkflowRunId } from "../domain/primitives";
-import type { FinalPullRequestProjection } from "../domain/final-pull-request";
-import type { DevFlowPullRequestRepository, FinalPullRequestRepository } from "../storage/repositories";
+import type { BuildCohortEvent } from "../adapters/dev-flow-build";
+import { selectFinalPullRequestObservationOutcome, type FinalPullRequestEvent } from "../domain/final-pull-request";
 import type { DevFlowBuildCohort } from "../domain/cohort-pull-request";
+import { parseUuidId, type CohortId, type UnitId, type WorkflowRunId } from "../domain/primitives";
 import type { PullRequestVerificationId } from "../domain/pull-request";
 import type { GitCommandRunner } from "../domain/repository-provisioning";
-import { verifyCohortPullRequest, type PullRequestForgeReader } from "../runtime/cohort-pull-request";
+import { verifyAndBindCohortPullRequest, type PullRequestForgeReader } from "../runtime/cohort-pull-request";
+import type { DevFlowPullRequestRepository } from "../storage/repositories";
 
 export interface FinalPullRequestTarget {
   readonly cohort: DevFlowBuildCohort;
@@ -19,11 +20,12 @@ export interface FinalPullRequestTargetRepository {
 }
 
 export interface FinalPullRequestHttpDependencies {
-  readonly final_pull_requests: FinalPullRequestRepository;
   readonly pull_requests: DevFlowPullRequestRepository;
   readonly final_targets: FinalPullRequestTargetRepository;
   readonly pull_request_reader: PullRequestForgeReader;
   readonly git: GitCommandRunner;
+  readonly record_build_event: (cohort_id: CohortId, event: BuildCohortEvent) => Promise<void>;
+  readonly record_final_event: (event: FinalPullRequestEvent) => Promise<void>;
   readonly now?: () => string;
 }
 
@@ -33,12 +35,9 @@ const observationSchema = z.object({
 });
 
 const confirmationSchema = z.object({
-  idempotency_key: z.string(),
+  idempotency_key: z.string().trim().min(1),
   operator_comment: z.string().optional(),
 });
-
-const publicProjection = ({ outcome, profile }: FinalPullRequestProjection) => ({ outcome, profile });
-const errorStatus = (kind: string): 404 | 409 => kind === "profile_not_found" ? 404 : 409;
 
 export const createFinalPullRequestApp = (dependencies: FinalPullRequestHttpDependencies): Hono => {
   const app = new Hono();
@@ -49,33 +48,21 @@ export const createFinalPullRequestApp = (dependencies: FinalPullRequestHttpDepe
     if (!parsed.success) return http.json({ error: "invalid final pull request observation" }, 400);
     const runId = parseUuidId<WorkflowRunId>(http.req.param("runId"));
     if (!runId) return http.json({ error: "workflow run was not found" }, 404);
-    const repositoryKey = http.req.param("repositoryKey");
-    const target = await dependencies.final_targets.find(runId, repositoryKey);
+    const target = await dependencies.final_targets.find(runId, http.req.param("repositoryKey"));
     if (!target) return http.json({ error: "final pull request target was not found", code: "profile_not_found" }, 404);
-    const verified = await verifyCohortPullRequest({ reader: dependencies.pull_request_reader, git: dependencies.git }, {
+    const verified = await verifyAndBindCohortPullRequest({ pull_requests: dependencies.pull_requests,
+      reader: dependencies.pull_request_reader, git: dependencies.git, now,
+      record_build_event: dependencies.record_build_event }, {
       cohort: target.cohort, forge_repository: target.forge_repository, candidate_url: parsed.data.pull_request_url,
+      replace_verification_id: (parsed.data.replace_verification_id ?? null) as PullRequestVerificationId | null,
     });
     if (!verified.ok) return http.json({ error: verified.error.detail, code: verified.error.kind }, 409);
-    const stored = await dependencies.pull_requests.observe({ repository_key: target.cohort.repository_key,
-      observation: verified.value.observation, recorded_at: now() });
-    const current = await dependencies.pull_requests.find_current_for_unit(target.cohort.stage_instance_id, target.cohort.cohort_key as UnitId);
-    const isSameVerifiedHead = current?.pull_request.id === stored.pull_request_id
-      && current.observation.head_sha === verified.value.pushed_head_sha;
-    if (!isSameVerifiedHead) {
-      const bound = await dependencies.pull_requests.bind_verified({ cohort_id: target.cohort.cohort_id, ...stored,
-        verified_head_sha: verified.value.pushed_head_sha, verified_at: now(),
-        replace_verification_id: (parsed.data.replace_verification_id ?? null) as PullRequestVerificationId | null });
-      if (!bound.ok) return http.json({ error: bound.error.detail, code: bound.error.kind }, 409);
-    }
-    const result = await dependencies.final_pull_requests.observe({
-      run_id: runId,
-      repository_key: repositoryKey,
-      observation: verified.value.observation,
-      updated_at: now(),
-    });
-    return result.ok
-      ? http.json(publicProjection(result.value))
-      : http.json({ error: result.error.detail, code: result.error.kind }, errorStatus(result.error.kind));
+    await dependencies.record_final_event({ kind: "pull_request_verified", cohort_id: target.cohort.cohort_id,
+      verification_id: verified.value.verification_id, revision: verified.value.pushed_head_sha,
+      pull_request_url: verified.value.observation.url, state: verified.value.observation.state });
+    return http.json({ outcome: selectFinalPullRequestObservationOutcome(verified.value.observation),
+      pull_request_url: verified.value.observation.url, verification_id: verified.value.verification_id,
+      binding: verified.value.binding });
   });
 
   app.post("/workflow_runs/:runId/final_pull_requests/:repositoryKey/confirm", async (http) => {
@@ -83,8 +70,7 @@ export const createFinalPullRequestApp = (dependencies: FinalPullRequestHttpDepe
     if (!parsed.success) return http.json({ error: "invalid final pull request confirmation" }, 400);
     const runId = parseUuidId<WorkflowRunId>(http.req.param("runId"));
     if (!runId) return http.json({ error: "workflow run was not found" }, 404);
-    const repositoryKey = http.req.param("repositoryKey");
-    const target = await dependencies.final_targets.find(runId, repositoryKey);
+    const target = await dependencies.final_targets.find(runId, http.req.param("repositoryKey"));
     if (!target) return http.json({ error: "final pull request target was not found", code: "profile_not_found" }, 404);
     const current = await dependencies.pull_requests.find_current_for_unit(target.cohort.stage_instance_id, target.cohort.cohort_key as UnitId);
     if (!current || current.observation.state !== "merged" || !current.observation.merged_at) {
@@ -94,15 +80,11 @@ export const createFinalPullRequestApp = (dependencies: FinalPullRequestHttpDepe
       pull_request_id: current.pull_request.id, idempotency_key: parsed.data.idempotency_key,
       merged_at: current.observation.merged_at, confirmed_at: now() });
     if (!closure.ok) return http.json({ error: closure.error.detail, code: closure.error.kind }, 409);
-    const result = await dependencies.final_pull_requests.confirm({
-      run_id: runId,
-      repository_key: repositoryKey,
-      request: parsed.data,
-      confirmed_at: now(),
-    });
-    return result.ok
-      ? http.json(publicProjection(result.value))
-      : http.json({ error: result.error.detail, code: result.error.kind }, errorStatus(result.error.kind));
+    await dependencies.record_final_event({ kind: "pull_request_merge_confirmed", cohort_id: target.cohort.cohort_id,
+      pull_request_url: current.pull_request.url, confirmation: closure.value.kind,
+      operator_comment: parsed.data.operator_comment ?? null });
+    return http.json({ outcome: "completed", pull_request_url: current.pull_request.url,
+      confirmation: closure.value.kind, closure: closure.value.closure });
   });
 
   return app;

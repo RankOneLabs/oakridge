@@ -7,14 +7,8 @@
  * is that the cohort's work landed, so the evidence has to be checked against
  * what the build itself reported opening.
  *
- * The check is deliberately graded rather than all-or-nothing. Identity — the
- * pull request URL and the head branch — comes from the cohort's own
- * `pr_summary` artifact and is always available, so it is always checked; those
- * two are what stop a merge of some other branch being accepted here. The forge
- * binding and the expected base branch come from an Epic profile, which not
- * every run has. v1 refused outright without one. Refusing means a run launched
- * without an Epic can never finish, so an absent expectation is skipped and
- * recorded as skipped instead.
+ * Identity comes from the independently verified PR link and the stored cohort
+ * refs. Agent-authored artifact bodies are never used as PR evidence.
  */
 import type { ForgeRepositoryIdentity } from "./epic";
 import type { ArtifactId, CohortId, JsonValue, StageInstanceId, UnitId, WorkflowRunId } from "./primitives";
@@ -123,7 +117,7 @@ export const reconciliationForHandoff = (
 const findMismatch = (expected: ExpectedCohortPullRequest, observation: PullRequestObservation): PullRequestMismatch | null => {
   const identity = parseGithubPullRequestIdentity(expected.url);
   if (!identity) {
-    return pullRequestMismatch("pull_request_mismatch", "the cohort's pr_summary URL is not a canonical GitHub pull request URL");
+    return pullRequestMismatch("pull_request_mismatch", "the cohort's verified pull request URL is not a canonical GitHub pull request URL");
   }
   if (!pullRequestUrlsMatch(expected.url, observation.url)) {
     return pullRequestMismatch("pull_request_mismatch", "observed pull request is not the one the build reported opening");

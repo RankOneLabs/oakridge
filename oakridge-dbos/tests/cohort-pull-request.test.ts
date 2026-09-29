@@ -7,8 +7,9 @@ import {
 import { invalidatePullRequestForReplacement, type PullRequestApproval, type PullRequestObservation, type PullRequestObservationId, type PullRequestId, type PullRequestVerificationId, type VerifiedPullRequestLink } from "../src/domain/pull-request";
 import type { ArtifactId, CohortId, StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
 import { renderCohortBranchContract, selectCohortBranchRoles } from "../src/domain/repository-refs";
-import { advanceCohortRef, verifyCohortPullRequest } from "../src/runtime/cohort-pull-request";
+import { advanceCohortRef, advanceStoredCohortRef, prepareDevFlowBuildCohort, verifyCohortPullRequest } from "../src/runtime/cohort-pull-request";
 import { BunGitCommandRunner } from "../src/runtime/git-command-runner";
+import type { DevFlowPullRequestRepository } from "../src/storage/repositories";
 import { createGitRepositoryFixture } from "./support/dev-flow-harness";
 
 const firstHandoffId = "00000000-0000-4000-8000-000000000003" as ArtifactId;
@@ -249,4 +250,44 @@ test("repository-specific cohort refs drive both storage and prompt contracts", 
   expect(api).toEqual({ canonical_ref: "cohort/api", expected_pr_base: "epic/api" });
   expect(web).toEqual({ canonical_ref: "cohort/web", expected_pr_base: "release/web" });
   expect(renderCohortBranchContract(web)).toContain("Pull request base: release/web");
+});
+
+test("cohort preparation creates the canonical ref and persists the roles rendered for the agent", async () => {
+  const fixture = await createGitRepositoryFixture();
+  try {
+    let stored: DevFlowBuildCohort | null = null;
+    const repository = {
+      async find_cohort_for_unit() { return stored; },
+      async create_cohort(cohort: DevFlowBuildCohort) { stored = cohort; return cohort; },
+    } as unknown as DevFlowPullRequestRepository;
+    const baseHead = await fixture.origin_branch_sha(fixture.integration_branch);
+    if (!baseHead) throw new Error("fixture integration branch is missing");
+    const result = await prepareDevFlowBuildCohort({ pull_requests: repository, git: new BunGitCommandRunner() }, {
+      cohort_id: storedCohort(fixture.path, baseHead).cohort_id, stage_instance_id: expected.stage_instance_id,
+      cohort_key: "foundation", repository: { repository_key: "oakridge", repository_path: fixture.path,
+        integration_branch: fixture.integration_branch, base_branch: "epic/tiers", base_head_sha: baseHead },
+      prepared_at: "2026-09-29T00:00:00Z",
+    });
+    expect(result.ok).toBe(true);
+    expect(stored).toEqual(expect.objectContaining({ canonical_ref: "cohort/foundation", expected_pr_base: "epic/tiers" }));
+    expect(result.ok && result.value.branch_contract).toContain("Canonical cohort ref: cohort/foundation");
+    expect(await fixture.origin_branch_sha("cohort/foundation")).toBe(baseHead);
+  } finally {
+    await fixture.remove();
+  }
+});
+
+test("stored cohort advance records the same guarded head that was pushed", async () => {
+  const cohort = storedCohort("/repo", "old-head");
+  const commands: string[][] = [];
+  const git = { async run(_cwd: string, args: readonly string[]) {
+    commands.push([...args]);
+    if (args[0] === "ls-remote") return { exit_code: 0, stdout: "old-head\trefs/heads/cohort/foundation\n", stderr: "" };
+    return { exit_code: 0, stdout: "", stderr: "" };
+  } };
+  const repository = { async advance_cohort_head() { return { ok: true as const, value: { ...cohort, recorded_head_sha: "new-head" } }; } } as unknown as DevFlowPullRequestRepository;
+  const result = await advanceStoredCohortRef({ pull_requests: repository, git, now: () => "2026-09-29T00:00:00Z" },
+    { cohort, next_head_sha: "new-head" });
+  expect(result.ok && result.value.recorded_head_sha).toBe("new-head");
+  expect(commands.map((command) => command[0])).toEqual(["ls-remote", "merge-base", "push"]);
 });
