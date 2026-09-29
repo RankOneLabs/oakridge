@@ -3,6 +3,7 @@ import { err, ok, type JsonValue, type Result } from "../domain/primitives";
 import type { PromptBundleEntry, StageOperatorRole } from "../domain/workflow";
 import type { CommittedSessionLaunch } from "../domain/delegated-session";
 import type { RunTransitionId } from "../domain/primitives";
+import type { GateDisposition } from "../domain/gates";
 
 export const BUILD_LAUNCH_REASONS = {
   build: [
@@ -20,6 +21,7 @@ export type BuildSessionRole = keyof typeof BUILD_LAUNCH_REASONS;
 export type BuildLaunchReason = (typeof BUILD_LAUNCH_REASONS)[BuildSessionRole][number];
 export type BuildCohortPhase = "pending" | "builder_active" | "build_review" | "assessor_active" | "assessment_review" | "awaiting_merge" | "complete";
 export type BuildEventDisposition = "transitioned" | "recorded_only";
+export type BuildGateName = "build_review" | "assessment_review";
 
 export interface VerifiedPullRequest {
   readonly url: string;
@@ -38,7 +40,8 @@ export interface BuildCohortState {
 
 export type BuildCohortEvent =
   | { readonly kind: "stage_started" }
-  | { readonly kind: "build_evidence_observed"; readonly revision: string; readonly output_name: string; readonly pull_request_url: string | null; readonly is_verified: boolean }
+  | { readonly kind: "build_artifact_recorded"; readonly revision: string; readonly output_name: string }
+  | { readonly kind: "pull_request_verified"; readonly revision: string; readonly pull_request_url: string }
   | { readonly kind: "builder_attempt_lost" }
   | { readonly kind: "build_review_approved" }
   | { readonly kind: "build_review_revision_requested" }
@@ -151,6 +154,13 @@ export const isBuildReviewReady = (input: Pick<BuildCohortState,
   && input.required_build_set.every((name) => input.accepted_build_set.includes(name))
   && input.verified_pull_request?.revision === input.accepted_revision;
 
+/** Manual gate decisions enter the same event boundary as every other fact. */
+export const selectBuildGateEvent = (gate: BuildGateName, disposition: GateDisposition): Result<BuildCohortEvent, string> => {
+  if (disposition === "release") return ok({ kind: gate === "build_review" ? "build_review_approved" : "assessment_review_approved" });
+  if (disposition === "revise") return ok({ kind: gate === "build_review" ? "build_review_revision_requested" : "assessment_review_revision_requested" });
+  return err(`${gate} does not have a terminal route`);
+};
+
 export const projectBuildCohortState = (state: BuildCohortState): BuildCohortProjection => {
   if (state.phase === "pending") return { status: "pending", blocked_reason: null, next_actor: "core", outcome: null };
   if (state.phase === "builder_active" || state.phase === "assessor_active") {
@@ -191,13 +201,16 @@ const restartBuilder = (state: BuildCohortState): BuildCohortState => ({
   is_pull_request_merged: false,
 });
 
-const observeBuildEvidence = (state: BuildCohortState, event: Extract<BuildCohortEvent, { readonly kind: "build_evidence_observed" }>): BuildCohortState => {
+const observeBuildArtifact = (state: BuildCohortState, event: Extract<BuildCohortEvent, { readonly kind: "build_artifact_recorded" }>): BuildCohortState => {
   const sameRevision = state.accepted_revision === event.revision;
   const accepted_build_set = unique([...(sameRevision ? state.accepted_build_set : []), event.output_name]);
-  const verified_pull_request = event.is_verified && event.pull_request_url
-    ? { url: event.pull_request_url, revision: event.revision }
-    : sameRevision ? state.verified_pull_request : null;
+  const verified_pull_request = state.verified_pull_request?.revision === event.revision ? state.verified_pull_request : null;
   const observed = { ...state, accepted_revision: event.revision, accepted_build_set, verified_pull_request };
+  return isBuildReviewReady(observed) ? { ...observed, phase: "build_review" } : observed;
+};
+
+const observeVerifiedPullRequest = (state: BuildCohortState, event: Extract<BuildCohortEvent, { readonly kind: "pull_request_verified" }>): BuildCohortState => {
+  const observed = { ...state, verified_pull_request: { url: event.pull_request_url, revision: event.revision } };
   return isBuildReviewReady(observed) ? { ...observed, phase: "build_review" } : observed;
 };
 
@@ -217,8 +230,12 @@ const applyEvent = (machine: BuildCohortMachine, state: BuildCohortState, event:
     return transitioned(next, launch(machine, next, "build", "initial_build"));
   }
   if (state.phase === "builder_active") {
-    if (event.kind === "build_evidence_observed") {
-      const next = observeBuildEvidence(state, event);
+    if (event.kind === "build_artifact_recorded") {
+      const next = observeBuildArtifact(state, event);
+      return next.phase === state.phase ? recorded(next) : transitioned(next);
+    }
+    if (event.kind === "pull_request_verified") {
+      const next = observeVerifiedPullRequest(state, event);
       return next.phase === state.phase ? recorded(next) : transitioned(next);
     }
     if (event.kind === "builder_attempt_lost") return transitioned(state, launch(machine, state, "build", "retry_after_lost_attempt"));

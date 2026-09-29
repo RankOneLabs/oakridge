@@ -13,6 +13,9 @@ import {
 } from "../../src/adapters/dev-flow-build";
 import type { PromptBundleEntry } from "../../src/domain/workflow";
 import { createDevFlowAdapterRegistry } from "../../src/adapters/dev-flow";
+import { loadDevFlowV15 } from "../../src/seed/dev-flow-v15";
+import { createPromptBundle } from "../../src/runtime/prompt-template";
+import type { DelegatedSessionDefinitionConfig } from "../../src/domain/delegated-session";
 
 const prompt = (session_role: "build" | "assessment", launch_reason: string): PromptBundleEntry => ({
   stage_key: "build",
@@ -44,7 +47,8 @@ const state = (phase: BuildCohortPhase, overrides: Partial<BuildCohortState> = {
 
 const EVENTS = [
   "stage_started",
-  "build_evidence_observed",
+  "build_artifact_recorded",
+  "pull_request_verified",
   "builder_attempt_lost",
   "build_review_approved",
   "build_review_revision_requested",
@@ -59,7 +63,8 @@ const EVENTS = [
 ] as const satisfies readonly BuildCohortEvent["kind"][];
 
 const event = (kind: BuildCohortEvent["kind"]): BuildCohortEvent => {
-  if (kind === "build_evidence_observed") return { kind, revision: "revision-1", output_name: "build_result", pull_request_url: "https://example.test/pull/7", is_verified: true };
+  if (kind === "build_artifact_recorded") return { kind, revision: "revision-1", output_name: "build_result" };
+  if (kind === "pull_request_verified") return { kind, revision: "revision-1", pull_request_url: "https://example.test/pull/7" };
   if (kind === "assessment_artifact_recorded") return { kind, artifact_id: "assessment-1" };
   if (kind === "assessment_outcome_observed") return { kind, outcome: "fail" };
   if (kind === "pull_request_mismatch") return { kind, pull_request_url: "https://example.test/pull/7" };
@@ -75,42 +80,42 @@ const event = (kind: BuildCohortEvent["kind"]): BuildCohortEvent => {
  */
 const TRANSITION_TABLE: Readonly<Record<BuildCohortPhase, Readonly<Record<BuildCohortEvent["kind"], BuildEventDisposition>>>> = {
   pending: {
-    stage_started: "transitioned", build_evidence_observed: "recorded_only", builder_attempt_lost: "recorded_only",
+    stage_started: "transitioned", build_artifact_recorded: "recorded_only", pull_request_verified: "recorded_only", builder_attempt_lost: "recorded_only",
     build_review_approved: "recorded_only", build_review_revision_requested: "recorded_only", assessment_artifact_recorded: "recorded_only",
     assessment_outcome_observed: "recorded_only", assessor_attempt_lost: "recorded_only", assessment_review_approved: "recorded_only",
     assessment_review_revision_requested: "recorded_only", pull_request_mismatch: "recorded_only",
     replacement_pull_request_required: "recorded_only", pull_request_merged: "recorded_only",
   },
   builder_active: {
-    stage_started: "recorded_only", build_evidence_observed: "transitioned", builder_attempt_lost: "transitioned",
+    stage_started: "recorded_only", build_artifact_recorded: "transitioned", pull_request_verified: "transitioned", builder_attempt_lost: "transitioned",
     build_review_approved: "recorded_only", build_review_revision_requested: "recorded_only", assessment_artifact_recorded: "recorded_only",
     assessment_outcome_observed: "recorded_only", assessor_attempt_lost: "recorded_only", assessment_review_approved: "recorded_only",
     assessment_review_revision_requested: "recorded_only", pull_request_mismatch: "transitioned",
     replacement_pull_request_required: "transitioned", pull_request_merged: "recorded_only",
   },
   build_review: {
-    stage_started: "recorded_only", build_evidence_observed: "recorded_only", builder_attempt_lost: "recorded_only",
+    stage_started: "recorded_only", build_artifact_recorded: "recorded_only", pull_request_verified: "recorded_only", builder_attempt_lost: "recorded_only",
     build_review_approved: "transitioned", build_review_revision_requested: "transitioned", assessment_artifact_recorded: "recorded_only",
     assessment_outcome_observed: "recorded_only", assessor_attempt_lost: "recorded_only", assessment_review_approved: "recorded_only",
     assessment_review_revision_requested: "recorded_only", pull_request_mismatch: "transitioned",
     replacement_pull_request_required: "transitioned", pull_request_merged: "recorded_only",
   },
   assessor_active: {
-    stage_started: "recorded_only", build_evidence_observed: "recorded_only", builder_attempt_lost: "recorded_only",
+    stage_started: "recorded_only", build_artifact_recorded: "recorded_only", pull_request_verified: "recorded_only", builder_attempt_lost: "recorded_only",
     build_review_approved: "recorded_only", build_review_revision_requested: "recorded_only", assessment_artifact_recorded: "transitioned",
     assessment_outcome_observed: "recorded_only", assessor_attempt_lost: "transitioned", assessment_review_approved: "recorded_only",
     assessment_review_revision_requested: "recorded_only", pull_request_mismatch: "transitioned",
     replacement_pull_request_required: "transitioned", pull_request_merged: "recorded_only",
   },
   assessment_review: {
-    stage_started: "recorded_only", build_evidence_observed: "recorded_only", builder_attempt_lost: "recorded_only",
+    stage_started: "recorded_only", build_artifact_recorded: "recorded_only", pull_request_verified: "recorded_only", builder_attempt_lost: "recorded_only",
     build_review_approved: "recorded_only", build_review_revision_requested: "recorded_only", assessment_artifact_recorded: "recorded_only",
     assessment_outcome_observed: "recorded_only", assessor_attempt_lost: "recorded_only", assessment_review_approved: "transitioned",
     assessment_review_revision_requested: "transitioned", pull_request_mismatch: "transitioned",
     replacement_pull_request_required: "transitioned", pull_request_merged: "recorded_only",
   },
   awaiting_merge: {
-    stage_started: "recorded_only", build_evidence_observed: "recorded_only", builder_attempt_lost: "recorded_only",
+    stage_started: "recorded_only", build_artifact_recorded: "recorded_only", pull_request_verified: "recorded_only", builder_attempt_lost: "recorded_only",
     build_review_approved: "recorded_only", build_review_revision_requested: "recorded_only", assessment_artifact_recorded: "recorded_only",
     assessment_outcome_observed: "recorded_only", assessor_attempt_lost: "recorded_only", assessment_review_approved: "recorded_only",
     assessment_review_revision_requested: "recorded_only", pull_request_mismatch: "transitioned",
@@ -122,9 +127,12 @@ const TRANSITION_TABLE: Readonly<Record<BuildCohortPhase, Readonly<Record<BuildC
 describe("build cohort transition table", () => {
   for (const [phase, expectedByEvent] of Object.entries(TRANSITION_TABLE) as [BuildCohortPhase, (typeof TRANSITION_TABLE)[BuildCohortPhase]][]) {
     for (const kind of EVENTS) test(`${phase} + ${kind} -> ${expectedByEvent[kind]}`, () => {
-      const current = phase === "builder_active" && kind === "build_evidence_observed"
-        ? state(phase, { accepted_revision: "revision-1", accepted_build_set: ["pr_summary"] })
-        : state(phase);
+      const current = phase === "builder_active" && kind === "build_artifact_recorded"
+        ? state(phase, { accepted_revision: "revision-1", accepted_build_set: ["pr_summary"],
+          verified_pull_request: { url: "https://example.test/pull/7", revision: "revision-1" } })
+        : phase === "builder_active" && kind === "pull_request_verified"
+          ? state(phase, { accepted_revision: "revision-1", accepted_build_set: ["pr_summary", "build_result"] })
+          : state(phase);
       expect(applyBuildCohortEvent(machine.value, current, event(kind)).disposition).toBe(expectedByEvent[kind]);
     });
   }
@@ -141,6 +149,21 @@ test("the adapter registers exactly the six builder and two assessor launch cell
   expect(registry.launch_reasons_for("assessment")).toEqual(BUILD_LAUNCH_REASONS.assessment);
 });
 
+test("the shipped c2 prompt bundle resolves all eight build-stage cells exactly once", async () => {
+  const loaded = await loadDevFlowV15();
+  if (!loaded.ok) throw new Error(loaded.error.detail);
+  const bundle = await createPromptBundle(loaded.value, {
+    load: async (path) => Bun.file(new URL(`../../../workflow-config/prompts/${path}`, import.meta.url)).text(),
+  });
+  const build = loaded.value.graph.stages.build!;
+  const config = build.config as unknown as DelegatedSessionDefinitionConfig;
+  const validated = createBuildCohortMachine({ required_build_set: ["pr_summary", "build_result"],
+    prompts: bundle.matrix.filter((entry) => entry.stage_key === "build") });
+  expect(validated.ok).toBe(true);
+  expect(config.prompt_matrix).toHaveLength(8);
+  if (validated.ok) expect(validated.value.prompts.size).toBe(8);
+});
+
 test("build review requires the full declared set at one revision and a matching verified PR", () => {
   expect(isBuildReviewReady({ required_build_set: ["pr_summary", "build_result"], accepted_revision: "r2",
     accepted_build_set: ["build_result"], verified_pull_request: { url: "https://example.test/pull/7", revision: "r2" } })).toBe(false);
@@ -148,6 +171,17 @@ test("build review requires the full declared set at one revision and a matching
     accepted_build_set: ["pr_summary", "build_result"], verified_pull_request: { url: "https://example.test/pull/7", revision: "r1" } })).toBe(false);
   expect(isBuildReviewReady({ required_build_set: ["pr_summary", "build_result"], accepted_revision: "r2",
     accepted_build_set: ["pr_summary", "build_result"], verified_pull_request: { url: "https://example.test/pull/7", revision: "r2" } })).toBe(true);
+});
+
+test("artifact members and verified PR can arrive in either order", () => {
+  const started = applyBuildCohortEvent(machine.value, initialBuildCohortState(["pr_summary", "build_result"]), { kind: "stage_started" }).state;
+  const withPr = applyBuildCohortEvent(machine.value, started,
+    { kind: "pull_request_verified", revision: "r3", pull_request_url: "https://example.test/pull/9" }).state;
+  const partial = applyBuildCohortEvent(machine.value, withPr,
+    { kind: "build_artifact_recorded", revision: "r3", output_name: "pr_summary" }).state;
+  expect(partial.phase).toBe("builder_active");
+  expect(applyBuildCohortEvent(machine.value, partial,
+    { kind: "build_artifact_recorded", revision: "r3", output_name: "build_result" }).state.phase).toBe("build_review");
 });
 
 test("an assessment outcome is recorded without routing the cohort", () => {
