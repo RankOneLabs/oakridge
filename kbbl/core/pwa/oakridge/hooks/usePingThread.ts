@@ -19,6 +19,7 @@ export function useSessionMessageDelivery(runId: string, deliveryKey: string, en
   return useQuery({
     queryKey: ["oakridge", "run", runId, "message", deliveryKey],
     queryFn: () => fetchSessionMessageDelivery(runId, deliveryKey),
+    refetchInterval: (query) => query.state.data?.delivery_status === "pending" ? 10_000 : false,
     enabled,
   });
 }

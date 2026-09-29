@@ -41,6 +41,32 @@ test("useSessionMessageDelivery exposes the committed backend result", async () 
   expect(hook.result.current.data?.delivery_status).toBe("failed");
 });
 
+test("useSessionMessageDelivery polls while delivery remains pending", async () => {
+  vi.useFakeTimers();
+  try {
+    const pending: SessionMessageRecord = {
+      ...message,
+      delivery_status: "pending",
+      delivery_result: null,
+      delivered_at: null,
+    };
+    const fetch = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(json(pending))
+      .mockResolvedValue(json(message));
+    const { wrapper } = subject();
+    renderHook(() => useSessionMessageDelivery("run/1", "delivery/1"), { wrapper });
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test("usePostSessionMessage sends the durable key and caches the returned delivery state", async () => {
   const accepted = { kind: "accepted" as const, message, workflow_id: "workflow-1" };
   const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(json(accepted));

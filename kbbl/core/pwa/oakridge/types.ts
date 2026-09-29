@@ -660,7 +660,7 @@ export interface SessionMessageParty {
   id: string | null;
 }
 
-export interface SessionMessageRecord {
+interface SessionMessageRecordFields {
   id: string;
   run_id: string;
   cohort_id: string | null;
@@ -671,11 +671,14 @@ export interface SessionMessageRecord {
   artifact_thread_id: string | null;
   body: JsonValue;
   delivery_key: string;
-  delivery_status: "pending" | "delivered" | "failed";
-  delivery_result: { kind: "delivered" } | { kind: "failed"; detail: string } | null;
   created_at: string;
-  delivered_at: string | null;
 }
+
+/** Mirrors the backend delivery-state union and excludes impossible combinations. */
+export type SessionMessageRecord =
+  | (SessionMessageRecordFields & { delivery_status: "pending"; delivery_result: null; delivered_at: null })
+  | (SessionMessageRecordFields & { delivery_status: "delivered"; delivery_result: { kind: "delivered" }; delivered_at: string })
+  | (SessionMessageRecordFields & { delivery_status: "failed"; delivery_result: { kind: "failed"; detail: string }; delivered_at: null });
 
 export interface PostSessionMessageRequest {
   cohort_id?: string | null;
@@ -684,7 +687,7 @@ export interface PostSessionMessageRequest {
   thread_id: string;
   message_id?: string;
   artifact_thread_id?: string | null;
-  body: unknown;
+  body: JsonValue;
 }
 
 export interface SessionMessageAccepted {
