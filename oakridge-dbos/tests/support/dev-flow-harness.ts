@@ -355,10 +355,9 @@ export interface InstallIntegrationRuntimeOptions {
 export const installIntegrationRuntime = async (databaseUrl: string, options: InstallIntegrationRuntimeOptions = {}): Promise<IntegrationRuntime> => {
   const migrationSql = PgPostgresExecutor.connect(databaseUrl);
   try {
-    // This suite owns a dedicated application database. Slice 6c deliberately
-    // tests the supported cutover — construct the Oakridge schema from zero —
-    // rather than letting rows from an earlier local test run masquerade as an
-    // in-place migration. DBOS keeps its own schema and is not rewritten.
+    // Every e2e boot follows the production v15 cutover path after the dump:
+    // workers are absent, both application and DBOS state are discarded, and
+    // the one baseline reconstructs the application schema from zero.
     const databaseName = new URL(databaseUrl).pathname.replace(/^\//, "");
     const isDedicatedLocalDatabase = databaseName === "oakridge_e2e";
     const isDisposableCiDatabase = process.env.CI === "true" && process.env.OAKRIDGE_TEST_DATABASE_URL === databaseUrl;
@@ -366,6 +365,7 @@ export const installIntegrationRuntime = async (databaseUrl: string, options: In
       throw new Error(`refusing to drop schema 'oakridge' in database '${databaseName}': set OAKRIDGE_TEST_ALLOW_SCHEMA_DROP=1 to confirm it is disposable`);
     }
     await migrationSql.query("DROP SCHEMA IF EXISTS oakridge CASCADE", []);
+    await migrationSql.query("DROP SCHEMA IF EXISTS dbos CASCADE", []);
     await migrationSql.query("DROP TABLE IF EXISTS public.oakridge_schema_migration", []);
     await applyMigrations(migrationSql);
   } finally { await migrationSql.close(); }
