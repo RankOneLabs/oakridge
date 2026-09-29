@@ -1,6 +1,6 @@
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useRef } from "react";
-import { pingThread } from "../client";
+import { fetchSessionMessageDelivery, pingThread } from "../client";
 import { selectRequestIdentity, type PendingRequestIdentity } from "../lib/request-identity";
 import { randomUuid } from "../../lib/random-uuid";
 export function usePingThread(_artifactId: string) {
@@ -11,5 +11,14 @@ export function usePingThread(_artifactId: string) {
       return pingThread(threadId, pending.current.idempotency_key);
     },
     onSuccess: () => { pending.current = null; },
+  });
+}
+
+/** Reads the backend's committed delivery result without inferring it from thread activity. */
+export function useSessionMessageDelivery(runId: string, deliveryKey: string, enabled = true) {
+  return useQuery({
+    queryKey: ["oakridge", "run", runId, "message", deliveryKey],
+    queryFn: () => fetchSessionMessageDelivery(runId, deliveryKey),
+    enabled,
   });
 }
