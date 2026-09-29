@@ -1,12 +1,12 @@
 import type { DBOSClient } from "@dbos-inc/dbos-sdk";
 
-import type { DeliverSessionMessage, SessionMessage, SessionMessageAccepted, SessionMessageDeliveryResult, SessionMessageRecord, SessionMessageRepository } from "../domain/collaboration";
+import { isTerminalSessionMessageDelivery, type DeliverSessionMessage, type SessionMessage, type SessionMessageDeliveryResult, type SessionMessageEnqueueResult, type SessionMessageRecord, type SessionMessageRepository, type SessionThreadId, type SessionThreadMessageId } from "../domain/collaboration";
 import type { CohortId, DeliveryKey, SessionMessageId, WorkflowRunId } from "../domain/primitives";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
 import { registerSessionMessageRepository } from "../workflows/collaboration-responder";
 
 export interface CollaborationPingClient {
-  enqueue(input: DeliverSessionMessage): Promise<SessionMessageAccepted>;
+  enqueue(input: DeliverSessionMessage): Promise<SessionMessageEnqueueResult>;
 }
 
 interface SessionMessageRow {
@@ -17,8 +17,8 @@ interface SessionMessageRow {
   readonly sender_id: string | null;
   readonly recipient_kind: SessionMessageRecord["recipient_kind"];
   readonly recipient_id: string | null;
-  readonly thread_id: string;
-  readonly message_id: string;
+  readonly thread_id: SessionThreadId;
+  readonly message_id: SessionThreadMessageId;
   readonly artifact_thread_id: SessionMessageRecord["artifact_thread_id"];
   readonly body: SessionMessageRecord["body"];
   readonly delivery_key: DeliveryKey;
@@ -48,10 +48,10 @@ export class PostgresSessionMessageRepository implements SessionMessageRepositor
 
   async put_pending(message: SessionMessage): Promise<import("../domain/collaboration").PutSessionMessageResult> {
     return this.sql.transaction(async (transaction) => {
-      await transaction.query(`INSERT INTO oakridge.session_message
+      const inserted = await transaction.query<{ readonly id: SessionMessageId }>(`INSERT INTO oakridge.session_message
         (id,run_id,cohort_id,sender_kind,sender_id,recipient_kind,recipient_id,thread_id,message_id,artifact_thread_id,body,delivery_key,created_at)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13::timestamptz)
-        ON CONFLICT (run_id,delivery_key) DO NOTHING`, [
+        ON CONFLICT DO NOTHING RETURNING id`, [
         message.id, message.run_id, message.cohort_id, message.sender.kind, message.sender.id,
         message.recipient.kind, message.recipient.id, message.thread_id, message.message_id,
         message.artifact_thread_id, JSON.stringify(message.body), message.delivery_key, message.created_at,
@@ -66,9 +66,19 @@ export class PostgresSessionMessageRepository implements SessionMessageRepositor
         message.artifact_thread_id, JSON.stringify(message.body), message.run_id, message.delivery_key,
       ]);
       const row = rows[0];
-      if (!row) throw new Error(`session message '${message.delivery_key}' was not persisted`);
+      if (!row) {
+        const identityRows = await transaction.query<SessionMessageRow>(`SELECT ${SESSION_MESSAGE_COLUMNS}
+          FROM oakridge.session_message WHERE run_id=$1 AND thread_id=$2 AND message_id=$3`, [
+          message.run_id, message.thread_id, message.message_id,
+        ]);
+        if (identityRows[0]) return {
+          kind: "idempotency_conflict",
+          detail: `message '${message.thread_id}/${message.message_id}' was already submitted with a different delivery key`,
+        };
+        throw new Error(`session message '${message.delivery_key}' was not persisted`);
+      }
       if (!row.payload_matches) return { kind: "idempotency_conflict", detail: `delivery key '${message.delivery_key}' was already used with a different message` };
-      return { kind: row.id === message.id ? "created" : "existing", message: sessionMessageRecord(row) };
+      return { kind: inserted.length > 0 ? "created" : "existing", message: sessionMessageRecord(row) };
     });
   }
 
@@ -105,11 +115,11 @@ export class DbosCollaborationPingClient implements CollaborationPingClient {
     private readonly messages: SessionMessageRepository,
   ) { registerSessionMessageRepository(messages); }
 
-  async enqueue(input: DeliverSessionMessage): Promise<SessionMessageAccepted> {
+  async enqueue(input: DeliverSessionMessage): Promise<SessionMessageEnqueueResult> {
     const persisted = await this.messages.put_pending(input.message);
-    if (persisted.kind === "idempotency_conflict") throw new Error(persisted.detail);
+    if (persisted.kind === "idempotency_conflict") return persisted;
     const workflowId = `oakridge-session-message:${input.message.run_id}:${input.message.delivery_key}`;
-    if (persisted.message.delivery_status !== "pending") {
+    if (isTerminalSessionMessageDelivery(persisted.message.delivery_status)) {
       return { kind: "accepted", message: persisted.message, workflow_id: workflowId };
     }
     await this.client.enqueuePortable({

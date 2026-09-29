@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 
 import type { ArtifactRevision } from "../src/domain/artifacts";
-import type { CollaborationMessage, CollaborationThread, CollaborationThreadWithMessages, ReviewItem, SessionMessage, SessionMessageRecord } from "../src/domain/collaboration";
+import type { CollaborationMessage, CollaborationThread, CollaborationThreadWithMessages, ReviewItem, SessionMessage, SessionMessageEnqueueResult, SessionMessageRecord } from "../src/domain/collaboration";
 import type { ArtifactId, ExecutionId, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "../src/domain/primitives";
 import { createCollaborationApp, type CollaborationHttpDependencies } from "../src/http/collaboration";
 import type { CollaborationRepository } from "../src/storage/repositories";
@@ -14,7 +14,7 @@ const neverCalled = (name: string) => async () => { throw new Error(`${name} mus
 /** A `records` dependency stub for tests that never reach a work-order lookup. */
 const unusedRecords: CollaborationHttpDependencies["records"] = { find_work_order_attachment: neverCalled("find_work_order_attachment") };
 
-const fixture = () => {
+const fixture = (forceConflict = false) => {
   const threads: CollaborationThread[] = []; const messages: CollaborationMessage[] = []; const items: ReviewItem[] = []; const sessionMessages: SessionMessageRecord[] = [];
   let sequence = 0;
   const repository: CollaborationRepository = {
@@ -27,8 +27,11 @@ const fixture = () => {
     update_review_item: async (id, status, resolution) => { const index = items.findIndex((item) => item.id === id); if (index >= 0) items[index] = { ...items[index]!, status, resolution }; },
     count_open_review_items: async (revision) => items.filter((item) => item.revision_id === revision && item.status === "open").length,
   };
-  const persistMessage = async (message: SessionMessage) => {
+  const persistMessage = async (message: SessionMessage): Promise<SessionMessageEnqueueResult> => {
+    if (forceConflict) return { kind: "idempotency_conflict", detail: "message identity is already in use" };
     const existing = sessionMessages.find((candidate) => candidate.run_id === message.run_id && candidate.delivery_key === message.delivery_key);
+    const identity = sessionMessages.find((candidate) => candidate.run_id === message.run_id && candidate.thread_id === message.thread_id && candidate.message_id === message.message_id);
+    if (!existing && identity) return { kind: "idempotency_conflict", detail: "message identity is already in use" };
     const record: SessionMessageRecord = existing ?? { ...message, sender_kind: message.sender.kind, sender_id: message.sender.id, recipient_kind: message.recipient.kind, recipient_id: message.recipient.id, delivery_status: "pending", delivery_result: null, delivered_at: null };
     if (!existing) sessionMessages.push(record);
     return { kind: "accepted" as const, message: record, workflow_id: `message:${message.run_id}:${message.delivery_key}` };
@@ -91,6 +94,24 @@ test("run messages need no artifact thread and are readable from their cohort vi
   expect(await listed.json()).toEqual([expect.objectContaining({ message_id: "message-1", cohort_id: cohortId })]);
   const found = await subject.app.request(`/runs/${runId}/messages/cross-stage-1`);
   expect(await found.json()).toEqual(expect.objectContaining({ delivery_status: "pending", delivery_result: null }));
+});
+
+test("a repeated message identity with a new durable key returns a typed conflict", async () => {
+  const subject = fixture();
+  const url = "/runs/33333333-3333-4333-8333-333333333333/messages";
+  const body = JSON.stringify({ sender: { kind: "agent", id: "builder" }, recipient: { kind: "agent", id: "reviewer" }, thread_id: "build-review", message_id: "message-1", body: "Review" });
+  expect((await subject.app.request(url, { method: "POST", headers: { "content-type": "application/json", "idempotency-key": "delivery-1" }, body })).status).toBe(202);
+  const response = await subject.app.request(url, { method: "POST", headers: { "content-type": "application/json", "idempotency-key": "delivery-2" }, body });
+  expect(response.status).toBe(409);
+  expect(await response.json()).toEqual({ error: "message identity is already in use", code: "idempotency_conflict" });
+});
+
+test("a modeled ping conflict returns 409", async () => {
+  const subject = fixture(true);
+  await subject.app.request("/artifacts/11111111-1111-4111-8111-111111111111/threads", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ body: "Please explain", author: "operator" }) });
+  const response = await subject.app.request("/threads/11111111-aaaa-4aaa-8aaa-aaaaaaaaaaaa/ping", { method: "POST", headers: { "idempotency-key": "ping-request-1" } });
+  expect(response.status).toBe(409);
+  expect(await response.json()).toEqual({ error: "message identity is already in use", code: "idempotency_conflict" });
 });
 
 test("ping rejects an unsafe durable request identity", async () => {

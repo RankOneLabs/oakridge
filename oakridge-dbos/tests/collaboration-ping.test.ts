@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import type { DBOSClient } from "@dbos-inc/dbos-sdk";
 
-import type { DeliverSessionMessage, SessionMessage, SessionMessageRecord, SessionMessageRepository } from "../src/domain/collaboration";
+import type { DeliverSessionMessage, SessionMessage, SessionMessageRecord, SessionMessageRepository, SessionThreadId, SessionThreadMessageId } from "../src/domain/collaboration";
 import type { DeliveryKey, ExecutionId, SessionMessageId, WorkflowRunId } from "../src/domain/primitives";
 import { DbosCollaborationPingClient, PostgresSessionMessageRepository } from "../src/runtime/collaboration-ping";
 import { applyMigrations } from "../src/storage/migrate";
@@ -18,7 +18,7 @@ test("collaboration ping uses a stable DBOS workflow identity for transport retr
     id: "11111111-1111-4111-8111-111111111111" as SessionMessageId,
     run_id: "22222222-2222-4222-8222-222222222222" as WorkflowRunId,
     cohort_id: null, sender: { kind: "operator", id: "operator" }, recipient: { kind: "agent", id: "worker" },
-    thread_id: "thread-1", message_id: "message-1", artifact_thread_id: null, body: "Respond to the thread",
+    thread_id: "thread-1" as SessionThreadId, message_id: "message-1" as SessionThreadMessageId, artifact_thread_id: null, body: "Respond to the thread",
     delivery_key: "request-1" as DeliveryKey, created_at: "2026-09-28T12:00:00Z",
   };
   const pending: SessionMessageRecord = { ...message, sender_kind: "operator", sender_id: "operator", recipient_kind: "agent", recipient_id: "worker", delivery_status: "pending", delivery_result: null, delivered_at: null };
@@ -44,7 +44,7 @@ test("a completed durable key is readable and is not enqueued again", async () =
   const dbos = { enqueuePortable: async (...args: unknown[]) => { calls.push(args); } } as unknown as DBOSClient;
   const message: SessionMessage = {
     id: "11111111-1111-4111-8111-111111111111" as SessionMessageId, run_id: "22222222-2222-4222-8222-222222222222" as WorkflowRunId,
-    cohort_id: null, sender: { kind: "operator", id: "operator" }, recipient: { kind: "agent", id: "worker" }, thread_id: "thread-1", message_id: "message-1",
+    cohort_id: null, sender: { kind: "operator", id: "operator" }, recipient: { kind: "agent", id: "worker" }, thread_id: "thread-1" as SessionThreadId, message_id: "message-1" as SessionThreadMessageId,
     artifact_thread_id: null, body: "go", delivery_key: "request-1" as DeliveryKey, created_at: "2026-09-28T12:00:00Z",
   };
   const delivered: SessionMessageRecord = { ...message, sender_kind: "operator", sender_id: "operator", recipient_kind: "agent", recipient_id: "worker", delivery_status: "delivered", delivery_result: { kind: "delivered" }, delivered_at: "2026-09-28T12:01:00Z" };
@@ -54,7 +54,44 @@ test("a completed durable key is readable and is not enqueued again", async () =
   };
   const client = new DbosCollaborationPingClient(dbos, "app-v1", messages);
   const result = await client.enqueue({ message, target: { execution_id: "execution-1" as ExecutionId, executor_type: "delegated_session", external_reference: { kind: "kbbl_session", session_id: "session-1" } }, prompt: "go" });
-  expect(result.message).toEqual(delivered);
+  expect(result).toEqual(expect.objectContaining({ kind: "accepted", message: delivered }));
+  expect(calls).toEqual([]);
+});
+
+test("a failed durable key is terminal and is not enqueued again", async () => {
+  const calls: unknown[] = [];
+  const dbos = { enqueuePortable: async (...args: unknown[]) => { calls.push(args); } } as unknown as DBOSClient;
+  const message: SessionMessage = {
+    id: "11111111-1111-4111-8111-111111111111" as SessionMessageId, run_id: "22222222-2222-4222-8222-222222222222" as WorkflowRunId,
+    cohort_id: null, sender: { kind: "operator", id: "operator" }, recipient: { kind: "agent", id: "worker" },
+    thread_id: "thread-1" as SessionThreadId, message_id: "message-1" as SessionThreadMessageId,
+    artifact_thread_id: null, body: "go", delivery_key: "request-1" as DeliveryKey, created_at: "2026-09-28T12:00:00Z",
+  };
+  const failed: SessionMessageRecord = { ...message, sender_kind: "operator", sender_id: "operator", recipient_kind: "agent", recipient_id: "worker", delivery_status: "failed", delivery_result: { kind: "failed", detail: "retry limit reached" }, delivered_at: null };
+  const messages: SessionMessageRepository = {
+    put_pending: async () => ({ kind: "existing", message: failed }), find_by_delivery_key: async () => failed,
+    record_delivery_result: async () => failed, list_for_run: async () => [failed],
+  };
+  const result = await new DbosCollaborationPingClient(dbos, "app-v1", messages).enqueue({ message, target: { execution_id: "execution-1" as ExecutionId, executor_type: "delegated_session", external_reference: { kind: "kbbl_session", session_id: "session-1" } }, prompt: "go" });
+  expect(result).toEqual(expect.objectContaining({ kind: "accepted", message: failed }));
+  expect(calls).toEqual([]);
+});
+
+test("a modeled idempotency conflict is returned without enqueueing", async () => {
+  const calls: unknown[] = [];
+  const dbos = { enqueuePortable: async (...args: unknown[]) => { calls.push(args); } } as unknown as DBOSClient;
+  const message: SessionMessage = {
+    id: "11111111-1111-4111-8111-111111111111" as SessionMessageId, run_id: "22222222-2222-4222-8222-222222222222" as WorkflowRunId,
+    cohort_id: null, sender: { kind: "operator", id: "operator" }, recipient: { kind: "agent", id: "worker" },
+    thread_id: "thread-1" as SessionThreadId, message_id: "message-1" as SessionThreadMessageId,
+    artifact_thread_id: null, body: "go", delivery_key: "request-1" as DeliveryKey, created_at: "2026-09-28T12:00:00Z",
+  };
+  const messages = {
+    put_pending: async () => ({ kind: "idempotency_conflict" as const, detail: "conflict" }),
+    find_by_delivery_key: async () => null, record_delivery_result: async () => { throw new Error("unused"); }, list_for_run: async () => [],
+  };
+  const result = await new DbosCollaborationPingClient(dbos, "app-v1", messages).enqueue({ message, target: { execution_id: "execution-1" as ExecutionId, executor_type: "delegated_session", external_reference: { kind: "kbbl_session", session_id: "session-1" } }, prompt: "go" });
+  expect(result).toEqual({ kind: "idempotency_conflict", detail: "conflict" });
   expect(calls).toEqual([]);
 });
 
@@ -85,15 +122,30 @@ test("session message persistence makes delivery idempotent and readable by coho
       run_id: "22222222-2222-4222-8222-222222222222" as WorkflowRunId,
       cohort_id: "44444444-4444-4444-8444-444444444444" as import("../src/domain/primitives").CohortId,
       sender: { kind: "agent", id: "builder" }, recipient: { kind: "agent", id: "reviewer" },
-      thread_id: "review", message_id: "message-1", artifact_thread_id: null, body: { text: "review this" },
+      thread_id: "review" as SessionThreadId, message_id: "message-1" as SessionThreadMessageId, artifact_thread_id: null, body: { text: "review this" },
       delivery_key: "delivery-1" as DeliveryKey, created_at: "2026-09-28T12:00:00Z",
     };
     expect((await repository.put_pending(message)).kind).toBe("created");
     expect((await repository.put_pending({ ...message, id: "55555555-5555-4555-8555-555555555555" as SessionMessageId, created_at: "2026-09-28T12:01:00Z" })).kind).toBe("existing");
+    expect(await repository.put_pending({ ...message, id: "66666666-6666-4666-8666-666666666666" as SessionMessageId, delivery_key: "delivery-2" as DeliveryKey })).toEqual({
+      kind: "idempotency_conflict", detail: "message 'review/message-1' was already submitted with a different delivery key",
+    });
     const delivered = await repository.record_delivery_result(message.id, { kind: "delivered" }, "2026-09-28T12:02:00Z");
     expect(delivered).toEqual(expect.objectContaining({ delivery_status: "delivered", delivery_result: { kind: "delivered" }, delivered_at: expect.any(String) }));
     expect(await repository.find_by_delivery_key(message.run_id, message.delivery_key)).toEqual(delivered);
     expect(await repository.list_for_run(message.run_id, message.cohort_id ?? undefined)).toEqual([delivered]);
+
+    const failedMessage: SessionMessage = {
+      ...message,
+      id: "77777777-7777-4777-8777-777777777777" as SessionMessageId,
+      thread_id: "handoff" as SessionThreadId,
+      message_id: "message-2" as SessionThreadMessageId,
+      delivery_key: "delivery-failed" as DeliveryKey,
+    };
+    expect((await repository.put_pending(failedMessage)).kind).toBe("created");
+    const failed = await repository.record_delivery_result(failedMessage.id, { kind: "failed", detail: "retry limit reached" }, "2026-09-28T12:03:00Z");
+    expect(failed).toEqual(expect.objectContaining({ delivery_status: "failed", delivery_result: { kind: "failed", detail: "retry limit reached" }, delivered_at: null }));
+    expect(await repository.record_delivery_result(failedMessage.id, { kind: "delivered" }, "2026-09-28T12:04:00Z")).toEqual(failed);
   } finally {
     await sql.close();
   }

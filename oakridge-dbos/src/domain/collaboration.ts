@@ -3,6 +3,8 @@ import type { ArtifactId, Brand, CohortId, DeliveryKey, ExecutionId, JsonValue, 
 
 export type ThreadId = Brand<string, "ThreadId">;
 export type MessageId = Brand<string, "MessageId">;
+export type SessionThreadId = Brand<string, "SessionThreadId">;
+export type SessionThreadMessageId = Brand<string, "SessionThreadMessageId">;
 export type ReviewItemId = Brand<string, "ReviewItemId">;
 export type ThreadStatus = "open" | "resolved";
 export type ReviewItemStatus = "open" | "resolved" | "waived";
@@ -24,8 +26,8 @@ export interface SessionMessage {
   readonly cohort_id: CohortId | null;
   readonly sender: MessageParty;
   readonly recipient: MessageParty;
-  readonly thread_id: string;
-  readonly message_id: string;
+  readonly thread_id: SessionThreadId;
+  readonly message_id: SessionThreadMessageId;
   readonly artifact_thread_id: ThreadId | null;
   readonly body: JsonValue;
   readonly delivery_key: DeliveryKey;
@@ -43,6 +45,13 @@ export interface SessionMessageAccepted {
   readonly message: SessionMessageRecord;
   readonly workflow_id: string;
 }
+
+export interface SessionMessageConflict {
+  readonly kind: "idempotency_conflict";
+  readonly detail: string;
+}
+
+export type SessionMessageEnqueueResult = SessionMessageAccepted | SessionMessageConflict;
 
 export type DeliveryKeyValidation =
   | { readonly kind: "valid"; readonly delivery_key: DeliveryKey }
@@ -67,6 +76,10 @@ export interface MessageParty {
 export interface SessionMessageDeliveredResult { readonly kind: "delivered" }
 export interface SessionMessageFailedResult { readonly kind: "failed"; readonly detail: string }
 export type SessionMessageDeliveryResult = SessionMessageDeliveredResult | SessionMessageFailedResult;
+export type SessionMessageDeliveryStatus = "pending" | SessionMessageDeliveryResult["kind"];
+
+/** Delivery workflows own retries while pending; either recorded result is terminal for the durable key. */
+export const isTerminalSessionMessageDelivery = (status: SessionMessageDeliveryStatus): boolean => status !== "pending";
 
 interface SessionMessageRecordFields extends SessionMessage {
   readonly sender_kind: MessageParty["kind"];
@@ -84,7 +97,7 @@ export type SessionMessageRecord =
 export type PutSessionMessageResult =
   | { readonly kind: "created"; readonly message: SessionMessageRecord }
   | { readonly kind: "existing"; readonly message: SessionMessageRecord }
-  | { readonly kind: "idempotency_conflict"; readonly detail: string };
+  | SessionMessageConflict;
 
 export interface SessionMessageRepository {
   put_pending(message: SessionMessage): Promise<PutSessionMessageResult>;
