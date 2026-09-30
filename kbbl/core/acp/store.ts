@@ -57,6 +57,7 @@ export interface ClaimInput {
   worktree_path: string;
   requested_model: string | null;
   requested_effort: string | null;
+  requested_mode: string | null;
   workflow: AcpSessionWorkflowIdentity | null;
 }
 
@@ -147,6 +148,7 @@ interface RawAcpSessionRow {
   parent_sid: KbblSessionId | null;
   requested_model: string | null;
   requested_effort: string | null;
+  requested_mode: string | null;
   status: AcpSessionStatus;
   end_reason: string | null;
   end_detail: string | null;
@@ -272,6 +274,7 @@ export class AcpSessionStore {
           string,
           string | null,
           string | null,
+          string | null,
           string,
           string,
           string,
@@ -286,10 +289,10 @@ export class AcpSessionStore {
         `INSERT INTO acp_sessions (
            sid, resumable_key, start_spec_hash, agent_profile, name,
            artifact_id, project_workdir, worktree_path, requested_model,
-           requested_effort, status, last_activity_at, created_at, updated_at,
-           workflow_run_id, stage_instance_id, stage_unit_id, operator_role,
-           cohort_title, repository_key
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           requested_effort, requested_mode, status, last_activity_at,
+           created_at, updated_at, workflow_run_id, stage_instance_id,
+           stage_unit_id, operator_role, cohort_title, repository_key
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?, ?, ?, ?)
          RETURNING *`,
       )
       .get(
@@ -303,6 +306,7 @@ export class AcpSessionStore {
         input.worktree_path,
         input.requested_model,
         input.requested_effort,
+        input.requested_mode,
         ts,
         ts,
         ts,
@@ -452,6 +456,14 @@ export class AcpSessionStore {
       )
       .run(status, ts, sid);
     this.notifySessionsChanged();
+  }
+
+  setRequestedMode(sid: KbblSessionId, mode: string): void {
+    this.db
+      .prepare(
+        "UPDATE acp_sessions SET requested_mode = ?, updated_at = ? WHERE sid = ?",
+      )
+      .run(mode, nowIso(), sid);
   }
 
   setAcpSessionId(sid: KbblSessionId, acpSessionId: string): void {

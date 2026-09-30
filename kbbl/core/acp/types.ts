@@ -133,6 +133,7 @@ export interface AcpSessionRow {
   parent_sid: KbblSessionId | null;
   requested_model: string | null;
   requested_effort: string | null;
+  requested_mode: string | null;
   status: AcpSessionStatus;
   end_reason: string | null;
   end_detail: string | null;

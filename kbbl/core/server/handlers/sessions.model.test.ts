@@ -7,7 +7,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,7 +21,7 @@ import {
   TERMINAL_WAIT_MS_MAX,
 } from "./sessions";
 import { makeAcpTestService, type AcpTestHarness } from "../../acp/test-harness";
-import type { TurnKey } from "../../acp/types";
+import type { KbblSessionId, TurnKey } from "../../acp/types";
 import type { SessionManager } from "../../session/session-manager";
 
 let tmpRoot: string;
@@ -86,6 +86,20 @@ beforeEach(async () => {
 afterEach(async () => {
   await harness.service.shutdown();
   rmSync(tmpRoot, { recursive: true, force: true });
+});
+
+describe("worktree git access", () => {
+  test("a worktree session is granted the main repository's .git as a workspace root", async () => {
+    const created = await postSessions(makeApp(), { workdir: repoDir, name: "git-root" });
+    expect(created.status).toBe(200);
+    const row = harness.store.getSession(created.body.sid as KbblSessionId);
+    if (!row?.acp_session_id) throw new Error("session has no agent session id");
+
+    const granted = JSON.parse(
+      readFileSync(join(tmpRoot, "state", `${row.acp_session_id}.additional-directories.json`), "utf8"),
+    ) as string[];
+    expect(granted).toEqual([realpathSync(join(repoDir, ".git"))]);
+  });
 });
 
 describe("GET /sessions", () => {

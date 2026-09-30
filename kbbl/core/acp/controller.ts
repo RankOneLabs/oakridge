@@ -7,6 +7,7 @@
 import type * as schema from "@agentclientprotocol/sdk";
 
 import { contextHintOf, withoutContextHint } from "../runtime";
+import { resolveExternalGitDir } from "../session/worktree";
 import type { AgentProfile } from "./agent-profile";
 import { AcpClient } from "./client";
 import {
@@ -22,6 +23,7 @@ import {
   ok,
   type AcpAgentSessionId,
   type AcpError,
+  type AcpSessionRow,
   type AcpTurnRow,
   type AcpUiEvent,
   type KbblSessionId,
@@ -56,6 +58,12 @@ interface PendingPermission {
 }
 
 export type UiEventListener = (event: AcpUiEvent) => void;
+
+/** The durable §12 requests a session row carries across every spawn. */
+export type RequestedSessionConfig = Pick<
+  AcpSessionRow,
+  "requested_model" | "requested_effort" | "requested_mode"
+>;
 
 /**
  * How a request was satisfied. `exact` means the agent advertises the id (or
@@ -103,16 +111,33 @@ export function resolveRequestedOption(
     category === "model"
       ? ("requested_model_unsupported" as const)
       : ("requested_effort_unsupported" as const);
+  const matched = matchRequestedOption(options, category, requested);
+  if (!matched.ok) {
+    return err(acpError(code, "resolveRequestedOption", matched.error));
+  }
+  return matched;
+}
+
+/** Semantic config-option categories kbbl resolves requests against (§12). */
+export type RequestedOptionCategory = "model" | "thought_level" | "mode";
+
+/**
+ * Pure matcher behind every §12 request: the first select option in the
+ * category, matched by value id or normalized display name. The error is a
+ * human-readable detail; callers decide whether a miss is fatal (model,
+ * effort) or advisory (mode).
+ */
+export function matchRequestedOption(
+  options: readonly schema.SessionConfigOption[],
+  category: RequestedOptionCategory,
+  requested: string,
+): Result<ResolvedOption, string> {
   const selector = options.find(
     (option) => option.type === "select" && option.category === category,
   );
   if (!selector || selector.type !== "select") {
     return err(
-      acpError(
-        code,
-        "resolveRequestedOption",
-        `agent exposes no select config option with category "${category}"`,
-      ),
+      `agent exposes no select config option with category "${category}"`,
     );
   }
   const normalized = requested.trim().toLowerCase();
@@ -153,12 +178,16 @@ export function resolveRequestedOption(
     });
   }
   return err(
-    acpError(
-      code,
-      "resolveRequestedOption",
-      `no option matching "${requested}" in config option "${selector.id}"`,
-    ),
+    `no option matching "${requested}" in config option "${selector.id}"`,
   );
+}
+
+/** The semantic category of a config option id, or null when it has none. */
+export function configOptionCategory(
+  options: readonly schema.SessionConfigOption[],
+  configId: string,
+): string | null {
+  return options.find((option) => option.id === configId)?.category ?? null;
 }
 
 export class AcpSessionController {
@@ -236,6 +265,12 @@ export class AcpSessionController {
         ),
       );
     }
+    // A linked worktree's git data lives outside cwd; granting it as a
+    // workspace root lets a sandboxed agent commit without asking. Resolved
+    // before the spawn: an await between initialize and session/new|load
+    // would open a window where a cancel's teardown nulls the client.
+    const externalGitDir = await resolveExternalGitDir(cwd);
+    const additionalDirectories = externalGitDir === null ? [] : [externalGitDir];
     const spawned = this.deps.supervisor.spawn(this.deps.profile, cwd);
     if (!spawned.ok) return spawned;
     this.child = spawned.value;
@@ -290,7 +325,7 @@ export class AcpSessionController {
     }
 
     if (mode.kind === "new") {
-      const created = await this.client.newSession(cwd);
+      const created = await this.client.newSession(cwd, additionalDirectories);
       if (!created.ok) {
         await this.teardownChild();
         return created;
@@ -306,7 +341,11 @@ export class AcpSessionController {
 
     this.acpSessionId = mode.acp_session_id;
     this.replaying = true;
-    const loaded = await this.client.loadSession(mode.acp_session_id, cwd);
+    const loaded = await this.client.loadSession(
+      mode.acp_session_id,
+      cwd,
+      additionalDirectories,
+    );
     this.replaying = false;
     if (!loaded.ok) {
       await this.teardownChild();
@@ -323,41 +362,65 @@ export class AcpSessionController {
     return ok(undefined);
   }
 
-  /** §12: apply requested model/effort via semantic config categories. */
+  /**
+   * §12: apply the session's durable model/effort/mode requests via semantic
+   * config categories. A model or effort the agent cannot satisfy fails the
+   * session; a mode it cannot satisfy is logged and left at the agent's
+   * default — a missing permission preset must not kill a session that
+   * would otherwise run.
+   */
   async applyRequestedConfig(
-    requestedModel: string | null,
-    requestedEffort: string | null,
+    requested: RequestedSessionConfig,
   ): Promise<Result<void, AcpError>> {
     const requests: Array<["model" | "thought_level", string | null]> = [
-      ["model", requestedModel],
-      ["thought_level", requestedEffort],
+      ["model", requested.requested_model],
+      ["thought_level", requested.requested_effort],
     ];
-    for (const [category, requested] of requests) {
-      const resolved = resolveRequestedOption(
-        this.configOptions,
-        category,
-        requested,
-      );
+    for (const [category, value] of requests) {
+      const resolved = resolveRequestedOption(this.configOptions, category, value);
       if (!resolved.ok) return resolved;
       if (resolved.value === null) continue;
       const match = resolved.value.match;
       if (match.kind === "context_hint_ignored") {
         console.log(
-          `[acp] sid=${this.deps.sid} ${category} requested=${requested} ` +
+          `[acp] sid=${this.deps.sid} ${category} requested=${value} ` +
             `resolved=${resolved.value.valueId} context_hint_ignored ` +
             `requested_hint=${match.requestedHint ?? "none"} ` +
             `matched_hint=${match.matchedHint ?? "none"}`,
         );
-      }
-      const client = this.client;
-      if (!client) {
-        return err(this.notLiveError("controller.applyRequestedConfig"));
       }
       const applied = await this.setConfigOption(
         resolved.value.configId,
         resolved.value.valueId,
       );
       if (!applied.ok) return applied;
+    }
+    return this.applyRequestedMode(requested.requested_mode);
+  }
+
+  private async applyRequestedMode(
+    requestedMode: string | null,
+  ): Promise<Result<void, AcpError>> {
+    if (requestedMode === null) return ok(undefined);
+    const resolved = matchRequestedOption(this.configOptions, "mode", requestedMode);
+    if (!resolved.ok) {
+      console.warn(
+        `[acp] sid=${this.deps.sid} mode requested=${requestedMode} not applied: ${resolved.error}`,
+      );
+      return ok(undefined);
+    }
+    const current = this.configOptions.find(
+      (option) => option.id === resolved.value.configId,
+    );
+    if (current?.currentValue === resolved.value.valueId) return ok(undefined);
+    const applied = await this.setConfigOption(
+      resolved.value.configId,
+      resolved.value.valueId,
+    );
+    if (!applied.ok) {
+      console.warn(
+        `[acp] sid=${this.deps.sid} mode requested=${requestedMode} not applied: ${applied.error.detail}`,
+      );
     }
     return ok(undefined);
   }

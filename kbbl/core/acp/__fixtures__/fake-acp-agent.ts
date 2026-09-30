@@ -35,7 +35,7 @@ import {
 } from "@agentclientprotocol/sdk";
 import type * as schema from "@agentclientprotocol/sdk";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, appendFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, appendFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -97,11 +97,35 @@ const CONFIG_OPTIONS: schema.SessionConfigOption[] = [
       { value: "high", name: "High" },
     ],
   },
+  {
+    type: "select",
+    id: "mode",
+    name: "Mode",
+    category: "mode",
+    currentValue: "default",
+    options: [
+      { value: "default", name: "Manual" },
+      { value: "acceptEdits", name: "Accept edits" },
+      { value: "auto", name: "Auto" },
+    ],
+  },
 ];
 
 // Current config values per session (in-memory; config state does not
 // need to survive the fake's restarts).
 const configState = new Map<string, Map<string, string | boolean>>();
+
+// The workspace roots the client granted on session/new or session/load,
+// kept beside the transcript so tests can read what reached the agent.
+function recordAdditionalDirectories(
+  sessionId: string,
+  additionalDirectories: readonly string[] | undefined,
+): void {
+  writeFileSync(
+    join(stateDir, `${sessionId}.additional-directories.json`),
+    JSON.stringify(additionalDirectories ?? []),
+  );
+}
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -112,14 +136,14 @@ const app = agent({ name: `fake-acp-${behavior}` })
     protocolVersion: PROTOCOL_VERSION,
     agentCapabilities: {
       loadSession: behavior !== "no_load",
-      sessionCapabilities: { close: {} },
+      sessionCapabilities: { close: {}, additionalDirectories: {} },
     },
   }))
   .onRequest("session/new", (ctx) => {
     const sessionId = `fake-${randomUUID()}`;
     if (behavior !== "persist_on_prompt") appendFileSync(transcriptPath(sessionId), "");
     configState.set(sessionId, new Map());
-    void ctx;
+    recordAdditionalDirectories(sessionId, ctx.params.additionalDirectories);
     return { sessionId, configOptions: CONFIG_OPTIONS };
   })
   .onRequest("session/load", async (ctx) => {
@@ -131,6 +155,7 @@ const app = agent({ name: `fake-acp-${behavior}` })
     if (!existsSync(path)) {
       throw RequestError.resourceNotFound(sessionId);
     }
+    recordAdditionalDirectories(sessionId, ctx.params.additionalDirectories);
     if (behavior === "delayed_load") await delay(Math.max(0, delayMs));
     const lines = readFileSync(path, "utf8")
       .split("\n")

@@ -195,6 +195,76 @@ realTest(
     report.push(`load_replay=${reloaded.value.expired ? "EXPIRED" : `${reloaded.value.events.length} events`}`);
     expect(reloaded.value.expired).toBe(false);
 
+    // The respawned agent reports its settings-default mode; kbbl must have
+    // re-applied the profile's session mode on top. Claude Code falls back to
+    // acceptEdits by itself when the model lacks Auto support.
+    const requestedMode = profiles.get(REAL_AGENT)?.sessionMode ?? null;
+    if (requestedMode !== null) {
+      const modeOption = registry
+        .getLive(sid as never)
+        ?.liveConfigOptions.find((option) => option.category === "mode");
+      const landedMode = modeOption?.type === "select" ? modeOption.currentValue : null;
+      report.push(`mode_after_respawn=${landedMode ?? "none"}`);
+      if (landedMode === null) throw new Error("mode config option went missing");
+      expect([requestedMode, "acceptEdits"]).toContain(landedMode);
+
+      // A file write in the session's own worktree must run without an
+      // operator click — the prompt this mode exists to remove.
+      const probe = await service.sendInput(
+        sid,
+        "Use the Bash tool to run exactly `touch mode-probe.txt`, then reply with exactly PROBE-OK.",
+        { client_message_id: "mode-probe" },
+      );
+      if (!probe.ok) throw new Error(probe.error.detail);
+      const probeKey = "operator:mode-probe" as TurnKey;
+      const probeDeadline = Date.now() + 90_000;
+      while (
+        store.getTurn(sid, probeKey)?.status === "accepted" ||
+        store.getTurn(sid, probeKey)?.status === "prompting"
+      ) {
+        if (service.pendingPermissionCount(sid) > 0) {
+          throw new Error(`mode ${landedMode} still asked permission for a worktree write`);
+        }
+        if (Date.now() > probeDeadline) throw new Error("mode probe turn did not finish");
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      expect(store.getTurn(sid, probeKey)?.status).toBe("succeeded");
+      const worktreePath = store.getSession(sid as never)?.worktree_path;
+      if (!worktreePath) throw new Error("session lost its worktree");
+      const probeFile = Bun.file(join(worktreePath, "mode-probe.txt"));
+      expect(await probeFile.exists()).toBe(true);
+      report.push("mode_probe=no-permission-prompt");
+    }
+
+    // Codex sandboxes commands to the workspace. A kbbl worktree's git data
+    // lives in the main repo's .git, so a commit only succeeds inside the
+    // sandbox when kbbl granted that directory as a workspace root.
+    if (REAL_AGENT === "codex") {
+      const worktreePath = store.getSession(sid as never)?.worktree_path;
+      if (!worktreePath) throw new Error("session lost its worktree");
+      const commit = await service.sendInput(
+        sid,
+        "Run exactly `git commit --allow-empty -m sandbox-probe` in the default sandbox. " +
+          "Do not request escalated permissions and do not retry outside the sandbox. " +
+          "Reply COMMIT-OK if it succeeded, otherwise COMMIT-BLOCKED followed by the error.",
+        { client_message_id: "commit-probe" },
+      );
+      if (!commit.ok) throw new Error(commit.error.detail);
+      const commitKey = "operator:commit-probe" as TurnKey;
+      const commitDeadline = Date.now() + 120_000;
+      while (
+        store.getTurn(sid, commitKey)?.status === "accepted" ||
+        store.getTurn(sid, commitKey)?.status === "prompting"
+      ) {
+        if (Date.now() > commitDeadline) throw new Error("commit probe turn did not finish");
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      const log = Bun.spawnSync({ cmd: ["git", "-C", worktreePath, "log", "-1", "--format=%s"] });
+      const subject = log.stdout.toString().trim();
+      report.push(`sandboxed_commit=${subject === "sandbox-probe" ? "OK" : "BLOCKED"}`);
+      expect(subject).toBe("sandbox-probe");
+    }
+
     // A browser resume starts empty. Codex may not persist it before the first
     // prompt: reap the child, then prove the queued operator turn still runs
     // on the same kbbl session/worktree after cold recovery.
