@@ -48,6 +48,7 @@ export interface BuildCohortState {
 
 export type BuildCohortEvent =
   | { readonly kind: "stage_started" }
+  | { readonly kind: "stale_gate_recorded" }
   | { readonly kind: "build_artifact_recorded"; readonly revision: string; readonly output_name: string }
   | { readonly kind: "pull_request_verified"; readonly revision: string; readonly pull_request_url: string; readonly head_sha: string }
   | { readonly kind: "builder_attempt_lost" }

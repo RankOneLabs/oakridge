@@ -31,7 +31,7 @@ import type { Command, StageInputSet } from "../decision/commands";
 import { parseStageInputEdges } from "../domain/stage-contract";
 import type { ArtifactEnvelope } from "../domain/execution";
 import type { RunArtifactReadRepository, RunRecordRepository, StageInstanceRepository } from "../storage/repositories";
-import { MACHINE_WAKE_TOPIC } from "../http/dbos-transport";
+import { MACHINE_WAKE_TOPIC, sendRunWakeHint } from "../http/dbos-transport";
 
 export interface DecisionMachineAddress {
   readonly owner: TransitionOwner;
@@ -424,6 +424,9 @@ const commitCohortDecision = async (
         status: state.status, committed: false, should_reread: true, started_attempt: null, open_attempt: null };
       throw new Error(`${committed.error.kind}: ${committed.error.detail}`);
     }
+    if (committed.value.kind === "created") {
+      await sendRunWakeHint(state.run_id, `cohort_transition:${committed.value.transition.transition_id}`).catch(() => undefined);
+    }
     return { status: decision.event.change.status, committed: true, should_reread: false,
       started_attempt: committed.value.attempt_id, open_attempt: committed.value.attempt_id };
   }
@@ -431,6 +434,7 @@ const commitCohortDecision = async (
   if (recorded.kind === "version_conflict" || recorded.kind === "owner_terminal") return {
     status: state.status, committed: false, should_reread: true, started_attempt: null, open_attempt: null };
   if (recorded.kind !== "recorded") throw new Error(`${recorded.kind}: ${recorded.detail}`);
+  await sendRunWakeHint(state.run_id, `cohort_transition:${recorded.transition.transition_id}`).catch(() => undefined);
   return { status: decision.event.change.status, committed: true, should_reread: false,
     started_attempt: null, open_attempt };
 };

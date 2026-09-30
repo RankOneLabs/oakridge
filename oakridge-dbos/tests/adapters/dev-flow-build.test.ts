@@ -47,6 +47,7 @@ const state = (phase: BuildCohortPhase, overrides: Partial<BuildCohortState> = {
 
 const EVENTS = [
   "stage_started",
+  "stale_gate_recorded",
   "build_artifact_recorded",
   "pull_request_verified",
   "builder_attempt_lost",
@@ -80,42 +81,42 @@ const event = (kind: BuildCohortEvent["kind"]): BuildCohortEvent => {
  */
 const TRANSITION_TABLE: Readonly<Record<BuildCohortPhase, Readonly<Record<BuildCohortEvent["kind"], BuildEventDisposition>>>> = {
   pending: {
-    stage_started: "transitioned", build_artifact_recorded: "recorded_only", pull_request_verified: "recorded_only", builder_attempt_lost: "recorded_only",
+    stage_started: "transitioned", stale_gate_recorded: "recorded_only", build_artifact_recorded: "recorded_only", pull_request_verified: "recorded_only", builder_attempt_lost: "recorded_only",
     build_review_approved: "recorded_only", build_review_revision_requested: "recorded_only", assessment_artifact_recorded: "recorded_only",
     assessment_outcome_observed: "recorded_only", assessor_attempt_lost: "recorded_only", assessment_review_approved: "recorded_only",
     assessment_review_revision_requested: "recorded_only", pull_request_mismatch: "recorded_only",
     replacement_pull_request_required: "recorded_only", pull_request_merged: "recorded_only",
   },
   builder_active: {
-    stage_started: "recorded_only", build_artifact_recorded: "transitioned", pull_request_verified: "transitioned", builder_attempt_lost: "transitioned",
+    stage_started: "recorded_only", stale_gate_recorded: "recorded_only", build_artifact_recorded: "transitioned", pull_request_verified: "transitioned", builder_attempt_lost: "transitioned",
     build_review_approved: "recorded_only", build_review_revision_requested: "recorded_only", assessment_artifact_recorded: "recorded_only",
     assessment_outcome_observed: "recorded_only", assessor_attempt_lost: "recorded_only", assessment_review_approved: "recorded_only",
     assessment_review_revision_requested: "recorded_only", pull_request_mismatch: "transitioned",
     replacement_pull_request_required: "transitioned", pull_request_merged: "recorded_only",
   },
   build_review: {
-    stage_started: "recorded_only", build_artifact_recorded: "recorded_only", pull_request_verified: "recorded_only", builder_attempt_lost: "recorded_only",
+    stage_started: "recorded_only", stale_gate_recorded: "recorded_only", build_artifact_recorded: "recorded_only", pull_request_verified: "recorded_only", builder_attempt_lost: "recorded_only",
     build_review_approved: "transitioned", build_review_revision_requested: "transitioned", assessment_artifact_recorded: "recorded_only",
     assessment_outcome_observed: "recorded_only", assessor_attempt_lost: "recorded_only", assessment_review_approved: "recorded_only",
     assessment_review_revision_requested: "recorded_only", pull_request_mismatch: "transitioned",
     replacement_pull_request_required: "transitioned", pull_request_merged: "recorded_only",
   },
   assessor_active: {
-    stage_started: "recorded_only", build_artifact_recorded: "recorded_only", pull_request_verified: "recorded_only", builder_attempt_lost: "recorded_only",
+    stage_started: "recorded_only", stale_gate_recorded: "recorded_only", build_artifact_recorded: "recorded_only", pull_request_verified: "recorded_only", builder_attempt_lost: "recorded_only",
     build_review_approved: "recorded_only", build_review_revision_requested: "recorded_only", assessment_artifact_recorded: "transitioned",
     assessment_outcome_observed: "recorded_only", assessor_attempt_lost: "transitioned", assessment_review_approved: "recorded_only",
     assessment_review_revision_requested: "recorded_only", pull_request_mismatch: "transitioned",
     replacement_pull_request_required: "transitioned", pull_request_merged: "recorded_only",
   },
   assessment_review: {
-    stage_started: "recorded_only", build_artifact_recorded: "recorded_only", pull_request_verified: "recorded_only", builder_attempt_lost: "recorded_only",
+    stage_started: "recorded_only", stale_gate_recorded: "recorded_only", build_artifact_recorded: "recorded_only", pull_request_verified: "recorded_only", builder_attempt_lost: "recorded_only",
     build_review_approved: "recorded_only", build_review_revision_requested: "recorded_only", assessment_artifact_recorded: "recorded_only",
     assessment_outcome_observed: "recorded_only", assessor_attempt_lost: "recorded_only", assessment_review_approved: "transitioned",
     assessment_review_revision_requested: "transitioned", pull_request_mismatch: "transitioned",
     replacement_pull_request_required: "transitioned", pull_request_merged: "recorded_only",
   },
   awaiting_merge: {
-    stage_started: "recorded_only", build_artifact_recorded: "recorded_only", pull_request_verified: "recorded_only", builder_attempt_lost: "recorded_only",
+    stage_started: "recorded_only", stale_gate_recorded: "recorded_only", build_artifact_recorded: "recorded_only", pull_request_verified: "recorded_only", builder_attempt_lost: "recorded_only",
     build_review_approved: "recorded_only", build_review_revision_requested: "recorded_only", assessment_artifact_recorded: "recorded_only",
     assessment_outcome_observed: "recorded_only", assessor_attempt_lost: "recorded_only", assessment_review_approved: "recorded_only",
     assessment_review_revision_requested: "recorded_only", pull_request_mismatch: "transitioned",

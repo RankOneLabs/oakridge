@@ -349,3 +349,38 @@ test("a release on one required build output alone does not approve review", asy
       accepted: true, decided_at: "2026-09-29T00:00:00Z" }] };
   expect(await driver.step(contextOf(state, contract))).toBeNull();
 });
+
+test("a revised round consumes its sibling release with the revision", async () => {
+  const { contract, bundle } = await buildStage();
+  const driver = driverFor(bundle);
+  const original = verificationState();
+  const state: CohortMachineState = { ...original, status: "blocked", blocked_reason: "gate", next_actor: "operator",
+    stage_data: { ...original.stage_data as object, build_state: { ...buildStateOf(original), phase: "build_review" } } as JsonValue,
+    accepted_outputs: [original.accepted_outputs[0]!], open_waits: [],
+    decided_gates: [
+      { wait_id: "wait-build" as WaitId, output_name: "build_result", action: "approve",
+        artifact_id: "build-1" as ArtifactId, accepted: true, decided_at: "2026-09-29T00:00:00Z" },
+      { wait_id: "wait-pr" as WaitId, output_name: "pr_summary", action: "request_revision",
+        artifact_id: "pr-1" as ArtifactId, accepted: false, decided_at: "2026-09-29T00:00:00Z" },
+    ] };
+  const revised = await driver.step(contextOf(state, contract));
+  expect(revised?.launch).not.toBeNull();
+  expect((committed(state, revised!).stage_data as { readonly consumed_gate_wait_ids: string[] })
+    .consumed_gate_wait_ids).toEqual(["wait-build", "wait-pr"]);
+});
+
+test("an old assessment revision is recorded once while the assessor works", async () => {
+  const { contract, bundle } = await buildStage();
+  const driver = driverFor(bundle);
+  const original = verificationState();
+  const state: CohortMachineState = { ...original,
+    stage_data: { ...original.stage_data as object, build_state: { ...buildStateOf(original),
+      phase: "assessor_active", assessment_artifact_id: null } } as JsonValue,
+    accepted_outputs: [], open_waits: [],
+    decided_gates: [{ wait_id: "old-assessment" as WaitId, output_name: "assessment",
+      action: "request_revision", artifact_id: "assessment-1" as ArtifactId,
+      accepted: false, decided_at: "2026-09-29T00:00:00Z" }] };
+  const retired = await driver.step(contextOf(state, contract));
+  expect((retired?.event.effect as unknown as BuildCohortTransitionEffect).disposition).toBe("recorded_only");
+  expect(await driver.step(contextOf(committed(state, retired!), contract))).toBeNull();
+});
