@@ -236,6 +236,35 @@ realTest(
       report.push("mode_probe=no-permission-prompt");
     }
 
+    // Codex sandboxes commands to the workspace. A kbbl worktree's git data
+    // lives in the main repo's .git, so a commit only succeeds inside the
+    // sandbox when kbbl granted that directory as a workspace root.
+    if (REAL_AGENT === "codex") {
+      const worktreePath = store.getSession(sid as never)?.worktree_path;
+      if (!worktreePath) throw new Error("session lost its worktree");
+      const commit = await service.sendInput(
+        sid,
+        "Run exactly `git commit --allow-empty -m sandbox-probe` in the default sandbox. " +
+          "Do not request escalated permissions and do not retry outside the sandbox. " +
+          "Reply COMMIT-OK if it succeeded, otherwise COMMIT-BLOCKED followed by the error.",
+        { client_message_id: "commit-probe" },
+      );
+      if (!commit.ok) throw new Error(commit.error.detail);
+      const commitKey = "operator:commit-probe" as TurnKey;
+      const commitDeadline = Date.now() + 120_000;
+      while (
+        store.getTurn(sid, commitKey)?.status === "accepted" ||
+        store.getTurn(sid, commitKey)?.status === "prompting"
+      ) {
+        if (Date.now() > commitDeadline) throw new Error("commit probe turn did not finish");
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      const log = Bun.spawnSync({ cmd: ["git", "-C", worktreePath, "log", "-1", "--format=%s"] });
+      const subject = log.stdout.toString().trim();
+      report.push(`sandboxed_commit=${subject === "sandbox-probe" ? "OK" : "BLOCKED"}`);
+      expect(subject).toBe("sandbox-probe");
+    }
+
     // A browser resume starts empty. Codex may not persist it before the first
     // prompt: reap the child, then prove the queued operator turn still runs
     // on the same kbbl session/worktree after cold recovery.

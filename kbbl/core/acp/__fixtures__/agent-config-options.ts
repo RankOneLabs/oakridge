@@ -105,10 +105,19 @@ export const ADVERTISED_AGENT_VOCABULARY: Readonly<
     version: "1.13.0",
     model_option_id: "model",
     effort_option_id: "reasoning_effort",
-    // Only ever observed as one list. Codex ids carry no context hint, so
-    // there is no known axis for them to drift along — but that is an absence
-    // of evidence, not a guarantee.
+    // Codex ids carry no context hint, so these lists drift by entitlement
+    // alone: gpt-6.1-sol appeared at the head of the list on 2026-09-29.
     model_value_variants: [
+      [
+        "gpt-6.1-sol",
+        "gpt-6-astra",
+        "gpt-6-sol",
+        "gpt-6-luna",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+        "gpt-5.5",
+      ],
       [
         "gpt-6-astra",
         "gpt-6-sol",

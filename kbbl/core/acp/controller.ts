@@ -7,6 +7,7 @@
 import type * as schema from "@agentclientprotocol/sdk";
 
 import { contextHintOf, withoutContextHint } from "../runtime";
+import { resolveExternalGitDir } from "../session/worktree";
 import type { AgentProfile } from "./agent-profile";
 import { AcpClient } from "./client";
 import {
@@ -317,8 +318,13 @@ export class AcpSessionController {
       );
     }
 
+    // A linked worktree's git data lives outside cwd; granting it as a
+    // workspace root lets a sandboxed agent commit without asking.
+    const externalGitDir = await resolveExternalGitDir(cwd);
+    const additionalDirectories = externalGitDir === null ? [] : [externalGitDir];
+
     if (mode.kind === "new") {
-      const created = await this.client.newSession(cwd);
+      const created = await this.client.newSession(cwd, additionalDirectories);
       if (!created.ok) {
         await this.teardownChild();
         return created;
@@ -334,7 +340,11 @@ export class AcpSessionController {
 
     this.acpSessionId = mode.acp_session_id;
     this.replaying = true;
-    const loaded = await this.client.loadSession(mode.acp_session_id, cwd);
+    const loaded = await this.client.loadSession(
+      mode.acp_session_id,
+      cwd,
+      additionalDirectories,
+    );
     this.replaying = false;
     if (!loaded.ok) {
       await this.teardownChild();
