@@ -9,11 +9,9 @@ import { createScratchDatabase, type ScratchDatabase } from "./support/durable-d
 
 const MIGRATIONS = new URL("../src/storage/migrations", import.meta.url).pathname;
 const BASELINE = "0015_v15_baseline.sql";
-const DEV_FLOW_PULL_REQUESTS = "0016_dev_flow_pull_requests.sql";
-const ARTIFACT_THREADS = "0017_artifact_threads_and_attempt_idempotency.sql";
-const MIGRATION_SET = [BASELINE, DEV_FLOW_PULL_REQUESTS, ARTIFACT_THREADS];
+const MIGRATION_SET = [BASELINE];
 
-test("adapter migrations follow the v15 baseline", async () => {
+test("the v15 baseline is the only migration", async () => {
   expect(migrationNames(await readdir(MIGRATIONS))).toEqual(MIGRATION_SET);
 });
 

@@ -19,7 +19,7 @@ import { afterAll, expect, test } from "bun:test";
 
 import { createDevFlowAdapterRegistry } from "../src/adapters/dev-flow";
 import { attemptIdFor } from "../src/decision/ids";
-import type { AttemptId, CohortId, JsonValue, StageInstanceId, WorkflowRunId } from "../src/domain/primitives";
+import type { AttemptId, CohortId, JsonValue, SessionId, StageInstanceId, WorkflowRunId } from "../src/domain/primitives";
 import type { WorkOrderId } from "../src/domain/primitives";
 import { capabilityFor, capabilityHash } from "../src/runtime/resolve-work-order";
 import { applyMigrations } from "../src/storage/migrate";
@@ -232,4 +232,130 @@ test("an attempt created by an operator retry is the attempt the cohort machine 
   } finally {
     await prepared.sql.close();
   }
+});
+
+test("a cohort decision read before cancellation cannot un-cancel the cohort", async () => {
+  const prepared = await prepare("oakridge_v15_stale_cohort_decision");
+  if (!prepared) return;
+  try {
+    await openCohort(prepared.sql, STAGE_ID, cohortId(20), "stale");
+    const stale = await prepared.records.find_cohort_state(cohortId(20));
+    if (!stale) throw new Error("cohort was not created");
+    const writer = new PostgresRunRecordWriter(prepared.sql, createDevFlowAdapterRegistry());
+    const cancelled = await writer.commit({ run_id: RUN_ID, owner: { kind: "cohort", id: cohortId(20) },
+      expected_version: stale.durable_version, launch_reason: "operator",
+      change: { status: "cancelled", blocked_reason: null, next_actor: null, outcome: { kind: "cancelled" } },
+      effect: { kind: "none" }, actor: "operator", changed_at: "2026-09-29T01:00:00Z" });
+    expect(cancelled.ok).toBe(true);
+    const decision = { run_id: RUN_ID, cohort_id: cohortId(20), expected_version: stale.durable_version,
+      change: { status: "active" as const, blocked_reason: null, next_actor: "agent" as const, outcome: null },
+      stage_data: {}, effect: { kind: "none" as const }, launch_reason: "operator" as const,
+      actor: "stale-reader", recorded_at: "2026-09-29T01:01:00Z" };
+    expect((await prepared.records.record_cohort_event(decision)).kind).toBe("version_conflict");
+    const rows = await prepared.sql.query<{ readonly status: string; readonly version: string; readonly transitions: string }>(
+      `SELECT status::text, durable_version::text AS version,
+        (SELECT count(*)::text FROM oakridge.run_transition WHERE owner_cohort_id=$1) AS transitions
+       FROM oakridge.cohort WHERE id=$1`, [cohortId(20)]);
+    expect(rows[0]).toEqual({ status: "cancelled", version: "1", transitions: "1" });
+  } finally { await prepared.sql.close(); }
+});
+
+test("a commit against a terminal cohort at its current version returns owner_terminal", async () => {
+  const prepared = await prepare("oakridge_v15_terminal_cohort_guard");
+  if (!prepared) return;
+  try {
+    await openCohort(prepared.sql, STAGE_ID, cohortId(21), "terminal");
+    await prepared.sql.query("UPDATE oakridge.cohort SET status='failed',ended_at=now() WHERE id=$1", [cohortId(21)]);
+    const writer = new PostgresRunRecordWriter(prepared.sql, createDevFlowAdapterRegistry());
+    const committed = await writer.commit({ run_id: RUN_ID, owner: { kind: "cohort", id: cohortId(21) },
+      expected_version: 0, launch_reason: "operator",
+      change: { status: "active", blocked_reason: null, next_actor: "agent", outcome: null },
+      effect: { kind: "none" }, actor: "test", changed_at: "2026-09-29T01:00:00Z" });
+    expect(committed).toMatchObject({ ok: false, error: { kind: "owner_terminal", status: "failed" } });
+  } finally { await prepared.sql.close(); }
+});
+
+test("binding after abandonment preserves cancelled attempt and session", async () => {
+  const prepared = await prepare("oakridge_v15_abandoned_bind");
+  if (!prepared) return;
+  try {
+    await openCohort(prepared.sql, STAGE_ID, cohortId(22), "abandoned");
+    await startAttempt(prepared.sql, { stage: STAGE_ID, cohort: cohortId(22), attempt: attemptId(22),
+      number: 1, status: "active", request: {} });
+    const session_id = "00000000-0000-4000-8400-000000000422" as SessionId;
+    const transition_id = "00000000-0000-4000-8400-000000000423";
+    await prepared.sql.query("UPDATE oakridge.cohort SET durable_version=1 WHERE id=$1", [cohortId(22)]);
+    await prepared.sql.query(`INSERT INTO oakridge.run_transition
+      (id,run_id,owner_kind,owner_cohort_id,launch_reason,prior_owner_version,resulting_owner_version,
+       effect_descriptor,effect_workflow_id,actor)
+      VALUES ($1,$2,'cohort',$3,'initial',0,1,'{"kind":"start_attempt"}','test:abandoned-bind','test')`,
+      [transition_id, RUN_ID, cohortId(22)]);
+    await prepared.sql.query(`INSERT INTO oakridge.session
+      (id,run_id,stage_instance_id,attempt_id,launch_transition_id,status,adapter_reference,ended_at)
+      VALUES ($1,$2,$3,$4,$5,'cancelled','{"kind":"none"}',now())`,
+      [session_id, RUN_ID, STAGE_ID, attemptId(22), transition_id]);
+    await prepared.sql.query("UPDATE oakridge.attempt SET status='cancelled',ended_at=now() WHERE id=$1", [attemptId(22)]);
+    const result = await prepared.records.bind_session({ session_id, adapter_reference: { kind: "kbbl_session", session_id: "late" as never },
+      kbbl_session_id: "late" as never, bound_at: "2026-09-29T01:00:00Z" });
+    expect(result).toMatchObject({ kind: "attempt_ended", status: "cancelled" });
+    const rows = await prepared.sql.query<{ readonly session_status: string; readonly attempt_status: string;
+      readonly adapter_reference: JsonValue }>(`SELECT session.status::text AS session_status,attempt.status::text AS attempt_status,
+      session.adapter_reference FROM oakridge.session session JOIN oakridge.attempt attempt ON attempt.id=session.attempt_id
+      WHERE session.id=$1`, [session_id]);
+    expect(rows[0]).toMatchObject({ session_status: "cancelled", attempt_status: "cancelled",
+      adapter_reference: { kind: "kbbl_session", session_id: "late" } });
+  } finally { await prepared.sql.close(); }
+});
+
+test("a second accepted revision in one cohort slot is rejected", async () => {
+  const prepared = await prepare("oakridge_v15_unique_acceptance_slot");
+  if (!prepared) return;
+  try {
+    await openCohort(prepared.sql, STAGE_ID, cohortId(23), "slot");
+    const columns = await prepared.sql.query<{ readonly column_name: string }>(`SELECT column_name
+      FROM information_schema.columns WHERE table_schema='oakridge' AND table_name='artifact_acceptance'
+        AND column_name='cohort_id'`, []);
+    for (const artifact of [artifactId(23), artifactId(24)]) {
+      await prepared.sql.query(`INSERT INTO oakridge.artifact (id,chain_id,revision,artifact_type,body)
+        VALUES ($1,$1,1,'dev.build_result','{}')`, [artifact]);
+      await prepared.sql.query("INSERT INTO oakridge.artifact_owner (artifact_id,run_id,stage_instance_id,cohort_id) VALUES ($1,$2,$3,$4)",
+        [artifact, RUN_ID, STAGE_ID, cohortId(23)]);
+    }
+    const insertAcceptance = (artifact: string) => columns.length > 0
+      ? prepared.sql.query(`INSERT INTO oakridge.artifact_acceptance
+          (artifact_id,run_id,receiving_stage_instance_id,cohort_id,output_name,artifact_type)
+          VALUES ($1,$2,$3,$4,'build_result','dev.build_result')`, [artifact, RUN_ID, STAGE_ID, cohortId(23)])
+      : prepared.sql.query(`INSERT INTO oakridge.artifact_acceptance
+          (artifact_id,run_id,receiving_stage_instance_id,output_name,artifact_type)
+          VALUES ($1,$2,$3,'build_result','dev.build_result')`, [artifact, RUN_ID, STAGE_ID]);
+    await insertAcceptance(artifactId(23));
+    await expect(insertAcceptance(artifactId(24))).rejects.toMatchObject({ code: "23505" });
+  } finally { await prepared.sql.close(); }
+});
+
+test("a failed retry launch leaves its transition and earlier attempt untouched", async () => {
+  const prepared = await prepare("oakridge_v15_atomic_retry_launch");
+  if (!prepared) return;
+  try {
+    await openCohort(prepared.sql, RETRY_STAGE_ID, cohortId(24), "retry");
+    await startAttempt(prepared.sql, { stage: RETRY_STAGE_ID, cohort: cohortId(24), attempt: attemptId(25), number: 1,
+      status: "failed", request: { execution_id: attemptId(25), stage_instance_id: RETRY_STAGE_ID, unit_id: "retry",
+        executor_type: "delegated_session", resolved_config: { rendered_prompt: "go",
+          publication: { base_url: "http://127.0.0.1:1", work_order_id: attemptId(25), capability: "cap" } },
+        inputs: [], declared_outputs: [{ name: "build_result", artifact_type: "dev.build_result", required: true }],
+        expected_artifacts: [{ unit_id: "retry", output_name: "build_result", artifact_type: "dev.build_result" }] } });
+    await prepared.sql.query(`CREATE FUNCTION oakridge.reject_second_attempt() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN IF NEW.attempt_number=2 THEN RAISE EXCEPTION 'injected attempt insert failure'; END IF; RETURN NEW; END $$`, []);
+    await prepared.sql.query(`CREATE TRIGGER reject_second_attempt BEFORE INSERT ON oakridge.attempt
+      FOR EACH ROW EXECUTE FUNCTION oakridge.reject_second_attempt()`, []);
+    await expect(prepared.records.retry_cohort({ target: { kind: "cohort", cohort_id: cohortId(24) },
+      actor: "operator", idempotency_key: "retry-atomic" }, "2026-09-29T01:00:00Z"))
+      .rejects.toThrow("injected attempt insert failure");
+    const rows = await prepared.sql.query<{ readonly version: string; readonly transitions: string; readonly earlier_status: string }>(
+      `SELECT cohort.durable_version::text AS version,
+        (SELECT count(*)::text FROM oakridge.run_transition WHERE owner_cohort_id=cohort.id) AS transitions,
+        (SELECT status::text FROM oakridge.attempt WHERE id=$2) AS earlier_status
+       FROM oakridge.cohort cohort WHERE cohort.id=$1`, [cohortId(24), attemptId(25)]);
+    expect(rows[0]).toEqual({ version: "0", transitions: "0", earlier_status: "failed" });
+  } finally { await prepared.sql.close(); }
 });

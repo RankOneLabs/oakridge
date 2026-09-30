@@ -6,23 +6,25 @@ import { join, resolve } from "node:path";
 import { chromium, type Browser } from "@playwright/test";
 
 import type { OperatorParkedGate } from "../src/domain/operator-projections";
-import type { UnitId, WorkflowRunId } from "../src/domain/primitives";
-import type { StageOutcome } from "../src/domain/workflow";
+import type { CohortId, UnitId, WorkflowRunId } from "../src/domain/primitives";
+import { createDevFlowAdapterRegistry } from "../src/adapters/dev-flow";
+import { PostgresRunRecordWriter } from "../src/storage/postgres-run-record";
+import { PostgresRunRecordRepository } from "../src/storage/postgres-run-record-repository";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
 import { HARNESS_BASE_BRANCH, SEVEN_BRIEF_PLAN, awaitCondition, installIntegrationRuntime, runContext,
   scriptedAgentScenario, useScenario, type CohortPlanEntry, type IntegrationRuntime } from "./support/dev-flow-harness";
 import { assertQuietAsk, decideGate, driveRun, launchRun, listRunGates, readReviewInbox, readRun, readRunRecordFingerprint } from "./support/dev-flow-driver";
+import { findTestDatabaseUrl } from "./support/durable-database";
+import { attemptsAfterCancel, buildDependencies, buildStageRow, buildUnitRows, closedGateWaitCount,
+  countBuildOrdersInState, openBriefGateUnitIds, runOutcome, startedBuildUnitIds, transitionCountFor,
+  transitionVersion, workflowRunState } from "./support/v15-run-queries";
 
 const acceptanceEnabled = process.env.OAKRIDGE_ACCEPTANCE === "1";
-const databaseUrl = process.env.OAKRIDGE_TEST_DATABASE_URL;
-if (acceptanceEnabled && !databaseUrl) throw new Error("OAKRIDGE_TEST_DATABASE_URL is required for the deterministic acceptance harness");
+let databaseUrl: string | null = null;
 const e2e = acceptanceEnabled ? test : test.skip;
 /**
- * These decision-layer scenarios predate the v15 baseline and query the
- * removed `run_unit`, `work_order`, and `wait` tables (and the old `state`
- * columns). Porting their assertions to v15 is definition/runtime work owned
- * by c8, outside c9's acceptance-harness seam. Keep each case registered as an
- * explicit skip so the acceptance report accounts for all twenty by name.
+ * Cohort 2 owns scenarios 1-5 and straight-through dependency/decision behavior.
+ * Cohort 3 owns scenarios 6a, 7, and 8, including retry and fencing behavior.
  */
 const preV15DecisionScenario = test.skip;
 let oakridge: IntegrationRuntime;
@@ -38,10 +40,12 @@ let promptTemplateDir: string | null = null;
 
 if (acceptanceEnabled) {
   beforeAll(async () => {
+    databaseUrl = process.env.OAKRIDGE_TEST_DATABASE_URL ?? await findTestDatabaseUrl();
+    if (databaseUrl === null) throw new Error("no PostgreSQL test database is available for the deterministic acceptance harness");
     promptTemplateDir = await mkdtemp(join(tmpdir(), "oakridge-e2e-prompts-"));
     await cp(resolve(import.meta.dir, "../../workflow-config/prompts"), promptTemplateDir, { recursive: true });
-    oakridge = await installIntegrationRuntime(databaseUrl!, { prompt_template_directory: promptTemplateDir });
-    sql = PgPostgresExecutor.connect(databaseUrl!);
+    oakridge = await installIntegrationRuntime(databaseUrl, { prompt_template_directory: promptTemplateDir });
+    sql = PgPostgresExecutor.connect(databaseUrl);
     browser = await chromium.launch({ headless: true });
   }, 120_000);
 
@@ -53,56 +57,10 @@ if (acceptanceEnabled) {
   }, 60_000);
 }
 
-/** Every unit under one run's `build` stage: its unit id and current state. */
-const buildUnitRows = async (runId: WorkflowRunId): Promise<readonly { readonly unit_id: string; readonly state: string }[]> =>
-  sql.query<{ readonly unit_id: string; readonly state: string }>(
-    `SELECT unit.unit_id, unit.state FROM oakridge.run_unit unit
-     JOIN oakridge.stage_instance stage ON stage.id = unit.stage_instance_id
-     WHERE stage.run_id = $1 AND stage.stage_key = 'build' ORDER BY unit.unit_id`, [runId]);
-
-const countBuildUnits = async (runId: WorkflowRunId): Promise<number> => (await buildUnitRows(runId)).length;
+const countBuildUnits = async (runId: WorkflowRunId): Promise<number> => (await buildUnitRows(sql, runId)).length;
 
 const buildUnitState = async (runId: WorkflowRunId, unitId: string): Promise<string | null> =>
-  (await buildUnitRows(runId)).find((row) => row.unit_id === unitId)?.state ?? null;
-
-const countBuildOrdersInState = async (runId: WorkflowRunId, state: string): Promise<number> => {
-  const rows = await sql.query<{ readonly count: string }>(
-    `SELECT count(*)::text AS count FROM oakridge.work_order work
-     JOIN oakridge.run_unit unit ON unit.id = work.run_unit_id
-     JOIN oakridge.stage_instance stage ON stage.id = unit.stage_instance_id
-     WHERE stage.run_id = $1 AND stage.stage_key = 'build' AND work.state = $2`, [runId, state]);
-  return Number(rows[0]?.count ?? 0);
-};
-
-/** The record version at which one unit's transition of `operation` was committed — the run's own, race-free clock. */
-const transitionVersion = async (runId: WorkflowRunId, operation: string, stageKey: string, unitId: string): Promise<number> => {
-  const rows = await sql.query<{ readonly version: string }>(
-    `SELECT transition.resulting_record_version::text AS version FROM oakridge.run_transition transition
-     JOIN oakridge.run_unit unit ON unit.id = transition.run_unit_id
-     JOIN oakridge.stage_instance stage ON stage.id = unit.stage_instance_id
-     WHERE transition.run_id = $1 AND transition.operation = $2 AND stage.stage_key = $3 AND unit.unit_id = $4
-     ORDER BY transition.resulting_record_version LIMIT 1`, [runId, operation, stageKey, unitId]);
-  if (!rows[0]) throw new Error(`no '${operation}' transition for ${stageKey}/${unitId} on run ${runId}`);
-  return Number(rows[0].version);
-};
-
-/**
- * How many times a unit has had a transition of `operation` — a monotonic,
- * race-free fact unlike polling current state. `driveRun`'s review-inbox
- * pass confirms a cohort's pull request the moment it is in the inbox,
- * regardless of `decide`, so a build that has *started* can race straight
- * through to *satisfied* between one poll and the next; asking "did this
- * transition ever happen" is what a scenario that only cares about the
- * start, not the current instant, should ask instead.
- */
-const transitionCountFor = async (runId: WorkflowRunId, operation: string, stageKey: string, unitId: string): Promise<number> => {
-  const rows = await sql.query<{ readonly count: string }>(
-    `SELECT count(*)::text AS count FROM oakridge.run_transition transition
-     JOIN oakridge.run_unit unit ON unit.id = transition.run_unit_id
-     JOIN oakridge.stage_instance stage ON stage.id = unit.stage_instance_id
-     WHERE transition.run_id = $1 AND transition.operation = $2 AND stage.stage_key = $3 AND unit.unit_id = $4`, [runId, operation, stageKey, unitId]);
-  return Number(rows[0]?.count ?? 0);
-};
+  (await buildUnitRows(sql, runId)).find((row) => row.unit_id === unitId)?.state ?? null;
 
 e2e("browser launches a run and decides its first gate through kbbl", async () => {
   const agent = scriptedAgentScenario();
@@ -164,74 +122,18 @@ e2e("deleting the publication contract from a rendered prompt fails the run atte
   }
 }, 60_000);
 
-const workflowRunState = async (runId: WorkflowRunId): Promise<string> => {
-  const rows = await sql.query<{ readonly state: string }>("SELECT state FROM oakridge.workflow_run WHERE id = $1", [runId]);
-  if (!rows[0]) throw new Error(`workflow run '${runId}' was not found`);
-  return rows[0].state;
-};
-
-/** The `unit_id`s (collection keys, for a brief_writer gate) with an open gate wait against the `brief_writer` stage. */
-const openBriefGateUnitIds = async (runId: WorkflowRunId): Promise<ReadonlySet<string>> => {
-  const rows = await sql.query<{ readonly unit_id: string }>(
-    `SELECT DISTINCT COALESCE(wait.collection_key, wait.unit_id) AS unit_id FROM oakridge.wait wait
-     JOIN oakridge.run_unit unit ON unit.id = wait.run_unit_id
-     JOIN oakridge.stage_instance stage ON stage.id = unit.stage_instance_id
-     WHERE stage.run_id = $1 AND stage.stage_key = 'brief_writer' AND wait.kind = 'gate' AND wait.status = 'open'`, [runId]);
-  return new Set(rows.map((row) => row.unit_id));
-};
-
-/** Every build unit id with at least one `started` work order right now. */
-const startedBuildUnitIds = async (runId: WorkflowRunId): Promise<readonly string[]> => {
-  const rows = await sql.query<{ readonly unit_id: string }>(
-    `SELECT DISTINCT unit.unit_id FROM oakridge.work_order work
-     JOIN oakridge.run_unit unit ON unit.id = work.run_unit_id
-     JOIN oakridge.stage_instance stage ON stage.id = unit.stage_instance_id
-     WHERE stage.run_id = $1 AND stage.stage_key = 'build' AND work.state = 'started'`, [runId]);
-  return rows.map((row) => row.unit_id);
-};
-
-/** A build unit's dependency ids, from `run_unit_dependency` — the persisted graph, not the plan value. */
-const buildDependencies = async (runId: WorkflowRunId, unitId: string): Promise<readonly string[]> => {
-  const rows = await sql.query<{ readonly depends_on_unit_id: string }>(
-    `SELECT edge.depends_on_unit_id FROM oakridge.run_unit_dependency edge
-     JOIN oakridge.stage_instance stage ON stage.id = edge.stage_instance_id
-     WHERE stage.run_id = $1 AND stage.stage_key = 'build' AND edge.unit_id = $2`, [runId, unitId]);
-  return rows.map((row) => row.depends_on_unit_id);
-};
-
 /** Scenarios 2 and 3's per-step invariant: no build work order has started for a unit whose dependency's brief gate is still open. */
 const assertNoStartedBuildDependsOnOpenBrief = async (runId: WorkflowRunId): Promise<void> => {
-  const openBriefs = await openBriefGateUnitIds(runId);
-  for (const unitId of await startedBuildUnitIds(runId)) {
-    for (const dependency of await buildDependencies(runId, unitId)) expect(openBriefs.has(dependency)).toBe(false);
+  const openBriefs = await openBriefGateUnitIds(sql, runId);
+  for (const unitId of await startedBuildUnitIds(sql, runId)) {
+    for (const dependency of await buildDependencies(sql, runId, unitId)) expect(openBriefs.has(dependency)).toBe(false);
   }
-};
-
-const runOutcome = async (runId: WorkflowRunId): Promise<StageOutcome | null> => {
-  const rows = await sql.query<{ readonly outcome: StageOutcome | null }>("SELECT outcome FROM oakridge.workflow_run WHERE id = $1", [runId]);
-  return rows[0]?.outcome ?? null;
 };
 
 /** `run_transition` rows recording a materialization contradiction (`record_contradiction_tx`'s only pending transition). */
 const materializationFailedTransitions = async (runId: WorkflowRunId): Promise<readonly { readonly detail: unknown }[]> =>
   sql.query<{ readonly detail: unknown }>("SELECT detail FROM oakridge.run_transition WHERE run_id = $1 AND operation = 'materialization_failed'", [runId]);
 
-/** How many wait rows closed for one stage — e.g. "exactly one closed brief gate" after one approval. */
-const closedGateWaitCount = async (runId: WorkflowRunId, stageKey: string): Promise<number> => {
-  const rows = await sql.query<{ readonly count: string }>(
-    `SELECT count(*)::text AS count FROM oakridge.wait wait
-     JOIN oakridge.run_unit unit ON unit.id = wait.run_unit_id
-     JOIN oakridge.stage_instance stage ON stage.id = unit.stage_instance_id
-     WHERE stage.run_id = $1 AND stage.stage_key = $2 AND wait.kind = 'gate' AND wait.status = 'closed'`, [runId, stageKey]);
-  return Number(rows[0]?.count ?? 0);
-};
-
-/** The `build` stage's own row, or null when it has never been materialized (spec §3.6: a stage with no work has no row). */
-const buildStageRow = async (runId: WorkflowRunId): Promise<{ readonly state: string } | null> => {
-  const rows = await sql.query<{ readonly state: string }>(
-    "SELECT state FROM oakridge.stage_instance WHERE run_id = $1 AND stage_key = 'build' AND attempt_root_workflow_id IS NULL", [runId]);
-  return rows[0] ?? null;
-};
 
 /** `GET /gates` with no run filter — every open gate across every run, the way `listV2PendingGates()` (no `run_id`) reports it. */
 const allGates = async (baseUrl: string): Promise<readonly OperatorParkedGate[]> => {
@@ -281,10 +183,10 @@ const driveOrderedApprovals = async (order: readonly string[], shouldAssertQuiet
       approved.add(briefId);
       await driveRun(oakridge.base_url, agent, launched, {
         decide,
-        until: async () => (await openBriefGateUnitIds(launched.run_id)).size === 7 - approved.size ? true : null,
+        until: async () => (await openBriefGateUnitIds(sql, launched.run_id)).size === 7 - approved.size ? true : null,
         timeout_ms: 60_000,
       });
-      expect(await workflowRunState(launched.run_id)).toBe("active");
+      expect(await workflowRunState(sql, launched.run_id)).toBe("active");
       await assertNoStartedBuildDependsOnOpenBrief(launched.run_id);
       if (shouldAssertQuiet(step)) await assertQuietAsk(sql, launched.run_id);
     }
@@ -369,7 +271,7 @@ preV15DecisionScenario("scenario 1: approving a dependent brief first does not f
     await driveRun(oakridge.base_url, agent, launched, {
       decide,
       until: async (): Promise<boolean | null> => {
-        const state = await workflowRunState(launched.run_id);
+        const state = await workflowRunState(sql, launched.run_id);
         if (state !== "active") return true;
         const gates = await listRunGates(oakridge.base_url, launched.run_id);
         const briefGates = gates.filter((gate) => gate.stage_name === "brief_writer");
@@ -379,13 +281,13 @@ preV15DecisionScenario("scenario 1: approving a dependent brief first does not f
       timeout_ms: 30_000,
     });
 
-    expect(await workflowRunState(launched.run_id)).toBe("active");
+    expect(await workflowRunState(sql, launched.run_id)).toBe("active");
     const briefGatesAfterB = (await listRunGates(oakridge.base_url, launched.run_id)).filter((gate) => gate.stage_name === "brief_writer");
     expect(briefGatesAfterB).toHaveLength(6);
-    const buildUnitsAfterB = await buildUnitRows(launched.run_id);
+    const buildUnitsAfterB = await buildUnitRows(sql, launched.run_id);
     expect(buildUnitsAfterB).toHaveLength(1);
     expect(buildUnitsAfterB[0]?.unit_id).toBe("rollout");
-    expect(await countBuildOrdersInState(launched.run_id, "started")).toBe(0);
+    expect(await countBuildOrdersInState(sql, launched.run_id, "started")).toBe(0);
     const detailAfterB = await readRun(oakridge.base_url, launched.run_id);
     expect(detailAfterB.status).not.toBe("failed");
     expect(detailAfterB.status).not.toBe("complete");
@@ -405,10 +307,10 @@ preV15DecisionScenario("scenario 1: approving a dependent brief first does not f
 
     expect(await buildUnitState(launched.run_id, "versioning")).toBe("satisfied");
     expect(await buildUnitState(launched.run_id, "rollout")).toBe("satisfied");
-    const versioningSatisfiedAt = await transitionVersion(launched.run_id, "unit_satisfied", "build", "versioning");
-    const rolloutStartedAt = await transitionVersion(launched.run_id, "work_started", "build", "rollout");
+    const versioningSatisfiedAt = await transitionVersion(sql, launched.run_id, "unit_satisfied", "build", "versioning");
+    const rolloutStartedAt = await transitionVersion(sql, launched.run_id, "work_started", "build", "rollout");
     expect(rolloutStartedAt).toBeGreaterThan(versioningSatisfiedAt);
-    expect(await workflowRunState(launched.run_id)).toBe("active");
+    expect(await workflowRunState(sql, launched.run_id)).toBe("active");
     const briefGatesAfterC = (await listRunGates(oakridge.base_url, launched.run_id)).filter((gate) => gate.stage_name === "brief_writer");
     expect(briefGatesAfterC).toHaveLength(5);
     await assertQuietAsk(sql, launched.run_id);
@@ -456,12 +358,12 @@ preV15DecisionScenario("scenario 4: approving one brief starts exactly one build
     // race-free, whatever state it has moved on to by the time this settles.
     await driveRun(oakridge.base_url, agent, launched, {
       decide,
-      until: async () => (await transitionCountFor(launched.run_id, "work_started", "build", "docs")) > 0 ? true : null,
+      until: async () => (await transitionCountFor(sql, launched.run_id, "work_started", "build", "docs")) > 0 ? true : null,
       timeout_ms: 60_000,
     });
 
-    expect(await closedGateWaitCount(launched.run_id, "brief_writer")).toBe(1);
-    expect(await transitionCountFor(launched.run_id, "work_started", "build", "docs")).toBe(1);
+    expect(await closedGateWaitCount(sql, launched.run_id, "brief_writer")).toBe(1);
+    expect(await transitionCountFor(sql, launched.run_id, "work_started", "build", "docs")).toBe(1);
     const briefGates = (await listRunGates(oakridge.base_url, launched.run_id)).filter((gate) => gate.stage_name === "brief_writer");
     expect(briefGates).toHaveLength(6);
     await assertQuietAsk(sql, launched.run_id);
@@ -520,12 +422,12 @@ preV15DecisionScenario("scenario 5: an unknown dependency at close fails the run
   try {
     await driveRun(oakridge.base_url, agent, launched, {
       decide: () => "approve",
-      until: async () => (await workflowRunState(launched.run_id)) !== "active" ? true : null,
+      until: async () => (await workflowRunState(sql, launched.run_id)) !== "active" ? true : null,
       timeout_ms: 60_000,
     });
 
-    expect(await workflowRunState(launched.run_id)).toBe("failed");
-    const outcome = await runOutcome(launched.run_id);
+    expect(await workflowRunState(sql, launched.run_id)).toBe("failed");
+    const outcome = await runOutcome(sql, launched.run_id);
     expect(outcome?.kind).toBe("failed");
     expect(outcome && "code" in outcome ? outcome.code : null).toBe("contradiction");
 
@@ -565,12 +467,12 @@ preV15DecisionScenario("scenario 6a: a failed run strands its open gates visibly
   try {
     await driveRun(oakridge.base_url, agent, launched, {
       decide,
-      until: async () => (await workflowRunState(launched.run_id)) !== "active" ? true : null,
+      until: async () => (await workflowRunState(sql, launched.run_id)) !== "active" ? true : null,
       timeout_ms: 60_000,
     });
 
-    expect(await workflowRunState(launched.run_id)).toBe("failed");
-    const outcome = await runOutcome(launched.run_id);
+    expect(await workflowRunState(sql, launched.run_id)).toBe("failed");
+    const outcome = await runOutcome(sql, launched.run_id);
     expect(outcome?.kind).toBe("failed");
     expect(outcome && "code" in outcome ? outcome.code : null).toBe("contradiction");
     const transitions = await materializationFailedTransitions(launched.run_id);
@@ -620,7 +522,7 @@ preV15DecisionScenario("scenario 6a: a failed run strands its open gates visibly
  * run lands `cancelled`, and every one of those stranded gates disappears
  * from `GET /runs/:id/gates`.
  */
-preV15DecisionScenario("scenario 6b: cancelling a run with an open gate wait clears its stranded gates", async () => {
+e2e("scenario 6b: cancelling a run with an open gate wait clears its stranded gates", async () => {
   const agent = scriptedAgentScenario({ cohorts: SEVEN_BRIEF_PLAN });
   useScenario(agent);
   const launched = await launchRun(oakridge.base_url, oakridge.definition.id, runContext(oakridge.base_url, oakridge.repository.path));
@@ -628,7 +530,7 @@ preV15DecisionScenario("scenario 6b: cancelling a run with an open gate wait cle
   try {
     await driveRun(oakridge.base_url, agent, launched, {
       decide: (gate) => gate.stage_name === "brief_writer" ? null : "approve",
-      until: async () => (await openBriefGateUnitIds(launched.run_id)).size === 7 ? true : null,
+      until: async () => (await openBriefGateUnitIds(sql, launched.run_id)).size === 7 ? true : null,
       timeout_ms: 60_000,
     });
     const cancelResponse = await fetch(`${oakridge.base_url}/workflow_runs/${launched.run_id}/cancel`, { method: "POST" });
@@ -638,6 +540,22 @@ preV15DecisionScenario("scenario 6b: cancelling a run with an open gate wait cle
     await awaitCondition("the run to be cancelled", async () => (await readRun(oakridge.base_url, launched.run_id)).status === "cancelled" ? true : null, 15_000);
     expect(await listRunGates(oakridge.base_url, launched.run_id)).toHaveLength(0);
     expect((await readRun(oakridge.base_url, launched.run_id)).status).toBe("cancelled");
+    expect(await attemptsAfterCancel(sql, launched.run_id)).toBe(0);
+    const cancelledCohorts = await sql.query<{ readonly id: string; readonly durable_version: string }>(
+      "SELECT id::text,durable_version::text FROM oakridge.cohort WHERE run_id=$1 AND status='cancelled' ORDER BY id LIMIT 1",
+      [launched.run_id]);
+    const cancelledCohort = cancelledCohorts[0];
+    if (!cancelledCohort) throw new Error("scenario 6b stopped here: cancellation left no cancelled cohort");
+    const records = new PostgresRunRecordRepository(sql, new PostgresRunRecordWriter(sql, createDevFlowAdapterRegistry()));
+    const lateDecision = { run_id: launched.run_id, cohort_id: cancelledCohort.id as CohortId,
+      expected_version: Number(cancelledCohort.durable_version),
+      change: { status: "active" as const, blocked_reason: null, next_actor: "agent" as const, outcome: null },
+      stage_data: {}, effect: { kind: "none" as const }, launch_reason: "operator" as const,
+      actor: "acceptance-late-decision", recorded_at: new Date().toISOString() };
+    await records.record_cohort_event(lateDecision);
+    const afterLateDecision = await sql.query<{ readonly status: string }>(
+      "SELECT status::text FROM oakridge.cohort WHERE id=$1", [cancelledCohort.id]);
+    expect(afterLateDecision[0]?.status).toBe("cancelled");
   } finally {
     agent.releaseAll();
   }
@@ -689,7 +607,7 @@ preV15DecisionScenario("scenario 7: rejecting one brief, retrying its unit, and 
     // Phase A — all seven briefs parked at their gates.
     await driveRun(oakridge.base_url, agent, launched, {
       decide,
-      until: async (): Promise<boolean | null> => (await openBriefGateUnitIds(launched.run_id)).size === 7 ? true : null,
+      until: async (): Promise<boolean | null> => (await openBriefGateUnitIds(sql, launched.run_id)).size === 7 ? true : null,
       timeout_ms: 60_000,
     });
     const unit = await briefWriterUnit();
@@ -702,7 +620,7 @@ preV15DecisionScenario("scenario 7: rejecting one brief, retrying its unit, and 
     const rejectedArtifactId = rolloutGate.artifact_revision_id;
     const launchedBeforeReject = agent.launched.size;
     await decideGate(oakridge.base_url, rejectedArtifactId, "request_revision");
-    expect(await openBriefGateUnitIds(launched.run_id)).toEqual(new Set(siblings));
+    expect(await openBriefGateUnitIds(sql, launched.run_id)).toEqual(new Set(siblings));
     expect(agent.launched.size).toBe(launchedBeforeReject);
     expect(await rolloutSlot(unit.run_unit_id)).toEqual({ state: "invalidated", artifact_revision_id: rejectedArtifactId });
 
@@ -715,10 +633,10 @@ preV15DecisionScenario("scenario 7: rejecting one brief, retrying its unit, and 
     for (const sibling of siblings) approvedBriefs.add(sibling);
     await driveRun(oakridge.base_url, agent, launched, {
       decide,
-      until: async (): Promise<boolean | null> => (await openBriefGateUnitIds(launched.run_id)).size === 0 ? true : null,
+      until: async (): Promise<boolean | null> => (await openBriefGateUnitIds(sql, launched.run_id)).size === 0 ? true : null,
       timeout_ms: 60_000,
     });
-    expect(await workflowRunState(launched.run_id)).toBe("active");
+    expect(await workflowRunState(sql, launched.run_id)).toBe("active");
 
     // Phase D — retry. Created once; the same key replays the same work order.
     const accepted = await retry(unit.stage_instance_id, "scenario-7-retry-1");
@@ -733,10 +651,10 @@ preV15DecisionScenario("scenario 7: rejecting one brief, retrying its unit, and 
     approvedBriefs.add("rollout");
     await driveRun(oakridge.base_url, agent, launched, {
       decide,
-      until: async (): Promise<boolean | null> => (await workflowRunState(launched.run_id)) === "succeeded" ? true : null,
+      until: async (): Promise<boolean | null> => (await workflowRunState(sql, launched.run_id)) === "succeeded" ? true : null,
       timeout_ms: 240_000,
     });
-    expect(await workflowRunState(launched.run_id)).toBe("succeeded");
+    expect(await workflowRunState(sql, launched.run_id)).toBe("succeeded");
 
     const retryRequest = agent.launched.get(retried.work_order.id);
     if (!retryRequest) throw new Error("scenario 7 stopped here: the retry work order was never launched");
@@ -778,7 +696,7 @@ preV15DecisionScenario("scenario 8: a missing prompt template stalls the ask, no
     // brief_writer is reached at all; no brief itself is approved yet.
     await driveRun(oakridge.base_url, agent, launched, {
       decide: (gate) => gate.stage_name === "brief_writer" ? null : "approve",
-      until: async () => (await openBriefGateUnitIds(launched.run_id)).size === 7 ? true : null,
+      until: async () => (await openBriefGateUnitIds(sql, launched.run_id)).size === 7 ? true : null,
       timeout_ms: 60_000,
     });
 
@@ -794,8 +712,8 @@ preV15DecisionScenario("scenario 8: a missing prompt template stalls the ask, no
       await Bun.sleep(8_000);
       const afterWait = await readRunRecordFingerprint(sql, launched.run_id);
       expect(afterWait).toEqual(afterApproval);
-      expect(await workflowRunState(launched.run_id)).toBe("active");
-      const stage = await buildStageRow(launched.run_id);
+      expect(await workflowRunState(sql, launched.run_id)).toBe("active");
+      const stage = await buildStageRow(sql, launched.run_id);
       if (stage) expect(await countBuildUnits(launched.run_id)).toBe(0); // "no rows or no units"
       else expect(stage).toBeNull();
 
@@ -812,11 +730,11 @@ preV15DecisionScenario("scenario 8: a missing prompt template stalls the ask, no
       // "satisfied" between one poll and the next.
       await driveRun(oakridge.base_url, agent, launched, {
         decide: () => null,
-        until: async () => (await transitionCountFor(launched.run_id, "work_started", "build", "versioning")) > 0 ? true : null,
+        until: async () => (await transitionCountFor(sql, launched.run_id, "work_started", "build", "versioning")) > 0 ? true : null,
         timeout_ms: 120_000,
       });
-      expect(await transitionCountFor(launched.run_id, "work_started", "build", "versioning")).toBe(1);
-      expect(await workflowRunState(launched.run_id)).toBe("active");
+      expect(await transitionCountFor(sql, launched.run_id, "work_started", "build", "versioning")).toBe(1);
+      expect(await workflowRunState(sql, launched.run_id)).toBe("active");
     } finally {
       if (!restored) await writeFile(buildPromptPath, buildPromptBackup).catch(() => undefined);
     }
@@ -836,7 +754,7 @@ preV15DecisionScenario("scenario 8: a missing prompt template stalls the ask, no
  * operation for the v2 run record remains a deferred slice; this scenario
  * does not stand in for one.
  */
-preV15DecisionScenario("scenario 9: an operator edit on a gated artifact is refused through the real route", async () => {
+e2e("scenario 9: an operator edit on a gated artifact is refused through the real route", async () => {
   const agent = scriptedAgentScenario({ cohorts: SEVEN_BRIEF_PLAN });
   useScenario(agent);
   const launched = await launchRun(oakridge.base_url, oakridge.definition.id, runContext(oakridge.base_url, oakridge.repository.path));
@@ -844,7 +762,7 @@ preV15DecisionScenario("scenario 9: an operator edit on a gated artifact is refu
   try {
     await driveRun(oakridge.base_url, agent, launched, {
       decide: (gate) => gate.stage_name === "brief_writer" ? null : "approve",
-      until: async () => (await openBriefGateUnitIds(launched.run_id)).size >= 1 ? true : null,
+      until: async () => (await openBriefGateUnitIds(sql, launched.run_id)).size >= 1 ? true : null,
       timeout_ms: 60_000,
     });
 

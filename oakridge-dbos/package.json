@@ -7,7 +7,7 @@
     "migrate": "bun run src/migrate.ts",
     "start": "bun run src/main.ts",
     "test": "bun run test:unit",
-    "test:unit": "find src tests -name '*.test.ts' ! -name 'dev-flow-e2e.test.ts' -exec bun test {} \\;",
+    "test:unit": "find src tests -name '*.test.ts' ! -name 'dev-flow-e2e.test.ts' -print0 | xargs -0 -n1 bun test",
     "test:acceptance": "OAKRIDGE_ACCEPTANCE=1 bun test tests/dev-flow-e2e.test.ts",
     "validate:definitions": "bun run src/validation/validate-definition-files.ts",
     "typecheck": "bunx tsc --noEmit -p tsconfig.json"
