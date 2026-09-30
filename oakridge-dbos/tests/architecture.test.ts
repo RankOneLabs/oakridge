@@ -125,10 +125,17 @@ test("core never reads final integration branch or merge policy", async () => {
  * exists to catch. Keying on the bare `SET status=` was the other failure: it
  * flagged a closed wait and a resolved artifact thread, neither of which is a
  * lifecycle owner.
+ *
+ * `UPDATE` only, and the `SET` has to follow the table directly — at most an
+ * alias between them. No lifecycle status is written by an upsert, and allowing
+ * `INSERT INTO` with an unbounded bridge to a later `SET` let one template
+ * literal's insert pair with a different statement's `SET status=` and flag the
+ * file. The clause body may not cross into another statement either.
  */
 const LIFECYCLE_TABLES = ["workflow_run", "stage_instance", "cohort", "attempt", "session"];
 const LIFECYCLE_STATUS_WRITE = new RegExp(
-  `(?:UPDATE|INSERT\\s+INTO)\\s+oakridge\\.(?:${LIFECYCLE_TABLES.join("|")})\\b[^;\`]*?\\bSET\\b[^;\`]*?\\bstatus\\s*=`,
+  `UPDATE\\s+oakridge\\.(?:${LIFECYCLE_TABLES.join("|")})\\b(?:\\s+\\w+)?\\s+SET\\b`
+  + "(?:(?!UPDATE|INSERT|DELETE)[^;`])*?\\bstatus\\s*=",
   "is");
 
 test("lifecycle status SQL has one writer", async () => {
@@ -149,6 +156,13 @@ test("the lifecycle rule catches a literal status write to a cohort", () => {
   expect(LIFECYCLE_STATUS_WRITE.test("UPDATE oakridge.cohort SET status='cancelled' WHERE id=$1")).toBe(true);
   expect(LIFECYCLE_STATUS_WRITE.test("UPDATE oakridge.attempt attempt SET ended_at=now(),status='failed'")).toBe(true);
   expect(LIFECYCLE_STATUS_WRITE.test("UPDATE oakridge.session SET adapter_reference=$2::jsonb WHERE id=$1")).toBe(false);
+});
+
+test("the lifecycle rule does not pair one statement's table with another's status write", () => {
+  expect(LIFECYCLE_STATUS_WRITE.test(
+    "INSERT INTO oakridge.attempt (id) VALUES ($1)\nUPDATE oakridge.wait_gate SET status='closed'")).toBe(false);
+  expect(LIFECYCLE_STATUS_WRITE.test(
+    "UPDATE oakridge.attempt SET ended_at=now()\nUPDATE oakridge.artifact_thread SET status=$2")).toBe(false);
 });
 
 test("each cohort has one stable machine address", () => {

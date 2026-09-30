@@ -18,12 +18,13 @@ import {
   type BuildCohortEvent,
   type BuildCohortMachine,
   type BuildCohortState,
+  type BuildGateName,
   type BuildSessionRole,
 } from "./dev-flow-build";
 import type { StageInputSet } from "../decision/commands";
 import type { CompiledStageContract } from "../domain/compiled-workflow";
 import type { DelegatedSessionDefinitionConfig } from "../domain/delegated-session";
-import { selectArtifactGateDisposition, selectBuiltInGateDisposition } from "../domain/gates";
+import { selectArtifactGateDisposition, selectBuiltInGateDisposition, type GateDisposition } from "../domain/gates";
 import type { AttemptId, JsonValue, RunTransitionId, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "../domain/primitives";
 import { hasOwn, readOwn } from "../domain/records";
 import type { CohortMachineState, DecidedCohortGate, OpenCohort } from "../domain/run-record";
@@ -42,6 +43,19 @@ interface DevFlowCohortStageData {
   readonly artifact: JsonValue;
   /** The build machine's own state, nested so it cannot collide with the item. */
   readonly build_state: BuildCohortState;
+  /**
+   * Every gate decision this driver has already translated into an event.
+   *
+   * Durable, and a set, because translation is the driver's own job and a closed
+   * wait stays closed: without this record every later step reads the same
+   * decision as new. It cannot be inferred from the machine's phase. A `revise`
+   * decision read at any phase but `builder_active` used to translate into
+   * `build_review_revision_requested` forever — the machine has no branch for it
+   * outside `build_review`, so it answered `recorded_only`, which still commits,
+   * and `cohortMachineWorkflow` skips its `recv` after a commit. One
+   * `record_cohort_event` write per pass, unbounded.
+   */
+  readonly consumed_gate_wait_ids: readonly string[];
 }
 
 const isObject = (value: JsonValue | undefined): value is { readonly [key: string]: JsonValue } =>
@@ -66,23 +80,31 @@ const requiredBuildSet = (contract: CompiledStageContract): readonly string[] =>
   return gated.length > 0 ? gated : contract.outputs.map((output) => output.name);
 };
 
+const consumedGateWaitIds = (stored: JsonValue | undefined): readonly string[] => {
+  if (!isObject(stored) || !Array.isArray(stored.consumed_gate_wait_ids)) return [];
+  return stored.consumed_gate_wait_ids.filter((value): value is string => typeof value === "string");
+};
+
 const stageDataOf = (state: CohortMachineState, contract: CompiledStageContract): DevFlowCohortStageData => {
   const stored = state.stage_data;
   if (isObject(stored) && hasOwn(stored, "build_state") && isObject(stored.build_state)) {
     return { unit_id: typeof stored.unit_id === "string" ? stored.unit_id : state.cohort_key,
       artifact: readOwn(stored, "artifact") ?? null,
-      build_state: stored.build_state as unknown as BuildCohortState };
+      build_state: stored.build_state as unknown as BuildCohortState,
+      consumed_gate_wait_ids: consumedGateWaitIds(stored) };
   }
   return {
     unit_id: isObject(stored) && typeof stored.unit_id === "string" ? stored.unit_id : state.cohort_key,
     artifact: isObject(stored) ? readOwn(stored, "artifact") ?? null : null,
     build_state: initialBuildCohortState(requiredBuildSet(contract)),
+    consumed_gate_wait_ids: consumedGateWaitIds(stored),
   };
 };
 
 const encodeStageData = (data: DevFlowCohortStageData): JsonValue => ({
   unit_id: data.unit_id, artifact: data.artifact,
   build_state: data.build_state as unknown as JsonValue,
+  consumed_gate_wait_ids: [...data.consumed_gate_wait_ids],
 });
 
 /** One revision this cohort has published, whether or not a gate has accepted it. */
@@ -131,10 +153,75 @@ const publishedRevisions = (state: CohortMachineState, contract: CompiledStageCo
 const publishedBuildRevision = (published: readonly PublishedRevision[]): string =>
   published.map((revision) => revision.artifact_id).sort().join("+");
 
+/** The gate name a declared output parks on, or null when it releases immediately. */
+const gateNameOf = (contract: CompiledStageContract, output_name: string | null): string | null => {
+  const release = contract.outputs.find((output) => output.name === output_name)?.release;
+  return release !== undefined && release.kind === "gate" ? release.gate_name : null;
+};
+
+const BUILD_GATE_NAMES: readonly BuildGateName[] = ["build_review", "assessment_review"];
+
+/** One gate's verdict, once every wait declared under its name has answered. */
+interface SettledGate {
+  readonly gate_name: BuildGateName;
+  readonly disposition: GateDisposition;
+  /** Every decision the verdict speaks for, so all of them are consumed together. */
+  readonly wait_ids: readonly string[];
+}
+
+/**
+ * The gate whose review is complete and has not been translated yet.
+ *
+ * A gate *name* is one review, and `dev_flow_v15` names `build_review` on two
+ * outputs — but a wait is opened per published artifact, so that one review is
+ * two waits. It settles only when every one of them has answered. Translating the
+ * first answer alone launched the assessor while the second artifact was still
+ * parked, and the cohort then projected `active`/`agent`, so the gate the operator
+ * was still holding disappeared from the surface.
+ *
+ * Any `revise` among the answers sends the work back: a review with one rejection
+ * is a rejected review, whatever its siblings said. A `terminal` action has no
+ * route out of a build gate — `selectBuildGateEvent` refuses it — so a group
+ * carrying one stays unsettled rather than being translated into something the
+ * machine would only record.
+ */
+const settledGate = (
+  state: CohortMachineState,
+  contract: CompiledStageContract,
+  consumed: readonly string[],
+): SettledGate | null => {
+  const dispositionOf = (gate: DecidedCohortGate): GateDisposition =>
+    selectArtifactGateDisposition(
+      contract.outputs.find((output) => output.name === gate.output_name)?.artifact_type ?? "",
+      selectBuiltInGateDisposition(gate.action));
+  const unanswered = new Set(state.open_waits.flatMap((wait) =>
+    wait.kind === "gate" ? [gateNameOf(contract, wait.output_name) ?? ""] : []));
+  const pending = state.decided_gates.filter((gate) => !consumed.includes(gate.wait_id));
+  for (const gate of pending) {
+    const name = BUILD_GATE_NAMES.find((candidate) => candidate === gateNameOf(contract, gate.output_name));
+    if (name === undefined || unanswered.has(name)) continue;
+    const answers = pending.filter((candidate) => gateNameOf(contract, candidate.output_name) === name);
+    const dispositions = answers.map(dispositionOf);
+    if (dispositions.includes("revise")) {
+      return { gate_name: name, disposition: "revise", wait_ids: answers.map((answer) => answer.wait_id) };
+    }
+    if (dispositions.every((disposition) => disposition === "release")) {
+      return { gate_name: name, disposition: "release", wait_ids: answers.map((answer) => answer.wait_id) };
+    }
+  }
+  return null;
+};
+
+/** One event, and the gate decisions committing it discharges. */
+interface NextFact {
+  readonly event: BuildCohortEvent;
+  readonly consumed_gate_wait_ids: readonly string[];
+}
+
 /**
  * The next fact this cohort owes the machine, read from committed rows only.
  *
- * Order matters and is deliberate: a decided gate is the operator's answer and
+ * Order matters and is deliberate: a settled gate is the operator's answer and
  * outranks anything an agent has since published, and a published artifact
  * outranks the stage's own start. Exactly one event per step keeps each
  * transition attributable to one fact.
@@ -143,32 +230,19 @@ const nextEvent = (
   state: CohortMachineState,
   build: BuildCohortState,
   contract: CompiledStageContract,
-): BuildCohortEvent | null => {
-  const consumedGate = (gate: DecidedCohortGate): boolean => {
-    // A release has been consumed once the phase has moved past the review it
-    // decided; a revision request, once the builder is active again.
-    const disposition = selectArtifactGateDisposition(
-      contract.outputs.find((output) => output.name === gate.output_name)?.artifact_type ?? "",
-      selectBuiltInGateDisposition(gate.action));
-    if (disposition === "release") {
-      return gate.output_name === "assessment" || build.phase !== "build_review";
-    }
-    return build.phase === "builder_active";
-  };
-  const pendingGate = state.decided_gates.find((gate) => !consumedGate(gate));
-  if (pendingGate) {
-    const gateName = build.phase === "assessment_review" ? "assessment_review" as const : "build_review" as const;
-    const translated = selectBuildGateEvent(gateName,
-      selectArtifactGateDisposition(
-        contract.outputs.find((output) => output.name === pendingGate.output_name)?.artifact_type ?? "",
-        selectBuiltInGateDisposition(pendingGate.action)));
-    if (translated.ok) return translated.value;
+  consumed: readonly string[],
+): NextFact | null => {
+  const settled = settledGate(state, contract, consumed);
+  if (settled) {
+    const translated = selectBuildGateEvent(settled.gate_name, settled.disposition);
+    if (translated.ok) return { event: translated.value, consumed_gate_wait_ids: settled.wait_ids };
   }
 
   const published = publishedRevisions(state, contract);
   const assessment = published.find((revision) => revision.artifact_type === "dev.assessment");
   if (assessment && build.assessment_artifact_id !== assessment.artifact_id) {
-    return { kind: "assessment_artifact_recorded", artifact_id: assessment.artifact_id };
+    return { event: { kind: "assessment_artifact_recorded", artifact_id: assessment.artifact_id },
+      consumed_gate_wait_ids: [] };
   }
 
   // The build role's own outputs, under one revision. An output already recorded
@@ -180,10 +254,10 @@ const nextEvent = (
     !(build.accepted_revision === revision && build.accepted_build_set.includes(name)));
   const owedRevision = owed === undefined ? undefined : buildOutputs.find((candidate) => candidate.output_name === owed);
   if (owed !== undefined && owedRevision) {
-    return { kind: "build_artifact_recorded", revision, output_name: owed };
+    return { event: { kind: "build_artifact_recorded", revision, output_name: owed }, consumed_gate_wait_ids: [] };
   }
 
-  if (build.phase === "pending") return { kind: "stage_started" };
+  if (build.phase === "pending") return { event: { kind: "stage_started" }, consumed_gate_wait_ids: [] };
   return null;
 };
 
@@ -211,7 +285,7 @@ const openDevFlowCohorts = (
     id: cohortIdFor(stage_instance_id, entry.cohort_key),
     cohort_key: entry.cohort_key,
     stage_data: encodeStageData({ unit_id: entry.cohort_key, artifact: entry.item,
-      build_state: initialBuildCohortState(requiredBuildSet(contract)) }),
+      build_state: initialBuildCohortState(requiredBuildSet(contract)), consumed_gate_wait_ids: [] }),
   }));
 
 export const createDevFlowCohortDriver = (dependencies: DevFlowCohortDriverDependencies): CohortMachineDriver => ({
@@ -223,13 +297,15 @@ export const createDevFlowCohortDriver = (dependencies: DevFlowCohortDriverDepen
   step(context: CohortStepContext): Promise<CohortStepDecision | null> {
     const contract = contractOf(context.stage_contract);
     const stageData = stageDataOf(context.state, contract);
-    const event = nextEvent(context.state, stageData.build_state, contract);
-    return event === null ? Promise.resolve(null) : applyOne(context, event, dependencies);
+    const fact = nextEvent(context.state, stageData.build_state, contract, stageData.consumed_gate_wait_ids);
+    return fact === null ? Promise.resolve(null) : applyOne({ context, dependencies, ...fact });
   },
 
   apply_event(context: CohortStepContext, event: JsonValue): Promise<CohortStepDecision | null> {
     const decoded = decodeBuildCohortEvent(event);
-    return decoded === null ? Promise.resolve(null) : applyOne(context, decoded, dependencies);
+    return decoded === null
+      ? Promise.resolve(null)
+      : applyOne({ context, dependencies, event: decoded, consumed_gate_wait_ids: [] });
   },
 });
 
@@ -258,23 +334,32 @@ const decodeBuildCohortEvent = (value: JsonValue): BuildCohortEvent | null => {
   return null;
 };
 
+/** One event to apply, and what committing it settles. */
+interface ApplyOneInput {
+  readonly context: CohortStepContext;
+  readonly event: BuildCohortEvent;
+  readonly dependencies: DevFlowCohortDriverDependencies;
+  readonly consumed_gate_wait_ids: readonly string[];
+}
+
 /**
  * Applies exactly one event and shapes the transition it implies.
  *
  * `recorded_only` still commits: the machine's state changed, and the cohort's
  * own durable version is what makes that change observable to the next reader —
- * a fact recorded without a phase move is still a fact.
+ * a fact recorded without a phase move is still a fact. That is also why the
+ * consumed gate ids travel with the transition rather than being derived later:
+ * a translation that commits without recording what it discharged is a
+ * translation the next step makes again, and `cohortMachineWorkflow` asks again
+ * immediately after a commit.
  */
-const applyOne = async (
-  context: CohortStepContext,
-  event: BuildCohortEvent,
-  dependencies: DevFlowCohortDriverDependencies,
-): Promise<CohortStepDecision> => {
+const applyOne = async ({ context, event, dependencies, consumed_gate_wait_ids }: ApplyOneInput): Promise<CohortStepDecision> => {
   const contract = contractOf(context.stage_contract);
   const stageData = stageDataOf(context.state, contract);
   const machine = buildMachineFor(contract, await dependencies.load_prompt_bundle(context.state.run_id));
   const applied = applyBuildCohortEvent(machine, stageData.build_state, event);
-  const nextStageData: DevFlowCohortStageData = { ...stageData, build_state: applied.state };
+  const nextStageData: DevFlowCohortStageData = { ...stageData, build_state: applied.state,
+    consumed_gate_wait_ids: [...stageData.consumed_gate_wait_ids, ...consumed_gate_wait_ids] };
   const launch = applied.launch;
   return {
     event: {

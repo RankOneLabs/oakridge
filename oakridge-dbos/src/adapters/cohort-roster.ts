@@ -46,6 +46,13 @@ export interface CohortRosterEntry {
  * A fan-out whose binding does not resolve to an array is an operational
  * failure, not an empty roster: a stage that quietly opened no cohorts would
  * complete immediately and let the run carry on past work nobody did.
+ *
+ * So is a roster with a repeated key. `cohortIdFor` is a function of the key, so
+ * two items sharing one resolve to a single cohort row and the stage silently
+ * fans out over fewer items than it was given. The keys are agent-supplied —
+ * a collecting output's `Output-Collection-Key` becomes the envelope's `unit_id`
+ * and that is what `unit_id_path` reads — so a producer that published two items
+ * without distinguishing them has to be told, not absorbed.
  */
 export const resolveCohortRoster = (
   contract: CompiledStageContract,
@@ -57,8 +64,15 @@ export const resolveCohortRoster = (
   const resolved = resolveBindingValue(materialization.over, { inputs, context: run_context, item: null });
   if (!resolved.ok) throw new Error(`stage '${contract.stage_key}' fan-out did not resolve: ${resolved.error.detail}`);
   if (!Array.isArray(resolved.value)) throw new Error(`stage '${contract.stage_key}' fan-out did not resolve to an array`);
-  return resolved.value.map((item, index) => {
+  const roster = resolved.value.map((item, index) => {
     const key = readJsonPointer(item, materialization.unit_id_path);
     return { cohort_key: typeof key === "string" && key.length > 0 ? key : String(index), item };
   });
+  const repeated = roster.map((entry) => entry.cohort_key)
+    .filter((key, index, keys) => keys.indexOf(key) !== index);
+  if (repeated.length > 0) {
+    throw new Error(`stage '${contract.stage_key}' fan-out resolved ${roster.length} items onto a repeated cohort key: `
+      + `${[...new Set(repeated)].sort().join(", ")}`);
+  }
+  return roster;
 };

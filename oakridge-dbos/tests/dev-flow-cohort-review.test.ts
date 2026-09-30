@@ -90,6 +90,133 @@ const contextOf = (state: CohortMachineState, contract: CompiledStageContract): 
 const openWait = (wait_id: string, output_name: string, artifact_id: string): CohortMachineState["open_waits"][number] =>
   ({ wait_id: wait_id as WaitId, kind: "gate", output_name, artifact_id: artifact_id as ArtifactId });
 
+const BUILD_WAIT = "11111111-1111-4111-8111-000000000001";
+const SUMMARY_WAIT = "11111111-1111-4111-8111-000000000002";
+const BUILD_ARTIFACT = "aaaaaaaa-1111-4111-8111-000000000001";
+const SUMMARY_ARTIFACT = "aaaaaaaa-1111-4111-8111-000000000002";
+
+const decidedGate = (wait_id: string, output_name: string, artifact_id: string, action: string): CohortMachineState["decided_gates"][number] =>
+  ({ wait_id: wait_id as WaitId, output_name, action, artifact_id: artifact_id as ArtifactId,
+    accepted: action === "approve", decided_at: "2026-09-29T00:00:00.000Z" });
+
+/**
+ * A cohort that has published both required outputs and had its pull request
+ * verified: parked at `build_review`, with a wait open per published artifact.
+ */
+const parkedAtBuildReview = async (): Promise<{ readonly state: CohortMachineState; readonly contract: CompiledStageContract;
+  readonly driver: ReturnType<typeof driverFor> }> => {
+  const { contract, bundle } = await buildStage();
+  const driver = driverFor(bundle);
+  const cohorts = await driver.open_cohorts({ run_id: RUN_ID, stage_instance_id: STAGE_ID,
+    stage_contract: contract as unknown as JsonValue, run_context: {}, inputs: BUILD_INPUTS });
+  let state: CohortMachineState = {
+    run_id: RUN_ID, stage_instance_id: STAGE_ID, stage_key: "build",
+    cohort_id: cohorts[1]!.id, cohort_key: "web", status: "pending", blocked_reason: null, next_actor: "core",
+    durable_version: 0, stage_data: cohorts[1]!.stage_data, attempt_count: 0,
+    accepted_outputs: [], open_waits: [], decided_gates: [], latest_unfinished_attempt_id: null,
+  };
+  state = committed(state, (await driver.step(contextOf(state, contract)))!);
+  state = { ...state, open_waits: [
+    openWait(BUILD_WAIT, "build_result", BUILD_ARTIFACT),
+    openWait(SUMMARY_WAIT, "pr_summary", SUMMARY_ARTIFACT)] };
+  for (let recorded = await driver.step(contextOf(state, contract)); recorded !== null;
+    recorded = await driver.step(contextOf(state, contract))) {
+    state = committed(state, recorded);
+  }
+  const verified = await driver.apply_event(contextOf(state, contract), { kind: "pull_request_verified",
+    revision: buildStateOf(state).accepted_revision as string, pull_request_url: "https://example.test/pull/7" });
+  state = committed(state, verified!);
+  expect(buildStateOf(state).phase).toBe("build_review");
+  return { state, contract, driver };
+};
+
+/**
+ * `build_review` names two outputs, and a wait is opened per published artifact,
+ * so one review is two waits. Answering one of them used to translate the whole
+ * review: approving `build_result` launched the assessor while `pr_summary` was
+ * still parked, and the cohort then projected `active`/`agent`, so the gate the
+ * operator was still holding vanished from the surface.
+ */
+test("a build review is not settled until every wait under its gate name has answered", async () => {
+  const { state: parked, contract, driver } = await parkedAtBuildReview();
+
+  const halfAnswered: CohortMachineState = { ...parked,
+    open_waits: [openWait(SUMMARY_WAIT, "pr_summary", SUMMARY_ARTIFACT)],
+    accepted_outputs: [{ artifact_id: BUILD_ARTIFACT as ArtifactId, artifact_type: "dev.build_result",
+      output_name: "build_result", unit_id: "web" as UnitId, body: {} }],
+    decided_gates: [decidedGate(BUILD_WAIT, "build_result", BUILD_ARTIFACT, "approve")] };
+  expect(await driver.step(contextOf(halfAnswered, contract))).toBeNull();
+  expect({ status: halfAnswered.status, blocked_reason: halfAnswered.blocked_reason, next_actor: halfAnswered.next_actor })
+    .toEqual({ status: "blocked", blocked_reason: "gate", next_actor: "operator" });
+
+  const bothApproved: CohortMachineState = { ...halfAnswered, open_waits: [],
+    accepted_outputs: [...halfAnswered.accepted_outputs,
+      { artifact_id: SUMMARY_ARTIFACT as ArtifactId, artifact_type: "dev.pr_summary",
+        output_name: "pr_summary", unit_id: "web" as UnitId, body: {} }],
+    decided_gates: [...halfAnswered.decided_gates, decidedGate(SUMMARY_WAIT, "pr_summary", SUMMARY_ARTIFACT, "approve")] };
+  const released = await driver.step(contextOf(bothApproved, contract));
+  expect(launchOf(released!)).toEqual(expect.objectContaining({ session_role: "assessment", launch_reason: "initial_assessment" }));
+  const assessing = committed(bothApproved, released!);
+  expect(buildStateOf(assessing).phase).toBe("assessor_active");
+  // Both decisions were consumed by the one translation, so the assessor is not
+  // launched a second time for the sibling's answer.
+  expect(await driver.step(contextOf(assessing, contract))).toBeNull();
+});
+
+/**
+ * A gate decision the driver cannot act on at the current phase must not be
+ * translated again on the next pass. `build_review_revision_requested` has no
+ * branch outside `build_review`, so the machine answers `recorded_only` — which
+ * still commits, and `cohortMachineWorkflow` skips its `recv` after a commit. A
+ * phase-derived notion of "already consumed" turned that into one
+ * `record_cohort_event` write per pass, without end.
+ */
+test("a revision requested on the sibling wait is translated once and then leaves a fixpoint", async () => {
+  const { state: parked, contract, driver } = await parkedAtBuildReview();
+
+  let state: CohortMachineState = { ...parked, open_waits: [],
+    accepted_outputs: [{ artifact_id: BUILD_ARTIFACT as ArtifactId, artifact_type: "dev.build_result",
+      output_name: "build_result", unit_id: "web" as UnitId, body: {} }],
+    decided_gates: [decidedGate(BUILD_WAIT, "build_result", BUILD_ARTIFACT, "approve"),
+      decidedGate(SUMMARY_WAIT, "pr_summary", SUMMARY_ARTIFACT, "request_revision")] };
+
+  // One rejection makes the whole review a rejection, whatever its sibling said.
+  const revised = await driver.step(contextOf(state, contract));
+  expect(launchOf(revised!)).toEqual(expect.objectContaining({ session_role: "build", launch_reason: "revision_after_build_review" }));
+  state = committed(state, revised!);
+  expect(buildStateOf(state).phase).toBe("builder_active");
+
+  // It converges, and it converges without launching anything else. The approved
+  // `build_result` is still this cohort's current revision, so the restarted
+  // builder is owed it once under the new publication — that is a bounded number
+  // of recorded facts, not a decision the driver keeps making.
+  const passes: string[] = [];
+  for (let pass = 0; pass < 8; pass += 1) {
+    const again = await driver.step(contextOf(state, contract));
+    if (again === null) break;
+    passes.push((again.event.effect as unknown as { readonly event: { readonly kind: string } }).event.kind);
+    expect(again.launch).toBeNull();
+    state = committed(state, again);
+  }
+  expect(passes).toEqual(["build_artifact_recorded"]);
+  expect(await driver.step(contextOf(state, contract))).toBeNull();
+});
+
+/**
+ * Two items resolving to one cohort key is a fan-out that silently shrinks:
+ * `cohortIdFor` is a function of the key, so both items open the same cohort row.
+ * The keys are agent-supplied — a collecting output's `Output-Collection-Key`
+ * becomes the envelope's `unit_id`, which is what `unit_id_path` reads.
+ */
+test("a fan-out over items sharing one cohort key is refused rather than collapsed", async () => {
+  const { contract, bundle } = await buildStage();
+  const driver = driverFor(bundle);
+  const open = driver.open_cohorts({ run_id: RUN_ID, stage_instance_id: STAGE_ID,
+    stage_contract: contract as unknown as JsonValue, run_context: {},
+    inputs: { ...BUILD_INPUTS, brief: [briefEnvelope("web"), briefEnvelope("web")] } });
+  await expect(open).rejects.toThrow(/repeated cohort key: web/);
+});
+
 test("a build cohort enters its review on publication, presents the gate, and relaunches the builder on request_revision", async () => {
   const { contract, bundle } = await buildStage();
   const driver = driverFor(bundle);
