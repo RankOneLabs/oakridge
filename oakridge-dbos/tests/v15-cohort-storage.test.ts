@@ -64,7 +64,7 @@ const STAGES: readonly { readonly id: StageInstanceId; readonly key: string; rea
 ];
 
 const scratches: ScratchDatabase[] = [];
-afterAll(async () => { for (const scratch of scratches) await scratch.drop(); });
+afterAll(async () => { for (const scratch of scratches) await scratch.drop(); }, 30_000);
 
 interface Prepared {
   readonly url: string;
@@ -275,6 +275,25 @@ test("a commit against a terminal cohort at its current version returns owner_te
       change: { status: "active", blocked_reason: null, next_actor: "agent", outcome: null },
       effect: { kind: "none" }, actor: "test", changed_at: "2026-09-29T01:00:00Z" });
     expect(committed).toMatchObject({ ok: false, error: { kind: "owner_terminal", status: "failed" } });
+  } finally { await prepared.sql.close(); }
+});
+
+test("a commit against a terminal stage at its current version returns owner_terminal", async () => {
+  const prepared = await prepare("oakridge_v15_terminal_stage_guard");
+  if (!prepared) return;
+  try {
+    await prepared.sql.query("UPDATE oakridge.stage_instance SET status='failed',ended_at=now() WHERE id=$1", [STAGE_ID]);
+    const writer = new PostgresRunRecordWriter(prepared.sql, createDevFlowAdapterRegistry());
+    const committed = await writer.commit({ run_id: RUN_ID, owner: { kind: "stage_instance", id: STAGE_ID },
+      expected_version: 0, launch_reason: "operator",
+      change: { status: "active", blocked_reason: null, next_actor: "agent", outcome: null },
+      effect: { kind: "none" }, actor: "test", changed_at: "2026-09-29T01:00:00Z" });
+    expect(committed).toMatchObject({ ok: false, error: { kind: "owner_terminal", status: "failed" } });
+    const rows = await prepared.sql.query<{ readonly status: string; readonly version: string; readonly transitions: string }>(
+      `SELECT status::text, durable_version::text AS version,
+        (SELECT count(*)::text FROM oakridge.run_transition WHERE owner_stage_instance_id=$1) AS transitions
+       FROM oakridge.stage_instance WHERE id=$1`, [STAGE_ID]);
+    expect(rows[0]).toEqual({ status: "failed", version: "0", transitions: "0" });
   } finally { await prepared.sql.close(); }
 });
 
