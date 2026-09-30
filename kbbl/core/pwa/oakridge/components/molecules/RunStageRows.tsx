@@ -53,9 +53,6 @@ interface RunUnitRowProps {
   unit: StageUnit;
   unitArtifacts: StageDetail["artifacts"];
   onSelectArtifact?: (artifactId: string) => void;
-  onAdmit: (unitId: string) => void;
-  admitting: boolean;
-  admissionError?: string;
   onRetry: (unitId: string) => void;
   retrying: boolean;
   retryError?: string;
@@ -67,11 +64,10 @@ interface RunUnitRowProps {
   };
 }
 
-export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelectArtifact, onAdmit, admitting, admissionError, onRetry, retrying, retryError, canRetry, confirmMerge }: RunUnitRowProps) {
+export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelectArtifact, onRetry, retrying, retryError, canRetry, confirmMerge }: RunUnitRowProps) {
   const blockedBy = unit.admission_blocked_by ?? [];
   const brief = selectCohortBrief(unit);
   const dependencies = brief?.depends_on ?? [];
-  const needsAdmission = unit.status === "pending" && unit.admission_required === true && unit.admitted !== true;
   return (
     <Fragment>
     <tr className={stageRowClass(unit.status)} data-testid="or-stage-row">
@@ -88,7 +84,6 @@ export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelect
           {unit.blocked_reason} · next: {unit.next_actor}
         </Chip>}
         {unit.gate && <Chip tone="warning">{unit.gate}</Chip>}
-        {unit.admission_required && unit.admitted && <span className="text-xs text-emerald-500" data-testid="or-unit-admitted">Admitted</span>}
         {canRetry && <Button size="xsmall" variant="danger" onClick={() => onRetry(unit.unit_id)} disabled={retrying} data-testid="or-retry-unit-btn">{retrying ? "Retrying…" : "Retry"}</Button>}
         {retryError && <span role="alert" className="text-xs text-red-500">{retryError}</span>}
         {confirmMerge && (
@@ -108,7 +103,7 @@ export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelect
       <SessionCell sid={unit.sid} />
       <WorktreeCell worktree={unit.worktree} />
     </tr>
-    {(dependencies.length > 0 || needsAdmission) && (
+    {dependencies.length > 0 && (
       <tr data-testid="or-cohort-detail-row">
         <td colSpan={6} className={`${tableCellClass} bg-[var(--bg-surface)]`}>
           <div className="flex flex-col gap-3">
@@ -123,20 +118,6 @@ export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelect
                     </Chip>
                   );
                 })}
-              </div>
-            )}
-            {needsAdmission && (
-              <div className="flex flex-wrap items-center gap-3" data-testid="or-unit-admission">
-                {blockedBy.length > 0 || unit.admission_eligible !== true ? (
-                  <div className="text-sm text-amber-500" data-testid="or-admission-blocked">
-                    Blocked by: {blockedBy.length > 0 ? blockedBy.join(", ") : "dependencies not yet complete"}
-                  </div>
-                ) : (
-                  <Button size="medium" variant="accent-outline" onClick={() => onAdmit(unit.unit_id)} disabled={admitting} data-testid="or-admit-unit-btn">
-                    {admitting ? "Admitting…" : "Admit build"}
-                  </Button>
-                )}
-                {admissionError && <span role="alert" className="text-sm text-red-500">{admissionError}</span>}
               </div>
             )}
           </div>

@@ -38,7 +38,10 @@ describe("ReviewInboxView", () => {
     expect(await screen.findAllByTestId("or-review-inbox-item")).toHaveLength(2);
     expect(screen.queryAllByTestId("or-cohort-lifecycle-card")).toHaveLength(0);
     expect(screen.getByText("Artifact ready for review")).toBeTruthy();
-    expect(screen.getByTestId("or-inbox-admit-btn")).toBeTruthy();
+    // Manual admission is retired: the item still names its state, but there is
+    // no route behind an admit button any more.
+    expect(screen.getByText("Ready to start")).toBeTruthy();
+    expect(screen.queryByTestId("or-inbox-admit-btn")).toBeNull();
   });
 
   it("navigates directly to the reviewed artifact and its run", async () => {

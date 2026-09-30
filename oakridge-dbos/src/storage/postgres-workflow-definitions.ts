@@ -1,7 +1,7 @@
 import type { WorkflowDefinitionId } from "../domain/primitives";
 import type { PromptBundle, WorkflowDefinition } from "../domain/workflow";
 import { parseWorkflowDefinition, type AdapterRoleRegistry } from "../validation/workflow-definition";
-import type { WorkflowDefinitionRepository } from "./repositories";
+import type { PromptBundleRepository, WorkflowDefinitionRepository } from "./repositories";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 import { compileWorkflowManifest } from "../compiler/compile-workflow";
 
@@ -54,7 +54,7 @@ const decodeListedDefinition = (row: DefinitionRow, adapterRoles: AdapterRoleReg
   return null;
 };
 
-export class PostgresWorkflowDefinitionRepository implements WorkflowDefinitionRepository {
+export class PostgresWorkflowDefinitionRepository implements WorkflowDefinitionRepository, PromptBundleRepository {
   constructor(private readonly sql: TransactionalSqlExecutor, private readonly adapter_roles: AdapterRoleRegistry) {}
 
   async insert_immutable(definition: WorkflowDefinition, promptBundle: PromptBundle): Promise<WorkflowDefinition> {

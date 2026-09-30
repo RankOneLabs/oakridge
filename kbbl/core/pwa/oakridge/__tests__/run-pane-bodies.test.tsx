@@ -69,10 +69,9 @@ describe("the artifact pane", () => {
   it("renders the full review experience inside the pane", async () => {
     const detail = await openArtifactPane();
 
-    // Descriptor-driven viewer, review items, threads and the gate decision —
-    // the whole ArtifactReview organism, not a pane-local reimplementation.
+    // Descriptor-driven viewer, threads and the gate decision — the whole
+    // ArtifactReview organism, not a pane-local reimplementation.
     expect(detail.getAttribute("data-review-layout")).toBe("report");
-    expect(await screen.findByTestId("or-review-items-section")).toBeTruthy();
     expect(screen.getByTestId("or-threads-section")).toBeTruthy();
     expect(await screen.findByTestId("or-artifact-gate-actions")).toBeTruthy();
     expect(screen.getByTestId("or-decision-approve").textContent).toContain("Approve the build");

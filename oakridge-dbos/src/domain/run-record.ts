@@ -200,6 +200,22 @@ export interface DecidedCohortGate {
   readonly decided_at: string;
 }
 
+/**
+ * A wait this cohort is parked on, and the revision it holds.
+ *
+ * The artifact is carried because *publication* is the fact a cohort machine
+ * advances on. Acceptance is the gate's answer, not the agent's: a machine that
+ * could only see accepted rows entered its review phase after the gate had
+ * already decided, so the decision arrived at a phase that treats it as already
+ * acted on and the cohort parked with nobody able to move it.
+ */
+export interface OpenCohortWait {
+  readonly wait_id: WaitId;
+  readonly kind: "gate" | "handoff" | "external";
+  readonly output_name: string | null;
+  readonly artifact_id: ArtifactId | null;
+}
+
 /** The cohort state a machine reads before applying its next event. */
 export interface CohortMachineState {
   readonly run_id: WorkflowRunId;
@@ -225,9 +241,20 @@ export interface CohortMachineState {
    * replayed launch dispatch lands on the attempt it already created.
    */
   readonly attempt_count: number;
+  /**
+   * The cohort's newest attempt that has not ended, whoever created it.
+   *
+   * Carried because a cohort machine is the only thing that starts an attempt's
+   * workflow, and two paths create attempts outside it — an operator retry and an
+   * adapter event. Its workflow id is derived from the attempt id, so the machine
+   * can start this one on every pass: a duplicate start is a no-op, and it also
+   * recovers a crash between the launch commit and the start, which neither
+   * off-machine caller could.
+   */
+  readonly latest_unfinished_attempt_id: AttemptId | null;
   readonly accepted_outputs: readonly ArtifactEnvelope[];
   /** Every open wait this cohort is parked on, oldest first. */
-  readonly open_waits: readonly { readonly wait_id: WaitId; readonly kind: "gate" | "handoff" | "external"; readonly output_name: string | null }[];
+  readonly open_waits: readonly OpenCohortWait[];
   readonly decided_gates: readonly DecidedCohortGate[];
 }
 
@@ -427,5 +454,14 @@ export interface CancelledRunSession {
 
 export type CancelRunRecordResult =
   | { readonly kind: "cancelled"; readonly run_id: WorkflowRunId; readonly record_version: RunRecordVersion; readonly sessions_to_fence: readonly CancelledRunSession[] }
-  | { readonly kind: "already_terminal"; readonly run_id: WorkflowRunId; readonly status: Exclude<CoreStatus, "pending" | "active" | "blocked"> }
+  /**
+   * The run was already terminal, and its owners have been swept again.
+   *
+   * Carries the sessions to fence for the same reason `cancelled` does: this is
+   * the result a *re-entry* returns, and re-entry exists because a crash between
+   * the run's transition and its owners' leaves both the owners and the external
+   * sessions half-finished. A variant with nothing to fence would make the retry
+   * that finishes the owners silently skip the sessions.
+   */
+  | { readonly kind: "already_terminal"; readonly run_id: WorkflowRunId; readonly status: Exclude<CoreStatus, "pending" | "active" | "blocked">; readonly sessions_to_fence: readonly CancelledRunSession[] }
   | { readonly kind: "run_not_found"; readonly detail: string };

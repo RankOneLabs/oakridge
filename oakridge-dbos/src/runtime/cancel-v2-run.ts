@@ -10,7 +10,15 @@ export interface CancelV2RunDependencies {
   send_run_wake?: (run_id: WorkflowRunId, idempotency_key: string) => Promise<void>;
 }
 
-/** Domain cancellation commits first; session fencing is independent diagnostic cleanup. */
+/**
+ * Domain cancellation commits first; session fencing is independent diagnostic
+ * cleanup.
+ *
+ * `already_terminal` is a completed sweep, not a reason to stop: `cancel_run` is
+ * re-entrant precisely because a crash can leave a cancelled run with active
+ * owners and unfenced sessions, and returning early on it meant the retry that
+ * finished the owners never reached the sessions.
+ */
 export const cancelV2Run = async (
   run_id: WorkflowRunId,
   dependencies: CancelV2RunDependencies,
@@ -18,7 +26,7 @@ export const cancelV2Run = async (
 ): Promise<CancelRunRecordResult> => {
   const cancelledAt = dependencies.now();
   const result = await dependencies.records.cancel_run({ run_id, actor: "operator", reason, cancelled_at: cancelledAt });
-  if (result.kind !== "cancelled") return result;
+  if (result.kind === "run_not_found") return result;
   await Promise.all(result.sessions_to_fence.map(async (session) => {
     const adapter = dependencies.find_executor(session.executor_type);
     const observedAt = dependencies.now();
@@ -38,6 +46,7 @@ export const cancelV2Run = async (
         observed_at: observedAt });
     }
   }));
-  await dependencies.send_run_wake?.(run_id, `cancelled:${run_id}:${result.record_version}`).catch(() => undefined);
+  const wakeKey = result.kind === "cancelled" ? `cancelled:${run_id}:${result.record_version}` : `cancelled:${run_id}:${result.status}`;
+  await dependencies.send_run_wake?.(run_id, wakeKey).catch(() => undefined);
   return result;
 };

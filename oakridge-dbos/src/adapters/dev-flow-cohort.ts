@@ -20,6 +20,7 @@ import {
   type BuildCohortState,
   type BuildSessionRole,
 } from "./dev-flow-build";
+import type { StageInputSet } from "../decision/commands";
 import type { CompiledStageContract } from "../domain/compiled-workflow";
 import type { DelegatedSessionDefinitionConfig } from "../domain/delegated-session";
 import { selectArtifactGateDisposition, selectBuiltInGateDisposition } from "../domain/gates";
@@ -84,6 +85,52 @@ const encodeStageData = (data: DevFlowCohortStageData): JsonValue => ({
   build_state: data.build_state as unknown as JsonValue,
 });
 
+/** One revision this cohort has published, whether or not a gate has accepted it. */
+interface PublishedRevision {
+  readonly output_name: string;
+  readonly artifact_id: string;
+  readonly artifact_type: string;
+}
+
+/**
+ * Everything this cohort has published into a declared output.
+ *
+ * Open gate waits *and* acceptances, because publication is the fact the machine
+ * advances on. Reading acceptances alone meant `build_artifact_recorded` only
+ * arrived once a gate had already released the artifact — so `build_review`, the
+ * phase that means "the operator is holding the gate", was entered after the gate
+ * had answered, and the answer itself landed at `builder_active` where the driver
+ * treats it as already acted on.
+ */
+const publishedRevisions = (state: CohortMachineState, contract: CompiledStageContract): readonly PublishedRevision[] => {
+  const typeOf = (output_name: string): string =>
+    contract.outputs.find((output) => output.name === output_name)?.artifact_type ?? "";
+  const parked = state.open_waits.flatMap((wait): readonly PublishedRevision[] =>
+    wait.kind === "gate" && wait.output_name !== null && wait.artifact_id !== null
+      ? [{ output_name: wait.output_name, artifact_id: wait.artifact_id, artifact_type: typeOf(wait.output_name) }]
+      : []);
+  const accepted = state.accepted_outputs.map((artifact): PublishedRevision => ({
+    output_name: artifact.output_name, artifact_id: artifact.artifact_id, artifact_type: artifact.artifact_type }));
+  return [...parked, ...accepted];
+};
+
+/**
+ * The identity of the work a set of published outputs describes.
+ *
+ * The machine's `revision` is what ties a build's outputs to each other and to
+ * the pull request verified for them: `observeBuildArtifact` drops a verification
+ * whose revision no longer matches, which is how a build that published again
+ * stops counting an older PR as verified. It therefore has to be *one* value
+ * shared by every output of the same publication. Keyed per artifact, the build
+ * stage's two required outputs reset each other's `accepted_build_set` on every
+ * step and the machine re-recorded the pair forever.
+ *
+ * Derived from the published artifact ids: a republished output is a new artifact,
+ * so the identity changes exactly when the work does.
+ */
+const publishedBuildRevision = (published: readonly PublishedRevision[]): string =>
+  published.map((revision) => revision.artifact_id).sort().join("+");
+
 /**
  * The next fact this cohort owes the machine, read from committed rows only.
  *
@@ -118,17 +165,22 @@ const nextEvent = (
     if (translated.ok) return translated.value;
   }
 
-  const assessment = state.accepted_outputs.find((artifact) => artifact.artifact_type === "dev.assessment");
+  const published = publishedRevisions(state, contract);
+  const assessment = published.find((revision) => revision.artifact_type === "dev.assessment");
   if (assessment && build.assessment_artifact_id !== assessment.artifact_id) {
     return { kind: "assessment_artifact_recorded", artifact_id: assessment.artifact_id };
   }
 
-  const owed = build.required_build_set.find((name) => !build.accepted_build_set.includes(name));
-  const published = owed === undefined
-    ? undefined
-    : state.accepted_outputs.find((artifact) => artifact.output_name === owed);
-  if (owed !== undefined && published) {
-    return { kind: "build_artifact_recorded", revision: published.artifact_id, output_name: owed };
+  // The build role's own outputs, under one revision. An output already recorded
+  // under a *different* revision is owed again: that is how a republished build
+  // replaces the set the previous one was reviewed as.
+  const buildOutputs = published.filter((revision) => build.required_build_set.includes(revision.output_name));
+  const revision = publishedBuildRevision(buildOutputs);
+  const owed = build.required_build_set.find((name) =>
+    !(build.accepted_revision === revision && build.accepted_build_set.includes(name)));
+  const owedRevision = owed === undefined ? undefined : buildOutputs.find((candidate) => candidate.output_name === owed);
+  if (owed !== undefined && owedRevision) {
+    return { kind: "build_artifact_recorded", revision, output_name: owed };
   }
 
   if (build.phase === "pending") return { kind: "stage_started" };
@@ -153,8 +205,9 @@ const openDevFlowCohorts = (
   stage_instance_id: StageInstanceId,
   contract: CompiledStageContract,
   run_context: JsonValue,
+  inputs: StageInputSet,
 ): readonly OpenCohort[] =>
-  resolveCohortRoster(contract, run_context).map((entry) => ({
+  resolveCohortRoster(contract, run_context, inputs).map((entry) => ({
     id: cohortIdFor(stage_instance_id, entry.cohort_key),
     cohort_key: entry.cohort_key,
     stage_data: encodeStageData({ unit_id: entry.cohort_key, artifact: entry.item,
@@ -165,7 +218,7 @@ export const createDevFlowCohortDriver = (dependencies: DevFlowCohortDriverDepen
   stage_type: dependencies.stage_type,
 
   open_cohorts: async (input) => openDevFlowCohorts(input.stage_instance_id,
-    contractOf(input.stage_contract), input.run_context),
+    contractOf(input.stage_contract), input.run_context, input.inputs),
 
   step(context: CohortStepContext): Promise<CohortStepDecision | null> {
     const contract = contractOf(context.stage_contract);

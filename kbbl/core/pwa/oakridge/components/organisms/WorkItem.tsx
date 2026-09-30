@@ -1,7 +1,6 @@
 import { Button } from "../../../components/atoms/Button";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import { GateDecisionActions } from "./GateDecisionActions";
-import { useAdmitStageUnit } from "../../hooks/useAdmitStageUnit";
 import { useConfirmCohortMerged } from "../../hooks/useConfirmCohortMerged";
 import type { CohortLifecycleSummary, ParkedGate, ReviewInboxItem } from "../../types";
 
@@ -63,29 +62,13 @@ export function WorkItem({ item, cohort, isSettled = false, onSelectRun, onSelec
         {isSettled && <p data-testid="or-inbox-settled">No longer needs your decision.</p>}
         {!isSettled && <>
         {gate && <GateDecisionActions gate={gate} />}
-        {!gate && item.kind === "admission" && cohort && <AdmissionAction item={item} cohort={cohort} />}
         {!gate && item.kind === "pull_request_merge" && <PullRequestMergeAction item={item} />}
         {!gate && item.kind === "pull_request_mismatch" && <><p>{mismatch?.detail ?? "The observed pull request does not match this cohort’s durable configuration."}</p><p>Correct the pull request repository or branches, then Oakridge will reconcile it automatically.</p></>}
-        {!gate && item.kind !== "pull_request_mismatch" && item.kind !== "pull_request_merge" && item.kind !== "admission" && <p>{item.kind === "cohort_failed" ? "Open the run to inspect the failure and retry the work." : "This work will continue automatically when its dependencies finish."}</p>}
+        {!gate && item.kind !== "pull_request_mismatch" && item.kind !== "pull_request_merge" && <p>{item.kind === "cohort_failed" ? "Open the run to inspect the failure and retry the work." : "This work will continue automatically when its dependencies finish."}</p>}
         </>}
       </div>
     </article>
   );
-}
-
-function AdmissionAction({ item, cohort }: { item: ReviewInboxItem; cohort: CohortLifecycleSummary }) {
-  const admission = useAdmitStageUnit(item.run_id);
-  if (!cohort.admission.required || cohort.admission.admitted) return null;
-  if (!cohort.admission.eligible) {
-    return <p>Waiting on {cohort.admission.blocked_by.length > 0 ? cohort.admission.blocked_by.join(", ") : "dependencies to complete"}.</p>;
-  }
-  return <>
-    <p>This legacy workflow requires an explicit operator admission before the cohort starts.</p>
-    <Button variant="accent-outline" onClick={() => admission.mutate({ stageId: item.stage_instance_id, unitId: item.unit_id })} disabled={admission.isPending} data-testid="or-inbox-admit-btn">
-      {admission.isPending ? "Admitting…" : "Admit build"}
-    </Button>
-    {admission.isError && <FeedbackMessage tone="danger">{admission.error instanceof Error ? admission.error.message : "Admission failed"}</FeedbackMessage>}
-  </>;
 }
 
 /**

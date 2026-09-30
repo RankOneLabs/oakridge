@@ -108,9 +108,18 @@ export const parseStageInputEdges = (contract: JsonValue): readonly StageInputEd
  * `gate_step` and `actions` are the two fields every gate surface addresses a
  * wait by, so they are written flat rather than nested inside the release
  * contract a projection would then have to know the shape of.
+ *
+ * One step only. A multi-step gate would need a wait per step and a cursor
+ * between them; `dev_flow_v15` declares none, and flattening the first step of
+ * several would silently publish a wait that closes on the wrong actions and
+ * releases the artifact after the first of its reviews. Refused rather than
+ * approximated.
  */
 export const selectWaitClosesOn = (release: OutputReleaseContract): JsonValue => {
   if (release.kind === "gate") {
+    if (release.steps.length > 1) {
+      throw new Error(`gate '${release.gate_name}' declares ${release.steps.length} steps; a wait carries one`);
+    }
     const step = release.steps[0];
     return {
       kind: "gate",
