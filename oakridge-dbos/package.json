@@ -7,7 +7,7 @@
     "migrate": "bun run src/migrate.ts",
     "start": "bun run src/main.ts",
     "test": "bun run test:unit",
-    "test:unit": "rg --files src tests -g '*.test.ts' -g '!dev-flow-e2e.test.ts' | xargs -n 1 bun test",
+    "test:unit": "find src tests -name '*.test.ts' ! -name 'dev-flow-e2e.test.ts' -exec bun test {} \\;",
     "test:acceptance": "OAKRIDGE_ACCEPTANCE=1 bun test tests/dev-flow-e2e.test.ts",
     "validate:definitions": "bun run src/validation/validate-definition-files.ts",
     "typecheck": "bunx tsc --noEmit -p tsconfig.json"
@@ -19,6 +19,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@agentclientprotocol/sdk": "1.4.0",
     "@playwright/test": "^1.63.0",
     "@types/bun": "^1.3.13",
     "@types/pg": "^8.15.5",
