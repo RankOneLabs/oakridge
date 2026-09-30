@@ -15,7 +15,7 @@ import {
   reconcileCohortPullRequest,
   type CohortPullRequestReconciliation, type DevFlowBuildCohort, type ExpectedCohortPullRequest,
 } from "../domain/cohort-pull-request";
-import type { BuildCohortEvent } from "../adapters/dev-flow-build";
+import type { ReportedBuildCohortEvent } from "../adapters/dev-flow-build";
 import { err, ok, type ArtifactId, type CohortId, type Result, type StageInstanceId, type UnitId, type WorkflowRunId } from "../domain/primitives";
 import type { PullRequestObservation } from "../domain/pull-request";
 import { parseGithubPullRequestIdentity, repositoriesMatch, type PullRequestVerificationId } from "../domain/pull-request";
@@ -39,7 +39,7 @@ export interface CohortPullRequestDependencies {
   readonly git: GitCommandRunner;
   readonly records: Pick<RunRecordRepository, "find_cohort_handoff" | "complete_handoff_artifact">;
   readonly now: () => string;
-  readonly record_build_event: (cohort_id: CohortId, event: BuildCohortEvent) => Promise<void>;
+  readonly record_build_event: (cohort_id: CohortId, event: ReportedBuildCohortEvent) => Promise<void>;
   /** Wakes the run's root sooner than its bounded recheck once a merge releases the handoff — a hint, never a decision. */
   readonly send_run_wake?: (run_id: WorkflowRunId, idempotency_key: string) => Promise<void>;
 }
@@ -124,7 +124,12 @@ export interface BoundVerifiedCohortPullRequest extends VerifiedCohortPullReques
   readonly pull_request_id: import("../domain/pull-request").PullRequestId;
   readonly observation_id: import("../domain/pull-request").PullRequestObservationId;
   readonly verification_id: PullRequestVerificationId;
-  readonly binding: "created" | "current" | "replaced";
+  /**
+   * `rebound` is the same pull request at a new head — a builder pushed again.
+   * `replaced` is a *different* pull request taking over from one already bound,
+   * which is the only one of the two the machine treats as a replacement.
+   */
+  readonly binding: "created" | "current" | "rebound" | "replaced";
 }
 
 export interface PullRequestBindingError {
@@ -182,7 +187,7 @@ export const verifyAndBindCohortPullRequest = async (
     readonly reader: PullRequestForgeReader;
     readonly git: GitCommandRunner;
     readonly now: () => string;
-    readonly record_build_event: (cohort_id: CohortId, event: BuildCohortEvent) => Promise<void>;
+    readonly record_build_event: (cohort_id: CohortId, event: ReportedBuildCohortEvent) => Promise<void>;
   },
   input: VerifyCohortPullRequestInput & { readonly replace_verification_id: PullRequestVerificationId | null },
 ): Promise<Result<BoundVerifiedCohortPullRequest, CohortPullRequestVerificationError | PullRequestBindingError>> => {
@@ -210,17 +215,24 @@ export const verifyAndBindCohortPullRequest = async (
         current_verification_id: current?.cohort.current_verified_pull_request_id ?? null });
     }
     verificationId = bound.value;
-    if (current) {
+    // Only a *different* pull request displaces one. Re-verifying the same one
+    // after the builder pushed again is a rebind: reporting it as a replacement
+    // sent the machine down `replacement_pr`, which restarts the builder and
+    // discards the verification — for the ordinary case of a branch gaining a
+    // commit, which is every publication after the first.
+    if (current && current.pull_request.id !== stored.pull_request_id) {
       binding = "replaced";
       await dependencies.record_build_event(input.cohort.cohort_id, { kind: "replacement_pull_request_required",
         pull_request_url: current.pull_request.url });
+    } else if (current) {
+      binding = "rebound";
     }
   }
   if (!verificationId) return verificationFailure("unreadable_pull_request", "verified pull request binding was not retained");
   // Emitted on re-verification too: if the first delivery failed after the
   // binding committed, a retry must be able to deliver the idempotent fact.
   await dependencies.record_build_event(input.cohort.cohort_id, { kind: "pull_request_verified",
-    revision: verified.value.pushed_head_sha, pull_request_url: verified.value.observation.url });
+    head_sha: verified.value.pushed_head_sha, pull_request_url: verified.value.observation.url });
   return ok({ ...verified.value, ...stored, verification_id: verificationId, binding });
 };
 
@@ -372,6 +384,70 @@ const independentlyVerifyAndBind = async (
     });
   }
   return ok(verified.value);
+};
+
+/** What a publication-time verification did, for a caller that only reports it. */
+export type ReportedPullRequestOutcome =
+  | { readonly kind: "verified"; readonly pull_request_url: string; readonly binding: BoundVerifiedCohortPullRequest["binding"] }
+  /** No candidate URL and no stored one: this publication says nothing about a pull request. */
+  | { readonly kind: "no_candidate" }
+  /** The cohort is not a build cohort, or its repository has no forge identity. */
+  | { readonly kind: "not_applicable"; readonly detail: string }
+  | { readonly kind: "refused"; readonly detail: string };
+
+export interface ReportedCohortPullRequest {
+  readonly stage_instance_id: StageInstanceId;
+  readonly unit_id: UnitId;
+  readonly run_id: WorkflowRunId;
+  /** The URL the publishing session reported, when it reported one. */
+  readonly candidate_url: string | null;
+}
+
+export type ReportedPullRequestDependencies = Pick<CohortPullRequestDependencies,
+  "pull_requests" | "forge_targets" | "reader" | "git" | "now" | "record_build_event">;
+
+/**
+ * Verifies the pull request a publishing build session reported, and tells the
+ * cohort's machine what the check found.
+ *
+ * This is the only producer of `pull_request_verified` a build cohort has before
+ * its gate. The poller cannot be it: `pollCohortPullRequests` sweeps cohorts
+ * blocked on the *external* merge wait, which is two gates later, and its
+ * reconciliation path needs a handoff record the build stage has not created yet.
+ * Without this the third clause of `isBuildReviewReady` had nothing that could
+ * ever satisfy it and every build cohort sat at `builder_active` with its work
+ * published.
+ *
+ * The candidate URL is agent-supplied and that is the existing contract: it is a
+ * *pointer*, and `verifyCohortPullRequest` checks it against the forge and against
+ * origin's pushed head, neither of which the session can author. A verification
+ * that fails records `pull_request_mismatch`, which is the machine's route back to
+ * a correcting builder — so a wrong URL is answered, not ignored.
+ *
+ * Re-reporting the same pull request after more commits rebinds it rather than
+ * demanding a replacement: same pull request, moved head. A *different* URL is a
+ * replacement and is refused here exactly as `bind_verified` refuses it, which the
+ * machine turns into a `replacement_pr` launch.
+ */
+export const verifyReportedCohortPullRequest = async (
+  dependencies: ReportedPullRequestDependencies,
+  input: ReportedCohortPullRequest,
+): Promise<ReportedPullRequestOutcome> => {
+  const cohort = await dependencies.pull_requests.find_cohort_for_unit(input.stage_instance_id, input.unit_id);
+  if (!cohort) return { kind: "not_applicable", detail: `unit '${input.unit_id}' has no stored build cohort` };
+  const current = await dependencies.pull_requests.find_current_for_unit(input.stage_instance_id, input.unit_id);
+  const candidateUrl = input.candidate_url ?? current?.pull_request.url ?? null;
+  if (candidateUrl === null) return { kind: "no_candidate" };
+  const target = await dependencies.forge_targets.find(input.run_id, cohort.repository_key);
+  if (!target) return { kind: "not_applicable", detail: `repository '${cohort.repository_key}' has no forge identity` };
+  const samePullRequest = current !== undefined && current !== null && current.pull_request.url === candidateUrl;
+  const verified = await verifyAndBindCohortPullRequest(dependencies, {
+    cohort, forge_repository: target.forge_repository, candidate_url: candidateUrl,
+    replace_verification_id: samePullRequest ? cohort.current_verified_pull_request_id : null,
+  });
+  return verified.ok
+    ? { kind: "verified", pull_request_url: verified.value.observation.url, binding: verified.value.binding }
+    : { kind: "refused", detail: verified.error.detail };
 };
 
 /** The cohort's expectations, for a caller that wants to observe it. */

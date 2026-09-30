@@ -40,7 +40,8 @@ const state = (phase: BuildCohortPhase, overrides: Partial<BuildCohortState> = {
   phase,
   accepted_revision: phase === "builder_active" || phase === "pending" ? null : "revision-1",
   accepted_build_set: phase === "builder_active" || phase === "pending" ? [] : ["pr_summary", "build_result"],
-  verified_pull_request: phase === "builder_active" || phase === "pending" ? null : { url: "https://example.test/pull/7", revision: "revision-1" },
+  verified_pull_request: phase === "builder_active" || phase === "pending" ? null
+    : { url: "https://example.test/pull/7", head_sha: "head-1", accepted_revision: "revision-1" },
   assessment_artifact_id: phase === "assessment_review" || phase === "awaiting_merge" || phase === "complete" ? "assessment-1" : null,
   ...overrides,
 });
@@ -64,7 +65,7 @@ const EVENTS = [
 
 const event = (kind: BuildCohortEvent["kind"]): BuildCohortEvent => {
   if (kind === "build_artifact_recorded") return { kind, revision: "revision-1", output_name: "build_result" };
-  if (kind === "pull_request_verified") return { kind, revision: "revision-1", pull_request_url: "https://example.test/pull/7" };
+  if (kind === "pull_request_verified") return { kind, head_sha: "head-1", pull_request_url: "https://example.test/pull/7", accepted_revision: "revision-1" };
   if (kind === "assessment_artifact_recorded") return { kind, artifact_id: "assessment-1" };
   if (kind === "assessment_outcome_observed") return { kind, outcome: "fail" };
   if (kind === "pull_request_mismatch") return { kind, pull_request_url: "https://example.test/pull/7" };
@@ -129,7 +130,7 @@ describe("build cohort transition table", () => {
     for (const kind of EVENTS) test(`${phase} + ${kind} -> ${expectedByEvent[kind]}`, () => {
       const current = phase === "builder_active" && kind === "build_artifact_recorded"
         ? state(phase, { accepted_revision: "revision-1", accepted_build_set: ["pr_summary"],
-          verified_pull_request: { url: "https://example.test/pull/7", revision: "revision-1" } })
+          verified_pull_request: { url: "https://example.test/pull/7", head_sha: "head-1", accepted_revision: "revision-1" } })
         : phase === "builder_active" && kind === "pull_request_verified"
           ? state(phase, { accepted_revision: "revision-1", accepted_build_set: ["pr_summary", "build_result"] })
           : state(phase);
@@ -167,17 +168,20 @@ test("the shipped c2 prompt bundle resolves all eight build-stage cells exactly 
 
 test("build review requires the full declared set at one revision and a matching verified PR", () => {
   expect(isBuildReviewReady({ required_build_set: ["pr_summary", "build_result"], accepted_revision: "r2",
-    accepted_build_set: ["build_result"], verified_pull_request: { url: "https://example.test/pull/7", revision: "r2" } })).toBe(false);
+    accepted_build_set: ["build_result"],
+    verified_pull_request: { url: "https://example.test/pull/7", head_sha: "head-2", accepted_revision: "r2" } })).toBe(false);
   expect(isBuildReviewReady({ required_build_set: ["pr_summary", "build_result"], accepted_revision: "r2",
-    accepted_build_set: ["pr_summary", "build_result"], verified_pull_request: { url: "https://example.test/pull/7", revision: "r1" } })).toBe(false);
+    accepted_build_set: ["pr_summary", "build_result"],
+    verified_pull_request: { url: "https://example.test/pull/7", head_sha: "head-2", accepted_revision: "r1" } })).toBe(false);
   expect(isBuildReviewReady({ required_build_set: ["pr_summary", "build_result"], accepted_revision: "r2",
-    accepted_build_set: ["pr_summary", "build_result"], verified_pull_request: { url: "https://example.test/pull/7", revision: "r2" } })).toBe(true);
+    accepted_build_set: ["pr_summary", "build_result"],
+    verified_pull_request: { url: "https://example.test/pull/7", head_sha: "head-2", accepted_revision: "r2" } })).toBe(true);
 });
 
 test("artifact members and verified PR can arrive in either order", () => {
   const started = applyBuildCohortEvent(machine.value, initialBuildCohortState(["pr_summary", "build_result"]), { kind: "stage_started" }).state;
   const withPr = applyBuildCohortEvent(machine.value, started,
-    { kind: "pull_request_verified", revision: "r3", pull_request_url: "https://example.test/pull/9" }).state;
+    { kind: "pull_request_verified", head_sha: "head-3", pull_request_url: "https://example.test/pull/9", accepted_revision: "r3" }).state;
   const partial = applyBuildCohortEvent(machine.value, withPr,
     { kind: "build_artifact_recorded", revision: "r3", output_name: "pr_summary" }).state;
   expect(partial.phase).toBe("builder_active");

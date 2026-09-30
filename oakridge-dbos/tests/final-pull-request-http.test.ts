@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import type { BuildCohortEvent } from "../src/adapters/dev-flow-build";
+import type { ReportedBuildCohortEvent } from "../src/adapters/dev-flow-build";
 import type { FinalPullRequestEvent } from "../src/domain/final-pull-request";
 import type { CohortId, StageInstanceId, WorkflowRunId } from "../src/domain/primitives";
 import type { PullRequestId, PullRequestMergeClosure, PullRequestMergeClosureId, PullRequestObservationId, PullRequestVerificationId } from "../src/domain/pull-request";
@@ -35,14 +35,14 @@ const current = {
 
 interface DependencyFixture {
   readonly dependencies: FinalPullRequestHttpDependencies;
-  readonly build_events: BuildCohortEvent[];
+  readonly build_events: ReportedBuildCohortEvent[];
   readonly final_events: FinalPullRequestEvent[];
 }
 
 const dependencyFixture = (existing: typeof current | null = null, mergePolicy: "guarded" | "external_confirmation" = "external_confirmation"): DependencyFixture => {
   let currentValue = existing;
   let closure: PullRequestMergeClosure | null = null;
-  const build_events: BuildCohortEvent[] = [];
+  const build_events: ReportedBuildCohortEvent[] = [];
   const final_events: FinalPullRequestEvent[] = [];
   const pullRequests: DevFlowPullRequestRepository = {
     async create_cohort(value) { return value; },
@@ -86,7 +86,7 @@ test("final pull request HTTP verifies and binds through the shared PR entity", 
   expect(response.status).toBe(200);
   expect(await response.json()).toEqual({ outcome: "merged_evidence", pull_request_url: observation.url,
     verification_id: verificationId, binding: "created" });
-  expect(fixture.build_events).toEqual([{ kind: "pull_request_verified", revision: "abc", pull_request_url: observation.url }]);
+  expect(fixture.build_events).toEqual([{ kind: "pull_request_verified", head_sha: "abc", pull_request_url: observation.url }]);
   expect(fixture.final_events[0]).toEqual(expect.objectContaining({ kind: "pull_request_verified", verification_id: verificationId }));
 });
 

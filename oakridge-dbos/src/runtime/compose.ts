@@ -30,7 +30,7 @@ import { compileWorkflowDefinition } from "../compiler/compile-workflow";
 import { stageInstanceIdFor } from "../decision/ids";
 import { DEV_FLOW_ARTIFACT_TYPES, findArtifactType } from "../domain/artifact-types";
 import type { ExecutorAdapter } from "../domain/execution";
-import type { AttemptId, CohortId, JsonValue, WorkflowRunId } from "../domain/primitives";
+import type { AttemptId, CohortId, JsonValue, UnitId, WorkflowRunId } from "../domain/primitives";
 import type { GitCommandRunner } from "../domain/repository-provisioning";
 import type { InitializeStageInstance } from "../domain/run-record";
 import { selectOrphanedVersionRuns, type OrphanedVersionRuns } from "../domain/workflow-recovery";
@@ -38,7 +38,7 @@ import type { PromptBundleEntry } from "../domain/workflow";
 import { parseWorkflowDefinition } from "../validation/workflow-definition";
 import { STAGE_CONTRACT_DEPENDENCY_KEY } from "../storage/load-run-snapshot";
 import { STAGE_CONTRACT_INPUT_EDGES_KEY } from "../domain/stage-contract";
-import type { CohortPullRequestDependencies } from "./cohort-pull-request";
+import { verifyReportedCohortPullRequest, type CohortPullRequestDependencies } from "./cohort-pull-request";
 import { pollCohortPullRequests, type CohortPollOutcome, type PullRequestReader } from "./github-pull-requests";
 import { createApp } from "../http/app";
 import { registerDbosTransportClient, sendCohortWakeHint, sendRunWakeHint } from "../http/dbos-transport";
@@ -285,6 +285,21 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     record_build_event: (cohort_id, event) => recordCohortEvent(cohort_id, event as unknown as JsonValue),
     send_run_wake: sendRunWakeHint,
   };
+  /**
+   * A publication's cohort, addressed the way the pull-request reader addresses
+   * one. `dev_flow_build_cohort` is keyed by (stage instance, unit) because that
+   * is the identity the branch roles were derived from, so the cohort row has to
+   * be found through its state rather than by id.
+   */
+  const verifyReportedPullRequest = async (input: { readonly cohort_id: CohortId; readonly candidate_url: string | null }): Promise<void> => {
+    const state = await runRecords.find_cohort_state(input.cohort_id);
+    if (!state) return;
+    await verifyReportedCohortPullRequest(cohortPullRequests, {
+      stage_instance_id: state.stage_instance_id, unit_id: state.cohort_key as UnitId,
+      run_id: state.run_id, candidate_url: input.candidate_url,
+    });
+  };
+
   const pollPullRequests = (): Promise<readonly CohortPollOutcome[] | null> => {
     const reader = config.pull_request_reader;
     if (!reader) return Promise.resolve(null);
@@ -315,10 +330,11 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
       // enter through the same driver: a verification and a confirmed merge are
       // the two facts its machine acts on.
       record_final_event: (event) => recordCohortEvent(event.cohort_id, event.kind === "pull_request_verified"
-        ? { kind: "pull_request_verified", revision: event.revision, pull_request_url: event.pull_request_url }
+        ? { kind: "pull_request_verified", head_sha: event.revision, pull_request_url: event.pull_request_url }
         : { kind: "pull_request_merged", pull_request_url: event.pull_request_url }),
       now },
-    work_order_artifact_callback: { records: runRecords, now, send_cohort_wake: sendCohortWakeHint, send_run_wake: sendRunWakeHint },
+    work_order_artifact_callback: { records: runRecords, now, send_cohort_wake: sendCohortWakeHint, send_run_wake: sendRunWakeHint,
+      verify_reported_pull_request: verifyReportedPullRequest },
     gate_resume: { records: runRecords, now, send_cohort_wake: sendCohortWakeHint, send_run_wake: sendRunWakeHint },
     handoff_complete: { records: runRecords, now, send_cohort_wake: sendCohortWakeHint, send_run_wake: sendRunWakeHint },
     cohort_pull_requests: cohortPullRequests,

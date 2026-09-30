@@ -55,3 +55,42 @@ test("publication without its work-order capability never reaches the domain com
   expect(response.status).toBe(401);
   expect(calls).toBe(0);
 });
+
+/**
+ * The publication is where the run learns a build has a pull request, so the
+ * header has to reach the verifier — and a verifier that throws must leave the
+ * committed publication reported as committed.
+ */
+test("a reported pull request URL reaches the verifier, and its failure does not undo the publication", async () => {
+  const reported: { readonly cohort_id: CohortId; readonly candidate_url: string | null }[] = [];
+  const app = createWorkOrderArtifactCallbackApp({
+    records: { publish_artifact: async (request: PublishWorkOrderArtifact) =>
+      ({ kind: "published", artifact_id: request.artifact_id, run_id: runId, cohort_id: cohortId, record_version: 6 as RunRecordVersion }) },
+    now: () => "2026-09-29T12:00:00.000Z",
+    verify_reported_pull_request: async (input) => {
+      reported.push(input);
+      throw new Error("forge is unreachable");
+    },
+  });
+  const response = await app.request(`/work-orders/${workOrderId}/emit/pr_summary`, { method: "PUT", headers: {
+    "content-type": "application/json", "work-order-capability": "secret", "idempotency-key": "emit-4",
+    "pull-request-url": " https://github.com/RankOneLabs/oakridge/pull/440 ",
+  }, body: JSON.stringify({ pr_url: "https://github.com/RankOneLabs/oakridge/pull/440" }) });
+  expect(response.status).toBe(201);
+  expect(reported).toEqual([{ cohort_id: cohortId, candidate_url: "https://github.com/RankOneLabs/oakridge/pull/440" }]);
+});
+
+test("a publication that names no pull request still asks for a recheck of the stored one", async () => {
+  const reported: (string | null)[] = [];
+  const app = createWorkOrderArtifactCallbackApp({
+    records: { publish_artifact: async (request: PublishWorkOrderArtifact) =>
+      ({ kind: "published", artifact_id: request.artifact_id, run_id: runId, cohort_id: cohortId, record_version: 7 as RunRecordVersion }) },
+    now: () => "2026-09-29T12:00:00.000Z",
+    verify_reported_pull_request: async (input) => { reported.push(input.candidate_url); },
+  });
+  const response = await app.request(`/work-orders/${workOrderId}/emit/build_result`, { method: "PUT", headers: {
+    "content-type": "application/json", "work-order-capability": "secret", "idempotency-key": "emit-5",
+  }, body: JSON.stringify({ summary: "done" }) });
+  expect(response.status).toBe(201);
+  expect(reported).toEqual([null]);
+});

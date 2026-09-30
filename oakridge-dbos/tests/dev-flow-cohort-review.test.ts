@@ -123,8 +123,10 @@ const parkedAtBuildReview = async (): Promise<{ readonly state: CohortMachineSta
     recorded = await driver.step(contextOf(state, contract))) {
     state = committed(state, recorded);
   }
+  // The wire carries a forge head and nothing else; the driver stamps which
+  // publication the verification is good for, from the rows it just committed.
   const verified = await driver.apply_event(contextOf(state, contract), { kind: "pull_request_verified",
-    revision: buildStateOf(state).accepted_revision as string, pull_request_url: "https://example.test/pull/7" });
+    head_sha: "feedfacefeedfacefeedfacefeedfacefeedface", pull_request_url: "https://example.test/pull/7" });
   state = committed(state, verified!);
   expect(buildStateOf(state).phase).toBe("build_review");
   return { state, contract, driver };
@@ -261,10 +263,12 @@ test("a build cohort enters its review on publication, presents the gate, and re
   const revision = buildStateOf(state).accepted_revision;
   expect(revision).not.toBeNull();
   const verified = await driver.apply_event(contextOf(state, contract),
-    { kind: "pull_request_verified", revision: revision as string, pull_request_url: "https://example.test/pull/7" });
+    { kind: "pull_request_verified", head_sha: "feedfacefeedfacefeedfacefeedfacefeedface", pull_request_url: "https://example.test/pull/7" });
   expect(verified).not.toBeNull();
   state = committed(state, verified!);
   expect(buildStateOf(state).phase).toBe("build_review");
+  // The stamp is the publication the driver read, not anything the reporter said.
+  expect(buildStateOf(state).verified_pull_request?.accepted_revision).toBe(revision);
   // While the operator holds the gate, the cohort says so.
   expect({ status: state.status, blocked_reason: state.blocked_reason, next_actor: state.next_actor })
     .toEqual({ status: "blocked", blocked_reason: "gate", next_actor: "operator" });
@@ -295,7 +299,7 @@ test("a published assessment moves the cohort into its assessment review", async
   const build_state: BuildCohortState = {
     phase: "assessor_active", required_build_set: ["build_result", "pr_summary"],
     accepted_revision: "revision-1", accepted_build_set: ["build_result", "pr_summary"],
-    verified_pull_request: { url: "https://example.test/pull/7", revision: "revision-1" },
+    verified_pull_request: { url: "https://example.test/pull/7", head_sha: "head-1", accepted_revision: "revision-1" },
     assessment_artifact_id: null, is_pull_request_merged: false,
   };
   const state: CohortMachineState = {
@@ -309,4 +313,131 @@ test("a published assessment moves the cohort into its assessment review", async
   expect(decision).not.toBeNull();
   expect(decision!.event.change).toEqual(expect.objectContaining({ status: "blocked", blocked_reason: "gate", next_actor: "operator" }));
   expect(buildStateOf(committed(state, decision!)).phase).toBe("assessment_review");
+});
+
+const HEAD_SHA = "feedfacefeedfacefeedfacefeedfacefeedface";
+
+/** A cohort whose stage has started, with both required outputs parked in their gate waits. */
+const publishedAndParked = async (): Promise<{ state: CohortMachineState; readonly contract: CompiledStageContract;
+  readonly driver: ReturnType<typeof driverFor> }> => {
+  const { contract, bundle } = await buildStage();
+  const driver = driverFor(bundle);
+  const cohorts = await driver.open_cohorts({ run_id: RUN_ID, stage_instance_id: STAGE_ID,
+    stage_contract: contract as unknown as JsonValue, run_context: {}, inputs: BUILD_INPUTS });
+  let state: CohortMachineState = {
+    run_id: RUN_ID, stage_instance_id: STAGE_ID, stage_key: "build",
+    cohort_id: cohorts[1]!.id, cohort_key: "web", status: "pending", blocked_reason: null, next_actor: "core",
+    durable_version: 0, stage_data: cohorts[1]!.stage_data, attempt_count: 0,
+    accepted_outputs: [], open_waits: [], decided_gates: [], latest_unfinished_attempt_id: null,
+  };
+  state = committed(state, (await driver.step(contextOf(state, contract)))!);
+  state = { ...state, open_waits: [
+    openWait(BUILD_WAIT, "build_result", BUILD_ARTIFACT),
+    openWait(SUMMARY_WAIT, "pr_summary", SUMMARY_ARTIFACT)] };
+  return { state, contract, driver };
+};
+
+const drainSteps = async (start: CohortMachineState, contract: CompiledStageContract,
+  driver: ReturnType<typeof driverFor>): Promise<CohortMachineState> => {
+  let state = start;
+  for (let pass = 0; pass < 8; pass += 1) {
+    const decision = await driver.step(contextOf(state, contract));
+    if (decision === null) return state;
+    state = committed(state, decision);
+  }
+  throw new Error("cohort step did not reach a fixpoint");
+};
+
+/**
+ * The gate's readiness test used to compare a forge `pushed_head_sha` against
+ * published artifact ids joined with `+`. Those never match, so a build cohort
+ * reached `build_review` in a driver test that supplied the revision by hand and
+ * never on the real path: the work was published, the pull request was verified,
+ * and the cohort sat at `builder_active` with nothing left to do.
+ *
+ * Which of the two facts lands first is not ordered — a publication wake and a
+ * verification callback race — so both orders have to converge on the gate.
+ */
+test("a verified pull request and a published build open the review in either order", async () => {
+  for (const verifyFirst of [false, true]) {
+    const { state: parked, contract, driver } = await publishedAndParked();
+    const verify = (state: CohortMachineState) => driver.apply_event(contextOf(state, contract),
+      { kind: "pull_request_verified", head_sha: HEAD_SHA, pull_request_url: "https://example.test/pull/7" });
+
+    let state = parked;
+    if (verifyFirst) {
+      state = committed(state, (await verify(state))!);
+      expect(buildStateOf(state).phase).toBe("builder_active");
+      state = await drainSteps(state, contract, driver);
+    } else {
+      state = await drainSteps(state, contract, driver);
+      expect(buildStateOf(state).phase).toBe("builder_active");
+      state = committed(state, (await verify(state))!);
+    }
+    expect(buildStateOf(state).phase).toBe("build_review");
+    expect({ status: state.status, blocked_reason: state.blocked_reason, next_actor: state.next_actor })
+      .toEqual({ status: "blocked", blocked_reason: "gate", next_actor: "operator" });
+    expect(buildStateOf(state).verified_pull_request?.head_sha).toBe(HEAD_SHA);
+    expect(await driver.step(contextOf(state, contract))).toBeNull();
+  }
+});
+
+/**
+ * Staleness is a read off the stamp rather than a write that discards the
+ * verification: the URL stays, because `revision_after_build_review` cites it,
+ * and the gate re-opens once the new publication has been verified in its turn.
+ */
+test("a republished build makes its verification stale without losing the pull request", async () => {
+  const { state: parked, contract, driver } = await publishedAndParked();
+  let state = await drainSteps(parked, contract, driver);
+  state = committed(state, (await driver.apply_event(contextOf(state, contract),
+    { kind: "pull_request_verified", head_sha: HEAD_SHA, pull_request_url: "https://example.test/pull/7" }))!);
+  expect(buildStateOf(state).phase).toBe("build_review");
+
+  // The operator sends it back and the builder publishes a fresh pair.
+  state = { ...state, open_waits: [], decided_gates: [
+    decidedGate(BUILD_WAIT, "build_result", BUILD_ARTIFACT, "request_revision"),
+    decidedGate(SUMMARY_WAIT, "pr_summary", SUMMARY_ARTIFACT, "request_revision")] };
+  state = await drainSteps(state, contract, driver);
+  expect(buildStateOf(state).phase).toBe("builder_active");
+  state = { ...state, open_waits: [
+    openWait("11111111-1111-4111-8111-000000000003", "build_result", "aaaaaaaa-1111-4111-8111-000000000003"),
+    openWait("11111111-1111-4111-8111-000000000004", "pr_summary", "aaaaaaaa-1111-4111-8111-000000000004")] };
+  state = await drainSteps(state, contract, driver);
+
+  // Published again, and the old verification does not open the gate for it.
+  expect(buildStateOf(state).phase).toBe("builder_active");
+  expect(buildStateOf(state).verified_pull_request?.url).toBe("https://example.test/pull/7");
+  expect(buildStateOf(state).verified_pull_request?.accepted_revision).not.toBe(buildStateOf(state).accepted_revision);
+
+  const reverified = committed(state, (await driver.apply_event(contextOf(state, contract),
+    { kind: "pull_request_verified", head_sha: "0ddba11", pull_request_url: "https://example.test/pull/7" }))!);
+  expect(buildStateOf(reverified).phase).toBe("build_review");
+  expect(buildStateOf(reverified).verified_pull_request?.accepted_revision).toBe(buildStateOf(reverified).accepted_revision);
+});
+
+/**
+ * A freshness sweep must not rewind a cohort that has moved on. `awaiting_merge`
+ * is blocked on the forge, and a re-verification there is news about the pull
+ * request, not a reason to ask for the build review again.
+ */
+test("re-verifying a cohort past its build review records the head without rewinding the phase", async () => {
+  const { state: parked, contract, driver } = await publishedAndParked();
+  let state = await drainSteps(parked, contract, driver);
+  state = committed(state, (await driver.apply_event(contextOf(state, contract),
+    { kind: "pull_request_verified", head_sha: HEAD_SHA, pull_request_url: "https://example.test/pull/7" }))!);
+  state = { ...state, open_waits: [], accepted_outputs: [
+    { artifact_id: BUILD_ARTIFACT as ArtifactId, artifact_type: "dev.build_result", output_name: "build_result", unit_id: "web" as UnitId, body: {} },
+    { artifact_id: SUMMARY_ARTIFACT as ArtifactId, artifact_type: "dev.pr_summary", output_name: "pr_summary", unit_id: "web" as UnitId, body: {} }],
+  decided_gates: [
+    decidedGate(BUILD_WAIT, "build_result", BUILD_ARTIFACT, "approve"),
+    decidedGate(SUMMARY_WAIT, "pr_summary", SUMMARY_ARTIFACT, "approve")] };
+  state = await drainSteps(state, contract, driver);
+  expect(buildStateOf(state).phase).toBe("assessor_active");
+
+  const refreshed = await driver.apply_event(contextOf(state, contract),
+    { kind: "pull_request_verified", head_sha: "0ddba11", pull_request_url: "https://example.test/pull/7" });
+  const after = committed(state, refreshed!);
+  expect(buildStateOf(after).phase).toBe("assessor_active");
+  expect(buildStateOf(after).verified_pull_request?.head_sha).toBe("0ddba11");
 });

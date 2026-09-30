@@ -12,6 +12,20 @@ export interface WorkOrderArtifactCallbackDependencies {
   readonly send_run_wake?: (run_id: WorkflowRunId, idempotency_key: string) => Promise<void>;
   /** Wakes the publishing cohort's machine, which is what acts on a new artifact. */
   readonly send_cohort_wake?: (cohort_id: CohortId, idempotency_key: string) => Promise<void>;
+  /**
+   * Checks the pull request this publication reports against the forge and origin,
+   * and records what it found for the cohort's machine.
+   *
+   * Here because a publication is the only moment the run learns a build has a
+   * pull request: the merge poller sweeps cohorts two gates further on, so nothing
+   * else could produce the verification the build gate waits for. Absent is fine —
+   * a backend with no forge reader simply never reports one.
+   */
+  readonly verify_reported_pull_request?: (input: {
+    readonly cohort_id: CohortId;
+    /** From the `Pull-Request-Url` header; null leaves the cohort's stored one to be rechecked. */
+    readonly candidate_url: string | null;
+  }) => Promise<void>;
 }
 
 const statusOf = (result: PublishWorkOrderArtifactResult): 200 | 201 | 202 | 401 | 404 | 409 => {
@@ -41,6 +55,12 @@ export const createWorkOrderArtifactCallbackApp = (dependencies: WorkOrderArtifa
       collection_key: collectionKey as OutputCollectionKey | null, body, idempotency_key: context.req.header("idempotency-key")?.trim() || null }, dependencies);
     const status = statusOf(result);
     if (result.kind === "published" || result.kind === "already_applied" || result.kind === "pending") {
+      // Before the wakes, because the verification records a fact of its own and a
+      // machine woken first would only have to be woken again. Failure is swallowed:
+      // a forge that cannot be read must not undo a publication that committed, and
+      // a URL that fails verification has already been recorded as a mismatch.
+      await dependencies.verify_reported_pull_request?.({ cohort_id: result.cohort_id,
+        candidate_url: context.req.header("pull-request-url")?.trim() || null }).catch(() => undefined);
       // A hint only ever tells a machine "ask again" — sent fire-and-forget,
       // never on the response's critical path, and never required for the
       // publication itself to be correct.

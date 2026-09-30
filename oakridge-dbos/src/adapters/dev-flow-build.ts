@@ -30,9 +30,26 @@ export type BuildCohortPhase = "pending" | "builder_active" | "build_review" | "
 export type BuildEventDisposition = "transitioned" | "recorded_only";
 export type BuildGateName = "build_review" | "assessment_review";
 
+/**
+ * A pull request an independent authority has checked for this cohort.
+ *
+ * `head_sha` is the forge head the check was made against — the git namespace.
+ * `accepted_revision` is the *publication* the check is attached to, in the
+ * machine's own namespace, and it is what freshness is read from: a verification
+ * is good for the build it was made against and no later one.
+ *
+ * The two used to be one field called `revision`, compared against
+ * `accepted_revision` to decide the same thing. They never matched: one side is
+ * `pushed_head_sha` from the forge, the other is published artifact ids joined.
+ * The gate therefore never opened on the real path, and the mismatch also nulled
+ * the verification on every publication, which took the PR URL out of the
+ * revision prompts that cite it.
+ */
 export interface VerifiedPullRequest {
   readonly url: string;
-  readonly revision: string;
+  readonly head_sha: string;
+  /** Null when the verification arrived before the build published anything. */
+  readonly accepted_revision: string | null;
 }
 
 export interface BuildCohortState {
@@ -48,7 +65,15 @@ export interface BuildCohortState {
 export type BuildCohortEvent =
   | { readonly kind: "stage_started" }
   | { readonly kind: "build_artifact_recorded"; readonly revision: string; readonly output_name: string }
-  | { readonly kind: "pull_request_verified"; readonly revision: string; readonly pull_request_url: string }
+  /**
+   * `accepted_revision` is supplied by the *driver*, from the cohort's committed
+   * publications, not by whoever reported the pull request. Which of the two
+   * facts commits first is not ordered — a publication wake and a verification
+   * callback race — and stamping from committed rows makes both orders converge
+   * rather than leaving the gate shut on the loser.
+   */
+  | { readonly kind: "pull_request_verified"; readonly head_sha: string; readonly pull_request_url: string;
+    readonly accepted_revision: string | null }
   | { readonly kind: "builder_attempt_lost" }
   | { readonly kind: "build_review_approved" }
   | { readonly kind: "build_review_revision_requested" }
@@ -60,6 +85,19 @@ export type BuildCohortEvent =
   | { readonly kind: "pull_request_mismatch"; readonly pull_request_url: string }
   | { readonly kind: "replacement_pull_request_required"; readonly pull_request_url: string }
   | { readonly kind: "pull_request_merged"; readonly pull_request_url: string };
+
+/**
+ * The facts an outside authority reports about a cohort's pull request.
+ *
+ * The wire vocabulary, which differs from the machine's by exactly the stamp:
+ * a reporter knows the forge head it verified and nothing about which publication
+ * the cohort was on when it did. The driver fills that in from committed rows —
+ * see `decodeBuildCohortEvent`.
+ */
+export type ReportedBuildCohortEvent =
+  | { readonly kind: "pull_request_verified"; readonly head_sha: string; readonly pull_request_url: string }
+  | { readonly kind: "pull_request_mismatch" | "replacement_pull_request_required" | "pull_request_merged";
+    readonly pull_request_url: string };
 
 export interface CommittedBuildPrompt {
   readonly template_path: string;
@@ -155,11 +193,19 @@ export const initialBuildCohortState = (required_build_set: readonly string[]): 
   is_pull_request_merged: false,
 });
 
+/**
+ * Every required output published under one revision, and a pull request
+ * verified for that same revision.
+ *
+ * The third clause is what keeps a stale verification from opening the gate: the
+ * operator is being asked to review a pull request, so the one they are shown
+ * has to be the one the published work is in.
+ */
 export const isBuildReviewReady = (input: Pick<BuildCohortState,
   "required_build_set" | "accepted_revision" | "accepted_build_set" | "verified_pull_request">): boolean =>
   input.accepted_revision !== null
   && input.required_build_set.every((name) => input.accepted_build_set.includes(name))
-  && input.verified_pull_request?.revision === input.accepted_revision;
+  && input.verified_pull_request?.accepted_revision === input.accepted_revision;
 
 /** Manual gate decisions enter the same event boundary as every other fact. */
 export const selectBuildGateEvent = (gate: BuildGateName, disposition: GateDisposition): Result<BuildCohortEvent, string> => {
@@ -208,17 +254,33 @@ const restartBuilder = (state: BuildCohortState): BuildCohortState => ({
   is_pull_request_merged: false,
 });
 
+/**
+ * The verification is *kept* across a republication rather than dropped.
+ *
+ * A build that publishes again is the same pull request with more commits on it,
+ * so the URL stays true and the revision prompts keep citing it; what changes is
+ * that the verification is now stale, which `isBuildReviewReady` reads off the
+ * stamp. Dropping it here instead discarded the URL the `revision_after_*`
+ * prompts are built from.
+ */
 const observeBuildArtifact = (state: BuildCohortState, event: Extract<BuildCohortEvent, { readonly kind: "build_artifact_recorded" }>): BuildCohortState => {
   const sameRevision = state.accepted_revision === event.revision;
   const accepted_build_set = unique([...(sameRevision ? state.accepted_build_set : []), event.output_name]);
-  const verified_pull_request = state.verified_pull_request?.revision === event.revision ? state.verified_pull_request : null;
-  const observed = { ...state, accepted_revision: event.revision, accepted_build_set, verified_pull_request };
+  const observed = { ...state, accepted_revision: event.revision, accepted_build_set };
   return isBuildReviewReady(observed) ? { ...observed, phase: "build_review" } : observed;
 };
 
+/**
+ * Only `builder_active` opens the gate. A verification also arrives while the
+ * operator is already holding the gate, and after the assessor has taken over —
+ * re-verification is a freshness sweep, not a rewind — and a readiness test that
+ * set the phase unconditionally would send an `awaiting_merge` cohort back to
+ * `build_review`.
+ */
 const observeVerifiedPullRequest = (state: BuildCohortState, event: Extract<BuildCohortEvent, { readonly kind: "pull_request_verified" }>): BuildCohortState => {
-  const observed = { ...state, verified_pull_request: { url: event.pull_request_url, revision: event.revision } };
-  return isBuildReviewReady(observed) ? { ...observed, phase: "build_review" } : observed;
+  const observed = { ...state, verified_pull_request: { url: event.pull_request_url, head_sha: event.head_sha,
+    accepted_revision: event.accepted_revision } };
+  return state.phase === "builder_active" && isBuildReviewReady(observed) ? { ...observed, phase: "build_review" } : observed;
 };
 
 interface AppliedEvent { readonly state: BuildCohortState; readonly disposition: BuildEventDisposition; readonly launch: BuildSessionLaunch | null }
@@ -243,11 +305,11 @@ const applyEvent = (machine: BuildCohortMachine, state: BuildCohortState, event:
       const next = observeBuildArtifact(state, event);
       return next.phase === state.phase ? recorded(next) : transitioned(next);
     }
-    if (event.kind === "pull_request_verified") {
-      const next = observeVerifiedPullRequest(state, event);
-      return next.phase === state.phase ? recorded(next) : transitioned(next);
-    }
     if (event.kind === "builder_attempt_lost") return transitioned(state, launch(machine, state, "build", "retry_after_lost_attempt"));
+  }
+  if (event.kind === "pull_request_verified" && state.phase !== "pending") {
+    const next = observeVerifiedPullRequest(state, event);
+    return next.phase === state.phase ? recorded(next) : transitioned(next);
   }
   if (event.kind === "pull_request_mismatch" && state.phase !== "pending") {
     const next = restartBuilder(state);

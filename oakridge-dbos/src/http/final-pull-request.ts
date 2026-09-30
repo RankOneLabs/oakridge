@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 
-import type { BuildCohortEvent } from "../adapters/dev-flow-build";
+import type { ReportedBuildCohortEvent } from "../adapters/dev-flow-build";
 import { selectFinalPullRequestObservationOutcome, type FinalPullRequestEvent } from "../domain/final-pull-request";
 import { parseUuidId, type CohortId, type UnitId, type WorkflowRunId } from "../domain/primitives";
 import type { PullRequestVerificationId } from "../domain/pull-request";
@@ -16,7 +16,7 @@ export interface FinalPullRequestHttpDependencies {
   readonly final_targets: FinalPullRequestTargetRepository;
   readonly pull_request_reader: PullRequestForgeReader;
   readonly git: GitCommandRunner;
-  readonly record_build_event: (cohort_id: CohortId, event: BuildCohortEvent) => Promise<void>;
+  readonly record_build_event: (cohort_id: CohortId, event: ReportedBuildCohortEvent) => Promise<void>;
   readonly record_final_event: (event: FinalPullRequestEvent) => Promise<void>;
   readonly now?: () => string;
 }

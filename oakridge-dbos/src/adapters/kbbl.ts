@@ -152,7 +152,7 @@ const publicationInstructions = (config: KbblResolvedConfig, request: Pick<Execu
   const owed = request.expected_artifacts.length > 0
     ? `\n\nPublish exactly these outputs and no others:\n${expectedOutputLines(request)}\n`
     : "";
-  return `\n\n## Oakridge v2 artifact publication\n\nUse this run-owned endpoint instead of any stage/execution emit URL shown earlier:\n\nPUT ${config.publication.base_url.replace(/\/$/, "")}/work-orders/${config.publication.work_order_id}/emit/<output-name>\nWork-Order-Capability: ${config.publication.capability}\nIdempotency-Key: <stable key for this output payload>\nContent-Type: application/json\n\nFor a collection member, also send Output-Collection-Key. A successful executor exit does not satisfy the unit; publish every required output.\n${owed}`;
+  return `\n\n## Oakridge v2 artifact publication\n\nUse this run-owned endpoint instead of any stage/execution emit URL shown earlier:\n\nPUT ${config.publication.base_url.replace(/\/$/, "")}/work-orders/${config.publication.work_order_id}/emit/<output-name>\nWork-Order-Capability: ${config.publication.capability}\nIdempotency-Key: <stable key for this output payload>\nContent-Type: application/json\n\nFor a collection member, also send Output-Collection-Key. When you have opened a pull request for this unit, send Pull-Request-Url with its URL on every publication: Oakridge checks that URL against the forge and against your branch on origin, and a review cannot open until it has.\nA successful executor exit does not satisfy the unit; publish every required output.\n${owed}`;
 };
 
 const parseEnsureResponse = (value: unknown): EnsureSessionResponse => {

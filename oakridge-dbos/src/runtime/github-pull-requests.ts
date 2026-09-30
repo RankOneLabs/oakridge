@@ -15,7 +15,8 @@ import type { PullRequestObservation } from "../domain/pull-request";
 import { parseGithubPullRequestIdentity } from "../domain/pull-request";
 import type { StageInstanceId, UnitId } from "../domain/primitives";
 import type { OperatorCohortSummary } from "../domain/operator-projections";
-import { findCohortPullRequestExpectation, reconcileCohortEvidence, type CohortPullRequestDependencies, type CohortPullRequestResolution } from "./cohort-pull-request";
+import { findCohortPullRequestExpectation, reconcileCohortEvidence, verifyReportedCohortPullRequest,
+  type CohortPullRequestDependencies, type CohortPullRequestResolution, type ReportedPullRequestOutcome } from "./cohort-pull-request";
 
 /** Reads one pull request's current state. Absent when it cannot be read. */
 export interface PullRequestReader {
@@ -88,12 +89,45 @@ export interface CohortPullRequestPollDependencies extends CohortPullRequestDepe
 export interface CohortPollOutcome {
   readonly stage_instance_id: StageInstanceId;
   readonly unit_id: UnitId;
-  readonly resolution: CohortPullRequestResolution | { readonly kind: "unreadable" } | { readonly kind: "refused"; readonly detail: string };
+  readonly resolution: CohortPullRequestResolution | ReportedPullRequestOutcome
+  | { readonly kind: "unreadable" } | { readonly kind: "refused"; readonly detail: string };
 }
 
 /** Cohorts whose handoff is parked on the external review, and nothing else. */
 export const selectCohortsAwaitingReview = (cohorts: readonly OperatorCohortSummary[]): readonly OperatorCohortSummary[] =>
   cohorts.filter((cohort) => cohort.lifecycle === "blocked" && cohort.blocked_reason === "external");
+
+/** Cohorts an operator is holding at a gate, whose pull request may have moved under them. */
+export const selectCohortsUnderReview = (cohorts: readonly OperatorCohortSummary[]): readonly OperatorCohortSummary[] =>
+  cohorts.filter((cohort) => cohort.lifecycle === "blocked" && cohort.blocked_reason === "gate" && cohort.pr_url !== null);
+
+/**
+ * Re-checks the pull request behind every gate an operator is holding.
+ *
+ * A build gate opens on a verification, and the branch can be pushed to again
+ * while the review sits there. Re-verifying restamps the cohort with the head
+ * the forge reports now, so what the operator approves is checked against the
+ * current branch rather than the one that opened the gate. A head that has left
+ * the cohort's own ref fails verification and is recorded as a mismatch, which
+ * is the machine's route back to a correcting builder.
+ *
+ * Separate from the merge sweep because they answer different questions and
+ * read different rows: merge reconciliation needs the handoff wait, which a
+ * cohort still at its build gate has not opened.
+ */
+export const refreshCohortPullRequestVerifications = async (
+  dependencies: CohortPullRequestPollDependencies,
+): Promise<readonly CohortPollOutcome[]> => {
+  const outcomes: CohortPollOutcome[] = [];
+  for (const cohort of selectCohortsUnderReview(await dependencies.list_cohorts())) {
+    const refreshed = await verifyReportedCohortPullRequest(dependencies, {
+      stage_instance_id: cohort.stage_instance_id, unit_id: cohort.unit_id,
+      run_id: cohort.run_id, candidate_url: null,
+    }).catch((error: unknown) => ({ kind: "refused" as const, detail: String(error) }));
+    outcomes.push({ stage_instance_id: cohort.stage_instance_id, unit_id: cohort.unit_id, resolution: refreshed });
+  }
+  return outcomes;
+};
 
 /**
  * One sweep. Errors are per-cohort: a pull request that cannot be read, or a
@@ -101,7 +135,7 @@ export const selectCohortsAwaitingReview = (cohorts: readonly OperatorCohortSumm
  * reaching the cohorts behind it.
  */
 export const pollCohortPullRequests = async (dependencies: CohortPullRequestPollDependencies): Promise<readonly CohortPollOutcome[]> => {
-  const outcomes: CohortPollOutcome[] = [];
+  const outcomes: CohortPollOutcome[] = [...await refreshCohortPullRequestVerifications(dependencies)];
   for (const cohort of selectCohortsAwaitingReview(await dependencies.list_cohorts())) {
     const expectation = await findCohortPullRequestExpectation(dependencies, cohort.stage_instance_id, cohort.unit_id);
     if (!expectation.ok) {

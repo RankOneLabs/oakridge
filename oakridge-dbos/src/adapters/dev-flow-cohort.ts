@@ -153,6 +153,20 @@ const publishedRevisions = (state: CohortMachineState, contract: CompiledStageCo
 const publishedBuildRevision = (published: readonly PublishedRevision[]): string =>
   published.map((revision) => revision.artifact_id).sort().join("+");
 
+/**
+ * The publication a fact arriving now speaks about, or null before the build role
+ * has published anything.
+ *
+ * One reader for both uses: the revision `build_artifact_recorded` carries, and
+ * the revision a reported pull request is stamped with. They have to be the same
+ * value computed the same way — that equality *is* the readiness test in
+ * `isBuildReviewReady`.
+ */
+const currentBuildRevision = (published: readonly PublishedRevision[], build: BuildCohortState): string | null => {
+  const outputs = published.filter((revision) => build.required_build_set.includes(revision.output_name));
+  return outputs.length === 0 ? null : publishedBuildRevision(outputs);
+};
+
 /** The gate name a declared output parks on, or null when it releases immediately. */
 const gateNameOf = (contract: CompiledStageContract, output_name: string | null): string | null => {
   const release = contract.outputs.find((output) => output.name === output_name)?.release;
@@ -249,11 +263,11 @@ const nextEvent = (
   // under a *different* revision is owed again: that is how a republished build
   // replaces the set the previous one was reviewed as.
   const buildOutputs = published.filter((revision) => build.required_build_set.includes(revision.output_name));
-  const revision = publishedBuildRevision(buildOutputs);
+  const revision = currentBuildRevision(published, build);
   const owed = build.required_build_set.find((name) =>
     !(build.accepted_revision === revision && build.accepted_build_set.includes(name)));
   const owedRevision = owed === undefined ? undefined : buildOutputs.find((candidate) => candidate.output_name === owed);
-  if (owed !== undefined && owedRevision) {
+  if (owed !== undefined && owedRevision && revision !== null) {
     return { event: { kind: "build_artifact_recorded", revision, output_name: owed }, consumed_gate_wait_ids: [] };
   }
 
@@ -302,7 +316,10 @@ export const createDevFlowCohortDriver = (dependencies: DevFlowCohortDriverDepen
   },
 
   apply_event(context: CohortStepContext, event: JsonValue): Promise<CohortStepDecision | null> {
-    const decoded = decodeBuildCohortEvent(event);
+    const contract = contractOf(context.stage_contract);
+    const stageData = stageDataOf(context.state, contract);
+    const decoded = decodeBuildCohortEvent(event,
+      currentBuildRevision(publishedRevisions(context.state, contract), stageData.build_state));
     return decoded === null
       ? Promise.resolve(null)
       : applyOne({ context, dependencies, event: decoded, consumed_gate_wait_ids: [] });
@@ -315,11 +332,15 @@ export const createDevFlowCohortDriver = (dependencies: DevFlowCohortDriverDepen
  * Parsed rather than cast: these arrive from the pull-request reconciler and the
  * final-stage routes, and an unrecognised name must be ignored rather than
  * committed as a transition whose effect nothing can read.
+ *
+ * `accepted_revision` is *not* read off the wire. A verification reports a forge
+ * head; which publication that head is being vouched for is the cohort's own
+ * record to state, and the caller supplies it from committed rows.
  */
-const decodeBuildCohortEvent = (value: JsonValue): BuildCohortEvent | null => {
+const decodeBuildCohortEvent = (value: JsonValue, accepted_revision: string | null): BuildCohortEvent | null => {
   if (!isObject(value) || typeof value.kind !== "string") return null;
-  if (value.kind === "pull_request_verified" && typeof value.revision === "string" && typeof value.pull_request_url === "string") {
-    return { kind: "pull_request_verified", revision: value.revision, pull_request_url: value.pull_request_url };
+  if (value.kind === "pull_request_verified" && typeof value.head_sha === "string" && typeof value.pull_request_url === "string") {
+    return { kind: "pull_request_verified", head_sha: value.head_sha, pull_request_url: value.pull_request_url, accepted_revision };
   }
   if ((value.kind === "pull_request_merged" || value.kind === "pull_request_mismatch"
     || value.kind === "replacement_pull_request_required") && typeof value.pull_request_url === "string") {

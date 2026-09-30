@@ -7,7 +7,8 @@ import {
 import { invalidatePullRequestForReplacement, type PullRequestApproval, type PullRequestObservation, type PullRequestObservationId, type PullRequestId, type PullRequestVerificationId, type VerifiedPullRequestLink } from "../src/domain/pull-request";
 import type { ArtifactId, CohortId, StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
 import { renderCohortBranchContract, selectCohortBranchRoles } from "../src/domain/repository-refs";
-import { advanceCohortRef, advanceStoredCohortRef, prepareDevFlowBuildCohort, verifyAndBindCohortPullRequest, verifyCohortPullRequest } from "../src/runtime/cohort-pull-request";
+import { advanceCohortRef, advanceStoredCohortRef, prepareDevFlowBuildCohort, verifyAndBindCohortPullRequest, verifyCohortPullRequest, verifyReportedCohortPullRequest } from "../src/runtime/cohort-pull-request";
+import type { ReportedBuildCohortEvent } from "../src/adapters/dev-flow-build";
 import { BunGitCommandRunner } from "../src/runtime/git-command-runner";
 import type { DevFlowPullRequestRepository } from "../src/storage/repositories";
 import { createCohortPullRequestApp } from "../src/http/cohort-pull-request";
@@ -420,4 +421,131 @@ test("cohort preparation refuses a deleted stored canonical ref", async () => {
     prepared_at: "2026-09-29T00:00:00Z",
   });
   expect(result).toEqual({ ok: false, error: expect.objectContaining({ kind: "ref_lease_mismatch", detail: expect.stringContaining("missing") }) });
+});
+
+/* ------------------------------------------------------------------ *
+ * The build gate's own verification producer
+ * ------------------------------------------------------------------ */
+
+const PR_440 = "00000000-0000-4000-8000-000000000031" as PullRequestId;
+const PR_441 = "00000000-0000-4000-8000-000000000032" as PullRequestId;
+const VERIFICATION = "00000000-0000-4000-8000-000000000033" as PullRequestVerificationId;
+
+/** A reporting fixture: what the cohort already has, and what the forge says now. */
+interface ReportedFixture {
+  readonly cohort: DevFlowBuildCohort;
+  readonly current: { readonly pull_request_id: PullRequestId; readonly url: string; readonly head_sha: string } | null;
+  readonly forge: PullRequestObservation;
+  readonly stored_pull_request_id: PullRequestId;
+  readonly pushed_head_sha: string;
+  readonly forge_target?: boolean;
+}
+
+const reportedDependencies = (fixture: ReportedFixture) => {
+  const events: ReportedBuildCohortEvent[] = [];
+  const replacements: (PullRequestVerificationId | null)[] = [];
+  const pull_requests = {
+    async find_cohort_for_unit() { return fixture.cohort; },
+    async find_current_for_unit() {
+      if (!fixture.current) return null;
+      return { cohort: fixture.cohort,
+        pull_request: { id: fixture.current.pull_request_id, provider: "github" as const, owner: "RankOneLabs",
+          name: "oakridge", forge_pull_request_id: 440, url: fixture.current.url, created_at: "2026-09-29T00:00:00Z" },
+        observation: { ...observation({ state: "open", merged_at: null, head_sha: fixture.current.head_sha }),
+          id: "00000000-0000-4000-8000-000000000034" as PullRequestObservationId,
+          pull_request_id: fixture.current.pull_request_id, recorded_at: "2026-09-29T00:00:00Z" } };
+    },
+    async observe() { return { pull_request_id: fixture.stored_pull_request_id,
+      observation_id: "00000000-0000-4000-8000-000000000035" as PullRequestObservationId }; },
+    async bind_verified(input: { readonly replace_verification_id: PullRequestVerificationId | null }) {
+      replacements.push(input.replace_verification_id);
+      if (fixture.cohort.current_verified_pull_request_id !== null && input.replace_verification_id === null) {
+        return { ok: false as const, error: { kind: "replacement_required" as const, detail: "replacement must name it" } };
+      }
+      return { ok: true as const, value: "00000000-0000-4000-8000-000000000036" as PullRequestVerificationId };
+    },
+  } as unknown as DevFlowPullRequestRepository;
+  return { events, replacements, dependencies: {
+    pull_requests,
+    forge_targets: { async find() { return fixture.forge_target === false ? null
+      : { forge_repository: { owner: "RankOneLabs", name: "oakridge" } }; } } as never,
+    reader: { async read() { return fixture.forge; } },
+    git: { async run() { return { exit_code: 0, stdout: `${fixture.pushed_head_sha}\trefs/heads/cohort/foundation\n`, stderr: "" }; } },
+    now: () => "2026-09-29T02:00:00Z",
+    async record_build_event(_id: CohortId, event: ReportedBuildCohortEvent) { events.push(event); },
+  } };
+};
+
+const reportedInput = (candidate_url: string | null) => ({
+  stage_instance_id: expected.stage_instance_id, unit_id: expected.unit_id,
+  run_id: expected.run_id, candidate_url,
+});
+
+/**
+ * The bootstrap. Nothing else produces a build cohort's first
+ * `pull_request_verified`: the merge poller sweeps cohorts blocked on the
+ * external wait, two gates further on.
+ */
+test("a reported pull request URL is verified at publication and told to the machine", async () => {
+  const fixture = reportedDependencies({
+    cohort: storedCohort("/repo", "head-1"), current: null,
+    forge: observation({ state: "open", merged_at: null, head_sha: "head-1" }),
+    stored_pull_request_id: PR_440, pushed_head_sha: "head-1",
+  });
+  const outcome = await verifyReportedCohortPullRequest(fixture.dependencies, reportedInput(expected.url));
+  expect(outcome).toEqual({ kind: "verified", pull_request_url: expected.url, binding: "created" });
+  expect(fixture.events).toEqual([{ kind: "pull_request_verified", head_sha: "head-1", pull_request_url: expected.url }]);
+});
+
+/**
+ * Every publication after the first re-reports the same pull request with more
+ * commits on it. Calling that a replacement restarted the builder and threw the
+ * verification away, so the gate could never stay open.
+ */
+test("re-reporting the same pull request at a new head rebinds rather than demands a replacement", async () => {
+  const fixture = reportedDependencies({
+    cohort: { ...storedCohort("/repo", "head-2"), current_verified_pull_request_id: VERIFICATION },
+    current: { pull_request_id: PR_440, url: expected.url, head_sha: "head-1" },
+    forge: observation({ state: "open", merged_at: null, head_sha: "head-2" }),
+    stored_pull_request_id: PR_440, pushed_head_sha: "head-2",
+  });
+  const outcome = await verifyReportedCohortPullRequest(fixture.dependencies, reportedInput(expected.url));
+  expect(outcome).toEqual({ kind: "verified", pull_request_url: expected.url, binding: "rebound" });
+  expect(fixture.replacements).toEqual([VERIFICATION]);
+  expect(fixture.events.map((event) => event.kind)).toEqual(["pull_request_verified"]);
+});
+
+test("a different pull request URL is refused as the replacement it is", async () => {
+  const replacement = observation({ number: 441, url: "https://github.com/RankOneLabs/oakridge/pull/441",
+    state: "open", merged_at: null, head_sha: "head-2" });
+  const fixture = reportedDependencies({
+    cohort: { ...storedCohort("/repo", "head-2"), current_verified_pull_request_id: VERIFICATION },
+    current: { pull_request_id: PR_440, url: expected.url, head_sha: "head-1" },
+    forge: replacement, stored_pull_request_id: PR_441, pushed_head_sha: "head-2",
+  });
+  const outcome = await verifyReportedCohortPullRequest(fixture.dependencies, reportedInput(replacement.url));
+  expect(outcome).toEqual({ kind: "refused", detail: expect.stringContaining("replacement") });
+  expect(fixture.replacements).toEqual([null]);
+  expect(fixture.events.map((event) => event.kind)).toEqual(["replacement_pull_request_required"]);
+});
+
+test("a publication that reports no pull request, on a cohort with none, records nothing", async () => {
+  const fixture = reportedDependencies({
+    cohort: storedCohort("/repo", "head-1"), current: null,
+    forge: observation({ state: "open", merged_at: null, head_sha: "head-1" }),
+    stored_pull_request_id: PR_440, pushed_head_sha: "head-1",
+  });
+  expect(await verifyReportedCohortPullRequest(fixture.dependencies, reportedInput(null))).toEqual({ kind: "no_candidate" });
+  expect(fixture.events).toEqual([]);
+});
+
+test("a repository with no forge identity is not applicable rather than a mismatch", async () => {
+  const fixture = reportedDependencies({
+    cohort: storedCohort("/repo", "head-1"), current: null,
+    forge: observation({ state: "open", merged_at: null, head_sha: "head-1" }),
+    stored_pull_request_id: PR_440, pushed_head_sha: "head-1", forge_target: false,
+  });
+  expect(await verifyReportedCohortPullRequest(fixture.dependencies, reportedInput(expected.url)))
+    .toEqual({ kind: "not_applicable", detail: expect.stringContaining("forge identity") });
+  expect(fixture.events).toEqual([]);
 });
