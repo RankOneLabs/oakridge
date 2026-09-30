@@ -24,6 +24,11 @@ export interface AgentProfile {
   readonly enabled: boolean;
   /** Required for DBOS delegated-session use (§10.3, guardrail 18). */
   readonly requireLoadSession: boolean;
+  /**
+   * Value for the agent's `mode` config option that a new session starts in
+   * (§12 semantic category "mode"). Null leaves the agent's own default.
+   */
+  readonly sessionMode: string | null;
 }
 
 export type AcpRuntimeConfig = KbblConfig["acp"];
@@ -55,6 +60,7 @@ export function loadAgentProfiles(
       },
       enabled: agent.enabled,
       requireLoadSession: agent.require_load_session,
+      sessionMode: agent.session_mode,
     });
   }
   return profiles;

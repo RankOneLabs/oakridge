@@ -23,6 +23,12 @@ function installedBin(kbblRoot: string, binName: string): string {
  * OAuth, and a stray key in kbbl's environment must never silently flip a
  * session to per-token API billing. An operator who genuinely wants API
  * billing overrides the profile in config.acp.agents.
+ *
+ * `claude-code` starts sessions in Auto mode: kbbl hands the agent nothing
+ * but a cwd, so in the SDK's "default" mode every edit and non-read-only
+ * command in a run worktree waits on an operator click. Auto keeps the
+ * provider's own classifier (and its bypass-immune asks) in the loop; the
+ * adapter itself drops to "acceptEdits" when the model lacks Auto support.
  */
 export function builtinAgentProfiles(
   kbblRoot: string,
@@ -36,6 +42,7 @@ export function builtinAgentProfiles(
     env_policy: { inherit: true, exclude: ["ANTHROPIC_API_KEY"] },
     enabled: true,
     requireLoadSession: true,
+    sessionMode: "auto",
   });
   profiles.set("codex", {
     id: "codex",
@@ -45,6 +52,7 @@ export function builtinAgentProfiles(
     env_policy: { inherit: true },
     enabled: true,
     requireLoadSession: true,
+    sessionMode: null,
   });
   return profiles;
 }

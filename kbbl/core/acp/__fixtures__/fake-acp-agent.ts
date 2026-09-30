@@ -97,6 +97,18 @@ const CONFIG_OPTIONS: schema.SessionConfigOption[] = [
       { value: "high", name: "High" },
     ],
   },
+  {
+    type: "select",
+    id: "mode",
+    name: "Mode",
+    category: "mode",
+    currentValue: "default",
+    options: [
+      { value: "default", name: "Manual" },
+      { value: "acceptEdits", name: "Accept edits" },
+      { value: "auto", name: "Auto" },
+    ],
+  },
 ];
 
 // Current config values per session (in-memory; config state does not

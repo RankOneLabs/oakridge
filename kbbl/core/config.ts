@@ -141,6 +141,10 @@ const AcpAgentSchema = z
     // DBOS-managed sessions require session/load (guardrail 18); a profile
     // may opt out only for browser-only agents.
     require_load_session: z.boolean().default(true),
+    // Value for the agent's `mode` config option applied to every new
+    // session (e.g. "auto" for Claude Code). Null leaves the agent's own
+    // settings default in place.
+    session_mode: z.string().min(1).nullable().default(null),
   })
   .strict();
 

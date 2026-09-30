@@ -195,6 +195,47 @@ realTest(
     report.push(`load_replay=${reloaded.value.expired ? "EXPIRED" : `${reloaded.value.events.length} events`}`);
     expect(reloaded.value.expired).toBe(false);
 
+    // The respawned agent reports its settings-default mode; kbbl must have
+    // re-applied the profile's session mode on top. Claude Code falls back to
+    // acceptEdits by itself when the model lacks Auto support.
+    const requestedMode = profiles.get(REAL_AGENT)?.sessionMode ?? null;
+    if (requestedMode !== null) {
+      const modeOption = registry
+        .getLive(sid as never)
+        ?.liveConfigOptions.find((option) => option.category === "mode");
+      const landedMode = modeOption?.type === "select" ? modeOption.currentValue : null;
+      report.push(`mode_after_respawn=${landedMode ?? "none"}`);
+      if (landedMode === null) throw new Error("mode config option went missing");
+      expect([requestedMode, "acceptEdits"]).toContain(landedMode);
+
+      // A file write in the session's own worktree must run without an
+      // operator click — the prompt this mode exists to remove.
+      const probe = await service.sendInput(
+        sid,
+        "Use the Bash tool to run exactly `touch mode-probe.txt`, then reply with exactly PROBE-OK.",
+        { client_message_id: "mode-probe" },
+      );
+      if (!probe.ok) throw new Error(probe.error.detail);
+      const probeKey = "operator:mode-probe" as TurnKey;
+      const probeDeadline = Date.now() + 90_000;
+      while (
+        store.getTurn(sid, probeKey)?.status === "accepted" ||
+        store.getTurn(sid, probeKey)?.status === "prompting"
+      ) {
+        if (service.pendingPermissionCount(sid) > 0) {
+          throw new Error(`mode ${landedMode} still asked permission for a worktree write`);
+        }
+        if (Date.now() > probeDeadline) throw new Error("mode probe turn did not finish");
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      expect(store.getTurn(sid, probeKey)?.status).toBe("succeeded");
+      const worktreePath = store.getSession(sid as never)?.worktree_path;
+      if (!worktreePath) throw new Error("session lost its worktree");
+      const probeFile = Bun.file(join(worktreePath, "mode-probe.txt"));
+      expect(await probeFile.exists()).toBe(true);
+      report.push("mode_probe=no-permission-prompt");
+    }
+
     // A browser resume starts empty. Codex may not persist it before the first
     // prompt: reap the child, then prove the queued operator turn still runs
     // on the same kbbl session/worktree after cold recovery.
