@@ -16,7 +16,7 @@ import { HARNESS_BASE_BRANCH, SEVEN_BRIEF_PLAN, awaitCondition, installIntegrati
 import { assertQuietAsk, decideGate, driveRun, launchRun, listRunGates, readReviewInbox, readRun, readRunRecordFingerprint } from "./support/dev-flow-driver";
 import { findTestDatabaseUrl } from "./support/durable-database";
 import { attemptsAfterCancel, buildDependencies, buildStageRow, buildUnitRows, closedGateWaitCount,
-  countBuildOrdersInState, openBriefGateUnitIds, runOutcome, startedBuildUnitIds, transitionCountFor,
+  countBuildOrdersInState, materializationFailedTransitions, openBriefGateUnitIds, runOutcome, startedBuildUnitIds, transitionCountFor,
   transitionVersion, workflowRunState } from "./support/v15-run-queries";
 
 const acceptanceEnabled = process.env.OAKRIDGE_ACCEPTANCE === "1";
@@ -129,10 +129,6 @@ const assertNoStartedBuildDependsOnOpenBrief = async (runId: WorkflowRunId): Pro
     for (const dependency of await buildDependencies(sql, runId, unitId)) expect(openBriefs.has(dependency)).toBe(false);
   }
 };
-
-/** `run_transition` rows recording a materialization contradiction (`record_contradiction_tx`'s only pending transition). */
-const materializationFailedTransitions = async (runId: WorkflowRunId): Promise<readonly { readonly detail: unknown }[]> =>
-  sql.query<{ readonly detail: unknown }>("SELECT detail FROM oakridge.run_transition WHERE run_id = $1 AND operation = 'materialization_failed'", [runId]);
 
 
 /** `GET /gates` with no run filter — every open gate across every run, the way `listV2PendingGates()` (no `run_id`) reports it. */
@@ -431,7 +427,7 @@ preV15DecisionScenario("scenario 5: an unknown dependency at close fails the run
     expect(outcome?.kind).toBe("failed");
     expect(outcome && "code" in outcome ? outcome.code : null).toBe("contradiction");
 
-    const transitions = await materializationFailedTransitions(launched.run_id);
+    const transitions = await materializationFailedTransitions(sql, launched.run_id);
     expect(transitions).toHaveLength(1);
     expect(transitions[0]?.detail).toEqual({
       stage_key: "build",
@@ -475,7 +471,7 @@ preV15DecisionScenario("scenario 6a: a failed run strands its open gates visibly
     const outcome = await runOutcome(sql, launched.run_id);
     expect(outcome?.kind).toBe("failed");
     expect(outcome && "code" in outcome ? outcome.code : null).toBe("contradiction");
-    const transitions = await materializationFailedTransitions(launched.run_id);
+    const transitions = await materializationFailedTransitions(sql, launched.run_id);
     expect(transitions).toHaveLength(1);
     expect((transitions[0]?.detail as { readonly contradiction?: { readonly kind?: string } } | undefined)?.contradiction?.kind).toBe("dependency_cycle");
 
@@ -770,6 +766,12 @@ e2e("scenario 9: an operator edit on a gated artifact is refused through the rea
       .find((candidate) => candidate.stage_name === "brief_writer" && candidate.artifact_revision_id);
     if (!gate?.artifact_revision_id) throw new Error("scenario 9 stopped here: no brief_writer gate with an open artifact revision was found");
 
+    await awaitCondition("scenario 9 run record to settle", async () => {
+      const first = await readRunRecordFingerprint(sql, launched.run_id);
+      await Bun.sleep(500);
+      const second = await readRunRecordFingerprint(sql, launched.run_id);
+      return first.record_version === second.record_version && first.transition_count === second.transition_count ? true : null;
+    }, 15_000);
     const before = await readRunRecordFingerprint(sql, launched.run_id);
     const response = await fetch(`${oakridge.base_url}/artifacts/${gate.artifact_revision_id}/edits`, {
       method: "POST", headers: { "content-type": "application/json" },

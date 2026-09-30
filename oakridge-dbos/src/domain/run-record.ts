@@ -174,6 +174,7 @@ export type OpenStageCohortsResult =
 export interface RecordCohortEvent {
   readonly run_id: WorkflowRunId;
   readonly cohort_id: CohortId;
+  readonly expected_version: number;
   readonly change: { readonly status: CoreStatus; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null; readonly outcome: JsonValue | null };
   readonly stage_data: JsonValue;
   readonly effect: TransitionEffectDescriptor;
@@ -184,7 +185,7 @@ export interface RecordCohortEvent {
 
 export type RecordCohortEventResult =
   | { readonly kind: "recorded"; readonly transition: CommittedRunTransition }
-  | { readonly kind: "cohort_not_found" | "version_conflict" | "invalid_effect"; readonly detail: string };
+  | { readonly kind: "cohort_not_found" | "version_conflict" | "owner_terminal" | "invalid_effect"; readonly detail: string };
 
 /**
  * A gate this cohort has had decided, and what the decision did to the slot it
@@ -193,7 +194,7 @@ export type RecordCohortEventResult =
  */
 export interface DecidedCohortGate {
   readonly wait_id: WaitId;
-  readonly output_name: string;
+  readonly output_name: string | null;
   readonly action: string;
   readonly artifact_id: ArtifactId | null;
   readonly accepted: boolean;
@@ -311,6 +312,21 @@ export interface BindSession {
   readonly kbbl_session_id: KbblSessionId | null;
   readonly bound_at: string;
 }
+
+export type BindSessionResult = { readonly kind: "bound" } | { readonly kind: "attempt_ended"; readonly status: CoreStatus };
+export type SessionStatusWrite = { readonly kind: "written" } | { readonly kind: "already_ended"; readonly status: CoreStatus };
+
+export interface CommitCohortLaunch {
+  readonly event: RecordCohortEvent;
+  readonly attempt: StartAttempt;
+}
+
+export type CohortLaunchCommitted =
+  | { readonly kind: "created"; readonly attempt_id: AttemptId; readonly transition: CommittedRunTransition }
+  | { readonly kind: "already_created"; readonly attempt_id: AttemptId };
+
+export type CohortLaunchCommitError =
+  | { readonly kind: "cohort_not_found" | "version_conflict" | "owner_terminal" | "invalid_effect" | "idempotency_conflict"; readonly detail: string };
 
 export type ExecutorHealthObservation =
   | { readonly kind: "running"; readonly observed_at: string }

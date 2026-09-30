@@ -358,7 +358,7 @@ test("cohort preparation creates the canonical ref and persists the roles render
     let stored: DevFlowBuildCohort | null = null;
     const repository = {
       async find_cohort_for_unit() { return stored; },
-      async create_cohort(cohort: DevFlowBuildCohort) { stored = cohort; return cohort; },
+      async create_cohort(cohort: DevFlowBuildCohort) { stored = cohort; return { ok: true, value: cohort }; },
     } as unknown as DevFlowPullRequestRepository;
     const baseHead = await fixture.origin_branch_sha(fixture.integration_branch);
     if (!baseHead) throw new Error("fixture integration branch is missing");

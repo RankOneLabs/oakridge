@@ -45,7 +45,7 @@ const dependencyFixture = (existing: typeof current | null = null, mergePolicy: 
   const build_events: BuildCohortEvent[] = [];
   const final_events: FinalPullRequestEvent[] = [];
   const pullRequests: DevFlowPullRequestRepository = {
-    async create_cohort(value) { return value; },
+    async create_cohort(value) { return { ok: true, value }; },
     async begin_cohort_advance() { return { ok: false, error: { kind: "cohort_not_found", detail: "not used" } }; },
     async advance_cohort_head() { return { ok: false, error: { kind: "cohort_not_found", detail: "not used" } }; },
     async find_cohort_for_unit() { return cohort; },

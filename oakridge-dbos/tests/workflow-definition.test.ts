@@ -39,22 +39,15 @@ describe("versioned workflow definition compatibility", () => {
     expect(parseWorkflowDefinition(definition, registry).ok).toBe(true);
   });
 
-  test("decodes persisted singular contracts and preserves their revision route", () => {
-    const legacyConfig = (role: "build" | "assessment", terminal: object) => ({ runtime: "claude-code", prompt_template_path: `${role}.md`,
-      slot_bindings: {}, workdir: { from: "literal", value: "/repo" }, session_name: role, pre_authorized_tools: [], yolo: false, ...terminal });
-    const result = parseWorkflowDefinition({ id: "ef2b47a4-d1bd-44ee-840a-e4f7b27570db", name: "legacy", version: 14,
-      created_at: "2026-08-14T00:00:00Z", graph: { stages: {
-        build: { stage_type: "delegated_session", operator_role: "build", inputs: [], outputs: [{ name: "result", artifact_type: "build" }],
-          config: legacyConfig("build", { output_handoff: { output: "result", downstream_role: "assessment", approved_wait: { kind: "review" } } }) },
-        assessor: { stage_type: "delegated_session", operator_role: "assessment", inputs: [], outputs: [{ name: "assessment", artifact_type: "assessment" }],
-          config: legacyConfig("assessment", { output_gate: { output: "assessment", steps: [{ type: "artifact_approval", actions: ["approve", "request_revision"] }], revision_target: "upstream_handoff" } }) },
-      }, edges: [] } });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.value.graph.stages.assessor?.config).toEqual(expect.objectContaining({ prompt_matrix: expect.any(Array), role_configs: expect.any(Array) }));
-    expect(result.value.graph.transitions).toContainEqual({ trigger: { kind: "operator", stage: "assessor", item: "request_revision" },
-      launch: { stage: "build", session_role: "build", launch_reason: "input_revision" } });
+  test("a delegated stage without operator_role is refused", async () => {
+    const source = await Bun.file(new URL("../../workflow-config/definitions/dev_flow_v15.json", import.meta.url)).json();
+    delete source.graph.stages.build.operator_role;
+    const result = parseWorkflowDefinition(source);
+    expect(result).toEqual({ ok: false, error: expect.objectContaining({
+      detail: expect.stringContaining("operator_role"),
+    }) });
   });
+
 
   test("parses a declared output attention while keeping it optional", async () => {
     const source = await Bun.file(new URL("../../workflow-config/definitions/dev_flow_v15.json", import.meta.url)).json();
@@ -120,7 +113,7 @@ describe("versioned workflow definition compatibility", () => {
   test("rejects an incremental input on a fan-out driven by something other than an input", () => {
     const result = parseWorkflowDefinition(definitionWith("in", {
       a: producer,
-      b: { stage_type: "delegated_session", outputs: [{ name: "out", artifact_type: "b" }], inputs: [{ name: "in", artifact_type: "a", delivery: "unit_complete" }],
+      b: { stage_type: "delegated_session", operator_role: "build", outputs: [{ name: "out", artifact_type: "b" }], inputs: [{ name: "in", artifact_type: "a", delivery: "unit_complete" }],
         config: delegatedConfig({ over: { from: "context", path: "/repositories" }, unit_id_path: "/unit_id" }) },
     }));
     expect(result).toEqual({ ok: false, error: expect.objectContaining({ detail: expect.stringContaining("drives nothing") }) });
@@ -129,7 +122,7 @@ describe("versioned workflow definition compatibility", () => {
   test("accepts several incremental inputs when one of them is the fan-out driver", () => {
     const result = parseWorkflowDefinition(definitionWith("driver", {
       a: producer,
-      b: { stage_type: "delegated_session", outputs: [{ name: "out", artifact_type: "b" }],
+      b: { stage_type: "delegated_session", operator_role: "build", outputs: [{ name: "out", artifact_type: "b" }],
         inputs: [{ name: "driver", artifact_type: "a", delivery: "unit_complete" }, { name: "companion", artifact_type: "a", delivery: "unit_complete" }],
         config: delegatedConfig({ over: { from: "input", input_name: "driver" }, unit_id_path: "/unit_id" }) },
     }));

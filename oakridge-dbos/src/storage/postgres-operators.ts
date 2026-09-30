@@ -60,8 +60,10 @@ const BUILD_COHORT_COLUMNS = `cohort_id::text,stage_instance_id::text,cohort_key
 export class PostgresDevFlowPullRequestRepository implements DevFlowPullRequestRepository {
   constructor(private readonly sql: TransactionalSqlExecutor) {}
 
-  async create_cohort(cohort: DevFlowBuildCohort): Promise<DevFlowBuildCohort> {
-    return this.sql.transaction(async (tx) => {
+  async create_cohort(cohort: DevFlowBuildCohort): Promise<Result<DevFlowBuildCohort,
+    { readonly kind: "cohort_not_stored" | "identity_conflict" | "storage_failed"; readonly detail: string }>> {
+    try {
+    return await this.sql.transaction(async (tx) => {
       await tx.query(`INSERT INTO oakridge.dev_flow_build_cohort
         (cohort_id,stage_instance_id,cohort_key,repository_key,repository_path,canonical_ref,expected_pr_base,recorded_head_sha,created_at,updated_at)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (cohort_id) DO NOTHING`,
@@ -70,14 +72,18 @@ export class PostgresDevFlowPullRequestRepository implements DevFlowPullRequestR
       const rows = await tx.query<BuildCohortRow>(`SELECT ${BUILD_COHORT_COLUMNS}
         FROM oakridge.dev_flow_build_cohort WHERE cohort_id=$1`, [cohort.cohort_id]);
       const stored = rows[0];
-      if (!stored) throw new Error(`build cohort '${cohort.cohort_id}' was not stored`);
+      if (!stored) return err({ kind: "cohort_not_stored" as const, detail: `build cohort '${cohort.cohort_id}' was not stored` });
       const result = buildCohortFromRow(stored);
       const immutableMatches = result.stage_instance_id === cohort.stage_instance_id && result.cohort_key === cohort.cohort_key
         && result.repository_key === cohort.repository_key && result.repository_path === cohort.repository_path
         && result.canonical_ref === cohort.canonical_ref && result.expected_pr_base === cohort.expected_pr_base;
-      if (!immutableMatches) throw new Error(`build cohort '${cohort.cohort_id}' already exists with different branch roles`);
-      return result;
+      if (!immutableMatches) return err({ kind: "identity_conflict" as const,
+        detail: `build cohort '${cohort.cohort_id}' already exists with different branch roles` });
+      return ok(result);
     });
+    } catch (error) {
+      return err({ kind: "storage_failed", detail: `creating build cohort '${cohort.cohort_id}' failed: ${String(error)}` });
+    }
   }
 
   async advance_cohort_head(input: { readonly cohort_id: CohortId; readonly expected_head_sha: string; readonly next_head_sha: string; readonly advanced_at: string }): Promise<Result<DevFlowBuildCohort, { readonly kind: "cohort_not_found" | "ref_lease_mismatch"; readonly detail: string }>> {
@@ -542,6 +548,8 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
          COALESCE((SELECT max(accepted_at)::text FROM oakridge.artifact_acceptance), '0'),
          COALESCE((SELECT max(closed_at)::text FROM oakridge.wait_gate), '0'),
          COALESCE((SELECT max(created_at)::text FROM oakridge.session_message), '0'),
+         COALESCE((SELECT max(updated_at)::text FROM oakridge.session), '0'),
+         COALESCE((SELECT max(updated_at)::text FROM oakridge.artifact_thread), '0'),
          COALESCE((SELECT max(created_at)::text FROM oakridge.artifact_thread_message), '0'),
          COALESCE((SELECT max(updated_at)::text FROM oakridge.dev_flow_build_cohort), '0'),
          COALESCE((SELECT max(recorded_at)::text FROM oakridge.pull_request_observation), '0')) AS cursor`, []);

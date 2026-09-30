@@ -56,7 +56,7 @@ test("workflow definition archival updates the query column and stored domain do
 
 test("immutable reseeding ignores archive state and preserves the stored archive value", async () => {
   const stored: WorkflowDefinition = { id: "00000000-0000-4000-8000-000000000002" as WorkflowDefinitionId, name: "flow", version: 1, graph: { stages: {}, edges: [] }, archived: true, created_at: "2026-08-15T12:00:00Z" };
-  const sql = new StubSql([{ definition: stored }]);
+  const sql = new StubSql([{ definition: stored, hash: "empty", version: 1, matrix: [] }]);
   const result = await new PostgresWorkflowDefinitionRepository(sql, createDevFlowAdapterRegistry()).insert_immutable({ ...stored, archived: false }, { version: 1, hash: "empty", matrix: [] });
   expect(result.archived).toBe(true);
   expect(sql.transaction_calls).toBe(1);

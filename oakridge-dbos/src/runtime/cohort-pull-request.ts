@@ -59,7 +59,7 @@ export interface PreparedDevFlowBuildCohort {
 
 export interface PrepareDevFlowBuildCohortError {
   readonly operation: "prepare_dev_flow_build_cohort";
-  readonly kind: "git_read_failed" | "ref_lease_mismatch" | "git_command_failed";
+  readonly kind: "git_read_failed" | "ref_lease_mismatch" | "git_command_failed" | "cohort_storage_failed";
   readonly detail: string;
 }
 
@@ -102,7 +102,8 @@ export const prepareDevFlowBuildCohort = async (
     recorded_head_sha: input.repository.base_head_sha, current_verified_pull_request_id: null,
     created_at: input.prepared_at, updated_at: input.prepared_at,
   });
-  return ok({ cohort, branch_contract: renderCohortBranchContract(cohort) });
+  if (!cohort.ok) return prepareFailure("cohort_storage_failed", cohort.error.detail);
+  return ok({ cohort: cohort.value, branch_contract: renderCohortBranchContract(cohort.value) });
 };
 
 export interface PullRequestForgeReader {

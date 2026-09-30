@@ -1,11 +1,9 @@
 /**
  * The production `RunSnapshot` loader — the one read `derive` is evaluated over.
  *
- * Run inside `PostgresRunRecordWriter.decide`'s transaction, so every row it
- * returns is from the same committed instant: the whole point of the decision
- * layer is that one pure function sees one consistent picture, and a snapshot
- * assembled across transactions would let a cohort complete between two of its
- * own queries.
+ * Run inside `PostgresRunRecordWriter.decide`'s transaction. The run-row lock
+ * serialises whole-run decisions, and owner version checks protect each stage
+ * or cohort a decision writes.
  *
  * A stage's dependency edges are read off `stage_instance.stage_contract`, where
  * `initialize_run` wrote them from the compiled graph. They are stage-instance
@@ -13,7 +11,7 @@
  * decision time (spec §1), and the ids are what `derive` closes over.
  */
 import type { CohortSnapshot, RunDecisionSnapshot, RunSnapshot, StageSnapshot } from "../decision/snapshot";
-import type { ArtifactId, CohortId, JsonValue, RunRecordVersion, StageInstanceId, WorkflowRunId } from "../domain/primitives";
+import { err, ok, type ArtifactId, type CohortId, type JsonValue, type Result, type RunRecordVersion, type StageInstanceId, type WorkflowRunId } from "../domain/primitives";
 import type { BlockedReason, CoreStatus, NextActor } from "../domain/records";
 import type { SqlExecutor } from "./sql-executor";
 
@@ -49,21 +47,16 @@ interface CohortSnapshotRow {
   readonly accepted_artifact_ids: readonly string[];
 }
 
-export class RunSnapshotNotFoundError extends Error {
-  constructor(readonly run_id: WorkflowRunId) { super(`workflow run '${run_id}' was not found`); }
-}
-
 /**
  * `FOR UPDATE` on the run row alone. It is the run's decision lock: two
- * concurrent `decide_run` calls serialise here, so the stage and cohort reads
- * below cannot interleave with another decision's commits, and neither call
- * needs to lock every row it might transition.
+ * concurrent `decide_run` calls serialise here. Owner version checks cover
+ * the stage and cohort rows each decision writes.
  */
-export const loadRunSnapshot = async (tx: SqlExecutor, run_id: WorkflowRunId): Promise<RunSnapshot> => {
+export const loadRunSnapshot = async (tx: SqlExecutor, run_id: WorkflowRunId): Promise<Result<RunSnapshot, { readonly kind: "run_not_found"; readonly run_id: WorkflowRunId }>> => {
   const runs = await tx.query<RunSnapshotRow>(
     "SELECT id::text,status,record_version::text,outcome FROM oakridge.workflow_run WHERE id=$1 FOR UPDATE", [run_id]);
   const runRow = runs[0];
-  if (!runRow) throw new RunSnapshotNotFoundError(run_id);
+  if (!runRow) return err({ kind: "run_not_found", run_id });
   const run: RunDecisionSnapshot = {
     id: runRow.id as WorkflowRunId, status: runRow.status,
     record_version: Number(runRow.record_version) as RunRecordVersion, outcome: runRow.outcome,
@@ -109,5 +102,5 @@ export const loadRunSnapshot = async (tx: SqlExecutor, run_id: WorkflowRunId): P
     outcome: row.outcome,
   }));
 
-  return { run, stages };
+  return ok({ run, stages });
 };

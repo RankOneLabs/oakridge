@@ -15,6 +15,24 @@ test("the v15 baseline is the only migration", async () => {
   expect(migrationNames(await readdir(MIGRATIONS))).toEqual(MIGRATION_SET);
 });
 
+test("an applied 0015 ledger without its schema fails with named divergence", async () => {
+  const scratch = await createScratchDatabase("oakridge_v15_ledger_divergence");
+  if (!scratch.ok) {
+    if (scratch.error.operation !== "reach_admin_endpoint") throw new Error(`${scratch.error.operation}: ${scratch.error.detail}`);
+    console.warn("v15 ledger PostgreSQL check SKIPPED: no PostgreSQL reachable");
+    return;
+  }
+  scratches.push(scratch.value);
+  const sql = PgPostgresExecutor.connect(scratch.value.url);
+  try {
+    await sql.query(`CREATE TABLE public.oakridge_schema_migration
+      (name text PRIMARY KEY, applied_at timestamptz NOT NULL)`, []);
+    await sql.query(`INSERT INTO public.oakridge_schema_migration (name,applied_at)
+      VALUES ('0015_v15_baseline.sql',now())`, []);
+    await expect(applyMigrations(sql)).rejects.toThrow("artifact_thread, attempt.idempotency_key, dev_flow_build_cohort");
+  } finally { await sql.close(); }
+});
+
 const scratches: ScratchDatabase[] = [];
 afterAll(async () => { for (const scratch of scratches) await scratch.drop(); });
 
@@ -161,7 +179,9 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
 
     const gateId = "00000000-0000-4000-8000-000000000020";
     await sql.query(`INSERT INTO oakridge.wait_gate
-      (id,run_id,kind,closes_on,command_workflow_id) VALUES ($1,'00000000-0000-4000-8000-000000000002','gate','{}','gate:test')`, [gateId]);
+      (id,run_id,stage_instance_id,cohort_id,kind,closes_on,command_workflow_id)
+      VALUES ($1,'00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000003',
+        '00000000-0000-4000-8000-000000000005','gate','{}','gate:test')`, [gateId]);
     for (const artifactId of artifactIds) await sql.query(
       "INSERT INTO oakridge.wait_gate_artifact_revision (wait_gate_id,artifact_id,run_id) VALUES ($1,$2,'00000000-0000-4000-8000-000000000002')", [gateId, artifactId]);
     await sql.query(`INSERT INTO oakridge.wait_gate_output_slot
@@ -170,8 +190,10 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
       ($1,'00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000003','report','a'),
       ($1,'00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000004','assessment',NULL)`, [gateId]);
     await sql.query(`INSERT INTO oakridge.wait_gate
-      (id,run_id,kind,closes_on,command_workflow_id) VALUES
-      ('00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000002','external','{}','wait:no-artifact')`, []);
+      (id,run_id,stage_instance_id,cohort_id,kind,closes_on,command_workflow_id) VALUES
+      ('00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000002',
+        '00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000005',
+        'external','{}','wait:no-artifact')`, []);
     expect((await sql.query<{ readonly revisions: string; readonly slots: string }>(`SELECT
       (SELECT count(*)::text FROM oakridge.wait_gate_artifact_revision WHERE wait_gate_id=$1) AS revisions,
       (SELECT count(*)::text FROM oakridge.wait_gate_output_slot WHERE wait_gate_id=$1) AS slots`, [gateId]))[0])

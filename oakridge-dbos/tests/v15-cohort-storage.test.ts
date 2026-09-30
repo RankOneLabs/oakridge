@@ -25,6 +25,8 @@ import { capabilityFor, capabilityHash } from "../src/runtime/resolve-work-order
 import { applyMigrations } from "../src/storage/migrate";
 import { PostgresRunRecordWriter } from "../src/storage/postgres-run-record";
 import { PostgresArtifactRepository } from "../src/storage/postgres-domain";
+import { PostgresCollaborationRepository } from "../src/storage/postgres-domain";
+import { PostgresOperatorProjectionRepository } from "../src/storage/postgres-operators";
 import { PostgresRunRecordRepository } from "../src/storage/postgres-run-record-repository";
 import { PgPostgresExecutor, type TransactionalSqlExecutor } from "../src/storage/sql-executor";
 import { createScratchDatabase, type ScratchDatabase } from "./support/durable-database";
@@ -65,6 +67,7 @@ const scratches: ScratchDatabase[] = [];
 afterAll(async () => { for (const scratch of scratches) await scratch.drop(); });
 
 interface Prepared {
+  readonly url: string;
   readonly sql: TransactionalSqlExecutor & { close(): Promise<void> };
   readonly records: PostgresRunRecordRepository;
   readonly seed: string;
@@ -92,7 +95,7 @@ const prepare = async (name: string): Promise<Prepared | null> => {
       [stage.id, RUN_ID, stage.key, JSON.stringify(stage.contract)]);
   }
   const records = new PostgresRunRecordRepository(sql, new PostgresRunRecordWriter(sql, createDevFlowAdapterRegistry()));
-  return { sql, records, seed: await records.load_work_order_capability_seed() };
+  return { url: scratch.value.url, sql, records, seed: await records.load_work_order_capability_seed() };
 };
 
 const openCohort = async (sql: Prepared["sql"], stage: StageInstanceId, cohort: CohortId, key: string): Promise<void> => {
@@ -304,6 +307,11 @@ test("binding after abandonment preserves cancelled attempt and session", async 
       WHERE session.id=$1`, [session_id]);
     expect(rows[0]).toMatchObject({ session_status: "cancelled", attempt_status: "cancelled",
       adapter_reference: { kind: "kbbl_session", session_id: "late" } });
+    await prepared.records.mark_session_fenced(session_id, "2026-09-29T01:02:00Z");
+    const fenced = await prepared.sql.query<{ readonly status: string; readonly fenced_at: string | null }>(
+      "SELECT status::text,fenced_at::text FROM oakridge.session WHERE id=$1", [session_id]);
+    expect(fenced[0]?.status).toBe("cancelled");
+    expect(fenced[0]?.fenced_at).not.toBeNull();
   } finally { await prepared.sql.close(); }
 });
 
@@ -357,5 +365,97 @@ test("a failed retry launch leaves its transition and earlier attempt untouched"
         (SELECT status::text FROM oakridge.attempt WHERE id=$2) AS earlier_status
        FROM oakridge.cohort cohort WHERE cohort.id=$1`, [cohortId(24), attemptId(25)]);
     expect(rows[0]).toEqual({ version: "0", transitions: "0", earlier_status: "failed" });
+  } finally { await prepared.sql.close(); }
+});
+
+test("concurrent publishes from two attempts of one cohort park exactly one revision", async () => {
+  const prepared = await prepare("oakridge_v15_concurrent_publish_slot");
+  if (!prepared) return;
+  try {
+    await openCohort(prepared.sql, STAGE_ID, cohortId(25), "shared");
+    await startAttempt(prepared.sql, { stage: STAGE_ID, cohort: cohortId(25), attempt: attemptId(26),
+      number: 1, status: "active", request: {} });
+    await startAttempt(prepared.sql, { stage: STAGE_ID, cohort: cohortId(25), attempt: attemptId(27),
+      number: 2, status: "active", request: {} });
+    const results = await Promise.all([
+      publish(prepared, attemptId(26), artifactId(26)),
+      publish(prepared, attemptId(27), artifactId(27)),
+    ]);
+    expect(results.map((result) => result.kind).sort()).toEqual(["pending", "slot_pending"]);
+    const rows = await prepared.sql.query<{ readonly count: string }>(
+      "SELECT count(*)::text AS count FROM oakridge.wait_gate WHERE cohort_id=$1 AND status='open'", [cohortId(25)]);
+    expect(rows[0]?.count).toBe("1");
+  } finally { await prepared.sql.close(); }
+});
+
+test("same-key retries on two executors create one attempt and one transition", async () => {
+  const prepared = await prepare("oakridge_v15_same_key_retry");
+  if (!prepared) return;
+  try {
+    await openCohort(prepared.sql, RETRY_STAGE_ID, cohortId(26), "same-key");
+    await startAttempt(prepared.sql, { stage: RETRY_STAGE_ID, cohort: cohortId(26), attempt: attemptId(28), number: 1,
+      status: "failed", request: { execution_id: attemptId(28), stage_instance_id: RETRY_STAGE_ID, unit_id: "same-key",
+        executor_type: "delegated_session", resolved_config: { rendered_prompt: "go",
+          publication: { base_url: "http://127.0.0.1:1", work_order_id: attemptId(28), capability: "cap" } },
+        inputs: [], declared_outputs: [{ name: "build_result", artifact_type: "dev.build_result", required: true }],
+        expected_artifacts: [{ unit_id: "same-key", output_name: "build_result", artifact_type: "dev.build_result" }] } });
+    const secondSql = PgPostgresExecutor.connect(prepared.url);
+    const secondRecords = new PostgresRunRecordRepository(secondSql,
+      new PostgresRunRecordWriter(secondSql, createDevFlowAdapterRegistry()));
+    const retries = await Promise.all([
+      prepared.records.retry_cohort({ target: { kind: "cohort", cohort_id: cohortId(26) }, actor: "operator",
+        idempotency_key: "retry-same" }, "2026-09-29T01:00:00Z"),
+      secondRecords.retry_cohort({ target: { kind: "cohort", cohort_id: cohortId(26) }, actor: "operator",
+        idempotency_key: "retry-same" }, "2026-09-29T01:00:00Z"),
+    ]);
+    await secondSql.close();
+    expect(retries.map((result) => result.kind).sort()).toEqual(["already_created", "created"]);
+    if (retries[0]?.kind === "created" || retries[0]?.kind === "already_created") {
+      if (retries[1]?.kind === "created" || retries[1]?.kind === "already_created") {
+        expect(retries[0].attempt_id).toBe(retries[1].attempt_id);
+      }
+    }
+    const rows = await prepared.sql.query<{ readonly attempts: string; readonly transitions: string }>(
+      `SELECT (SELECT count(*)::text FROM oakridge.attempt WHERE cohort_id=$1 AND idempotency_key='retry-same') AS attempts,
+        (SELECT count(*)::text FROM oakridge.run_transition WHERE owner_cohort_id=$1 AND launch_reason='retry') AS transitions`, [cohortId(26)]);
+    expect(rows[0]).toEqual({ attempts: "1", transitions: "1" });
+  } finally { await prepared.sql.close(); }
+});
+
+test("resolving a thread and binding a session move the invalidation cursor", async () => {
+  const prepared = await prepare("oakridge_v15_cursor_updates");
+  if (!prepared) return;
+  try {
+    await prepared.sql.query("CREATE SCHEMA dbos", []);
+    await prepared.sql.query("CREATE TABLE dbos.workflow_status (updated_at timestamptz)", []);
+    await openCohort(prepared.sql, STAGE_ID, cohortId(27), "cursor");
+    await prepared.sql.query(`INSERT INTO oakridge.artifact (id,chain_id,revision,artifact_type,body)
+      VALUES ($1,$1,1,'dev.build_result','{}')`, [artifactId(29)]);
+    const thread_id = "00000000-0000-4000-8400-000000000529" as import("../src/domain/collaboration").ThreadId;
+    await prepared.sql.query(`INSERT INTO oakridge.artifact_thread (id,chain_id,artifact_id,status)
+      VALUES ($1,$2,$2,'open')`, [thread_id, artifactId(29)]);
+    const operator = new PostgresOperatorProjectionRepository(prepared.sql, "test", createDevFlowAdapterRegistry());
+    const beforeThread = await operator.get_invalidation_cursor();
+    await new PostgresCollaborationRepository(prepared.sql).update_thread_status(thread_id, "resolved");
+    const afterThread = await operator.get_invalidation_cursor();
+    expect(afterThread).not.toBe(beforeThread);
+
+    const writer = new PostgresRunRecordWriter(prepared.sql, createDevFlowAdapterRegistry());
+    const transition = await writer.commit({ run_id: RUN_ID, owner: { kind: "cohort", id: cohortId(27) },
+      expected_version: 0, launch_reason: "initial",
+      change: { status: "active", blocked_reason: null, next_actor: "agent", outcome: null },
+      effect: { kind: "start_attempt", cohort_id: cohortId(27), attempt_id: attemptId(29), attempt_number: 1 },
+      actor: "test", changed_at: "2026-09-29T01:00:00Z" });
+    if (!transition.ok) throw new Error(JSON.stringify(transition.error));
+    const session_id = "00000000-0000-4000-8400-000000000629" as SessionId;
+    await prepared.records.start_attempt({ run_id: RUN_ID, stage_instance_id: STAGE_ID, cohort_id: cohortId(27),
+      attempt_id: attemptId(29), attempt_number: 1, adapter_type: "delegated_session", request: {} as never,
+      launch_transition_id: transition.value.transition_id, session_id, idempotency_key: null,
+      created_at: "2026-09-29T01:00:00Z" });
+    const beforeBind = await operator.get_invalidation_cursor();
+    await prepared.records.bind_session({ session_id,
+      adapter_reference: { kind: "kbbl_session", session_id: "cursor-session" as never },
+      kbbl_session_id: "cursor-session" as never, bound_at: "2026-09-29T01:01:00Z" });
+    expect(await operator.get_invalidation_cursor()).not.toBe(beforeBind);
   } finally { await prepared.sql.close(); }
 });

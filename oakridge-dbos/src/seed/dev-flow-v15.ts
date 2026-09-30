@@ -28,8 +28,7 @@ import { createDevFlowAdapterRegistry } from "../adapters/dev-flow";
  *
  * A new version rather than an edit to v14: definitions are immutable per name
  * and version, so changing v14's graph in place makes seeding throw on any
- * database that already holds it. The decoder retains support for singular
- * rows used by runs still pinned to an older definition.
+ * database that already holds it.
  */
 const SOURCE = new URL("../../../workflow-config/definitions/dev_flow_v15.json", import.meta.url);
 

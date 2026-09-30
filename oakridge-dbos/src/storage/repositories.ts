@@ -11,7 +11,11 @@ import type { PullRequest, PullRequestId, PullRequestMergeClosure, PullRequestOb
 import type { WorkflowRunRecord } from "../domain/records";
 import type {
   AttemptExecution,
+  BindSessionResult,
   BindSession,
+  CohortLaunchCommitted,
+  CohortLaunchCommitError,
+  CommitCohortLaunch,
   CancelRunRecord,
   CancelRunRecordResult,
   CloseRunOutputWaitResult,
@@ -28,6 +32,7 @@ import type {
   PublishWorkOrderArtifactResult,
   RecordCohortEvent,
   RecordCohortEventResult,
+  SessionStatusWrite,
   RetryCohort,
   RetryCohortResult,
   RunDecision,
@@ -86,6 +91,7 @@ export interface RunRecordRepository {
   open_stage_cohorts(input: OpenStageCohorts): Promise<OpenStageCohortsResult>;
   /** Commits an adapter's cohort decision under the cohort's own durable version. */
   record_cohort_event(input: RecordCohortEvent): Promise<RecordCohortEventResult>;
+  commit_cohort_launch(input: CommitCohortLaunch): Promise<Result<CohortLaunchCommitted, CohortLaunchCommitError>>;
   /** What a cohort machine reads before applying its next event. */
   find_cohort_state(cohort_id: CohortId): Promise<CohortMachineState | null>;
   list_stage_cohort_ids(stage_instance_id: StageInstanceId): Promise<readonly CohortId[]>;
@@ -93,9 +99,10 @@ export interface RunRecordRepository {
   start_attempt(input: StartAttempt): Promise<StartAttemptResult>;
   find_attempt_execution(attempt_id: AttemptId): Promise<AttemptExecution | null>;
   /** Records the adapter handle an ensured session is addressed by. */
-  bind_session(input: BindSession): Promise<void>;
+  bind_session(input: BindSession): Promise<BindSessionResult>;
   /** The session's own lifecycle, and its attempt's, from what the adapter reported. */
-  observe_session(input: ObserveSession): Promise<void>;
+  observe_session(input: ObserveSession): Promise<SessionStatusWrite>;
+  mark_session_fenced(session_id: import("../domain/primitives").SessionId, fenced_at: string): Promise<void>;
   /** An operator retry: one further attempt at a cohort, claimed under the caller's key. */
   retry_cohort(input: RetryCohort, retried_at: string): Promise<RetryCohortResult>;
   /** The secret every attempt's publication capability is derived from. */
@@ -172,7 +179,8 @@ export interface CurrentVerifiedCohortPullRequest {
 
 /** Storage boundary shared by cohort and final-stage adapters. */
 export interface DevFlowPullRequestRepository {
-  create_cohort(cohort: DevFlowBuildCohort): Promise<DevFlowBuildCohort>;
+  create_cohort(cohort: DevFlowBuildCohort): Promise<Result<DevFlowBuildCohort,
+    { readonly kind: "cohort_not_stored" | "identity_conflict" | "storage_failed"; readonly detail: string }>>;
   begin_cohort_advance(input: { readonly cohort_id: CohortId; readonly expected_head_sha: string; readonly next_head_sha: string; readonly prepared_at: string }): Promise<Result<void, { readonly kind: "cohort_not_found" | "ref_lease_mismatch"; readonly detail: string }>>;
   advance_cohort_head(input: { readonly cohort_id: CohortId; readonly expected_head_sha: string; readonly next_head_sha: string; readonly advanced_at: string }): Promise<Result<DevFlowBuildCohort, { readonly kind: "cohort_not_found" | "ref_lease_mismatch"; readonly detail: string }>>;
   find_cohort_for_unit(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<DevFlowBuildCohort | null>;

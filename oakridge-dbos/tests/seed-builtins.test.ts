@@ -90,7 +90,7 @@ function archivingRepository(existing: readonly WorkflowDefinition[]): {
 const SHIPPED_V11 = "ef2b47a4-d1bd-44ee-840a-e4f7b27570db";
 const SHIPPED_V13 = "7c4a1f38-9b52-4d6e-8a17-3e0c5b9d24f1";
 
-test("seeding retires the shipped versions it supersedes", async () => {
+test("the clean v15 seed does not archive pre-v15 rows", async () => {
   // v11 predates the provisioning stage; v13 carries the UNIT_ID binding that
   // addressed every cohort's emit at a unit that does not exist. Offering them
   // beside the current one in the launch form is the trap this closes.
@@ -101,7 +101,7 @@ test("seeding retires the shipped versions it supersedes", async () => {
 
   await seedBuiltins(repository);
 
-  expect(archived.sort()).toEqual([SHIPPED_V13, SHIPPED_V11].sort());
+  expect(archived).toEqual([]);
 });
 
 test("seeding leaves a definition it did not ship alone, whatever it is called", async () => {

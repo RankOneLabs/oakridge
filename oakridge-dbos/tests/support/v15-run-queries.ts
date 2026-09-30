@@ -77,6 +77,10 @@ export const runOutcome = async (sql: SqlExecutor, run_id: WorkflowRunId): Promi
   return rows[0]?.outcome ?? null;
 };
 
+export const materializationFailedTransitions = (sql: SqlExecutor, run_id: WorkflowRunId): Promise<readonly { readonly detail: unknown }[]> =>
+  sql.query<{ readonly detail: unknown }>(`SELECT effect_descriptor AS detail FROM oakridge.run_transition
+    WHERE run_id=$1 AND effect_descriptor->>'kind'='materialization_failed'`, [run_id]);
+
 export const closedGateWaitCount = async (sql: SqlExecutor, run_id: WorkflowRunId, stage_key: string): Promise<number> => {
   const rows = await sql.query<{ readonly count: string }>(`SELECT count(*)::text AS count FROM oakridge.wait_gate wait
     JOIN oakridge.stage_instance stage ON stage.id=wait.stage_instance_id
