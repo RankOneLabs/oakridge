@@ -432,6 +432,7 @@ test("same-key retries on two executors create one attempt and one transition", 
     if (retries[0]?.kind === "created" || retries[0]?.kind === "already_created") {
       if (retries[1]?.kind === "created" || retries[1]?.kind === "already_created") {
         expect(retries[0].attempt_id).toBe(retries[1].attempt_id);
+        expect([retries[0].durable_version, retries[1].durable_version]).toEqual([1, 1]);
       }
     }
     const rows = await prepared.sql.query<{ readonly attempts: string; readonly transitions: string }>(

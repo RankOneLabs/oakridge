@@ -33,8 +33,24 @@ test("an applied 0015 ledger without its schema fails with named divergence", as
   } finally { await sql.close(); }
 });
 
+test("a retired migration ledger is rejected even when its tables exist", async () => {
+  const scratch = await createScratchDatabase("oakridge_v15_retired_ledger");
+  if (!scratch.ok) {
+    if (scratch.error.operation !== "reach_admin_endpoint") throw new Error(`${scratch.error.operation}: ${scratch.error.detail}`);
+    console.warn("v15 retired-ledger PostgreSQL check SKIPPED: no PostgreSQL reachable");
+    return;
+  }
+  scratches.push(scratch.value);
+  const sql = PgPostgresExecutor.connect(scratch.value.url);
+  try {
+    await applyMigrations(sql);
+    await sql.query("INSERT INTO public.oakridge_schema_migration (name,applied_at) VALUES ('0016_dev_flow_pull_requests.sql',now()),('0017_artifact_threads_and_attempt_idempotency.sql',now())", []);
+    await expect(applyMigrations(sql)).rejects.toThrow("0016_dev_flow_pull_requests.sql, 0017_artifact_threads_and_attempt_idempotency.sql");
+  } finally { await sql.close(); }
+});
+
 const scratches: ScratchDatabase[] = [];
-afterAll(async () => { for (const scratch of scratches) await scratch.drop(); });
+afterAll(async () => { for (const scratch of scratches) await scratch.drop(); }, 30_000);
 
 test("v15 baseline represents import artifacts, multi-slot gates, messages, and owner-local versions", async () => {
   const scratch = await createScratchDatabase("oakridge_v15_baseline_test");

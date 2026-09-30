@@ -13,6 +13,10 @@ export const applyMigrations = async (sql: TransactionalSqlExecutor, directory =
     (name text PRIMARY KEY, applied_at timestamptz NOT NULL)`, []);
   const applied = await sql.query<{ readonly name: string }>("SELECT name FROM public.oakridge_schema_migration", []);
   const appliedNames = new Set(applied.map((row) => row.name));
+  const retired = ["0016_dev_flow_pull_requests.sql", "0017_artifact_threads_and_attempt_idempotency.sql"]
+    .filter((name) => appliedNames.has(name));
+  if (retired.length > 0) throw new Error(
+    `oakridge migration ledger records retired migrations ${retired.join(", ")}; drop and recreate this v15 database`);
   const pending = migrationNames(await readdir(directory)).filter((name) => !appliedNames.has(name));
   for (const name of pending) {
     const statement = await readFile(join(directory, name), "utf8");

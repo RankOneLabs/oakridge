@@ -508,6 +508,7 @@ export const ensureAttemptSession = async (
       kbbl_session_id: kbblSessionOf(reference), bound_at: now() });
     if (bound.kind === "attempt_ended") {
       await adapter.cancel_or_fence(execution.attempt_id as unknown as ExecutionId, reference);
+      await records.mark_session_fenced(execution.session_id, now());
       return { kind: "abandoned" };
     }
     return { kind: "started", reference };
@@ -550,6 +551,7 @@ const observeSessionStep = DBOS.registerStep(
       observed_at: at });
     if (written?.kind === "already_ended") {
       await adapter.cancel_or_fence(input.execution.attempt_id as unknown as ExecutionId, input.reference);
+      await records.mark_session_fenced(input.execution.session_id, now());
       return { kind: "abandoned" };
     }
     return observation;

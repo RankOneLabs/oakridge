@@ -4,7 +4,7 @@ import type { CancelRunRecordResult } from "../domain/run-record";
 import type { RunRecordRepository } from "../storage/repositories";
 
 export interface CancelV2RunDependencies {
-  readonly records: Pick<RunRecordRepository, "cancel_run" | "observe_session">;
+  readonly records: Pick<RunRecordRepository, "cancel_run" | "observe_session" | "mark_session_fenced">;
   find_executor(executor_type: string): ExecutorAdapter | undefined;
   now(): string;
   send_run_wake?: (run_id: WorkflowRunId, idempotency_key: string) => Promise<void>;
@@ -38,6 +38,7 @@ export const cancelV2Run = async (
     }
     try {
       await adapter.cancel_or_fence(session.attempt_id as unknown as ExecutionId, session.external_reference);
+      await dependencies.records.mark_session_fenced(session.session_id, dependencies.now());
       await dependencies.records.observe_session({ session_id: session.session_id,
         health: { kind: "ended_cancelled", detail: reason, observed_at: observedAt }, observed_at: observedAt });
     } catch (cause) {

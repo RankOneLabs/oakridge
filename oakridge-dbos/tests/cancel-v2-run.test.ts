@@ -16,11 +16,12 @@ test("v2 cancellation commits domain truth before best-effort executor fencing",
       async cancel_run(input) { events.push("committed"); return { kind: "cancelled", run_id: input.run_id, record_version: 4 as never,
         sessions_to_fence: [{ session_id: sessionId, attempt_id: attemptId, executor_type: adapter.executor_type, external_reference: { kind: "none" } }] }; },
       async observe_session({ health }) { events.push(`observed:${health.kind}`); return { kind: "written" }; },
+      async mark_session_fenced() { events.push("recorded:fenced"); },
     },
     find_executor: () => adapter, now: () => "2026-08-29T00:00:00Z",
   }, "operator request");
   expect(result.kind).toBe("cancelled");
-  expect(events).toEqual(["committed", "fenced", "observed:ended_cancelled"]);
+  expect(events).toEqual(["committed", "fenced", "recorded:fenced", "observed:ended_cancelled"]);
 });
 
 test("a fencing failure remains diagnostic and cannot roll back cancellation", async () => {
@@ -31,6 +32,7 @@ test("a fencing failure remains diagnostic and cannot roll back cancellation", a
         sessions_to_fence: [{ session_id: "11111111-1111-4111-8111-11111111111a" as SessionId,
           attempt_id: "11111111-1111-4111-8111-111111111111" as AttemptId, executor_type: "missing", external_reference: { kind: "none" } }] }; },
       async observe_session({ health }) { observed.push(health.kind); return { kind: "written" }; },
+      async mark_session_fenced() { observed.push("recorded:fenced"); },
     }, find_executor: () => undefined, now: () => "2026-08-29T00:00:00Z",
   });
   expect(result.kind).toBe("cancelled");

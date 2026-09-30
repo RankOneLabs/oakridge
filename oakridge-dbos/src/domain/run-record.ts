@@ -322,8 +322,8 @@ export interface CommitCohortLaunch {
 }
 
 export type CohortLaunchCommitted =
-  | { readonly kind: "created"; readonly attempt_id: AttemptId; readonly transition: CommittedRunTransition }
-  | { readonly kind: "already_created"; readonly attempt_id: AttemptId };
+  | { readonly kind: "created"; readonly attempt_id: AttemptId; readonly durable_version: number; readonly transition: CommittedRunTransition }
+  | { readonly kind: "already_created"; readonly attempt_id: AttemptId; readonly durable_version: number };
 
 export type CohortLaunchCommitError =
   | { readonly kind: "cohort_not_found" | "version_conflict" | "owner_terminal" | "invalid_effect" | "idempotency_conflict"; readonly detail: string };

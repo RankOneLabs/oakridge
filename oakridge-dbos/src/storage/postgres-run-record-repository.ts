@@ -376,15 +376,16 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
 
   async commit_cohort_launch(input: CommitCohortLaunch): Promise<Result<CohortLaunchCommitted, CohortLaunchCommitError>> {
     return this.sql.transaction(async (tx) => {
-      const cohorts = await tx.query<{ readonly id: string }>(
-        "SELECT id::text FROM oakridge.cohort WHERE id=$1 AND run_id=$2 FOR UPDATE",
+      const cohorts = await tx.query<{ readonly id: string; readonly durable_version: string }>(
+        "SELECT id::text,durable_version::text FROM oakridge.cohort WHERE id=$1 AND run_id=$2 FOR UPDATE",
         [input.event.cohort_id, input.event.run_id]);
       if (!cohorts[0]) return err({ kind: "cohort_not_found" as const, detail: `cohort '${input.event.cohort_id}' was not found` });
       if (input.attempt.idempotency_key !== null) {
         const claimed = await tx.query<{ readonly id: string }>(
           "SELECT id::text FROM oakridge.attempt WHERE cohort_id=$1 AND idempotency_key=$2",
           [input.event.cohort_id, input.attempt.idempotency_key]);
-        if (claimed[0]) return ok({ kind: "already_created" as const, attempt_id: claimed[0].id as AttemptId });
+        if (claimed[0]) return ok({ kind: "already_created" as const, attempt_id: claimed[0].id as AttemptId,
+          durable_version: Number(cohorts[0].durable_version) });
       }
       const committed = await this.writer.commit_in(tx, {
         run_id: input.event.run_id, owner: { kind: "cohort", id: input.event.cohort_id },
@@ -403,7 +404,8 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       if (started.kind === "cohort_not_found" || started.kind === "idempotency_conflict") {
         throw new Error(`cohort launch attempt insert failed: ${started.detail}`);
       }
-      return ok({ kind: "created" as const, attempt_id: started.attempt_id, transition: {
+      return ok({ kind: "created" as const, attempt_id: started.attempt_id,
+        durable_version: committed.value.resulting_owner_version, transition: {
         transition_id: committed.value.transition_id, owner: committed.value.owner,
         effect: committed.value.effect_descriptor, effect_workflow_id: committed.value.effect_workflow_id,
         resulting_owner_version: committed.value.resulting_owner_version,
@@ -488,13 +490,15 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
   async retry_cohort(input: RetryCohort, retried_at: string): Promise<RetryCohortResult> {
     const located = await this.locateCohort(input.target);
     if (!located) return { kind: "cohort_not_found", detail: `no cohort matches ${JSON.stringify(input.target)}` };
-    const claimed = await this.sql.query<{ readonly id: string; readonly attempt_number: number }>(
-      "SELECT id::text,attempt_number FROM oakridge.attempt WHERE cohort_id=$1 AND idempotency_key=$2",
+    const claimed = await this.sql.query<{ readonly id: string; readonly attempt_number: number; readonly durable_version: string }>(
+      `SELECT attempt.id::text,attempt.attempt_number,cohort.durable_version::text
+       FROM oakridge.attempt attempt JOIN oakridge.cohort cohort ON cohort.id=attempt.cohort_id
+       WHERE attempt.cohort_id=$1 AND attempt.idempotency_key=$2`,
       [located.cohort_id, input.idempotency_key]);
     if (claimed[0]) {
       return { kind: "already_created", run_id: located.run_id, cohort_id: located.cohort_id,
         attempt_id: claimed[0].id as AttemptId, attempt_number: claimed[0].attempt_number,
-        durable_version: located.durable_version };
+        durable_version: Number(claimed[0].durable_version) };
     }
     if (located.status === "complete" || located.status === "failed" || located.status === "cancelled") {
       return { kind: "not_active", detail: `cohort '${located.cohort_id}' is ${located.status}` };
@@ -540,7 +544,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
     const result_attempt_id = committed.value.attempt_id;
     return { kind: committed.value.kind, run_id: located.run_id, cohort_id: located.cohort_id,
       attempt_id: result_attempt_id, attempt_number,
-      durable_version: committed.value.kind === "created" ? committed.value.transition.resulting_owner_version : located.durable_version };
+      durable_version: committed.value.durable_version };
   }
 
   private async locateCohort(target: RetryCohort["target"]): Promise<{
