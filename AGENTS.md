@@ -27,7 +27,7 @@ bun run typecheck          # typecheck across the repo
 Python sub-packages are independent uv projects — see each package's own
 AGENTS.md for its commands.
 
-<!-- import: ./standards/core.md @ 9db42c7d345d -->
+<!-- import: ./standards/core.md @ 7acf59ba7234 -->
 ## Two gates before building
 
 **Stop when uncertain.** Before introducing a pattern, dependency, file, or structural
@@ -114,7 +114,7 @@ over terse — `user_count`, not `n`. Booleans read as questions — `is_active`
 
 ## Environment
 
-<!-- import: ./standards/gated-review.md @ 9db42c7d345d -->
+<!-- import: ./standards/gated-review.md @ 7acf59ba7234 -->
 ## Gated Review environment
 
 This environment has the gated-review MCP server connected. All PR and
