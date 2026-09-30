@@ -110,26 +110,23 @@ export interface ScriptedAgentScenario {
   /** Every follow-up the run has sent an agent — a revision request, say. */
   readonly deliveries: AgentDelivery[];
   readonly forge_head_overrides: Map<string, string>;
-  readonly forge_verifications: Map<string, "verified" | "mismatch">;
-  recordVerifiedRevision(cohort_id: CohortId, revision: string, pull_request_url: string): Promise<void>;
+  readonly strip_publication_contract: boolean;
   releaseAll(): void;
 }
 
-export const scriptedAgentScenario = (options?: { readonly cohorts?: readonly CohortPlanEntry[] }): ScriptedAgentScenario => {
+export const scriptedAgentScenario = (options?: {
+  readonly cohorts?: readonly CohortPlanEntry[];
+  readonly strip_publication_contract?: boolean;
+}): ScriptedAgentScenario => {
   const cohorts = options?.cohorts ?? DEFAULT_COHORT_PLAN;
   const launched = new Map<string, FakeAgentLaunch>();
   const deliveries: AgentDelivery[] = [];
-  const forgeVerifications = new Map<string, "verified" | "mismatch">();
   return {
     cohorts,
     launched,
     deliveries,
     forge_head_overrides: new Map(),
-    forge_verifications: forgeVerifications,
-    async recordVerifiedRevision(cohortId, revision, pullRequestUrl) {
-      const outcome = await recordCohortAdapterEvent(cohortId, { kind: "pull_request_verified", revision, pull_request_url: pullRequestUrl });
-      if (outcome.committed) await sendCohortWakeHint(cohortId, `acceptance_verified:${revision}`).catch(() => undefined);
-    },
+    strip_publication_contract: options?.strip_publication_contract ?? false,
     releaseAll() {},
   };
 };
@@ -321,7 +318,10 @@ export const installIntegrationRuntime = async (databaseUrl: string, options: In
   const control = Bun.serve({ port: 0, async fetch(request) {
     const url = new URL(request.url);
     const scenario = requireScenario();
-    if (url.pathname === "/scenario") return Response.json({ cohorts: scenario.cohorts });
+    if (url.pathname === "/scenario") return Response.json({
+      cohorts: scenario.cohorts,
+      strip_publication_contract: scenario.strip_publication_contract,
+    });
     if (url.pathname === "/launch" && request.method === "POST") {
       const launch = await request.json() as { readonly work_order_id: string; readonly unit_id: string; readonly operator_role: StageOperatorRole;
         readonly outputs: readonly { readonly output_name: string; readonly unit_id: string }[]; readonly prompt: string };
@@ -337,61 +337,52 @@ export const installIntegrationRuntime = async (databaseUrl: string, options: In
         resolved_config: { publication: { work_order_id: launch.work_order_id }, session_name: launch.work_order_id,
           rendered_prompt: launch.prompt, session_identity: { operator_role: launch.operator_role } },
       });
-      return Response.json({ ok: true });
+      return Response.json({ ok: true, stage_instance_id: stageInstanceId ?? null });
     }
     if (url.pathname === "/delivery" && request.method === "POST") {
       scenario.deliveries.push(await request.json() as AgentDelivery);
       return Response.json({ ok: true });
     }
+    if (url.pathname === "/prepare-pull-request" && request.method === "POST") {
+      const input = await request.json() as { readonly unit_id: string; readonly stage_instance_id: string;
+        readonly head_branch: string; readonly base_branch: string };
+      const cohorts = await harnessSql.query<{ readonly id: string }>(
+        "SELECT id::text FROM oakridge.cohort WHERE stage_instance_id = $1 AND cohort_key = $2",
+        [input.stage_instance_id, input.unit_id]);
+      const baseHead = await repository.origin_branch_sha(repository.base_branch);
+      if (!cohorts[0] || !baseHead) return Response.json({ error: "build cohort identity was not persisted" }, { status: 422 });
+      const prepared = await prepareDevFlowBuildCohort({ pull_requests: pullRequests, git: new BunGitCommandRunner() }, {
+        cohort_id: cohorts[0].id as CohortId,
+        stage_instance_id: input.stage_instance_id as StageInstanceId,
+        cohort_key: input.unit_id,
+        repository: { repository_key: "oakridge", repository_path: repository.path,
+          integration_branch: repository.integration_branch, base_branch: repository.base_branch, base_head_sha: baseHead },
+        prepared_at: new Date().toISOString(),
+      });
+      if (!prepared.ok) return Response.json(prepared.error, { status: 409 });
+      forgeRefs.set(input.unit_id, { head_branch: input.head_branch, base_branch: input.base_branch });
+      return Response.json({ ok: true });
+    }
+    if (url.pathname === "/verify-pull-request" && request.method === "POST") {
+      const input = await request.json() as { readonly unit_id: string; readonly stage_instance_id: string };
+      const cohort = await pullRequests.find_cohort_for_unit(input.stage_instance_id as StageInstanceId, input.unit_id as UnitId);
+      if (!cohort) return Response.json({ error: "prepared build cohort was not found" }, { status: 404 });
+      const verified = await verifyAndBindCohortPullRequest({ pull_requests: pullRequests,
+        reader: new GithubPullRequestReader({ token: "acceptance-token", api_base_url: `http://127.0.0.1:${forge.port}` }),
+        git: new BunGitCommandRunner(), now: () => new Date().toISOString(),
+        record_build_event: async (cohortId, event) => {
+          const outcome = await recordCohortAdapterEvent(cohortId, event as unknown as JsonValue);
+          if (outcome.committed) await sendCohortWakeHint(cohortId, `acceptance_forge:${event.kind}`).catch(() => undefined);
+        },
+      }, { cohort, forge_repository: { owner: "RankOneLabs", name: "oakridge" },
+        candidate_url: cohortPullRequestUrl(input.unit_id as UnitId), replace_verification_id: null });
+      return Response.json(verified.ok ? { outcome: "verified" } : { outcome: "refused", error: verified.error });
+    }
     if (url.pathname === "/artifact-body" && request.method === "POST") {
       const input = await request.json() as { readonly work_order_id: string; readonly unit_id: string; readonly output_name: string;
-        readonly operator_role: StageOperatorRole; readonly revision: number; readonly head_branch: string | null; readonly base_branch: string | null };
+        readonly operator_role: StageOperatorRole; readonly revision: number; readonly stage_instance_id: string | null;
+        readonly head_branch: string | null; readonly base_branch: string | null };
       if (input.output_name === "pr_summary") {
-        const sessions = await fetch(`http://127.0.0.1:${kbblPort}/sessions?include=archived`).then((response) => response.json()) as {
-          readonly sessions: readonly { readonly name: string; readonly workflow?: {
-            readonly runId?: string; readonly stageInstanceId?: string; readonly unitId?: string; readonly cohortId?: string | null;
-          } }[];
-        };
-        const workflow = sessions.sessions.find((session) => session.name === input.work_order_id)?.workflow;
-        const run = workflow?.runId ? await fetch(`http://127.0.0.1:${oakridgePort}/runs/${workflow.runId}`).then((response) => response.json()) as {
-          readonly stages?: readonly { readonly stage_instance_id: string; readonly units: readonly {
-            readonly unit_id: string; readonly cohort_id: string;
-          }[] }[];
-        } : null;
-        const cohortId = workflow?.cohortId ?? run?.stages?.find((stage) => stage.stage_instance_id === workflow?.stageInstanceId)
-          ?.units.find((unit) => unit.unit_id === workflow?.unitId)?.cohort_id;
-        const baseHead = await repository.origin_branch_sha(repository.base_branch);
-        if (!workflow?.stageInstanceId || !cohortId || !baseHead) {
-          requireScenario().deliveries.push({ execution_id: input.work_order_id, delivery_key: "harness-error",
-            prompt: `builder identity=${JSON.stringify(workflow)} base_head=${baseHead}` });
-          return Response.json({ error: "builder session has no persisted cohort identity" }, { status: 422 });
-        }
-        const prepared = await prepareDevFlowBuildCohort({ pull_requests: pullRequests, git: new BunGitCommandRunner() }, {
-          cohort_id: cohortId as CohortId,
-          stage_instance_id: workflow.stageInstanceId as StageInstanceId,
-          cohort_key: input.unit_id,
-          repository: { repository_key: "oakridge", repository_path: repository.path,
-            integration_branch: repository.integration_branch, base_branch: repository.base_branch, base_head_sha: baseHead },
-          prepared_at: new Date().toISOString(),
-        });
-        if (!prepared.ok) {
-          requireScenario().deliveries.push({ execution_id: input.work_order_id, delivery_key: "harness-error",
-            prompt: JSON.stringify(prepared.error) });
-          return Response.json(prepared.error, { status: 409 });
-        }
-        if (input.head_branch && input.base_branch) forgeRefs.set(input.unit_id, { head_branch: input.head_branch, base_branch: input.base_branch });
-        const verified = await verifyAndBindCohortPullRequest({ pull_requests: pullRequests,
-          reader: new GithubPullRequestReader({ token: "acceptance-token", api_base_url: `http://127.0.0.1:${forge.port}` }),
-          git: new BunGitCommandRunner(), now: () => new Date().toISOString(),
-          record_build_event: async (cohortId, event) => {
-            const outcome = await recordCohortAdapterEvent(cohortId, event as unknown as JsonValue);
-            if (outcome.committed) await sendCohortWakeHint(cohortId, `acceptance_forge:${event.kind}`).catch(() => undefined);
-          },
-        }, { cohort: prepared.value.cohort, forge_repository: { owner: "RankOneLabs", name: "oakridge" },
-          candidate_url: cohortPullRequestUrl(input.unit_id as UnitId), replace_verification_id: null });
-        requireScenario().forge_verifications.set(input.unit_id, verified.ok ? "verified" : "mismatch");
-        requireScenario().deliveries.push({ execution_id: input.work_order_id, delivery_key: "forge-verification",
-          prompt: verified.ok ? "verified" : JSON.stringify(verified.error) });
         const branch = input.head_branch ?? cohortHeadBranch(input.unit_id as UnitId);
         return Response.json({ pr_url: cohortPullRequestUrl(input.unit_id as UnitId), branch,
           base_branch: input.base_branch ?? HARNESS_BASE_BRANCH, repository_key: "oakridge",
@@ -413,7 +404,7 @@ export const installIntegrationRuntime = async (databaseUrl: string, options: In
     const head = requireScenario().forge_head_overrides.get(String(unit))
       ?? await repository.origin_branch_sha(refs.head_branch);
     if (!head) return new Response("not found", { status: 404 });
-    return Response.json({ number, html_url: cohortPullRequestUrl(unit), state: "open", merged: false, merged_at: null,
+    return Response.json({ number, html_url: cohortPullRequestUrl(unit), state: "closed", merged: true, merged_at: new Date().toISOString(),
       head: { ref: refs.head_branch, sha: head }, base: { ref: refs.base_branch } });
   }});
   const oakridgePortProbe = Bun.serve({ port: 0, fetch: () => new Response() });

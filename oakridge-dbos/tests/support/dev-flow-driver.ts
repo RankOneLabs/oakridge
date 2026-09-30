@@ -14,6 +14,7 @@ import { Readable, Writable } from "node:stream";
 
 import type { OperatorArtifactDetail, OperatorParkedGate, OperatorRunDetail, OperatorRunSummary, OperatorReviewInbox } from "../../src/domain/operator-projections";
 import type { ArtifactId, JsonValue, UnitId, WorkflowDefinitionId, WorkflowRunId } from "../../src/domain/primitives";
+import { sendRunWakeHint } from "../../src/http/dbos-transport";
 import type { SqlExecutor } from "../../src/storage/sql-executor";
 import { awaitCondition, cohortHeadBranch, cohortPullRequestUrl, type ScriptedAgentScenario } from "./dev-flow-harness";
 
@@ -191,30 +192,11 @@ export const driveRun = async <Value>(baseUrl: string, agent: ScriptedAgentScena
   const driven = new Set<string>();
   const confirmed = new Set<string>();
   const decided = new Set<string>();
-  const recordedVerifications = new Set<string>();
   const deadline = Date.now() + options.timeout_ms;
   for (;;) {
     for (const [workflowId] of agent.launched) {
       if (driven.has(workflowId)) continue;
       driven.add(workflowId);
-    }
-
-    // The fake's candidate has already gone through the production forge and
-    // Git verifier. Once both build artifacts form the accepted revision,
-    // deliver that verified fact through the real cohort event path.
-    const runDetail = await readRun(baseUrl, run.run_id);
-    const buildStage = runDetail.stages.find((stage) => stage.name === "build");
-    if (buildStage) {
-      for (const unit of buildStage.units) {
-        if (agent.forge_verifications.get(unit.unit_id) !== "verified") continue;
-        const params = unit.params as { readonly build_state?: { readonly accepted_revision?: unknown } };
-        const revision = params.build_state?.accepted_revision;
-        if (typeof revision !== "string") continue;
-        const key = `${unit.cohort_id}:${revision}`;
-        if (recordedVerifications.has(key)) continue;
-        await agent.recordVerifiedRevision(unit.cohort_id, revision, cohortPullRequestUrl(unit.unit_id as UnitId));
-        recordedVerifications.add(key);
-      }
     }
 
     // `listV2PendingGates` reports a collection-key gate's `unit_id` as the
@@ -273,8 +255,13 @@ export const readRunRecordFingerprint = async (sql: SqlExecutor, runId: Workflow
  * taken before either ask still matches the one taken after both.
  */
 /** How long the record must sit unchanged before the root is taken to be parked: several asks' worth, well under the 5 s recheck. */
-export const assertQuietAsk = async (_sql: SqlExecutor, _runId: WorkflowRunId): Promise<void> => {
-  throw new Error("quiet run-record asks are unavailable until the v15 runtime is composed in cohort c8");
+export const assertQuietAsk = async (sql: SqlExecutor, runId: WorkflowRunId): Promise<void> => {
+  const before = await readRunRecordFingerprint(sql, runId);
+  await sendRunWakeHint(runId, `acceptance-quiet-ask-1:${crypto.randomUUID()}`);
+  await Bun.sleep(250);
+  await sendRunWakeHint(runId, `acceptance-quiet-ask-2:${crypto.randomUUID()}`);
+  await Bun.sleep(250);
+  expect(await readRunRecordFingerprint(sql, runId)).toEqual(before);
 };
 
 interface PromptOutput { readonly output_name: string; readonly unit_id: string }
@@ -284,6 +271,7 @@ interface PromptPublication {
   readonly capability: string;
   readonly unit_id: string;
   readonly operator_role: "spec" | "plan" | "brief" | "build" | "assess";
+  readonly stage_instance_id: string | null;
   readonly outputs: readonly PromptOutput[];
   readonly head_branch: string | null;
   readonly base_branch: string | null;
@@ -308,8 +296,11 @@ export const parsePromptPublication = (prompt: string): PromptPublication | null
     : names.has("pr_summary") || names.has("build_result") ? "build" : "assess";
   const headBranch = prompt.match(/^Canonical cohort ref: (.+)$/m)?.[1]?.trim() ?? null;
   const baseBranch = prompt.match(/^Pull request base: (.+)$/m)?.[1]?.trim() ?? null;
+  const stageInstanceId = prompt.match(/^Stage instance: `([^`]+)`$/m)?.[1]
+    ?? headBranch?.match(/^cohort\/([^/]+)\//)?.[1]
+    ?? null;
   return { base_url: endpoint[1]!, work_order_id: endpoint[2]!, capability, unit_id: scalarUnit, operator_role, outputs,
-    head_branch: headBranch, base_branch: baseBranch };
+    stage_instance_id: stageInstanceId, head_branch: headBranch, base_branch: baseBranch };
 };
 
 const runFakeAcpAgent = (): void => {
@@ -336,21 +327,39 @@ const runFakeAcpAgent = (): void => {
     .onNotification("session/cancel", () => {})
     .onRequest("session/prompt", async (ctx) => {
       const prompt = ctx.params.prompt.map((block) => block.type === "text" ? block.text : "").join("");
-      const parsed = parsePromptPublication(prompt);
+      const scenario = await fetch(`${controlUrl}/scenario`).then((response) => response.json()) as {
+        readonly strip_publication_contract?: boolean;
+      };
+      const renderedPrompt = scenario.strip_publication_contract
+        ? prompt.replace(/\n\n## Oakridge v2 artifact publication[\s\S]*$/, "")
+        : prompt;
+      const parsed = parsePromptPublication(renderedPrompt);
       if (parsed) {
-        publications.set(ctx.params.sessionId, parsed);
         revisions.set(ctx.params.sessionId, 0);
         const launched = await fetch(`${controlUrl}/launch`, { method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ ...parsed, prompt }) });
+          body: JSON.stringify({ ...parsed, prompt: renderedPrompt }) });
         if (!launched.ok) throw new Error(`fake agent launch recording failed: ${launched.status}`);
+        const launchIdentity = await launched.json() as { readonly stage_instance_id?: string | null };
+        publications.set(ctx.params.sessionId, {
+          ...parsed,
+          stage_instance_id: launchIdentity.stage_instance_id ?? parsed.stage_instance_id,
+        });
       } else {
         await fetch(`${controlUrl}/delivery`, { method: "POST", headers: { "content-type": "application/json" },
           body: JSON.stringify({ execution_id: publications.get(ctx.params.sessionId)?.work_order_id ?? ctx.params.sessionId,
-            delivery_key: `delivery-${Date.now()}`, prompt }) });
+            delivery_key: `missing-publication-contract-${Date.now()}`, prompt: renderedPrompt }) });
       }
       const publication = publications.get(ctx.params.sessionId);
-      if (!publication) throw new Error("rendered prompt did not state the Oakridge publication contract");
+      if (!publication) {
+        setTimeout(() => process.exit(1), 10);
+        throw new Error("rendered prompt did not state the Oakridge publication contract");
+      }
       if (publication.head_branch) await publishPromptBranch(publication.head_branch);
+      if (publication.operator_role === "build" && publication.stage_instance_id && publication.head_branch && publication.base_branch) {
+        const prepared = await fetch(`${controlUrl}/prepare-pull-request`, { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify(publication) });
+        if (!prepared.ok) throw new Error(`fake pull request preparation failed: ${prepared.status} ${await prepared.text()}`);
+      }
       const revision = (revisions.get(ctx.params.sessionId) ?? 0) + 1;
       revisions.set(ctx.params.sessionId, revision);
       for (const output of publication.outputs) {
@@ -364,6 +373,11 @@ const runFakeAcpAgent = (): void => {
           body: await bodyResponse.text(),
         });
         if (!response.ok) throw new Error(`fake publication ${output.output_name} failed: ${response.status} ${await response.text()}`);
+      }
+      if (publication.operator_role === "build" && publication.stage_instance_id && publication.head_branch && publication.base_branch) {
+        const verification = await fetch(`${controlUrl}/verify-pull-request`, { method: "POST",
+          headers: { "content-type": "application/json" }, body: JSON.stringify(publication) });
+        if (!verification.ok) throw new Error(`production pull request verification failed: ${verification.status} ${await verification.text()}`);
       }
       await notify(ctx.client, ctx.params.sessionId, `published ${publication.outputs.map((output) => output.output_name).join(", ")}`);
       setTimeout(() => process.exit(0), 10);
