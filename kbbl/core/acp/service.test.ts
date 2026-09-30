@@ -39,6 +39,8 @@ interface HarnessOptions {
   liveEventBuffer?: number;
   db?: Database;
   command?: string;
+  /** Profile `sessionMode` for the fake agent(s); default null. */
+  sessionMode?: string | null;
 }
 
 const openHarnesses: Harness[] = [];
@@ -74,6 +76,7 @@ function makeHarness(options: HarnessOptions): Harness {
     },
     enabled: true,
     requireLoadSession: true,
+    sessionMode: options.sessionMode ?? null,
   };
   const profiles = new Map<AgentProfileId, AgentProfile>([["fake", profile]]);
   const worktrees: WorktreeProvider = {
@@ -482,7 +485,7 @@ test("an unprompted session survives idle reaping and delivers queued input once
   expect(second.store.getSession(sid)?.acp_session_id).not.toBe(original?.acp_session_id);
   expect(second.store.getSession(sid)?.worktree_path).toBe(original?.worktree_path);
   const controller = second.registry.getLive(sid);
-  expect(controller?.liveConfigOptions.map(option => option.currentValue)).toEqual(["fake-large", "high"]);
+  expect(controller?.liveConfigOptions.map(option => option.currentValue)).toEqual(["fake-large", "high", "default"]);
   const replay = await second.service.sendInput(sid, "handle the review", { client_message_id: "review" });
   expect(replay.ok && replay.value.status).toBe("succeeded");
 }, 15000);
@@ -1116,6 +1119,58 @@ test("session/load restores the requested config and re-emits its selectors", as
     expect.objectContaining({ category: "model", value: "fake-large" }),
     expect.objectContaining({ category: "thought_level", value: "high" }),
   ]));
+}, 20000);
+
+function liveMode(registry: AcpControllerRegistry, sid: string): unknown {
+  const option = registry
+    .getLive(sid as KbblSessionId)
+    ?.liveConfigOptions.find((candidate) => candidate.category === "mode");
+  return option?.currentValue ?? null;
+}
+
+test("a new session starts in its profile's session mode", async () => {
+  const { stateDir, workdir } = await makeDirs();
+  const { service, registry, store } = makeHarness({ stateDir, sessionMode: "auto" });
+
+  const ensured = await service.ensureResumableSession("key-mode", spec(workdir));
+  expect(ensured.ok).toBe(true);
+  if (!ensured.ok) return;
+  const sid = ensured.value.session.sid;
+
+  expect(liveMode(registry, sid)).toBe("auto");
+  expect(store.getSession(sid as KbblSessionId)?.requested_mode).toBe("auto");
+}, 20000);
+
+test("an operator's mode change survives the agent respawning", async () => {
+  const { stateDir, workdir } = await makeDirs();
+  const { service, registry } = makeHarness({ stateDir, sessionMode: "auto" });
+
+  const ensured = await service.ensureResumableSession("key-mode-toggle", spec(workdir));
+  expect(ensured.ok).toBe(true);
+  if (!ensured.ok) return;
+  const sid = ensured.value.session.sid;
+  await service.observeInitialTurn(sid, 8000);
+
+  const toggled = await service.setConfigOption(sid, "mode", "acceptEdits");
+  expect(toggled.ok).toBe(true);
+  // The respawned fake agent reports its default mode again; kbbl must
+  // re-apply the operator's choice rather than the profile default.
+  await registry.getLive(sid as KbblSessionId)!.closeChild();
+  const reloaded = await service.loadHistory(sid);
+  expect(reloaded.ok).toBe(true);
+
+  expect(liveMode(registry, sid)).toBe("acceptEdits");
+}, 20000);
+
+test("a session mode the agent does not offer leaves the session running", async () => {
+  const { stateDir, workdir } = await makeDirs();
+  const { service, registry } = makeHarness({ stateDir, sessionMode: "no-such-mode" });
+
+  const ensured = await service.ensureResumableSession("key-mode-miss", spec(workdir));
+  expect(ensured.ok).toBe(true);
+  if (!ensured.ok) return;
+
+  expect(liveMode(registry, ensured.value.session.sid)).toBe("default");
 }, 20000);
 
 test("sessions change feed fires on session writes and stops after unsubscribe", async () => {

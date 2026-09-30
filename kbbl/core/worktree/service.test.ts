@@ -48,6 +48,7 @@ function insertProvisioningSession(sid: KbblSessionId, name: string): void {
     worktree_path: repoDir,
     requested_model: null,
     requested_effort: null,
+    requested_mode: null,
     workflow: null,
   });
 }
@@ -125,6 +126,7 @@ describe("GitWorktreeProvider.resolve", () => {
       worktree_path: first.value.worktree_path,
       requested_model: null,
       requested_effort: null,
+      requested_mode: null,
       workflow: null,
     });
     store.setWorktree(SID, {
@@ -202,6 +204,7 @@ describe("GitWorktreeProvider.resolve", () => {
       worktree_path: parent.value.worktree_path,
       requested_model: null,
       requested_effort: null,
+      requested_mode: null,
       workflow: null,
     });
     store.setWorktree(SID, {

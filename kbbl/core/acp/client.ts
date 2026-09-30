@@ -90,18 +90,24 @@ export class AcpClient {
 
   newSession(
     cwd: string,
+    additionalDirectories: readonly string[],
   ): Promise<Result<schema.NewSessionResponse, AcpError>> {
     return this.request(
       "acp_session_new_failed",
       "client.newSession",
       () =>
-        this.connection.agent.request("session/new", { cwd, mcpServers: [] }),
+        this.connection.agent.request("session/new", {
+          cwd,
+          mcpServers: [],
+          ...this.additionalDirectoriesField(additionalDirectories),
+        }),
     );
   }
 
   loadSession(
     sessionId: string,
     cwd: string,
+    additionalDirectories: readonly string[],
   ): Promise<Result<schema.LoadSessionResponse | void, AcpError>> {
     return this.request(
       "acp_session_load_failed",
@@ -111,8 +117,23 @@ export class AcpClient {
           sessionId,
           cwd,
           mcpServers: [],
+          ...this.additionalDirectoriesField(additionalDirectories),
         }),
     );
+  }
+
+  /**
+   * `additionalDirectories` goes on the wire only to an agent that advertises
+   * `sessionCapabilities.additionalDirectories` (ACP: clients MUST NOT send
+   * it otherwise), and only when there is something to add.
+   */
+  private additionalDirectoriesField(
+    additionalDirectories: readonly string[],
+  ): { additionalDirectories?: string[] } {
+    const isSupported =
+      this.capabilities.sessionCapabilities?.additionalDirectories != null;
+    if (!isSupported || additionalDirectories.length === 0) return {};
+    return { additionalDirectories: [...additionalDirectories] };
   }
 
   prompt(
