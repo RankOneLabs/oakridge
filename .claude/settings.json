@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__gated-review__get_review_round",
+      "mcp__gated-review__reply_to_thread",
+      "mcp__gated-review__resolve_thread",
+      "mcp__gated-review__request_next_round",
+      "mcp__gated-review__review_get_state",
+      "mcp__gated-review__review_list_actions",
+      "mcp__gated-review__pr_status",
+      "mcp__gated-review__open_pr",
+      "mcp__gated-review__git_push",
+      "mcp__gated-review__git_pull",
+      "mcp__gated-review__git_fetch",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git switch *)",
+      "Bash(bun run *)",
+      "Bash(bun test *)",
+      "Bash(bun install)",
+      "Bash(bunx tsc *)",
+      "Bash(uv run *)",
+      "Bash(uv sync)",
+      "Bash(uv sync *)",
+      "Bash(cargo build *)",
+      "Bash(cargo check *)",
+      "Bash(cargo test *)"
+    ],
+    "deny": [
+      "Bash(git push)",
+      "Bash(git push *)",
+      "Bash(git pull)",
+      "Bash(git pull *)",
+      "Bash(git fetch)",
+      "Bash(git fetch *)",
+      "Bash(gh *)",
+      "mcp__gated-review__merge_pr",
+      "mcp__gated-review__mark_merge_ready"
+    ]
+  }
+}
