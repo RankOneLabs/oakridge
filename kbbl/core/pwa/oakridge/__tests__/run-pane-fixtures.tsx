@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
 
 import type { SessionSnapshot } from "../../types";
-import type { ArtifactDetail, ParkedGate, ReviewItem, RunDetail, RunSessionAttempt } from "../types";
+import type { ArtifactDetail, ParkedGate, RunDetail, RunSessionAttempt } from "../types";
 
 // Fixtures and the jsdom harness for the pane-body render tests. Not a
 // `*.test.*` file, so vitest imports it rather than collecting it.
@@ -105,7 +105,7 @@ const ARTIFACT: ArtifactDetail = {
   id: "art-build",
   type_id: "dev.build_result",
   component_id: null,
-  capabilities: { reviewable: true, commentable: true, atom_editable: false, review_items: true },
+  capabilities: { reviewable: true, commentable: true, atom_editable: false, review_items: false },
   anchor_schema: null,
   review: {
     viewer: "json",
@@ -125,20 +125,6 @@ const ARTIFACT: ArtifactDetail = {
     },
   ],
 };
-
-const REVIEW_ITEMS: ReviewItem[] = [
-  {
-    id: "ri-1",
-    artifact_id: "art-build",
-    revision_id: "rev-1",
-    anchor: "summary",
-    claim: "The pane hosts the review",
-    reality: "It does",
-    status: "open",
-    resolution: null,
-    created_at: "2026-09-01T09:05:00Z",
-  },
-];
 
 export const snapshotOf = (sid: string): SessionSnapshot => ({
   sid,
@@ -168,7 +154,6 @@ export const makeFetch = (): FetchHandler =>
     // body without a turn key, so answering this properly is what keeps the
     // send path on its success branch rather than its error branch.
     if (url.includes("/input")) return json({ turn_key: "turn-1", status: "accepted" });
-    if (url.includes("/review_items")) return json(REVIEW_ITEMS);
     if (url.includes("/threads")) return json([]);
     if (url.includes("/artifact_details/")) return json(ARTIFACT);
     if (url.includes("/runs/") && url.includes("/diagnosis")) return json({

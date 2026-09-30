@@ -326,7 +326,16 @@ export class PostgresArtifactRepository implements ArtifactRevisionRepository, R
     return rows.map(artifactRevision);
   }
 
-  /** The revision currently holding a declared slot — accepted, or parked pending its gate. */
+  /**
+   * The revision currently holding a declared slot — accepted, or parked pending
+   * its gate.
+   *
+   * Scoped to the stage instance, so on a fan-out stage it answers with whichever
+   * cohort's revision sorts first. That is only sound for a scalar stage, and this
+   * has no production caller: `publish_artifact` resolves the slot itself, per
+   * cohort. A caller that needs it for a fan-out stage has to take the cohort as
+   * part of the coordinate.
+   */
   async find_current(coordinate: ArtifactCoordinate): Promise<ArtifactRevision | null> {
     const rows = await this.sql.query<ArtifactRevisionRow>(
       `SELECT ${ARTIFACT_REVISION_COLUMNS} ${ARTIFACT_REVISION_SOURCE}

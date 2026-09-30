@@ -234,12 +234,6 @@ export type FinalPullRequestResponse = {
   };
 }[FinalPullRequestOutcome];
 
-export interface AdmitStageUnitResponse {
-  stage_instance_id: string;
-  unit_id: string;
-  admitted: boolean;
-}
-
 export interface CreateRunRequest {
   workflow_def_id: string;
   project_id: string | null;
@@ -666,18 +660,6 @@ export interface CollabThread {
   messages: CollabMessage[];
 }
 
-export interface ReviewItem {
-  id: string;
-  artifact_id: string;
-  revision_id: string;
-  anchor: string;
-  claim: string;
-  reality: string;
-  status: "open" | "resolved" | "waived";
-  resolution: string | null;
-  created_at: string;
-}
-
 export interface PostThreadRequest {
   anchor?: string | null;
   body: string;
@@ -736,17 +718,6 @@ export interface PostAtomEditRequest {
   prev_value: unknown;
   new_value: unknown;
   author: string;
-}
-
-export interface PostReviewItemRequest {
-  anchor: string;
-  claim: string;
-  reality: string;
-}
-
-export interface PatchReviewItemRequest {
-  status: "resolved" | "waived";
-  resolution?: string;
 }
 
 // ── Workflow-def authoring types ──────────────────────────────────────────────

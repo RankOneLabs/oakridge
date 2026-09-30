@@ -5,11 +5,8 @@ import { usePostThread } from "../../hooks/usePostThread";
 import { usePostMessage } from "../../hooks/usePostMessage";
 import { usePingThread } from "../../hooks/usePingThread";
 import { useResolveThread } from "../../hooks/useResolveThread";
-import { useReviewItems } from "../../hooks/useReviewItems";
-import { usePatchReviewItem } from "../../hooks/usePatchReviewItem";
 import { useAtomEdit } from "../../hooks/useAtomEdit";
 import { resolveViewer } from "../../artifactRegistry";
-import { ReviewItemsChecklist } from "../molecules/ReviewItemsChecklist";
 import type { ArtifactRevision, RunDiagnosisGate } from "../../types";
 import { formatRelative } from "../../../lib/time";
 import { ThreadSidebar } from "../../../review/shared/ThreadSidebar";
@@ -47,10 +44,8 @@ export function ArtifactReview({ artifactId, gates }: ArtifactReviewProps) {
   // Collab data — loaded only when the artifact has relevant capabilities
   const caps = query.data?.capabilities ?? null;
   const commentable = caps?.commentable ?? false;
-  const hasReviewItems = caps?.review_items ?? false;
 
   const threadsQuery = useThreads(artifactId, commentable);
-  const reviewItemsQuery = useReviewItems(artifactId, hasReviewItems);
   const revisions = query.data?.revisions ?? [];
   const revIdx = selectedRevIdx === null
     ? Math.max(0, revisions.length - 1)
@@ -68,7 +63,6 @@ export function ArtifactReview({ artifactId, gates }: ArtifactReviewProps) {
   const postMessage = usePostMessage(artifactId, selectedThreadId ?? "");
   const pingThread = usePingThread(artifactId);
   const resolveThread = useResolveThread(artifactId);
-  const patchReviewItem = usePatchReviewItem(artifactId);
 
   if (query.isError) {
     return (
@@ -142,16 +136,6 @@ export function ArtifactReview({ artifactId, gates }: ArtifactReviewProps) {
     setSelectedThreadId(null);
   }
 
-  const reviewItems = reviewItemsQuery.data ?? [];
-
-  function handleResolveItem(id: string, resolution: string) {
-    patchReviewItem.mutate({ id, req: { status: "resolved", resolution: resolution || undefined } });
-  }
-
-  function handleWaiveItem(id: string, resolution: string) {
-    patchReviewItem.mutate({ id, req: { status: "waived", resolution: resolution || undefined } });
-  }
-
   const header = (
       <header className="or-artifact-detail__header">
         <h2 className="or-artifact-detail__title" data-testid="or-artifact-type">
@@ -218,17 +202,6 @@ export function ArtifactReview({ artifactId, gates }: ArtifactReviewProps) {
         </section>
       ) : <FeedbackMessage>No revisions.</FeedbackMessage>;
 
-      {/* ── Collab chrome: review items ─────────────────────────────────── */}
-  const reviewItemsContent = hasReviewItems ? (
-        <section className="or-artifact-detail__collab" data-testid="or-review-items-section">
-          <ReviewItemsChecklist
-            items={reviewItems}
-            onResolve={handleResolveItem}
-            onWaive={handleWaiveItem}
-          />
-        </section>
-      ) : undefined;
-
       {/* ── Collab chrome: threads ──────────────────────────────────────── */}
   const threadsContent = commentable ? (
         <section className="or-artifact-detail__threads" data-testid="or-threads-section">
@@ -267,7 +240,6 @@ export function ArtifactReview({ artifactId, gates }: ArtifactReviewProps) {
       header={header}
       revisionNavigation={revisionNavigation}
       artifact={artifactContent}
-      reviewItems={reviewItemsContent}
       threads={threadsContent}
       gateActions={gateActions}
     />

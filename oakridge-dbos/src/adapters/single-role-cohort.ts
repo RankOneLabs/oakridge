@@ -35,12 +35,17 @@ interface SingleRoleCohortStageData {
   readonly artifact: JsonValue;
   readonly launched: number;
   /**
-   * The gate decision this cohort has already acted on. Durable because it is
+   * Every gate decision this cohort has already acted on. Durable because it is
    * what makes "the operator has answered" a fact the machine consumes once: a
    * closed wait stays closed, so without it every later step would read the same
    * decision as new.
+   *
+   * A set, not one slot. A `revise` decision never becomes `accepted`, so two
+   * revision rounds leave two decisions that both stay unconsumed forever — and a
+   * single slot alternated between them, launching a real session on every pass
+   * and never parking again, so the operator could not approve their way out.
    */
-  readonly consumed_gate_wait_id: string | null;
+  readonly consumed_gate_wait_ids: readonly string[];
 }
 
 const isObject = (value: JsonValue | undefined): value is { readonly [key: string]: JsonValue } =>
@@ -54,19 +59,33 @@ const contractOf = (value: JsonValue): CompiledStageContract => {
 const configOf = (contract: CompiledStageContract): DelegatedSessionDefinitionConfig =>
   contract.executor.definition_config as DelegatedSessionDefinitionConfig;
 
+/**
+ * The consumed set, reading either shape.
+ *
+ * The single-slot key is still read so a cohort already in flight when this
+ * shipped keeps the decision it had acted on — dropping it would have relaunched
+ * that cohort's session once more on the first step after the deploy.
+ */
+const consumedGateWaitIds = (stored: JsonValue | undefined): readonly string[] => {
+  if (!isObject(stored)) return [];
+  const many = stored.consumed_gate_wait_ids;
+  if (Array.isArray(many)) return many.filter((value): value is string => typeof value === "string");
+  return typeof stored.consumed_gate_wait_id === "string" ? [stored.consumed_gate_wait_id] : [];
+};
+
 const stageDataOf = (state: CohortStepContext["state"]): SingleRoleCohortStageData => {
   const stored = state.stage_data;
   return {
     unit_id: isObject(stored) && typeof stored.unit_id === "string" ? stored.unit_id : state.cohort_key,
     artifact: isObject(stored) ? readOwn(stored, "artifact") ?? null : null,
     launched: isObject(stored) && hasOwn(stored, "launched") && typeof stored.launched === "number" ? stored.launched : 0,
-    consumed_gate_wait_id: isObject(stored) && typeof stored.consumed_gate_wait_id === "string" ? stored.consumed_gate_wait_id : null,
+    consumed_gate_wait_ids: consumedGateWaitIds(stored),
   };
 };
 
 const encode = (data: SingleRoleCohortStageData): JsonValue => ({
   unit_id: data.unit_id, artifact: data.artifact, launched: data.launched,
-  consumed_gate_wait_id: data.consumed_gate_wait_id,
+  consumed_gate_wait_ids: [...data.consumed_gate_wait_ids],
 });
 
 /** The one role this stage launches, and the reasons it declares for it. */
@@ -117,10 +136,10 @@ export const createSingleRoleCohortDriver = (dependencies: SingleRoleCohortDrive
 
   async open_cohorts(input): Promise<readonly OpenCohort[]> {
     const contract = contractOf(input.stage_contract);
-    return resolveCohortRoster(contract, input.run_context).map((entry) => ({
+    return resolveCohortRoster(contract, input.run_context, input.inputs).map((entry) => ({
       id: cohortIdFor(input.stage_instance_id, entry.cohort_key),
       cohort_key: entry.cohort_key,
-      stage_data: encode({ unit_id: entry.cohort_key, artifact: entry.item, launched: 0, consumed_gate_wait_id: null }),
+      stage_data: encode({ unit_id: entry.cohort_key, artifact: entry.item, launched: 0, consumed_gate_wait_ids: [] }),
     }));
   },
 
@@ -138,12 +157,14 @@ export const createSingleRoleCohortDriver = (dependencies: SingleRoleCohortDrive
         launch_reason: "artifact_accepted", actor: "core" }, launch: null };
     }
 
-    const decided = context.state.decided_gates.find((gate) => gate.wait_id !== stageData.consumed_gate_wait_id && !gate.accepted);
+    const decided = context.state.decided_gates.find((gate) =>
+      !stageData.consumed_gate_wait_ids.includes(gate.wait_id) && !gate.accepted);
     if (decided) {
       const disposition = selectArtifactGateDisposition(
         contract.outputs.find((output) => output.name === decided.output_name)?.artifact_type ?? "",
         selectBuiltInGateDisposition(decided.action));
-      const consumed = { ...stageData, consumed_gate_wait_id: decided.wait_id as string };
+      const consumed = { ...stageData,
+        consumed_gate_wait_ids: [...stageData.consumed_gate_wait_ids, decided.wait_id as string] };
       if (disposition === "terminal") {
         return { event: { change: { status: "failed", blocked_reason: null, next_actor: null,
           outcome: { kind: "failed", code: "gate_rejected", detail: `gate '${decided.output_name}' was ended by '${decided.action}'` } },

@@ -22,7 +22,7 @@ import { DBOS } from "@dbos-inc/dbos-sdk";
 import { attemptIdFor, attemptWorkflowId, cohortMachineWorkflowId, runMachineWorkflowId, sessionIdFor, stageMachineWorkflowId, transitionIdFor } from "../decision/ids";
 import { executorHealthFromTerminal, type AttemptExecution, type CohortMachineState, type OpenCohort, type RecordCohortEvent, type RunDecision, type TransitionEffectDescriptor } from "../domain/run-record";
 import { ExecutorStartRejectedError, type ExecutorAdapter, type ExecutorObservationAttempt, type ExternalExecutionReference } from "../domain/execution";
-import type { AttemptId, CohortId, JsonValue, KbblSessionId, RunTransitionId, StageInstanceId, WorkflowRunId } from "../domain/primitives";
+import type { AttemptId, CohortId, JsonValue, KbblSessionId, RunTransitionId, StageInstanceId, UnitId, WorkflowRunId } from "../domain/primitives";
 import { executorOperationIdForWorkOrder, type ExecutionId, type WorkOrderId } from "../domain/primitives";
 import type { TransitionOwner } from "../domain/run-record";
 import type { Command, StageInputSet } from "../decision/commands";
@@ -109,8 +109,15 @@ export interface CohortStepDecision {
  */
 export interface CohortMachineDriver {
   readonly stage_type: string;
-  /** The cohort roster a started stage fans out over. */
-  open_cohorts(input: { readonly run_id: WorkflowRunId; readonly stage_instance_id: StageInstanceId; readonly stage_contract: JsonValue; readonly run_context: JsonValue }): Promise<readonly OpenCohort[]>;
+  /**
+   * The cohort roster a started stage fans out over.
+   *
+   * The stage's resolved inputs come with it, because a fan-out binding may name
+   * an *input* rather than the run context — dev-flow's build stage fans out over
+   * the briefs the planning stage produced — and a roster resolved without them
+   * cannot open a single cohort.
+   */
+  open_cohorts(input: { readonly run_id: WorkflowRunId; readonly stage_instance_id: StageInstanceId; readonly stage_contract: JsonValue; readonly run_context: JsonValue; readonly inputs: StageInputSet }): Promise<readonly OpenCohort[]>;
   /** The next transition this cohort owes, or null when it is waiting on something outside itself. */
   step(context: CohortStepContext): Promise<CohortStepDecision | null>;
   /**
@@ -225,7 +232,8 @@ const openStageCohortsStep = DBOS.registerStep(
     const run_context = await workflowServices().find_run_context(contract.run_id);
     if (run_context === null) throw new Error(`run '${contract.run_id}' was not found`);
     const cohorts = await driver.open_cohorts({ run_id: contract.run_id, stage_instance_id,
-      stage_contract: contract.stage_contract, run_context });
+      stage_contract: contract.stage_contract, run_context,
+      inputs: await loadStageInputs(contract.stage_contract, null) });
     const opened = await records.open_stage_cohorts({ run_id: contract.run_id, stage_instance_id, cohorts, opened_at: now() });
     if (opened.kind === "stage_not_found") throw new Error(opened.detail);
     return opened.cohort_ids;
@@ -258,6 +266,18 @@ export interface CohortStepOutcome {
   readonly status: CohortMachineState["status"];
   readonly committed: boolean;
   readonly started_attempt: AttemptId | null;
+  /**
+   * The cohort's attempt that still needs its workflow running — this pass's
+   * launch, or an unfinished attempt somebody else created.
+   *
+   * Two paths create attempts outside any machine: `retry_cohort`, which the PWA's
+   * retry button drives, and an adapter event. Neither could start a workflow — the
+   * retry route has no handle on the topology and the event path returns an
+   * outcome the caller discards — so the attempt row existed, the previous attempt
+   * was abandoned, and no session ever launched. There is no attempt-level
+   * sweeper: `run-launch-dispatch` covers runs only.
+   */
+  readonly open_attempt: AttemptId | null;
 }
 
 /** The cohort, its stage's pinned contract, its run's context, and its driver. */
@@ -272,20 +292,32 @@ const cohortContext = async (cohort_id: CohortId): Promise<{ readonly context: C
   if (!driver) throw new Error(`stage type '${stage.stage_type}' has no registered cohort driver`);
   const run_context = await workflowServices().find_run_context(state.run_id);
   if (run_context === null) throw new Error(`run '${state.run_id}' was not found`);
-  const inputs = await loadStageInputs(contract.stage_contract);
+  const inputs = await loadStageInputs(contract.stage_contract, state.cohort_key);
   return { context: { state, stage_contract: contract.stage_contract, run_context, inputs }, driver };
 };
 
 /**
  * One stage's declared inputs, as artifact envelopes.
  *
- * A collecting input takes every accepted revision of its producer's slot; a
- * scalar one takes the latest. An input whose producer has accepted nothing is
- * left out rather than filled with an empty array: `resolve_execution` reports a
- * missing input by name, and an empty array would instead render an empty list
- * into the prompt as though the upstream stage had produced nothing to say.
+ * A collecting input takes every accepted revision of its producer's slot. A
+ * scalar one is *delivered per cohort* when its producer made several revisions —
+ * that is what `delivery: unit_complete` means, and dev-flow's build stage reads
+ * one brief out of the collection the planner wrote. At stage scope (`cohort_key`
+ * is null, which is how the roster is resolved) the whole collection is kept,
+ * because a fan-out iterates the collection rather than one member of it.
+ *
+ * An envelope's `unit_id` is its collection key when it has one. That key is the
+ * item's identity for a collected output — it is what the fan-out reads its
+ * cohort key from, what the prompt renders beside the body and what a publication
+ * names the slot by — whereas the producing cohort's own key is `"0"` for every
+ * revision a scalar producer wrote.
+ *
+ * An input whose producer has accepted nothing is left out rather than filled
+ * with an empty array: `resolve_execution` reports a missing input by name, and
+ * an empty array would instead render an empty list into the prompt as though the
+ * upstream stage had produced nothing to say.
  */
-const loadStageInputs = async (stage_contract: JsonValue): Promise<StageInputSet> => {
+const loadStageInputs = async (stage_contract: JsonValue, cohort_key: string | null): Promise<StageInputSet> => {
   const { artifacts } = workflowServices();
   const resolved: Record<string, ArtifactEnvelope | readonly ArtifactEnvelope[]> = {};
   for (const edge of parseStageInputEdges(stage_contract)) {
@@ -294,10 +326,14 @@ const loadStageInputs = async (stage_contract: JsonValue): Promise<StageInputSet
     if (revisions.length === 0) continue;
     const envelopes = revisions.map((revision): ArtifactEnvelope => ({
       artifact_id: revision.id, artifact_type: revision.artifact_type, output_name: revision.output_name,
-      unit_id: revision.unit_id, body: revision.body, chain_id: revision.chain_id,
+      unit_id: (revision.collection_key ?? revision.unit_id) as UnitId, body: revision.body, chain_id: revision.chain_id,
       ...(revision.attempt_id ? { producer_execution_id: revision.attempt_id as unknown as ExecutionId } : {}),
     }));
-    resolved[edge.input_name] = edge.collect ? envelopes : envelopes[0]!;
+    if (edge.collect || cohort_key === null) {
+      resolved[edge.input_name] = envelopes;
+      continue;
+    }
+    resolved[edge.input_name] = envelopes.find((envelope) => envelope.unit_id === cohort_key) ?? envelopes[0]!;
   }
   return resolved;
 };
@@ -325,7 +361,8 @@ const commitCohortDecision = async (
 ): Promise<CohortStepOutcome> => {
   const { records, now } = workflowServices();
   const { state } = context;
-  if (!decision) return { status: state.status, committed: false, started_attempt: null };
+  const open_attempt = state.latest_unfinished_attempt_id;
+  if (!decision) return { status: state.status, committed: false, started_attempt: null, open_attempt };
 
   const owner: TransitionOwner = { kind: "cohort", id: state.cohort_id };
   const launch = decision.launch;
@@ -339,9 +376,9 @@ const commitCohortDecision = async (
   const recorded = await records.record_cohort_event({
     ...decision.event, run_id: state.run_id, cohort_id: state.cohort_id, recorded_at: now(),
   });
-  if (recorded.kind === "version_conflict") return { status: state.status, committed: false, started_attempt: null };
+  if (recorded.kind === "version_conflict") return { status: state.status, committed: false, started_attempt: null, open_attempt };
   if (recorded.kind !== "recorded") throw new Error(`${recorded.kind}: ${recorded.detail}`);
-  if (launch === null || prepared === null) return { status: decision.event.change.status, committed: true, started_attempt: null };
+  if (launch === null || prepared === null) return { status: decision.event.change.status, committed: true, started_attempt: null, open_attempt };
 
   const started = await records.start_attempt({
     run_id: state.run_id, stage_instance_id: state.stage_instance_id, cohort_id: state.cohort_id,
@@ -351,13 +388,16 @@ const commitCohortDecision = async (
     idempotency_key: null, created_at: now(),
   });
   if (started.kind === "cohort_not_found" || started.kind === "idempotency_conflict") throw new Error(started.detail);
-  return { status: decision.event.change.status, committed: true, started_attempt: prepared.attempt_id };
+  return { status: decision.event.change.status, committed: true,
+    started_attempt: prepared.attempt_id, open_attempt: prepared.attempt_id };
 };
 
 const stepCohortStep = DBOS.registerStep(
   async (cohort_id: CohortId): Promise<CohortStepOutcome> => {
     const { context, driver } = await cohortContext(cohort_id);
-    if (isTerminal(context.state.status)) return { status: context.state.status, committed: false, started_attempt: null };
+    // A terminal cohort's attempts have been abandoned with it; starting one would
+    // drive a session for work nothing is waiting on.
+    if (isTerminal(context.state.status)) return { status: context.state.status, committed: false, started_attempt: null, open_attempt: null };
     return commitCohortDecision(context, await driver.step(context));
   },
   { name: "oakridgeV15CohortStepStep", retriesAllowed: true, maxAttempts: 5, intervalSeconds: 1, backoffRate: 2 },
@@ -394,8 +434,13 @@ export const cohortMachineWorkflow = DBOS.registerWorkflow(async (cohort_id: Coh
       await DBOS.sleepSeconds(MACHINE_FAILURE_BACKOFF_SECONDS);
       continue;
     }
-    if (outcome.started_attempt) {
-      await DBOS.startWorkflow(attemptWorkflow, { workflowID: attemptWorkflowId(outcome.started_attempt) })(outcome.started_attempt);
+    // Started unconditionally, not only for this pass's own launch. The workflow id
+    // is derived from the attempt id, so a second start joins the first rather than
+    // opening anything — which makes this the one place that covers an attempt
+    // created off-machine (an operator retry, an adapter event) *and* a crash
+    // between the launch commit and its start.
+    if (outcome.open_attempt) {
+      await DBOS.startWorkflow(attemptWorkflow, { workflowID: attemptWorkflowId(outcome.open_attempt) })(outcome.open_attempt);
     }
     if (isTerminal(outcome.status)) return outcome.status;
     if (outcome.committed) continue; // something changed: ask again now, no recv
