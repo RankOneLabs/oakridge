@@ -316,3 +316,36 @@ test("a published assessment moves the cohort into its assessment review", async
   expect(decision!.event.change).toEqual(expect.objectContaining({ status: "blocked", blocked_reason: "gate", next_actor: "operator" }));
   expect(buildStateOf(committed(state, decision!)).phase).toBe("assessment_review");
 });
+
+test("a first-round revision cannot revise the second build round", async () => {
+  const { contract, bundle } = await buildStage();
+  const driver = driverFor(bundle);
+  const original = verificationState();
+  const state: CohortMachineState = { ...original, status: "blocked", blocked_reason: "gate", next_actor: "operator",
+    stage_data: { ...original.stage_data as object, build_state: { ...buildStateOf(original),
+      phase: "build_review", accepted_revision: "build-2+pr-2", verified_pull_request: {
+        url: "https://example.test/pull/7", revision: "build-2+pr-2", head_sha: "head-2" } } } as JsonValue,
+    accepted_outputs: [], open_waits: [openWait("wait-2-build", "build_result", "build-2"),
+      openWait("wait-2-pr", "pr_summary", "pr-2")],
+    decided_gates: [{ wait_id: "wait-1-build" as WaitId, output_name: "build_result",
+      action: "request_revision", artifact_id: "build-1" as ArtifactId,
+      accepted: false, decided_at: "2026-09-29T00:00:00Z" }] };
+  const retired = await driver.step(contextOf(state, contract));
+  expect(retired?.launch).toBeNull();
+  expect((retired?.event.effect as unknown as BuildCohortTransitionEffect).disposition).toBe("recorded_only");
+  expect(await driver.step(contextOf(committed(state, retired!), contract))).toBeNull();
+});
+
+test("a release on one required build output alone does not approve review", async () => {
+  const { contract, bundle } = await buildStage();
+  const driver = driverFor(bundle);
+  const original = verificationState();
+  const state: CohortMachineState = { ...original, status: "blocked", blocked_reason: "gate", next_actor: "operator",
+    stage_data: { ...original.stage_data as object, build_state: { ...buildStateOf(original), phase: "build_review" } } as JsonValue,
+    accepted_outputs: [original.accepted_outputs[0]!],
+    open_waits: [openWait("wait-pr", "pr_summary", "pr-1")],
+    decided_gates: [{ wait_id: "wait-build" as WaitId, output_name: "build_result",
+      action: "approve", artifact_id: "build-1" as ArtifactId,
+      accepted: true, decided_at: "2026-09-29T00:00:00Z" }] };
+  expect(await driver.step(contextOf(state, contract))).toBeNull();
+});

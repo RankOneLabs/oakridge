@@ -26,13 +26,14 @@ import { join, resolve } from "node:path";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
 import type { ExecutionRequest } from "../../src/domain/execution";
-import type { JsonValue, StageInstanceId, UnitId } from "../../src/domain/primitives";
-import type { StageOperatorRole, WorkflowDefinition } from "../../src/domain/workflow";
+import type { JsonValue, StageInstanceId, UnitId, WorkflowRunId } from "../../src/domain/primitives";
+import type { PromptBundleEntry, StageOperatorRole, WorkflowDefinition } from "../../src/domain/workflow";
 import { KbblExecutorAdapter } from "../../src/adapters/kbbl";
 import { createOakridgeRuntime, type OakridgeRuntime } from "../../src/runtime/compose";
 import { GithubPullRequestReader } from "../../src/runtime/github-pull-requests";
 import { applyMigrations } from "../../src/storage/migrate";
 import { PgPostgresExecutor } from "../../src/storage/sql-executor";
+import type { SqlExecutor } from "../../src/storage/sql-executor";
 import { loadDevFlowV15 } from "../../src/seed/dev-flow-v15";
 
 /**
@@ -107,12 +108,15 @@ export interface ScriptedAgentScenario {
   readonly forge_overrides: Map<string, { readonly head_branch?: string; readonly head_sha?: string;
     readonly base_branch?: string; readonly merged_at?: string | null }>;
   readonly strip_publication_contract: boolean;
+  readonly skip_first_publication_role: StageOperatorRole | null;
+  readonly unpublished_work_orders: Set<string>;
   releaseAll(): void;
 }
 
 export const scriptedAgentScenario = (options?: {
   readonly cohorts?: readonly CohortPlanEntry[];
   readonly strip_publication_contract?: boolean;
+  readonly skip_first_publication_role?: StageOperatorRole;
 }): ScriptedAgentScenario => {
   const cohorts = options?.cohorts ?? DEFAULT_COHORT_PLAN;
   const launched = new Map<string, FakeAgentLaunch>();
@@ -123,8 +127,28 @@ export const scriptedAgentScenario = (options?: {
     deliveries,
     forge_overrides: new Map(),
     strip_publication_contract: options?.strip_publication_contract ?? false,
+    skip_first_publication_role: options?.skip_first_publication_role ?? null,
+    unpublished_work_orders: new Set(),
     releaseAll() {},
   };
+};
+
+export const removePinnedPromptCell = async (
+  sql: SqlExecutor, run_id: WorkflowRunId, stage_key: string, role: string, reason: string,
+): Promise<() => Promise<void>> => {
+  const rows = await sql.query<{ readonly hash: string; readonly matrix: readonly PromptBundleEntry[] }>(
+    `SELECT bundle.hash,bundle.matrix FROM oakridge.workflow_run run
+     JOIN oakridge.prompt_bundle bundle ON bundle.hash=run.bundle_pin->>'prompt_bundle_hash'
+     WHERE run.id=$1`, [run_id]);
+  const bundle = rows[0];
+  if (!bundle) throw new Error(`run '${run_id}' has no bound prompt bundle`);
+  const reduced = bundle.matrix.filter((cell) => !(cell.stage_key === stage_key
+    && cell.session_role === role && cell.launch_reason === reason));
+  if (reduced.length === bundle.matrix.length) throw new Error(`prompt cell ${stage_key}:${role}:${reason} is missing`);
+  await sql.query("UPDATE oakridge.prompt_bundle SET matrix=$2::jsonb WHERE hash=$1",
+    [bundle.hash, JSON.stringify(reduced)]);
+  return async () => { await sql.query("UPDATE oakridge.prompt_bundle SET matrix=$2::jsonb WHERE hash=$1",
+    [bundle.hash, JSON.stringify(bundle.matrix)]); };
 };
 
 /** The one branch the harness's runs provision and build on. */
@@ -337,7 +361,11 @@ export const installIntegrationRuntime = async (databaseUrl: string, options: In
       if (launch.operator_role === "build" && launch.head_branch && launch.base_branch) {
         forgeRefs.set(launch.unit_id, { head_branch: launch.head_branch, base_branch: launch.base_branch });
       }
-      return Response.json({ ok: true, stage_instance_id: stageInstanceId ?? null });
+      const skipPublication = launch.operator_role === scenario.skip_first_publication_role
+        && scenario.unpublished_work_orders.size === 0;
+      if (skipPublication) scenario.unpublished_work_orders.add(launch.work_order_id);
+      return Response.json({ ok: true, stage_instance_id: stageInstanceId ?? null,
+        skip_publication: skipPublication });
     }
     if (url.pathname === "/delivery" && request.method === "POST") {
       scenario.deliveries.push(await request.json() as AgentDelivery);

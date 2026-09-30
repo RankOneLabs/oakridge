@@ -1,8 +1,5 @@
 /** Public v2 proof: real runtime, repositories, routes, workflows, gates and handoffs; only the agent is scripted. */
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
 import { chromium, type Browser } from "@playwright/test";
 
 import type { OperatorParkedGate } from "../src/domain/operator-projections";
@@ -12,39 +9,25 @@ import { PostgresRunRecordWriter } from "../src/storage/postgres-run-record";
 import { PostgresRunRecordRepository } from "../src/storage/postgres-run-record-repository";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
 import { HARNESS_BASE_BRANCH, SEVEN_BRIEF_PLAN, awaitCondition, installIntegrationRuntime, runContext,
-  scriptedAgentScenario, useScenario, type CohortPlanEntry, type IntegrationRuntime } from "./support/dev-flow-harness";
+  removePinnedPromptCell, scriptedAgentScenario, useScenario, type CohortPlanEntry, type IntegrationRuntime } from "./support/dev-flow-harness";
 import { assertQuietAsk, confirmCohortMerged, decideGate, driveRun, launchRun, listRunGates, readReviewInbox, readRun, readRunRecordFingerprint } from "./support/dev-flow-driver";
 import { findTestDatabaseUrl } from "./support/durable-database";
 import { attemptsAfterCancel, buildStageRow, buildUnitRows, closedGateWaitCount,
-  countBuildOrdersInState, openBriefGateUnitIds, runOutcome, transitionCountFor,
+  countBuildOrdersInState, openBriefGateUnitIds, runOutcome,
   workflowRunState } from "./support/v15-run-queries";
 
 const acceptanceEnabled = process.env.OAKRIDGE_ACCEPTANCE === "1";
 let databaseUrl: string | null = null;
 const e2e = acceptanceEnabled ? test : test.skip;
-/**
- * Cohort 2 owns scenarios 1-5 and straight-through dependency/decision behavior.
- * Cohort 3 owns scenarios 6a, 7, and 8, including retry and fencing behavior.
- */
-const preV15DecisionScenario = test.skip;
 let oakridge: IntegrationRuntime;
 let sql: PgPostgresExecutor;
 let browser: Browser;
-/**
- * A writable copy of `workflow-config/prompts`, built once for the whole file.
- * Scenario 8 is the only one that ever mutates it (and always restores what
- * it removed); every other scenario reads it exactly as it would the real
- * tree, since it is a plain recursive copy.
- */
-let promptTemplateDir: string | null = null;
 
 if (acceptanceEnabled) {
   beforeAll(async () => {
     databaseUrl = process.env.OAKRIDGE_TEST_DATABASE_URL ?? await findTestDatabaseUrl();
     if (databaseUrl === null) throw new Error("no PostgreSQL test database is available for the deterministic acceptance harness");
-    promptTemplateDir = await mkdtemp(join(tmpdir(), "oakridge-e2e-prompts-"));
-    await cp(resolve(import.meta.dir, "../../workflow-config/prompts"), promptTemplateDir, { recursive: true });
-    oakridge = await installIntegrationRuntime(databaseUrl, { prompt_template_directory: promptTemplateDir });
+    oakridge = await installIntegrationRuntime(databaseUrl);
     sql = PgPostgresExecutor.connect(databaseUrl);
     browser = await chromium.launch({ headless: true });
   }, 120_000);
@@ -53,7 +36,6 @@ if (acceptanceEnabled) {
     if (oakridge) await oakridge.stop();
     if (browser) await browser.close();
     if (sql) await sql.close();
-    if (promptTemplateDir) await rm(promptTemplateDir, { recursive: true, force: true });
   }, 60_000);
 }
 
@@ -113,7 +95,12 @@ e2e("deleting the publication contract from a rendered prompt fails the run atte
     const refusedPrompt = agent.deliveries.find((delivery) => delivery.delivery_key.startsWith("missing-publication-contract"))?.prompt;
     expect(refusedPrompt).toBeDefined();
     expect(refusedPrompt).not.toContain("## Oakridge v2 artifact publication");
-    expect((await readRun(oakridge.base_url, launched.run_id)).status).toBe("active");
+    const detail = await awaitCondition("failed publication attempt to block for operator retry", async () => {
+      const run = await readRun(oakridge.base_url, launched.run_id);
+      const unit = run.stages.find((stage) => stage.name === "spec_analyzer")?.units[0];
+      return unit?.status === "blocked" && unit.blocked_reason === "retry" && unit.next_actor === "operator" ? run : null;
+    }, 30_000);
+    expect(detail.status).toBe("active");
   } finally {
     agent.releaseAll();
   }
@@ -423,6 +410,12 @@ e2e("c5 refuses a forge head that disagrees with the real Git remote", async () 
   const launched = await launchRun(oakridge.base_url, oakridge.definition.id, runContext(oakridge.base_url, oakridge.repository.path));
   oakridge.started_runs.push(launched.root_workflow_id);
   try {
+    const firstSid = await driveRun(oakridge.base_url, agent, launched, {
+      decide: () => "approve",
+      until: async () => (await readRun(oakridge.base_url, launched.run_id)).stages
+        .find((stage) => stage.name === "build")?.units.find((unit) => unit.unit_id === "foundation")?.sid ?? null,
+      timeout_ms: 90_000,
+    }).then((result) => result.value);
     await driveRun(oakridge.base_url, agent, launched, {
       decide: () => "approve",
       until: async () => {
@@ -432,7 +425,8 @@ e2e("c5 refuses a forge head that disagrees with the real Git remote", async () 
         const state = foundation?.params as { readonly build_state?: {
           readonly accepted_revision?: unknown; readonly verified_pull_request?: unknown;
         } } | undefined;
-        return foundation?.status === "active" && foundation.sid === null
+        return foundation?.status === "active" && foundation.sid !== null && foundation.sid !== firstSid
+          && foundation.worktree?.branch === `cohort/${detail.stages.find((stage) => stage.name === "build")?.stage_instance_id}/foundation`
           && typeof state?.build_state?.accepted_revision === "string"
           && (state.build_state.verified_pull_request ?? null) === null ? detail : null;
       },
@@ -449,6 +443,45 @@ e2e("c5 refuses a forge head that disagrees with the real Git remote", async () 
     agent.releaseAll();
   }
 }, 120_000);
+
+e2e("c6 an assessment revision parks the rebuilt cohort at a fresh build review", async () => {
+  const agent = scriptedAgentScenario();
+  useScenario(agent);
+  const launched = await launchRun(oakridge.base_url, oakridge.definition.id,
+    runContext(oakridge.base_url, oakridge.repository.path));
+  oakridge.started_runs.push(launched.root_workflow_id);
+  const firstBuildGates = new Set<string>();
+  let assessmentRevised = false;
+  try {
+    const rebuilt = await driveRun(oakridge.base_url, agent, launched, {
+      decide: (gate) => {
+        if (gate.stage_name !== "build") return "approve";
+        if (gate.gate_step === "assessment_review" && !assessmentRevised) {
+          assessmentRevised = true;
+          return "request_revision";
+        }
+        if (assessmentRevised) return null;
+        firstBuildGates.add(gate.id);
+        return "approve";
+      },
+      until: async () => {
+        if (!assessmentRevised) return null;
+        const detail = await readRun(oakridge.base_url, launched.run_id);
+        const unit = detail.stages.find((stage) => stage.name === "build")?.units[0];
+        const gates = (await listRunGates(oakridge.base_url, launched.run_id))
+          .filter((gate) => gate.stage_name === "build" && gate.gate_step === "build_review"
+            && !firstBuildGates.has(gate.id));
+        return unit?.status === "blocked" && gates.length === 2 ? { detail, unit, gates } : null;
+      },
+      timeout_ms: 180_000,
+    });
+    expect(rebuilt.value.unit.blocked_reason).toBe("gate");
+    expect(rebuilt.value.unit.next_actor).toBe("operator");
+    expect(rebuilt.value.gates).toHaveLength(2);
+  } finally {
+    agent.releaseAll();
+  }
+}, 210_000);
 
 /**
  * Amends spec §5.2 scenario 5's cohort ids to avoid colliding with
@@ -609,97 +642,45 @@ e2e("scenario 6b: cancelling a run with an open gate wait clears its stranded ga
  * - `publish_artifact` accepts the replacement into the invalidated slot as a
  *   fresh chain root, withdraws the rejected artifact, and opens a new gate.
  */
-preV15DecisionScenario("scenario 7: rejecting one brief, retrying its unit, and approving the replacement completes the run", async () => {
-  const agent = scriptedAgentScenario({ cohorts: SEVEN_BRIEF_PLAN });
+e2e("scenario 7: a lost brief blocks for retry and the retry uses its dedicated prompt", async () => {
+  const agent = scriptedAgentScenario({ skip_first_publication_role: "brief" });
   useScenario(agent);
-  const launched = await launchRun(oakridge.base_url, oakridge.definition.id, runContext(oakridge.base_url, oakridge.repository.path));
+  const launched = await launchRun(oakridge.base_url, oakridge.definition.id,
+    runContext(oakridge.base_url, oakridge.repository.path));
   oakridge.started_runs.push(launched.root_workflow_id);
-  const siblings = ["release", "ui", "api", "docs", "schema", "versioning"];
-  const approvedBriefs = new Set<string>();
-  const decide = (gate: OperatorParkedGate): string | null =>
-    gate.stage_name === "brief_writer" ? (approvedBriefs.has(gate.unit_id) ? "approve" : null) : "approve";
-  const briefWriterUnit = async (): Promise<{ readonly run_unit_id: string; readonly stage_instance_id: string }> => {
-    const rows = await sql.query<{ readonly run_unit_id: string; readonly stage_instance_id: string }>(
-      `SELECT unit.id::text AS run_unit_id, stage.id::text AS stage_instance_id FROM oakridge.run_unit unit
-       JOIN oakridge.stage_instance stage ON stage.id = unit.stage_instance_id
-       WHERE stage.run_id = $1 AND stage.stage_key = 'brief_writer' AND unit.unit_id = '0'`, [launched.run_id]);
-    if (!rows[0]) throw new Error("scenario 7 stopped here: brief_writer's run_unit row was not found");
-    return rows[0];
-  };
-  const rolloutSlot = async (runUnitId: string): Promise<{ readonly state: string; readonly artifact_revision_id: string | null } | undefined> =>
-    (await sql.query<{ readonly state: string; readonly artifact_revision_id: string | null }>(
-      "SELECT state, artifact_revision_id::text FROM oakridge.run_output_slot WHERE run_unit_id = $1 AND output_name = 'brief' AND collection_key = 'rollout'", [runUnitId]))[0];
-  // The route kbbl's run detail calls: stage instance + unit id, no run-unit row id needed.
-  const retry = (stageInstanceId: string, key: string): Promise<Response> =>
-    fetch(`${oakridge.base_url}/stage_instances/${stageInstanceId}/units/0/retry`, { method: "PUT", headers: { "idempotency-key": key } });
   try {
-    // Phase A — all seven briefs parked at their gates.
-    await driveRun(oakridge.base_url, agent, launched, {
-      decide,
-      until: async (): Promise<boolean | null> => (await openBriefGateUnitIds(sql, launched.run_id)).size === 7 ? true : null,
-      timeout_ms: 60_000,
+    const blocked = await driveRun(oakridge.base_url, agent, launched, {
+      decide: () => "approve",
+      until: async () => {
+        const detail = await readRun(oakridge.base_url, launched.run_id);
+        const unit = detail.stages.find((stage) => stage.name === "brief_writer")?.units[0];
+        return unit?.status === "blocked" && unit.blocked_reason === "retry"
+          && unit.next_actor === "operator" ? unit : null;
+      },
+      timeout_ms: 90_000,
     });
-    const unit = await briefWriterUnit();
-
-    // Phase B — reject rollout's brief. Only its slot is invalidated, and the
-    // rejection relaunches nothing: the replacement is the operator's retry.
-    const rolloutGate = (await listRunGates(oakridge.base_url, launched.run_id)).find((gate) => gate.stage_name === "brief_writer" && gate.unit_id === "rollout");
-    if (!rolloutGate?.artifact_revision_id) throw new Error("scenario 7 stopped here: rollout's brief gate was not open going into the revision");
-    expect(rolloutGate.resume_actions).toContain("request_revision");
-    const rejectedArtifactId = rolloutGate.artifact_revision_id;
-    const launchedBeforeReject = agent.launched.size;
-    await decideGate(oakridge.base_url, rejectedArtifactId, "request_revision");
-    expect(await openBriefGateUnitIds(sql, launched.run_id)).toEqual(new Set(siblings));
-    expect(agent.launched.size).toBe(launchedBeforeReject);
-    expect(await rolloutSlot(unit.run_unit_id)).toEqual({ state: "invalidated", artifact_revision_id: rejectedArtifactId });
-
-    // Retry is refused while sibling gates are open — the documented limitation.
-    const refused = await retry(unit.stage_instance_id, "scenario-7-retry-early");
-    expect(refused.status).toBe(409);
-    expect((await refused.json() as { readonly kind?: string }).kind).toBe("actionable_wait");
-
-    // Phase C — decide the other six.
-    for (const sibling of siblings) approvedBriefs.add(sibling);
-    await driveRun(oakridge.base_url, agent, launched, {
-      decide,
-      until: async (): Promise<boolean | null> => (await openBriefGateUnitIds(sql, launched.run_id)).size === 0 ? true : null,
-      timeout_ms: 60_000,
+    expect(blocked.value.status).toBe("blocked");
+    expect(agent.unpublished_work_orders.size).toBe(1);
+    const stage = (await readRun(oakridge.base_url, launched.run_id)).stages
+      .find((candidate) => candidate.name === "brief_writer");
+    if (!stage) throw new Error("brief_writer stage is missing");
+    const response = await fetch(`${oakridge.base_url}/stage_instances/${stage.stage_instance_id}/units/0/retry`, {
+      method: "PUT", headers: { "idempotency-key": "scenario-7-retry" },
     });
-    expect(await workflowRunState(sql, launched.run_id)).toBe("active");
-
-    // Phase D — retry. Created once; the same key replays the same work order.
-    const accepted = await retry(unit.stage_instance_id, "scenario-7-retry-1");
-    expect(accepted.status).toBe(202);
-    const retried = await accepted.json() as { readonly work_order: { readonly id: string } };
-    const replayed = await retry(unit.stage_instance_id, "scenario-7-retry-1");
-    expect(replayed.status).toBe(200);
-    expect((await replayed.json() as { readonly work_order: { readonly id: string } }).work_order.id).toBe(retried.work_order.id);
-
-    // Phase E — the relaunched agent publishes rollout's brief and nothing
-    // else; the replacement is approved and the run completes.
-    approvedBriefs.add("rollout");
+    expect(response.status).toBe(202);
+    const retried = await response.json() as { readonly attempt_id: string };
     await driveRun(oakridge.base_url, agent, launched, {
-      decide,
-      until: async (): Promise<boolean | null> => (await workflowRunState(sql, launched.run_id)) === "succeeded" ? true : null,
+      decide: () => "approve",
+      until: async () => (await readRun(oakridge.base_url, launched.run_id)).status === "complete" ? true : null,
       timeout_ms: 240_000,
     });
-    expect(await workflowRunState(sql, launched.run_id)).toBe("succeeded");
-
-    const retryRequest = agent.launched.get(retried.work_order.id);
-    if (!retryRequest) throw new Error("scenario 7 stopped here: the retry work order was never launched");
-    expect(retryRequest.expected_artifacts).toEqual([{ unit_id: "rollout" as UnitId, output_name: "brief", artifact_type: expect.any(String) }]);
-    expect((retryRequest.resolved_config as { readonly publication?: { readonly work_order_id?: string } }).publication?.work_order_id).toBe(retried.work_order.id);
-    expect((retryRequest.resolved_config as { readonly session_name?: string }).session_name).toBe(retried.work_order.id);
-    const retryArtifacts = await sql.query<{ readonly id: string; readonly collection_key: string | null; readonly version: number; readonly parent_artifact_id: string | null }>(
-      "SELECT id::text, collection_key, version, parent_artifact_id::text FROM oakridge.artifact WHERE work_order_id = $1", [retried.work_order.id]);
-    expect(retryArtifacts).toHaveLength(1);
-    expect(retryArtifacts[0]).toEqual(expect.objectContaining({ collection_key: "rollout", version: 1, parent_artifact_id: null }));
-    expect((await sql.query<{ readonly lifecycle_state: string }>("SELECT lifecycle_state FROM oakridge.artifact WHERE id = $1", [rejectedArtifactId]))[0]?.lifecycle_state).toBe("withdrawn");
-    expect(await rolloutSlot(unit.run_unit_id)).toEqual({ state: "released", artifact_revision_id: retryArtifacts[0]!.id });
+    const request = agent.launched.get(retried.attempt_id);
+    const prompt = (request?.resolved_config as { readonly rendered_prompt?: string } | undefined)?.rendered_prompt;
+    expect(prompt).toContain("# Build Brief Writer — Retry After Lost Attempt");
   } finally {
     agent.releaseAll();
   }
-}, 420_000);
+}, 330_000);
 
 /**
  * The runtime's prompt root for this file is a writable temp copy (see
@@ -710,67 +691,51 @@ preV15DecisionScenario("scenario 7: rejecting one brief, retrying its unit, and 
  * the step retries in place, exhausts, and the root sleeps and asks again,
  * never touching the record and never terminating.
  */
-preV15DecisionScenario("scenario 8: a missing prompt template stalls the ask, not the run", async () => {
-  if (!promptTemplateDir) throw new Error("no writable prompt-template directory was set up for this file");
-  const buildPromptPath = join(promptTemplateDir, "dev-flow", "build_v2.md");
-  const buildPromptBackup = await readFile(buildPromptPath, "utf8");
-
-  const agent = scriptedAgentScenario({ cohorts: SEVEN_BRIEF_PLAN });
+e2e("scenario 8: a missing pinned prompt leaves the first cohort launch pending", async () => {
+  const agent = scriptedAgentScenario();
   useScenario(agent);
-  const launched = await launchRun(oakridge.base_url, oakridge.definition.id, runContext(oakridge.base_url, oakridge.repository.path));
+  const launched = await launchRun(oakridge.base_url, oakridge.definition.id,
+    runContext(oakridge.base_url, oakridge.repository.path));
   oakridge.started_runs.push(launched.root_workflow_id);
+  let restore: (() => Promise<void>) | null = null;
   try {
-    // Park all seven brief gates open, same as scenario 1's phase A — the
-    // pre-brief_writer pipeline (spec_analyzer, plan_writer) is approved so
-    // brief_writer is reached at all; no brief itself is approved yet.
-    await driveRun(oakridge.base_url, agent, launched, {
-      decide: (gate) => gate.stage_name === "brief_writer" ? null : "approve",
-      until: async () => (await openBriefGateUnitIds(sql, launched.run_id)).size === 7 ? true : null,
+    const planGate = await driveRun(oakridge.base_url, agent, launched, {
+      decide: (gate) => gate.stage_name === "spec_analyzer" ? "approve" : null,
+      until: async () => (await listRunGates(oakridge.base_url, launched.run_id))
+        .find((gate) => gate.stage_name === "plan_writer") ?? null,
       timeout_ms: 60_000,
     });
-
-    await rm(buildPromptPath);
-    let restored = false;
-    try {
-      const versioningGate = (await listRunGates(oakridge.base_url, launched.run_id))
-        .find((gate) => gate.stage_name === "brief_writer" && gate.unit_id === "versioning");
-      if (!versioningGate?.artifact_revision_id) throw new Error("scenario 8 stopped here: versioning's brief gate was not open");
-      await decideGate(oakridge.base_url, versioningGate.artifact_revision_id, "approve");
-
-      const afterApproval = await readRunRecordFingerprint(sql, launched.run_id);
-      await Bun.sleep(8_000);
-      const afterWait = await readRunRecordFingerprint(sql, launched.run_id);
-      expect(afterWait).toEqual(afterApproval);
-      expect(await workflowRunState(sql, launched.run_id)).toBe("active");
-      const stage = await buildStageRow(sql, launched.run_id);
-      if (stage) expect(await countBuildUnits(launched.run_id)).toBe(0); // "no rows or no units"
-      else expect(stage).toBeNull();
-
-      await writeFile(buildPromptPath, buildPromptBackup);
-      restored = true;
-
-      // No wake, no operator action from here: `driveRun`'s own polling and
-      // its "emit for launched executions" pass are read-only against the
-      // root's recv/wake mechanism; recovery is the root's own backoff-retry
-      // loop discovering the file is back. The transition log, not current
-      // state, is the race-free way to catch "started": `driveRun`'s
-      // review-inbox pass confirms a cohort's pull request unconditionally,
-      // so versioning's build can race straight through "started" to
-      // "satisfied" between one poll and the next.
-      await driveRun(oakridge.base_url, agent, launched, {
-        decide: () => null,
-        until: async () => (await transitionCountFor(sql, launched.run_id, "work_started", "build", "versioning")) > 0 ? true : null,
-        timeout_ms: 120_000,
-      });
-      expect(await transitionCountFor(sql, launched.run_id, "work_started", "build", "versioning")).toBe(1);
-      expect(await workflowRunState(sql, launched.run_id)).toBe("active");
-    } finally {
-      if (!restored) await writeFile(buildPromptPath, buildPromptBackup).catch(() => undefined);
-    }
+    restore = await removePinnedPromptCell(sql, launched.run_id, "brief_writer", "brief", "initial");
+    if (!planGate.value.artifact_revision_id) throw new Error("plan gate has no artifact");
+    await decideGate(oakridge.base_url, planGate.value.artifact_revision_id, "approve");
+    const pending = await awaitCondition("brief cohort to remain pending without a prompt", async () => {
+      const detail = await readRun(oakridge.base_url, launched.run_id);
+      return detail.stages.find((stage) => stage.name === "brief_writer")?.units[0] ?? null;
+    }, 30_000);
+    await Bun.sleep(8_000);
+    const attempts = await sql.query<{ readonly count: string }>(
+      "SELECT count(*)::text AS count FROM oakridge.attempt WHERE cohort_id=$1", [pending.cohort_id]);
+    expect(pending.status).toBe("pending");
+    expect(attempts[0]?.count).toBe("0");
+    expect((await readRun(oakridge.base_url, launched.run_id)).status).toBe("active");
+    await restore();
+    restore = null;
+    await driveRun(oakridge.base_url, agent, launched, {
+      decide: () => null,
+      until: async () => (await readRun(oakridge.base_url, launched.run_id)).stages
+        .find((stage) => stage.name === "brief_writer")?.units[0]?.sid ?? null,
+      timeout_ms: 120_000,
+    });
+    const request = [...agent.launched.values()].find((item) =>
+      (item.resolved_config as { readonly session_identity?: { readonly operator_role?: string } })
+        .session_identity?.operator_role === "brief");
+    expect((request?.resolved_config as { readonly rendered_prompt?: string } | undefined)?.rendered_prompt)
+      .toContain("# Build Brief Writer — Initial Briefs");
   } finally {
+    if (restore) await restore();
     agent.releaseAll();
   }
-}, 150_000);
+}, 180_000);
 
 /**
  * A real HTTP round trip through `/artifacts/:id/edits` on a run parked at a
