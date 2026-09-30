@@ -103,6 +103,7 @@ export interface RunRecordRepository {
   /** The session's own lifecycle, and its attempt's, from what the adapter reported. */
   observe_session(input: ObserveSession): Promise<SessionStatusWrite>;
   mark_session_fenced(session_id: import("../domain/primitives").SessionId, fenced_at: string): Promise<void>;
+  list_prior_sessions_to_fence(cohort_id: CohortId, attempt_id: AttemptId): Promise<readonly import("../domain/run-record").PriorSessionToFence[]>;
   /** An operator retry: one further attempt at a cohort, claimed under the caller's key. */
   retry_cohort(input: RetryCohort, retried_at: string): Promise<RetryCohortResult>;
   /** The secret every attempt's publication capability is derived from. */

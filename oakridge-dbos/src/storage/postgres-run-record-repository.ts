@@ -492,6 +492,19 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       [session_id, fenced_at]);
   }
 
+  async list_prior_sessions_to_fence(cohort_id: CohortId, attempt_id: AttemptId): Promise<readonly import("../domain/run-record").PriorSessionToFence[]> {
+    const rows = await this.sql.query<{ readonly session_id: string; readonly attempt_id: string;
+      readonly adapter_reference: import("../domain/execution").ExternalExecutionReference }>(
+      `SELECT session.id::text AS session_id,session.attempt_id::text,session.adapter_reference
+       FROM oakridge.session session
+       JOIN oakridge.attempt attempt ON attempt.id=session.attempt_id
+       WHERE attempt.cohort_id=$1 AND session.attempt_id<>$2
+         AND session.kbbl_session_id IS NOT NULL AND session.fenced_at IS NULL
+       ORDER BY attempt.attempt_number`, [cohort_id, attempt_id]);
+    return rows.map((row) => ({ session_id: row.session_id as SessionId,
+      attempt_id: row.attempt_id as AttemptId, adapter_reference: row.adapter_reference }));
+  }
+
   /**
    * One further attempt at a cohort, claimed under the operator's own key.
    *

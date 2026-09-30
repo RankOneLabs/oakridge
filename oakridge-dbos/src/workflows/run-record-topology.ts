@@ -61,7 +61,7 @@ export const machineAddressFor = (command: Command): DecisionMachineAddress => {
 };
 
 /** The bound on how long a lost or never-sent wake can delay a recheck. */
-export const MACHINE_WAKE_TIMEOUT_SECONDS = 5;
+export const MACHINE_WAKE_TIMEOUT_SECONDS = 60;
 /** How long a machine sleeps, durably, after a run of failed asks. */
 export const MACHINE_FAILURE_BACKOFF_SECONDS = 30;
 const OBSERVE_INTERVAL_SECONDS = 5;
@@ -528,6 +528,13 @@ export const ensureAttemptSession = async (
     const { records, now } = deps;
     const adapter = deps.find_executor(execution.adapter_type);
     if (!adapter) throw new Error(`executor adapter '${execution.adapter_type}' is not registered`);
+    for (const prior of await records.list_prior_sessions_to_fence(execution.cohort_id, execution.attempt_id)) {
+      await adapter.cancel_or_fence(prior.attempt_id as unknown as ExecutionId, prior.adapter_reference);
+      await records.mark_session_fenced(prior.session_id, now());
+      await records.observe_session({ session_id: prior.session_id,
+        health: { kind: "ended_cancelled", detail: `replaced by attempt ${execution.attempt_number}`,
+          observed_at: now() }, observed_at: now() });
+    }
     let reference: ExternalExecutionReference;
     try {
       reference = await adapter.start_or_attach(execution.request,

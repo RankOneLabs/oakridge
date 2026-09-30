@@ -307,6 +307,12 @@ export interface AttemptExecution {
   readonly kbbl_session_id: KbblSessionId | null;
 }
 
+export interface PriorSessionToFence {
+  readonly session_id: SessionId;
+  readonly attempt_id: AttemptId;
+  readonly adapter_reference: ExternalExecutionReference;
+}
+
 export interface BindSession {
   readonly session_id: SessionId;
   readonly adapter_reference: ExternalExecutionReference;
