@@ -7,6 +7,8 @@
     "migrate": "bun run src/migrate.ts",
     "start": "bun run src/main.ts",
     "test": "bun test",
+    "test:unit": "rg --files src tests -g '*.test.ts' -g '!dev-flow-e2e.test.ts' | xargs bun test",
+    "test:acceptance": "bun test tests/dev-flow-e2e.test.ts --test-name-pattern 'browser launches|publication contract|c5 refuses'",
     "validate:definitions": "bun run src/validation/validate-definition-files.ts",
     "typecheck": "bunx tsc --noEmit -p tsconfig.json"
   },
@@ -17,6 +19,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/bun": "^1.3.13",
     "@types/pg": "^8.15.5",
     "typescript": "^5.7.2"

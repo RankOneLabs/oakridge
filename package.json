@@ -7,6 +7,7 @@
   "workspaces": ["kbbl", "lbc-dashboard", "oakridge-dbos"],
   "scripts": {
     "oakridge": "./scripts/oakridge-start",
-    "typecheck": "bunx tsc --noEmit"
+    "typecheck": "bunx tsc --noEmit",
+    "test:acceptance": "bun run --filter oakridge-dbos test:acceptance"
   }
 }

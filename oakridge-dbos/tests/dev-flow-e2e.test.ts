@@ -3,6 +3,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { chromium, type Browser } from "@playwright/test";
 
 import type { OperatorParkedGate } from "../src/domain/operator-projections";
 import type { UnitId, WorkflowRunId } from "../src/domain/primitives";
@@ -10,13 +11,14 @@ import type { StageOutcome } from "../src/domain/workflow";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
 import { HARNESS_BASE_BRANCH, SEVEN_BRIEF_PLAN, awaitCondition, installIntegrationRuntime, runContext,
   scriptedAgentScenario, useScenario, type CohortPlanEntry, type IntegrationRuntime } from "./support/dev-flow-harness";
-import { assertQuietAsk, decideGate, driveRun, launchRun, listRunGates, readReviewInbox, readRun, readRunRecordFingerprint } from "./support/dev-flow-driver";
+import { assertQuietAsk, decideGate, driveRun, launchRun, listRunGates, parsePromptPublication, readReviewInbox, readRun, readRunRecordFingerprint } from "./support/dev-flow-driver";
 
-const databaseUrl = null as string | null;
-console.warn("dev-flow e2e SKIPPED: v15 runtime composition is unavailable until cohort c8");
-const e2e = test.skip;
+const databaseUrl = process.env.OAKRIDGE_TEST_DATABASE_URL;
+if (!databaseUrl) throw new Error("OAKRIDGE_TEST_DATABASE_URL is required for the deterministic acceptance harness");
+const e2e = test;
 let oakridge: IntegrationRuntime;
 let sql: PgPostgresExecutor;
+let browser: Browser;
 /**
  * A writable copy of `workflow-config/prompts`, built once for the whole file.
  * Scenario 8 is the only one that ever mutates it (and always restores what
@@ -26,20 +28,18 @@ let sql: PgPostgresExecutor;
 let promptTemplateDir: string | null = null;
 
 beforeAll(async () => {
-  if (databaseUrl) {
-    promptTemplateDir = await mkdtemp(join(tmpdir(), "oakridge-e2e-prompts-"));
-    await cp(resolve(import.meta.dir, "../../workflow-config/prompts"), promptTemplateDir, { recursive: true });
-    oakridge = await installIntegrationRuntime(databaseUrl, { prompt_template_directory: promptTemplateDir });
-    sql = PgPostgresExecutor.connect(databaseUrl);
-  }
+  promptTemplateDir = await mkdtemp(join(tmpdir(), "oakridge-e2e-prompts-"));
+  await cp(resolve(import.meta.dir, "../../workflow-config/prompts"), promptTemplateDir, { recursive: true });
+  oakridge = await installIntegrationRuntime(databaseUrl, { prompt_template_directory: promptTemplateDir });
+  sql = PgPostgresExecutor.connect(databaseUrl);
+  browser = await chromium.launch({ headless: true });
 }, 120_000);
 
 afterAll(async () => {
-  if (databaseUrl) {
-    await oakridge.stop();
-    await sql.close();
-    if (promptTemplateDir) await rm(promptTemplateDir, { recursive: true, force: true });
-  }
+  if (oakridge) await oakridge.stop();
+  if (browser) await browser.close();
+  if (sql) await sql.close();
+  if (promptTemplateDir) await rm(promptTemplateDir, { recursive: true, force: true });
 }, 60_000);
 
 /** Every unit under one run's `build` stage: its unit id and current state. */
@@ -92,6 +92,49 @@ const transitionCountFor = async (runId: WorkflowRunId, operation: string, stage
      WHERE transition.run_id = $1 AND transition.operation = $2 AND stage.stage_key = $3 AND unit.unit_id = $4`, [runId, operation, stageKey, unitId]);
   return Number(rows[0]?.count ?? 0);
 };
+
+e2e("browser launches a run and decides its first gate through kbbl", async () => {
+  const agent = scriptedAgentScenario();
+  useScenario(agent);
+  const before = await fetch(`${oakridge.base_url}/runs`).then((response) => response.json()) as readonly { readonly id: string }[];
+  const beforeIds = new Set(before.map((run) => run.id));
+  const page = await browser.newPage();
+  try {
+    await page.goto(`${oakridge.kbbl_url}/#oakridge/new-run`);
+    await page.getByLabel("Epic title").fill("Browser acceptance run");
+    await page.getByLabel("Repository 1 key").fill("oakridge");
+    await page.getByLabel("Repository 1 GitHub owner").fill("RankOneLabs");
+    await page.getByLabel("Repository 1 GitHub name").fill("oakridge");
+    await page.getByLabel("Repository 1 path").fill(oakridge.repository.path);
+    await page.getByRole("textbox", { name: "Brief notes", exact: true }).fill("browser acceptance");
+    await page.getByRole("button", { name: "Start Run" }).click();
+
+    const launched = await awaitCondition("browser launch to appear in the public API", async () => {
+      const runs = await fetch(`${oakridge.base_url}/runs`).then((response) => response.json()) as readonly { readonly id: string; readonly current_attempt_root_workflow_id: string }[];
+      return runs.find((run) => !beforeIds.has(run.id)) ?? null;
+    }, 30_000);
+    oakridge.started_runs.push(launched.current_attempt_root_workflow_id);
+    let lastDetail: unknown = null;
+    let kbblSessions: unknown = null;
+    const gate = await awaitCondition(() => `browser run's first gate; last run detail=${JSON.stringify(lastDetail)}; kbbl sessions=${JSON.stringify(kbblSessions)}; fake launches=${agent.launched.size}`, async () => {
+      lastDetail = await readRun(oakridge.base_url, launched.id as WorkflowRunId);
+      kbblSessions = await fetch(`${oakridge.kbbl_url}/sessions`).then((response) => response.json()).catch((error) => String(error));
+      return (await listRunGates(oakridge.base_url, launched.id as WorkflowRunId))[0] ?? null;
+    }, 30_000);
+
+    await page.goto(`${oakridge.kbbl_url}/#oakridge/review-inbox`);
+    await page.getByTestId("or-decision-approve").first().click();
+    await awaitCondition("browser gate decision in the public API", async () =>
+      (await listRunGates(oakridge.base_url, launched.id as WorkflowRunId)).some((candidate) => candidate.id === gate.id) ? null : true, 30_000);
+  } finally {
+    await page.close();
+    agent.releaseAll();
+  }
+}, 90_000);
+
+e2e("the fake ACP agent refuses a rendered prompt without its publication contract", () => {
+  expect(parsePromptPublication("# Build Agent\n\nImplement the cohort and stop.")).toBeNull();
+});
 
 const workflowRunState = async (runId: WorkflowRunId): Promise<string> => {
   const rows = await sql.query<{ readonly state: string }>("SELECT state FROM oakridge.workflow_run WHERE id = $1", [runId]);
@@ -233,7 +276,7 @@ e2e("straight-through dev flow completes", async () => {
   useScenario(agent);
   const launched = await launchRun(oakridge.base_url, oakridge.definition.id, runContext(oakridge.base_url, oakridge.repository.path));
   oakridge.started_runs.push(launched.root_workflow_id);
-  expect(launched.root_workflow_id).toBe(`v2-run:${launched.run_id}`);
+  expect(launched.root_workflow_id).toBe(`v15-run:${launched.run_id}`);
 
   try {
     const { value: detail, driven, confirmed } = await driveRun(oakridge.base_url, agent, launched, {
@@ -394,6 +437,27 @@ e2e("scenario 4: approving one brief starts exactly one build and closes exactly
     const briefGates = (await listRunGates(oakridge.base_url, launched.run_id)).filter((gate) => gate.stage_name === "brief_writer");
     expect(briefGates).toHaveLength(6);
     await assertQuietAsk(sql, launched.run_id);
+  } finally {
+    agent.releaseAll();
+  }
+}, 120_000);
+
+e2e("c5 refuses a forge head that disagrees with the real Git remote", async () => {
+  const agent = scriptedAgentScenario();
+  agent.forge_head_overrides.set("foundation", "0000000000000000000000000000000000000000");
+  useScenario(agent);
+  const launched = await launchRun(oakridge.base_url, oakridge.definition.id, runContext(oakridge.base_url, oakridge.repository.path));
+  oakridge.started_runs.push(launched.root_workflow_id);
+  try {
+    await driveRun(oakridge.base_url, agent, launched, {
+      decide: () => "approve",
+      until: async () => agent.forge_verifications.get("foundation") === "mismatch" ? true : null,
+      timeout_ms: 90_000,
+    });
+    const detail = await readRun(oakridge.base_url, launched.run_id);
+    expect(detail.status).toBe("active");
+    expect(detail.stages.find((stage) => stage.name === "build")?.units
+      .find((unit) => unit.unit_id === "foundation")?.status).not.toBe("complete");
   } finally {
     agent.releaseAll();
   }
