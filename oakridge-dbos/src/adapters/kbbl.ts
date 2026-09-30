@@ -143,7 +143,7 @@ const parseSessionIdentity = (value: JsonValue): KbblResolvedSessionIdentity => 
  * a collection tells the agent to emit that member and nothing else.
  */
 const authorizedOutputNames = (renderedPrompt: string): ReadonlySet<string> | null => {
-  const line = renderedPrompt.match(/^Authorized outputs: (.+)$/m)?.[1];
+  const line = [...renderedPrompt.matchAll(/^Authorized outputs: (.+)$/gm)].at(-1)?.[1];
   return line ? new Set(line.split(",").map((name) => name.trim()).filter(Boolean)) : null;
 };
 
@@ -160,6 +160,8 @@ export const selectPromptExpectedArtifacts = (config: Pick<KbblResolvedConfig, "
   if (!authorized) return request.expected_artifacts;
   const filtered = request.expected_artifacts.filter((expected) => authorized.has(expected.output_name));
   if (!authorized.has("brief")) return filtered;
+  const isInitialCollectionPlaceholder = filtered.length === 1 && filtered[0]?.unit_id === request.unit_id;
+  if (!isInitialCollectionPlaceholder) return filtered;
   const plan = request.inputs.find((input) => input.artifact_type === "dev.plan")?.body;
   if (plan === undefined || !isObject(plan) || !Array.isArray(plan.cohorts)) return filtered;
   const artifactType = request.declared_outputs.find((output) => output.name === "brief")?.artifact_type;

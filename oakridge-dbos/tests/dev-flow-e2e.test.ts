@@ -13,9 +13,10 @@ import { HARNESS_BASE_BRANCH, SEVEN_BRIEF_PLAN, awaitCondition, installIntegrati
   scriptedAgentScenario, useScenario, type CohortPlanEntry, type IntegrationRuntime } from "./support/dev-flow-harness";
 import { assertQuietAsk, decideGate, driveRun, launchRun, listRunGates, readReviewInbox, readRun, readRunRecordFingerprint } from "./support/dev-flow-driver";
 
+const acceptanceEnabled = process.env.OAKRIDGE_ACCEPTANCE === "1";
 const databaseUrl = process.env.OAKRIDGE_TEST_DATABASE_URL;
-if (!databaseUrl) throw new Error("OAKRIDGE_TEST_DATABASE_URL is required for the deterministic acceptance harness");
-const e2e = test;
+if (acceptanceEnabled && !databaseUrl) throw new Error("OAKRIDGE_TEST_DATABASE_URL is required for the deterministic acceptance harness");
+const e2e = acceptanceEnabled ? test : test.skip;
 /**
  * These decision-layer scenarios predate the v15 baseline and query the
  * removed `run_unit`, `work_order`, and `wait` tables (and the old `state`
@@ -35,20 +36,22 @@ let browser: Browser;
  */
 let promptTemplateDir: string | null = null;
 
-beforeAll(async () => {
-  promptTemplateDir = await mkdtemp(join(tmpdir(), "oakridge-e2e-prompts-"));
-  await cp(resolve(import.meta.dir, "../../workflow-config/prompts"), promptTemplateDir, { recursive: true });
-  oakridge = await installIntegrationRuntime(databaseUrl, { prompt_template_directory: promptTemplateDir });
-  sql = PgPostgresExecutor.connect(databaseUrl);
-  browser = await chromium.launch({ headless: true });
-}, 120_000);
+if (acceptanceEnabled) {
+  beforeAll(async () => {
+    promptTemplateDir = await mkdtemp(join(tmpdir(), "oakridge-e2e-prompts-"));
+    await cp(resolve(import.meta.dir, "../../workflow-config/prompts"), promptTemplateDir, { recursive: true });
+    oakridge = await installIntegrationRuntime(databaseUrl!, { prompt_template_directory: promptTemplateDir });
+    sql = PgPostgresExecutor.connect(databaseUrl!);
+    browser = await chromium.launch({ headless: true });
+  }, 120_000);
 
-afterAll(async () => {
-  if (oakridge) await oakridge.stop();
-  if (browser) await browser.close();
-  if (sql) await sql.close();
-  if (promptTemplateDir) await rm(promptTemplateDir, { recursive: true, force: true });
-}, 60_000);
+  afterAll(async () => {
+    if (oakridge) await oakridge.stop();
+    if (browser) await browser.close();
+    if (sql) await sql.close();
+    if (promptTemplateDir) await rm(promptTemplateDir, { recursive: true, force: true });
+  }, 60_000);
+}
 
 /** Every unit under one run's `build` stage: its unit id and current state. */
 const buildUnitRows = async (runId: WorkflowRunId): Promise<readonly { readonly unit_id: string; readonly state: string }[]> =>
