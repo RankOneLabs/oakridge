@@ -83,6 +83,7 @@ export const createDeterministicCohortDriver = (dependencies: DeterministicCohor
         event: {
           change: { status: "complete", blocked_reason: null, next_actor: null, outcome: { kind: "succeeded" } },
           stage_data: encode(stageData),
+          reopen_output_names: [],
           effect: { kind: "none" },
           launch_reason: "artifact_accepted",
           actor: "core",
@@ -99,6 +100,7 @@ export const createDeterministicCohortDriver = (dependencies: DeterministicCohor
       event: {
         change: { status: "active", blocked_reason: null, next_actor: "service", outcome: null },
         stage_data: encode(launched),
+        reopen_output_names: [],
         effect: { kind: "start_attempt", cohort_id: context.state.cohort_id, attempt_number: launched.launched },
         launch_reason: stageData.launched === 0 ? "initial" : "retry",
         actor: "core",

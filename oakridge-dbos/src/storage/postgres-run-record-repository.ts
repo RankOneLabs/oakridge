@@ -413,6 +413,19 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         kind: committed.error.kind === "owner_not_found" ? "cohort_not_found" : committed.error.kind,
         detail: JSON.stringify(committed.error),
       });
+      if (input.event.reopen_output_names.length > 0) {
+        await tx.query(
+          `UPDATE oakridge.artifact SET lifecycle='superseded'
+           WHERE lifecycle='released' AND id IN (
+             SELECT acceptance.artifact_id FROM oakridge.artifact_acceptance acceptance
+             WHERE acceptance.cohort_id=$1 AND acceptance.output_name=ANY($2)
+               AND acceptance.superseded_at IS NULL)`,
+          [input.event.cohort_id, input.event.reopen_output_names]);
+        await tx.query(
+          `UPDATE oakridge.artifact_acceptance SET superseded_at=clock_timestamp()
+           WHERE cohort_id=$1 AND output_name=ANY($2) AND superseded_at IS NULL`,
+          [input.event.cohort_id, input.event.reopen_output_names]);
+      }
       await abandonCohortAttempts(tx, { cohort_id: input.event.cohort_id, at: input.event.recorded_at,
         reason: "replaced by cohort launch" });
       const started = await this.startAttemptIn(tx, { ...input.attempt,
@@ -560,7 +573,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
     const committed = await this.commit_cohort_launch({
       event: { run_id: located.run_id, cohort_id: located.cohort_id, expected_version: located.durable_version,
         launch_reason: "retry", change: { status: "active", blocked_reason: null, next_actor: "agent", outcome: null },
-        stage_data: located.stage_data, effect: { kind: "start_attempt", cohort_id: located.cohort_id, attempt_id, attempt_number },
+        stage_data: located.stage_data, reopen_output_names: [], effect: { kind: "start_attempt", cohort_id: located.cohort_id, attempt_id, attempt_number },
         actor: input.actor, recorded_at: retried_at },
       attempt: { run_id: located.run_id, stage_instance_id: located.stage_instance_id, cohort_id: located.cohort_id,
         attempt_id, attempt_number, adapter_type: basis.adapter_type, request: rebound.request,

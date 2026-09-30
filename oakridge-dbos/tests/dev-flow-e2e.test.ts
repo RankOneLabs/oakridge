@@ -456,20 +456,22 @@ e2e("c6 an assessment revision parks the rebuilt cohort at a fresh build review"
     const rebuilt = await driveRun(oakridge.base_url, agent, launched, {
       decide: (gate) => {
         if (gate.stage_name !== "build") return "approve";
-        if (gate.gate_step === "assessment_review" && !assessmentRevised) {
-          assessmentRevised = true;
-          return "request_revision";
-        }
+        if (gate.unit_id !== "foundation") return "approve";
         if (assessmentRevised) return null;
-        firstBuildGates.add(gate.id);
-        return "approve";
+        if (firstBuildGates.size < 2) {
+          firstBuildGates.add(gate.id);
+          return "approve";
+        }
+        assessmentRevised = true;
+        return "request_revision";
       },
       until: async () => {
         if (!assessmentRevised) return null;
         const detail = await readRun(oakridge.base_url, launched.run_id);
-        const unit = detail.stages.find((stage) => stage.name === "build")?.units[0];
+        const unit = detail.stages.find((stage) => stage.name === "build")?.units
+          .find((candidate) => candidate.unit_id === "foundation");
         const gates = (await listRunGates(oakridge.base_url, launched.run_id))
-          .filter((gate) => gate.stage_name === "build" && gate.gate_step === "build_review"
+          .filter((gate) => gate.stage_name === "build" && gate.unit_id === "foundation"
             && !firstBuildGates.has(gate.id));
         return unit?.status === "blocked" && gates.length === 2 ? { detail, unit, gates } : null;
       },
@@ -612,7 +614,7 @@ e2e("scenario 6b: cancelling a run with an open gate wait clears its stranded ga
     const lateDecision = { run_id: launched.run_id, cohort_id: cancelledCohort.id as CohortId,
       expected_version: Number(cancelledCohort.durable_version),
       change: { status: "active" as const, blocked_reason: null, next_actor: "agent" as const, outcome: null },
-      stage_data: {}, effect: { kind: "none" as const }, launch_reason: "operator" as const,
+      stage_data: {}, reopen_output_names: [], effect: { kind: "none" as const }, launch_reason: "operator" as const,
       actor: "acceptance-late-decision", recorded_at: new Date().toISOString() };
     await records.record_cohort_event(lateDecision);
     const afterLateDecision = await sql.query<{ readonly status: string }>(

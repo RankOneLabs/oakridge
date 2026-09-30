@@ -198,6 +198,7 @@ test("revision after assessment commits the revision prompt and names the existi
   expect(result.launch).toMatchObject({ session_role: "build", launch_reason: "revision_after_assessment",
     prompt: { content: "build:revision_after_assessment" } });
   expect(result.launch?.contract_block).toContain("Existing PR: https://example.test/pull/7");
+  expect(result.effect.reopen_output_names).toEqual(["build_result", "pr_summary"]);
 });
 
 test("awaiting merge completes only for the verified pull request", () => {

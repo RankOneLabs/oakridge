@@ -190,12 +190,21 @@ const selectGateDecision = (
     !stageData.consumed_gate_wait_ids.includes(gate.wait_id));
   if (unconsumed.length === 0) return null;
   const build = stageData.build_state;
+  const published = publishedRevisions(state, contract);
   const currentBuildIds = new Set(build.accepted_revision?.split("+") ?? []);
+  const publishedBuildIds = new Set(published.filter((item) =>
+    build.required_build_set.includes(item.output_name)).map((item) => item.artifact_id));
   const isCurrent = (gate: typeof unconsumed[number]): boolean =>
     build.phase === "build_review" ? gate.artifact_id !== null && currentBuildIds.has(gate.artifact_id)
       : build.phase === "assessment_review" && gate.artifact_id === build.assessment_artifact_id;
-  const stale = unconsumed.find((gate) => !isCurrent(gate));
+  const isAwaitingArtifactRecord = (gate: typeof unconsumed[number]): boolean =>
+    gate.artifact_id !== null && (build.phase === "builder_active"
+      && build.required_build_set.includes(gate.output_name ?? "") && publishedBuildIds.has(gate.artifact_id)
+      || build.phase === "assessor_active" && gate.output_name === "assessment"
+        && published.some((item) => item.artifact_id === gate.artifact_id));
+  const stale = unconsumed.find((gate) => !isCurrent(gate) && !isAwaitingArtifactRecord(gate));
   if (stale) return { event: { kind: "stale_gate_recorded" }, consumed_wait_ids: [stale.wait_id] };
+  if (unconsumed.some(isAwaitingArtifactRecord)) return null;
   const disposition = (gate: typeof unconsumed[number]) => selectArtifactGateDisposition(
     contract.outputs.find((output) => output.name === gate.output_name)?.artifact_type ?? "",
     selectBuiltInGateDisposition(gate.action));
@@ -345,6 +354,7 @@ const applyOne = async (
     event: {
       change: applied.projection,
       stage_data: encodeStageData(nextStageData),
+      reopen_output_names: applied.effect.reopen_output_names,
       effect: applied.effect as unknown as CohortStepDecision["event"]["effect"],
       launch_reason: launchReasonFor(event),
       actor: "core",

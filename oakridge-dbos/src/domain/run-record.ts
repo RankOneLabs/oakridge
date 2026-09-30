@@ -177,6 +177,7 @@ export interface RecordCohortEvent {
   readonly expected_version: number;
   readonly change: { readonly status: CoreStatus; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null; readonly outcome: JsonValue | null };
   readonly stage_data: JsonValue;
+  readonly reopen_output_names: readonly string[];
   readonly effect: TransitionEffectDescriptor;
   readonly launch_reason: TransitionLaunchReason;
   readonly actor: string;

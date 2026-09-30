@@ -18,7 +18,7 @@
 import { afterAll, expect, test } from "bun:test";
 
 import { createDevFlowAdapterRegistry } from "../src/adapters/dev-flow";
-import { attemptIdFor } from "../src/decision/ids";
+import { attemptIdFor, sessionIdFor, transitionIdFor } from "../src/decision/ids";
 import type { AttemptId, CohortId, JsonValue, SessionId, StageInstanceId, WorkflowRunId } from "../src/domain/primitives";
 import type { WorkOrderId } from "../src/domain/primitives";
 import { capabilityFor, capabilityHash } from "../src/runtime/resolve-work-order";
@@ -164,6 +164,50 @@ test("two cohorts of one stage instance each publish the stage's declared output
   }
 });
 
+test("a reopened build slot keeps acceptance history and accepts one new publication", async () => {
+  const prepared = await prepare("oakridge_v15_reopened_build_slot");
+  if (!prepared) return;
+  try {
+    const cohort = cohortId(3);
+    await openCohort(prepared.sql, STAGE_ID, cohort, "foundation");
+    await startAttempt(prepared.sql, { stage: STAGE_ID, cohort, attempt: attemptId(3),
+      number: 1, status: "active", request: {} });
+    const first = await publish(prepared, attemptId(3), artifactId(3));
+    if (first.kind !== "pending") throw new Error(`first publication was ${first.kind}`);
+    const released = await prepared.records.decide_gate_wait({ wait_id: first.wait_id, action: "approve",
+      actor: "operator", detail: null, decided_at: "2026-09-29T00:01:00.000Z" });
+    expect(released.kind).toBe("released");
+    const state = await prepared.records.find_cohort_state(cohort);
+    if (!state) throw new Error("cohort disappeared");
+    const replacement = attemptId(13);
+    const committed = await prepared.records.commit_cohort_launch({
+      event: { run_id: RUN_ID, cohort_id: cohort, expected_version: state.durable_version,
+        change: { status: "active", blocked_reason: null, next_actor: "agent", outcome: null },
+        stage_data: {}, reopen_output_names: ["build_result"],
+        effect: { kind: "start_attempt", cohort_id: cohort, attempt_number: 2 },
+        launch_reason: "gate_decided", actor: "core", recorded_at: "2026-09-29T00:02:00.000Z" },
+      attempt: { run_id: RUN_ID, stage_instance_id: STAGE_ID, cohort_id: cohort,
+        attempt_id: replacement, attempt_number: 2, adapter_type: "delegated_session",
+        request: {} as never, launch_transition_id: transitionIdFor({ kind: "cohort", id: cohort }, state.durable_version + 1),
+        session_id: sessionIdFor(replacement), idempotency_key: null, created_at: "2026-09-29T00:02:00.000Z" },
+    });
+    expect(committed.ok).toBe(true);
+    const second = await publish(prepared, replacement, artifactId(13));
+    expect(second.kind).toBe("pending");
+    if (second.kind !== "pending") return;
+    const secondReleased = await prepared.records.decide_gate_wait({ wait_id: second.wait_id, action: "approve",
+      actor: "operator", detail: null, decided_at: "2026-09-29T00:03:00.000Z" });
+    expect(secondReleased.kind).toBe("released");
+    const acceptances = await prepared.sql.query<{ readonly artifact_id: string; readonly is_live: boolean }>(
+      `SELECT artifact_id::text,(superseded_at IS NULL) AS is_live FROM oakridge.artifact_acceptance
+       WHERE cohort_id=$1 AND output_name='build_result' ORDER BY accepted_at`, [cohort]);
+    expect(acceptances).toEqual([{ artifact_id: artifactId(3), is_live: false },
+      { artifact_id: artifactId(13), is_live: true }]);
+  } finally {
+    await prepared.sql.close();
+  }
+});
+
 /**
  * The planner publishes one brief per cohort into the same declared output, each
  * under its own collection key. Keyed by artifact type, the second publication
@@ -252,7 +296,7 @@ test("a cohort decision read before cancellation cannot un-cancel the cohort", a
     expect(cancelled.ok).toBe(true);
     const decision = { run_id: RUN_ID, cohort_id: cohortId(20), expected_version: stale.durable_version,
       change: { status: "active" as const, blocked_reason: null, next_actor: "agent" as const, outcome: null },
-      stage_data: {}, effect: { kind: "none" as const }, launch_reason: "operator" as const,
+      stage_data: {}, reopen_output_names: [], effect: { kind: "none" as const }, launch_reason: "operator" as const,
       actor: "stale-reader", recorded_at: "2026-09-29T01:01:00Z" };
     expect((await prepared.records.record_cohort_event(decision)).kind).toBe("version_conflict");
     const rows = await prepared.sql.query<{ readonly status: string; readonly version: string; readonly transitions: string }>(

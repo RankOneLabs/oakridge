@@ -90,6 +90,7 @@ export interface BuildCohortTransitionEffect {
   readonly stage_data: BuildCohortState;
   readonly projected_status: BuildCohortProjection;
   readonly session_launch: BuildSessionLaunch | null;
+  readonly reopen_output_names: readonly string[];
 }
 
 export interface BuildCohortEventResult {
@@ -305,6 +306,9 @@ export const applyBuildCohortEvent = (
     stage_data: applied.state,
     projected_status: projection,
     session_launch: applied.launch,
+    reopen_output_names: applied.launch?.session_role === "build"
+      && ["revision_after_assessment", "revision_after_build_review", "pr_mismatch_correction", "replacement_pr"]
+        .includes(applied.launch.launch_reason) ? state.required_build_set : [],
   };
   return { disposition: applied.disposition, state: applied.state, projection, launch: applied.launch, effect };
 };

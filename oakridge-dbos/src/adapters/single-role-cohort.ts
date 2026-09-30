@@ -152,11 +152,11 @@ export const createSingleRoleCohortDriver = (dependencies: SingleRoleCohortDrive
     if (dependencyCycle) {
       return { event: { change: { status: "failed", blocked_reason: null, next_actor: null,
         outcome: { kind: "failed", code: "roster_failed", detail: dependencyCycle } },
-        stage_data: encode(stageData), effect: { kind: "none" }, launch_reason: "artifact_accepted", actor: "core" }, launch: null };
+        stage_data: encode(stageData), reopen_output_names: [], effect: { kind: "none" }, launch_reason: "artifact_accepted", actor: "core" }, launch: null };
     }
     if (stageData.launched > 0 && context.state.open_waits.length === 0
       && selectCohortOutputsSatisfied(contract, context, context.state.accepted_outputs)) {
-      return { event: { change: COMPLETE, stage_data: encode(stageData), effect: { kind: "none" },
+      return { event: { change: COMPLETE, stage_data: encode(stageData), reopen_output_names: [], effect: { kind: "none" },
         launch_reason: "artifact_accepted", actor: "core" }, launch: null };
     }
 
@@ -171,7 +171,7 @@ export const createSingleRoleCohortDriver = (dependencies: SingleRoleCohortDrive
       if (disposition === "terminal") {
         return { event: { change: { status: "failed", blocked_reason: null, next_actor: null,
           outcome: { kind: "failed", code: "gate_rejected", detail: `gate '${decided.output_name}' was ended by '${decided.action}'` } },
-          stage_data: encode(consumed), effect: { kind: "none" }, launch_reason: "gate_decided", actor: "core" }, launch: null };
+          stage_data: encode(consumed), reopen_output_names: [], effect: { kind: "none" }, launch_reason: "gate_decided", actor: "core" }, launch: null };
       }
       // A revision: the same role again, under the reason the stage declared for
       // it. The slot is empty — a `revise` decision accepts nothing — so the
@@ -184,7 +184,7 @@ export const createSingleRoleCohortDriver = (dependencies: SingleRoleCohortDrive
     if (context.state.open_waits.length > 0) {
       return context.state.status === GATED.status && context.state.blocked_reason === GATED.blocked_reason
         ? null
-        : { event: { change: GATED, stage_data: encode(stageData), effect: { kind: "none" },
+        : { event: { change: GATED, stage_data: encode(stageData), reopen_output_names: [], effect: { kind: "none" },
           launch_reason: "artifact_accepted", actor: "core" }, launch: null };
     }
 
@@ -211,6 +211,7 @@ const launchDecision = async (
   event: {
     change: ACTIVE,
     stage_data: encode(stageData),
+    reopen_output_names: [],
     effect: { kind: "start_attempt", cohort_id: context.state.cohort_id, attempt_number: context.state.attempt_count + 1 },
     launch_reason, actor: "core",
   },
