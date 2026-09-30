@@ -280,8 +280,12 @@ const decodeBuildCohortEvent = (value: JsonValue): BuildCohortEvent | null => {
     return { kind: "pull_request_verified", revision: value.revision,
       pull_request_url: value.pull_request_url, head_sha: value.head_sha };
   }
-  if ((value.kind === "pull_request_merged" || value.kind === "pull_request_mismatch"
-    || value.kind === "replacement_pull_request_required") && typeof value.pull_request_url === "string") {
+  if (value.kind === "pull_request_merged" && typeof value.pull_request_url === "string"
+    && typeof value.head_sha === "string") {
+    return { kind: "pull_request_merged", pull_request_url: value.pull_request_url, head_sha: value.head_sha };
+  }
+  if ((value.kind === "pull_request_mismatch" || value.kind === "replacement_pull_request_required")
+    && typeof value.pull_request_url === "string") {
     return { kind: value.kind, pull_request_url: value.pull_request_url };
   }
   if (value.kind === "builder_attempt_lost" || value.kind === "assessor_attempt_lost" || value.kind === "stage_started") {

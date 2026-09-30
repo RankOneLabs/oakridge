@@ -7,7 +7,7 @@ import {
 import { invalidatePullRequestForReplacement, type PullRequestApproval, type PullRequestObservation, type PullRequestObservationId, type PullRequestId, type PullRequestVerificationId, type VerifiedPullRequestLink } from "../src/domain/pull-request";
 import type { ArtifactId, CohortId, StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
 import { renderCohortBranchContract, selectCohortBranchRoles } from "../src/domain/repository-refs";
-import { advanceCohortRef, advanceStoredCohortRef, prepareDevFlowBuildCohort, verifyAndBindCohortPullRequest, verifyCohortPullRequest } from "../src/runtime/cohort-pull-request";
+import { advanceCohortRef, advanceStoredCohortRef, prepareDevFlowBuildCohort, reconcileCohortEvidence, verifyAndBindCohortPullRequest, verifyCohortPullRequest } from "../src/runtime/cohort-pull-request";
 import { BunGitCommandRunner } from "../src/runtime/git-command-runner";
 import type { DevFlowPullRequestRepository } from "../src/storage/repositories";
 import { createCohortPullRequestApp } from "../src/http/cohort-pull-request";
@@ -156,6 +156,34 @@ test("an operator confirmation reconciles as a manually sourced merge", () => {
 
 test("an operator cannot confirm a cohort whose reported URL is not a pull request", () => {
   expect(operatorMergedObservation({ ...expected, url: "https://example.test/nope" }, "2026-08-18T13:00:00.000Z")).toBeNull();
+});
+
+test("operator confirmation completes an awaiting-merge cohort without forge or git access", async () => {
+  const verificationId = "00000000-0000-4000-8000-000000000020" as PullRequestVerificationId;
+  const pullRequestId = "00000000-0000-4000-8000-000000000021" as PullRequestId;
+  const cohort = { ...storedCohort("/repo", "reviewed-head"), current_verified_pull_request_id: verificationId };
+  const events: unknown[] = [];
+  const dependencies = {
+    pull_requests: {
+      async find_current_for_unit() { return { cohort, pull_request: { id: pullRequestId, provider: "github" as const,
+        owner: "RankOneLabs", name: "oakridge", forge_pull_request_id: 440, url: expected.url, created_at: "2026-08-18T10:00:00Z" },
+        observation: { ...observation({ state: "open", merged_at: null, head_sha: "reviewed-head" }),
+          id: "00000000-0000-4000-8000-000000000022" as PullRequestObservationId,
+          pull_request_id: pullRequestId, recorded_at: "2026-08-18T10:00:00Z" } }; },
+      async confirm_merge() { return { ok: true as const, value: { kind: "created" as const, closure: {} } }; },
+    } as unknown as DevFlowPullRequestRepository,
+    forge_repositories: { async find_forge_repository() { throw new Error("forge identity should not be reread"); } },
+    records: { async find_cohort_location() { return { run_id: expected.run_id, cohort_id: cohort.cohort_id, status: "blocked" as const }; } },
+    reader: { async read() { throw new Error("forge should not be read"); } },
+    git: { async run() { throw new Error("origin should not be read"); } },
+    now: () => "2026-08-18T13:00:00.000Z",
+    async record_build_event(_cohort_id: CohortId, event: unknown) { events.push(event); },
+  };
+  const result = await reconcileCohortEvidence(dependencies, expected.stage_instance_id, expected.unit_id,
+    { kind: "operator_confirmation", idempotency_key: "manual-merge-1", operator_comment: "Merged" });
+  expect(result.ok && result.value.resolution.kind).toBe("completed");
+  expect(result.ok && result.value.reconciliation.observation.source).toBe("manual_recheck");
+  expect(events).toEqual([{ kind: "pull_request_merged", pull_request_url: expected.url, head_sha: "reviewed-head" }]);
 });
 
 const storedCohort = (repositoryPath: string, head: string): DevFlowBuildCohort => ({

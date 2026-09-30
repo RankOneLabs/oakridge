@@ -12,7 +12,7 @@
  * artifact bodies never become verification evidence.
  */
 import {
-  reconcileCohortPullRequest,
+  operatorMergedObservation, reconcileCohortPullRequest,
   type CohortPullRequestReconciliation, type DevFlowBuildCohort, type ExpectedCohortPullRequest,
 } from "../domain/cohort-pull-request";
 import type { BuildCohortEvent } from "../adapters/dev-flow-build";
@@ -371,7 +371,7 @@ export const reconcileCohortEvidence = async (
   unitId: UnitId,
   evidence: CohortPullRequestEvidence,
 ): Promise<Result<ResolvedCohortPullRequest, CohortPullRequestError>> => {
-  let verified: BoundVerifiedCohortPullRequest;
+  let verified: BoundVerifiedCohortPullRequest | null = null;
   if (evidence.kind === "observation") {
     const result = await independentlyVerifyAndBind(dependencies, stageInstanceId, unitId, evidence.observation.url, evidence.replace_verification_id ?? null);
     if (!result.ok) return result;
@@ -379,9 +379,6 @@ export const reconcileCohortEvidence = async (
   } else {
     const current = await dependencies.pull_requests.find_current_for_unit(stageInstanceId, unitId);
     if (!current) return failure("missing_pull_request_evidence", "cohort has no verified pull request to recheck");
-    const result = await independentlyVerifyAndBind(dependencies, stageInstanceId, unitId, current.pull_request.url, null);
-    if (!result.ok) return result;
-    verified = result.value;
   }
   const loaded = await loadCohortExpectation(dependencies, stageInstanceId, unitId);
   if (!loaded.ok) return loaded;
@@ -391,7 +388,10 @@ export const reconcileCohortEvidence = async (
   if (!current || !current.cohort.current_verified_pull_request_id) {
     return failure("missing_pull_request_evidence", "verified pull request link disappeared before reconciliation");
   }
-  const observation = current.observation;
+  const observation = evidence.kind === "operator_confirmation"
+    ? operatorMergedObservation(expected, now)
+    : current.observation;
+  if (!observation) return failure("missing_pull_request_evidence", "verified pull request has no canonical identity");
   const reconciled = reconcileCohortPullRequest({ expected,
     observation, previous: null, reconciled_at: now });
   const verificationId = current.cohort.current_verified_pull_request_id;
@@ -402,7 +402,7 @@ export const reconcileCohortEvidence = async (
     return failure("mismatch", reconciled.outcome.mismatch.detail, { reconciliation: reconciled.reconciliation,
       current_verification_id: verificationId });
   }
-  if (Date.parse(observation.observed_at) > Date.parse(verified.observation.observed_at)) {
+  if (verified && Date.parse(observation.observed_at) > Date.parse(verified.observation.observed_at)) {
     return ok({ resolution: { kind: "ignored_stale" }, reconciliation: reconciled.reconciliation, verification_id: verificationId });
   }
   if (status === "complete") {
@@ -411,6 +411,8 @@ export const reconcileCohortEvidence = async (
   if (reconciled.outcome.kind === "waiting") {
     return ok({ resolution: { kind: "waiting" }, reconciliation: reconciled.reconciliation, verification_id: verificationId });
   }
+  const verifiedHeadSha = current.observation.head_sha;
+  if (!verifiedHeadSha) return failure("missing_pull_request_evidence", "verified pull request has no head commit");
 
   const idempotencyKey = evidence.kind === "operator_confirmation"
     ? evidence.idempotency_key
@@ -422,7 +424,7 @@ export const reconcileCohortEvidence = async (
     current_verification_id: verificationId });
 
   await dependencies.record_build_event(current.cohort.cohort_id,
-    { kind: "pull_request_merged", pull_request_url: observation.url });
+    { kind: "pull_request_merged", pull_request_url: observation.url, head_sha: verifiedHeadSha });
   const completed = { ...reconciled.reconciliation, completed_at: now };
   await dependencies.send_run_wake?.(expected.run_id, `pull_request_merged:${current.cohort.cohort_id}`).catch(() => undefined);
   return ok({ resolution: { kind: "completed" }, reconciliation: completed, verification_id: verificationId });

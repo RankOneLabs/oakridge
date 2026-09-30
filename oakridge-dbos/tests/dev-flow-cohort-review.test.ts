@@ -15,6 +15,7 @@
 import { expect, test } from "bun:test";
 
 import { createDevFlowCohortDriver, type DevFlowCohortDriverDependencies } from "../src/adapters/dev-flow-cohort";
+import { resolveCohortRoster } from "../src/adapters/cohort-roster";
 import type { BuildCohortState, BuildCohortTransitionEffect } from "../src/adapters/dev-flow-build";
 import { compileWorkflowDefinition } from "../src/compiler/compile-workflow";
 import type { StageInputSet } from "../src/decision/commands";
@@ -68,6 +69,16 @@ const buildStage = async (): Promise<{ readonly contract: CompiledStageContract;
   if (!contract) throw new Error("dev_flow_v15 has no build stage");
   return { contract, bundle };
 };
+
+test("duplicate derived cohort keys fail roster resolution instead of dropping work", async () => {
+  const { contract } = await buildStage();
+  expect(() => resolveCohortRoster(contract, {}, { ...BUILD_INPUTS,
+    brief: [briefEnvelope("foundation"), briefEnvelope("foundation")] }))
+    .toThrow("duplicate cohort key 'foundation'");
+  expect(() => resolveCohortRoster(contract, {}, { ...BUILD_INPUTS,
+    brief: [briefEnvelope("1"), { ...briefEnvelope("fallback"), unit_id: "" as UnitId }] }))
+    .toThrow("duplicate cohort key '1'");
+});
 
 const driverFor = (bundle: Awaited<ReturnType<typeof createPromptBundle>>,
   verify?: DevFlowCohortDriverDependencies["verify_build_pull_request"]) => createDevFlowCohortDriver({

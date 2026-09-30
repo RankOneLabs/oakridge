@@ -69,7 +69,7 @@ const event = (kind: BuildCohortEvent["kind"]): BuildCohortEvent => {
   if (kind === "assessment_outcome_observed") return { kind, outcome: "fail" };
   if (kind === "pull_request_mismatch") return { kind, pull_request_url: "https://example.test/pull/7" };
   if (kind === "replacement_pull_request_required") return { kind, pull_request_url: "https://example.test/pull/8" };
-  if (kind === "pull_request_merged") return { kind, pull_request_url: "https://example.test/pull/7" };
+  if (kind === "pull_request_merged") return { kind, pull_request_url: "https://example.test/pull/7", head_sha: "head-1" };
   return { kind };
 };
 
@@ -202,11 +202,18 @@ test("revision after assessment commits the revision prompt and names the existi
 test("awaiting merge completes only for the verified pull request", () => {
   const current = state("awaiting_merge");
   const mismatched = applyBuildCohortEvent(machine.value, current,
-    { kind: "pull_request_merged", pull_request_url: "https://example.test/pull/99" });
+    { kind: "pull_request_merged", pull_request_url: "https://example.test/pull/99", head_sha: "head-1" });
   expect(mismatched).toMatchObject({ disposition: "recorded_only", state: { phase: "awaiting_merge", is_pull_request_merged: false } });
   const verified = applyBuildCohortEvent(machine.value, current,
-    { kind: "pull_request_merged", pull_request_url: "https://example.test/pull/7" });
+    { kind: "pull_request_merged", pull_request_url: "https://example.test/pull/7", head_sha: "head-1" });
   expect(verified).toMatchObject({ disposition: "transitioned", state: { phase: "complete", is_pull_request_merged: true } });
+});
+
+test("a merge of an advanced head restarts review rather than completing", () => {
+  const result = applyBuildCohortEvent(machine.value, state("awaiting_merge"),
+    { kind: "pull_request_merged", pull_request_url: "https://example.test/pull/7", head_sha: "head-2" });
+  expect(result).toMatchObject({ disposition: "transitioned", state: { phase: "builder_active", is_pull_request_merged: false },
+    launch: { session_role: "build", launch_reason: "pr_mismatch_correction" } });
 });
 
 test("replacement PR work names the old PR but cannot reuse its verification", () => {

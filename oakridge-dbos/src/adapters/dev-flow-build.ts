@@ -60,7 +60,7 @@ export type BuildCohortEvent =
   | { readonly kind: "assessment_review_revision_requested" }
   | { readonly kind: "pull_request_mismatch"; readonly pull_request_url: string }
   | { readonly kind: "replacement_pull_request_required"; readonly pull_request_url: string }
-  | { readonly kind: "pull_request_merged"; readonly pull_request_url: string };
+  | { readonly kind: "pull_request_merged"; readonly pull_request_url: string; readonly head_sha: string };
 
 export interface CommittedBuildPrompt {
   readonly template_path: string;
@@ -229,10 +229,16 @@ const transitioned = (state: BuildCohortState, sessionLaunch: BuildSessionLaunch
 const applyEvent = (machine: BuildCohortMachine, state: BuildCohortState, event: BuildCohortEvent): AppliedEvent => {
   if (state.phase === "complete") return recorded(state);
   if (event.kind === "pull_request_merged") {
-    if (state.phase === "awaiting_merge" && state.verified_pull_request?.url === event.pull_request_url) {
+    const matchesVerification = state.verified_pull_request?.url === event.pull_request_url
+      && state.verified_pull_request.head_sha === event.head_sha;
+    if (state.verified_pull_request?.url === event.pull_request_url && !matchesVerification && state.phase !== "pending") {
+      const next = restartBuilder(state);
+      return transitioned(next, launch(machine, state, "build", "pr_mismatch_correction"));
+    }
+    if (state.phase === "awaiting_merge" && matchesVerification) {
       return transitioned({ ...state, phase: "complete", is_pull_request_merged: true });
     }
-    return recorded({ ...state, is_pull_request_merged: state.verified_pull_request?.url === event.pull_request_url || state.is_pull_request_merged });
+    return recorded({ ...state, is_pull_request_merged: matchesVerification || state.is_pull_request_merged });
   }
   if (event.kind === "stage_started" && state.phase === "pending") {
     const next = { ...state, phase: "builder_active" } as const;

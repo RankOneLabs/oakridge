@@ -62,15 +62,19 @@ export const resolveCohortRoster = (
     const key = readJsonPointer(item, materialization.unit_id_path);
     return { cohort_key: typeof key === "string" && key.length > 0 ? key : String(index), item };
   });
+  const keys = new Set<string>();
+  for (const entry of entries) {
+    if (keys.has(entry.cohort_key)) throw new Error(`stage '${contract.stage_key}' has duplicate cohort key '${entry.cohort_key}'`);
+    keys.add(entry.cohort_key);
+  }
   if (materialization.depends_on_path !== null) {
-    const known = new Set(entries.map((entry) => entry.cohort_key));
     for (const entry of entries) {
       const dependencies = readJsonPointer(entry.item, materialization.depends_on_path);
       if (!Array.isArray(dependencies) || dependencies.some((dependency) => typeof dependency !== "string")) {
         throw new Error(`stage '${contract.stage_key}' unit '${entry.cohort_key}' has invalid dependencies`);
       }
       for (const dependency of dependencies) {
-        if (!known.has(dependency as string)) {
+        if (!keys.has(dependency as string)) {
           throw new Error(`stage '${contract.stage_key}' unit '${entry.cohort_key}' has unknown dependency '${dependency}'`);
         }
       }
