@@ -80,7 +80,7 @@ test("four sibling cohort machines commit concurrently on owner-local versions w
     ]);
 
     const stageDecision = await writer.decide({
-      load_snapshot: async () => ({
+      load_snapshot: async () => ok({
         run: { id: RUN_ID, status: "active", record_version: 0 as RunRecordVersion, outcome: null },
         stages: [{ id: STAGE_ID, status: "active", blocked_reason: null, next_actor: "core", durable_version: 0,
           dependency_stage_instance_ids: [], accepted_artifact_ids: [], outcome: null,
@@ -134,7 +134,7 @@ test("a build cohort decision commits the machine effect and projected status to
       initialBuildCohortState(["pr_summary", "build_result"]), { kind: "stage_started" });
     const writer = new PostgresRunRecordWriter(sql, createDevFlowAdapterRegistry());
     const decided = await writer.decide({
-      load_snapshot: async () => ({
+      load_snapshot: async () => ok({
         run: { id: RUN_ID, status: "active", record_version: 0 as RunRecordVersion, outcome: null },
         stages: [{ id: STAGE_ID, status: "active", blocked_reason: null, next_actor: "core", durable_version: 0,
           dependency_stage_instance_ids: [], accepted_artifact_ids: [], outcome: null,
@@ -164,4 +164,49 @@ test("a build cohort decision commits the machine effect and projected status to
   } finally {
     await sql.close();
   }
+}, 60_000);
+
+test("a concurrent commit loses the cohort version race", async () => {
+  const scratch = await createScratchDatabase("oakridge_v15_version_race");
+  if (!scratch.ok) {
+    if (scratch.error.operation !== "reach_admin_endpoint") throw new Error(`${scratch.error.operation}: ${scratch.error.detail}`);
+    console.warn("cohort race PostgreSQL check SKIPPED: no PostgreSQL reachable");
+    return;
+  }
+  scratches.push(scratch.value);
+  const firstSql = PgPostgresExecutor.connect(scratch.value.url);
+  const secondSql = PgPostgresExecutor.connect(scratch.value.url);
+  try {
+    await applyMigrations(firstSql);
+    await firstSql.query(`INSERT INTO oakridge.workflow_definition (id,name,version,definition)
+      VALUES ('00000000-0000-4000-8100-000000000000','version-race',1,'{}')`, []);
+    await firstSql.query(`INSERT INTO oakridge.workflow_run (id,workflow_definition_id,context,bundle_pin,status)
+      VALUES ($1,'00000000-0000-4000-8100-000000000000','{}',
+        '{"definition_version":1,"prompt_bundle_hash":"test","adapter_version":"test","artifact_schema_version":"test"}','active')`, [RUN_ID]);
+    await firstSql.query(`INSERT INTO oakridge.stage_instance (id,run_id,stage_key,stage_type,stage_contract,status)
+      VALUES ($1,$2,'worker','example','{}','active')`, [STAGE_ID, RUN_ID]);
+    await firstSql.query(`INSERT INTO oakridge.cohort (id,run_id,stage_instance_id,cohort_key,status)
+      VALUES ($1,$2,$3,'racing','active')`, [cohortId(8), RUN_ID, STAGE_ID]);
+    const registry = createDevFlowAdapterRegistry();
+    const writerA = new PostgresRunRecordWriter(secondSql, registry);
+    const writerB = new PostgresRunRecordWriter(firstSql, registry);
+    const input = { run_id: RUN_ID, owner: { kind: "cohort" as const, id: cohortId(8) }, expected_version: 0,
+      launch_reason: "operator" as const,
+      change: { status: "blocked" as const, blocked_reason: "operator" as const, next_actor: "operator" as const, outcome: null },
+      effect: { kind: "none" as const }, actor: "race", changed_at: "2026-09-29T01:00:00Z" };
+    const race = await firstSql.transaction(async (tx) => {
+      await tx.query("SELECT id FROM oakridge.cohort WHERE id=$1 FOR UPDATE", [cohortId(8)]);
+      const competing = writerA.commit(input);
+      await Bun.sleep(50);
+      const winner = await writerB.commit_in(tx, input);
+      return { winner, competing };
+    });
+    expect(race.winner.ok).toBe(true);
+    expect(await race.competing).toMatchObject({ ok: false, error: { kind: "version_conflict" } });
+    const rows = await firstSql.query<{ readonly version: string; readonly transitions: string }>(`SELECT
+      durable_version::text AS version,
+      (SELECT count(*)::text FROM oakridge.run_transition WHERE owner_cohort_id=$1) AS transitions
+      FROM oakridge.cohort WHERE id=$1`, [cohortId(8)]);
+    expect(rows[0]).toEqual({ version: "1", transitions: "1" });
+  } finally { await firstSql.close(); await secondSql.close(); }
 }, 60_000);

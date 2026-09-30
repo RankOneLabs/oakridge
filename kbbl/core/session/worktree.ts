@@ -242,6 +242,31 @@ export async function resolveRepoTopLevel(path: string): Promise<string> {
 }
 
 /**
+ * The git directory a commit from this checkout writes into, when it lies
+ * outside the checkout: a linked worktree keeps its objects, refs and index
+ * under the main repository's `.git`. An agent sandboxed to the checkout
+ * (Codex's workspace-write) otherwise has to ask to run every `git commit`.
+ * Null for an ordinary clone, whose `.git` is already inside it, and for a
+ * path git cannot read as a repository — nothing to add in either case.
+ */
+export async function resolveExternalGitDir(path: string): Promise<string | null> {
+  const proc = Bun.spawn({
+    cmd: ["git", "-C", path, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...process.env, LC_ALL: "C", LANG: "C" },
+  });
+  const [stdout, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    proc.exited,
+  ]);
+  if (code !== 0) return null;
+  const commonDir = stdout.trim();
+  if (commonDir.length === 0 || isPathInside(commonDir, path)) return null;
+  return commonDir;
+}
+
+/**
  * Resolves HEAD to a sha1. Used to capture the base ref at worktree create
  * time so the value persisted to JSONL is immutable (resolving a branch
  * name later could yield a different commit).

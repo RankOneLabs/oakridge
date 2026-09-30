@@ -23,18 +23,6 @@ import { resolve } from "node:path";
  * A new version adds its id here.
  */
 const SHIPPED_DEV_FLOW_IDS: ReadonlySet<string> = new Set([
-  "00000000-0000-0000-0000-000000000001", // v1
-  "7f80ea26-a412-46fa-9446-0d8a84cd92b8", // v3
-  "3859fc47-bd74-4c6e-aab8-0e123285d151", // v4
-  "018dea85-c156-4317-991b-25e99ddf6bb4", // v5
-  "018dea85-c156-4317-991b-25e99ddf6bb5", // v6
-  "75715664-8490-48f7-96bc-2b461bd79f17", // v7
-  "a7e0a90e-c854-420c-b3ad-2ab97f8298b0", // v8
-  "c524667d-a09a-46bb-ae8f-da763d865815", // v9
-  "ef2b47a4-d1bd-44ee-840a-e4f7b27570db", // v11
-  "6d1e9a52-3c74-4c1f-9a3e-2f5b8c0d41a7", // v12
-  "7c4a1f38-9b52-4d6e-8a17-3e0c5b9d24f1", // v13
-  "3f7b2c95-6d41-4e88-9a52-c1e0f4b7d206", // v14
   "5a8c3d16-7e42-4f99-8b63-d2f1a6c8e307", // v15
 ]);
 

@@ -4,7 +4,7 @@ import { transitionEffectWorkflowId, transitionIdFor } from "../decision/ids";
 import type { RunSnapshot } from "../decision/snapshot";
 import { err, ok, type Result, type RunTransitionId, type SessionId, type WorkflowRunId } from "../domain/primitives";
 import type { CoreStatus } from "../domain/records";
-import type { RunTransitionRecord, TransitionEffectDescriptor, TransitionLaunchReason, TransitionOwner } from "../domain/run-record";
+import type { RunTransitionRecord, SessionStatusWrite, TransitionEffectDescriptor, TransitionLaunchReason, TransitionOwner } from "../domain/run-record";
 import type { AdapterRegistry } from "../runtime/executor-registry";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 
@@ -29,6 +29,7 @@ export interface CommitTransitionInput {
 export type CommitTransitionError =
   | { readonly kind: "owner_not_found"; readonly owner: TransitionOwner }
   | { readonly kind: "version_conflict"; readonly owner: TransitionOwner; readonly expected_version: number; readonly actual_version: number }
+  | { readonly kind: "owner_terminal"; readonly owner: TransitionOwner; readonly status: CoreStatus }
   | { readonly kind: "invalid_effect"; readonly effect_name: string; readonly detail: string };
 
 export interface CommittedTransition {
@@ -41,7 +42,7 @@ export interface CommittedTransition {
 }
 
 export interface DecideTransactionInput {
-  readonly load_snapshot: (transaction: SqlExecutor) => Promise<RunSnapshot>;
+  readonly load_snapshot: (transaction: SqlExecutor) => Promise<Result<RunSnapshot, { readonly kind: "run_not_found"; readonly run_id: WorkflowRunId }>>;
   /** Adapter composition may supply its own pure decision over the locked snapshot. */
   readonly decide_snapshot?: (snapshot: RunSnapshot) => Result<Derivation, Contradiction>;
   readonly launch_reason: TransitionLaunchReason;
@@ -49,13 +50,13 @@ export interface DecideTransactionInput {
   readonly decided_at: string;
 }
 
-export type DecideTransactionError = Contradiction | CommitTransitionError;
+export type DecideTransactionError = Contradiction | CommitTransitionError | { readonly kind: "run_not_found"; readonly run_id: WorkflowRunId };
 export interface CommittedDecision {
   readonly derivation: Derivation;
   readonly transitions: readonly CommittedTransition[];
 }
 
-interface VersionRow { readonly version: string }
+interface VersionRow { readonly version: string; readonly status: CoreStatus }
 
 const ownerTable = (owner: TransitionOwner): { readonly table: "workflow_run" | "stage_instance" | "cohort"; readonly version_column: "record_version" | "durable_version" } => {
   if (owner.kind === "run") return { table: "workflow_run", version_column: "record_version" };
@@ -81,6 +82,7 @@ const updateOwner = async (
 ): Promise<Result<number, CommitTransitionError>> => {
   const target = ownerTable(input.owner);
   const runPredicate = input.owner.kind === "run" ? "" : " AND run_id=$8";
+  const terminalPredicate = input.owner.kind === "run" ? "" : " AND status NOT IN ('complete','failed','cancelled')";
   const parameters = [input.owner.id, input.expected_version, input.change.status, input.change.blocked_reason,
     input.change.next_actor, input.change.outcome === null ? null : JSON.stringify(input.change.outcome), input.changed_at];
   if (input.owner.kind !== "run") parameters.push(input.run_id);
@@ -94,15 +96,17 @@ const updateOwner = async (
          started_at=CASE WHEN $3::oakridge.core_status='active' THEN COALESCE(started_at,$7::timestamptz) ELSE started_at END,
          ended_at=CASE WHEN $3::oakridge.core_status IN ('complete','failed','cancelled') THEN $7::timestamptz ELSE NULL END,
          ${target.version_column}=${target.version_column}+1${stageDataAssignment}
-     WHERE id=$1 AND ${target.version_column}=$2${runPredicate}
-     RETURNING ${target.version_column}::text AS version`,
+     WHERE id=$1 AND ${target.version_column}=$2${runPredicate}${terminalPredicate}
+     RETURNING ${target.version_column}::text AS version,status`,
     parameters,
   );
   if (rows[0]) return ok(Number(rows[0].version));
   const current = await tx.query<VersionRow>(
-    `SELECT ${target.version_column}::text AS version FROM oakridge.${target.table} WHERE id=$1`, [input.owner.id]);
+    `SELECT ${target.version_column}::text AS version,status FROM oakridge.${target.table} WHERE id=$1`, [input.owner.id]);
   if (!current[0]) return err({ kind: "owner_not_found", owner: input.owner });
-  return err({ kind: "version_conflict", owner: input.owner, expected_version: input.expected_version, actual_version: Number(current[0].version) });
+  if (Number(current[0].version) !== input.expected_version) return err({ kind: "version_conflict", owner: input.owner,
+    expected_version: input.expected_version, actual_version: Number(current[0].version) });
+  return err({ kind: "owner_terminal", owner: input.owner, status: current[0].status });
 };
 
 const insertTransition = async (
@@ -149,18 +153,25 @@ class DecisionTransactionAbort extends Error {
   constructor(readonly reason: CommitTransitionError) { super("decision transaction aborted"); }
 }
 
+export const commitTransitionIn = async (tx: SqlExecutor, registry: AdapterRegistry,
+  input: CommitTransitionInput): Promise<Result<CommittedTransition, CommitTransitionError>> => {
+  const effect = checkedEffect(registry, input.effect, input.actor);
+  if (!effect.ok) return effect;
+  const version = await updateOwner(tx, input);
+  if (!version.ok) return version;
+  return ok(await insertTransition(tx, input, effect.value, version.value));
+};
+
 /** The only writer for run, stage-instance, and cohort lifecycle status. */
 export class PostgresRunRecordWriter {
   constructor(private readonly sql: TransactionalSqlExecutor, private readonly registry: AdapterRegistry) {}
 
   commit(input: CommitTransitionInput): Promise<Result<CommittedTransition, CommitTransitionError>> {
-    const effect = checkedEffect(this.registry, input.effect, input.actor);
-    if (!effect.ok) return Promise.resolve(effect);
-    return this.sql.transaction(async (tx) => {
-      const version = await updateOwner(tx, input);
-      if (!version.ok) return version;
-      return ok(await insertTransition(tx, input, effect.value, version.value));
-    });
+    return this.sql.transaction((tx) => commitTransitionIn(tx, this.registry, input));
+  }
+
+  commit_in(tx: SqlExecutor, input: CommitTransitionInput): Promise<Result<CommittedTransition, CommitTransitionError>> {
+    return commitTransitionIn(tx, this.registry, input);
   }
 
   /** Load, derive, and apply one whole-run decision under a single transaction. */
@@ -168,7 +179,8 @@ export class PostgresRunRecordWriter {
     try {
       return await this.sql.transaction(async (tx) => {
         const snapshot = await input.load_snapshot(tx);
-        const derivation = (input.decide_snapshot ?? derive)(snapshot);
+        if (!snapshot.ok) return snapshot;
+        const derivation = (input.decide_snapshot ?? derive)(snapshot.value);
         if (!derivation.ok) return derivation;
         const commits = derivation.value.commands.map((command) => transitionInputFor(command, input));
         const effects = commits.map((commit) => checkedEffect(this.registry, commit.effect, commit.actor));
@@ -208,23 +220,30 @@ export const decodeTransitionRecord = (row: RunTransitionRecord): RunTransitionR
 export const writeSessionStatus = async (
   tx: SqlExecutor,
   input: { readonly session_id: SessionId; readonly status: SessionLifecycleStatus; readonly at: string },
-): Promise<void> => {
+): Promise<SessionStatusWrite> => {
   const terminal = input.status === "complete" || input.status === "failed" || input.status === "cancelled";
-  await tx.query(
+  const sessions = await tx.query<{ readonly attempt_id: string }>(
     `UPDATE oakridge.session
      SET status=$2::oakridge.session_status,
          started_at=CASE WHEN $2::text='active' THEN COALESCE(started_at,$3::timestamptz) ELSE started_at END,
-         ended_at=CASE WHEN $4::boolean THEN $3::timestamptz ELSE NULL END
-     WHERE id=$1`, [input.session_id, input.status, input.at, terminal]);
+         ended_at=CASE WHEN $4::boolean THEN $3::timestamptz ELSE NULL END,
+         updated_at=clock_timestamp()
+     WHERE id=$1 AND ended_at IS NULL RETURNING attempt_id::text`, [input.session_id, input.status, input.at, terminal]);
+  if (!sessions[0]) {
+    const rows = await tx.query<{ readonly status: CoreStatus }>("SELECT status FROM oakridge.session WHERE id=$1", [input.session_id]);
+    if (!rows[0]) throw new Error(`session '${input.session_id}' was not found`);
+    return { kind: "already_ended", status: rows[0].status };
+  }
   await tx.query(
     `UPDATE oakridge.attempt
      SET status=$2::oakridge.attempt_status,
          started_at=CASE WHEN $2::text='active' THEN COALESCE(started_at,$3::timestamptz) ELSE started_at END,
          ended_at=CASE WHEN $4::boolean THEN $3::timestamptz ELSE NULL END,
          outcome=CASE WHEN $4::boolean THEN $5::jsonb ELSE NULL END
-     WHERE id=(SELECT attempt_id FROM oakridge.session WHERE id=$1)`,
-    [input.session_id, input.status, input.at, terminal,
+     WHERE id=$1 AND ended_at IS NULL`,
+    [sessions[0].attempt_id, input.status, input.at, terminal,
       terminal ? JSON.stringify({ kind: input.status === "complete" ? "succeeded" : input.status }) : null]);
+  return { kind: "written" };
 };
 
 /** Abandons every unfinished attempt of a cohort — what a retry replaces. */
@@ -234,7 +253,7 @@ export const abandonCohortAttempts = async (
 ): Promise<void> => {
   await tx.query(
     `UPDATE oakridge.session
-     SET status='cancelled'::oakridge.session_status,ended_at=$2::timestamptz
+     SET status='cancelled'::oakridge.session_status,ended_at=$2::timestamptz,updated_at=clock_timestamp()
      WHERE ended_at IS NULL AND attempt_id IN (SELECT id FROM oakridge.attempt WHERE cohort_id=$1 AND ended_at IS NULL)`,
     [input.cohort_id, input.at]);
   await tx.query(

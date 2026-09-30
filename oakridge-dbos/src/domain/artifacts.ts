@@ -30,13 +30,13 @@ export interface ArtifactRevision {
   readonly run_id: WorkflowRunId;
   readonly stage_instance_id: StageInstanceId;
   readonly cohort_id: CohortId | null;
-  /** The cohort key the revision belongs to; `"0"` for a scalar stage. */
-  readonly unit_id: UnitId;
+  /** The cohort key the revision belongs to, when it has a cohort owner. */
+  readonly unit_id: UnitId | null;
   /** The attempt that produced it — absent for a service, operator or imported artifact. */
   readonly attempt_id: AttemptId | null;
   /** The agent session that produced it, when one had been ensured. */
   readonly session_id: SessionId | null;
-  readonly output_name: string;
+  readonly output_name: string | null;
   readonly collection_key?: OutputCollectionKey | null;
   readonly artifact_type: ArtifactTypeId;
   readonly label: string | null;

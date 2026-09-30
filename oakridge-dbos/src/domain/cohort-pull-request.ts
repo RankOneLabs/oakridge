@@ -43,7 +43,7 @@ export interface RunOwnedCohortHandoff {
   readonly stage_instance_id: StageInstanceId;
   readonly cohort_id: CohortId;
   readonly unit_id: UnitId;
-  readonly repository_key: string;
+  readonly repository_key: string | null;
   readonly handoff_artifact_id: ArtifactId;
   readonly handoff_slot_state: "empty" | "pending" | "released" | "invalidated";
   readonly handoff_body: JsonValue;

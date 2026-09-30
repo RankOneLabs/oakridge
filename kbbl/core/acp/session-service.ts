@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 
 import type { AgentProfile, AgentProfileId } from "./agent-profile";
 import { resolveProfile } from "./agent-profile";
-import { AcpSessionController } from "./controller";
+import { AcpSessionController, configOptionCategory } from "./controller";
 import type { AcpControllerRegistry } from "./controller-registry";
 import type { AcpProcessSupervisor } from "./process-supervisor";
 import {
@@ -145,6 +145,7 @@ export class AcpSessionService {
       worktree_path: spec.workdir,
       requested_model: spec.model ?? null,
       requested_effort: spec.effort ?? null,
+      requested_mode: this.profileSessionMode(profileId),
       workflow: identity,
     });
 
@@ -212,6 +213,7 @@ export class AcpSessionService {
       worktree_path: spec.workdir,
       requested_model: spec.model ?? null,
       requested_effort: spec.effort ?? null,
+      requested_mode: this.profileSessionMode(profileId),
       workflow: null,
     });
 
@@ -682,7 +684,23 @@ export class AcpSessionService {
   ): Promise<Result<void, AcpError>> {
     const touched = await this.touchController(sid as KbblSessionId);
     if (!touched.ok) return touched;
-    return touched.value.setConfigOption(configId, value);
+    const controller = touched.value;
+    const applied = await controller.setConfigOption(configId, value);
+    if (!applied.ok) return applied;
+    // The operator's mode choice outlives this child: a respawn re-applies
+    // requested_mode, so a toggle sticks for the session's life.
+    if (
+      typeof value === "string" &&
+      configOptionCategory(controller.liveConfigOptions, configId) === "mode"
+    ) {
+      this.deps.store.setRequestedMode(sid as KbblSessionId, value);
+    }
+    return ok(undefined);
+  }
+
+  /** The profile's starting permission mode; null when the profile is unknown or sets none. */
+  private profileSessionMode(profileId: AgentProfileId): string | null {
+    return this.deps.profiles.get(profileId)?.sessionMode ?? null;
   }
 
   subscribe(
@@ -749,10 +767,7 @@ export class AcpSessionService {
         kind: "new",
       });
       if (!started.ok) return started;
-      const configured = await controller.applyRequestedConfig(
-        row.requested_model,
-        row.requested_effort,
-      );
+      const configured = await controller.applyRequestedConfig(row);
       if (!configured.ok) {
         await controller.closeChild();
         return configured;
@@ -934,7 +949,7 @@ export class AcpSessionService {
       // session/load may report the agent's default config instead of the
       // selection used before the child exited. The durable requested values
       // remain authoritative across both new-session recovery and reload.
-      const configured = await controller.applyRequestedConfig(row.requested_model, row.requested_effort);
+      const configured = await controller.applyRequestedConfig(row);
       if (!configured.ok) {
         await controller.closeChild();
         return configured;

@@ -237,8 +237,8 @@ interface ArtifactRevisionRow {
   readonly run_id: string;
   readonly cohort_id: string | null;
   readonly stage_instance_id: string;
-  readonly unit_id: string;
-  readonly output_name: string;
+  readonly unit_id: string | null;
+  readonly output_name: string | null;
   readonly collection_key: string | null;
   readonly attempt_id: string | null;
   readonly session_id: string | null;
@@ -274,8 +274,8 @@ const ARTIFACT_REVISION_COLUMNS = `
   owner.run_id::text,owner.cohort_id::text,
   COALESCE(acceptance.receiving_stage_instance_id,pending_slot.receiving_stage_instance_id,
            owner.stage_instance_id,provenance.stage_instance_id)::text AS stage_instance_id,
-  COALESCE(cohort.cohort_key,'0') AS unit_id,
-  COALESCE(acceptance.output_name,pending_slot.output_name,'') AS output_name,
+  cohort.cohort_key AS unit_id,
+  COALESCE(acceptance.output_name,pending_slot.output_name) AS output_name,
   COALESCE(acceptance.collection_key,pending_slot.collection_key) AS collection_key,
   provenance.attempt_id::text,provenance.session_id::text`;
 
@@ -296,7 +296,7 @@ const artifactRevision = (row: ArtifactRevisionRow): ArtifactRevision => ({
   run_id: row.run_id as WorkflowRunId,
   stage_instance_id: row.stage_instance_id as StageInstanceId,
   cohort_id: row.cohort_id as CohortId | null,
-  unit_id: row.unit_id as UnitId,
+  unit_id: row.unit_id as UnitId | null,
   attempt_id: row.attempt_id as AttemptId | null,
   session_id: row.session_id as SessionId | null,
   output_name: row.output_name,
@@ -484,7 +484,7 @@ export class PostgresCollaborationRepository implements CollaborationRepository 
   }
 
   async update_thread_status(id: ThreadId, status: ThreadStatus): Promise<void> {
-    await this.sql.query("UPDATE oakridge.artifact_thread SET status=$2 WHERE id=$1", [id, status]);
+    await this.sql.query("UPDATE oakridge.artifact_thread SET status=$2,updated_at=clock_timestamp() WHERE id=$1", [id, status]);
   }
 }
 

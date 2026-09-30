@@ -13,6 +13,10 @@ export const applyMigrations = async (sql: TransactionalSqlExecutor, directory =
     (name text PRIMARY KEY, applied_at timestamptz NOT NULL)`, []);
   const applied = await sql.query<{ readonly name: string }>("SELECT name FROM public.oakridge_schema_migration", []);
   const appliedNames = new Set(applied.map((row) => row.name));
+  const retired = ["0016_dev_flow_pull_requests.sql", "0017_artifact_threads_and_attempt_idempotency.sql"]
+    .filter((name) => appliedNames.has(name));
+  if (retired.length > 0) throw new Error(
+    `oakridge migration ledger records retired migrations ${retired.join(", ")}; drop and recreate this v15 database`);
   const pending = migrationNames(await readdir(directory)).filter((name) => !appliedNames.has(name));
   for (const name of pending) {
     const statement = await readFile(join(directory, name), "utf8");
@@ -20,6 +24,22 @@ export const applyMigrations = async (sql: TransactionalSqlExecutor, directory =
       await transaction.query(statement, []);
       await transaction.query("INSERT INTO public.oakridge_schema_migration (name, applied_at) VALUES ($1, now())", [name]);
     });
+  }
+  if (appliedNames.has("0015_v15_baseline.sql")) {
+    const rows = await sql.query<{ readonly artifact_thread: string | null;
+      readonly dev_flow_build_cohort: string | null; readonly attempt_idempotency_key: boolean }>(
+      `SELECT to_regclass('oakridge.artifact_thread')::text AS artifact_thread,
+        to_regclass('oakridge.dev_flow_build_cohort')::text AS dev_flow_build_cohort,
+        EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='oakridge'
+          AND table_name='attempt' AND column_name='idempotency_key') AS attempt_idempotency_key`, []);
+    const schema = rows[0];
+    const missing = [
+      schema?.artifact_thread ? null : "artifact_thread",
+      schema?.attempt_idempotency_key ? null : "attempt.idempotency_key",
+      schema?.dev_flow_build_cohort ? null : "dev_flow_build_cohort",
+    ].filter((name): name is string => name !== null);
+    if (missing.length > 0) throw new Error(
+      `oakridge migration ledger records 0015_v15_baseline.sql but schema diverges: missing ${missing.join(", ")}; drop and recreate this v15 database`);
   }
   return pending;
 };

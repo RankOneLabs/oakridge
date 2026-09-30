@@ -9,16 +9,48 @@ import { createScratchDatabase, type ScratchDatabase } from "./support/durable-d
 
 const MIGRATIONS = new URL("../src/storage/migrations", import.meta.url).pathname;
 const BASELINE = "0015_v15_baseline.sql";
-const DEV_FLOW_PULL_REQUESTS = "0016_dev_flow_pull_requests.sql";
-const ARTIFACT_THREADS = "0017_artifact_threads_and_attempt_idempotency.sql";
-const MIGRATION_SET = [BASELINE, DEV_FLOW_PULL_REQUESTS, ARTIFACT_THREADS];
+const MIGRATION_SET = [BASELINE];
 
-test("adapter migrations follow the v15 baseline", async () => {
+test("the v15 baseline is the only migration", async () => {
   expect(migrationNames(await readdir(MIGRATIONS))).toEqual(MIGRATION_SET);
 });
 
+test("an applied 0015 ledger without its schema fails with named divergence", async () => {
+  const scratch = await createScratchDatabase("oakridge_v15_ledger_divergence");
+  if (!scratch.ok) {
+    if (scratch.error.operation !== "reach_admin_endpoint") throw new Error(`${scratch.error.operation}: ${scratch.error.detail}`);
+    console.warn("v15 ledger PostgreSQL check SKIPPED: no PostgreSQL reachable");
+    return;
+  }
+  scratches.push(scratch.value);
+  const sql = PgPostgresExecutor.connect(scratch.value.url);
+  try {
+    await sql.query(`CREATE TABLE public.oakridge_schema_migration
+      (name text PRIMARY KEY, applied_at timestamptz NOT NULL)`, []);
+    await sql.query(`INSERT INTO public.oakridge_schema_migration (name,applied_at)
+      VALUES ('0015_v15_baseline.sql',now())`, []);
+    await expect(applyMigrations(sql)).rejects.toThrow("artifact_thread, attempt.idempotency_key, dev_flow_build_cohort");
+  } finally { await sql.close(); }
+});
+
+test("a retired migration ledger is rejected even when its tables exist", async () => {
+  const scratch = await createScratchDatabase("oakridge_v15_retired_ledger");
+  if (!scratch.ok) {
+    if (scratch.error.operation !== "reach_admin_endpoint") throw new Error(`${scratch.error.operation}: ${scratch.error.detail}`);
+    console.warn("v15 retired-ledger PostgreSQL check SKIPPED: no PostgreSQL reachable");
+    return;
+  }
+  scratches.push(scratch.value);
+  const sql = PgPostgresExecutor.connect(scratch.value.url);
+  try {
+    await applyMigrations(sql);
+    await sql.query("INSERT INTO public.oakridge_schema_migration (name,applied_at) VALUES ('0016_dev_flow_pull_requests.sql',now()),('0017_artifact_threads_and_attempt_idempotency.sql',now())", []);
+    await expect(applyMigrations(sql)).rejects.toThrow("0016_dev_flow_pull_requests.sql, 0017_artifact_threads_and_attempt_idempotency.sql");
+  } finally { await sql.close(); }
+});
+
 const scratches: ScratchDatabase[] = [];
-afterAll(async () => { for (const scratch of scratches) await scratch.drop(); });
+afterAll(async () => { for (const scratch of scratches) await scratch.drop(); }, 30_000);
 
 test("v15 baseline represents import artifacts, multi-slot gates, messages, and owner-local versions", async () => {
   const scratch = await createScratchDatabase("oakridge_v15_baseline_test");
@@ -163,7 +195,9 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
 
     const gateId = "00000000-0000-4000-8000-000000000020";
     await sql.query(`INSERT INTO oakridge.wait_gate
-      (id,run_id,kind,closes_on,command_workflow_id) VALUES ($1,'00000000-0000-4000-8000-000000000002','gate','{}','gate:test')`, [gateId]);
+      (id,run_id,stage_instance_id,cohort_id,kind,closes_on,command_workflow_id)
+      VALUES ($1,'00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000003',
+        '00000000-0000-4000-8000-000000000005','gate','{}','gate:test')`, [gateId]);
     for (const artifactId of artifactIds) await sql.query(
       "INSERT INTO oakridge.wait_gate_artifact_revision (wait_gate_id,artifact_id,run_id) VALUES ($1,$2,'00000000-0000-4000-8000-000000000002')", [gateId, artifactId]);
     await sql.query(`INSERT INTO oakridge.wait_gate_output_slot
@@ -172,8 +206,10 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
       ($1,'00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000003','report','a'),
       ($1,'00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000004','assessment',NULL)`, [gateId]);
     await sql.query(`INSERT INTO oakridge.wait_gate
-      (id,run_id,kind,closes_on,command_workflow_id) VALUES
-      ('00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000002','external','{}','wait:no-artifact')`, []);
+      (id,run_id,stage_instance_id,cohort_id,kind,closes_on,command_workflow_id) VALUES
+      ('00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000002',
+        '00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000005',
+        'external','{}','wait:no-artifact')`, []);
     expect((await sql.query<{ readonly revisions: string; readonly slots: string }>(`SELECT
       (SELECT count(*)::text FROM oakridge.wait_gate_artifact_revision WHERE wait_gate_id=$1) AS revisions,
       (SELECT count(*)::text FROM oakridge.wait_gate_output_slot WHERE wait_gate_id=$1) AS slots`, [gateId]))[0])
