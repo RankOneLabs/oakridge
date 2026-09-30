@@ -59,6 +59,12 @@ interface PendingPermission {
 
 export type UiEventListener = (event: AcpUiEvent) => void;
 
+/** The durable §12 requests a session row carries across every spawn. */
+export type RequestedSessionConfig = Pick<
+  AcpSessionRow,
+  "requested_model" | "requested_effort" | "requested_mode"
+>;
+
 /**
  * How a request was satisfied. `exact` means the agent advertises the id (or
  * display name) that was asked for. `context_hint_ignored` means only the
@@ -66,12 +72,6 @@ export type UiEventListener = (event: AcpUiEvent) => void;
  * between what was asked for and what will run — the caller logs it, because
  * nothing else can tell the operator their window changed.
  */
-/** The durable §12 requests a session row carries across every spawn. */
-export type RequestedSessionConfig = Pick<
-  AcpSessionRow,
-  "requested_model" | "requested_effort" | "requested_mode"
->;
-
 export type OptionMatchKind =
   | { kind: "exact" }
   | {
