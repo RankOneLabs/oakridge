@@ -38,7 +38,7 @@ uv run ruff format           # format
 uv run mypy                  # type-check
 ```
 
-<!-- import: ../standards/core.md @ 64f1695b5090 -->
+<!-- import: ../standards/core.md @ 9db42c7d345d -->
 ## Two gates before building
 
 **Stop when uncertain.** Before introducing a pattern, dependency, file, or structural
@@ -123,7 +123,7 @@ over terse — `user_count`, not `n`. Booleans read as questions — `is_active`
 `has_permission`, `should_retry`.
 <!-- /import: ../standards/core.md -->
 
-<!-- import: ../standards/python.md @ 64f1695b5090 -->
+<!-- import: ../standards/python.md @ 9db42c7d345d -->
 ## Tooling — uv
 
 `uv` for everything: `uv sync`, `uv add`, `uv run`. Never `pip`, `poetry`, or `conda`.
