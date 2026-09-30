@@ -110,9 +110,9 @@ test("core never reads final integration branch or merge policy", async () => {
   const core = (await Promise.all(files.map((file) => readFile(file, "utf8")))).join("\n");
   expect(core).not.toContain(".integration_branch");
   expect(core).not.toContain(".final_merge_policy");
-  const adapter = await readFile(join(SOURCE, "domain", "final-pull-request.ts"), "utf8");
-  expect(adapter).toContain("repository.integration_branch");
-  expect(adapter).toContain("profile.final_merge_policy");
+  const adapter = await readFile(join(SOURCE, "domain", "repository-refs.ts"), "utf8");
+  expect(adapter).toContain("integration_branch");
+  expect(adapter).toContain("final_merge_policy");
 });
 
 /**

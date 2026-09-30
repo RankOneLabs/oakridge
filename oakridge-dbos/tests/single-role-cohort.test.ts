@@ -14,7 +14,8 @@ import { expect, test } from "bun:test";
 import { createSingleRoleCohortDriver } from "../src/adapters/single-role-cohort";
 import { compileWorkflowDefinition } from "../src/compiler/compile-workflow";
 import type { CompiledStageContract } from "../src/domain/compiled-workflow";
-import type { ArtifactId, CohortId, JsonValue, StageInstanceId, WaitId, WorkflowRunId } from "../src/domain/primitives";
+import type { ArtifactId, CohortId, JsonValue, StageInstanceId, UnitId, WaitId, WorkflowRunId } from "../src/domain/primitives";
+import type { ArtifactEnvelope } from "../src/domain/execution";
 import type { CohortMachineState, DecidedCohortGate } from "../src/domain/run-record";
 import { createPromptBundle } from "../src/runtime/prompt-template";
 import { loadDevFlowV15 } from "../src/seed/dev-flow-v15";
@@ -120,4 +121,48 @@ test("stage_data written under the single-slot key is still read as a consumed g
     status: "active", next_actor: "agent", attempt_count: 2, decided_gates: [revisedGate(1)],
   };
   expect(await driver.step(contextOf(state, contract))).toBeNull();
+});
+
+test("one of seven accepted briefs does not complete brief_writer", async () => {
+  const { contract, bundle } = await briefStage();
+  const state = { ...initialState({ unit_id: "0", artifact: null, launched: 1, consumed_gate_wait_ids: [] }),
+    status: "active" as const, accepted_outputs: [acceptedBrief("versioning")] };
+  expect(await driverFor(bundle).step(briefContext(state, contract))).toBeNull();
+});
+
+test("all seven accepted briefs complete only after open waits close", async () => {
+  const { contract, bundle } = await briefStage();
+  const accepted = BRIEF_KEYS.map(acceptedBrief);
+  const state = { ...initialState({ unit_id: "0", artifact: null, launched: 1, consumed_gate_wait_ids: [] }),
+    status: "active" as const, accepted_outputs: accepted };
+  const driver = driverFor(bundle);
+  const held = await driver.step(briefContext({ ...state,
+    open_waits: [{ wait_id: waitId(9), kind: "gate" as const, output_name: "brief", artifact_id: artifactId(9) }] }, contract));
+  expect(held?.event.change.status).not.toBe("complete");
+  expect((await driver.step(briefContext(state, contract)))?.event.change.status).toBe("complete");
+});
+
+const BRIEF_KEYS = ["versioning", "schema", "docs", "rollout", "api", "ui", "release"] as const;
+
+const acceptedBrief = (key: string): ArtifactEnvelope => ({
+  artifact_id: artifactId(BRIEF_KEYS.indexOf(key as typeof BRIEF_KEYS[number]) + 1),
+  artifact_type: "dev.build_brief", output_name: "brief", unit_id: "0" as UnitId,
+  collection_key: key, body: { cohort_id: key, repository_key: "oakridge", depends_on: [] },
+});
+
+const briefStage = async () => {
+  const loaded = await loadDevFlowV15();
+  if (!loaded.ok) throw new Error(loaded.error.detail);
+  const compiled = compileWorkflowDefinition(loaded.value);
+  if (!compiled.ok) throw new Error(JSON.stringify(compiled.error));
+  const bundle = await createPromptBundle(loaded.value, { load: async (path) => `prompt for ${path}` });
+  const contract = compiled.value.stages.brief_writer;
+  if (!contract) throw new Error("dev_flow_v15 has no brief_writer stage");
+  return { contract, bundle };
+};
+
+const briefContext = (state: CohortMachineState, contract: CompiledStageContract): CohortStepContext => ({
+  state, stage_contract: contract as unknown as JsonValue, run_context: {},
+  inputs: { plan: { artifact_id: artifactId(8), artifact_type: "dev.plan", output_name: "plan",
+    unit_id: "0" as UnitId, body: { cohorts: BRIEF_KEYS.map((id) => ({ id })) } } },
 });

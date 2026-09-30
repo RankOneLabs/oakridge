@@ -1,7 +1,6 @@
 import { Hono } from "hono";
 
 import { createGateResumeApp, type GateResumeDependencies } from "./gate-resume";
-import { createHandoffCompleteApp, type HandoffCompleteDependencies } from "./handoff-complete";
 import { createCohortPullRequestApp, type CohortPullRequestHttpDependencies } from "./cohort-pull-request";
 import { createCollaborationApp, type CollaborationHttpDependencies } from "./collaboration";
 import { createOperatorProjectionApp } from "./operator-projections";
@@ -14,7 +13,6 @@ import type { LaunchRunDependencies } from "../runtime/launch-run";
 import { createConfigurationApp, type ConfigurationHttpDependencies } from "./configuration";
 import { createRunLifecycleApp, type RunLifecycleHttpDependencies } from "./run-lifecycle";
 import { createDomainReadApp, type DomainReadHttpDependencies } from "./domain-reads";
-import { createFinalPullRequestApp, type FinalPullRequestHttpDependencies } from "./final-pull-request";
 import { controlTokenMiddleware } from "./control-auth";
 import { sharedCursor } from "./shared-cursor";
 import { createWorkOrderArtifactCallbackApp, type WorkOrderArtifactCallbackDependencies } from "./work-order-artifact-callback";
@@ -25,10 +23,8 @@ export interface OakridgeHttpDependencies {
   readonly operator_retry: OperatorRetryHttpDependencies;
   readonly run_lifecycle: RunLifecycleHttpDependencies;
   readonly domain_reads: DomainReadHttpDependencies;
-  readonly final_pull_requests: FinalPullRequestHttpDependencies;
   readonly work_order_artifact_callback: WorkOrderArtifactCallbackDependencies;
   readonly gate_resume: GateResumeDependencies;
-  readonly handoff_complete: HandoffCompleteDependencies;
   readonly cohort_pull_requests: CohortPullRequestHttpDependencies;
   readonly collaboration: CollaborationHttpDependencies;
   readonly operator_projections: OperatorProjectionRepository;
@@ -46,10 +42,8 @@ export const createApp = (dependencies: OakridgeHttpDependencies): Hono => {
   app.route("/", createOperatorRetryApp(dependencies.operator_retry));
   app.route("/", createRunLifecycleApp(dependencies.run_lifecycle));
   app.route("/", createDomainReadApp(dependencies.domain_reads));
-  app.route("/", createFinalPullRequestApp(dependencies.final_pull_requests));
   app.route("/", createWorkOrderArtifactCallbackApp(dependencies.work_order_artifact_callback));
   app.route("/", createGateResumeApp(dependencies.gate_resume));
-  app.route("/", createHandoffCompleteApp(dependencies.handoff_complete));
   app.route("/", createCohortPullRequestApp(dependencies.cohort_pull_requests));
   app.route("/", createCollaborationApp(dependencies.collaboration));
   app.route("/", createOperatorProjectionApp(dependencies.operator_projections));

@@ -33,6 +33,7 @@ export type BuildGateName = "build_review" | "assessment_review";
 export interface VerifiedPullRequest {
   readonly url: string;
   readonly revision: string;
+  readonly head_sha: string;
 }
 
 export interface BuildCohortState {
@@ -48,7 +49,7 @@ export interface BuildCohortState {
 export type BuildCohortEvent =
   | { readonly kind: "stage_started" }
   | { readonly kind: "build_artifact_recorded"; readonly revision: string; readonly output_name: string }
-  | { readonly kind: "pull_request_verified"; readonly revision: string; readonly pull_request_url: string }
+  | { readonly kind: "pull_request_verified"; readonly revision: string; readonly pull_request_url: string; readonly head_sha: string }
   | { readonly kind: "builder_attempt_lost" }
   | { readonly kind: "build_review_approved" }
   | { readonly kind: "build_review_revision_requested" }
@@ -59,7 +60,7 @@ export type BuildCohortEvent =
   | { readonly kind: "assessment_review_revision_requested" }
   | { readonly kind: "pull_request_mismatch"; readonly pull_request_url: string }
   | { readonly kind: "replacement_pull_request_required"; readonly pull_request_url: string }
-  | { readonly kind: "pull_request_merged"; readonly pull_request_url: string };
+  | { readonly kind: "pull_request_merged"; readonly pull_request_url: string; readonly head_sha: string };
 
 export interface CommittedBuildPrompt {
   readonly template_path: string;
@@ -211,13 +212,12 @@ const restartBuilder = (state: BuildCohortState): BuildCohortState => ({
 const observeBuildArtifact = (state: BuildCohortState, event: Extract<BuildCohortEvent, { readonly kind: "build_artifact_recorded" }>): BuildCohortState => {
   const sameRevision = state.accepted_revision === event.revision;
   const accepted_build_set = unique([...(sameRevision ? state.accepted_build_set : []), event.output_name]);
-  const verified_pull_request = state.verified_pull_request?.revision === event.revision ? state.verified_pull_request : null;
-  const observed = { ...state, accepted_revision: event.revision, accepted_build_set, verified_pull_request };
+  const observed = { ...state, accepted_revision: event.revision, accepted_build_set };
   return isBuildReviewReady(observed) ? { ...observed, phase: "build_review" } : observed;
 };
 
 const observeVerifiedPullRequest = (state: BuildCohortState, event: Extract<BuildCohortEvent, { readonly kind: "pull_request_verified" }>): BuildCohortState => {
-  const observed = { ...state, verified_pull_request: { url: event.pull_request_url, revision: event.revision } };
+  const observed = { ...state, verified_pull_request: { url: event.pull_request_url, revision: event.revision, head_sha: event.head_sha } };
   return isBuildReviewReady(observed) ? { ...observed, phase: "build_review" } : observed;
 };
 
@@ -229,10 +229,16 @@ const transitioned = (state: BuildCohortState, sessionLaunch: BuildSessionLaunch
 const applyEvent = (machine: BuildCohortMachine, state: BuildCohortState, event: BuildCohortEvent): AppliedEvent => {
   if (state.phase === "complete") return recorded(state);
   if (event.kind === "pull_request_merged") {
-    if (state.phase === "awaiting_merge" && state.verified_pull_request?.url === event.pull_request_url) {
+    const matchesVerification = state.verified_pull_request?.url === event.pull_request_url
+      && state.verified_pull_request.head_sha === event.head_sha;
+    if (state.verified_pull_request?.url === event.pull_request_url && !matchesVerification && state.phase !== "pending") {
+      const next = restartBuilder(state);
+      return transitioned(next, launch(machine, state, "build", "pr_mismatch_correction"));
+    }
+    if (state.phase === "awaiting_merge" && matchesVerification) {
       return transitioned({ ...state, phase: "complete", is_pull_request_merged: true });
     }
-    return recorded({ ...state, is_pull_request_merged: state.verified_pull_request?.url === event.pull_request_url || state.is_pull_request_merged });
+    return recorded({ ...state, is_pull_request_merged: matchesVerification || state.is_pull_request_merged });
   }
   if (event.kind === "stage_started" && state.phase === "pending") {
     const next = { ...state, phase: "builder_active" } as const;

@@ -23,7 +23,7 @@ import type { PromptBundleEntry } from "../domain/workflow";
 import { resolveAttemptExecution } from "../runtime/resolve-work-order";
 import type { RunRecordRepository } from "../storage/repositories";
 import type { CohortMachineDriver, CohortStepContext, CohortStepDecision } from "../workflows/run-record-topology";
-import { cohortIdFor, resolveCohortRoster } from "./cohort-roster";
+import { cohortIdFor, resolveCohortRoster, selectAcceptedCollectionDependencyCycle, selectCohortOutputsSatisfied } from "./cohort-roster";
 
 /** The reason a first launch uses, and the one a rejected gate relaunches under. */
 const INITIAL_REASON = "initial";
@@ -147,12 +147,15 @@ export const createSingleRoleCohortDriver = (dependencies: SingleRoleCohortDrive
     const contract = contractOf(context.stage_contract);
     const { role, reasons } = roleOf(contract);
     const stageData = stageDataOf(context.state);
-    const owed = contract.outputs.filter((output) =>
-      !context.state.accepted_outputs.some((artifact) => artifact.output_name === output.name));
-
-    // Accepted everything it declared: the gate let the output through, which is
-    // the same fact acceptance records, so there is nothing left to wait for.
-    if (owed.length === 0 && stageData.launched > 0) {
+    const dependencyCycle = contract.materialization.kind === "artifact_collections"
+      ? selectAcceptedCollectionDependencyCycle(context.state.accepted_outputs) : null;
+    if (dependencyCycle) {
+      return { event: { change: { status: "failed", blocked_reason: null, next_actor: null,
+        outcome: { kind: "failed", code: "roster_failed", detail: dependencyCycle } },
+        stage_data: encode(stageData), effect: { kind: "none" }, launch_reason: "artifact_accepted", actor: "core" }, launch: null };
+    }
+    if (stageData.launched > 0 && context.state.open_waits.length === 0
+      && selectCohortOutputsSatisfied(contract, context, context.state.accepted_outputs)) {
       return { event: { change: COMPLETE, stage_data: encode(stageData), effect: { kind: "none" },
         launch_reason: "artifact_accepted", actor: "core" }, launch: null };
     }

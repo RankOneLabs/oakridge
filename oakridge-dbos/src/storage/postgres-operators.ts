@@ -175,15 +175,20 @@ export class PostgresDevFlowPullRequestRepository implements DevFlowPullRequestR
     });
   }
 
-  async bind_verified(input: { readonly cohort_id: CohortId; readonly pull_request_id: PullRequestId; readonly observation_id: PullRequestObservationId; readonly verified_head_sha: string; readonly verified_at: string; readonly replace_verification_id: PullRequestVerificationId | null }): Promise<Result<PullRequestVerificationId, { readonly kind: "replacement_required" | "replacement_conflict"; readonly detail: string }>> {
+  async bind_verified(input: { readonly cohort_id: CohortId; readonly pull_request_id: PullRequestId; readonly observation_id: PullRequestObservationId; readonly verified_head_sha: string; readonly verified_at: string; readonly replace_verification_id: PullRequestVerificationId | null }): Promise<Result<{ readonly id: PullRequestVerificationId; readonly binding: "created" | "replaced" | "head_advanced" }, { readonly kind: "replacement_required" | "replacement_conflict" | "build_cohort_not_found"; readonly detail: string }>> {
     return this.sql.transaction(async (tx) => {
       const rows = await tx.query<{ readonly current_verified_pull_request_id: string | null }>(
         "SELECT current_verified_pull_request_id::text FROM oakridge.dev_flow_build_cohort WHERE cohort_id=$1 FOR UPDATE", [input.cohort_id]);
-      const current = rows[0]?.current_verified_pull_request_id ?? null;
-      if (current !== null && input.replace_verification_id === null) return err({ kind: "replacement_required", detail: "cohort already has a verified pull request; replacement must name it" });
-      if (current !== null && current !== input.replace_verification_id) return err({ kind: "replacement_conflict", detail: "current verified pull request changed before replacement" });
+      if (!rows[0]) return err({ kind: "build_cohort_not_found", detail: "build cohort is missing" });
+      const current = rows[0].current_verified_pull_request_id;
+      const prior = current === null ? null : (await tx.query<{ readonly pull_request_id: string }>(
+        "SELECT pull_request_id::text FROM oakridge.pull_request_verification WHERE id=$1", [current]))[0] ?? null;
+      const isHeadAdvance = prior?.pull_request_id === input.pull_request_id;
+      if (current !== null && !isHeadAdvance && input.replace_verification_id === null) return err({ kind: "replacement_required", detail: "cohort already has a verified pull request; replacement must name it" });
+      if (current !== null && !isHeadAdvance && current !== input.replace_verification_id) return err({ kind: "replacement_conflict", detail: "current verified pull request changed before replacement" });
       if (current !== null) {
-        await tx.query("UPDATE oakridge.pull_request_verification SET invalidated_at=$2,invalidation_reason='replaced' WHERE id=$1 AND invalidated_at IS NULL", [current, input.verified_at]);
+        await tx.query("UPDATE oakridge.pull_request_verification SET invalidated_at=$2,invalidation_reason=$3 WHERE id=$1 AND invalidated_at IS NULL",
+          [current, input.verified_at, isHeadAdvance ? "head_changed" : "replaced"]);
         await tx.query("UPDATE oakridge.pull_request_approval SET invalidated_at=$2 WHERE verification_id=$1 AND invalidated_at IS NULL", [current, input.verified_at]);
       }
       const inserted = await tx.query<{ readonly id: string }>(`INSERT INTO oakridge.pull_request_verification
@@ -192,7 +197,7 @@ export class PostgresDevFlowPullRequestRepository implements DevFlowPullRequestR
       [input.cohort_id, input.pull_request_id, input.observation_id, input.verified_head_sha, input.verified_at]);
       const id = inserted[0]!.id as PullRequestVerificationId;
       await tx.query("UPDATE oakridge.dev_flow_build_cohort SET current_verified_pull_request_id=$2,updated_at=$3 WHERE cohort_id=$1", [input.cohort_id, id, input.verified_at]);
-      return ok(id);
+      return ok({ id, binding: current === null ? "created" : isHeadAdvance ? "head_advanced" : "replaced" });
     });
   }
 
@@ -447,7 +452,8 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     // owning unit's own id, so an operator can tell cohort gates apart.
     const rows = await this.sql.query<V2GateProjectionRow>(
       `SELECT wait.id::text AS wait_id,run.id::text AS run_id,stage.stage_key AS stage_name,
-              wait.stage_instance_id::text,cohort.cohort_key AS unit_id,revision.artifact_id::text AS artifact_revision_id,
+              wait.stage_instance_id::text,COALESCE(slot.collection_key,cohort.cohort_key) AS unit_id,
+              revision.artifact_id::text AS artifact_revision_id,
               wait.closes_on->>'gate_step' AS gate_step,
               COALESCE(ARRAY(SELECT jsonb_array_elements_text(wait.closes_on->'actions')),ARRAY[]::text[]) AS actions,
               build_cohort.repository_key,run.status AS run_state
@@ -456,6 +462,10 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
        LEFT JOIN oakridge.stage_instance stage ON stage.id=wait.stage_instance_id
        LEFT JOIN oakridge.cohort cohort ON cohort.id=wait.cohort_id
        LEFT JOIN oakridge.dev_flow_build_cohort build_cohort ON build_cohort.cohort_id=cohort.id
+       LEFT JOIN LATERAL (
+         SELECT candidate.collection_key FROM oakridge.wait_gate_output_slot candidate
+         WHERE candidate.wait_gate_id=wait.id ORDER BY candidate.collection_key LIMIT 1
+       ) slot ON true
        LEFT JOIN LATERAL (
          SELECT linked.artifact_id FROM oakridge.wait_gate_artifact_revision linked
          WHERE linked.wait_gate_id=wait.id ORDER BY linked.artifact_id LIMIT 1

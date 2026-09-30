@@ -20,6 +20,7 @@ test("only cohorts parked on their pull request are polled", () => {
   const selected = selectCohortsAwaitingReview([
     cohort("foundation", "blocked"), cohort("web", "active"),
     cohort("api", "pending"), cohort("cli", "complete"),
+    { ...cohort("operator", "blocked"), next_actor: "operator" },
   ]);
   expect(selected.map((candidate) => String(candidate.unit_id))).toEqual(["foundation"]);
 });

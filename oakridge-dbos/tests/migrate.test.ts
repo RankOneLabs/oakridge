@@ -107,13 +107,20 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
     expect(firstBinding.ok).toBe(true);
     if (!firstBinding.ok) throw new Error(firstBinding.error.detail);
     await sql.query(`INSERT INTO oakridge.pull_request_approval (id,cohort_id,verification_id,approval_kind,approved_at)
-      VALUES ('00000000-0000-4000-8000-000000000060',$1,$2,'assessment_review','2026-09-29T10:00:03Z')`, [cohortId, firstBinding.value]);
-    const replacementObservation = { ...observed("head-two"), number: 43, url: "https://github.com/RankOneLabs/oakridge/pull/43" };
+      VALUES ('00000000-0000-4000-8000-000000000060',$1,$2,'assessment_review','2026-09-29T10:00:03Z')`, [cohortId, firstBinding.value.id]);
+    const advancedObservation = await pullRequests.observe({ observation: observed("head-two"), recorded_at: "2026-09-29T10:30:01Z" });
+    const advancedBinding = await pullRequests.bind_verified({ cohort_id: cohortId, ...advancedObservation,
+      verified_head_sha: "head-two", verified_at: "2026-09-29T10:30:02Z", replace_verification_id: null });
+    expect(advancedBinding.ok && advancedBinding.value.binding).toBe("head_advanced");
+    expect((await sql.query<{ readonly invalidation_reason: string | null }>(
+      "SELECT invalidation_reason FROM oakridge.pull_request_verification WHERE id=$1", [firstBinding.value.id]))[0]
+    ).toEqual({ invalidation_reason: "head_changed" });
+    const replacementObservation = { ...observed("head-three"), number: 43, url: "https://github.com/RankOneLabs/oakridge/pull/43" };
     const secondObservation = await pullRequests.observe({ observation: replacementObservation, recorded_at: "2026-09-29T11:00:01Z" });
-    expect((await pullRequests.bind_verified({ cohort_id: cohortId, ...secondObservation, verified_head_sha: "head-two",
+    expect((await pullRequests.bind_verified({ cohort_id: cohortId, ...secondObservation, verified_head_sha: "head-three",
       verified_at: "2026-09-29T11:00:02Z", replace_verification_id: null })).ok).toBe(false);
-    const replacement = await pullRequests.bind_verified({ cohort_id: cohortId, ...secondObservation, verified_head_sha: "head-two",
-      verified_at: "2026-09-29T11:00:02Z", replace_verification_id: firstBinding.value });
+    const replacement = await pullRequests.bind_verified({ cohort_id: cohortId, ...secondObservation, verified_head_sha: "head-three",
+      verified_at: "2026-09-29T11:00:02Z", replace_verification_id: advancedBinding.ok ? advancedBinding.value.id : null });
     expect(replacement.ok).toBe(true);
     await pullRequests.observe({ observation: { ...replacementObservation, state: "merged",
       observed_at: "2026-09-29T12:00:00Z", merged_at: "2026-09-29T12:00:00Z" }, recorded_at: "2026-09-29T12:00:01Z" });
@@ -126,7 +133,7 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
     expect((await sql.query<{ readonly observations: string; readonly invalidated_approvals: string }>(`SELECT
       (SELECT count(*)::text FROM oakridge.pull_request_observation) AS observations,
       (SELECT count(*)::text FROM oakridge.pull_request_approval WHERE invalidated_at IS NOT NULL) AS invalidated_approvals`, []))[0])
-      .toEqual({ observations: "3", invalidated_approvals: "1" });
+      .toEqual({ observations: "4", invalidated_approvals: "1" });
     const confirmation = { cohort_id: cohortId, pull_request_id: secondObservation.pull_request_id, idempotency_key: "merge-core",
       merged_at: "2026-09-29T12:00:00Z", confirmed_at: "2026-09-29T12:00:01Z" };
     expect((await pullRequests.confirm_merge(confirmation)).ok).toBe(true);

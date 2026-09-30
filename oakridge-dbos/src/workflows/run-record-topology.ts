@@ -5,7 +5,9 @@
  * v14 had a single root workflow that asked one repository for the whole run's
  * next move. v15 scopes optimistic concurrency per owner — a run's
  * `record_version`, a stage's and a cohort's `durable_version` — so the topology
- * mirrors the ownership: the run machine decides the run and its stages, a stage
+ * mirrors the ownership: the run machine decides the run and its stages, except
+ * that a stage machine also fails its own stage when its roster cannot open;
+ * both writes use the stage's expected version. A stage
  * machine opens its cohorts, and a cohort machine is the only thing that
  * transitions its own cohort. A command is routed to the machine that owns the
  * version it names (`machineAddressFor`), which is what makes a version
@@ -221,8 +223,11 @@ export const runMachineWorkflow = DBOS.registerWorkflow(async (run_id: WorkflowR
  * The stage machine
  * ------------------------------------------------------------------ */
 
+type StageRosterResult = { readonly kind: "opened"; readonly cohort_ids: readonly CohortId[] }
+  | { readonly kind: "roster_failed"; readonly detail: string };
+
 const openStageCohortsStep = DBOS.registerStep(
-  async (stage_instance_id: StageInstanceId): Promise<readonly CohortId[]> => {
+  async (stage_instance_id: StageInstanceId): Promise<StageRosterResult> => {
     const { records, stages, now } = workflowServices();
     const contract = await stages.find_contract(stage_instance_id);
     if (!contract) throw new Error(`stage instance '${stage_instance_id}' was not found`);
@@ -232,12 +237,20 @@ const openStageCohortsStep = DBOS.registerStep(
     if (!driver) throw new Error(`stage type '${stage.stage_type}' has no registered cohort driver`);
     const run_context = await workflowServices().find_run_context(contract.run_id);
     if (run_context === null) throw new Error(`run '${contract.run_id}' was not found`);
-    const cohorts = await driver.open_cohorts({ run_id: contract.run_id, stage_instance_id,
-      stage_contract: contract.stage_contract, run_context,
-      inputs: await loadStageInputs(contract.stage_contract, null) });
+    const inputs = await loadStageInputs(contract.stage_contract, null);
+    let cohorts: readonly OpenCohort[];
+    try {
+      cohorts = await driver.open_cohorts({ run_id: contract.run_id, stage_instance_id,
+        stage_contract: contract.stage_contract, run_context, inputs });
+      if (cohorts.length === 0) throw new Error("cohort roster is empty");
+    } catch (error) {
+      const detail = String(error);
+      await records.fail_stage_roster(stage_instance_id, detail, now());
+      return { kind: "roster_failed", detail };
+    }
     const opened = await records.open_stage_cohorts({ run_id: contract.run_id, stage_instance_id, cohorts, opened_at: now() });
     if (opened.kind === "stage_not_found") throw new Error(opened.detail);
-    return opened.cohort_ids;
+    return { kind: "opened", cohort_ids: opened.cohort_ids };
   },
   { name: "oakridgeV15OpenStageCohortsStep", retriesAllowed: true },
 );
@@ -251,12 +264,23 @@ const openStageCohortsStep = DBOS.registerStep(
  * transaction-consistent snapshot — not something a stage workflow could
  * conclude by watching its children's return values.
  */
-export const stageMachineWorkflow = DBOS.registerWorkflow(async (stage_instance_id: StageInstanceId): Promise<readonly CohortId[]> => {
-  const cohorts = await openStageCohortsStep(stage_instance_id);
-  for (const cohort of cohorts) {
-    await DBOS.startWorkflow(cohortMachineWorkflow, { workflowID: cohortMachineWorkflowId(cohort) })(cohort);
+export const stageMachineWorkflow = DBOS.registerWorkflow(async (stage_instance_id: StageInstanceId): Promise<StageRosterResult | null> => {
+  for (;;) {
+    let result: StageRosterResult;
+    try {
+      result = await openStageCohortsStep(stage_instance_id);
+    } catch (error) {
+      if (error instanceof DBOSErrors.DBOSWorkflowCancelledError) return null;
+      DBOS.logger.error(`stage ${stage_instance_id}: roster failed, retrying in ${MACHINE_FAILURE_BACKOFF_SECONDS}s: ${String(error)}`);
+      await DBOS.sleepSeconds(MACHINE_FAILURE_BACKOFF_SECONDS);
+      continue;
+    }
+    if (result.kind === "roster_failed") return result;
+    for (const cohort of result.cohort_ids) {
+      await DBOS.startWorkflow(cohortMachineWorkflow, { workflowID: cohortMachineWorkflowId(cohort) })(cohort);
+    }
+    return result;
   }
-  return cohorts;
 }, { name: "oakridgeV15StageWorkflow" });
 
 /* ------------------------------------------------------------------ *
@@ -330,17 +354,25 @@ const loadStageInputs = async (stage_contract: JsonValue, cohort_key: string | n
       revision.output_name !== null && revision.unit_id !== null)
       .map((revision): ArtifactEnvelope => ({
       artifact_id: revision.id, artifact_type: revision.artifact_type, output_name: revision.output_name,
-      unit_id: (revision.collection_key ?? revision.unit_id) as UnitId, body: revision.body, chain_id: revision.chain_id,
+      unit_id: (revision.collection_key ?? revision.unit_id) as UnitId, collection_key: revision.collection_key,
+      body: revision.body, chain_id: revision.chain_id,
       ...(revision.attempt_id ? { producer_execution_id: revision.attempt_id as unknown as ExecutionId } : {}),
     }));
     if (edge.collect || cohort_key === null) {
       resolved[edge.input_name] = envelopes;
       continue;
     }
-    resolved[edge.input_name] = envelopes.find((envelope) => envelope.unit_id === cohort_key) ?? envelopes[0]!;
+    const selected = selectCohortInputEnvelope(envelopes, cohort_key);
+    if (selected) resolved[edge.input_name] = selected;
   }
   return resolved;
 };
+
+export const selectCohortInputEnvelope = (
+  envelopes: readonly ArtifactEnvelope[], cohort_key: string,
+): ArtifactEnvelope | undefined => envelopes.some((envelope) => envelope.collection_key !== null)
+  ? envelopes.find((envelope) => envelope.collection_key === cohort_key)
+  : envelopes[0];
 
 /**
  * Commits one driver decision, and starts the attempt it names.
