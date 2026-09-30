@@ -6,7 +6,6 @@ interface ArtifactReviewShellProps {
   header: ReactNode;
   revisionNavigation?: ReactNode;
   artifact: ReactNode;
-  reviewItems?: ReactNode;
   threads?: ReactNode;
   gateActions?: ReactNode;
 }
@@ -17,17 +16,15 @@ export function ArtifactReviewShell({
   header,
   revisionNavigation,
   artifact,
-  reviewItems,
   threads,
   gateActions,
 }: ArtifactReviewShellProps) {
   const slots: Record<string, ReactNode> = {
     artifact,
-    review_items: reviewItems,
     threads,
     gate_actions: gateActions,
   };
-  const orderedKeys = ["artifact", "review_items", "threads", "gate_actions"];
+  const orderedKeys = ["artifact", "threads", "gate_actions"];
 
   return (
     <div

@@ -22,15 +22,12 @@ import type {
   GateResumeRequest,
   GateResumeResponse,
   CollabThread,
-  ReviewItem,
   PostThreadRequest,
   PostMessageRequest,
   PostSessionMessageRequest,
   SessionMessageAccepted,
   SessionMessageRecord,
   PostAtomEditRequest,
-  PostReviewItemRequest,
-  PatchReviewItemRequest,
   StageDetail,
   StageUnit,
   ReviewInbox,
@@ -41,7 +38,6 @@ import type {
   EpicWorkflowProfile,
   FinalPullRequestResponse,
   RepositoryKey,
-  AdmitStageUnitResponse,
   EpicProfileId,
   WorkflowRunId,
   SessionRunLocation,
@@ -419,10 +415,6 @@ export function fetchReviewInbox(): Promise<ReviewInbox> {
   return oakridgeGet<RawReviewInbox>("/review_inbox").then((value) => unwrapResponse("/review_inbox", parseReviewInbox(value)));
 }
 
-export function admitStageUnit(stageId: string, unitId: string, idempotencyKey: string): Promise<AdmitStageUnitResponse> {
-  return oakridgePost(`/stages/${encodeURIComponent(stageId)}/units/${encodeURIComponent(unitId)}/admit`, { idempotency_key: idempotencyKey });
-}
-
 export function fetchArtifact(id: string): Promise<ArtifactDetail> {
   return oakridgeGet<ArtifactDetail>(`/artifact_details/${encodeURIComponent(id)}`);
 }
@@ -592,22 +584,3 @@ export function postAtomEdit(
   return oakridgePost(`/artifacts/${encodeURIComponent(artifactId)}/edits`, req);
 }
 
-// ── Collab: review items ──────────────────────────────────────────────────────
-
-export function fetchReviewItems(artifactId: string): Promise<ReviewItem[]> {
-  return oakridgeGet<ReviewItem[]>(`/artifacts/${encodeURIComponent(artifactId)}/review_items`);
-}
-
-export function postReviewItem(
-  artifactId: string,
-  req: PostReviewItemRequest,
-): Promise<ReviewItem> {
-  return oakridgePost(`/artifacts/${encodeURIComponent(artifactId)}/review_items`, req);
-}
-
-export function patchReviewItem(
-  reviewItemId: string,
-  req: PatchReviewItemRequest,
-): Promise<ReviewItem> {
-  return oakridgePatch(`/review_items/${encodeURIComponent(reviewItemId)}`, req);
-}

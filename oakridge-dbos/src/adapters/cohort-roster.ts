@@ -11,6 +11,7 @@
 import { createHash } from "node:crypto";
 
 import { resolveBindingValue } from "../compiler/resolve-execution";
+import type { StageInputSet } from "../decision/commands";
 import type { CompiledStageContract } from "../domain/compiled-workflow";
 import { readJsonPointer } from "../domain/json-pointer";
 import type { CohortId, JsonValue, StageInstanceId } from "../domain/primitives";
@@ -35,7 +36,12 @@ export interface CohortRosterEntry {
 }
 
 /**
- * Resolves the roster from the pinned contract and the run context.
+ * Resolves the roster from the pinned contract, the run context and the stage's
+ * resolved inputs.
+ *
+ * The inputs are not optional: dev-flow's build stage fans out over the `brief`
+ * input, so a roster resolved against the context alone reports that input as
+ * missing and the stage opens no cohorts at all.
  *
  * A fan-out whose binding does not resolve to an array is an operational
  * failure, not an empty roster: a stage that quietly opened no cohorts would
@@ -44,10 +50,11 @@ export interface CohortRosterEntry {
 export const resolveCohortRoster = (
   contract: CompiledStageContract,
   run_context: JsonValue,
+  inputs: StageInputSet,
 ): readonly CohortRosterEntry[] => {
   const materialization = contract.materialization;
   if (materialization.kind !== "fan_out") return [{ cohort_key: SCALAR_COHORT_KEY, item: null }];
-  const resolved = resolveBindingValue(materialization.over, { inputs: {}, context: run_context, item: null });
+  const resolved = resolveBindingValue(materialization.over, { inputs, context: run_context, item: null });
   if (!resolved.ok) throw new Error(`stage '${contract.stage_key}' fan-out did not resolve: ${resolved.error.detail}`);
   if (!Array.isArray(resolved.value)) throw new Error(`stage '${contract.stage_key}' fan-out did not resolve to an array`);
   return resolved.value.map((item, index) => {

@@ -59,7 +59,7 @@ export const createDeterministicCohortDriver = (dependencies: DeterministicCohor
 
   async open_cohorts(input): Promise<readonly OpenCohort[]> {
     const contract = contractOf(input.stage_contract);
-    return resolveCohortRoster(contract, input.run_context).map((entry) => ({
+    return resolveCohortRoster(contract, input.run_context, input.inputs).map((entry) => ({
       id: cohortIdFor(input.stage_instance_id, entry.cohort_key),
       cohort_key: entry.cohort_key,
       stage_data: encode({ unit_id: entry.cohort_key, artifact: entry.item, launched: 0 }),

@@ -116,15 +116,20 @@ test("core never reads final integration branch or merge policy", async () => {
 });
 
 /**
- * Keyed on the *status enums* rather than the literal `SET status=`.
+ * Keyed on the *lifecycle tables* rather than on the parameter's cast.
  *
- * `oakridge.core_status`, `attempt_status` and `session_status` are the three
- * lifecycle vocabularies, and one module writes all of them — that is the
- * invariant. The literal string also matched a closed wait and a resolved
- * artifact thread, neither of which is a lifecycle owner and neither of which
- * carries a durable version, so it flagged files that had not broken the rule.
+ * The five owners below are the ones whose status moves with a durable version,
+ * and one module writes all of them — that is the invariant. Keying on
+ * `::oakridge.X_status` instead let a literal `SET status='cancelled'` on a
+ * cohort, attempt or session past the guard, which is exactly the write the rule
+ * exists to catch. Keying on the bare `SET status=` was the other failure: it
+ * flagged a closed wait and a resolved artifact thread, neither of which is a
+ * lifecycle owner.
  */
-const LIFECYCLE_STATUS_WRITE = /status\s*=\s*\$\d+::oakridge\.(?:core|attempt|session)_status/;
+const LIFECYCLE_TABLES = ["workflow_run", "stage_instance", "cohort", "attempt", "session"];
+const LIFECYCLE_STATUS_WRITE = new RegExp(
+  `(?:UPDATE|INSERT\\s+INTO)\\s+oakridge\\.(?:${LIFECYCLE_TABLES.join("|")})\\b[^;\`]*?\\bSET\\b[^;\`]*?\\bstatus\\s*=`,
+  "is");
 
 test("lifecycle status SQL has one writer", async () => {
   const files = await treeSources(SOURCE);
@@ -137,7 +142,13 @@ test("lifecycle status SQL has one writer", async () => {
 test("the lifecycle rule ignores a wait close and an artifact thread resolution", () => {
   expect(LIFECYCLE_STATUS_WRITE.test("UPDATE oakridge.wait_gate SET status='closed' WHERE id=$1")).toBe(false);
   expect(LIFECYCLE_STATUS_WRITE.test("UPDATE oakridge.artifact_thread SET status=$2 WHERE id=$1")).toBe(false);
-  expect(LIFECYCLE_STATUS_WRITE.test("SET status=$3::oakridge.core_status")).toBe(true);
+  expect(LIFECYCLE_STATUS_WRITE.test("UPDATE oakridge.stage_instance\n     SET status=$3::oakridge.core_status")).toBe(true);
+});
+
+test("the lifecycle rule catches a literal status write to a cohort", () => {
+  expect(LIFECYCLE_STATUS_WRITE.test("UPDATE oakridge.cohort SET status='cancelled' WHERE id=$1")).toBe(true);
+  expect(LIFECYCLE_STATUS_WRITE.test("UPDATE oakridge.attempt attempt SET ended_at=now(),status='failed'")).toBe(true);
+  expect(LIFECYCLE_STATUS_WRITE.test("UPDATE oakridge.session SET adapter_reference=$2::jsonb WHERE id=$1")).toBe(false);
 });
 
 test("each cohort has one stable machine address", () => {
