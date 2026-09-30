@@ -265,6 +265,12 @@ export class AcpSessionController {
         ),
       );
     }
+    // A linked worktree's git data lives outside cwd; granting it as a
+    // workspace root lets a sandboxed agent commit without asking. Resolved
+    // before the spawn: an await between initialize and session/new|load
+    // would open a window where a cancel's teardown nulls the client.
+    const externalGitDir = await resolveExternalGitDir(cwd);
+    const additionalDirectories = externalGitDir === null ? [] : [externalGitDir];
     const spawned = this.deps.supervisor.spawn(this.deps.profile, cwd);
     if (!spawned.ok) return spawned;
     this.child = spawned.value;
@@ -317,11 +323,6 @@ export class AcpSessionController {
         ),
       );
     }
-
-    // A linked worktree's git data lives outside cwd; granting it as a
-    // workspace root lets a sandboxed agent commit without asking.
-    const externalGitDir = await resolveExternalGitDir(cwd);
-    const additionalDirectories = externalGitDir === null ? [] : [externalGitDir];
 
     if (mode.kind === "new") {
       const created = await this.client.newSession(cwd, additionalDirectories);
