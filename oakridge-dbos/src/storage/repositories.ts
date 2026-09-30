@@ -28,6 +28,7 @@ import type {
   PublishWorkOrderArtifactResult,
   RecordCohortEvent,
   RecordCohortEventResult,
+  ReopenCohortOutputSlots,
   RetryCohort,
   RetryCohortResult,
   RunDecision,
@@ -109,6 +110,12 @@ export interface RunRecordRepository {
   publish_artifact(request: PublishWorkOrderArtifact): Promise<PublishWorkOrderArtifactResult>;
   /** Decides an operator gate, releasing or invalidating the slots it holds. */
   decide_gate_wait(request: DecideGateWait): Promise<CloseRunOutputWaitResult>;
+  /**
+   * Un-discharges output slots a rejected review had already released, so the
+   * relaunched role can publish the whole replacement set. Returns the artifacts
+   * whose acceptance was undone. Idempotent.
+   */
+  reopen_cohort_output_slots(input: ReopenCohortOutputSlots): Promise<readonly ArtifactId[]>;
   /** Closes a handoff's external wait on evidence from outside the run. */
   complete_handoff_artifact(request: CompleteHandoffArtifact): Promise<CloseRunOutputWaitResult>;
   find_cohort_handoff(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<RunOwnedCohortHandoff | null>;

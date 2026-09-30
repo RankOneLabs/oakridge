@@ -391,6 +391,18 @@ export type PublishWorkOrderArtifactResult =
   | { readonly kind: "slot_pending"; readonly wait_id: WaitId; readonly detail: string }
   | { readonly kind: "idempotency_conflict"; readonly artifact_id: ArtifactId; readonly detail: string };
 
+/**
+ * The slots a cohort owes again, because the review holding them was rejected.
+ *
+ * Named by output rather than by artifact: the caller knows which outputs a
+ * relaunched role has to republish (the build role's required set), and which
+ * revision currently occupies each one is the record's own business.
+ */
+export interface ReopenCohortOutputSlots {
+  readonly cohort_id: CohortId;
+  readonly output_names: readonly string[];
+}
+
 export interface DecideGateWait {
   readonly wait_id: WaitId;
   readonly action: string;
@@ -464,4 +476,13 @@ export type CancelRunRecordResult =
    * that finishes the owners silently skip the sessions.
    */
   | { readonly kind: "already_terminal"; readonly run_id: WorkflowRunId; readonly status: Exclude<CoreStatus, "pending" | "active" | "blocked">; readonly sessions_to_fence: readonly CancelledRunSession[] }
+  /**
+   * The run kept moving under the cancellation and it gave up asking.
+   *
+   * Not a terminal status and not a cancellation: the run is still whatever it
+   * was. A conflict means some other writer — the run's own machine, starting a
+   * stage — reached the row first, so cancellation is retried against the
+   * re-read version and this is what exhausting those retries says.
+   */
+  | { readonly kind: "run_busy"; readonly detail: string }
   | { readonly kind: "run_not_found"; readonly detail: string };

@@ -19,7 +19,7 @@ import { afterAll, expect, test } from "bun:test";
 
 import { createDevFlowAdapterRegistry } from "../src/adapters/dev-flow";
 import { attemptIdFor } from "../src/decision/ids";
-import type { AttemptId, CohortId, JsonValue, StageInstanceId, WorkflowRunId } from "../src/domain/primitives";
+import type { ArtifactId, AttemptId, CohortId, JsonValue, SessionId, StageInstanceId, WorkflowRunId } from "../src/domain/primitives";
 import type { WorkOrderId } from "../src/domain/primitives";
 import { capabilityFor, capabilityHash } from "../src/runtime/resolve-work-order";
 import { applyMigrations } from "../src/storage/migrate";
@@ -229,6 +229,180 @@ test("an attempt created by an operator retry is the attempt the cohort machine 
     expect(state?.latest_unfinished_attempt_id).toBe(retried.attempt_id);
     // The replaced attempt is not a candidate: it ended when the retry abandoned it.
     expect(state?.attempt_count).toBe(2);
+  } finally {
+    await prepared.sql.close();
+  }
+});
+
+const NOW = "2026-09-29T01:00:00.000Z";
+const sessionId = (index: number): SessionId =>
+  `00000000-0000-4000-8400-${String(index + 400).padStart(12, "0")}` as SessionId;
+
+const openSession = async (
+  sql: Prepared["sql"],
+  input: { readonly cohort: CohortId; readonly attempt: AttemptId; readonly session: SessionId },
+): Promise<void> => {
+  const transition = `00000000-0000-4000-8400-${String(900).padStart(12, "0")}`;
+  // A transition's resulting version is checked against the owner's persisted
+  // one, so the launch this session hangs off has to be the cohort's version 1.
+  await sql.query("UPDATE oakridge.cohort SET durable_version=1 WHERE id=$1", [input.cohort]);
+  await sql.query(`INSERT INTO oakridge.run_transition
+      (id,run_id,owner_kind,owner_cohort_id,launch_reason,prior_owner_version,resulting_owner_version,effect_descriptor,effect_workflow_id,actor)
+    VALUES ($1,$2,'cohort',$3,'initial',0,1,'{"kind":"none"}'::jsonb,$4,'core')`,
+    [transition, RUN_ID, input.cohort, `launch:${input.session}`]);
+  await sql.query(`INSERT INTO oakridge.session (id,run_id,stage_instance_id,attempt_id,launch_transition_id,status,adapter_reference)
+    VALUES ($1,$2,$3,$4,$5,'active',$6::jsonb)`,
+    [input.session, RUN_ID, STAGE_ID, input.attempt, transition,
+      JSON.stringify({ kind: "kbbl_session", session_id: `kbbl-${input.session}` })]);
+};
+
+const cancel = (prepared: Prepared) =>
+  prepared.records.cancel_run({ run_id: RUN_ID, actor: "operator", reason: "operator request", cancelled_at: NOW });
+
+/**
+ * A review that comes back `revise` has to hand the slot back.
+ *
+ * The gate releases each artifact as its wait answers, and a released slot
+ * refuses the next publication — so the builder relaunched to correct the work
+ * had nowhere to publish the correction. `build_review` names two outputs, so
+ * this also arrives as the mixed answer: approving `pr_summary` while revising
+ * `build_result` released one half of a review that was rejected.
+ */
+test("a released slot takes a replacement once the rejected review reopens it", async () => {
+  const prepared = await prepare("oakridge_v15_slot_reopen");
+  if (!prepared) return;
+  try {
+    await openCohort(prepared.sql, STAGE_ID, cohortId(6), "web");
+    await startAttempt(prepared.sql, { stage: STAGE_ID, cohort: cohortId(6), attempt: attemptId(6), number: 1, status: "active", request: {} });
+    const published = await publish(prepared, attemptId(6), artifactId(6));
+    expect(published.kind).toBe("pending");
+    if (published.kind !== "pending") return;
+    const released = await prepared.records.decide_gate_wait({ wait_id: published.wait_id, action: "approve",
+      actor: "operator", detail: null, decided_at: NOW });
+    expect(released.kind).toBe("released");
+
+    // The correcting attempt, which is what the revision launches.
+    await startAttempt(prepared.sql, { stage: STAGE_ID, cohort: cohortId(6), attempt: attemptId(7), number: 2, status: "active", request: {} });
+    expect((await publish(prepared, attemptId(7), artifactId(7))).kind).toBe("slot_already_released");
+
+    const reopened = await prepared.records.reopen_cohort_output_slots({ cohort_id: cohortId(6), output_names: ["build_result"] });
+    expect(reopened).toEqual([artifactId(6) as ArtifactId]);
+
+    const replacement = await publish(prepared, attemptId(7), artifactId(7));
+    expect(replacement.kind).toBe("pending");
+    if (replacement.kind !== "pending") return;
+    expect(replacement.wait_id).not.toBe(published.wait_id);
+    // The replacement is the next revision of the same chain, and the revision it
+    // replaces is superseded rather than left as a second released revision.
+    const rows = await prepared.sql.query<{ readonly id: string; readonly revision: number; readonly lifecycle: string }>(
+      "SELECT id::text,revision,lifecycle FROM oakridge.artifact ORDER BY revision", []);
+    expect(rows).toEqual([{ id: artifactId(6), revision: 1, lifecycle: "superseded" },
+      { id: artifactId(7), revision: 2, lifecycle: "current" }]);
+    // Reopening again finds nothing to undo: re-entry after a crash must be free.
+    expect(await prepared.records.reopen_cohort_output_slots({ cohort_id: cohortId(6), output_names: ["build_result"] })).toEqual([]);
+  } finally {
+    await prepared.sql.close();
+  }
+});
+
+/**
+ * Only cancellation can leave the half-finished state the owner sweep repairs.
+ * A failed run's open gates are deliberately left for diagnosis, and its owners
+ * reached their own terminal status honestly — rewriting them as cancelled while
+ * reporting `failed` told two different stories about the same run.
+ */
+test("cancelling a failed run reports its status and leaves its owners and gates alone", async () => {
+  const prepared = await prepare("oakridge_v15_cancel_failed");
+  if (!prepared) return;
+  try {
+    await openCohort(prepared.sql, STAGE_ID, cohortId(8), "web");
+    await startAttempt(prepared.sql, { stage: STAGE_ID, cohort: cohortId(8), attempt: attemptId(8), number: 1, status: "active", request: {} });
+    expect((await publish(prepared, attemptId(8), artifactId(8))).kind).toBe("pending");
+    await prepared.sql.query("UPDATE oakridge.workflow_run SET status='failed',ended_at=now() WHERE id=$1", [RUN_ID]);
+
+    const result = await cancel(prepared);
+    expect(result).toEqual(expect.objectContaining({ kind: "already_terminal", status: "failed" }));
+    const cohorts = await prepared.sql.query<{ readonly status: string }>(
+      "SELECT status FROM oakridge.cohort WHERE id=$1", [cohortId(8)]);
+    expect(cohorts[0]?.status).toBe("active");
+    const waits = await prepared.sql.query<{ readonly status: string }>(
+      "SELECT status FROM oakridge.wait_gate WHERE run_id=$1", [RUN_ID]);
+    expect(waits.map((wait) => wait.status)).toEqual(["open"]);
+  } finally {
+    await prepared.sql.close();
+  }
+});
+
+/**
+ * Nothing records that a fence happened, so re-entry cannot ask "which sessions
+ * are unfenced" by looking for live ones: the first pass marked them cancelled
+ * with an `ended_at`, and a crash before the fencing loop left a live agent that
+ * `ended_at IS NULL` could no longer find.
+ */
+test("re-cancelling a cancelled run sweeps its owners again and still offers its sessions to fence", async () => {
+  const prepared = await prepare("oakridge_v15_cancel_reentry");
+  if (!prepared) return;
+  try {
+    await openCohort(prepared.sql, STAGE_ID, cohortId(9), "web");
+    await startAttempt(prepared.sql, { stage: STAGE_ID, cohort: cohortId(9), attempt: attemptId(9), number: 1, status: "active", request: {} });
+    await openSession(prepared.sql, { cohort: cohortId(9), attempt: attemptId(9), session: sessionId(9) });
+
+    const first = await cancel(prepared);
+    expect(first.kind).toBe("cancelled");
+    if (first.kind !== "cancelled") return;
+    expect(first.sessions_to_fence.map((session) => session.session_id)).toEqual([sessionId(9)]);
+    const cohorts = await prepared.sql.query<{ readonly status: string }>(
+      "SELECT status FROM oakridge.cohort WHERE id=$1", [cohortId(9)]);
+    expect(cohorts[0]?.status).toBe("cancelled");
+
+    const again = await cancel(prepared);
+    expect(again).toEqual(expect.objectContaining({ kind: "already_terminal", status: "cancelled" }));
+    if (again.kind !== "already_terminal") return;
+    expect(again.sessions_to_fence.map((session) => session.session_id)).toEqual([sessionId(9)]);
+  } finally {
+    await prepared.sql.close();
+  }
+});
+
+/**
+ * Bumps the run's `record_version` the first time cancellation reads it, which
+ * is what the run's own machine does when it starts a stage.
+ */
+const bumpsVersionOnFirstRead = (sql: Prepared["sql"]): TransactionalSqlExecutor => {
+  let bumped = false;
+  return {
+    query: async <Row extends object>(statement: string, parameters: readonly unknown[]): Promise<readonly Row[]> => {
+      const rows = await sql.query<Row>(statement, parameters);
+      if (!bumped && statement.includes("record_version::text,outcome FROM oakridge.workflow_run")) {
+        bumped = true;
+        await sql.query("UPDATE oakridge.workflow_run SET record_version=record_version+1 WHERE id=$1", [RUN_ID]);
+      }
+      return rows;
+    },
+    transaction: (operation) => sql.transaction(operation),
+  };
+};
+
+/**
+ * A version conflict is not somebody else's cancellation.
+ *
+ * The run machine bumps the version while leaving the run active, so reporting
+ * the conflict as `already_terminal`/`cancelled` answered the operator with a
+ * cancellation that never happened — and swept the children of a run still
+ * running.
+ */
+test("a run that moved under the cancellation is cancelled on the retry, not reported as already cancelled", async () => {
+  const prepared = await prepare("oakridge_v15_cancel_conflict");
+  if (!prepared) return;
+  try {
+    await openCohort(prepared.sql, STAGE_ID, cohortId(10), "web");
+    const racing = new PostgresRunRecordRepository(bumpsVersionOnFirstRead(prepared.sql),
+      new PostgresRunRecordWriter(prepared.sql, createDevFlowAdapterRegistry()));
+    const result = await racing.cancel_run({ run_id: RUN_ID, actor: "operator", reason: null, cancelled_at: NOW });
+    expect(result.kind).toBe("cancelled");
+    const runs = await prepared.sql.query<{ readonly status: string }>(
+      "SELECT status FROM oakridge.workflow_run WHERE id=$1", [RUN_ID]);
+    expect(runs[0]?.status).toBe("cancelled");
   } finally {
     await prepared.sql.close();
   }

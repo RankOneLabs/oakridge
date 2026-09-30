@@ -19,7 +19,7 @@ import { createSingleRoleCohortDriver, declaresMultipleRoles } from "./single-ro
 export const DELEGATED_SESSION_STAGE_TYPE = "delegated_session";
 
 export interface DelegatedSessionCohortDriverDependencies {
-  readonly records: Pick<RunRecordRepository, "load_work_order_capability_seed">;
+  readonly records: Pick<RunRecordRepository, "load_work_order_capability_seed" | "reopen_cohort_output_slots">;
   readonly pull_requests: Pick<DevFlowPullRequestRepository, "find_cohort_for_unit">;
   load_prompt_bundle(run_id: WorkflowRunId): Promise<readonly PromptBundleEntry[]>;
 }

@@ -26,7 +26,10 @@ export const cancelV2Run = async (
 ): Promise<CancelRunRecordResult> => {
   const cancelledAt = dependencies.now();
   const result = await dependencies.records.cancel_run({ run_id, actor: "operator", reason, cancelled_at: cancelledAt });
-  if (result.kind === "run_not_found") return result;
+  // Neither of these cancelled anything, so there is nothing to fence and no
+  // status change to wake the run for. `run_busy` is the retryable one: the run
+  // is still live and still whatever it was.
+  if (result.kind === "run_not_found" || result.kind === "run_busy") return result;
   await Promise.all(result.sessions_to_fence.map(async (session) => {
     const adapter = dependencies.find_executor(session.executor_type);
     const observedAt = dependencies.now();

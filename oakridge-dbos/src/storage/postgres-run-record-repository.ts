@@ -37,6 +37,7 @@ import type {
   PublishWorkOrderArtifactResult,
   RecordCohortEvent,
   RecordCohortEventResult,
+  ReopenCohortOutputSlots,
   RetryCohort,
   RetryCohortResult,
   RunDecision,
@@ -63,6 +64,9 @@ const slotKey = (output_name: string, collection_key: string | null): string =>
 
 /** How many version races one owner's cancellation will lose before giving up. */
 const CANCEL_OWNER_ATTEMPTS = 3;
+
+/** How many version races the run's own cancellation will lose before giving up. */
+const CANCEL_RUN_ATTEMPTS = 3;
 
 const isObject = (value: JsonValue | undefined): value is { readonly [key: string]: JsonValue } =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -884,6 +888,40 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
   }
 
   /**
+   * Un-discharges a cohort's output slots so a replacement can be published.
+   *
+   * A gate decision releases each artifact as it answers, but a review that
+   * comes back `revise` sends the *whole* set back — and a released slot
+   * refuses the next publication with `slot_already_released`, which left the
+   * revising builder unable to publish anything and the loop dead at its first
+   * correction. `build_review` names two outputs, so it also arrives by the
+   * mixed answer: approving `pr_summary` while revising `build_result` accepted
+   * one half of a review that was rejected.
+   *
+   * The acceptance row is what discharges a slot, so deleting it is the fact
+   * being undone — the operator's decision itself stays on the wait row and in
+   * the transition ledger. Lifecycle goes back to `current` so the replacement
+   * supersedes this revision as the chain's parent, rather than leaving two
+   * `released` revisions of one slot.
+   */
+  async reopen_cohort_output_slots(input: ReopenCohortOutputSlots): Promise<readonly ArtifactId[]> {
+    if (input.output_names.length === 0) return [];
+    return this.sql.transaction(async (tx) => {
+      const reopened = await tx.query<{ readonly artifact_id: string }>(
+        `DELETE FROM oakridge.artifact_acceptance acceptance
+         USING oakridge.artifact_owner owner
+         WHERE owner.artifact_id=acceptance.artifact_id AND owner.cohort_id=$1
+           AND acceptance.output_name=ANY($2::text[])
+         RETURNING acceptance.artifact_id::text AS artifact_id`,
+        [input.cohort_id, [...input.output_names]]);
+      for (const row of reopened) {
+        await tx.query("UPDATE oakridge.artifact SET lifecycle='current' WHERE id=$1 AND lifecycle='released'", [row.artifact_id]);
+      }
+      return reopened.map((row) => row.artifact_id as ArtifactId);
+    });
+  }
+
+  /**
    * The cohort's handoff output and what state its slot is in — what the
    * pull-request reconciler reads before it closes the external wait.
    */
@@ -932,39 +970,54 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
    *
    * The run's own transition commits first and alone, because that is the fact
    * every other surface reads. A crash between it and the owner cancellations
-   * leaves a cancelled run with stages still marked active, so the sweep runs on
-   * the `already_terminal` path too: re-entry is the recovery, and a version that
-   * reports the run terminal before sweeping has none. Fencing the external
+   * leaves a *cancelled* run with stages still marked active, so an already
+   * cancelled run re-enters the sweep: re-entry is the recovery, and a version
+   * that reports the run terminal before sweeping has none. Fencing the external
    * sessions is the caller's, and is diagnostic cleanup rather than a domain fact.
+   *
+   * A completed or failed run is *not* swept. Only cancellation can leave the
+   * half-finished state the sweep repairs, and a failed run's open gates are
+   * deliberately left for diagnosis; cancelling its children would rewrite
+   * owners that reached their own terminal status honestly.
+   *
+   * A version conflict is retried against the re-read version rather than
+   * reported as a cancellation. The run machine bumps the version while staying
+   * active — starting a stage does it — so treating a conflict as "somebody else
+   * cancelled it" answered the operator with `cancelled` for a run that was
+   * never transitioned, and swept its children out from under it.
    */
   async cancel_run(input: CancelRunRecord): Promise<CancelRunRecordResult> {
-    const current = await runVersion(this.sql, input.run_id);
-    if (!current) return { kind: "run_not_found", detail: `workflow run '${input.run_id}' was not found` };
-    const sessions = await this.listSessionsToFence(input.run_id);
-    if (current.status === "complete" || current.status === "failed" || current.status === "cancelled") {
-      await this.cancelRunOwners(input);
-      return { kind: "already_terminal", run_id: input.run_id, status: current.status, sessions_to_fence: sessions };
-    }
-    const cancelled = await this.writer.commit({
-      run_id: input.run_id, owner: { kind: "run", id: input.run_id }, expected_version: Number(current.record_version),
-      launch_reason: "operator",
-      change: { status: "cancelled", blocked_reason: null, next_actor: null,
-        outcome: { kind: "cancelled", reason: input.reason } },
-      effect: { kind: "none" }, actor: input.actor, changed_at: input.cancelled_at,
-    });
-    if (!cancelled.ok) {
+    for (let attempt = 0; attempt < CANCEL_RUN_ATTEMPTS; attempt += 1) {
+      const current = await runVersion(this.sql, input.run_id);
+      if (!current) return { kind: "run_not_found", detail: `workflow run '${input.run_id}' was not found` };
+      const sessions = await this.listSessionsToFence(input.run_id);
+      if (current.status === "cancelled") {
+        await this.cancelRunOwners(input);
+        return { kind: "already_terminal", run_id: input.run_id, status: "cancelled", sessions_to_fence: sessions };
+      }
+      if (current.status === "complete" || current.status === "failed") {
+        return { kind: "already_terminal", run_id: input.run_id, status: current.status, sessions_to_fence: sessions };
+      }
+      const cancelled = await this.writer.commit({
+        run_id: input.run_id, owner: { kind: "run", id: input.run_id }, expected_version: Number(current.record_version),
+        launch_reason: "operator",
+        change: { status: "cancelled", blocked_reason: null, next_actor: null,
+          outcome: { kind: "cancelled", reason: input.reason } },
+        effect: { kind: "none" }, actor: input.actor, changed_at: input.cancelled_at,
+      });
+      if (cancelled.ok) {
+        await this.cancelRunOwners(input);
+        return { kind: "cancelled", run_id: input.run_id,
+          record_version: cancelled.value.resulting_owner_version as RunRecordVersion, sessions_to_fence: sessions };
+      }
       if (cancelled.error.kind === "owner_not_found") {
         return { kind: "run_not_found", detail: `workflow run '${input.run_id}' was not found` };
       }
-      // Another writer moved the run between the read and the commit. Its owners
-      // still have to be swept — that writer may have been the cancellation that
-      // crashed before finishing.
-      await this.cancelRunOwners(input);
-      return { kind: "already_terminal", run_id: input.run_id, status: "cancelled", sessions_to_fence: sessions };
+      if (cancelled.error.kind !== "version_conflict") {
+        throw new Error(`cancelling run '${input.run_id}' failed: ${JSON.stringify(cancelled.error)}`);
+      }
     }
-    await this.cancelRunOwners(input);
-    return { kind: "cancelled", run_id: input.run_id,
-      record_version: cancelled.value.resulting_owner_version as RunRecordVersion, sessions_to_fence: sessions };
+    return { kind: "run_busy", detail: `run '${input.run_id}' lost ${CANCEL_RUN_ATTEMPTS} version races; cancel it again` };
   }
 
   private async cancelRunOwners(input: CancelRunRecord): Promise<void> {
@@ -1024,15 +1077,30 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
     throw new Error(`cancelling ${owner.kind} '${owner.id}' lost ${CANCEL_OWNER_ATTEMPTS} version races; cancel the run again`);
   }
 
+  /**
+   * The sessions whose external executor may still be running.
+   *
+   * Includes sessions already ended as `cancelled`, not only live ones. Nothing
+   * records that a fence *happened*: `cancelRunOwners` marks these sessions
+   * cancelled with an `ended_at`, and the fence's own `observe_session` writes
+   * the identical two columns — so a crash between the sweep and the fencing
+   * loop left a live agent that `ended_at IS NULL` could no longer find, and
+   * re-entry swept nothing. `cancel_or_fence` is idempotent by contract (the
+   * kbbl adapter tolerates a 404), so re-offering an already-fenced session
+   * costs one DELETE and is what makes the re-entry a real recovery.
+   *
+   * A `completed` reference is a deterministic executor's finished work: there
+   * is no process to fence, which is the whole point of that variant.
+   */
   private async listSessionsToFence(run_id: WorkflowRunId): Promise<readonly CancelledRunSession[]> {
     const rows = await this.sql.query<{ readonly session_id: string; readonly attempt_id: string; readonly adapter_type: string; readonly adapter_reference: JsonValue }>(
       `SELECT session.id::text AS session_id,session.attempt_id::text,attempt.adapter_type,session.adapter_reference
        FROM oakridge.session session
        JOIN oakridge.attempt attempt ON attempt.id=session.attempt_id
-       WHERE session.run_id=$1 AND session.ended_at IS NULL`, [run_id]);
+       WHERE session.run_id=$1 AND (session.ended_at IS NULL OR session.status='cancelled')`, [run_id]);
     return rows.flatMap((row) => {
       const reference = deliverableReference(row.adapter_reference);
-      if (!reference || reference.kind === "none") return [];
+      if (!reference || reference.kind === "none" || reference.kind === "completed") return [];
       return [{ session_id: row.session_id as SessionId, attempt_id: row.attempt_id as AttemptId,
         executor_type: row.adapter_type, external_reference: reference }];
     });

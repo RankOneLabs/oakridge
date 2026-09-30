@@ -276,7 +276,7 @@ const nextEvent = (
 };
 
 export interface DevFlowCohortDriverDependencies {
-  readonly records: Pick<RunRecordRepository, "load_work_order_capability_seed">;
+  readonly records: Pick<RunRecordRepository, "load_work_order_capability_seed" | "reopen_cohort_output_slots">;
   readonly pull_requests: Pick<DevFlowPullRequestRepository, "find_cohort_for_unit">;
   /**
    * The prompt cells this run was pinned to, by `bundle_pin.prompt_bundle_hash`.
@@ -355,6 +355,22 @@ const decodeBuildCohortEvent = (value: JsonValue, accepted_revision: string | nu
   return null;
 };
 
+/**
+ * Whether the machine just threw away the publication it had accepted.
+ *
+ * True exactly on the transitions that send the build role back for a
+ * replacement set — a rejected review at either gate, a pull request that no
+ * longer matches, a replacement pull request required. Read off the state rather
+ * than enumerated by event name: `restartBuilder` clearing `accepted_revision`
+ * *is* the machine saying the set it had is no longer the set it wants, and a
+ * fifth event added to that list would otherwise be a silent omission here.
+ *
+ * It matters because the slots holding that publication have to become writable
+ * again before the relaunched builder tries to publish into them.
+ */
+const dropsAcceptedPublication = (before: BuildCohortState, after: BuildCohortState): boolean =>
+  before.accepted_revision !== null && after.accepted_revision === null;
+
 /** One event to apply, and what committing it settles. */
 interface ApplyOneInput {
   readonly context: CohortStepContext;
@@ -379,6 +395,14 @@ const applyOne = async ({ context, event, dependencies, consumed_gate_wait_ids }
   const stageData = stageDataOf(context.state, contract);
   const machine = buildMachineFor(contract, await dependencies.load_prompt_bundle(context.state.run_id));
   const applied = applyBuildCohortEvent(machine, stageData.build_state, event);
+  // Every declared output, not just the build role's: an assessment released
+  // against a publication the machine has just dropped is no longer a discharge
+  // of anything, and the assessor relaunched after the next build review has to
+  // be able to publish its replacement.
+  if (dropsAcceptedPublication(stageData.build_state, applied.state)) {
+    await dependencies.records.reopen_cohort_output_slots({
+      cohort_id: context.state.cohort_id, output_names: contract.outputs.map((output) => output.name) });
+  }
   const nextStageData: DevFlowCohortStageData = { ...stageData, build_state: applied.state,
     consumed_gate_wait_ids: [...stageData.consumed_gate_wait_ids, ...consumed_gate_wait_ids] };
   const launch = applied.launch;

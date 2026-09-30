@@ -59,12 +59,19 @@ const buildStage = async (): Promise<{ readonly contract: CompiledStageContract;
   return { contract, bundle };
 };
 
-const driverFor = (bundle: Awaited<ReturnType<typeof createPromptBundle>>) => createDevFlowCohortDriver({
-  records: { load_work_order_capability_seed: async () => "seed-value-for-tests" },
-  pull_requests: { find_cohort_for_unit: async () => null },
-  load_prompt_bundle: async () => bundle.matrix,
-  stage_type: "delegated_session",
-});
+/** The slot names the driver asked the record to make writable again, in order. */
+type ReopenLog = string[][];
+
+const driverFor = (bundle: Awaited<ReturnType<typeof createPromptBundle>>, reopened: ReopenLog = []) =>
+  createDevFlowCohortDriver({
+    records: {
+      load_work_order_capability_seed: async () => "seed-value-for-tests",
+      reopen_cohort_output_slots: async (input) => { reopened.push([...input.output_names]); return []; },
+    },
+    pull_requests: { find_cohort_for_unit: async () => null },
+    load_prompt_bundle: async () => bundle.matrix,
+    stage_type: "delegated_session",
+  });
 
 const buildStateOf = (state: CohortMachineState): BuildCohortState =>
   (state.stage_data as unknown as { readonly build_state: BuildCohortState }).build_state;
@@ -103,10 +110,10 @@ const decidedGate = (wait_id: string, output_name: string, artifact_id: string, 
  * A cohort that has published both required outputs and had its pull request
  * verified: parked at `build_review`, with a wait open per published artifact.
  */
-const parkedAtBuildReview = async (): Promise<{ readonly state: CohortMachineState; readonly contract: CompiledStageContract;
-  readonly driver: ReturnType<typeof driverFor> }> => {
+const parkedAtBuildReview = async (reopened: ReopenLog = []): Promise<{ readonly state: CohortMachineState;
+  readonly contract: CompiledStageContract; readonly driver: ReturnType<typeof driverFor> }> => {
   const { contract, bundle } = await buildStage();
-  const driver = driverFor(bundle);
+  const driver = driverFor(bundle, reopened);
   const cohorts = await driver.open_cohorts({ run_id: RUN_ID, stage_instance_id: STAGE_ID,
     stage_contract: contract as unknown as JsonValue, run_context: {}, inputs: BUILD_INPUTS });
   let state: CohortMachineState = {
@@ -174,7 +181,8 @@ test("a build review is not settled until every wait under its gate name has ans
  * `record_cohort_event` write per pass, without end.
  */
 test("a revision requested on the sibling wait is translated once and then leaves a fixpoint", async () => {
-  const { state: parked, contract, driver } = await parkedAtBuildReview();
+  const reopened: ReopenLog = [];
+  const { state: parked, contract, driver } = await parkedAtBuildReview(reopened);
 
   let state: CohortMachineState = { ...parked, open_waits: [],
     accepted_outputs: [{ artifact_id: BUILD_ARTIFACT as ArtifactId, artifact_type: "dev.build_result",
@@ -188,10 +196,16 @@ test("a revision requested on the sibling wait is translated once and then leave
   state = committed(state, revised!);
   expect(buildStateOf(state).phase).toBe("builder_active");
 
-  // It converges, and it converges without launching anything else. The approved
-  // `build_result` is still this cohort's current revision, so the restarted
-  // builder is owed it once under the new publication — that is a bounded number
-  // of recorded facts, not a decision the driver keeps making.
+  // The sibling's `approve` had already released `build_result` into its slot. A
+  // released slot refuses the next publication, so the review that sent the work
+  // back has to un-discharge every slot this cohort publishes into — otherwise
+  // the relaunched builder cannot put its replacement anywhere.
+  expect(reopened).toEqual([["pr_summary", "build_result", "assessment"]]);
+
+  // And the record answering that is what makes it converge: with no accepted
+  // revision left, there is no stale publication to re-record, and nothing to
+  // launch a second time.
+  state = { ...state, accepted_outputs: [] };
   const passes: string[] = [];
   for (let pass = 0; pass < 8; pass += 1) {
     const again = await driver.step(contextOf(state, contract));
@@ -200,8 +214,7 @@ test("a revision requested on the sibling wait is translated once and then leave
     expect(again.launch).toBeNull();
     state = committed(state, again);
   }
-  expect(passes).toEqual(["build_artifact_recorded"]);
-  expect(await driver.step(contextOf(state, contract))).toBeNull();
+  expect(passes).toEqual([]);
 });
 
 /**
