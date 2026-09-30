@@ -78,6 +78,25 @@ export interface RepositoryRefs {
   readonly base_head_sha: string;
 }
 
+export interface RepositoryRefsParseError {
+  readonly operation: "parse_repository_refs";
+  readonly detail: string;
+}
+
+export const parseRepositoryRefs = (body: JsonValue): Result<RepositoryRefs, RepositoryRefsParseError> => {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return err({ operation: "parse_repository_refs", detail: "repository refs body must be an object" });
+  }
+  const fields = ["repository_key", "repository_path", "integration_branch", "base_branch", "base_head_sha"] as const;
+  for (const field of fields) {
+    const value = readJsonPointer(body, `/${field}`);
+    if (typeof value !== "string" || value.length === 0) {
+      return err({ operation: "parse_repository_refs", detail: `repository refs '${field}' must be a non-empty string` });
+    }
+  }
+  return ok(body as unknown as RepositoryRefs);
+};
+
 /** The one source used for both persisted cohort data and agent instructions. */
 export interface CohortBranchRoles {
   readonly canonical_ref: string;

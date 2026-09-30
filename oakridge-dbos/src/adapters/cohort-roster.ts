@@ -13,6 +13,7 @@ import { createHash } from "node:crypto";
 import { resolveBindingValue } from "../compiler/resolve-execution";
 import type { StageInputSet } from "../decision/commands";
 import type { CompiledStageContract } from "../domain/compiled-workflow";
+import type { ArtifactEnvelope } from "../domain/execution";
 import { readJsonPointer } from "../domain/json-pointer";
 import type { CohortId, JsonValue, StageInstanceId } from "../domain/primitives";
 
@@ -45,7 +46,7 @@ export interface CohortRosterEntry {
  *
  * A fan-out whose binding does not resolve to an array is an operational
  * failure, not an empty roster: a stage that quietly opened no cohorts would
- * complete immediately and let the run carry on past work nobody did.
+ * leave the stage active without cohorts or any work to complete it.
  */
 export const resolveCohortRoster = (
   contract: CompiledStageContract,
@@ -57,8 +58,72 @@ export const resolveCohortRoster = (
   const resolved = resolveBindingValue(materialization.over, { inputs, context: run_context, item: null });
   if (!resolved.ok) throw new Error(`stage '${contract.stage_key}' fan-out did not resolve: ${resolved.error.detail}`);
   if (!Array.isArray(resolved.value)) throw new Error(`stage '${contract.stage_key}' fan-out did not resolve to an array`);
-  return resolved.value.map((item, index) => {
+  const entries = resolved.value.map((item, index) => {
     const key = readJsonPointer(item, materialization.unit_id_path);
     return { cohort_key: typeof key === "string" && key.length > 0 ? key : String(index), item };
   });
+  if (materialization.depends_on_path !== null) {
+    const known = new Set(entries.map((entry) => entry.cohort_key));
+    for (const entry of entries) {
+      const dependencies = readJsonPointer(entry.item, materialization.depends_on_path);
+      if (!Array.isArray(dependencies) || dependencies.some((dependency) => typeof dependency !== "string")) {
+        throw new Error(`stage '${contract.stage_key}' unit '${entry.cohort_key}' has invalid dependencies`);
+      }
+      for (const dependency of dependencies) {
+        if (!known.has(dependency as string)) {
+          throw new Error(`stage '${contract.stage_key}' unit '${entry.cohort_key}' has unknown dependency '${dependency}'`);
+        }
+      }
+    }
+  }
+  return entries;
+};
+
+export const selectAcceptedCollectionDependencyCycle = (accepted: readonly ArtifactEnvelope[]): string | null => {
+  const briefs = accepted.filter((artifact) => artifact.artifact_type === "dev.build_brief" && artifact.collection_key);
+  const graph = new Map<string, readonly string[]>(briefs.map((artifact) => {
+    const dependencies = readJsonPointer(artifact.body, "/depends_on");
+    return [artifact.collection_key!, Array.isArray(dependencies)
+      ? dependencies.filter((dependency): dependency is string => typeof dependency === "string") : []];
+  }));
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const visit = (key: string): string | null => {
+    if (visiting.has(key)) return key;
+    if (visited.has(key)) return null;
+    visiting.add(key);
+    for (const dependency of graph.get(key) ?? []) {
+      if (!graph.has(dependency)) continue;
+      const cycle = visit(dependency);
+      if (cycle) return cycle;
+    }
+    visiting.delete(key);
+    visited.add(key);
+    return null;
+  };
+  for (const key of graph.keys()) {
+    const cycle = visit(key);
+    if (cycle) return `accepted brief dependency cycle includes '${cycle}'`;
+  }
+  return null;
+};
+
+/** Accepted output slots must cover every key pinned by a collection production. */
+export const selectCohortOutputsSatisfied = (
+  contract: CompiledStageContract,
+  context: { readonly inputs: StageInputSet; readonly run_context: JsonValue },
+  accepted: readonly ArtifactEnvelope[],
+): boolean => {
+  if (contract.materialization.kind !== "artifact_collections") {
+    return contract.outputs.every((output) => accepted.some((artifact) => artifact.output_name === output.name));
+  }
+  const expectedKeys = contract.materialization.productions.flatMap((production) => {
+    const resolved = resolveBindingValue(production.over,
+      { inputs: context.inputs, context: context.run_context, item: null });
+    if (!resolved.ok || !Array.isArray(resolved.value)) return [null];
+    return resolved.value.map((item) => readJsonPointer(item, production.id_path));
+  });
+  if (expectedKeys.length === 0 || expectedKeys.some((key) => typeof key !== "string" || key.length === 0)) return false;
+  return contract.outputs.every((output) => expectedKeys.every((key) =>
+    accepted.some((artifact) => artifact.output_name === output.name && artifact.collection_key === key)));
 };

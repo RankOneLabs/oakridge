@@ -13,11 +13,11 @@ import { PostgresRunRecordRepository } from "../src/storage/postgres-run-record-
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
 import { HARNESS_BASE_BRANCH, SEVEN_BRIEF_PLAN, awaitCondition, installIntegrationRuntime, runContext,
   scriptedAgentScenario, useScenario, type CohortPlanEntry, type IntegrationRuntime } from "./support/dev-flow-harness";
-import { assertQuietAsk, decideGate, driveRun, launchRun, listRunGates, readReviewInbox, readRun, readRunRecordFingerprint } from "./support/dev-flow-driver";
+import { assertQuietAsk, confirmCohortMerged, decideGate, driveRun, launchRun, listRunGates, readReviewInbox, readRun, readRunRecordFingerprint } from "./support/dev-flow-driver";
 import { findTestDatabaseUrl } from "./support/durable-database";
-import { attemptsAfterCancel, buildDependencies, buildStageRow, buildUnitRows, closedGateWaitCount,
-  countBuildOrdersInState, materializationFailedTransitions, openBriefGateUnitIds, runOutcome, startedBuildUnitIds, transitionCountFor,
-  transitionVersion, workflowRunState } from "./support/v15-run-queries";
+import { attemptsAfterCancel, buildStageRow, buildUnitRows, closedGateWaitCount,
+  countBuildOrdersInState, openBriefGateUnitIds, runOutcome, transitionCountFor,
+  workflowRunState } from "./support/v15-run-queries";
 
 const acceptanceEnabled = process.env.OAKRIDGE_ACCEPTANCE === "1";
 let databaseUrl: string | null = null;
@@ -58,9 +58,6 @@ if (acceptanceEnabled) {
 }
 
 const countBuildUnits = async (runId: WorkflowRunId): Promise<number> => (await buildUnitRows(sql, runId)).length;
-
-const buildUnitState = async (runId: WorkflowRunId, unitId: string): Promise<string | null> =>
-  (await buildUnitRows(sql, runId)).find((row) => row.unit_id === unitId)?.state ?? null;
 
 e2e("browser launches a run and decides its first gate through kbbl", async () => {
   const agent = scriptedAgentScenario();
@@ -122,14 +119,6 @@ e2e("deleting the publication contract from a rendered prompt fails the run atte
   }
 }, 60_000);
 
-/** Scenarios 2 and 3's per-step invariant: no build work order has started for a unit whose dependency's brief gate is still open. */
-const assertNoStartedBuildDependsOnOpenBrief = async (runId: WorkflowRunId): Promise<void> => {
-  const openBriefs = await openBriefGateUnitIds(sql, runId);
-  for (const unitId of await startedBuildUnitIds(sql, runId)) {
-    for (const dependency of await buildDependencies(sql, runId, unitId)) expect(openBriefs.has(dependency)).toBe(false);
-  }
-};
-
 
 /** `GET /gates` with no run filter — every open gate across every run, the way `listV2PendingGates()` (no `run_id`) reports it. */
 const allGates = async (baseUrl: string): Promise<readonly OperatorParkedGate[]> => {
@@ -166,7 +155,7 @@ const shuffled = <Value>(items: readonly Value[], random: () => number): Value[]
  * then drives everything else to completion. Shared by scenarios 2 and 3,
  * which differ only in which order they approve in.
  */
-const driveOrderedApprovals = async (order: readonly string[], shouldAssertQuiet: (step: number) => boolean): Promise<void> => {
+const driveOrderedApprovals = async (order: readonly string[]): Promise<void> => {
   const agent = scriptedAgentScenario({ cohorts: SEVEN_BRIEF_PLAN });
   useScenario(agent);
   const launched = await launchRun(oakridge.base_url, oakridge.definition.id, runContext(oakridge.base_url, oakridge.repository.path));
@@ -175,7 +164,7 @@ const driveOrderedApprovals = async (order: readonly string[], shouldAssertQuiet
   const decide = (gate: OperatorParkedGate): string | null =>
     gate.stage_name === "brief_writer" ? (approved.has(gate.unit_id) ? "approve" : null) : "approve";
   try {
-    for (const [step, briefId] of order.entries()) {
+    for (const briefId of order) {
       approved.add(briefId);
       await driveRun(oakridge.base_url, agent, launched, {
         decide,
@@ -183,8 +172,7 @@ const driveOrderedApprovals = async (order: readonly string[], shouldAssertQuiet
         timeout_ms: 60_000,
       });
       expect(await workflowRunState(sql, launched.run_id)).toBe("active");
-      await assertNoStartedBuildDependsOnOpenBrief(launched.run_id);
-      if (shouldAssertQuiet(step)) await assertQuietAsk(sql, launched.run_id);
+      if (approved.size < order.length) expect(await countBuildUnits(launched.run_id)).toBe(0);
     }
     await driveRun(oakridge.base_url, agent, launched, {
       decide: () => "approve",
@@ -197,7 +185,7 @@ const driveOrderedApprovals = async (order: readonly string[], shouldAssertQuiet
   }
 };
 
-preV15DecisionScenario("straight-through dev flow completes", async () => {
+e2e("straight-through dev flow completes", async () => {
   const agent = scriptedAgentScenario();
   useScenario(agent);
   const launched = await launchRun(oakridge.base_url, oakridge.definition.id, runContext(oakridge.base_url, oakridge.repository.path));
@@ -218,13 +206,65 @@ preV15DecisionScenario("straight-through dev flow completes", async () => {
     expect(detail.status).toBe("complete");
     expect(detail.stages).toHaveLength(6);
     expect(detail.stages.every((stage) => stage.status === "complete")).toBe(true);
-    expect(driven.size).toBe(7);
+    expect(driven.size).toBe(8);
     expect(confirmed.size).toBe(2);
     expect(await oakridge.repository.list_origin_branches()).toContain(HARNESS_BASE_BRANCH);
   } finally {
     agent.releaseAll();
   }
 }, 240_000);
+
+const awaitBuildMerge = async (agent: ReturnType<typeof scriptedAgentScenario>) => {
+  useScenario(agent);
+  const launched = await launchRun(oakridge.base_url, oakridge.definition.id,
+    runContext(oakridge.base_url, oakridge.repository.path));
+  oakridge.started_runs.push(launched.root_workflow_id);
+  const reached = await driveRun(oakridge.base_url, agent, launched, {
+    decide: () => "approve", confirm_merges: false,
+    until: async () => {
+      const detail = await readRun(oakridge.base_url, launched.run_id);
+      const stage = detail.stages.find((candidate) => candidate.name === "build");
+      const unit = stage?.units[0];
+      const state = unit?.params as { readonly build_state?: { readonly phase?: string } } | null;
+      return state?.build_state?.phase === "awaiting_merge" && stage && unit
+        ? `${stage.stage_instance_id}:${unit.unit_id}` : null;
+    },
+    timeout_ms: 120_000,
+  });
+  return { launched, cohort_address: reached.value };
+};
+
+e2e("a build cohort awaiting merge completes after operator confirmation", async () => {
+  const agent = scriptedAgentScenario({ cohorts: [{ id: "foundation" as UnitId, depends_on: [] }] });
+  try {
+    const { launched, cohort_address } = await awaitBuildMerge(agent);
+    const confirmed = await confirmCohortMerged(oakridge.base_url, cohort_address);
+    expect(confirmed).toEqual({ kind: "accepted", outcome: "completed" });
+    await awaitCondition("operator merge completion", async () =>
+      (await readRun(oakridge.base_url, launched.run_id)).stages.find((stage) => stage.name === "build")?.units[0]?.status === "complete" ? true : null, 30_000);
+    await driveRun(oakridge.base_url, agent, launched, {
+      decide: () => "approve", until: async () =>
+        (await readRun(oakridge.base_url, launched.run_id)).status === "complete" ? true : null,
+      timeout_ms: 90_000,
+    });
+  } finally { agent.releaseAll(); }
+}, 180_000);
+
+e2e("a build cohort awaiting merge completes when the poller observes the merge", async () => {
+  const agent = scriptedAgentScenario({ cohorts: [{ id: "foundation" as UnitId, depends_on: [] }] });
+  try {
+    const { launched } = await awaitBuildMerge(agent);
+    const swept = await oakridge.runtime.poll_pull_requests();
+    expect(swept?.some((outcome) => outcome.resolution.kind === "completed")).toBe(true);
+    await awaitCondition("poller merge completion", async () =>
+      (await readRun(oakridge.base_url, launched.run_id)).stages.find((stage) => stage.name === "build")?.units[0]?.status === "complete" ? true : null, 30_000);
+    await driveRun(oakridge.base_url, agent, launched, {
+      decide: () => "approve", until: async () =>
+        (await readRun(oakridge.base_url, launched.run_id)).status === "complete" ? true : null,
+      timeout_ms: 90_000,
+    });
+  } finally { agent.releaseAll(); }
+}, 180_000);
 
 /**
  * Reproduces run `16381389-e7ba-4ae6-8041-7a150b201c75`: seven briefs, a
@@ -237,7 +277,7 @@ preV15DecisionScenario("straight-through dev flow completes", async () => {
  * decision-layer rewrite and it must fail on today's code; the rewrite's
  * PR description is its red/green evidence.
  */
-preV15DecisionScenario("scenario 1: approving a dependent brief first does not fail the run", async () => {
+e2e("scenario 1: approving a dependent brief first does not fail the run", async () => {
   const agent = scriptedAgentScenario({ cohorts: SEVEN_BRIEF_PLAN });
   useScenario(agent);
   const launched = await launchRun(oakridge.base_url, oakridge.definition.id, runContext(oakridge.base_url, oakridge.repository.path));
@@ -271,8 +311,7 @@ preV15DecisionScenario("scenario 1: approving a dependent brief first does not f
         if (state !== "active") return true;
         const gates = await listRunGates(oakridge.base_url, launched.run_id);
         const briefGates = gates.filter((gate) => gate.stage_name === "brief_writer");
-        const buildUnitCount = await countBuildUnits(launched.run_id);
-        return briefGates.length === 6 && buildUnitCount === 1 ? true : null;
+        return briefGates.length === 6 ? true : null;
       },
       timeout_ms: 30_000,
     });
@@ -280,36 +319,36 @@ preV15DecisionScenario("scenario 1: approving a dependent brief first does not f
     expect(await workflowRunState(sql, launched.run_id)).toBe("active");
     const briefGatesAfterB = (await listRunGates(oakridge.base_url, launched.run_id)).filter((gate) => gate.stage_name === "brief_writer");
     expect(briefGatesAfterB).toHaveLength(6);
-    const buildUnitsAfterB = await buildUnitRows(sql, launched.run_id);
-    expect(buildUnitsAfterB).toHaveLength(1);
-    expect(buildUnitsAfterB[0]?.unit_id).toBe("rollout");
+    expect(await buildUnitRows(sql, launched.run_id)).toHaveLength(0);
     expect(await countBuildOrdersInState(sql, launched.run_id, "started")).toBe(0);
     const detailAfterB = await readRun(oakridge.base_url, launched.run_id);
     expect(detailAfterB.status).not.toBe("failed");
     expect(detailAfterB.status).not.toBe("complete");
     await assertQuietAsk(sql, launched.run_id);
 
-    // Phase C — approve the dependency; the dependent brief's build starts
-    // only once it is satisfied. `driveRun` drives every launched execution
-    // to completion (rollout's build included, then its assessment and merge),
-    // so the quiescent point to wait for is rollout *satisfied* — and the
-    // ordering claim is read from the transition log, which cannot race.
+    // Phase C — approving the dependency still leaves the collection incomplete.
     approvedBriefs.add("versioning");
     await driveRun(oakridge.base_url, agent, launched, {
       decide,
-      until: async (): Promise<boolean | null> => (await buildUnitState(launched.run_id, "rollout")) === "satisfied" ? true : null,
+      until: async (): Promise<boolean | null> => (await openBriefGateUnitIds(sql, launched.run_id)).size === 5 ? true : null,
       timeout_ms: 120_000,
     });
-
-    expect(await buildUnitState(launched.run_id, "versioning")).toBe("satisfied");
-    expect(await buildUnitState(launched.run_id, "rollout")).toBe("satisfied");
-    const versioningSatisfiedAt = await transitionVersion(sql, launched.run_id, "unit_satisfied", "build", "versioning");
-    const rolloutStartedAt = await transitionVersion(sql, launched.run_id, "work_started", "build", "rollout");
-    expect(rolloutStartedAt).toBeGreaterThan(versioningSatisfiedAt);
+    expect(await countBuildUnits(launched.run_id)).toBe(0);
     expect(await workflowRunState(sql, launched.run_id)).toBe("active");
     const briefGatesAfterC = (await listRunGates(oakridge.base_url, launched.run_id)).filter((gate) => gate.stage_name === "brief_writer");
     expect(briefGatesAfterC).toHaveLength(5);
     await assertQuietAsk(sql, launched.run_id);
+    await driveRun(oakridge.base_url, agent, launched, {
+      decide: () => "approve",
+      until: async () => (await readRun(oakridge.base_url, launched.run_id)).status === "complete" ? true : null,
+      timeout_ms: 180_000,
+    });
+    expect(await countBuildUnits(launched.run_id)).toBe(7);
+    await driveRun(oakridge.base_url, agent, launched, {
+      decide: () => "approve",
+      until: async () => (await readRun(oakridge.base_url, launched.run_id)).status === "complete" ? true : null,
+      timeout_ms: 180_000,
+    });
   } finally {
     agent.releaseAll();
   }
@@ -321,8 +360,8 @@ preV15DecisionScenario("scenario 1: approving a dependent brief first does not f
  * jumped the queue. Quiet-ask is asserted at every one of the seven
  * checkpoints: each is a genuine "run active, nothing pending" point.
  */
-preV15DecisionScenario("scenario 2: reverse topological approval order still starts nothing early", () =>
-  driveOrderedApprovals(["release", "ui", "api", "rollout", "docs", "schema", "versioning"], () => true), 300_000);
+e2e("scenario 2: reverse topological approval order still starts nothing early", () =>
+  driveOrderedApprovals(["release", "ui", "api", "rollout", "docs", "schema", "versioning"]), 300_000);
 
 /**
  * Ten more orderings, from a fixed-seed shuffle so a failure reproduces.
@@ -336,10 +375,10 @@ const permutationRandom = mulberry32(PERMUTATION_SEED);
 const PERMUTATIONS: readonly (readonly string[])[] = Array.from({ length: 10 }, () => shuffled(SEVEN_BRIEF_PLAN.map((entry) => entry.id), permutationRandom));
 
 PERMUTATIONS.forEach((order, index) => {
-  preV15DecisionScenario(`scenario 3: seeded permutation ${index} [${order.join(",")}]`, () => driveOrderedApprovals(order, (step) => step === 0), 300_000);
+  e2e(`scenario 3: seeded permutation ${index} [${order.join(",")}]`, () => driveOrderedApprovals(order), 300_000);
 });
 
-preV15DecisionScenario("scenario 4: approving one brief starts exactly one build and closes exactly one gate", async () => {
+e2e("scenario 4: approving one of seven briefs starts no build; approving all seven opens seven build cohorts", async () => {
   const agent = scriptedAgentScenario({ cohorts: SEVEN_BRIEF_PLAN });
   useScenario(agent);
   const launched = await launchRun(oakridge.base_url, oakridge.definition.id, runContext(oakridge.base_url, oakridge.repository.path));
@@ -354,15 +393,21 @@ preV15DecisionScenario("scenario 4: approving one brief starts exactly one build
     // race-free, whatever state it has moved on to by the time this settles.
     await driveRun(oakridge.base_url, agent, launched, {
       decide,
-      until: async () => (await transitionCountFor(sql, launched.run_id, "work_started", "build", "docs")) > 0 ? true : null,
+      until: async () => (await openBriefGateUnitIds(sql, launched.run_id)).size === 6 ? true : null,
       timeout_ms: 60_000,
     });
 
     expect(await closedGateWaitCount(sql, launched.run_id, "brief_writer")).toBe(1);
-    expect(await transitionCountFor(sql, launched.run_id, "work_started", "build", "docs")).toBe(1);
+    expect(await countBuildUnits(launched.run_id)).toBe(0);
     const briefGates = (await listRunGates(oakridge.base_url, launched.run_id)).filter((gate) => gate.stage_name === "brief_writer");
     expect(briefGates).toHaveLength(6);
     await assertQuietAsk(sql, launched.run_id);
+    await driveRun(oakridge.base_url, agent, launched, {
+      decide: () => "approve",
+      until: async () => (await countBuildUnits(launched.run_id)) === 7 ? true : null,
+      timeout_ms: 90_000,
+    });
+    expect(await countBuildUnits(launched.run_id)).toBe(7);
   } finally {
     agent.releaseAll();
   }
@@ -370,8 +415,11 @@ preV15DecisionScenario("scenario 4: approving one brief starts exactly one build
 
 e2e("c5 refuses a forge head that disagrees with the real Git remote", async () => {
   const agent = scriptedAgentScenario();
-  agent.forge_head_overrides.set("foundation", "0000000000000000000000000000000000000000");
   useScenario(agent);
+  const override = await fetch(oakridge.forge_override_url, { method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ unit_id: "foundation", head_sha: "0000000000000000000000000000000000000000" }) });
+  expect(override.ok).toBe(true);
   const launched = await launchRun(oakridge.base_url, oakridge.definition.id, runContext(oakridge.base_url, oakridge.repository.path));
   oakridge.started_runs.push(launched.root_workflow_id);
   try {
@@ -409,7 +457,7 @@ e2e("c5 refuses a forge head that disagrees with the real Git remote", async () 
  * proves this, not a cycle — `b`'s dependency is simply unknown when the
  * `brief_writer` stage (and so the `build` stage's driver) finishes.
  */
-preV15DecisionScenario("scenario 5: an unknown dependency at close fails the run, not the graph around it", async () => {
+e2e("scenario 5: an unknown dependency at close fails the run, not the graph around it", async () => {
   const plan: readonly CohortPlanEntry[] = [{ id: "a" as UnitId, depends_on: [] }, { id: "b" as UnitId, depends_on: ["never" as UnitId] }];
   const agent = scriptedAgentScenario({ cohorts: plan });
   useScenario(agent);
@@ -425,21 +473,9 @@ preV15DecisionScenario("scenario 5: an unknown dependency at close fails the run
     expect(await workflowRunState(sql, launched.run_id)).toBe("failed");
     const outcome = await runOutcome(sql, launched.run_id);
     expect(outcome?.kind).toBe("failed");
-    expect(outcome && "code" in outcome ? outcome.code : null).toBe("contradiction");
-
-    const transitions = await materializationFailedTransitions(sql, launched.run_id);
-    expect(transitions).toHaveLength(1);
-    expect(transitions[0]?.detail).toEqual({
-      stage_key: "build",
-      contradiction: { kind: "unknown_dependency_at_close", stage_key: "build", unit_id: "b", dependency: "never" },
-    });
-
-    // Nothing else was rewritten: "a" still has whatever state its own
-    // build reached — never failed or cancelled by "b"'s contradiction.
-    const aState = await buildUnitState(launched.run_id, "a");
-    expect(aState).not.toBeNull();
-    expect(aState).not.toBe("failed");
-    expect(aState).not.toBe("cancelled");
+    expect(outcome && "code" in outcome ? outcome.code : null).toBe("roster_failed");
+    expect((await buildStageRow(sql, launched.run_id))?.state).toBe("failed");
+    expect(await countBuildUnits(launched.run_id)).toBe(0);
   } finally {
     agent.releaseAll();
   }
@@ -452,7 +488,7 @@ preV15DecisionScenario("scenario 5: an unknown dependency at close fails the run
  * `schema` fails the run with five brief gates never even reached, and
  * every one of them stays visible (not actionable).
  */
-preV15DecisionScenario("scenario 6a: a failed run strands its open gates visibly", async () => {
+e2e("scenario 6a: a failed run strands its open gates visibly", async () => {
   const cyclePlan: readonly CohortPlanEntry[] = SEVEN_BRIEF_PLAN.map((entry) => entry.id === "schema" ? { id: "schema" as UnitId, depends_on: ["api" as UnitId] } : entry);
   const agent = scriptedAgentScenario({ cohorts: cyclePlan });
   useScenario(agent);
@@ -470,10 +506,7 @@ preV15DecisionScenario("scenario 6a: a failed run strands its open gates visibly
     expect(await workflowRunState(sql, launched.run_id)).toBe("failed");
     const outcome = await runOutcome(sql, launched.run_id);
     expect(outcome?.kind).toBe("failed");
-    expect(outcome && "code" in outcome ? outcome.code : null).toBe("contradiction");
-    const transitions = await materializationFailedTransitions(sql, launched.run_id);
-    expect(transitions).toHaveLength(1);
-    expect((transitions[0]?.detail as { readonly contradiction?: { readonly kind?: string } } | undefined)?.contradiction?.kind).toBe("dependency_cycle");
+    expect(outcome && "code" in outcome ? outcome.code : null).toBe("roster_failed");
 
     const strandedFromGlobal = (await allGates(oakridge.base_url)).filter((gate) => gate.run_id === launched.run_id);
     expect(strandedFromGlobal).toHaveLength(5); // the five briefs never approved: versioning, docs, rollout, ui, release

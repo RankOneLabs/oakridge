@@ -167,6 +167,7 @@ export interface DriveOptions<Value> {
   /** Stop when this returns non-null; it is polled after every pass. */
   readonly until: () => Promise<Value | null>;
   readonly timeout_ms: number;
+  readonly confirm_merges?: boolean;
 }
 
 export interface DriveOutcome<Value> {
@@ -204,21 +205,23 @@ export const driveRun = async <Value>(baseUrl: string, agent: ScriptedAgentScena
     // to `options.decide` as-is — no re-keying against the emitted artifact.
     for (const gate of await listRunGates(baseUrl, run.run_id)) {
       if (decided.has(gate.id)) continue;
-      const action = options.decide(gate);
+      const requested = options.decide(gate);
+      const action = requested === "approve" && gate.resume_actions.includes("confirm_merged") ? "confirm_merged" : requested;
       if (!action) continue;
       if (!gate.artifact_revision_id) continue;
       decided.add(gate.id);
       await decideGate(baseUrl, gate.artifact_revision_id, action);
     }
 
-    const inbox = await readReviewInbox(baseUrl);
-    for (const item of inbox.items) {
-      if (item.kind !== "pull_request_merge" || item.run_id !== run.run_id) continue;
-      const cohortId = `${item.stage_instance_id}:${item.unit_id}`;
-      // The inbox item's PR is the one the build's pr_summary named.
-      expect(item.pr_url).toBe(cohortPullRequestUrl(item.unit_id as UnitId));
-      const result = await confirmCohortMerged(baseUrl, cohortId);
-      if (result.kind === "accepted" && result.outcome === "completed") confirmed.add(cohortId);
+    if (options.confirm_merges !== false) {
+      const inbox = await readReviewInbox(baseUrl);
+      for (const item of inbox.items) {
+        if (item.kind !== "pull_request_merge" || item.run_id !== run.run_id) continue;
+        const cohortId = `${item.stage_instance_id}:${item.unit_id}`;
+        expect(item.pr_url).toBe(cohortPullRequestUrl(item.unit_id as UnitId));
+        const result = await confirmCohortMerged(baseUrl, cohortId);
+        if (result.kind === "accepted" && result.outcome === "completed") confirmed.add(cohortId);
+      }
     }
 
     const value = await options.until();
@@ -355,11 +358,6 @@ const runFakeAcpAgent = (): void => {
         throw new Error("rendered prompt did not state the Oakridge publication contract");
       }
       if (publication.head_branch) await publishPromptBranch(publication.head_branch);
-      if (publication.operator_role === "build" && publication.stage_instance_id && publication.head_branch && publication.base_branch) {
-        const prepared = await fetch(`${controlUrl}/prepare-pull-request`, { method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify(publication) });
-        if (!prepared.ok) throw new Error(`fake pull request preparation failed: ${prepared.status} ${await prepared.text()}`);
-      }
       const revision = (revisions.get(ctx.params.sessionId) ?? 0) + 1;
       revisions.set(ctx.params.sessionId, revision);
       for (const output of publication.outputs) {
@@ -373,11 +371,6 @@ const runFakeAcpAgent = (): void => {
           body: await bodyResponse.text(),
         });
         if (!response.ok) throw new Error(`fake publication ${output.output_name} failed: ${response.status} ${await response.text()}`);
-      }
-      if (publication.operator_role === "build" && publication.stage_instance_id && publication.head_branch && publication.base_branch) {
-        const verification = await fetch(`${controlUrl}/verify-pull-request`, { method: "POST",
-          headers: { "content-type": "application/json" }, body: JSON.stringify(publication) });
-        if (!verification.ok) throw new Error(`production pull request verification failed: ${verification.status} ${await verification.text()}`);
       }
       await notify(ctx.client, ctx.params.sessionId, `published ${publication.outputs.map((output) => output.output_name).join(", ")}`);
       setTimeout(() => process.exit(0), 10);

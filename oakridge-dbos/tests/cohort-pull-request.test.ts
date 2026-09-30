@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 
 import {
-  operatorMergedObservation, reconcileCohortPullRequest, reconciliationForHandoff, withCompletion,
+  operatorMergedObservation, reconcileCohortPullRequest, withCompletion,
   type CohortPullRequestReconciliation, type DevFlowBuildCohort, type ExpectedCohortPullRequest,
 } from "../src/domain/cohort-pull-request";
 import { invalidatePullRequestForReplacement, type PullRequestApproval, type PullRequestObservation, type PullRequestObservationId, type PullRequestId, type PullRequestVerificationId, type VerifiedPullRequestLink } from "../src/domain/pull-request";
@@ -14,7 +14,6 @@ import { createCohortPullRequestApp } from "../src/http/cohort-pull-request";
 import { createGitRepositoryFixture } from "./support/dev-flow-harness";
 
 const firstHandoffId = "00000000-0000-4000-8000-000000000003" as ArtifactId;
-const secondHandoffId = "00000000-0000-4000-8000-000000000004" as ArtifactId;
 
 const expected: ExpectedCohortPullRequest = {
   run_id: "00000000-0000-4000-8000-000000000001" as WorkflowRunId,
@@ -143,27 +142,6 @@ test("a cohort already reconciled as merged stays merged", () => {
   expect(result.reconciliation).toEqual(previous);
 });
 
-test("a new open handoff can reconcile a merge after an earlier handoff completed", () => {
-  const previous = withCompletion(reconcile().reconciliation, "2026-08-18T12:00:02.000Z");
-  const current = reconciliationForHandoff(previous, secondHandoffId, "pending");
-  const result = reconcileCohortPullRequest({ expected, handoff_artifact_id: secondHandoffId,
-    previous: current, observation: observation({ observed_at: "2026-08-19T00:00:00.000Z" }), reconciled_at: "2026-08-19T00:00:00.000Z" });
-  expect(result.outcome).toEqual({ kind: "merged" });
-  expect(result.reconciliation.handoff_artifact_id).toBe(secondHandoffId);
-  expect(result.reconciliation.completed_at).toBeNull();
-  expect(withCompletion(result.reconciliation, "2026-08-19T00:00:01.000Z").completed_at).toBe("2026-08-19T00:00:01.000Z");
-});
-
-test("a released handoff keeps its completed reconciliation", () => {
-  const previous = withCompletion(reconcile().reconciliation, "2026-08-18T12:00:02.000Z");
-  expect(reconciliationForHandoff(previous, firstHandoffId, "released")).toEqual(previous);
-});
-
-test("an invalidated handoff does not reset an earlier completion", () => {
-  const previous = withCompletion(reconcile().reconciliation, "2026-08-18T12:00:02.000Z");
-  expect(reconciliationForHandoff(previous, secondHandoffId, "invalidated")).toEqual(previous);
-});
-
 /**
  * The operator's fallback asserts only what the operator asserted. It copies
  * the identity from the build's own report, so it passes exactly the checks a
@@ -214,18 +192,18 @@ test("verification refuses a forge head commit that is not the pushed head", asy
   }
 });
 
-test("independent verification failure emits the corrective build event", async () => {
+test("independent verification failure returns a mismatch without emitting an event", async () => {
   const cohort = storedCohort("/repo", "pushed-head");
   const events: { readonly kind: string }[] = [];
   const result = await verifyAndBindCohortPullRequest({ pull_requests: {} as DevFlowPullRequestRepository,
     reader: { async read() { return observation({ state: "open", merged_at: null, head_sha: "claimed-head" }); } },
     git: { async run() { return { exit_code: 0, stdout: "pushed-head\trefs/heads/cohort/foundation\n", stderr: "" }; } },
-    now: () => "2026-09-29T01:00:00Z", async record_build_event(_id, event) { events.push(event); } }, {
+    now: () => "2026-09-29T01:00:00Z" }, {
     cohort, forge_repository: { owner: "RankOneLabs", name: "oakridge" }, candidate_url: expected.url,
     replace_verification_id: null,
   });
   expect(result).toEqual({ ok: false, error: expect.objectContaining({ kind: "head_commit_mismatch" }) });
-  expect(events.map((event) => event.kind)).toEqual(["pull_request_mismatch"]);
+  expect(events).toEqual([]);
 });
 
 test("a drifted origin refuses a builder retry before it can reset the cohort ref", async () => {
@@ -271,19 +249,19 @@ test("a successful replacement resets review state before verifying the new head
       observation: { ...observation({ state: "open", merged_at: null, head_sha: "old-head" }), id: "00000000-0000-4000-8000-000000000022" as PullRequestObservationId,
         pull_request_id: oldPullRequestId, recorded_at: "2026-09-29T00:00:00Z" } }; },
     async observe() { return { pull_request_id: newPullRequestId, observation_id: "00000000-0000-4000-8000-000000000024" as PullRequestObservationId }; },
-    async bind_verified() { return { ok: true as const, value: "00000000-0000-4000-8000-000000000025" as PullRequestVerificationId }; },
+    async bind_verified() { return { ok: true as const, value: { id: "00000000-0000-4000-8000-000000000025" as PullRequestVerificationId, binding: "replaced" as const } }; },
   } as unknown as DevFlowPullRequestRepository;
   const replacement = observation({ number: 441, url: "https://github.com/RankOneLabs/oakridge/pull/441",
     state: "open", merged_at: null, head_sha: "new-head" });
   const result = await verifyAndBindCohortPullRequest({ pull_requests: repository,
     reader: { async read() { return replacement; } },
     git: { async run() { return { exit_code: 0, stdout: "new-head\trefs/heads/cohort/foundation\n", stderr: "" }; } },
-    now: () => "2026-09-29T01:00:00Z", async record_build_event(_id, event) { events.push(event); } }, {
+    now: () => "2026-09-29T01:00:00Z" }, {
     cohort, forge_repository: { owner: "RankOneLabs", name: "oakridge" }, candidate_url: replacement.url,
     replace_verification_id: cohort.current_verified_pull_request_id,
   });
   expect(result.ok && result.value.binding).toBe("replaced");
-  expect(events.map((event) => event.kind)).toEqual(["replacement_pull_request_required", "pull_request_verified"]);
+  expect(events).toEqual([]);
 });
 
 test("replacement-required verification exposes the current verification id", async () => {
@@ -304,7 +282,7 @@ test("replacement-required verification exposes the current verification id", as
   const result = await verifyAndBindCohortPullRequest({ pull_requests: repository,
     reader: { async read() { return candidate; } },
     git: { async run() { return { exit_code: 0, stdout: "new-head\trefs/heads/cohort/foundation\n", stderr: "" }; } },
-    now: () => "2026-09-29T01:00:00Z", async record_build_event() {} }, {
+    now: () => "2026-09-29T01:00:00Z" }, {
     cohort, forge_repository: { owner: "RankOneLabs", name: "oakridge" }, candidate_url: candidate.url,
     replace_verification_id: null,
   });
@@ -328,10 +306,8 @@ test("cohort HTTP exposes the verification id needed to authorize replacement", 
         observation_id: "00000000-0000-4000-8000-000000000024" as PullRequestObservationId }; },
       async bind_verified() { return { ok: false as const, error: { kind: "replacement_required" as const, detail: "replacement required" } }; },
     } as unknown as DevFlowPullRequestRepository,
-    forge_targets: { async find() { return { forge_repository: { owner: "RankOneLabs", name: "oakridge" } }; } } as never,
-    records: { async find_cohort_handoff() { return { run_id: expected.run_id, stage_instance_id: expected.stage_instance_id,
-      unit_id: expected.unit_id, repository_key: "oakridge", handoff_artifact_id: firstHandoffId,
-      handoff_slot_state: "pending", handoff_body: {} }; } } as never,
+    forge_repositories: { async find_forge_repository() { return { owner: "RankOneLabs", name: "oakridge" }; } },
+    records: { async find_cohort_location() { return { run_id: expected.run_id, cohort_id: cohort.cohort_id, status: "blocked" as const }; } },
     reader: { async read() { return candidate; } },
     git: { async run() { return { exit_code: 0, stdout: "new-head\trefs/heads/cohort/foundation\n", stderr: "" }; } },
     now: () => "2026-09-29T01:00:00Z", async record_build_event() {},

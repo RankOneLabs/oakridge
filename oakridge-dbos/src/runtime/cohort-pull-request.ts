@@ -16,14 +16,12 @@ import {
   type CohortPullRequestReconciliation, type DevFlowBuildCohort, type ExpectedCohortPullRequest,
 } from "../domain/cohort-pull-request";
 import type { BuildCohortEvent } from "../adapters/dev-flow-build";
-import { err, ok, type ArtifactId, type CohortId, type Result, type StageInstanceId, type UnitId, type WorkflowRunId } from "../domain/primitives";
+import { err, ok, type CohortId, type Result, type StageInstanceId, type UnitId, type WorkflowRunId } from "../domain/primitives";
 import type { PullRequestObservation } from "../domain/pull-request";
 import { parseGithubPullRequestIdentity, repositoriesMatch, type PullRequestVerificationId } from "../domain/pull-request";
 import type { GitCommandRunner } from "../domain/repository-provisioning";
 import { renderCohortBranchContract, selectCohortBranchRoles, type RepositoryRefs } from "../domain/repository-refs";
-import type { DevFlowPullRequestRepository, FinalPullRequestTargetRepository, RunRecordRepository } from "../storage/repositories";
-
-const GITHUB_REVIEW_WAIT = "github_review";
+import type { DevFlowPullRequestRepository, ForgeRepositoryRepository, RunRecordRepository } from "../storage/repositories";
 
 export interface CohortPullRequestDependencies {
   readonly pull_requests: DevFlowPullRequestRepository;
@@ -34,13 +32,13 @@ export interface CohortPullRequestDependencies {
    * identity is launch configuration, never a field an agent's artifact
    * supplied.
    */
-  readonly forge_targets: FinalPullRequestTargetRepository;
+  readonly forge_repositories: ForgeRepositoryRepository;
   readonly reader: PullRequestForgeReader;
   readonly git: GitCommandRunner;
-  readonly records: Pick<RunRecordRepository, "find_cohort_handoff" | "complete_handoff_artifact">;
+  readonly records: Pick<RunRecordRepository, "find_cohort_location">;
   readonly now: () => string;
   readonly record_build_event: (cohort_id: CohortId, event: BuildCohortEvent) => Promise<void>;
-  /** Wakes the run's root sooner than its bounded recheck once a merge releases the handoff — a hint, never a decision. */
+  /** Wakes the run's root sooner than its bounded recheck after a merge. */
   readonly send_run_wake?: (run_id: WorkflowRunId, idempotency_key: string) => Promise<void>;
 }
 
@@ -125,12 +123,14 @@ export interface BoundVerifiedCohortPullRequest extends VerifiedCohortPullReques
   readonly pull_request_id: import("../domain/pull-request").PullRequestId;
   readonly observation_id: import("../domain/pull-request").PullRequestObservationId;
   readonly verification_id: PullRequestVerificationId;
-  readonly binding: "created" | "current" | "replaced";
+  readonly binding: "created" | "current" | "replaced" | "head_advanced";
+  readonly pull_request_url: string;
+  readonly head_sha: string;
 }
 
 export interface PullRequestBindingError {
   readonly operation: "verify_cohort_pull_request";
-  readonly kind: "replacement_required" | "replacement_conflict";
+  readonly kind: "replacement_required" | "replacement_conflict" | "build_cohort_not_found";
   readonly detail: string;
   readonly current_verification_id: PullRequestVerificationId | null;
 }
@@ -176,23 +176,18 @@ export const verifyCohortPullRequest = async (
   return ok({ observation, pushed_head_sha: pushedHead });
 };
 
-/** Shared cohort/final-stage boundary: verify, retain the observation, bind it, then notify the build machine. */
+/** Verify against forge and origin, then retain the verified binding. */
 export const verifyAndBindCohortPullRequest = async (
   dependencies: {
     readonly pull_requests: DevFlowPullRequestRepository;
     readonly reader: PullRequestForgeReader;
     readonly git: GitCommandRunner;
     readonly now: () => string;
-    readonly record_build_event: (cohort_id: CohortId, event: BuildCohortEvent) => Promise<void>;
   },
   input: VerifyCohortPullRequestInput & { readonly replace_verification_id: PullRequestVerificationId | null },
 ): Promise<Result<BoundVerifiedCohortPullRequest, CohortPullRequestVerificationError | PullRequestBindingError>> => {
   const verified = await verifyCohortPullRequest(dependencies, input);
-  if (!verified.ok) {
-    await dependencies.record_build_event(input.cohort.cohort_id,
-      { kind: "pull_request_mismatch", pull_request_url: input.candidate_url });
-    return verified;
-  }
+  if (!verified.ok) return verified;
   const recordedAt = dependencies.now();
   const current = await dependencies.pull_requests.find_current_for_unit(input.cohort.stage_instance_id, input.cohort.cohort_key as UnitId);
   const stored = await dependencies.pull_requests.observe({ observation: verified.value.observation, recorded_at: recordedAt });
@@ -205,24 +200,15 @@ export const verifyAndBindCohortPullRequest = async (
       verified_head_sha: verified.value.pushed_head_sha, verified_at: recordedAt,
       replace_verification_id: input.replace_verification_id });
     if (!bound.ok) {
-      await dependencies.record_build_event(input.cohort.cohort_id,
-        { kind: "replacement_pull_request_required", pull_request_url: input.candidate_url });
       return err({ operation: "verify_cohort_pull_request", ...bound.error,
         current_verification_id: current?.cohort.current_verified_pull_request_id ?? null });
     }
-    verificationId = bound.value;
-    if (current) {
-      binding = "replaced";
-      await dependencies.record_build_event(input.cohort.cohort_id, { kind: "replacement_pull_request_required",
-        pull_request_url: current.pull_request.url });
-    }
+    verificationId = bound.value.id;
+    binding = bound.value.binding;
   }
   if (!verificationId) return verificationFailure("unreadable_pull_request", "verified pull request binding was not retained");
-  // Emitted on re-verification too: if the first delivery failed after the
-  // binding committed, a retry must be able to deliver the idempotent fact.
-  await dependencies.record_build_event(input.cohort.cohort_id, { kind: "pull_request_verified",
-    revision: verified.value.pushed_head_sha, pull_request_url: verified.value.observation.url });
-  return ok({ ...verified.value, ...stored, verification_id: verificationId, binding });
+  return ok({ ...verified.value, ...stored, verification_id: verificationId, binding,
+    pull_request_url: verified.value.observation.url, head_sha: verified.value.pushed_head_sha });
 };
 
 export interface AdvanceCohortRefInput { readonly cohort: DevFlowBuildCohort; readonly next_head_sha: string }
@@ -296,14 +282,12 @@ export interface CohortPullRequestError {
 /**
  * What became of the evidence.
  *
- * `merged_not_awaiting` is a real state, not a failure: a pull request can
- * merge before the assessor has approved it. The merge is recorded and the wait
- * closes on a later observation, once there is a wait to close.
+ * A merge event completes an awaiting_merge build cohort; earlier observations
+ * are retained by the pull request repository and can be rechecked later.
  */
 export type CohortPullRequestResolution =
   | { readonly kind: "completed" }
   | { readonly kind: "already_completed" }
-  | { readonly kind: "merged_not_awaiting"; readonly handoff_status: string | null }
   | { readonly kind: "waiting" }
   | { readonly kind: "ignored_stale" };
 
@@ -316,28 +300,26 @@ export interface ResolvedCohortPullRequest {
 const failure = (kind: CohortPullRequestError["kind"], detail: string, options: Pick<CohortPullRequestError, "reconciliation" | "current_verification_id"> = {}): Result<never, CohortPullRequestError> =>
   err({ operation: "reconcile_cohort_pull_request", kind, detail, ...options });
 
-interface CohortHandoff {
+interface CohortExpectation {
   readonly expected: ExpectedCohortPullRequest;
-  readonly handoff_artifact_id: ArtifactId;
-  readonly handoff_slot_state: "empty" | "pending" | "released" | "invalidated";
+  readonly status: import("../domain/records").CoreStatus;
 }
 
 /** Everything the run already knows about this cohort's pull request. */
-const loadCohortHandoff = async (
+const loadCohortExpectation = async (
   dependencies: CohortPullRequestDependencies,
   stageInstanceId: StageInstanceId,
   unitId: UnitId,
-): Promise<Result<CohortHandoff, CohortPullRequestError>> => {
-  const record = await dependencies.records.find_cohort_handoff(stageInstanceId, unitId);
-  if (!record) return failure("cohort_not_found", `no run-owned handoff for stage '${stageInstanceId}' unit '${unitId}'`);
+): Promise<Result<CohortExpectation, CohortPullRequestError>> => {
+  const location = await dependencies.records.find_cohort_location(stageInstanceId, unitId);
+  if (!location) return failure("cohort_not_found", `no cohort for stage '${stageInstanceId}' unit '${unitId}'`);
   const verified = await dependencies.pull_requests.find_current_for_unit(stageInstanceId, unitId);
   if (!verified) return failure("missing_pull_request_evidence", `unit '${unitId}' has no independently verified pull request`);
 
   return ok({
-    handoff_artifact_id: record.handoff_artifact_id,
-    handoff_slot_state: record.handoff_slot_state,
+    status: location.status,
     expected: {
-      run_id: record.run_id, stage_instance_id: record.stage_instance_id, unit_id: record.unit_id,
+      run_id: location.run_id, stage_instance_id: stageInstanceId, unit_id: unitId,
       repository_key: verified.cohort.repository_key,
       url: verified.pull_request.url,
       head_branch: verified.cohort.canonical_ref,
@@ -354,15 +336,13 @@ const independentlyVerifyAndBind = async (
   candidateUrl: string,
   replaceVerificationId: PullRequestVerificationId | null,
 ): Promise<Result<BoundVerifiedCohortPullRequest, CohortPullRequestError>> => {
-  const handoff = await dependencies.records.find_cohort_handoff(stageInstanceId, unitId);
+  const location = await dependencies.records.find_cohort_location(stageInstanceId, unitId);
   const cohort = await dependencies.pull_requests.find_cohort_for_unit(stageInstanceId, unitId);
-  if (!handoff || !cohort) return failure("cohort_not_found", `no stored build cohort for stage '${stageInstanceId}' unit '${unitId}'`);
-  const target = await dependencies.forge_targets.find(handoff.run_id, cohort.repository_key);
-  if (!target) return failure("missing_pull_request_evidence", `repository '${cohort.repository_key}' has no forge identity`);
-  const forgeRepository = target.forge_repository;
+  if (!location || !cohort) return failure("cohort_not_found", `no stored build cohort for stage '${stageInstanceId}' unit '${unitId}'`);
+  const forgeRepository = await dependencies.forge_repositories.find_forge_repository(location.run_id, cohort.repository_key);
+  if (!forgeRepository) return failure("missing_pull_request_evidence", `repository '${cohort.repository_key}' has no forge identity`);
   const verified = await verifyAndBindCohortPullRequest({ pull_requests: dependencies.pull_requests,
-    reader: dependencies.reader, git: dependencies.git, now: dependencies.now,
-    record_build_event: dependencies.record_build_event }, {
+    reader: dependencies.reader, git: dependencies.git, now: dependencies.now }, {
     cohort, forge_repository: forgeRepository, candidate_url: candidateUrl,
     replace_verification_id: replaceVerificationId,
   });
@@ -381,7 +361,7 @@ export const findCohortPullRequestExpectation = async (
   stageInstanceId: StageInstanceId,
   unitId: UnitId,
 ): Promise<Result<ExpectedCohortPullRequest, CohortPullRequestError>> => {
-  const loaded = await loadCohortHandoff(dependencies, stageInstanceId, unitId);
+  const loaded = await loadCohortExpectation(dependencies, stageInstanceId, unitId);
   return loaded.ok ? ok(loaded.value.expected) : loaded;
 };
 
@@ -403,16 +383,16 @@ export const reconcileCohortEvidence = async (
     if (!result.ok) return result;
     verified = result.value;
   }
-  const loaded = await loadCohortHandoff(dependencies, stageInstanceId, unitId);
+  const loaded = await loadCohortExpectation(dependencies, stageInstanceId, unitId);
   if (!loaded.ok) return loaded;
-  const { expected, handoff_artifact_id: handoffArtifactId, handoff_slot_state: handoffSlotState } = loaded.value;
+  const { expected, status } = loaded.value;
   const now = dependencies.now();
   const current = await dependencies.pull_requests.find_current_for_unit(stageInstanceId, unitId);
   if (!current || !current.cohort.current_verified_pull_request_id) {
     return failure("missing_pull_request_evidence", "verified pull request link disappeared before reconciliation");
   }
   const observation = current.observation;
-  const reconciled = reconcileCohortPullRequest({ expected, handoff_artifact_id: handoffArtifactId,
+  const reconciled = reconcileCohortPullRequest({ expected,
     observation, previous: null, reconciled_at: now });
   const verificationId = current.cohort.current_verified_pull_request_id;
 
@@ -425,7 +405,7 @@ export const reconcileCohortEvidence = async (
   if (Date.parse(observation.observed_at) > Date.parse(verified.observation.observed_at)) {
     return ok({ resolution: { kind: "ignored_stale" }, reconciliation: reconciled.reconciliation, verification_id: verificationId });
   }
-  if (handoffSlotState === "released") {
+  if (status === "complete") {
     return ok({ resolution: { kind: "already_completed" }, reconciliation: { ...reconciled.reconciliation, completed_at: now }, verification_id: verificationId });
   }
   if (reconciled.outcome.kind === "waiting") {
@@ -441,17 +421,9 @@ export const reconcileCohortEvidence = async (
   if (!closure.ok) return failure("mismatch", closure.error.detail, { reconciliation: reconciled.reconciliation,
     current_verification_id: verificationId });
 
-  const completion = await dependencies.records.complete_handoff_artifact({ artifact_id: handoffArtifactId,
-    external_kind: GITHUB_REVIEW_WAIT, actor: evidence.kind === "operator_confirmation" ? "operator" : "poller:github",
-    correlation_id: observation.url, decided_at: now });
-  if (completion.kind === "wait_not_found" || completion.kind === "wait_conflict") {
-    // Merged, but there is no wait open to close — the assessor has not
-    // approved yet, or something already closed it. Recorded either way; the
-    // next observation completes it once the wait exists.
-    return ok({ resolution: { kind: "merged_not_awaiting", handoff_status: completion.kind },
-      reconciliation: reconciled.reconciliation, verification_id: verificationId });
-  }
+  await dependencies.record_build_event(current.cohort.cohort_id,
+    { kind: "pull_request_merged", pull_request_url: observation.url });
   const completed = { ...reconciled.reconciliation, completed_at: now };
-  await dependencies.send_run_wake?.(completion.run_id, `${completion.kind}:${completion.run_id}:${completion.record_version}`).catch(() => undefined);
+  await dependencies.send_run_wake?.(expected.run_id, `pull_request_merged:${current.cohort.cohort_id}`).catch(() => undefined);
   return ok({ resolution: { kind: "completed" }, reconciliation: completed, verification_id: verificationId });
 };

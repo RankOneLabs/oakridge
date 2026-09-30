@@ -9,7 +9,6 @@
  * attempts, sessions, artifacts and waits.
  */
 import { attemptIdFor, sessionIdFor, transitionIdFor, waitGateCommandWorkflowId, waitGateIdFor } from "../decision/ids";
-import type { RunOwnedCohortHandoff } from "../domain/cohort-pull-request";
 import type { ArtifactEnvelope, ExecutionRequest, ExternalExecutionReference } from "../domain/execution";
 import { selectArtifactGateDisposition, selectBuiltInGateDisposition } from "../domain/gates";
 import { err, ok, type ArtifactId, type AttemptId, type CohortId, type JsonValue, type OutputCollectionKey, type Result, type RunRecordVersion, type SessionId, type StageInstanceId, type UnitId, type WaitId, type WorkflowRunId } from "../domain/primitives";
@@ -29,7 +28,6 @@ import type {
   CloseRunOutputWaitResult,
   CohortMachineState,
   CommittedRunTransition,
-  CompleteHandoffArtifact,
   DecidedCohortGate,
   DecideGateWait,
   InitializeRun,
@@ -255,6 +253,22 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
     });
   }
 
+  async fail_stage_roster(stage_instance_id: StageInstanceId, detail: string, failed_at: string): Promise<void> {
+    const rows = await this.sql.query<{ readonly run_id: string; readonly durable_version: string; readonly status: CoreStatus }>(
+      "SELECT run_id::text,durable_version::text,status FROM oakridge.stage_instance WHERE id=$1", [stage_instance_id]);
+    const stage = rows[0];
+    if (!stage) throw new Error(`stage instance '${stage_instance_id}' was not found`);
+    if (stage.status === "failed") return;
+    const committed = await this.writer.commit({
+      run_id: stage.run_id as WorkflowRunId, owner: { kind: "stage_instance", id: stage_instance_id },
+      expected_version: Number(stage.durable_version), launch_reason: "recovery",
+      change: { status: "failed", blocked_reason: null, next_actor: null,
+        outcome: { kind: "failed", code: "roster_failed", detail } },
+      effect: { kind: "none" }, actor: "core", changed_at: failed_at,
+    });
+    if (!committed.ok) throw new Error(`stage roster failure commit: ${committed.error.kind}`);
+  }
+
   async record_cohort_event(input: RecordCohortEvent): Promise<RecordCohortEventResult> {
     const committed = await this.writer.commit({
       run_id: input.run_id, owner: { kind: "cohort", id: input.cohort_id },
@@ -318,10 +332,10 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
     const rows = await sql.query<{
       readonly wait_id: string; readonly kind: "gate" | "handoff" | "external"; readonly status: "open" | "closed" | "cancelled";
       readonly output_name: string | null; readonly action: string | null; readonly artifact_id: string | null;
-      readonly accepted: boolean; readonly closed_at: string | null;
+      readonly accepted: boolean; readonly closed_at: string | null; readonly artifact_body: JsonValue | null;
     }>(
       `SELECT wait.id::text AS wait_id,wait.kind,wait.status,slot.output_name,wait.outcome->>'action' AS action,
-              link.artifact_id::text,
+              link.artifact_id::text,artifact.body AS artifact_body,
               COALESCE(EXISTS (SELECT 1 FROM oakridge.artifact_acceptance acceptance
                 WHERE acceptance.artifact_id=link.artifact_id),false) AS accepted,
               wait.closed_at::text AS closed_at
@@ -334,6 +348,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
          SELECT candidate.artifact_id FROM oakridge.wait_gate_artifact_revision candidate
          WHERE candidate.wait_gate_id=wait.id ORDER BY candidate.artifact_id LIMIT 1
        ) link ON true
+       LEFT JOIN oakridge.artifact artifact ON artifact.id=link.artifact_id
        WHERE wait.cohort_id=$1 ORDER BY wait.opened_at,wait.id`, [cohort_id]);
     return {
       // The parked revision travels with the open wait: it is the cohort's
@@ -341,7 +356,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       // machine into the review the wait is holding.
       open: rows.filter((row) => row.status === "open")
         .map((row) => ({ wait_id: row.wait_id as WaitId, kind: row.kind, output_name: row.output_name,
-          artifact_id: row.artifact_id as ArtifactId | null })),
+          artifact_id: row.artifact_id as ArtifactId | null, artifact_body: row.artifact_body })),
       decided: rows.filter((row) => row.status === "closed" && row.kind === "gate" && row.action !== null)
         .map((row) => ({ wait_id: row.wait_id as WaitId, output_name: row.output_name,
           action: row.action as string, artifact_id: row.artifact_id as ArtifactId | null,
@@ -352,10 +367,10 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
   private async listAcceptedCohortOutputs(sql: SqlExecutor, cohort_id: CohortId): Promise<readonly ArtifactEnvelope[]> {
     const rows = await sql.query<{
       readonly artifact_id: string; readonly artifact_type: string; readonly output_name: string;
-      readonly unit_id: string; readonly body: JsonValue; readonly chain_id: string;
+      readonly unit_id: string; readonly collection_key: string | null; readonly body: JsonValue; readonly chain_id: string;
     }>(
       `SELECT artifact.id::text AS artifact_id,artifact.artifact_type,acceptance.output_name,
-              cohort.cohort_key AS unit_id,artifact.body,artifact.chain_id::text
+              cohort.cohort_key AS unit_id,acceptance.collection_key,artifact.body,artifact.chain_id::text
        FROM oakridge.artifact_acceptance acceptance
        JOIN oakridge.artifact artifact ON artifact.id=acceptance.artifact_id
        JOIN oakridge.artifact_owner owner ON owner.artifact_id=artifact.id
@@ -363,7 +378,8 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
        WHERE owner.cohort_id=$1 AND artifact.lifecycle IN ('current','released')
        ORDER BY acceptance.output_name,artifact.revision DESC`, [cohort_id]);
     return rows.map((row) => ({ artifact_id: row.artifact_id as ArtifactId, artifact_type: row.artifact_type,
-      output_name: row.output_name, unit_id: row.unit_id as UnitId, body: row.body, chain_id: row.chain_id as ArtifactId }));
+      output_name: row.output_name, unit_id: row.unit_id as UnitId, collection_key: row.collection_key,
+      body: row.body, chain_id: row.chain_id as ArtifactId }));
   }
 
   async list_stage_cohort_ids(stage_instance_id: StageInstanceId): Promise<readonly CohortId[]> {
@@ -812,11 +828,6 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       actor: request.actor, detail: request.detail, decided_at: request.decided_at, kinds: ["gate"] });
   }
 
-  complete_handoff_artifact(request: CompleteHandoffArtifact): Promise<CloseRunOutputWaitResult> {
-    return this.closeWait({ wait: { kind: "artifact", artifact_id: request.artifact_id }, action: request.external_kind,
-      actor: request.actor, detail: request.correlation_id, decided_at: request.decided_at, kinds: ["handoff", "external"] });
-  }
-
   /**
    * Closes one wait and applies what its decision does to the slots it holds,
    * in one transaction: an action whose disposition releases accepts the
@@ -923,46 +934,14 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
     });
   }
 
-  /**
-   * The cohort's handoff output and what state its slot is in — what the
-   * pull-request reconciler reads before it closes the external wait.
-   */
-  async find_cohort_handoff(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<RunOwnedCohortHandoff | null> {
-    const rows = await this.sql.query<{
-      readonly run_id: string; readonly cohort_id: string; readonly repository_key: string | null;
-      readonly artifact_id: string | null; readonly lifecycle: string | null; readonly open_wait: boolean;
-      readonly accepted: boolean; readonly body: JsonValue | null;
-    }>(
-      `SELECT cohort.run_id::text,cohort.id::text AS cohort_id,build_cohort.repository_key,
-              handoff.id::text AS artifact_id,handoff.lifecycle,
-              handoff.open_wait,handoff.accepted,handoff.body
-       FROM oakridge.cohort cohort
-       LEFT JOIN oakridge.dev_flow_build_cohort build_cohort ON build_cohort.cohort_id=cohort.id
-       LEFT JOIN LATERAL (
-         SELECT artifact.id,artifact.lifecycle,artifact.body,
-                EXISTS (SELECT 1 FROM oakridge.wait_gate wait
-                  JOIN oakridge.wait_gate_artifact_revision link ON link.wait_gate_id=wait.id
-                  WHERE link.artifact_id=artifact.id AND wait.kind IN ('handoff','external') AND wait.status='open') AS open_wait,
-                EXISTS (SELECT 1 FROM oakridge.artifact_acceptance acceptance WHERE acceptance.artifact_id=artifact.id) AS accepted
-         FROM oakridge.artifact artifact
-         JOIN oakridge.artifact_owner owner ON owner.artifact_id=artifact.id
-         WHERE owner.cohort_id=cohort.id
-           AND EXISTS (SELECT 1 FROM oakridge.wait_gate wait
-             JOIN oakridge.wait_gate_artifact_revision link ON link.wait_gate_id=wait.id
-             WHERE link.artifact_id=artifact.id AND wait.kind IN ('handoff','external'))
-         ORDER BY artifact.revision DESC LIMIT 1
-       ) handoff ON true
-       WHERE cohort.stage_instance_id=$1 AND cohort.cohort_key=$2`, [stage_instance_id, unit_id]);
+  async find_cohort_location(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<{
+    readonly run_id: WorkflowRunId; readonly cohort_id: CohortId; readonly status: CoreStatus;
+  } | null> {
+    const rows = await this.sql.query<{ readonly run_id: string; readonly id: string; readonly status: CoreStatus }>(
+      "SELECT run_id::text,id::text,status FROM oakridge.cohort WHERE stage_instance_id=$1 AND cohort_key=$2",
+      [stage_instance_id, unit_id]);
     const row = rows[0];
-    if (!row || row.artifact_id === null) return null;
-    const handoff_slot_state = row.accepted ? "released" as const
-      : row.open_wait ? "pending" as const
-        : row.lifecycle === "withdrawn" ? "invalidated" as const : "empty" as const;
-    return {
-      run_id: row.run_id as WorkflowRunId, stage_instance_id, cohort_id: row.cohort_id as CohortId, unit_id,
-      repository_key: row.repository_key, handoff_artifact_id: row.artifact_id as ArtifactId,
-      handoff_slot_state, handoff_body: row.body ?? null,
-    };
+    return row ? { run_id: row.run_id as WorkflowRunId, cohort_id: row.id as CohortId, status: row.status } : null;
   }
 
   /* ---------------------------- run lifecycle ---------------------------- */

@@ -17,7 +17,7 @@ import type { OpenCohort } from "../domain/run-record";
 import { resolveAttemptExecution } from "../runtime/resolve-work-order";
 import type { RunRecordRepository } from "../storage/repositories";
 import type { CohortMachineDriver, CohortStepContext, CohortStepDecision } from "../workflows/run-record-topology";
-import { cohortIdFor, resolveCohortRoster } from "./cohort-roster";
+import { cohortIdFor, resolveCohortRoster, selectCohortOutputsSatisfied } from "./cohort-roster";
 
 /** `oakridge.cohort.stage_data` for a deterministic cohort. */
 interface DeterministicCohortStageData {
@@ -77,10 +77,8 @@ export const createDeterministicCohortDriver = (dependencies: DeterministicCohor
   async step(context: CohortStepContext): Promise<CohortStepDecision | null> {
     const contract = contractOf(context.stage_contract);
     const stageData = stageDataOf(context.state);
-    const owed = contract.outputs
-      .filter((output) => !context.state.accepted_outputs.some((artifact) => artifact.output_name === output.name));
-
-    if (owed.length === 0 && stageData.launched > 0) {
+    if (stageData.launched > 0 && context.state.open_waits.length === 0
+      && selectCohortOutputsSatisfied(contract, context, context.state.accepted_outputs)) {
       return {
         event: {
           change: { status: "complete", blocked_reason: null, next_actor: null, outcome: { kind: "succeeded" } },

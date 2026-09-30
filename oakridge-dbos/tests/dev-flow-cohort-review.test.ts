@@ -14,7 +14,7 @@
  */
 import { expect, test } from "bun:test";
 
-import { createDevFlowCohortDriver } from "../src/adapters/dev-flow-cohort";
+import { createDevFlowCohortDriver, type DevFlowCohortDriverDependencies } from "../src/adapters/dev-flow-cohort";
 import type { BuildCohortState, BuildCohortTransitionEffect } from "../src/adapters/dev-flow-build";
 import { compileWorkflowDefinition } from "../src/compiler/compile-workflow";
 import type { StageInputSet } from "../src/decision/commands";
@@ -24,10 +24,15 @@ import type { ArtifactId, CohortId, JsonValue, StageInstanceId, UnitId, WaitId, 
 import type { CohortMachineState } from "../src/domain/run-record";
 import { createPromptBundle } from "../src/runtime/prompt-template";
 import { loadDevFlowV15 } from "../src/seed/dev-flow-v15";
-import type { CohortStepContext, CohortStepDecision } from "../src/workflows/run-record-topology";
+import { selectCohortInputEnvelope, type CohortStepContext, type CohortStepDecision } from "../src/workflows/run-record-topology";
+import type { DevFlowPullRequestRepository } from "../src/storage/repositories";
+import type { DevFlowBuildCohort } from "../src/domain/cohort-pull-request";
+import type { AttemptId, RunTransitionId } from "../src/domain/primitives";
 
 const RUN_ID = "00000000-0000-4000-8200-000000000001" as WorkflowRunId;
 const STAGE_ID = "00000000-0000-4000-8200-000000000002" as StageInstanceId;
+const RUN_CONTEXT: JsonValue = { worker_runtime: "claude-code", worker_model: null, worker_effort: null,
+  oakridge_url: "http://127.0.0.1:8790" };
 
 const briefBody = (unit: string): JsonValue => ({
   cohort_id: unit, repository_key: "oakridge", title: unit, goal: "ship it", files_in_scope: [],
@@ -48,6 +53,11 @@ const BUILD_INPUTS: StageInputSet = {
       base_branch: "epic/test", base_head_sha: "9a8b7c6" } }],
 };
 
+test("a keyed input with no match is missing", () => {
+  const envelope = { ...briefEnvelope("foundation"), collection_key: "foundation" };
+  expect(selectCohortInputEnvelope([envelope], "web")).toBeUndefined();
+});
+
 const buildStage = async (): Promise<{ readonly contract: CompiledStageContract; readonly bundle: Awaited<ReturnType<typeof createPromptBundle>> }> => {
   const loaded = await loadDevFlowV15();
   if (!loaded.ok) throw new Error(loaded.error.detail);
@@ -59,11 +69,123 @@ const buildStage = async (): Promise<{ readonly contract: CompiledStageContract;
   return { contract, bundle };
 };
 
-const driverFor = (bundle: Awaited<ReturnType<typeof createPromptBundle>>) => createDevFlowCohortDriver({
+const driverFor = (bundle: Awaited<ReturnType<typeof createPromptBundle>>,
+  verify?: DevFlowCohortDriverDependencies["verify_build_pull_request"]) => createDevFlowCohortDriver({
   records: { load_work_order_capability_seed: async () => "seed-value-for-tests" },
-  pull_requests: { find_cohort_for_unit: async () => null },
+  pull_requests: { find_cohort_for_unit: async () => null } as unknown as DevFlowPullRequestRepository,
+  git: { async run() { return { exit_code: 0, stdout: "", stderr: "" }; } },
+  verify_build_pull_request: verify ?? (async () => ({ ok: false as const,
+    error: { operation: "verify_cohort_pull_request" as const, kind: "unreadable_pull_request" as const,
+      detail: "forge unavailable" } })),
   load_prompt_bundle: async () => bundle.matrix,
   stage_type: "delegated_session",
+});
+
+const verificationState = (): CohortMachineState => ({
+  run_id: RUN_ID, stage_instance_id: STAGE_ID, stage_key: "build",
+  cohort_id: "22222222-2222-4222-8222-000000000009" as CohortId,
+  cohort_key: "foundation", status: "active", blocked_reason: null, next_actor: "agent",
+  durable_version: 3, attempt_count: 1, latest_unfinished_attempt_id: null,
+  stage_data: { unit_id: "foundation", artifact: { unit_id: "foundation", artifact: briefBody("foundation") },
+    build_state: { phase: "builder_active", required_build_set: ["build_result", "pr_summary"],
+      accepted_revision: "build-1+pr-1", accepted_build_set: ["build_result", "pr_summary"],
+      verified_pull_request: null, assessment_artifact_id: null, is_pull_request_merged: false } },
+  accepted_outputs: [
+    { artifact_id: "build-1" as ArtifactId, artifact_type: "dev.build_result", output_name: "build_result",
+      unit_id: "foundation" as UnitId, body: { summary: "built" } },
+    { artifact_id: "pr-1" as ArtifactId, artifact_type: "dev.pr_summary", output_name: "pr_summary",
+      unit_id: "foundation" as UnitId, body: { pr_url: "https://github.com/RankOneLabs/oakridge/pull/7" } },
+  ], open_waits: [], decided_gates: [],
+});
+
+test("a verified PR for revision R opens build_review", async () => {
+  const { contract, bundle } = await buildStage();
+  const driver = driverFor(bundle, async () => ({ ok: true, value: {
+    pull_request_url: "https://github.com/RankOneLabs/oakridge/pull/7", head_sha: "head-1", binding: "created" } }));
+  const decision = await driver.step(contextOf(verificationState(), contract));
+  expect(decision?.event.change.status).toBe("blocked");
+  expect(buildStateOf(committed(verificationState(), decision!)).verified_pull_request?.revision).toBe("build-1+pr-1");
+});
+
+test("a verification mismatch emits pull_request_mismatch", async () => {
+  const { contract, bundle } = await buildStage();
+  const driver = driverFor(bundle, async () => ({ ok: false, error: {
+    operation: "verify_cohort_pull_request", kind: "head_commit_mismatch", detail: "wrong head" } }));
+  const decision = await driver.step(contextOf(verificationState(), contract));
+  expect((decision?.event.effect as unknown as BuildCohortTransitionEffect).event.kind).toBe("pull_request_mismatch");
+});
+
+test("an unreadable forge emits nothing", async () => {
+  const { contract, bundle } = await buildStage();
+  expect(await driverFor(bundle).step(contextOf(verificationState(), contract))).toBeNull();
+});
+
+test("a cohort outside the verification condition performs no forge or git read", async () => {
+  const { contract, bundle } = await buildStage();
+  let reads = 0;
+  const driver = driverFor(bundle, async () => { reads += 1; return { ok: false, error: {
+    operation: "verify_cohort_pull_request", kind: "unreadable_pull_request", detail: "unavailable" } }; });
+  const state = verificationState();
+  const build_state = buildStateOf(state);
+  await driver.step(contextOf({ ...state, stage_data: { ...state.stage_data as object,
+    build_state: { ...build_state, phase: "assessor_active" } } as JsonValue }, contract));
+  expect(reads).toBe(0);
+});
+
+const preparedCohort = (): DevFlowBuildCohort => ({
+  cohort_id: "22222222-2222-4222-8222-000000000009" as CohortId,
+  stage_instance_id: STAGE_ID, cohort_key: "foundation", repository_key: "oakridge",
+  repository_path: "/repo/oakridge", canonical_ref: `cohort/${STAGE_ID}/foundation`,
+  expected_pr_base: "epic/test", recorded_head_sha: "9a8b7c6",
+  current_verified_pull_request_id: null, created_at: "2026-09-29T00:00:00Z",
+  updated_at: "2026-09-29T00:00:00Z",
+});
+
+const initialBuildLaunch = async (dependencies: DevFlowCohortDriverDependencies) => {
+  const { contract } = await buildStage();
+  const driver = createDevFlowCohortDriver(dependencies);
+  const cohort = (await driver.open_cohorts({ run_id: RUN_ID, stage_instance_id: STAGE_ID,
+    stage_contract: contract as unknown as JsonValue, run_context: RUN_CONTEXT, inputs: BUILD_INPUTS }))[0]!;
+  const state: CohortMachineState = { ...verificationState(), cohort_id: cohort.id,
+    stage_data: cohort.stage_data, status: "pending", next_actor: "core", attempt_count: 0,
+    accepted_outputs: [], open_waits: [], decided_gates: [] };
+  const decision = await driver.step({ ...contextOf(state, contract), run_context: RUN_CONTEXT });
+  if (!decision?.launch) throw new Error("initial build did not launch");
+  return decision.launch.resolve_request("11111111-1111-4111-8111-000000000001" as AttemptId,
+    "11111111-1111-4111-8111-000000000002" as RunTransitionId);
+};
+
+test("prepare is skipped when the build cohort row exists", async () => {
+  const { bundle } = await buildStage();
+  let gitCalls = 0;
+  const request = await initialBuildLaunch({ stage_type: "delegated_session",
+    records: { load_work_order_capability_seed: async () => "seed-value-for-tests" },
+    load_prompt_bundle: async () => bundle.matrix,
+    pull_requests: { async find_cohort_for_unit() { return preparedCohort(); } } as unknown as DevFlowPullRequestRepository,
+    git: { async run() { gitCalls += 1; return { exit_code: 0, stdout: "", stderr: "" }; } },
+    verify_build_pull_request: async () => { throw new Error("unexpected verification"); },
+  });
+  expect(request).toBeDefined();
+  expect(gitCalls).toBe(0);
+});
+
+test("prepare runs once before the first builder launch", async () => {
+  const { bundle } = await buildStage();
+  let stored: DevFlowBuildCohort | null = null;
+  const commands: string[] = [];
+  const dependencies: DevFlowCohortDriverDependencies = { stage_type: "delegated_session",
+    records: { load_work_order_capability_seed: async () => "seed-value-for-tests" },
+    load_prompt_bundle: async () => bundle.matrix,
+    pull_requests: {
+      async find_cohort_for_unit() { return stored; },
+      async create_cohort(cohort: DevFlowBuildCohort) { stored = cohort; return { ok: true as const, value: cohort }; },
+    } as unknown as DevFlowPullRequestRepository,
+    git: { async run(_path, args) { commands.push(args[0]!); return { exit_code: 0, stdout: "", stderr: "" }; } },
+    verify_build_pull_request: async () => { throw new Error("unexpected verification"); },
+  };
+  await initialBuildLaunch(dependencies);
+  await initialBuildLaunch(dependencies);
+  expect(commands).toEqual(["ls-remote", "push"]);
 });
 
 const buildStateOf = (state: CohortMachineState): BuildCohortState =>
@@ -134,7 +256,7 @@ test("a build cohort enters its review on publication, presents the gate, and re
   const revision = buildStateOf(state).accepted_revision;
   expect(revision).not.toBeNull();
   const verified = await driver.apply_event(contextOf(state, contract),
-    { kind: "pull_request_verified", revision: revision as string, pull_request_url: "https://example.test/pull/7" });
+    { kind: "pull_request_verified", revision: revision as string, pull_request_url: "https://example.test/pull/7", head_sha: "head-1" });
   expect(verified).not.toBeNull();
   state = committed(state, verified!);
   expect(buildStateOf(state).phase).toBe("build_review");
@@ -168,7 +290,7 @@ test("a published assessment moves the cohort into its assessment review", async
   const build_state: BuildCohortState = {
     phase: "assessor_active", required_build_set: ["build_result", "pr_summary"],
     accepted_revision: "revision-1", accepted_build_set: ["build_result", "pr_summary"],
-    verified_pull_request: { url: "https://example.test/pull/7", revision: "revision-1" },
+    verified_pull_request: { url: "https://example.test/pull/7", revision: "revision-1", head_sha: "head-1" },
     assessment_artifact_id: null, is_pull_request_merged: false,
   };
   const state: CohortMachineState = {

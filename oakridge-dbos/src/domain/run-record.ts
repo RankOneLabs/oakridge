@@ -215,6 +215,7 @@ export interface OpenCohortWait {
   readonly kind: "gate" | "handoff" | "external";
   readonly output_name: string | null;
   readonly artifact_id: ArtifactId | null;
+  readonly artifact_body?: JsonValue | null;
 }
 
 /** The cohort state a machine reads before applying its next event. */
@@ -412,14 +413,6 @@ export interface DecideGateWait {
   readonly action: string;
   readonly actor: string;
   readonly detail: string | null;
-  readonly decided_at: string;
-}
-
-export interface CompleteHandoffArtifact {
-  readonly artifact_id: ArtifactId;
-  readonly external_kind: string;
-  readonly actor: string;
-  readonly correlation_id: string;
   readonly decided_at: string;
 }
 
