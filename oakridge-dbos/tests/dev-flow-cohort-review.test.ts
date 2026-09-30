@@ -441,3 +441,77 @@ test("re-verifying a cohort past its build review records the head without rewin
   expect(buildStateOf(after).phase).toBe("assessor_active");
   expect(buildStateOf(after).verified_pull_request?.head_sha).toBe("0ddba11");
 });
+
+const ASSESSMENT_WAIT = "11111111-1111-4111-8111-000000000009";
+const ASSESSMENT_ARTIFACT = "aaaaaaaa-1111-4111-8111-000000000009";
+
+const acceptedOutput = (artifact_id: string, artifact_type: string, output_name: string): CohortMachineState["accepted_outputs"][number] =>
+  ({ artifact_id: artifact_id as ArtifactId, artifact_type, output_name, unit_id: "web" as UnitId, body: {} });
+
+/** A cohort whose build was approved, whose assessment is published, and whose gate is held. */
+const atAssessmentReview = async (): Promise<{ state: CohortMachineState; readonly contract: CompiledStageContract;
+  readonly driver: ReturnType<typeof driverFor> }> => {
+  const { state: parked, contract, driver } = await publishedAndParked();
+  let state = await drainSteps(parked, contract, driver);
+  state = committed(state, (await driver.apply_event(contextOf(state, contract),
+    { kind: "pull_request_verified", head_sha: HEAD_SHA, pull_request_url: "https://example.test/pull/7" }))!);
+  state = { ...state, open_waits: [], accepted_outputs: [
+    acceptedOutput(BUILD_ARTIFACT, "dev.build_result", "build_result"),
+    acceptedOutput(SUMMARY_ARTIFACT, "dev.pr_summary", "pr_summary")],
+  decided_gates: [
+    decidedGate(BUILD_WAIT, "build_result", BUILD_ARTIFACT, "approve"),
+    decidedGate(SUMMARY_WAIT, "pr_summary", SUMMARY_ARTIFACT, "approve")] };
+  state = await drainSteps(state, contract, driver);
+  expect(buildStateOf(state).phase).toBe("assessor_active");
+  state = { ...state, open_waits: [openWait(ASSESSMENT_WAIT, "assessment", ASSESSMENT_ARTIFACT)] };
+  state = await drainSteps(state, contract, driver);
+  expect(buildStateOf(state).phase).toBe("assessment_review");
+  return { state, contract, driver };
+};
+
+const assessmentApproved = (state: CohortMachineState): CohortMachineState => ({ ...state, open_waits: [],
+  accepted_outputs: [...state.accepted_outputs, acceptedOutput(ASSESSMENT_ARTIFACT, "dev.assessment", "assessment")],
+  decided_gates: [...state.decided_gates, decidedGate(ASSESSMENT_WAIT, "assessment", ASSESSMENT_ARTIFACT, "approve")] });
+
+/**
+ * `awaiting_merge` is left on `pull_request_merged` and nothing else, and until
+ * `reconcileCohortEvidence` emitted that event no build cohort in `dev_flow_v15`
+ * had a producer for it: its only emitter was the final epic pull request's route.
+ * Every cohort parked here permanently, blocked on an external answer nobody could
+ * give.
+ */
+test("a merged pull request completes a cohort parked on the merge", async () => {
+  const { state: reviewing, contract, driver } = await atAssessmentReview();
+  let state = await drainSteps(assessmentApproved(reviewing), contract, driver);
+  expect(buildStateOf(state).phase).toBe("awaiting_merge");
+  expect({ status: state.status, blocked_reason: state.blocked_reason, next_actor: state.next_actor })
+    .toEqual({ status: "blocked", blocked_reason: "external", next_actor: "external" });
+
+  state = committed(state, (await driver.apply_event(contextOf(state, contract),
+    { kind: "pull_request_merged", pull_request_url: "https://example.test/pull/7" }))!);
+  expect(buildStateOf(state).phase).toBe("complete");
+  expect({ status: state.status, next_actor: state.next_actor }).toEqual({ status: "complete", next_actor: null });
+  expect(await driver.step(contextOf(state, contract))).toBeNull();
+});
+
+/** A merge can land before the assessor has approved; the cohort then completes at approval. */
+test("a merge observed before the assessment is approved completes the cohort at approval", async () => {
+  const { state: reviewing, contract, driver } = await atAssessmentReview();
+  let state = committed(reviewing, (await driver.apply_event(contextOf(reviewing, contract),
+    { kind: "pull_request_merged", pull_request_url: "https://example.test/pull/7" }))!);
+  expect(buildStateOf(state).phase).toBe("assessment_review");
+  expect(buildStateOf(state).is_pull_request_merged).toBe(true);
+
+  state = await drainSteps(assessmentApproved(state), contract, driver);
+  expect(buildStateOf(state).phase).toBe("complete");
+});
+
+/** A merge reported for some other pull request is not this cohort's completion. */
+test("a merge of a pull request this cohort never opened leaves it waiting", async () => {
+  const { state: reviewing, contract, driver } = await atAssessmentReview();
+  const state = await drainSteps(assessmentApproved(reviewing), contract, driver);
+  const after = committed(state, (await driver.apply_event(contextOf(state, contract),
+    { kind: "pull_request_merged", pull_request_url: "https://example.test/pull/99" }))!);
+  expect(buildStateOf(after).phase).toBe("awaiting_merge");
+  expect(buildStateOf(after).is_pull_request_merged).toBe(false);
+});

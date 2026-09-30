@@ -1,11 +1,15 @@
 /**
  * Deciding whether a cohort's pull request really merged.
  *
- * A build unit's `build_result` is released through a handoff whose external
- * wait is `github_review`. Something outside the run has to say that wait is
- * over, and "something said so" is not good enough: the whole point of the wait
- * is that the cohort's work landed, so the evidence has to be checked against
+ * Something outside the run has to say that a cohort's work landed, and
+ * "something said so" is not good enough: the evidence has to be checked against
  * what the build itself reported opening.
+ *
+ * `dev_flow_v15` declares no handoffs — a cohort's merge is recorded as a
+ * `pull_request_merge_closure` and told to the cohort's machine, not modelled as
+ * an external wait — so `handoff_artifact_id` is optional here. Core still
+ * supports a handoff release and a definition may declare one; a reconciliation
+ * carries its id when there is one to carry.
  *
  * Identity comes from the independently verified PR link and the stored cohort
  * refs. Agent-authored artifact bodies are never used as PR evidence.
@@ -70,7 +74,7 @@ export interface CohortPullRequestReconciliation {
   readonly stage_instance_id: StageInstanceId;
   readonly unit_id: UnitId;
   readonly repository_key: string;
-  /** Null only for rows written before handoff identity was persisted. */
+  /** Null when the stage declares no handoff, and for rows written before it was persisted. */
   readonly handoff_artifact_id: ArtifactId | null;
   readonly observation: PullRequestObservation;
   readonly mismatch: PullRequestMismatch | null;
@@ -93,7 +97,8 @@ export type CohortPullRequestOutcome =
 
 export interface ReconcileCohortPullRequestInput {
   readonly expected: ExpectedCohortPullRequest;
-  readonly handoff_artifact_id: ArtifactId;
+  /** Null when the stage releases through gates only, which every v15 stage does. */
+  readonly handoff_artifact_id: ArtifactId | null;
   readonly observation: PullRequestObservation;
   readonly previous: CohortPullRequestReconciliation | null;
   readonly reconciled_at: string;

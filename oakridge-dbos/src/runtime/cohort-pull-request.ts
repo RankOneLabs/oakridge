@@ -1,22 +1,24 @@
 /**
- * Closing a cohort's `github_review` wait on evidence that its pull request
- * merged.
+ * Completing a cohort on evidence that its pull request merged.
  *
- * A build unit's `build_result` is released through a handoff whose external
- * wait is `github_review`. The poller and operator recheck both arrive here,
- * but neither supplies trusted state: each triggers a fresh forge read and
- * origin ref check before reconciliation.
+ * The poller and the operator's confirm-merged both arrive here, and neither
+ * supplies trusted state: each triggers a fresh forge read and origin ref check
+ * before reconciliation. Identity comes from the cohort's current verified PR
+ * link; agent-authored artifact bodies never become verification evidence.
  *
- * The wait is named `github_review` and the evidence is a pull request. Its
- * identity comes from the cohort's current verified PR link; agent-authored
- * artifact bodies never become verification evidence.
+ * A merge is recorded as a `pull_request_merge_closure` and told to the cohort's
+ * machine as `pull_request_merged`. It used to close a `github_review` handoff
+ * wait instead, which `dev_flow_v15` does not declare — no stage in it declares a
+ * handoff at all — so every read here refused before reaching the checks. The
+ * handoff close is still performed for a definition that declares one.
  */
 import {
   reconcileCohortPullRequest,
   type CohortPullRequestReconciliation, type DevFlowBuildCohort, type ExpectedCohortPullRequest,
+  type RunOwnedCohortHandoff,
 } from "../domain/cohort-pull-request";
 import type { ReportedBuildCohortEvent } from "../adapters/dev-flow-build";
-import { err, ok, type ArtifactId, type CohortId, type Result, type StageInstanceId, type UnitId, type WorkflowRunId } from "../domain/primitives";
+import { err, ok, type CohortId, type Result, type StageInstanceId, type UnitId, type WorkflowRunId } from "../domain/primitives";
 import type { PullRequestObservation } from "../domain/pull-request";
 import { parseGithubPullRequestIdentity, repositoriesMatch, type PullRequestVerificationId } from "../domain/pull-request";
 import type { GitCommandRunner } from "../domain/repository-provisioning";
@@ -37,10 +39,10 @@ export interface CohortPullRequestDependencies {
   readonly forge_targets: FinalPullRequestTargetRepository;
   readonly reader: PullRequestForgeReader;
   readonly git: GitCommandRunner;
-  readonly records: Pick<RunRecordRepository, "find_cohort_handoff" | "complete_handoff_artifact">;
+  readonly records: Pick<RunRecordRepository, "find_cohort_handoff" | "complete_handoff_artifact" | "find_cohort_state">;
   readonly now: () => string;
   readonly record_build_event: (cohort_id: CohortId, event: ReportedBuildCohortEvent) => Promise<void>;
-  /** Wakes the run's root sooner than its bounded recheck once a merge releases the handoff — a hint, never a decision. */
+  /** Wakes the run's root sooner than its bounded recheck once a merge completes a cohort — a hint, never a decision. */
   readonly send_run_wake?: (run_id: WorkflowRunId, idempotency_key: string) => Promise<void>;
 }
 
@@ -307,9 +309,11 @@ export interface CohortPullRequestError {
 /**
  * What became of the evidence.
  *
- * `merged_not_awaiting` is a real state, not a failure: a pull request can
- * merge before the assessor has approved it. The merge is recorded and the wait
- * closes on a later observation, once there is a wait to close.
+ * `merged_not_awaiting` is a real state, not a failure: a definition that declares
+ * a handoff had no wait open to close. The closure is recorded and the cohort's
+ * machine is told either way, which is what completes the cohort — an early merge
+ * needs no wait, because the machine carries `is_pull_request_merged` until the
+ * assessment is approved.
  */
 export type CohortPullRequestResolution =
   | { readonly kind: "completed" }
@@ -327,32 +331,54 @@ export interface ResolvedCohortPullRequest {
 const failure = (kind: CohortPullRequestError["kind"], detail: string, options: Pick<CohortPullRequestError, "reconciliation" | "current_verification_id"> = {}): Result<never, CohortPullRequestError> =>
   err({ operation: "reconcile_cohort_pull_request", kind, detail, ...options });
 
-interface CohortHandoff {
+interface CohortPullRequestContext {
   readonly expected: ExpectedCohortPullRequest;
-  readonly handoff_artifact_id: ArtifactId;
-  readonly handoff_slot_state: "empty" | "pending" | "released" | "invalidated";
+  readonly cohort: DevFlowBuildCohort;
+  /** The handoff this cohort's output releases through, when its stage declares one. */
+  readonly handoff: RunOwnedCohortHandoff | null;
 }
 
-/** Everything the run already knows about this cohort's pull request. */
-const loadCohortHandoff = async (
+/**
+ * The run a stored cohort belongs to. `dev_flow_build_cohort` is keyed by
+ * (stage instance, unit) and keeps no run id, and the handoff record that used to
+ * supply one only exists for a stage that declares a handoff — which no v15 stage
+ * does. The cohort's own machine state has it.
+ */
+const runIdOf = async (dependencies: CohortPullRequestDependencies, cohort_id: CohortId): Promise<WorkflowRunId | null> =>
+  (await dependencies.records.find_cohort_state(cohort_id))?.run_id ?? null;
+
+/**
+ * Everything the run already knows about this cohort's pull request.
+ *
+ * Built from the stored cohort and the verified PR link rather than from a
+ * handoff record. Requiring the handoff meant every read here refused with
+ * `cohort_not_found` under `dev_flow_v15`, whose stages declare gates only — so
+ * neither the merge poller nor the operator's confirm-merged button could reach
+ * the checks at all.
+ */
+const loadCohortContext = async (
   dependencies: CohortPullRequestDependencies,
   stageInstanceId: StageInstanceId,
   unitId: UnitId,
-): Promise<Result<CohortHandoff, CohortPullRequestError>> => {
-  const record = await dependencies.records.find_cohort_handoff(stageInstanceId, unitId);
-  if (!record) return failure("cohort_not_found", `no run-owned handoff for stage '${stageInstanceId}' unit '${unitId}'`);
+): Promise<Result<CohortPullRequestContext, CohortPullRequestError>> => {
+  const cohort = await dependencies.pull_requests.find_cohort_for_unit(stageInstanceId, unitId);
+  if (!cohort) return failure("cohort_not_found", `no stored build cohort for stage '${stageInstanceId}' unit '${unitId}'`);
   const verified = await dependencies.pull_requests.find_current_for_unit(stageInstanceId, unitId);
   if (!verified) return failure("missing_pull_request_evidence", `unit '${unitId}' has no independently verified pull request`);
+  const handoff = await dependencies.records.find_cohort_handoff(stageInstanceId, unitId);
+  // From the cohort's own state, not the handoff record's join, so there is one
+  // answer to "which run owns this cohort" whether a handoff exists or not.
+  const run_id = await runIdOf(dependencies, cohort.cohort_id);
+  if (!run_id) return failure("cohort_not_found", `cohort '${cohort.cohort_id}' belongs to no run`);
 
   return ok({
-    handoff_artifact_id: record.handoff_artifact_id,
-    handoff_slot_state: record.handoff_slot_state,
+    cohort, handoff,
     expected: {
-      run_id: record.run_id, stage_instance_id: record.stage_instance_id, unit_id: record.unit_id,
-      repository_key: verified.cohort.repository_key,
+      run_id, stage_instance_id: stageInstanceId, unit_id: unitId,
+      repository_key: cohort.repository_key,
       url: verified.pull_request.url,
-      head_branch: verified.cohort.canonical_ref,
-      base_branch: verified.cohort.expected_pr_base,
+      head_branch: cohort.canonical_ref,
+      base_branch: cohort.expected_pr_base,
       forge_repository: { provider: "github", owner: verified.pull_request.owner, name: verified.pull_request.name },
     },
   });
@@ -365,10 +391,11 @@ const independentlyVerifyAndBind = async (
   candidateUrl: string,
   replaceVerificationId: PullRequestVerificationId | null,
 ): Promise<Result<BoundVerifiedCohortPullRequest, CohortPullRequestError>> => {
-  const handoff = await dependencies.records.find_cohort_handoff(stageInstanceId, unitId);
   const cohort = await dependencies.pull_requests.find_cohort_for_unit(stageInstanceId, unitId);
-  if (!handoff || !cohort) return failure("cohort_not_found", `no stored build cohort for stage '${stageInstanceId}' unit '${unitId}'`);
-  const target = await dependencies.forge_targets.find(handoff.run_id, cohort.repository_key);
+  if (!cohort) return failure("cohort_not_found", `no stored build cohort for stage '${stageInstanceId}' unit '${unitId}'`);
+  const runId = await runIdOf(dependencies, cohort.cohort_id);
+  if (!runId) return failure("cohort_not_found", `cohort '${cohort.cohort_id}' belongs to no run`);
+  const target = await dependencies.forge_targets.find(runId, cohort.repository_key);
   if (!target) return failure("missing_pull_request_evidence", `repository '${cohort.repository_key}' has no forge identity`);
   const forgeRepository = target.forge_repository;
   const verified = await verifyAndBindCohortPullRequest({ pull_requests: dependencies.pull_requests,
@@ -456,7 +483,7 @@ export const findCohortPullRequestExpectation = async (
   stageInstanceId: StageInstanceId,
   unitId: UnitId,
 ): Promise<Result<ExpectedCohortPullRequest, CohortPullRequestError>> => {
-  const loaded = await loadCohortHandoff(dependencies, stageInstanceId, unitId);
+  const loaded = await loadCohortContext(dependencies, stageInstanceId, unitId);
   return loaded.ok ? ok(loaded.value.expected) : loaded;
 };
 
@@ -478,16 +505,16 @@ export const reconcileCohortEvidence = async (
     if (!result.ok) return result;
     verified = result.value;
   }
-  const loaded = await loadCohortHandoff(dependencies, stageInstanceId, unitId);
+  const loaded = await loadCohortContext(dependencies, stageInstanceId, unitId);
   if (!loaded.ok) return loaded;
-  const { expected, handoff_artifact_id: handoffArtifactId, handoff_slot_state: handoffSlotState } = loaded.value;
+  const { expected, handoff } = loaded.value;
   const now = dependencies.now();
   const current = await dependencies.pull_requests.find_current_for_unit(stageInstanceId, unitId);
   if (!current || !current.cohort.current_verified_pull_request_id) {
     return failure("missing_pull_request_evidence", "verified pull request link disappeared before reconciliation");
   }
   const observation = current.observation;
-  const reconciled = reconcileCohortPullRequest({ expected, handoff_artifact_id: handoffArtifactId,
+  const reconciled = reconcileCohortPullRequest({ expected, handoff_artifact_id: handoff?.handoff_artifact_id ?? null,
     observation, previous: null, reconciled_at: now });
   const verificationId = current.cohort.current_verified_pull_request_id;
 
@@ -500,7 +527,7 @@ export const reconcileCohortEvidence = async (
   if (Date.parse(observation.observed_at) > Date.parse(verified.observation.observed_at)) {
     return ok({ resolution: { kind: "ignored_stale" }, reconciliation: reconciled.reconciliation, verification_id: verificationId });
   }
-  if (handoffSlotState === "released") {
+  if (handoff?.handoff_slot_state === "released") {
     return ok({ resolution: { kind: "already_completed" }, reconciliation: { ...reconciled.reconciliation, completed_at: now }, verification_id: verificationId });
   }
   if (reconciled.outcome.kind === "waiting") {
@@ -516,17 +543,31 @@ export const reconcileCohortEvidence = async (
   if (!closure.ok) return failure("mismatch", closure.error.detail, { reconciliation: reconciled.reconciliation,
     current_verification_id: verificationId });
 
-  const completion = await dependencies.records.complete_handoff_artifact({ artifact_id: handoffArtifactId,
-    external_kind: GITHUB_REVIEW_WAIT, actor: evidence.kind === "operator_confirmation" ? "operator" : "poller:github",
+  // The completion, in v15: the closure is recorded and the cohort's own machine
+  // is told. No stage declares a handoff, so there is no external wait to close,
+  // and `pull_request_merged` is the only thing that can move a cohort out of
+  // `awaiting_merge`. Emitted on a replay too — if a first delivery failed after
+  // the closure committed, the retry has to be able to deliver the fact.
+  //
+  // A merge that arrives before the assessor has approved needs no special case:
+  // the machine records `is_pull_request_merged` and `assessment_review_approved`
+  // then completes the cohort directly instead of parking it.
+  await dependencies.record_build_event(current.cohort.cohort_id,
+    { kind: "pull_request_merged", pull_request_url: observation.url });
+
+  // A definition that *does* declare a handoff still has its wait closed, and a
+  // wait that is missing or already closed is not a failure here: the machine has
+  // been told, which is what completes the cohort.
+  const completion = handoff === null ? null : await dependencies.records.complete_handoff_artifact({
+    artifact_id: handoff.handoff_artifact_id, external_kind: GITHUB_REVIEW_WAIT,
+    actor: evidence.kind === "operator_confirmation" ? "operator" : "poller:github",
     correlation_id: observation.url, decided_at: now });
-  if (completion.kind === "wait_not_found" || completion.kind === "wait_conflict") {
-    // Merged, but there is no wait open to close — the assessor has not
-    // approved yet, or something already closed it. Recorded either way; the
-    // next observation completes it once the wait exists.
-    return ok({ resolution: { kind: "merged_not_awaiting", handoff_status: completion.kind },
-      reconciliation: reconciled.reconciliation, verification_id: verificationId });
-  }
-  const completed = { ...reconciled.reconciliation, completed_at: now };
-  await dependencies.send_run_wake?.(completion.run_id, `${completion.kind}:${completion.run_id}:${completion.record_version}`).catch(() => undefined);
-  return ok({ resolution: { kind: "completed" }, reconciliation: completed, verification_id: verificationId });
+  const runId = completion !== null && completion.kind !== "wait_not_found" && completion.kind !== "wait_conflict"
+    ? completion.run_id : expected.run_id;
+  await dependencies.send_run_wake?.(runId, `pull_request_merged:${runId}:${current.pull_request.id}`).catch(() => undefined);
+  const resolution: CohortPullRequestResolution =
+    completion !== null && (completion.kind === "wait_not_found" || completion.kind === "wait_conflict")
+      ? { kind: "merged_not_awaiting", handoff_status: completion.kind }
+      : closure.value.kind === "replayed" ? { kind: "already_completed" } : { kind: "completed" };
+  return ok({ resolution, reconciliation: { ...reconciled.reconciliation, completed_at: now }, verification_id: verificationId });
 };

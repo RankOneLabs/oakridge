@@ -7,7 +7,7 @@ import {
 import { invalidatePullRequestForReplacement, type PullRequestApproval, type PullRequestObservation, type PullRequestObservationId, type PullRequestId, type PullRequestVerificationId, type VerifiedPullRequestLink } from "../src/domain/pull-request";
 import type { ArtifactId, CohortId, StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
 import { renderCohortBranchContract, selectCohortBranchRoles } from "../src/domain/repository-refs";
-import { advanceCohortRef, advanceStoredCohortRef, prepareDevFlowBuildCohort, verifyAndBindCohortPullRequest, verifyCohortPullRequest, verifyReportedCohortPullRequest } from "../src/runtime/cohort-pull-request";
+import { advanceCohortRef, advanceStoredCohortRef, prepareDevFlowBuildCohort, reconcileCohortEvidence, verifyAndBindCohortPullRequest, verifyCohortPullRequest, verifyReportedCohortPullRequest } from "../src/runtime/cohort-pull-request";
 import type { ReportedBuildCohortEvent } from "../src/adapters/dev-flow-build";
 import { BunGitCommandRunner } from "../src/runtime/git-command-runner";
 import type { DevFlowPullRequestRepository } from "../src/storage/repositories";
@@ -332,7 +332,9 @@ test("cohort HTTP exposes the verification id needed to authorize replacement", 
     forge_targets: { async find() { return { forge_repository: { owner: "RankOneLabs", name: "oakridge" } }; } } as never,
     records: { async find_cohort_handoff() { return { run_id: expected.run_id, stage_instance_id: expected.stage_instance_id,
       unit_id: expected.unit_id, repository_key: "oakridge", handoff_artifact_id: firstHandoffId,
-      handoff_slot_state: "pending", handoff_body: {} }; } } as never,
+      handoff_slot_state: "pending", handoff_body: {} }; },
+    async find_cohort_state() { return { run_id: expected.run_id, stage_instance_id: expected.stage_instance_id,
+      cohort_key: expected.unit_id }; } } as never,
     reader: { async read() { return candidate; } },
     git: { async run() { return { exit_code: 0, stdout: "new-head\trefs/heads/cohort/foundation\n", stderr: "" }; } },
     now: () => "2026-09-29T01:00:00Z", async record_build_event() {},
@@ -548,4 +550,90 @@ test("a repository with no forge identity is not applicable rather than a mismat
   expect(await verifyReportedCohortPullRequest(fixture.dependencies, reportedInput(expected.url)))
     .toEqual({ kind: "not_applicable", detail: expect.stringContaining("forge identity") });
   expect(fixture.events).toEqual([]);
+});
+
+/* ------------------------------------------------------------------ *
+ * Completing a cohort on a merge, without a handoff wait
+ * ------------------------------------------------------------------ */
+
+/**
+ * `dev_flow_v15` declares gates and no handoffs, so `find_cohort_handoff` returns
+ * null for every cohort in it. Reconciliation used to require that record and
+ * refused with `cohort_not_found` before reaching a single check — so neither the
+ * merge poller nor the operator's confirm-merged button could complete a cohort,
+ * and every one of them parked in `awaiting_merge` after assessment approval.
+ */
+const mergedFixture = (overrides: { readonly handoff?: boolean } = {}) => {
+  const merged = observation({ state: "merged", merged_at: "2026-09-29T03:00:00.000Z",
+    observed_at: "2026-09-29T03:01:00.000Z", head_sha: "merged-head", source: "poll" });
+  const cohort = { ...storedCohort("/repo", "merged-head"), current_verified_pull_request_id: VERIFICATION };
+  const events: ReportedBuildCohortEvent[] = [];
+  const closures: string[] = [];
+  const wakes: string[] = [];
+  const pull_requests = {
+    async find_cohort_for_unit() { return cohort; },
+    async find_current_for_unit() {
+      return { cohort, pull_request: { id: PR_440, provider: "github" as const, owner: "RankOneLabs",
+        name: "oakridge", forge_pull_request_id: 440, url: expected.url, created_at: "2026-09-29T00:00:00Z" },
+      observation: { ...merged, id: "00000000-0000-4000-8000-000000000037" as PullRequestObservationId,
+        pull_request_id: PR_440, recorded_at: "2026-09-29T03:01:00.000Z" } };
+    },
+    async observe() { return { pull_request_id: PR_440,
+      observation_id: "00000000-0000-4000-8000-000000000038" as PullRequestObservationId }; },
+    async bind_verified() { return { ok: true as const, value: VERIFICATION }; },
+    async confirm_merge(input: { readonly idempotency_key: string }) {
+      closures.push(input.idempotency_key);
+      return { ok: true as const, value: { kind: "created" as const, closure: {} } };
+    },
+  } as unknown as DevFlowPullRequestRepository;
+  return { events, closures, wakes, merged, cohort, dependencies: {
+    pull_requests,
+    forge_targets: { async find() { return { forge_repository: { owner: "RankOneLabs", name: "oakridge" } }; } } as never,
+    reader: { async read() { return merged; } },
+    git: { async run() { return { exit_code: 0, stdout: "merged-head\trefs/heads/cohort/foundation\n", stderr: "" }; } },
+    records: {
+      async find_cohort_handoff() {
+        return overrides.handoff === true ? { run_id: expected.run_id, stage_instance_id: expected.stage_instance_id,
+          unit_id: expected.unit_id, repository_key: "oakridge", handoff_artifact_id: firstHandoffId,
+          handoff_slot_state: "pending", handoff_body: {} } : null;
+      },
+      async find_cohort_state() { return { run_id: expected.run_id, stage_instance_id: expected.stage_instance_id,
+        cohort_key: expected.unit_id }; },
+      async complete_handoff_artifact() { return { kind: "released" as const, artifact_id: firstHandoffId,
+        run_id: expected.run_id, cohort_id: cohort.cohort_id, record_version: 9 }; },
+    } as never,
+    now: () => "2026-09-29T03:02:00.000Z",
+    async record_build_event(_id: CohortId, event: ReportedBuildCohortEvent) { events.push(event); },
+    async send_run_wake(_run: WorkflowRunId, key: string) { wakes.push(key); },
+  } };
+};
+
+test("a merged cohort with no handoff is completed by telling its machine", async () => {
+  const fixture = mergedFixture();
+  const result = await reconcileCohortEvidence(fixture.dependencies as never,
+    expected.stage_instance_id, expected.unit_id, { kind: "observation", observation: fixture.merged, replace_verification_id: null });
+  expect(result.ok && result.value.resolution).toEqual({ kind: "completed" });
+  expect(fixture.events.map((event) => event.kind)).toEqual(["pull_request_verified", "pull_request_merged"]);
+  expect(fixture.events.at(-1)).toEqual({ kind: "pull_request_merged", pull_request_url: expected.url });
+  expect(fixture.closures).toEqual([`forge:${PR_440}:${fixture.merged.merged_at}`]);
+  expect(fixture.wakes).toHaveLength(1);
+});
+
+test("an operator confirmation completes the same way and carries its own idempotency key", async () => {
+  const fixture = mergedFixture();
+  const result = await reconcileCohortEvidence(fixture.dependencies as never,
+    expected.stage_instance_id, expected.unit_id,
+    { kind: "operator_confirmation", idempotency_key: "operator-merge-1", operator_comment: "merged by hand" });
+  expect(result.ok && result.value.resolution).toEqual({ kind: "completed" });
+  expect(fixture.closures).toEqual(["operator-merge-1"]);
+  expect(fixture.events.at(-1)).toEqual({ kind: "pull_request_merged", pull_request_url: expected.url });
+});
+
+/** A definition that does declare a handoff still has its wait closed. */
+test("a declared handoff wait is still closed alongside the machine event", async () => {
+  const fixture = mergedFixture({ handoff: true });
+  const result = await reconcileCohortEvidence(fixture.dependencies as never,
+    expected.stage_instance_id, expected.unit_id, { kind: "observation", observation: fixture.merged, replace_verification_id: null });
+  expect(result.ok && result.value.resolution).toEqual({ kind: "completed" });
+  expect(fixture.events.at(-1)).toEqual({ kind: "pull_request_merged", pull_request_url: expected.url });
 });
