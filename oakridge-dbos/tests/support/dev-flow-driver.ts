@@ -1,5 +1,5 @@
 /**
- * Everyone but the agent, talking to Oakridge the way they really do.
+ * Public operator actions plus the fake ACP process used by the harness.
  *
  * The agent emits artifacts through the work-order emit route. The operator
  * approves gates through the gate resume route, and confirms a merge through
@@ -9,12 +9,14 @@
  * how a deadlock ships green.
  */
 import { expect } from "bun:test";
+import { agent, ndJsonStream, PROTOCOL_VERSION, type AgentContext } from "@agentclientprotocol/sdk";
+import { Readable, Writable } from "node:stream";
 
 import type { OperatorArtifactDetail, OperatorParkedGate, OperatorRunDetail, OperatorRunSummary, OperatorReviewInbox } from "../../src/domain/operator-projections";
 import type { ArtifactId, JsonValue, UnitId, WorkflowDefinitionId, WorkflowRunId } from "../../src/domain/primitives";
-import type { ExecutionRequest } from "../../src/domain/execution";
+import { sendRunWakeHint } from "../../src/http/dbos-transport";
 import type { SqlExecutor } from "../../src/storage/sql-executor";
-import { artifactBody, awaitCondition, cohortHeadBranch, cohortPullRequestUrl, executionOperatorRole, type ScriptedAgentScenario } from "./dev-flow-harness";
+import { awaitCondition, cohortHeadBranch, cohortPullRequestUrl, type ScriptedAgentScenario } from "./dev-flow-harness";
 
 const readJson = async <Value>(response: Response, describe: string): Promise<Value> => {
   const text = await response.text();
@@ -42,69 +44,6 @@ export const launchRun = async (baseUrl: string, definitionId: WorkflowDefinitio
   });
   const summary = await readJson<OperatorRunSummary>(response, "run launch");
   return { run_id: summary.id, root_workflow_id: summary.current_attempt_root_workflow_id };
-};
-
-/** What one emitted artifact became, as the emit route reports it. */
-export interface EmittedArtifact {
-  readonly artifact_id: ArtifactId;
-  readonly output_name: string;
-  readonly unit_id: string;
-  /** The release policy that took the artifact, straight from the route. */
-  readonly release: "released" | "waiting_gate" | "waiting_handoff";
-}
-
-interface WorkOrderEmitResponse {
-  readonly artifact_id: ArtifactId;
-  readonly state: "released" | "pending";
-}
-
-/** Which of a unit's outputs an emission covers, and which round it is. */
-export interface EmissionOptions {
-  /** A later round carries the same identity and different content. */
-  readonly revision?: number;
-  /**
-   * Restricts the emission to these outputs. A revising agent re-emits only
-   * what changed: an already-released output is final, and the run refuses to
-   * revise one — which is right, and means "emit everything again" is not what
-   * a revision looks like.
-   */
-  readonly outputs?: readonly string[];
-  /**
-   * Restricts the emission to these collection members — the `artifact_collection`
-   * analog of `outputs`, for re-emitting one cohort's brief (say) without
-   * touching the others `request.expected_artifacts` still lists.
-   */
-  readonly unit_ids?: readonly string[];
-}
-
-/**
- * The agent's side of one execution: emit the artifacts the unit owes, through
- * the same route a real coding agent calls.
- */
-export const emitDeclaredArtifacts = async (baseUrl: string, request: ExecutionRequest, options: EmissionOptions = {}): Promise<readonly EmittedArtifact[]> => {
-  const revision = options.revision ?? 1;
-  const emitted: EmittedArtifact[] = [];
-  for (const expected of request.expected_artifacts) {
-    if (options.outputs && !options.outputs.includes(expected.output_name)) continue;
-    if (options.unit_ids && !options.unit_ids.includes(expected.unit_id)) continue;
-    const publication = (request.resolved_config as { readonly publication?: { readonly work_order_id: string; readonly capability: string } }).publication;
-    if (!publication) throw new Error(`execution '${request.execution_id}' resolved with no v2 publication — a harness bug, not a legacy execution to emulate`);
-    const url = `${baseUrl}/work-orders/${publication.work_order_id}/emit/${expected.output_name}`;
-    const response = await fetch(url, {
-      method: "PUT",
-      // The revision rides in the key and the body alike: an unchanged payload
-      // under a new key is still the same artifact, and an unchanged key is a
-      // replay of the first emission whatever the payload says.
-      headers: { "content-type": "application/json", "idempotency-key": `${request.execution_id}:${expected.unit_id}:${expected.output_name}:v${revision}`,
-        "work-order-capability": publication.capability,
-        ...(expected.unit_id !== request.unit_id ? { "output-collection-key": expected.unit_id } : {}) },
-      body: JSON.stringify(artifactBody(request, expected.unit_id, expected.output_name, revision) as JsonValue),
-    });
-    const result = await readJson<WorkOrderEmitResponse>(response, `emit ${expected.output_name} for unit ${expected.unit_id}`);
-    const release = result.state === "released" ? "released" : executionOperatorRole(request) === "build" ? "waiting_handoff" : "waiting_gate";
-    emitted.push({ artifact_id: result.artifact_id, output_name: expected.output_name, unit_id: expected.unit_id, release });
-  }
-  return emitted;
 };
 
 /** The gate an artifact is parked in, once the operator surface shows it. */
@@ -163,7 +102,7 @@ const postCohortEvidence = async (baseUrl: string, cohortId: string, body: unkno
   });
   const text = await response.text();
   if (response.ok) return { kind: "accepted", outcome: (JSON.parse(text) as { outcome: { kind: string } }).outcome.kind };
-  if (response.status !== 409) throw new Error(`cohort pull request evidence for ${cohortId} failed: ${response.status} ${text}`);
+  if (response.status !== 404 && response.status !== 409) throw new Error(`cohort pull request evidence for ${cohortId} failed: ${response.status} ${text}`);
   return { kind: "refused", detail: `${response.status} ${text}` };
 };
 
@@ -255,15 +194,9 @@ export const driveRun = async <Value>(baseUrl: string, agent: ScriptedAgentScena
   const decided = new Set<string>();
   const deadline = Date.now() + options.timeout_ms;
   for (;;) {
-    for (const [workflowId, request] of agent.launched) {
+    for (const [workflowId] of agent.launched) {
       if (driven.has(workflowId)) continue;
       driven.add(workflowId);
-      // The execution's publication handle is its own work order — the seam
-      // the adapter and the emit route agree on.
-      const publication = (request.resolved_config as { readonly publication?: { readonly work_order_id: string } }).publication;
-      expect(publication?.work_order_id).toBe(workflowId);
-      await emitDeclaredArtifacts(baseUrl, request);
-      agent.succeed(request.execution_id);
     }
 
     // `listV2PendingGates` reports a collection-key gate's `unit_id` as the
@@ -290,7 +223,14 @@ export const driveRun = async <Value>(baseUrl: string, agent: ScriptedAgentScena
 
     const value = await options.until();
     if (value !== null) return { value, driven, confirmed };
-    if (Date.now() > deadline) throw new Error(`driveRun timed out after ${options.timeout_ms}ms waiting for run ${run.run_id}'s condition`);
+    if (Date.now() > deadline) {
+      const diagnostic = { run: await readRun(baseUrl, run.run_id), gates: await listRunGates(baseUrl, run.run_id),
+        inbox: (await readReviewInbox(baseUrl)).items.filter((item) => item.run_id === run.run_id),
+        deliveries: agent.deliveries,
+        launches: [...agent.launched.entries()].map(([id, launch]) => ({ id, expected: launch.expected_artifacts,
+          prompt_tail: String((launch.resolved_config as { readonly rendered_prompt?: string }).rendered_prompt).slice(-700) })) };
+      throw new Error(`driveRun timed out after ${options.timeout_ms}ms waiting for run ${run.run_id}'s condition: ${JSON.stringify(diagnostic)}`);
+    }
     await Bun.sleep(50);
   }
 };
@@ -315,6 +255,136 @@ export const readRunRecordFingerprint = async (sql: SqlExecutor, runId: Workflow
  * taken before either ask still matches the one taken after both.
  */
 /** How long the record must sit unchanged before the root is taken to be parked: several asks' worth, well under the 5 s recheck. */
-export const assertQuietAsk = async (_sql: SqlExecutor, _runId: WorkflowRunId): Promise<void> => {
-  throw new Error("quiet run-record asks are unavailable until the v15 runtime is composed in cohort c8");
+export const assertQuietAsk = async (sql: SqlExecutor, runId: WorkflowRunId): Promise<void> => {
+  const before = await readRunRecordFingerprint(sql, runId);
+  await sendRunWakeHint(runId, `acceptance-quiet-ask-1:${crypto.randomUUID()}`);
+  await Bun.sleep(250);
+  await sendRunWakeHint(runId, `acceptance-quiet-ask-2:${crypto.randomUUID()}`);
+  await Bun.sleep(250);
+  expect(await readRunRecordFingerprint(sql, runId)).toEqual(before);
 };
+
+interface PromptOutput { readonly output_name: string; readonly unit_id: string }
+interface PromptPublication {
+  readonly base_url: string;
+  readonly work_order_id: string;
+  readonly capability: string;
+  readonly unit_id: string;
+  readonly operator_role: "spec" | "plan" | "brief" | "build" | "assess";
+  readonly stage_instance_id: string | null;
+  readonly outputs: readonly PromptOutput[];
+  readonly head_branch: string | null;
+  readonly base_branch: string | null;
+}
+
+/** The fake process understands only the contract that the production adapter appends. */
+export const parsePromptPublication = (prompt: string): PromptPublication | null => {
+  const endpoint = prompt.match(/PUT (https?:\/\/[^\s]+)\/work-orders\/([^/\s]+)\/emit\/<output-name>/);
+  const capability = prompt.match(/^Work-Order-Capability: ([^\s]+)$/m)?.[1];
+  const outputBlock = prompt.match(/Publish exactly these outputs and no others:\n([\s\S]*?)(?:\n\n|$)/)?.[1];
+  if (!endpoint || !capability || !outputBlock) return null;
+  const scalarUnit = prompt.match(/(?:Unit\/cohort|Unit): `([^`]+)`/)?.[1]
+    ?? prompt.match(/^\s*- ID: (.+)$/m)?.[1]?.trim()
+    ?? prompt.match(/"cohort_id"\s*:\s*"([^"]+)"/)?.[1]
+    ?? prompt.match(/\*\*ID:\*\* ([^\n]+)/)?.[1]?.trim()
+    ?? "0";
+  const outputs = [...outputBlock.matchAll(/^- ([^\s]+)(?: \(Output-Collection-Key: ([^)]+)\))?$/gm)]
+    .map((match) => ({ output_name: match[1]!, unit_id: match[2] ?? scalarUnit }));
+  if (outputs.length === 0) return null;
+  const names = new Set(outputs.map((output) => output.output_name));
+  const operator_role = names.has("spec_analysis") ? "spec" : names.has("plan") ? "plan" : names.has("brief") ? "brief"
+    : names.has("pr_summary") || names.has("build_result") ? "build" : "assess";
+  const headBranch = prompt.match(/^Canonical cohort ref: (.+)$/m)?.[1]?.trim() ?? null;
+  const baseBranch = prompt.match(/^Pull request base: (.+)$/m)?.[1]?.trim() ?? null;
+  const stageInstanceId = prompt.match(/^Stage instance: `([^`]+)`$/m)?.[1]
+    ?? headBranch?.match(/^cohort\/([^/]+)\//)?.[1]
+    ?? null;
+  return { base_url: endpoint[1]!, work_order_id: endpoint[2]!, capability, unit_id: scalarUnit, operator_role, outputs,
+    stage_instance_id: stageInstanceId, head_branch: headBranch, base_branch: baseBranch };
+};
+
+const runFakeAcpAgent = (): void => {
+  const controlUrl = process.env.OAKRIDGE_FAKE_AGENT_CONTROL_URL;
+  if (!controlUrl) throw new Error("OAKRIDGE_FAKE_AGENT_CONTROL_URL is required");
+  const publications = new Map<string, PromptPublication>();
+  const revisions = new Map<string, number>();
+  const configOptions = [{ type: "select" as const, id: "model", name: "Model", category: "model" as const,
+    currentValue: "opus", options: [{ value: "opus", name: "Opus" }] }];
+  const notify = async (client: AgentContext, sessionId: string, text: string): Promise<void> => {
+    await client.notify("session/update", { sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } } });
+  };
+  const publishPromptBranch = async (branch: string): Promise<void> => {
+    const child = Bun.spawn(["git", "push", "origin", `HEAD:refs/heads/${branch}`], { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+    if (exitCode !== 0) throw new Error(`fake agent could not publish '${branch}': ${stderr.trim() || stdout.trim()}`);
+  };
+  const app = agent({ name: "oakridge-acceptance-agent" })
+    .onRequest("initialize", () => ({ protocolVersion: PROTOCOL_VERSION, agentCapabilities: { loadSession: true, sessionCapabilities: { close: {} } } }))
+    .onRequest("session/new", () => ({ sessionId: crypto.randomUUID(), configOptions }))
+    .onRequest("session/load", () => ({ configOptions }))
+    .onRequest("session/set_config_option", () => ({ configOptions }))
+    .onRequest("session/close", () => ({}))
+    .onNotification("session/cancel", () => {})
+    .onRequest("session/prompt", async (ctx) => {
+      const prompt = ctx.params.prompt.map((block) => block.type === "text" ? block.text : "").join("");
+      const scenario = await fetch(`${controlUrl}/scenario`).then((response) => response.json()) as {
+        readonly strip_publication_contract?: boolean;
+      };
+      const renderedPrompt = scenario.strip_publication_contract
+        ? prompt.replace(/\n\n## Oakridge v2 artifact publication[\s\S]*$/, "")
+        : prompt;
+      const parsed = parsePromptPublication(renderedPrompt);
+      if (parsed) {
+        revisions.set(ctx.params.sessionId, 0);
+        const launched = await fetch(`${controlUrl}/launch`, { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ ...parsed, prompt: renderedPrompt }) });
+        if (!launched.ok) throw new Error(`fake agent launch recording failed: ${launched.status}`);
+        const launchIdentity = await launched.json() as { readonly stage_instance_id?: string | null };
+        publications.set(ctx.params.sessionId, {
+          ...parsed,
+          stage_instance_id: launchIdentity.stage_instance_id ?? parsed.stage_instance_id,
+        });
+      } else {
+        await fetch(`${controlUrl}/delivery`, { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ execution_id: publications.get(ctx.params.sessionId)?.work_order_id ?? ctx.params.sessionId,
+            delivery_key: `missing-publication-contract-${Date.now()}`, prompt: renderedPrompt }) });
+      }
+      const publication = publications.get(ctx.params.sessionId);
+      if (!publication) {
+        setTimeout(() => process.exit(1), 10);
+        throw new Error("rendered prompt did not state the Oakridge publication contract");
+      }
+      if (publication.head_branch) await publishPromptBranch(publication.head_branch);
+      if (publication.operator_role === "build" && publication.stage_instance_id && publication.head_branch && publication.base_branch) {
+        const prepared = await fetch(`${controlUrl}/prepare-pull-request`, { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify(publication) });
+        if (!prepared.ok) throw new Error(`fake pull request preparation failed: ${prepared.status} ${await prepared.text()}`);
+      }
+      const revision = (revisions.get(ctx.params.sessionId) ?? 0) + 1;
+      revisions.set(ctx.params.sessionId, revision);
+      for (const output of publication.outputs) {
+        const bodyResponse = await fetch(`${controlUrl}/artifact-body`, { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ ...publication, ...output, revision }) });
+        if (!bodyResponse.ok) throw new Error(`fake artifact body failed: ${bodyResponse.status} ${await bodyResponse.text()}`);
+        const response = await fetch(`${publication.base_url}/work-orders/${publication.work_order_id}/emit/${output.output_name}`, {
+          method: "PUT", headers: { "content-type": "application/json", "work-order-capability": publication.capability,
+            "idempotency-key": `${publication.work_order_id}:${output.unit_id}:${output.output_name}:v${revision}`,
+            ...(output.unit_id !== publication.unit_id ? { "output-collection-key": output.unit_id } : {}) },
+          body: await bodyResponse.text(),
+        });
+        if (!response.ok) throw new Error(`fake publication ${output.output_name} failed: ${response.status} ${await response.text()}`);
+      }
+      if (publication.operator_role === "build" && publication.stage_instance_id && publication.head_branch && publication.base_branch) {
+        const verification = await fetch(`${controlUrl}/verify-pull-request`, { method: "POST",
+          headers: { "content-type": "application/json" }, body: JSON.stringify(publication) });
+        if (!verification.ok) throw new Error(`production pull request verification failed: ${verification.status} ${await verification.text()}`);
+      }
+      await notify(ctx.client, ctx.params.sessionId, `published ${publication.outputs.map((output) => output.output_name).join(", ")}`);
+      setTimeout(() => process.exit(0), 10);
+      return { stopReason: "end_turn" as const };
+    });
+  app.connect(ndJsonStream(Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+    Readable.toWeb(process.stdin) as unknown as ReadableStream<Uint8Array>));
+};
+
+if (process.argv.includes("--fake-acp-agent")) runFakeAcpAgent();

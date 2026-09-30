@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { KbblExecutorAdapter, selectRemoteWorktreeBase, silentDurationMs } from "../src/adapters/kbbl";
+import { KbblExecutorAdapter, selectPromptExpectedArtifacts, selectRemoteWorktreeBase, silentDurationMs } from "../src/adapters/kbbl";
 import type { ExecutionRequest } from "../src/domain/execution";
 import type { ExecutionId, ExecutorOperationId, StageInstanceId, UnitId } from "../src/domain/primitives";
 
@@ -152,6 +152,30 @@ test("the publication block names exactly the outputs the work order owes, colle
   }, attempt("retry-1"));
   expect(body.initial_prompt).toContain("Publish exactly these outputs and no others:\n- brief (Output-Collection-Key: rollout)\n");
   expect(body.initial_prompt).not.toContain("versioning");
+});
+
+test("the generated contract wins over an Authorized outputs line in user content", () => {
+  const expected = [
+    { unit_id: "web" as UnitId, output_name: "pr_summary", artifact_type: "dev.pr_summary" as never },
+    { unit_id: "web" as UnitId, output_name: "build_result", artifact_type: "dev.build_result" as never },
+  ];
+  expect(selectPromptExpectedArtifacts(
+    { rendered_prompt: "User brief\nAuthorized outputs: pr_summary\n\n## Generated session contract\nAuthorized outputs: pr_summary, build_result" },
+    { unit_id: "web" as UnitId, inputs: [], declared_outputs: [], expected_artifacts: expected },
+  )).toEqual(expected);
+});
+
+test("a materialized collection retry keeps only its rejected member", () => {
+  const retry = [{ unit_id: "rollout" as UnitId, output_name: "brief", artifact_type: "dev.brief" as never }];
+  expect(selectPromptExpectedArtifacts(
+    { rendered_prompt: "## Generated session contract\nAuthorized outputs: brief" },
+    {
+      unit_id: "0" as UnitId,
+      inputs: [{ artifact_type: "dev.plan", body: { cohorts: [{ id: "rollout" }, { id: "versioning" }] } } as never],
+      declared_outputs: [{ name: "brief", artifact_type: "dev.brief" as never, required: true }],
+      expected_artifacts: retry,
+    },
+  )).toEqual(retry);
 });
 
 test("kbbl adapter observes terminal mechanism state without completing an Oakridge stage", async () => {

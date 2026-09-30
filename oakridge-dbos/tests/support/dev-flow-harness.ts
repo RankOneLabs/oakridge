@@ -13,25 +13,32 @@
  *
  * So it now builds the real thing: `createOakridgeRuntime` against a real
  * PostgreSQL, real repositories, the real HTTP surface listening on a real
- * port. The agent is the only fake, and a test drives it the way an agent
- * drives Oakridge — by calling the emit route over HTTP.
+ * port. The ACP child is the only fake: it reads the rendered prompt and
+ * publishes exactly the outputs and repository refs that prompt authorizes.
  *
- * Bun runs every test file in one process, so the executor adapter can be
- * registered exactly once. Tests swap behaviour behind it with `useScenario`.
+ * Bun runs every test file in one process, so one real kbbl and one fake ACP
+ * control service are shared while tests swap data with `useScenario`.
  */
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
-import type { ExecutionRequest, ExecutorAdapter, ExecutorObservationAttempt, ExternalExecutionReference } from "../../src/domain/execution";
-import type { ExecutionId, JsonValue, UnitId } from "../../src/domain/primitives";
+import type { ExecutionRequest } from "../../src/domain/execution";
+import type { CohortId, JsonValue, StageInstanceId, UnitId } from "../../src/domain/primitives";
 import type { StageOperatorRole, WorkflowDefinition } from "../../src/domain/workflow";
+import { KbblExecutorAdapter } from "../../src/adapters/kbbl";
 import { createOakridgeRuntime, type OakridgeRuntime } from "../../src/runtime/compose";
+import { prepareDevFlowBuildCohort, verifyAndBindCohortPullRequest } from "../../src/runtime/cohort-pull-request";
+import { sendCohortWakeHint } from "../../src/http/dbos-transport";
+import { BunGitCommandRunner } from "../../src/runtime/git-command-runner";
+import { GithubPullRequestReader } from "../../src/runtime/github-pull-requests";
 import { applyMigrations } from "../../src/storage/migrate";
+import { PostgresDevFlowPullRequestRepository } from "../../src/storage/postgres-operators";
 import { PgPostgresExecutor } from "../../src/storage/sql-executor";
 import { loadDevFlowV15 } from "../../src/seed/dev-flow-v15";
+import { recordCohortAdapterEvent } from "../../src/workflows/run-record-topology";
 
 /**
  * How an execution behaves, for the scenario currently running.
@@ -39,15 +46,7 @@ import { loadDevFlowV15 } from "../../src/seed/dev-flow-v15";
  * Exactly one adapter may be registered per process, so scenarios are swapped
  * behind a single adapter rather than registered per test.
  */
-export interface ExecutionScenario {
-  start_or_attach(request: ExecutionRequest, attempt_id: string): Promise<ExternalExecutionReference>;
-  observe_terminal(execution_id: ExecutionId, reference: ExternalExecutionReference): Promise<ExecutorObservationAttempt>;
-  cancel_or_fence(execution_id: ExecutionId, reference: ExternalExecutionReference): Promise<void>;
-  /** Sent when something asks this execution's agent to do more work. */
-  deliver_input?(execution_id: ExecutionId, delivery_key: string, prompt: string): Promise<void>;
-}
-
-let currentScenario: ExecutionScenario | null = null;
+let currentScenario: ScriptedAgentScenario | null = null;
 
 /**
  * Which cohorts a run's plan-writer and brief-writer emit, and the
@@ -76,67 +75,19 @@ export const SEVEN_BRIEF_PLAN: readonly CohortPlanEntry[] = [
 /** The plan `artifactBody` mints its cohort/brief bodies from — set by `useScenario`. */
 let activeCohortPlan: readonly CohortPlanEntry[] = DEFAULT_COHORT_PLAN;
 
-const hasCohortPlan = (scenario: ExecutionScenario): scenario is ExecutionScenario & { readonly cohorts: readonly CohortPlanEntry[] } =>
-  "cohorts" in scenario;
-
-/** Point the registered adapter at the scenario for the test about to run. */
-export const useScenario = (scenario: ExecutionScenario): void => {
+/** Point the fake ACP process at the scenario for the test about to run. */
+export const useScenario = (scenario: ScriptedAgentScenario): void => {
   currentScenario = scenario;
-  activeCohortPlan = hasCohortPlan(scenario) ? scenario.cohorts : DEFAULT_COHORT_PLAN;
+  activeCohortPlan = scenario.cohorts;
 };
 
-const requireScenario = (): ExecutionScenario => {
+const requireScenario = (): ScriptedAgentScenario => {
   if (!currentScenario) throw new Error("no execution scenario is active — call useScenario() first");
   return currentScenario;
 };
 
-const RELEASED_AT_TEARDOWN: ExecutorObservationAttempt = { kind: "terminal", observation: { kind: "cancelled", detail: "released at teardown" } };
-
 /**
- * A scenario that never finishes on its own: each execution stays running
- * until something fences it. This is the state a run is in when an operator
- * cancels it, so it is what the cancellation path must be tested against.
- */
-export interface IdleScenario extends ExecutionScenario {
-  /**
-   * Resolve every still-waiting observation, and every one still to come. A
-   * pending observation keeps the runtime's event loop alive, so a test that
-   * leaves one hanging cannot shut DBOS down cleanly — this is the teardown for
-   * that. It latches rather than draining once, because a run being torn down
-   * can still start an execution after teardown begins, and that observation
-   * would hang exactly like the ones the drain was written to catch.
-   */
-  releaseAll(): void;
-}
-
-export const neverFinishingScenario = (): IdleScenario => {
-  const resolvers = new Map<ExecutionId, (attempt: ExecutorObservationAttempt) => void>();
-  const cancelled = (detail: string): ExecutorObservationAttempt => ({ kind: "terminal", observation: { kind: "cancelled", detail } });
-  let released = false;
-  return {
-    async start_or_attach() { return { kind: "none" }; },
-    observe_terminal(execution_id) {
-      if (released) return Promise.resolve(RELEASED_AT_TEARDOWN);
-      return new Promise((resolve) => resolvers.set(execution_id, resolve));
-    },
-    async cancel_or_fence(execution_id) {
-      resolvers.get(execution_id)?.(cancelled("fenced by test"));
-      resolvers.delete(execution_id);
-    },
-    releaseAll() {
-      released = true;
-      for (const resolve of resolvers.values()) resolve(RELEASED_AT_TEARDOWN);
-      resolvers.clear();
-    },
-  };
-};
-
-/**
- * An agent that does nothing until told to, and records what it was asked for.
- *
- * A driver reads `launched` to learn which executions exist and what each one
- * owes, emits those artifacts over the real HTTP surface, and then reports the
- * agent as having exited cleanly.
+ * What the fake ACP child launched and published after parsing its prompt.
  */
 export interface AgentDelivery {
   readonly execution_id: string;
@@ -144,59 +95,39 @@ export interface AgentDelivery {
   readonly prompt: string;
 }
 
-export interface ScriptedAgentScenario extends ExecutionScenario {
+export interface FakeAgentLaunch {
+  readonly execution_id: string;
+  readonly stage_instance_id: StageInstanceId | null;
+  readonly expected_artifacts: readonly { readonly unit_id: UnitId; readonly output_name: string; readonly artifact_type: string }[];
+  readonly resolved_config: JsonValue;
+}
+
+export interface ScriptedAgentScenario {
   /** The cohort plan this scenario's plan-writer and brief-writer emit against. */
   readonly cohorts: readonly CohortPlanEntry[];
   /** Execution workflow id → the request that started it, in launch order. */
-  readonly launched: Map<string, ExecutionRequest>;
+  readonly launched: Map<string, FakeAgentLaunch>;
   /** Every follow-up the run has sent an agent — a revision request, say. */
   readonly deliveries: AgentDelivery[];
-  /** Report this execution's agent as having exited cleanly. */
-  succeed(execution_id: ExecutionId | string): void;
+  readonly forge_head_overrides: Map<string, string>;
+  readonly strip_publication_contract: boolean;
   releaseAll(): void;
 }
 
-export const scriptedAgentScenario = (options?: { readonly cohorts?: readonly CohortPlanEntry[] }): ScriptedAgentScenario => {
+export const scriptedAgentScenario = (options?: {
+  readonly cohorts?: readonly CohortPlanEntry[];
+  readonly strip_publication_contract?: boolean;
+}): ScriptedAgentScenario => {
   const cohorts = options?.cohorts ?? DEFAULT_COHORT_PLAN;
-  const launched = new Map<string, ExecutionRequest>();
+  const launched = new Map<string, FakeAgentLaunch>();
   const deliveries: AgentDelivery[] = [];
-  const succeeded = new Set<string>();
-  const waiters = new Map<string, (attempt: ExecutorObservationAttempt) => void>();
-  const success: ExecutorObservationAttempt = { kind: "terminal", observation: { kind: "succeeded", metadata: {} } };
-  let released = false;
   return {
     cohorts,
     launched,
     deliveries,
-    async deliver_input(execution_id, delivery_key, prompt) {
-      deliveries.push({ execution_id: String(execution_id), delivery_key, prompt });
-    },
-    async start_or_attach(request, attempt_id) {
-      // The attempt id is the execution's own workflow id, which is the handle
-      // every other participant addresses this execution by.
-      launched.set(attempt_id, request);
-      return { kind: "none" };
-    },
-    observe_terminal(execution_id) {
-      const id = String(execution_id);
-      // The observation can be requested either side of the agent finishing;
-      // both orders must terminate.
-      if (succeeded.has(id)) return Promise.resolve(success);
-      if (released) return Promise.resolve(RELEASED_AT_TEARDOWN);
-      return new Promise((resolve) => waiters.set(id, resolve));
-    },
-    async cancel_or_fence() {},
-    succeed(execution_id) {
-      const id = String(execution_id);
-      succeeded.add(id);
-      waiters.get(id)?.(success);
-      waiters.delete(id);
-    },
-    releaseAll() {
-      released = true;
-      for (const resolve of waiters.values()) resolve(RELEASED_AT_TEARDOWN);
-      waiters.clear();
-    },
+    forge_head_overrides: new Map(),
+    strip_publication_contract: options?.strip_publication_contract ?? false,
+    releaseAll() {},
   };
 };
 
@@ -317,6 +248,7 @@ export interface IntegrationRuntime {
   readonly runtime: OakridgeRuntime;
   /** Where the real HTTP surface is listening. */
   readonly base_url: string;
+  readonly kbbl_url: string;
   readonly definition: WorkflowDefinition;
   readonly application_version: string;
   /** The repository the seeded flow's runs provision and build in. */
@@ -376,15 +308,128 @@ export const installIntegrationRuntime = async (databaseUrl: string, options: In
   const applicationVersion = `e2e-${crypto.randomUUID()}`;
   DBOS.setConfig({ name: "oakridge-dev-flow-e2e", systemDatabaseUrl: databaseUrl, applicationVersion, logLevel: "warn" });
 
-  const adapter: ExecutorAdapter = {
-    executor_type: "delegated_session",
-    start_or_attach: (request, attempt_id) => requireScenario().start_or_attach(request, attempt_id),
-    observe_terminal: (execution_id, reference) => requireScenario().observe_terminal(execution_id, reference),
-    async deliver_input(execution_id, delivery_key, prompt) { await requireScenario().deliver_input?.(execution_id, delivery_key, prompt); },
-    cancel_or_fence: (execution_id, reference) => requireScenario().cancel_or_fence(execution_id, reference),
-  };
-
   const repository = await createGitRepositoryFixture();
+  const harnessSql = PgPostgresExecutor.connect(databaseUrl);
+  const pullRequests = new PostgresDevFlowPullRequestRepository(harnessSql);
+  const runtimeRoot = await mkdtemp(join(tmpdir(), "oakridge-acceptance-runtime-"));
+  const forgeRefs = new Map<string, { readonly head_branch: string; readonly base_branch: string }>();
+  let kbblPort = 0;
+  let oakridgePort = 0;
+  const control = Bun.serve({ port: 0, async fetch(request) {
+    const url = new URL(request.url);
+    const scenario = requireScenario();
+    if (url.pathname === "/scenario") return Response.json({
+      cohorts: scenario.cohorts,
+      strip_publication_contract: scenario.strip_publication_contract,
+    });
+    if (url.pathname === "/launch" && request.method === "POST") {
+      const launch = await request.json() as { readonly work_order_id: string; readonly unit_id: string; readonly operator_role: StageOperatorRole;
+        readonly outputs: readonly { readonly output_name: string; readonly unit_id: string }[]; readonly prompt: string };
+      const sessions = await fetch(`http://127.0.0.1:${kbblPort}/sessions?include=archived`).then((response) => response.json()) as {
+        readonly sessions: readonly { readonly name: string; readonly workflow?: { readonly stageInstanceId?: string } }[];
+      };
+      const stageInstanceId = sessions.sessions.find((session) => session.name === launch.work_order_id)?.workflow?.stageInstanceId
+        ?? launch.prompt.match(/^Stage instance: `([^`]+)`$/m)?.[1];
+      scenario.launched.set(launch.work_order_id, {
+        execution_id: launch.work_order_id,
+        stage_instance_id: stageInstanceId ? stageInstanceId as StageInstanceId : null,
+        expected_artifacts: launch.outputs.map((output) => ({ ...output, unit_id: output.unit_id as UnitId, artifact_type: output.output_name })),
+        resolved_config: { publication: { work_order_id: launch.work_order_id }, session_name: launch.work_order_id,
+          rendered_prompt: launch.prompt, session_identity: { operator_role: launch.operator_role } },
+      });
+      return Response.json({ ok: true, stage_instance_id: stageInstanceId ?? null });
+    }
+    if (url.pathname === "/delivery" && request.method === "POST") {
+      scenario.deliveries.push(await request.json() as AgentDelivery);
+      return Response.json({ ok: true });
+    }
+    if (url.pathname === "/prepare-pull-request" && request.method === "POST") {
+      const input = await request.json() as { readonly unit_id: string; readonly stage_instance_id: string;
+        readonly head_branch: string; readonly base_branch: string };
+      const cohorts = await harnessSql.query<{ readonly id: string }>(
+        "SELECT id::text FROM oakridge.cohort WHERE stage_instance_id = $1 AND cohort_key = $2",
+        [input.stage_instance_id, input.unit_id]);
+      const baseHead = await repository.origin_branch_sha(repository.base_branch);
+      if (!cohorts[0] || !baseHead) return Response.json({ error: "build cohort identity was not persisted" }, { status: 422 });
+      const prepared = await prepareDevFlowBuildCohort({ pull_requests: pullRequests, git: new BunGitCommandRunner() }, {
+        cohort_id: cohorts[0].id as CohortId,
+        stage_instance_id: input.stage_instance_id as StageInstanceId,
+        cohort_key: input.unit_id,
+        repository: { repository_key: "oakridge", repository_path: repository.path,
+          integration_branch: repository.integration_branch, base_branch: repository.base_branch, base_head_sha: baseHead },
+        prepared_at: new Date().toISOString(),
+      });
+      if (!prepared.ok) return Response.json(prepared.error, { status: 409 });
+      forgeRefs.set(input.unit_id, { head_branch: input.head_branch, base_branch: input.base_branch });
+      return Response.json({ ok: true });
+    }
+    if (url.pathname === "/verify-pull-request" && request.method === "POST") {
+      const input = await request.json() as { readonly unit_id: string; readonly stage_instance_id: string };
+      const cohort = await pullRequests.find_cohort_for_unit(input.stage_instance_id as StageInstanceId, input.unit_id as UnitId);
+      if (!cohort) return Response.json({ error: "prepared build cohort was not found" }, { status: 404 });
+      const verified = await verifyAndBindCohortPullRequest({ pull_requests: pullRequests,
+        reader: new GithubPullRequestReader({ token: "acceptance-token", api_base_url: `http://127.0.0.1:${forge.port}` }),
+        git: new BunGitCommandRunner(), now: () => new Date().toISOString(),
+        record_build_event: async (cohortId, event) => {
+          const outcome = await recordCohortAdapterEvent(cohortId, event as unknown as JsonValue);
+          if (outcome.committed) await sendCohortWakeHint(cohortId, `acceptance_forge:${event.kind}`).catch(() => undefined);
+        },
+      }, { cohort, forge_repository: { owner: "RankOneLabs", name: "oakridge" },
+        candidate_url: cohortPullRequestUrl(input.unit_id as UnitId), replace_verification_id: null });
+      return Response.json(verified.ok ? { outcome: "verified" } : { outcome: "refused", error: verified.error });
+    }
+    if (url.pathname === "/artifact-body" && request.method === "POST") {
+      const input = await request.json() as { readonly work_order_id: string; readonly unit_id: string; readonly output_name: string;
+        readonly operator_role: StageOperatorRole; readonly revision: number; readonly stage_instance_id: string | null;
+        readonly head_branch: string | null; readonly base_branch: string | null };
+      if (input.output_name === "pr_summary") {
+        const branch = input.head_branch ?? cohortHeadBranch(input.unit_id as UnitId);
+        return Response.json({ pr_url: cohortPullRequestUrl(input.unit_id as UnitId), branch,
+          base_branch: input.base_branch ?? HARNESS_BASE_BRANCH, repository_key: "oakridge",
+          summary: `built ${input.unit_id} v${input.revision}`, review_status: "ready" });
+      }
+      const synthetic = { execution_id: input.work_order_id, resolved_config: { session_identity: { operator_role: input.operator_role } } } as unknown as ExecutionRequest;
+      return Response.json(artifactBody(synthetic, input.unit_id as UnitId, input.output_name, input.revision));
+    }
+    return new Response("not found", { status: 404 });
+  }});
+  const forge = Bun.serve({ port: 0, async fetch(request) {
+    const match = new URL(request.url).pathname.match(/^\/repos\/RankOneLabs\/oakridge\/pulls\/(\d+)$/);
+    if (!match) return new Response("not found", { status: 404 });
+    const number = Number(match[1]);
+    const unit = activeCohortPlan[number - 1]?.id;
+    if (!unit) return new Response("not found", { status: 404 });
+    const refs = forgeRefs.get(String(unit));
+    if (!refs) return new Response("not found", { status: 404 });
+    const head = requireScenario().forge_head_overrides.get(String(unit))
+      ?? await repository.origin_branch_sha(refs.head_branch);
+    if (!head) return new Response("not found", { status: 404 });
+    return Response.json({ number, html_url: cohortPullRequestUrl(unit), state: "closed", merged: true, merged_at: new Date().toISOString(),
+      head: { ref: refs.head_branch, sha: head }, base: { ref: refs.base_branch } });
+  }});
+  const oakridgePortProbe = Bun.serve({ port: 0, fetch: () => new Response() });
+  oakridgePort = oakridgePortProbe.port!;
+  oakridgePortProbe.stop(true);
+  const kbblPortProbe = Bun.serve({ port: 0, fetch: () => new Response() });
+  kbblPort = kbblPortProbe.port!;
+  kbblPortProbe.stop(true);
+  const configPath = join(runtimeRoot, "kbbl-config.json");
+  const driverPath = resolve(import.meta.dir, "dev-flow-driver.ts");
+  const fakeAgentProfile = { command: process.execPath, args: [driverPath, "--fake-acp-agent"], require_load_session: true,
+    env_policy: { inherit: true, set: { OAKRIDGE_FAKE_AGENT_CONTROL_URL: `http://127.0.0.1:${control.port}` } } };
+  await writeFile(configPath, JSON.stringify({ acp: { default_agent: "claude-code", agents: {
+    "claude-code": fakeAgentProfile, codex: fakeAgentProfile,
+  } } }));
+  const kbbl = Bun.spawn([process.execPath, "run", resolve(import.meta.dir, "../../../kbbl/core/server.ts"), `--port=${kbblPort}`,
+    `--host=127.0.0.1`, `--dataDir=${join(runtimeRoot, "kbbl-data")}`, `--config=${configPath}`, `--workdir=${repository.path}`], {
+    cwd: resolve(import.meta.dir, "../../.."), stdout: "ignore", stderr: "inherit",
+    env: { ...process.env, OAKRIDGE_CORE_BASE_URL: `http://127.0.0.1:${oakridgePort}` },
+  });
+  await awaitCondition("kbbl to start", async () => {
+    if (kbbl.exitCode !== null) throw new Error(`kbbl exited before startup with code ${kbbl.exitCode}`);
+    return (await fetch(`http://127.0.0.1:${kbblPort}/config`).catch(() => null))?.ok ? true : null;
+  }, 20_000);
+  const adapter = new KbblExecutorAdapter({ base_url: `http://127.0.0.1:${kbblPort}`, executor_function_identity: applicationVersion, observe_wait_ms: 250 });
   // Only `stop()` removes the fixture, and nothing calls `stop()` on a runtime
   // that never finished being built — so from here to the return, a failure has
   // to take the directory with it. A database that refuses a connection is
@@ -400,11 +445,17 @@ export const installIntegrationRuntime = async (databaseUrl: string, options: In
       application_version: applicationVersion,
       executor_adapters: [adapter],
       prompt_template_directory: options.prompt_template_directory ?? resolve(import.meta.dir, "../../../workflow-config/prompts"),
+      pull_request_reader: new GithubPullRequestReader({ token: "acceptance-token", api_base_url: `http://127.0.0.1:${forge.port}` }),
     });
     await runtime.seed_builtins();
     await DBOS.launch();
-    server = Bun.serve({ port: 0, idleTimeout: 60, fetch: runtime.app.fetch });
+    server = Bun.serve({ port: oakridgePort, idleTimeout: 60, fetch: runtime.app.fetch });
   } catch (error) {
+    kbbl.kill();
+    control.stop(true);
+    forge.stop(true);
+    await harnessSql.close();
+    await rm(runtimeRoot, { recursive: true, force: true });
     await repository.remove();
     throw error;
   }
@@ -413,6 +464,7 @@ export const installIntegrationRuntime = async (databaseUrl: string, options: In
   return {
     runtime,
     base_url: `http://127.0.0.1:${server.port}`,
+    kbbl_url: `http://127.0.0.1:${kbblPort}`,
     definition: loaded.value,
     application_version: applicationVersion,
     repository,
@@ -424,6 +476,12 @@ export const installIntegrationRuntime = async (databaseUrl: string, options: In
       server.stop(true);
       await DBOS.shutdown();
       await runtime.close();
+      await harnessSql.close();
+      kbbl.kill();
+      await kbbl.exited;
+      control.stop(true);
+      forge.stop(true);
+      await rm(runtimeRoot, { recursive: true, force: true });
       await repository.remove();
     },
   };
@@ -482,7 +540,8 @@ export const runContext = (oakridgeUrl: string, repositoryPath: string) => ({
   // One base branch for the run, beside the repositories rather than repeated
   // inside each of them.
   base_branch: HARNESS_BASE_BRANCH,
-  repositories: [{ key: "oakridge", path: repositoryPath, integration_branch: HARNESS_INTEGRATION_BRANCH }],
+  repositories: [{ key: "oakridge", path: repositoryPath, integration_branch: HARNESS_INTEGRATION_BRANCH,
+    forge_repository: { provider: "github", owner: "RankOneLabs", name: "oakridge" } }],
   oakridge_url: oakridgeUrl,
   planner_runtime: "claude-code" as const, planner_model: null, planner_effort: null,
   worker_runtime: "claude-code" as const, worker_model: null, worker_effort: null,

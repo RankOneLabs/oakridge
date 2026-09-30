@@ -1,5 +1,5 @@
-import { ExecutorStartRejectedError, type ExecutionRequest, type ExecutorAdapter, type ExecutorObservationAttempt, type ExecutorTerminalObservation, type ExternalExecutionReference } from "../domain/execution";
-import type { ExecutionId, ExecutorOperationId, JsonValue } from "../domain/primitives";
+import { ExecutorStartRejectedError, type ExecutionRequest, type ExpectedArtifactContract, type ExecutorAdapter, type ExecutorObservationAttempt, type ExecutorTerminalObservation, type ExternalExecutionReference } from "../domain/execution";
+import type { ExecutionId, ExecutorOperationId, JsonValue, UnitId } from "../domain/primitives";
 
 /**
  * How long kbbl may hold one observation request open. Well under kbbl's own
@@ -142,17 +142,52 @@ const parseSessionIdentity = (value: JsonValue): KbblResolvedSessionIdentity => 
  * request's own `unit_id` marks a scalar), so a retry that owes one member of
  * a collection tells the agent to emit that member and nothing else.
  */
-const expectedOutputLines = (request: Pick<ExecutionRequest, "unit_id" | "expected_artifacts">): string =>
-  request.expected_artifacts.map((expected) => expected.unit_id === request.unit_id
+const authorizedOutputNames = (renderedPrompt: string): ReadonlySet<string> | null => {
+  const line = [...renderedPrompt.matchAll(/^Authorized outputs: (.+)$/gm)].at(-1)?.[1];
+  return line ? new Set(line.split(",").map((name) => name.trim()).filter(Boolean)) : null;
+};
+
+/**
+ * The committed role owns only the outputs named by its generated session
+ * contract. A build cohort declares assessment beside its builder outputs, and
+ * the stage-level request consequently carries all three slots; forwarding all
+ * three tells the builder to impersonate its assessor. Brief writing is the
+ * other plural case: one scalar session publishes a collection whose keys come
+ * from the accepted plan it received.
+ */
+export const selectPromptExpectedArtifacts = (config: Pick<KbblResolvedConfig, "rendered_prompt">, request: Pick<ExecutionRequest, "unit_id" | "inputs" | "declared_outputs" | "expected_artifacts">): readonly ExpectedArtifactContract[] => {
+  const authorized = authorizedOutputNames(config.rendered_prompt);
+  if (!authorized) return request.expected_artifacts;
+  const filtered = request.expected_artifacts.filter((expected) => authorized.has(expected.output_name));
+  if (!authorized.has("brief")) return filtered;
+  const isInitialCollectionPlaceholder = filtered.length === 1 && filtered[0]?.unit_id === request.unit_id;
+  if (!isInitialCollectionPlaceholder) return filtered;
+  const plan = request.inputs.find((input) => input.artifact_type === "dev.plan")?.body;
+  if (plan === undefined || !isObject(plan) || !Array.isArray(plan.cohorts)) return filtered;
+  const artifactType = request.declared_outputs.find((output) => output.name === "brief")?.artifact_type;
+  if (!artifactType) return filtered;
+  const members = plan.cohorts.flatMap((cohort): ExpectedArtifactContract[] =>
+    isObject(cohort) && typeof cohort.id === "string" && cohort.id.length > 0
+      ? [{ unit_id: cohort.id as UnitId, output_name: "brief", artifact_type: artifactType }]
+      : []);
+  return members.length > 0 ? members : filtered;
+};
+
+const expectedOutputLines = (unitId: UnitId, expectedArtifacts: readonly ExpectedArtifactContract[]): string =>
+  expectedArtifacts.map((expected) => expected.unit_id === unitId
     ? `- ${expected.output_name}`
     : `- ${expected.output_name} (Output-Collection-Key: ${expected.unit_id})`).join("\n");
 
-const publicationInstructions = (config: KbblResolvedConfig, request: Pick<ExecutionRequest, "unit_id" | "expected_artifacts">): string => {
+const publicationInstructions = (config: KbblResolvedConfig, request: Pick<ExecutionRequest, "unit_id" | "inputs" | "declared_outputs" | "expected_artifacts">): string => {
   if (!config.publication) return "";
-  const owed = request.expected_artifacts.length > 0
-    ? `\n\nPublish exactly these outputs and no others:\n${expectedOutputLines(request)}\n`
+  const expected = selectPromptExpectedArtifacts(config, request);
+  const repositoryRefs = config.worktree
+    ? `\n\n## Repository refs\nCanonical cohort ref: ${config.worktree.branchName}\nPull request base: ${config.worktree.baseRef ?? ""}`
     : "";
-  return `\n\n## Oakridge v2 artifact publication\n\nUse this run-owned endpoint instead of any stage/execution emit URL shown earlier:\n\nPUT ${config.publication.base_url.replace(/\/$/, "")}/work-orders/${config.publication.work_order_id}/emit/<output-name>\nWork-Order-Capability: ${config.publication.capability}\nIdempotency-Key: <stable key for this output payload>\nContent-Type: application/json\n\nFor a collection member, also send Output-Collection-Key. A successful executor exit does not satisfy the unit; publish every required output.\n${owed}`;
+  const owed = expected.length > 0
+    ? `\n\nPublish exactly these outputs and no others:\n${expectedOutputLines(request.unit_id, expected)}\n`
+    : "";
+  return `${repositoryRefs}\n\n## Oakridge v2 artifact publication\n\nUse this run-owned endpoint instead of any stage/execution emit URL shown earlier:\n\nPUT ${config.publication.base_url.replace(/\/$/, "")}/work-orders/${config.publication.work_order_id}/emit/<output-name>\nWork-Order-Capability: ${config.publication.capability}\nIdempotency-Key: <stable key for this output payload>\nContent-Type: application/json\n\nFor a collection member, also send Output-Collection-Key. A successful executor exit does not satisfy the unit; publish every required output.\n${owed}`;
 };
 
 const parseEnsureResponse = (value: unknown): EnsureSessionResponse => {
