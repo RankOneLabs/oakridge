@@ -7,8 +7,8 @@
     "migrate": "bun run src/migrate.ts",
     "start": "bun run src/main.ts",
     "test": "bun test",
-    "test:unit": "rg --files src tests -g '*.test.ts' -g '!dev-flow-e2e.test.ts' | xargs bun test",
-    "test:acceptance": "bun test tests/dev-flow-e2e.test.ts --test-name-pattern 'browser launches|publication contract|c5 refuses'",
+    "test:unit": "rg --files src tests -g '*.test.ts' -g '!dev-flow-e2e.test.ts' | xargs -n 1 bun test",
+    "test:acceptance": "bun test tests/dev-flow-e2e.test.ts",
     "validate:definitions": "bun run src/validation/validate-definition-files.ts",
     "typecheck": "bunx tsc --noEmit -p tsconfig.json"
   },
