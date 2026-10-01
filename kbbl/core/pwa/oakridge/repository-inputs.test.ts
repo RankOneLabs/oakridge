@@ -8,7 +8,7 @@ describe("repositoryDraftFromProject", () => {
   it("prefills forge identity derived from the local repository", () => {
     expect(repositoryDraftFromProject({
       id: projectId, name: "PAA dot DEV", repo_dir: "/repos/paa", created_at: "2026-08-12T00:00:00Z",
-      forge_repository: { provider: "github", owner: "RankOneLabs", name: "paa_site" }, base_branch: "develop",
+      forge_repository: { provider: "github", owner: "RankOneLabs", name: "paa_site" }, integration_branch: "develop",
     }, { key: "repo", path: "", forge_owner: "", forge_name: "", integration_branch: "main" })).toEqual({
       key: "paa-dot-dev", path: "/repos/paa", forge_owner: "RankOneLabs", forge_name: "paa_site", integration_branch: "develop",
     });

@@ -16,7 +16,7 @@ export interface Project {
   repo_dir: string;
   created_at: string;
   forge_repository?: ForgeRepositoryIdentity | null;
-  base_branch?: string | null;
+  integration_branch?: string | null;
 }
 
 export interface ProjectWriteInput {
@@ -67,75 +67,38 @@ export interface CreateRunContext {
 
 export type RepositoryKey = string & { readonly __brand: "RepositoryKey" };
 export type CohortId = string & { readonly __brand: "CohortId" };
-export type EpicProfileId = string & { readonly __brand: "EpicProfileId" };
 export type WorkflowRunId = string & { readonly __brand: "WorkflowRunId" };
 export type JsonValue = null | boolean | number | string | readonly JsonValue[] | { readonly [key: string]: JsonValue };
 
-export type RunEventOperation =
-  | "stage_materialized" | "materialization_closed" | "materialization_failed" | "run_cancelled"
-  | "unit_admitted" | "operator_retry_created" | "input_revised" | "slot_released" | "slot_pending"
-  | "slot_invalidated" | "unit_satisfied" | "work_started" | "gate_opened" | "gate_decided"
-  | "pull_request_observed" | "pull_request_merge_confirmed";
+export type BuildCohortEventKind =
+  | "stage_started" | "stale_gate_recorded" | "build_artifact_recorded" | "pull_request_verified"
+  | "builder_attempt_lost" | "build_review_approved" | "build_review_revision_requested"
+  | "assessment_artifact_recorded" | "assessment_outcome_observed" | "assessor_attempt_lost"
+  | "operator_retry_requested" | "assessment_review_approved" | "assessment_review_revision_requested"
+  | "pull_request_mismatch" | "replacement_pull_request_required" | "pull_request_merged";
 
-export interface RunEventPayload {
-  readonly run_id: WorkflowRunId;
-  readonly run_unit_id: string | null;
-  readonly stage_instance_id: string | null;
-  readonly stage_key: string | null;
-  readonly unit_id: string | null;
-  readonly work_order_id: string | null;
-  readonly wait_id: string | null;
-  readonly output_name: string | null;
-  readonly collection_key: string | null;
-  readonly artifact_revision_id: string | null;
-  readonly attention: "required" | "optional" | "none" | null;
-  readonly continuation: "waiting" | "continuing" | null;
-  readonly detail: JsonValue;
-}
+export type RunEventEffect =
+  | { readonly kind: "none" | "deliver_message" | "resume_wait" }
+  | { readonly kind: "start_stage"; readonly stage_instance_id: string }
+  | { readonly kind: "start_attempt"; readonly cohort_id: string; readonly attempt_number: number; readonly attempt_id: string | null }
+  | { readonly kind: "dev_flow_build_cohort_transition"; readonly event: { readonly kind: BuildCohortEventKind; readonly pull_request_url: string | null }; readonly disposition: string }
+  | { readonly kind: "pull_request_observed" | "pull_request_merge_confirmed"; readonly repository_key: string; readonly pull_request_url: string; readonly state: string; readonly source: string; readonly merged_at: string | null }
+  | { readonly kind: "unrecognized"; readonly effect_kind: string };
 
-type GateRunEventOperation = "gate_opened" | "gate_decided";
-type PullRequestRunEventOperation = "pull_request_observed" | "pull_request_merge_confirmed";
-type OtherRunEventOperation = Exclude<RunEventOperation, GateRunEventOperation | PullRequestRunEventOperation>;
-
-export interface GateRunEventPayload extends RunEventPayload {
-  readonly run_unit_id: string;
-  readonly stage_instance_id: string;
-  readonly stage_key: string;
-  readonly unit_id: string;
-  readonly wait_id: string;
-  readonly output_name: string;
-  readonly artifact_revision_id: string;
-  readonly attention: "required" | "optional" | "none";
-  readonly continuation: "waiting" | "continuing";
-}
-
-export interface PullRequestRunEventPayload extends RunEventPayload {
-  readonly run_unit_id: string;
-  readonly stage_instance_id: string;
-  readonly stage_key: string;
-  readonly unit_id: string;
-  readonly artifact_revision_id: string;
-  readonly detail: {
-    readonly [key: string]: JsonValue;
-    readonly repository_key: string;
-    readonly pull_request_url: string;
-    readonly state: string;
-    readonly source: string;
-    readonly merged_at: string | null;
-  };
-}
-
-interface RunEventEnvelope<Operation extends RunEventOperation, Payload extends RunEventPayload> {
+/** Mirrors the v15 run transition projection in oakridge-dbos/src/domain/run-event.ts. */
+export interface RunEvent {
   readonly sequence: string;
-  readonly operation: Operation;
-  readonly payload: Payload;
+  readonly transition_id: string;
+  readonly run_id: WorkflowRunId;
+  readonly owner: { readonly kind: "run" | "stage_instance" | "cohort"; readonly id: string };
+  readonly launch_reason: "initial" | "dependency_satisfied" | "artifact_accepted" | "gate_decided" | "operator" | "retry" | "recovery";
+  readonly prior_owner_version: number;
+  readonly resulting_owner_version: number;
+  readonly effect: RunEventEffect;
+  readonly effect_workflow_id: string | null;
+  readonly actor: string;
   readonly occurred_at: string;
 }
-
-export type RunEvent =
-  | RunEventEnvelope<GateRunEventOperation, GateRunEventPayload>
-  | RunEventEnvelope<PullRequestRunEventOperation, PullRequestRunEventPayload>
-  | RunEventEnvelope<OtherRunEventOperation, RunEventPayload>;
 
 export type RunEventFrame = RunEvent & { readonly replayed: boolean };
 
@@ -181,58 +144,6 @@ export interface EpicProfileConfig {
   repositories: EpicRepositoryConfig[];
 }
 
-export type EpicLifecycleState = "draft" | "active" | "final_integration" | "completed" | "failed";
-export type FinalMergeState = "pending" | "pull_request_open" | "awaiting_confirmation" | "merged" | "closed_without_merge";
-
-export interface PullRequestReference {
-  number: number;
-  url: string;
-  head_branch: string;
-  base_branch: string;
-}
-
-export interface EpicRepositoryBinding {
-  repository_key: RepositoryKey;
-  repository_path: string;
-  integration_branch: string;
-  forge_repository: ForgeRepositoryIdentity | null;
-  final_pull_request: PullRequestReference | null;
-  final_merge_state: FinalMergeState;
-}
-
-export interface EpicWorkflowProfile {
-  id: EpicProfileId;
-  workflow_run_id: WorkflowRunId;
-  title: string;
-  slug: string;
-  lifecycle_state: EpicLifecycleState;
-  final_merge_policy: FinalMergePolicy;
-  /** The one branch this epic builds on, and the head of every final PR. */
-  base_branch: string;
-  repositories: EpicRepositoryBinding[];
-  created_at: string;
-  updated_at: string;
-}
-
-export interface ConfirmFinalPullRequestRequest {
-  idempotency_key: string;
-  operator_comment?: string;
-}
-
-type FinalPullRequestOutcome =
-  | "waiting"
-  | "completed"
-  | "already_completed"
-  | "mismatch"
-  | "ignored_stale"
-  | "awaiting_external_confirmation";
-
-export type FinalPullRequestResponse = {
-  [Outcome in FinalPullRequestOutcome]: {
-    outcome: Outcome;
-    profile: EpicWorkflowProfile;
-  };
-}[FinalPullRequestOutcome];
 
 export interface CreateRunRequest {
   workflow_def_id: string;
@@ -301,11 +212,8 @@ export interface StageUnit {
   status: StageStatus;
   blocked_reason: BlockedReason | null;
   next_actor: NextActor | null;
+  retryable: boolean;
   gate: string | null;
-  admission_required?: boolean;
-  admitted?: boolean;
-  admission_eligible?: boolean;
-  admission_blocked_by?: string[];
 }
 
 /**
@@ -345,19 +253,26 @@ export interface RunDetail {
   stages: StageDetail[];
   parked_count: number;
   updated_at: string;
-  epic_profile?: EpicWorkflowProfile | null;
 }
 
 export interface RunDiagnosisSession {
   session_id: string;
   stage_key: string;
   cohort_id: string;
+  cohort_key: string;
   attempt_number: number;
   attempt_count: number;
   status: CoreStatus;
 }
 
 export interface RunDiagnosisGate extends ParkedGate { cohort_id: string | null }
+
+export interface PullRequestMergeWait {
+  cohort_id: string;
+  stage_instance_id: string;
+  unit_id: string;
+  pull_request_url: string;
+}
 
 export interface RunDiagnosisArtifact {
   artifact_id: string;
@@ -374,45 +289,11 @@ export interface RunDiagnosis {
   current_session: RunDiagnosisSession | null;
   sessions_awaiting_action: RunDiagnosisSession[];
   active_gates: RunDiagnosisGate[];
+  pull_request_merge_waits: PullRequestMergeWait[];
   recent_artifacts: RunDiagnosisArtifact[];
   stage_progress: Record<CoreStatus, number> & { total: number };
 }
 
-/**
- * Why a work order exists — `oakridge.work_order.reason`
- * (`migrations/0011_run_owned_work.sql:69`), mirrored from
- * `OperatorRunSessionAttempt["reason"]`. This is the attempt's label in the UI:
- * it is the column the retry path actually writes, so the label cannot drift
- * from the record.
- */
-export type WorkOrderReason = "initial" | "operator_retry" | "input_revision";
-
-/** `oakridge.work_order.state` (`migrations/0011_run_owned_work.sql:72`). */
-export type WorkOrderState = "available" | "started" | "completed" | "abandoned";
-
-/**
- * One executor attempt at one unit, mirroring `OperatorRunSessionAttempt`
- * (`oakridge-dbos/src/domain/operator-projections.ts`) — `GET /runs/:id/sessions`.
- *
- * Every attempt keeps its own session for the unit's whole life, so a unit
- * that was retried contributes one entry per attempt, not one per unit.
- */
-export interface RunSessionAttempt {
-  work_order_id: string;
-  /** kbbl's session id, not a domain uuid. */
-  session_id: string;
-  stage_instance_id: string;
-  stage_key: string;
-  unit_id: string;
-  reason: WorkOrderReason;
-  work_order_state: WorkOrderState;
-  created_at: string;
-  /** Null while the attempt is `available` or `started`. */
-  completed_at: string | null;
-  /** Null when nothing has observed the executor yet. */
-  executor_health_kind: string | null;
-  cleanup_state: string;
-}
 
 /**
  * Where a session sits in the run graph, mirroring
@@ -485,6 +366,7 @@ export interface ArtifactDetail {
 
 export interface ParkedGate {
   id: string;
+  stage_instance_id: string | null;
   gate_type: string;
   gate_step: string | null;
   run_id: string;
@@ -528,7 +410,6 @@ export interface ConfirmCohortMergedRequest {
 export type CohortPullRequestOutcomeKind =
   | "completed"
   | "already_completed"
-  | "merged_not_awaiting"
   | "waiting"
   | "ignored_stale";
 
@@ -544,13 +425,6 @@ export interface CohortCompletion {
   assessment_complete: boolean;
 }
 
-export interface CohortAdmission {
-  required: boolean;
-  admitted: boolean;
-  eligible: boolean;
-  blocked_by: string[];
-}
-
 export interface CohortLifecycleSummary {
   id: string;
   run_id: string;
@@ -564,7 +438,7 @@ export interface CohortLifecycleSummary {
   blocked_reason: BlockedReason | null;
   next_actor: NextActor | null;
   completion: CohortCompletion;
-  admission: CohortAdmission;
+  blocked_by: string[];
   artifact_revision_id?: string | null;
   artifact_url?: string | null;
   gate_id?: string | null;
@@ -575,14 +449,13 @@ export interface CohortLifecycleSummary {
 }
 
 export type ReviewInboxItemKind =
-  | "admission"
   | "artifact_gate"
   | "merge_confirmation"
   | "cohort_blocked"
   | "cohort_failed"
+  | "cohort_retry"
   | "pull_request_mismatch"
-  | "pull_request_merge"
-  | "gate_decision";
+  | "pull_request_merge";
 
 export type ReviewInboxItemState = "actionable" | "blocked";
 
@@ -698,8 +571,6 @@ export type SessionMessageRecord =
   | (SessionMessageRecordFields & { delivery_status: "failed"; delivery_result: { kind: "failed"; detail: string }; delivered_at: null });
 
 export interface PostSessionMessageRequest {
-  cohort_id?: string | null;
-  sender: SessionMessageParty;
   recipient: SessionMessageParty;
   thread_id: string;
   message_id?: string;

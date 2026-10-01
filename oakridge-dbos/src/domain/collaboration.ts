@@ -22,11 +22,11 @@ export interface SessionMessageDeliveryTarget {
 }
 
 export type SessionMessageRecipientResolution =
-  | { readonly kind: "resolved"; readonly target: SessionMessageDeliveryTarget }
+  | { readonly kind: "resolved"; readonly target: SessionMessageDeliveryTarget; readonly cohort_id: CohortId | null }
   | { readonly kind: "recipient_not_deliverable"; readonly detail: string };
 
 export interface SessionMessageRecipientResolver {
-  resolve(message: SessionMessage): Promise<SessionMessageRecipientResolution>;
+  resolve(input: { readonly run_id: WorkflowRunId; readonly recipient: MessageParty }): Promise<SessionMessageRecipientResolution>;
 }
 
 export interface SessionMessage {

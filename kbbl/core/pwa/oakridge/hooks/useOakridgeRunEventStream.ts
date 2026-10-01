@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 
-import { parseOakridgeRunEventFrame } from "../client";
+import { parseOakridgeRunEventFrame } from "../wire";
 import type { RunEventFrame } from "../types";
 
 type StreamEventName = "invalidate" | "run_event";

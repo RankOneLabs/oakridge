@@ -96,7 +96,7 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
   const sidebarSessions = selectRunSidebarSessions(diagnosis, purgedSessionIds);
   const sidebarArtifacts = selectRunArtifacts(run);
   const activity: RunActivityRead = activityQuery.data !== undefined
-    ? { kind: "loaded", items: selectRunActivity(activityQuery.data, runId) }
+    ? { kind: "loaded", items: selectRunActivity(activityQuery.data, run) }
     : activityQuery.isError && !activityQuery.isPending
       ? { kind: "unavailable" }
       : { kind: "pending" };
@@ -194,6 +194,7 @@ function PaneBody({ pane, runId, run, overview, activity, onRunDeleted, onOpenPa
           runId={runId}
           run={run}
           activeGates={overview.active_gates}
+          mergeWaits={overview.pull_request_merge_waits}
           onRunDeleted={onRunDeleted}
           onSelectArtifact={(artifactId) =>
             onOpenPane({ kind: "artifact", artifact_id: artifactId as ArtifactId })

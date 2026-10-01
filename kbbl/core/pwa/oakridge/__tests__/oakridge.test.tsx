@@ -76,6 +76,7 @@ const PARKED_RUN_SUMMARY: RunSummary = {
 
 const PARKED_GATE_FIXTURE: ParkedGate = {
   id: "gate-1",
+  stage_instance_id: "si-1",
   gate_type: "operator_approval",
   gate_step: null,
   run_id: "run-2",
@@ -227,38 +228,37 @@ describe("RunDetail committed diagnosis", () => {
   };
 
   it("renders typed blocked facts without deriving them", () => {
-    wrap(<RunDetailOrganism runId="run-1" run={detail} activeGates={[]} onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
+    wrap(<RunDetailOrganism runId="run-1" run={detail} activeGates={[]} mergeWaits={[]} onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
     expect(screen.getByTestId("or-run-detail-blocked-reason").textContent).toContain("gate · next: operator");
     expect(screen.getByTestId("or-stage-blocked-reason").textContent).toContain("gate · next: operator");
   });
 
   it("keeps a cancelled stage cancelled", () => {
-    wrap(<RunDetailOrganism runId="run-1" run={detail} activeGates={[]} onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
+    wrap(<RunDetailOrganism runId="run-1" run={detail} activeGates={[]} mergeWaits={[]} onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
     expect(screen.getAllByText("cancelled").length).toBeGreaterThan(0);
   });
 
   it("offers retry only for the committed retry reason", () => {
     const units = [
-      { cohort_id: "cohort-gate", unit_id: "gate", sid: null, worktree: null, status: "blocked" as const, blocked_reason: "gate" as const, next_actor: "operator" as const, gate: "artifact_review" },
-      { cohort_id: "cohort-retry", unit_id: "retry", sid: null, worktree: null, status: "blocked" as const, blocked_reason: "retry" as const, next_actor: "operator" as const, gate: null },
+      { cohort_id: "cohort-gate", unit_id: "gate", sid: null, worktree: null, status: "blocked" as const, blocked_reason: "gate" as const, next_actor: "operator" as const, retryable: false, gate: "artifact_review" },
+      { cohort_id: "cohort-retry", unit_id: "retry", sid: null, worktree: null, status: "blocked" as const, blocked_reason: "retry" as const, next_actor: "operator" as const, retryable: true, gate: null },
     ];
     const retryDetail: RunDetail = { ...detail, stages: [{ ...detail.stages[0]!, units }] };
 
-    wrap(<RunDetailOrganism runId="run-1" run={retryDetail} activeGates={[]} onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
+    wrap(<RunDetailOrganism runId="run-1" run={retryDetail} activeGates={[]} mergeWaits={[]} onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
 
     expect(screen.getAllByTestId("or-retry-unit-btn")).toHaveLength(1);
   });
 
   it("addresses merge confirmation with the route's stage and unit identity", async () => {
-    const unit = { cohort_id: "durable-cohort-uuid", unit_id: "web", sid: null, worktree: null, status: "blocked" as const, blocked_reason: "gate" as const, next_actor: "operator" as const, gate: "merge_confirmation" };
+    const unit = { cohort_id: "durable-cohort-uuid", unit_id: "web", sid: null, worktree: null, status: "blocked" as const, blocked_reason: "external" as const, next_actor: "external" as const, retryable: false, gate: null };
     const companion = { ...unit, cohort_id: "other-cohort", unit_id: "api", gate: null };
     const mergeDetail: RunDetail = { ...detail, stages: [{ ...detail.stages[0]!, stage_instance_id: "stage-build", units: [unit, companion] }] };
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ cohort_id: "stage-build:web", outcome: "accepted" }, 202));
 
-    wrap(<RunDetailOrganism runId="run-1" run={mergeDetail} activeGates={[{
-      id: "merge-gate", gate_type: "merge_confirmation", gate_step: "merge_confirmation", run_id: "run-1",
-      stage_name: "build", unit_id: "web", cohort_id: "durable-cohort-uuid", artifact_revision_id: null,
-      worktree: null, resume_actions: ["confirm_merged"], run_state: "blocked", actionable: true,
+    wrap(<RunDetailOrganism runId="run-1" run={mergeDetail} activeGates={[]} mergeWaits={[{
+      cohort_id: "durable-cohort-uuid", stage_instance_id: "stage-build", unit_id: "web",
+      pull_request_url: "https://example.test/pr/1",
     }]} onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
     fireEvent.click(screen.getByTestId("or-confirm-cohort-merged-btn"));
 

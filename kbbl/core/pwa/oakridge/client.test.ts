@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { confirmFinalPullRequest, createRun, fetchRun, fetchSessionRun, parseOakridgeRunEventFrame } from "./client";
-import { parseRepositoryKey } from "./repository-inputs";
+import { createRun, fetchRun, fetchSessionRun } from "./client";
+import { parseOakridgeRunEventFrame } from "./wire";
 import type { CreateRunRequest, RepositoryKey } from "./types";
 
 function json(body: unknown): Response {
@@ -79,12 +79,4 @@ describe("Oakridge response parsing", () => {
     await expect(fetchSessionRun("sid-1")).resolves.toEqual(expect.objectContaining({ run_id: "run-1", unit_id: "api" }));
   });
 
-  it("rejects unknown final reconciliation outcomes at the API boundary", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ outcome: "surprise", profile: {} }));
-    const repositoryKey = parseRepositoryKey("oakridge");
-    if (!repositoryKey) throw new Error("test repository key should be valid");
-
-    await expect(confirmFinalPullRequest("run-1", repositoryKey, { idempotency_key: "confirm-1" }))
-      .rejects.toThrow("response contained an unknown outcome");
-  });
 });

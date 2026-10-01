@@ -18,7 +18,7 @@ test("an agent recipient resolves to its attached session in the same run", asyn
   const sql: SqlExecutor = {
     query: async <Row extends object>(_statement: string, parameters: readonly unknown[]) => {
       queries.push([...parameters]);
-      return [{ execution_id: "execution-1" as ExecutionId, executor_type: "delegated_session", adapter_reference: { kind: "kbbl_session", session_id: "session-1" } }] as unknown as readonly Row[];
+      return [{ cohort_id: null, execution_id: "execution-1" as ExecutionId, executor_type: "delegated_session", adapter_reference: { kind: "kbbl_session", session_id: "session-1" } }] as unknown as readonly Row[];
     },
   };
   const resolver = new PostgresSessionMessageRecipientResolver(sql);
@@ -31,6 +31,7 @@ test("an agent recipient resolves to its attached session in the same run", asyn
 
   expect(await resolver.resolve(message)).toEqual({
     kind: "resolved",
+    cohort_id: null,
     target: { execution_id: "execution-1" as ExecutionId, executor_type: "delegated_session", external_reference: { kind: "kbbl_session", session_id: "session-1" } },
   });
   expect(queries).toEqual([[runId, sessionId]]);
@@ -171,6 +172,7 @@ test("session message persistence makes delivery idempotent and readable by coho
     };
     expect(await new PostgresSessionMessageRecipientResolver(sql).resolve(message)).toEqual({
       kind: "resolved",
+      cohort_id: "44444444-4444-4444-8444-444444444444" as import("../src/domain/primitives").CohortId,
       target: { execution_id: "execution-1" as ExecutionId, executor_type: "delegated_session", external_reference: { kind: "kbbl_session", session_id: "kbbl-1" } },
     });
     expect((await repository.put_pending(message)).kind).toBe("created");

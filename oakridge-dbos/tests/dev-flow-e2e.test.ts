@@ -74,11 +74,35 @@ e2e("browser launches a run and decides its first gate through kbbl", async () =
     await page.getByTestId("or-decision-approve").first().click();
     await awaitCondition("browser gate decision in the public API", async () =>
       (await listRunGates(oakridge.base_url, launched.id as WorkflowRunId)).some((candidate) => candidate.id === gate.id) ? null : true, 30_000);
+
+    await page.goto(`${oakridge.kbbl_url}/#oakridge/run/${launched.id}`);
+    const activity = page.getByTestId("or-run-activity");
+    await activity.getByText("Stage started").first().waitFor();
+    await activity.getByText("Gate decided").first().waitFor();
+    expect(await page.getByText("Run activity is unavailable.").count()).toBe(0);
+
+    const run = { run_id: launched.id as WorkflowRunId, root_workflow_id: launched.current_attempt_root_workflow_id };
+    const { value: mergeCohort } = await driveRun(oakridge.base_url, agent, run, {
+      decide: () => "approve", confirm_merges: false,
+      until: async () => {
+        const detail = await readRun(oakridge.base_url, run.run_id);
+        const build = detail.stages.find((stage) => stage.name === "build");
+        return build?.units.find((unit) => (unit.params as { readonly build_state?: { readonly phase?: string } } | null)?.build_state?.phase === "awaiting_merge") ?? null;
+      },
+      timeout_ms: 120_000,
+    });
+    await page.reload();
+    await page.getByTestId("or-sidebar-pane-list").click();
+    await page.getByTestId("or-confirm-cohort-merged-btn").first().click();
+    await awaitCondition("browser merge confirmation to complete its cohort", async () => {
+      const detail = await readRun(oakridge.base_url, run.run_id);
+      return detail.stages.flatMap((stage) => stage.units).find((unit) => unit.cohort_id === mergeCohort.cohort_id)?.status === "complete" ? true : null;
+    }, 60_000);
   } finally {
     await page.close();
     agent.releaseAll();
   }
-}, 90_000);
+}, 240_000);
 
 e2e("deleting the publication contract from a rendered prompt fails the run attempt", async () => {
   const agent = scriptedAgentScenario({ strip_publication_contract: true });

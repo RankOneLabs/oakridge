@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
 
 import type { SessionSnapshot } from "../../types";
-import type { ArtifactDetail, ParkedGate, RunDetail, RunSessionAttempt } from "../types";
+import type { ArtifactDetail, ParkedGate, RunDetail } from "../types";
 
 // Fixtures and the jsdom harness for the pane-body render tests. Not a
 // `*.test.*` file, so vitest imports it rather than collecting it.
@@ -64,14 +64,14 @@ const RUN: RunDetail = {
       delegated_kbbl_sid: null,
       worktree: null,
       units: [
-        { cohort_id: "c1", unit_id: "c1", sid: "sid-c1", worktree: null, status: "blocked", blocked_reason: "gate", next_actor: "operator", gate: "artifact_review" },
-        { cohort_id: "c2", unit_id: "c2", sid: "sid-c2", worktree: null, status: "active", blocked_reason: null, next_actor: "agent", gate: null },
+        { cohort_id: "c1", unit_id: "c1", sid: "sid-c1", worktree: null, status: "blocked", blocked_reason: "gate", next_actor: "operator", retryable: false, gate: "artifact_review" },
+        { cohort_id: "c2", unit_id: "c2", sid: "sid-c2", worktree: null, status: "active", blocked_reason: null, next_actor: "agent", retryable: false, gate: null },
       ],
     },
   ],
 };
 
-const SESSIONS: RunSessionAttempt[] = ["c1", "c2"].map((unit, index) => ({
+const SESSIONS = ["c1", "c2"].map((unit, index) => ({
   work_order_id: `wo-${unit}`,
   session_id: `sid-${unit}`,
   stage_instance_id: "si-build",
@@ -88,6 +88,7 @@ const SESSIONS: RunSessionAttempt[] = ["c1", "c2"].map((unit, index) => ({
 const GATES: ParkedGate[] = [
   {
     id: "gate-1",
+    stage_instance_id: "si-build",
     gate_type: "artifact_review",
     gate_step: null,
     run_id: "run-1",
@@ -159,18 +160,15 @@ export const makeFetch = (): FetchHandler =>
     if (url.includes("/runs/") && url.includes("/diagnosis")) return json({
       run: RUN,
       sessions: SESSIONS.map((attempt) => ({ session_id: attempt.session_id, stage_key: attempt.stage_key,
-        cohort_id: attempt.unit_id, attempt_number: 1, attempt_count: 1, status: "active" })),
-      current_session: { session_id: "sid-c2", stage_key: "build", cohort_id: "c2", attempt_number: 1, attempt_count: 1, status: "active" },
-      sessions_awaiting_action: [{ session_id: "sid-c1", stage_key: "build", cohort_id: "c1", attempt_number: 1, attempt_count: 1, status: "blocked" }],
+        cohort_id: attempt.unit_id, cohort_key: attempt.unit_id, attempt_number: 1, attempt_count: 1, status: "active" })),
+      current_session: { session_id: "sid-c2", stage_key: "build", cohort_id: "c2", cohort_key: "c2", attempt_number: 1, attempt_count: 1, status: "active" },
+      sessions_awaiting_action: [{ session_id: "sid-c1", stage_key: "build", cohort_id: "c1", cohort_key: "c1", attempt_number: 1, attempt_count: 1, status: "blocked" }],
       active_gates: GATES.map((gate) => ({ ...gate, cohort_id: gate.unit_id })),
+      pull_request_merge_waits: [],
       recent_artifacts: [{ artifact_id: "art-build", type_id: "dev.build_result", revision: 1, stage_name: "build", label: null, created_at: "2026-09-01T09:00:00Z" }],
       stage_progress: { total: 1, pending: 0, active: 0, blocked: 1, complete: 0, failed: 0, cancelled: 0 },
     });
     if (url.includes("/gates")) return json(GATES);
-    // Narrower than `/sessions`: kbbl's own per-session reads (skills, stream)
-    // live under `/sessions/:sid/...` and must not be answered with the run's
-    // attempt list.
-    if (url.includes("/runs/") && url.includes("/sessions")) return json(SESSIONS);
     if (url.includes("/runs/")) return json(RUN);
     return json([]);
   });

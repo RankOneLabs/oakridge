@@ -11,6 +11,7 @@ export interface CollaborationPingClient {
 }
 
 interface SessionMessageRecipientRow {
+  readonly cohort_id: CohortId;
   readonly execution_id: ExecutionId | null;
   readonly executor_type: string;
   readonly adapter_reference: JsonValue;
@@ -29,24 +30,25 @@ const deliverableReference = (value: JsonValue): ExternalExecutionReference | nu
 export class PostgresSessionMessageRecipientResolver implements SessionMessageRecipientResolver {
   constructor(private readonly sql: SqlExecutor) {}
 
-  async resolve(message: SessionMessage): Promise<SessionMessageRecipientResolution> {
-    if (message.recipient.kind !== "agent" || message.recipient.id === null) {
+  async resolve(input: { readonly run_id: WorkflowRunId; readonly recipient: import("../domain/collaboration").MessageParty }): Promise<SessionMessageRecipientResolution> {
+    if (input.recipient.kind !== "agent" || input.recipient.id === null) {
       return { kind: "recipient_not_deliverable", detail: "only an agent recipient with a session id can receive a session message" };
     }
-    const sessionId = parseUuidId<SessionId>(message.recipient.id);
+    const sessionId = parseUuidId<SessionId>(input.recipient.id);
     if (!sessionId) return { kind: "recipient_not_deliverable", detail: "agent recipient id must be a session UUID" };
-    const rows = await this.sql.query<SessionMessageRecipientRow>(`SELECT attempt.request->>'execution_id' AS execution_id,
+    const rows = await this.sql.query<SessionMessageRecipientRow>(`SELECT attempt.cohort_id::text,attempt.request->>'execution_id' AS execution_id,
       attempt.adapter_type AS executor_type,session.adapter_reference
       FROM oakridge.session session JOIN oakridge.attempt attempt ON attempt.id=session.attempt_id
-      WHERE session.run_id=$1 AND session.id=$2`, [message.run_id, sessionId]);
+      WHERE session.run_id=$1 AND session.id=$2`, [input.run_id, sessionId]);
     const row = rows[0];
-    if (!row) return { kind: "recipient_not_deliverable", detail: `recipient session '${sessionId}' was not found in run '${message.run_id}'` };
+    if (!row) return { kind: "recipient_not_deliverable", detail: `recipient session '${sessionId}' was not found in run '${input.run_id}'` };
     const externalReference = deliverableReference(row.adapter_reference);
     if (!row.execution_id || !externalReference) {
       return { kind: "recipient_not_deliverable", detail: `recipient session '${sessionId}' has no deliverable executor reference` };
     }
     return {
       kind: "resolved",
+      cohort_id: row.cohort_id,
       target: {
         execution_id: row.execution_id,
         executor_type: row.executor_type,

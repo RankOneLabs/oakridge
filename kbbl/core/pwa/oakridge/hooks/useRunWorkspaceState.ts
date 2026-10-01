@@ -29,7 +29,7 @@ export interface RunWorkspaceStateInput {
   /** Undefined until `GET /runs/:id` resolves; restore waits for it. */
   readonly run: RunDetail | undefined;
   /**
-   * What `GET /runs/:id/sessions` knows. Restore waits while it is `pending`
+   * What run diagnosis knows. Restore waits while it is `pending`
    * but not while it is `unavailable`: a read that failed is never going to
    * answer on its own, and holding the workspace on "Loading run…" until it
    * does would make a session outage cost the operator the whole run view.
@@ -39,7 +39,7 @@ export interface RunWorkspaceStateInput {
   readonly sessions: RunSessionsRead;
   /**
    * Sids kbbl's inbox has reported gone. Oakridge keeps listing the work
-   * order behind a purged session, so nothing in the run's own reads says the
+   * attempt behind a purged session, so nothing in the run's own reads says the
    * transcript is gone — this is the signal that a pane holding one is stale.
    */
   readonly purgedSessionIds: ReadonlySet<string>;
@@ -139,7 +139,7 @@ export function useRunWorkspaceState({
    * stored pane against everything the run lists because the store is untrusted
    * input that can be arbitrarily old; an open happening now is the operator
    * (or a route) naming something, and the run's own reads lag what exists —
-   * resuming an ended session opens a sid that `GET /runs/:id/sessions` has not
+   * resuming an ended session opens a sid that run diagnosis has not
    * listed yet. So the only thing refused here is a target already known to be
    * gone, which the validation effect above would otherwise drop a frame after
    * the pane mounted.

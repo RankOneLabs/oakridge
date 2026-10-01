@@ -2,6 +2,7 @@ import { Button } from "../../../components/atoms/Button";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import { GateDecisionActions } from "./GateDecisionActions";
 import { useConfirmCohortMerged } from "../../hooks/useConfirmCohortMerged";
+import { useRetryStuck } from "../../hooks/useRetryStuck";
 import type { CohortLifecycleSummary, ParkedGate, ReviewInboxItem } from "../../types";
 
 function itemToGate(item: ReviewInboxItem): ParkedGate | null {
@@ -10,6 +11,7 @@ function itemToGate(item: ReviewInboxItem): ParkedGate | null {
   const mergeConfirmation = item.kind === "merge_confirmation";
   return {
     id: item.gate_id,
+    stage_instance_id: item.stage_instance_id,
     gate_type: mergeConfirmation ? "merge_confirmation" : "artifact_approval",
     gate_step: mergeConfirmation ? "merge_confirmation" : "artifact_approval",
     run_id: item.run_id,
@@ -29,14 +31,13 @@ function itemToGate(item: ReviewInboxItem): ParkedGate | null {
 
 function workLabel(item: ReviewInboxItem): string {
   switch (item.kind) {
-    case "admission": return "Ready to start";
     case "artifact_gate": return "Artifact ready for review";
     case "merge_confirmation": return "Confirm the merged pull request";
     case "cohort_blocked": return "Waiting on another cohort";
     case "cohort_failed": return "Cohort needs recovery";
+    case "cohort_retry": return "Session ended without finishing";
     case "pull_request_mismatch": return "Pull request needs attention";
     case "pull_request_merge": return "Waiting for the pull request to merge";
-    case "gate_decision": return "Decision recorded";
   }
 }
 
@@ -63,12 +64,23 @@ export function WorkItem({ item, cohort, isSettled = false, onSelectRun, onSelec
         {!isSettled && <>
         {gate && <GateDecisionActions gate={gate} />}
         {!gate && item.kind === "pull_request_merge" && <PullRequestMergeAction item={item} />}
+        {!gate && item.kind === "cohort_retry" && <CohortRetryAction item={item} />}
         {!gate && item.kind === "pull_request_mismatch" && <><p>{mismatch?.detail ?? "The observed pull request does not match this cohort’s durable configuration."}</p><p>Correct the pull request repository or branches, then Oakridge will reconcile it automatically.</p></>}
-        {!gate && item.kind !== "pull_request_mismatch" && item.kind !== "pull_request_merge" && <p>{item.kind === "cohort_failed" ? "Open the run to inspect the failure and retry the work." : "This work will continue automatically when its dependencies finish."}</p>}
+        {!gate && item.kind !== "pull_request_mismatch" && item.kind !== "pull_request_merge" && item.kind !== "cohort_retry" && <p>{item.kind === "cohort_failed" ? "This cohort failed and ended its run. Start a new run to try again." : "This work will continue automatically when its dependencies finish."}</p>}
         </>}
       </div>
     </article>
   );
+}
+
+function CohortRetryAction({ item }: { item: ReviewInboxItem }) {
+  const retry = useRetryStuck(item.run_id);
+  return <>
+    <p>Session ended without finishing. Retry to relaunch it.</p>
+    <Button variant="secondary" onClick={() => retry.mutate({ stageInstanceId: item.stage_instance_id, unitId: item.unit_id })}
+      disabled={retry.isPending}>Retry</Button>
+    {retry.isError && <FeedbackMessage tone="danger">{retry.error instanceof Error ? retry.error.message : "Retry failed"}</FeedbackMessage>}
+  </>;
 }
 
 /**
@@ -96,4 +108,3 @@ function PullRequestMergeAction({ item }: { item: ReviewInboxItem }) {
     {confirmation.isError && <FeedbackMessage tone="danger">{confirmation.error instanceof Error ? confirmation.error.message : "Could not confirm the merge"}</FeedbackMessage>}
   </>;
 }
-

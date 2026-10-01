@@ -14,9 +14,6 @@ function lifecycleLabel(cohort: CohortLifecycleSummary): string {
   if (cohort.lifecycle === "complete" && cohort.pull_request_reconciliation?.completed_at) {
     return "Merged · complete";
   }
-  if (cohort.lifecycle === "pending" && cohort.admission.required && !cohort.admission.admitted) {
-    return cohort.admission.eligible ? "Brief approved · awaiting admission" : "Brief approved · waiting on dependencies";
-  }
   if (cohort.lifecycle === "blocked" && cohort.blocked_reason && cohort.next_actor) {
     return `Blocked: ${cohort.blocked_reason} · next: ${cohort.next_actor}`;
   }

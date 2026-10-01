@@ -11,7 +11,7 @@ export function repositoryDraftFromProject(
     path: project.repo_dir,
     forge_owner: project.forge_repository?.owner ?? current.forge_owner,
     forge_name: project.forge_repository?.name ?? current.forge_name,
-    integration_branch: project.base_branch ?? current.integration_branch,
+    integration_branch: project.integration_branch ?? current.integration_branch,
   };
 }
 

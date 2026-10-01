@@ -23,9 +23,9 @@ function renderInbox(data: InboxFixture, onSelectRun = vi.fn(), onSelectArtifact
 }
 
 const inbox: ReviewInbox = {
-  cohorts: [{ id: "run-1:api", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "api", title: "Build API", lifecycle: "pending", blocked_reason: null, next_actor: "operator", completion: { build_complete: false, assessment_complete: false }, admission: { required: true, admitted: false, eligible: true, blocked_by: [] }, artifact_revision_id: null, updated_at: "2026-08-07T00:00:00Z" },
-    { id: "run-1:web", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "web", title: "Build UI", lifecycle: "blocked", blocked_reason: "gate", next_actor: "operator", completion: { build_complete: true, assessment_complete: false }, admission: { required: true, admitted: true, eligible: true, blocked_by: [] }, artifact_revision_id: "revision-web", updated_at: "2026-08-07T01:00:00Z" }],
-  items: [{ id: "admit-api", kind: "admission", state: "actionable", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "api", lifecycle: "pending", blocked_reason: null, next_actor: "operator", title: "Build API", resume_actions: [], blocked_by: [] },
+  cohorts: [{ id: "run-1:api", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "api", title: "Build API", lifecycle: "blocked", blocked_reason: "retry", next_actor: "operator", completion: { build_complete: false, assessment_complete: false }, blocked_by: [], artifact_revision_id: null, updated_at: "2026-08-07T00:00:00Z" },
+    { id: "run-1:web", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "web", title: "Build UI", lifecycle: "blocked", blocked_reason: "gate", next_actor: "operator", completion: { build_complete: true, assessment_complete: false }, blocked_by: [], artifact_revision_id: "revision-web", updated_at: "2026-08-07T01:00:00Z" }],
+  items: [{ id: "retry-api", kind: "cohort_retry", state: "actionable", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "api", lifecycle: "blocked", blocked_reason: "retry", next_actor: "operator", title: "Build API", resume_actions: ["retry"], blocked_by: [] },
     { id: "review-web", kind: "artifact_gate", state: "actionable", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "web", lifecycle: "blocked", blocked_reason: "gate", next_actor: "operator", title: "Build UI", artifact_revision_id: "revision-web", gate_id: "stage-build:web", resume_actions: ["approve", "request_revision"], blocked_by: [] }],
   attention_count: 2,
 };
@@ -38,10 +38,8 @@ describe("ReviewInboxView", () => {
     expect(await screen.findAllByTestId("or-review-inbox-item")).toHaveLength(2);
     expect(screen.queryAllByTestId("or-cohort-lifecycle-card")).toHaveLength(0);
     expect(screen.getByText("Artifact ready for review")).toBeTruthy();
-    // Manual admission is retired: the item still names its state, but there is
-    // no route behind an admit button any more.
-    expect(screen.getByText("Ready to start")).toBeTruthy();
-    expect(screen.queryByTestId("or-inbox-admit-btn")).toBeNull();
+    expect(screen.getByText("Session ended without finishing")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
   });
 
   it("navigates directly to the reviewed artifact and its run", async () => {
@@ -92,25 +90,25 @@ describe("ReviewInboxView", () => {
     expect(JSON.parse(String(request.body))).toMatchObject({ action: "request_revision", feedback: "Explain the recovery path." });
   });
 
-  it("shows blockers without offering admission", async () => {
+  it("shows blockers", async () => {
     renderInbox({ cohorts: [], items: [{ ...inbox.items[0], kind: "cohort_blocked", state: "blocked", blocked_by: ["database"] }] });
     expect((await screen.findByTestId("or-review-inbox-blocked")).textContent).toContain("database");
-    expect(screen.queryByTestId("or-inbox-admit-btn")).toBeNull();
   });
 
-  it("keeps automatic workflows action-free while naming their queued state", async () => {
+  it("keeps queued workflows action-free", async () => {
     const automatic = {
       ...inbox.cohorts[0],
-      admission: { required: false, admitted: true, eligible: true, blocked_by: [] },
+      lifecycle: "pending" as const,
+      blocked_reason: null,
+      next_actor: "core" as const,
     };
-    renderInbox({ cohorts: [automatic], items: [inbox.items[0]] });
+    renderInbox({ cohorts: [automatic], items: [] });
     expect(await screen.findByText("Queued")).toBeTruthy();
-    expect(screen.queryByTestId("or-inbox-admit-btn")).toBeNull();
   });
 
   it("names every committed lifecycle state in operator language", async () => {
     const states: CohortLifecycle[] = ["pending", "active", "blocked", "complete", "failed", "cancelled"];
-    const labels = ["Brief approved · awaiting admission", "Active", "Blocked: gate · next: operator", "Needs recovery", "Cancelled"];
+    const labels = ["Queued", "Active", "Blocked: gate · next: operator", "Needs recovery", "Cancelled"];
     renderInbox({
       items: [],
       cohorts: states.map((lifecycle, index) => ({
