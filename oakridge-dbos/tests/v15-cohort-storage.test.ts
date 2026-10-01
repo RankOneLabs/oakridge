@@ -18,7 +18,7 @@
 import { afterAll, expect, test } from "bun:test";
 
 import { createDevFlowAdapterRegistry } from "../src/adapters/dev-flow";
-import { attemptIdFor } from "../src/decision/ids";
+import { attemptIdFor, sessionIdFor, transitionIdFor } from "../src/decision/ids";
 import type { AttemptId, CohortId, JsonValue, SessionId, StageInstanceId, WorkflowRunId } from "../src/domain/primitives";
 import type { WorkOrderId } from "../src/domain/primitives";
 import { capabilityFor, capabilityHash } from "../src/runtime/resolve-work-order";
@@ -126,6 +126,26 @@ const publish = (prepared: Prepared, attempt: AttemptId, artifact: string,
     published_at: "2026-09-29T00:00:00.000Z",
   });
 
+const launchReplacement = async (
+  records: PostgresRunRecordRepository, cohort: CohortId, stage: StageInstanceId,
+  replacement: AttemptId, key: string,
+) => {
+  const state = await records.find_cohort_state(cohort);
+  if (!state) throw new Error("cohort disappeared");
+  const attempt_number = state.attempt_count + 1;
+  return records.commit_cohort_launch({
+    event: { run_id: RUN_ID, cohort_id: cohort, expected_version: state.durable_version,
+      change: { status: "active", blocked_reason: null, next_actor: "agent", outcome: null },
+      stage_data: state.stage_data, reopen_output_names: [],
+      effect: { kind: "start_attempt", cohort_id: cohort, attempt_number },
+      launch_reason: "retry", actor: "operator", recorded_at: "2026-09-29T01:00:00Z" },
+    attempt: { run_id: RUN_ID, stage_instance_id: stage, cohort_id: cohort,
+      attempt_id: replacement, attempt_number, adapter_type: "delegated_session", request: {} as never,
+      launch_transition_id: transitionIdFor({ kind: "cohort", id: cohort }, state.durable_version + 1),
+      session_id: sessionIdFor(replacement), idempotency_key: key, created_at: "2026-09-29T01:00:00Z" },
+  });
+};
+
 test("two cohorts of one stage instance each publish the stage's declared output", async () => {
   const prepared = await prepare("oakridge_v15_fan_out_publish");
   if (!prepared) return;
@@ -159,6 +179,50 @@ test("two cohorts of one stage instance each publish the stage's declared output
     expect(released.kind).toBe("released");
     const secondState = await prepared.records.find_cohort_state(cohortId(2));
     expect(secondState?.open_waits.map((wait) => wait.wait_id)).toEqual([second.wait_id]);
+  } finally {
+    await prepared.sql.close();
+  }
+});
+
+test("a reopened build slot keeps acceptance history and accepts one new publication", async () => {
+  const prepared = await prepare("oakridge_v15_reopened_build_slot");
+  if (!prepared) return;
+  try {
+    const cohort = cohortId(3);
+    await openCohort(prepared.sql, STAGE_ID, cohort, "foundation");
+    await startAttempt(prepared.sql, { stage: STAGE_ID, cohort, attempt: attemptId(3),
+      number: 1, status: "active", request: {} });
+    const first = await publish(prepared, attemptId(3), artifactId(3));
+    if (first.kind !== "pending") throw new Error(`first publication was ${first.kind}`);
+    const released = await prepared.records.decide_gate_wait({ wait_id: first.wait_id, action: "approve",
+      actor: "operator", detail: null, decided_at: "2026-09-29T00:01:00.000Z" });
+    expect(released.kind).toBe("released");
+    const state = await prepared.records.find_cohort_state(cohort);
+    if (!state) throw new Error("cohort disappeared");
+    const replacement = attemptId(13);
+    const committed = await prepared.records.commit_cohort_launch({
+      event: { run_id: RUN_ID, cohort_id: cohort, expected_version: state.durable_version,
+        change: { status: "active", blocked_reason: null, next_actor: "agent", outcome: null },
+        stage_data: {}, reopen_output_names: ["build_result"],
+        effect: { kind: "start_attempt", cohort_id: cohort, attempt_number: 2 },
+        launch_reason: "gate_decided", actor: "core", recorded_at: "2026-09-29T00:02:00.000Z" },
+      attempt: { run_id: RUN_ID, stage_instance_id: STAGE_ID, cohort_id: cohort,
+        attempt_id: replacement, attempt_number: 2, adapter_type: "delegated_session",
+        request: {} as never, launch_transition_id: transitionIdFor({ kind: "cohort", id: cohort }, state.durable_version + 1),
+        session_id: sessionIdFor(replacement), idempotency_key: null, created_at: "2026-09-29T00:02:00.000Z" },
+    });
+    expect(committed.ok).toBe(true);
+    const second = await publish(prepared, replacement, artifactId(13));
+    expect(second.kind).toBe("pending");
+    if (second.kind !== "pending") return;
+    const secondReleased = await prepared.records.decide_gate_wait({ wait_id: second.wait_id, action: "approve",
+      actor: "operator", detail: null, decided_at: "2026-09-29T00:03:00.000Z" });
+    expect(secondReleased.kind).toBe("released");
+    const acceptances = await prepared.sql.query<{ readonly artifact_id: string; readonly is_live: boolean }>(
+      `SELECT artifact_id::text,(superseded_at IS NULL) AS is_live FROM oakridge.artifact_acceptance
+       WHERE cohort_id=$1 AND output_name='build_result' ORDER BY accepted_at`, [cohort]);
+    expect(acceptances).toEqual([{ artifact_id: artifactId(3), is_live: false },
+      { artifact_id: artifactId(13), is_live: true }]);
   } finally {
     await prepared.sql.close();
   }
@@ -221,15 +285,14 @@ test("an attempt created by an operator retry is the attempt the cohort machine 
         inputs: [], declared_outputs: [{ name: "build_result", artifact_type: "dev.build_result", required: true }],
         expected_artifacts: [{ unit_id: "web", output_name: "build_result", artifact_type: "dev.build_result" }] } });
 
-    const retried = await prepared.records.retry_cohort({
-      target: { kind: "cohort", cohort_id: cohortId(5) }, actor: "operator", idempotency_key: "retry-1",
-    }, "2026-09-29T00:02:00.000Z");
-    expect(retried.kind).toBe("created");
-    if (retried.kind !== "created") return;
-    expect(retried.attempt_id).toBe(attemptIdFor(cohortId(5), 2));
+    const retried = await launchReplacement(prepared.records, cohortId(5), RETRY_STAGE_ID,
+      attemptIdFor(cohortId(5), 2), "retry-1");
+    expect(retried.ok).toBe(true);
+    if (!retried.ok) return;
+    expect(retried.value.attempt_id).toBe(attemptIdFor(cohortId(5), 2));
 
     const state = await prepared.records.find_cohort_state(cohortId(5));
-    expect(state?.latest_unfinished_attempt_id).toBe(retried.attempt_id);
+    expect(state?.latest_unfinished_attempt_id).toBe(retried.value.attempt_id);
     // The replaced attempt is not a candidate: it ended when the retry abandoned it.
     expect(state?.attempt_count).toBe(2);
   } finally {
@@ -252,7 +315,7 @@ test("a cohort decision read before cancellation cannot un-cancel the cohort", a
     expect(cancelled.ok).toBe(true);
     const decision = { run_id: RUN_ID, cohort_id: cohortId(20), expected_version: stale.durable_version,
       change: { status: "active" as const, blocked_reason: null, next_actor: "agent" as const, outcome: null },
-      stage_data: {}, effect: { kind: "none" as const }, launch_reason: "operator" as const,
+      stage_data: {}, reopen_output_names: [], effect: { kind: "none" as const }, launch_reason: "operator" as const,
       actor: "stale-reader", recorded_at: "2026-09-29T01:01:00Z" };
     expect((await prepared.records.record_cohort_event(decision)).kind).toBe("version_conflict");
     const rows = await prepared.sql.query<{ readonly status: string; readonly version: string; readonly transitions: string }>(
@@ -375,8 +438,8 @@ test("a failed retry launch leaves its transition and earlier attempt untouched"
       BEGIN IF NEW.attempt_number=2 THEN RAISE EXCEPTION 'injected attempt insert failure'; END IF; RETURN NEW; END $$`, []);
     await prepared.sql.query(`CREATE TRIGGER reject_second_attempt BEFORE INSERT ON oakridge.attempt
       FOR EACH ROW EXECUTE FUNCTION oakridge.reject_second_attempt()`, []);
-    await expect(prepared.records.retry_cohort({ target: { kind: "cohort", cohort_id: cohortId(24) },
-      actor: "operator", idempotency_key: "retry-atomic" }, "2026-09-29T01:00:00Z"))
+    await expect(launchReplacement(prepared.records, cohortId(24), RETRY_STAGE_ID,
+      attemptIdFor(cohortId(24), 2), "retry-atomic"))
       .rejects.toThrow("injected attempt insert failure");
     const rows = await prepared.sql.query<{ readonly version: string; readonly transitions: string; readonly earlier_status: string }>(
       `SELECT cohort.durable_version::text AS version,
@@ -422,18 +485,16 @@ test("same-key retries on two executors create one attempt and one transition", 
     const secondRecords = new PostgresRunRecordRepository(secondSql,
       new PostgresRunRecordWriter(secondSql, createDevFlowAdapterRegistry()));
     const retries = await Promise.all([
-      prepared.records.retry_cohort({ target: { kind: "cohort", cohort_id: cohortId(26) }, actor: "operator",
-        idempotency_key: "retry-same" }, "2026-09-29T01:00:00Z"),
-      secondRecords.retry_cohort({ target: { kind: "cohort", cohort_id: cohortId(26) }, actor: "operator",
-        idempotency_key: "retry-same" }, "2026-09-29T01:00:00Z"),
+      launchReplacement(prepared.records, cohortId(26), RETRY_STAGE_ID,
+        attemptIdFor(cohortId(26), 2), "retry-same"),
+      launchReplacement(secondRecords, cohortId(26), RETRY_STAGE_ID,
+        attemptIdFor(cohortId(26), 2), "retry-same"),
     ]);
     await secondSql.close();
-    expect(retries.map((result) => result.kind).sort()).toEqual(["already_created", "created"]);
-    if (retries[0]?.kind === "created" || retries[0]?.kind === "already_created") {
-      if (retries[1]?.kind === "created" || retries[1]?.kind === "already_created") {
-        expect(retries[0].attempt_id).toBe(retries[1].attempt_id);
-        expect([retries[0].durable_version, retries[1].durable_version]).toEqual([1, 1]);
-      }
+    expect(retries.every((result) => result.ok)).toBe(true);
+    if (retries[0]?.ok && retries[1]?.ok) {
+      expect(retries[0].value.attempt_id).toBe(retries[1].value.attempt_id);
+      expect([retries[0].value.durable_version, retries[1].value.durable_version]).toEqual([1, 1]);
     }
     const rows = await prepared.sql.query<{ readonly attempts: string; readonly transitions: string }>(
       `SELECT (SELECT count(*)::text FROM oakridge.attempt WHERE cohort_id=$1 AND idempotency_key='retry-same') AS attempts,

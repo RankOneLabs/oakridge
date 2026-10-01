@@ -16,6 +16,7 @@ import type { DevFlowBuildCohort } from "../domain/cohort-pull-request";
 import type { PullRequest, PullRequestId, PullRequestMergeClosure, PullRequestMergeClosureId, PullRequestObservation, PullRequestObservationId, PullRequestVerificationId, StoredPullRequestObservation } from "../domain/pull-request";
 import { err, ok, type Result } from "../domain/primitives";
 import type { CurrentVerifiedCohortPullRequest, DevFlowPullRequestRepository } from "./repositories";
+import { selectCohortRetryability } from "../domain/cohort-retry";
 
 interface GateProjectionRow {
   readonly run_id: string;
@@ -650,6 +651,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
         sid: unit.session_id,
         worktree: null, base_sha: null,
         status: unit.status, blocked_reason: unit.blocked_reason, next_actor: unit.next_actor,
+        retryable: selectCohortRetryability(unit).kind === "retryable",
         gate: unit.gate_step, admission_required: false, admitted: true,
         admission_eligible: true, admission_blocked_by: [],
       }));

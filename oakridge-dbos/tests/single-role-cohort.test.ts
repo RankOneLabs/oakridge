@@ -12,9 +12,10 @@
 import { expect, test } from "bun:test";
 
 import { createSingleRoleCohortDriver } from "../src/adapters/single-role-cohort";
+import { createDeterministicCohortDriver } from "../src/adapters/deterministic-cohort";
 import { compileWorkflowDefinition } from "../src/compiler/compile-workflow";
 import type { CompiledStageContract } from "../src/domain/compiled-workflow";
-import type { ArtifactId, CohortId, JsonValue, StageInstanceId, UnitId, WaitId, WorkflowRunId } from "../src/domain/primitives";
+import type { ArtifactId, AttemptId, CohortId, JsonValue, StageInstanceId, UnitId, WaitId, WorkflowRunId } from "../src/domain/primitives";
 import type { ArtifactEnvelope } from "../src/domain/execution";
 import type { CohortMachineState, DecidedCohortGate } from "../src/domain/run-record";
 import { createPromptBundle } from "../src/runtime/prompt-template";
@@ -64,7 +65,7 @@ const committed = (state: CohortMachineState, decision: CohortStepDecision): Coh
 const initialState = (stage_data: JsonValue): CohortMachineState => ({
   run_id: RUN_ID, stage_instance_id: STAGE_ID, stage_key: "spec_analyzer", cohort_id: COHORT_ID, cohort_key: "0",
   status: "pending", blocked_reason: null, next_actor: "core", durable_version: 0, stage_data,
-  attempt_count: 0, accepted_outputs: [], open_waits: [], decided_gates: [], latest_unfinished_attempt_id: null,
+  attempt_count: 0, accepted_outputs: [], open_waits: [], decided_gates: [], latest_unfinished_attempt_id: null, latest_attempt: null,
 });
 
 test("a one-role cohort reaches a fixpoint after two revision rounds instead of alternating between them", async () => {
@@ -165,4 +166,28 @@ const briefContext = (state: CohortMachineState, contract: CompiledStageContract
   state, stage_contract: contract as unknown as JsonValue, run_context: {},
   inputs: { plan: { artifact_id: artifactId(8), artifact_type: "dev.plan", output_name: "plan",
     unit_id: "0" as UnitId, body: { cohorts: BRIEF_KEYS.map((id) => ({ id })) } } },
+});
+
+test("a deterministic lost attempt waits for operator retry and launches exactly once", async () => {
+  const loaded = await loadDevFlowV15();
+  if (!loaded.ok) throw new Error(loaded.error.detail);
+  const compiled = compileWorkflowDefinition(loaded.value);
+  if (!compiled.ok) throw new Error(JSON.stringify(compiled.error));
+  const contract = compiled.value.stages.provision_repository_refs;
+  if (!contract) throw new Error("provision_repository_refs stage is missing");
+  const driver = createDeterministicCohortDriver({ stage_type: "provision_repository_refs",
+    records: { load_work_order_capability_seed: async () => "seed-value-for-tests" } });
+  const state: CohortMachineState = { ...initialState({ unit_id: "0", artifact: null, launched: 1 }),
+    status: "active", next_actor: "service", attempt_count: 1,
+    latest_attempt: { attempt_id: "11111111-1111-4111-8111-000000000001" as AttemptId,
+      attempt_number: 1, status: "failed", created_at: "2026-09-29T00:00:00Z", ended_at: "2026-09-29T00:01:00Z" } };
+  const context = contextOf(state, contract);
+  const lost = await driver.step(context);
+  expect(lost?.event.change.blocked_reason).toBe("retry");
+  const blocked = committed(state, lost!);
+  const retry = await driver.apply_event(contextOf(blocked, contract), { kind: "operator_retry_requested" });
+  expect(retry?.launch?.attempt_number).toBe(2);
+  const relaunched = { ...committed(blocked, retry!), latest_unfinished_attempt_id: retry?.launch
+    ? "11111111-1111-4111-8111-000000000002" as AttemptId : null };
+  expect(await driver.step(contextOf(relaunched, contract))).toBeNull();
 });

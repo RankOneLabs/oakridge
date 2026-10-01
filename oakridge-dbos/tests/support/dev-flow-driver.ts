@@ -342,7 +342,12 @@ const runFakeAcpAgent = (): void => {
         const launched = await fetch(`${controlUrl}/launch`, { method: "POST", headers: { "content-type": "application/json" },
           body: JSON.stringify({ ...parsed, prompt: renderedPrompt }) });
         if (!launched.ok) throw new Error(`fake agent launch recording failed: ${launched.status}`);
-        const launchIdentity = await launched.json() as { readonly stage_instance_id?: string | null };
+        const launchIdentity = await launched.json() as { readonly stage_instance_id?: string | null;
+          readonly skip_publication?: boolean };
+        if (launchIdentity.skip_publication) {
+          setTimeout(() => process.exit(0), 10);
+          return { stopReason: "end_turn" as const };
+        }
         publications.set(ctx.params.sessionId, {
           ...parsed,
           stage_instance_id: launchIdentity.stage_instance_id ?? parsed.stage_instance_id,

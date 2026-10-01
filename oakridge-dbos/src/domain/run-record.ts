@@ -177,6 +177,7 @@ export interface RecordCohortEvent {
   readonly expected_version: number;
   readonly change: { readonly status: CoreStatus; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null; readonly outcome: JsonValue | null };
   readonly stage_data: JsonValue;
+  readonly reopen_output_names: readonly string[];
   readonly effect: TransitionEffectDescriptor;
   readonly launch_reason: TransitionLaunchReason;
   readonly actor: string;
@@ -254,6 +255,14 @@ export interface CohortMachineState {
    * off-machine caller could.
    */
   readonly latest_unfinished_attempt_id: AttemptId | null;
+  readonly latest_attempt: {
+    readonly attempt_id: AttemptId;
+    readonly attempt_number: number;
+    readonly status: CoreStatus;
+    readonly created_at: string;
+    readonly ended_at: string | null;
+  } | null;
+  readonly latest_assessment_published_at?: string | null;
   readonly accepted_outputs: readonly ArtifactEnvelope[];
   /** Every open wait this cohort is parked on, oldest first. */
   readonly open_waits: readonly OpenCohortWait[];
@@ -305,6 +314,12 @@ export interface AttemptExecution {
   readonly request: ExecutionRequest;
   readonly adapter_reference: ExternalExecutionReference | null;
   readonly kbbl_session_id: KbblSessionId | null;
+}
+
+export interface PriorSessionToFence {
+  readonly session_id: SessionId;
+  readonly attempt_id: AttemptId;
+  readonly adapter_reference: ExternalExecutionReference;
 }
 
 export interface BindSession {
@@ -359,12 +374,6 @@ export type RetryCohortTarget =
   | { readonly kind: "cohort"; readonly cohort_id: CohortId }
   | { readonly kind: "stage_cohort"; readonly stage_instance_id: StageInstanceId; readonly cohort_key: string };
 
-export interface RetryCohort {
-  readonly target: RetryCohortTarget;
-  readonly idempotency_key: string;
-  readonly actor: string;
-}
-
 export type RetryCohortResult =
   | {
       readonly kind: "created" | "already_created";
@@ -375,9 +384,7 @@ export type RetryCohortResult =
       readonly durable_version: number;
     }
   | { readonly kind: "cohort_not_found"; readonly detail: string }
-  | { readonly kind: "not_active"; readonly detail: string }
-  | { readonly kind: "work_in_progress"; readonly detail: string }
-  | { readonly kind: "actionable_wait"; readonly detail: string }
+  | { readonly kind: "not_retryable"; readonly reason: "terminal" | "gate_pending" | "work_in_progress" | "not_lost" }
   | { readonly kind: "idempotency_conflict"; readonly detail: string };
 
 /* ------------------------------------------------------------------ *
