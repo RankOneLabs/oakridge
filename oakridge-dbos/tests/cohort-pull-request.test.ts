@@ -317,34 +317,12 @@ test("replacement-required verification exposes the current verification id", as
   expect(result).toEqual({ ok: false, error: expect.objectContaining({ kind: "replacement_required", current_verification_id: currentVerificationId }) });
 });
 
-test("cohort HTTP exposes the verification id needed to authorize replacement", async () => {
-  const currentVerificationId = "00000000-0000-4000-8000-000000000020" as PullRequestVerificationId;
-  const cohort = { ...storedCohort("/repo", "new-head"), current_verified_pull_request_id: currentVerificationId };
-  const pullRequestId = "00000000-0000-4000-8000-000000000021" as PullRequestId;
-  const candidate = observation({ number: 441, url: "https://github.com/RankOneLabs/oakridge/pull/441",
-    state: "open", merged_at: null, head_sha: "new-head" });
-  const app = createCohortPullRequestApp({
-    pull_requests: {
-      async find_cohort_for_unit() { return cohort; },
-      async find_current_for_unit() { return { cohort, pull_request: { id: pullRequestId, provider: "github" as const,
-        owner: "RankOneLabs", name: "oakridge", forge_pull_request_id: 440, url: expected.url, created_at: "2026-09-29T00:00:00Z" },
-        observation: { ...observation({ state: "open", merged_at: null, head_sha: "old-head" }), id: "00000000-0000-4000-8000-000000000022" as PullRequestObservationId,
-          pull_request_id: pullRequestId, recorded_at: "2026-09-29T00:00:00Z" } }; },
-      async observe() { return { pull_request_id: "00000000-0000-4000-8000-000000000023" as PullRequestId,
-        observation_id: "00000000-0000-4000-8000-000000000024" as PullRequestObservationId }; },
-      async bind_verified() { return { ok: false as const, error: { kind: "replacement_required" as const, detail: "replacement required" } }; },
-    } as unknown as DevFlowPullRequestRepository,
-    forge_repositories: { async find_forge_repository() { return { owner: "RankOneLabs", name: "oakridge" }; } },
-    records: { async find_cohort_location() { return { run_id: expected.run_id, cohort_id: cohort.cohort_id, status: "blocked" as const }; } },
-    reader: { async read() { return candidate; } },
-    git: { async run() { return { exit_code: 0, stdout: "new-head\trefs/heads/cohort/foundation\n", stderr: "" }; } },
-    now: () => "2026-09-29T01:00:00Z", async record_build_event() {},
-  });
-  const response = await app.request(`/cohorts/${expected.stage_instance_id}:${expected.unit_id}/pull_request`, {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: "observation", observation: candidate }),
-  });
-  expect(response.status).toBe(409);
-  expect(await response.json()).toEqual(expect.objectContaining({ current_verification_id: currentVerificationId }));
+test("cohort HTTP refresh returns the state observed from GitHub", async () => {
+  const cohort_id = "00000000-0000-4000-8000-000000000020";
+  const app = createCohortPullRequestApp({ async refresh() { return { state: "awaiting_merge" }; } });
+  const response = await app.request(`/cohorts/${cohort_id}/pull_request/refresh`, { method: "POST" });
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ state: "awaiting_merge" });
 });
 
 test("repository-specific cohort refs drive both storage and prompt contracts", () => {
@@ -369,11 +347,11 @@ test("cohort preparation creates the canonical ref and persists the roles render
     const result = await prepareDevFlowBuildCohort({ pull_requests: repository, git: new BunGitCommandRunner() }, {
       cohort_id: storedCohort(fixture.path, baseHead).cohort_id, stage_instance_id: expected.stage_instance_id,
       cohort_key: "foundation", repository: { repository_key: "oakridge", repository_path: fixture.path,
-        integration_branch: fixture.integration_branch, base_branch: "epic/tiers", base_head_sha: baseHead },
+        integration_branch: fixture.integration_branch, base_branch: fixture.integration_branch, base_head_sha: baseHead },
       prepared_at: "2026-09-29T00:00:00Z",
     });
     expect(result.ok).toBe(true);
-    expect(stored).toEqual(expect.objectContaining({ canonical_ref: canonicalRef, expected_pr_base: "epic/tiers" }));
+    expect(stored).toEqual(expect.objectContaining({ canonical_ref: canonicalRef, expected_pr_base: fixture.integration_branch }));
     expect(result.ok && result.value.branch_contract).toContain(`Canonical cohort ref: ${canonicalRef}`);
     expect(await fixture.origin_branch_sha(canonicalRef)).toBe(baseHead);
   } finally {

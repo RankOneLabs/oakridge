@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 
-import type { ArtifactId, AttemptId, JsonValue, OutputCollectionKey } from "../domain/primitives";
+import type { ArtifactId, AttemptId, JsonValue, OutputCollectionKey, Result } from "../domain/primitives";
 import type { PublishWorkOrderArtifactResult } from "../domain/run-record";
 import type { RunRecordRepository } from "../storage/repositories";
 
@@ -16,6 +16,8 @@ export interface PublishWorkOrderArtifactCommand {
 
 export interface PublishWorkOrderArtifactDependencies {
   readonly records: Pick<RunRecordRepository, "publish_artifact">;
+  readonly enrich?: (input: { readonly attempt_id: AttemptId; readonly output_name: string; readonly body: JsonValue }) =>
+    Promise<Result<JsonValue | null, { readonly code: string; readonly detail: string }>>;
   now(): string;
   new_artifact_id?: () => string;
 }
@@ -26,6 +28,10 @@ export const publishWorkOrderArtifact = async (
   dependencies: PublishWorkOrderArtifactDependencies,
 ): Promise<PublishWorkOrderArtifactResult> => {
   const payloadHash = createHash("sha256").update(JSON.stringify(command.body)).digest("hex");
+  const enriched = dependencies.enrich
+    ? await dependencies.enrich({ attempt_id: command.attempt_id, output_name: command.output_name, body: command.body })
+    : { ok: true as const, value: null };
+  if (!enriched.ok) return { kind: "enrichment_unavailable", detail: enriched.error.detail };
   return dependencies.records.publish_artifact({
     artifact_id: (dependencies.new_artifact_id ?? randomUUID)() as ArtifactId,
     attempt_id: command.attempt_id,
@@ -33,6 +39,7 @@ export const publishWorkOrderArtifact = async (
     output_name: command.output_name,
     collection_key: command.collection_key,
     body: command.body,
+    enrichment: enriched.value,
     idempotency_key: command.idempotency_key ?? payloadHash,
     payload_hash: payloadHash,
     published_at: dependencies.now(),

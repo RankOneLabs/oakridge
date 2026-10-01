@@ -24,6 +24,8 @@ import type { Hono } from "hono";
 import { createDelegatedSessionCohortDriver } from "../adapters/delegated-session-cohort";
 import { createDeterministicCohortDriver } from "../adapters/deterministic-cohort";
 import { createDevFlowAdapterRegistry } from "../adapters/dev-flow";
+import { registerDevFlowMachine } from "../adapters/dev-flow-machine";
+import type { RegisteredEffect } from "../decision/stage-effects";
 import { PROVISION_REPOSITORY_REFS_STAGE_TYPE, parseRepositoryRefs } from "../domain/repository-refs";
 import { RepositoryProvisioningAdapter } from "../adapters/repository-provisioning";
 import { compileWorkflowDefinition } from "../compiler/compile-workflow";
@@ -34,7 +36,8 @@ import type { ArtifactEnvelope, ExecutionRequest, ExecutorAdapter } from "../dom
 import type { CompiledStageContract } from "../domain/compiled-workflow";
 import type { CommittedSessionLaunch, DelegatedSessionDefinitionConfig } from "../domain/delegated-session";
 import { readJsonPointer } from "../domain/json-pointer";
-import { err, type AttemptId, type CohortId, type JsonValue, type RunTransitionId, type StageInstanceId, type UnitId, type WorkOrderId, type WorkflowRunId } from "../domain/primitives";
+import { err, ok, type AttemptId, type CohortId, type JsonValue, type Result, type RunTransitionId, type StageInstanceId, type UnitId, type WorkOrderId, type WorkflowRunId } from "../domain/primitives";
+import { parseGithubPullRequestIdentity } from "../domain/pull-request";
 import type { GitCommandRunner } from "../domain/repository-provisioning";
 import type { InitializeStageInstance } from "../domain/run-record";
 import type { RetryCohortResult, RetryCohortTarget } from "../domain/run-record";
@@ -43,8 +46,8 @@ import type { PromptBundleEntry } from "../domain/workflow";
 import { parseWorkflowDefinition } from "../validation/workflow-definition";
 import { STAGE_CONTRACT_DEPENDENCY_KEY } from "../storage/load-run-snapshot";
 import { STAGE_CONTRACT_INPUT_EDGES_KEY } from "../domain/stage-contract";
-import { prepareDevFlowBuildCohort, verifyAndBindCohortPullRequest, type CohortPullRequestDependencies } from "./cohort-pull-request";
-import { pollCohortPullRequests, type CohortPollOutcome, type PullRequestReader } from "./github-pull-requests";
+import { prepareDevFlowBuildCohort, verifyAndBindCohortPullRequest } from "./cohort-pull-request";
+import { pollStagePullRequests, type PullRequestReader, type StagePullRequestPollOutcome } from "./github-pull-requests";
 import { createApp } from "../http/app";
 import { registerDbosTransportClient, sendCohortWakeHint, sendRunWakeHint } from "../http/dbos-transport";
 import { seedBuiltins } from "../seed/seed-builtins";
@@ -63,7 +66,7 @@ import { StageEventApplier } from "../storage/apply-stage-event";
 import { PostgresWorkflowDefinitionRepository } from "../storage/postgres-workflow-definitions";
 import { PgPostgresExecutor } from "../storage/sql-executor";
 import { findExecutorAdapter, registerExecutorAdapter } from "./executor-registry";
-import { loadStageInputs, recordCohortAdapterEvent, registerRunRecordWorkflowServices, stageEffectWorkflow, attemptWorkflow, type CohortMachineDriver } from "../workflows/run-record-topology";
+import { loadStageInputs, registerRunRecordWorkflowServices, stageEffectWorkflow, attemptWorkflow, type CohortMachineDriver } from "../workflows/run-record-topology";
 import "../workflows/collaboration-responder";
 import { DbosRunLaunchClient } from "./dbos-run-launch-client";
 import { DbosCollaborationPingClient, PostgresSessionMessageRecipientResolver, PostgresSessionMessageRepository } from "./collaboration-ping";
@@ -117,7 +120,7 @@ export interface OakridgeRuntime {
    * the waits whose pull requests have merged. Resolves to null when no reader
    * is configured, which is a backend where merges are confirmed by hand.
    */
-  poll_pull_requests(): Promise<readonly CohortPollOutcome[] | null>;
+  poll_pull_requests(): Promise<readonly StagePullRequestPollOutcome[] | null>;
   readonly pull_request_poll_interval_ms: number | null;
   start_unstarted_effects(): Promise<number>;
   is_pull_request_poll_running(): boolean;
@@ -151,6 +154,8 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const writer = new PostgresRunRecordWriter(sql, adapterRegistry);
   const runRecords = new PostgresRunRecordRepository(sql, writer);
   const machineRegistry = new StageMachineRegistry();
+  const registeredEffects = new Map<string, RegisteredEffect>();
+  registerDevFlowMachine(machineRegistry, registeredEffects);
   const startEffects = async (transition_ids: readonly RunTransitionId[]): Promise<void> => {
     if (transition_ids.length === 0) return;
     const rows = await sql.query<{ readonly id: string; readonly effect_workflow_id: string }>(
@@ -159,7 +164,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
       { workflowID: row.effect_workflow_id })(row.id as RunTransitionId);
   };
   const stageEvents = new StageEventApplier({ sql, writer, registry: machineRegistry,
-    registered_effects: new Map(),
+    registered_effects: registeredEffects,
     load_stage_inputs: async (_tx, stage_instance_id, cohort_key) => {
       const stage = await stages.find_contract(stage_instance_id);
       return stage ? loadStageInputs(stage.stage_contract, cohort_key) : {};
@@ -196,6 +201,34 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   for (const adapter of config.executor_adapters) registerExecutorAdapter(adapter);
   const git = config.git_commands ?? new BunGitCommandRunner();
   const forgeReader = config.pull_request_reader ?? { read: async () => null };
+  const enrichStagePublication = async (input: { readonly attempt_id: AttemptId;
+    readonly output_name: string; readonly body: JsonValue }): Promise<Result<JsonValue | null,
+      { readonly code: string; readonly detail: string }>> => {
+    if (input.output_name !== "pr_summary") return ok(null);
+    const rows = await sql.query<{ readonly repository_path: string; readonly canonical_ref: string;
+      readonly expected_pr_base: string }>(
+      `SELECT build.repository_path,build.canonical_ref,build.expected_pr_base
+       FROM oakridge.attempt attempt JOIN oakridge.dev_flow_build_cohort build ON build.cohort_id=attempt.cohort_id
+       WHERE attempt.id=$1`, [input.attempt_id]);
+    const roles = rows[0];
+    const base = { expected_pr_base: roles?.expected_pr_base ?? null,
+      canonical_ref: roles?.canonical_ref ?? null };
+    const url = isJsonObject(input.body) && typeof input.body.pr_url === "string" ? input.body.pr_url : null;
+    const identity = url ? parseGithubPullRequestIdentity(url) : null;
+    if (!identity || !roles) return ok({ ...base, pr: null, origin_head_sha: null });
+    const reader = config.pull_request_reader;
+    if (!reader) return err({ code: "enrichment_unavailable", detail: "GitHub reader is not configured" });
+    const reading = await reader.read(identity.owner, identity.name, identity.number);
+    if (!reading.ok) return err({ code: "enrichment_unavailable", detail: reading.error.detail });
+    if (reading.value === null) return ok({ ...base, pr: null, origin_head_sha: null });
+    const ref = `refs/heads/${roles.canonical_ref}`;
+    let remote: Awaited<ReturnType<GitCommandRunner["run"]>>;
+    try { remote = await git.run(roles.repository_path, ["ls-remote", "origin", ref]); }
+    catch (error) { return err({ code: "enrichment_unavailable", detail: String(error) }); }
+    if (remote.exit_code !== 0) return err({ code: "enrichment_unavailable", detail: remote.stderr.trim() || "origin could not be read" });
+    const origin_head_sha = remote.stdout.trim().split(/\s+/)[0] || null;
+    return ok({ ...base, pr: reading.value as unknown as JsonValue, origin_head_sha });
+  };
   registerExecutorAdapter(new RepositoryProvisioningAdapter({
     git,
     publish_work_order: async (request) => {
@@ -229,7 +262,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     if (!definition) throw new Error(`workflow definition '${launch.workflow_definition_id}' was not found`);
     const parsed = parseWorkflowDefinition(definition, adapterRegistry);
     if (!parsed.ok) throw new Error(`run ${run_id}'s definition is invalid: ${parsed.error.detail}`);
-    const compiled = compileWorkflowDefinition(parsed.value);
+    const compiled = compileWorkflowDefinition(parsed.value, undefined, adapterRegistry, machineRegistry);
     if (!compiled.ok) throw new Error(`run ${run_id}'s definition does not compile: ${compiled.error.detail}`);
     const producers = new Map<string, Set<string>>();
     for (const edge of compiled.value.edges) {
@@ -409,25 +442,10 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
    * the machine's step uses, then wakes the machine so it acts on the new state
    * without waiting out its bounded recheck.
    */
-  const recordCohortEvent = async (cohort_id: CohortId, event: JsonValue): Promise<void> => {
-    const outcome = await recordCohortAdapterEvent(cohort_id, event);
-    if (!outcome.committed) return;
-    await sendCohortWakeHint(cohort_id, `adapter_event:${cohort_id}:${outcome.status}`).catch(() => undefined);
-  };
-
-  // Without a forge reader nothing can be read, and every verification refuses
-  // with `unreadable_pull_request` — which is exactly the documented no-token
-  // backend, where an operator confirms merges through the same checked route.
-  const cohortPullRequests: CohortPullRequestDependencies = {
-    pull_requests: pullRequests, forge_repositories: forgeRepositories, reader: forgeReader,
-    git, records: runRecords, now,
-    record_build_event: (cohort_id, event) => recordCohortEvent(cohort_id, event as unknown as JsonValue),
-    send_run_wake: sendRunWakeHint,
-  };
-  const pollPullRequests = (): Promise<readonly CohortPollOutcome[] | null> => {
+  const pollPullRequests = (): Promise<readonly StagePullRequestPollOutcome[] | null> => {
     const reader = config.pull_request_reader;
     if (!reader) return Promise.resolve(null);
-    return trackDispatch(() => pollCohortPullRequests({ ...cohortPullRequests, reader, list_cohorts: () => projections.list_cohorts() }));
+    return trackDispatch(() => pollStagePullRequests({ sql, reader, stage_events: stageEvents }));
   };
   const retryStageCohort = async (target: RetryCohortTarget, idempotency_key: string): Promise<RetryCohortResult> => {
     const cohort_id = target.kind === "cohort" ? target.cohort_id
@@ -487,9 +505,8 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
       if (pullRequestPoll) return;
       pullRequestPoll = pollPullRequests()
         .then((outcomes) => {
-          for (const outcome of outcomes ?? []) {
-            if (outcome.resolution.kind === "refused") console.warn(`cohort ${outcome.stage_instance_id}:${outcome.unit_id} pull request refused: ${outcome.resolution.detail}`);
-          }
+          for (const outcome of outcomes ?? []) if (outcome.kind === "unavailable")
+            console.warn(`cohort ${outcome.cohort_id} pull request unavailable`);
         })
         .catch((error: unknown) => { console.error("cohort pull request poll failed", error); })
         .finally(() => { pullRequestPoll = null; });
@@ -524,9 +541,16 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
       } },
     run_lifecycle: { records: runRecords },
     domain_reads: { stages, artifacts, session_holds: projections, session_run_locations: projections },
-    work_order_artifact_callback: { records: runRecords, now, send_cohort_wake: sendCohortWakeHint, send_run_wake: sendRunWakeHint },
+    work_order_artifact_callback: { records: runRecords, enrich: enrichStagePublication,
+      now, send_cohort_wake: sendCohortWakeHint, send_run_wake: sendRunWakeHint },
     gate_resume: { records: runRecords, now, send_cohort_wake: sendCohortWakeHint, send_run_wake: sendRunWakeHint },
-    cohort_pull_requests: cohortPullRequests,
+    cohort_pull_requests: { refresh: async (cohort_id) => {
+      const reader = config.pull_request_reader;
+      if (reader) await pollStagePullRequests({ sql, reader, stage_events: stageEvents }, cohort_id);
+      const rows = await sql.query<{ readonly state: string }>(
+        "SELECT state FROM oakridge.cohort WHERE id=$1", [cohort_id]);
+      return rows[0] ?? null;
+    } },
     collaboration: { artifacts, collaboration, policy_for_artifact_type: collaborationPolicy,
       messages, message_recipients: messageRecipients,
       send_message: (input) => collaborationPings.enqueue(input),

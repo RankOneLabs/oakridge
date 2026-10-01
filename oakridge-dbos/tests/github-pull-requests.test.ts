@@ -43,7 +43,8 @@ const readerReturning = (status: number, payload: unknown) => {
 
 test("an open pull request reads as open", async () => {
   const { reader, calls } = readerReturning(200, githubPayload());
-  const observation = await reader.read("RankOneLabs", "oakridge", 440);
+  const read = await reader.read("RankOneLabs", "oakridge", 440);
+  const observation = read.ok ? read.value : null;
   expect(observation?.state).toBe("open");
   expect(observation?.source).toBe("poll");
   expect(observation?.head_branch).toBe("cohort/foundation");
@@ -58,14 +59,16 @@ test("an open pull request reads as open", async () => {
  */
 test("a merged pull request reads as merged even though GitHub calls it closed", async () => {
   const { reader } = readerReturning(200, githubPayload({ state: "closed", merged: true, merged_at: "2026-08-18T11:00:00Z" }));
-  const observation = await reader.read("RankOneLabs", "oakridge", 440);
+  const read = await reader.read("RankOneLabs", "oakridge", 440);
+  const observation = read.ok ? read.value : null;
   expect(observation?.state).toBe("merged");
   expect(observation?.merged_at).toBe("2026-08-18T11:00:00Z");
 });
 
 test("a pull request closed without merging reads as closed_unmerged", async () => {
   const { reader } = readerReturning(200, githubPayload({ state: "closed", merged: false, merged_at: null }));
-  const observation = await reader.read("RankOneLabs", "oakridge", 440);
+  const read = await reader.read("RankOneLabs", "oakridge", 440);
+  const observation = read.ok ? read.value : null;
   expect(observation?.state).toBe("closed_unmerged");
 });
 
@@ -75,10 +78,17 @@ test("a pull request closed without merging reads as closed_unmerged", async () 
  */
 test("a pull request that cannot be read yields no observation", async () => {
   const { reader } = readerReturning(404, { message: "Not Found" });
-  expect(await reader.read("RankOneLabs", "oakridge", 440)).toBeNull();
+  expect(await reader.read("RankOneLabs", "oakridge", 440)).toEqual({ ok: true, value: null });
 });
 
 test("a payload missing the fields an observation needs yields no observation", async () => {
   const { reader } = readerReturning(200, githubPayload({ head: null }));
-  expect(await reader.read("RankOneLabs", "oakridge", 440)).toBeNull();
+  expect((await reader.read("RankOneLabs", "oakridge", 440)).ok).toBe(false);
+});
+
+test("a GitHub 503 is distinguishable from a missing pull request", async () => {
+  const { reader } = readerReturning(503, { message: "Unavailable" });
+  expect(await reader.read("RankOneLabs", "oakridge", 440)).toEqual({ ok: false, error: {
+    kind: "unavailable", status: 503, detail: "GitHub pull request read failed (503)",
+  } });
 });

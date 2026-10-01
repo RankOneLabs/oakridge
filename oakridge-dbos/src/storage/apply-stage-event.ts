@@ -138,10 +138,22 @@ export class StageEventApplier {
       `SELECT output.output_name,output.collection_key,output.artifact_id::text,artifact.body
        FROM oakridge.cohort_output output JOIN oakridge.artifact artifact ON artifact.id=output.artifact_id
        WHERE output.cohort_id=$1 AND output.round=$2`, [cohort_id, cohort.round]);
-    const round_outputs: readonly RoundOutput[] = outputs.map((output) => ({
+    const round_outputs: RoundOutput[] = outputs.map((output) => ({
       output: output.output_name, collection_key: output.collection_key, artifact_id: output.artifact_id as ArtifactId,
       body: output.body,
     }));
+    if (event.kind === "artifact_published") {
+      const published = await tx.query<{ readonly body: JsonValue }>(
+        "SELECT body FROM oakridge.artifact WHERE id=$1", [event.artifact_id]);
+      if (published[0]) {
+        const position = round_outputs.findIndex((output) => output.output === event.output
+          && output.collection_key === event.collection_key);
+        const candidate = { output: event.output, collection_key: event.collection_key,
+          artifact_id: event.artifact_id, body: published[0].body };
+        if (position >= 0) round_outputs[position] = candidate;
+        else round_outputs.push(candidate);
+      }
+    }
     const stage_inputs = await this.dependencies.load_stage_inputs(tx, cohort.stage_instance_id as StageInstanceId, cohort.cohort_key);
     const selected = transition(machine, from, event,
       { event, stage_data: cohort.stage_data, round_outputs, stage_inputs, registry: this.dependencies.registry });
