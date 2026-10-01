@@ -6,9 +6,15 @@ import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 import { compileWorkflowManifest } from "../compiler/compile-workflow";
 
 interface DefinitionRow { readonly definition: unknown }
+interface PromptBundleRow { readonly hash: string; readonly version: number; readonly matrix: PromptBundle["matrix"] }
+
+const decodePromptBundleRow = (row: PromptBundleRow): PromptBundle => {
+  if (row.version !== 1) throw new Error(`prompt bundle '${row.hash}' has unsupported version ${row.version}; expected 1`);
+  return { hash: row.hash, version: 1, matrix: row.matrix };
+};
 
 const insertPromptBundle = async (sql: SqlExecutor, bundle: PromptBundle): Promise<PromptBundle> => {
-  const rows = await sql.query<{ readonly hash: string; readonly version: number; readonly matrix: PromptBundle["matrix"] }>(
+  const rows = await sql.query<PromptBundleRow>(
     `INSERT INTO oakridge.prompt_bundle (hash,version,matrix) VALUES ($1,$2,$3::jsonb)
      ON CONFLICT (hash) DO UPDATE SET hash=EXCLUDED.hash
      WHERE oakridge.prompt_bundle.version=EXCLUDED.version AND oakridge.prompt_bundle.matrix=EXCLUDED.matrix
@@ -21,7 +27,7 @@ const insertPromptBundle = async (sql: SqlExecutor, bundle: PromptBundle): Promi
   );
   const row = rows[0];
   if (!row) throw new Error(`prompt bundle '${bundle.hash}' conflicts with stored content`);
-  return { version: 1, hash: row.hash, matrix: row.matrix };
+  return decodePromptBundleRow(row);
 };
 
 const bindPromptBundle = async (sql: SqlExecutor, definition_id: WorkflowDefinitionId, hash: string): Promise<void> => {
@@ -89,20 +95,20 @@ export class PostgresWorkflowDefinitionRepository implements WorkflowDefinitionR
   }
 
   async find_prompt_bundle(hash: string): Promise<PromptBundle | null> {
-    const rows = await this.sql.query<{ readonly hash: string; readonly version: number; readonly matrix: PromptBundle["matrix"] }>(
+    const rows = await this.sql.query<PromptBundleRow>(
       "SELECT hash,version,matrix FROM oakridge.prompt_bundle WHERE hash=$1", [hash]);
     const row = rows[0];
-    return row ? { version: 1, hash: row.hash, matrix: row.matrix } : null;
+    return row ? decodePromptBundleRow(row) : null;
   }
 
   async find_bound_prompt_bundle(definition_id: WorkflowDefinitionId): Promise<PromptBundle | null> {
-    const rows = await this.sql.query<{ readonly hash: string; readonly version: number; readonly matrix: PromptBundle["matrix"] }>(
+    const rows = await this.sql.query<PromptBundleRow>(
       `SELECT bundle.hash,bundle.version,bundle.matrix
        FROM oakridge.workflow_definition_prompt_bundle binding
        JOIN oakridge.prompt_bundle bundle ON bundle.hash=binding.prompt_bundle_hash
        WHERE binding.workflow_definition_id=$1`, [definition_id]);
     const row = rows[0];
-    return row ? { version: 1, hash: row.hash, matrix: row.matrix } : null;
+    return row ? decodePromptBundleRow(row) : null;
   }
 
   async find_by_id(id: WorkflowDefinitionId): Promise<WorkflowDefinition | null> {

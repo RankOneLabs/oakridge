@@ -40,13 +40,14 @@ const state = (phase: BuildCohortPhase, overrides: Partial<BuildCohortState> = {
   phase,
   accepted_revision: phase === "builder_active" || phase === "pending" ? null : "revision-1",
   accepted_build_set: phase === "builder_active" || phase === "pending" ? [] : ["pr_summary", "build_result"],
-  verified_pull_request: phase === "builder_active" || phase === "pending" ? null : { url: "https://example.test/pull/7", revision: "revision-1" },
+  verified_pull_request: phase === "builder_active" || phase === "pending" ? null : { url: "https://example.test/pull/7", revision: "revision-1", head_sha: "head-1" },
   assessment_artifact_id: phase === "assessment_review" || phase === "awaiting_merge" || phase === "complete" ? "assessment-1" : null,
   ...overrides,
 });
 
 const EVENTS = [
   "stage_started",
+  "stale_gate_recorded",
   "build_artifact_recorded",
   "pull_request_verified",
   "builder_attempt_lost",
@@ -55,6 +56,7 @@ const EVENTS = [
   "assessment_artifact_recorded",
   "assessment_outcome_observed",
   "assessor_attempt_lost",
+  "operator_retry_requested",
   "assessment_review_approved",
   "assessment_review_revision_requested",
   "pull_request_mismatch",
@@ -64,12 +66,12 @@ const EVENTS = [
 
 const event = (kind: BuildCohortEvent["kind"]): BuildCohortEvent => {
   if (kind === "build_artifact_recorded") return { kind, revision: "revision-1", output_name: "build_result" };
-  if (kind === "pull_request_verified") return { kind, revision: "revision-1", pull_request_url: "https://example.test/pull/7" };
+  if (kind === "pull_request_verified") return { kind, revision: "revision-1", pull_request_url: "https://example.test/pull/7", head_sha: "head-1" };
   if (kind === "assessment_artifact_recorded") return { kind, artifact_id: "assessment-1" };
   if (kind === "assessment_outcome_observed") return { kind, outcome: "fail" };
   if (kind === "pull_request_mismatch") return { kind, pull_request_url: "https://example.test/pull/7" };
   if (kind === "replacement_pull_request_required") return { kind, pull_request_url: "https://example.test/pull/8" };
-  if (kind === "pull_request_merged") return { kind, pull_request_url: "https://example.test/pull/7" };
+  if (kind === "pull_request_merged") return { kind, pull_request_url: "https://example.test/pull/7", head_sha: "head-1" };
   return { kind };
 };
 
@@ -80,47 +82,59 @@ const event = (kind: BuildCohortEvent["kind"]): BuildCohortEvent => {
  */
 const TRANSITION_TABLE: Readonly<Record<BuildCohortPhase, Readonly<Record<BuildCohortEvent["kind"], BuildEventDisposition>>>> = {
   pending: {
-    stage_started: "transitioned", build_artifact_recorded: "recorded_only", pull_request_verified: "recorded_only", builder_attempt_lost: "recorded_only",
+    operator_retry_requested: "recorded_only",
+    stage_started: "transitioned", stale_gate_recorded: "recorded_only", build_artifact_recorded: "recorded_only", pull_request_verified: "recorded_only", builder_attempt_lost: "recorded_only",
     build_review_approved: "recorded_only", build_review_revision_requested: "recorded_only", assessment_artifact_recorded: "recorded_only",
     assessment_outcome_observed: "recorded_only", assessor_attempt_lost: "recorded_only", assessment_review_approved: "recorded_only",
     assessment_review_revision_requested: "recorded_only", pull_request_mismatch: "recorded_only",
     replacement_pull_request_required: "recorded_only", pull_request_merged: "recorded_only",
   },
   builder_active: {
-    stage_started: "recorded_only", build_artifact_recorded: "transitioned", pull_request_verified: "transitioned", builder_attempt_lost: "transitioned",
+    operator_retry_requested: "recorded_only",
+    stage_started: "recorded_only", stale_gate_recorded: "recorded_only", build_artifact_recorded: "transitioned", pull_request_verified: "transitioned", builder_attempt_lost: "transitioned",
     build_review_approved: "recorded_only", build_review_revision_requested: "recorded_only", assessment_artifact_recorded: "recorded_only",
     assessment_outcome_observed: "recorded_only", assessor_attempt_lost: "recorded_only", assessment_review_approved: "recorded_only",
     assessment_review_revision_requested: "recorded_only", pull_request_mismatch: "transitioned",
     replacement_pull_request_required: "transitioned", pull_request_merged: "recorded_only",
   },
   build_review: {
-    stage_started: "recorded_only", build_artifact_recorded: "recorded_only", pull_request_verified: "recorded_only", builder_attempt_lost: "recorded_only",
+    operator_retry_requested: "recorded_only",
+    stage_started: "recorded_only", stale_gate_recorded: "recorded_only", build_artifact_recorded: "recorded_only", pull_request_verified: "recorded_only", builder_attempt_lost: "recorded_only",
     build_review_approved: "transitioned", build_review_revision_requested: "transitioned", assessment_artifact_recorded: "recorded_only",
     assessment_outcome_observed: "recorded_only", assessor_attempt_lost: "recorded_only", assessment_review_approved: "recorded_only",
     assessment_review_revision_requested: "recorded_only", pull_request_mismatch: "transitioned",
     replacement_pull_request_required: "transitioned", pull_request_merged: "recorded_only",
   },
   assessor_active: {
-    stage_started: "recorded_only", build_artifact_recorded: "recorded_only", pull_request_verified: "recorded_only", builder_attempt_lost: "recorded_only",
+    operator_retry_requested: "recorded_only",
+    stage_started: "recorded_only", stale_gate_recorded: "recorded_only", build_artifact_recorded: "recorded_only", pull_request_verified: "recorded_only", builder_attempt_lost: "recorded_only",
     build_review_approved: "recorded_only", build_review_revision_requested: "recorded_only", assessment_artifact_recorded: "transitioned",
     assessment_outcome_observed: "recorded_only", assessor_attempt_lost: "transitioned", assessment_review_approved: "recorded_only",
     assessment_review_revision_requested: "recorded_only", pull_request_mismatch: "transitioned",
     replacement_pull_request_required: "transitioned", pull_request_merged: "recorded_only",
   },
   assessment_review: {
-    stage_started: "recorded_only", build_artifact_recorded: "recorded_only", pull_request_verified: "recorded_only", builder_attempt_lost: "recorded_only",
+    operator_retry_requested: "recorded_only",
+    stage_started: "recorded_only", stale_gate_recorded: "recorded_only", build_artifact_recorded: "recorded_only", pull_request_verified: "recorded_only", builder_attempt_lost: "recorded_only",
     build_review_approved: "recorded_only", build_review_revision_requested: "recorded_only", assessment_artifact_recorded: "recorded_only",
     assessment_outcome_observed: "recorded_only", assessor_attempt_lost: "recorded_only", assessment_review_approved: "transitioned",
     assessment_review_revision_requested: "transitioned", pull_request_mismatch: "transitioned",
     replacement_pull_request_required: "transitioned", pull_request_merged: "recorded_only",
   },
   awaiting_merge: {
-    stage_started: "recorded_only", build_artifact_recorded: "recorded_only", pull_request_verified: "recorded_only", builder_attempt_lost: "recorded_only",
+    operator_retry_requested: "recorded_only",
+    stage_started: "recorded_only", stale_gate_recorded: "recorded_only", build_artifact_recorded: "recorded_only", pull_request_verified: "recorded_only", builder_attempt_lost: "recorded_only",
     build_review_approved: "recorded_only", build_review_revision_requested: "recorded_only", assessment_artifact_recorded: "recorded_only",
     assessment_outcome_observed: "recorded_only", assessor_attempt_lost: "recorded_only", assessment_review_approved: "recorded_only",
     assessment_review_revision_requested: "recorded_only", pull_request_mismatch: "transitioned",
     replacement_pull_request_required: "transitioned", pull_request_merged: "transitioned",
   },
+  build_lost: Object.fromEntries(EVENTS.map((kind) => [kind,
+    kind === "operator_retry_requested" || kind === "pull_request_mismatch" || kind === "replacement_pull_request_required"
+      ? "transitioned" : "recorded_only"])) as Record<BuildCohortEvent["kind"], BuildEventDisposition>,
+  assess_lost: Object.fromEntries(EVENTS.map((kind) => [kind,
+    kind === "operator_retry_requested" || kind === "pull_request_mismatch" || kind === "replacement_pull_request_required"
+      ? "transitioned" : "recorded_only"])) as Record<BuildCohortEvent["kind"], BuildEventDisposition>,
   complete: Object.fromEntries(EVENTS.map((kind) => [kind, "recorded_only"])) as Record<BuildCohortEvent["kind"], BuildEventDisposition>,
 };
 
@@ -129,7 +143,7 @@ describe("build cohort transition table", () => {
     for (const kind of EVENTS) test(`${phase} + ${kind} -> ${expectedByEvent[kind]}`, () => {
       const current = phase === "builder_active" && kind === "build_artifact_recorded"
         ? state(phase, { accepted_revision: "revision-1", accepted_build_set: ["pr_summary"],
-          verified_pull_request: { url: "https://example.test/pull/7", revision: "revision-1" } })
+          verified_pull_request: { url: "https://example.test/pull/7", revision: "revision-1", head_sha: "head-1" } })
         : phase === "builder_active" && kind === "pull_request_verified"
           ? state(phase, { accepted_revision: "revision-1", accepted_build_set: ["pr_summary", "build_result"] })
           : state(phase);
@@ -167,17 +181,17 @@ test("the shipped c2 prompt bundle resolves all eight build-stage cells exactly 
 
 test("build review requires the full declared set at one revision and a matching verified PR", () => {
   expect(isBuildReviewReady({ required_build_set: ["pr_summary", "build_result"], accepted_revision: "r2",
-    accepted_build_set: ["build_result"], verified_pull_request: { url: "https://example.test/pull/7", revision: "r2" } })).toBe(false);
+    accepted_build_set: ["build_result"], verified_pull_request: { url: "https://example.test/pull/7", revision: "r2", head_sha: "head-2" } })).toBe(false);
   expect(isBuildReviewReady({ required_build_set: ["pr_summary", "build_result"], accepted_revision: "r2",
-    accepted_build_set: ["pr_summary", "build_result"], verified_pull_request: { url: "https://example.test/pull/7", revision: "r1" } })).toBe(false);
+    accepted_build_set: ["pr_summary", "build_result"], verified_pull_request: { url: "https://example.test/pull/7", revision: "r1", head_sha: "head-1" } })).toBe(false);
   expect(isBuildReviewReady({ required_build_set: ["pr_summary", "build_result"], accepted_revision: "r2",
-    accepted_build_set: ["pr_summary", "build_result"], verified_pull_request: { url: "https://example.test/pull/7", revision: "r2" } })).toBe(true);
+    accepted_build_set: ["pr_summary", "build_result"], verified_pull_request: { url: "https://example.test/pull/7", revision: "r2", head_sha: "head-2" } })).toBe(true);
 });
 
 test("artifact members and verified PR can arrive in either order", () => {
   const started = applyBuildCohortEvent(machine.value, initialBuildCohortState(["pr_summary", "build_result"]), { kind: "stage_started" }).state;
   const withPr = applyBuildCohortEvent(machine.value, started,
-    { kind: "pull_request_verified", revision: "r3", pull_request_url: "https://example.test/pull/9" }).state;
+    { kind: "pull_request_verified", revision: "r3", pull_request_url: "https://example.test/pull/9", head_sha: "head-3" }).state;
   const partial = applyBuildCohortEvent(machine.value, withPr,
     { kind: "build_artifact_recorded", revision: "r3", output_name: "pr_summary" }).state;
   expect(partial.phase).toBe("builder_active");
@@ -197,16 +211,25 @@ test("revision after assessment commits the revision prompt and names the existi
   expect(result.launch).toMatchObject({ session_role: "build", launch_reason: "revision_after_assessment",
     prompt: { content: "build:revision_after_assessment" } });
   expect(result.launch?.contract_block).toContain("Existing PR: https://example.test/pull/7");
+  expect(result.effect.reopen_output_names).toEqual(["build_result", "pr_summary", "assessment"]);
 });
 
 test("awaiting merge completes only for the verified pull request", () => {
   const current = state("awaiting_merge");
   const mismatched = applyBuildCohortEvent(machine.value, current,
-    { kind: "pull_request_merged", pull_request_url: "https://example.test/pull/99" });
+    { kind: "pull_request_merged", pull_request_url: "https://example.test/pull/99", head_sha: "head-1" });
   expect(mismatched).toMatchObject({ disposition: "recorded_only", state: { phase: "awaiting_merge", is_pull_request_merged: false } });
   const verified = applyBuildCohortEvent(machine.value, current,
-    { kind: "pull_request_merged", pull_request_url: "https://example.test/pull/7" });
+    { kind: "pull_request_merged", pull_request_url: "https://example.test/pull/7", head_sha: "head-1" });
   expect(verified).toMatchObject({ disposition: "transitioned", state: { phase: "complete", is_pull_request_merged: true } });
+});
+
+test("a merge of an advanced head restarts review rather than completing", () => {
+  const result = applyBuildCohortEvent(machine.value, state("awaiting_merge"),
+    { kind: "pull_request_merged", pull_request_url: "https://example.test/pull/7", head_sha: "head-2" });
+  expect(result).toMatchObject({ disposition: "transitioned", state: { phase: "builder_active", is_pull_request_merged: false },
+    launch: { session_role: "build", launch_reason: "pr_mismatch_correction" } });
+  expect(result.effect.reopen_output_names).toEqual(["build_result", "pr_summary", "assessment"]);
 });
 
 test("replacement PR work names the old PR but cannot reuse its verification", () => {

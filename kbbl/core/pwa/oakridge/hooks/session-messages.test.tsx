@@ -76,7 +76,7 @@ test("usePostSessionMessage sends the durable key and caches the returned delive
   await act(async () => {
     await hook.result.current.mutateAsync({
       delivery_key: "delivery/1",
-      message: { sender: message.sender, recipient: message.recipient, thread_id: message.thread_id, message_id: message.message_id, body: message.body },
+      message: { recipient: message.recipient, thread_id: message.thread_id, message_id: message.message_id, body: message.body },
     });
   });
   expect(fetch).toHaveBeenCalledWith("/oakridge/api/runs/run%2F1/messages", expect.objectContaining({

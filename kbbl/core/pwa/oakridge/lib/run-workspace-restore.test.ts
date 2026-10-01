@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ArtifactId, Sid } from "../../lib/ids";
-import type { RunDetail, RunSessionAttempt } from "../types";
+import type { RunDetail } from "../types";
 import type { RunSessionsRead } from "./run-sessions";
 import {
   LIST_PANE,
@@ -52,8 +52,8 @@ const RUN: RunDetail = {
       delegated_kbbl_sid: null,
       worktree: null,
       units: [
-        { cohort_id: "c1", unit_id: "c1", sid: "sid-c1", worktree: null, status: "complete", blocked_reason: null, next_actor: null, gate: null },
-        { cohort_id: "c2", unit_id: "c2", sid: "sid-c2", worktree: null, status: "active", blocked_reason: null, next_actor: "agent", gate: null },
+        { cohort_id: "c1", unit_id: "c1", sid: "sid-c1", worktree: null, status: "complete", blocked_reason: null, next_actor: null, retryable: false, gate: null },
+        { cohort_id: "c2", unit_id: "c2", sid: "sid-c2", worktree: null, status: "active", blocked_reason: null, next_actor: "agent", retryable: false, gate: null },
       ],
     },
   ],
@@ -68,7 +68,7 @@ const RUN: RunDetail = {
  * transcript exists only in this list, and a pane holding one is exactly what a
  * failed read must not quietly discard.
  */
-const SESSIONS: readonly RunSessionAttempt[] = [
+const SESSIONS = [
   {
     work_order_id: "wo-0",
     session_id: "sid-c1-prior",

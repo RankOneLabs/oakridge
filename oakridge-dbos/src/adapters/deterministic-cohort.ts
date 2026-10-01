@@ -17,7 +17,7 @@ import type { OpenCohort } from "../domain/run-record";
 import { resolveAttemptExecution } from "../runtime/resolve-work-order";
 import type { RunRecordRepository } from "../storage/repositories";
 import type { CohortMachineDriver, CohortStepContext, CohortStepDecision } from "../workflows/run-record-topology";
-import { cohortIdFor, resolveCohortRoster } from "./cohort-roster";
+import { cohortIdFor, resolveCohortRoster, selectCohortOutputsSatisfied } from "./cohort-roster";
 
 /** `oakridge.cohort.stage_data` for a deterministic cohort. */
 interface DeterministicCohortStageData {
@@ -77,14 +77,13 @@ export const createDeterministicCohortDriver = (dependencies: DeterministicCohor
   async step(context: CohortStepContext): Promise<CohortStepDecision | null> {
     const contract = contractOf(context.stage_contract);
     const stageData = stageDataOf(context.state);
-    const owed = contract.outputs
-      .filter((output) => !context.state.accepted_outputs.some((artifact) => artifact.output_name === output.name));
-
-    if (owed.length === 0 && stageData.launched > 0) {
+    if (stageData.launched > 0 && context.state.open_waits.length === 0
+      && selectCohortOutputsSatisfied(contract, context, context.state.accepted_outputs)) {
       return {
         event: {
           change: { status: "complete", blocked_reason: null, next_actor: null, outcome: { kind: "succeeded" } },
           stage_data: encode(stageData),
+          reopen_output_names: [],
           effect: { kind: "none" },
           launch_reason: "artifact_accepted",
           actor: "core",
@@ -94,13 +93,20 @@ export const createDeterministicCohortDriver = (dependencies: DeterministicCohor
     }
     // Already running: the attempt workflow owns the wait, and its publication
     // is what wakes this machine again.
-    if (stageData.launched > context.state.attempt_count - 1 && context.state.attempt_count > 0) return null;
+    if (context.state.status === "blocked" && context.state.blocked_reason === "retry") return null;
+    if (context.state.latest_unfinished_attempt_id !== null) return null;
+    if (stageData.launched > 0 && context.state.latest_attempt?.ended_at) {
+      return { event: { change: { status: "blocked", blocked_reason: "retry", next_actor: "operator", outcome: null },
+        stage_data: encode(stageData), reopen_output_names: [], effect: { kind: "none" },
+        launch_reason: "retry", actor: "core" }, launch: null };
+    }
 
     const launched = { ...stageData, launched: stageData.launched + 1 };
     return {
       event: {
         change: { status: "active", blocked_reason: null, next_actor: "service", outcome: null },
         stage_data: encode(launched),
+        reopen_output_names: [],
         effect: { kind: "start_attempt", cohort_id: context.state.cohort_id, attempt_number: launched.launched },
         launch_reason: stageData.launched === 0 ? "initial" : "retry",
         actor: "core",
@@ -127,7 +133,31 @@ export const createDeterministicCohortDriver = (dependencies: DeterministicCohor
   },
 
   /** A deterministic stage has no external facts to take in. */
-  apply_event: async () => null,
+  apply_event: async (context, event) => {
+    if (!isObject(event) || event.kind !== "operator_retry_requested") return null;
+    if (context.state.status !== "blocked" || context.state.blocked_reason !== "retry") return null;
+    const contract = contractOf(context.stage_contract);
+    const stageData = stageDataOf(context.state);
+    const launched = { ...stageData, launched: stageData.launched + 1 };
+    return { event: { change: { status: "active", blocked_reason: null, next_actor: "service", outcome: null },
+      stage_data: encode(launched), reopen_output_names: [],
+      effect: { kind: "start_attempt", cohort_id: context.state.cohort_id, attempt_number: context.state.attempt_count + 1 },
+      launch_reason: "retry", actor: "core" },
+    launch: { attempt_number: context.state.attempt_count + 1, adapter_type: contract.executor.executor_type,
+      resolve_request: async (attempt_id: AttemptId, _launch_transition_id: RunTransitionId) => {
+        const resolved = await resolveAttemptExecution({
+          run_id: context.state.run_id, stage: contract, stage_instance_id: context.state.stage_instance_id,
+          unit: { unit_id: context.state.cohort_key as UnitId, parameters: stageData.artifact, depends_on: [] },
+          inputs: context.inputs, context: context.run_context,
+          outputs: contract.outputs.map((output) => ({ output_name: output.name, artifact_type: output.artifact_type,
+            release: output.release, attention: output.attention ?? "none" })),
+          identity: `attempt:${attempt_id}`, capability_seed: await dependencies.records.load_work_order_capability_seed(),
+          attempt_id: attempt_id as unknown as WorkOrderId, attempt_workflow_id: attemptWorkflowId(attempt_id),
+        });
+        return resolved.request;
+      } },
+    };
+  },
 });
 
 /** Re-exported so composition can address a deterministic cohort by key. */

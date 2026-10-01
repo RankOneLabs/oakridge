@@ -34,10 +34,11 @@ test("invalidation and typed run-event hooks share one EventSource and deliver r
   }, { wrapper });
   expect(EventSourceStub.instances).toHaveLength(1);
   const source = EventSourceStub.instances[0];
-  const frame = { sequence: "7", operation: "gate_opened", occurred_at: "2026-09-26T12:00:00.000Z",
-    payload: { run_id: "run", run_unit_id: "run-unit", stage_instance_id: "stage", stage_key: "build", unit_id: "unit",
-      work_order_id: null, wait_id: "wait", output_name: "build_result", collection_key: null, artifact_revision_id: "artifact",
-      attention: "required", continuation: "waiting", detail: {} } };
+  const frame = { sequence: "7", transition_id: "transition-7", run_id: "run",
+    owner: { kind: "stage_instance", id: "stage" }, launch_reason: "initial",
+    prior_owner_version: 0, resulting_owner_version: 1,
+    effect: { kind: "start_stage", stage_instance_id: "stage" }, effect_workflow_id: null,
+    actor: "core", occurred_at: "2026-09-26T12:00:00.000Z" };
   act(() => { source?.emit("run_event", JSON.stringify({ ...frame, replayed: true })); });
   act(() => { source?.emit("run_event", JSON.stringify({ ...frame, sequence: "8", replayed: false })); });
   expect(received.map((event) => [event.sequence, event.replayed])).toEqual([

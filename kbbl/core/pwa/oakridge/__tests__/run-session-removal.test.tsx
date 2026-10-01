@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RunDetailView } from "../views/RunDetailView";
 import { useStore } from "../../state/store";
 import type { SessionSnapshot } from "../../types";
-import type { RunDetail, RunSessionAttempt } from "../types";
+import type { RunDetail } from "../types";
 import { writeStoredRunWorkspace } from "../lib/run-workspace-storage";
 import type { Sid } from "../../lib/ids";
 
@@ -14,7 +14,7 @@ const run: RunDetail = {
   workflow_name: "dev_flow_v2", status: "blocked", blocked_reason: "gate", next_actor: "operator",
   parked_count: 0, updated_at: "2026-09-01T00:00:00Z", stages: [],
 };
-const attempts: RunSessionAttempt[] = ["deleted", "existing"].map((session_id, index) => ({
+const attempts = ["deleted", "existing"].map((session_id, index) => ({
   work_order_id: `work-${index}`, session_id, stage_instance_id: "stage",
   stage_key: "build", unit_id: "unit", reason: "initial",
   work_order_state: "completed", created_at: "2026-09-01T00:00:00Z",
@@ -37,8 +37,8 @@ beforeEach(() => {
     const body = url.endsWith("/diagnosis") ? {
       run,
       sessions: attempts.map((attempt, index) => ({ session_id: attempt.session_id, stage_key: attempt.stage_key,
-        cohort_id: attempt.unit_id, attempt_number: index + 1, attempt_count: attempts.length, status: "complete" })),
-      current_session: null, sessions_awaiting_action: [], active_gates: [], recent_artifacts: [],
+        cohort_id: attempt.unit_id, cohort_key: attempt.unit_id, attempt_number: index + 1, attempt_count: attempts.length, status: "complete" })),
+      current_session: null, sessions_awaiting_action: [], active_gates: [], pull_request_merge_waits: [], recent_artifacts: [],
       stage_progress: { total: 0, pending: 0, active: 0, blocked: 0, complete: 0, failed: 0, cancelled: 0 },
     } : [];
     return new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });

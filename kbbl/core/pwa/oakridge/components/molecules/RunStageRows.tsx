@@ -2,7 +2,6 @@ import type { StageDetail, StageUnit } from "../../types";
 import { StatusBadge } from "../atoms/StatusBadge";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
-import { Fragment } from "react";
 import { selectCohortBrief } from "../../lib/stage-unit-params";
 
 const tableCellClass = "border-b border-[var(--border-subtle)] px-3 py-2.5 align-middle";
@@ -65,11 +64,8 @@ interface RunUnitRowProps {
 }
 
 export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelectArtifact, onRetry, retrying, retryError, canRetry, confirmMerge }: RunUnitRowProps) {
-  const blockedBy = unit.admission_blocked_by ?? [];
   const brief = selectCohortBrief(unit);
-  const dependencies = brief?.depends_on ?? [];
   return (
-    <Fragment>
     <tr className={stageRowClass(unit.status)} data-testid="or-stage-row">
       <td className={`${tableCellClass} font-medium text-[var(--text-primary)]`} data-testid="or-stage-name">
         <span>{stageName}</span>
@@ -94,7 +90,7 @@ export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelect
             disabled={confirmMerge.isConfirming}
             data-testid="or-confirm-cohort-merged-btn"
           >
-            {confirmMerge.isConfirming ? "Confirming…" : "It’s merged — continue"}
+            {confirmMerge.isConfirming ? "Confirming…" : "Confirm merge"}
           </Button>
         )}
         {confirmMerge?.error && <span role="alert" className="text-xs text-red-500">{confirmMerge.error}</span>}
@@ -103,28 +99,6 @@ export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelect
       <SessionCell sid={unit.sid} />
       <WorktreeCell worktree={unit.worktree} />
     </tr>
-    {dependencies.length > 0 && (
-      <tr data-testid="or-cohort-detail-row">
-        <td colSpan={6} className={`${tableCellClass} bg-[var(--bg-surface)]`}>
-          <div className="flex flex-col gap-3">
-            {dependencies.length > 0 && (
-              <div className="flex flex-wrap items-center gap-2 text-xs" data-testid="or-dependency-status">
-                <span className="font-semibold uppercase text-[var(--text-muted)]">Dependency status</span>
-                {dependencies.map((dependency) => {
-                  const isBlocked = blockedBy.includes(dependency);
-                  return (
-                    <Chip key={dependency} tone={isBlocked ? "warning" : "success"}>
-                      {dependency}: {isBlocked ? "waiting" : "complete"}
-                    </Chip>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </td>
-      </tr>
-    )}
-    </Fragment>
   );
 }
 

@@ -30,7 +30,7 @@ import { compileWorkflowDefinition } from "../compiler/compile-workflow";
 import { stageInstanceIdFor } from "../decision/ids";
 import { DEV_FLOW_ARTIFACT_TYPES, findArtifactType } from "../domain/artifact-types";
 import type { ExecutorAdapter } from "../domain/execution";
-import type { AttemptId, CohortId, JsonValue, WorkflowRunId } from "../domain/primitives";
+import { err, type AttemptId, type CohortId, type JsonValue, type WorkflowRunId } from "../domain/primitives";
 import type { GitCommandRunner } from "../domain/repository-provisioning";
 import type { InitializeStageInstance } from "../domain/run-record";
 import { selectOrphanedVersionRuns, type OrphanedVersionRuns } from "../domain/workflow-recovery";
@@ -38,7 +38,7 @@ import type { PromptBundleEntry } from "../domain/workflow";
 import { parseWorkflowDefinition } from "../validation/workflow-definition";
 import { STAGE_CONTRACT_DEPENDENCY_KEY } from "../storage/load-run-snapshot";
 import { STAGE_CONTRACT_INPUT_EDGES_KEY } from "../domain/stage-contract";
-import type { CohortPullRequestDependencies } from "./cohort-pull-request";
+import { verifyAndBindCohortPullRequest, type CohortPullRequestDependencies } from "./cohort-pull-request";
 import { pollCohortPullRequests, type CohortPollOutcome, type PullRequestReader } from "./github-pull-requests";
 import { createApp } from "../http/app";
 import { registerDbosTransportClient, sendCohortWakeHint, sendRunWakeHint } from "../http/dbos-transport";
@@ -46,7 +46,7 @@ import { seedBuiltins } from "../seed/seed-builtins";
 import {
   PostgresArtifactRepository,
   PostgresCollaborationRepository,
-  PostgresFinalPullRequestTargetRepository,
+  PostgresForgeRepositoryRepository,
   PostgresStageInstanceRepository,
   PostgresWorkflowRunRepository,
 } from "../storage/postgres-domain";
@@ -57,7 +57,7 @@ import { PostgresRunRecordRepository } from "../storage/postgres-run-record-repo
 import { PostgresWorkflowDefinitionRepository } from "../storage/postgres-workflow-definitions";
 import { PgPostgresExecutor } from "../storage/sql-executor";
 import { findExecutorAdapter, registerExecutorAdapter } from "./executor-registry";
-import { recordCohortAdapterEvent, registerRunRecordWorkflowServices, type CohortMachineDriver } from "../workflows/run-record-topology";
+import { recordCohortAdapterEvent, registerRunRecordWorkflowServices, retryCohortThroughDriver, type CohortMachineDriver } from "../workflows/run-record-topology";
 import "../workflows/collaboration-responder";
 import { DbosRunLaunchClient } from "./dbos-run-launch-client";
 import { DbosCollaborationPingClient, PostgresSessionMessageRecipientResolver, PostgresSessionMessageRepository } from "./collaboration-ping";
@@ -133,7 +133,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const stages = new PostgresStageInstanceRepository(sql);
   const artifacts = new PostgresArtifactRepository(sql);
   const collaboration = new PostgresCollaborationRepository(sql);
-  const finalTargets = new PostgresFinalPullRequestTargetRepository(sql);
+  const forgeRepositories = new PostgresForgeRepositoryRepository(sql);
   const pullRequests = new PostgresDevFlowPullRequestRepository(sql);
   const projections = new PostgresOperatorProjectionRepository(sql, config.application_version, adapterRegistry);
   const messages = new PostgresSessionMessageRepository(sql);
@@ -158,8 +158,10 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
 
   registerDbosTransportClient(client);
   for (const adapter of config.executor_adapters) registerExecutorAdapter(adapter);
+  const git = config.git_commands ?? new BunGitCommandRunner();
+  const forgeReader = config.pull_request_reader ?? { read: async () => null };
   registerExecutorAdapter(new RepositoryProvisioningAdapter({
-    git: config.git_commands ?? new BunGitCommandRunner(),
+    git,
     publish_work_order: async (request) => {
       const result = await publishWorkOrderArtifact({
         attempt_id: request.work_order_id as unknown as AttemptId, capability: request.capability,
@@ -244,7 +246,23 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
    * agent-facing delegated session and the deterministic provisioning action.
    */
   const devFlowDriver = createDelegatedSessionCohortDriver({
-    records: runRecords, pull_requests: pullRequests, load_prompt_bundle: promptBundleOf,
+    records: runRecords, pull_requests: pullRequests, git, load_prompt_bundle: promptBundleOf,
+    verify_build_pull_request: async (input) => {
+      const location = await runRecords.find_cohort_location(input.stage_instance_id, input.cohort_key as import("../domain/primitives").UnitId);
+      const cohort = await pullRequests.find_cohort_for_unit(input.stage_instance_id, input.cohort_key as import("../domain/primitives").UnitId);
+      if (!location || !cohort || location.cohort_id !== input.cohort_id) {
+        return err({ operation: "verify_cohort_pull_request" as const, kind: "build_cohort_not_found" as const,
+          detail: "stored build cohort is missing", current_verification_id: null });
+      }
+      const forgeRepository = await forgeRepositories.find_forge_repository(location.run_id, cohort.repository_key);
+      if (!forgeRepository) return err({ operation: "verify_cohort_pull_request" as const,
+        kind: "repository_mismatch" as const, detail: "run context has no forge identity for the build repository" });
+      const verified = await verifyAndBindCohortPullRequest({ pull_requests: pullRequests,
+        reader: forgeReader, git, now }, { cohort, forge_repository: forgeRepository,
+        candidate_url: input.candidate_url, replace_verification_id: null });
+      return verified.ok ? { ok: true, value: { pull_request_url: verified.value.pull_request_url,
+        head_sha: verified.value.head_sha, binding: verified.value.binding } } : verified;
+    },
   });
   const provisioningDriver = createDeterministicCohortDriver({
     records: runRecords, stage_type: PROVISION_REPOSITORY_REFS_STAGE_TYPE,
@@ -277,10 +295,8 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   // Without a forge reader nothing can be read, and every verification refuses
   // with `unreadable_pull_request` — which is exactly the documented no-token
   // backend, where an operator confirms merges through the same checked route.
-  const forgeReader = config.pull_request_reader ?? { read: async () => null };
-  const git = config.git_commands ?? new BunGitCommandRunner();
   const cohortPullRequests: CohortPullRequestDependencies = {
-    pull_requests: pullRequests, forge_targets: finalTargets, reader: forgeReader,
+    pull_requests: pullRequests, forge_repositories: forgeRepositories, reader: forgeReader,
     git, records: runRecords, now,
     record_build_event: (cohort_id, event) => recordCohortEvent(cohort_id, event as unknown as JsonValue),
     send_run_wake: sendRunWakeHint,
@@ -305,22 +321,11 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const app = createApp({
     configuration: { projects, definitions, project_identity: projectIdentity, now,
       prompt_templates: promptTemplates, adapter_roles: adapterRegistry },
-    operator_retry: { records: runRecords, now, send_cohort_wake: sendCohortWakeHint, send_run_wake: sendRunWakeHint },
+    operator_retry: { retry_through_driver: retryCohortThroughDriver },
     run_lifecycle: { records: runRecords },
     domain_reads: { stages, artifacts, session_holds: projections, session_run_locations: projections },
-    final_pull_requests: { pull_requests: pullRequests, final_targets: finalTargets,
-      pull_request_reader: forgeReader, git,
-      record_build_event: cohortPullRequests.record_build_event,
-      // The final epic pull request is a cohort like any other, so its events
-      // enter through the same driver: a verification and a confirmed merge are
-      // the two facts its machine acts on.
-      record_final_event: (event) => recordCohortEvent(event.cohort_id, event.kind === "pull_request_verified"
-        ? { kind: "pull_request_verified", revision: event.revision, pull_request_url: event.pull_request_url }
-        : { kind: "pull_request_merged", pull_request_url: event.pull_request_url }),
-      now },
     work_order_artifact_callback: { records: runRecords, now, send_cohort_wake: sendCohortWakeHint, send_run_wake: sendRunWakeHint },
     gate_resume: { records: runRecords, now, send_cohort_wake: sendCohortWakeHint, send_run_wake: sendRunWakeHint },
-    handoff_complete: { records: runRecords, now, send_cohort_wake: sendCohortWakeHint, send_run_wake: sendRunWakeHint },
     cohort_pull_requests: cohortPullRequests,
     collaboration: { artifacts, collaboration, policy_for_artifact_type: collaborationPolicy,
       messages, message_recipients: messageRecipients,

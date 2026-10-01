@@ -6,17 +6,20 @@ import type { SessionHold } from "../domain/session-hold";
 import type { OperatorSessionRunLocation } from "../domain/operator-projections";
 import type { CreateProject, Project, UpdateProject } from "../domain/projects";
 import type { CreateWorkflowRunResult, DeleteRunResult, PersistWorkflowRunLaunch, SetRunArchiveResult, UnstartedRun, WorkflowRunLaunchRecord, WorkflowRunListFilter } from "../domain/runs";
-import type { DevFlowBuildCohort, RunOwnedCohortHandoff } from "../domain/cohort-pull-request";
+import type { DevFlowBuildCohort } from "../domain/cohort-pull-request";
 import type { PullRequest, PullRequestId, PullRequestMergeClosure, PullRequestObservation, PullRequestObservationId, PullRequestVerificationId, StoredPullRequestObservation } from "../domain/pull-request";
 import type { WorkflowRunRecord } from "../domain/records";
 import type {
   AttemptExecution,
+  BindSessionResult,
   BindSession,
+  CohortLaunchCommitted,
+  CohortLaunchCommitError,
+  CommitCohortLaunch,
   CancelRunRecord,
   CancelRunRecordResult,
   CloseRunOutputWaitResult,
   CohortMachineState,
-  CompleteHandoffArtifact,
   DecideGateWait,
   GateDecisionRecord,
   InitializeRun,
@@ -28,8 +31,7 @@ import type {
   PublishWorkOrderArtifactResult,
   RecordCohortEvent,
   RecordCohortEventResult,
-  RetryCohort,
-  RetryCohortResult,
+  SessionStatusWrite,
   RunDecision,
   RunRecordRepositoryError,
   StartAttempt,
@@ -84,8 +86,10 @@ export interface RunRecordRepository {
   decide_run(run_id: WorkflowRunId, decided_at: string): Promise<Result<RunDecision, RunRecordRepositoryError>>;
   /** Materializes a started stage's cohorts and their declared output slots. Idempotent. */
   open_stage_cohorts(input: OpenStageCohorts): Promise<OpenStageCohortsResult>;
+  fail_stage_roster(stage_instance_id: StageInstanceId, detail: string, failed_at: string): Promise<void>;
   /** Commits an adapter's cohort decision under the cohort's own durable version. */
   record_cohort_event(input: RecordCohortEvent): Promise<RecordCohortEventResult>;
+  commit_cohort_launch(input: CommitCohortLaunch): Promise<Result<CohortLaunchCommitted, CohortLaunchCommitError>>;
   /** What a cohort machine reads before applying its next event. */
   find_cohort_state(cohort_id: CohortId): Promise<CohortMachineState | null>;
   list_stage_cohort_ids(stage_instance_id: StageInstanceId): Promise<readonly CohortId[]>;
@@ -93,11 +97,13 @@ export interface RunRecordRepository {
   start_attempt(input: StartAttempt): Promise<StartAttemptResult>;
   find_attempt_execution(attempt_id: AttemptId): Promise<AttemptExecution | null>;
   /** Records the adapter handle an ensured session is addressed by. */
-  bind_session(input: BindSession): Promise<void>;
+  bind_session(input: BindSession): Promise<BindSessionResult>;
   /** The session's own lifecycle, and its attempt's, from what the adapter reported. */
-  observe_session(input: ObserveSession): Promise<void>;
-  /** An operator retry: one further attempt at a cohort, claimed under the caller's key. */
-  retry_cohort(input: RetryCohort, retried_at: string): Promise<RetryCohortResult>;
+  observe_session(input: ObserveSession): Promise<SessionStatusWrite>;
+  mark_session_fenced(session_id: import("../domain/primitives").SessionId, fenced_at: string): Promise<void>;
+  list_prior_sessions_to_fence(cohort_id: CohortId, attempt_id: AttemptId): Promise<readonly import("../domain/run-record").PriorSessionToFence[]>;
+  find_cohort_retry_claim(cohort_id: CohortId, idempotency_key: string): Promise<{
+    readonly attempt_id: AttemptId; readonly attempt_number: number; readonly durable_version: number } | null>;
   /** The secret every attempt's publication capability is derived from. */
   load_work_order_capability_seed(): Promise<string>;
   /**
@@ -109,9 +115,9 @@ export interface RunRecordRepository {
   publish_artifact(request: PublishWorkOrderArtifact): Promise<PublishWorkOrderArtifactResult>;
   /** Decides an operator gate, releasing or invalidating the slots it holds. */
   decide_gate_wait(request: DecideGateWait): Promise<CloseRunOutputWaitResult>;
-  /** Closes a handoff's external wait on evidence from outside the run. */
-  complete_handoff_artifact(request: CompleteHandoffArtifact): Promise<CloseRunOutputWaitResult>;
-  find_cohort_handoff(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<RunOwnedCohortHandoff | null>;
+  find_cohort_location(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<{
+    readonly run_id: WorkflowRunId; readonly cohort_id: CohortId; readonly status: import("../domain/records").CoreStatus;
+  } | null>;
   cancel_run(input: CancelRunRecord): Promise<CancelRunRecordResult>;
   delete_run(run_id: WorkflowRunId): Promise<DeleteRunResult>;
 }
@@ -172,13 +178,14 @@ export interface CurrentVerifiedCohortPullRequest {
 
 /** Storage boundary shared by cohort and final-stage adapters. */
 export interface DevFlowPullRequestRepository {
-  create_cohort(cohort: DevFlowBuildCohort): Promise<DevFlowBuildCohort>;
+  create_cohort(cohort: DevFlowBuildCohort): Promise<Result<DevFlowBuildCohort,
+    { readonly kind: "cohort_not_stored" | "identity_conflict" | "storage_failed"; readonly detail: string }>>;
   begin_cohort_advance(input: { readonly cohort_id: CohortId; readonly expected_head_sha: string; readonly next_head_sha: string; readonly prepared_at: string }): Promise<Result<void, { readonly kind: "cohort_not_found" | "ref_lease_mismatch"; readonly detail: string }>>;
   advance_cohort_head(input: { readonly cohort_id: CohortId; readonly expected_head_sha: string; readonly next_head_sha: string; readonly advanced_at: string }): Promise<Result<DevFlowBuildCohort, { readonly kind: "cohort_not_found" | "ref_lease_mismatch"; readonly detail: string }>>;
   find_cohort_for_unit(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<DevFlowBuildCohort | null>;
   find_current_for_unit(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<CurrentVerifiedCohortPullRequest | null>;
   observe(input: { readonly observation: PullRequestObservation; readonly recorded_at: string }): Promise<{ readonly pull_request_id: PullRequestId; readonly observation_id: PullRequestObservationId }>;
-  bind_verified(input: { readonly cohort_id: CohortId; readonly pull_request_id: PullRequestId; readonly observation_id: PullRequestObservationId; readonly verified_head_sha: string; readonly verified_at: string; readonly replace_verification_id: PullRequestVerificationId | null }): Promise<Result<PullRequestVerificationId, { readonly kind: "replacement_required" | "replacement_conflict"; readonly detail: string }>>;
+  bind_verified(input: { readonly cohort_id: CohortId; readonly pull_request_id: PullRequestId; readonly observation_id: PullRequestObservationId; readonly verified_head_sha: string; readonly verified_at: string; readonly replace_verification_id: PullRequestVerificationId | null }): Promise<Result<{ readonly id: PullRequestVerificationId; readonly binding: "created" | "replaced" | "head_advanced" }, { readonly kind: "replacement_required" | "replacement_conflict" | "build_cohort_not_found"; readonly detail: string }>>;
   confirm_merge(input: { readonly cohort_id: CohortId; readonly pull_request_id: PullRequestId; readonly idempotency_key: string; readonly merged_at: string; readonly confirmed_at: string }): Promise<Result<{ readonly kind: "created" | "replayed"; readonly closure: PullRequestMergeClosure }, { readonly kind: "idempotency_conflict" | "pull_request_not_current" | "missing_merged_evidence"; readonly detail: string }>>;
 }
 
@@ -207,12 +214,6 @@ export interface CollaborationRepository {
  * `forge_repository` and `final_merge_policy` live there now, and the cohort
  * itself is 0016's `dev_flow_build_cohort`.
  */
-export interface FinalPullRequestTarget {
-  readonly cohort: DevFlowBuildCohort;
-  readonly forge_repository: { readonly owner: string; readonly name: string };
-  readonly merge_policy: import("../domain/epic").FinalMergePolicy;
-}
-
-export interface FinalPullRequestTargetRepository {
-  find(run_id: WorkflowRunId, repository_key: string): Promise<FinalPullRequestTarget | null>;
+export interface ForgeRepositoryRepository {
+  find_forge_repository(run_id: WorkflowRunId, repository_key: string): Promise<{ readonly owner: string; readonly name: string } | null>;
 }

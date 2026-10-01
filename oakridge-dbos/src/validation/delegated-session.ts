@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { BUILT_IN_GATE_DISPOSITIONS, isBuiltInGateAction } from "../domain/gates";
 import type { DelegatedSessionDefinitionConfig, SessionLaunchReasonName } from "../domain/delegated-session";
-import type { JsonValue } from "../domain/primitives";
 import type { StageOperatorRole } from "../domain/workflow";
 import type { AdapterRoleRegistry } from "./workflow-definition";
 
@@ -59,51 +58,6 @@ const outputGateSchema = z.object({
   }
 });
 
-const LEGACY_REVISION_ROUTE_FIELD = ["revision", "target"].join("_");
-const legacyOutputGateSchema = z.object({
-  output: z.string().min(1),
-  steps: z.array(z.object({ type: z.enum(["artifact_approval", "merge_confirmation"]), actions: z.array(z.string().min(1)).min(1) })).min(1),
-  requires_zero_open_review_items: z.boolean().optional().transform(() => undefined),
-}).passthrough().transform((gate) => ({ ...gate,
-  legacy_revision_route: gate[LEGACY_REVISION_ROUTE_FIELD] === "upstream_handoff" ? "upstream_handoff" as const : "self_stage" as const }));
-
-const legacyDelegatedSessionDefinitionSchema = z.object({
-  runtime: bindableSchema,
-  prompt_template_path: z.string().min(1),
-  slot_bindings: z.record(z.string(), slotBindingSchema),
-  workdir: slotBindingSchema,
-  session_name: z.string().min(1),
-  model: bindableSchema.optional(), effort: bindableSchema.optional(),
-  worktree: z.object({ branchName: bindableSchema, worktreeSubdir: bindableSchema, baseRef: bindableSchema.optional() }).optional(),
-  pre_authorized_tools: z.array(z.string()).default([]), yolo: z.boolean().default(false),
-  fan_out: z.object({ over: slotBindingSchema, unit_id_path: z.string().min(1), session_mode: z.enum(["per_unit", "shared"]).default("per_unit"),
-    depends_on_path: z.string().nullable().optional(), max_parallel: z.number().int().positive().default(8), manual_admission: z.boolean().default(false),
-    item_bindings: z.record(z.string(), slotBindingSchema).default({}), workdir: slotBindingSchema.optional(),
-    worktree: z.object({ branch_name: bindableSchema, worktree_subdir: bindableSchema, base_ref: bindableSchema.optional() }).optional() }).optional(),
-  artifacts: z.object({ over: slotBindingSchema, id_path: z.string().min(1) }).optional(),
-  gate_output: z.string().optional(), output_gate: legacyOutputGateSchema.optional(),
-  output_handoff: z.object({ output: z.string().min(1), downstream_role: roleSchema,
-    approved_wait: z.object({ kind: z.string().min(1) }) }).optional(),
-});
-
-export interface LegacyRevisionPolicy {
-  readonly target: "self_stage" | "upstream_handoff";
-  readonly action: string;
-}
-
-export const legacyRevisionPolicyOf = (input: unknown): LegacyRevisionPolicy | null => {
-  const parsed = legacyDelegatedSessionDefinitionSchema.safeParse(input);
-  if (parsed.success && parsed.data.gate_output) return { target: "self_stage", action: "request_revision" };
-  const gate = parsed.success ? parsed.data.output_gate : undefined;
-  if (!gate) return null;
-  const action = gate.steps.flatMap((step) => step.actions).find((candidate) => BUILT_IN_GATE_DISPOSITIONS[candidate as keyof typeof BUILT_IN_GATE_DISPOSITIONS] === "revise");
-  return action ? { target: gate.legacy_revision_route, action } : null;
-};
-
-export const legacyHandoffRoleOf = (input: unknown): StageOperatorRole | null => {
-  const parsed = legacyDelegatedSessionDefinitionSchema.safeParse(input);
-  return parsed.success ? parsed.data.output_handoff?.downstream_role ?? null : null;
-};
 
 export const delegatedSessionDefinitionSchema = z.object({
   prompt_matrix: z.array(z.object({
@@ -155,39 +109,6 @@ export const delegatedSessionDefinitionSchema = z.object({
   }
 });
 
-/** Decode immutable pre-plural rows into the named plural domain model. */
-export const normalizeDelegatedSessionDefinition = (
-  input: JsonValue,
-  sessionRole: StageOperatorRole | null,
-  declaredOutputs: readonly string[],
-): JsonValue => {
-  if (!input || typeof input !== "object" || !("prompt_template_path" in input)) return input;
-  const parsed = legacyDelegatedSessionDefinitionSchema.safeParse(input);
-  if (!parsed.success || sessionRole === null) return input;
-  const legacy = parsed.data;
-  const roleWorktree = legacy.fan_out?.worktree ?? (legacy.worktree ? {
-    branch_name: legacy.worktree.branchName, worktree_subdir: legacy.worktree.worktreeSubdir, base_ref: legacy.worktree.baseRef,
-  } : undefined);
-  return {
-    prompt_matrix: LEGACY_LAUNCH_REASONS.map((launch_reason) => ({ session_role: sessionRole, launch_reason, template_path: legacy.prompt_template_path })),
-    role_configs: [{ session_role: sessionRole, runtime: legacy.runtime, session_name: legacy.session_name, model: legacy.model,
-      effort: legacy.effort, worktree: roleWorktree, pre_authorized_tools: legacy.pre_authorized_tools, required_tools: [],
-      authorized_outputs: declaredOutputs, yolo: legacy.yolo }],
-    slot_bindings: sessionRole === "build" && legacy.fan_out && !("COHORT_FILES" in legacy.slot_bindings)
-      ? { ...legacy.slot_bindings, COHORT_FILES: { from: "item", path: "/files_in_scope" } }
-      : legacy.slot_bindings,
-    workdir: legacy.workdir,
-    fan_out: legacy.fan_out ? { ...legacy.fan_out, worktree: undefined } : undefined,
-    artifact_productions: legacy.artifacts ? [legacy.artifacts] : [],
-    gates: legacy.output_gate ? [{ name: `${legacy.output_gate.output}_gate`, outputs: [legacy.output_gate.output],
-      steps: legacy.output_gate.steps }]
-      : legacy.gate_output ? [{ name: `${legacy.gate_output}_gate`, outputs: [legacy.gate_output],
-        steps: [{ type: "artifact_approval", actions: ["approve", "request_revision"] },
-          { type: "merge_confirmation", actions: ["confirm_merged", "closed_without_merge"] }] }] : [],
-    handoffs: legacy.output_handoff ? [{ name: `${legacy.output_handoff.output}_handoff`, outputs: [legacy.output_handoff.output],
-      downstream_role: legacy.output_handoff.downstream_role, approved_wait: { kind: legacy.output_handoff.approved_wait.kind, close_events: ["approved"] } }] : [],
-  } as unknown as JsonValue;
-};
 
 export type DelegatedSessionDiagnostic =
   | { readonly kind: "invalid_stage_config"; readonly stage_key: string; readonly session_role: StageOperatorRole | null; readonly contract_item: "config"; readonly issues: readonly string[] }
@@ -203,7 +124,6 @@ export type DelegatedSessionDiagnostic =
   | { readonly kind: "prompt_bundle_cell_count"; readonly stage_key: string; readonly session_role: StageOperatorRole; readonly contract_item: string; readonly launch_reason: SessionLaunchReasonName; readonly matches: number }
   | { readonly kind: "automated_assessment_transition"; readonly stage_key: string; readonly session_role: StageOperatorRole | null; readonly contract_item: string; readonly trigger: string };
 
-const LEGACY_LAUNCH_REASONS: readonly SessionLaunchReasonName[] = ["initial", "operator_retry", "input_revision"];
 
 const duplicateDiagnostics = (
   stage_key: string,

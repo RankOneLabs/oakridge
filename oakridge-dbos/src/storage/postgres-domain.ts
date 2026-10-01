@@ -10,8 +10,7 @@
  */
 import type { ArtifactCoordinate, ArtifactRevision, ArtifactRevisionLifecycle } from "../domain/artifacts";
 import type { CollaborationMessage, CollaborationThread, CollaborationThreadWithMessages, MessageId, ThreadId, ThreadStatus } from "../domain/collaboration";
-import type { DevFlowBuildCohort } from "../domain/cohort-pull-request";
-import { parseFinalMergePolicy, parseRunContextRepository } from "../domain/repository-refs";
+import { parseRunContextRepository } from "../domain/repository-refs";
 import { selectBuiltInGateDisposition } from "../domain/gates";
 import type { JsonValue } from "../domain/primitives";
 import { err, ok, type ArtifactId, type AttemptId, type CohortId, type OutputCollectionKey, type ProjectId, type SessionId, type StageInstanceId, type UnitId, type WaitId, type WorkflowDefinitionId, type WorkflowRunId } from "../domain/primitives";
@@ -24,8 +23,7 @@ import type { StageInstance, StageInstanceLifecycle, StageOutcome, WorkflowRunBu
 import type {
   ArtifactRevisionRepository,
   CollaborationRepository,
-  FinalPullRequestTarget,
-  FinalPullRequestTargetRepository,
+  ForgeRepositoryRepository,
   GateDecisionReadRepository,
   RunArtifactReadRepository,
   StageInstanceRepository,
@@ -237,8 +235,8 @@ interface ArtifactRevisionRow {
   readonly run_id: string;
   readonly cohort_id: string | null;
   readonly stage_instance_id: string;
-  readonly unit_id: string;
-  readonly output_name: string;
+  readonly unit_id: string | null;
+  readonly output_name: string | null;
   readonly collection_key: string | null;
   readonly attempt_id: string | null;
   readonly session_id: string | null;
@@ -274,8 +272,8 @@ const ARTIFACT_REVISION_COLUMNS = `
   owner.run_id::text,owner.cohort_id::text,
   COALESCE(acceptance.receiving_stage_instance_id,pending_slot.receiving_stage_instance_id,
            owner.stage_instance_id,provenance.stage_instance_id)::text AS stage_instance_id,
-  COALESCE(cohort.cohort_key,'0') AS unit_id,
-  COALESCE(acceptance.output_name,pending_slot.output_name,'') AS output_name,
+  cohort.cohort_key AS unit_id,
+  COALESCE(acceptance.output_name,pending_slot.output_name) AS output_name,
   COALESCE(acceptance.collection_key,pending_slot.collection_key) AS collection_key,
   provenance.attempt_id::text,provenance.session_id::text`;
 
@@ -296,7 +294,7 @@ const artifactRevision = (row: ArtifactRevisionRow): ArtifactRevision => ({
   run_id: row.run_id as WorkflowRunId,
   stage_instance_id: row.stage_instance_id as StageInstanceId,
   cohort_id: row.cohort_id as CohortId | null,
-  unit_id: row.unit_id as UnitId,
+  unit_id: row.unit_id as UnitId | null,
   attempt_id: row.attempt_id as AttemptId | null,
   session_id: row.session_id as SessionId | null,
   output_name: row.output_name,
@@ -484,22 +482,13 @@ export class PostgresCollaborationRepository implements CollaborationRepository 
   }
 
   async update_thread_status(id: ThreadId, status: ThreadStatus): Promise<void> {
-    await this.sql.query("UPDATE oakridge.artifact_thread SET status=$2 WHERE id=$1", [id, status]);
+    await this.sql.query("UPDATE oakridge.artifact_thread SET status=$2,updated_at=clock_timestamp() WHERE id=$1", [id, status]);
   }
 }
 
 /* ------------------------------------------------------------------ *
- * Final pull request target
+ * Forge identity from the run context
  * ------------------------------------------------------------------ */
-
-interface FinalTargetRow {
-  readonly context: JsonValue;
-  readonly cohort_id: string; readonly stage_instance_id: string; readonly cohort_key: string;
-  readonly repository_key: string; readonly repository_path: string; readonly canonical_ref: string;
-  readonly expected_pr_base: string; readonly recorded_head_sha: string;
-  readonly current_verified_pull_request_id: string | null;
-  readonly created_at: string; readonly updated_at: string;
-}
 
 const readContextRepositories = (context: JsonValue): readonly JsonValue[] => {
   if (typeof context !== "object" || context === null || Array.isArray(context)) return [];
@@ -513,39 +502,17 @@ const readContextRepositories = (context: JsonValue): readonly JsonValue[] => {
  * from `epic_workflow_profile`; they are launch configuration, so they now
  * arrive on the run context that every other stage already reads.
  */
-export class PostgresFinalPullRequestTargetRepository implements FinalPullRequestTargetRepository {
+export class PostgresForgeRepositoryRepository implements ForgeRepositoryRepository {
   constructor(private readonly sql: SqlExecutor) {}
 
-  async find(run_id: WorkflowRunId, repository_key: string): Promise<FinalPullRequestTarget | null> {
-    const rows = await this.sql.query<FinalTargetRow>(
-      `SELECT run.context,
-              cohort.cohort_id::text,cohort.stage_instance_id::text,cohort.cohort_key,cohort.repository_key,
-              cohort.repository_path,cohort.canonical_ref,cohort.expected_pr_base,cohort.recorded_head_sha,
-              cohort.current_verified_pull_request_id::text,cohort.created_at::text,cohort.updated_at::text
-       FROM oakridge.workflow_run run
-       JOIN oakridge.stage_instance stage ON stage.run_id=run.id
-       JOIN oakridge.dev_flow_build_cohort cohort ON cohort.stage_instance_id=stage.id AND cohort.repository_key=$2
-       WHERE run.id=$1
-       ORDER BY stage.created_at DESC,cohort.created_at DESC LIMIT 1`, [run_id, repository_key]);
-    const row = rows[0];
-    if (!row) return null;
-    const repository = readContextRepositories(row.context)
+  async find_forge_repository(run_id: WorkflowRunId, repository_key: string): Promise<{ readonly owner: string; readonly name: string } | null> {
+    const rows = await this.sql.query<{ readonly context: JsonValue }>(
+      "SELECT context FROM oakridge.workflow_run WHERE id=$1", [run_id]);
+    const repository = readContextRepositories(rows[0]?.context ?? null)
       .map(parseRunContextRepository)
       .flatMap((parsed) => (parsed.ok ? [parsed.value] : []))
       .find((candidate) => candidate.key === repository_key);
     if (!repository?.forge_repository) return null;
-    const cohort: DevFlowBuildCohort = {
-      cohort_id: row.cohort_id as CohortId, stage_instance_id: row.stage_instance_id as StageInstanceId,
-      cohort_key: row.cohort_key, repository_key: row.repository_key, repository_path: row.repository_path,
-      canonical_ref: row.canonical_ref, expected_pr_base: row.expected_pr_base, recorded_head_sha: row.recorded_head_sha,
-      current_verified_pull_request_id: row.current_verified_pull_request_id as DevFlowBuildCohort["current_verified_pull_request_id"],
-      created_at: row.created_at, updated_at: row.updated_at,
-    };
-    const contextObject = typeof row.context === "object" && row.context !== null && !Array.isArray(row.context) ? row.context : {};
-    return {
-      cohort,
-      forge_repository: { owner: repository.forge_repository.owner, name: repository.forge_repository.name },
-      merge_policy: parseFinalMergePolicy((contextObject as { readonly final_merge_policy?: JsonValue }).final_merge_policy),
-    };
+    return { owner: repository.forge_repository.owner, name: repository.forge_repository.name };
   }
 }

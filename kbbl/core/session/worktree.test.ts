@@ -9,6 +9,7 @@ import {
   createWorktree,
   isGitRepo,
   isPathInside,
+  resolveExternalGitDir,
   resolveHead,
   removeWorktree,
 } from "./worktree";
@@ -115,6 +116,29 @@ describe("resolveHead", () => {
     const proc = Bun.spawn({ cmd: ["mkdir", "-p", notRepo] });
     await proc.exited;
     await expect(resolveHead(notRepo)).rejects.toThrow();
+  });
+});
+
+describe("resolveExternalGitDir", () => {
+  test("a linked worktree resolves to the main repository's .git", async () => {
+    const created = await createWorktree({
+      workdir: repoDir,
+      worktreesRoot,
+      oakridgeSid: "ext-git-dir-linked",
+      resumeDepth: 0,
+    });
+    const mainGitDir = (await git(repoDir, "rev-parse", "--path-format=absolute", "--git-dir")).trim();
+    expect(await resolveExternalGitDir(created.worktreePath)).toBe(mainGitDir);
+  });
+
+  test("an ordinary clone needs nothing extra", async () => {
+    expect(await resolveExternalGitDir(repoDir)).toBeNull();
+  });
+
+  test("a directory outside any repository needs nothing extra", async () => {
+    const plain = join(tmpRoot, "plain");
+    await Bun.spawn({ cmd: ["mkdir", "-p", plain] }).exited;
+    expect(await resolveExternalGitDir(plain)).toBeNull();
   });
 });
 

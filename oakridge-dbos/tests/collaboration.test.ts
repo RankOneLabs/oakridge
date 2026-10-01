@@ -48,7 +48,7 @@ const fixture = (forceConflict = false, recipientFailure = false) => {
     },
     message_recipients: { resolve: async () => recipientFailure
       ? { kind: "recipient_not_deliverable", detail: "recipient session is unavailable" }
-      : { kind: "resolved", target } },
+      : { kind: "resolved", target, cohort_id: "55555555-5555-4555-8555-555555555555" as CohortId } },
     send_message: deliver,
     ping_thread: deliver,
     policy_for_artifact_type: () => ({ commentable: true, atom_editable: true }),
@@ -90,10 +90,10 @@ test("run messages need no artifact thread and are readable from their cohort vi
   const cohortId = "55555555-5555-4555-8555-555555555555";
   const response = await subject.app.request(`/runs/${runId}/messages`, {
     method: "POST", headers: { "content-type": "application/json", "idempotency-key": "cross-stage-1" },
-    body: JSON.stringify({ cohort_id: cohortId, sender: { kind: "agent", id: "builder" }, recipient: { kind: "agent", id: "reviewer" }, thread_id: "build-review", message_id: "message-1", body: { text: "Please review" } }),
+    body: JSON.stringify({ cohort_id: artifact.cohort_id, sender: { kind: "agent", id: "builder" }, recipient: { kind: "agent", id: "reviewer" }, thread_id: "build-review", message_id: "message-1", body: { text: "Please review" } }),
   });
   expect(response.status).toBe(202);
-  expect(subject.sessionMessages[0]).toEqual(expect.objectContaining({ run_id: runId, cohort_id: cohortId, artifact_thread_id: null, sender_kind: "agent", sender_id: "builder", recipient_kind: "agent", recipient_id: "reviewer", delivery_key: "cross-stage-1" }));
+  expect(subject.sessionMessages[0]).toEqual(expect.objectContaining({ run_id: runId, cohort_id: cohortId, artifact_thread_id: null, sender_kind: "operator", sender_id: "operator", recipient_kind: "agent", recipient_id: "reviewer", delivery_key: "cross-stage-1" }));
   expect(subject.deliveryRequests[0]).toEqual(expect.objectContaining({
     message: expect.objectContaining({ run_id: runId, recipient: { kind: "agent", id: "reviewer" } }),
     target,

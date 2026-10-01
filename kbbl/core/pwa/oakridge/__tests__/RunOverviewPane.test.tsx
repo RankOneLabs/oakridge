@@ -6,7 +6,7 @@ import type { RunDiagnosis } from "../types";
 
 const overview: RunDiagnosis = {
   run: { id: "run-1", title: null, repository_keys: [], workflow_name: "test", status: "active", blocked_reason: null, next_actor: "core", stages: [], parked_count: 0, updated_at: "2026-09-29T00:00:00Z" },
-  sessions: [], current_session: null, sessions_awaiting_action: [], active_gates: [], recent_artifacts: [],
+  sessions: [], current_session: null, sessions_awaiting_action: [], active_gates: [], pull_request_merge_waits: [], recent_artifacts: [],
   stage_progress: { total: 0, pending: 0, active: 0, blocked: 0, complete: 0, failed: 0, cancelled: 0 },
 };
 

@@ -12,6 +12,7 @@ import type { CompiledStageContract } from "../domain/compiled-workflow";
 import type { JsonValue, WorkflowRunId } from "../domain/primitives";
 import type { PromptBundleEntry } from "../domain/workflow";
 import type { DevFlowPullRequestRepository, RunRecordRepository } from "../storage/repositories";
+import type { GitCommandRunner } from "../domain/repository-provisioning";
 import type { CohortMachineDriver, CohortStepContext, CohortStepDecision } from "../workflows/run-record-topology";
 import { createDevFlowCohortDriver } from "./dev-flow-cohort";
 import { createSingleRoleCohortDriver, declaresMultipleRoles } from "./single-role-cohort";
@@ -20,7 +21,9 @@ export const DELEGATED_SESSION_STAGE_TYPE = "delegated_session";
 
 export interface DelegatedSessionCohortDriverDependencies {
   readonly records: Pick<RunRecordRepository, "load_work_order_capability_seed">;
-  readonly pull_requests: Pick<DevFlowPullRequestRepository, "find_cohort_for_unit">;
+  readonly pull_requests: DevFlowPullRequestRepository;
+  readonly git: GitCommandRunner;
+  readonly verify_build_pull_request: import("./dev-flow-cohort").DevFlowCohortDriverDependencies["verify_build_pull_request"];
   load_prompt_bundle(run_id: WorkflowRunId): Promise<readonly PromptBundleEntry[]>;
 }
 

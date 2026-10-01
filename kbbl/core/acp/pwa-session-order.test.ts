@@ -120,7 +120,7 @@ test("the build member's cohort title wins when the assessor member carries none
 test("a group with no titled member falls back to the unit id", () => {
   const build = makeSnapshot({ sid: "build-1", workflow: workflow({ cohortTitle: null }) });
   const grouping = groupSessionsByRun([build]);
-  expect(grouping.runs[0]?.groups[0]).toMatchObject({ title: "cohort-a" });
+  expect(grouping.runs[0]?.groups[0]).toMatchObject({ title: "unit-a" });
 });
 
 test("the group's repositoryKey is the first non-null one among its members", () => {

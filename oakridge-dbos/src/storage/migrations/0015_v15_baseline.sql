@@ -49,7 +49,7 @@ CREATE TABLE oakridge.workflow_definition (
 
 CREATE TABLE oakridge.prompt_bundle (
   hash text PRIMARY KEY,
-  version integer NOT NULL CHECK (version > 0),
+  version integer NOT NULL CHECK (version = 1),
   matrix jsonb NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
@@ -141,6 +141,7 @@ CREATE TABLE oakridge.attempt (
   status oakridge.attempt_status NOT NULL DEFAULT 'pending',
   adapter_type text NOT NULL CHECK (length(btrim(adapter_type)) > 0),
   request jsonb NOT NULL,
+  idempotency_key text CHECK (idempotency_key IS NULL OR length(btrim(idempotency_key)) > 0),
   outcome jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
   started_at timestamptz,
@@ -153,6 +154,8 @@ CREATE TABLE oakridge.attempt (
   CHECK (status IN ('complete', 'failed', 'cancelled') OR outcome IS NULL)
 );
 CREATE INDEX attempt_cohort_status_idx ON oakridge.attempt (cohort_id, status, attempt_number DESC);
+CREATE UNIQUE INDEX attempt_cohort_idempotency_key_unique
+  ON oakridge.attempt (cohort_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
 
 CREATE TABLE oakridge.session (
   id uuid PRIMARY KEY,
@@ -163,7 +166,9 @@ CREATE TABLE oakridge.session (
   status oakridge.session_status NOT NULL DEFAULT 'pending',
   kbbl_session_id text,
   adapter_reference jsonb NOT NULL,
+  fenced_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   started_at timestamptz,
   ended_at timestamptz,
   UNIQUE (attempt_id),
@@ -251,23 +256,23 @@ CREATE INDEX artifact_owner_run_idx ON oakridge.artifact_owner (run_id, cohort_i
 CREATE TABLE oakridge.artifact_acceptance (
   artifact_id uuid PRIMARY KEY REFERENCES oakridge.artifact(id) ON DELETE CASCADE,
   run_id uuid NOT NULL,
+  cohort_id uuid NOT NULL,
   receiving_stage_instance_id uuid NOT NULL,
   output_name text NOT NULL CHECK (length(btrim(output_name)) > 0),
   artifact_type text NOT NULL CHECK (length(btrim(artifact_type)) > 0),
   collection_key text,
   accepted_at timestamptz NOT NULL DEFAULT now(),
+  superseded_at timestamptz,
+  FOREIGN KEY (run_id, cohort_id) REFERENCES oakridge.cohort(run_id, id) ON DELETE CASCADE,
   FOREIGN KEY (run_id, receiving_stage_instance_id)
     REFERENCES oakridge.stage_instance(run_id, id) ON DELETE CASCADE,
   FOREIGN KEY (artifact_id, artifact_type)
     REFERENCES oakridge.artifact(id, artifact_type) ON DELETE CASCADE,
   CHECK (collection_key IS NULL OR length(collection_key) > 0)
 );
-CREATE UNIQUE INDEX artifact_acceptance_scalar_slot_idx
-  ON oakridge.artifact_acceptance (receiving_stage_instance_id, output_name, artifact_id)
-  WHERE collection_key IS NULL;
-CREATE UNIQUE INDEX artifact_acceptance_collection_slot_idx
-  ON oakridge.artifact_acceptance (receiving_stage_instance_id, output_name, collection_key, artifact_id)
-  WHERE collection_key IS NOT NULL;
+CREATE UNIQUE INDEX artifact_acceptance_cohort_slot_unique_idx
+  ON oakridge.artifact_acceptance (receiving_stage_instance_id, cohort_id, output_name, collection_key)
+  NULLS NOT DISTINCT WHERE superseded_at IS NULL;
 
 -- Provenance is a discriminated union. A stage-produced artifact always names
 -- its stage and attempt; its session may be absent while the session is being
@@ -307,8 +312,8 @@ CREATE INDEX artifact_provenance_session_idx
 CREATE TABLE oakridge.wait_gate (
   id uuid PRIMARY KEY,
   run_id uuid NOT NULL REFERENCES oakridge.workflow_run(id) ON DELETE CASCADE,
-  stage_instance_id uuid,
-  cohort_id uuid,
+  stage_instance_id uuid NOT NULL,
+  cohort_id uuid NOT NULL,
   kind oakridge.wait_kind NOT NULL,
   status oakridge.wait_status NOT NULL DEFAULT 'open',
   closes_on jsonb NOT NULL,
@@ -319,7 +324,6 @@ CREATE TABLE oakridge.wait_gate (
   UNIQUE (run_id, id),
   FOREIGN KEY (run_id, stage_instance_id, cohort_id)
     REFERENCES oakridge.cohort(run_id, stage_instance_id, id),
-  CHECK ((cohort_id IS NULL) = (stage_instance_id IS NULL)),
   CHECK ((status = 'open') = (closed_at IS NULL)),
   CHECK ((status = 'open') = (outcome IS NULL))
 );
@@ -421,6 +425,31 @@ ON oakridge.run_transition
 DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW EXECUTE FUNCTION oakridge.validate_transition_owner_version();
 
+CREATE TABLE oakridge.artifact_thread (
+  id uuid PRIMARY KEY,
+  -- The revision chain the discussion belongs to: a thread survives the
+  -- revision it was opened on.
+  chain_id uuid NOT NULL,
+  -- The exact revision it was opened against.
+  artifact_id uuid NOT NULL REFERENCES oakridge.artifact(id) ON DELETE CASCADE,
+  anchor text CHECK (anchor IS NULL OR length(btrim(anchor)) > 0),
+  status text NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved')),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+CREATE INDEX artifact_thread_chain_idx ON oakridge.artifact_thread (chain_id, created_at, id);
+CREATE INDEX artifact_thread_revision_idx ON oakridge.artifact_thread (artifact_id);
+
+CREATE TABLE oakridge.artifact_thread_message (
+  id uuid PRIMARY KEY,
+  thread_id uuid NOT NULL REFERENCES oakridge.artifact_thread(id) ON DELETE CASCADE,
+  body text NOT NULL CHECK (length(btrim(body)) > 0),
+  author text NOT NULL CHECK (length(btrim(author)) > 0),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX artifact_thread_message_thread_idx
+  ON oakridge.artifact_thread_message (thread_id, created_at, id);
+
 CREATE TABLE oakridge.session_message (
   id uuid PRIMARY KEY,
   run_id uuid NOT NULL REFERENCES oakridge.workflow_run(id) ON DELETE CASCADE,
@@ -431,7 +460,7 @@ CREATE TABLE oakridge.session_message (
   recipient_id text,
   thread_id text NOT NULL CHECK (length(btrim(thread_id)) > 0),
   message_id text NOT NULL CHECK (length(btrim(message_id)) > 0),
-  artifact_thread_id uuid,
+  artifact_thread_id uuid REFERENCES oakridge.artifact_thread(id),
   body jsonb NOT NULL,
   delivery_key text NOT NULL CHECK (length(btrim(delivery_key)) > 0),
   delivery_status oakridge.delivery_status NOT NULL DEFAULT 'pending',
@@ -446,6 +475,96 @@ CREATE TABLE oakridge.session_message (
 );
 CREATE INDEX session_message_context_idx ON oakridge.session_message (run_id, cohort_id, created_at);
 CREATE INDEX session_message_recipient_idx ON oakridge.session_message (recipient_kind, recipient_id, delivery_status);
+
+-- Adapter-owned build cohort refs and one pull-request model for cohort and
+-- final epic pull requests. Observations are append-only; verification and
+-- merge closure are separate facts.
+
+CREATE TABLE oakridge.dev_flow_build_cohort (
+  cohort_id uuid PRIMARY KEY REFERENCES oakridge.cohort(id) ON DELETE CASCADE,
+  stage_instance_id uuid NOT NULL REFERENCES oakridge.stage_instance(id) ON DELETE CASCADE,
+  cohort_key text NOT NULL CHECK (length(btrim(cohort_key)) > 0),
+  repository_key text NOT NULL CHECK (length(btrim(repository_key)) > 0),
+  repository_path text NOT NULL CHECK (length(btrim(repository_path)) > 0),
+  canonical_ref text NOT NULL CHECK (length(btrim(canonical_ref)) > 0),
+  expected_pr_base text NOT NULL CHECK (length(btrim(expected_pr_base)) > 0),
+  recorded_head_sha text NOT NULL CHECK (length(btrim(recorded_head_sha)) > 0),
+  pending_head_sha text CHECK (pending_head_sha IS NULL OR length(btrim(pending_head_sha)) > 0),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (stage_instance_id, cohort_key),
+  UNIQUE (cohort_id, repository_key)
+);
+
+CREATE TABLE oakridge.pull_request (
+  id uuid PRIMARY KEY,
+  provider text NOT NULL CHECK (provider = 'github'),
+  owner text NOT NULL CHECK (length(btrim(owner)) > 0),
+  name text NOT NULL CHECK (length(btrim(name)) > 0),
+  forge_pull_request_id bigint NOT NULL CHECK (forge_pull_request_id > 0),
+  url text NOT NULL CHECK (length(btrim(url)) > 0),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX pull_request_forge_identity_unique_idx
+  ON oakridge.pull_request (provider, lower(owner), lower(name), forge_pull_request_id);
+
+CREATE TABLE oakridge.pull_request_observation (
+  id uuid PRIMARY KEY,
+  pull_request_id uuid NOT NULL REFERENCES oakridge.pull_request(id) ON DELETE CASCADE,
+  head_ref text NOT NULL CHECK (length(btrim(head_ref)) > 0),
+  base_ref text NOT NULL CHECK (length(btrim(base_ref)) > 0),
+  head_sha text CHECK (head_sha IS NULL OR length(btrim(head_sha)) > 0),
+  state text NOT NULL CHECK (state IN ('open', 'merged', 'closed_unmerged')),
+  source text NOT NULL CHECK (source IN ('poll', 'webhook', 'manual_recheck')),
+  observed_at timestamptz NOT NULL,
+  merged_at timestamptz,
+  recorded_at timestamptz NOT NULL DEFAULT now(),
+  CHECK ((state = 'merged') = (merged_at IS NOT NULL))
+);
+CREATE INDEX pull_request_observation_history_idx
+  ON oakridge.pull_request_observation (pull_request_id, observed_at DESC, id);
+
+CREATE TABLE oakridge.pull_request_verification (
+  id uuid PRIMARY KEY,
+  cohort_id uuid NOT NULL REFERENCES oakridge.cohort(id) ON DELETE CASCADE,
+  pull_request_id uuid NOT NULL REFERENCES oakridge.pull_request(id) ON DELETE CASCADE,
+  observation_id uuid NOT NULL REFERENCES oakridge.pull_request_observation(id) ON DELETE RESTRICT,
+  verified_head_sha text NOT NULL CHECK (length(btrim(verified_head_sha)) > 0),
+  verified_at timestamptz NOT NULL,
+  invalidated_at timestamptz,
+  invalidation_reason text CHECK (invalidation_reason IN ('replaced', 'head_changed')),
+  CHECK ((invalidated_at IS NULL) = (invalidation_reason IS NULL))
+);
+CREATE UNIQUE INDEX pull_request_one_current_verified_per_cohort_idx
+  ON oakridge.pull_request_verification (cohort_id)
+  WHERE invalidated_at IS NULL;
+
+ALTER TABLE oakridge.dev_flow_build_cohort
+  ADD COLUMN current_verified_pull_request_id uuid,
+  ADD CONSTRAINT dev_flow_build_cohort_current_verified_fk
+    FOREIGN KEY (current_verified_pull_request_id)
+    REFERENCES oakridge.pull_request_verification(id) DEFERRABLE INITIALLY DEFERRED;
+
+CREATE TABLE oakridge.pull_request_merge_closure (
+  id uuid PRIMARY KEY,
+  cohort_id uuid NOT NULL UNIQUE REFERENCES oakridge.cohort(id) ON DELETE CASCADE,
+  pull_request_id uuid NOT NULL REFERENCES oakridge.pull_request(id) ON DELETE RESTRICT,
+  idempotency_key text NOT NULL CHECK (length(btrim(idempotency_key)) > 0),
+  merged_at timestamptz NOT NULL,
+  confirmed_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- Approvals name the verified head they reviewed. Replacing a PR invalidates
+-- those facts in the same transaction as the current-link transition.
+CREATE TABLE oakridge.pull_request_approval (
+  id uuid PRIMARY KEY,
+  cohort_id uuid NOT NULL REFERENCES oakridge.cohort(id) ON DELETE CASCADE,
+  verification_id uuid NOT NULL REFERENCES oakridge.pull_request_verification(id) ON DELETE CASCADE,
+  approval_kind text NOT NULL CHECK (approval_kind IN ('build_review', 'assessment_review')),
+  approved_at timestamptz NOT NULL,
+  invalidated_at timestamptz,
+  UNIQUE (cohort_id, approval_kind, verification_id)
+);
 
 CREATE TABLE oakridge.runtime_secret (
   name text PRIMARY KEY,

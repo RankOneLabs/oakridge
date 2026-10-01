@@ -39,6 +39,7 @@ function claim(
     worktree_path: "/tmp/repo",
     requested_model: null,
     requested_effort: null,
+    requested_mode: null,
     workflow,
   });
 }
@@ -224,6 +225,7 @@ test("boot sweep fails prompting turns, retains accepted turns, and settles sess
     worktree_path: "/tmp/repo",
     requested_model: null,
     requested_effort: null,
+    requested_mode: null,
     workflow: null,
   });
 
@@ -264,6 +266,7 @@ test("listByArtifact reads back the stored workflow identity, not a raw undefine
     worktree_path: "/tmp/repo",
     requested_model: null,
     requested_effort: null,
+    requested_mode: null,
     workflow,
   });
 

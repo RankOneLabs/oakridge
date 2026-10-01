@@ -8,10 +8,9 @@ export interface PendingRequestIdentity {
  *
  * A retry of the same request must carry the key its first attempt used, so the
  * server replays instead of launching a second run or sending a second ping; a
- * genuinely different request must get a fresh one. Three surfaces — run
- * launch, thread ping, unit admission — each grew their own copy of that rule
- * with a differently named identity field. The identity is whatever string
- * distinguishes one request from another: a thread id, a stage/unit pair, or a
+ * genuinely different request must get a fresh one. Run launch and thread ping
+ * use the same rule with differently named identity fields. The identity is whatever string
+ * distinguishes one request from another: a thread id or a
  * fingerprint of the whole request body.
  */
 export const selectRequestIdentity = (

@@ -32,6 +32,8 @@ export interface AcpTestHarnessOptions {
   /** Profile ids all mapped to the fake agent. */
   profileIds?: readonly string[];
   defaultAgent?: string;
+  /** Profile `sessionMode` for the fake agent(s); default null. */
+  sessionMode?: string | null;
 }
 
 export interface AcpTestHarness {
@@ -71,6 +73,7 @@ export function makeAcpTestService(
       },
       enabled: true,
       requireLoadSession: true,
+      sessionMode: options.sessionMode ?? null,
     });
   }
   const worktrees: WorktreeProvider = options.worktreesRoot

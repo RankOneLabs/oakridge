@@ -5,13 +5,12 @@ import { useArchiveRun } from "../../hooks/useArchiveRun";
 import { useUnarchiveRun } from "../../hooks/useUnarchiveRun";
 import { useDeleteRun } from "../../hooks/useDeleteRun";
 import { useConfirmCohortMerged } from "../../hooks/useConfirmCohortMerged";
-import type { RunDiagnosisGate, RunDetail as RunDetailRecord, StageDetail } from "../../types";
+import type { PullRequestMergeWait, RunDiagnosisGate, RunDetail as RunDetailRecord, StageDetail } from "../../types";
 import { RunParkedGateList } from "./ParkedGateList";
 import { RunStageRow, RunUnitRow } from "../molecules/RunStageRows";
 import { StatusBadge } from "../atoms/StatusBadge";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
-import { FinalIntegrationPanel } from "./FinalIntegrationPanel";
 
 const tableHeaderClass =
   "border-b border-[var(--border-subtle)] px-3 py-2 text-left text-xs font-semibold uppercase text-[var(--text-muted)]";
@@ -24,19 +23,11 @@ function isFannedOut(stage: StageDetail): boolean {
   );
 }
 
-interface UnitRetryFacts {
-  readonly isRunActive: boolean;
-  readonly unitStatus: NonNullable<StageDetail["units"]>[number]["status"];
-  readonly blockedReason: NonNullable<StageDetail["units"]>[number]["blocked_reason"];
-}
-
-const canRetryUnit = ({ isRunActive, unitStatus, blockedReason }: UnitRetryFacts): boolean =>
-  isRunActive && (unitStatus === "failed" || (unitStatus === "blocked" && blockedReason === "retry"));
-
 interface RunDetailProps {
   runId: string;
   run: RunDetailRecord;
   activeGates: readonly RunDiagnosisGate[];
+  mergeWaits: readonly PullRequestMergeWait[];
   /**
    * Leave the run entirely, because it no longer exists. Only the delete path
    * calls this: the stage list renders inside a workspace pane, so navigation
@@ -50,7 +41,7 @@ interface RunDetailProps {
   onSelectArtifact: (artifactId: string) => void;
 }
 
-export function RunDetail({ runId, run, activeGates, onRunDeleted, onSelectArtifact }: RunDetailProps) {
+export function RunDetail({ runId, run, activeGates, mergeWaits, onRunDeleted, onSelectArtifact }: RunDetailProps) {
   const qc = useQueryClient();
   const cancelMutation = useCancelRun(runId);
   const retryMutation = useRetryStuck(runId);
@@ -65,7 +56,6 @@ export function RunDetail({ runId, run, activeGates, onRunDeleted, onSelectArtif
   };
 
   const canCancel = run.status === "active" || run.status === "blocked";
-  const isRunActive = run.status === "active" || run.status === "blocked";
 
   return (
     <div className="or-page or-page--wide" data-testid="or-run-detail">
@@ -143,7 +133,6 @@ export function RunDetail({ runId, run, activeGates, onRunDeleted, onSelectArtif
         </div>
       </header>
 
-      {run.epic_profile && <FinalIntegrationPanel runId={runId} profile={run.epic_profile} />}
 
       <section className="flex flex-col">
         <h3 className="mb-3 mt-0 text-sm font-semibold text-[var(--text-secondary)]">Stages</h3>
@@ -166,8 +155,7 @@ export function RunDetail({ runId, run, activeGates, onRunDeleted, onSelectArtif
                   return units.map((unit) => {
                     const cohortId = unit.cohort_id;
                     const cohortRouteId = `${stage.stage_instance_id}:${unit.unit_id}`;
-                    const canConfirmMerge = activeGates.some((gate) => gate.cohort_id === cohortId
-                      && gate.resume_actions.includes("confirm_merged"));
+                    const canConfirmMerge = mergeWaits.some((wait) => wait.cohort_id === cohortId);
                     const unitArtifacts = stage.artifacts.filter(
                       (a) => a.label === unit.unit_id,
                     );
@@ -188,7 +176,7 @@ export function RunDetail({ runId, run, activeGates, onRunDeleted, onSelectArtif
                           && retryMutation.variables.unitId === unit.unit_id
                           ? (retryMutation.error instanceof Error ? retryMutation.error.message : "Retry failed")
                           : undefined}
-                        canRetry={canRetryUnit({ isRunActive, unitStatus: unit.status, blockedReason: unit.blocked_reason })}
+                        canRetry={unit.retryable}
                         confirmMerge={canConfirmMerge ? {
                           onConfirm: () => confirmMergeMutation.mutate({
                             cohortId: cohortRouteId,
@@ -208,8 +196,7 @@ export function RunDetail({ runId, run, activeGates, onRunDeleted, onSelectArtif
                   });
                 }
                 const unit = units?.length === 1 ? units[0] : undefined;
-                const shouldOfferRetry = unit !== undefined
-                  && canRetryUnit({ isRunActive, unitStatus: unit.status, blockedReason: unit.blocked_reason });
+                const shouldOfferRetry = unit?.retryable === true;
                 return [
             <RunStageRow
                     key={stage.name}

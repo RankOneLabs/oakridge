@@ -27,10 +27,9 @@ import type { StageInputSet } from "../decision/commands";
 import { workOrderIdFor, workOrderWorkflowId } from "../decision/ids";
 import type { CompiledStageContract, MaterializedExecutionUnit } from "../domain/compiled-workflow";
 import type { CommittedSessionLaunch, DelegatedSessionDefinitionConfig } from "../domain/delegated-session";
-import type { AssessmentRevisionContext } from "../domain/dev-flow-artifacts";
 import type { DevFlowBuildCohort } from "../domain/cohort-pull-request";
 import type { ArtifactEnvelope, ExecutionRequest } from "../domain/execution";
-import type { ArtifactId, JsonValue, OutputCollectionKey, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "../domain/primitives";
+import type { JsonValue, StageInstanceId, WorkflowRunId, WorkOrderId } from "../domain/primitives";
 import { PROVISION_REPOSITORY_REFS_STAGE_TYPE, parseBaseBranch, parseRunContextRepository, renderCohortBranchContract, type RepositoryProvisioningDefinitionConfig, type ResolvedRepositoryProvisioningConfig } from "../domain/repository-refs";
 import type { DeclaredOutputSlot } from "../domain/run-record";
 
@@ -170,96 +169,4 @@ export const resolveAttemptExecution = async (
 export const resolveWorkOrder = async (input: ResolveWorkOrderInput): Promise<ResolvedAttemptExecution> => {
   const id = workOrderIdFor(input.run_id, input.stage.stage_key, input.unit.unit_id, input.identity);
   return resolveAttemptExecution({ ...input, attempt_id: id, attempt_workflow_id: workOrderWorkflowId(id) });
-};
-
-/** One required output slot a retried unit still owes, as `retry_unit` reads it off `run_output_slot`. */
-export interface MissingOutputSlot {
-  readonly output_name: string;
-  readonly collection_key: OutputCollectionKey | null;
-}
-
-/** Rejected artifact and feedback from run_output_slot and its referenced artifact row. */
-export interface RejectedOutputContext extends MissingOutputSlot {
-  readonly artifact_id: ArtifactId;
-  readonly body: JsonValue;
-  readonly feedback: string | null;
-}
-
-export interface RebindWorkOrderPublicationInput {
-  /** The latest execution request the unit ran under — prompt, workdir, inputs are reused as they were resolved. */
-  readonly basis: ExecutionRequest;
-  readonly work_order_id: WorkOrderId;
-  readonly capability_seed: string;
-  readonly missing: readonly MissingOutputSlot[];
-  readonly rejected_outputs?: readonly RejectedOutputContext[];
-  /** The assessment the operator sent back, rendered beside the rejected outputs. */
-  readonly review?: AssessmentRevisionContext;
-  /** The previous writer's checkout is the retry's base when that writer reached kbbl. */
-  readonly retry_workspace_source?: ExecutionRequest["workspace_source"];
-}
-
-export interface ReboundWorkOrderPublication {
-  readonly request: ExecutionRequest;
-  readonly capability_hash: string;
-}
-
-const isJsonObject = (value: JsonValue): value is { readonly [key: string]: JsonValue } =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-/**
- * The section a retry's prompt gains: the rejected outputs with the operator's
- * feedback, then, when an assessment was sent back, its open findings and
- * recommendations, subordinate to that feedback.
- */
-const selectCorrectionSection = (rejected: readonly RejectedOutputContext[], review: AssessmentRevisionContext | null): string => {
-  const corrections = `## Requested output corrections\n\nThe previous writer is being replaced. Revise these stored outputs according to the operator feedback; preserve the remaining scope. Publish using the new work-order instructions below.\n\n${JSON.stringify(rejected, null, 2)}`;
-  if (!review) return corrections;
-  return `${corrections}\n\n## Assessment sent back by the operator\n\nThe assessor reviewed the previous build and the operator sent it back for changes. Address its open findings and recommended next actions below; where the operator feedback above differs from them, follow the operator feedback.\n\n${JSON.stringify(review, null, 2)}`;
-};
-
-/**
- * Derives a retry's execution request from the basis request. Everything that
- * names the work order is re-minted, never copied: the execution id, the
- * publication target the executor PUTs to, and the capability that authorizes
- * it — from the same durable seed `resolveWorkOrder` uses, so a capability
- * issued to one work order never authenticates another. `expected_artifacts`
- * narrows to the slots still owed, so the relaunched agent is told to emit
- * those and nothing else (the adapter renders this list into its prompt).
- *
- * `null` when the basis carries no publication authority, or declares no
- * output for a slot that is missing — either is a request this unit cannot be
- * retried from, which `retry_unit` reports as `no_execution_basis`.
- */
-export const rebindWorkOrderPublication = (input: RebindWorkOrderPublicationInput): ReboundWorkOrderPublication | null => {
-  const config = input.basis.resolved_config;
-  if (!isJsonObject(config)) return null;
-  const publication = config.publication;
-  if (!isJsonObject(publication)) return null;
-  const expected_artifacts: ExecutionRequest["expected_artifacts"][number][] = [];
-  for (const slot of input.missing) {
-    const declared = input.basis.declared_outputs.find((output) => output.name === slot.output_name);
-    if (!declared) return null;
-    expected_artifacts.push({
-      unit_id: slot.collection_key === null ? input.basis.unit_id : (slot.collection_key as unknown as UnitId),
-      output_name: slot.output_name, artifact_type: declared.artifact_type,
-    });
-  }
-  const capability = capabilityFor(input.capability_seed, input.work_order_id);
-  const rejected = input.rejected_outputs ?? [];
-  const reboundConfig = { ...config,
-    ...(typeof config.session_name === "string" ? { session_name: input.work_order_id } : {}),
-    publication: { ...publication, work_order_id: input.work_order_id, capability } };
-  // A named cohort branch is still owned by the previous session. A retry
-  // inherits that session's checkout and must not ask kbbl to create the same
-  // branch a second time.
-  const retryConfig: { [key: string]: JsonValue } = { ...reboundConfig };
-  if (input.retry_workspace_source) delete retryConfig.worktree;
-  const resolved_config: JsonValue = rejected.length > 0 && typeof config.rendered_prompt === "string"
-    ? { ...retryConfig, rendered_prompt: `${config.rendered_prompt}\n\n${selectCorrectionSection(rejected, input.review ?? null)}` }
-    : retryConfig;
-  return {
-    capability_hash: capabilityHash(capability),
-    request: { ...input.basis, execution_id: input.work_order_id as unknown as ExecutionRequest["execution_id"], resolved_config, expected_artifacts,
-      ...(input.retry_workspace_source ? { workspace_source: input.retry_workspace_source } : {}) },
-  };
 };

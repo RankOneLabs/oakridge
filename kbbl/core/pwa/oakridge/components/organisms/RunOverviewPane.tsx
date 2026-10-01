@@ -47,7 +47,7 @@ export function RunOverviewPane({ overview, activity, onOpenPane }: RunOverviewP
         ) : (
           <Button variant="secondary" type="button" className={rowButtonClass}
             onClick={() => openSession(currentSession.session_id as Sid)} data-testid="or-overview-current-session">
-            {currentSession.stage_key} · {currentSession.cohort_id} · {attemptLabel(currentSession)}
+            {currentSession.stage_key} · {currentSession.cohort_key} · {attemptLabel(currentSession)}
           </Button>
         )}
       </section>
@@ -62,7 +62,7 @@ export function RunOverviewPane({ overview, activity, onOpenPane }: RunOverviewP
               <li key={session.session_id}>
                 <Button variant="secondary" type="button" className={rowButtonClass}
                   onClick={() => openSession(session.session_id as Sid)} data-testid="or-overview-awaiting-session">
-                  {session.stage_key} · {session.cohort_id} · {attemptLabel(session)}
+                  {session.stage_key} · {session.cohort_key} · {attemptLabel(session)}
                 </Button>
               </li>
             ))}

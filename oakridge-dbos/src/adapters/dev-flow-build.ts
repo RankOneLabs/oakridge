@@ -26,13 +26,14 @@ export const BUILD_LAUNCH_REASONS = {
 
 export type BuildSessionRole = keyof typeof BUILD_LAUNCH_REASONS;
 export type BuildLaunchReason = (typeof BUILD_LAUNCH_REASONS)[BuildSessionRole][number];
-export type BuildCohortPhase = "pending" | "builder_active" | "build_review" | "assessor_active" | "assessment_review" | "awaiting_merge" | "complete";
+export type BuildCohortPhase = "pending" | "builder_active" | "build_lost" | "build_review" | "assessor_active" | "assess_lost" | "assessment_review" | "awaiting_merge" | "complete";
 export type BuildEventDisposition = "transitioned" | "recorded_only";
 export type BuildGateName = "build_review" | "assessment_review";
 
 export interface VerifiedPullRequest {
   readonly url: string;
   readonly revision: string;
+  readonly head_sha: string;
 }
 
 export interface BuildCohortState {
@@ -47,19 +48,21 @@ export interface BuildCohortState {
 
 export type BuildCohortEvent =
   | { readonly kind: "stage_started" }
+  | { readonly kind: "stale_gate_recorded" }
   | { readonly kind: "build_artifact_recorded"; readonly revision: string; readonly output_name: string }
-  | { readonly kind: "pull_request_verified"; readonly revision: string; readonly pull_request_url: string }
+  | { readonly kind: "pull_request_verified"; readonly revision: string; readonly pull_request_url: string; readonly head_sha: string }
   | { readonly kind: "builder_attempt_lost" }
   | { readonly kind: "build_review_approved" }
   | { readonly kind: "build_review_revision_requested" }
   | { readonly kind: "assessment_artifact_recorded"; readonly artifact_id: string }
   | { readonly kind: "assessment_outcome_observed"; readonly outcome: string }
   | { readonly kind: "assessor_attempt_lost" }
+  | { readonly kind: "operator_retry_requested" }
   | { readonly kind: "assessment_review_approved" }
   | { readonly kind: "assessment_review_revision_requested" }
   | { readonly kind: "pull_request_mismatch"; readonly pull_request_url: string }
   | { readonly kind: "replacement_pull_request_required"; readonly pull_request_url: string }
-  | { readonly kind: "pull_request_merged"; readonly pull_request_url: string };
+  | { readonly kind: "pull_request_merged"; readonly pull_request_url: string; readonly head_sha: string };
 
 export interface CommittedBuildPrompt {
   readonly template_path: string;
@@ -88,6 +91,7 @@ export interface BuildCohortTransitionEffect {
   readonly stage_data: BuildCohortState;
   readonly projected_status: BuildCohortProjection;
   readonly session_launch: BuildSessionLaunch | null;
+  readonly reopen_output_names: readonly string[];
 }
 
 export interface BuildCohortEventResult {
@@ -173,6 +177,9 @@ export const projectBuildCohortState = (state: BuildCohortState): BuildCohortPro
   if (state.phase === "builder_active" || state.phase === "assessor_active") {
     return { status: "active", blocked_reason: null, next_actor: "agent", outcome: null };
   }
+  if (state.phase === "build_lost" || state.phase === "assess_lost") {
+    return { status: "blocked", blocked_reason: "retry", next_actor: "operator", outcome: null };
+  }
   if (state.phase === "build_review" || state.phase === "assessment_review") {
     return { status: "blocked", blocked_reason: "gate", next_actor: "operator", outcome: null };
   }
@@ -211,13 +218,12 @@ const restartBuilder = (state: BuildCohortState): BuildCohortState => ({
 const observeBuildArtifact = (state: BuildCohortState, event: Extract<BuildCohortEvent, { readonly kind: "build_artifact_recorded" }>): BuildCohortState => {
   const sameRevision = state.accepted_revision === event.revision;
   const accepted_build_set = unique([...(sameRevision ? state.accepted_build_set : []), event.output_name]);
-  const verified_pull_request = state.verified_pull_request?.revision === event.revision ? state.verified_pull_request : null;
-  const observed = { ...state, accepted_revision: event.revision, accepted_build_set, verified_pull_request };
+  const observed = { ...state, accepted_revision: event.revision, accepted_build_set };
   return isBuildReviewReady(observed) ? { ...observed, phase: "build_review" } : observed;
 };
 
 const observeVerifiedPullRequest = (state: BuildCohortState, event: Extract<BuildCohortEvent, { readonly kind: "pull_request_verified" }>): BuildCohortState => {
-  const observed = { ...state, verified_pull_request: { url: event.pull_request_url, revision: event.revision } };
+  const observed = { ...state, verified_pull_request: { url: event.pull_request_url, revision: event.revision, head_sha: event.head_sha } };
   return isBuildReviewReady(observed) ? { ...observed, phase: "build_review" } : observed;
 };
 
@@ -229,10 +235,16 @@ const transitioned = (state: BuildCohortState, sessionLaunch: BuildSessionLaunch
 const applyEvent = (machine: BuildCohortMachine, state: BuildCohortState, event: BuildCohortEvent): AppliedEvent => {
   if (state.phase === "complete") return recorded(state);
   if (event.kind === "pull_request_merged") {
-    if (state.phase === "awaiting_merge" && state.verified_pull_request?.url === event.pull_request_url) {
+    const matchesVerification = state.verified_pull_request?.url === event.pull_request_url
+      && state.verified_pull_request.head_sha === event.head_sha;
+    if (state.verified_pull_request?.url === event.pull_request_url && !matchesVerification && state.phase !== "pending") {
+      const next = restartBuilder(state);
+      return transitioned(next, launch(machine, state, "build", "pr_mismatch_correction"));
+    }
+    if (state.phase === "awaiting_merge" && matchesVerification) {
       return transitioned({ ...state, phase: "complete", is_pull_request_merged: true });
     }
-    return recorded({ ...state, is_pull_request_merged: state.verified_pull_request?.url === event.pull_request_url || state.is_pull_request_merged });
+    return recorded({ ...state, is_pull_request_merged: matchesVerification || state.is_pull_request_merged });
   }
   if (event.kind === "stage_started" && state.phase === "pending") {
     const next = { ...state, phase: "builder_active" } as const;
@@ -247,7 +259,7 @@ const applyEvent = (machine: BuildCohortMachine, state: BuildCohortState, event:
       const next = observeVerifiedPullRequest(state, event);
       return next.phase === state.phase ? recorded(next) : transitioned(next);
     }
-    if (event.kind === "builder_attempt_lost") return transitioned(state, launch(machine, state, "build", "retry_after_lost_attempt"));
+    if (event.kind === "builder_attempt_lost") return transitioned({ ...state, phase: "build_lost" });
   }
   if (event.kind === "pull_request_mismatch" && state.phase !== "pending") {
     const next = restartBuilder(state);
@@ -269,7 +281,15 @@ const applyEvent = (machine: BuildCohortMachine, state: BuildCohortState, event:
   }
   if (state.phase === "assessor_active") {
     if (event.kind === "assessment_artifact_recorded") return transitioned({ ...state, phase: "assessment_review", assessment_artifact_id: event.artifact_id });
-    if (event.kind === "assessor_attempt_lost") return transitioned(state, launch(machine, state, "assessment", "retry_after_lost_attempt"));
+    if (event.kind === "assessor_attempt_lost") return transitioned({ ...state, phase: "assess_lost" });
+  }
+  if (event.kind === "operator_retry_requested" && state.phase === "build_lost") {
+    const next = { ...state, phase: "builder_active" } as const;
+    return transitioned(next, launch(machine, next, "build", "retry_after_lost_attempt"));
+  }
+  if (event.kind === "operator_retry_requested" && state.phase === "assess_lost") {
+    const next = { ...state, phase: "assessor_active" } as const;
+    return transitioned(next, launch(machine, next, "assessment", "retry_after_lost_attempt"));
   }
   if (state.phase === "assessment_review") {
     if (event.kind === "assessment_review_revision_requested") {
@@ -298,6 +318,9 @@ export const applyBuildCohortEvent = (
     stage_data: applied.state,
     projected_status: projection,
     session_launch: applied.launch,
+    reopen_output_names: applied.launch?.session_role === "build"
+      && ["revision_after_assessment", "revision_after_build_review", "pr_mismatch_correction", "replacement_pr"]
+        .includes(applied.launch.launch_reason) ? [...state.required_build_set, "assessment"] : [],
   };
   return { disposition: applied.disposition, state: applied.state, projection, launch: applied.launch, effect };
 };

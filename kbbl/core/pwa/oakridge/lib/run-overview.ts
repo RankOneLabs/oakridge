@@ -53,7 +53,7 @@ export const selectRunSidebarSessions = (
   rows: diagnosis.sessions.filter((session) => !purgedSessionIds.has(session.session_id)).map((session) => ({
     session_id: session.session_id as Sid,
     stage_key: session.stage_key,
-    unit_id: session.cohort_id,
+    unit_id: session.cohort_key,
     attempt_label: attemptLabel(session),
     status: session.status,
     is_current: session.attempt_number === session.attempt_count,

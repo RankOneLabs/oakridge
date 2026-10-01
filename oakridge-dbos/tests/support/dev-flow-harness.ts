@@ -26,19 +26,15 @@ import { join, resolve } from "node:path";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
 import type { ExecutionRequest } from "../../src/domain/execution";
-import type { CohortId, JsonValue, StageInstanceId, UnitId } from "../../src/domain/primitives";
-import type { StageOperatorRole, WorkflowDefinition } from "../../src/domain/workflow";
+import type { JsonValue, StageInstanceId, UnitId, WorkflowRunId } from "../../src/domain/primitives";
+import type { PromptBundleEntry, StageOperatorRole, WorkflowDefinition } from "../../src/domain/workflow";
 import { KbblExecutorAdapter } from "../../src/adapters/kbbl";
 import { createOakridgeRuntime, type OakridgeRuntime } from "../../src/runtime/compose";
-import { prepareDevFlowBuildCohort, verifyAndBindCohortPullRequest } from "../../src/runtime/cohort-pull-request";
-import { sendCohortWakeHint } from "../../src/http/dbos-transport";
-import { BunGitCommandRunner } from "../../src/runtime/git-command-runner";
 import { GithubPullRequestReader } from "../../src/runtime/github-pull-requests";
 import { applyMigrations } from "../../src/storage/migrate";
-import { PostgresDevFlowPullRequestRepository } from "../../src/storage/postgres-operators";
 import { PgPostgresExecutor } from "../../src/storage/sql-executor";
+import type { SqlExecutor } from "../../src/storage/sql-executor";
 import { loadDevFlowV15 } from "../../src/seed/dev-flow-v15";
-import { recordCohortAdapterEvent } from "../../src/workflows/run-record-topology";
 
 /**
  * How an execution behaves, for the scenario currently running.
@@ -109,14 +105,18 @@ export interface ScriptedAgentScenario {
   readonly launched: Map<string, FakeAgentLaunch>;
   /** Every follow-up the run has sent an agent — a revision request, say. */
   readonly deliveries: AgentDelivery[];
-  readonly forge_head_overrides: Map<string, string>;
+  readonly forge_overrides: Map<string, { readonly head_branch?: string; readonly head_sha?: string;
+    readonly base_branch?: string; readonly merged_at?: string | null }>;
   readonly strip_publication_contract: boolean;
+  readonly skip_first_publication_role: StageOperatorRole | null;
+  readonly unpublished_work_orders: Set<string>;
   releaseAll(): void;
 }
 
 export const scriptedAgentScenario = (options?: {
   readonly cohorts?: readonly CohortPlanEntry[];
   readonly strip_publication_contract?: boolean;
+  readonly skip_first_publication_role?: StageOperatorRole;
 }): ScriptedAgentScenario => {
   const cohorts = options?.cohorts ?? DEFAULT_COHORT_PLAN;
   const launched = new Map<string, FakeAgentLaunch>();
@@ -125,10 +125,30 @@ export const scriptedAgentScenario = (options?: {
     cohorts,
     launched,
     deliveries,
-    forge_head_overrides: new Map(),
+    forge_overrides: new Map(),
     strip_publication_contract: options?.strip_publication_contract ?? false,
+    skip_first_publication_role: options?.skip_first_publication_role ?? null,
+    unpublished_work_orders: new Set(),
     releaseAll() {},
   };
+};
+
+export const removePinnedPromptCell = async (
+  sql: SqlExecutor, run_id: WorkflowRunId, stage_key: string, role: string, reason: string,
+): Promise<() => Promise<void>> => {
+  const rows = await sql.query<{ readonly hash: string; readonly matrix: readonly PromptBundleEntry[] }>(
+    `SELECT bundle.hash,bundle.matrix FROM oakridge.workflow_run run
+     JOIN oakridge.prompt_bundle bundle ON bundle.hash=run.bundle_pin->>'prompt_bundle_hash'
+     WHERE run.id=$1`, [run_id]);
+  const bundle = rows[0];
+  if (!bundle) throw new Error(`run '${run_id}' has no bound prompt bundle`);
+  const reduced = bundle.matrix.filter((cell) => !(cell.stage_key === stage_key
+    && cell.session_role === role && cell.launch_reason === reason));
+  if (reduced.length === bundle.matrix.length) throw new Error(`prompt cell ${stage_key}:${role}:${reason} is missing`);
+  await sql.query("UPDATE oakridge.prompt_bundle SET matrix=$2::jsonb WHERE hash=$1",
+    [bundle.hash, JSON.stringify(reduced)]);
+  return async () => { await sql.query("UPDATE oakridge.prompt_bundle SET matrix=$2::jsonb WHERE hash=$1",
+    [bundle.hash, JSON.stringify(bundle.matrix)]); };
 };
 
 /** The one branch the harness's runs provision and build on. */
@@ -249,6 +269,7 @@ export interface IntegrationRuntime {
   /** Where the real HTTP surface is listening. */
   readonly base_url: string;
   readonly kbbl_url: string;
+  readonly forge_override_url: string;
   readonly definition: WorkflowDefinition;
   readonly application_version: string;
   /** The repository the seeded flow's runs provision and build in. */
@@ -310,7 +331,6 @@ export const installIntegrationRuntime = async (databaseUrl: string, options: In
 
   const repository = await createGitRepositoryFixture();
   const harnessSql = PgPostgresExecutor.connect(databaseUrl);
-  const pullRequests = new PostgresDevFlowPullRequestRepository(harnessSql);
   const runtimeRoot = await mkdtemp(join(tmpdir(), "oakridge-acceptance-runtime-"));
   const forgeRefs = new Map<string, { readonly head_branch: string; readonly base_branch: string }>();
   let kbblPort = 0;
@@ -324,6 +344,7 @@ export const installIntegrationRuntime = async (databaseUrl: string, options: In
     });
     if (url.pathname === "/launch" && request.method === "POST") {
       const launch = await request.json() as { readonly work_order_id: string; readonly unit_id: string; readonly operator_role: StageOperatorRole;
+        readonly head_branch: string | null; readonly base_branch: string | null;
         readonly outputs: readonly { readonly output_name: string; readonly unit_id: string }[]; readonly prompt: string };
       const sessions = await fetch(`http://127.0.0.1:${kbblPort}/sessions?include=archived`).then((response) => response.json()) as {
         readonly sessions: readonly { readonly name: string; readonly workflow?: { readonly stageInstanceId?: string } }[];
@@ -337,46 +358,25 @@ export const installIntegrationRuntime = async (databaseUrl: string, options: In
         resolved_config: { publication: { work_order_id: launch.work_order_id }, session_name: launch.work_order_id,
           rendered_prompt: launch.prompt, session_identity: { operator_role: launch.operator_role } },
       });
-      return Response.json({ ok: true, stage_instance_id: stageInstanceId ?? null });
+      if (launch.operator_role === "build" && launch.head_branch && launch.base_branch) {
+        forgeRefs.set(launch.unit_id, { head_branch: launch.head_branch, base_branch: launch.base_branch });
+      }
+      const skipPublication = launch.operator_role === scenario.skip_first_publication_role
+        && scenario.unpublished_work_orders.size === 0;
+      if (skipPublication) scenario.unpublished_work_orders.add(launch.work_order_id);
+      return Response.json({ ok: true, stage_instance_id: stageInstanceId ?? null,
+        skip_publication: skipPublication });
     }
     if (url.pathname === "/delivery" && request.method === "POST") {
       scenario.deliveries.push(await request.json() as AgentDelivery);
       return Response.json({ ok: true });
     }
-    if (url.pathname === "/prepare-pull-request" && request.method === "POST") {
-      const input = await request.json() as { readonly unit_id: string; readonly stage_instance_id: string;
-        readonly head_branch: string; readonly base_branch: string };
-      const cohorts = await harnessSql.query<{ readonly id: string }>(
-        "SELECT id::text FROM oakridge.cohort WHERE stage_instance_id = $1 AND cohort_key = $2",
-        [input.stage_instance_id, input.unit_id]);
-      const baseHead = await repository.origin_branch_sha(repository.base_branch);
-      if (!cohorts[0] || !baseHead) return Response.json({ error: "build cohort identity was not persisted" }, { status: 422 });
-      const prepared = await prepareDevFlowBuildCohort({ pull_requests: pullRequests, git: new BunGitCommandRunner() }, {
-        cohort_id: cohorts[0].id as CohortId,
-        stage_instance_id: input.stage_instance_id as StageInstanceId,
-        cohort_key: input.unit_id,
-        repository: { repository_key: "oakridge", repository_path: repository.path,
-          integration_branch: repository.integration_branch, base_branch: repository.base_branch, base_head_sha: baseHead },
-        prepared_at: new Date().toISOString(),
-      });
-      if (!prepared.ok) return Response.json(prepared.error, { status: 409 });
-      forgeRefs.set(input.unit_id, { head_branch: input.head_branch, base_branch: input.base_branch });
+    if (url.pathname === "/forge-override" && request.method === "POST") {
+      const input = await request.json() as { readonly unit_id: string; readonly head_branch?: string;
+        readonly head_sha?: string; readonly base_branch?: string; readonly merged_at?: string | null };
+      if (!input.unit_id) return Response.json({ error: "unit_id is required" }, { status: 400 });
+      scenario.forge_overrides.set(input.unit_id, input);
       return Response.json({ ok: true });
-    }
-    if (url.pathname === "/verify-pull-request" && request.method === "POST") {
-      const input = await request.json() as { readonly unit_id: string; readonly stage_instance_id: string };
-      const cohort = await pullRequests.find_cohort_for_unit(input.stage_instance_id as StageInstanceId, input.unit_id as UnitId);
-      if (!cohort) return Response.json({ error: "prepared build cohort was not found" }, { status: 404 });
-      const verified = await verifyAndBindCohortPullRequest({ pull_requests: pullRequests,
-        reader: new GithubPullRequestReader({ token: "acceptance-token", api_base_url: `http://127.0.0.1:${forge.port}` }),
-        git: new BunGitCommandRunner(), now: () => new Date().toISOString(),
-        record_build_event: async (cohortId, event) => {
-          const outcome = await recordCohortAdapterEvent(cohortId, event as unknown as JsonValue);
-          if (outcome.committed) await sendCohortWakeHint(cohortId, `acceptance_forge:${event.kind}`).catch(() => undefined);
-        },
-      }, { cohort, forge_repository: { owner: "RankOneLabs", name: "oakridge" },
-        candidate_url: cohortPullRequestUrl(input.unit_id as UnitId), replace_verification_id: null });
-      return Response.json(verified.ok ? { outcome: "verified" } : { outcome: "refused", error: verified.error });
     }
     if (url.pathname === "/artifact-body" && request.method === "POST") {
       const input = await request.json() as { readonly work_order_id: string; readonly unit_id: string; readonly output_name: string;
@@ -401,11 +401,14 @@ export const installIntegrationRuntime = async (databaseUrl: string, options: In
     if (!unit) return new Response("not found", { status: 404 });
     const refs = forgeRefs.get(String(unit));
     if (!refs) return new Response("not found", { status: 404 });
-    const head = requireScenario().forge_head_overrides.get(String(unit))
-      ?? await repository.origin_branch_sha(refs.head_branch);
+    const override = requireScenario().forge_overrides.get(String(unit));
+    const headBranch = override?.head_branch ?? refs.head_branch;
+    const head = override?.head_sha ?? await repository.origin_branch_sha(headBranch);
     if (!head) return new Response("not found", { status: 404 });
-    return Response.json({ number, html_url: cohortPullRequestUrl(unit), state: "closed", merged: true, merged_at: new Date().toISOString(),
-      head: { ref: refs.head_branch, sha: head }, base: { ref: refs.base_branch } });
+    const mergedAt = override && "merged_at" in override ? override.merged_at : new Date().toISOString();
+    return Response.json({ number, html_url: cohortPullRequestUrl(unit), state: mergedAt ? "closed" : "open",
+      merged: mergedAt !== null, merged_at: mergedAt,
+      head: { ref: headBranch, sha: head }, base: { ref: override?.base_branch ?? refs.base_branch } });
   }});
   const oakridgePortProbe = Bun.serve({ port: 0, fetch: () => new Response() });
   oakridgePort = oakridgePortProbe.port!;
@@ -465,6 +468,7 @@ export const installIntegrationRuntime = async (databaseUrl: string, options: In
     runtime,
     base_url: `http://127.0.0.1:${server.port}`,
     kbbl_url: `http://127.0.0.1:${kbblPort}`,
+    forge_override_url: `http://127.0.0.1:${control.port}/forge-override`,
     definition: loaded.value,
     application_version: applicationVersion,
     repository,

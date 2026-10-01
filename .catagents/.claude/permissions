@@ -1,0 +1,8 @@
+# Claude Code permission rules for every oakridge checkout and kbbl worktree.
+# Generated into .claude/settings.json by catagents; personal rules belong in
+# .claude/settings.local.json.
+@../standards/permissions/gated-review
+@../standards/permissions/git-local
+@../standards/permissions/bun
+@../standards/permissions/uv
+@../standards/permissions/cargo

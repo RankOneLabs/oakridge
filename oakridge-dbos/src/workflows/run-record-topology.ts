@@ -5,7 +5,9 @@
  * v14 had a single root workflow that asked one repository for the whole run's
  * next move. v15 scopes optimistic concurrency per owner — a run's
  * `record_version`, a stage's and a cohort's `durable_version` — so the topology
- * mirrors the ownership: the run machine decides the run and its stages, a stage
+ * mirrors the ownership: the run machine decides the run and its stages, except
+ * that a stage machine also fails its own stage when its roster cannot open;
+ * both writes use the stage's expected version. A stage
  * machine opens its cohorts, and a cohort machine is the only thing that
  * transitions its own cohort. A command is routed to the machine that owns the
  * version it names (`machineAddressFor`), which is what makes a version
@@ -17,10 +19,11 @@
  * duplicated or out-of-order wake can only ever mean "ask again" — and asking
  * again is always safe.
  */
-import { DBOS } from "@dbos-inc/dbos-sdk";
+import { DBOS, Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 
 import { attemptIdFor, attemptWorkflowId, cohortMachineWorkflowId, runMachineWorkflowId, sessionIdFor, stageMachineWorkflowId, transitionIdFor } from "../decision/ids";
-import { executorHealthFromTerminal, type AttemptExecution, type CohortMachineState, type OpenCohort, type RecordCohortEvent, type RunDecision, type TransitionEffectDescriptor } from "../domain/run-record";
+import { executorHealthFromTerminal, type AttemptExecution, type CohortMachineState, type OpenCohort, type RecordCohortEvent, type RetryCohortResult, type RetryCohortTarget, type RunDecision, type TransitionEffectDescriptor } from "../domain/run-record";
+import { selectCohortRetryability } from "../domain/cohort-retry";
 import { ExecutorStartRejectedError, type ExecutorAdapter, type ExecutorObservationAttempt, type ExternalExecutionReference } from "../domain/execution";
 import type { AttemptId, CohortId, JsonValue, KbblSessionId, RunTransitionId, StageInstanceId, UnitId, WorkflowRunId } from "../domain/primitives";
 import { executorOperationIdForWorkOrder, type ExecutionId, type WorkOrderId } from "../domain/primitives";
@@ -29,7 +32,7 @@ import type { Command, StageInputSet } from "../decision/commands";
 import { parseStageInputEdges } from "../domain/stage-contract";
 import type { ArtifactEnvelope } from "../domain/execution";
 import type { RunArtifactReadRepository, RunRecordRepository, StageInstanceRepository } from "../storage/repositories";
-import { MACHINE_WAKE_TOPIC } from "../http/dbos-transport";
+import { MACHINE_WAKE_TOPIC, sendCohortWakeHint, sendRunWakeHint } from "../http/dbos-transport";
 
 export interface DecisionMachineAddress {
   readonly owner: TransitionOwner;
@@ -59,7 +62,7 @@ export const machineAddressFor = (command: Command): DecisionMachineAddress => {
 };
 
 /** The bound on how long a lost or never-sent wake can delay a recheck. */
-export const MACHINE_WAKE_TIMEOUT_SECONDS = 5;
+export const MACHINE_WAKE_TIMEOUT_SECONDS = 60;
 /** How long a machine sleeps, durably, after a run of failed asks. */
 export const MACHINE_FAILURE_BACKOFF_SECONDS = 30;
 const OBSERVE_INTERVAL_SECONDS = 5;
@@ -92,7 +95,7 @@ export interface CohortStepContext {
  * request.
  */
 export interface CohortStepDecision {
-  readonly event: Omit<RecordCohortEvent, "run_id" | "cohort_id" | "recorded_at">;
+  readonly event: Omit<RecordCohortEvent, "run_id" | "cohort_id" | "expected_version" | "recorded_at">;
   readonly launch: {
     readonly attempt_number: number;
     readonly adapter_type: string;
@@ -190,14 +193,15 @@ export const RUN_MACHINE_WORKFLOW_NAME = "oakridgeV15RunWorkflow";
  * asks again once the cause clears. A deleted run is the one case that ends the
  * workflow, because there is no longer a record to keep alive.
  */
-export const runMachineWorkflow = DBOS.registerWorkflow(async (run_id: WorkflowRunId): Promise<RunMachineResult> => {
+export const runMachineWorkflow = DBOS.registerWorkflow(async (run_id: WorkflowRunId): Promise<RunMachineResult | null> => {
   for (;;) {
     let decision: RunDecision;
     try {
       decision = await decideRunStep(run_id);
     } catch (error) {
+      if (error instanceof DBOSErrors.DBOSWorkflowCancelledError) return null;
       const message = String(error);
-      if (message.includes("run_not_found")) throw new Error(`run ${run_id} no longer exists`);
+      if (message.includes("run_not_found")) return null;
       DBOS.logger.error(`run ${run_id}: decide failed, retrying in ${MACHINE_FAILURE_BACKOFF_SECONDS}s: ${message}`);
       await DBOS.sleepSeconds(MACHINE_FAILURE_BACKOFF_SECONDS);
       continue;
@@ -220,8 +224,11 @@ export const runMachineWorkflow = DBOS.registerWorkflow(async (run_id: WorkflowR
  * The stage machine
  * ------------------------------------------------------------------ */
 
+type StageRosterResult = { readonly kind: "opened"; readonly cohort_ids: readonly CohortId[] }
+  | { readonly kind: "roster_failed"; readonly detail: string };
+
 const openStageCohortsStep = DBOS.registerStep(
-  async (stage_instance_id: StageInstanceId): Promise<readonly CohortId[]> => {
+  async (stage_instance_id: StageInstanceId): Promise<StageRosterResult> => {
     const { records, stages, now } = workflowServices();
     const contract = await stages.find_contract(stage_instance_id);
     if (!contract) throw new Error(`stage instance '${stage_instance_id}' was not found`);
@@ -231,12 +238,21 @@ const openStageCohortsStep = DBOS.registerStep(
     if (!driver) throw new Error(`stage type '${stage.stage_type}' has no registered cohort driver`);
     const run_context = await workflowServices().find_run_context(contract.run_id);
     if (run_context === null) throw new Error(`run '${contract.run_id}' was not found`);
-    const cohorts = await driver.open_cohorts({ run_id: contract.run_id, stage_instance_id,
-      stage_contract: contract.stage_contract, run_context,
-      inputs: await loadStageInputs(contract.stage_contract, null) });
+    const inputs = await loadStageInputs(contract.stage_contract, null);
+    let cohorts: readonly OpenCohort[];
+    try {
+      cohorts = await driver.open_cohorts({ run_id: contract.run_id, stage_instance_id,
+        stage_contract: contract.stage_contract, run_context, inputs });
+      if (cohorts.length === 0) throw new Error("cohort roster is empty");
+    } catch (error) {
+      const detail = String(error);
+      await records.fail_stage_roster(stage_instance_id, detail, now());
+      await sendRunWakeHint(contract.run_id, `roster_failed:${stage_instance_id}`).catch(() => undefined);
+      return { kind: "roster_failed", detail };
+    }
     const opened = await records.open_stage_cohorts({ run_id: contract.run_id, stage_instance_id, cohorts, opened_at: now() });
     if (opened.kind === "stage_not_found") throw new Error(opened.detail);
-    return opened.cohort_ids;
+    return { kind: "opened", cohort_ids: opened.cohort_ids };
   },
   { name: "oakridgeV15OpenStageCohortsStep", retriesAllowed: true },
 );
@@ -250,12 +266,23 @@ const openStageCohortsStep = DBOS.registerStep(
  * transaction-consistent snapshot — not something a stage workflow could
  * conclude by watching its children's return values.
  */
-export const stageMachineWorkflow = DBOS.registerWorkflow(async (stage_instance_id: StageInstanceId): Promise<readonly CohortId[]> => {
-  const cohorts = await openStageCohortsStep(stage_instance_id);
-  for (const cohort of cohorts) {
-    await DBOS.startWorkflow(cohortMachineWorkflow, { workflowID: cohortMachineWorkflowId(cohort) })(cohort);
+export const stageMachineWorkflow = DBOS.registerWorkflow(async (stage_instance_id: StageInstanceId): Promise<StageRosterResult | null> => {
+  for (;;) {
+    let result: StageRosterResult;
+    try {
+      result = await openStageCohortsStep(stage_instance_id);
+    } catch (error) {
+      if (error instanceof DBOSErrors.DBOSWorkflowCancelledError) return null;
+      DBOS.logger.error(`stage ${stage_instance_id}: roster failed, retrying in ${MACHINE_FAILURE_BACKOFF_SECONDS}s: ${String(error)}`);
+      await DBOS.sleepSeconds(MACHINE_FAILURE_BACKOFF_SECONDS);
+      continue;
+    }
+    if (result.kind === "roster_failed") return result;
+    for (const cohort of result.cohort_ids) {
+      await DBOS.startWorkflow(cohortMachineWorkflow, { workflowID: cohortMachineWorkflowId(cohort) })(cohort);
+    }
+    return result;
   }
-  return cohorts;
 }, { name: "oakridgeV15StageWorkflow" });
 
 /* ------------------------------------------------------------------ *
@@ -265,13 +292,15 @@ export const stageMachineWorkflow = DBOS.registerWorkflow(async (stage_instance_
 export interface CohortStepOutcome {
   readonly status: CohortMachineState["status"];
   readonly committed: boolean;
+  readonly should_reread: boolean;
   readonly started_attempt: AttemptId | null;
+  readonly launch_commit?: { readonly kind: "created" | "already_created"; readonly durable_version: number };
   /**
    * The cohort's attempt that still needs its workflow running — this pass's
    * launch, or an unfinished attempt somebody else created.
    *
-   * Two paths create attempts outside any machine: `retry_cohort`, which the PWA's
-   * retry button drives, and an adapter event. Neither could start a workflow — the
+   * Two paths create attempts outside any machine: operator retry through the
+   * driver, and an adapter event. Neither starts a workflow directly — the
    * retry route has no handle on the topology and the event path returns an
    * outcome the caller discards — so the attempt row existed, the previous attempt
    * was abandoned, and no session ever launched. There is no attempt-level
@@ -324,19 +353,29 @@ const loadStageInputs = async (stage_contract: JsonValue, cohort_key: string | n
     const revisions = await artifacts.list_released_for_stage_output(
       edge.producer_stage_instance_id as StageInstanceId, edge.producer_output);
     if (revisions.length === 0) continue;
-    const envelopes = revisions.map((revision): ArtifactEnvelope => ({
+    const envelopes = revisions.filter((revision): revision is typeof revision & { readonly output_name: string; readonly unit_id: UnitId } =>
+      revision.output_name !== null && revision.unit_id !== null)
+      .map((revision): ArtifactEnvelope => ({
       artifact_id: revision.id, artifact_type: revision.artifact_type, output_name: revision.output_name,
-      unit_id: (revision.collection_key ?? revision.unit_id) as UnitId, body: revision.body, chain_id: revision.chain_id,
+      unit_id: (revision.collection_key ?? revision.unit_id) as UnitId, collection_key: revision.collection_key,
+      body: revision.body, chain_id: revision.chain_id,
       ...(revision.attempt_id ? { producer_execution_id: revision.attempt_id as unknown as ExecutionId } : {}),
     }));
     if (edge.collect || cohort_key === null) {
       resolved[edge.input_name] = envelopes;
       continue;
     }
-    resolved[edge.input_name] = envelopes.find((envelope) => envelope.unit_id === cohort_key) ?? envelopes[0]!;
+    const selected = selectCohortInputEnvelope(envelopes, cohort_key);
+    if (selected) resolved[edge.input_name] = selected;
   }
   return resolved;
 };
+
+export const selectCohortInputEnvelope = (
+  envelopes: readonly ArtifactEnvelope[], cohort_key: string,
+): ArtifactEnvelope | undefined => envelopes.some((envelope) => envelope.collection_key !== null)
+  ? envelopes.find((envelope) => envelope.collection_key === cohort_key)
+  : envelopes[0];
 
 /**
  * Commits one driver decision, and starts the attempt it names.
@@ -358,11 +397,12 @@ const loadStageInputs = async (stage_contract: JsonValue, cohort_key: string | n
 const commitCohortDecision = async (
   context: CohortStepContext,
   decision: CohortStepDecision | null,
+  idempotency_key: string | null = null,
 ): Promise<CohortStepOutcome> => {
   const { records, now } = workflowServices();
   const { state } = context;
   const open_attempt = state.latest_unfinished_attempt_id;
-  if (!decision) return { status: state.status, committed: false, started_attempt: null, open_attempt };
+  if (!decision) return { status: state.status, committed: false, should_reread: false, started_attempt: null, open_attempt };
 
   const owner: TransitionOwner = { kind: "cohort", id: state.cohort_id };
   const launch = decision.launch;
@@ -373,23 +413,35 @@ const commitCohortDecision = async (
       request: await launch.resolve_request(attempt_id, launch_transition_id) };
   })();
 
-  const recorded = await records.record_cohort_event({
-    ...decision.event, run_id: state.run_id, cohort_id: state.cohort_id, recorded_at: now(),
-  });
-  if (recorded.kind === "version_conflict") return { status: state.status, committed: false, started_attempt: null, open_attempt };
+  const event: RecordCohortEvent = { ...decision.event, run_id: state.run_id, cohort_id: state.cohort_id,
+    expected_version: state.durable_version, recorded_at: now() };
+  if (launch !== null && prepared !== null) {
+    const committed = await records.commit_cohort_launch({ event, attempt: {
+      run_id: state.run_id, stage_instance_id: state.stage_instance_id, cohort_id: state.cohort_id,
+      attempt_id: prepared.attempt_id, attempt_number: launch.attempt_number,
+      adapter_type: launch.adapter_type, request: prepared.request,
+      launch_transition_id: prepared.launch_transition_id, session_id: sessionIdFor(prepared.attempt_id),
+      idempotency_key, created_at: now(),
+    } });
+    if (!committed.ok) {
+      if (committed.error.kind === "version_conflict" || committed.error.kind === "owner_terminal") return {
+        status: state.status, committed: false, should_reread: true, started_attempt: null, open_attempt: null };
+      throw new Error(`${committed.error.kind}: ${committed.error.detail}`);
+    }
+    if (committed.value.kind === "created") {
+      await sendRunWakeHint(state.run_id, `cohort_transition:${committed.value.transition.transition_id}`).catch(() => undefined);
+    }
+    return { status: decision.event.change.status, committed: committed.value.kind === "created", should_reread: false,
+      started_attempt: committed.value.attempt_id, open_attempt: committed.value.attempt_id,
+      launch_commit: { kind: committed.value.kind, durable_version: committed.value.durable_version } };
+  }
+  const recorded = await records.record_cohort_event(event);
+  if (recorded.kind === "version_conflict" || recorded.kind === "owner_terminal") return {
+    status: state.status, committed: false, should_reread: true, started_attempt: null, open_attempt: null };
   if (recorded.kind !== "recorded") throw new Error(`${recorded.kind}: ${recorded.detail}`);
-  if (launch === null || prepared === null) return { status: decision.event.change.status, committed: true, started_attempt: null, open_attempt };
-
-  const started = await records.start_attempt({
-    run_id: state.run_id, stage_instance_id: state.stage_instance_id, cohort_id: state.cohort_id,
-    attempt_id: prepared.attempt_id, attempt_number: launch.attempt_number,
-    adapter_type: launch.adapter_type, request: prepared.request,
-    launch_transition_id: recorded.transition.transition_id, session_id: sessionIdFor(prepared.attempt_id),
-    idempotency_key: null, created_at: now(),
-  });
-  if (started.kind === "cohort_not_found" || started.kind === "idempotency_conflict") throw new Error(started.detail);
-  return { status: decision.event.change.status, committed: true,
-    started_attempt: prepared.attempt_id, open_attempt: prepared.attempt_id };
+  await sendRunWakeHint(state.run_id, `cohort_transition:${recorded.transition.transition_id}`).catch(() => undefined);
+  return { status: decision.event.change.status, committed: true, should_reread: false,
+    started_attempt: null, open_attempt };
 };
 
 const stepCohortStep = DBOS.registerStep(
@@ -397,7 +449,8 @@ const stepCohortStep = DBOS.registerStep(
     const { context, driver } = await cohortContext(cohort_id);
     // A terminal cohort's attempts have been abandoned with it; starting one would
     // drive a session for work nothing is waiting on.
-    if (isTerminal(context.state.status)) return { status: context.state.status, committed: false, started_attempt: null, open_attempt: null };
+    if (isTerminal(context.state.status)) return { status: context.state.status, committed: false, should_reread: false,
+      started_attempt: null, open_attempt: null };
     return commitCohortDecision(context, await driver.step(context));
   },
   { name: "oakridgeV15CohortStepStep", retriesAllowed: true, maxAttempts: 5, intervalSeconds: 1, backoffRate: 2 },
@@ -409,11 +462,56 @@ const stepCohortStep = DBOS.registerStep(
  *
  * It goes through the same driver and the same single-writer commit as the
  * machine's own step, under the cohort's current version, so a push and a step
- * racing each other serialise on that version instead of both landing.
+ * racing each other cause one version conflict and a fresh read.
  */
 export const recordCohortAdapterEvent = async (cohort_id: CohortId, event: JsonValue): Promise<CohortStepOutcome> => {
-  const { context, driver } = await cohortContext(cohort_id);
-  return commitCohortDecision(context, await driver.apply_event(context, event));
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const { context, driver } = await cohortContext(cohort_id);
+    if (isTerminal(context.state.status)) return { status: context.state.status, committed: false,
+      should_reread: false, started_attempt: null, open_attempt: null };
+    const outcome = await commitCohortDecision(context, await driver.apply_event(context, event));
+    if (!outcome.should_reread) return outcome;
+  }
+  return { status: (await cohortContext(cohort_id)).context.state.status, committed: false,
+    should_reread: true, started_attempt: null, open_attempt: null };
+};
+
+export const retryCohortThroughDriver = async (
+  target: RetryCohortTarget, idempotency_key: string,
+): Promise<RetryCohortResult> => {
+  const records = workflowServices().records;
+  const cohort_id = target.kind === "cohort" ? target.cohort_id
+    : (await records.find_cohort_location(target.stage_instance_id, target.cohort_key as UnitId))?.cohort_id;
+  if (!cohort_id) return { kind: "cohort_not_found", detail: `no cohort matches ${JSON.stringify(target)}` };
+  if (!(await records.find_cohort_state(cohort_id))) {
+    return { kind: "cohort_not_found", detail: `no cohort matches ${JSON.stringify(target)}` };
+  }
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const { context, driver } = await cohortContext(cohort_id);
+    const claimed = await records.find_cohort_retry_claim(cohort_id, idempotency_key);
+    if (claimed) return { kind: "already_created", run_id: context.state.run_id, cohort_id,
+      attempt_id: claimed.attempt_id, attempt_number: claimed.attempt_number,
+      durable_version: claimed.durable_version };
+    const retryability = selectCohortRetryability(context.state);
+    if (retryability.kind === "not_retryable") return retryability;
+    const decision = await driver.apply_event(context, { kind: "operator_retry_requested" });
+    if (!decision?.launch) return { kind: "not_retryable", reason: "not_lost" };
+    const outcome = await commitCohortDecision(context, decision, idempotency_key);
+    if (outcome.should_reread) continue;
+    if (!outcome.started_attempt) return { kind: "not_retryable", reason: "not_lost" };
+    if (outcome.launch_commit?.kind === "already_created") {
+      const claimed = await records.find_cohort_retry_claim(cohort_id, idempotency_key);
+      if (!claimed) throw new Error(`retry claim '${idempotency_key}' for cohort '${cohort_id}' disappeared`);
+      return { kind: "already_created", run_id: context.state.run_id, cohort_id,
+        attempt_id: claimed.attempt_id, attempt_number: claimed.attempt_number,
+        durable_version: claimed.durable_version };
+    }
+    await sendCohortWakeHint(cohort_id, `operator_retry:${cohort_id}:${idempotency_key}`).catch(() => undefined);
+    return { kind: "created", run_id: context.state.run_id, cohort_id,
+      attempt_id: outcome.started_attempt, attempt_number: decision.launch.attempt_number,
+      durable_version: outcome.launch_commit?.durable_version ?? context.state.durable_version + 1 };
+  }
+  return { kind: "not_retryable", reason: "work_in_progress" };
 };
 
 /**
@@ -443,7 +541,7 @@ export const cohortMachineWorkflow = DBOS.registerWorkflow(async (cohort_id: Coh
       await DBOS.startWorkflow(attemptWorkflow, { workflowID: attemptWorkflowId(outcome.open_attempt) })(outcome.open_attempt);
     }
     if (isTerminal(outcome.status)) return outcome.status;
-    if (outcome.committed) continue; // something changed: ask again now, no recv
+    if (outcome.committed || outcome.should_reread) continue;
     await DBOS.recv(MACHINE_WAKE_TOPIC, { timeoutSeconds: MACHINE_WAKE_TIMEOUT_SECONDS });
   }
 }, { name: "oakridgeV15CohortWorkflow" });
@@ -463,17 +561,27 @@ const loadAttemptStep = DBOS.registerStep(
 
 type EnsureSessionAttempt =
   | { readonly kind: "started"; readonly reference: ExternalExecutionReference }
+  | { readonly kind: "abandoned" }
   | { readonly kind: "rejected"; readonly detail: string };
 
 /** kbbl's own session id, when the adapter's handle carries one. */
 const kbblSessionOf = (reference: ExternalExecutionReference): KbblSessionId | null =>
   reference.kind === "kbbl_session" ? reference.session_id as KbblSessionId : null;
 
-const ensureSessionStep = DBOS.registerStep(
-  async (execution: AttemptExecution): Promise<EnsureSessionAttempt> => {
-    const { records, now } = workflowServices();
-    const adapter = workflowServices().find_executor(execution.adapter_type);
+export const ensureAttemptSession = async (
+  deps: Pick<RunRecordWorkflowServices, "records" | "find_executor" | "now">,
+  execution: AttemptExecution,
+): Promise<EnsureSessionAttempt> => {
+    const { records, now } = deps;
+    const adapter = deps.find_executor(execution.adapter_type);
     if (!adapter) throw new Error(`executor adapter '${execution.adapter_type}' is not registered`);
+    for (const prior of await records.list_prior_sessions_to_fence(execution.cohort_id, execution.attempt_id)) {
+      await adapter.cancel_or_fence(prior.attempt_id as unknown as ExecutionId, prior.adapter_reference);
+      await records.mark_session_fenced(prior.session_id, now());
+      await records.observe_session({ session_id: prior.session_id,
+        health: { kind: "ended_cancelled", detail: `replaced by attempt ${execution.attempt_number}`,
+          observed_at: now() }, observed_at: now() });
+    }
     let reference: ExternalExecutionReference;
     try {
       reference = await adapter.start_or_attach(execution.request,
@@ -482,10 +590,18 @@ const ensureSessionStep = DBOS.registerStep(
       if (error instanceof ExecutorStartRejectedError) return { kind: "rejected", detail: error.message };
       throw error;
     }
-    await records.bind_session({ session_id: execution.session_id, adapter_reference: reference,
+    const bound = await records.bind_session({ session_id: execution.session_id, adapter_reference: reference,
       kbbl_session_id: kbblSessionOf(reference), bound_at: now() });
+    if (bound.kind === "attempt_ended") {
+      await adapter.cancel_or_fence(execution.attempt_id as unknown as ExecutionId, reference);
+      await records.mark_session_fenced(execution.session_id, now());
+      return { kind: "abandoned" };
+    }
     return { kind: "started", reference };
-  },
+};
+
+const ensureSessionStep = DBOS.registerStep(
+  (execution: AttemptExecution): Promise<EnsureSessionAttempt> => ensureAttemptSession(workflowServices(), execution),
   { name: "oakridgeV15EnsureSessionStep", retriesAllowed: true },
 );
 
@@ -502,21 +618,32 @@ const recordSessionStartFailureStep = DBOS.registerStep(
     await records.observe_session({ session_id: input.execution.session_id,
       health: { kind: "ended_failed", code: "executor_start_failed", detail: input.detail, observed_at: at },
       observed_at: at });
+    await sendCohortWakeHint(input.execution.cohort_id, `attempt_failed:${input.execution.attempt_id}`).catch(() => undefined);
   },
   { name: "oakridgeV15RecordSessionStartFailureStep", retriesAllowed: true },
 );
 
+type ObservedSessionAttempt = ExecutorObservationAttempt | { readonly kind: "abandoned" };
+
 const observeSessionStep = DBOS.registerStep(
-  async (input: { readonly execution: AttemptExecution; readonly reference: ExternalExecutionReference }): Promise<ExecutorObservationAttempt> => {
+  async (input: { readonly execution: AttemptExecution; readonly reference: ExternalExecutionReference }): Promise<ObservedSessionAttempt> => {
     const { records, now } = workflowServices();
     const adapter = workflowServices().find_executor(input.execution.adapter_type);
     if (!adapter) throw new Error(`executor adapter '${input.execution.adapter_type}' is not registered`);
     const observation = await adapter.observe_terminal(
       input.execution.request.execution_id as ExecutionId, input.reference);
     const at = now();
-    await records.observe_session({ session_id: input.execution.session_id,
+    const written = await records.observe_session({ session_id: input.execution.session_id,
       health: observation.kind === "terminal" ? executorHealthFromTerminal(observation.observation, at) : { kind: "running", observed_at: at },
       observed_at: at });
+    if (written?.kind === "already_ended") {
+      await adapter.cancel_or_fence(input.execution.attempt_id as unknown as ExecutionId, input.reference);
+      await records.mark_session_fenced(input.execution.session_id, now());
+      return { kind: "abandoned" };
+    }
+    if (observation.kind === "terminal") {
+      await sendCohortWakeHint(input.execution.cohort_id, `attempt_ended:${input.execution.attempt_id}`).catch(() => undefined);
+    }
     return observation;
   },
   { name: "oakridgeV15ObserveSessionStep", retriesAllowed: true },
@@ -538,9 +665,11 @@ export const attemptWorkflow = DBOS.registerWorkflow(async (attempt_id: AttemptI
     await recordSessionStartFailureStep({ execution, detail: ensured.detail });
     return;
   }
+  if (ensured.kind === "abandoned") return;
   const reference = ensured.reference;
   for (;;) {
     const observation = await observeSessionStep({ execution, reference });
+    if (observation.kind === "abandoned") return;
     if (observation.kind === "terminal") return;
     await DBOS.sleepSeconds(OBSERVE_INTERVAL_SECONDS);
   }

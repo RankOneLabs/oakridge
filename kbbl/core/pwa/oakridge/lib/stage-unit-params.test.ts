@@ -22,6 +22,7 @@ function makeUnit(params: StageUnit["params"]): StageUnit {
     status: "complete",
     blocked_reason: null,
     next_actor: null,
+    retryable: false,
     gate: null,
   };
 }

@@ -11,7 +11,7 @@
  * refs. Agent-authored artifact bodies are never used as PR evidence.
  */
 import type { ForgeRepositoryIdentity } from "./epic";
-import type { ArtifactId, CohortId, JsonValue, StageInstanceId, UnitId, WorkflowRunId } from "./primitives";
+import type { ArtifactId, CohortId, StageInstanceId, UnitId, WorkflowRunId } from "./primitives";
 import type { PullRequestVerificationId } from "./pull-request";
 import {
   parseGithubPullRequestIdentity, pullRequestMismatch, pullRequestUrlsMatch, repositoriesMatch,
@@ -38,17 +38,6 @@ export interface DevFlowBuildCohort {
 }
 
 /** The run-owned facts required to reconcile one cohort's external handoff. */
-export interface RunOwnedCohortHandoff {
-  readonly run_id: WorkflowRunId;
-  readonly stage_instance_id: StageInstanceId;
-  readonly cohort_id: CohortId;
-  readonly unit_id: UnitId;
-  readonly repository_key: string;
-  readonly handoff_artifact_id: ArtifactId;
-  readonly handoff_slot_state: "empty" | "pending" | "released" | "invalidated";
-  readonly handoff_body: JsonValue;
-}
-
 /** What the run expects this cohort's pull request to be. */
 export interface ExpectedCohortPullRequest {
   readonly run_id: WorkflowRunId;
@@ -93,7 +82,7 @@ export type CohortPullRequestOutcome =
 
 export interface ReconcileCohortPullRequestInput {
   readonly expected: ExpectedCohortPullRequest;
-  readonly handoff_artifact_id: ArtifactId;
+  readonly handoff_artifact_id?: ArtifactId | null;
   readonly observation: PullRequestObservation;
   readonly previous: CohortPullRequestReconciliation | null;
   readonly reconciled_at: string;
@@ -105,15 +94,6 @@ export interface ReconciledCohortPullRequest {
 }
 
 /** A prior completion is historical only when a different handoff is pending. */
-export const reconciliationForHandoff = (
-  previous: CohortPullRequestReconciliation | null,
-  handoffArtifactId: ArtifactId,
-  slotState: RunOwnedCohortHandoff["handoff_slot_state"],
-): CohortPullRequestReconciliation | null =>
-  previous?.completed_at && slotState === "pending" && previous.handoff_artifact_id !== handoffArtifactId
-    ? { ...previous, completed_at: null }
-    : previous;
-
 /** The first expectation the observation fails, or null if it meets them all. */
 const findMismatch = (expected: ExpectedCohortPullRequest, observation: PullRequestObservation): PullRequestMismatch | null => {
   const identity = parseGithubPullRequestIdentity(expected.url);
@@ -157,7 +137,7 @@ const findMismatch = (expected: ExpectedCohortPullRequest, observation: PullRequ
 export const reconcileCohortPullRequest = (input: ReconcileCohortPullRequestInput): ReconciledCohortPullRequest => {
   const record = (mismatch: PullRequestMismatch | null): CohortPullRequestReconciliation => ({
     run_id: input.expected.run_id, stage_instance_id: input.expected.stage_instance_id, unit_id: input.expected.unit_id,
-    repository_key: input.expected.repository_key, handoff_artifact_id: input.handoff_artifact_id,
+    repository_key: input.expected.repository_key, handoff_artifact_id: input.handoff_artifact_id ?? null,
     observation: input.observation, mismatch,
     completed_at: input.previous?.completed_at ?? null, updated_at: input.reconciled_at,
   });

@@ -7,6 +7,7 @@ export interface ArtifactEnvelope {
   readonly artifact_type: ArtifactTypeId;
   readonly output_name: string;
   readonly unit_id: UnitId;
+  readonly collection_key?: string | null;
   readonly body: JsonValue;
   readonly producer_execution_id?: ExecutionId;
   /**

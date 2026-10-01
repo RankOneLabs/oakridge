@@ -26,11 +26,15 @@ import type { DelegatedSessionDefinitionConfig } from "../domain/delegated-sessi
 import { selectArtifactGateDisposition, selectBuiltInGateDisposition } from "../domain/gates";
 import type { AttemptId, JsonValue, RunTransitionId, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "../domain/primitives";
 import { hasOwn, readOwn } from "../domain/records";
-import type { CohortMachineState, DecidedCohortGate, OpenCohort } from "../domain/run-record";
+import type { CohortMachineState, OpenCohort } from "../domain/run-record";
 import type { PromptBundleEntry } from "../domain/workflow";
 import { attemptWorkflowId } from "../decision/ids";
 import { cohortIdFor, resolveCohortRoster } from "./cohort-roster";
 import type { DevFlowPullRequestRepository, RunRecordRepository } from "../storage/repositories";
+import type { GitCommandRunner } from "../domain/repository-provisioning";
+import { readJsonPointer } from "../domain/json-pointer";
+import { parseRepositoryRefs } from "../domain/repository-refs";
+import { prepareDevFlowBuildCohort } from "../runtime/cohort-pull-request";
 import { resolveAttemptExecution } from "../runtime/resolve-work-order";
 import type { CohortMachineDriver, CohortStepContext, CohortStepDecision } from "../workflows/run-record-topology";
 
@@ -42,6 +46,7 @@ interface DevFlowCohortStageData {
   readonly artifact: JsonValue;
   /** The build machine's own state, nested so it cannot collide with the item. */
   readonly build_state: BuildCohortState;
+  readonly consumed_gate_wait_ids: readonly string[];
 }
 
 const isObject = (value: JsonValue | undefined): value is { readonly [key: string]: JsonValue } =>
@@ -71,18 +76,22 @@ const stageDataOf = (state: CohortMachineState, contract: CompiledStageContract)
   if (isObject(stored) && hasOwn(stored, "build_state") && isObject(stored.build_state)) {
     return { unit_id: typeof stored.unit_id === "string" ? stored.unit_id : state.cohort_key,
       artifact: readOwn(stored, "artifact") ?? null,
-      build_state: stored.build_state as unknown as BuildCohortState };
+      build_state: stored.build_state as unknown as BuildCohortState,
+      consumed_gate_wait_ids: Array.isArray(stored.consumed_gate_wait_ids)
+        ? stored.consumed_gate_wait_ids.filter((value): value is string => typeof value === "string") : [] };
   }
   return {
     unit_id: isObject(stored) && typeof stored.unit_id === "string" ? stored.unit_id : state.cohort_key,
     artifact: isObject(stored) ? readOwn(stored, "artifact") ?? null : null,
     build_state: initialBuildCohortState(requiredBuildSet(contract)),
+    consumed_gate_wait_ids: [],
   };
 };
 
 const encodeStageData = (data: DevFlowCohortStageData): JsonValue => ({
   unit_id: data.unit_id, artifact: data.artifact,
   build_state: data.build_state as unknown as JsonValue,
+  consumed_gate_wait_ids: [...data.consumed_gate_wait_ids],
 });
 
 /** One revision this cohort has published, whether or not a gate has accepted it. */
@@ -90,6 +99,7 @@ interface PublishedRevision {
   readonly output_name: string;
   readonly artifact_id: string;
   readonly artifact_type: string;
+  readonly body: JsonValue | null;
 }
 
 /**
@@ -107,10 +117,12 @@ const publishedRevisions = (state: CohortMachineState, contract: CompiledStageCo
     contract.outputs.find((output) => output.name === output_name)?.artifact_type ?? "";
   const parked = state.open_waits.flatMap((wait): readonly PublishedRevision[] =>
     wait.kind === "gate" && wait.output_name !== null && wait.artifact_id !== null
-      ? [{ output_name: wait.output_name, artifact_id: wait.artifact_id, artifact_type: typeOf(wait.output_name) }]
+      ? [{ output_name: wait.output_name, artifact_id: wait.artifact_id,
+        artifact_type: typeOf(wait.output_name), body: wait.artifact_body ?? null }]
       : []);
   const accepted = state.accepted_outputs.map((artifact): PublishedRevision => ({
-    output_name: artifact.output_name, artifact_id: artifact.artifact_id, artifact_type: artifact.artifact_type }));
+    output_name: artifact.output_name, artifact_id: artifact.artifact_id,
+    artifact_type: artifact.artifact_type, body: artifact.body }));
   return [...parked, ...accepted];
 };
 
@@ -144,29 +156,11 @@ const nextEvent = (
   build: BuildCohortState,
   contract: CompiledStageContract,
 ): BuildCohortEvent | null => {
-  const consumedGate = (gate: DecidedCohortGate): boolean => {
-    // A release has been consumed once the phase has moved past the review it
-    // decided; a revision request, once the builder is active again.
-    const disposition = selectArtifactGateDisposition(
-      contract.outputs.find((output) => output.name === gate.output_name)?.artifact_type ?? "",
-      selectBuiltInGateDisposition(gate.action));
-    if (disposition === "release") {
-      return gate.output_name === "assessment" || build.phase !== "build_review";
-    }
-    return build.phase === "builder_active";
-  };
-  const pendingGate = state.decided_gates.find((gate) => !consumedGate(gate));
-  if (pendingGate) {
-    const gateName = build.phase === "assessment_review" ? "assessment_review" as const : "build_review" as const;
-    const translated = selectBuildGateEvent(gateName,
-      selectArtifactGateDisposition(
-        contract.outputs.find((output) => output.name === pendingGate.output_name)?.artifact_type ?? "",
-        selectBuiltInGateDisposition(pendingGate.action)));
-    if (translated.ok) return translated.value;
-  }
-
   const published = publishedRevisions(state, contract);
-  const assessment = published.find((revision) => revision.artifact_type === "dev.assessment");
+  const assessment = published.find((revision) => revision.artifact_type === "dev.assessment"
+    && (state.latest_attempt === null || state.latest_assessment_published_at === undefined
+      || (state.latest_assessment_published_at !== null
+        && state.latest_assessment_published_at >= state.latest_attempt.created_at)));
   if (assessment && build.assessment_artifact_id !== assessment.artifact_id) {
     return { kind: "assessment_artifact_recorded", artifact_id: assessment.artifact_id };
   }
@@ -184,12 +178,74 @@ const nextEvent = (
   }
 
   if (build.phase === "pending") return { kind: "stage_started" };
+  if (state.latest_attempt !== null && state.latest_attempt.ended_at !== null
+    && state.latest_unfinished_attempt_id === null) {
+    if (build.phase === "builder_active" && !build.required_build_set.every((name) =>
+      buildOutputs.some((output) => output.output_name === name))) return { kind: "builder_attempt_lost" };
+    if (build.phase === "assessor_active" && !assessment) return { kind: "assessor_attempt_lost" };
+  }
   return null;
+};
+
+interface SelectedGateDecision {
+  readonly event: BuildCohortEvent;
+  readonly consumed_wait_ids: readonly string[];
+}
+
+const selectGateDecision = (
+  state: CohortMachineState, stageData: DevFlowCohortStageData, contract: CompiledStageContract,
+): SelectedGateDecision | null => {
+  const unconsumed = state.decided_gates.filter((gate) =>
+    !stageData.consumed_gate_wait_ids.includes(gate.wait_id));
+  if (unconsumed.length === 0) return null;
+  const build = stageData.build_state;
+  const published = publishedRevisions(state, contract);
+  const currentBuildIds = new Set(build.accepted_revision?.split("+") ?? []);
+  const publishedBuildIds = new Set(published.filter((item) =>
+    build.required_build_set.includes(item.output_name)).map((item) => item.artifact_id));
+  const isCurrent = (gate: typeof unconsumed[number]): boolean =>
+    build.phase === "build_review" ? gate.artifact_id !== null && currentBuildIds.has(gate.artifact_id)
+      : build.phase === "assessment_review" && gate.artifact_id === build.assessment_artifact_id;
+  const isAwaitingArtifactRecord = (gate: typeof unconsumed[number]): boolean =>
+    gate.artifact_id !== null && (build.phase === "builder_active"
+      && build.required_build_set.includes(gate.output_name ?? "") && publishedBuildIds.has(gate.artifact_id)
+      || build.phase === "assessor_active" && gate.output_name === "assessment"
+        && published.some((item) => item.artifact_id === gate.artifact_id));
+  const stale = unconsumed.find((gate) => !isCurrent(gate) && !isAwaitingArtifactRecord(gate));
+  if (stale) return { event: { kind: "stale_gate_recorded" }, consumed_wait_ids: [stale.wait_id] };
+  if (unconsumed.some(isAwaitingArtifactRecord)) return null;
+  const disposition = (gate: typeof unconsumed[number]) => selectArtifactGateDisposition(
+    contract.outputs.find((output) => output.name === gate.output_name)?.artifact_type ?? "",
+    selectBuiltInGateDisposition(gate.action));
+  if (build.phase === "build_review") {
+    const current = unconsumed.filter(isCurrent);
+    if (current.some((gate) => disposition(gate) === "revise")) {
+      return { event: { kind: "build_review_revision_requested" },
+        consumed_wait_ids: current.map((gate) => gate.wait_id) };
+    }
+    if (build.required_build_set.every((name) => current.some((gate) =>
+      gate.output_name === name && disposition(gate) === "release"))) {
+      return { event: { kind: "build_review_approved" },
+        consumed_wait_ids: current.map((gate) => gate.wait_id) };
+    }
+    return null;
+  }
+  const assessment = unconsumed[0];
+  if (!assessment || build.phase !== "assessment_review") return null;
+  const selected = selectBuildGateEvent("assessment_review", disposition(assessment));
+  return selected.ok ? { event: selected.value, consumed_wait_ids: [assessment.wait_id] } : null;
 };
 
 export interface DevFlowCohortDriverDependencies {
   readonly records: Pick<RunRecordRepository, "load_work_order_capability_seed">;
-  readonly pull_requests: Pick<DevFlowPullRequestRepository, "find_cohort_for_unit">;
+  readonly pull_requests: DevFlowPullRequestRepository;
+  readonly git: GitCommandRunner;
+  readonly verify_build_pull_request: (input: { readonly cohort_id: CohortMachineState["cohort_id"];
+    readonly stage_instance_id: StageInstanceId; readonly cohort_key: string; readonly candidate_url: string }) =>
+    Promise<import("../domain/primitives").Result<{
+      readonly pull_request_url: string; readonly head_sha: string; readonly binding: string },
+      import("../runtime/cohort-pull-request").CohortPullRequestVerificationError |
+      import("../runtime/cohort-pull-request").PullRequestBindingError>>;
   /**
    * The prompt cells this run was pinned to, by `bundle_pin.prompt_bundle_hash`.
    * Loaded per run rather than read from the definition, because the pin is what
@@ -211,7 +267,7 @@ const openDevFlowCohorts = (
     id: cohortIdFor(stage_instance_id, entry.cohort_key),
     cohort_key: entry.cohort_key,
     stage_data: encodeStageData({ unit_id: entry.cohort_key, artifact: entry.item,
-      build_state: initialBuildCohortState(requiredBuildSet(contract)) }),
+      build_state: initialBuildCohortState(requiredBuildSet(contract)), consumed_gate_wait_ids: [] }),
   }));
 
 export const createDevFlowCohortDriver = (dependencies: DevFlowCohortDriverDependencies): CohortMachineDriver => ({
@@ -220,11 +276,30 @@ export const createDevFlowCohortDriver = (dependencies: DevFlowCohortDriverDepen
   open_cohorts: async (input) => openDevFlowCohorts(input.stage_instance_id,
     contractOf(input.stage_contract), input.run_context, input.inputs),
 
-  step(context: CohortStepContext): Promise<CohortStepDecision | null> {
+  async step(context: CohortStepContext): Promise<CohortStepDecision | null> {
     const contract = contractOf(context.stage_contract);
     const stageData = stageDataOf(context.state, contract);
+    const gateDecision = selectGateDecision(context.state, stageData, contract);
+    if (gateDecision) return applyOne(context, gateDecision.event, dependencies, gateDecision.consumed_wait_ids);
     const event = nextEvent(context.state, stageData.build_state, contract);
-    return event === null ? Promise.resolve(null) : applyOne(context, event, dependencies);
+    if (event !== null) return applyOne(context, event, dependencies);
+    const build = stageData.build_state;
+    const revision = build.accepted_revision;
+    if (build.phase !== "builder_active" || revision === null
+      || !build.required_build_set.every((name) => build.accepted_build_set.includes(name))
+      || build.verified_pull_request?.revision === revision) return null;
+    const summary = publishedRevisions(context.state, contract).find((item) => item.output_name === "pr_summary");
+    const summaryBody = summary?.body ?? null;
+    const candidateUrl = isObject(summaryBody) && typeof summaryBody.pr_url === "string" ? summaryBody.pr_url : "";
+    const verified = await dependencies.verify_build_pull_request({ cohort_id: context.state.cohort_id,
+      stage_instance_id: context.state.stage_instance_id, cohort_key: context.state.cohort_key,
+      candidate_url: candidateUrl });
+    if (verified.ok) return applyOne(context, { kind: "pull_request_verified", revision,
+      pull_request_url: verified.value.pull_request_url, head_sha: verified.value.head_sha }, dependencies);
+    if (verified.error.kind === "unreadable_pull_request" || verified.error.kind === "git_read_failed") return null;
+    return applyOne(context, { kind: verified.error.kind === "replacement_required"
+      || verified.error.kind === "replacement_conflict" ? "replacement_pull_request_required" : "pull_request_mismatch",
+      pull_request_url: candidateUrl }, dependencies);
   },
 
   apply_event(context: CohortStepContext, event: JsonValue): Promise<CohortStepDecision | null> {
@@ -242,16 +317,23 @@ export const createDevFlowCohortDriver = (dependencies: DevFlowCohortDriverDepen
  */
 const decodeBuildCohortEvent = (value: JsonValue): BuildCohortEvent | null => {
   if (!isObject(value) || typeof value.kind !== "string") return null;
-  if (value.kind === "pull_request_verified" && typeof value.revision === "string" && typeof value.pull_request_url === "string") {
-    return { kind: "pull_request_verified", revision: value.revision, pull_request_url: value.pull_request_url };
+  if (value.kind === "pull_request_verified" && typeof value.revision === "string"
+    && typeof value.pull_request_url === "string" && typeof value.head_sha === "string") {
+    return { kind: "pull_request_verified", revision: value.revision,
+      pull_request_url: value.pull_request_url, head_sha: value.head_sha };
   }
-  if ((value.kind === "pull_request_merged" || value.kind === "pull_request_mismatch"
-    || value.kind === "replacement_pull_request_required") && typeof value.pull_request_url === "string") {
+  if (value.kind === "pull_request_merged" && typeof value.pull_request_url === "string"
+    && typeof value.head_sha === "string") {
+    return { kind: "pull_request_merged", pull_request_url: value.pull_request_url, head_sha: value.head_sha };
+  }
+  if ((value.kind === "pull_request_mismatch" || value.kind === "replacement_pull_request_required")
+    && typeof value.pull_request_url === "string") {
     return { kind: value.kind, pull_request_url: value.pull_request_url };
   }
   if (value.kind === "builder_attempt_lost" || value.kind === "assessor_attempt_lost" || value.kind === "stage_started") {
     return { kind: value.kind };
   }
+  if (value.kind === "operator_retry_requested") return { kind: "operator_retry_requested" };
   if (value.kind === "assessment_outcome_observed" && typeof value.outcome === "string") {
     return { kind: "assessment_outcome_observed", outcome: value.outcome };
   }
@@ -269,17 +351,20 @@ const applyOne = async (
   context: CohortStepContext,
   event: BuildCohortEvent,
   dependencies: DevFlowCohortDriverDependencies,
+  consumed_wait_ids: readonly string[] = [],
 ): Promise<CohortStepDecision> => {
   const contract = contractOf(context.stage_contract);
   const stageData = stageDataOf(context.state, contract);
   const machine = buildMachineFor(contract, await dependencies.load_prompt_bundle(context.state.run_id));
   const applied = applyBuildCohortEvent(machine, stageData.build_state, event);
-  const nextStageData: DevFlowCohortStageData = { ...stageData, build_state: applied.state };
+  const nextStageData: DevFlowCohortStageData = { ...stageData, build_state: applied.state,
+    consumed_gate_wait_ids: [...stageData.consumed_gate_wait_ids, ...consumed_wait_ids] };
   const launch = applied.launch;
   return {
     event: {
       change: applied.projection,
       stage_data: encodeStageData(nextStageData),
+      reopen_output_names: applied.effect.reopen_output_names,
       effect: applied.effect as unknown as CohortStepDecision["event"]["effect"],
       launch_reason: launchReasonFor(event),
       actor: "core",
@@ -288,8 +373,27 @@ const applyOne = async (
       attempt_number: context.state.attempt_count + 1,
       adapter_type: contract.executor.executor_type,
       resolve_request: async (attempt_id: AttemptId, launch_transition_id: RunTransitionId) => {
-        const cohort = await dependencies.pull_requests.find_cohort_for_unit(
+        let cohort = await dependencies.pull_requests.find_cohort_for_unit(
           context.state.stage_instance_id, context.state.cohort_key as UnitId);
+        if (launch.session_role === "build" && cohort === null) {
+          const repositoryValue = readJsonPointer(nextStageData.artifact, "/artifact/repository_key");
+          const repositoryKey = typeof repositoryValue === "string" ? repositoryValue : null;
+          if (!repositoryKey) throw new Error("build brief has no repository_key");
+          const refsInput = context.inputs.repository_refs;
+          const envelopes = refsInput === undefined ? [] : Array.isArray(refsInput) ? refsInput : [refsInput];
+          const refsBody = envelopes.find((envelope) => isObject(envelope.body)
+            && envelope.body.repository_key === repositoryKey)?.body;
+          if (refsBody === undefined) throw new Error(`repository refs for '${repositoryKey}' are missing`);
+          const repository = parseRepositoryRefs(refsBody);
+          if (!repository.ok) throw new Error(repository.error.detail);
+          const prepared = await prepareDevFlowBuildCohort({ pull_requests: dependencies.pull_requests, git: dependencies.git }, {
+            cohort_id: context.state.cohort_id, stage_instance_id: context.state.stage_instance_id,
+            cohort_key: context.state.cohort_key, repository: repository.value,
+            prepared_at: new Date().toISOString(),
+          });
+          if (!prepared.ok) throw new Error(`${prepared.error.kind}: ${prepared.error.detail}`);
+          cohort = prepared.value.cohort;
+        }
         const resolved = await resolveAttemptExecution({
           run_id: context.state.run_id, stage: contract, stage_instance_id: context.state.stage_instance_id,
           unit: { unit_id: context.state.cohort_key as UnitId, parameters: nextStageData.artifact, depends_on: [] },
@@ -314,7 +418,7 @@ const launchReasonFor = (event: BuildCohortEvent): CohortStepDecision["event"]["
   if (event.kind === "stage_started") return "initial";
   if (event.kind === "build_review_approved" || event.kind === "build_review_revision_requested"
     || event.kind === "assessment_review_approved" || event.kind === "assessment_review_revision_requested") return "gate_decided";
-  if (event.kind === "builder_attempt_lost" || event.kind === "assessor_attempt_lost") return "retry";
+  if (event.kind === "operator_retry_requested") return "retry";
   return "artifact_accepted";
 };
 

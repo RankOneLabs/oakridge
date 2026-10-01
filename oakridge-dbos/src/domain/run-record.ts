@@ -174,8 +174,10 @@ export type OpenStageCohortsResult =
 export interface RecordCohortEvent {
   readonly run_id: WorkflowRunId;
   readonly cohort_id: CohortId;
+  readonly expected_version: number;
   readonly change: { readonly status: CoreStatus; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null; readonly outcome: JsonValue | null };
   readonly stage_data: JsonValue;
+  readonly reopen_output_names: readonly string[];
   readonly effect: TransitionEffectDescriptor;
   readonly launch_reason: TransitionLaunchReason;
   readonly actor: string;
@@ -184,7 +186,7 @@ export interface RecordCohortEvent {
 
 export type RecordCohortEventResult =
   | { readonly kind: "recorded"; readonly transition: CommittedRunTransition }
-  | { readonly kind: "cohort_not_found" | "version_conflict" | "invalid_effect"; readonly detail: string };
+  | { readonly kind: "cohort_not_found" | "version_conflict" | "owner_terminal" | "invalid_effect"; readonly detail: string };
 
 /**
  * A gate this cohort has had decided, and what the decision did to the slot it
@@ -193,7 +195,7 @@ export type RecordCohortEventResult =
  */
 export interface DecidedCohortGate {
   readonly wait_id: WaitId;
-  readonly output_name: string;
+  readonly output_name: string | null;
   readonly action: string;
   readonly artifact_id: ArtifactId | null;
   readonly accepted: boolean;
@@ -214,6 +216,7 @@ export interface OpenCohortWait {
   readonly kind: "gate" | "handoff" | "external";
   readonly output_name: string | null;
   readonly artifact_id: ArtifactId | null;
+  readonly artifact_body?: JsonValue | null;
 }
 
 /** The cohort state a machine reads before applying its next event. */
@@ -252,6 +255,14 @@ export interface CohortMachineState {
    * off-machine caller could.
    */
   readonly latest_unfinished_attempt_id: AttemptId | null;
+  readonly latest_attempt: {
+    readonly attempt_id: AttemptId;
+    readonly attempt_number: number;
+    readonly status: CoreStatus;
+    readonly created_at: string;
+    readonly ended_at: string | null;
+  } | null;
+  readonly latest_assessment_published_at?: string | null;
   readonly accepted_outputs: readonly ArtifactEnvelope[];
   /** Every open wait this cohort is parked on, oldest first. */
   readonly open_waits: readonly OpenCohortWait[];
@@ -305,12 +316,33 @@ export interface AttemptExecution {
   readonly kbbl_session_id: KbblSessionId | null;
 }
 
+export interface PriorSessionToFence {
+  readonly session_id: SessionId;
+  readonly attempt_id: AttemptId;
+  readonly adapter_reference: ExternalExecutionReference;
+}
+
 export interface BindSession {
   readonly session_id: SessionId;
   readonly adapter_reference: ExternalExecutionReference;
   readonly kbbl_session_id: KbblSessionId | null;
   readonly bound_at: string;
 }
+
+export type BindSessionResult = { readonly kind: "bound" } | { readonly kind: "attempt_ended"; readonly status: CoreStatus };
+export type SessionStatusWrite = { readonly kind: "written" } | { readonly kind: "already_ended"; readonly status: CoreStatus };
+
+export interface CommitCohortLaunch {
+  readonly event: RecordCohortEvent;
+  readonly attempt: StartAttempt;
+}
+
+export type CohortLaunchCommitted =
+  | { readonly kind: "created"; readonly attempt_id: AttemptId; readonly durable_version: number; readonly transition: CommittedRunTransition }
+  | { readonly kind: "already_created"; readonly attempt_id: AttemptId; readonly durable_version: number };
+
+export type CohortLaunchCommitError =
+  | { readonly kind: "cohort_not_found" | "version_conflict" | "owner_terminal" | "invalid_effect" | "idempotency_conflict"; readonly detail: string };
 
 export type ExecutorHealthObservation =
   | { readonly kind: "running"; readonly observed_at: string }
@@ -342,12 +374,6 @@ export type RetryCohortTarget =
   | { readonly kind: "cohort"; readonly cohort_id: CohortId }
   | { readonly kind: "stage_cohort"; readonly stage_instance_id: StageInstanceId; readonly cohort_key: string };
 
-export interface RetryCohort {
-  readonly target: RetryCohortTarget;
-  readonly idempotency_key: string;
-  readonly actor: string;
-}
-
 export type RetryCohortResult =
   | {
       readonly kind: "created" | "already_created";
@@ -358,9 +384,7 @@ export type RetryCohortResult =
       readonly durable_version: number;
     }
   | { readonly kind: "cohort_not_found"; readonly detail: string }
-  | { readonly kind: "not_active"; readonly detail: string }
-  | { readonly kind: "work_in_progress"; readonly detail: string }
-  | { readonly kind: "actionable_wait"; readonly detail: string }
+  | { readonly kind: "not_retryable"; readonly reason: "terminal" | "gate_pending" | "work_in_progress" | "not_lost" }
   | { readonly kind: "idempotency_conflict"; readonly detail: string };
 
 /* ------------------------------------------------------------------ *
@@ -396,14 +420,6 @@ export interface DecideGateWait {
   readonly action: string;
   readonly actor: string;
   readonly detail: string | null;
-  readonly decided_at: string;
-}
-
-export interface CompleteHandoffArtifact {
-  readonly artifact_id: ArtifactId;
-  readonly external_kind: string;
-  readonly actor: string;
-  readonly correlation_id: string;
   readonly decided_at: string;
 }
 

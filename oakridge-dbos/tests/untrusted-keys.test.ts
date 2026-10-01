@@ -72,7 +72,7 @@ test("no operator projection route queries on a malformed run id", async () => {
     const encoded = encodeURIComponent(id);
     expect((await app.request(`/runs/${encoded}`)).status).toBe(404);
     expect((await app.request(`/runs/${encoded}/gates`)).status).toBe(200);
-    expect((await app.request(`/runs/${encoded}/sessions`)).status).toBe(200);
+    expect((await app.request(`/runs/${encoded}/sessions`)).status).toBe(404);
     expect((await app.request(`/run_events?run_id=${encoded}`)).status).toBe(400);
     expect((await app.request(`/workflow_runs/${encoded}/archive`, { method: "POST" })).status).toBe(404);
     expect((await app.request(`/workflow_runs/${encoded}/unarchive`, { method: "POST" })).status).toBe(404);
