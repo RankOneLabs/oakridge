@@ -201,6 +201,10 @@ export function confirmCohortMerged(cohortId: string): Promise<CohortPullRequest
   return oakridgePost<CohortPullRequestResponse>(`/cohorts/${encodeURIComponent(cohortId)}/pull_request/refresh`, {});
 }
 
+export function abandonCohort(cohortId: string, detail: string): Promise<{ readonly state: string }> {
+  return oakridgePost<{ readonly state: string }>(`/cohorts/${encodeURIComponent(cohortId)}/abandon`, { detail });
+}
+
 export function fetchProjects(): Promise<Project[]> {
   return oakridgeGet<unknown>("/projects").then((body) => {
     if (!Array.isArray(body)) throw new Error("oakridge /projects: response was not a list");

@@ -70,18 +70,13 @@ export type CohortId = string & { readonly __brand: "CohortId" };
 export type WorkflowRunId = string & { readonly __brand: "WorkflowRunId" };
 export type JsonValue = null | boolean | number | string | readonly JsonValue[] | { readonly [key: string]: JsonValue };
 
-export type BuildCohortEventKind =
-  | "stage_started" | "stale_gate_recorded" | "build_artifact_recorded" | "pull_request_verified"
-  | "builder_attempt_lost" | "build_review_approved" | "build_review_revision_requested"
-  | "assessment_artifact_recorded" | "assessment_outcome_observed" | "assessor_attempt_lost"
-  | "operator_retry_requested" | "assessment_review_approved" | "assessment_review_revision_requested"
-  | "pull_request_mismatch" | "replacement_pull_request_required" | "pull_request_merged";
-
 export type RunEventEffect =
   | { readonly kind: "none" | "deliver_message" | "resume_wait" }
   | { readonly kind: "start_stage"; readonly stage_instance_id: string }
   | { readonly kind: "start_attempt"; readonly cohort_id: string; readonly attempt_number: number; readonly attempt_id: string | null }
-  | { readonly kind: "dev_flow_build_cohort_transition"; readonly event: { readonly kind: BuildCohortEventKind; readonly pull_request_url: string | null }; readonly disposition: string }
+  | { readonly kind: "cohort_transition"; readonly cohort_id: string; readonly unit_label: string;
+      readonly event_kind: string; readonly from_state: string; readonly to_state: string;
+      readonly next_actor: string | null; readonly refusal: null }
   | { readonly kind: "pull_request_observed" | "pull_request_merge_confirmed"; readonly repository_key: string; readonly pull_request_url: string; readonly state: string; readonly source: string; readonly merged_at: string | null }
   | { readonly kind: "unrecognized"; readonly effect_kind: string };
 
@@ -204,6 +199,7 @@ export interface StageArtifact {
 export interface StageUnit {
   cohort_id: string;
   unit_id: string;
+  state?: string;
   repository_key?: RepositoryKey | null;
   params?: StageUnitParams | null;
   sid: string | null;

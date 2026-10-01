@@ -278,7 +278,7 @@ export interface ListRunEventsInput {
 
 interface V2RunProjectionRow { readonly id: string; readonly title: string | null; readonly repository_keys: readonly string[]; readonly workflow_name: string; readonly status: CoreStatus; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null; readonly current_stage: string | null; readonly stage_total: string; readonly stage_complete: string; readonly attention_count: string; readonly parked_count: string; readonly updated_at: string; readonly archived: boolean }
 interface V2StageProjectionRow { readonly stage_instance_id: string; readonly name: string; readonly stage_type: string; readonly operator_role: string | null; readonly status: CoreStatus; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null }
-interface V2UnitProjectionRow { readonly cohort_id: string; readonly stage_instance_id: string; readonly unit_id: string; readonly params: OperatorStageUnit["params"]; readonly status: CoreStatus; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null; readonly session_id: string | null; readonly gate_step: string | null }
+interface V2UnitProjectionRow { readonly cohort_id: string; readonly stage_instance_id: string; readonly unit_id: string; readonly params: OperatorStageUnit["params"]; readonly state: string; readonly status: CoreStatus; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null; readonly session_id: string | null; readonly gate_step: string | null }
 interface StageArtifactRow { readonly stage_instance_id: string; readonly id: string; readonly type_id: string; readonly version: number; readonly label: string | null; readonly created_at: string }
 interface DiagnosisSessionRow { readonly session_id: string; readonly stage_key: string; readonly cohort_id: string; readonly cohort_key: string; readonly attempt_number: number; readonly attempt_count: number; readonly status: CoreStatus; readonly created_at: string }
 /**
@@ -539,9 +539,14 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
               transition.owner_kind,transition.owner_run_id::text,transition.owner_stage_instance_id::text,
               transition.owner_cohort_id::text,transition.launch_reason,
               transition.prior_owner_version::text,transition.resulting_owner_version::text,
+              transition.event,transition.from_state,transition.to_state,
+              cohort.cohort_key AS unit_label,
+              stage.stage_contract->'machine'->'states'->transition.to_state->>'next_actor' AS target_next_actor,
               transition.effect_descriptor,transition.effect_workflow_id,transition.actor,
               transition.created_at::text
        FROM oakridge.run_transition transition
+       LEFT JOIN oakridge.cohort cohort ON cohort.id=transition.owner_cohort_id
+       LEFT JOIN oakridge.stage_instance stage ON stage.id=cohort.stage_instance_id
        WHERE ($1::bigint IS NULL OR transition.sequence > $1::bigint)
          AND ($2::uuid IS NULL OR transition.run_id = $2::uuid)
        ORDER BY transition.sequence ASC LIMIT $3`, [after_sequence, run_id, limit]);
@@ -584,7 +589,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
        FROM oakridge.stage_instance stage WHERE stage.run_id=$1 ORDER BY stage.created_at,stage.stage_key`, [id]);
     const unitRows = await this.sql.query<V2UnitProjectionRow>(
       `SELECT cohort.id::text AS cohort_id,cohort.stage_instance_id::text,cohort.cohort_key AS unit_id,
-              cohort.stage_data AS params,cohort.status,cohort.blocked_reason,cohort.next_actor,
+              cohort.stage_data AS params,cohort.state,cohort.status,cohort.blocked_reason,cohort.next_actor,
               current_session.kbbl_session_id AS session_id,gate.gate_step
        FROM oakridge.cohort cohort
        LEFT JOIN LATERAL (
@@ -610,7 +615,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
         repository_key: selectStageUnitRepositoryKey(unit.params), params: unit.params,
         sid: unit.session_id,
         worktree: null, base_sha: null,
-        status: unit.status, blocked_reason: unit.blocked_reason, next_actor: unit.next_actor,
+        state: unit.state, status: unit.status, blocked_reason: unit.blocked_reason, next_actor: unit.next_actor,
         retryable: selectCohortRetryability(unit).kind === "retryable",
         gate: unit.gate_step,
       }));
