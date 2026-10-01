@@ -53,8 +53,8 @@ export interface CohortPlanEntry { readonly id: UnitId; readonly depends_on: rea
 
 /** What every test wrote by hand before the plan became a value. */
 export const DEFAULT_COHORT_PLAN: readonly CohortPlanEntry[] = [
-  { id: "foundation" as UnitId, depends_on: [] },
-  { id: "web" as UnitId, depends_on: ["foundation" as UnitId] },
+  { id: "a" as UnitId, depends_on: [] },
+  { id: "b" as UnitId, depends_on: ["a" as UnitId] },
 ];
 
 /** The seven-brief dependency graph run-16381389 reproduces. */
@@ -75,6 +75,7 @@ let activeCohortPlan: readonly CohortPlanEntry[] = DEFAULT_COHORT_PLAN;
 export const useScenario = (scenario: ScriptedAgentScenario): void => {
   currentScenario = scenario;
   activeCohortPlan = scenario.cohorts;
+  activeForgeRefs?.clear();
 };
 
 const requireScenario = (): ScriptedAgentScenario => {
@@ -91,6 +92,8 @@ export interface AgentDelivery {
   readonly prompt: string;
 }
 
+export type PrSummaryMismatch = "base" | "head_ref" | "head_sha" | "number";
+
 export interface FakeAgentLaunch {
   readonly execution_id: string;
   readonly stage_instance_id: StageInstanceId | null;
@@ -105,8 +108,18 @@ export interface ScriptedAgentScenario {
   readonly launched: Map<string, FakeAgentLaunch>;
   /** Every follow-up the run has sent an agent — a revision request, say. */
   readonly deliveries: AgentDelivery[];
-  readonly forge_overrides: Map<string, { readonly head_branch?: string; readonly head_sha?: string;
-    readonly base_branch?: string; readonly merged_at?: string | null }>;
+  readonly pull_requests: Map<string, { state: "open" | "closed"; merged_at: string | null; head_sha: string | null }>;
+  readonly forge_failures: Map<string, { status: number; remaining: number }>;
+  pr_summary_mismatch: PrSummaryMismatch | null;
+  pr_url_number: number | null;
+  pause_before_publication_role: StageOperatorRole | null;
+  pause_before_publication_unit: UnitId | null;
+  pause_after_refusal_output: string | null;
+  merge(unit: UnitId, options?: { readonly head_sha?: string }): Promise<string>;
+  close(unit: UnitId): void;
+  reopen(unit: UnitId): void;
+  move_head(unit: UnitId): Promise<string>;
+  fail(unit: UnitId, status: number, times: number): void;
   readonly strip_publication_contract: boolean;
   readonly skip_first_publication_role: StageOperatorRole | null;
   readonly unpublished_work_orders: Set<string>;
@@ -117,21 +130,53 @@ export const scriptedAgentScenario = (options?: {
   readonly cohorts?: readonly CohortPlanEntry[];
   readonly strip_publication_contract?: boolean;
   readonly skip_first_publication_role?: StageOperatorRole;
+  readonly pr_summary_mismatch?: PrSummaryMismatch;
+  readonly pause_before_publication_role?: StageOperatorRole;
+  readonly pause_before_publication_unit?: UnitId;
+  readonly pause_after_refusal_output?: string;
 }): ScriptedAgentScenario => {
   const cohorts = options?.cohorts ?? DEFAULT_COHORT_PLAN;
   const launched = new Map<string, FakeAgentLaunch>();
   const deliveries: AgentDelivery[] = [];
+  const pullRequests = new Map<string, { state: "open" | "closed"; merged_at: string | null; head_sha: string | null }>();
+  const forgeFailures = new Map<string, { status: number; remaining: number }>();
   return {
     cohorts,
     launched,
     deliveries,
-    forge_overrides: new Map(),
+    pull_requests: pullRequests,
+    forge_failures: forgeFailures,
+    pr_summary_mismatch: options?.pr_summary_mismatch ?? null,
+    pr_url_number: null,
+    pause_before_publication_role: options?.pause_before_publication_role ?? null,
+    pause_before_publication_unit: options?.pause_before_publication_unit ?? null,
+    pause_after_refusal_output: options?.pause_after_refusal_output ?? null,
+    async merge(unit, options) {
+      if (!activeRepositoryFixture) throw new Error("the git repository fixture is not running");
+      const branch = activeForgeRefs?.get(unit)?.head_branch;
+      if (!branch) throw new Error(`cohort '${unit}' has no build branch`);
+      const mergedHead = await activeRepositoryFixture.merge_cohort_branch(branch);
+      pullRequests.set(unit, { state: "closed", merged_at: new Date().toISOString(), head_sha: options?.head_sha ?? null });
+      return mergedHead;
+    },
+    close(unit) { pullRequests.set(unit, { state: "closed", merged_at: null, head_sha: null }); },
+    reopen(unit) { pullRequests.delete(unit); },
+    async move_head(unit) {
+      if (!activeRepositoryFixture) throw new Error("the git repository fixture is not running");
+      const branch = activeForgeRefs?.get(unit)?.head_branch;
+      if (!branch) throw new Error(`cohort '${unit}' has no build branch`);
+      return activeRepositoryFixture.advance_origin_branch(branch, `move ${unit} head`);
+    },
+    fail(unit, status, times) { forgeFailures.set(unit, { status, remaining: times }); },
     strip_publication_contract: options?.strip_publication_contract ?? false,
     skip_first_publication_role: options?.skip_first_publication_role ?? null,
     unpublished_work_orders: new Set(),
     releaseAll() {},
   };
 };
+
+let activeRepositoryFixture: GitRepositoryFixture | null = null;
+let activeForgeRefs: Map<string, { readonly head_branch: string; readonly base_branch: string }> | null = null;
 
 export const removePinnedPromptCell = async (
   sql: SqlExecutor, run_id: WorkflowRunId, stage_key: string, role: string, reason: string,
@@ -174,8 +219,10 @@ export interface GitRepositoryFixture {
   list_origin_branches(): Promise<readonly string[]>;
   /** What origin says a branch points at, or null when it holds no such branch. */
   origin_branch_sha(branch: string): Promise<string | null>;
+  origin_branch_parent_sha(branch: string): Promise<string | null>;
   /** Commits onto an existing origin branch, standing in for merged cohort work. Returns the new head. */
   advance_origin_branch(branch: string, message: string): Promise<string>;
+  merge_cohort_branch(branch: string): Promise<string>;
   remove(): Promise<void>;
 }
 
@@ -244,6 +291,11 @@ export const createGitRepositoryFixture = async (): Promise<GitRepositoryFixture
       // the nullish form returned an empty string where the contract says null.
       return output.trim().split(/\s+/)[0] || null;
     },
+    async origin_branch_parent_sha(branch) {
+      await git(workingPath, ["fetch", "origin", branch]);
+      const commits = (await git(workingPath, ["rev-list", "--first-parent", "--max-count=2", `origin/${branch}`])).trim().split("\n");
+      return commits[1] ?? null;
+    },
     // Committed from a scratch worktree so the fixture's own checkout is never
     // moved off the base branch, which the provisioning commands read.
     async advance_origin_branch(branch, message) {
@@ -251,10 +303,22 @@ export const createGitRepositoryFixture = async (): Promise<GitRepositoryFixture
       await git(workingPath, ["fetch", "origin", branch]);
       await git(workingPath, ["worktree", "add", "--detach", scratch, `origin/${branch}`]);
       try {
-        await Bun.write(join(scratch, `${message.replaceAll(/[^a-z]/gi, "-")}.md`), `${message}\n`);
+        await Bun.write(join(scratch, `${message.replaceAll(/[^a-z]/gi, "-")}-${crypto.randomUUID()}.md`), `${message}\n`);
         await git(scratch, ["add", "."]);
         await git(scratch, ["commit", "-m", message]);
         await git(scratch, ["push", "origin", `HEAD:refs/heads/${branch}`]);
+        return (await git(scratch, ["rev-parse", "HEAD"])).trim();
+      } finally {
+        await git(workingPath, ["worktree", "remove", "--force", scratch]);
+      }
+    },
+    async merge_cohort_branch(branch) {
+      const scratch = join(root, `merge-${branch.replaceAll("/", "-")}`);
+      await git(workingPath, ["fetch", "origin", HARNESS_BASE_BRANCH, branch]);
+      await git(workingPath, ["worktree", "add", "--detach", scratch, `origin/${HARNESS_BASE_BRANCH}`]);
+      try {
+        await git(scratch, ["merge", "--no-ff", `origin/${branch}`, "-m", `Merge ${branch}`]);
+        await git(scratch, ["push", "origin", `HEAD:refs/heads/${HARNESS_BASE_BRANCH}`]);
         return (await git(scratch, ["rev-parse", "HEAD"])).trim();
       } finally {
         await git(workingPath, ["worktree", "remove", "--force", scratch]);
@@ -269,7 +333,8 @@ export interface IntegrationRuntime {
   /** Where the real HTTP surface is listening. */
   readonly base_url: string;
   readonly kbbl_url: string;
-  readonly forge_override_url: string;
+  readonly kbbl_pid: number;
+  restart_kbbl(): Promise<void>;
   readonly definition: WorkflowDefinition;
   readonly application_version: string;
   /** The repository the seeded flow's runs provision and build in. */
@@ -330,9 +395,11 @@ export const installIntegrationRuntime = async (databaseUrl: string, options: In
   DBOS.setConfig({ name: "oakridge-dev-flow-e2e", systemDatabaseUrl: databaseUrl, applicationVersion, logLevel: "warn" });
 
   const repository = await createGitRepositoryFixture();
+  activeRepositoryFixture = repository;
   const harnessSql = PgPostgresExecutor.connect(databaseUrl);
   const runtimeRoot = await mkdtemp(join(tmpdir(), "oakridge-acceptance-runtime-"));
   const forgeRefs = new Map<string, { readonly head_branch: string; readonly base_branch: string }>();
+  activeForgeRefs = forgeRefs;
   let kbblPort = 0;
   let oakridgePort = 0;
   const control = Bun.serve({ port: 0, async fetch(request) {
@@ -341,6 +408,10 @@ export const installIntegrationRuntime = async (databaseUrl: string, options: In
     if (url.pathname === "/scenario") return Response.json({
       cohorts: scenario.cohorts,
       strip_publication_contract: scenario.strip_publication_contract,
+      pr_summary_mismatch: scenario.pr_summary_mismatch,
+      pause_before_publication_role: scenario.pause_before_publication_role,
+      pause_before_publication_unit: scenario.pause_before_publication_unit,
+      pause_after_refusal_output: scenario.pause_after_refusal_output,
     });
     if (url.pathname === "/launch" && request.method === "POST") {
       const launch = await request.json() as { readonly work_order_id: string; readonly unit_id: string; readonly operator_role: StageOperatorRole;
@@ -371,21 +442,21 @@ export const installIntegrationRuntime = async (databaseUrl: string, options: In
       scenario.deliveries.push(await request.json() as AgentDelivery);
       return Response.json({ ok: true });
     }
-    if (url.pathname === "/forge-override" && request.method === "POST") {
-      const input = await request.json() as { readonly unit_id: string; readonly head_branch?: string;
-        readonly head_sha?: string; readonly base_branch?: string; readonly merged_at?: string | null };
-      if (!input.unit_id) return Response.json({ error: "unit_id is required" }, { status: 400 });
-      scenario.forge_overrides.set(input.unit_id, input);
-      return Response.json({ ok: true });
-    }
     if (url.pathname === "/artifact-body" && request.method === "POST") {
       const input = await request.json() as { readonly work_order_id: string; readonly unit_id: string; readonly output_name: string;
         readonly operator_role: StageOperatorRole; readonly revision: number; readonly stage_instance_id: string | null;
-        readonly head_branch: string | null; readonly base_branch: string | null };
+        readonly head_branch: string | null; readonly base_branch: string | null; readonly retry_index?: number };
       if (input.output_name === "pr_summary") {
         const branch = input.head_branch ?? cohortHeadBranch(input.unit_id as UnitId);
-        return Response.json({ pr_url: cohortPullRequestUrl(input.unit_id as UnitId), branch,
-          base_branch: input.base_branch ?? HARNESS_BASE_BRANCH, repository_key: "oakridge",
+        const mismatch = input.retry_index === 0 ? scenario.pr_summary_mismatch : null;
+        if (scenario.pr_summary_mismatch === "head_sha") {
+          scenario.pull_requests.set(input.unit_id, { state: "open", merged_at: null,
+            head_sha: mismatch ? "0000000000000000000000000000000000000000" : null });
+        }
+        return Response.json({ pr_url: mismatch === "number" || scenario.pr_url_number === 99
+          ? "https://github.com/RankOneLabs/oakridge/pull/99" : cohortPullRequestUrl(input.unit_id as UnitId),
+          branch: mismatch === "head_ref" ? "cohort/wrong-ref" : branch,
+          base_branch: mismatch === "base" ? "main" : input.base_branch ?? HARNESS_BASE_BRANCH, repository_key: "oakridge",
           summary: `built ${input.unit_id} v${input.revision}`, review_status: "ready" });
       }
       const synthetic = { execution_id: input.work_order_id, resolved_config: { session_identity: { operator_role: input.operator_role } } } as unknown as ExecutionRequest;
@@ -397,18 +468,26 @@ export const installIntegrationRuntime = async (databaseUrl: string, options: In
     const match = new URL(request.url).pathname.match(/^\/repos\/RankOneLabs\/oakridge\/pulls\/(\d+)$/);
     if (!match) return new Response("not found", { status: 404 });
     const number = Number(match[1]);
-    const unit = activeCohortPlan[number - 1]?.id;
+    const unit = activeCohortPlan[number - 1]?.id
+      ?? (number === 99 && (requireScenario().pr_summary_mismatch === "number" || requireScenario().pr_url_number === 99)
+        ? activeCohortPlan[0]?.id : undefined);
     if (!unit) return new Response("not found", { status: 404 });
     const refs = forgeRefs.get(String(unit));
     if (!refs) return new Response("not found", { status: 404 });
-    const override = requireScenario().forge_overrides.get(String(unit));
-    const headBranch = override?.head_branch ?? refs.head_branch;
-    const head = override?.head_sha ?? await repository.origin_branch_sha(headBranch);
+    const scenario = requireScenario();
+    const failure = scenario.forge_failures.get(String(unit));
+    if (failure && failure.remaining > 0) {
+      failure.remaining -= 1;
+      return new Response("fake forge unavailable", { status: failure.status });
+    }
+    const observation = scenario.pull_requests.get(String(unit));
+    const headBranch = refs.head_branch;
+    const head = observation?.head_sha ?? await repository.origin_branch_sha(headBranch);
     if (!head) return new Response("not found", { status: 404 });
-    const mergedAt = override && "merged_at" in override ? override.merged_at : new Date().toISOString();
-    return Response.json({ number, html_url: cohortPullRequestUrl(unit), state: mergedAt ? "closed" : "open",
+    const mergedAt = observation?.merged_at ?? null;
+    return Response.json({ number, html_url: `https://github.com/RankOneLabs/oakridge/pull/${number}`, state: observation?.state ?? "open",
       merged: mergedAt !== null, merged_at: mergedAt,
-      head: { ref: headBranch, sha: head }, base: { ref: override?.base_branch ?? refs.base_branch } });
+      head: { ref: headBranch, sha: head }, base: { ref: refs.base_branch } });
   }});
   const oakridgePortProbe = Bun.serve({ port: 0, fetch: () => new Response() });
   oakridgePort = oakridgePortProbe.port!;
@@ -423,15 +502,17 @@ export const installIntegrationRuntime = async (databaseUrl: string, options: In
   await writeFile(configPath, JSON.stringify({ acp: { default_agent: "claude-code", agents: {
     "claude-code": fakeAgentProfile, codex: fakeAgentProfile,
   } } }));
-  const kbbl = Bun.spawn([process.execPath, "run", resolve(import.meta.dir, "../../../kbbl/core/server.ts"), `--port=${kbblPort}`,
+  const startKbbl = () => Bun.spawn([process.execPath, "run", resolve(import.meta.dir, "../../../kbbl/core/server.ts"), `--port=${kbblPort}`,
     `--host=127.0.0.1`, `--dataDir=${join(runtimeRoot, "kbbl-data")}`, `--config=${configPath}`, `--workdir=${repository.path}`], {
     cwd: resolve(import.meta.dir, "../../.."), stdout: "ignore", stderr: "inherit",
     env: { ...process.env, OAKRIDGE_CORE_BASE_URL: `http://127.0.0.1:${oakridgePort}` },
   });
-  await awaitCondition("kbbl to start", async () => {
+  let kbbl = startKbbl();
+  const awaitKbbl = () => awaitCondition("kbbl to start", async () => {
     if (kbbl.exitCode !== null) throw new Error(`kbbl exited before startup with code ${kbbl.exitCode}`);
     return (await fetch(`http://127.0.0.1:${kbblPort}/config`).catch(() => null))?.ok ? true : null;
   }, 20_000);
+  await awaitKbbl();
   const adapter = new KbblExecutorAdapter({ base_url: `http://127.0.0.1:${kbblPort}`, executor_function_identity: applicationVersion, observe_wait_ms: 250 });
   // Only `stop()` removes the fixture, and nothing calls `stop()` on a runtime
   // that never finished being built — so from here to the return, a failure has
@@ -443,13 +524,23 @@ export const installIntegrationRuntime = async (databaseUrl: string, options: In
     // No `git_commands` override: the provisioning stage runs real git against
     // the fixture above, because the sequence of commands is the thing under
     // test and a fake runner would agree with whatever it was told.
-    runtime = await createOakridgeRuntime({
-      database_url: databaseUrl,
-      application_version: applicationVersion,
-      executor_adapters: [adapter],
-      prompt_template_directory: options.prompt_template_directory ?? resolve(import.meta.dir, "../../../workflow-config/prompts"),
-      pull_request_reader: new GithubPullRequestReader({ token: "acceptance-token", api_base_url: `http://127.0.0.1:${forge.port}` }),
-    });
+    const previousPollSeconds = process.env.OAKRIDGE_PULL_REQUEST_POLL_SECONDS;
+    process.env.OAKRIDGE_PULL_REQUEST_POLL_SECONDS = "1";
+    try {
+      runtime = await createOakridgeRuntime({
+        database_url: databaseUrl,
+        application_version: applicationVersion,
+        executor_adapters: [adapter],
+        prompt_template_directory: options.prompt_template_directory ?? resolve(import.meta.dir, "../../../workflow-config/prompts"),
+        pull_request_reader: new GithubPullRequestReader({ token: "acceptance-token", api_base_url: `http://127.0.0.1:${forge.port}` }),
+      });
+    } finally {
+      if (previousPollSeconds === undefined) delete process.env.OAKRIDGE_PULL_REQUEST_POLL_SECONDS;
+      else process.env.OAKRIDGE_PULL_REQUEST_POLL_SECONDS = previousPollSeconds;
+    }
+    if (!runtime.is_pull_request_poll_running() || runtime.pull_request_poll_interval_ms !== 1_000) {
+      throw new Error("runtime did not start the configured 1-second pull-request poll timer");
+    }
     await runtime.seed_builtins();
     await DBOS.launch();
     server = Bun.serve({ port: oakridgePort, idleTimeout: 60, fetch: runtime.app.fetch });
@@ -460,6 +551,8 @@ export const installIntegrationRuntime = async (databaseUrl: string, options: In
     await harnessSql.close();
     await rm(runtimeRoot, { recursive: true, force: true });
     await repository.remove();
+    activeRepositoryFixture = null;
+    activeForgeRefs = null;
     throw error;
   }
   const startedRuns: string[] = [];
@@ -468,7 +561,13 @@ export const installIntegrationRuntime = async (databaseUrl: string, options: In
     runtime,
     base_url: `http://127.0.0.1:${server.port}`,
     kbbl_url: `http://127.0.0.1:${kbblPort}`,
-    forge_override_url: `http://127.0.0.1:${control.port}/forge-override`,
+    get kbbl_pid() { return kbbl.pid; },
+    async restart_kbbl() {
+      kbbl.kill();
+      await kbbl.exited;
+      kbbl = startKbbl();
+      await awaitKbbl();
+    },
     definition: loaded.value,
     application_version: applicationVersion,
     repository,
@@ -487,6 +586,8 @@ export const installIntegrationRuntime = async (databaseUrl: string, options: In
       forge.stop(true);
       await rm(runtimeRoot, { recursive: true, force: true });
       await repository.remove();
+      activeRepositoryFixture = null;
+      activeForgeRefs = null;
     },
   };
 };

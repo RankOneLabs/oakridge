@@ -92,6 +92,7 @@ export interface OakridgeRuntimeConfig {
    * confirms merges by hand through the same route.
    */
   readonly pull_request_reader?: PullRequestReader;
+  readonly pull_request_poll_interval_ms?: number;
   readonly now?: () => string;
 }
 
@@ -107,6 +108,9 @@ export interface OakridgeRuntime {
    * is configured, which is a backend where merges are confirmed by hand.
    */
   poll_pull_requests(): Promise<readonly CohortPollOutcome[] | null>;
+  readonly pull_request_poll_interval_ms: number | null;
+  is_pull_request_poll_running(): boolean;
+  pause_pull_request_polling(): Promise<() => void>;
   /**
    * Runs this executor has inherited from an application version it cannot
    * recover. Empty on a healthy start; anything here will never advance on its
@@ -118,6 +122,11 @@ export interface OakridgeRuntime {
 }
 
 export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Promise<OakridgeRuntime> => {
+  const pullRequestPollIntervalMs = config.pull_request_poll_interval_ms
+    ?? Number(process.env.OAKRIDGE_PULL_REQUEST_POLL_SECONDS ?? "60") * 1_000;
+  if (!Number.isFinite(pullRequestPollIntervalMs) || pullRequestPollIntervalMs < 1_000) {
+    throw new Error("OAKRIDGE_PULL_REQUEST_POLL_SECONDS must be at least 1 second");
+  }
   const now = config.now ?? (() => new Date().toISOString());
   const sql = PgPostgresExecutor.connect(config.database_url);
   const client = await DBOSClient.create({ systemDatabaseUrl: config.database_url });
@@ -306,6 +315,24 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     if (!reader) return Promise.resolve(null);
     return trackDispatch(() => pollCohortPullRequests({ ...cohortPullRequests, reader, list_cohorts: () => projections.list_cohorts() }));
   };
+  let pullRequestPoll: Promise<unknown> | null = null;
+  let isPullRequestPollClosing = false;
+  let pullRequestTimer: ReturnType<typeof setInterval> | null = null;
+  const startPullRequestTimer = (): void => {
+    if (!config.pull_request_reader || isPullRequestPollClosing || pullRequestTimer) return;
+    pullRequestTimer = setInterval(() => {
+      if (pullRequestPoll) return;
+      pullRequestPoll = pollPullRequests()
+        .then((outcomes) => {
+          for (const outcome of outcomes ?? []) {
+            if (outcome.resolution.kind === "refused") console.warn(`cohort ${outcome.stage_instance_id}:${outcome.unit_id} pull request refused: ${outcome.resolution.detail}`);
+          }
+        })
+        .catch((error: unknown) => { console.error("cohort pull request poll failed", error); })
+        .finally(() => { pullRequestPoll = null; });
+    }, pullRequestPollIntervalMs);
+  };
+  startPullRequestTimer();
 
   const presentation = (artifactType: string) => {
     const definition = findArtifactType(artifactType);
@@ -352,10 +379,22 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     dispatch_launches: dispatchLaunches,
     seed_builtins: () => seedBuiltins(definitions),
     poll_pull_requests: pollPullRequests,
+    pull_request_poll_interval_ms: config.pull_request_reader ? pullRequestPollIntervalMs : null,
+    is_pull_request_poll_running: () => pullRequestTimer !== null,
+    async pause_pull_request_polling() {
+      if (pullRequestTimer) clearInterval(pullRequestTimer);
+      pullRequestTimer = null;
+      await Promise.allSettled(pullRequestPoll ? [pullRequestPoll] : []);
+      return startPullRequestTimer;
+    },
     async orphaned_version_runs() {
       return selectOrphanedVersionRuns(await projections.list_application_versions(), config.application_version);
     },
     async close() {
+      isPullRequestPollClosing = true;
+      if (pullRequestTimer) clearInterval(pullRequestTimer);
+      pullRequestTimer = null;
+      await Promise.allSettled(pullRequestPoll ? [pullRequestPoll] : []);
       isDispatchClosing = true;
       await Promise.allSettled([...inFlightDispatches]);
       await client.destroy();
