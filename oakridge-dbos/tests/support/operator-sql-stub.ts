@@ -95,6 +95,8 @@ export class DiagnosisSql implements TransactionalSqlExecutor {
       rows = this.fixture.artifacts ?? [];
     } else if (statement.includes("SELECT definition.definition")) {
       rows = [];
+    } else if (statement.includes("FROM oakridge.dev_flow_build_cohort build")) {
+      rows = [];
     } else if (statement.includes("FROM oakridge.session session") && statement.includes("attempt_count")) {
       if (!statement.includes("max(a2.attempt_number)") || !statement.includes("JOIN oakridge.cohort cohort")) {
         throw new Error("diagnosis attempt_count must include unbound attempts and cohort_key");

@@ -94,6 +94,9 @@ export const contextForMachineRow = (machine_name: string, index: number, row: T
     if ((index === 3 || index === 5) && event.kind === "artifact_published")
       round_outputs = [{ output: index === 3 ? "build_result" : "pr_summary",
         collection_key: null, artifact_id: "prior" as never, body: {} }];
+    if (event.kind === "artifact_published" && event.output === "pr_summary")
+      round_outputs = [...round_outputs, { output: "pr_summary", collection_key: null,
+        artifact_id: event.artifact_id, body: { branch: "cohort-a", base_branch: "main" } }];
     if (event.kind === "external_observed") {
       event = { ...event, observation: index === 15 || index === 18
         ? { state: "merged", merged_at: "2026-01-01T00:00:00Z", base_branch: "main" }

@@ -290,9 +290,7 @@ const awaitBuildMerge = async (agent: ReturnType<typeof scriptedAgentScenario>) 
       const detail = await readRun(oakridge.base_url, launched.run_id);
       const stage = detail.stages.find((candidate) => candidate.name === "build");
       const unit = stage?.units[0];
-      const state = unit?.params as { readonly build_state?: { readonly phase?: string } } | null;
-      return state?.build_state?.phase === "awaiting_merge" && stage && unit
-        ? `${stage.stage_instance_id}:${unit.unit_id}` : null;
+      return unit?.state === "awaiting_merge" && stage && unit ? unit.cohort_id : null;
     },
     timeout_ms: 120_000,
   });
@@ -389,6 +387,8 @@ e2e("S2 replacement PR number is refused while the approved PR remains bound", a
     const cohort = build?.units.find((unit) => unit.unit_id === "a");
     expect(cohort).toBeDefined();
     expect(await attemptCount(cohort!.cohort_id)).toBe(2);
+    await awaitCondition("replacement build review", async () =>
+      (await cohortMachineState(sql, launched.run_id, "build", "a")) === "build_review" ? true : null, 60_000);
     await assertCohortTrace(launched.run_id, "build", "a", [
       { event: "started", from: "pending", to: "building" },
       { event: "artifact_published", from: "building", to: "build_review" },
@@ -411,6 +411,7 @@ e2e("S9 browser Confirm merged refreshes GitHub and reports done", async () => {
     expect(oakridge.runtime.is_pull_request_poll_running()).toBe(false);
     await agent.merge("foundation" as UnitId);
     await page.goto(`${oakridge.kbbl_url}/#oakridge/run/${launched.run_id}`);
+    await page.getByTestId("or-sidebar-pane-list").click();
     const responsePromise = page.waitForResponse((response) => response.url().endsWith(`/cohorts/${encodeURIComponent(cohort_address)}/pull_request/refresh`));
     await page.getByTestId("or-confirm-cohort-merged-btn").first().click();
     const refreshed = await (await responsePromise).json() as { readonly state: string };
@@ -607,6 +608,10 @@ e2e("S5 assessment revision launches a builder with assessment feedback", async 
     expect(cohort).toBeDefined();
     await awaitCondition("assessment revision builder attempt", async () =>
       (await attemptCount(cohort!.cohort_id)) === 3 ? true : null, 30_000);
+    await awaitCondition("assessment revision prompt launched", async () =>
+      [...agent.launched.values()].some((launch) =>
+        String((launch.resolved_config as { readonly rendered_prompt?: string }).rendered_prompt).includes("revision_after_assessment"))
+        ? true : null, 30_000);
     const prompt = [...agent.launched.values()].map((launch) =>
       (launch.resolved_config as { readonly rendered_prompt?: string }).rendered_prompt ?? "")
       .find((value) => value.includes("revision_after_assessment"));

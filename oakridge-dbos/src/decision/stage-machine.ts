@@ -15,15 +15,18 @@ const matchesEvent = (match: EventMatch, event: StageEvent): boolean => {
 export const transition = (machine: CompiledMachine, state: StateName, event: StageEvent, context: GuardContext): TransitionResult => {
   for (const [row_index, row] of machine.transitions.entries()) {
     if (!matchesFrom(machine, row.from, state) || !matchesEvent(row.on, event)) continue;
+    let detail: string | null = null;
     if (row.guard) {
       const predicate = context.registry.guard(machine.stage_type, row.guard.name);
       if (!predicate) continue;
-      const holds = predicate({ ...context, event }, row.guard.args);
+      const outcome = predicate({ ...context, event }, row.guard.args);
+      const holds = typeof outcome === "boolean" ? outcome : outcome.holds;
+      detail = typeof outcome === "boolean" ? null : outcome.detail;
       if (row.guard.negate ? holds : !holds) continue;
     }
     return "to" in row
       ? { kind: "applied", from: state, to: row.to, effects: row.effects, row_index }
-      : { kind: "refused", from: state, code: row.refuse, row_index };
+      : { kind: "refused", from: state, code: row.refuse, row_index, ...(detail ? { detail } : {}) };
   }
   return { kind: "refused", from: state, code: "no_transition" as RefusalCode, row_index: null };
 };

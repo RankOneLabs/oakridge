@@ -660,8 +660,24 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
   }
 
   async get_run_diagnosis(id: WorkflowRunId): Promise<OperatorRunDiagnosis | null> {
-    const run = await this.getV2Run(id);
-    if (!run) return null;
+    const baseRun = await this.getV2Run(id);
+    if (!baseRun) return null;
+    const driftRows = await this.sql.query<{ readonly cohort_id: string; readonly accepted_head_sha: string; readonly merged_head_sha: string }>(
+      `SELECT build.cohort_id::text,verification.verified_head_sha AS accepted_head_sha,
+              observation.head_sha AS merged_head_sha
+       FROM oakridge.dev_flow_build_cohort build
+       JOIN oakridge.cohort cohort ON cohort.id=build.cohort_id
+       JOIN oakridge.pull_request_verification verification ON verification.id=build.current_verified_pull_request_id
+       JOIN oakridge.pull_request_merge_closure closure ON closure.cohort_id=build.cohort_id
+       JOIN LATERAL (SELECT head_sha FROM oakridge.pull_request_observation
+         WHERE pull_request_id=closure.pull_request_id AND merged_at IS NOT NULL
+         ORDER BY observed_at DESC,recorded_at DESC LIMIT 1) observation ON true
+       WHERE cohort.run_id=$1 AND observation.head_sha IS DISTINCT FROM verification.verified_head_sha`, [id]);
+    const driftByCohort = new Map(driftRows.map((row) => [row.cohort_id,
+      { accepted_head_sha: row.accepted_head_sha, merged_head_sha: row.merged_head_sha }]));
+    const run = { ...baseRun, stages: baseRun.stages.map((stage) => ({ ...stage, units: stage.units.map((unit) => ({
+      ...unit, ...(driftByCohort.has(unit.cohort_id) ? { merge_head_drift: driftByCohort.get(unit.cohort_id) } : {}),
+    })) })) };
     const sessionRows = await this.sql.query<DiagnosisSessionRow>(
       `SELECT session.kbbl_session_id AS session_id,stage.stage_key,attempt.cohort_id::text,cohort.cohort_key,
               attempt.attempt_number,(SELECT max(a2.attempt_number) FROM oakridge.attempt a2 WHERE a2.cohort_id=attempt.cohort_id)::int AS attempt_count,

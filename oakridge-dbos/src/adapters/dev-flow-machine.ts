@@ -11,15 +11,25 @@ const objectOf = (value: JsonValue | undefined): { readonly [key: string]: JsonV
 const prOf = (context: GuardContext): { readonly [key: string]: JsonValue } | null =>
   context.event.kind === "artifact_published" ? objectOf(objectOf(context.event.enrichment ?? undefined)?.pr) : null;
 
-export const prMatchesCohort = (context: GuardContext): boolean => {
+const prMismatchDetail = (context: GuardContext): string | null => {
   const enrichment = context.event.kind === "artifact_published" ? objectOf(context.event.enrichment ?? undefined) : null;
   const pr = prOf(context);
-  if (!enrichment || !pr || pr.state !== "open") return false;
-  if (pr.base_branch !== enrichment.expected_pr_base || pr.head_branch !== enrichment.canonical_ref
-    || pr.head_sha !== enrichment.origin_head_sha) return false;
+  const artifact_id = context.event.kind === "artifact_published" ? context.event.artifact_id : null;
+  const body = artifact_id === null ? null
+    : objectOf(context.round_outputs.find((output) => output.artifact_id === artifact_id)?.body);
+  if (!enrichment || !pr) return "pr.url could not be verified";
+  if (pr.state !== "open") return "pr.state is not open";
+  if (pr.base_branch !== enrichment.expected_pr_base || body?.base_branch !== enrichment.expected_pr_base)
+    return "base.ref does not match the cohort base";
+  if (pr.head_branch !== enrichment.canonical_ref || body?.branch !== enrichment.canonical_ref)
+    return "head.ref does not match the cohort branch";
+  if (pr.head_sha !== enrichment.origin_head_sha) return "head.sha does not match origin";
   const bound = objectOf(objectOf(context.stage_data)?.pull_request);
-  return bound === null || bound.number === pr.number;
+  if (bound !== null && bound.number !== pr.number) return "pr.number does not match the approved PR";
+  return null;
 };
+
+export const prMatchesCohort = (context: GuardContext): boolean => prMismatchDetail(context) === null;
 
 export const prMergedIntoBase = (context: GuardContext): boolean => {
   if (context.event.kind !== "external_observed") return false;
@@ -97,6 +107,9 @@ const bindPullRequest: RegisteredEffect = async (tx, { cohort, event }) => {
      VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,'poll',$6::timestamptz,$7::timestamptz,clock_timestamp())
      RETURNING id::text`, [pull_id, pr.head_branch, pr.base_branch, pr.head_sha, pr.state,
       pr.observed_at, pr.merged_at]);
+  await tx.query(
+    `UPDATE oakridge.pull_request_verification SET invalidated_at=clock_timestamp(),
+       invalidation_reason='replaced' WHERE cohort_id=$1 AND invalidated_at IS NULL`, [cohort.id]);
   const verified = await tx.query<{ readonly id: string }>(
     `INSERT INTO oakridge.pull_request_verification
        (id,cohort_id,pull_request_id,observation_id,verified_head_sha,verified_at)
@@ -146,7 +159,10 @@ export const registerDevFlowMachine = (registry: StageMachineRegistry,
   effects: Map<string, RegisteredEffect>): void => {
   const stage_type = "delegated_session";
   const guards = {
-    pr_matches_cohort: prMatchesCohort,
+    pr_matches_cohort: (context: GuardContext) => {
+      const detail = prMismatchDetail(context);
+      return { holds: detail === null, detail };
+    },
     pr_merged_into_base: prMergedIntoBase,
     pr_closed_unmerged: prClosedUnmerged,
     briefs_cover_plan: briefsCoverPlan,

@@ -481,7 +481,8 @@ export const installIntegrationRuntime = async (databaseUrl: string, options: In
       failure.remaining -= 1;
       return new Response("fake forge unavailable", { status: failure.status });
     }
-    const observation = scenario.pull_requests.get(String(unit));
+    const observation = number === 99 && scenario.pr_url_number === 99
+      ? undefined : scenario.pull_requests.get(String(unit));
     const headBranch = refs.head_branch;
     const head = observation?.head_sha ?? await repository.origin_branch_sha(headBranch);
     if (!head) return new Response("not found", { status: 404 });

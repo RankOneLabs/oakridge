@@ -33,7 +33,7 @@ for (const [name, dependencies] of [
         visits.set(id, (visits.get(id) ?? 0) + 1);
         return cohorts.filter((cohort) => cohort.id === id);
       }
-      if (statement.includes("FROM oakridge.cohort WHERE stage_instance_id=$1")) return cohorts;
+      if (/FROM oakridge\.cohort\s+WHERE stage_instance_id=\$1/.test(statement)) return cohorts;
       if (statement.includes("FROM oakridge.stage_instance")) return [{ status: "active", stage_contract: {
         machine, materialization: { kind: "fan_out", max_parallel: 4 }, outputs: [], inputs: [],
       } }];

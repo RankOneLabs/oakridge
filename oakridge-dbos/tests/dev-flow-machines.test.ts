@@ -38,7 +38,8 @@ for (const [machine_name, machine] of Object.entries(machines)) {
         const predicate = context.registry.guard("delegated_session", earlier.guard.name);
         expect(predicate).toBeDefined();
         if (!predicate) continue;
-        const holds = predicate(context, earlier.guard.args);
+        const outcome = predicate(context, earlier.guard.args);
+        const holds = typeof outcome === "boolean" ? outcome : outcome.holds;
         expect(earlier.guard.negate ? !holds : holds).toBe(false);
       }
       expect(result.row_index).toBe(index);

@@ -312,6 +312,7 @@ const recordAttemptOutcome = async (execution: AttemptExecution, status: "comple
   if (!effects_sql || !stage_events) throw new Error("stage event ingress is not configured");
   const transition_ids: RunTransitionId[] = [];
   await effects_sql.transaction(async (tx) => {
+    await stage_events.lock_stage_cohorts_in(tx, execution.cohort_id);
     const written = await writeSessionStatus(tx, { session_id: execution.session_id, status, at: now() });
     if (written.kind === "already_ended") return;
     const applied = await stage_events.apply_in(tx, execution.cohort_id,
@@ -493,6 +494,10 @@ const startStageAttemptsStep = DBOS.registerStep(async (transition_id: RunTransi
 const fenceStageSessionsStep = DBOS.registerStep(async (cohort_id: CohortId): Promise<void | ExecutorUnavailable> => {
   const { effects_sql, records, find_executor, now } = workflowServices();
   if (!effects_sql) throw new Error("stage effect SQL is not registered");
+  await effects_sql.query(
+    `UPDATE oakridge.session session SET fenced_at=clock_timestamp(),updated_at=clock_timestamp()
+     FROM oakridge.attempt attempt WHERE attempt.id=session.attempt_id AND attempt.cohort_id=$1
+       AND session.fenced_at IS NULL AND session.kbbl_session_id IS NULL`, [cohort_id]);
   const rows = await effects_sql.query<{ readonly session_id: string; readonly adapter_type: string;
     readonly adapter_reference: ExternalExecutionReference; readonly execution_id: string }>(
     `SELECT session.id::text AS session_id,attempt.adapter_type,session.adapter_reference,

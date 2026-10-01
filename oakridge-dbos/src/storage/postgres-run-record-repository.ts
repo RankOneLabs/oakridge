@@ -230,6 +230,9 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
   async open_stage_cohorts(input: OpenStageCohorts): Promise<OpenStageCohortsResult> {
     const transition_ids: RunTransitionId[] = [];
     const result = await this.sql.transaction(async (tx) => {
+      await tx.query(
+        `SELECT id FROM oakridge.cohort WHERE stage_instance_id=$1 ORDER BY cohort_key FOR UPDATE`,
+        [input.stage_instance_id]);
       const stages = await tx.query<{ readonly id: string; readonly status: CoreStatus; readonly stage_contract: JsonValue }>(
         "SELECT id::text,status,stage_contract FROM oakridge.stage_instance WHERE id=$1 AND run_id=$2 FOR UPDATE", [input.stage_instance_id, input.run_id]);
       if (!stages[0]) return { kind: "stage_not_found" as const, detail: `stage instance '${input.stage_instance_id}' was not found in run '${input.run_id}'` };
@@ -536,24 +539,30 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
     const transition_ids: RunTransitionId[] = [];
     try {
       const result = await this.sql.transaction(async (tx): Promise<PublishWorkOrderArtifactResult> => {
+        const location = await tx.query<{ readonly cohort_id: string }>(
+          "SELECT cohort_id::text FROM oakridge.attempt WHERE id=$1", [request.attempt_id]);
+        if (location[0]) await applier.lock_stage_cohorts_in(tx, location[0].cohort_id as CohortId);
         const rows = await tx.query<{ readonly run_id: string; readonly cohort_id: string;
           readonly stage_instance_id: string; readonly stage_contract: JsonValue; readonly status: CoreStatus;
+          readonly cohort_state: string;
           readonly session_id: string | null; readonly record_version: string;
           readonly effect_descriptor: JsonValue | null }>(
           `SELECT attempt.run_id::text,attempt.cohort_id::text,attempt.stage_instance_id::text,
-                  stage.stage_contract,attempt.status,session.id::text AS session_id,
+                  stage.stage_contract,attempt.status,cohort.state AS cohort_state,session.id::text AS session_id,
                   run.record_version::text,launch.effect_descriptor
            FROM oakridge.attempt attempt JOIN oakridge.cohort cohort ON cohort.id=attempt.cohort_id
            JOIN oakridge.stage_instance stage ON stage.id=attempt.stage_instance_id
            JOIN oakridge.workflow_run run ON run.id=attempt.run_id
            LEFT JOIN oakridge.session session ON session.attempt_id=attempt.id
            LEFT JOIN oakridge.run_transition launch ON launch.id=session.launch_transition_id
-           WHERE attempt.id=$1 FOR UPDATE OF cohort,attempt`, [request.attempt_id]);
+           WHERE attempt.id=$1 FOR UPDATE OF attempt`, [request.attempt_id]);
         const attempt = rows[0];
         if (!attempt) return { kind: "work_not_found", detail: `attempt '${request.attempt_id}' was not found` };
         if (request.capability_hash !== expected) return { kind: "invalid_capability", detail: "work-order capability is invalid" };
         if (attempt.status === "cancelled") return { kind: "work_abandoned", detail: "attempt was cancelled" };
         if (attempt.status === "failed") return { kind: "work_not_active", detail: "attempt has failed" };
+        if (attempt.cohort_state === "build_review")
+          return { kind: "refused", code: "awaiting_review", detail: "cohort is awaiting review" };
         const declared = findDeclaredOutput(attempt.stage_contract, request.output_name);
         if (!declared) return { kind: "slot_not_found", detail: `stage does not declare output '${request.output_name}'` };
         const contract = attempt.stage_contract as unknown as import("../domain/compiled-workflow").CompiledStageContract;
@@ -633,7 +642,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         const location = await tx.query<{ readonly cohort_id: string }>(
           "SELECT cohort_id::text FROM oakridge.wait_gate WHERE id=$1", [request.wait_id]);
         if (!location[0]) return { kind: "wait_not_found", detail: "gate not found" };
-        await tx.query("SELECT id FROM oakridge.cohort WHERE id=$1 FOR UPDATE", [location[0].cohort_id]);
+        await applier.lock_stage_cohorts_in(tx, location[0].cohort_id as CohortId);
         const rows = await tx.query<{ readonly id: string; readonly run_id: string; readonly cohort_id: string;
           readonly status: string; readonly closes_on: JsonValue; readonly command_workflow_id: string;
           readonly record_version: string }>(

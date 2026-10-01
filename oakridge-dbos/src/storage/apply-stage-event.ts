@@ -83,6 +83,16 @@ class ApplyAbort extends Error {
 export class StageEventApplier {
   constructor(private readonly dependencies: ApplyStageEventDependencies) {}
 
+  async lock_stage_cohorts_in(tx: SqlExecutor, cohort_id: CohortId): Promise<readonly CohortRow[]> {
+    const location = await tx.query<{ readonly stage_instance_id: string }>(
+      "SELECT stage_instance_id::text FROM oakridge.cohort WHERE id=$1", [cohort_id]);
+    if (!location[0]) return [];
+    return tx.query<CohortRow>(
+      `SELECT id::text,run_id::text,stage_instance_id::text,cohort_key,state,status,round,depends_on,
+              durable_version::text,stage_data FROM oakridge.cohort
+       WHERE stage_instance_id=$1 ORDER BY cohort_key FOR UPDATE`, [location[0].stage_instance_id]);
+  }
+
   start_effects(transition_ids: readonly RunTransitionId[]): Promise<void> {
     return this.dependencies.start_effects(transition_ids);
   }
@@ -108,10 +118,8 @@ export class StageEventApplier {
   ): Promise<Result<ApplyOutcome, ApplyStageEventError>> {
     if (visited.has(cohort_id)) return ok({ kind: "ignored", reason: "cohort_terminal" });
     visited.add(cohort_id);
-    const cohorts = await tx.query<CohortRow>(
-      `SELECT id::text,run_id::text,stage_instance_id::text,cohort_key,state,status,round,depends_on,
-              durable_version::text,stage_data FROM oakridge.cohort WHERE id=$1 FOR UPDATE`, [cohort_id]);
-    const cohort = cohorts[0];
+    const cohorts = await this.lock_stage_cohorts_in(tx, cohort_id);
+    const cohort = cohorts.find((candidate) => candidate.id === cohort_id);
     if (!cohort) return err({ operation: "apply_stage_event", cohort_id, kind: "cohort_not_found", detail: "cohort not found" });
     const stages = await tx.query<OwnerRow>(
       "SELECT status,stage_contract FROM oakridge.stage_instance WHERE id=$1 FOR SHARE", [cohort.stage_instance_id]);
@@ -158,7 +166,7 @@ export class StageEventApplier {
     const selected = transition(machine, from, event,
       { event, stage_data: cohort.stage_data, round_outputs, stage_inputs, registry: this.dependencies.registry });
     if (selected.kind === "refused") return ok({ kind: "refused", code: selected.code, from,
-      detail: `machine row ${selected.row_index ?? "none"} refused ${event.kind}` });
+      detail: selected.detail ?? `machine row ${selected.row_index ?? "none"} refused ${event.kind}` });
     const target = readOwn(machine.states, selected.to);
     if (!target) return err({ operation: "apply_stage_event", cohort_id, kind: "effect_failed",
       detail: `target state '${selected.to}' is undeclared` });

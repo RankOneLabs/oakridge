@@ -36,7 +36,8 @@ const summaryOf = (event: RunEvent): string | null => {
     case "start_stage": return "Stage started";
     case "start_attempt": return event.launch_reason === "retry" ? "Retry launched" : `Session launched (attempt ${effect.attempt_number})`;
     case "cohort_transition":
-      return `${effect.unit_label}: ${effect.from_state} → ${effect.to_state}`;
+      return effect.event_kind === "gate_decided" ? "Gate decided"
+        : `${effect.unit_label}: ${effect.from_state} → ${effect.to_state}`;
     case "none":
       return event.launch_reason === "gate_decided" ? "Gate decided"
         : event.launch_reason === "operator" ? "Operator action" : null;

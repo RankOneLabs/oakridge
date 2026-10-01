@@ -1046,7 +1046,6 @@ export class AcpSessionService {
       case "succeeded":
         return { kind: "succeeded", session };
       case "failed":
-      case "unknown":
         return {
           kind: "failed",
           session,
@@ -1054,6 +1053,8 @@ export class AcpSessionService {
           failure_detail:
             turn.failure_detail ?? `initial turn is ${turn.status}`,
         };
+      case "unknown":
+        return { kind: "pending", session };
       case "cancelled":
         return {
           kind: "failed",

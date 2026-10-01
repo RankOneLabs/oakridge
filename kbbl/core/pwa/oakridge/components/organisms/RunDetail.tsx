@@ -162,7 +162,6 @@ export function RunDetail({ runId, run, activeGates, mergeWaits, onRunDeleted, o
                 if (units != null && isFannedOut(stage)) {
                   return units.map((unit) => {
                     const cohortId = unit.cohort_id;
-                    const cohortRouteId = `${stage.stage_instance_id}:${unit.unit_id}`;
                     const canConfirmMerge = mergeWaits.some((wait) => wait.cohort_id === cohortId);
                     const unitArtifacts = stage.artifacts.filter(
                       (a) => a.label === unit.unit_id,
@@ -193,13 +192,13 @@ export function RunDetail({ runId, run, activeGates, mergeWaits, onRunDeleted, o
                         } : undefined}
                         confirmMerge={canConfirmMerge ? {
                           onConfirm: () => confirmMergeMutation.mutate({
-                            cohortId: cohortRouteId,
+                            cohortId,
                             operatorComment: "Operator confirmed the pull request merged from the run workspace",
                           }),
                           isConfirming: confirmMergeMutation.isPending
-                            && confirmMergeMutation.variables?.cohortId === cohortRouteId,
+                            && confirmMergeMutation.variables?.cohortId === cohortId,
                           error: confirmMergeMutation.isError
-                            && confirmMergeMutation.variables?.cohortId === cohortRouteId
+                            && confirmMergeMutation.variables?.cohortId === cohortId
                             ? (confirmMergeMutation.error instanceof Error
                               ? confirmMergeMutation.error.message
                               : "Could not confirm the merge")

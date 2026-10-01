@@ -204,7 +204,7 @@ export const pollStagePullRequests = async (dependencies: StagePullRequestPollDe
     }
     const transition_ids: RunTransitionId[] = [];
     const state = await dependencies.sql.transaction(async (tx): Promise<string> => {
-      await tx.query("SELECT id FROM oakridge.cohort WHERE id=$1 FOR UPDATE", [cohort_id]);
+      await dependencies.stage_events.lock_stage_cohorts_in(tx, cohort_id);
       const pull = await tx.query<{ readonly id: string }>(
         `SELECT verification.pull_request_id::text AS id FROM oakridge.dev_flow_build_cohort build
          JOIN oakridge.pull_request_verification verification ON verification.id=build.current_verified_pull_request_id

@@ -356,8 +356,19 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
         && candidate.session_role === role && candidate.launch_reason === reason
         && candidate.template_path === entry?.template_path);
       if (!cell) throw new Error(`pinned prompt bundle has no ${stage.stage_key}:${role}:${reason} cell`);
+      const review = reason.startsWith("revision_after_") ? await sql.query<{ readonly feedback: string | null;
+        readonly artifact_id: string; readonly body: JsonValue }>(
+        `SELECT gate.outcome->>'feedback' AS feedback,artifact.id::text AS artifact_id,artifact.body
+         FROM oakridge.wait_gate gate
+         JOIN oakridge.wait_gate_artifact_revision revision ON revision.wait_gate_id=gate.id
+         JOIN oakridge.artifact artifact ON artifact.id=revision.artifact_id
+         WHERE gate.cohort_id=$1 AND gate.outcome->>'action'='request_revision'
+         ORDER BY gate.closed_at DESC,artifact.id`, [row.cohort_id]) : [];
+      const reviewPrompt = review.length > 0
+        ? `\n\n## Previous review\nFeedback: ${review[0]?.feedback ?? ""}\n${review.map((item) =>
+          `Artifact ${item.artifact_id}: ${JSON.stringify(item.body)}`).join("\n")}` : "";
       session_launch = { reason: { transition_id: row.launch_transition_id as RunTransitionId, name: reason },
-        session_role: role, prompt: { template_path: cell.template_path, content: cell.content },
+        session_role: role, prompt: { template_path: cell.template_path, content: `${cell.content}${reviewPrompt}` },
         existing_pull_request: null };
     }
     const resolved = await resolveAttemptExecution({
@@ -467,6 +478,11 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     operator_retry: { retry_through_driver: retryStageCohort,
       abandon: async (cohort_id, detail) => {
         const result = await stageEvents.apply(cohort_id, { kind: "operator_abandon", actor: "operator", detail });
+        if (result.ok && result.value.kind === "applied") {
+          const run = await sql.query<{ readonly run_id: string }>(
+            "SELECT run_id::text FROM oakridge.cohort WHERE id=$1", [cohort_id]);
+          if (run[0]) await sendRunWakeHint(run[0].run_id as WorkflowRunId, `abandon:${result.value.transition_id}`);
+        }
         if (!result.ok) return result.error.kind === "cohort_not_found"
           ? { kind: "not_found" as const }
           : { kind: "refused" as const, code: result.error.kind, detail: result.error.detail };
