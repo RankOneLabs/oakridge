@@ -75,13 +75,16 @@ export class DiagnosisSql implements TransactionalSqlExecutor {
   async query<Row extends object>(statement: string, _parameters: readonly unknown[]): Promise<readonly Row[]> {
     let rows: readonly object[];
     if (statement.includes("AS stage_total")) {
-      if (!statement.includes("FROM oakridge.wait_gate wait") || !statement.includes("verification.invalidated_at IS NULL")) {
+      if (!statement.includes("FROM oakridge.wait_gate wait") || !statement.includes("verification.invalidated_at IS NULL")
+        || !statement.includes("cohort.blocked_reason='retry'") || !statement.includes("cohort.next_actor='operator'")) {
         throw new Error("run attention_count must use the actionable inbox facts");
       }
+      const retryAttention = (this.fixture.units ?? []).filter((unit) =>
+        unit.status === "blocked" && unit.blocked_reason === "retry" && unit.next_actor === "operator").length;
       rows = [{
         id: RUN_ID, title: "Diagnosis fixture", repository_keys: [], workflow_name: "test",
         status: "active", blocked_reason: null, next_actor: "core", current_stage: null,
-        stage_total: String(this.fixture.stages?.length ?? 0), stage_complete: "0", attention_count: "0",
+        stage_total: String(this.fixture.stages?.length ?? 0), stage_complete: "0", attention_count: String(retryAttention),
         parked_count: "0", updated_at: "2026-09-29T00:00:00.000Z", archived: false,
       }];
     } else if (statement.includes("FROM oakridge.stage_instance stage WHERE")) {

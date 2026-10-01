@@ -8,6 +8,16 @@ import { PostgresOperatorProjectionRepository } from "../src/storage/postgres-op
 import { RUN_ID, DiagnosisSql, diagnosisOf, stage, type ArtifactRow, type UnitRow } from "./support/operator-sql-stub";
 
 describe("get_run_diagnosis", () => {
+  test("run summary counts a retry-only cohort as operator attention", async () => {
+    const build = stage(1, "blocked");
+    const repository = new PostgresOperatorProjectionRepository(new DiagnosisSql({ stages: [build], units: [{
+      cohort_id: "30000000-0000-0000-0000-000000000001", stage_instance_id: build.stage_instance_id,
+      unit_id: "lost", params: null, status: "blocked", blocked_reason: "retry", next_actor: "operator",
+      session_id: null, gate_step: null,
+    }] }), "test-app-version", createDevFlowAdapterRegistry());
+    expect((await repository.list_runs())[0]?.attention_count).toBe(1);
+  });
+
   test("unit.retryable mirrors selectCohortRetryability", async () => {
     const build = stage(1, "blocked");
     const units: UnitRow[] = [

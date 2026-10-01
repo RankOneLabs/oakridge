@@ -40,6 +40,12 @@ describe("selectRunActivity", () => {
     expect(selectRunActivity([event({ effect: { kind: "unrecognized", effect_kind: "future_step" } })], run)[0]?.summary)
       .toBe("Recorded future_step");
   });
+
+  it("shows a transitioned dev-flow retry as launched activity", () => {
+    const retry = event({ effect: { kind: "dev_flow_build_cohort_transition",
+      event: { kind: "operator_retry_requested", pull_request_url: null }, disposition: "transitioned" } });
+    expect(selectRunActivity([retry], run)[0]?.summary).toBe("Retry launched");
+  });
 });
 
 describe("fetchRunEvents", () => {

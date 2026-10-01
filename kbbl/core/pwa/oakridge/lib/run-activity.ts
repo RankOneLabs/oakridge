@@ -23,6 +23,7 @@ const buildLabels: Partial<Record<BuildCohortEventKind, string>> = {
   build_artifact_recorded: "Build output recorded",
   pull_request_verified: "Pull request verified",
   builder_attempt_lost: "Builder session lost",
+  operator_retry_requested: "Retry launched",
   build_review_approved: "Build approved",
   build_review_revision_requested: "Build revision requested",
   assessment_artifact_recorded: "Assessment recorded",

@@ -464,6 +464,10 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
                       ON verification.id=build_cohort.current_verified_pull_request_id AND verification.invalidated_at IS NULL
                     JOIN oakridge.pull_request pull_request ON pull_request.id=verification.pull_request_id
                    WHERE cohort.run_id=run.id AND cohort.status='blocked' AND cohort.next_actor='external'
+                     AND run.archived=false)
+               + (SELECT count(*) FROM oakridge.cohort cohort
+                   WHERE cohort.run_id=run.id AND cohort.status='blocked' AND cohort.blocked_reason='retry'
+                     AND cohort.next_actor='operator' AND run.status IN ('active','blocked')
                      AND run.archived=false))::text AS attention_count,
               COALESCE(waits.parked_count,0)::text AS parked_count,
               GREATEST(run.created_at,COALESCE(run.ended_at,run.created_at),COALESCE(progress.updated_at,run.created_at))::text AS updated_at,

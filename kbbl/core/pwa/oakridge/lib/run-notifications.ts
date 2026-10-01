@@ -13,6 +13,7 @@ export const selectRunNotification = (event: RunEvent): RunNotification | null =
   if (effect.kind === "dev_flow_build_cohort_transition" && effect.disposition === "transitioned") {
     switch (effect.event.kind) {
       case "builder_attempt_lost": kind = "error"; message = "Builder session lost"; break;
+      case "operator_retry_requested": kind = "info"; message = "Retry launched"; break;
       case "assessor_attempt_lost": kind = "error"; message = "Assessor session lost"; break;
       case "pull_request_mismatch": kind = "error"; message = "Pull request mismatch"; break;
       case "replacement_pull_request_required": kind = "error"; message = "Replacement pull request required"; break;

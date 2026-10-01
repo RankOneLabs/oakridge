@@ -28,4 +28,11 @@ describe("selectRunFrameNotification", () => {
       event: { kind: "builder_attempt_lost", pull_request_url: null }, disposition: "transitioned",
     } })?.kind).toBe("error");
   });
+
+  it("reports a transitioned dev-flow retry as a live info notification", () => {
+    const retry = { ...frame(false), effect: { kind: "dev_flow_build_cohort_transition" as const,
+      event: { kind: "operator_retry_requested" as const, pull_request_url: null }, disposition: "transitioned" } };
+    expect(selectRunFrameNotification(retry)).toMatchObject({ kind: "info", message: "Retry launched" });
+    expect(selectRunFrameNotification({ ...retry, replayed: true })).toBeNull();
+  });
 });
