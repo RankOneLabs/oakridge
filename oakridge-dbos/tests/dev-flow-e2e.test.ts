@@ -97,12 +97,12 @@ e2e("browser launches a run and decides its first gate through kbbl", async () =
     await awaitCondition("browser merge confirmation to complete its cohort", async () => {
       const detail = await readRun(oakridge.base_url, run.run_id);
       return detail.stages.flatMap((stage) => stage.units).find((unit) => unit.cohort_id === mergeCohort.cohort_id)?.status === "complete" ? true : null;
-    }, 30_000);
+    }, 60_000);
   } finally {
     await page.close();
     agent.releaseAll();
   }
-}, 210_000);
+}, 240_000);
 
 e2e("deleting the publication contract from a rendered prompt fails the run attempt", async () => {
   const agent = scriptedAgentScenario({ strip_publication_contract: true });

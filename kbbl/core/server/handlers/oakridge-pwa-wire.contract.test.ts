@@ -41,9 +41,8 @@ test("every effect kind projected by projectRunEvent parses as a PWA frame", asy
   expect(response.status).toBe(200);
   const wire: unknown = await response.json();
   if (!Array.isArray(wire)) throw new Error("run events response is not an array");
-  for (const value of wire) {
-    expect(parseRunEventFrame({ ...value, replayed: false }).effect.kind).toBeTruthy();
-  }
+  expect(wire.map((value) => parseRunEventFrame({ ...value, replayed: false }).effect.kind))
+    .toEqual(effectDescriptors.map((descriptor) => descriptor.kind === "future_effect" ? "unrecognized" : descriptor.kind));
 });
 
 test("a malformed known effect names its bad field while future effects remain visible", () => {
