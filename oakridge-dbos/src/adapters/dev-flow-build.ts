@@ -26,7 +26,7 @@ export const BUILD_LAUNCH_REASONS = {
 
 export type BuildSessionRole = keyof typeof BUILD_LAUNCH_REASONS;
 export type BuildLaunchReason = (typeof BUILD_LAUNCH_REASONS)[BuildSessionRole][number];
-export type BuildCohortPhase = "pending" | "builder_active" | "build_review" | "assessor_active" | "assessment_review" | "awaiting_merge" | "complete";
+export type BuildCohortPhase = "pending" | "builder_active" | "build_lost" | "build_review" | "assessor_active" | "assess_lost" | "assessment_review" | "awaiting_merge" | "complete";
 export type BuildEventDisposition = "transitioned" | "recorded_only";
 export type BuildGateName = "build_review" | "assessment_review";
 
@@ -57,6 +57,7 @@ export type BuildCohortEvent =
   | { readonly kind: "assessment_artifact_recorded"; readonly artifact_id: string }
   | { readonly kind: "assessment_outcome_observed"; readonly outcome: string }
   | { readonly kind: "assessor_attempt_lost" }
+  | { readonly kind: "operator_retry_requested" }
   | { readonly kind: "assessment_review_approved" }
   | { readonly kind: "assessment_review_revision_requested" }
   | { readonly kind: "pull_request_mismatch"; readonly pull_request_url: string }
@@ -176,6 +177,9 @@ export const projectBuildCohortState = (state: BuildCohortState): BuildCohortPro
   if (state.phase === "builder_active" || state.phase === "assessor_active") {
     return { status: "active", blocked_reason: null, next_actor: "agent", outcome: null };
   }
+  if (state.phase === "build_lost" || state.phase === "assess_lost") {
+    return { status: "blocked", blocked_reason: "retry", next_actor: "operator", outcome: null };
+  }
   if (state.phase === "build_review" || state.phase === "assessment_review") {
     return { status: "blocked", blocked_reason: "gate", next_actor: "operator", outcome: null };
   }
@@ -255,7 +259,7 @@ const applyEvent = (machine: BuildCohortMachine, state: BuildCohortState, event:
       const next = observeVerifiedPullRequest(state, event);
       return next.phase === state.phase ? recorded(next) : transitioned(next);
     }
-    if (event.kind === "builder_attempt_lost") return transitioned(state, launch(machine, state, "build", "retry_after_lost_attempt"));
+    if (event.kind === "builder_attempt_lost") return transitioned({ ...state, phase: "build_lost" });
   }
   if (event.kind === "pull_request_mismatch" && state.phase !== "pending") {
     const next = restartBuilder(state);
@@ -277,7 +281,15 @@ const applyEvent = (machine: BuildCohortMachine, state: BuildCohortState, event:
   }
   if (state.phase === "assessor_active") {
     if (event.kind === "assessment_artifact_recorded") return transitioned({ ...state, phase: "assessment_review", assessment_artifact_id: event.artifact_id });
-    if (event.kind === "assessor_attempt_lost") return transitioned(state, launch(machine, state, "assessment", "retry_after_lost_attempt"));
+    if (event.kind === "assessor_attempt_lost") return transitioned({ ...state, phase: "assess_lost" });
+  }
+  if (event.kind === "operator_retry_requested" && state.phase === "build_lost") {
+    const next = { ...state, phase: "builder_active" } as const;
+    return transitioned(next, launch(machine, next, "build", "retry_after_lost_attempt"));
+  }
+  if (event.kind === "operator_retry_requested" && state.phase === "assess_lost") {
+    const next = { ...state, phase: "assessor_active" } as const;
+    return transitioned(next, launch(machine, next, "assessment", "retry_after_lost_attempt"));
   }
   if (state.phase === "assessment_review") {
     if (event.kind === "assessment_review_revision_requested") {

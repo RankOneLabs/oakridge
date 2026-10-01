@@ -8,13 +8,13 @@
  * owns is everything hanging off those owners — stage instances, cohorts,
  * attempts, sessions, artifacts and waits.
  */
-import { attemptIdFor, sessionIdFor, transitionIdFor, waitGateCommandWorkflowId, waitGateIdFor } from "../decision/ids";
+import { sessionIdFor, waitGateCommandWorkflowId, waitGateIdFor } from "../decision/ids";
 import type { ArtifactEnvelope, ExecutionRequest, ExternalExecutionReference } from "../domain/execution";
 import { selectArtifactGateDisposition, selectBuiltInGateDisposition } from "../domain/gates";
-import { err, ok, type ArtifactId, type AttemptId, type CohortId, type JsonValue, type OutputCollectionKey, type Result, type RunRecordVersion, type SessionId, type StageInstanceId, type UnitId, type WaitId, type WorkflowRunId } from "../domain/primitives";
+import { err, ok, type ArtifactId, type AttemptId, type CohortId, type JsonValue, type Result, type RunRecordVersion, type SessionId, type StageInstanceId, type UnitId, type WaitId, type WorkflowRunId } from "../domain/primitives";
 import type { BlockedReason, CoreStatus, NextActor } from "../domain/records";
 import type { DeleteRunResult } from "../domain/runs";
-import { findDeclaredOutput, parseStageContractOutputs, selectWaitClosesOn, selectWaitKind } from "../domain/stage-contract";
+import { findDeclaredOutput, selectWaitClosesOn, selectWaitKind } from "../domain/stage-contract";
 import type {
   AttemptExecution,
   BindSessionResult,
@@ -40,14 +40,12 @@ import type {
   RecordCohortEvent,
   RecordCohortEventResult,
   SessionStatusWrite,
-  RetryCohort,
-  RetryCohortResult,
   RunDecision,
   RunRecordRepositoryError,
   StartAttempt,
   StartAttemptResult,
 } from "../domain/run-record";
-import { capabilityFor, capabilityHash, rebindWorkOrderPublication, type MissingOutputSlot } from "../runtime/resolve-work-order";
+import { capabilityFor, capabilityHash } from "../runtime/resolve-work-order";
 import { loadRunSnapshot } from "./load-run-snapshot";
 import { abandonCohortAttempts, writeSessionStatus, type PostgresRunRecordWriter } from "./postgres-run-record";
 import type { RunRecordRepository } from "./repositories";
@@ -55,14 +53,6 @@ import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 
 const CAPABILITY_SECRET = "work_order_capability";
 
-/**
- * The identity of one output slot, for comparing a declared output against a
- * stored row. A structured key rather than a delimiter-joined string: the two
- * halves are free text from a definition, and the previous separator was a
- * literal NUL, which made the whole source file read as binary to `grep`.
- */
-const slotKey = (output_name: string, collection_key: string | null): string =>
-  JSON.stringify([output_name, collection_key]);
 
 /** How many version races one owner's cancellation will lose before giving up. */
 const CANCEL_OWNER_ATTEMPTS = 3;
@@ -299,12 +289,22 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
     if (!row) return null;
     const accepted_outputs = await this.listAcceptedCohortOutputs(tx, cohort_id);
     const waits = await this.listCohortWaits(tx, cohort_id);
+    const assessmentIds = [...accepted_outputs.filter((artifact) => artifact.artifact_type === "dev.assessment")
+      .map((artifact) => artifact.artifact_id), ...waits.open.filter((wait) => wait.output_name === "assessment")
+      .flatMap((wait) => wait.artifact_id === null ? [] : [wait.artifact_id])];
+    const assessmentRows = assessmentIds.length > 0
+      ? await tx.query<{ readonly published_at: string | null }>(
+        "SELECT max(created_at)::text AS published_at FROM oakridge.artifact WHERE id=ANY($1::uuid[])", [assessmentIds]) : [];
     const attempts = await tx.query<{ readonly attempt_count: string; readonly open_attempt_id: string | null }>(
         `SELECT count(*)::text AS attempt_count,
                 (SELECT open.id::text FROM oakridge.attempt open
                   WHERE open.cohort_id=$1 AND open.ended_at IS NULL
                   ORDER BY open.attempt_number DESC LIMIT 1) AS open_attempt_id
          FROM oakridge.attempt WHERE cohort_id=$1`, [cohort_id]);
+    const latest = await tx.query<{ readonly attempt_id: string; readonly attempt_number: number;
+      readonly status: CoreStatus; readonly created_at: string; readonly ended_at: string | null }>(
+      `SELECT id::text AS attempt_id,attempt_number,status,created_at::text,ended_at::text
+       FROM oakridge.attempt WHERE cohort_id=$1 ORDER BY attempt_number DESC LIMIT 1`, [cohort_id]);
     return {
       run_id: row.run_id as WorkflowRunId, stage_instance_id: row.stage_instance_id as StageInstanceId,
       stage_key: row.stage_key, cohort_id: row.id as CohortId, cohort_key: row.cohort_key, status: row.status,
@@ -312,6 +312,8 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       durable_version: Number(row.durable_version), stage_data: row.stage_data,
       attempt_count: Number(attempts[0]?.attempt_count ?? 0),
       latest_unfinished_attempt_id: (attempts[0]?.open_attempt_id ?? null) as AttemptId | null,
+      latest_attempt: latest[0] ? { ...latest[0], attempt_id: latest[0].attempt_id as AttemptId } : null,
+      latest_assessment_published_at: assessmentRows[0]?.published_at ?? null,
       accepted_outputs, open_waits: waits.open, decided_gates: waits.decided,
     };
     });
@@ -518,133 +520,16 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       attempt_id: row.attempt_id as AttemptId, adapter_reference: row.adapter_reference }));
   }
 
-  /**
-   * One further attempt at a cohort, claimed under the operator's own key.
-   *
-   * The replacement's execution request is rebound from the previous attempt's
-   * — same prompt, workdir and inputs, a freshly minted attempt id and
-   * publication capability, and `expected_artifacts` narrowed to the outputs the
-   * cohort still owes. A key that has already produced an attempt returns that
-   * attempt: `Idempotency-Key` exists so a re-submit after a *completed* retry
-   * cannot open a second session, which the transition ledger's own uniqueness
-   * cannot see because the two calls are at different owner versions.
-   */
-  async retry_cohort(input: RetryCohort, retried_at: string): Promise<RetryCohortResult> {
-    const located = await this.locateCohort(input.target);
-    if (!located) return { kind: "cohort_not_found", detail: `no cohort matches ${JSON.stringify(input.target)}` };
-    const claimed = await this.sql.query<{ readonly id: string; readonly attempt_number: number; readonly durable_version: string }>(
-      `SELECT attempt.id::text,attempt.attempt_number,cohort.durable_version::text
+  async find_cohort_retry_claim(cohort_id: CohortId, idempotency_key: string): Promise<{
+    readonly attempt_id: AttemptId; readonly attempt_number: number; readonly durable_version: number } | null> {
+    const rows = await this.sql.query<{ readonly attempt_id: string; readonly attempt_number: number;
+      readonly durable_version: string }>(
+      `SELECT attempt.id::text AS attempt_id,attempt.attempt_number,cohort.durable_version::text
        FROM oakridge.attempt attempt JOIN oakridge.cohort cohort ON cohort.id=attempt.cohort_id
-       WHERE attempt.cohort_id=$1 AND attempt.idempotency_key=$2`,
-      [located.cohort_id, input.idempotency_key]);
-    if (claimed[0]) {
-      return { kind: "already_created", run_id: located.run_id, cohort_id: located.cohort_id,
-        attempt_id: claimed[0].id as AttemptId, attempt_number: claimed[0].attempt_number,
-        durable_version: Number(claimed[0].durable_version) };
-    }
-    if (located.status === "complete" || located.status === "failed" || located.status === "cancelled") {
-      return { kind: "not_active", detail: `cohort '${located.cohort_id}' is ${located.status}` };
-    }
-    const openWaits = await this.sql.query<{ readonly id: string }>(
-      "SELECT id::text FROM oakridge.wait_gate WHERE cohort_id=$1 AND status='open' LIMIT 1", [located.cohort_id]);
-    if (openWaits[0]) {
-      return { kind: "actionable_wait", detail: `cohort '${located.cohort_id}' is waiting on ${openWaits[0].id}; decide it instead of retrying` };
-    }
-    const latest = await this.sql.query<AttemptRow & { readonly ended_at: string | null }>(
-      `SELECT ${ATTEMPT_COLUMNS},attempt.ended_at::text
-       ${ATTEMPT_SOURCE} WHERE attempt.cohort_id=$1 ORDER BY attempt.attempt_number DESC LIMIT 1`, [located.cohort_id]);
-    const basisRow = latest[0];
-    if (!basisRow) return { kind: "not_active", detail: `cohort '${located.cohort_id}' has no attempt to retry from` };
-    if (basisRow.ended_at === null && basisRow.status === "active") {
-      return { kind: "work_in_progress", detail: `attempt ${basisRow.attempt_number} of cohort '${located.cohort_id}' is still running` };
-    }
-    const basis = attemptExecution(basisRow);
-    const missing = await this.listMissingSlots(located.cohort_id, located.stage_instance_id);
-    const attempt_number = basisRow.attempt_number + 1;
-    const attempt_id = attemptIdFor(located.cohort_id, attempt_number);
-    const rebound = rebindWorkOrderPublication({
-      basis: basis.request, work_order_id: attempt_id as unknown as import("../domain/primitives").WorkOrderId,
-      capability_seed: await this.load_work_order_capability_seed(), missing,
-      ...(basis.adapter_reference && basis.adapter_reference.kind === "kbbl_session"
-        ? { retry_workspace_source: { execution_id: basis.request.execution_id, external_reference: basis.adapter_reference } }
-        : {}),
-    });
-    if (!rebound) return { kind: "not_active", detail: `attempt ${basisRow.attempt_number} carries no publication authority to retry from` };
-    const committed = await this.commit_cohort_launch({
-      event: { run_id: located.run_id, cohort_id: located.cohort_id, expected_version: located.durable_version,
-        launch_reason: "retry", change: { status: "active", blocked_reason: null, next_actor: "agent", outcome: null },
-        stage_data: located.stage_data, reopen_output_names: [], effect: { kind: "start_attempt", cohort_id: located.cohort_id, attempt_id, attempt_number },
-        actor: input.actor, recorded_at: retried_at },
-      attempt: { run_id: located.run_id, stage_instance_id: located.stage_instance_id, cohort_id: located.cohort_id,
-        attempt_id, attempt_number, adapter_type: basis.adapter_type, request: rebound.request,
-        launch_transition_id: transitionIdFor({ kind: "cohort", id: located.cohort_id }, located.durable_version + 1),
-        session_id: sessionIdFor(attempt_id), idempotency_key: input.idempotency_key, created_at: retried_at },
-    });
-    if (!committed.ok) return committed.error.kind === "version_conflict" || committed.error.kind === "owner_terminal"
-      ? { kind: "work_in_progress", detail: committed.error.detail }
-      : { kind: "cohort_not_found", detail: committed.error.detail };
-    const result_attempt_id = committed.value.attempt_id;
-    return { kind: committed.value.kind, run_id: located.run_id, cohort_id: located.cohort_id,
-      attempt_id: result_attempt_id, attempt_number,
-      durable_version: committed.value.durable_version };
-  }
-
-  private async locateCohort(target: RetryCohort["target"]): Promise<{
-    readonly run_id: WorkflowRunId; readonly cohort_id: CohortId; readonly stage_instance_id: StageInstanceId;
-    readonly status: CoreStatus; readonly durable_version: number; readonly stage_data: JsonValue;
-  } | null> {
-    const rows = target.kind === "cohort"
-      ? await this.sql.query<CohortVersionRow>(`SELECT ${COHORT_STATE_COLUMNS} FROM oakridge.cohort cohort
-          JOIN oakridge.stage_instance stage ON stage.id=cohort.stage_instance_id WHERE cohort.id=$1`, [target.cohort_id])
-      : await this.sql.query<CohortVersionRow>(`SELECT ${COHORT_STATE_COLUMNS} FROM oakridge.cohort cohort
-          JOIN oakridge.stage_instance stage ON stage.id=cohort.stage_instance_id
-          WHERE cohort.stage_instance_id=$1 AND cohort.cohort_key=$2`, [target.stage_instance_id, target.cohort_key]);
+       WHERE attempt.cohort_id=$1 AND attempt.idempotency_key=$2`, [cohort_id, idempotency_key]);
     const row = rows[0];
-    if (!row) return null;
-    return { run_id: row.run_id as WorkflowRunId, cohort_id: row.id as CohortId,
-      stage_instance_id: row.stage_instance_id as StageInstanceId, status: row.status,
-      durable_version: Number(row.durable_version), stage_data: row.stage_data };
-  }
-
-  /**
-   * The declared outputs a cohort still owes — no accepted revision in the slot.
-   *
-   * A slot's identity is `(output_name, collection_key)` on both sides, because a
-   * collecting output is accepted once per key: comparing names alone would call
-   * a whole collection held because one sibling was. The key is carried into the
-   * result rather than nulled, since `rebindWorkOrderPublication` turns it back
-   * into the `unit_id` the retried executor publishes under — dropping it made a
-   * retried `brief_writer` re-owe every brief with no cohort key at all.
-   *
-   * The keys come from the rows this cohort already has: a declared output is owed
-   * under no key until something has been published into it, and a published slot
-   * names the real one.
-   */
-  private async listMissingSlots(cohort_id: CohortId, stage_instance_id: StageInstanceId): Promise<readonly MissingOutputSlot[]> {
-    const contracts = await this.sql.query<{ readonly stage_contract: JsonValue }>(
-      "SELECT stage_contract FROM oakridge.stage_instance WHERE id=$1", [stage_instance_id]);
-    const contract = contracts[0]?.stage_contract;
-    if (contract === undefined) return [];
-    const rows = await this.sql.query<{ readonly output_name: string; readonly collection_key: string | null; readonly accepted: boolean }>(
-      `SELECT acceptance.output_name,acceptance.collection_key,true AS accepted
-         FROM oakridge.artifact_acceptance acceptance
-         JOIN oakridge.artifact_owner owner ON owner.artifact_id=acceptance.artifact_id
-        WHERE owner.cohort_id=$1
-       UNION ALL
-       SELECT slot.output_name,slot.collection_key,false AS accepted
-         FROM oakridge.wait_gate_output_slot slot
-         JOIN oakridge.wait_gate wait ON wait.id=slot.wait_gate_id
-        WHERE wait.cohort_id=$1`, [cohort_id]);
-    const held = new Set(rows.filter((row) => row.accepted).map((row) => slotKey(row.output_name, row.collection_key)));
-    const owed = new Map<string, MissingOutputSlot>(parseStageContractOutputs(contract)
-      .map((output) => [slotKey(output.output_name, null), { output_name: output.output_name, collection_key: null }]));
-    for (const row of rows) {
-      if (row.collection_key === null) continue;
-      owed.delete(slotKey(row.output_name, null));
-      owed.set(slotKey(row.output_name, row.collection_key),
-        { output_name: row.output_name, collection_key: row.collection_key as OutputCollectionKey });
-    }
-    return [...owed].flatMap(([key, slot]) => held.has(key) ? [] : [slot]);
+    return row ? { attempt_id: row.attempt_id as AttemptId, attempt_number: row.attempt_number,
+      durable_version: Number(row.durable_version) } : null;
   }
 
   async load_work_order_capability_seed(): Promise<string> {

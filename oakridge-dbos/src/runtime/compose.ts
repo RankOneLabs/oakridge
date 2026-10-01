@@ -57,7 +57,7 @@ import { PostgresRunRecordRepository } from "../storage/postgres-run-record-repo
 import { PostgresWorkflowDefinitionRepository } from "../storage/postgres-workflow-definitions";
 import { PgPostgresExecutor } from "../storage/sql-executor";
 import { findExecutorAdapter, registerExecutorAdapter } from "./executor-registry";
-import { recordCohortAdapterEvent, registerRunRecordWorkflowServices, type CohortMachineDriver } from "../workflows/run-record-topology";
+import { recordCohortAdapterEvent, registerRunRecordWorkflowServices, retryCohortThroughDriver, type CohortMachineDriver } from "../workflows/run-record-topology";
 import "../workflows/collaboration-responder";
 import { DbosRunLaunchClient } from "./dbos-run-launch-client";
 import { DbosCollaborationPingClient, PostgresSessionMessageRecipientResolver, PostgresSessionMessageRepository } from "./collaboration-ping";
@@ -321,7 +321,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const app = createApp({
     configuration: { projects, definitions, project_identity: projectIdentity, now,
       prompt_templates: promptTemplates, adapter_roles: adapterRegistry },
-    operator_retry: { records: runRecords, now, send_cohort_wake: sendCohortWakeHint, send_run_wake: sendRunWakeHint },
+    operator_retry: { retry_through_driver: retryCohortThroughDriver },
     run_lifecycle: { records: runRecords },
     domain_reads: { stages, artifacts, session_holds: projections, session_run_locations: projections },
     work_order_artifact_callback: { records: runRecords, now, send_cohort_wake: sendCohortWakeHint, send_run_wake: sendRunWakeHint },

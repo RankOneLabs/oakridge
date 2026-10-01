@@ -32,8 +32,6 @@ import type {
   RecordCohortEvent,
   RecordCohortEventResult,
   SessionStatusWrite,
-  RetryCohort,
-  RetryCohortResult,
   RunDecision,
   RunRecordRepositoryError,
   StartAttempt,
@@ -104,8 +102,8 @@ export interface RunRecordRepository {
   observe_session(input: ObserveSession): Promise<SessionStatusWrite>;
   mark_session_fenced(session_id: import("../domain/primitives").SessionId, fenced_at: string): Promise<void>;
   list_prior_sessions_to_fence(cohort_id: CohortId, attempt_id: AttemptId): Promise<readonly import("../domain/run-record").PriorSessionToFence[]>;
-  /** An operator retry: one further attempt at a cohort, claimed under the caller's key. */
-  retry_cohort(input: RetryCohort, retried_at: string): Promise<RetryCohortResult>;
+  find_cohort_retry_claim(cohort_id: CohortId, idempotency_key: string): Promise<{
+    readonly attempt_id: AttemptId; readonly attempt_number: number; readonly durable_version: number } | null>;
   /** The secret every attempt's publication capability is derived from. */
   load_work_order_capability_seed(): Promise<string>;
   /**

@@ -100,6 +100,7 @@ interface Projection { readonly status: CoreStatus; readonly blocked_reason: Blo
 const ACTIVE: Projection = { status: "active", blocked_reason: null, next_actor: "agent", outcome: null };
 const GATED: Projection = { status: "blocked", blocked_reason: "gate", next_actor: "operator", outcome: null };
 const COMPLETE: Projection = { status: "complete", blocked_reason: null, next_actor: null, outcome: { kind: "succeeded" } };
+const LOST: Projection = { status: "blocked", blocked_reason: "retry", next_actor: "operator", outcome: null };
 
 export interface SingleRoleCohortDriverDependencies {
   readonly records: Pick<RunRecordRepository, "load_work_order_capability_seed">;
@@ -188,6 +189,13 @@ export const createSingleRoleCohortDriver = (dependencies: SingleRoleCohortDrive
           launch_reason: "artifact_accepted", actor: "core" }, launch: null };
     }
 
+    if (context.state.status === "blocked" && context.state.blocked_reason === "retry") return null;
+    if (stageData.launched > 0 && context.state.latest_attempt?.ended_at
+      && context.state.latest_unfinished_attempt_id === null) {
+      return { event: { change: LOST, stage_data: encode(stageData), reopen_output_names: [],
+        effect: { kind: "none" }, launch_reason: "retry", actor: "core" }, launch: null };
+    }
+
     if (stageData.launched === 0) {
       return launchDecision(context, contract, role, INITIAL_REASON, { ...stageData, launched: 1 }, dependencies, "initial");
     }
@@ -196,7 +204,15 @@ export const createSingleRoleCohortDriver = (dependencies: SingleRoleCohortDrive
   },
 
   /** A one-role stage takes in no facts from outside the run. */
-  apply_event: async () => null,
+  apply_event: async (context, event) => {
+    if (!isObject(event) || event.kind !== "operator_retry_requested") return null;
+    if (context.state.status !== "blocked" || context.state.blocked_reason !== "retry") return null;
+    const contract = contractOf(context.stage_contract);
+    const { role, reasons } = roleOf(contract);
+    const stageData = stageDataOf(context.state);
+    const reason = reasons.has("operator_retry") ? "operator_retry" : INITIAL_REASON;
+    return launchDecision(context, contract, role, reason, { ...stageData, launched: stageData.launched + 1 }, dependencies, "retry");
+  },
 });
 
 const launchDecision = async (

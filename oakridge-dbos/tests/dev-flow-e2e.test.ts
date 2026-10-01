@@ -396,6 +396,7 @@ e2e("scenario 4: approving one of seven briefs starts no build; approving all se
     });
     expect(await countBuildUnits(launched.run_id)).toBe(7);
   } finally {
+    await fetch(`${oakridge.base_url}/workflow_runs/${launched.run_id}/cancel`, { method: "POST" });
     agent.releaseAll();
   }
 }, 120_000);
@@ -410,10 +411,19 @@ e2e("c5 refuses a forge head that disagrees with the real Git remote", async () 
   const launched = await launchRun(oakridge.base_url, oakridge.definition.id, runContext(oakridge.base_url, oakridge.repository.path));
   oakridge.started_runs.push(launched.root_workflow_id);
   try {
-    const firstSid = await driveRun(oakridge.base_url, agent, launched, {
+    const kbblSession = async (sid: string): Promise<{ readonly sid: string; readonly worktreeBranch: string | null; readonly worktreePath: string } | null> => {
+      const response = await fetch(`${oakridge.kbbl_url}/sessions?include=archived`);
+      const body = await response.json() as { readonly sessions: readonly {
+        readonly sid: string; readonly worktreeBranch: string | null; readonly worktreePath: string }[] };
+      return body.sessions.find((session) => session.sid === sid) ?? null;
+    };
+    const firstSession = await driveRun(oakridge.base_url, agent, launched, {
       decide: () => "approve",
-      until: async () => (await readRun(oakridge.base_url, launched.run_id)).stages
-        .find((stage) => stage.name === "build")?.units.find((unit) => unit.unit_id === "foundation")?.sid ?? null,
+      until: async () => {
+        const sid = (await readRun(oakridge.base_url, launched.run_id)).stages
+          .find((stage) => stage.name === "build")?.units.find((unit) => unit.unit_id === "foundation")?.sid;
+        return sid ? kbblSession(sid) : null;
+      },
       timeout_ms: 90_000,
     }).then((result) => result.value);
     await driveRun(oakridge.base_url, agent, launched, {
@@ -422,13 +432,10 @@ e2e("c5 refuses a forge head that disagrees with the real Git remote", async () 
         const detail = await readRun(oakridge.base_url, launched.run_id);
         const foundation = detail.stages.find((stage) => stage.name === "build")?.units
           .find((unit) => unit.unit_id === "foundation");
-        const state = foundation?.params as { readonly build_state?: {
-          readonly accepted_revision?: unknown; readonly verified_pull_request?: unknown;
-        } } | undefined;
-        return foundation?.status === "active" && foundation.sid !== null && foundation.sid !== firstSid
-          && foundation.worktree?.branch === `cohort/${detail.stages.find((stage) => stage.name === "build")?.stage_instance_id}/foundation`
-          && typeof state?.build_state?.accepted_revision === "string"
-          && (state.build_state.verified_pull_request ?? null) === null ? detail : null;
+        const session = foundation?.sid ? await kbblSession(foundation.sid) : null;
+        return foundation?.sid !== null && foundation?.sid !== firstSession.sid
+          && session?.worktreeBranch === `cohort/${detail.stages.find((stage) => stage.name === "build")?.stage_instance_id}/foundation`
+          && session.worktreePath === firstSession.worktreePath ? detail : null;
       },
       timeout_ms: 90_000,
     });
@@ -440,6 +447,7 @@ e2e("c5 refuses a forge head that disagrees with the real Git remote", async () 
     expect((foundation?.params as { readonly build_state?: { readonly verified_pull_request?: unknown } })
       .build_state?.verified_pull_request ?? null).toBeNull();
   } finally {
+    await fetch(`${oakridge.base_url}/workflow_runs/${launched.run_id}/cancel`, { method: "POST" });
     agent.releaseAll();
   }
 }, 120_000);
@@ -625,25 +633,7 @@ e2e("scenario 6b: cancelling a run with an open gate wait clears its stranded ga
   }
 }, 90_000);
 
-/**
- * The operator's correction loop through the real routes: reject one brief
- * of a seven-brief collection, decide the remaining six, retry the unit, and
- * watch the relaunched agent publish only the rejected member into its
- * invalidated slot — then approve the replacement and complete the run.
- *
- * What is proven, and where each step used to dead-end:
- * - `request_revision` invalidates exactly the rejected member's slot and
- *   closes exactly its gate; the six sibling gates stay open.
- * - retry is refused while sibling gates are open (`actionable_wait`) — the
- *   documented limitation, asserted so that a change to it is deliberate.
- * - the retry's execution request carries publication authority minted for
- *   the new work order and `expected_artifacts` narrowed to the rejected
- *   member. `driveRun` emits exactly what a launched request lists and
- *   asserts the PUT target is the launched work order — a request that still
- *   named the abandoned order (the old `retry_unit`) fails right there.
- * - `publish_artifact` accepts the replacement into the invalidated slot as a
- *   fresh chain root, withdraws the rejected artifact, and opens a new gate.
- */
+/** A lost brief waits for an explicit retry, then renders the retry prompt. */
 e2e("scenario 7: a lost brief blocks for retry and the retry uses its dedicated prompt", async () => {
   const agent = scriptedAgentScenario({ skip_first_publication_role: "brief" });
   useScenario(agent);
@@ -684,15 +674,7 @@ e2e("scenario 7: a lost brief blocks for retry and the retry uses its dedicated 
   }
 }, 330_000);
 
-/**
- * The runtime's prompt root for this file is a writable temp copy (see
- * `beforeAll`) exactly so this scenario can remove one file from it and put
- * it back. Removing `build_v2.md` makes `resolveWorkOrder`'s
- * `load_prompt_template` throw inside `apply` — inside `decide_run`'s own
- * transaction, which is the operational-failure boundary spec §3.5 draws:
- * the step retries in place, exhausts, and the root sleeps and asks again,
- * never touching the record and never terminating.
- */
+/** A missing cell in the run's bound bundle delays the first launch, without ending the run. */
 e2e("scenario 8: a missing pinned prompt leaves the first cohort launch pending", async () => {
   const agent = scriptedAgentScenario();
   useScenario(agent);

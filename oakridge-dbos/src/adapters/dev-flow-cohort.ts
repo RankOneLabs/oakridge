@@ -157,7 +157,10 @@ const nextEvent = (
   contract: CompiledStageContract,
 ): BuildCohortEvent | null => {
   const published = publishedRevisions(state, contract);
-  const assessment = published.find((revision) => revision.artifact_type === "dev.assessment");
+  const assessment = published.find((revision) => revision.artifact_type === "dev.assessment"
+    && (state.latest_attempt === null || state.latest_assessment_published_at === undefined
+      || (state.latest_assessment_published_at !== null
+        && state.latest_assessment_published_at >= state.latest_attempt.created_at)));
   if (assessment && build.assessment_artifact_id !== assessment.artifact_id) {
     return { kind: "assessment_artifact_recorded", artifact_id: assessment.artifact_id };
   }
@@ -175,6 +178,12 @@ const nextEvent = (
   }
 
   if (build.phase === "pending") return { kind: "stage_started" };
+  if (state.latest_attempt !== null && state.latest_attempt.ended_at !== null
+    && state.latest_unfinished_attempt_id === null) {
+    if (build.phase === "builder_active" && !build.required_build_set.every((name) =>
+      buildOutputs.some((output) => output.output_name === name))) return { kind: "builder_attempt_lost" };
+    if (build.phase === "assessor_active" && !assessment) return { kind: "assessor_attempt_lost" };
+  }
   return null;
 };
 
@@ -324,6 +333,7 @@ const decodeBuildCohortEvent = (value: JsonValue): BuildCohortEvent | null => {
   if (value.kind === "builder_attempt_lost" || value.kind === "assessor_attempt_lost" || value.kind === "stage_started") {
     return { kind: value.kind };
   }
+  if (value.kind === "operator_retry_requested") return { kind: "operator_retry_requested" };
   if (value.kind === "assessment_outcome_observed" && typeof value.outcome === "string") {
     return { kind: "assessment_outcome_observed", outcome: value.outcome };
   }

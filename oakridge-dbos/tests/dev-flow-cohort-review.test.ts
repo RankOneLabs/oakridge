@@ -96,7 +96,7 @@ const verificationState = (): CohortMachineState => ({
   run_id: RUN_ID, stage_instance_id: STAGE_ID, stage_key: "build",
   cohort_id: "22222222-2222-4222-8222-000000000009" as CohortId,
   cohort_key: "foundation", status: "active", blocked_reason: null, next_actor: "agent",
-  durable_version: 3, attempt_count: 1, latest_unfinished_attempt_id: null,
+  durable_version: 3, attempt_count: 1, latest_unfinished_attempt_id: null, latest_attempt: null,
   stage_data: { unit_id: "foundation", artifact: { unit_id: "foundation", artifact: briefBody("foundation") },
     build_state: { phase: "builder_active", required_build_set: ["build_result", "pr_summary"],
       accepted_revision: "build-1+pr-1", accepted_build_set: ["build_result", "pr_summary"],
@@ -223,6 +223,64 @@ const contextOf = (state: CohortMachineState, contract: CompiledStageContract): 
 const openWait = (wait_id: string, output_name: string, artifact_id: string): CohortMachineState["open_waits"][number] =>
   ({ wait_id: wait_id as WaitId, kind: "gate", output_name, artifact_id: artifact_id as ArtifactId });
 
+const endedAttempt = (state: CohortMachineState): CohortMachineState => ({ ...state,
+  latest_attempt: { attempt_id: "11111111-1111-4111-8111-000000000001" as AttemptId,
+    attempt_number: state.attempt_count, status: "failed", created_at: "2026-09-29T00:00:00Z",
+    ended_at: "2026-09-29T00:01:00Z" }, latest_unfinished_attempt_id: null });
+
+test("an ended builder missing outputs blocks for operator retry without launching", async () => {
+  const { contract, bundle } = await buildStage();
+  const state = endedAttempt({ ...verificationState(), accepted_outputs: [],
+    stage_data: { ...verificationState().stage_data as object, build_state: {
+      ...buildStateOf(verificationState()), accepted_revision: null, accepted_build_set: [] } } as JsonValue });
+  const driver = driverFor(bundle);
+  const decision = await driver.step(contextOf(state, contract));
+  expect(decision?.event.change).toEqual(expect.objectContaining({ status: "blocked", blocked_reason: "retry", next_actor: "operator" }));
+  expect(decision?.launch).toBeNull();
+  expect(await driver.step(contextOf(committed(state, decision!), contract))).toBeNull();
+});
+
+test("a complete build set awaiting pull request verification is not lost", async () => {
+  const { contract, bundle } = await buildStage();
+  const driver = driverFor(bundle);
+  expect(await driver.step(contextOf(endedAttempt(verificationState()), contract))).toBeNull();
+});
+
+test("an ended assessor does not count an assessment published before its launch", async () => {
+  const { contract, bundle } = await buildStage();
+  const original = verificationState();
+  const state = endedAttempt({ ...original,
+    latest_assessment_published_at: "2026-09-28T00:00:00Z",
+    accepted_outputs: [...original.accepted_outputs, { artifact_id: "assessment-old" as ArtifactId,
+      artifact_type: "dev.assessment", output_name: "assessment", unit_id: "foundation" as UnitId,
+      body: { summary: "old" } }],
+    stage_data: { ...original.stage_data as object,
+      build_state: { ...buildStateOf(original), phase: "assessor_active", assessment_artifact_id: null } } as JsonValue });
+  const decision = await driverFor(bundle).step(contextOf(state, contract));
+  expect((decision?.event.effect as unknown as BuildCohortTransitionEffect).event.kind).toBe("assessor_attempt_lost");
+});
+
+test("operator retry of a lost build uses the retry prompt", async () => {
+  const { contract, bundle } = await buildStage();
+  const original = verificationState();
+  const state = endedAttempt({ ...original, status: "blocked", blocked_reason: "retry", next_actor: "operator",
+    accepted_outputs: [], stage_data: { ...original.stage_data as object,
+      build_state: { ...buildStateOf(original), phase: "build_lost", accepted_revision: null,
+        accepted_build_set: [] } } as JsonValue });
+  const decision = await driverFor(bundle).apply_event(contextOf(state, contract), { kind: "operator_retry_requested" });
+  expect(launchOf(decision!)?.launch_reason).toBe("retry_after_lost_attempt");
+});
+
+test("operator retry of a lost assessment uses the retry prompt", async () => {
+  const { contract, bundle } = await buildStage();
+  const original = verificationState();
+  const state = endedAttempt({ ...original, status: "blocked", blocked_reason: "retry", next_actor: "operator",
+    stage_data: { ...original.stage_data as object,
+      build_state: { ...buildStateOf(original), phase: "assess_lost" } } as JsonValue });
+  const decision = await driverFor(bundle).apply_event(contextOf(state, contract), { kind: "operator_retry_requested" });
+  expect(launchOf(decision!)?.launch_reason).toBe("retry_after_lost_attempt");
+});
+
 test("a build cohort enters its review on publication, presents the gate, and relaunches the builder on request_revision", async () => {
   const { contract, bundle } = await buildStage();
   const driver = driverFor(bundle);
@@ -238,7 +296,7 @@ test("a build cohort enters its review on publication, presents the gate, and re
     run_id: RUN_ID, stage_instance_id: STAGE_ID, stage_key: "build",
     cohort_id: cohorts[1]!.id, cohort_key: "web", status: "pending", blocked_reason: null, next_actor: "core",
     durable_version: 0, stage_data: cohorts[1]!.stage_data, attempt_count: 0,
-    accepted_outputs: [], open_waits: [], decided_gates: [], latest_unfinished_attempt_id: null,
+    accepted_outputs: [], open_waits: [], decided_gates: [], latest_unfinished_attempt_id: null, latest_attempt: null,
   };
 
   const started = await driver.step(contextOf(state, contract));
@@ -308,7 +366,7 @@ test("a published assessment moves the cohort into its assessment review", async
     run_id: RUN_ID, stage_instance_id: STAGE_ID, stage_key: "build", cohort_id, cohort_key: "web",
     status: "active", blocked_reason: null, next_actor: "agent", durable_version: 4,
     stage_data: { unit_id: "web", artifact: briefBody("web"), build_state: build_state as unknown as JsonValue },
-    attempt_count: 2, accepted_outputs: [], decided_gates: [], latest_unfinished_attempt_id: null,
+    attempt_count: 2, accepted_outputs: [], decided_gates: [], latest_unfinished_attempt_id: null, latest_attempt: null,
     open_waits: [openWait("11111111-1111-4111-8111-000000000003", "assessment", "aaaaaaaa-1111-4111-8111-000000000003")],
   };
   const decision = await driver.step(contextOf(state, contract));

@@ -56,6 +56,7 @@ const EVENTS = [
   "assessment_artifact_recorded",
   "assessment_outcome_observed",
   "assessor_attempt_lost",
+  "operator_retry_requested",
   "assessment_review_approved",
   "assessment_review_revision_requested",
   "pull_request_mismatch",
@@ -81,6 +82,7 @@ const event = (kind: BuildCohortEvent["kind"]): BuildCohortEvent => {
  */
 const TRANSITION_TABLE: Readonly<Record<BuildCohortPhase, Readonly<Record<BuildCohortEvent["kind"], BuildEventDisposition>>>> = {
   pending: {
+    operator_retry_requested: "recorded_only",
     stage_started: "transitioned", stale_gate_recorded: "recorded_only", build_artifact_recorded: "recorded_only", pull_request_verified: "recorded_only", builder_attempt_lost: "recorded_only",
     build_review_approved: "recorded_only", build_review_revision_requested: "recorded_only", assessment_artifact_recorded: "recorded_only",
     assessment_outcome_observed: "recorded_only", assessor_attempt_lost: "recorded_only", assessment_review_approved: "recorded_only",
@@ -88,6 +90,7 @@ const TRANSITION_TABLE: Readonly<Record<BuildCohortPhase, Readonly<Record<BuildC
     replacement_pull_request_required: "recorded_only", pull_request_merged: "recorded_only",
   },
   builder_active: {
+    operator_retry_requested: "recorded_only",
     stage_started: "recorded_only", stale_gate_recorded: "recorded_only", build_artifact_recorded: "transitioned", pull_request_verified: "transitioned", builder_attempt_lost: "transitioned",
     build_review_approved: "recorded_only", build_review_revision_requested: "recorded_only", assessment_artifact_recorded: "recorded_only",
     assessment_outcome_observed: "recorded_only", assessor_attempt_lost: "recorded_only", assessment_review_approved: "recorded_only",
@@ -95,6 +98,7 @@ const TRANSITION_TABLE: Readonly<Record<BuildCohortPhase, Readonly<Record<BuildC
     replacement_pull_request_required: "transitioned", pull_request_merged: "recorded_only",
   },
   build_review: {
+    operator_retry_requested: "recorded_only",
     stage_started: "recorded_only", stale_gate_recorded: "recorded_only", build_artifact_recorded: "recorded_only", pull_request_verified: "recorded_only", builder_attempt_lost: "recorded_only",
     build_review_approved: "transitioned", build_review_revision_requested: "transitioned", assessment_artifact_recorded: "recorded_only",
     assessment_outcome_observed: "recorded_only", assessor_attempt_lost: "recorded_only", assessment_review_approved: "recorded_only",
@@ -102,6 +106,7 @@ const TRANSITION_TABLE: Readonly<Record<BuildCohortPhase, Readonly<Record<BuildC
     replacement_pull_request_required: "transitioned", pull_request_merged: "recorded_only",
   },
   assessor_active: {
+    operator_retry_requested: "recorded_only",
     stage_started: "recorded_only", stale_gate_recorded: "recorded_only", build_artifact_recorded: "recorded_only", pull_request_verified: "recorded_only", builder_attempt_lost: "recorded_only",
     build_review_approved: "recorded_only", build_review_revision_requested: "recorded_only", assessment_artifact_recorded: "transitioned",
     assessment_outcome_observed: "recorded_only", assessor_attempt_lost: "transitioned", assessment_review_approved: "recorded_only",
@@ -109,6 +114,7 @@ const TRANSITION_TABLE: Readonly<Record<BuildCohortPhase, Readonly<Record<BuildC
     replacement_pull_request_required: "transitioned", pull_request_merged: "recorded_only",
   },
   assessment_review: {
+    operator_retry_requested: "recorded_only",
     stage_started: "recorded_only", stale_gate_recorded: "recorded_only", build_artifact_recorded: "recorded_only", pull_request_verified: "recorded_only", builder_attempt_lost: "recorded_only",
     build_review_approved: "recorded_only", build_review_revision_requested: "recorded_only", assessment_artifact_recorded: "recorded_only",
     assessment_outcome_observed: "recorded_only", assessor_attempt_lost: "recorded_only", assessment_review_approved: "transitioned",
@@ -116,12 +122,19 @@ const TRANSITION_TABLE: Readonly<Record<BuildCohortPhase, Readonly<Record<BuildC
     replacement_pull_request_required: "transitioned", pull_request_merged: "recorded_only",
   },
   awaiting_merge: {
+    operator_retry_requested: "recorded_only",
     stage_started: "recorded_only", stale_gate_recorded: "recorded_only", build_artifact_recorded: "recorded_only", pull_request_verified: "recorded_only", builder_attempt_lost: "recorded_only",
     build_review_approved: "recorded_only", build_review_revision_requested: "recorded_only", assessment_artifact_recorded: "recorded_only",
     assessment_outcome_observed: "recorded_only", assessor_attempt_lost: "recorded_only", assessment_review_approved: "recorded_only",
     assessment_review_revision_requested: "recorded_only", pull_request_mismatch: "transitioned",
     replacement_pull_request_required: "transitioned", pull_request_merged: "transitioned",
   },
+  build_lost: Object.fromEntries(EVENTS.map((kind) => [kind,
+    kind === "operator_retry_requested" || kind === "pull_request_mismatch" || kind === "replacement_pull_request_required"
+      ? "transitioned" : "recorded_only"])) as Record<BuildCohortEvent["kind"], BuildEventDisposition>,
+  assess_lost: Object.fromEntries(EVENTS.map((kind) => [kind,
+    kind === "operator_retry_requested" || kind === "pull_request_mismatch" || kind === "replacement_pull_request_required"
+      ? "transitioned" : "recorded_only"])) as Record<BuildCohortEvent["kind"], BuildEventDisposition>,
   complete: Object.fromEntries(EVENTS.map((kind) => [kind, "recorded_only"])) as Record<BuildCohortEvent["kind"], BuildEventDisposition>,
 };
 

@@ -1,22 +1,16 @@
 import { Hono, type Context } from "hono";
 
-import { parseUuidId, type CohortId, type StageInstanceId, type WorkflowRunId } from "../domain/primitives";
-import type { RetryCohortTarget } from "../domain/run-record";
-import type { RunRecordRepository } from "../storage/repositories";
+import { parseUuidId, type CohortId, type StageInstanceId } from "../domain/primitives";
+import type { RetryCohortResult, RetryCohortTarget } from "../domain/run-record";
 
 export interface OperatorRetryHttpDependencies {
-  readonly records: Pick<RunRecordRepository, "retry_cohort">;
-  now(): string;
-  /** Wakes the cohort's machine sooner than its bounded recheck; absent is fine — the recheck still starts the retry. */
-  readonly send_cohort_wake?: (cohort_id: CohortId, idempotency_key: string) => Promise<void>;
-  /** Wakes the run's root so the retry shows up in its projections without waiting. */
-  readonly send_run_wake?: (run_id: WorkflowRunId, idempotency_key: string) => Promise<void>;
+  retry_through_driver(target: RetryCohortTarget, idempotency_key: string): Promise<RetryCohortResult>;
 }
 
 /**
  * Operator retry of a cohort, addressed either by the cohort row id or by the
- * stage instance + cohort key kbbl's run detail already holds. Both forms are
- * one repository operation; the route only decides how the cohort is named.
+ * stage instance + cohort key kbbl's run detail already holds. Both forms
+ * enter the cohort driver; the route only decides how the cohort is named.
  *
  * The path segments keep their `run-units` / `units` spelling: v15's cohort is
  * what v14 called a run unit, and the PWA addresses it by the same two ids.
@@ -26,17 +20,10 @@ export const createOperatorRetryApp = (dependencies: OperatorRetryHttpDependenci
   const retry = async (http: Context, target: RetryCohortTarget) => {
     const idempotencyKey = http.req.header("idempotency-key")?.trim();
     if (!idempotencyKey) return http.json({ error: "Idempotency-Key header is required" }, 400);
-    const result = await dependencies.records.retry_cohort({ target, idempotency_key: idempotencyKey, actor: "operator" }, dependencies.now());
+    const result = await dependencies.retry_through_driver(target, idempotencyKey);
     if (result.kind === "cohort_not_found") return http.json({ error: result.detail }, 404);
-    if (result.kind === "not_active" || result.kind === "work_in_progress" || result.kind === "actionable_wait") {
-      return http.json({ error: result.detail, kind: result.kind }, 409);
-    }
+    if (result.kind === "not_retryable") return http.json({ kind: result.kind, reason: result.reason }, 409);
     if (result.kind === "idempotency_conflict") return http.json({ error: result.detail, kind: result.kind }, 409);
-    if (result.kind === "created") {
-      const key = `operator_retry:${result.cohort_id}:${result.attempt_number}`;
-      await dependencies.send_cohort_wake?.(result.cohort_id, key).catch(() => undefined);
-      await dependencies.send_run_wake?.(result.run_id, key).catch(() => undefined);
-    }
     return http.json({ run_id: result.run_id, cohort_id: result.cohort_id, attempt_id: result.attempt_id,
       attempt_number: result.attempt_number, record_version: result.durable_version },
     result.kind === "created" ? 202 : 200);
