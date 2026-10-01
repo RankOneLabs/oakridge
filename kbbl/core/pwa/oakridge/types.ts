@@ -374,6 +374,7 @@ export interface ParkedGate {
   unit_id: string;
   repository_key?: RepositoryKey | null;
   artifact_revision_id: string | null;
+  artifact_revision_ids?: string[];
   worktree: WorktreeMetadata | null;
   resume_actions: string[];
   pr_url?: string | null;
@@ -402,21 +403,13 @@ export interface GateResumeResponse {
  * see the repository for itself. Mirrors the `operator_confirmation` half of
  * `POST /cohorts/:cohortId/pull_request` in oakridge-dbos.
  */
-export interface ConfirmCohortMergedRequest {
-  idempotency_key: string;
-  operator_comment: string;
-}
-
 export type CohortPullRequestOutcomeKind =
   | "completed"
   | "already_completed"
   | "waiting"
   | "ignored_stale";
 
-export interface CohortPullRequestResponse {
-  cohort_id: string;
-  outcome: { kind: CohortPullRequestOutcomeKind };
-}
+export interface CohortPullRequestResponse { state: string }
 
 export type CohortLifecycle = CoreStatus;
 
@@ -440,6 +433,7 @@ export interface CohortLifecycleSummary {
   completion: CohortCompletion;
   blocked_by: string[];
   artifact_revision_id?: string | null;
+  artifact_revision_ids?: string[];
   artifact_url?: string | null;
   gate_id?: string | null;
   gate_url?: string | null;
@@ -474,6 +468,7 @@ export interface ReviewInboxItem {
   next_actor: NextActor | null;
   title?: string | null;
   artifact_revision_id?: string | null;
+  artifact_revision_ids?: string[];
   artifact_url?: string | null;
   gate_id?: string | null;
   gate_url?: string | null;

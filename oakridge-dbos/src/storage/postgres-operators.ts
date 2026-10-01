@@ -239,6 +239,7 @@ export class PostgresDevFlowPullRequestRepository implements DevFlowPullRequestR
 
 interface V2GateProjectionRow extends GateProjectionRow {
   readonly wait_id: string;
+  readonly artifact_revision_ids: readonly string[];
   readonly repository_key: string | null;
   readonly run_state: CoreStatus;
 }
@@ -409,8 +410,10 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     // owning unit's own id, so an operator can tell cohort gates apart.
     const rows = await this.sql.query<V2GateProjectionRow>(
       `SELECT wait.id::text AS wait_id,run.id::text AS run_id,stage.stage_key AS stage_name,
-              wait.stage_instance_id::text,COALESCE(slot.collection_key,cohort.cohort_key) AS unit_id,
+              wait.stage_instance_id::text,cohort.cohort_key AS unit_id,
               revision.artifact_id::text AS artifact_revision_id,
+              ARRAY(SELECT linked.artifact_id::text FROM oakridge.wait_gate_artifact_revision linked
+                WHERE linked.wait_gate_id=wait.id ORDER BY linked.artifact_id) AS artifact_revision_ids,
               wait.closes_on->>'gate_step' AS gate_step,
               COALESCE(ARRAY(SELECT jsonb_array_elements_text(wait.closes_on->'actions')),ARRAY[]::text[]) AS actions,
               build_cohort.repository_key,run.status AS run_state
@@ -419,10 +422,6 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
        LEFT JOIN oakridge.stage_instance stage ON stage.id=wait.stage_instance_id
        LEFT JOIN oakridge.cohort cohort ON cohort.id=wait.cohort_id
        LEFT JOIN oakridge.dev_flow_build_cohort build_cohort ON build_cohort.cohort_id=cohort.id
-       LEFT JOIN LATERAL (
-         SELECT candidate.collection_key FROM oakridge.wait_gate_output_slot candidate
-         WHERE candidate.wait_gate_id=wait.id ORDER BY candidate.collection_key LIMIT 1
-       ) slot ON true
        LEFT JOIN LATERAL (
          SELECT linked.artifact_id FROM oakridge.wait_gate_artifact_revision linked
          WHERE linked.wait_gate_id=wait.id ORDER BY linked.artifact_id LIMIT 1
@@ -433,7 +432,8 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
        ORDER BY wait.opened_at,wait.id`, [run_id ?? null, requiredAttentionOnly]);
     return rows.map((row) => ({ id: row.wait_id, stage_instance_id: row.stage_instance_id as import("../domain/primitives").StageInstanceId, gate_type: row.gate_step, run_id: row.run_id as WorkflowRunId,
       stage_name: row.stage_name, unit_id: row.unit_id as UnitId, repository_key: row.repository_key,
-      artifact_revision_id: row.artifact_revision_id as ArtifactId | null, gate_step: row.gate_step, worktree: null,
+      artifact_revision_id: row.artifact_revision_id as ArtifactId | null,
+      artifact_revision_ids: row.artifact_revision_ids as ArtifactId[], gate_step: row.gate_step, worktree: null,
       resume_actions: row.actions,
       pr_url: null, run_state: row.run_state, actionable: selectGateActionability(row.run_state) }));
   }
@@ -714,12 +714,13 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
       const isMerge = gate.gate_step === "merge_confirmation";
       const cohort = cohorts.find((candidate) => candidate.run_id === gate.run_id && candidate.stage_instance_id === gate.stage_instance_id && candidate.unit_id === gate.unit_id);
       return {
-        id: `gate:${gate.id}:${gate.artifact_revision_id ?? "none"}:${gate.gate_step ?? "unknown"}`,
+        id: `gate:${gate.id}:${gate.gate_step ?? "unknown"}`,
         kind: isMerge ? "merge_confirmation" : "artifact_gate", state: "actionable", run_id: gate.run_id,
         workflow_name: names.get(gate.run_id) ?? "unknown", stage_instance_id: gate.stage_instance_id as StageInstanceId,
         stage_name: gate.stage_name, unit_id: gate.unit_id, repository_key: cohort?.repository_key ?? gate.repository_key, title: cohort?.title ?? null,
         lifecycle: cohort?.lifecycle ?? "blocked", blocked_reason: cohort?.blocked_reason ?? "gate", next_actor: cohort?.next_actor ?? "operator",
         artifact_revision_id: gate.artifact_revision_id,
+        artifact_revision_ids: gate.artifact_revision_ids,
         artifact_url: gate.artifact_revision_id ? `/artifact_details/${gate.artifact_revision_id}` : null,
         gate_id: gate.id, gate_url: `/oakridge/gates/${gate.id}`, resume_actions: gate.resume_actions, blocked_by: [], pr_url: gate.pr_url,
       };

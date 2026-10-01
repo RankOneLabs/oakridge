@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 
-import { isJsonValue, parseUuidId, type AttemptId, type CohortId, type JsonValue, type OutputCollectionKey, type Result, type WorkflowRunId } from "../domain/primitives";
+import { isJsonValue, parseUuidId, type AttemptId, type JsonValue, type OutputCollectionKey, type Result, type WorkflowRunId } from "../domain/primitives";
 import type { PublishWorkOrderArtifactResult } from "../domain/run-record";
 import { publishWorkOrderArtifact } from "../runtime/publish-work-order-artifact";
 import type { RunRecordRepository } from "../storage/repositories";
@@ -13,7 +13,6 @@ export interface WorkOrderArtifactCallbackDependencies {
   /** Wakes the run's root workflow sooner than its bounded recheck; absent is fine — the recheck still happens. */
   readonly send_run_wake?: (run_id: WorkflowRunId, idempotency_key: string) => Promise<void>;
   /** Wakes the publishing cohort's machine, which is what acts on a new artifact. */
-  readonly send_cohort_wake?: (cohort_id: CohortId, idempotency_key: string) => Promise<void>;
 }
 
 const statusOf = (result: PublishWorkOrderArtifactResult): 200 | 201 | 202 | 401 | 404 | 409 | 503 => {
@@ -48,7 +47,6 @@ export const createWorkOrderArtifactCallbackApp = (dependencies: WorkOrderArtifa
       // never on the response's critical path, and never required for the
       // publication itself to be correct.
       const key = `${result.kind}:${result.artifact_id}:${result.record_version}`;
-      await dependencies.send_cohort_wake?.(result.cohort_id, key).catch(() => undefined);
       await dependencies.send_run_wake?.(result.run_id, key).catch(() => undefined);
     }
     if (result.kind === "published" || result.kind === "already_applied") return context.json({ artifact_id: result.artifact_id, state: "released", record_version: result.record_version }, status);

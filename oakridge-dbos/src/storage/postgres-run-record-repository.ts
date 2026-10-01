@@ -8,14 +8,13 @@
  * owns is everything hanging off those owners — stage instances, cohorts,
  * attempts, sessions, artifacts and waits.
  */
-import { sessionIdFor, waitGateCommandWorkflowId, waitGateIdFor } from "../decision/ids";
+import { sessionIdFor } from "../decision/ids";
 import { selectStartableCohorts } from "../decision/schedule-cohorts";
 import type { ArtifactEnvelope, ExecutionRequest, ExternalExecutionReference } from "../domain/execution";
-import { selectArtifactGateDisposition, selectBuiltInGateDisposition } from "../domain/gates";
 import { err, ok, type ArtifactId, type AttemptId, type CohortId, type JsonValue, type Result, type RunRecordVersion, type RunTransitionId, type SessionId, type StageInstanceId, type UnitId, type WaitId, type WorkflowRunId } from "../domain/primitives";
 import type { BlockedReason, CoreStatus, NextActor } from "../domain/records";
 import type { DeleteRunResult } from "../domain/runs";
-import { findDeclaredOutput, selectWaitClosesOn, selectWaitKind } from "../domain/stage-contract";
+import { findDeclaredOutput } from "../domain/stage-contract";
 import type {
   AttemptExecution,
   BindSessionResult,
@@ -275,7 +274,6 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       return { kind: inserted > 0 ? "opened" as const : "already_open" as const,
         cohort_ids: stored.map((row) => row.id as CohortId) };
     });
-    if (transition_ids.length > 0) await this.stage_event_applier?.start_effects(transition_ids);
     return result;
   }
 
@@ -588,187 +586,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
    * capability issued to one attempt can never authenticate another.
    */
   async publish_artifact(request: PublishWorkOrderArtifact): Promise<PublishWorkOrderArtifactResult> {
-    if (this.stage_event_applier) return this.publishStageArtifact(request);
-    const seed = await this.load_work_order_capability_seed();
-    const expected = capabilityHash(capabilityFor(seed, request.attempt_id as unknown as import("../domain/primitives").WorkOrderId));
-    return this.sql.transaction(async (tx): Promise<PublishWorkOrderArtifactResult> => {
-      const attempts = await tx.query<{
-        readonly id: string; readonly run_id: string; readonly stage_instance_id: string; readonly cohort_id: string;
-        readonly status: CoreStatus; readonly ended_at: string | null; readonly stage_contract: JsonValue;
-        readonly session_id: string | null; readonly record_version: string;
-      }>(
-        `SELECT attempt.id::text,attempt.run_id::text,attempt.stage_instance_id::text,attempt.cohort_id::text,
-                attempt.status,attempt.ended_at::text,stage.stage_contract,session.id::text AS session_id,
-                run.record_version::text
-         FROM oakridge.attempt attempt
-         JOIN oakridge.cohort cohort ON cohort.id=attempt.cohort_id
-         JOIN oakridge.stage_instance stage ON stage.id=attempt.stage_instance_id
-         JOIN oakridge.workflow_run run ON run.id=attempt.run_id
-         LEFT JOIN oakridge.session session ON session.attempt_id=attempt.id
-         WHERE attempt.id=$1 FOR UPDATE OF attempt, cohort`, [request.attempt_id]);
-      const attempt = attempts[0];
-      if (!attempt) return { kind: "work_not_found", detail: `attempt '${request.attempt_id}' was not found` };
-      if (request.capability_hash !== expected) return { kind: "invalid_capability", detail: "work-order capability is not valid for this attempt" };
-      if (attempt.status === "cancelled") return { kind: "work_abandoned", detail: `attempt '${request.attempt_id}' was cancelled` };
-      if (attempt.status === "failed") return { kind: "work_not_active", detail: `attempt '${request.attempt_id}' has failed` };
-
-      const declared = findDeclaredOutput(attempt.stage_contract, request.output_name);
-      if (!declared) {
-        return { kind: "slot_not_found", detail: `stage does not declare output '${request.output_name}'` };
-      }
-      const collection_key = request.collection_key ?? null;
-      const run_id = attempt.run_id as WorkflowRunId;
-      const cohort_id = attempt.cohort_id as CohortId;
-      const record_version = Number(attempt.record_version) as RunRecordVersion;
-
-      const replay = await tx.query<{ readonly id: string; readonly same_body: boolean; readonly lifecycle: string; readonly wait_id: string | null }>(
-        `SELECT artifact.id::text,artifact.body=$4::jsonb AS same_body,artifact.lifecycle,
-                open_wait.id::text AS wait_id
-         FROM oakridge.artifact artifact
-         JOIN oakridge.artifact_provenance provenance ON provenance.artifact_id=artifact.id
-         LEFT JOIN LATERAL (
-           SELECT wait.id FROM oakridge.wait_gate wait
-           JOIN oakridge.wait_gate_artifact_revision link ON link.wait_gate_id=wait.id
-           WHERE link.artifact_id=artifact.id AND wait.status='open' LIMIT 1
-         ) open_wait ON true
-         WHERE provenance.attempt_id=$1
-           AND (
-             EXISTS (
-               SELECT 1 FROM oakridge.wait_gate_output_slot slot
-               JOIN oakridge.wait_gate_artifact_revision link ON link.wait_gate_id=slot.wait_gate_id
-               WHERE link.artifact_id=artifact.id AND slot.output_name=$2
-                 AND slot.collection_key IS NOT DISTINCT FROM $3
-             )
-             OR EXISTS (
-               SELECT 1 FROM oakridge.artifact_acceptance acceptance
-               WHERE acceptance.artifact_id=artifact.id AND acceptance.output_name=$2
-                 AND acceptance.collection_key IS NOT DISTINCT FROM $3
-             )
-           )
-         ORDER BY artifact.revision DESC LIMIT 1`,
-        [request.attempt_id, request.output_name, collection_key, JSON.stringify(request.body)]);
-      const prior = replay[0];
-      if (prior) {
-        if (!prior.same_body) {
-          return { kind: "idempotency_conflict", artifact_id: prior.id as ArtifactId,
-            detail: "this attempt already published a different body into that slot" };
-        }
-        return prior.wait_id
-          ? { kind: "pending", artifact_id: prior.id as ArtifactId, wait_id: prior.wait_id as WaitId, run_id, cohort_id, record_version }
-          : { kind: "already_applied", artifact_id: prior.id as ArtifactId, run_id, cohort_id, record_version };
-      }
-
-      // Both slot lookups are scoped to the *publishing cohort*, not to the stage
-      // instance alone. A fan-out stage's cohorts publish the same output name
-      // with no collection key — `Output-Collection-Key` is only sent when the
-      // publishing unit differs from the expected one, which it never does — so a
-      // stage-wide lookup handed the second cohort the first one's parked wait and
-      // then the first one's accepted revision. It could never publish. v14's
-      // `run_output_slot` was keyed per unit; this restores that identity.
-      const slotState = await tx.query<{ readonly accepted_id: string | null; readonly pending_wait_id: string | null; readonly chain_id: string | null; readonly revision: number | null; readonly tip_id: string | null }>(
-        `SELECT accepted.artifact_id::text AS accepted_id,pending.wait_id::text AS pending_wait_id,
-                tip.chain_id::text,tip.revision,tip.id::text AS tip_id
-         FROM (SELECT 1) anchor
-         LEFT JOIN LATERAL (
-           SELECT acceptance.artifact_id FROM oakridge.artifact_acceptance acceptance
-           JOIN oakridge.artifact artifact ON artifact.id=acceptance.artifact_id
-           JOIN oakridge.artifact_owner owner ON owner.artifact_id=acceptance.artifact_id
-           WHERE acceptance.receiving_stage_instance_id=$1 AND acceptance.output_name=$2
-             AND acceptance.collection_key IS NOT DISTINCT FROM $3
-             AND acceptance.superseded_at IS NULL
-             AND owner.cohort_id=$4
-             AND artifact.lifecycle IN ('current','released') LIMIT 1
-         ) accepted ON true
-         LEFT JOIN LATERAL (
-           SELECT slot.wait_gate_id AS wait_id FROM oakridge.wait_gate_output_slot slot
-           JOIN oakridge.wait_gate wait ON wait.id=slot.wait_gate_id
-           WHERE slot.receiving_stage_instance_id=$1 AND slot.output_name=$2
-             AND slot.collection_key IS NOT DISTINCT FROM $3
-             AND wait.cohort_id=$4 AND wait.status='open' LIMIT 1
-         ) pending ON true
-         -- The revision chain belongs to the *slot*, not to the cohort's
-         -- artifact type. Keyed by type, a collecting output published once per
-         -- collection key became successive revisions of one chain, each
-         -- superseding the last: the planner's two briefs left one current
-         -- artifact, so the build stage fanned out over a single brief.
-         LEFT JOIN LATERAL (
-           SELECT artifact.id,artifact.chain_id,artifact.revision FROM oakridge.artifact artifact
-           JOIN oakridge.artifact_owner owner ON owner.artifact_id=artifact.id
-           LEFT JOIN oakridge.artifact_acceptance acceptance ON acceptance.artifact_id=artifact.id
-           LEFT JOIN LATERAL (
-             SELECT slot.output_name,slot.collection_key
-             FROM oakridge.wait_gate_artifact_revision link
-             JOIN oakridge.wait_gate_output_slot slot ON slot.wait_gate_id=link.wait_gate_id
-             WHERE link.artifact_id=artifact.id
-             ORDER BY slot.output_name,slot.collection_key NULLS FIRST LIMIT 1
-           ) parked ON acceptance.artifact_id IS NULL
-           WHERE owner.cohort_id=$4
-             AND COALESCE(acceptance.output_name,parked.output_name)=$2
-             AND COALESCE(acceptance.collection_key,parked.collection_key) IS NOT DISTINCT FROM $3
-           ORDER BY artifact.revision DESC,artifact.created_at DESC LIMIT 1
-         ) tip ON true`,
-        [attempt.stage_instance_id, request.output_name, collection_key, cohort_id]);
-      const slot = slotState[0];
-      if (slot?.accepted_id) {
-        return { kind: "slot_already_released", artifact_id: slot.accepted_id as ArtifactId,
-          detail: `output '${request.output_name}' already holds an accepted revision` };
-      }
-      if (slot?.pending_wait_id) {
-        return { kind: "slot_pending", wait_id: slot.pending_wait_id as WaitId,
-          detail: `output '${request.output_name}' is parked pending its wait` };
-      }
-
-      const parent = slot?.tip_id ?? null;
-      const chain_id = slot?.chain_id ?? request.artifact_id;
-      const revision = (slot?.revision ?? 0) + 1;
-      if (parent) {
-        await tx.query("UPDATE oakridge.artifact SET lifecycle='superseded' WHERE id=$1 AND lifecycle='current'", [parent]);
-      }
-      await tx.query(
-        `INSERT INTO oakridge.artifact (id,chain_id,revision,parent_artifact_id,artifact_type,body,label,created_at)
-         VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8::timestamptz)`,
-        [request.artifact_id, chain_id, revision, parent, declared.artifact_type, JSON.stringify(request.body), null, request.published_at]);
-      await tx.query(
-        `INSERT INTO oakridge.artifact_owner (artifact_id,run_id,stage_instance_id,cohort_id) VALUES ($1,$2,$3,$4)`,
-        [request.artifact_id, run_id, attempt.stage_instance_id, cohort_id]);
-      await tx.query(
-        `INSERT INTO oakridge.artifact_provenance (artifact_id,kind,run_id,stage_instance_id,attempt_id,session_id)
-         VALUES ($1,'stage_attempt',$2,$3,$4,$5)`,
-        [request.artifact_id, run_id, attempt.stage_instance_id, request.attempt_id, attempt.session_id]);
-
-      const waitKind = selectWaitKind(declared.release);
-      if (waitKind === null) {
-        // `receiving_stage_instance_id` is written with the *producing* stage, and
-        // every reader addresses it that way — `loadStageInputs` looks a slot up by
-        // `edge.producer_stage_instance_id`. The name is a leftover from v14, where
-        // a slot belonged to the stage that consumed it; renaming the column
-        // mid-epic would break every reader for no behaviour change, so it is
-        // recorded here instead.
-        await tx.query(
-          `INSERT INTO oakridge.artifact_acceptance (artifact_id,run_id,cohort_id,receiving_stage_instance_id,output_name,artifact_type,collection_key,accepted_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8::timestamptz)`,
-          [request.artifact_id, run_id, cohort_id, attempt.stage_instance_id, request.output_name,
-            declared.artifact_type, collection_key, request.published_at]);
-        return { kind: "published", artifact_id: request.artifact_id, run_id, cohort_id, record_version };
-      }
-      const wait_id = waitGateIdFor(request.artifact_id);
-      await tx.query(
-        `INSERT INTO oakridge.wait_gate (id,run_id,stage_instance_id,cohort_id,kind,closes_on,command_workflow_id,opened_at)
-         VALUES ($1,$2,$3,$4,$5::oakridge.wait_kind,$6::jsonb,$7,$8::timestamptz)
-         ON CONFLICT (id) DO NOTHING`,
-        [wait_id, run_id, attempt.stage_instance_id, cohort_id, waitKind,
-          JSON.stringify(selectWaitClosesOn(declared.release)), waitGateCommandWorkflowId(request.artifact_id), request.published_at]);
-      await tx.query(
-        `INSERT INTO oakridge.wait_gate_artifact_revision (wait_gate_id,artifact_id,run_id) VALUES ($1,$2,$3)
-         ON CONFLICT DO NOTHING`, [wait_id, request.artifact_id, run_id]);
-      // As on `artifact_acceptance` above: `receiving_stage_instance_id` holds the
-      // producing stage, which is how every reader of the slot addresses it.
-      await tx.query(
-        `INSERT INTO oakridge.wait_gate_output_slot (wait_gate_id,run_id,receiving_stage_instance_id,output_name,collection_key)
-         VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
-        [wait_id, run_id, attempt.stage_instance_id, request.output_name, collection_key]);
-      return { kind: "pending", artifact_id: request.artifact_id, wait_id, run_id, cohort_id, record_version };
-    });
+    return this.publishStageArtifact(request);
   }
 
   private async publishStageArtifact(request: PublishWorkOrderArtifact): Promise<PublishWorkOrderArtifactResult> {
@@ -865,9 +683,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
   }
 
   decide_gate_wait(request: DecideGateWait): Promise<CloseRunOutputWaitResult> {
-    if (this.stage_event_applier) return this.decideStageGate(request);
-    return this.closeWait({ wait: { kind: "id", wait_id: request.wait_id }, action: request.action,
-      actor: request.actor, detail: request.detail, decided_at: request.decided_at, kinds: ["gate"] });
+    return this.decideStageGate(request);
   }
 
   private async decideStageGate(request: DecideGateWait): Promise<CloseRunOutputWaitResult> {
@@ -917,112 +733,6 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       if (error instanceof PublishAbort) return { kind: "refused", code: error.code, detail: error.detail };
       throw error;
     }
-  }
-
-  /**
-   * Closes one wait and applies what its decision does to the slots it holds,
-   * in one transaction: an action whose disposition releases accepts the
-   * revision into its slot; one that asks for a revision leaves the revision
-   * current and the slot empty, which is what makes the replacement publishable;
-   * a terminal one withdraws it.
-   *
-   * The cohort's own advance is not written here. That is its machine's
-   * decision, taken from this wait's recorded outcome under the cohort's own
-   * durable version — one owner, one writer.
-   */
-  private async closeWait(input: {
-    readonly wait: { readonly kind: "id"; readonly wait_id: WaitId } | { readonly kind: "artifact"; readonly artifact_id: ArtifactId };
-    readonly action: string;
-    readonly actor: string;
-    readonly detail: string | null;
-    readonly decided_at: string;
-    readonly kinds: readonly ("gate" | "handoff" | "external")[];
-  }): Promise<CloseRunOutputWaitResult> {
-    return this.sql.transaction(async (tx): Promise<CloseRunOutputWaitResult> => {
-      const predicate = input.wait.kind === "id"
-        ? "wait.id=$1"
-        : "EXISTS (SELECT 1 FROM oakridge.wait_gate_artifact_revision link WHERE link.wait_gate_id=wait.id AND link.artifact_id=$1)";
-      const parameter = input.wait.kind === "id" ? input.wait.wait_id : input.wait.artifact_id;
-      const waits = await tx.query<{
-        readonly id: string; readonly run_id: string; readonly cohort_id: string | null; readonly status: "open" | "closed" | "cancelled";
-        readonly closes_on: JsonValue; readonly outcome: JsonValue | null; readonly record_version: string;
-      }>(
-        `SELECT wait.id::text,wait.run_id::text,wait.cohort_id::text,wait.status,wait.closes_on,wait.outcome,
-                run.record_version::text
-         FROM oakridge.wait_gate wait
-         JOIN oakridge.workflow_run run ON run.id=wait.run_id
-         WHERE ${predicate} AND wait.kind=ANY($2::oakridge.wait_kind[])
-         ORDER BY wait.status='open' DESC,wait.opened_at DESC LIMIT 1
-         FOR UPDATE OF wait`, [parameter, input.kinds]);
-      const wait = waits[0];
-      if (!wait) return { kind: "wait_not_found", detail: `no ${input.kinds.join("/")} wait matches ${String(parameter)}` };
-      const run_id = wait.run_id as WorkflowRunId;
-      const cohort_id = wait.cohort_id as CohortId | null;
-      const record_version = Number(wait.record_version) as RunRecordVersion;
-      if (wait.status !== "open") {
-        const decided = isObject(wait.outcome) && wait.outcome.action === input.action;
-        return decided
-          ? { kind: "already_applied", run_id, cohort_id, record_version }
-          : { kind: "wait_conflict", detail: `wait '${wait.id}' is already ${wait.status}` };
-      }
-      const declaredActions = isObject(wait.closes_on) && Array.isArray(wait.closes_on.actions)
-        ? wait.closes_on.actions.filter((value): value is string => typeof value === "string")
-        : [];
-      const closeEvents = isObject(wait.closes_on) && Array.isArray(wait.closes_on.close_events)
-        ? wait.closes_on.close_events.filter((value): value is string => typeof value === "string")
-        : [];
-      const externalKind = isObject(wait.closes_on) && typeof wait.closes_on.external_wait_kind === "string"
-        ? wait.closes_on.external_wait_kind : null;
-      const accepted = input.kinds[0] === "gate"
-        ? declaredActions.includes(input.action)
-        : input.action === externalKind || closeEvents.includes(input.action) || declaredActions.includes(input.action);
-      if (!accepted) {
-        return { kind: "wait_conflict", detail: `wait '${wait.id}' does not close on '${input.action}'` };
-      }
-
-      const linked = await tx.query<{ readonly artifact_id: string; readonly artifact_type: string }>(
-        `SELECT link.artifact_id::text,artifact.artifact_type
-         FROM oakridge.wait_gate_artifact_revision link
-         JOIN oakridge.artifact artifact ON artifact.id=link.artifact_id
-         WHERE link.wait_gate_id=$1 ORDER BY link.artifact_id`, [wait.id]);
-      const slots = await tx.query<{ readonly receiving_stage_instance_id: string; readonly output_name: string; readonly collection_key: string | null }>(
-        `SELECT receiving_stage_instance_id::text,output_name,collection_key
-         FROM oakridge.wait_gate_output_slot WHERE wait_gate_id=$1 ORDER BY output_name,collection_key NULLS FIRST`, [wait.id]);
-
-      const disposition = input.kinds[0] === "gate" ? selectBuiltInGateDisposition(input.action) : "release";
-      await tx.query(
-        `UPDATE oakridge.wait_gate SET status='closed',closed_at=$2::timestamptz,outcome=$3::jsonb
-         WHERE id=$1 AND status='open'`,
-        [wait.id, input.decided_at, JSON.stringify({ kind: "decided", action: input.action, actor: input.actor, detail: input.detail })]);
-
-      let releasedArtifactId: ArtifactId | null = null;
-      for (const artifact of linked) {
-        const effective = input.kinds[0] === "gate"
-          ? selectArtifactGateDisposition(artifact.artifact_type, disposition)
-          : "release";
-        if (effective === "release") {
-          for (const slot of slots) {
-            await tx.query(
-              `INSERT INTO oakridge.artifact_acceptance (artifact_id,run_id,cohort_id,receiving_stage_instance_id,output_name,artifact_type,collection_key,accepted_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8::timestamptz) ON CONFLICT DO NOTHING`,
-              [artifact.artifact_id, run_id, cohort_id, slot.receiving_stage_instance_id, slot.output_name,
-                artifact.artifact_type, slot.collection_key, input.decided_at]);
-          }
-          await tx.query("UPDATE oakridge.artifact SET lifecycle='released' WHERE id=$1 AND lifecycle='current'", [artifact.artifact_id]);
-          releasedArtifactId = artifact.artifact_id as ArtifactId;
-          continue;
-        }
-        if (effective === "terminal") {
-          await tx.query("UPDATE oakridge.artifact SET lifecycle='withdrawn' WHERE id=$1 AND lifecycle='current'", [artifact.artifact_id]);
-        }
-        // `revise` leaves the revision `current` and its slot unaccepted: the
-        // next attempt publishes the replacement into the same slot, as a new
-        // revision of the same chain.
-      }
-      return releasedArtifactId !== null
-        ? { kind: "released", artifact_id: releasedArtifactId, run_id, cohort_id, record_version }
-        : { kind: "invalidated", run_id, cohort_id, record_version };
-    });
   }
 
   async find_cohort_location(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<{

@@ -3,7 +3,6 @@
 
 import type {
   CohortPullRequestResponse,
-  ConfirmCohortMergedRequest,
   OakridgeConfig,
   Project,
   ProjectUpdateCommand,
@@ -32,6 +31,7 @@ import type {
   RunDiagnosis,
 } from "./types";
 import type { Result } from "../lib/result";
+import { randomUuid } from "../lib/random-uuid";
 
 const API = "/oakridge/api";
 
@@ -197,8 +197,8 @@ export function resumeGate(gateId: string, req: GateResumeRequest): Promise<Gate
  * checks a confirmation against the same expectations it checks a polled
  * observation against, so this asserts only that the merge happened.
  */
-export function confirmCohortMerged(cohortId: string, req: ConfirmCohortMergedRequest): Promise<CohortPullRequestResponse> {
-  return oakridgePost<CohortPullRequestResponse>(`/cohorts/${encodeURIComponent(cohortId)}/pull_request`, { kind: "operator_confirmation", ...req });
+export function confirmCohortMerged(cohortId: string): Promise<CohortPullRequestResponse> {
+  return oakridgePost<CohortPullRequestResponse>(`/cohorts/${encodeURIComponent(cohortId)}/pull_request/refresh`, {});
 }
 
 export function fetchProjects(): Promise<Project[]> {
@@ -283,7 +283,7 @@ export function deleteRun(runId: string): Promise<void> {
 export function retryRunUnit(stageInstanceId: string, unitId: string): Promise<unknown> {
   return oakridgePut<unknown>(
     `/stage_instances/${encodeURIComponent(stageInstanceId)}/units/${encodeURIComponent(unitId)}/retry`,
-    { idempotency_key: crypto.randomUUID() },
+    { idempotency_key: randomUuid() },
   );
 }
 

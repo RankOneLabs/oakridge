@@ -1,6 +1,5 @@
-import { cohortMachineWorkflowId } from "../decision/ids";
 import { runRecordWorkflowId } from "../domain/workflow-ids";
-import type { CohortId, WorkflowRunId } from "../domain/primitives";
+import type { WorkflowRunId } from "../domain/primitives";
 
 const RUN_RECORD_WAKE_TOPIC = "oakridge-v15-machine-wake";
 
@@ -33,9 +32,5 @@ export const sendRunWakeHint = async (run_id: WorkflowRunId, idempotency_key: st
  * not what the run decides: `derive` reads committed cohort status, so waking
  * the root alone would have it re-read a picture nothing had changed yet.
  */
-export const sendCohortWakeHint = async (cohort_id: CohortId, idempotency_key: string): Promise<void> => {
-  await client().send(cohortMachineWorkflowId(cohort_id), {}, RUN_RECORD_WAKE_TOPIC, idempotency_key);
-};
-
 /** The one topic every machine's bounded `recv` listens on. */
 export const MACHINE_WAKE_TOPIC = RUN_RECORD_WAKE_TOPIC;

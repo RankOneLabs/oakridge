@@ -13,7 +13,6 @@ import { createHash } from "node:crypto";
 import { resolveBindingValue } from "../compiler/resolve-execution";
 import type { StageInputSet } from "../decision/commands";
 import type { CompiledStageContract } from "../domain/compiled-workflow";
-import type { ArtifactEnvelope } from "../domain/execution";
 import { readJsonPointer } from "../domain/json-pointer";
 import type { CohortId, JsonValue, StageInstanceId } from "../domain/primitives";
 
@@ -86,53 +85,4 @@ export const resolveCohortRoster = (
     }
   }
   return entries;
-};
-
-export const selectAcceptedCollectionDependencyCycle = (accepted: readonly ArtifactEnvelope[]): string | null => {
-  const briefs = accepted.filter((artifact) => artifact.artifact_type === "dev.build_brief" && artifact.collection_key);
-  const graph = new Map<string, readonly string[]>(briefs.map((artifact) => {
-    const dependencies = readJsonPointer(artifact.body, "/depends_on");
-    return [artifact.collection_key!, Array.isArray(dependencies)
-      ? dependencies.filter((dependency): dependency is string => typeof dependency === "string") : []];
-  }));
-  const visiting = new Set<string>();
-  const visited = new Set<string>();
-  const visit = (key: string): string | null => {
-    if (visiting.has(key)) return key;
-    if (visited.has(key)) return null;
-    visiting.add(key);
-    for (const dependency of graph.get(key) ?? []) {
-      if (!graph.has(dependency)) continue;
-      const cycle = visit(dependency);
-      if (cycle) return cycle;
-    }
-    visiting.delete(key);
-    visited.add(key);
-    return null;
-  };
-  for (const key of graph.keys()) {
-    const cycle = visit(key);
-    if (cycle) return `accepted brief dependency cycle includes '${cycle}'`;
-  }
-  return null;
-};
-
-/** Accepted output slots must cover every key pinned by a collection production. */
-export const selectCohortOutputsSatisfied = (
-  contract: CompiledStageContract,
-  context: { readonly inputs: StageInputSet; readonly run_context: JsonValue },
-  accepted: readonly ArtifactEnvelope[],
-): boolean => {
-  if (contract.materialization.kind !== "artifact_collections") {
-    return contract.outputs.every((output) => accepted.some((artifact) => artifact.output_name === output.name));
-  }
-  const expectedKeys = contract.materialization.productions.flatMap((production) => {
-    const resolved = resolveBindingValue(production.over,
-      { inputs: context.inputs, context: context.run_context, item: null });
-    if (!resolved.ok || !Array.isArray(resolved.value)) return [null];
-    return resolved.value.map((item) => readJsonPointer(item, production.id_path));
-  });
-  if (expectedKeys.length === 0 || expectedKeys.some((key) => typeof key !== "string" || key.length === 0)) return false;
-  return contract.outputs.every((output) => expectedKeys.every((key) =>
-    accepted.some((artifact) => artifact.output_name === output.name && artifact.collection_key === key)));
 };

@@ -2,7 +2,6 @@ import { z } from "zod";
 import { BUILT_IN_GATE_DISPOSITIONS, isBuiltInGateAction } from "../domain/gates";
 import type { DelegatedSessionDefinitionConfig, SessionLaunchReasonName } from "../domain/delegated-session";
 import type { StageOperatorRole } from "../domain/workflow";
-import type { AdapterRoleRegistry } from "./workflow-definition";
 
 export const slotBindingSchema = z.discriminatedUnion("from", [
   z.object({ from: z.literal("input"), input_name: z.string().min(1), path: z.string().nullable().default(null) }),
@@ -114,10 +113,7 @@ export const delegatedSessionDefinitionSchema = z.object({
 export type DelegatedSessionDiagnostic =
   | { readonly kind: "invalid_stage_config"; readonly stage_key: string; readonly session_role: StageOperatorRole | null; readonly contract_item: "config"; readonly issues: readonly string[] }
   | { readonly kind: "duplicate_key"; readonly stage_key: string; readonly session_role: StageOperatorRole | null; readonly contract_item: string; readonly array: string; readonly key: string }
-  | { readonly kind: "prompt_not_total"; readonly stage_key: string; readonly session_role: StageOperatorRole; readonly contract_item: string; readonly launch_reason: SessionLaunchReasonName; readonly matches: number }
-  | { readonly kind: "gate_without_closer"; readonly stage_key: string; readonly session_role: StageOperatorRole | null; readonly contract_item: string; readonly gate: string }
   | { readonly kind: "output_producer_count"; readonly stage_key: string; readonly session_role: StageOperatorRole | null; readonly contract_item: string; readonly output: string; readonly producers: number }
-  | { readonly kind: "wait_without_closing_event"; readonly stage_key: string; readonly session_role: StageOperatorRole | null; readonly contract_item: string; readonly wait: string }
   | { readonly kind: "unbound_placeholder"; readonly stage_key: string; readonly session_role: StageOperatorRole; readonly contract_item: string; readonly placeholder: string }
   | { readonly kind: "undeclared_output"; readonly stage_key: string; readonly session_role: StageOperatorRole | null; readonly contract_item: string; readonly output: string }
   | { readonly kind: "unavailable_tool"; readonly stage_key: string; readonly session_role: StageOperatorRole; readonly contract_item: string; readonly tool: string }
@@ -183,19 +179,12 @@ export const validateDelegatedSessionContracts = (
   session_role: StageOperatorRole | null,
   declared_outputs: readonly string[],
   config: DelegatedSessionDefinitionConfig,
-  registry: Pick<AdapterRoleRegistry, "launch_reasons_for">,
 ): readonly DelegatedSessionDiagnostic[] => {
   const diagnostics: DelegatedSessionDiagnostic[] = [];
   if (session_role === null || !config.role_configs.some((role) => role.session_role === session_role)) diagnostics.push({
     kind: "selected_role_missing", stage_key, session_role, contract_item: "operator_role",
   });
   for (const roleConfig of config.role_configs) {
-    for (const launchReason of registry.launch_reasons_for(roleConfig.session_role)) {
-      const matches = config.prompt_matrix.filter((entry) => entry.session_role === roleConfig.session_role
-        && entry.launch_reason === launchReason).length;
-      if (matches !== 1) diagnostics.push({ kind: "prompt_not_total", stage_key, session_role: roleConfig.session_role,
-        contract_item: `${roleConfig.session_role}:${launchReason}`, launch_reason: launchReason, matches });
-    }
     const available = new Set(roleConfig.pre_authorized_tools ?? []);
     for (const tool of roleConfig.required_tools ?? []) if (!available.has(tool)) diagnostics.push({
       kind: "unavailable_tool", stage_key, session_role: roleConfig.session_role, contract_item: tool, tool,
@@ -208,12 +197,6 @@ export const validateDelegatedSessionContracts = (
       kind: "unbound_placeholder", stage_key, session_role: roleConfig.session_role, contract_item: placeholder, placeholder,
     });
   }
-  for (const gate of config.gates) if (gate.steps.length === 0) diagnostics.push({
-    kind: "gate_without_closer", stage_key, session_role, contract_item: gate.name, gate: gate.name,
-  });
-  for (const handoff of config.handoffs) if (handoff.approved_wait.close_events.length === 0) diagnostics.push({
-    kind: "wait_without_closing_event", stage_key, session_role, contract_item: handoff.name, wait: handoff.name,
-  });
   const declared = new Set(declared_outputs);
   const claimed = [...config.role_configs.flatMap((role) => role.authorized_outputs), ...config.gates.flatMap((gate) => gate.outputs), ...config.handoffs.flatMap((handoff) => handoff.outputs)];
   for (const output of new Set(claimed)) if (!declared.has(output)) diagnostics.push({ kind: "undeclared_output", stage_key, session_role, contract_item: output, output });

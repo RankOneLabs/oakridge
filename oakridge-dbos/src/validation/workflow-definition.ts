@@ -93,7 +93,6 @@ export interface DefinitionValidationError {
 
 export interface AdapterRoleRegistry {
   has_role(name: string): boolean;
-  launch_reasons_for(role: string): readonly string[];
 }
 
 /**

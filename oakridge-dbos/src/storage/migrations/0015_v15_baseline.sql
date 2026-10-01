@@ -110,7 +110,7 @@ CREATE TABLE oakridge.cohort (
   run_id uuid NOT NULL,
   stage_instance_id uuid NOT NULL,
   cohort_key text NOT NULL CHECK (length(btrim(cohort_key)) > 0),
-  state text NOT NULL CHECK (length(btrim(state)) > 0),
+  state text NOT NULL DEFAULT 'pending' CHECK (length(btrim(state)) > 0),
   round integer NOT NULL DEFAULT 1 CHECK (round > 0),
   depends_on text[] NOT NULL DEFAULT '{}',
   status oakridge.core_status NOT NULL DEFAULT 'pending',

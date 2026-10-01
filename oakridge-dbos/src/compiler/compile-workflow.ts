@@ -11,6 +11,13 @@ import { createDevFlowAdapterRegistry } from "../adapters/dev-flow";
 import type { AdapterRoleRegistry } from "../validation/workflow-definition";
 import type { CompiledMachine, EffectRef, EventMatch, MachineDefinition, MachineRegistry, Transition } from "../domain/stage-machine";
 import { StageMachineRegistry } from "../runtime/executor-registry";
+import { registerDevFlowMachine } from "../adapters/dev-flow-machine";
+
+const defaultMachineRegistry = (): MachineRegistry => {
+  const registry = new StageMachineRegistry();
+  registerDevFlowMachine(registry, new Map());
+  return registry;
+};
 
 export type MachineCheck = "names_exist" | "initial_state" | "reachability" | "group_totality" | "mandatory_events"
   | "termination" | "prompt_totality" | "retry_correspondence" | "outputs" | "gates" | "no_orphan_gate";
@@ -266,8 +273,8 @@ const compileStage = (stageKey: string, node: StageNodeDefinition, registry: Sta
 export const compileWorkflowDefinition = (
   definition: WorkflowDefinition,
   registry: StageTypeCompilerRegistry = builtInStageTypeCompilers,
-  adapterRegistry: AdapterRoleRegistry = createDevFlowAdapterRegistry(),
-  machineRegistry: MachineRegistry = new StageMachineRegistry(),
+  _adapterRegistry: AdapterRoleRegistry = createDevFlowAdapterRegistry(),
+  machineRegistry: MachineRegistry = defaultMachineRegistry(),
 ): Result<CompiledWorkflowDefinition, CompileWorkflowError> => {
   const diagnostics: (DelegatedSessionDiagnostic | MachineDiagnostic)[] = [];
   const machines: Record<string, CompiledMachine> = {};
@@ -297,16 +304,8 @@ export const compileWorkflowDefinition = (
       continue;
     }
     diagnostics.push(...validateDelegatedSessionCardinality(stageKey, node.operator_role, parsed.data));
-    // Immutable pre-v15 definitions use the former initial/retry/revision
-    // vocabulary. Their exact declared cells remain their compatibility
-    // contract; current adapter registration applies to the v15 build cohort,
-    // identified by its required build set.
-    const launchReasonRegistry = parsed.data.required_build_set && !machines[stageKey] ? adapterRegistry : {
-      launch_reasons_for: (role: string) => parsed.data.prompt_matrix
-        .filter((cell) => cell.session_role === role).map((cell) => cell.launch_reason),
-    };
     diagnostics.push(...validateDelegatedSessionContracts(stageKey, node.operator_role,
-      node.outputs.map((output) => output.name), parsed.data, launchReasonRegistry));
+      node.outputs.map((output) => output.name), parsed.data));
   }
   if (diagnostics.length > 0) return err({ operation: "compile_workflow", stage_key: diagnostics[0]?.stage_key ?? null,
     detail: diagnostics.map((diagnostic) => `${diagnostic.kind}: ${diagnostic.stage_key}.${diagnostic.contract_item}`).join("\n"), diagnostics });
@@ -342,7 +341,7 @@ export const compileWorkflowManifest = (
   versions: CompileManifestVersions,
   registry: StageTypeCompilerRegistry = builtInStageTypeCompilers,
   adapterRegistry: AdapterRoleRegistry = createDevFlowAdapterRegistry(),
-  machineRegistry: MachineRegistry = new StageMachineRegistry(),
+  machineRegistry: MachineRegistry = defaultMachineRegistry(),
 ): Result<CompiledWorkflowDefinition, CompileWorkflowError> => {
   const compiled = compileWorkflowDefinition(definition, registry, adapterRegistry, machineRegistry);
   const promptDiagnostics: DelegatedSessionDiagnostic[] = [];

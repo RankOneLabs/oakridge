@@ -93,7 +93,7 @@ const updateOwner = async (
     input.change.next_actor, input.change.outcome === null ? null : JSON.stringify(input.change.outcome), input.changed_at];
   if (input.owner.kind !== "run") parameters.push(input.run_id);
   if (input.owner.kind === "cohort") {
-    parameters.push(JSON.stringify(input.cohort_stage_data ?? null));
+    parameters.push(input.cohort_stage_data === undefined ? null : JSON.stringify(input.cohort_stage_data));
     parameters.push(input.cohort_state ?? null);
   }
   const stageDataAssignment = input.owner.kind === "cohort"
@@ -130,7 +130,7 @@ const insertTransition = async (
     `INSERT INTO oakridge.run_transition
        (id,run_id,owner_kind,owner_run_id,owner_stage_instance_id,owner_cohort_id,launch_reason,
         prior_owner_version,resulting_owner_version,event,from_state,to_state,effect_descriptor,effect_workflow_id,actor,created_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13::jsonb,$14,$15,$16,$17::timestamptz)`,
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13::jsonb,$14,$15,$16::timestamptz)`,
     [transition_id, input.run_id, input.owner.kind,
       input.owner.kind === "run" ? input.owner.id : null,
       input.owner.kind === "stage_instance" ? input.owner.id : null,

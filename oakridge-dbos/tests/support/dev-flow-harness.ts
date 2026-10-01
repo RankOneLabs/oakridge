@@ -153,9 +153,9 @@ export const scriptedAgentScenario = (options?: {
     pause_after_refusal_output: options?.pause_after_refusal_output ?? null,
     async merge(unit, options) {
       if (!activeRepositoryFixture) throw new Error("the git repository fixture is not running");
-      const branch = activeForgeRefs?.get(unit)?.head_branch;
-      if (!branch) throw new Error(`cohort '${unit}' has no build branch`);
-      const mergedHead = await activeRepositoryFixture.merge_cohort_branch(branch);
+      const refs = activeForgeRefs?.get(unit);
+      if (!refs) throw new Error(`cohort '${unit}' has no build branch`);
+      const mergedHead = await activeRepositoryFixture.merge_cohort_branch(refs.head_branch, refs.base_branch);
       pullRequests.set(unit, { state: "closed", merged_at: new Date().toISOString(), head_sha: options?.head_sha ?? null });
       return mergedHead;
     },
@@ -222,7 +222,7 @@ export interface GitRepositoryFixture {
   origin_branch_parent_sha(branch: string): Promise<string | null>;
   /** Commits onto an existing origin branch, standing in for merged cohort work. Returns the new head. */
   advance_origin_branch(branch: string, message: string): Promise<string>;
-  merge_cohort_branch(branch: string): Promise<string>;
+  merge_cohort_branch(branch: string, base_branch: string): Promise<string>;
   remove(): Promise<void>;
 }
 
@@ -292,6 +292,7 @@ export const createGitRepositoryFixture = async (): Promise<GitRepositoryFixture
       return output.trim().split(/\s+/)[0] || null;
     },
     async origin_branch_parent_sha(branch) {
+      if (!(await git(workingPath, ["ls-remote", "origin", `refs/heads/${branch}`])).trim()) return null;
       await git(workingPath, ["fetch", "origin", branch]);
       const commits = (await git(workingPath, ["rev-list", "--first-parent", "--max-count=2", `origin/${branch}`])).trim().split("\n");
       return commits[1] ?? null;
@@ -312,13 +313,13 @@ export const createGitRepositoryFixture = async (): Promise<GitRepositoryFixture
         await git(workingPath, ["worktree", "remove", "--force", scratch]);
       }
     },
-    async merge_cohort_branch(branch) {
+    async merge_cohort_branch(branch, base_branch) {
       const scratch = join(root, `merge-${branch.replaceAll("/", "-")}`);
-      await git(workingPath, ["fetch", "origin", HARNESS_BASE_BRANCH, branch]);
-      await git(workingPath, ["worktree", "add", "--detach", scratch, `origin/${HARNESS_BASE_BRANCH}`]);
+      await git(workingPath, ["fetch", "origin", base_branch, branch]);
+      await git(workingPath, ["worktree", "add", "--detach", scratch, `origin/${base_branch}`]);
       try {
         await git(scratch, ["merge", "--no-ff", `origin/${branch}`, "-m", `Merge ${branch}`]);
-        await git(scratch, ["push", "origin", `HEAD:refs/heads/${HARNESS_BASE_BRANCH}`]);
+        await git(scratch, ["push", "origin", `HEAD:refs/heads/${base_branch}`]);
         return (await git(scratch, ["rev-parse", "HEAD"])).trim();
       } finally {
         await git(workingPath, ["worktree", "remove", "--force", scratch]);

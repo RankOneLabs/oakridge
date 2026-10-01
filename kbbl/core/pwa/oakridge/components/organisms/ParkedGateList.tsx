@@ -83,21 +83,17 @@ function GateCard({ gate, onNavigateRun, onNavigateArtifact }: GateCardProps) {
         </div>
       )}
 
-      {gate.artifact_revision_id && (
-        <div className="flex items-center gap-2">
+      {(gate.artifact_revision_ids ?? (gate.artifact_revision_id ? [gate.artifact_revision_id] : [])).map((artifactId) => (
+        <div className="flex items-center gap-2" key={artifactId}>
           <span className={labelClass}>Revision</span>
           {onNavigateArtifact ? (
-            <Button variant="link"
-              type="button"
-              className="font-mono text-xs"
-              onClick={() => onNavigateArtifact(gate.artifact_revision_id!)}
-              data-testid="or-gate-artifact-link"
-            >
-              {gate.artifact_revision_id}
+            <Button variant="link" type="button" className="font-mono text-xs"
+              onClick={() => onNavigateArtifact(artifactId)} data-testid="or-gate-artifact-link">
+              {artifactId}
             </Button>
-          ) : <code className={codeClass}>{gate.artifact_revision_id}</code>}
+          ) : <code className={codeClass}>{artifactId}</code>}
         </div>
-      )}
+      ))}
 
       <GateDecisionActions gate={gate} />
     </div>

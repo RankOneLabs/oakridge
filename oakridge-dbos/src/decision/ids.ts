@@ -33,7 +33,6 @@ const ownerIdentity = (owner: TransitionOwner): string => `${owner.kind}:${owner
 
 export const runMachineWorkflowId = (run_id: WorkflowRunId): string => `v15-run:${run_id}`;
 export const stageMachineWorkflowId = (stage_instance_id: StageInstanceId): string => `v15-stage:${stage_instance_id}`;
-export const cohortMachineWorkflowId = (cohort_id: CohortId): string => `v15-cohort:${cohort_id}`;
 
 export const transitionIdFor = (owner: TransitionOwner, resulting_version: number): RunTransitionId =>
   stableUuid(`v15-transition:${ownerIdentity(owner)}:${resulting_version}`) as RunTransitionId;

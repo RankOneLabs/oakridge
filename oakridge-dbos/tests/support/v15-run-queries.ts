@@ -70,10 +70,9 @@ export const workflowRunState = async (sql: SqlExecutor, run_id: WorkflowRunId):
 };
 
 export const openBriefGateUnitIds = async (sql: SqlExecutor, run_id: WorkflowRunId): Promise<ReadonlySet<string>> => {
-  const rows = await sql.query<{ readonly unit_id: string }>(`SELECT DISTINCT COALESCE(slot.collection_key, cohort.cohort_key) AS unit_id
+  const rows = await sql.query<{ readonly unit_id: string }>(`SELECT DISTINCT cohort.cohort_key AS unit_id
     FROM oakridge.wait_gate wait JOIN oakridge.cohort cohort ON cohort.id=wait.cohort_id
     JOIN oakridge.stage_instance stage ON stage.id=wait.stage_instance_id
-    LEFT JOIN oakridge.wait_gate_output_slot slot ON slot.wait_gate_id=wait.id
     WHERE wait.run_id=$1 AND stage.stage_key='brief_writer' AND wait.kind='gate' AND wait.status='open'`, [run_id]);
   return new Set(rows.map((row) => row.unit_id));
 };

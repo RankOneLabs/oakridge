@@ -1,6 +1,5 @@
 import { err, ok, type JsonValue, type Result } from "../domain/primitives";
 import { AdapterRegistry, type AdapterDecisionContext, type AdapterDecisionHandler } from "../runtime/executor-registry";
-import { BUILD_LAUNCH_REASONS, type BuildCohortTransitionEffect } from "./dev-flow-build";
 
 interface PullRequestPayload {
   readonly repository_key: string;
@@ -40,27 +39,10 @@ const pullRequestHandler = (name: string): AdapterDecisionHandler<PullRequestPay
   effect,
 });
 
-const buildTransitionHandler: AdapterDecisionHandler<BuildCohortTransitionEffect> = {
-  name: "dev_flow_build_cohort_transition",
-  decode(value) {
-    if (!isObject(value) || value.kind !== "dev_flow_build_cohort_transition"
-      || !isObject(value.event) || typeof value.event.kind !== "string"
-      || typeof value.disposition !== "string" || !isObject(value.stage_data)
-      || !isObject(value.projected_status)) return err("build cohort transition effect is invalid");
-    return ok(value as unknown as BuildCohortTransitionEffect);
-  },
-  guard: allow,
-  effect: (_context, payload) => payload as unknown as ReturnType<typeof effect>,
-};
-
 export const registerDevFlowAdapter = (registry: AdapterRegistry): void => {
   for (const role of ["spec", "plan", "brief", "build", "assessment", "final_integration", "provision"]) registry.register_role(role);
-  for (const [role, reasons] of Object.entries(BUILD_LAUNCH_REASONS)) {
-    for (const reason of reasons) registry.register_launch_reason(role, reason);
-  }
   registry.register_decision(pullRequestHandler("pull_request_observed"));
   registry.register_decision(pullRequestHandler("pull_request_merge_confirmed"));
-  registry.register_decision(buildTransitionHandler);
 };
 
 export const createDevFlowAdapterRegistry = (): AdapterRegistry => {

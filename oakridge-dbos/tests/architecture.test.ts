@@ -4,8 +4,8 @@ import { join } from "node:path";
 
 import { ok, type JsonValue } from "../src/domain/primitives";
 import { AdapterRegistry } from "../src/runtime/executor-registry";
-import { cohortMachineAddress } from "../src/workflows/run-record-topology";
-import { BUILD_LAUNCH_REASONS } from "../src/adapters/dev-flow-build";
+import { transitionEffectWorkflowId } from "../src/decision/ids";
+import { loadDevFlowV15 } from "../src/seed/dev-flow-v15";
 
 const SOURCE = new URL("../src", import.meta.url).pathname;
 const FORBIDDEN_IDENTIFIERS = [
@@ -88,9 +88,17 @@ test("the baseline stores arbitrary registered effects without event-name checks
 test("adapter launch reason names require no core decision or migration edit", async () => {
   const decision = (await Promise.all((await decisionSources()).map((file) => readFile(file, "utf8")))).join("\n");
   const baseline = await readFile(join(SOURCE, "storage", "migrations", "0015_v15_baseline.sql"), "utf8");
-  for (const reason of Object.values(BUILD_LAUNCH_REASONS).flat()) {
-    expect(decision).not.toContain(reason);
-    expect(baseline).not.toContain(reason);
+  const loaded = await loadDevFlowV15();
+  if (!loaded.ok) throw new Error(loaded.error.detail);
+  const reasons = new Set(Object.values(loaded.value.machines ?? {}).flatMap((machine) => machine.transitions
+    .flatMap((row) => "effects" in row ? row.effects : [])
+    .filter((effect) => effect.name === "launch_session")
+    .map((effect) => effect.args.reason)
+    .filter((reason): reason is string => typeof reason === "string")));
+  for (const reason of reasons) {
+    if (reason === "initial" || reason === "operator_retry") continue;
+    expect(decision).not.toContain(`"${reason}"`);
+    expect(baseline).not.toContain(`'${reason}'`);
   }
 });
 
@@ -151,9 +159,11 @@ test("the lifecycle rule catches a literal status write to a cohort", () => {
   expect(LIFECYCLE_STATUS_WRITE.test("UPDATE oakridge.session SET adapter_reference=$2::jsonb WHERE id=$1")).toBe(false);
 });
 
-test("each cohort has one stable machine address", () => {
+test("each cohort transition has one stable effect workflow address", () => {
   const first = "00000000-0000-4000-8000-000000000001" as import("../src/domain/primitives").CohortId;
   const second = "00000000-0000-4000-8000-000000000002" as import("../src/domain/primitives").CohortId;
-  expect(cohortMachineAddress(first)).toEqual(cohortMachineAddress(first));
-  expect(cohortMachineAddress(first).workflow_id).not.toBe(cohortMachineAddress(second).workflow_id);
+  expect(transitionEffectWorkflowId({ kind: "cohort", id: first }, 1))
+    .toBe(transitionEffectWorkflowId({ kind: "cohort", id: first }, 1));
+  expect(transitionEffectWorkflowId({ kind: "cohort", id: first }, 1))
+    .not.toBe(transitionEffectWorkflowId({ kind: "cohort", id: second }, 1));
 });

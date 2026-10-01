@@ -21,12 +21,10 @@
 import { DBOS, DBOSClient } from "@dbos-inc/dbos-sdk";
 import type { Hono } from "hono";
 
-import { createDelegatedSessionCohortDriver } from "../adapters/delegated-session-cohort";
-import { createDeterministicCohortDriver } from "../adapters/deterministic-cohort";
 import { createDevFlowAdapterRegistry } from "../adapters/dev-flow";
 import { registerDevFlowMachine } from "../adapters/dev-flow-machine";
 import type { RegisteredEffect } from "../decision/stage-effects";
-import { PROVISION_REPOSITORY_REFS_STAGE_TYPE, parseRepositoryRefs } from "../domain/repository-refs";
+import { parseRepositoryRefs } from "../domain/repository-refs";
 import { RepositoryProvisioningAdapter } from "../adapters/repository-provisioning";
 import { compileWorkflowDefinition } from "../compiler/compile-workflow";
 import { attemptWorkflowId, stageInstanceIdFor } from "../decision/ids";
@@ -46,15 +44,14 @@ import type { PromptBundleEntry } from "../domain/workflow";
 import { parseWorkflowDefinition } from "../validation/workflow-definition";
 import { STAGE_CONTRACT_DEPENDENCY_KEY } from "../storage/load-run-snapshot";
 import { STAGE_CONTRACT_INPUT_EDGES_KEY } from "../domain/stage-contract";
-import { prepareDevFlowBuildCohort, verifyAndBindCohortPullRequest } from "./cohort-pull-request";
+import { prepareDevFlowBuildCohort } from "./cohort-pull-request";
 import { pollStagePullRequests, type PullRequestReader, type StagePullRequestPollOutcome } from "./github-pull-requests";
 import { createApp } from "../http/app";
-import { registerDbosTransportClient, sendCohortWakeHint, sendRunWakeHint } from "../http/dbos-transport";
+import { registerDbosTransportClient, sendRunWakeHint } from "../http/dbos-transport";
 import { seedBuiltins } from "../seed/seed-builtins";
 import {
   PostgresArtifactRepository,
   PostgresCollaborationRepository,
-  PostgresForgeRepositoryRepository,
   PostgresStageInstanceRepository,
   PostgresWorkflowRunRepository,
 } from "../storage/postgres-domain";
@@ -66,7 +63,7 @@ import { StageEventApplier } from "../storage/apply-stage-event";
 import { PostgresWorkflowDefinitionRepository } from "../storage/postgres-workflow-definitions";
 import { PgPostgresExecutor } from "../storage/sql-executor";
 import { findExecutorAdapter, registerExecutorAdapter } from "./executor-registry";
-import { loadStageInputs, registerRunRecordWorkflowServices, stageEffectWorkflow, attemptWorkflow, type CohortMachineDriver } from "../workflows/run-record-topology";
+import { loadStageInputs, registerRunRecordWorkflowServices, stageEffectWorkflow, attemptWorkflow } from "../workflows/run-record-topology";
 import "../workflows/collaboration-responder";
 import { DbosRunLaunchClient } from "./dbos-run-launch-client";
 import { DbosCollaborationPingClient, PostgresSessionMessageRecipientResolver, PostgresSessionMessageRepository } from "./collaboration-ping";
@@ -174,7 +171,6 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const stages = new PostgresStageInstanceRepository(sql);
   const artifacts = new PostgresArtifactRepository(sql);
   const collaboration = new PostgresCollaborationRepository(sql);
-  const forgeRepositories = new PostgresForgeRepositoryRepository(sql);
   const pullRequests = new PostgresDevFlowPullRequestRepository(sql);
   const projections = new PostgresOperatorProjectionRepository(sql, config.application_version, adapterRegistry);
   const messages = new PostgresSessionMessageRepository(sql);
@@ -200,7 +196,6 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   registerDbosTransportClient(client);
   for (const adapter of config.executor_adapters) registerExecutorAdapter(adapter);
   const git = config.git_commands ?? new BunGitCommandRunner();
-  const forgeReader = config.pull_request_reader ?? { read: async () => null };
   const enrichStagePublication = async (input: { readonly attempt_id: AttemptId;
     readonly output_name: string; readonly body: JsonValue }): Promise<Result<JsonValue | null,
       { readonly code: string; readonly detail: string }>> => {
@@ -238,7 +233,6 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
         idempotency_key: request.idempotency_key,
       }, { records: runRecords, now });
       if (result.kind === "published" || result.kind === "pending" || result.kind === "already_applied") {
-        await sendCohortWakeHint(result.cohort_id, `provision:${result.artifact_id}`).catch(() => undefined);
         await sendRunWakeHint(result.run_id, `provision:${result.artifact_id}`).catch(() => undefined);
       }
       return result;
@@ -392,45 +386,9 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     return resolved.request;
   };
 
-  /**
-   * One cohort driver per stage type.
-   *
-   * Registered rather than switched on: a stage type's roster and its advance
-   * belong to whoever owns that stage type, and core carries the name through
-   * durable records without closing over it. The two shipped types are the
-   * agent-facing delegated session and the deterministic provisioning action.
-   */
-  const devFlowDriver = createDelegatedSessionCohortDriver({
-    records: runRecords, pull_requests: pullRequests, git, load_prompt_bundle: promptBundleOf,
-    verify_build_pull_request: async (input) => {
-      const location = await runRecords.find_cohort_location(input.stage_instance_id, input.cohort_key as import("../domain/primitives").UnitId);
-      const cohort = await pullRequests.find_cohort_for_unit(input.stage_instance_id, input.cohort_key as import("../domain/primitives").UnitId);
-      if (!location || !cohort || location.cohort_id !== input.cohort_id) {
-        return err({ operation: "verify_cohort_pull_request" as const, kind: "build_cohort_not_found" as const,
-          detail: "stored build cohort is missing", current_verification_id: null });
-      }
-      const forgeRepository = await forgeRepositories.find_forge_repository(location.run_id, cohort.repository_key);
-      if (!forgeRepository) return err({ operation: "verify_cohort_pull_request" as const,
-        kind: "repository_mismatch" as const, detail: "run context has no forge identity for the build repository" });
-      const verified = await verifyAndBindCohortPullRequest({ pull_requests: pullRequests,
-        reader: forgeReader, git, now }, { cohort, forge_repository: forgeRepository,
-        candidate_url: input.candidate_url, replace_verification_id: null });
-      return verified.ok ? { ok: true, value: { pull_request_url: verified.value.pull_request_url,
-        head_sha: verified.value.head_sha, binding: verified.value.binding } } : verified;
-    },
-  });
-  const provisioningDriver = createDeterministicCohortDriver({
-    records: runRecords, stage_type: PROVISION_REPOSITORY_REFS_STAGE_TYPE,
-  });
-  const drivers = new Map<string, CohortMachineDriver>(
-    [devFlowDriver, provisioningDriver].map((driver) => [driver.stage_type, driver]));
-
-  // The wait tables are the record of gate/handoff state; DBOS stays the
-  // command mechanism, so the wake hints above keep coming from the transport.
   registerRunRecordWorkflowServices({
     records: runRecords, stages, artifacts, effects_sql: sql, stage_events: stageEvents, find_run_context: runContextOf,
     resolve_attempt_request: resolveStageAttemptRequest,
-    find_driver: (stage_type) => drivers.get(stage_type),
     find_executor: findExecutorAdapter, now,
   });
 
@@ -542,8 +500,8 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     run_lifecycle: { records: runRecords },
     domain_reads: { stages, artifacts, session_holds: projections, session_run_locations: projections },
     work_order_artifact_callback: { records: runRecords, enrich: enrichStagePublication,
-      now, send_cohort_wake: sendCohortWakeHint, send_run_wake: sendRunWakeHint },
-    gate_resume: { records: runRecords, now, send_cohort_wake: sendCohortWakeHint, send_run_wake: sendRunWakeHint },
+      now, send_run_wake: sendRunWakeHint },
+    gate_resume: { records: runRecords, now, send_run_wake: sendRunWakeHint },
     cohort_pull_requests: { refresh: async (cohort_id) => {
       const reader = config.pull_request_reader;
       if (reader) await pollStagePullRequests({ sql, reader, stage_events: stageEvents }, cohort_id);

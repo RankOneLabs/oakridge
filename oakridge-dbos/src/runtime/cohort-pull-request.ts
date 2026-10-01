@@ -15,7 +15,9 @@ import {
   operatorMergedObservation, reconcileCohortPullRequest,
   type CohortPullRequestReconciliation, type DevFlowBuildCohort, type ExpectedCohortPullRequest,
 } from "../domain/cohort-pull-request";
-import type { BuildCohortEvent } from "../adapters/dev-flow-build";
+type BuildCohortEvent =
+  | { readonly kind: "pull_request_mismatch"; readonly pull_request_url: string }
+  | { readonly kind: "pull_request_merged"; readonly pull_request_url: string; readonly head_sha: string };
 import { err, ok, type CohortId, type Result, type StageInstanceId, type UnitId, type WorkflowRunId } from "../domain/primitives";
 import type { PullRequestObservation } from "../domain/pull-request";
 import { parseGithubPullRequestIdentity, repositoriesMatch, type PullRequestVerificationId } from "../domain/pull-request";

@@ -191,7 +191,11 @@ export function parseParkedGates(gates: RawParkedGate[]): Result<ParkedGate[], R
   for (const gate of gates) {
     const repositoryKey = parseOptionalRepositoryKey(gate.repository_key);
     if (!repositoryKey.ok) return repositoryKey;
-    parsed.push({ ...gate, repository_key: repositoryKey.value });
+    const revisions = gate.artifact_revision_ids ?? (gate.artifact_revision_id ? [gate.artifact_revision_id] : []);
+    if (!Array.isArray(revisions) || revisions.some((id) => typeof id !== "string")) {
+      return err("parse parked gates", "response contained invalid artifact revision ids");
+    }
+    parsed.push({ ...gate, repository_key: repositoryKey.value, artifact_revision_ids: revisions });
   }
   return ok(parsed);
 }

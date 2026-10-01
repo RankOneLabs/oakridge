@@ -19,6 +19,7 @@ function itemToGate(item: ReviewInboxItem): ParkedGate | null {
     unit_id: item.unit_id,
     repository_key: item.repository_key,
     artifact_revision_id: item.artifact_revision_id,
+    artifact_revision_ids: item.artifact_revision_ids,
     worktree: null,
     resume_actions: item.resume_actions,
     pr_url: item.pr_url,
@@ -43,7 +44,7 @@ function workLabel(item: ReviewInboxItem): string {
 
 export function WorkItem({ item, cohort, isSettled = false, onSelectRun, onSelectArtifact }: { item: ReviewInboxItem; cohort?: CohortLifecycleSummary; isSettled?: boolean; onSelectRun: (id: string) => void; onSelectArtifact: (id: string) => void }) {
   const gate = isSettled ? null : itemToGate(item);
-  const artifactRevisionId = item.artifact_revision_id;
+  const artifactRevisionIds = item.artifact_revision_ids ?? (item.artifact_revision_id ? [item.artifact_revision_id] : []);
   const mismatch = cohort?.pull_request_reconciliation?.mismatch;
 
   return (
@@ -54,7 +55,8 @@ export function WorkItem({ item, cohort, isSettled = false, onSelectRun, onSelec
         <p>{item.repository_key || item.workflow_name}</p>
         {item.blocked_by.length > 0 && <div className="or-work-item__blocker" data-testid="or-review-inbox-blocked">Waiting on {item.blocked_by.join(", ")}</div>}
         <div className="or-work-item__links">
-          {artifactRevisionId && <Button variant="link" onClick={() => onSelectArtifact(artifactRevisionId)} data-testid="or-inbox-artifact-link">Open full review</Button>}
+          {artifactRevisionIds.map((artifactId) => <Button key={artifactId} variant="link"
+            onClick={() => onSelectArtifact(artifactId)} data-testid="or-inbox-artifact-link">Review {artifactId}</Button>)}
           <Button variant="link" onClick={() => onSelectRun(item.run_id)} data-testid="or-inbox-run-link">View run details</Button>
           {item.pr_url && <a href={item.pr_url} target="_blank" rel="noopener noreferrer">Open pull request</a>}
         </div>
@@ -63,7 +65,7 @@ export function WorkItem({ item, cohort, isSettled = false, onSelectRun, onSelec
         {isSettled && <p data-testid="or-inbox-settled">No longer needs your decision.</p>}
         {!isSettled && <>
         {gate && <GateDecisionActions gate={gate} />}
-        {!gate && item.kind === "pull_request_merge" && <PullRequestMergeAction item={item} />}
+        {!gate && item.kind === "pull_request_merge" && <PullRequestMergeAction item={item} cohort={cohort} />}
         {!gate && item.kind === "cohort_retry" && <CohortRetryAction item={item} />}
         {!gate && item.kind === "pull_request_mismatch" && <><p>{mismatch?.detail ?? "The observed pull request does not match this cohort’s durable configuration."}</p><p>Correct the pull request repository or branches, then Oakridge will reconcile it automatically.</p></>}
         {!gate && item.kind !== "pull_request_mismatch" && item.kind !== "pull_request_merge" && item.kind !== "cohort_retry" && <p>{item.kind === "cohort_failed" ? "This cohort failed and ended its run. Start a new run to try again." : "This work will continue automatically when its dependencies finish."}</p>}
@@ -92,19 +94,21 @@ function CohortRetryAction({ item }: { item: ReviewInboxItem }) {
  * against the same expectations as a polled observation, so this asserts the
  * merge happened and nothing else.
  */
-function PullRequestMergeAction({ item }: { item: ReviewInboxItem }) {
+function PullRequestMergeAction({ item, cohort }: { item: ReviewInboxItem; cohort?: CohortLifecycleSummary }) {
   const confirmation = useConfirmCohortMerged(item.run_id);
-  const cohortId = `${item.stage_instance_id}:${item.unit_id}`;
+  const cohortId = cohort?.id;
   return <>
     <p>Oakridge is watching this pull request and will continue on its own once it merges.</p>
     <Button
       variant="secondary"
-      onClick={() => confirmation.mutate({ cohortId, operatorComment: "Operator confirmed the pull request merged" })}
-      disabled={confirmation.isPending}
+      onClick={() => { if (cohortId) confirmation.mutate({ cohortId }); }}
+      disabled={confirmation.isPending || !cohortId}
       data-testid="or-inbox-confirm-merged-btn"
     >
-      {confirmation.isPending ? "Confirming…" : "It’s merged — continue"}
+      {confirmation.isPending ? "Checking…" : "Check GitHub merge"}
     </Button>
+    {confirmation.data && <FeedbackMessage>{confirmation.data.state === "done"
+      ? "GitHub reports this PR merged." : "GitHub still reports this PR open"}</FeedbackMessage>}
     {confirmation.isError && <FeedbackMessage tone="danger">{confirmation.error instanceof Error ? confirmation.error.message : "Could not confirm the merge"}</FeedbackMessage>}
   </>;
 }
