@@ -269,6 +269,7 @@ test("operator retry of a lost build uses the retry prompt", async () => {
         accepted_build_set: [] } } as JsonValue });
   const decision = await driverFor(bundle).apply_event(contextOf(state, contract), { kind: "operator_retry_requested" });
   expect(launchOf(decision!)?.launch_reason).toBe("retry_after_lost_attempt");
+  expect(decision?.event.launch_reason).toBe("retry");
 });
 
 test("operator retry of a lost assessment uses the retry prompt", async () => {

@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
 
 import type { ExecutorAdapter, ExternalExecutionReference } from "../src/domain/execution";
-import type { SessionId } from "../src/domain/primitives";
-import type { AttemptExecution } from "../src/domain/run-record";
+import type { AttemptId, CohortId, SessionId, StageInstanceId, WorkflowRunId } from "../src/domain/primitives";
+import type { AttemptExecution, CohortMachineState } from "../src/domain/run-record";
 import type { RunRecordRepository } from "../src/storage/repositories";
-import { ensureAttemptSession } from "../src/workflows/run-record-topology";
+import { ensureAttemptSession, registerRunRecordWorkflowServices, retryCohortThroughDriver,
+  type CohortMachineDriver, type RunRecordWorkflowServices } from "../src/workflows/run-record-topology";
 
 test("ensureAttemptSession fences a session started for an abandoned attempt", async () => {
   const reference: ExternalExecutionReference = { kind: "kbbl_session", session_id: "late-session" as never };
@@ -68,4 +69,38 @@ test("ensureAttemptSession fences prior cohort sessions before starting a replac
     adapter_type: "delegated_session", request: { execution_id: "new-attempt" } } as unknown as AttemptExecution;
   await ensureAttemptSession({ records, find_executor: () => adapter, now: () => "2026-09-29T01:00:00Z" }, execution);
   expect(calls).toEqual(["fence prior", "mark prior fenced", "observe prior cancelled", "start replacement"]);
+});
+
+test("a concurrent retry whose launch commit finds the same key returns already_created", async () => {
+  const cohort_id = "00000000-0000-4000-8000-000000000011" as CohortId;
+  const attempt_id = "00000000-0000-4000-8000-000000000012" as AttemptId;
+  const run_id = "00000000-0000-4000-8000-000000000013" as WorkflowRunId;
+  const stage_instance_id = "00000000-0000-4000-8000-000000000014" as StageInstanceId;
+  const state = { cohort_id, run_id, stage_instance_id, cohort_key: "unit", status: "blocked",
+    blocked_reason: "retry", next_actor: "operator", durable_version: 4,
+    latest_unfinished_attempt_id: null } as CohortMachineState;
+  let claim_reads = 0;
+  const records = {
+    find_cohort_state: async () => state,
+    find_cohort_retry_claim: async () => {
+      claim_reads += 1;
+      return claim_reads === 1 ? null : { attempt_id, attempt_number: 2, durable_version: 5 };
+    },
+    commit_cohort_launch: async () => ({ ok: true as const,
+      value: { kind: "already_created" as const, attempt_id, durable_version: 5 } }),
+  } as unknown as RunRecordRepository;
+  const driver = { apply_event: async () => ({
+    event: { change: { status: "active", blocked_reason: null, next_actor: "agent", outcome: null },
+      stage_data: {}, reopen_output_names: [], effect: { kind: "none" }, launch_reason: "retry", actor: "operator" },
+    launch: { attempt_number: 2, adapter_type: "delegated_session", resolve_request: async () => ({}) },
+  }) } as unknown as CohortMachineDriver;
+  registerRunRecordWorkflowServices({ records,
+    stages: { find_by_id: async () => ({ stage_type: "test" }),
+      find_contract: async () => ({ run_id, stage_key: "test", stage_contract: {} }) },
+    artifacts: {}, find_run_context: async () => ({}), find_driver: () => driver,
+    find_executor: () => undefined, now: () => "2026-09-30T00:00:00Z",
+  } as unknown as RunRecordWorkflowServices);
+  const result = await retryCohortThroughDriver({ kind: "cohort", cohort_id }, "retry-key");
+  expect(result).toEqual({ kind: "already_created", run_id, cohort_id, attempt_id,
+    attempt_number: 2, durable_version: 5 });
 });

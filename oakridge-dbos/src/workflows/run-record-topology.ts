@@ -247,6 +247,7 @@ const openStageCohortsStep = DBOS.registerStep(
     } catch (error) {
       const detail = String(error);
       await records.fail_stage_roster(stage_instance_id, detail, now());
+      await sendRunWakeHint(contract.run_id, `roster_failed:${stage_instance_id}`).catch(() => undefined);
       return { kind: "roster_failed", detail };
     }
     const opened = await records.open_stage_cohorts({ run_id: contract.run_id, stage_instance_id, cohorts, opened_at: now() });
@@ -293,6 +294,7 @@ export interface CohortStepOutcome {
   readonly committed: boolean;
   readonly should_reread: boolean;
   readonly started_attempt: AttemptId | null;
+  readonly launch_commit?: { readonly kind: "created" | "already_created"; readonly durable_version: number };
   /**
    * The cohort's attempt that still needs its workflow running — this pass's
    * launch, or an unfinished attempt somebody else created.
@@ -429,8 +431,9 @@ const commitCohortDecision = async (
     if (committed.value.kind === "created") {
       await sendRunWakeHint(state.run_id, `cohort_transition:${committed.value.transition.transition_id}`).catch(() => undefined);
     }
-    return { status: decision.event.change.status, committed: true, should_reread: false,
-      started_attempt: committed.value.attempt_id, open_attempt: committed.value.attempt_id };
+    return { status: decision.event.change.status, committed: committed.value.kind === "created", should_reread: false,
+      started_attempt: committed.value.attempt_id, open_attempt: committed.value.attempt_id,
+      launch_commit: { kind: committed.value.kind, durable_version: committed.value.durable_version } };
   }
   const recorded = await records.record_cohort_event(event);
   if (recorded.kind === "version_conflict" || recorded.kind === "owner_terminal") return {
@@ -496,10 +499,17 @@ export const retryCohortThroughDriver = async (
     const outcome = await commitCohortDecision(context, decision, idempotency_key);
     if (outcome.should_reread) continue;
     if (!outcome.started_attempt) return { kind: "not_retryable", reason: "not_lost" };
+    if (outcome.launch_commit?.kind === "already_created") {
+      const claimed = await records.find_cohort_retry_claim(cohort_id, idempotency_key);
+      if (!claimed) throw new Error(`retry claim '${idempotency_key}' for cohort '${cohort_id}' disappeared`);
+      return { kind: "already_created", run_id: context.state.run_id, cohort_id,
+        attempt_id: claimed.attempt_id, attempt_number: claimed.attempt_number,
+        durable_version: claimed.durable_version };
+    }
     await sendCohortWakeHint(cohort_id, `operator_retry:${cohort_id}:${idempotency_key}`).catch(() => undefined);
     return { kind: "created", run_id: context.state.run_id, cohort_id,
       attempt_id: outcome.started_attempt, attempt_number: decision.launch.attempt_number,
-      durable_version: context.state.durable_version + 1 };
+      durable_version: outcome.launch_commit?.durable_version ?? context.state.durable_version + 1 };
   }
   return { kind: "not_retryable", reason: "work_in_progress" };
 };

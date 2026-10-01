@@ -418,7 +418,7 @@ const launchReasonFor = (event: BuildCohortEvent): CohortStepDecision["event"]["
   if (event.kind === "stage_started") return "initial";
   if (event.kind === "build_review_approved" || event.kind === "build_review_revision_requested"
     || event.kind === "assessment_review_approved" || event.kind === "assessment_review_revision_requested") return "gate_decided";
-  if (event.kind === "builder_attempt_lost" || event.kind === "assessor_attempt_lost") return "retry";
+  if (event.kind === "operator_retry_requested") return "retry";
   return "artifact_accepted";
 };
 

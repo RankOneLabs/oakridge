@@ -211,7 +211,7 @@ test("revision after assessment commits the revision prompt and names the existi
   expect(result.launch).toMatchObject({ session_role: "build", launch_reason: "revision_after_assessment",
     prompt: { content: "build:revision_after_assessment" } });
   expect(result.launch?.contract_block).toContain("Existing PR: https://example.test/pull/7");
-  expect(result.effect.reopen_output_names).toEqual(["build_result", "pr_summary"]);
+  expect(result.effect.reopen_output_names).toEqual(["build_result", "pr_summary", "assessment"]);
 });
 
 test("awaiting merge completes only for the verified pull request", () => {
@@ -229,6 +229,7 @@ test("a merge of an advanced head restarts review rather than completing", () =>
     { kind: "pull_request_merged", pull_request_url: "https://example.test/pull/7", head_sha: "head-2" });
   expect(result).toMatchObject({ disposition: "transitioned", state: { phase: "builder_active", is_pull_request_merged: false },
     launch: { session_role: "build", launch_reason: "pr_mismatch_correction" } });
+  expect(result.effect.reopen_output_names).toEqual(["build_result", "pr_summary", "assessment"]);
 });
 
 test("replacement PR work names the old PR but cannot reuse its verification", () => {
