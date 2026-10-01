@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { err, ok, type Result } from "../domain/primitives";
 import type { WorkflowDefinitionId } from "../domain/primitives";
+import type { MachineDefinition } from "../domain/stage-machine";
 import type { FanOutDefinition } from "../domain/delegated-session";
 import type { InputSlot, WorkflowDefinition } from "../domain/workflow";
 import { delegatedSessionDefinitionSchema } from "./delegated-session";
@@ -23,6 +24,38 @@ const outputSlotSchema = z.object({
   attention: z.enum(["required", "optional", "none"]).optional(),
 });
 const endpointSchema = z.object({ stage: z.string().min(1), slot: z.string().min(1) });
+const eventMatchSchema = z.discriminatedUnion("event", [
+  z.object({ event: z.literal("started") }),
+  z.object({ event: z.literal("artifact_published"), output: z.string().min(1) }),
+  z.object({ event: z.literal("gate_decided"), gate: z.string().min(1), action: z.string().min(1) }),
+  z.object({ event: z.literal("session_ended") }),
+  z.object({ event: z.literal("operator_retry") }),
+  z.object({ event: z.literal("operator_abandon") }),
+  z.object({ event: z.literal("cancel") }),
+  z.object({ event: z.literal("external_observed"), source: z.string().min(1) }),
+]);
+const stateSchema = z.object({
+  status: z.enum(["pending", "active", "blocked", "complete", "failed", "cancelled"]),
+  blocked_reason: z.enum(["dependency", "gate", "capacity", "external", "operator", "retry"]).nullable(),
+  next_actor: z.enum(["core", "agent", "service", "operator", "external"]).nullable(),
+  session_role: z.string().nullable(),
+}).superRefine((state, context) => {
+  if ((state.status === "blocked") !== (state.blocked_reason !== null)) context.addIssue({ code: "custom", message: "blocked_reason must be set iff status is blocked" });
+  if ((["complete", "failed", "cancelled"].includes(state.status)) !== (state.next_actor === null)) context.addIssue({ code: "custom", message: "next_actor must be null iff status is terminal" });
+});
+const machineSchema = z.object({
+  initial: z.string().min(1),
+  states: z.record(z.string(), stateSchema),
+  transitions: z.array(z.union([
+    z.object({ from: z.union([z.string().min(1), z.object({ any_nonterminal: z.literal(true) })]), on: eventMatchSchema,
+      guard: z.object({ name: z.string().min(1), negate: z.boolean().default(false), args: z.record(z.string(), z.json()).default({}) }).nullable().default(null),
+      to: z.string().min(1), effects: z.array(z.object({ name: z.string().min(1), args: z.record(z.string(), z.json()).default({}) })).default([]) }),
+    z.object({ from: z.union([z.string().min(1), z.object({ any_nonterminal: z.literal(true) })]), on: eventMatchSchema,
+      guard: z.object({ name: z.string().min(1), negate: z.boolean().default(false), args: z.record(z.string(), z.json()).default({}) }).nullable().default(null),
+      refuse: z.string().min(1) }),
+  ])),
+});
+export const machineDefinitionsSchema = z.record(z.string(), machineSchema);
 const stageSchema = z.object({
   stage_type: z.string().min(1),
   operator_role: z.string().min(1).nullable().optional().transform((value) => value ?? null),
@@ -39,6 +72,7 @@ const workflowDefinitionSchema = z.object({
   id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, "Invalid UUID"),
   name: z.string().min(1),
   version: z.number().int().positive(),
+  machines: machineDefinitionsSchema.optional(),
   graph: z.object({
     stages: z.record(z.string(), stageSchema),
     edges: z.array(z.object({ from: endpointSchema, to: endpointSchema })),
@@ -164,6 +198,7 @@ export const parseWorkflowDefinition = (input: unknown, adapter_roles: AdapterRo
   const definition: WorkflowDefinition = {
     ...parsed.data,
     id: parsed.data.id as WorkflowDefinitionId,
+    machines: parsed.data.machines as unknown as Readonly<Record<string, MachineDefinition>> | undefined,
   };
   const graph = validateGraphReferences(definition);
   if (!graph.ok) return graph;

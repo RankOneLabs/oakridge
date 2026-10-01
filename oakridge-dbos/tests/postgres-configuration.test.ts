@@ -8,6 +8,7 @@ import type { SqlExecutor, TransactionalSqlExecutor } from "../src/storage/sql-e
 import { loadDevFlowV15 } from "../src/seed/dev-flow-v15";
 import { createDevFlowAdapterRegistry } from "../src/adapters/dev-flow";
 import { createPromptBundle } from "../src/runtime/prompt-template";
+import { definitionWithMachine } from "./support/machine-fixtures";
 
 class StubSql implements TransactionalSqlExecutor {
   readonly calls: Array<{ statement: string; parameters: readonly unknown[] }> = [];
@@ -16,6 +17,14 @@ class StubSql implements TransactionalSqlExecutor {
   async query<Row extends object>(statement: string, parameters: readonly unknown[]): Promise<readonly Row[]> { this.calls.push({ statement, parameters }); return this.rows as readonly Row[]; }
   transaction<Value>(operation: (transaction: SqlExecutor) => Promise<Value>): Promise<Value> { this.transaction_calls += 1; return operation(this); }
 }
+
+test("stored workflow definition retains machine table and stage reference", async () => {
+  const definition = await definitionWithMachine();
+  const sql = new StubSql([{ definition: structuredClone(definition) }]);
+  const stored = await new PostgresWorkflowDefinitionRepository(sql, createDevFlowAdapterRegistry()).find_by_id(definition.id);
+  expect(stored?.machines?.spec_review?.transitions).toEqual(definition.machines?.spec_review?.transitions);
+  expect((stored?.graph.stages.spec_analyzer?.config as { readonly machine: string }).machine).toBe("spec_review");
+});
 
 test("project repository persists and decodes the public project model", async () => {
   const row = { id: "00000000-0000-4000-8000-000000000001", name: "Oakridge", repo_dir: "/code/oakridge", created_at: "2026-08-15T12:00:00Z", forge_repository: null, integration_branch: null };

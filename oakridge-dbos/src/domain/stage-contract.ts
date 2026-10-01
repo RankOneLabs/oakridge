@@ -15,6 +15,7 @@ import { selectOutputAttention, type OutputReleaseContract } from "./compiled-wo
 import type { DeclaredOutputSlot } from "./run-record";
 import type { JsonValue } from "./primitives";
 import { hasOwn } from "./records";
+import type { CompiledMachine } from "./stage-machine";
 
 const isObject = (value: JsonValue | undefined): value is { readonly [key: string]: JsonValue } =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -69,6 +70,14 @@ export const findDeclaredOutput = (contract: JsonValue, output_name: string): De
 /** The stage key a contract was compiled for, for diagnostics that hold only the row. */
 export const stageContractKey = (contract: JsonValue): string | null =>
   isObject(contract) && typeof contract.stage_key === "string" ? contract.stage_key : null;
+
+export const parseStageContractMachine = (contract: JsonValue): CompiledMachine | null => {
+  if (!isObject(contract) || !isObject(contract.machine)) return null;
+  const machine = contract.machine;
+  if (typeof machine.stage_type !== "string" || typeof machine.initial !== "string"
+    || !isObject(machine.states) || !Array.isArray(machine.transitions)) return null;
+  return machine as unknown as CompiledMachine;
+};
 
 /**
  * Where a stage's declared inputs come from, resolved to stage-instance ids when

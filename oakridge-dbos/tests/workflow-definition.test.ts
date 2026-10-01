@@ -3,6 +3,9 @@ import { describe, expect, test } from "bun:test";
 import { parseWorkflowDefinition as parseDefinition, type AdapterRoleRegistry } from "../src/validation/workflow-definition";
 import { AdapterRegistry } from "../src/runtime/executor-registry";
 import { createDevFlowAdapterRegistry } from "../src/adapters/dev-flow";
+import { delegatedSessionDefinitionSchema } from "../src/validation/delegated-session";
+import { repositoryProvisioningDefinitionSchema } from "../src/validation/repository-provisioning";
+import { reviewMachine } from "./support/machine-fixtures";
 
 const adapterRoles = createDevFlowAdapterRegistry();
 const parseWorkflowDefinition = (input: unknown, registry: AdapterRoleRegistry = adapterRoles) => parseDefinition(input, registry);
@@ -27,6 +30,18 @@ const definitionWith = (consumerInput: string, stages: Record<string, unknown>) 
 const producer = { stage_type: "stub", config: {}, inputs: [], outputs: [{ name: "out", artifact_type: "a" }] };
 
 describe("versioned workflow definition compatibility", () => {
+  test("all three schemas retain machines and per-stage machine names", async () => {
+    const source = await Bun.file(new URL("../../workflow-config/definitions/dev_flow_v15.json", import.meta.url)).json();
+    source.machines = { spec_review: reviewMachine() };
+    source.graph.stages.spec_analyzer.config.machine = "spec_review";
+    source.graph.stages.provision_repository_refs.config.machine = "provision_review";
+    const parsed = parseWorkflowDefinition(source);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.machines?.spec_review?.transitions).toEqual(source.machines.spec_review.transitions);
+    expect(delegatedSessionDefinitionSchema.parse(parsed.value.graph.stages.spec_analyzer?.config).machine).toBe("spec_review");
+    expect(repositoryProvisioningDefinitionSchema.parse(parsed.value.graph.stages.provision_repository_refs?.config).machine).toBe("provision_review");
+  });
   test("operator roles are adapter-registered names rather than a core enum", () => {
     const definition = { id: "ef2b47a4-d1bd-44ee-840a-e4f7b27570db", name: "custom-role", version: 1,
       created_at: "2026-08-14T00:00:00Z", graph: { stages: {

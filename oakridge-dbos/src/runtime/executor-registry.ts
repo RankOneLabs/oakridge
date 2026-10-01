@@ -2,6 +2,22 @@ import type { ExecutorAdapter } from "../domain/execution";
 import type { JsonValue, Result } from "../domain/primitives";
 import { err, ok } from "../domain/primitives";
 import type { TransitionEffectDescriptor } from "../domain/run-record";
+import type { EffectName, GuardName, GuardPredicate, MachineRegistry, ObserverName } from "../domain/stage-machine";
+
+export class StageMachineRegistry implements MachineRegistry {
+  private readonly guards = new Map<string, GuardPredicate>();
+  private readonly effects = new Set<string>();
+  private readonly observers = new Set<string>();
+
+  private key(stage_type: string, name: string): string { return `${stage_type}:${name}`; }
+  register_guard(stage_type: string, name: GuardName, predicate: GuardPredicate): void { this.guards.set(this.key(stage_type, name), predicate); }
+  register_effect(stage_type: string, name: EffectName): void { this.effects.add(this.key(stage_type, name)); }
+  register_observer(stage_type: string, name: ObserverName): void { this.observers.add(this.key(stage_type, name)); }
+  has_guard(stage_type: string, name: GuardName): boolean { return this.guards.has(this.key(stage_type, name)); }
+  has_effect(stage_type: string, name: EffectName): boolean { return this.effects.has(this.key(stage_type, name)); }
+  has_observer(stage_type: string, name: ObserverName): boolean { return this.observers.has(this.key(stage_type, name)); }
+  guard(stage_type: string, name: GuardName): GuardPredicate | undefined { return this.guards.get(this.key(stage_type, name)); }
+}
 
 const adapters = new Map<string, ExecutorAdapter>();
 

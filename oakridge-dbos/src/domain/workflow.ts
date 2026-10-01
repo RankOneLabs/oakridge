@@ -1,6 +1,7 @@
 import type { JsonValue, StageInstanceId, WorkflowDefinitionId, WorkflowRunId } from "./primitives";
 import type { OutputAttention } from "./compiled-workflow";
 import type { PromptMatrixEntry } from "./delegated-session";
+import type { MachineDefinition } from "./stage-machine";
 
 export type StageKey = string;
 export type StageTypeId = string;
@@ -52,6 +53,7 @@ export interface WorkflowDefinition {
   readonly name: string;
   readonly version: number;
   readonly graph: WorkflowGraph;
+  readonly machines?: Readonly<Record<string, MachineDefinition>>;
   readonly created_at: string;
   readonly archived: boolean;
 }
