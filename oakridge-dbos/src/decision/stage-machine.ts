@@ -17,7 +17,8 @@ export const transition = (machine: CompiledMachine, state: StateName, event: St
     if (!matchesFrom(machine, row.from, state) || !matchesEvent(row.on, event)) continue;
     if (row.guard) {
       const predicate = context.registry.guard(machine.stage_type, row.guard.name);
-      const holds = predicate?.(context, row.guard.args) ?? false;
+      if (!predicate) continue;
+      const holds = predicate({ ...context, event }, row.guard.args);
       if (row.guard.negate ? holds : !holds) continue;
     }
     return "to" in row

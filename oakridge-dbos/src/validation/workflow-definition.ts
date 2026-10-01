@@ -43,7 +43,7 @@ const stateSchema = z.object({
   if ((state.status === "blocked") !== (state.blocked_reason !== null)) context.addIssue({ code: "custom", message: "blocked_reason must be set iff status is blocked" });
   if ((["complete", "failed", "cancelled"].includes(state.status)) !== (state.next_actor === null)) context.addIssue({ code: "custom", message: "next_actor must be null iff status is terminal" });
 });
-const machineSchema = z.object({
+export const machineDefinitionSchema = z.object({
   initial: z.string().min(1),
   states: z.record(z.string(), stateSchema),
   transitions: z.array(z.union([
@@ -55,7 +55,7 @@ const machineSchema = z.object({
       refuse: z.string().min(1) }),
   ])),
 });
-export const machineDefinitionsSchema = z.record(z.string(), machineSchema);
+export const machineDefinitionsSchema = z.record(z.string(), machineDefinitionSchema);
 const stageSchema = z.object({
   stage_type: z.string().min(1),
   operator_role: z.string().min(1).nullable().optional().transform((value) => value ?? null),

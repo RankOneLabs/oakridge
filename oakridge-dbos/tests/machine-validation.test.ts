@@ -28,6 +28,19 @@ test("a valid machine pins its ordered transitions into the stage contract", asy
   expect(parseStageContractMachine(JSON.parse(JSON.stringify(result.value.stages.spec_analyzer)))?.transitions).toEqual(definition.machines?.spec_review?.transitions);
 });
 
+test("a malformed pinned machine is rejected at the JSON boundary", async () => {
+  const definition = await definitionWithMachine();
+  const result = compileWorkflowDefinition(definition, undefined, undefined, machineRegistry());
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  const contract = structuredClone(result.value.stages.spec_analyzer) as Record<string, any>;
+  contract.machine.transitions = [null];
+  expect(parseStageContractMachine(contract)).toBeNull();
+  contract.machine.transitions = definition.machines?.spec_review?.transitions;
+  contract.machine.states.pending.status = "invalid";
+  expect(parseStageContractMachine(contract)).toBeNull();
+});
+
 test("guard, effect and observer names resolve through the stage registry", async () => {
   const diagnostics = await mutate((definition) => {
     definition.machines.spec_review.transitions[0].guard = { name: "unknown_guard", negate: false, args: {} };

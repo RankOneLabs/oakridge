@@ -26,6 +26,21 @@ test("a negated guard skips the first row when the predicate holds", () => {
   expect(result).toMatchObject({ kind: "applied", row_index: 1 });
 });
 
+test("a missing negated guard cannot authorize a transition", () => {
+  const row = { ...reviewMachine().transitions[0]!, guard: { name: "missing", negate: true, args: {} } } as Transition;
+  expect(transition(machine([row]), "pending" as never, started, context(started))).toMatchObject({ kind: "refused", code: "no_transition", row_index: null });
+});
+
+test("guards see the event being transitioned rather than a stale context event", () => {
+  const event: StageEvent = { kind: "cancel", actor: "current" };
+  const stale: StageEvent = { kind: "cancel", actor: "stale" };
+  const guardedRegistry = machineRegistry();
+  guardedRegistry.register_guard("delegated_session", "current_actor" as never, (guardContext) =>
+    guardContext.event.kind === "cancel" && guardContext.event.actor === "current");
+  const row = { ...reviewMachine().transitions.at(-1)!, guard: { name: "current_actor", negate: false, args: {} } } as Transition;
+  expect(transition(machine([row]), "pending" as never, event, { ...context(stale), registry: guardedRegistry })).toMatchObject({ kind: "applied", row_index: 0 });
+});
+
 test("any_nonterminal matches pending but not complete", () => {
   const event: StageEvent = { kind: "cancel", actor: "operator" };
   const row = reviewMachine().transitions.at(-1)!;
