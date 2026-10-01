@@ -1,4 +1,4 @@
-import { ExecutorStartRejectedError, type ExecutionRequest, type ExpectedArtifactContract, type ExecutorAdapter, type ExecutorObservationAttempt, type ExecutorTerminalObservation, type ExternalExecutionReference } from "../domain/execution";
+import { ExecutorStartRejectedError, type ExecutionRequest, type ExpectedArtifactContract, type ExecutorAdapter, type ExecutorObservationAttempt, type ExecutorTerminalObservation, type ExecutorUnavailable, type ExternalExecutionReference } from "../domain/execution";
 import type { ExecutionId, ExecutorOperationId, JsonValue, UnitId } from "../domain/primitives";
 
 /**
@@ -262,7 +262,7 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
     this.fetch = options.fetch ?? globalThis.fetch;
   }
 
-  async start_or_attach(request: ExecutionRequest, operation_id: ExecutorOperationId): Promise<ExternalExecutionReference> {
+  async start_or_attach(request: ExecutionRequest, operation_id: ExecutorOperationId): Promise<ExternalExecutionReference | ExecutorUnavailable> {
     let config: KbblResolvedConfig;
     try {
       config = parseResolvedConfig(request.resolved_config);
@@ -270,7 +270,8 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
       throw new ExecutorStartRejectedError(error instanceof Error ? error.message : String(error));
     }
     const sessionKey = sessionKeyFor(operation_id, this.options.executor_function_identity);
-    const response = await this.fetch(`${this.options.base_url}/sessions/resumable/${encodeURIComponent(sessionKey)}`, {
+    let response: Response;
+    try { response = await this.fetch(`${this.options.base_url}/sessions/resumable/${encodeURIComponent(sessionKey)}`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -293,14 +294,17 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
           ...(config.session_identity.repository_key ? { repository_key: config.session_identity.repository_key } : {}),
         },
       }),
-    });
-    if (!response.ok) throw new ExecutorStartRejectedError(`kbbl ensure-session failed (${response.status}): ${await response.text()}`);
+    }); } catch (error) { return { kind: "executor_unavailable", operation: "start_or_attach", detail: String(error) }; }
+    if (!response.ok) {
+      if (response.status >= 400 && response.status < 500) throw new ExecutorStartRejectedError(`kbbl ensure-session failed (${response.status}): ${await response.text()}`);
+      return { kind: "executor_unavailable", operation: "start_or_attach", detail: `kbbl ensure-session failed (${response.status})` };
+    }
     const ensured = parseEnsureResponse(await response.json());
     return { kind: "kbbl_session", session_id: ensured.session.sid,
       ...(ensured.session.worktreeBaseRef ? { worktree_base_sha: ensured.session.worktreeBaseRef } : {}) };
   }
 
-  async observe_terminal(execution_id: ExecutionId, external_reference: ExternalExecutionReference): Promise<ExecutorObservationAttempt> {
+  async observe_terminal(execution_id: ExecutionId, external_reference: ExternalExecutionReference): Promise<ExecutorObservationAttempt | ExecutorUnavailable> {
     // Reported as a failure rather than thrown, unlike `cancel_or_fence` below.
     // This is the only path by which a unit can ever be reported terminal, and
     // it runs inside a retrying step: throwing exhausts the retries, kills the
@@ -310,7 +314,9 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
     if (external_reference.kind !== "kbbl_session") return terminal({ kind: "failed", code: "session_not_ensured", detail: `no kbbl session is associated with execution ${execution_id}` });
     const sessionId = external_reference.session_id;
     const url = `${this.options.base_url}/sessions/resumable/${encodeURIComponent(sessionId)}/terminal?wait_ms=${this.options.observe_wait_ms ?? DEFAULT_OBSERVE_WAIT_MS}`;
-    const response = await this.fetch(url);
+    let response: Response;
+    try { response = await this.fetch(url); }
+    catch (error) { return { kind: "executor_unavailable", operation: "observe_terminal", detail: String(error) }; }
     if (response.status === 202) {
       // A session that never takes its first turn ends no other way: kbbl keeps
       // answering "not terminal", correctly, and the unit waits on a state that
@@ -329,7 +335,7 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
       }
       return { kind: "pending" };
     }
-    if (!response.ok) return terminal({ kind: "failed", code: "terminal_observation_failed", detail: `kbbl terminal observation failed (${response.status}): ${await response.text()}` });
+    if (!response.ok) return { kind: "executor_unavailable", operation: "observe_terminal", detail: `kbbl terminal observation failed (${response.status})` };
     const raw = await response.json();
     if (typeof raw !== "object" || raw === null || !("session" in raw) || typeof raw.session !== "object" || raw.session === null || !("endReason" in raw.session)) {
       return terminal({ kind: "failed", code: "invalid_terminal_response", detail: "kbbl returned an invalid terminal response" });
@@ -355,7 +361,7 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
     return terminal({ kind: "succeeded", metadata: { session_id: sessionId, exit_code: exitCode } });
   }
 
-  async cancel_or_fence(execution_id: ExecutionId, external_reference: ExternalExecutionReference): Promise<void> {
+  async cancel_or_fence(execution_id: ExecutionId, external_reference: ExternalExecutionReference): Promise<void | ExecutorUnavailable> {
     // `none` is the honest answer for an execution that never reached an
     // executor; anything else means the reference was lost, which must fail
     // loudly rather than leave a live agent running unfenced.
@@ -367,8 +373,10 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
     // through exactly this call, so an unqualified DELETE deadlocks the run
     // against itself — uncancellable because it is still active.
     const url = `${this.options.base_url}/sessions/${encodeURIComponent(sessionId)}?fenced_by=${encodeURIComponent(execution_id)}`;
-    const response = await this.fetch(url, { method: "DELETE" });
-    if (!response.ok && response.status !== 404) throw new Error(`kbbl cancellation failed (${response.status}): ${await response.text()}`);
+    let response: Response;
+    try { response = await this.fetch(url, { method: "DELETE" }); }
+    catch (error) { return { kind: "executor_unavailable", operation: "cancel_or_fence", detail: String(error) }; }
+    if (!response.ok && response.status !== 404) return { kind: "executor_unavailable", operation: "cancel_or_fence", detail: `kbbl cancellation failed (${response.status})` };
   }
 
   async deliver_input(execution_id: ExecutionId, delivery_key: string, input: string, external_reference: ExternalExecutionReference): Promise<void> {

@@ -332,10 +332,31 @@ test("an unknown session is treated as already fenced", async () => {
   expect(urls).toHaveLength(1);
 });
 
-/** A fence that fails quietly leaves a live agent running against a stopped run. */
-test("a refused fence is raised rather than swallowed", async () => {
-  await expect(recordingAdapter([], 409).cancel_or_fence("execution-1" as ExecutionId, { kind: "kbbl_session", session_id: "session-1" }))
-    .rejects.toThrow("kbbl cancellation failed (409)");
+test("a refused fence returns an unavailable value for durable retry", async () => {
+  expect(await recordingAdapter([], 409).cancel_or_fence("execution-1" as ExecutionId, { kind: "kbbl_session", session_id: "session-1" }))
+    .toEqual({ kind: "executor_unavailable", operation: "cancel_or_fence", detail: "kbbl cancellation failed (409)" });
+});
+
+const unavailableAdapter = (): KbblExecutorAdapter => new KbblExecutorAdapter({
+  base_url: "http://kbbl", executor_function_identity: "v15",
+  fetch: async () => { throw new Error("connection refused"); },
+});
+
+test("start_or_attach returns ExecutorUnavailable when fetch rejects", async () => {
+  expect(await unavailableAdapter().start_or_attach(buildRequest, attempt("attempt-1")))
+    .toEqual({ kind: "executor_unavailable", operation: "start_or_attach", detail: "Error: connection refused" });
+});
+
+test("observe_terminal returns ExecutorUnavailable when fetch rejects", async () => {
+  expect(await unavailableAdapter().observe_terminal("execution-1" as ExecutionId,
+    { kind: "kbbl_session", session_id: "session-1" }))
+    .toEqual({ kind: "executor_unavailable", operation: "observe_terminal", detail: "Error: connection refused" });
+});
+
+test("cancel_or_fence returns ExecutorUnavailable when fetch rejects", async () => {
+  expect(await unavailableAdapter().cancel_or_fence("execution-1" as ExecutionId,
+    { kind: "kbbl_session", session_id: "session-1" }))
+    .toEqual({ kind: "executor_unavailable", operation: "cancel_or_fence", detail: "Error: connection refused" });
 });
 
 const buildRequest: ExecutionRequest = {

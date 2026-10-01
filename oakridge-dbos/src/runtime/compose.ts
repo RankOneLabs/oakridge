@@ -24,22 +24,26 @@ import type { Hono } from "hono";
 import { createDelegatedSessionCohortDriver } from "../adapters/delegated-session-cohort";
 import { createDeterministicCohortDriver } from "../adapters/deterministic-cohort";
 import { createDevFlowAdapterRegistry } from "../adapters/dev-flow";
-import { PROVISION_REPOSITORY_REFS_STAGE_TYPE } from "../domain/repository-refs";
+import { PROVISION_REPOSITORY_REFS_STAGE_TYPE, parseRepositoryRefs } from "../domain/repository-refs";
 import { RepositoryProvisioningAdapter } from "../adapters/repository-provisioning";
 import { compileWorkflowDefinition } from "../compiler/compile-workflow";
-import { stageInstanceIdFor } from "../decision/ids";
+import { attemptWorkflowId, stageInstanceIdFor } from "../decision/ids";
 import { StageMachineRegistry } from "./executor-registry";
 import { DEV_FLOW_ARTIFACT_TYPES, findArtifactType } from "../domain/artifact-types";
-import type { ExecutorAdapter } from "../domain/execution";
-import { err, type AttemptId, type CohortId, type JsonValue, type RunTransitionId, type WorkflowRunId } from "../domain/primitives";
+import type { ArtifactEnvelope, ExecutionRequest, ExecutorAdapter } from "../domain/execution";
+import type { CompiledStageContract } from "../domain/compiled-workflow";
+import type { CommittedSessionLaunch, DelegatedSessionDefinitionConfig } from "../domain/delegated-session";
+import { readJsonPointer } from "../domain/json-pointer";
+import { err, type AttemptId, type CohortId, type JsonValue, type RunTransitionId, type StageInstanceId, type UnitId, type WorkOrderId, type WorkflowRunId } from "../domain/primitives";
 import type { GitCommandRunner } from "../domain/repository-provisioning";
 import type { InitializeStageInstance } from "../domain/run-record";
+import type { RetryCohortResult, RetryCohortTarget } from "../domain/run-record";
 import { selectOrphanedVersionRuns, type OrphanedVersionRuns } from "../domain/workflow-recovery";
 import type { PromptBundleEntry } from "../domain/workflow";
 import { parseWorkflowDefinition } from "../validation/workflow-definition";
 import { STAGE_CONTRACT_DEPENDENCY_KEY } from "../storage/load-run-snapshot";
 import { STAGE_CONTRACT_INPUT_EDGES_KEY } from "../domain/stage-contract";
-import { verifyAndBindCohortPullRequest, type CohortPullRequestDependencies } from "./cohort-pull-request";
+import { prepareDevFlowBuildCohort, verifyAndBindCohortPullRequest, type CohortPullRequestDependencies } from "./cohort-pull-request";
 import { pollCohortPullRequests, type CohortPollOutcome, type PullRequestReader } from "./github-pull-requests";
 import { createApp } from "../http/app";
 import { registerDbosTransportClient, sendCohortWakeHint, sendRunWakeHint } from "../http/dbos-transport";
@@ -59,7 +63,7 @@ import { StageEventApplier } from "../storage/apply-stage-event";
 import { PostgresWorkflowDefinitionRepository } from "../storage/postgres-workflow-definitions";
 import { PgPostgresExecutor } from "../storage/sql-executor";
 import { findExecutorAdapter, registerExecutorAdapter } from "./executor-registry";
-import { loadStageInputs, recordCohortAdapterEvent, registerRunRecordWorkflowServices, retryCohortThroughDriver, stageEffectWorkflow, attemptWorkflow, type CohortMachineDriver } from "../workflows/run-record-topology";
+import { loadStageInputs, recordCohortAdapterEvent, registerRunRecordWorkflowServices, stageEffectWorkflow, attemptWorkflow, type CohortMachineDriver } from "../workflows/run-record-topology";
 import "../workflows/collaboration-responder";
 import { DbosRunLaunchClient } from "./dbos-run-launch-client";
 import { DbosCollaborationPingClient, PostgresSessionMessageRecipientResolver, PostgresSessionMessageRepository } from "./collaboration-ping";
@@ -68,6 +72,10 @@ import { createPromptTemplateLoader } from "./prompt-template";
 import { GitProjectRepositoryIdentityResolver } from "./project-identity";
 import { dispatchRunLaunches } from "./run-launch-dispatch";
 import { publishWorkOrderArtifact } from "./publish-work-order-artifact";
+import { resolveAttemptExecution } from "./resolve-work-order";
+
+const isJsonObject = (value: JsonValue): value is { readonly [key: string]: JsonValue } =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
 
 export interface OakridgeRuntimeConfig {
   readonly database_url: string;
@@ -265,6 +273,92 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     return bundle.matrix;
   };
 
+  const resolveStageAttemptRequest = async (attempt_id: AttemptId): Promise<ExecutionRequest> => {
+    const rows = await sql.query<{ readonly run_id: string; readonly stage_instance_id: string;
+      readonly cohort_id: string; readonly cohort_key: string; readonly stage_data: JsonValue;
+      readonly stage_contract: JsonValue; readonly context: JsonValue; readonly effect_descriptor: JsonValue;
+      readonly launch_transition_id: string }>(
+      `SELECT attempt.run_id::text,attempt.stage_instance_id::text,cohort.id::text AS cohort_id,
+              cohort.cohort_key,cohort.stage_data,stage.stage_contract,run.context,
+              launch.effect_descriptor,launch.id::text AS launch_transition_id
+       FROM oakridge.attempt attempt JOIN oakridge.cohort cohort ON cohort.id=attempt.cohort_id
+       JOIN oakridge.stage_instance stage ON stage.id=attempt.stage_instance_id
+       JOIN oakridge.workflow_run run ON run.id=attempt.run_id
+       JOIN oakridge.session session ON session.attempt_id=attempt.id
+       JOIN oakridge.run_transition launch ON launch.id=session.launch_transition_id
+       WHERE attempt.id=$1`, [attempt_id]);
+    const row = rows[0];
+    if (!row) throw new Error(`attempt '${attempt_id}' was not found`);
+    const stage = row.stage_contract as unknown as CompiledStageContract;
+    const data = row.stage_data;
+    const artifact = isJsonObject(data) ? data.artifact ?? null : null;
+    const inputs = await loadStageInputs(row.stage_contract, row.cohort_key);
+    const descriptor = row.effect_descriptor;
+    const effects = isJsonObject(descriptor) && Array.isArray(descriptor.effects) ? descriptor.effects : [];
+    const launch = effects.find((effect) => isJsonObject(effect) && effect.name === "launch_session");
+    const args = launch && isJsonObject(launch) ? launch.args : null;
+    const role = args && isJsonObject(args) && typeof args.role === "string" ? args.role : null;
+    const reason = args && isJsonObject(args) && typeof args.reason === "string" ? args.reason : null;
+    const accepted = await sql.query<{ readonly id: string; readonly artifact_type: string;
+      readonly output_name: string; readonly collection_key: string | null; readonly body: JsonValue; readonly chain_id: string }>(
+      `SELECT artifact.id::text,artifact.artifact_type,acceptance.output_name,acceptance.collection_key,
+              artifact.body,artifact.chain_id::text
+       FROM oakridge.artifact_acceptance acceptance
+       JOIN oakridge.artifact artifact ON artifact.id=acceptance.artifact_id
+       WHERE acceptance.cohort_id=$1 AND acceptance.superseded_at IS NULL`, [row.cohort_id]);
+    const accepted_outputs: readonly ArtifactEnvelope[] = accepted.map((entry) => ({
+      artifact_id: entry.id as import("../domain/primitives").ArtifactId,
+      artifact_type: entry.artifact_type, output_name: entry.output_name,
+      unit_id: (entry.collection_key ?? row.cohort_key) as UnitId,
+      collection_key: entry.collection_key, body: entry.body,
+      chain_id: entry.chain_id as import("../domain/primitives").ArtifactId,
+    }));
+    let build_cohort = await pullRequests.find_cohort_for_unit(row.stage_instance_id as StageInstanceId, row.cohort_key as UnitId);
+    if (role === "build" && stage.stage_key === "build" && build_cohort === null) {
+      const repository_key = readJsonPointer(artifact, "/artifact/repository_key");
+      if (typeof repository_key !== "string") throw new Error("build brief has no repository_key");
+      const refs = inputs.repository_refs;
+      const choices = refs === undefined ? [] : Array.isArray(refs) ? refs : [refs as ArtifactEnvelope];
+      const matching = choices.find((candidate) => readJsonPointer(candidate.body, "/repository_key") === repository_key);
+      if (!matching) throw new Error(`repository refs for '${repository_key}' are missing`);
+      const parsed = parseRepositoryRefs(matching.body);
+      if (!parsed.ok) throw new Error(parsed.error.detail);
+      const prepared = await prepareDevFlowBuildCohort({ pull_requests: pullRequests, git }, {
+        cohort_id: row.cohort_id as CohortId, stage_instance_id: row.stage_instance_id as StageInstanceId,
+        cohort_key: row.cohort_key, repository: parsed.value, prepared_at: now(),
+      });
+      if (!prepared.ok) throw new Error(`${prepared.error.kind}: ${prepared.error.detail}`);
+      build_cohort = prepared.value.cohort;
+    }
+    let session_launch: CommittedSessionLaunch | undefined;
+    if (stage.stage_type === "delegated_session") {
+      if (!role || !reason) throw new Error("launch transition has no role and reason");
+      const config = stage.executor.definition_config as DelegatedSessionDefinitionConfig;
+      const entry = config.prompt_matrix.find((candidate) => candidate.session_role === role && candidate.launch_reason === reason);
+      const bundle = await promptBundleOf(row.run_id as WorkflowRunId);
+      const cell = bundle.find((candidate) => candidate.stage_key === stage.stage_key
+        && candidate.session_role === role && candidate.launch_reason === reason
+        && candidate.template_path === entry?.template_path);
+      if (!cell) throw new Error(`pinned prompt bundle has no ${stage.stage_key}:${role}:${reason} cell`);
+      session_launch = { reason: { transition_id: row.launch_transition_id as RunTransitionId, name: reason },
+        session_role: role, prompt: { template_path: cell.template_path, content: cell.content },
+        existing_pull_request: null };
+    }
+    const resolved = await resolveAttemptExecution({
+      run_id: row.run_id as WorkflowRunId, stage, stage_instance_id: row.stage_instance_id as StageInstanceId,
+      unit: { unit_id: row.cohort_key as UnitId, parameters: artifact, depends_on: [] },
+      inputs, accepted_cohort_outputs: accepted_outputs, context: row.context,
+      outputs: stage.outputs.map((output) => ({ output_name: output.name, artifact_type: output.artifact_type,
+        release: output.release, attention: output.attention ?? "none" })),
+      identity: `attempt:${attempt_id}`, capability_seed: await runRecords.load_work_order_capability_seed(),
+      ...(session_launch ? { session_launch } : {}),
+      ...(build_cohort ? { build_cohort } : {}),
+      attempt_id: attempt_id as unknown as WorkOrderId,
+      attempt_workflow_id: attemptWorkflowId(attempt_id),
+    });
+    return resolved.request;
+  };
+
   /**
    * One cohort driver per stage type.
    *
@@ -301,7 +395,8 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   // The wait tables are the record of gate/handoff state; DBOS stays the
   // command mechanism, so the wake hints above keep coming from the transport.
   registerRunRecordWorkflowServices({
-    records: runRecords, stages, artifacts, effects_sql: sql, find_run_context: runContextOf,
+    records: runRecords, stages, artifacts, effects_sql: sql, stage_events: stageEvents, find_run_context: runContextOf,
+    resolve_attempt_request: resolveStageAttemptRequest,
     find_driver: (stage_type) => drivers.get(stage_type),
     find_executor: findExecutorAdapter, now,
   });
@@ -333,6 +428,31 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     const reader = config.pull_request_reader;
     if (!reader) return Promise.resolve(null);
     return trackDispatch(() => pollCohortPullRequests({ ...cohortPullRequests, reader, list_cohorts: () => projections.list_cohorts() }));
+  };
+  const retryStageCohort = async (target: RetryCohortTarget, idempotency_key: string): Promise<RetryCohortResult> => {
+    const cohort_id = target.kind === "cohort" ? target.cohort_id
+      : (await runRecords.find_cohort_location(target.stage_instance_id,
+        target.cohort_key as import("../domain/primitives").UnitId))?.cohort_id;
+    if (!cohort_id) return { kind: "cohort_not_found", detail: "cohort not found" };
+    const readClaim = () => runRecords.find_cohort_retry_claim(cohort_id, idempotency_key);
+    const claim = await readClaim();
+    const location = await sql.query<{ readonly run_id: string; readonly durable_version: string }>(
+      "SELECT run_id::text,durable_version::text FROM oakridge.cohort WHERE id=$1", [cohort_id]);
+    if (!location[0]) return { kind: "cohort_not_found", detail: "cohort not found" };
+    if (!claim) {
+      const applied = await stageEvents.apply(cohort_id, { kind: "operator_retry", idempotency_key, actor: "operator" });
+      if (!applied.ok) return { kind: "refused", code: applied.error.kind, detail: applied.error.detail };
+      if (applied.value.kind === "refused") {
+        const raced = await readClaim();
+        if (!raced) return { kind: "refused", code: applied.value.code, detail: applied.value.detail };
+      } else if (applied.value.kind === "ignored") return { kind: "refused", code: applied.value.reason,
+        detail: "cohort is terminal" };
+    }
+    const stored = await readClaim();
+    if (!stored) return { kind: "refused", code: "attempt_missing", detail: "retry did not create an attempt" };
+    return { kind: claim ? "already_created" : "created", run_id: location[0].run_id as WorkflowRunId,
+      cohort_id, attempt_id: stored.attempt_id, attempt_number: stored.attempt_number,
+      durable_version: stored.durable_version };
   };
   const startUnstartedEffects = async (): Promise<number> => {
     const transitions = await sql.query<{ readonly id: string }>(
@@ -391,7 +511,17 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const app = createApp({
     configuration: { projects, definitions, project_identity: projectIdentity, now,
       prompt_templates: promptTemplates, adapter_roles: adapterRegistry },
-    operator_retry: { retry_through_driver: retryCohortThroughDriver },
+    operator_retry: { retry_through_driver: retryStageCohort,
+      abandon: async (cohort_id, detail) => {
+        const result = await stageEvents.apply(cohort_id, { kind: "operator_abandon", actor: "operator", detail });
+        if (!result.ok) return result.error.kind === "cohort_not_found"
+          ? { kind: "not_found" as const }
+          : { kind: "refused" as const, code: result.error.kind, detail: result.error.detail };
+        return result.value.kind === "applied"
+          ? { kind: "applied" as const, state: result.value.to }
+          : { kind: "refused" as const, code: result.value.kind === "refused" ? result.value.code : result.value.reason,
+            detail: result.value.kind === "refused" ? result.value.detail : "cohort is terminal" };
+      } },
     run_lifecycle: { records: runRecords },
     domain_reads: { stages, artifacts, session_holds: projections, session_run_locations: projections },
     work_order_artifact_callback: { records: runRecords, now, send_cohort_wake: sendCohortWakeHint, send_run_wake: sendRunWakeHint },

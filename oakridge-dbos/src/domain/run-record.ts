@@ -302,7 +302,7 @@ export interface StartAttempt {
 export type StartAttemptResult =
   | { readonly kind: "started" | "already_started"; readonly attempt_id: AttemptId; readonly session_id: SessionId }
   | { readonly kind: "cohort_not_found"; readonly detail: string }
-  | { readonly kind: "idempotency_conflict"; readonly detail: string };
+  | { readonly kind: "idempotency_conflict"; readonly detail: string }
 
 /** Everything the attempt workflow needs to drive one adapter execution. */
 export interface AttemptExecution {
@@ -316,7 +316,7 @@ export interface AttemptExecution {
   readonly attempt_number: number;
   readonly status: CoreStatus;
   readonly adapter_type: string;
-  readonly request: ExecutionRequest;
+  readonly request: ExecutionRequest | null;
   readonly adapter_reference: ExternalExecutionReference | null;
   readonly kbbl_session_id: KbblSessionId | null;
 }
@@ -390,7 +390,8 @@ export type RetryCohortResult =
     }
   | { readonly kind: "cohort_not_found"; readonly detail: string }
   | { readonly kind: "not_retryable"; readonly reason: "terminal" | "gate_pending" | "work_in_progress" | "not_lost" }
-  | { readonly kind: "idempotency_conflict"; readonly detail: string };
+  | { readonly kind: "idempotency_conflict"; readonly detail: string }
+  | { readonly kind: "refused"; readonly code: string; readonly detail: string };
 
 /* ------------------------------------------------------------------ *
  * Artifacts and waits
@@ -404,6 +405,7 @@ export interface PublishWorkOrderArtifact {
   readonly output_name: string;
   readonly collection_key?: OutputCollectionKey | null;
   readonly body: JsonValue;
+  readonly enrichment?: JsonValue | null;
   readonly idempotency_key: string;
   readonly payload_hash: string;
   readonly published_at: string;
@@ -418,7 +420,9 @@ export type PublishWorkOrderArtifactResult =
   | { readonly kind: "slot_already_released"; readonly artifact_id: ArtifactId; readonly detail: string }
   /** A different, non-replay publish arrived while the slot is already parked pending an earlier one's wait. */
   | { readonly kind: "slot_pending"; readonly wait_id: WaitId; readonly detail: string }
-  | { readonly kind: "idempotency_conflict"; readonly artifact_id: ArtifactId; readonly detail: string };
+  | { readonly kind: "idempotency_conflict"; readonly artifact_id: ArtifactId; readonly detail: string }
+  | { readonly kind: "refused"; readonly code: string; readonly detail: string }
+  | { readonly kind: "enrichment_unavailable"; readonly detail: string };
 
 export interface DecideGateWait {
   readonly wait_id: WaitId;
@@ -429,6 +433,11 @@ export interface DecideGateWait {
 }
 
 export type CloseRunOutputWaitResult =
+  | { readonly kind: "decided"; readonly run_id: WorkflowRunId; readonly cohort_id: CohortId; readonly record_version: RunRecordVersion }
+  | { readonly kind: "already_decided"; readonly detail: string; readonly code: string }
+  | { readonly kind: "invalid_action"; readonly detail: string; readonly code: string }
+  | { readonly kind: "invalid_feedback"; readonly detail: string; readonly code: string }
+  | { readonly kind: "refused"; readonly detail: string; readonly code: string }
   | { readonly kind: "released"; readonly artifact_id: ArtifactId; readonly run_id: WorkflowRunId; readonly cohort_id: CohortId | null; readonly record_version: RunRecordVersion }
   | { readonly kind: "invalidated"; readonly run_id: WorkflowRunId; readonly cohort_id: CohortId | null; readonly record_version: RunRecordVersion }
   | { readonly kind: "already_applied"; readonly run_id: WorkflowRunId; readonly cohort_id: CohortId | null; readonly record_version: RunRecordVersion }

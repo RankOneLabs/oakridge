@@ -21,11 +21,14 @@
  */
 import { DBOS, Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
+import type { StageEventApplier } from "../storage/apply-stage-event";
+import { writeSessionStatus } from "../storage/postgres-run-record";
+import type { SessionEndOutcome } from "../domain/stage-machine";
 
 import { attemptIdFor, attemptWorkflowId, cohortMachineWorkflowId, runMachineWorkflowId, sessionIdFor, stageMachineWorkflowId, transitionIdFor } from "../decision/ids";
-import { executorHealthFromTerminal, type AttemptExecution, type CohortMachineState, type OpenCohort, type RecordCohortEvent, type RetryCohortResult, type RetryCohortTarget, type RunDecision, type TransitionEffectDescriptor } from "../domain/run-record";
+import { type AttemptExecution, type CohortMachineState, type OpenCohort, type RecordCohortEvent, type RetryCohortResult, type RetryCohortTarget, type RunDecision, type TransitionEffectDescriptor } from "../domain/run-record";
 import { selectCohortRetryability } from "../domain/cohort-retry";
-import { ExecutorStartRejectedError, type ExecutorAdapter, type ExecutorObservationAttempt, type ExternalExecutionReference } from "../domain/execution";
+import { ExecutorStartRejectedError, type ExecutionRequest, type ExecutorAdapter, type ExecutorObservationAttempt, type ExecutorUnavailable, type ExternalExecutionReference } from "../domain/execution";
 import type { AttemptId, CohortId, JsonValue, KbblSessionId, RunTransitionId, StageInstanceId, UnitId, WorkflowRunId } from "../domain/primitives";
 import { executorOperationIdForWorkOrder, type ExecutionId, type WorkOrderId } from "../domain/primitives";
 import type { TransitionOwner } from "../domain/run-record";
@@ -100,7 +103,7 @@ export interface CohortStepDecision {
   readonly launch: {
     readonly attempt_number: number;
     readonly adapter_type: string;
-    readonly resolve_request: (attempt_id: AttemptId, launch_transition_id: RunTransitionId) => Promise<AttemptExecution["request"]>;
+    readonly resolve_request: (attempt_id: AttemptId, launch_transition_id: RunTransitionId) => Promise<ExecutionRequest>;
   } | null;
 }
 
@@ -138,6 +141,8 @@ export interface RunRecordWorkflowServices {
   /** Reads the accepted revisions that fill a producing stage's declared output. */
   readonly artifacts: RunArtifactReadRepository;
   readonly effects_sql?: TransactionalSqlExecutor;
+  readonly stage_events?: StageEventApplier;
+  resolve_attempt_request?(attempt_id: AttemptId): Promise<ExecutionRequest>;
   /** The run's own context, which drivers resolve their bindings against. */
   find_run_context(run_id: WorkflowRunId): Promise<JsonValue | null>;
   find_driver(stage_type: string): CohortMachineDriver | undefined;
@@ -561,10 +566,45 @@ const loadAttemptStep = DBOS.registerStep(
   { name: "oakridgeV15LoadAttemptStep", retriesAllowed: true },
 );
 
+const resolveAttemptRequestStep = DBOS.registerStep(async (attempt_id: AttemptId): Promise<{
+  readonly kind: "resolved" | "failed"; readonly detail: string | null }> => {
+  const { effects_sql, resolve_attempt_request } = workflowServices();
+  if (!effects_sql || !resolve_attempt_request) throw new Error("attempt resolution is not configured");
+  const stored = await effects_sql.query<{ readonly request: JsonValue | null }>(
+    "SELECT request FROM oakridge.attempt WHERE id=$1", [attempt_id]);
+  if (!stored[0]) return { kind: "failed", detail: "attempt is missing" };
+  if (stored[0].request !== null) return { kind: "resolved", detail: null };
+  try {
+    const request = await resolve_attempt_request(attempt_id);
+    await effects_sql.query("UPDATE oakridge.attempt SET request=$2::jsonb WHERE id=$1 AND request IS NULL",
+      [attempt_id, JSON.stringify(request)]);
+    return { kind: "resolved", detail: null };
+  } catch (error) {
+    return { kind: "failed", detail: String(error) };
+  }
+}, { name: "oakridgeV15ResolveAttemptRequestStep", retriesAllowed: true });
+
+const recordAttemptOutcome = async (execution: AttemptExecution, status: "complete" | "failed" | "cancelled",
+  outcome: SessionEndOutcome): Promise<void> => {
+  const { effects_sql, stage_events, now } = workflowServices();
+  if (!effects_sql || !stage_events) throw new Error("stage event ingress is not configured");
+  const transition_ids: RunTransitionId[] = [];
+  await effects_sql.transaction(async (tx) => {
+    const written = await writeSessionStatus(tx, { session_id: execution.session_id, status, at: now() });
+    if (written.kind === "already_ended") return;
+    const applied = await stage_events.apply_in(tx, execution.cohort_id,
+      { kind: "session_ended", attempt_id: execution.attempt_id, outcome }, transition_ids);
+    if (!applied.ok) throw new Error(`${applied.error.kind}: ${applied.error.detail}`);
+  });
+  await stage_events.start_effects(transition_ids);
+  await sendRunWakeHint(execution.run_id, `session_ended:${execution.attempt_id}`).catch(() => undefined);
+};
+
 type EnsureSessionAttempt =
   | { readonly kind: "started"; readonly reference: ExternalExecutionReference }
   | { readonly kind: "abandoned" }
-  | { readonly kind: "rejected"; readonly detail: string };
+  | { readonly kind: "rejected"; readonly detail: string }
+  | ExecutorUnavailable;
 
 /** kbbl's own session id, when the adapter's handle carries one. */
 const kbblSessionOf = (reference: ExternalExecutionReference): KbblSessionId | null =>
@@ -575,16 +615,18 @@ export const ensureAttemptSession = async (
   execution: AttemptExecution,
 ): Promise<EnsureSessionAttempt> => {
     const { records, now } = deps;
+    if (execution.request === null) return { kind: "rejected", detail: "attempt request is unresolved" };
     const adapter = deps.find_executor(execution.adapter_type);
     if (!adapter) throw new Error(`executor adapter '${execution.adapter_type}' is not registered`);
     for (const prior of await records.list_prior_sessions_to_fence(execution.cohort_id, execution.attempt_id)) {
-      await adapter.cancel_or_fence(prior.attempt_id as unknown as ExecutionId, prior.adapter_reference);
+      const fenced = await adapter.cancel_or_fence(prior.attempt_id as unknown as ExecutionId, prior.adapter_reference);
+      if (fenced?.kind === "executor_unavailable") return fenced;
       await records.mark_session_fenced(prior.session_id, now());
       await records.observe_session({ session_id: prior.session_id,
         health: { kind: "ended_cancelled", detail: `replaced by attempt ${execution.attempt_number}`,
           observed_at: now() }, observed_at: now() });
     }
-    let reference: ExternalExecutionReference;
+    let reference: ExternalExecutionReference | ExecutorUnavailable;
     try {
       reference = await adapter.start_or_attach(execution.request,
         executorOperationIdForWorkOrder(execution.attempt_id as unknown as WorkOrderId));
@@ -592,10 +634,12 @@ export const ensureAttemptSession = async (
       if (error instanceof ExecutorStartRejectedError) return { kind: "rejected", detail: error.message };
       throw error;
     }
+    if (reference.kind === "executor_unavailable") return reference;
     const bound = await records.bind_session({ session_id: execution.session_id, adapter_reference: reference,
       kbbl_session_id: kbblSessionOf(reference), bound_at: now() });
     if (bound.kind === "attempt_ended") {
-      await adapter.cancel_or_fence(execution.attempt_id as unknown as ExecutionId, reference);
+      const fenced = await adapter.cancel_or_fence(execution.attempt_id as unknown as ExecutionId, reference);
+      if (fenced?.kind === "executor_unavailable") return fenced;
       await records.mark_session_fenced(execution.session_id, now());
       return { kind: "abandoned" };
     }
@@ -615,36 +659,39 @@ const ensureSessionStep = DBOS.registerStep(
  */
 const recordSessionStartFailureStep = DBOS.registerStep(
   async (input: { readonly execution: AttemptExecution; readonly detail: string }): Promise<void> => {
-    const { records, now } = workflowServices();
-    const at = now();
-    await records.observe_session({ session_id: input.execution.session_id,
-      health: { kind: "ended_failed", code: "executor_start_failed", detail: input.detail, observed_at: at },
-      observed_at: at });
-    await sendCohortWakeHint(input.execution.cohort_id, `attempt_failed:${input.execution.attempt_id}`).catch(() => undefined);
+    await recordAttemptOutcome(input.execution, "failed",
+      { kind: "failed", code: "executor_start_failed", detail: input.detail });
   },
   { name: "oakridgeV15RecordSessionStartFailureStep", retriesAllowed: true },
 );
 
-type ObservedSessionAttempt = ExecutorObservationAttempt | { readonly kind: "abandoned" };
+type ObservedSessionAttempt = ExecutorObservationAttempt | ExecutorUnavailable | { readonly kind: "abandoned" };
 
 const observeSessionStep = DBOS.registerStep(
   async (input: { readonly execution: AttemptExecution; readonly reference: ExternalExecutionReference }): Promise<ObservedSessionAttempt> => {
     const { records, now } = workflowServices();
     const adapter = workflowServices().find_executor(input.execution.adapter_type);
     if (!adapter) throw new Error(`executor adapter '${input.execution.adapter_type}' is not registered`);
+    if (input.execution.request === null) throw new Error("attempt request is unresolved");
     const observation = await adapter.observe_terminal(
       input.execution.request.execution_id as ExecutionId, input.reference);
+    if (observation.kind === "executor_unavailable") return observation;
     const at = now();
-    const written = await records.observe_session({ session_id: input.execution.session_id,
-      health: observation.kind === "terminal" ? executorHealthFromTerminal(observation.observation, at) : { kind: "running", observed_at: at },
-      observed_at: at });
+    const written = observation.kind === "terminal" ? null : await records.observe_session({ session_id: input.execution.session_id,
+      health: { kind: "running", observed_at: at }, observed_at: at });
     if (written?.kind === "already_ended") {
-      await adapter.cancel_or_fence(input.execution.attempt_id as unknown as ExecutionId, input.reference);
+      const fenced = await adapter.cancel_or_fence(input.execution.attempt_id as unknown as ExecutionId, input.reference);
+      if (fenced?.kind === "executor_unavailable") return fenced;
       await records.mark_session_fenced(input.execution.session_id, now());
       return { kind: "abandoned" };
     }
     if (observation.kind === "terminal") {
-      await sendCohortWakeHint(input.execution.cohort_id, `attempt_ended:${input.execution.attempt_id}`).catch(() => undefined);
+      const terminal = observation.observation;
+      const status = terminal.kind === "succeeded" ? "complete" : terminal.kind === "cancelled" ? "cancelled" : "failed";
+      const outcome: SessionEndOutcome = terminal.kind === "succeeded" ? { kind: "exited", exit_code: 0 }
+        : terminal.kind === "failed" ? { kind: "failed", code: terminal.code, detail: terminal.detail }
+          : { kind: "cancelled" };
+      await recordAttemptOutcome(input.execution, status, outcome);
     }
     return observation;
   },
@@ -661,19 +708,36 @@ const observeSessionStep = DBOS.registerStep(
  * cohort machine takes it from there under its own version.
  */
 export const attemptWorkflow = DBOS.registerWorkflow(async (attempt_id: AttemptId): Promise<void> => {
-  const execution = await loadAttemptStep(attempt_id);
-  const ensured = await ensureSessionStep(execution);
-  if (ensured.kind === "rejected") {
-    await recordSessionStartFailureStep({ execution, detail: ensured.detail });
-    return;
+  let execution = await loadAttemptStep(attempt_id);
+  if (execution.request === null) {
+    const resolved = await resolveAttemptRequestStep(attempt_id);
+    if (resolved.kind === "failed") {
+      await recordAttemptOutcome(execution, "failed", { kind: "failed", code: "launch_resolution_failed",
+        detail: resolved.detail ?? "attempt request could not be resolved" });
+      return;
+    }
+    execution = await loadAttemptStep(attempt_id);
   }
-  if (ensured.kind === "abandoned") return;
-  const reference = ensured.reference;
+  let reference: ExternalExecutionReference;
+  for (;;) {
+    const ensured = await ensureSessionStep(execution);
+    if (ensured.kind === "executor_unavailable") {
+      await DBOS.sleepSeconds(10);
+      continue;
+    }
+    if (ensured.kind === "rejected") {
+      await recordSessionStartFailureStep({ execution, detail: ensured.detail });
+      return;
+    }
+    if (ensured.kind === "abandoned") return;
+    reference = ensured.reference;
+    break;
+  }
   for (;;) {
     const observation = await observeSessionStep({ execution, reference });
     if (observation.kind === "abandoned") return;
     if (observation.kind === "terminal") return;
-    await DBOS.sleepSeconds(OBSERVE_INTERVAL_SECONDS);
+    await DBOS.sleepSeconds(observation.kind === "executor_unavailable" ? 10 : OBSERVE_INTERVAL_SECONDS);
   }
 }, { name: "oakridgeV15AttemptWorkflow" });
 
@@ -704,7 +768,7 @@ const startStageAttemptsStep = DBOS.registerStep(async (transition_id: RunTransi
   return rows.map((row) => row.id as AttemptId);
 }, { name: "oakridgeV15FindStageAttemptsStep", retriesAllowed: true });
 
-const fenceStageSessionsStep = DBOS.registerStep(async (cohort_id: CohortId): Promise<void> => {
+const fenceStageSessionsStep = DBOS.registerStep(async (cohort_id: CohortId): Promise<void | ExecutorUnavailable> => {
   const { effects_sql, records, find_executor, now } = workflowServices();
   if (!effects_sql) throw new Error("stage effect SQL is not registered");
   const rows = await effects_sql.query<{ readonly session_id: string; readonly adapter_type: string;
@@ -717,7 +781,8 @@ const fenceStageSessionsStep = DBOS.registerStep(async (cohort_id: CohortId): Pr
   for (const row of rows) {
     const adapter = find_executor(row.adapter_type);
     if (!adapter) throw new Error(`executor '${row.adapter_type}' is not registered`);
-    await adapter.cancel_or_fence(row.execution_id as ExecutionId, row.adapter_reference);
+    const fenced = await adapter.cancel_or_fence(row.execution_id as ExecutionId, row.adapter_reference);
+    if (fenced?.kind === "executor_unavailable") return fenced;
     await records.mark_session_fenced(row.session_id as import("../domain/primitives").SessionId, now());
   }
 }, { name: "oakridgeV15FenceStageSessionsStep", retriesAllowed: true });
@@ -730,7 +795,11 @@ export const stageEffectWorkflow = DBOS.registerWorkflow(async (transition_id: R
         await DBOS.startWorkflow(attemptWorkflow, { workflowID: attemptWorkflowId(attempt_id) })(attempt_id);
       }
     } else if (effect.name === "end_session" && row.owner_cohort_id) {
-      await fenceStageSessionsStep(row.owner_cohort_id as CohortId);
+      for (;;) {
+        const fenced = await fenceStageSessionsStep(row.owner_cohort_id as CohortId);
+        if (fenced?.kind !== "executor_unavailable") break;
+        await DBOS.sleepSeconds(10);
+      }
     }
   }
 }, { name: "oakridgeV15StageEffectWorkflow" });

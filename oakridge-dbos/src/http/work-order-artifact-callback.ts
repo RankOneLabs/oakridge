@@ -14,11 +14,12 @@ export interface WorkOrderArtifactCallbackDependencies {
   readonly send_cohort_wake?: (cohort_id: CohortId, idempotency_key: string) => Promise<void>;
 }
 
-const statusOf = (result: PublishWorkOrderArtifactResult): 200 | 201 | 202 | 401 | 404 | 409 => {
+const statusOf = (result: PublishWorkOrderArtifactResult): 200 | 201 | 202 | 401 | 404 | 409 | 503 => {
   if (result.kind === "published") return 201;
   if (result.kind === "pending") return 202;
   if (result.kind === "already_applied") return 200;
   if (result.kind === "invalid_capability") return 401;
+  if (result.kind === "enrichment_unavailable") return 503;
   if (result.kind === "work_not_found" || result.kind === "slot_not_found") return 404;
   return 409;
 };
@@ -51,7 +52,7 @@ export const createWorkOrderArtifactCallbackApp = (dependencies: WorkOrderArtifa
     if (result.kind === "published" || result.kind === "already_applied") return context.json({ artifact_id: result.artifact_id, state: "released", record_version: result.record_version }, status);
     if (result.kind === "pending") return context.json({ artifact_id: result.artifact_id, state: "pending", wait_id: result.wait_id, record_version: result.record_version }, status);
     const failure = result;
-    return context.json({ error: failure.detail, code: failure.kind,
+    return context.json({ error: failure.detail, code: failure.kind === "refused" ? failure.code : failure.kind,
       ...(failure.kind === "slot_already_released" || failure.kind === "idempotency_conflict" ? { artifact_id: failure.artifact_id } : {}),
       ...(failure.kind === "slot_pending" ? { wait_id: failure.wait_id } : {}) }, status);
   };

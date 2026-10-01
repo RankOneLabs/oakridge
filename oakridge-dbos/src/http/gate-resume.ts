@@ -43,6 +43,8 @@ export const createGateResumeApp = (dependencies: GateResumeDependencies): Hono 
       decided_at: (dependencies.now ?? (() => new Date().toISOString()))() });
     if (result.kind === "wait_not_found") return http.json({ error: result.detail }, 404);
     if (result.kind === "wait_conflict") return http.json({ error: result.detail }, 409);
+    if (result.kind === "already_decided" || result.kind === "refused") return http.json({ code: result.code, detail: result.detail }, 409);
+    if (result.kind === "invalid_action" || result.kind === "invalid_feedback") return http.json({ code: result.code, detail: result.detail }, 422);
     const key = `${result.kind}:${waitId}:${result.record_version}`;
     if (result.cohort_id !== null) await dependencies.send_cohort_wake?.(result.cohort_id, key).catch(() => undefined);
     await dependencies.send_run_wake?.(result.run_id, key).catch(() => undefined);

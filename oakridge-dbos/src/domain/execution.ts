@@ -75,6 +75,12 @@ export type ExecutorObservationAttempt =
   | { readonly kind: "pending" }
   | { readonly kind: "terminal"; readonly observation: ExecutorTerminalObservation };
 
+export interface ExecutorUnavailable {
+  readonly kind: "executor_unavailable";
+  readonly operation: "start_or_attach" | "observe_terminal" | "cancel_or_fence";
+  readonly detail: string;
+}
+
 /**
  * A start request that the executor definitively rejected before creating an
  * external execution. Transport failures stay ordinary errors because their
@@ -96,10 +102,10 @@ export class ExecutorStartRejectedError extends Error {
  */
 export interface ExecutorAdapter {
   readonly executor_type: string;
-  start_or_attach(request: ExecutionRequest, operation_id: ExecutorOperationId): Promise<ExternalExecutionReference>;
-  observe_terminal(execution_id: ExecutionId, external_reference: ExternalExecutionReference): Promise<ExecutorObservationAttempt>;
+  start_or_attach(request: ExecutionRequest, operation_id: ExecutorOperationId): Promise<ExternalExecutionReference | ExecutorUnavailable>;
+  observe_terminal(execution_id: ExecutionId, external_reference: ExternalExecutionReference): Promise<ExecutorObservationAttempt | ExecutorUnavailable>;
   deliver_input(execution_id: ExecutionId, delivery_key: string, input: string, external_reference: ExternalExecutionReference): Promise<void>;
-  cancel_or_fence(execution_id: ExecutionId, external_reference: ExternalExecutionReference): Promise<void>;
+  cancel_or_fence(execution_id: ExecutionId, external_reference: ExternalExecutionReference): Promise<void | ExecutorUnavailable>;
 }
 
 export interface AttemptExecutionContext {

@@ -54,6 +54,11 @@ import type { RunRecordRepository } from "./repositories";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 
 const CAPABILITY_SECRET = "work_order_capability";
+const isTerminalStatus = (status: CoreStatus): boolean => status === "complete" || status === "failed" || status === "cancelled";
+
+class PublishAbort extends Error {
+  constructor(readonly code: string, readonly detail: string) { super(detail); }
+}
 
 
 /** How many version races one owner's cancellation will lose before giving up. */
@@ -108,7 +113,7 @@ interface AttemptRow {
   readonly attempt_number: number;
   readonly status: CoreStatus;
   readonly adapter_type: string;
-  readonly request: JsonValue;
+  readonly request: JsonValue | null;
   readonly session_id: string | null;
   readonly adapter_reference: JsonValue | null;
   readonly kbbl_session_id: string | null;
@@ -133,7 +138,7 @@ const attemptExecution = (row: AttemptRow): AttemptExecution => ({
   cohort_key: row.cohort_key,
   attempt_number: row.attempt_number,
   status: row.status,
-  request: row.request as unknown as ExecutionRequest,
+  request: row.request as unknown as ExecutionRequest | null,
   adapter_type: row.adapter_type,
   adapter_reference: row.adapter_reference === null ? null : deliverableReference(row.adapter_reference),
   kbbl_session_id: row.kbbl_session_id as AttemptExecution["kbbl_session_id"],
@@ -583,6 +588,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
    * capability issued to one attempt can never authenticate another.
    */
   async publish_artifact(request: PublishWorkOrderArtifact): Promise<PublishWorkOrderArtifactResult> {
+    if (this.stage_event_applier) return this.publishStageArtifact(request);
     const seed = await this.load_work_order_capability_seed();
     const expected = capabilityHash(capabilityFor(seed, request.attempt_id as unknown as import("../domain/primitives").WorkOrderId));
     return this.sql.transaction(async (tx): Promise<PublishWorkOrderArtifactResult> => {
@@ -765,9 +771,152 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
     });
   }
 
+  private async publishStageArtifact(request: PublishWorkOrderArtifact): Promise<PublishWorkOrderArtifactResult> {
+    const applier = this.stage_event_applier;
+    if (!applier) throw new Error("stage event ingress is not configured");
+    const seed = await this.load_work_order_capability_seed();
+    const expected = capabilityHash(capabilityFor(seed, request.attempt_id as unknown as import("../domain/primitives").WorkOrderId));
+    const transition_ids: RunTransitionId[] = [];
+    try {
+      const result = await this.sql.transaction(async (tx): Promise<PublishWorkOrderArtifactResult> => {
+        const rows = await tx.query<{ readonly run_id: string; readonly cohort_id: string;
+          readonly stage_instance_id: string; readonly stage_contract: JsonValue; readonly status: CoreStatus;
+          readonly session_id: string | null; readonly record_version: string;
+          readonly effect_descriptor: JsonValue | null }>(
+          `SELECT attempt.run_id::text,attempt.cohort_id::text,attempt.stage_instance_id::text,
+                  stage.stage_contract,attempt.status,session.id::text AS session_id,
+                  run.record_version::text,launch.effect_descriptor
+           FROM oakridge.attempt attempt JOIN oakridge.cohort cohort ON cohort.id=attempt.cohort_id
+           JOIN oakridge.stage_instance stage ON stage.id=attempt.stage_instance_id
+           JOIN oakridge.workflow_run run ON run.id=attempt.run_id
+           LEFT JOIN oakridge.session session ON session.attempt_id=attempt.id
+           LEFT JOIN oakridge.run_transition launch ON launch.id=session.launch_transition_id
+           WHERE attempt.id=$1 FOR UPDATE OF cohort,attempt`, [request.attempt_id]);
+        const attempt = rows[0];
+        if (!attempt) return { kind: "work_not_found", detail: `attempt '${request.attempt_id}' was not found` };
+        if (request.capability_hash !== expected) return { kind: "invalid_capability", detail: "work-order capability is invalid" };
+        if (attempt.status === "cancelled") return { kind: "work_abandoned", detail: "attempt was cancelled" };
+        if (attempt.status === "failed") return { kind: "work_not_active", detail: "attempt has failed" };
+        const declared = findDeclaredOutput(attempt.stage_contract, request.output_name);
+        if (!declared) return { kind: "slot_not_found", detail: `stage does not declare output '${request.output_name}'` };
+        const contract = attempt.stage_contract as unknown as import("../domain/compiled-workflow").CompiledStageContract;
+        if (contract.stage_type === "delegated_session") {
+          const descriptor = attempt.effect_descriptor;
+          const launch = isObject(descriptor) && Array.isArray(descriptor.effects)
+            ? descriptor.effects.find((effect) => isObject(effect) && effect.name === "launch_session") : null;
+          const role = isObject(launch) && isObject(launch.args) && typeof launch.args.role === "string" ? launch.args.role : null;
+          const config = contract.executor.definition_config as import("../domain/delegated-session").DelegatedSessionDefinitionConfig;
+          const allowed = config.role_configs.find((candidate) => candidate.session_role === role)?.authorized_outputs ?? [];
+          if (!allowed.includes(request.output_name)) return { kind: "slot_not_found",
+            detail: `session role '${role}' cannot publish '${request.output_name}'` };
+        }
+        const cohort_id = attempt.cohort_id as CohortId;
+        const run_id = attempt.run_id as WorkflowRunId;
+        const record_version = Number(attempt.record_version) as RunRecordVersion;
+        const collection_key = request.collection_key ?? null;
+        const replay = await tx.query<{ readonly id: string; readonly same_body: boolean }>(
+          `SELECT artifact.id::text,artifact.body=$4::jsonb AS same_body
+           FROM oakridge.cohort_output output
+           JOIN oakridge.artifact artifact ON artifact.id=output.artifact_id
+           JOIN oakridge.artifact_provenance provenance ON provenance.artifact_id=artifact.id
+           WHERE provenance.attempt_id=$1 AND output.output_name=$2
+             AND output.collection_key IS NOT DISTINCT FROM $3
+           ORDER BY output.round DESC LIMIT 1`,
+          [request.attempt_id, request.output_name, collection_key, JSON.stringify(request.body)]);
+        if (replay[0]) return replay[0].same_body
+          ? { kind: "already_applied", artifact_id: replay[0].id as ArtifactId, run_id, cohort_id, record_version }
+          : { kind: "idempotency_conflict", artifact_id: replay[0].id as ArtifactId,
+            detail: "this attempt already published a different body into that output" };
+        const tips = await tx.query<{ readonly id: string; readonly chain_id: string; readonly revision: number }>(
+          `SELECT artifact.id::text,artifact.chain_id::text,artifact.revision
+           FROM oakridge.cohort_output output JOIN oakridge.artifact artifact ON artifact.id=output.artifact_id
+           WHERE output.cohort_id=$1 AND output.output_name=$2
+             AND output.collection_key IS NOT DISTINCT FROM $3
+           ORDER BY output.round DESC,artifact.revision DESC LIMIT 1`, [cohort_id, request.output_name, collection_key]);
+        const tip = tips[0];
+        if (tip) await tx.query("UPDATE oakridge.artifact SET lifecycle='superseded' WHERE id=$1 AND lifecycle='current'", [tip.id]);
+        await tx.query(
+          `INSERT INTO oakridge.artifact (id,chain_id,revision,parent_artifact_id,artifact_type,body,label,created_at)
+           VALUES ($1,$2,$3,$4,$5,$6::jsonb,NULL,$7::timestamptz)`,
+          [request.artifact_id, tip?.chain_id ?? request.artifact_id, (tip?.revision ?? 0) + 1,
+            tip?.id ?? null, declared.artifact_type, JSON.stringify(request.body), request.published_at]);
+        await tx.query(
+          "INSERT INTO oakridge.artifact_owner (artifact_id,run_id,stage_instance_id,cohort_id) VALUES ($1,$2,$3,$4)",
+          [request.artifact_id, run_id, attempt.stage_instance_id, cohort_id]);
+        await tx.query(
+          `INSERT INTO oakridge.artifact_provenance
+             (artifact_id,kind,run_id,stage_instance_id,attempt_id,session_id)
+           VALUES ($1,'stage_attempt',$2,$3,$4,$5)`,
+          [request.artifact_id, run_id, attempt.stage_instance_id, request.attempt_id, attempt.session_id]);
+        const applied = await applier.apply_in(tx, cohort_id, { kind: "artifact_published", attempt_id: request.attempt_id,
+          output: request.output_name, collection_key, artifact_id: request.artifact_id,
+          enrichment: request.enrichment ?? null }, transition_ids);
+        if (!applied.ok) throw new PublishAbort("effect_failed", applied.error.detail);
+        if (applied.value.kind === "refused") throw new PublishAbort(applied.value.code, applied.value.detail);
+        if (applied.value.kind === "ignored") throw new PublishAbort(applied.value.reason, "publication did not advance cohort");
+        return { kind: "published", artifact_id: request.artifact_id, run_id, cohort_id, record_version };
+      });
+      await applier.start_effects(transition_ids);
+      return result;
+    } catch (error) {
+      if (error instanceof PublishAbort) return { kind: "refused", code: error.code, detail: error.detail };
+      throw error;
+    }
+  }
+
   decide_gate_wait(request: DecideGateWait): Promise<CloseRunOutputWaitResult> {
+    if (this.stage_event_applier) return this.decideStageGate(request);
     return this.closeWait({ wait: { kind: "id", wait_id: request.wait_id }, action: request.action,
       actor: request.actor, detail: request.detail, decided_at: request.decided_at, kinds: ["gate"] });
+  }
+
+  private async decideStageGate(request: DecideGateWait): Promise<CloseRunOutputWaitResult> {
+    const applier = this.stage_event_applier;
+    if (!applier) throw new Error("stage event ingress is not configured");
+    const transition_ids: RunTransitionId[] = [];
+    try {
+      const result = await this.sql.transaction(async (tx): Promise<CloseRunOutputWaitResult> => {
+        const location = await tx.query<{ readonly cohort_id: string }>(
+          "SELECT cohort_id::text FROM oakridge.wait_gate WHERE id=$1", [request.wait_id]);
+        if (!location[0]) return { kind: "wait_not_found", detail: "gate not found" };
+        await tx.query("SELECT id FROM oakridge.cohort WHERE id=$1 FOR UPDATE", [location[0].cohort_id]);
+        const rows = await tx.query<{ readonly id: string; readonly run_id: string; readonly cohort_id: string;
+          readonly status: string; readonly closes_on: JsonValue; readonly command_workflow_id: string;
+          readonly record_version: string }>(
+          `SELECT wait.id::text,wait.run_id::text,wait.cohort_id::text,wait.status,wait.closes_on,
+                  wait.command_workflow_id,run.record_version::text
+           FROM oakridge.wait_gate wait JOIN oakridge.workflow_run run ON run.id=wait.run_id
+           WHERE wait.id=$1 FOR UPDATE OF wait`, [request.wait_id]);
+        const gate = rows[0];
+        if (!gate) return { kind: "wait_not_found", detail: "gate not found" };
+        if (gate.status !== "open") return { kind: "already_decided", code: "already_decided", detail: "gate is already decided" };
+        const actions = isObject(gate.closes_on) && Array.isArray(gate.closes_on.actions)
+          ? gate.closes_on.actions.filter((action): action is string => typeof action === "string") : [];
+        if (!actions.includes(request.action)) return { kind: "invalid_action", code: "invalid_action",
+          detail: `gate does not close on '${request.action}'` };
+        if (request.action === "request_revision" && !request.detail?.trim()) return { kind: "invalid_feedback",
+          code: "invalid_feedback", detail: "request_revision requires feedback" };
+        const match = /^v15-gate:[^:]+:(.+):[0-9]+$/.exec(gate.command_workflow_id);
+        if (!match?.[1]) throw new Error(`gate '${gate.id}' has no machine gate name`);
+        await tx.query(
+          `UPDATE oakridge.wait_gate SET status='closed',closed_at=$2::timestamptz,outcome=$3::jsonb
+           WHERE id=$1`, [request.wait_id, request.decided_at,
+            JSON.stringify({ kind: "decided", action: request.action, actor: request.actor, feedback: request.detail })]);
+        const applied = await applier.apply_in(tx, gate.cohort_id as CohortId, {
+          kind: "gate_decided", gate_id: request.wait_id as unknown as import("../domain/stage-machine").GateId,
+          gate: match[1], action: request.action, actor: request.actor, feedback: request.detail,
+        }, transition_ids);
+        if (!applied.ok) throw new PublishAbort("effect_failed", applied.error.detail);
+        if (applied.value.kind === "refused") throw new PublishAbort(applied.value.code, applied.value.detail);
+        return { kind: "decided", run_id: gate.run_id as WorkflowRunId, cohort_id: gate.cohort_id as CohortId,
+          record_version: Number(gate.record_version) as RunRecordVersion };
+      });
+      await applier.start_effects(transition_ids);
+      return result;
+    } catch (error) {
+      if (error instanceof PublishAbort) return { kind: "refused", code: error.code, detail: error.detail };
+      throw error;
+    }
   }
 
   /**
@@ -899,6 +1048,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
    * sessions is the caller's, and is diagnostic cleanup rather than a domain fact.
    */
   async cancel_run(input: CancelRunRecord): Promise<CancelRunRecordResult> {
+    if (this.stage_event_applier) return this.cancelStageRun(input);
     const current = await runVersion(this.sql, input.run_id);
     if (!current) return { kind: "run_not_found", detail: `workflow run '${input.run_id}' was not found` };
     const sessions = await this.listSessionsToFence(input.run_id);
@@ -926,6 +1076,57 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
     await this.cancelRunOwners(input);
     return { kind: "cancelled", run_id: input.run_id,
       record_version: cancelled.value.resulting_owner_version as RunRecordVersion, sessions_to_fence: sessions };
+  }
+
+  private async cancelStageRun(input: CancelRunRecord): Promise<CancelRunRecordResult> {
+    const applier = this.stage_event_applier;
+    if (!applier) throw new Error("stage event ingress is not configured");
+    const transition_ids: RunTransitionId[] = [];
+    const result = await this.sql.transaction(async (tx): Promise<CancelRunRecordResult> => {
+      const cohorts = await tx.query<{ readonly id: string }>(
+        `SELECT cohort.id::text FROM oakridge.cohort cohort
+         JOIN oakridge.stage_instance stage ON stage.id=cohort.stage_instance_id
+         WHERE cohort.run_id=$1 AND cohort.status NOT IN ('complete','failed','cancelled')
+         ORDER BY stage.stage_key,cohort.cohort_key`, [input.run_id]);
+      for (const cohort of cohorts) {
+        const applied = await applier.apply_in(tx, cohort.id as CohortId,
+          { kind: "cancel", actor: input.actor }, transition_ids);
+        if (!applied.ok || applied.value.kind === "refused") throw new Error(`cancel cohort ${cohort.id}: ${JSON.stringify(applied)}`);
+      }
+      const stages = await tx.query<{ readonly id: string; readonly durable_version: string }>(
+        `SELECT id::text,durable_version::text FROM oakridge.stage_instance
+         WHERE run_id=$1 AND status NOT IN ('complete','failed','cancelled') ORDER BY stage_key FOR UPDATE`, [input.run_id]);
+      for (const stage of stages) {
+        const changed = await this.writer.commit_in(tx, {
+          run_id: input.run_id, owner: { kind: "stage_instance", id: stage.id as StageInstanceId },
+          expected_version: Number(stage.durable_version), launch_reason: "operator",
+          change: { status: "cancelled", blocked_reason: null, next_actor: null,
+            outcome: { kind: "cancelled", reason: input.reason } },
+          effect: { kind: "none" }, actor: input.actor, changed_at: input.cancelled_at,
+        });
+        if (!changed.ok) throw new Error(`cancel stage ${stage.id}: ${changed.error.kind}`);
+      }
+      const runs = await tx.query<{ readonly record_version: string; readonly status: CoreStatus }>(
+        "SELECT record_version::text,status FROM oakridge.workflow_run WHERE id=$1 FOR UPDATE", [input.run_id]);
+      const run = runs[0];
+      if (!run) return { kind: "run_not_found", detail: `workflow run '${input.run_id}' was not found` };
+      if (isTerminalStatus(run.status)) return { kind: "already_terminal", run_id: input.run_id,
+        status: run.status as "complete" | "failed" | "cancelled", sessions_to_fence: [] };
+      const changed = await this.writer.commit_in(tx, {
+        run_id: input.run_id, owner: { kind: "run", id: input.run_id }, expected_version: Number(run.record_version),
+        launch_reason: "operator", change: { status: "cancelled", blocked_reason: null, next_actor: null,
+          outcome: { kind: "cancelled", reason: input.reason } },
+        effect: { kind: "none" }, actor: input.actor, changed_at: input.cancelled_at,
+      });
+      if (!changed.ok) throw new Error(`cancel run: ${changed.error.kind}`);
+      return { kind: "cancelled", run_id: input.run_id,
+        record_version: changed.value.resulting_owner_version as RunRecordVersion, sessions_to_fence: [] };
+    });
+    await applier.start_effects(transition_ids);
+    if (result.kind === "cancelled" || result.kind === "already_terminal") return {
+      ...result, sessions_to_fence: await this.listSessionsToFence(input.run_id),
+    };
+    return result;
   }
 
   private async cancelRunOwners(input: CancelRunRecord): Promise<void> {
@@ -990,7 +1191,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       `SELECT session.id::text AS session_id,session.attempt_id::text,attempt.adapter_type,session.adapter_reference
        FROM oakridge.session session
        JOIN oakridge.attempt attempt ON attempt.id=session.attempt_id
-       WHERE session.run_id=$1 AND session.ended_at IS NULL`, [run_id]);
+       WHERE session.run_id=$1 AND session.fenced_at IS NULL`, [run_id]);
     return rows.flatMap((row) => {
       const reference = deliverableReference(row.adapter_reference);
       if (!reference || reference.kind === "none") return [];
@@ -1018,7 +1219,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       }
       const live = await tx.query<{ readonly session_id: string }>(
         `SELECT session.id::text AS session_id FROM oakridge.session session
-         WHERE session.run_id=$1 AND session.ended_at IS NULL AND session.adapter_reference->>'kind' NOT IN ('none','completed')
+         WHERE session.run_id=$1 AND session.fenced_at IS NULL AND session.adapter_reference->>'kind' NOT IN ('none','completed')
          LIMIT 1`, [run_id]);
       if (live[0]) {
         return { kind: "external_execution_conflict", run_id,
