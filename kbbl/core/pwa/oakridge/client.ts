@@ -28,9 +28,6 @@ import type {
   SessionMessageRecord,
   PostAtomEditRequest,
   ReviewInbox,
-  ConfirmFinalPullRequestRequest,
-  FinalPullRequestResponse,
-  RepositoryKey,
   SessionRunLocation,
   RunDiagnosis,
 } from "./types";
@@ -38,8 +35,12 @@ import type { Result } from "../lib/result";
 
 const API = "/oakridge/api";
 
-import { parseFinalPullRequestResponse, parseProject, parseRunDetail, parseParkedGates, parseReviewInbox, parseSessionRunLocation, projectUpdateError, type ResponseParseError, type RawRunDetail, type RawParkedGate, type RawReviewInbox } from "./wire";
-export { parseOakridgeRunEventFrame } from "./wire";
+import { parseProject, parseRunDetail, parseRunDiagnosis, parseParkedGates, parseReviewInbox, parseSessionRunLocation, parseSessionMessageRecord, parseSessionMessageAccepted, type ResponseParseError, type RawRunDetail, type RawParkedGate, type RawReviewInbox } from "./wire";
+
+const projectUpdateError = (path: string, detail: string): Result<never, ProjectUpdateError> => ({
+  ok: false,
+  error: { operation: "update project", path, detail },
+});
 
 function unwrapResponse<T>(path: string, result: Result<T, ResponseParseError>): T {
   if (result.ok) return result.value;
@@ -151,7 +152,7 @@ export function fetchRun(id: string): Promise<RunDetail> {
 
 export function fetchRunDiagnosis(id: string): Promise<RunDiagnosis> {
   const path = `/runs/${encodeURIComponent(id)}/diagnosis`;
-  return oakridgeGet<RunDiagnosis>(path);
+  return oakridgeGet<unknown>(path).then(parseRunDiagnosis);
 }
 
 /**
@@ -201,11 +202,14 @@ export function confirmCohortMerged(cohortId: string, req: ConfirmCohortMergedRe
 }
 
 export function fetchProjects(): Promise<Project[]> {
-  return oakridgeGet<Project[]>("/projects");
+  return oakridgeGet<unknown>("/projects").then((body) => {
+    if (!Array.isArray(body)) throw new Error("oakridge /projects: response was not a list");
+    return body.map((value) => unwrapResponse("/projects", parseProject(value)));
+  });
 }
 
 export function createProject(body: ProjectWriteInput): Promise<Project> {
-  return oakridgePost<Project>("/projects", body);
+  return oakridgePost<unknown>("/projects", body).then((value) => unwrapResponse("/projects", parseProject(value)));
 }
 
 export async function updateProject(command: ProjectUpdateCommand): Promise<Result<Project, ProjectUpdateError>> {
@@ -283,18 +287,6 @@ export function retryRunUnit(stageInstanceId: string, unitId: string): Promise<u
   );
 }
 
-export function confirmFinalPullRequest(
-  runId: string,
-  repositoryKey: RepositoryKey,
-  request: ConfirmFinalPullRequestRequest,
-): Promise<FinalPullRequestResponse> {
-  const path = `/workflow_runs/${encodeURIComponent(runId)}/final_pull_requests/${encodeURIComponent(repositoryKey)}/confirm`;
-  return oakridgePost<unknown>(
-    path,
-    request,
-  ).then((value) => unwrapResponse(path, parseFinalPullRequestResponse(value)));
-}
-
 export function fetchArtifactTypes(): Promise<ArtifactTypeDescriptor[]> {
   return oakridgeGet<ArtifactTypeDescriptor[]>("/artifact_types");
 }
@@ -329,15 +321,18 @@ export function resolveThread(threadId: string): Promise<{ thread_id: string; st
 
 export function fetchSessionMessages(runId: string, cohortId?: string): Promise<SessionMessageRecord[]> {
   const query = cohortId ? `?cohort_id=${encodeURIComponent(cohortId)}` : "";
-  return oakridgeGet<SessionMessageRecord[]>(`/runs/${encodeURIComponent(runId)}/messages${query}`);
+  return oakridgeGet<unknown>(`/runs/${encodeURIComponent(runId)}/messages${query}`).then((body) => {
+    if (!Array.isArray(body)) throw new Error("oakridge session messages: response was not a list");
+    return body.map(parseSessionMessageRecord);
+  });
 }
 
 export function fetchSessionMessageDelivery(runId: string, deliveryKey: string): Promise<SessionMessageRecord> {
-  return oakridgeGet<SessionMessageRecord>(`/runs/${encodeURIComponent(runId)}/messages/${encodeURIComponent(deliveryKey)}`);
+  return oakridgeGet<unknown>(`/runs/${encodeURIComponent(runId)}/messages/${encodeURIComponent(deliveryKey)}`).then(parseSessionMessageRecord);
 }
 
 export function postSessionMessage(runId: string, deliveryKey: string, request: PostSessionMessageRequest): Promise<SessionMessageAccepted> {
-  return oakridgePost(`/runs/${encodeURIComponent(runId)}/messages`, request, { idempotency_key: deliveryKey });
+  return oakridgePost<unknown>(`/runs/${encodeURIComponent(runId)}/messages`, request, { idempotency_key: deliveryKey }).then(parseSessionMessageAccepted);
 }
 
 // ── Collab: atom edits ────────────────────────────────────────────────────────

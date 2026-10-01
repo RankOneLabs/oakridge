@@ -1,4 +1,4 @@
-import type { RunEvent, RunEventFrame, RunEventOperation } from "../types";
+import type { RunEvent, RunEventFrame } from "../types";
 
 export interface RunNotification {
   readonly kind: "success" | "error" | "info";
@@ -6,46 +6,26 @@ export interface RunNotification {
   readonly href: string;
 }
 
-const transitionLabels: Readonly<Record<RunEventOperation, string>> = {
-  stage_materialized: "Stage materialized",
-  materialization_closed: "Materialization closed",
-  materialization_failed: "Materialization failed",
-  run_cancelled: "Run cancelled",
-  unit_admitted: "Unit admitted",
-  operator_retry_created: "Unit retry created",
-  input_revised: "Input revised",
-  slot_released: "Output published",
-  slot_pending: "Output awaiting review",
-  slot_invalidated: "Output invalidated",
-  unit_satisfied: "Unit completed",
-  work_started: "Work started",
-  gate_opened: "Gate opened",
-  gate_decided: "Gate decided",
-  pull_request_observed: "Pull request observed",
-  pull_request_merge_confirmed: "Pull request merge confirmed",
+export const selectRunNotification = (event: RunEvent): RunNotification | null => {
+  const effect = event.effect;
+  let kind: RunNotification["kind"];
+  let message: string;
+  if (effect.kind === "dev_flow_build_cohort_transition" && effect.disposition === "transitioned") {
+    switch (effect.event.kind) {
+      case "builder_attempt_lost": kind = "error"; message = "Builder session lost"; break;
+      case "assessor_attempt_lost": kind = "error"; message = "Assessor session lost"; break;
+      case "pull_request_mismatch": kind = "error"; message = "Pull request mismatch"; break;
+      case "replacement_pull_request_required": kind = "error"; message = "Replacement pull request required"; break;
+      case "pull_request_merged": kind = "success"; message = "Pull request merged"; break;
+      default: return null;
+    }
+  } else if (effect.kind === "pull_request_merge_confirmed") {
+    kind = "success"; message = "Pull request merge confirmed";
+  } else if (effect.kind === "start_attempt" && event.launch_reason === "retry") {
+    kind = "info"; message = "Retry launched";
+  } else return null;
+  return { kind, message, href: `#oakridge/run/${encodeURIComponent(event.run_id)}` };
 };
 
-const kindOf = (operation: RunEventOperation): RunNotification["kind"] => {
-  if (operation === "materialization_failed" || operation === "run_cancelled") return "error";
-  if (operation === "unit_satisfied" || operation === "pull_request_merge_confirmed") return "success";
-  return "info";
-};
-
-export const selectRunNotification = (event: RunEvent): RunNotification => {
-  const location = [event.payload.stage_key, event.payload.unit_id]
-    .filter((part): part is string => part !== null)
-    .join(" · ");
-  const optionalAttention =
-    event.payload.attention === "optional" && event.payload.continuation === "continuing";
-  const prefix = optionalAttention ? "Optional attention: " : "";
-  const suffix = location === "" ? "" : ` · ${location}`;
-  return {
-    kind: kindOf(event.operation),
-    message: `${prefix}${transitionLabels[event.operation]}${suffix}`,
-    href: `#oakridge/run/${encodeURIComponent(event.payload.run_id)}`,
-  };
-};
-
-/** Replayed frames rebuild stream position and never represent a new notification. */
 export const selectRunFrameNotification = (frame: RunEventFrame): RunNotification | null =>
   frame.replayed ? null : selectRunNotification(frame);

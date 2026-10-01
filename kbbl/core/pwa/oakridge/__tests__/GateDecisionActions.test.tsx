@@ -8,6 +8,7 @@ import type { ParkedGate, RepositoryKey, RunState } from "../types";
 function gate(id: string, revision: string, overrides: Partial<Pick<ParkedGate, "run_state" | "actionable">> = {}): ParkedGate {
   return {
     id,
+    stage_instance_id: "stage-build",
     gate_type: "artifact_approval",
     gate_step: "artifact_approval",
     run_id: "run-1",

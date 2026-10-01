@@ -113,6 +113,22 @@ test("a cohort parks on its open gate rather than relaunching, so the operator c
   expect(decision?.event.change).toEqual(expect.objectContaining({ status: "blocked", blocked_reason: "gate", next_actor: "operator" }));
 });
 
+test("an accepted gate completing a cohort records gate_decided activity", async () => {
+  const { contract, bundle } = await specStage();
+  const accepted_outputs: ArtifactEnvelope[] = contract.outputs.map((output) => ({
+    artifact_id: artifactId(1), artifact_type: output.artifact_type, output_name: output.name,
+    unit_id: "0" as UnitId, body: {},
+  }));
+  const state: CohortMachineState = {
+    ...initialState({ unit_id: "0", artifact: null, launched: 1, consumed_gate_wait_ids: [] }),
+    status: "blocked", blocked_reason: "gate", next_actor: "operator", attempt_count: 1,
+    accepted_outputs, decided_gates: [{ wait_id: waitId(1), output_name: contract.outputs[0]!.name,
+      action: "approve", artifact_id: artifactId(1), accepted: true, decided_at: "2026-09-29T00:00:00Z" }],
+  };
+  const decision = await driverFor(bundle).step(contextOf(state, contract));
+  expect(decision?.event.launch_reason).toBe("gate_decided");
+});
+
 /** An in-flight cohort's stored state still parses once the field becomes a set. */
 test("stage_data written under the single-slot key is still read as a consumed gate", async () => {
   const { contract, bundle } = await specStage();

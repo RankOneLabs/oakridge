@@ -2,9 +2,15 @@ import { expect, test } from "bun:test";
 
 import { createConfigurationApp, type ConfigurationHttpDependencies } from "../../../../oakridge-dbos/src/http/configuration";
 import { createOperatorProjectionApp } from "../../../../oakridge-dbos/src/http/operator-projections";
+import { createCollaborationApp, type CollaborationHttpDependencies } from "../../../../oakridge-dbos/src/http/collaboration";
 import { projectRunEvent, type RunEventRow } from "../../../../oakridge-dbos/src/domain/run-event";
+import type { SessionMessageRecord } from "../../../../oakridge-dbos/src/domain/collaboration";
+import type { CohortId } from "../../../../oakridge-dbos/src/domain/primitives";
+import { createDevFlowAdapterRegistry } from "../../../../oakridge-dbos/src/adapters/dev-flow";
+import { PostgresOperatorProjectionRepository } from "../../../../oakridge-dbos/src/storage/postgres-operators";
 import type { OperatorProjectionRepository } from "../../../../oakridge-dbos/src/storage/postgres-operators";
-import { parseOakridgeRunEventFrame, parseProject } from "../../pwa/oakridge/wire";
+import { DiagnosisSql, stage } from "../../../../oakridge-dbos/tests/support/operator-sql-stub";
+import { parseRunEventFrame, parseProject, parseRunDiagnosis, parseSessionMessageAccepted, parseSessionMessageRecord } from "../../pwa/oakridge/wire";
 
 const RUN_ID = "10000000-0000-0000-0000-000000000001";
 
@@ -36,8 +42,15 @@ test("every effect kind projected by projectRunEvent parses as a PWA frame", asy
   const wire: unknown = await response.json();
   if (!Array.isArray(wire)) throw new Error("run events response is not an array");
   for (const value of wire) {
-    expect(parseOakridgeRunEventFrame(JSON.stringify({ ...value, replayed: false }))).not.toBeNull();
+    expect(parseRunEventFrame({ ...value, replayed: false }).effect.kind).toBeTruthy();
   }
+});
+
+test("a malformed known effect names its bad field while future effects remain visible", () => {
+  const malformed = projectRunEvent(rowFor({ kind: "start_attempt", cohort_id: "cohort-1", attempt_number: "wrong" }, 9));
+  expect(() => parseRunEventFrame({ ...malformed, replayed: false })).toThrow("effect.attempt_number");
+  const future = projectRunEvent(rowFor({ kind: "future_effect" }, 10));
+  expect(parseRunEventFrame({ ...future, replayed: false }).effect).toEqual({ kind: "unrecognized", effect_kind: "future_effect" });
 });
 
 test("GET /projects parses the server's integration branch", async () => {
@@ -49,5 +62,51 @@ test("GET /projects parses the server's integration branch", async () => {
   if (!Array.isArray(body)) throw new Error("projects response is not an array");
   const parsed = parseProject(body[0]);
   expect(parsed.ok).toBe(true);
-  if (parsed.ok) expect(parsed.value.base_branch).toBe("main");
+  if (parsed.ok) expect(parsed.value.integration_branch).toBe("main");
+});
+
+test("diagnosis from PostgresOperatorProjectionRepository parses", async () => {
+  const repository = new PostgresOperatorProjectionRepository(
+    new DiagnosisSql({ stages: [stage(1, "active")] }), "test-app-version", createDevFlowAdapterRegistry(),
+  );
+  const response = await createOperatorProjectionApp(repository).request(`/runs/${RUN_ID}/diagnosis`);
+  expect(response.status).toBe(200);
+  expect(parseRunDiagnosis(await response.json()).run.id).toBe(RUN_ID);
+});
+
+test("session message routes serialize records accepted by PWA guards", async () => {
+  const stored: SessionMessageRecord[] = [];
+  const cohort_id = "30000000-0000-0000-0000-000000000001" as CohortId;
+  const dependencies = {
+    messages: {
+      list_for_run: async () => stored,
+      find_by_delivery_key: async () => stored[0] ?? null,
+    },
+    message_recipients: { resolve: async () => ({ kind: "resolved", cohort_id, target: {
+      execution_id: "execution-1", executor_type: "delegated_session", external_reference: { kind: "kbbl_session", session_id: "kbbl-1" },
+    } }) },
+    send_message: async ({ message }: { message: SessionMessageRecord }) => {
+      const record = { ...message, sender_kind: message.sender.kind, sender_id: message.sender.id,
+        recipient_kind: message.recipient.kind, recipient_id: message.recipient.id,
+        delivery_status: "pending" as const, delivery_result: null, delivered_at: null } as SessionMessageRecord;
+      stored.push(record);
+      return { kind: "accepted", message: record, workflow_id: "message-1" };
+    },
+    new_id: () => "40000000-0000-0000-0000-000000000001",
+    now: () => "2026-09-29T00:00:00Z",
+  } as unknown as CollaborationHttpDependencies;
+  const app = createCollaborationApp(dependencies);
+  const posted = await app.request(`/runs/${RUN_ID}/messages`, { method: "POST",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": "message-1" },
+    body: JSON.stringify({ sender: { kind: "agent", id: "untrusted" }, cohort_id: RUN_ID,
+      recipient: { kind: "agent", id: "session-1" }, thread_id: "thread-1", body: "review" }),
+  });
+  expect(posted.status).toBe(202);
+  const accepted = parseSessionMessageAccepted(await posted.json());
+  expect(accepted.message.sender).toEqual({ kind: "operator", id: "operator" });
+  expect(accepted.message.cohort_id).toBe(cohort_id);
+  const listed = await app.request(`/runs/${RUN_ID}/messages`);
+  expect((await listed.json() as unknown[]).map(parseSessionMessageRecord)).toHaveLength(1);
+  const delivery = await app.request(`/runs/${RUN_ID}/messages/message-1`);
+  expect(parseSessionMessageRecord(await delivery.json()).delivery_status).toBe("pending");
 });

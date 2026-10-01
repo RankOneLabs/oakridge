@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { RunDetailView } from "../views/RunDetailView";
@@ -34,6 +34,7 @@ const diagnosis: RunDiagnosis = {
         status: "blocked",
         blocked_reason: "gate",
         next_actor: "operator",
+        retryable: false,
         gate: "artifact_review",
       }],
     }],
@@ -42,6 +43,7 @@ const diagnosis: RunDiagnosis = {
     session_id: "sid-build",
     stage_key: "build",
     cohort_id: "cohort-1",
+    cohort_key: "cohort-1",
     attempt_number: 1,
     attempt_count: 1,
     status: "blocked",
@@ -51,12 +53,14 @@ const diagnosis: RunDiagnosis = {
     session_id: "sid-build",
     stage_key: "build",
     cohort_id: "cohort-1",
+    cohort_key: "cohort-1",
     attempt_number: 1,
     attempt_count: 1,
     status: "blocked",
   }],
   active_gates: [{
     id: "gate-1",
+    stage_instance_id: "stage-build",
     gate_type: "artifact_review",
     gate_step: "artifact_review",
     run_id: "run-1",
@@ -70,6 +74,7 @@ const diagnosis: RunDiagnosis = {
     actionable: true,
   }],
   recent_artifacts: [],
+  pull_request_merge_waits: [],
   stage_progress: { total: 1, pending: 0, active: 0, blocked: 1, complete: 0, failed: 0, cancelled: 0 },
 };
 
@@ -91,6 +96,59 @@ afterEach(() => {
   localStorage.clear();
 });
 describe("run diagnosis workspace", () => {
+  it("merge button follows pull_request_merge_waits, not merge_confirmation gates", async () => {
+    const waiting: RunDiagnosis = { ...diagnosis, pull_request_merge_waits: [{
+      cohort_id: "cohort-1", stage_instance_id: "stage-build", unit_id: "cohort-1",
+      pull_request_url: "https://example.test/pr/1",
+    }] };
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (init?.method === "POST") return json({ cohort_id: "stage-build:cohort-1", outcome: { kind: "completed" } });
+      return String(input).endsWith("/diagnosis") ? json(waiting) : json([]);
+    });
+    renderWorkspace();
+    fireEvent.click(await screen.findByTestId("or-sidebar-pane-list"));
+    expect(screen.queryByTestId("or-retry-unit-btn")).toBeNull();
+    fireEvent.click(await screen.findByTestId("or-confirm-cohort-merged-btn"));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([input, init]) =>
+      init?.method === "POST" && String(input).includes("/cohorts/stage-build%3Acohort-1/pull_request"))).toBe(true));
+  });
+
+  it("a merge_confirmation gate alone does not offer cohort merge", async () => {
+    const gated: RunDiagnosis = { ...diagnosis, active_gates: [{
+      ...diagnosis.active_gates[0]!, gate_step: "merge_confirmation", resume_actions: ["confirm_merged"],
+    }] };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+      String(input).endsWith("/diagnosis") ? json(gated) : json([]));
+    renderWorkspace();
+    fireEvent.click(await screen.findByTestId("or-sidebar-pane-list"));
+    expect(screen.queryByTestId("or-confirm-cohort-merged-btn")).toBeNull();
+  });
+
+  it("Retry shows only for retryable units", async () => {
+    const retryable: RunDiagnosis = { ...diagnosis, run: { ...diagnosis.run, stages: [{
+      ...diagnosis.run.stages[0]!, units: [{ ...diagnosis.run.stages[0]!.units![0]!, retryable: true }],
+    }] } };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+      String(input).endsWith("/diagnosis") ? json(retryable) : json([]));
+    renderWorkspace();
+    fireEvent.click(await screen.findByTestId("or-sidebar-pane-list"));
+    expect(await screen.findAllByTestId("or-retry-unit-btn")).toHaveLength(1);
+  });
+
+  it("diagnosis with an unknown status is a named parse error", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+      String(input).endsWith("/diagnosis") ? json({ ...diagnosis, run: { ...diagnosis.run, status: "unknown" } }) : json([]));
+    renderWorkspace();
+    expect((await screen.findByTestId("or-run-workspace-error")).textContent).toContain("run.status");
+  });
+
+  it("sidebar shows the cohort key", async () => {
+    const named: RunDiagnosis = { ...diagnosis, sessions: [{ ...diagnosis.sessions[0]!, cohort_key: "api" }] };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+      String(input).endsWith("/diagnosis") ? json(named) : json([]));
+    renderWorkspace();
+    expect((await screen.findByTestId("or-sidebar-session")).textContent).toContain("api");
+  });
   it("loads every operator pane from the single diagnosis read", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);

@@ -4,37 +4,28 @@ import type { RunEventFrame, WorkflowRunId } from "../types";
 import { selectRunFrameNotification } from "./run-notifications";
 
 const frame = (replayed: boolean): RunEventFrame => ({
-  sequence: "42",
-  operation: "slot_released",
-  occurred_at: "2026-09-27T10:00:00Z",
-  replayed,
-  payload: {
-    run_id: "run/one" as WorkflowRunId,
-    run_unit_id: null,
-    stage_instance_id: null,
-    stage_key: "build",
-    unit_id: "c5",
-    work_order_id: null,
-    wait_id: null,
-    output_name: "build_result",
-    collection_key: null,
-    artifact_revision_id: null,
-    attention: "optional",
-    continuation: "continuing",
-    detail: { attention: "optional", continuation: "continuing" },
-  },
+  sequence: "42", transition_id: "transition-42", run_id: "run/one" as WorkflowRunId,
+  owner: { kind: "cohort", id: "cohort-1" }, launch_reason: "retry",
+  prior_owner_version: 1, resulting_owner_version: 2,
+  effect: { kind: "start_attempt", cohort_id: "cohort-1", attempt_number: 2, attempt_id: null },
+  effect_workflow_id: null, actor: "core", occurred_at: "2026-09-27T10:00:00Z", replayed,
 });
 
 describe("selectRunFrameNotification", () => {
-  it("links a live transition to its durable run surface", () => {
+  it("links a live retry to its durable run surface", () => {
     expect(selectRunFrameNotification(frame(false))).toEqual({
-      kind: "info",
-      message: "Optional attention: Output published · build · c5",
-      href: "#oakridge/run/run%2Fone",
+      kind: "info", message: "Retry launched", href: "#oakridge/run/run%2Fone",
     });
   });
 
   it("suppresses replayed first-load and reconnect frames", () => {
     expect(selectRunFrameNotification(frame(true))).toBeNull();
+  });
+
+  it("reports lost builder attempts as errors", () => {
+    expect(selectRunFrameNotification({ ...frame(false), effect: {
+      kind: "dev_flow_build_cohort_transition",
+      event: { kind: "builder_attempt_lost", pull_request_url: null }, disposition: "transitioned",
+    } })?.kind).toBe("error");
   });
 });

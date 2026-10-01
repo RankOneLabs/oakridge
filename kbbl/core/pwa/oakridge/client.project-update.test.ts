@@ -16,7 +16,7 @@ describe("updateProject", () => {
       repo_dir: "/code/rol/scout",
       created_at: "2026-08-15T12:00:00Z",
       forge_repository: { provider: "github", owner: "RankOneLabs", name: "scout" },
-      base_branch: "main",
+      integration_branch: "main",
     }), { status: 200, headers: { "content-type": "application/json" } })));
 
     const result = await updateProject(command);

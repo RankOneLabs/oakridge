@@ -1,22 +1,11 @@
-import { parseOakridgeRunEventFrame } from "../client";
-import type { RunEvent, RunEventOperation } from "../types";
+import { parseRunEvent } from "../wire";
+import type { BuildCohortEventKind, RunDetail, RunEvent } from "../types";
 
 const PAGE_SIZE = 500;
 
-const ACTIVITY_OPERATIONS: ReadonlySet<RunEventOperation> = new Set([
-  "input_revised",
-  "slot_released",
-  "slot_pending",
-  "slot_invalidated",
-  "gate_opened",
-  "gate_decided",
-  "pull_request_observed",
-  "pull_request_merge_confirmed",
-]);
-
 export interface RunActivityItem {
   readonly sequence: string;
-  readonly operation: RunEventOperation;
+  readonly operation: string;
   readonly occurred_at: string;
   readonly summary: string;
   readonly context: string | null;
@@ -29,57 +18,70 @@ export type RunActivityRead =
   | { readonly kind: "pending" }
   | { readonly kind: "unavailable" };
 
-const summaries: Readonly<Record<RunEventOperation, string>> = {
-  stage_materialized: "Stage materialized",
-  materialization_closed: "Materialization closed",
-  materialization_failed: "Materialization failed",
-  run_cancelled: "Run cancelled",
-  unit_admitted: "Unit admitted",
-  operator_retry_created: "Unit retry created",
-  input_revised: "Revision requested",
-  slot_released: "Output published",
-  slot_pending: "Publication awaiting review",
-  slot_invalidated: "Publication invalidated",
-  unit_satisfied: "Unit satisfied",
-  work_started: "Work started",
-  gate_opened: "Gate opened",
-  gate_decided: "Gate decided",
-  pull_request_observed: "Pull request observed",
-  pull_request_merge_confirmed: "Pull request merge confirmed",
+const buildLabels: Partial<Record<BuildCohortEventKind, string>> = {
+  stage_started: "Build started",
+  build_artifact_recorded: "Build output recorded",
+  pull_request_verified: "Pull request verified",
+  builder_attempt_lost: "Builder session lost",
+  build_review_approved: "Build approved",
+  build_review_revision_requested: "Build revision requested",
+  assessment_artifact_recorded: "Assessment recorded",
+  assessment_outcome_observed: "Assessment outcome recorded",
+  assessor_attempt_lost: "Assessor session lost",
+  assessment_review_approved: "Assessment approved",
+  assessment_review_revision_requested: "Assessment revision requested",
+  pull_request_mismatch: "Pull request mismatch",
+  replacement_pull_request_required: "Replacement pull request required",
+  pull_request_merged: "Pull request merged",
 };
 
-const contextOf = (event: RunEvent): string | null => {
-  const parts = [event.payload.stage_key, event.payload.unit_id, event.payload.output_name]
-    .filter((part): part is string => part !== null);
-  return parts.length > 0 ? parts.join(" · ") : null;
+const contextOf = (event: RunEvent, run: RunDetail): string | null => {
+  if (event.owner.kind === "run") return null;
+  if (event.owner.kind === "stage_instance") {
+    return run.stages.find((stage) => stage.stage_instance_id === event.owner.id)?.name ?? null;
+  }
+  for (const stage of run.stages) {
+    const unit = stage.units?.find((candidate) => candidate.cohort_id === event.owner.id);
+    if (unit) return `${stage.name} · ${unit.unit_id}`;
+  }
+  return null;
 };
 
-const pullRequestUrlOf = (event: RunEvent): string | null =>
-  event.operation === "pull_request_observed" || event.operation === "pull_request_merge_confirmed"
-    ? event.payload.detail.pull_request_url
-    : null;
+const summaryOf = (event: RunEvent): string | null => {
+  const effect = event.effect;
+  switch (effect.kind) {
+    case "start_stage": return "Stage started";
+    case "start_attempt": return event.launch_reason === "retry" ? "Retry launched" : `Session launched (attempt ${effect.attempt_number})`;
+    case "dev_flow_build_cohort_transition":
+      return effect.disposition === "transitioned" ? buildLabels[effect.event.kind] ?? null : null;
+    case "none":
+      return event.launch_reason === "gate_decided" ? "Gate decided"
+        : event.launch_reason === "operator" ? "Operator action" : null;
+    case "pull_request_observed": return "Pull request observed";
+    case "pull_request_merge_confirmed": return "Pull request merge confirmed";
+    case "unrecognized": return `Recorded ${effect.effect_kind}`;
+    case "deliver_message":
+    case "resume_wait": return null;
+  }
+};
 
-export const selectRunActivity = (
-  events: readonly RunEvent[],
-  runId: string,
-): readonly RunActivityItem[] =>
-  events
-    .filter((event) => event.payload.run_id === runId && ACTIVITY_OPERATIONS.has(event.operation))
-    .map((event) => ({
-      sequence: event.sequence,
-      operation: event.operation,
-      occurred_at: event.occurred_at,
-      summary: summaries[event.operation],
-      context: contextOf(event),
-      is_optional_attention:
-        event.payload.attention === "optional" && event.payload.continuation === "continuing",
-      pull_request_url: pullRequestUrlOf(event),
-    }))
-    .sort((left, right) => {
-      const leftSequence = BigInt(left.sequence);
-      const rightSequence = BigInt(right.sequence);
-      return leftSequence === rightSequence ? 0 : leftSequence > rightSequence ? -1 : 1;
-    });
+export const selectRunActivity = (events: readonly RunEvent[], run: RunDetail): readonly RunActivityItem[] =>
+  events.flatMap((event): RunActivityItem[] => {
+    if (event.run_id !== run.id) return [];
+    const summary = summaryOf(event);
+    if (summary === null) return [];
+    const effect = event.effect;
+    return [{
+      sequence: event.sequence, operation: effect.kind, occurred_at: event.occurred_at,
+      summary, context: contextOf(event, run), is_optional_attention: false,
+      pull_request_url: effect.kind === "pull_request_observed" || effect.kind === "pull_request_merge_confirmed"
+        ? effect.pull_request_url : null,
+    }];
+  }).sort((left, right) => {
+    const leftSequence = BigInt(left.sequence);
+    const rightSequence = BigInt(right.sequence);
+    return leftSequence === rightSequence ? 0 : leftSequence > rightSequence ? -1 : 1;
+  });
 
 /** Read one run's durable ledger to exhaustion; `/run_events` is ascending and paged. */
 export async function fetchRunEvents(runId: string): Promise<readonly RunEvent[]> {
@@ -92,11 +94,7 @@ export async function fetchRunEvents(runId: string): Promise<readonly RunEvent[]
     if (!response.ok) throw new Error(`run activity: ${response.status}`);
     const body: unknown = await response.json();
     if (!Array.isArray(body)) throw new Error("run activity response was not a list");
-    const page = body.map((value) => {
-      const event = parseOakridgeRunEventFrame(JSON.stringify({ ...value, replayed: true }));
-      if (event === null) throw new Error("run activity response contained an invalid event");
-      return event as RunEvent;
-    });
+    const page = body.map(parseRunEvent);
     events.push(...page);
     if (page.length < PAGE_SIZE) return events;
     after = page[page.length - 1]?.sequence ?? after;

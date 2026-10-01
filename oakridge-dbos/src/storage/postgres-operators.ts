@@ -1,6 +1,5 @@
 import type { ArtifactId, ExecutionId, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "../domain/primitives";
-import { selectGateActionability, selectPendingStageOrder, type OperatorApplicationVersionInventory, type OperatorCohortSummary, type OperatorParkedGate, type OperatorReviewInbox, type OperatorReviewInboxItem, type OperatorRunDetail, type OperatorRunDiagnosis, type OperatorRunDiagnosisSession, type OperatorRunSessionAttempt, type OperatorRunSummary, type OperatorSessionRunLocation, type OperatorStageArtifact, type OperatorStageDetail, type OperatorStageUnit } from "../domain/operator-projections";
-import type { SessionLaunchReasonName } from "../domain/delegated-session";
+import { selectGateActionability, selectPendingStageOrder, selectPullRequestMergeWaits, type OperatorApplicationVersionInventory, type OperatorCohortSummary, type OperatorParkedGate, type OperatorReviewInbox, type OperatorReviewInboxItem, type OperatorRunDetail, type OperatorRunDiagnosis, type OperatorRunDiagnosisSession, type OperatorRunSummary, type OperatorSessionRunLocation, type OperatorStageArtifact, type OperatorStageDetail, type OperatorStageUnit } from "../domain/operator-projections";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 import type { BlockedReason, CoreStatus, NextActor } from "../domain/records";
 import { compileWorkflowDefinition } from "../compiler/compile-workflow";
@@ -263,7 +262,6 @@ export interface OperatorProjectionRepository {
    * session id (`executor_attachment.work_order_id` is a PRIMARY KEY), and
    * hiding finished attempts is exactly what would make the history useless.
    */
-  list_run_sessions(run_id: WorkflowRunId): Promise<readonly OperatorRunSessionAttempt[]>;
   set_run_archived(id: WorkflowRunId, archived: boolean): Promise<boolean>;
   get_invalidation_cursor(): Promise<string>;
   list_run_events(input: ListRunEventsInput): Promise<readonly RunEvent[]>;
@@ -281,7 +279,7 @@ interface V2RunProjectionRow { readonly id: string; readonly title: string | nul
 interface V2StageProjectionRow { readonly stage_instance_id: string; readonly name: string; readonly stage_type: string; readonly operator_role: string | null; readonly status: CoreStatus; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null }
 interface V2UnitProjectionRow { readonly cohort_id: string; readonly stage_instance_id: string; readonly unit_id: string; readonly params: OperatorStageUnit["params"]; readonly status: CoreStatus; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null; readonly session_id: string | null; readonly gate_step: string | null }
 interface StageArtifactRow { readonly stage_instance_id: string; readonly id: string; readonly type_id: string; readonly version: number; readonly label: string | null; readonly created_at: string }
-interface DiagnosisSessionRow { readonly session_id: string; readonly stage_key: string; readonly cohort_id: string; readonly attempt_number: number; readonly attempt_count: number; readonly status: CoreStatus; readonly created_at: string }
+interface DiagnosisSessionRow { readonly session_id: string; readonly stage_key: string; readonly cohort_id: string; readonly cohort_key: string; readonly attempt_number: number; readonly attempt_count: number; readonly status: CoreStatus; readonly created_at: string }
 /**
  * A fan-out unit's parameters are the item the stage fanned out over, wrapped.
  *
@@ -309,12 +307,6 @@ function selectStageUnitRepositoryKey(params: unknown): string | null {
   return typeof repositoryKey === "string" ? repositoryKey : null;
 }
 
-interface RunSessionAttemptRow {
-  readonly work_order_id: string; readonly session_id: string; readonly stage_instance_id: string;
-  readonly stage_key: string; readonly unit_id: string; readonly reason: SessionLaunchReasonName;
-  readonly work_order_state: OperatorRunSessionAttempt["work_order_state"]; readonly created_at: string;
-  readonly completed_at: string | null; readonly executor_health_kind: string | null; readonly cleanup_state: string;
-}
 
 interface SessionRunLocationRow {
   readonly run_id: string; readonly stage_instance_id: string; readonly stage_key: string;
@@ -381,42 +373,6 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     return claim.hold;
   }
 
-  /**
-   * The run's full session history — see the interface doc for why this
-   * carries no state, status or cleanup predicate. Deliberately *not* built on
-   * `find_session_hold`'s query: that one answers close-safety and its
-   * predicates are those semantics, so widening it to serve navigation would
-   * make kbbl refuse to close sessions that are safe to close.
-   */
-  async list_run_sessions(run_id: WorkflowRunId): Promise<readonly OperatorRunSessionAttempt[]> {
-    const rows = await this.sql.query<RunSessionAttemptRow>(
-      `SELECT attempt.id::text AS work_order_id,session.kbbl_session_id AS session_id,
-              attempt.stage_instance_id::text AS stage_instance_id,stage.stage_key,cohort.cohort_key AS unit_id,
-              transition.launch_reason::text AS reason,
-              CASE session.status WHEN 'pending' THEN 'available' WHEN 'active' THEN 'started'
-                WHEN 'blocked' THEN 'started' WHEN 'complete' THEN 'completed' ELSE 'abandoned' END AS work_order_state,
-              session.created_at::text AS created_at,session.ended_at::text AS completed_at,
-              -- v15 has no separate attachment row: the session's own terminal
-              -- status is what executor health used to report, and a session
-              -- that has ended needs no cleanup.
-              CASE session.status WHEN 'complete' THEN 'ended_succeeded' WHEN 'failed' THEN 'ended_failed'
-                WHEN 'cancelled' THEN 'ended_cancelled' WHEN 'active' THEN 'running' ELSE NULL END AS executor_health_kind,
-              CASE WHEN session.ended_at IS NULL THEN 'not_needed' ELSE 'complete' END AS cleanup_state
-       FROM oakridge.session session
-       JOIN oakridge.attempt attempt ON attempt.id=session.attempt_id
-       JOIN oakridge.cohort cohort ON cohort.id=attempt.cohort_id
-       JOIN oakridge.stage_instance stage ON stage.id=attempt.stage_instance_id
-       JOIN oakridge.run_transition transition ON transition.id=session.launch_transition_id
-       WHERE session.run_id=$1 AND session.kbbl_session_id IS NOT NULL
-       ORDER BY session.created_at,session.id`, [run_id]);
-    return rows.map((row) => ({
-      work_order_id: row.work_order_id as WorkOrderId, session_id: row.session_id,
-      stage_instance_id: row.stage_instance_id as StageInstanceId, stage_key: row.stage_key,
-      unit_id: row.unit_id as UnitId, reason: row.reason, work_order_state: row.work_order_state,
-      created_at: row.created_at, completed_at: row.completed_at,
-      executor_health_kind: row.executor_health_kind, cleanup_state: row.cleanup_state,
-    }));
-  }
 
   /**
    * Navigation: the run a session belongs to, whatever became of the work that
@@ -652,8 +608,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
         worktree: null, base_sha: null,
         status: unit.status, blocked_reason: unit.blocked_reason, next_actor: unit.next_actor,
         retryable: selectCohortRetryability(unit).kind === "retryable",
-        gate: unit.gate_step, admission_required: false, admitted: true,
-        admission_eligible: true, admission_blocked_by: [],
+        gate: unit.gate_step,
       }));
       const artifacts = artifactRows.filter((artifact) => artifact.stage_instance_id === stage.stage_instance_id)
         .map((artifact): OperatorStageArtifact => ({ id: artifact.id as ArtifactId, type_id: artifact.type_id, version: artifact.version, label: artifact.label, created_at: artifact.created_at }));
@@ -699,16 +654,17 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     const run = await this.getV2Run(id);
     if (!run) return null;
     const sessionRows = await this.sql.query<DiagnosisSessionRow>(
-      `SELECT session.kbbl_session_id AS session_id,stage.stage_key,attempt.cohort_id::text,
-              attempt.attempt_number,count(*) OVER (PARTITION BY attempt.cohort_id)::int AS attempt_count,
+      `SELECT session.kbbl_session_id AS session_id,stage.stage_key,attempt.cohort_id::text,cohort.cohort_key,
+              attempt.attempt_number,(SELECT max(a2.attempt_number) FROM oakridge.attempt a2 WHERE a2.cohort_id=attempt.cohort_id)::int AS attempt_count,
               session.status,session.created_at::text
        FROM oakridge.session session
        JOIN oakridge.attempt attempt ON attempt.id=session.attempt_id
+       JOIN oakridge.cohort cohort ON cohort.id=attempt.cohort_id
        JOIN oakridge.stage_instance stage ON stage.id=session.stage_instance_id
        WHERE session.run_id=$1 AND session.kbbl_session_id IS NOT NULL
        ORDER BY session.created_at,session.id`, [id]);
     const sessions: OperatorRunDiagnosisSession[] = sessionRows.map((row) => ({
-      session_id: row.session_id, stage_key: row.stage_key, cohort_id: row.cohort_id as CohortId,
+      session_id: row.session_id, stage_key: row.stage_key, cohort_id: row.cohort_id as CohortId, cohort_key: row.cohort_key,
       attempt_number: Number(row.attempt_number), attempt_count: Number(row.attempt_count), status: row.status,
     }));
     const current_session = [...sessions].reverse().find((session) => session.status === "active") ?? null;
@@ -729,7 +685,8 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     }))).sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at)).slice(0, 8);
     const progress = { total: run.stages.length, pending: 0, active: 0, blocked: 0, complete: 0, failed: 0, cancelled: 0 };
     for (const stage of run.stages) progress[stage.status] += 1;
-    return { run, sessions, current_session, sessions_awaiting_action, active_gates, recent_artifacts, stage_progress: progress };
+    const pull_request_merge_waits = selectPullRequestMergeWaits(await this.listV2Cohorts(id));
+    return { run, sessions, current_session, sessions_awaiting_action, active_gates, pull_request_merge_waits, recent_artifacts, stage_progress: progress };
   }
 
   async get_review_inbox(): Promise<OperatorReviewInbox> {
@@ -749,13 +706,13 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
         artifact_url: gate.artifact_revision_id ? `/artifact_details/${gate.artifact_revision_id}` : cohort.artifact_url,
         gate_id: gate.id, gate_url: `/gates/${gate.id}/resume`, pr_url: gate.pr_url };
     });
-    const items: OperatorReviewInboxItem[] = gates.map((gate) => {
+    const items: OperatorReviewInboxItem[] = gates.filter((gate) => gate.stage_instance_id !== null).map((gate) => {
       const isMerge = gate.gate_step === "merge_confirmation";
       const cohort = cohorts.find((candidate) => candidate.run_id === gate.run_id && candidate.stage_instance_id === gate.stage_instance_id && candidate.unit_id === gate.unit_id);
       return {
         id: `gate:${gate.id}:${gate.artifact_revision_id ?? "none"}:${gate.gate_step ?? "unknown"}`,
         kind: isMerge ? "merge_confirmation" : "artifact_gate", state: "actionable", run_id: gate.run_id,
-        workflow_name: names.get(gate.run_id) ?? "unknown", stage_instance_id: gate.stage_instance_id ?? gate.id.slice(0, gate.id.indexOf(":")) as import("../domain/primitives").StageInstanceId,
+        workflow_name: names.get(gate.run_id) ?? "unknown", stage_instance_id: gate.stage_instance_id as StageInstanceId,
         stage_name: gate.stage_name, unit_id: gate.unit_id, repository_key: cohort?.repository_key ?? gate.repository_key, title: cohort?.title ?? null,
         lifecycle: cohort?.lifecycle ?? "blocked", blocked_reason: cohort?.blocked_reason ?? "gate", next_actor: cohort?.next_actor ?? "operator",
         artifact_revision_id: gate.artifact_revision_id,
@@ -765,21 +722,23 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     });
     for (const cohort of cohorts) {
       const kind = cohort.lifecycle === "failed" ? "cohort_failed"
+        : cohort.lifecycle === "blocked" && cohort.blocked_reason === "retry" && cohort.next_actor === "operator" ? "cohort_retry"
         : cohort.lifecycle === "blocked" && cohort.next_actor !== "operator" && cohort.next_actor !== "external" ? "cohort_blocked" : null;
       if (!kind) continue;
-      items.push({ id: `${cohort.id}:${kind}`, kind, state: "blocked", run_id: cohort.run_id, workflow_name: cohort.workflow_name,
+      items.push({ id: `${cohort.id}:${kind}`, kind, state: kind === "cohort_retry" ? "actionable" : "blocked", run_id: cohort.run_id, workflow_name: cohort.workflow_name,
         stage_instance_id: cohort.stage_instance_id, stage_name: cohort.stage_name, unit_id: cohort.unit_id,
         repository_key: cohort.repository_key, title: cohort.title, lifecycle: cohort.lifecycle,
         blocked_reason: cohort.blocked_reason, next_actor: cohort.next_actor,
         artifact_revision_id: cohort.artifact_revision_id, artifact_url: cohort.artifact_url, gate_id: cohort.gate_id,
-        gate_url: cohort.gate_url, resume_actions: [], blocked_by: cohort.admission.blocked_by, pr_url: cohort.pr_url });
+        gate_url: cohort.gate_url, resume_actions: kind === "cohort_retry" ? ["retry"] : [], blocked_by: cohort.blocked_by, pr_url: cohort.pr_url });
     }
     // A cohort waiting on its pull request to merge is work, and it used to
     // appear nowhere in this list — the run sat on an external wait that no
     // surface offered a way to close. The poller normally closes it; the item
     // is `actionable` because an operator has to be able to when it cannot.
-    for (const cohort of cohorts) {
-      if (cohort.lifecycle !== "blocked" || cohort.next_actor !== "external" || cohort.pr_url === null) continue;
+    for (const wait of selectPullRequestMergeWaits(cohorts)) {
+      const cohort = cohorts.find((candidate) => candidate.id === wait.cohort_id);
+      if (!cohort) continue;
       items.push({ id: `${cohort.id}:pull_request_merge`, kind: "pull_request_merge", state: "actionable", run_id: cohort.run_id,
         workflow_name: cohort.workflow_name, stage_instance_id: cohort.stage_instance_id, stage_name: cohort.stage_name,
         unit_id: cohort.unit_id, repository_key: cohort.repository_key, title: cohort.title, lifecycle: cohort.lifecycle,
@@ -794,7 +753,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     return this.listV2Cohorts();
   }
 
-  private async listV2Cohorts(): Promise<readonly OperatorCohortSummary[]> {
+  private async listV2Cohorts(run_id: WorkflowRunId | null = null): Promise<readonly OperatorCohortSummary[]> {
     const rows = await this.sql.query<V2CohortProjectionRow>(`SELECT cohort.id::text AS cohort_id,run.id::text AS run_id,
       definition.name AS workflow_name,stage.id::text AS stage_instance_id,stage.stage_key AS stage_name,
       cohort.cohort_key AS unit_id,cohort.stage_data AS params,cohort.status,cohort.blocked_reason,cohort.next_actor,
@@ -820,10 +779,10 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
         WHERE latest.pull_request_id=verification.pull_request_id AND latest.head_sha=verification.verified_head_sha
         ORDER BY latest.observed_at DESC,latest.recorded_at DESC,latest.id DESC LIMIT 1) observation ON true
       LEFT JOIN oakridge.pull_request_merge_closure merge_closure ON merge_closure.cohort_id=build_cohort.cohort_id
-      WHERE run.archived=false ORDER BY updated_at DESC`, []);
+      WHERE run.archived=false AND ($1::uuid IS NULL OR run.id=$1) ORDER BY updated_at DESC`, [run_id]);
     return rows.map((row) => {
       const artifact = row.artifact_revision_id as ArtifactId | null; const cohort = row.params?.artifact ?? null;
-      return { id: row.cohort_id,run_id: row.run_id as WorkflowRunId,workflow_name: row.workflow_name,stage_instance_id: row.stage_instance_id as import("../domain/primitives").StageInstanceId,stage_name: row.stage_name,unit_id: row.unit_id as UnitId,repository_key: selectStageUnitRepositoryKey(row.params),title: cohort?.title ?? null,lifecycle: row.status,blocked_reason: row.blocked_reason,next_actor: row.next_actor,completion: { build_complete: artifact !== null, assessment_complete: row.status === "complete" },admission: { required: false, admitted: true, eligible: true, blocked_by: [] },artifact_revision_id: artifact,artifact_url: artifact ? `/artifact_details/${artifact}` : null,gate_id: null,gate_url: null,pr_url: row.verified_pr_url,pull_request_reconciliation: row.reconciliation,updated_at: row.updated_at };
+      return { id: row.cohort_id,run_id: row.run_id as WorkflowRunId,workflow_name: row.workflow_name,stage_instance_id: row.stage_instance_id as import("../domain/primitives").StageInstanceId,stage_name: row.stage_name,unit_id: row.unit_id as UnitId,repository_key: selectStageUnitRepositoryKey(row.params),title: cohort?.title ?? null,lifecycle: row.status,blocked_reason: row.blocked_reason,next_actor: row.next_actor,completion: { build_complete: artifact !== null, assessment_complete: row.status === "complete" },blocked_by: [],artifact_revision_id: artifact,artifact_url: artifact ? `/artifact_details/${artifact}` : null,gate_id: null,gate_url: null,pr_url: row.verified_pr_url,pull_request_reconciliation: row.reconciliation,updated_at: row.updated_at };
     });
   }
 }

@@ -157,8 +157,10 @@ export const createSingleRoleCohortDriver = (dependencies: SingleRoleCohortDrive
     }
     if (stageData.launched > 0 && context.state.open_waits.length === 0
       && selectCohortOutputsSatisfied(contract, context, context.state.accepted_outputs)) {
+      const hasAcceptedGate = context.state.decided_gates.some((gate) =>
+        gate.accepted && !stageData.consumed_gate_wait_ids.includes(gate.wait_id));
       return { event: { change: COMPLETE, stage_data: encode(stageData), reopen_output_names: [], effect: { kind: "none" },
-        launch_reason: "artifact_accepted", actor: "core" }, launch: null };
+        launch_reason: hasAcceptedGate ? "gate_decided" : "artifact_accepted", actor: "core" }, launch: null };
     }
 
     const decided = context.state.decided_gates.find((gate) =>

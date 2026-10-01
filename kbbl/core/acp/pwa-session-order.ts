@@ -141,7 +141,7 @@ export function groupSessionsByRun(
         };
       }
       const title = firstNonNull(sorted, (session) => session.workflow?.cohortTitle ?? null)
-        ?? workflow.cohortId;
+        ?? workflow.unitId;
       return {
         kind: "cohort",
         key,

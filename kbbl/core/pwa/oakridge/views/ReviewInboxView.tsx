@@ -17,11 +17,6 @@ interface ReviewInboxViewProps {
 const cohortKey = (value: Pick<CohortLifecycleSummary, "run_id" | "stage_instance_id" | "unit_id">): string =>
   `${value.run_id}:${value.stage_instance_id}:${value.unit_id}`;
 
-function selectVisibleItems(data: ReviewInbox): ReviewInboxItem[] {
-  const cohortsByKey = new Map(data.cohorts.map((cohort) => [cohortKey(cohort), cohort]));
-  return data.items.filter((item) => item.kind !== "admission" || cohortsByKey.get(cohortKey(item))?.admission.required === true);
-}
-
 const isActionable = (item: ReviewInboxItem): boolean => item.state === "actionable" || item.kind === "pull_request_mismatch";
 
 interface DecisionQueueState { readonly source: ReviewInbox | null; readonly entries: readonly DecisionQueueEntry[] }
@@ -34,7 +29,7 @@ export function ReviewInboxView({ onSelectRun, onSelectArtifact }: ReviewInboxVi
   // rather than replacing it. Refresh is the explicit way to compact it.
   const [queue, setQueue] = useState<DecisionQueueState>({ source: null, entries: [] });
   if (query.data && query.data !== queue.source) {
-    setQueue({ source: query.data, entries: selectStableDecisionQueue(queue.entries, selectVisibleItems(query.data).filter(isActionable)) });
+    setQueue({ source: query.data, entries: selectStableDecisionQueue(queue.entries, query.data.items.filter(isActionable)) });
   }
 
   if (query.isError) return <FeedbackMessage tone="danger" testId="or-review-inbox-error">{query.error instanceof Error ? query.error.message : "Could not load review work."}</FeedbackMessage>;
@@ -42,7 +37,7 @@ export function ReviewInboxView({ onSelectRun, onSelectArtifact }: ReviewInboxVi
 
   const cohortsByKey = new Map(query.data.cohorts.map((cohort) => [cohortKey(cohort), cohort]));
   const cohortFor = (item: ReviewInboxItem) => cohortsByKey.get(cohortKey(item));
-  const visibleItems = selectVisibleItems(query.data);
+  const visibleItems = query.data.items;
   const actionable = visibleItems.filter(isActionable);
   const blocked = visibleItems.filter((item) => item.state === "blocked" && item.kind !== "pull_request_mismatch");
   const attentionKeys = new Set([...actionable, ...blocked].map((item) => cohortKey(item)));

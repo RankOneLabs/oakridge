@@ -1,128 +1,50 @@
 import { describe, expect, test } from "bun:test";
 
+import type { CoreStatus } from "../src/domain/records";
+import { selectCohortRetryability } from "../src/domain/cohort-retry";
 import { createDevFlowAdapterRegistry } from "../src/adapters/dev-flow";
-import type { WorkflowRunId } from "../src/domain/primitives";
-import type { CoreStatus, NextActor } from "../src/domain/records";
 import { PostgresOperatorProjectionRepository } from "../src/storage/postgres-operators";
-import type { SqlExecutor, TransactionalSqlExecutor } from "../src/storage/sql-executor";
 
-const RUN_ID = "10000000-0000-0000-0000-000000000001" as WorkflowRunId;
-
-interface StageRow {
-  readonly stage_instance_id: string;
-  readonly name: string;
-  readonly stage_type: string;
-  readonly operator_role: string | null;
-  readonly status: CoreStatus;
-  readonly blocked_reason: "gate" | null;
-  readonly next_actor: NextActor | null;
-}
-
-interface UnitRow {
-  readonly cohort_id: string;
-  readonly stage_instance_id: string;
-  readonly unit_id: string;
-  readonly params: null;
-  readonly status: CoreStatus;
-  readonly blocked_reason: "gate" | null;
-  readonly next_actor: NextActor | null;
-  readonly session_id: string | null;
-  readonly gate_step: string | null;
-}
-
-interface ArtifactRow {
-  readonly stage_instance_id: string;
-  readonly id: string;
-  readonly type_id: string;
-  readonly version: number;
-  readonly label: string | null;
-  readonly created_at: string;
-}
-
-interface SessionRow {
-  readonly session_id: string;
-  readonly stage_key: string;
-  readonly cohort_id: string;
-  readonly attempt_number: number;
-  readonly attempt_count: number;
-  readonly status: CoreStatus;
-  readonly created_at: string;
-}
-
-interface GateRow {
-  readonly wait_id: string;
-  readonly run_id: string;
-  readonly stage_name: string;
-  readonly stage_instance_id: string;
-  readonly unit_id: string;
-  readonly artifact_revision_id: null;
-  readonly gate_step: string;
-  readonly actions: readonly string[];
-  readonly repository_key: null;
-  readonly run_state: CoreStatus;
-}
-
-interface DiagnosisFixture {
-  readonly stages?: readonly StageRow[];
-  readonly units?: readonly UnitRow[];
-  readonly artifacts?: readonly ArtifactRow[];
-  readonly sessions?: readonly SessionRow[];
-  readonly gates?: readonly GateRow[];
-}
-
-class DiagnosisSql implements TransactionalSqlExecutor {
-  constructor(private readonly fixture: DiagnosisFixture) {}
-
-  async query<Row extends object>(statement: string, _parameters: readonly unknown[]): Promise<readonly Row[]> {
-    let rows: readonly object[];
-    if (statement.includes("AS stage_total")) {
-      if (!statement.includes("FROM oakridge.wait_gate wait") || !statement.includes("verification.invalidated_at IS NULL")) {
-        throw new Error("run attention_count must use the actionable inbox facts");
-      }
-      rows = [{
-        id: RUN_ID, title: "Diagnosis fixture", repository_keys: [], workflow_name: "test",
-        status: "active", blocked_reason: null, next_actor: "core", current_stage: null,
-        stage_total: String(this.fixture.stages?.length ?? 0), stage_complete: "0", attention_count: "0",
-        parked_count: "0", updated_at: "2026-09-29T00:00:00.000Z", archived: false,
-      }];
-    } else if (statement.includes("FROM oakridge.stage_instance stage WHERE")) {
-      rows = this.fixture.stages ?? [];
-    } else if (statement.includes("FROM oakridge.cohort cohort") && statement.includes("current_session")) {
-      rows = this.fixture.units ?? [];
-    } else if (statement.includes("FROM oakridge.artifact artifact JOIN oakridge.artifact_owner")) {
-      rows = this.fixture.artifacts ?? [];
-    } else if (statement.includes("SELECT definition.definition")) {
-      rows = [];
-    } else if (statement.includes("FROM oakridge.session session") && statement.includes("attempt_count")) {
-      rows = this.fixture.sessions ?? [];
-    } else if (statement.includes("FROM oakridge.wait_gate wait")) {
-      rows = this.fixture.gates ?? [];
-    } else {
-      throw new Error(`unexpected diagnosis query: ${statement.slice(0, 80)}`);
-    }
-    return rows as readonly Row[];
-  }
-
-  transaction<Value>(operation: (transaction: SqlExecutor) => Promise<Value>): Promise<Value> {
-    return operation(this);
-  }
-}
-
-const stage = (index: number, status: CoreStatus): StageRow => ({
-  stage_instance_id: `20000000-0000-0000-0000-${String(index).padStart(12, "0")}`,
-  name: `stage-${index}`,
-  stage_type: "delegated_session",
-  operator_role: null,
-  status,
-  blocked_reason: status === "blocked" ? "gate" : null,
-  next_actor: status === "blocked" ? "operator" : status === "complete" || status === "failed" || status === "cancelled" ? null : "core",
-});
-
-const diagnosisOf = (fixture: DiagnosisFixture) =>
-  new PostgresOperatorProjectionRepository(new DiagnosisSql(fixture), "test-app-version", createDevFlowAdapterRegistry())
-    .get_run_diagnosis(RUN_ID);
+import { RUN_ID, DiagnosisSql, diagnosisOf, stage, type ArtifactRow, type UnitRow } from "./support/operator-sql-stub";
 
 describe("get_run_diagnosis", () => {
+  test("unit.retryable mirrors selectCohortRetryability", async () => {
+    const build = stage(1, "blocked");
+    const units: UnitRow[] = [
+      { cohort_id: "30000000-0000-0000-0000-000000000001", stage_instance_id: build.stage_instance_id,
+        unit_id: "lost", params: null, status: "blocked", blocked_reason: "retry", next_actor: "operator", session_id: null, gate_step: null },
+      { cohort_id: "30000000-0000-0000-0000-000000000002", stage_instance_id: build.stage_instance_id,
+        unit_id: "gated", params: null, status: "blocked", blocked_reason: "gate", next_actor: "operator", session_id: null, gate_step: "review" },
+    ];
+    const diagnosis = await diagnosisOf({ stages: [build], units });
+    expect(diagnosis?.run.stages[0]?.units.map((unit) => unit.retryable))
+      .toEqual(units.map((unit) => selectCohortRetryability(unit).kind === "retryable"));
+  });
+  test("attempt_count counts attempts whose session never bound", async () => {
+    const diagnosis = await diagnosisOf({ stages: [stage(1, "active")], sessions: [
+      { session_id: "sid-first", stage_key: "stage-1", cohort_id: "30000000-0000-0000-0000-000000000001",
+        cohort_key: "api", attempt_number: 1, attempt_count: 2, status: "complete", created_at: "2026-09-29T01:00:00Z" },
+    ] });
+    expect(diagnosis?.sessions[0]?.attempt_count).toBe(2);
+  });
+
+  test("the latest-attempt predicate follows the cohort's latest attempt", async () => {
+    const blocked = stage(1, "blocked");
+    const cohortId = "30000000-0000-0000-0000-000000000001";
+    const diagnosis = await diagnosisOf({ stages: [blocked], units: [{ cohort_id: cohortId,
+      stage_instance_id: blocked.stage_instance_id, unit_id: "api", params: null, status: "blocked",
+      blocked_reason: "gate", next_actor: "operator", session_id: "sid-first", gate_step: "review" }],
+      sessions: [{ session_id: "sid-first", stage_key: blocked.name, cohort_id: cohortId, cohort_key: "api",
+        attempt_number: 1, attempt_count: 2, status: "blocked", created_at: "2026-09-29T01:00:00Z" }] });
+    expect(diagnosis?.sessions_awaiting_action).toEqual([]);
+  });
+
+  test("sessions carry cohort_key", async () => {
+    const diagnosis = await diagnosisOf({ sessions: [{ session_id: "sid-api", stage_key: "build",
+      cohort_id: "30000000-0000-0000-0000-000000000001", cohort_key: "api", attempt_number: 1,
+      attempt_count: 1, status: "active", created_at: "2026-09-29T01:00:00Z" }] });
+    expect(diagnosis?.sessions[0]?.cohort_key).toBe("api");
+  });
   test("current_session picks the newest executing attempt and never a superseded one", async () => {
     const build = stage(1, "active");
     const diagnosis = await diagnosisOf({ stages: [build], sessions: [
@@ -191,5 +113,16 @@ describe("get_run_diagnosis", () => {
     }] });
 
     expect(diagnosis?.active_gates).toEqual([expect.objectContaining({ id: "gate-stranded", actionable: false })]);
+  });
+
+  test("inbox items carry their gate's stage instance id", async () => {
+    const build = stage(1, "blocked");
+    const repository = new PostgresOperatorProjectionRepository(new DiagnosisSql({ stages: [build], gates: [{
+      wait_id: "gate-1", run_id: RUN_ID, stage_name: build.name, stage_instance_id: build.stage_instance_id,
+      unit_id: "api", artifact_revision_id: null, gate_step: "final_integration_review",
+      actions: ["approve"], repository_key: null, run_state: "blocked",
+    }] }), "test-app-version", createDevFlowAdapterRegistry());
+    const inbox = await repository.get_review_inbox();
+    expect(String(inbox.items[0]?.stage_instance_id)).toBe(build.stage_instance_id);
   });
 });

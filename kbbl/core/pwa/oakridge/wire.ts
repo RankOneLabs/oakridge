@@ -1,22 +1,106 @@
 import type {
-  CohortPullRequestReconciliation, CohortLifecycleSummary, EpicWorkflowProfile, EpicProfileId,
-  FinalPullRequestResponse, ParkedGate, Project, ProjectId, ProjectUpdateError, RepositoryKey, ReviewInbox,
-  ReviewInboxItem, RunDetail, RunEventFrame, RunEventOperation, SessionRunLocation,
+  CohortPullRequestReconciliation, CohortLifecycleSummary,
+  ParkedGate, Project, ProjectId, RepositoryKey, ReviewInbox,
+  ReviewInboxItem, RunDetail, RunDiagnosis, RunDiagnosisSession, RunEvent, RunEventEffect, RunEventFrame, BuildCohortEventKind, SessionRunLocation, SessionMessageRecord, SessionMessageAccepted,
   StageDetail, StageUnit, WorkflowRunId,
 } from "./types";
 import type { Result } from "../lib/result";
 import { parseRepositoryKey } from "./repository-inputs";
 
-const RUN_EVENT_OPERATIONS: ReadonlySet<string> = new Set<RunEventOperation>([
-  "stage_materialized", "materialization_closed", "materialization_failed", "run_cancelled", "unit_admitted",
-  "operator_retry_created", "input_revised", "slot_released", "slot_pending", "slot_invalidated", "unit_satisfied",
-  "work_started", "gate_opened", "gate_decided", "pull_request_observed", "pull_request_merge_confirmed",
+const nullableString = (value: unknown): value is string | null => value === null || typeof value === "string";
+const object = (value: unknown, field: string): { readonly [key: string]: unknown } => {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(`parse run event: invalid ${field}`);
+  return value as { readonly [key: string]: unknown };
+};
+const string = (value: unknown, field: string): string => {
+  if (typeof value !== "string") throw new Error(`parse run event: invalid ${field}`);
+  return value;
+};
+const number = (value: unknown, field: string): number => {
+  if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`parse run event: invalid ${field}`);
+  return value;
+};
+
+const BUILD_EVENT_KINDS: ReadonlySet<string> = new Set<BuildCohortEventKind>([
+  "stage_started", "stale_gate_recorded", "build_artifact_recorded", "pull_request_verified",
+  "builder_attempt_lost", "build_review_approved", "build_review_revision_requested",
+  "assessment_artifact_recorded", "assessment_outcome_observed", "assessor_attempt_lost",
+  "operator_retry_requested", "assessment_review_approved", "assessment_review_revision_requested",
+  "pull_request_mismatch", "replacement_pull_request_required", "pull_request_merged",
+]);
+const LAUNCH_REASONS = new Set<RunEvent["launch_reason"]>([
+  "initial", "dependency_satisfied", "artifact_accepted", "gate_decided", "operator", "retry", "recovery",
 ]);
 
-const nullableString = (value: unknown): value is string | null => value === null || typeof value === "string";
-const isGateRunEventOperation = (operation: string): boolean => operation === "gate_opened" || operation === "gate_decided";
-const isPullRequestRunEventOperation = (operation: string): boolean =>
-  operation === "pull_request_observed" || operation === "pull_request_merge_confirmed";
+const parseEffect = (value: unknown): RunEventEffect => {
+  const effect = object(value, "effect");
+  const kind = string(effect.kind, "effect.kind");
+  switch (kind) {
+    case "none":
+    case "deliver_message":
+    case "resume_wait":
+      return { kind };
+    case "start_stage":
+      return { kind, stage_instance_id: string(effect.stage_instance_id, "effect.stage_instance_id") };
+    case "start_attempt": {
+      const attempt_id = effect.attempt_id ?? null;
+      if (!nullableString(attempt_id)) throw new Error("parse run event: invalid effect.attempt_id");
+      return { kind, cohort_id: string(effect.cohort_id, "effect.cohort_id"),
+        attempt_number: number(effect.attempt_number, "effect.attempt_number"), attempt_id };
+    }
+    case "dev_flow_build_cohort_transition": {
+      const event = object(effect.event, "effect.event");
+      const eventKind = string(event.kind, "effect.event.kind");
+      if (!BUILD_EVENT_KINDS.has(eventKind)) throw new Error("parse run event: invalid effect.event.kind");
+      const pull_request_url = event.pull_request_url ?? null;
+      if (!nullableString(pull_request_url)) throw new Error("parse run event: invalid effect.event.pull_request_url");
+      return { kind, event: { kind: eventKind as BuildCohortEventKind, pull_request_url },
+        disposition: string(effect.disposition, "effect.disposition") };
+    }
+    case "pull_request_observed":
+    case "pull_request_merge_confirmed":
+      if (!nullableString(effect.merged_at)) throw new Error("parse run event: invalid effect.merged_at");
+      return { kind, repository_key: string(effect.repository_key, "effect.repository_key"),
+        pull_request_url: string(effect.pull_request_url, "effect.pull_request_url"),
+        state: string(effect.state, "effect.state"), source: string(effect.source, "effect.source"),
+        merged_at: effect.merged_at };
+    default:
+      return { kind: "unrecognized", effect_kind: kind };
+  }
+};
+
+export const parseRunEvent = (value: unknown): RunEvent => {
+  const event = object(value, "event");
+  const sequence = string(event.sequence, "sequence");
+  if (!/^\d+$/.test(sequence)) throw new Error("parse run event: invalid sequence");
+  const owner = object(event.owner, "owner");
+  if (owner.kind !== "run" && owner.kind !== "stage_instance" && owner.kind !== "cohort") {
+    throw new Error("parse run event: invalid owner.kind");
+  }
+  const launch_reason = string(event.launch_reason, "launch_reason");
+  if (!LAUNCH_REASONS.has(launch_reason as RunEvent["launch_reason"])) throw new Error("parse run event: invalid launch_reason");
+  if (!nullableString(event.effect_workflow_id)) throw new Error("parse run event: invalid effect_workflow_id");
+  return {
+    sequence, transition_id: string(event.transition_id, "transition_id"),
+    run_id: string(event.run_id, "run_id") as WorkflowRunId,
+    owner: { kind: owner.kind, id: string(owner.id, "owner.id") },
+    launch_reason: launch_reason as RunEvent["launch_reason"],
+    prior_owner_version: number(event.prior_owner_version, "prior_owner_version"),
+    resulting_owner_version: number(event.resulting_owner_version, "resulting_owner_version"),
+    effect: parseEffect(event.effect), effect_workflow_id: event.effect_workflow_id,
+    actor: string(event.actor, "actor"), occurred_at: string(event.occurred_at, "occurred_at"),
+  };
+};
+
+export const parseRunEventFrame = (value: unknown): RunEventFrame => {
+  const event = object(value, "frame");
+  if (typeof event.replayed !== "boolean") throw new Error("parse run event: invalid replayed");
+  return { ...parseRunEvent(event), replayed: event.replayed };
+};
+
+export const parseOakridgeRunEventFrame = (data: string): RunEventFrame | null => {
+  try { return parseRunEventFrame(JSON.parse(data)); } catch { return null; }
+};
 
 const isJsonValue = (value: unknown): value is import("./types").JsonValue => {
   if (value === null || typeof value === "string" || typeof value === "boolean" || typeof value === "number") return true;
@@ -24,50 +108,11 @@ const isJsonValue = (value: unknown): value is import("./types").JsonValue => {
   return typeof value === "object" && Object.values(value).every(isJsonValue);
 };
 
-const isJsonObject = (value: unknown): value is { readonly [key: string]: import("./types").JsonValue } =>
-  typeof value === "object" && value !== null && !Array.isArray(value) && Object.values(value).every(isJsonValue);
-
-/** Parse one server frame without allowing malformed stream data into UI subscribers. */
-export const parseOakridgeRunEventFrame = (data: string): RunEventFrame | null => {
-  let value: unknown;
-  try { value = JSON.parse(data); } catch { return null; }
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const event = value as Partial<RunEventFrame>;
-  if (typeof event.sequence !== "string" || !/^\d+$/.test(event.sequence) || typeof event.operation !== "string"
-      || !RUN_EVENT_OPERATIONS.has(event.operation) || typeof event.occurred_at !== "string" || typeof event.replayed !== "boolean") return null;
-  const payload = event.payload;
-  if (!payload || typeof payload !== "object" || typeof payload.run_id !== "string"
-      || !nullableString(payload.run_unit_id) || !nullableString(payload.stage_instance_id) || !nullableString(payload.stage_key)
-      || !nullableString(payload.unit_id) || !nullableString(payload.work_order_id) || !nullableString(payload.wait_id)
-      || !nullableString(payload.output_name) || !nullableString(payload.collection_key) || !nullableString(payload.artifact_revision_id)
-      || !(payload.attention === null || payload.attention === "required" || payload.attention === "optional" || payload.attention === "none")
-      || !(payload.continuation === null || payload.continuation === "waiting" || payload.continuation === "continuing")
-      || !isJsonValue(payload.detail)) return null;
-  if (isGateRunEventOperation(event.operation)
-      && (payload.run_unit_id === null || payload.stage_instance_id === null || payload.stage_key === null
-        || payload.unit_id === null || payload.wait_id === null || payload.output_name === null
-        || payload.artifact_revision_id === null || payload.attention === null || payload.continuation === null)) return null;
-  if (isPullRequestRunEventOperation(event.operation)) {
-    const detail = payload.detail;
-    if (payload.run_unit_id === null || payload.stage_instance_id === null || payload.stage_key === null
-        || payload.unit_id === null || payload.artifact_revision_id === null || !isJsonObject(detail)
-        || typeof detail.repository_key !== "string"
-        || typeof detail.pull_request_url !== "string" || typeof detail.state !== "string" || typeof detail.source !== "string"
-        || !(detail.merged_at === null || typeof detail.merged_at === "string")) return null;
-  }
-  return event as RunEventFrame;
-};
 
 type RawStageUnit = Omit<StageUnit, "repository_key"> & { repository_key?: string | null };
 type RawStageDetail = Omit<StageDetail, "units"> & { units?: RawStageUnit[] };
-type RawEpicWorkflowProfile = Omit<EpicWorkflowProfile, "id" | "workflow_run_id" | "repositories"> & {
-  id: string;
-  workflow_run_id: string;
-  repositories: Array<Omit<EpicWorkflowProfile["repositories"][number], "repository_key"> & { repository_key: string }>;
-};
-export type RawRunDetail = Omit<RunDetail, "stages" | "epic_profile"> & {
+export type RawRunDetail = Omit<RunDetail, "stages"> & {
   stages: RawStageDetail[];
-  epic_profile?: RawEpicWorkflowProfile | null;
 };
 export type RawParkedGate = Omit<ParkedGate, "repository_key"> & { repository_key?: string | null };
 type RawCohortPullRequestReconciliation = Omit<CohortPullRequestReconciliation, "repository_key"> & { repository_key: string };
@@ -94,11 +139,6 @@ interface RawProject extends Omit<Project, "id"> {
 const ok = <T>(value: T): Result<T, ResponseParseError> => ({ ok: true, value });
 const err = (operation: string, detail: string): Result<never, ResponseParseError> => ({ ok: false, error: { operation, detail } });
 
-export const projectUpdateError = (path: string, detail: string): Result<never, ProjectUpdateError> => ({
-  ok: false,
-  error: { operation: "update project", path, detail },
-});
-
 export const parseProject = (value: unknown): Result<Project, ResponseParseError> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return err("parse project", "response was not an object");
   const project = value as Partial<RawProject>;
@@ -106,8 +146,8 @@ export const parseProject = (value: unknown): Result<Project, ResponseParseError
   if (typeof project.name !== "string") return err("parse project", "response contained an invalid project name");
   if (typeof project.repo_dir !== "string") return err("parse project", "response contained an invalid repository path");
   if (typeof project.created_at !== "string") return err("parse project", "response contained an invalid creation time");
-  if (project.base_branch !== null && project.base_branch !== undefined && typeof project.base_branch !== "string") {
-    return err("parse project", "response contained an invalid base branch");
+  if (project.integration_branch !== null && project.integration_branch !== undefined && typeof project.integration_branch !== "string") {
+    return err("parse project", "response contained an invalid integration branch");
   }
   const forge = project.forge_repository;
   if (forge !== null && forge !== undefined && (typeof forge !== "object" || forge.provider !== "github"
@@ -128,29 +168,6 @@ function parseRequiredRepositoryKey(value: string): Result<RepositoryKey, Respon
   return key ? ok(key) : err("parse repository key", "response contained an empty repository key");
 }
 
-function parseEpicProfile(value: unknown): Result<EpicWorkflowProfile, ResponseParseError> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return err("parse epic profile", "response was not an object");
-  const candidate = value as Partial<RawEpicWorkflowProfile>;
-  if (typeof candidate.id !== "string" || !candidate.id.trim()) return err("parse epic profile", "response contained an empty epic profile id");
-  if (typeof candidate.workflow_run_id !== "string" || !candidate.workflow_run_id.trim()) return err("parse epic profile", "response contained an empty workflow run id");
-  if (!Array.isArray(candidate.repositories)) return err("parse epic profile", "response contained no repository bindings");
-  const profile = candidate as RawEpicWorkflowProfile;
-  const repositories = [];
-  for (const repository of profile.repositories) {
-    if (!repository || typeof repository !== "object" || typeof repository.repository_key !== "string") {
-      return err("parse epic profile", "response contained an invalid repository binding");
-    }
-    const key = parseRequiredRepositoryKey(repository.repository_key);
-    if (!key.ok) return key;
-    repositories.push({ ...repository, repository_key: key.value });
-  }
-  return ok({
-    ...profile,
-    id: profile.id as EpicProfileId,
-    workflow_run_id: profile.workflow_run_id as WorkflowRunId,
-    repositories,
-  });
-}
 
 export function parseRunDetail(run: RawRunDetail): Result<RunDetail, ResponseParseError> {
   const stages: StageDetail[] = [];
@@ -163,12 +180,9 @@ export function parseRunDetail(run: RawRunDetail): Result<RunDetail, ResponsePar
     }
     stages.push({ ...stage, units: stage.units ? units : stage.units });
   }
-  const epicProfile = run.epic_profile ? parseEpicProfile(run.epic_profile) : ok(run.epic_profile);
-  if (!epicProfile.ok) return epicProfile;
   return ok({
     ...run,
     stages,
-    epic_profile: epicProfile.value,
   });
 }
 
@@ -206,17 +220,6 @@ export function parseReviewInbox(inbox: RawReviewInbox): Result<ReviewInbox, Res
   return ok({ cohorts, items, attention_count: inbox.attention_count });
 }
 
-const FINAL_OUTCOMES = new Set(["waiting", "completed", "already_completed", "mismatch", "ignored_stale", "awaiting_external_confirmation"]);
-
-export function parseFinalPullRequestResponse(value: unknown): Result<FinalPullRequestResponse, ResponseParseError> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return err("parse final pull request response", "response was not an object");
-  const raw = value as { outcome?: unknown; profile?: unknown };
-  if (typeof raw.outcome !== "string" || !FINAL_OUTCOMES.has(raw.outcome)) return err("parse final pull request response", "response contained an unknown outcome");
-  if (!raw.profile || typeof raw.profile !== "object" || Array.isArray(raw.profile)) return err("parse final pull request response", "response contained no epic profile");
-  const profile = parseEpicProfile(raw.profile);
-  if (!profile.ok) return profile;
-  return ok({ outcome: raw.outcome, profile: profile.value } as FinalPullRequestResponse);
-}
 
 export function parseSessionRunLocation(value: unknown): Result<SessionRunLocation, ResponseParseError> {
   const operation = "parse session run location";
@@ -232,3 +235,138 @@ export function parseSessionRunLocation(value: unknown): Result<SessionRunLocati
     stage_key: raw.stage_key, unit_id: raw.unit_id, work_order_id: raw.work_order_id,
   });
 }
+
+const record = (value: unknown, field: string): { readonly [key: string]: unknown } => {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(`oakridge wire: invalid ${field}`);
+  return value as { readonly [key: string]: unknown };
+};
+const textField = (value: unknown, field: string): string => {
+  if (typeof value !== "string") throw new Error(`oakridge wire: invalid ${field}`);
+  return value;
+};
+const numericField = (value: unknown, field: string): number => {
+  if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`oakridge wire: invalid ${field}`);
+  return value;
+};
+const list = (value: unknown, field: string): readonly unknown[] => {
+  if (!Array.isArray(value)) throw new Error(`oakridge wire: invalid ${field}`);
+  return value;
+};
+const CORE_STATUSES = new Set(["pending", "active", "blocked", "complete", "failed", "cancelled"]);
+const BLOCKED_REASONS = new Set(["dependency", "gate", "capacity", "external", "operator", "retry"]);
+const NEXT_ACTORS = new Set(["core", "agent", "service", "operator", "external"]);
+const statusField = (value: unknown, field: string): void => {
+  if (typeof value !== "string" || !CORE_STATUSES.has(value)) throw new Error(`oakridge wire: invalid ${field}`);
+};
+const nullableEnum = (value: unknown, values: ReadonlySet<string>, field: string): void => {
+  if (value !== null && (typeof value !== "string" || !values.has(value))) throw new Error(`oakridge wire: invalid ${field}`);
+};
+
+const parseDiagnosisSession = (value: unknown, field: string): RunDiagnosisSession => {
+  const session = record(value, field);
+  textField(session.session_id, `${field}.session_id`);
+  textField(session.stage_key, `${field}.stage_key`);
+  textField(session.cohort_id, `${field}.cohort_id`);
+  textField(session.cohort_key, `${field}.cohort_key`);
+  numericField(session.attempt_number, `${field}.attempt_number`);
+  numericField(session.attempt_count, `${field}.attempt_count`);
+  statusField(session.status, `${field}.status`);
+  return session as unknown as RunDiagnosisSession;
+};
+
+export const parseRunDiagnosis = (value: unknown): RunDiagnosis => {
+  const diagnosis = record(value, "diagnosis");
+  const rawRun = record(diagnosis.run, "run");
+  textField(rawRun.id, "run.id");
+  statusField(rawRun.status, "run.status");
+  nullableEnum(rawRun.blocked_reason, BLOCKED_REASONS, "run.blocked_reason");
+  nullableEnum(rawRun.next_actor, NEXT_ACTORS, "run.next_actor");
+  for (const [index, value] of list(rawRun.stages, "run.stages").entries()) {
+    const stage = record(value, `run.stages[${index}]`);
+    statusField(stage.status, `run.stages[${index}].status`);
+    nullableEnum(stage.blocked_reason, BLOCKED_REASONS, `run.stages[${index}].blocked_reason`);
+    nullableEnum(stage.next_actor, NEXT_ACTORS, `run.stages[${index}].next_actor`);
+    for (const [unitIndex, rawUnit] of list(stage.units, `run.stages[${index}].units`).entries()) {
+      const unit = record(rawUnit, `run.stages[${index}].units[${unitIndex}]`);
+      statusField(unit.status, `run.stages[${index}].units[${unitIndex}].status`);
+      nullableEnum(unit.blocked_reason, BLOCKED_REASONS, `run.stages[${index}].units[${unitIndex}].blocked_reason`);
+      nullableEnum(unit.next_actor, NEXT_ACTORS, `run.stages[${index}].units[${unitIndex}].next_actor`);
+      if (typeof unit.retryable !== "boolean") throw new Error(`oakridge wire: invalid run.stages[${index}].units[${unitIndex}].retryable`);
+    }
+  }
+  const parsedRun = parseRunDetail(rawRun as unknown as RawRunDetail);
+  if (!parsedRun.ok) throw new Error(`oakridge wire: ${parsedRun.error.detail}`);
+  const sessions = list(diagnosis.sessions, "sessions").map((item, index) => parseDiagnosisSession(item, `sessions[${index}]`));
+  const current_session = diagnosis.current_session === null ? null : parseDiagnosisSession(diagnosis.current_session, "current_session");
+  const sessions_awaiting_action = list(diagnosis.sessions_awaiting_action, "sessions_awaiting_action")
+    .map((item, index) => parseDiagnosisSession(item, `sessions_awaiting_action[${index}]`));
+  const active_gates = list(diagnosis.active_gates, "active_gates").map((item, index) => {
+    const gate = record(item, `active_gates[${index}]`);
+    textField(gate.id, `active_gates[${index}].id`);
+    if (gate.stage_instance_id !== null) textField(gate.stage_instance_id, `active_gates[${index}].stage_instance_id`);
+    if (gate.cohort_id !== null) textField(gate.cohort_id, `active_gates[${index}].cohort_id`);
+    statusField(gate.run_state, `active_gates[${index}].run_state`);
+    return gate;
+  });
+  const parsedGates = parseParkedGates(active_gates as unknown as RawParkedGate[]);
+  if (!parsedGates.ok) throw new Error(`oakridge wire: ${parsedGates.error.detail}`);
+  const recent_artifacts = list(diagnosis.recent_artifacts, "recent_artifacts").map((item, index) => {
+    const artifact = record(item, `recent_artifacts[${index}]`);
+    textField(artifact.artifact_id, `recent_artifacts[${index}].artifact_id`);
+    textField(artifact.type_id, `recent_artifacts[${index}].type_id`);
+    numericField(artifact.revision, `recent_artifacts[${index}].revision`);
+    textField(artifact.stage_name, `recent_artifacts[${index}].stage_name`);
+    if (artifact.label !== null) textField(artifact.label, `recent_artifacts[${index}].label`);
+    textField(artifact.created_at, `recent_artifacts[${index}].created_at`);
+    return artifact;
+  });
+  const stage_progress = record(diagnosis.stage_progress, "stage_progress");
+  for (const key of ["total", ...CORE_STATUSES]) numericField(stage_progress[key], `stage_progress.${key}`);
+  const pull_request_merge_waits = list(diagnosis.pull_request_merge_waits, "pull_request_merge_waits").map((item, index) => {
+    const wait = record(item, `pull_request_merge_waits[${index}]`);
+    for (const key of ["cohort_id", "stage_instance_id", "unit_id", "pull_request_url"]) {
+      textField(wait[key], `pull_request_merge_waits[${index}].${key}`);
+    }
+    return wait;
+  });
+  return { run: parsedRun.value, sessions, current_session, sessions_awaiting_action,
+    active_gates: parsedGates.value.map((gate, index) => ({ ...gate, cohort_id: active_gates[index]?.cohort_id as string | null })),
+    recent_artifacts: recent_artifacts as unknown as RunDiagnosis["recent_artifacts"],
+    stage_progress: stage_progress as unknown as RunDiagnosis["stage_progress"],
+    pull_request_merge_waits: pull_request_merge_waits as unknown as RunDiagnosis["pull_request_merge_waits"] };
+};
+
+export const parseSessionMessageRecord = (value: unknown): SessionMessageRecord => {
+  const message = record(value, "session message");
+  for (const key of ["id", "run_id", "thread_id", "message_id", "delivery_key", "created_at"])
+    textField(message[key], `session message.${key}`);
+  for (const key of ["cohort_id", "artifact_thread_id"])
+    if (message[key] !== null) textField(message[key], `session message.${key}`);
+  for (const partyName of ["sender", "recipient"]) {
+    const party = record(message[partyName], `session message.${partyName}`);
+    if (party.kind !== "core" && party.kind !== "agent" && party.kind !== "service" && party.kind !== "operator")
+      throw new Error(`oakridge wire: invalid session message.${partyName}.kind`);
+    if (party.id !== null) textField(party.id, `session message.${partyName}.id`);
+  }
+  if (!isJsonValue(message.body)) throw new Error("oakridge wire: invalid session message.body");
+  if (message.delivery_status === "pending") {
+    if (message.delivery_result !== null || message.delivered_at !== null) throw new Error("oakridge wire: invalid session message.delivery_result");
+  } else if (message.delivery_status === "delivered") {
+    if (record(message.delivery_result, "session message.delivery_result").kind !== "delivered") throw new Error("oakridge wire: invalid session message.delivery_result.kind");
+    textField(message.delivered_at, "session message.delivered_at");
+  } else if (message.delivery_status === "failed") {
+    const result = record(message.delivery_result, "session message.delivery_result");
+    if (result.kind !== "failed") throw new Error("oakridge wire: invalid session message.delivery_result.kind");
+    textField(result.detail, "session message.delivery_result.detail");
+    if (message.delivered_at !== null) throw new Error("oakridge wire: invalid session message.delivered_at");
+  } else throw new Error("oakridge wire: invalid session message.delivery_status");
+  return message as unknown as SessionMessageRecord;
+};
+
+export const parseSessionMessageAccepted = (value: unknown): SessionMessageAccepted => {
+  const accepted = record(value, "session message accepted");
+  if (accepted.kind !== "accepted") throw new Error("oakridge wire: invalid session message accepted.kind");
+  textField(accepted.workflow_id, "session message accepted.workflow_id");
+  return { kind: "accepted", workflow_id: accepted.workflow_id as string,
+    message: parseSessionMessageRecord(accepted.message) };
+};

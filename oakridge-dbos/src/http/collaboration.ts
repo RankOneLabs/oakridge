@@ -70,20 +70,19 @@ export const createCollaborationApp = (dependencies: CollaborationHttpDependenci
     const key = validateDeliveryKey(http.req.header("idempotency-key") ?? "");
     if (key.kind === "invalid") return http.json({ error: key.detail }, 400);
     const body = await objectBody(http.req.raw);
-    const sender = messageParty(body?.sender); const recipient = messageParty(body?.recipient);
+    const recipient = messageParty(body?.recipient);
     const threadId = sessionThreadId(body?.thread_id); const messageId = sessionThreadMessageId(body?.message_id) ?? sessionThreadMessageId(key.delivery_key)!;
-    const cohortId = body?.cohort_id === undefined || body.cohort_id === null ? null : parseUuidId<CohortId>(String(body.cohort_id));
     const artifactThreadId = body?.artifact_thread_id === undefined || body.artifact_thread_id === null ? null : parseUuidId<ThreadId>(String(body.artifact_thread_id));
-    if (!body || !sender || !recipient || !threadId || !isJsonValue(body.body) || (body.cohort_id !== undefined && body.cohort_id !== null && !cohortId) || (body.artifact_thread_id !== undefined && body.artifact_thread_id !== null && !artifactThreadId)) {
-      return http.json({ error: "sender, recipient, thread_id, and JSON body are required; cohort_id and artifact_thread_id must be UUIDs or null" }, 400);
+    if (!body || !recipient || !threadId || !isJsonValue(body.body) || (body.artifact_thread_id !== undefined && body.artifact_thread_id !== null && !artifactThreadId)) {
+      return http.json({ error: "recipient, thread_id, and JSON body are required; artifact_thread_id must be a UUID or null" }, 400);
     }
+    const resolution = await dependencies.message_recipients.resolve({ run_id: runId, recipient });
+    if (resolution.kind === "recipient_not_deliverable") return http.json({ error: resolution.detail, code: resolution.kind }, 409);
     const message: SessionMessage = {
-      id: newId() as SessionMessageId, run_id: runId, cohort_id: cohortId, sender, recipient,
+      id: newId() as SessionMessageId, run_id: runId, cohort_id: resolution.cohort_id, sender: { kind: "operator", id: "operator" }, recipient,
       thread_id: threadId, message_id: messageId, artifact_thread_id: artifactThreadId,
       body: body.body, delivery_key: key.delivery_key, created_at: now(),
     };
-    const resolution = await dependencies.message_recipients.resolve(message);
-    if (resolution.kind === "recipient_not_deliverable") return http.json({ error: resolution.detail, code: resolution.kind }, 409);
     const result = await dependencies.send_message({ message, target: resolution.target, prompt: renderSessionMessagePrompt(message.body) });
     return result.kind === "idempotency_conflict" ? http.json({ error: result.detail, code: result.kind }, 409) : http.json(result, 202);
   });
@@ -157,10 +156,10 @@ export const createCollaborationApp = (dependencies: CollaborationHttpDependenci
       thread_id: sessionThreadId(threadId)!, message_id: sessionThreadMessageId(key.delivery_key)!, artifact_thread_id: threadId,
       body: prompt, delivery_key: key.delivery_key, created_at: createdAt,
     };
-    const resolution = await dependencies.message_recipients.resolve(message);
+    const resolution = await dependencies.message_recipients.resolve({ run_id: message.run_id, recipient: message.recipient });
     if (resolution.kind === "recipient_not_deliverable") return http.json({ error: resolution.detail, code: resolution.kind }, 409);
     const accepted = await dependencies.ping_thread({
-      message, target: resolution.target, prompt: renderSessionMessagePrompt(message.body),
+      message: { ...message, cohort_id: resolution.cohort_id }, target: resolution.target, prompt: renderSessionMessagePrompt(message.body),
     });
     return accepted.kind === "idempotency_conflict"
       ? http.json({ error: accepted.detail, code: accepted.kind }, 409)
