@@ -5,11 +5,11 @@ import { chromium, type Browser, type Page } from "@playwright/test";
 import type { OperatorParkedGate } from "../src/domain/operator-projections";
 import type { ArtifactId, UnitId, WorkflowRunId } from "../src/domain/primitives";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
-import { HARNESS_BASE_BRANCH, awaitCondition, installIntegrationRuntime, runContext,
+import { awaitCondition, installIntegrationRuntime, runContext,
   scriptedAgentScenario, useScenario, type CohortPlanEntry, type IntegrationRuntime } from "./support/dev-flow-harness";
 import { decideGate, driveRun, launchRun, listRunGates, parsePromptPublication, readRun, readRunRecordFingerprint } from "./support/dev-flow-driver";
 import { findTestDatabaseUrl } from "./support/durable-database";
-import { attemptsAfterCancel, buildStageRow, buildUnitRows, cohortMachineState, cohortStateTrace,
+import { attemptsAfterCancel, buildStageRow, buildUnitRows, cohortMachineState, cohortStateTrace, runBaseBranch, stageCohortKeys,
   runOutcome,
   workflowRunState } from "./support/v15-run-queries";
 
@@ -39,11 +39,12 @@ if (acceptanceEnabled) {
 const countBuildUnits = async (runId: WorkflowRunId): Promise<number> => (await buildUnitRows(sql, runId)).length;
 
 const launchBrowserRun = async (page: Page, title: string) => {
+  const repository_key = "oakridge";
   const before = await fetch(`${oakridge.base_url}/runs`).then((response) => response.json()) as readonly { readonly id: string }[];
   const beforeIds = new Set(before.map((run) => run.id));
   await page.goto(`${oakridge.kbbl_url}/#oakridge/new-run`);
   await page.getByLabel("Epic title").fill(title);
-  await page.getByLabel("Repository 1 key").fill("oakridge");
+  await page.getByLabel("Repository 1 key").fill(repository_key);
   await page.getByLabel("Repository 1 GitHub owner").fill("RankOneLabs");
   await page.getByLabel("Repository 1 GitHub name").fill("oakridge");
   await page.getByLabel("Repository 1 path").fill(oakridge.repository.path);
@@ -55,7 +56,8 @@ const launchBrowserRun = async (page: Page, title: string) => {
     return runs.find((run) => !beforeIds.has(run.id)) ?? null;
   }, 30_000);
   oakridge.started_runs.push(launched.current_attempt_root_workflow_id);
-  return { run_id: launched.id as WorkflowRunId, root_workflow_id: launched.current_attempt_root_workflow_id };
+  return { run_id: launched.id as WorkflowRunId, root_workflow_id: launched.current_attempt_root_workflow_id,
+    repository_key };
 };
 
 const waitForCohortState = (runId: WorkflowRunId, stageKey: string, cohortKey: string, state: string, timeoutMs = 30_000) =>
@@ -259,12 +261,18 @@ e2e("S1 straight-through browser run respects dependency merges", async () => {
       { event: "gate_decided", from: "assessment_review", to: "awaiting_merge" },
       { event: "external_observed", from: "awaiting_merge", to: "done" },
     ]);
-    await assertCohortTrace(launched.run_id, "final_integration", "0", [
-      { event: "started", from: "pending", to: "working" },
-      { event: "artifact_published", from: "working", to: "merge_review" },
-      { event: "gate_decided", from: "merge_review", to: "done" },
-    ]);
-    expect(await oakridge.repository.list_origin_branches()).toContain(HARNESS_BASE_BRANCH);
+    const repositoryKeys = (await readRun(oakridge.base_url, launched.run_id)).repository_keys;
+    expect(repositoryKeys).toEqual([launched.repository_key]);
+    const finalIntegrationKeys = await stageCohortKeys(sql, launched.run_id, "final_integration");
+    expect(finalIntegrationKeys).toEqual(repositoryKeys);
+    for (const cohortKey of finalIntegrationKeys) {
+      await assertCohortTrace(launched.run_id, "final_integration", cohortKey, [
+        { event: "started", from: "pending", to: "working" },
+        { event: "artifact_published", from: "working", to: "merge_review" },
+        { event: "gate_decided", from: "merge_review", to: "done" },
+      ]);
+    }
+    expect(await oakridge.repository.list_origin_branches()).toContain(await runBaseBranch(sql, launched.run_id));
   } finally {
     await page.close();
     agent.releaseAll();

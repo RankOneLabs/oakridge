@@ -30,6 +30,21 @@ export const cohortMachineState = async (sql: SqlExecutor, run_id: WorkflowRunId
   return rows[0]?.state ?? null;
 };
 
+export const stageCohortKeys = async (sql: SqlExecutor, run_id: WorkflowRunId, stage_key: string): Promise<readonly string[]> => {
+  const rows = await sql.query<{ readonly cohort_key: string }>(`SELECT cohort.cohort_key
+    FROM oakridge.cohort cohort JOIN oakridge.stage_instance stage ON stage.id=cohort.stage_instance_id
+    WHERE cohort.run_id=$1 AND stage.stage_key=$2 ORDER BY cohort.cohort_key`, [run_id, stage_key]);
+  return rows.map((row) => row.cohort_key);
+};
+
+export const runBaseBranch = async (sql: SqlExecutor, run_id: WorkflowRunId): Promise<string> => {
+  const rows = await sql.query<{ readonly base_branch: string | null }>(
+    "SELECT context->>'base_branch' AS base_branch FROM oakridge.workflow_run WHERE id=$1", [run_id]);
+  const base_branch = rows[0]?.base_branch;
+  if (!base_branch) throw new Error(`run '${run_id}' has no base branch`);
+  return base_branch;
+};
+
 export const buildUnitRows = (sql: SqlExecutor, run_id: WorkflowRunId): Promise<readonly BuildCohortRow[]> =>
   sql.query<BuildCohortRow>(`SELECT cohort.cohort_key AS unit_id, cohort.status::text AS state
     FROM oakridge.cohort cohort JOIN oakridge.stage_instance stage ON stage.id=cohort.stage_instance_id
