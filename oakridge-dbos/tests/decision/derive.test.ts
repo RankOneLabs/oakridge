@@ -50,10 +50,10 @@ test("all complete cohorts complete their stage on the stage version", () => {
   });
 });
 
-test("a cancelled cohort deterministically cancels its active stage", () => {
+test("a cancelled cohort wins over a failed cohort in the same active stage", () => {
   const value = stage(1, { status: "active", durable_version: 6, cohorts: [
-    cohort(2, { status: "failed", outcome: { reason: "failed" } }),
-    cohort(1, { status: "cancelled", outcome: { reason: "operator" } }),
+    cohort(1, { status: "failed", outcome: { reason: "failed" } }),
+    cohort(2, { status: "cancelled", outcome: { reason: "operator" } }),
   ] });
   const result = derive(snapshot([value]));
   expect(result.ok && result.value.commands).toEqual([{
