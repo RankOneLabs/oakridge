@@ -301,7 +301,7 @@ export const compileWorkflowDefinition = (
     // vocabulary. Their exact declared cells remain their compatibility
     // contract; current adapter registration applies to the v15 build cohort,
     // identified by its required build set.
-    const launchReasonRegistry = parsed.data.required_build_set ? adapterRegistry : {
+    const launchReasonRegistry = parsed.data.required_build_set && !machines[stageKey] ? adapterRegistry : {
       launch_reasons_for: (role: string) => parsed.data.prompt_matrix
         .filter((cell) => cell.session_role === role).map((cell) => cell.launch_reason),
     };

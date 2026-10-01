@@ -54,7 +54,7 @@ const buildTransitionHandler: AdapterDecisionHandler<BuildCohortTransitionEffect
 };
 
 export const registerDevFlowAdapter = (registry: AdapterRegistry): void => {
-  for (const role of ["spec", "plan", "brief", "build", "assessment", "final_integration"]) registry.register_role(role);
+  for (const role of ["spec", "plan", "brief", "build", "assessment", "final_integration", "provision"]) registry.register_role(role);
   for (const [role, reasons] of Object.entries(BUILD_LAUNCH_REASONS)) {
     for (const reason of reasons) registry.register_launch_reason(role, reason);
   }

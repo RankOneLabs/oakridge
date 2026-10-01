@@ -146,7 +146,6 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const client = await DBOSClient.create({ systemDatabaseUrl: config.database_url });
 
   const adapterRegistry = createDevFlowAdapterRegistry();
-  const definitions = new PostgresWorkflowDefinitionRepository(sql, adapterRegistry);
   const projects = new PostgresProjectRepository(sql);
   const projectIdentity = new GitProjectRepositoryIdentityResolver();
   const runs = new PostgresWorkflowRunRepository(sql);
@@ -156,6 +155,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const machineRegistry = new StageMachineRegistry();
   const registeredEffects = new Map<string, RegisteredEffect>();
   registerDevFlowMachine(machineRegistry, registeredEffects);
+  const definitions = new PostgresWorkflowDefinitionRepository(sql, adapterRegistry, machineRegistry);
   const startEffects = async (transition_ids: readonly RunTransitionId[]): Promise<void> => {
     if (transition_ids.length === 0) return;
     const rows = await sql.query<{ readonly id: string; readonly effect_workflow_id: string }>(

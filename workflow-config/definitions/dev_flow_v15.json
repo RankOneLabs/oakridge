@@ -3,12 +3,1621 @@
   "name": "dev-flow",
   "version": 15,
   "created_at": "2026-08-21T00:00:00Z",
+  "machines": {
+   "spec_review": {
+     "initial": "pending",
+     "states": {
+       "pending": {
+         "status": "pending",
+         "blocked_reason": null,
+         "next_actor": "core",
+         "session_role": null
+       },
+       "working": {
+         "status": "active",
+         "blocked_reason": null,
+         "next_actor": "agent",
+         "session_role": "spec"
+       },
+       "review": {
+         "status": "blocked",
+         "blocked_reason": "gate",
+         "next_actor": "operator",
+         "session_role": null
+       },
+       "lost": {
+         "status": "blocked",
+         "blocked_reason": "retry",
+         "next_actor": "operator",
+         "session_role": null
+       },
+       "done": {
+         "status": "complete",
+         "blocked_reason": null,
+         "next_actor": null,
+         "session_role": null
+       },
+       "abandoned": {
+         "status": "failed",
+         "blocked_reason": null,
+         "next_actor": null,
+         "session_role": null
+       },
+       "cancelled": {
+         "status": "cancelled",
+         "blocked_reason": null,
+         "next_actor": null,
+         "session_role": null
+       }
+     },
+     "transitions": [
+       {
+         "from": "pending",
+         "on": {
+           "event": "started"
+         },
+         "guard": null,
+         "to": "working",
+         "effects": [
+           {
+             "name": "launch_session",
+             "args": {
+               "role": "spec",
+               "reason": "initial"
+             }
+           }
+         ]
+       },
+       {
+         "from": "working",
+         "on": {
+           "event": "artifact_published",
+           "output": "spec_analysis"
+         },
+         "guard": null,
+         "to": "review",
+         "effects": [
+           {
+             "name": "record_output",
+             "args": {}
+           },
+           {
+             "name": "open_gate",
+             "args": {
+               "gate": "spec_analysis_gate",
+               "outputs": [
+                 "spec_analysis"
+               ]
+             }
+           }
+         ]
+       },
+       {
+         "from": "working",
+         "on": {
+           "event": "session_ended"
+         },
+         "guard": null,
+         "to": "lost",
+         "effects": []
+       },
+       {
+         "from": "review",
+         "on": {
+           "event": "gate_decided",
+           "gate": "spec_analysis_gate",
+           "action": "approve"
+         },
+         "guard": null,
+         "to": "done",
+         "effects": [
+           {
+             "name": "accept_outputs",
+             "args": {
+               "outputs": [
+                 "spec_analysis"
+               ]
+             }
+           }
+         ]
+       },
+       {
+         "from": "review",
+         "on": {
+           "event": "gate_decided",
+           "gate": "spec_analysis_gate",
+           "action": "request_revision"
+         },
+         "guard": null,
+         "to": "working",
+         "effects": [
+           {
+             "name": "new_round",
+             "args": {}
+           },
+           {
+             "name": "launch_session",
+             "args": {
+               "role": "spec",
+               "reason": "input_revision"
+             }
+           }
+         ]
+       },
+       {
+         "from": "review",
+         "on": {
+           "event": "artifact_published",
+           "output": "spec_analysis"
+         },
+         "guard": null,
+         "refuse": "awaiting_review"
+       },
+       {
+         "from": "review",
+         "on": {
+           "event": "session_ended"
+         },
+         "guard": null,
+         "to": "review",
+         "effects": []
+       },
+       {
+         "from": "lost",
+         "on": {
+           "event": "operator_retry"
+         },
+         "guard": null,
+         "to": "working",
+         "effects": [
+           {
+             "name": "launch_session",
+             "args": {
+               "role": "spec",
+               "reason": "operator_retry"
+             }
+           }
+         ]
+       },
+       {
+         "from": "lost",
+         "on": {
+           "event": "artifact_published",
+           "output": "spec_analysis"
+         },
+         "guard": null,
+         "refuse": "session_lost"
+       },
+       {
+         "from": {
+           "any_nonterminal": true
+         },
+         "on": {
+           "event": "operator_abandon"
+         },
+         "guard": null,
+         "to": "abandoned",
+         "effects": [
+           {
+             "name": "end_session",
+             "args": {}
+           }
+         ]
+       },
+       {
+         "from": {
+           "any_nonterminal": true
+         },
+         "on": {
+           "event": "cancel"
+         },
+         "guard": null,
+         "to": "cancelled",
+         "effects": [
+           {
+             "name": "end_session",
+             "args": {}
+           }
+         ]
+       }
+     ]
+   },
+   "plan_review": {
+     "initial": "pending",
+     "states": {
+       "pending": {
+         "status": "pending",
+         "blocked_reason": null,
+         "next_actor": "core",
+         "session_role": null
+       },
+       "working": {
+         "status": "active",
+         "blocked_reason": null,
+         "next_actor": "agent",
+         "session_role": "plan"
+       },
+       "review": {
+         "status": "blocked",
+         "blocked_reason": "gate",
+         "next_actor": "operator",
+         "session_role": null
+       },
+       "lost": {
+         "status": "blocked",
+         "blocked_reason": "retry",
+         "next_actor": "operator",
+         "session_role": null
+       },
+       "done": {
+         "status": "complete",
+         "blocked_reason": null,
+         "next_actor": null,
+         "session_role": null
+       },
+       "abandoned": {
+         "status": "failed",
+         "blocked_reason": null,
+         "next_actor": null,
+         "session_role": null
+       },
+       "cancelled": {
+         "status": "cancelled",
+         "blocked_reason": null,
+         "next_actor": null,
+         "session_role": null
+       }
+     },
+     "transitions": [
+       {
+         "from": "pending",
+         "on": {
+           "event": "started"
+         },
+         "guard": null,
+         "to": "working",
+         "effects": [
+           {
+             "name": "launch_session",
+             "args": {
+               "role": "plan",
+               "reason": "initial"
+             }
+           }
+         ]
+       },
+       {
+         "from": "working",
+         "on": {
+           "event": "artifact_published",
+           "output": "plan"
+         },
+         "guard": null,
+         "to": "review",
+         "effects": [
+           {
+             "name": "record_output",
+             "args": {}
+           },
+           {
+             "name": "open_gate",
+             "args": {
+               "gate": "plan_gate",
+               "outputs": [
+                 "plan"
+               ]
+             }
+           }
+         ]
+       },
+       {
+         "from": "working",
+         "on": {
+           "event": "session_ended"
+         },
+         "guard": null,
+         "to": "lost",
+         "effects": []
+       },
+       {
+         "from": "review",
+         "on": {
+           "event": "gate_decided",
+           "gate": "plan_gate",
+           "action": "approve"
+         },
+         "guard": null,
+         "to": "done",
+         "effects": [
+           {
+             "name": "accept_outputs",
+             "args": {
+               "outputs": [
+                 "plan"
+               ]
+             }
+           }
+         ]
+       },
+       {
+         "from": "review",
+         "on": {
+           "event": "gate_decided",
+           "gate": "plan_gate",
+           "action": "request_revision"
+         },
+         "guard": null,
+         "to": "working",
+         "effects": [
+           {
+             "name": "new_round",
+             "args": {}
+           },
+           {
+             "name": "launch_session",
+             "args": {
+               "role": "plan",
+               "reason": "input_revision"
+             }
+           }
+         ]
+       },
+       {
+         "from": "review",
+         "on": {
+           "event": "artifact_published",
+           "output": "plan"
+         },
+         "guard": null,
+         "refuse": "awaiting_review"
+       },
+       {
+         "from": "review",
+         "on": {
+           "event": "session_ended"
+         },
+         "guard": null,
+         "to": "review",
+         "effects": []
+       },
+       {
+         "from": "lost",
+         "on": {
+           "event": "operator_retry"
+         },
+         "guard": null,
+         "to": "working",
+         "effects": [
+           {
+             "name": "launch_session",
+             "args": {
+               "role": "plan",
+               "reason": "operator_retry"
+             }
+           }
+         ]
+       },
+       {
+         "from": "lost",
+         "on": {
+           "event": "artifact_published",
+           "output": "plan"
+         },
+         "guard": null,
+         "refuse": "session_lost"
+       },
+       {
+         "from": {
+           "any_nonterminal": true
+         },
+         "on": {
+           "event": "operator_abandon"
+         },
+         "guard": null,
+         "to": "abandoned",
+         "effects": [
+           {
+             "name": "end_session",
+             "args": {}
+           }
+         ]
+       },
+       {
+         "from": {
+           "any_nonterminal": true
+         },
+         "on": {
+           "event": "cancel"
+         },
+         "guard": null,
+         "to": "cancelled",
+         "effects": [
+           {
+             "name": "end_session",
+             "args": {}
+           }
+         ]
+       }
+     ]
+   },
+   "brief_review": {
+     "initial": "pending",
+     "states": {
+       "pending": {
+         "status": "pending",
+         "blocked_reason": null,
+         "next_actor": "core",
+         "session_role": null
+       },
+       "working": {
+         "status": "active",
+         "blocked_reason": null,
+         "next_actor": "agent",
+         "session_role": "brief"
+       },
+       "review": {
+         "status": "blocked",
+         "blocked_reason": "gate",
+         "next_actor": "operator",
+         "session_role": null
+       },
+       "lost": {
+         "status": "blocked",
+         "blocked_reason": "retry",
+         "next_actor": "operator",
+         "session_role": null
+       },
+       "done": {
+         "status": "complete",
+         "blocked_reason": null,
+         "next_actor": null,
+         "session_role": null
+       },
+       "abandoned": {
+         "status": "failed",
+         "blocked_reason": null,
+         "next_actor": null,
+         "session_role": null
+       },
+       "cancelled": {
+         "status": "cancelled",
+         "blocked_reason": null,
+         "next_actor": null,
+         "session_role": null
+       }
+     },
+     "transitions": [
+       {
+         "from": "pending",
+         "on": {
+           "event": "started"
+         },
+         "guard": null,
+         "to": "working",
+         "effects": [
+           {
+             "name": "launch_session",
+             "args": {
+               "role": "brief",
+               "reason": "initial"
+             }
+           }
+         ]
+       },
+       {
+         "from": "working",
+         "on": {
+           "event": "artifact_published",
+           "output": "brief"
+         },
+         "guard": {
+           "name": "briefs_cover_plan",
+           "negate": true,
+           "args": {}
+         },
+         "to": "working",
+         "effects": [
+           {
+             "name": "record_output",
+             "args": {}
+           }
+         ]
+       },
+       {
+         "from": "working",
+         "on": {
+           "event": "artifact_published",
+           "output": "brief"
+         },
+         "guard": {
+           "name": "briefs_acyclic",
+           "negate": true,
+           "args": {}
+         },
+         "refuse": "brief_dependency_cycle"
+       },
+       {
+         "from": "working",
+         "on": {
+           "event": "artifact_published",
+           "output": "brief"
+         },
+         "guard": null,
+         "to": "review",
+         "effects": [
+           {
+             "name": "record_output",
+             "args": {}
+           },
+           {
+             "name": "open_gate",
+             "args": {
+               "gate": "brief_gate",
+               "outputs": [
+                 "brief"
+               ]
+             }
+           }
+         ]
+       },
+       {
+         "from": "working",
+         "on": {
+           "event": "session_ended"
+         },
+         "guard": null,
+         "to": "lost",
+         "effects": []
+       },
+       {
+         "from": "review",
+         "on": {
+           "event": "gate_decided",
+           "gate": "brief_gate",
+           "action": "approve"
+         },
+         "guard": null,
+         "to": "done",
+         "effects": [
+           {
+             "name": "accept_outputs",
+             "args": {
+               "outputs": [
+                 "brief"
+               ]
+             }
+           }
+         ]
+       },
+       {
+         "from": "review",
+         "on": {
+           "event": "gate_decided",
+           "gate": "brief_gate",
+           "action": "request_revision"
+         },
+         "guard": null,
+         "to": "working",
+         "effects": [
+           {
+             "name": "new_round",
+             "args": {}
+           },
+           {
+             "name": "launch_session",
+             "args": {
+               "role": "brief",
+               "reason": "input_revision"
+             }
+           }
+         ]
+       },
+       {
+         "from": "review",
+         "on": {
+           "event": "artifact_published",
+           "output": "brief"
+         },
+         "guard": null,
+         "refuse": "awaiting_review"
+       },
+       {
+         "from": "review",
+         "on": {
+           "event": "session_ended"
+         },
+         "guard": null,
+         "to": "review",
+         "effects": []
+       },
+       {
+         "from": "lost",
+         "on": {
+           "event": "operator_retry"
+         },
+         "guard": null,
+         "to": "working",
+         "effects": [
+           {
+             "name": "launch_session",
+             "args": {
+               "role": "brief",
+               "reason": "operator_retry"
+             }
+           }
+         ]
+       },
+       {
+         "from": "lost",
+         "on": {
+           "event": "artifact_published",
+           "output": "brief"
+         },
+         "guard": null,
+         "refuse": "session_lost"
+       },
+       {
+         "from": {
+           "any_nonterminal": true
+         },
+         "on": {
+           "event": "operator_abandon"
+         },
+         "guard": null,
+         "to": "abandoned",
+         "effects": [
+           {
+             "name": "end_session",
+             "args": {}
+           }
+         ]
+       },
+       {
+         "from": {
+           "any_nonterminal": true
+         },
+         "on": {
+           "event": "cancel"
+         },
+         "guard": null,
+         "to": "cancelled",
+         "effects": [
+           {
+             "name": "end_session",
+             "args": {}
+           }
+         ]
+       }
+     ]
+   },
+   "build_cohort": {
+     "initial": "pending",
+     "states": {
+       "pending": {
+         "status": "pending",
+         "blocked_reason": null,
+         "next_actor": "core",
+         "session_role": null
+       },
+       "building": {
+         "status": "active",
+         "blocked_reason": null,
+         "next_actor": "agent",
+         "session_role": "build"
+       },
+       "build_review": {
+         "status": "blocked",
+         "blocked_reason": "gate",
+         "next_actor": "operator",
+         "session_role": null
+       },
+       "assessing": {
+         "status": "active",
+         "blocked_reason": null,
+         "next_actor": "agent",
+         "session_role": "assessment"
+       },
+       "assessment_review": {
+         "status": "blocked",
+         "blocked_reason": "gate",
+         "next_actor": "operator",
+         "session_role": null
+       },
+       "awaiting_merge": {
+         "status": "blocked",
+         "blocked_reason": "external",
+         "next_actor": "external",
+         "session_role": null
+       },
+       "pr_closed": {
+         "status": "blocked",
+         "blocked_reason": "retry",
+         "next_actor": "operator",
+         "session_role": null
+       },
+       "build_lost": {
+         "status": "blocked",
+         "blocked_reason": "retry",
+         "next_actor": "operator",
+         "session_role": null
+       },
+       "assess_lost": {
+         "status": "blocked",
+         "blocked_reason": "retry",
+         "next_actor": "operator",
+         "session_role": null
+       },
+       "done": {
+         "status": "complete",
+         "blocked_reason": null,
+         "next_actor": null,
+         "session_role": null
+       },
+       "abandoned": {
+         "status": "failed",
+         "blocked_reason": null,
+         "next_actor": null,
+         "session_role": null
+       },
+       "cancelled": {
+         "status": "cancelled",
+         "blocked_reason": null,
+         "next_actor": null,
+         "session_role": null
+       }
+     },
+     "transitions": [
+       {
+         "from": "pending",
+         "on": {
+           "event": "started"
+         },
+         "guard": null,
+         "to": "building",
+         "effects": [
+           {
+             "name": "launch_session",
+             "args": {
+               "role": "build",
+               "reason": "initial_build"
+             }
+           }
+         ]
+       },
+       {
+         "from": "building",
+         "on": {
+           "event": "artifact_published",
+           "output": "pr_summary"
+         },
+         "guard": {
+           "name": "pr_matches_cohort",
+           "negate": true,
+           "args": {}
+         },
+         "refuse": "pr_mismatch"
+       },
+       {
+         "from": "building",
+         "on": {
+           "event": "artifact_published",
+           "output": "pr_summary"
+         },
+         "guard": {
+           "name": "round_has",
+           "negate": true,
+           "args": {
+             "output": "build_result"
+           }
+         },
+         "to": "building",
+         "effects": [
+           {
+             "name": "record_output",
+             "args": {}
+           },
+           {
+             "name": "bind_pull_request",
+             "args": {}
+           }
+         ]
+       },
+       {
+         "from": "building",
+         "on": {
+           "event": "artifact_published",
+           "output": "pr_summary"
+         },
+         "guard": null,
+         "to": "build_review",
+         "effects": [
+           {
+             "name": "record_output",
+             "args": {}
+           },
+           {
+             "name": "bind_pull_request",
+             "args": {}
+           },
+           {
+             "name": "open_gate",
+             "args": {
+               "gate": "build_review",
+               "outputs": [
+                 "build_result",
+                 "pr_summary"
+               ]
+             }
+           }
+         ]
+       },
+       {
+         "from": "building",
+         "on": {
+           "event": "artifact_published",
+           "output": "build_result"
+         },
+         "guard": {
+           "name": "round_has",
+           "negate": true,
+           "args": {
+             "output": "pr_summary"
+           }
+         },
+         "to": "building",
+         "effects": [
+           {
+             "name": "record_output",
+             "args": {}
+           }
+         ]
+       },
+       {
+         "from": "building",
+         "on": {
+           "event": "artifact_published",
+           "output": "build_result"
+         },
+         "guard": null,
+         "to": "build_review",
+         "effects": [
+           {
+             "name": "record_output",
+             "args": {}
+           },
+           {
+             "name": "open_gate",
+             "args": {
+               "gate": "build_review",
+               "outputs": [
+                 "build_result",
+                 "pr_summary"
+               ]
+             }
+           }
+         ]
+       },
+       {
+         "from": "building",
+         "on": {
+           "event": "session_ended"
+         },
+         "guard": null,
+         "to": "build_lost",
+         "effects": []
+       },
+       {
+         "from": "build_review",
+         "on": {
+           "event": "gate_decided",
+           "gate": "build_review",
+           "action": "approve"
+         },
+         "guard": null,
+         "to": "assessing",
+         "effects": [
+           {
+             "name": "accept_outputs",
+             "args": {
+               "outputs": [
+                 "build_result",
+                 "pr_summary"
+               ]
+             }
+           },
+           {
+             "name": "launch_session",
+             "args": {
+               "role": "assessment",
+               "reason": "initial_assessment"
+             }
+           }
+         ]
+       },
+       {
+         "from": "build_review",
+         "on": {
+           "event": "gate_decided",
+           "gate": "build_review",
+           "action": "request_revision"
+         },
+         "guard": null,
+         "to": "building",
+         "effects": [
+           {
+             "name": "new_round",
+             "args": {}
+           },
+           {
+             "name": "launch_session",
+             "args": {
+               "role": "build",
+               "reason": "revision_after_build_review"
+             }
+           }
+         ]
+       },
+       {
+         "from": "build_review",
+         "on": {
+           "event": "session_ended"
+         },
+         "guard": null,
+         "to": "build_review",
+         "effects": []
+       },
+       {
+         "from": "assessing",
+         "on": {
+           "event": "artifact_published",
+           "output": "assessment"
+         },
+         "guard": null,
+         "to": "assessment_review",
+         "effects": [
+           {
+             "name": "record_output",
+             "args": {}
+           },
+           {
+             "name": "open_gate",
+             "args": {
+               "gate": "assessment_review",
+               "outputs": [
+                 "assessment"
+               ]
+             }
+           }
+         ]
+       },
+       {
+         "from": "assessing",
+         "on": {
+           "event": "session_ended"
+         },
+         "guard": null,
+         "to": "assess_lost",
+         "effects": []
+       },
+       {
+         "from": "assessment_review",
+         "on": {
+           "event": "gate_decided",
+           "gate": "assessment_review",
+           "action": "approve"
+         },
+         "guard": null,
+         "to": "awaiting_merge",
+         "effects": [
+           {
+             "name": "accept_outputs",
+             "args": {
+               "outputs": [
+                 "assessment"
+               ]
+             }
+           }
+         ]
+       },
+       {
+         "from": "assessment_review",
+         "on": {
+           "event": "gate_decided",
+           "gate": "assessment_review",
+           "action": "request_revision"
+         },
+         "guard": null,
+         "to": "building",
+         "effects": [
+           {
+             "name": "new_round",
+             "args": {}
+           },
+           {
+             "name": "launch_session",
+             "args": {
+               "role": "build",
+               "reason": "revision_after_assessment"
+             }
+           }
+         ]
+       },
+       {
+         "from": "assessment_review",
+         "on": {
+           "event": "session_ended"
+         },
+         "guard": null,
+         "to": "assessment_review",
+         "effects": []
+       },
+       {
+         "from": "awaiting_merge",
+         "on": {
+           "event": "external_observed",
+           "source": "pr_watcher"
+         },
+         "guard": {
+           "name": "pr_merged_into_base",
+           "negate": false,
+           "args": {}
+         },
+         "to": "done",
+         "effects": [
+           {
+             "name": "record_merge",
+             "args": {}
+           }
+         ]
+       },
+       {
+         "from": "awaiting_merge",
+         "on": {
+           "event": "external_observed",
+           "source": "pr_watcher"
+         },
+         "guard": {
+           "name": "pr_closed_unmerged",
+           "negate": false,
+           "args": {}
+         },
+         "to": "pr_closed",
+         "effects": []
+       },
+       {
+         "from": "awaiting_merge",
+         "on": {
+           "event": "external_observed",
+           "source": "pr_watcher"
+         },
+         "guard": null,
+         "to": "awaiting_merge",
+         "effects": []
+       },
+       {
+         "from": "pr_closed",
+         "on": {
+           "event": "external_observed",
+           "source": "pr_watcher"
+         },
+         "guard": {
+           "name": "pr_merged_into_base",
+           "negate": false,
+           "args": {}
+         },
+         "to": "done",
+         "effects": [
+           {
+             "name": "record_merge",
+             "args": {}
+           }
+         ]
+       },
+       {
+         "from": "pr_closed",
+         "on": {
+           "event": "external_observed",
+           "source": "pr_watcher"
+         },
+         "guard": {
+           "name": "pr_closed_unmerged",
+           "negate": false,
+           "args": {}
+         },
+         "to": "pr_closed",
+         "effects": []
+       },
+       {
+         "from": "pr_closed",
+         "on": {
+           "event": "external_observed",
+           "source": "pr_watcher"
+         },
+         "guard": null,
+         "to": "awaiting_merge",
+         "effects": []
+       },
+       {
+         "from": "pr_closed",
+         "on": {
+           "event": "operator_retry"
+         },
+         "guard": null,
+         "to": "building",
+         "effects": [
+           {
+             "name": "new_round",
+             "args": {}
+           },
+           {
+             "name": "unbind_pull_request",
+             "args": {}
+           },
+           {
+             "name": "launch_session",
+             "args": {
+               "role": "build",
+               "reason": "replacement_pr"
+             }
+           }
+         ]
+       },
+       {
+         "from": "build_lost",
+         "on": {
+           "event": "operator_retry"
+         },
+         "guard": null,
+         "to": "building",
+         "effects": [
+           {
+             "name": "launch_session",
+             "args": {
+               "role": "build",
+               "reason": "retry_after_lost_attempt"
+             }
+           }
+         ]
+       },
+       {
+         "from": "assess_lost",
+         "on": {
+           "event": "operator_retry"
+         },
+         "guard": null,
+         "to": "assessing",
+         "effects": [
+           {
+             "name": "launch_session",
+             "args": {
+               "role": "assessment",
+               "reason": "retry_after_lost_attempt"
+             }
+           }
+         ]
+       },
+       {
+         "from": {
+           "any_nonterminal": true
+         },
+         "on": {
+           "event": "artifact_published",
+           "output": "build_result"
+         },
+         "guard": null,
+         "refuse": "not_building"
+       },
+       {
+         "from": {
+           "any_nonterminal": true
+         },
+         "on": {
+           "event": "artifact_published",
+           "output": "pr_summary"
+         },
+         "guard": null,
+         "refuse": "not_building"
+       },
+       {
+         "from": {
+           "any_nonterminal": true
+         },
+         "on": {
+           "event": "artifact_published",
+           "output": "assessment"
+         },
+         "guard": null,
+         "refuse": "not_assessing"
+       },
+       {
+         "from": {
+           "any_nonterminal": true
+         },
+         "on": {
+           "event": "operator_abandon"
+         },
+         "guard": null,
+         "to": "abandoned",
+         "effects": [
+           {
+             "name": "end_session",
+             "args": {}
+           }
+         ]
+       },
+       {
+         "from": {
+           "any_nonterminal": true
+         },
+         "on": {
+           "event": "cancel"
+         },
+         "guard": null,
+         "to": "cancelled",
+         "effects": [
+           {
+             "name": "end_session",
+             "args": {}
+           }
+         ]
+       }
+     ]
+   },
+   "final_integration_review": {
+     "initial": "pending",
+     "states": {
+       "pending": {
+         "status": "pending",
+         "blocked_reason": null,
+         "next_actor": "core",
+         "session_role": null
+       },
+       "working": {
+         "status": "active",
+         "blocked_reason": null,
+         "next_actor": "agent",
+         "session_role": "final_integration"
+       },
+       "merge_review": {
+         "status": "blocked",
+         "blocked_reason": "gate",
+         "next_actor": "operator",
+         "session_role": null
+       },
+       "lost": {
+         "status": "blocked",
+         "blocked_reason": "retry",
+         "next_actor": "operator",
+         "session_role": null
+       },
+       "done": {
+         "status": "complete",
+         "blocked_reason": null,
+         "next_actor": null,
+         "session_role": null
+       },
+       "abandoned": {
+         "status": "failed",
+         "blocked_reason": null,
+         "next_actor": null,
+         "session_role": null
+       },
+       "cancelled": {
+         "status": "cancelled",
+         "blocked_reason": null,
+         "next_actor": null,
+         "session_role": null
+       }
+     },
+     "transitions": [
+       {
+         "from": "pending",
+         "on": {
+           "event": "started"
+         },
+         "guard": null,
+         "to": "working",
+         "effects": [
+           {
+             "name": "launch_session",
+             "args": {
+               "role": "final_integration",
+               "reason": "initial"
+             }
+           }
+         ]
+       },
+       {
+         "from": "working",
+         "on": {
+           "event": "artifact_published",
+           "output": "pr_summary"
+         },
+         "guard": null,
+         "to": "merge_review",
+         "effects": [
+           {
+             "name": "record_output",
+             "args": {}
+           },
+           {
+             "name": "open_gate",
+             "args": {
+               "gate": "final_integration_review",
+               "outputs": [
+                 "pr_summary"
+               ]
+             }
+           }
+         ]
+       },
+       {
+         "from": "working",
+         "on": {
+           "event": "session_ended"
+         },
+         "guard": null,
+         "to": "lost",
+         "effects": []
+       },
+       {
+         "from": "merge_review",
+         "on": {
+           "event": "gate_decided",
+           "gate": "final_integration_review",
+           "action": "confirm_merged"
+         },
+         "guard": null,
+         "to": "done",
+         "effects": [
+           {
+             "name": "accept_outputs",
+             "args": {
+               "outputs": [
+                 "pr_summary"
+               ]
+             }
+           }
+         ]
+       },
+       {
+         "from": "merge_review",
+         "on": {
+           "event": "gate_decided",
+           "gate": "final_integration_review",
+           "action": "closed_without_merge"
+         },
+         "guard": null,
+         "to": "abandoned",
+         "effects": []
+       },
+       {
+         "from": "merge_review",
+         "on": {
+           "event": "artifact_published",
+           "output": "pr_summary"
+         },
+         "guard": null,
+         "refuse": "awaiting_review"
+       },
+       {
+         "from": "merge_review",
+         "on": {
+           "event": "session_ended"
+         },
+         "guard": null,
+         "to": "merge_review",
+         "effects": []
+       },
+       {
+         "from": "lost",
+         "on": {
+           "event": "operator_retry"
+         },
+         "guard": null,
+         "to": "working",
+         "effects": [
+           {
+             "name": "launch_session",
+             "args": {
+               "role": "final_integration",
+               "reason": "operator_retry"
+             }
+           }
+         ]
+       },
+       {
+         "from": "lost",
+         "on": {
+           "event": "artifact_published",
+           "output": "pr_summary"
+         },
+         "guard": null,
+         "refuse": "session_lost"
+       },
+       {
+         "from": {
+           "any_nonterminal": true
+         },
+         "on": {
+           "event": "operator_abandon"
+         },
+         "guard": null,
+         "to": "abandoned",
+         "effects": [
+           {
+             "name": "end_session",
+             "args": {}
+           }
+         ]
+       },
+       {
+         "from": {
+           "any_nonterminal": true
+         },
+         "on": {
+           "event": "cancel"
+         },
+         "guard": null,
+         "to": "cancelled",
+         "effects": [
+           {
+             "name": "end_session",
+             "args": {}
+           }
+         ]
+       }
+     ]
+   },
+   "provision": {
+     "initial": "pending",
+     "states": {
+       "pending": {
+         "status": "pending",
+         "blocked_reason": null,
+         "next_actor": "core",
+         "session_role": null
+       },
+       "provisioning": {
+         "status": "active",
+         "blocked_reason": null,
+         "next_actor": "service",
+         "session_role": "provision"
+       },
+       "lost": {
+         "status": "blocked",
+         "blocked_reason": "retry",
+         "next_actor": "operator",
+         "session_role": null
+       },
+       "done": {
+         "status": "complete",
+         "blocked_reason": null,
+         "next_actor": null,
+         "session_role": null
+       },
+       "abandoned": {
+         "status": "failed",
+         "blocked_reason": null,
+         "next_actor": null,
+         "session_role": null
+       },
+       "cancelled": {
+         "status": "cancelled",
+         "blocked_reason": null,
+         "next_actor": null,
+         "session_role": null
+       }
+     },
+     "transitions": [
+       {
+         "from": "pending",
+         "on": {
+           "event": "started"
+         },
+         "guard": null,
+         "to": "provisioning",
+         "effects": [
+           {
+             "name": "launch_session",
+             "args": {
+               "role": "provision",
+               "reason": "initial"
+             }
+           }
+         ]
+       },
+       {
+         "from": "provisioning",
+         "on": {
+           "event": "artifact_published",
+           "output": "repository_refs"
+         },
+         "guard": null,
+         "to": "done",
+         "effects": [
+           {
+             "name": "record_output",
+             "args": {}
+           },
+           {
+             "name": "accept_outputs",
+             "args": {
+               "outputs": [
+                 "repository_refs"
+               ]
+             }
+           }
+         ]
+       },
+       {
+         "from": "provisioning",
+         "on": {
+           "event": "session_ended"
+         },
+         "guard": null,
+         "to": "lost",
+         "effects": []
+       },
+       {
+         "from": "lost",
+         "on": {
+           "event": "operator_retry"
+         },
+         "guard": null,
+         "to": "provisioning",
+         "effects": [
+           {
+             "name": "launch_session",
+             "args": {
+               "role": "provision",
+               "reason": "operator_retry"
+             }
+           }
+         ]
+       },
+       {
+         "from": {
+           "any_nonterminal": true
+         },
+         "on": {
+           "event": "operator_abandon"
+         },
+         "guard": null,
+         "to": "abandoned",
+         "effects": [
+           {
+             "name": "end_session",
+             "args": {}
+           }
+         ]
+       },
+       {
+         "from": {
+           "any_nonterminal": true
+         },
+         "on": {
+           "event": "cancel"
+         },
+         "guard": null,
+         "to": "cancelled",
+         "effects": [
+           {
+             "name": "end_session",
+             "args": {}
+           }
+         ]
+       }
+     ]
+   }
+ },
   "graph": {
     "stages": {
       "provision_repository_refs": {
         "stage_type": "provision_repository_refs",
         "operator_role": null,
         "config": {
+          "machine": "provision",
           "repositories": {
             "from": "context",
             "path": "/repositories"
@@ -31,6 +1640,7 @@
         "stage_type": "delegated_session",
         "operator_role": "spec",
         "config": {
+          "machine": "spec_review",
           "prompt_matrix": [
             {
               "session_role": "spec",
@@ -131,6 +1741,7 @@
         "stage_type": "delegated_session",
         "operator_role": "plan",
         "config": {
+          "machine": "plan_review",
           "prompt_matrix": [
             {
               "session_role": "plan",
@@ -237,6 +1848,7 @@
         "stage_type": "delegated_session",
         "operator_role": "brief",
         "config": {
+          "machine": "brief_review",
           "prompt_matrix": [
             {
               "session_role": "brief",
@@ -347,6 +1959,7 @@
         "stage_type": "delegated_session",
         "operator_role": "build",
         "config": {
+          "machine": "build_cohort",
           "prompt_matrix": [
             {
               "session_role": "build",
@@ -362,11 +1975,6 @@
               "session_role": "build",
               "launch_reason": "revision_after_assessment",
               "template_path": "dev-flow/v15/build/build/revision_after_assessment.md"
-            },
-            {
-              "session_role": "build",
-              "launch_reason": "pr_mismatch_correction",
-              "template_path": "dev-flow/v15/build/build/pr_mismatch_correction.md"
             },
             {
               "session_role": "build",
@@ -610,11 +2218,17 @@
         "stage_type": "delegated_session",
         "operator_role": "final_integration",
         "config": {
+          "machine": "final_integration_review",
           "prompt_matrix": [
             {
               "session_role": "final_integration",
               "launch_reason": "initial",
               "template_path": "dev-flow/v15/final_integration/final_integration/initial.md"
+            },
+            {
+              "session_role": "final_integration",
+              "launch_reason": "operator_retry",
+              "template_path": "dev-flow/v15/final_integration/final_integration/operator_retry.md"
             }
           ],
           "role_configs": [
@@ -858,44 +2472,6 @@
         "to": {
           "stage": "final_integration",
           "slot": "assessments"
-        }
-      }
-    ],
-    "transitions": [
-      {
-        "trigger": {
-          "kind": "operator",
-          "stage": "spec_analyzer",
-          "item": "request_revision"
-        },
-        "launch": {
-          "stage": "spec_analyzer",
-          "session_role": "spec",
-          "launch_reason": "input_revision"
-        }
-      },
-      {
-        "trigger": {
-          "kind": "operator",
-          "stage": "plan_writer",
-          "item": "request_revision"
-        },
-        "launch": {
-          "stage": "plan_writer",
-          "session_role": "plan",
-          "launch_reason": "input_revision"
-        }
-      },
-      {
-        "trigger": {
-          "kind": "operator",
-          "stage": "brief_writer",
-          "item": "request_revision"
-        },
-        "launch": {
-          "stage": "brief_writer",
-          "session_role": "brief",
-          "launch_reason": "input_revision"
         }
       }
     ]

@@ -4,12 +4,16 @@ import { compileWorkflowManifest } from "../compiler/compile-workflow";
 import { createPromptBundle, createPromptTemplateLoader } from "../runtime/prompt-template";
 import { parseWorkflowDefinition } from "./workflow-definition";
 import { createDevFlowAdapterRegistry } from "../adapters/dev-flow";
+import { registerDevFlowMachine } from "../adapters/dev-flow-machine";
+import { StageMachineRegistry } from "../runtime/executor-registry";
 
 const repositoryRoot = resolve(import.meta.dir, "../../..");
 const definitionsRoot = resolve(repositoryRoot, "workflow-config/definitions");
 const promptLoader = createPromptTemplateLoader(resolve(repositoryRoot, "workflow-config/prompts"));
 const failures: string[] = [];
 const adapterRoles = createDevFlowAdapterRegistry();
+const machineRegistry = new StageMachineRegistry();
+registerDevFlowMachine(machineRegistry, new Map());
 
 for await (const relativePath of new Bun.Glob("*.json").scan({ cwd: definitionsRoot })) {
   const source = await Bun.file(resolve(definitionsRoot, relativePath)).json();
@@ -21,7 +25,7 @@ for await (const relativePath of new Bun.Glob("*.json").scan({ cwd: definitionsR
   try {
     const bundle = await createPromptBundle(parsed.value, promptLoader);
     const compiled = compileWorkflowManifest(parsed.value, bundle,
-      { adapter_version: "delegated-session-v1", artifact_schema_version: "v1" }, undefined, adapterRoles);
+      { adapter_version: "delegated-session-v1", artifact_schema_version: "v1" }, undefined, adapterRoles, machineRegistry);
     if (!compiled.ok) failures.push(`${relativePath}: ${compiled.error.detail}`);
   } catch (error) {
     failures.push(`${relativePath}: ${error instanceof Error ? error.message : String(error)}`);
