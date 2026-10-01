@@ -42,10 +42,7 @@ const controlAccess = selectControlPlaneAccess({
   allow_insecure_non_loopback: process.env.ALLOW_INSECURE_NON_LOOPBACK_CONTROL === "1",
 });
 if (controlAccess.kind === "refused") throw new Error(controlAccess.detail);
-// Optional on purpose. Without a token nothing polls GitHub, and a cohort's
-// merge is confirmed by an operator through the same route the poller uses —
-// which is also the fallback when the token cannot see a given repository.
-const githubToken = process.env.OAKRIDGE_GITHUB_TOKEN?.trim();
+const githubToken = required("OAKRIDGE_GITHUB_TOKEN");
 
 DBOS.setConfig({ name: "oakridge", systemDatabaseUrl: databaseUrl, applicationVersion });
 
@@ -58,10 +55,9 @@ const runtime = await createOakridgeRuntime({
     ...(maxSilentMs !== null ? { max_silent_ms: maxSilentMs } : {}),
   })],
   prompt_template_directory: resolve(import.meta.dir, "../../workflow-config/prompts"),
-  ...(githubToken ? { pull_request_reader: new GithubPullRequestReader({ token: githubToken }) } : {}),
+  pull_request_reader: new GithubPullRequestReader({ token: githubToken }),
   ...(controlAccess.kind === "token_required" ? { control_token: controlAccess.token } : {}),
 });
-if (!githubToken) console.warn("OAKRIDGE_GITHUB_TOKEN is unset: cohort pull requests are not polled, so merges must be confirmed by an operator");
 
 await runtime.seed_builtins();
 await DBOS.launch();
