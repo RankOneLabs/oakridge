@@ -3,6 +3,7 @@ import { expect, test } from "bun:test";
 import { derive } from "../../src/decision/derive";
 import type { RunRecordVersion } from "../../src/domain/primitives";
 import { artifactId, cohort, RUN_ID, snapshot, stage, stageId } from "./snapshot-builder";
+import type { CoreStatus } from "../../src/domain/records";
 
 test("a source stage starts against its own durable version", () => {
   const source = stage(1, { durable_version: 7 });
@@ -49,10 +50,10 @@ test("all complete cohorts complete their stage on the stage version", () => {
   });
 });
 
-test("a cancelled cohort deterministically cancels its active stage", () => {
+test("a cancelled cohort wins over a failed cohort in the same active stage", () => {
   const value = stage(1, { status: "active", durable_version: 6, cohorts: [
-    cohort(2, { status: "failed", outcome: { reason: "failed" } }),
-    cohort(1, { status: "cancelled", outcome: { reason: "operator" } }),
+    cohort(1, { status: "failed", outcome: { reason: "failed" } }),
+    cohort(2, { status: "cancelled", outcome: { reason: "operator" } }),
   ] });
   const result = derive(snapshot([value]));
   expect(result.ok && result.value.commands).toEqual([{
@@ -127,4 +128,45 @@ test("a terminal run never emits another transition", () => {
     ok: true,
     value: { commands: [], observed_artifact_ids: [] },
   });
+});
+
+test("all six statuses across the six-stage graph follow the table-free run oracle", () => {
+  const statuses: readonly CoreStatus[] = ["pending", "active", "blocked", "complete", "failed", "cancelled"];
+  const dependencies = [[], [0], [0], [1, 2], [3], [4]] as const;
+  for (let combination = 0; combination < statuses.length ** 6; combination++) {
+    let remaining = combination;
+    const selected = dependencies.map(() => {
+      const status = statuses[remaining % statuses.length]!;
+      remaining = Math.floor(remaining / statuses.length);
+      return status;
+    });
+    const stages = selected.map((status, index) => stage(index + 1, {
+      status,
+      dependencies: dependencies[index]!.map((dependency) => stageId(dependency + 1)),
+    }));
+    const result = derive(snapshot(stages));
+    if (!result.ok) throw new Error(`unexpected contradiction at combination ${combination}`);
+    const actual = result.value.commands.map((command) => ({
+      kind: command.kind,
+      target: command.kind === "transition_stage" ? command.stage_instance_id : RUN_ID,
+      status: command.change.status,
+    }));
+    const cancelled = selected.indexOf("cancelled");
+    const failed = selected.indexOf("failed");
+    const expected: typeof actual = cancelled >= 0 ? [{ kind: "transition_run", target: RUN_ID, status: "cancelled" }]
+      : failed >= 0 ? [{ kind: "transition_run", target: RUN_ID, status: "failed" }]
+        : selected.every((status) => status === "complete") ? [{ kind: "transition_run", target: RUN_ID, status: "complete" }]
+          : selected.flatMap((status, index) => status === "pending"
+            && dependencies[index]!.every((dependency) => selected[dependency] === "complete")
+            ? [{ kind: "transition_stage", target: stageId(index + 1), status: "active" }] : []);
+    expect(actual).toEqual(expected);
+  }
+});
+
+test("blocked stages do not complete from completed cohorts while active stages do", () => {
+  const completed = cohort(1, { status: "complete" });
+  const activeResult = derive(snapshot([stage(1, { status: "active", cohorts: [completed] })]));
+  const blockedResult = derive(snapshot([stage(1, { status: "blocked", cohorts: [completed] })]));
+  expect(activeResult.ok && activeResult.value.commands[0]?.kind).toBe("transition_stage");
+  expect(blockedResult.ok && blockedResult.value.commands).toEqual([]);
 });

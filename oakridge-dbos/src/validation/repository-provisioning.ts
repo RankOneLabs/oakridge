@@ -14,6 +14,7 @@ import { slotBindingSchema } from "./delegated-session";
  * own was an entry that could disagree with its siblings.
  */
 export const repositoryProvisioningDefinitionSchema = z.object({
+  machine: z.string().min(1).optional(),
   repositories: slotBindingSchema,
   base_branch: slotBindingSchema,
   max_parallel: z.number().int().positive().default(4),

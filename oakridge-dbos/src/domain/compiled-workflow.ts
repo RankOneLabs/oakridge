@@ -2,6 +2,7 @@ import type { JsonValue, UnitId } from "./primitives";
 import type { ArtifactTypeId, InputDelivery, StageKey, StageOperatorRole, StageTypeId, WorkflowRunBundlePin } from "./workflow";
 import type { DelegatedSessionDefinitionConfig, SlotBinding } from "./delegated-session";
 import type { GateAction } from "./gates";
+import type { CompiledMachine } from "./stage-machine";
 
 export interface CompiledInputContract {
   readonly name: string;
@@ -66,6 +67,7 @@ export interface CompiledStageContract {
   readonly outputs: readonly CompiledOutputContract[];
   readonly materialization: MaterializationContract;
   readonly executor: CompiledExecutorSelection;
+  readonly machine?: CompiledMachine;
 }
 
 export interface CompiledEdge {

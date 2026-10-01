@@ -60,6 +60,7 @@ const outputGateSchema = z.object({
 
 
 export const delegatedSessionDefinitionSchema = z.object({
+  machine: z.string().min(1).optional(),
   prompt_matrix: z.array(z.object({
     session_role: roleSchema,
     launch_reason: launchReasonSchema,
