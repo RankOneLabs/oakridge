@@ -20,6 +20,7 @@
  * again is always safe.
  */
 import { DBOS, Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
+import type { TransactionalSqlExecutor } from "../storage/sql-executor";
 
 import { attemptIdFor, attemptWorkflowId, cohortMachineWorkflowId, runMachineWorkflowId, sessionIdFor, stageMachineWorkflowId, transitionIdFor } from "../decision/ids";
 import { executorHealthFromTerminal, type AttemptExecution, type CohortMachineState, type OpenCohort, type RecordCohortEvent, type RetryCohortResult, type RetryCohortTarget, type RunDecision, type TransitionEffectDescriptor } from "../domain/run-record";
@@ -136,6 +137,7 @@ export interface RunRecordWorkflowServices {
   readonly stages: StageInstanceRepository;
   /** Reads the accepted revisions that fill a producing stage's declared output. */
   readonly artifacts: RunArtifactReadRepository;
+  readonly effects_sql?: TransactionalSqlExecutor;
   /** The run's own context, which drivers resolve their bindings against. */
   find_run_context(run_id: WorkflowRunId): Promise<JsonValue | null>;
   find_driver(stage_type: string): CohortMachineDriver | undefined;
@@ -251,7 +253,7 @@ const openStageCohortsStep = DBOS.registerStep(
       return { kind: "roster_failed", detail };
     }
     const opened = await records.open_stage_cohorts({ run_id: contract.run_id, stage_instance_id, cohorts, opened_at: now() });
-    if (opened.kind === "stage_not_found") throw new Error(opened.detail);
+    if ("detail" in opened) throw new Error(opened.detail);
     return { kind: "opened", cohort_ids: opened.cohort_ids };
   },
   { name: "oakridgeV15OpenStageCohortsStep", retriesAllowed: true },
@@ -346,7 +348,7 @@ const cohortContext = async (cohort_id: CohortId): Promise<{ readonly context: C
  * an empty array would instead render an empty list into the prompt as though the
  * upstream stage had produced nothing to say.
  */
-const loadStageInputs = async (stage_contract: JsonValue, cohort_key: string | null): Promise<StageInputSet> => {
+export const loadStageInputs = async (stage_contract: JsonValue, cohort_key: string | null): Promise<StageInputSet> => {
   const { artifacts } = workflowServices();
   const resolved: Record<string, ArtifactEnvelope | readonly ArtifactEnvelope[]> = {};
   for (const edge of parseStageInputEdges(stage_contract)) {
@@ -674,3 +676,61 @@ export const attemptWorkflow = DBOS.registerWorkflow(async (attempt_id: AttemptI
     await DBOS.sleepSeconds(OBSERVE_INTERVAL_SECONDS);
   }
 }, { name: "oakridgeV15AttemptWorkflow" });
+
+interface StageEffectTransitionRow {
+  readonly id: string;
+  readonly owner_cohort_id: string;
+  readonly effect_workflow_id: string;
+  readonly effect_descriptor: { readonly kind: string; readonly effects?: readonly { readonly name: string }[] };
+}
+
+const markStageEffectsStartedStep = DBOS.registerStep(async (transition_id: RunTransitionId): Promise<StageEffectTransitionRow> => {
+  const sql = workflowServices().effects_sql;
+  if (!sql) throw new Error("stage effect SQL is not registered");
+  const rows = await sql.query<StageEffectTransitionRow>(
+    `UPDATE oakridge.run_transition SET effects_started_at=COALESCE(effects_started_at,clock_timestamp())
+     WHERE id=$1 RETURNING id::text,owner_cohort_id::text,effect_workflow_id,effect_descriptor`, [transition_id]);
+  if (!rows[0]) throw new Error(`transition '${transition_id}' is missing`);
+  return rows[0];
+}, { name: "oakridgeV15MarkStageEffectsStartedStep", retriesAllowed: true });
+
+const startStageAttemptsStep = DBOS.registerStep(async (transition_id: RunTransitionId): Promise<readonly AttemptId[]> => {
+  const sql = workflowServices().effects_sql;
+  if (!sql) throw new Error("stage effect SQL is not registered");
+  const rows = await sql.query<{ readonly id: string }>(
+    `SELECT attempt.id::text FROM oakridge.attempt attempt
+     JOIN oakridge.session session ON session.attempt_id=attempt.id
+     WHERE session.launch_transition_id=$1 ORDER BY attempt.attempt_number`, [transition_id]);
+  return rows.map((row) => row.id as AttemptId);
+}, { name: "oakridgeV15FindStageAttemptsStep", retriesAllowed: true });
+
+const fenceStageSessionsStep = DBOS.registerStep(async (cohort_id: CohortId): Promise<void> => {
+  const { effects_sql, records, find_executor, now } = workflowServices();
+  if (!effects_sql) throw new Error("stage effect SQL is not registered");
+  const rows = await effects_sql.query<{ readonly session_id: string; readonly adapter_type: string;
+    readonly adapter_reference: ExternalExecutionReference; readonly execution_id: string }>(
+    `SELECT session.id::text AS session_id,attempt.adapter_type,session.adapter_reference,
+            attempt.id::text AS execution_id
+     FROM oakridge.session session JOIN oakridge.attempt attempt ON attempt.id=session.attempt_id
+     WHERE attempt.cohort_id=$1 AND session.fenced_at IS NULL AND session.kbbl_session_id IS NOT NULL
+     ORDER BY attempt.attempt_number`, [cohort_id]);
+  for (const row of rows) {
+    const adapter = find_executor(row.adapter_type);
+    if (!adapter) throw new Error(`executor '${row.adapter_type}' is not registered`);
+    await adapter.cancel_or_fence(row.execution_id as ExecutionId, row.adapter_reference);
+    await records.mark_session_fenced(row.session_id as import("../domain/primitives").SessionId, now());
+  }
+}, { name: "oakridgeV15FenceStageSessionsStep", retriesAllowed: true });
+
+export const stageEffectWorkflow = DBOS.registerWorkflow(async (transition_id: RunTransitionId): Promise<void> => {
+  const row = await markStageEffectsStartedStep(transition_id);
+  for (const effect of row.effect_descriptor.effects ?? []) {
+    if (effect.name === "launch_session") {
+      for (const attempt_id of await startStageAttemptsStep(transition_id)) {
+        await DBOS.startWorkflow(attemptWorkflow, { workflowID: attemptWorkflowId(attempt_id) })(attempt_id);
+      }
+    } else if (effect.name === "end_session" && row.owner_cohort_id) {
+      await fenceStageSessionsStep(row.owner_cohort_id as CohortId);
+    }
+  }
+}, { name: "oakridgeV15StageEffectWorkflow" });

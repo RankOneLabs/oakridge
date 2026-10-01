@@ -9,9 +9,10 @@
  * attempts, sessions, artifacts and waits.
  */
 import { sessionIdFor, waitGateCommandWorkflowId, waitGateIdFor } from "../decision/ids";
+import { selectStartableCohorts } from "../decision/schedule-cohorts";
 import type { ArtifactEnvelope, ExecutionRequest, ExternalExecutionReference } from "../domain/execution";
 import { selectArtifactGateDisposition, selectBuiltInGateDisposition } from "../domain/gates";
-import { err, ok, type ArtifactId, type AttemptId, type CohortId, type JsonValue, type Result, type RunRecordVersion, type SessionId, type StageInstanceId, type UnitId, type WaitId, type WorkflowRunId } from "../domain/primitives";
+import { err, ok, type ArtifactId, type AttemptId, type CohortId, type JsonValue, type Result, type RunRecordVersion, type RunTransitionId, type SessionId, type StageInstanceId, type UnitId, type WaitId, type WorkflowRunId } from "../domain/primitives";
 import type { BlockedReason, CoreStatus, NextActor } from "../domain/records";
 import type { DeleteRunResult } from "../domain/runs";
 import { findDeclaredOutput, selectWaitClosesOn, selectWaitKind } from "../domain/stage-contract";
@@ -48,6 +49,7 @@ import type {
 import { capabilityFor, capabilityHash } from "../runtime/resolve-work-order";
 import { loadRunSnapshot } from "./load-run-snapshot";
 import { abandonCohortAttempts, writeSessionStatus, type PostgresRunRecordWriter } from "./postgres-run-record";
+import type { StageEventApplier } from "./apply-stage-event";
 import type { RunRecordRepository } from "./repositories";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 
@@ -146,10 +148,14 @@ const runVersion = async (sql: SqlExecutor, run_id: WorkflowRunId): Promise<RunV
 };
 
 export class PostgresRunRecordRepository implements RunRecordRepository {
+  private stage_event_applier: StageEventApplier | null = null;
+
   constructor(
     private readonly sql: TransactionalSqlExecutor,
     private readonly writer: PostgresRunRecordWriter,
   ) {}
+
+  set_stage_event_applier(applier: StageEventApplier): void { this.stage_event_applier = applier; }
 
   /* ---------------- initialization and the decision loop ---------------- */
 
@@ -223,24 +229,49 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
   /* ---------------------------- cohorts ---------------------------- */
 
   async open_stage_cohorts(input: OpenStageCohorts): Promise<OpenStageCohortsResult> {
-    return this.sql.transaction(async (tx) => {
-      const stages = await tx.query<{ readonly id: string }>(
-        "SELECT id::text FROM oakridge.stage_instance WHERE id=$1 AND run_id=$2 FOR UPDATE", [input.stage_instance_id, input.run_id]);
+    const transition_ids: RunTransitionId[] = [];
+    const result = await this.sql.transaction(async (tx) => {
+      const stages = await tx.query<{ readonly id: string; readonly status: CoreStatus; readonly stage_contract: JsonValue }>(
+        "SELECT id::text,status,stage_contract FROM oakridge.stage_instance WHERE id=$1 AND run_id=$2 FOR UPDATE", [input.stage_instance_id, input.run_id]);
       if (!stages[0]) return { kind: "stage_not_found" as const, detail: `stage instance '${input.stage_instance_id}' was not found in run '${input.run_id}'` };
+      if (stages[0].status !== "active") return { kind: "stage_not_active" as const, detail: `stage instance '${input.stage_instance_id}' is ${stages[0].status}` };
+      const machine = (stages[0].stage_contract as { readonly machine?: { readonly initial?: string } }).machine;
+      const initial = machine?.initial ?? "pending";
       let inserted = 0;
       for (const cohort of input.cohorts) {
         const rows = await tx.query<{ readonly id: string }>(
-          `INSERT INTO oakridge.cohort (id,run_id,stage_instance_id,cohort_key,stage_data,created_at)
-           VALUES ($1,$2,$3,$4,$5::jsonb,$6::timestamptz)
+          `INSERT INTO oakridge.cohort (id,run_id,stage_instance_id,cohort_key,state,depends_on,stage_data,created_at)
+           VALUES ($1,$2,$3,$4,$5,$6::text[],$7::jsonb,$8::timestamptz)
            ON CONFLICT (run_id,stage_instance_id,cohort_key) DO NOTHING RETURNING id::text`,
-          [cohort.id, input.run_id, input.stage_instance_id, cohort.cohort_key, JSON.stringify(cohort.stage_data), input.opened_at]);
+          [cohort.id, input.run_id, input.stage_instance_id, cohort.cohort_key, initial,
+            cohort.depends_on ?? [], JSON.stringify(cohort.stage_data), input.opened_at]);
         inserted += rows.length;
       }
       const stored = await tx.query<{ readonly id: string }>(
         "SELECT id::text FROM oakridge.cohort WHERE stage_instance_id=$1 ORDER BY cohort_key", [input.stage_instance_id]);
+      if (machine && this.stage_event_applier) {
+        const schedulable = await tx.query<{ readonly id: string; readonly cohort_key: string;
+          readonly status: CoreStatus; readonly depends_on: readonly string[] }>(
+          `SELECT id::text,cohort_key,status,depends_on FROM oakridge.cohort
+           WHERE stage_instance_id=$1 ORDER BY cohort_key`, [input.stage_instance_id]);
+        const contract = stages[0].stage_contract as { readonly materialization?: { readonly max_parallel?: number } };
+        const max_parallel = contract.materialization?.max_parallel ?? 1;
+        const selected = new Set(selectStartableCohorts(schedulable.map((cohort) => ({
+          cohort_key: cohort.cohort_key, state_status: cohort.status, depends_on: cohort.depends_on,
+        })), max_parallel));
+        const visited = new Set<CohortId>();
+        for (const cohort of schedulable) {
+          if (!selected.has(cohort.cohort_key)) continue;
+          const started = await this.stage_event_applier.apply_in(tx, cohort.id as CohortId,
+            { kind: "started" }, transition_ids, visited);
+          if (!started.ok || started.value.kind === "refused") throw new Error(`start cohort '${cohort.cohort_key}' failed: ${JSON.stringify(started)}`);
+        }
+      }
       return { kind: inserted > 0 ? "opened" as const : "already_open" as const,
         cohort_ids: stored.map((row) => row.id as CohortId) };
     });
+    if (transition_ids.length > 0) await this.stage_event_applier?.start_effects(transition_ids);
+    return result;
   }
 
   async fail_stage_roster(stage_instance_id: StageInstanceId, detail: string, failed_at: string): Promise<void> {

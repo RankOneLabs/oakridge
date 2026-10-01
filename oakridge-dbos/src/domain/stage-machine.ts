@@ -52,7 +52,7 @@ export type StageEvent =
   | { readonly kind: "operator_abandon"; readonly actor: string; readonly detail: string }
   | { readonly kind: "cancel"; readonly actor: string }
   | { readonly kind: "external_observed"; readonly source: ObserverName; readonly observation: JsonValue };
-export interface RoundOutput { readonly output: string; readonly collection_key: string | null; readonly artifact_id: ArtifactId }
+export interface RoundOutput { readonly output: string; readonly collection_key: string | null; readonly artifact_id: ArtifactId; readonly body: JsonValue }
 export interface GuardContext { readonly event: StageEvent; readonly stage_data: JsonValue; readonly round_outputs: readonly RoundOutput[]; readonly stage_inputs: StageInputSet; readonly registry: MachineRegistry }
 export type GuardPredicate = (context: GuardContext, args: JsonObject) => boolean;
 export interface MachineRegistry {

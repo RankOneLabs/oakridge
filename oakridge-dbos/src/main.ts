@@ -65,6 +65,7 @@ if (!githubToken) console.warn("OAKRIDGE_GITHUB_TOKEN is unset: cohort pull requ
 
 await runtime.seed_builtins();
 await DBOS.launch();
+await runtime.start_unstarted_effects();
 
 // DBOS recovers a workflow only when its application_version matches this
 // executor's, so a version bump between two restarts leaves every in-flight run

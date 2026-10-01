@@ -13,10 +13,18 @@ export class StageMachineRegistry implements MachineRegistry {
   register_guard(stage_type: string, name: GuardName, predicate: GuardPredicate): void { this.guards.set(this.key(stage_type, name), predicate); }
   register_effect(stage_type: string, name: EffectName): void { this.effects.add(this.key(stage_type, name)); }
   register_observer(stage_type: string, name: ObserverName): void { this.observers.add(this.key(stage_type, name)); }
-  has_guard(stage_type: string, name: GuardName): boolean { return this.guards.has(this.key(stage_type, name)); }
-  has_effect(stage_type: string, name: EffectName): boolean { return this.effects.has(this.key(stage_type, name)); }
+  has_guard(stage_type: string, name: GuardName): boolean { return this.guards.has(this.key(stage_type, name)) || name === "round_has" || name === "round_has_all"; }
+  has_effect(stage_type: string, name: EffectName): boolean { return this.effects.has(this.key(stage_type, name))
+    || ["launch_session", "end_session", "record_output", "open_gate", "accept_outputs", "new_round"].includes(name); }
   has_observer(stage_type: string, name: ObserverName): boolean { return this.observers.has(this.key(stage_type, name)); }
-  guard(stage_type: string, name: GuardName): GuardPredicate | undefined { return this.guards.get(this.key(stage_type, name)); }
+  guard(stage_type: string, name: GuardName): GuardPredicate | undefined {
+    if (name === "round_has") return (context, args) =>
+      typeof args.output === "string" && context.round_outputs.some((output) => output.output === args.output);
+    if (name === "round_has_all") return (context, args) =>
+      Array.isArray(args.outputs) && args.outputs.every((requested) =>
+        typeof requested === "string" && context.round_outputs.some((output) => output.output === requested));
+    return this.guards.get(this.key(stage_type, name));
+  }
 }
 
 const adapters = new Map<string, ExecutorAdapter>();

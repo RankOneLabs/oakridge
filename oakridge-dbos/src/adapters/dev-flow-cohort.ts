@@ -264,6 +264,7 @@ const openDevFlowCohorts = (
   inputs: StageInputSet,
 ): readonly OpenCohort[] =>
   resolveCohortRoster(contract, run_context, inputs).map((entry) => ({
+    depends_on: entry.depends_on,
     id: cohortIdFor(stage_instance_id, entry.cohort_key),
     cohort_key: entry.cohort_key,
     stage_data: encodeStageData({ unit_id: entry.cohort_key, artifact: entry.item,

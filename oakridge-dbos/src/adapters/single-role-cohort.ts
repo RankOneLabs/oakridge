@@ -140,6 +140,7 @@ export const createSingleRoleCohortDriver = (dependencies: SingleRoleCohortDrive
     return resolveCohortRoster(contract, input.run_context, input.inputs).map((entry) => ({
       id: cohortIdFor(input.stage_instance_id, entry.cohort_key),
       cohort_key: entry.cohort_key,
+      depends_on: entry.depends_on,
       stage_data: encode({ unit_id: entry.cohort_key, artifact: entry.item, launched: 0, consumed_gate_wait_ids: [] }),
     }));
   },

@@ -34,6 +34,7 @@ export const cohortIdFor = (stage_instance_id: StageInstanceId, cohort_key: stri
 export interface CohortRosterEntry {
   readonly cohort_key: string;
   readonly item: JsonValue;
+  readonly depends_on: readonly string[];
 }
 
 /**
@@ -54,13 +55,17 @@ export const resolveCohortRoster = (
   inputs: StageInputSet,
 ): readonly CohortRosterEntry[] => {
   const materialization = contract.materialization;
-  if (materialization.kind !== "fan_out") return [{ cohort_key: SCALAR_COHORT_KEY, item: null }];
+  if (materialization.kind !== "fan_out") return [{ cohort_key: SCALAR_COHORT_KEY, item: null, depends_on: [] }];
   const resolved = resolveBindingValue(materialization.over, { inputs, context: run_context, item: null });
   if (!resolved.ok) throw new Error(`stage '${contract.stage_key}' fan-out did not resolve: ${resolved.error.detail}`);
   if (!Array.isArray(resolved.value)) throw new Error(`stage '${contract.stage_key}' fan-out did not resolve to an array`);
   const entries = resolved.value.map((item, index) => {
     const key = readJsonPointer(item, materialization.unit_id_path);
-    return { cohort_key: typeof key === "string" && key.length > 0 ? key : String(index), item };
+    const dependencies = materialization.depends_on_path === null ? []
+      : readJsonPointer(item, materialization.depends_on_path);
+    return { cohort_key: typeof key === "string" && key.length > 0 ? key : String(index), item,
+      depends_on: Array.isArray(dependencies) && dependencies.every((dependency) => typeof dependency === "string")
+        ? dependencies as string[] : [] };
   });
   const keys = new Set<string>();
   for (const entry of entries) {

@@ -18,7 +18,7 @@
  * what it registers is the v15 topology: one machine per decision owner rather
  * than one root workflow that asked for the whole run's next move.
  */
-import { DBOSClient } from "@dbos-inc/dbos-sdk";
+import { DBOS, DBOSClient } from "@dbos-inc/dbos-sdk";
 import type { Hono } from "hono";
 
 import { createDelegatedSessionCohortDriver } from "../adapters/delegated-session-cohort";
@@ -28,9 +28,10 @@ import { PROVISION_REPOSITORY_REFS_STAGE_TYPE } from "../domain/repository-refs"
 import { RepositoryProvisioningAdapter } from "../adapters/repository-provisioning";
 import { compileWorkflowDefinition } from "../compiler/compile-workflow";
 import { stageInstanceIdFor } from "../decision/ids";
+import { StageMachineRegistry } from "./executor-registry";
 import { DEV_FLOW_ARTIFACT_TYPES, findArtifactType } from "../domain/artifact-types";
 import type { ExecutorAdapter } from "../domain/execution";
-import { err, type AttemptId, type CohortId, type JsonValue, type WorkflowRunId } from "../domain/primitives";
+import { err, type AttemptId, type CohortId, type JsonValue, type RunTransitionId, type WorkflowRunId } from "../domain/primitives";
 import type { GitCommandRunner } from "../domain/repository-provisioning";
 import type { InitializeStageInstance } from "../domain/run-record";
 import { selectOrphanedVersionRuns, type OrphanedVersionRuns } from "../domain/workflow-recovery";
@@ -54,10 +55,11 @@ import { PostgresDevFlowPullRequestRepository, PostgresOperatorProjectionReposit
 import { PostgresProjectRepository } from "../storage/postgres-projects";
 import { PostgresRunRecordWriter } from "../storage/postgres-run-record";
 import { PostgresRunRecordRepository } from "../storage/postgres-run-record-repository";
+import { StageEventApplier } from "../storage/apply-stage-event";
 import { PostgresWorkflowDefinitionRepository } from "../storage/postgres-workflow-definitions";
 import { PgPostgresExecutor } from "../storage/sql-executor";
 import { findExecutorAdapter, registerExecutorAdapter } from "./executor-registry";
-import { recordCohortAdapterEvent, registerRunRecordWorkflowServices, retryCohortThroughDriver, type CohortMachineDriver } from "../workflows/run-record-topology";
+import { loadStageInputs, recordCohortAdapterEvent, registerRunRecordWorkflowServices, retryCohortThroughDriver, stageEffectWorkflow, attemptWorkflow, type CohortMachineDriver } from "../workflows/run-record-topology";
 import "../workflows/collaboration-responder";
 import { DbosRunLaunchClient } from "./dbos-run-launch-client";
 import { DbosCollaborationPingClient, PostgresSessionMessageRecipientResolver, PostgresSessionMessageRepository } from "./collaboration-ping";
@@ -109,6 +111,7 @@ export interface OakridgeRuntime {
    */
   poll_pull_requests(): Promise<readonly CohortPollOutcome[] | null>;
   readonly pull_request_poll_interval_ms: number | null;
+  start_unstarted_effects(): Promise<number>;
   is_pull_request_poll_running(): boolean;
   pause_pull_request_polling(): Promise<() => void>;
   /**
@@ -139,6 +142,22 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const promptTemplates = createPromptTemplateLoader(config.prompt_template_directory);
   const writer = new PostgresRunRecordWriter(sql, adapterRegistry);
   const runRecords = new PostgresRunRecordRepository(sql, writer);
+  const machineRegistry = new StageMachineRegistry();
+  const startEffects = async (transition_ids: readonly RunTransitionId[]): Promise<void> => {
+    if (transition_ids.length === 0) return;
+    const rows = await sql.query<{ readonly id: string; readonly effect_workflow_id: string }>(
+      `SELECT id::text,effect_workflow_id FROM oakridge.run_transition WHERE id=ANY($1::uuid[])`, [transition_ids]);
+    for (const row of rows) await DBOS.startWorkflow(stageEffectWorkflow,
+      { workflowID: row.effect_workflow_id })(row.id as RunTransitionId);
+  };
+  const stageEvents = new StageEventApplier({ sql, writer, registry: machineRegistry,
+    registered_effects: new Map(),
+    load_stage_inputs: async (_tx, stage_instance_id, cohort_key) => {
+      const stage = await stages.find_contract(stage_instance_id);
+      return stage ? loadStageInputs(stage.stage_contract, cohort_key) : {};
+    },
+    start_effects: startEffects, now });
+  runRecords.set_stage_event_applier(stageEvents);
   const stages = new PostgresStageInstanceRepository(sql);
   const artifacts = new PostgresArtifactRepository(sql);
   const collaboration = new PostgresCollaborationRepository(sql);
@@ -282,7 +301,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   // The wait tables are the record of gate/handoff state; DBOS stays the
   // command mechanism, so the wake hints above keep coming from the transport.
   registerRunRecordWorkflowServices({
-    records: runRecords, stages, artifacts, find_run_context: runContextOf,
+    records: runRecords, stages, artifacts, effects_sql: sql, find_run_context: runContextOf,
     find_driver: (stage_type) => drivers.get(stage_type),
     find_executor: findExecutorAdapter, now,
   });
@@ -315,6 +334,30 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     if (!reader) return Promise.resolve(null);
     return trackDispatch(() => pollCohortPullRequests({ ...cohortPullRequests, reader, list_cohorts: () => projections.list_cohorts() }));
   };
+  const startUnstartedEffects = async (): Promise<number> => {
+    const transitions = await sql.query<{ readonly id: string }>(
+      `SELECT id::text FROM oakridge.run_transition
+       WHERE effect_descriptor->>'external'='true' AND effects_started_at IS NULL
+         AND created_at<clock_timestamp()-interval '5 seconds'
+       ORDER BY created_at LIMIT 100`, []);
+    await startEffects(transitions.map((row) => row.id as RunTransitionId));
+    const attempts = await sql.query<{ readonly id: string }>(
+      `SELECT attempt.id::text FROM oakridge.attempt attempt
+       WHERE attempt.ended_at IS NULL
+         AND NOT EXISTS (SELECT 1 FROM dbos.workflow_status status
+           WHERE status.workflow_uuid='v15-attempt:' || attempt.id::text)
+       ORDER BY attempt.created_at LIMIT 100`, []);
+    for (const attempt of attempts) await DBOS.startWorkflow(attemptWorkflow,
+      { workflowID: `v15-attempt:${attempt.id}` })(attempt.id as AttemptId);
+    return transitions.length + attempts.length;
+  };
+  let effectSweep: Promise<unknown> | null = null;
+  const effectSweepTimer = setInterval(() => {
+    if (effectSweep) return;
+    effectSweep = startUnstartedEffects()
+      .catch((error: unknown) => { console.error("stage effect sweep failed", error); })
+      .finally(() => { effectSweep = null; });
+  }, 30_000);
   let pullRequestPoll: Promise<unknown> | null = null;
   let isPullRequestPollClosing = false;
   let pullRequestTimer: ReturnType<typeof setInterval> | null = null;
@@ -377,6 +420,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   return {
     app,
     dispatch_launches: dispatchLaunches,
+    start_unstarted_effects: startUnstartedEffects,
     seed_builtins: () => seedBuiltins(definitions),
     poll_pull_requests: pollPullRequests,
     pull_request_poll_interval_ms: config.pull_request_reader ? pullRequestPollIntervalMs : null,
@@ -391,6 +435,8 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
       return selectOrphanedVersionRuns(await projections.list_application_versions(), config.application_version);
     },
     async close() {
+      clearInterval(effectSweepTimer);
+      await Promise.allSettled(effectSweep ? [effectSweep] : []);
       isPullRequestPollClosing = true;
       if (pullRequestTimer) clearInterval(pullRequestTimer);
       pullRequestTimer = null;

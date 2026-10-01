@@ -4,11 +4,13 @@ import { transitionEffectWorkflowId, transitionIdFor } from "../decision/ids";
 import type { RunSnapshot } from "../decision/snapshot";
 import { err, ok, type Result, type RunTransitionId, type SessionId, type WorkflowRunId } from "../domain/primitives";
 import type { CoreStatus } from "../domain/records";
+import type { JsonValue } from "../domain/primitives";
+import type { StateName } from "../domain/stage-machine";
 import type { RunTransitionRecord, SessionStatusWrite, TransitionEffectDescriptor, TransitionLaunchReason, TransitionOwner } from "../domain/run-record";
 import type { AdapterRegistry } from "../runtime/executor-registry";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 
-const CORE_EFFECT_NAMES = new Set(["none", "start_stage", "start_attempt", "deliver_message", "resume_wait"]);
+const CORE_EFFECT_NAMES = new Set(["none", "start_stage", "start_attempt", "deliver_message", "resume_wait", "stage_machine_effects"]);
 
 /** `oakridge.session_status` and `oakridge.attempt_status` share this vocabulary. */
 export type SessionLifecycleStatus = CoreStatus;
@@ -22,6 +24,10 @@ export interface CommitTransitionInput {
   readonly effect: TransitionEffectDescriptor;
   /** Adapter-owned cohort state committed under the same owner version. */
   readonly cohort_stage_data?: import("../domain/primitives").JsonValue;
+  readonly cohort_state?: StateName;
+  readonly event?: JsonValue;
+  readonly from_state?: StateName | null;
+  readonly to_state?: StateName | null;
   readonly actor: string;
   readonly changed_at: string;
 }
@@ -86,9 +92,12 @@ const updateOwner = async (
   const parameters = [input.owner.id, input.expected_version, input.change.status, input.change.blocked_reason,
     input.change.next_actor, input.change.outcome === null ? null : JSON.stringify(input.change.outcome), input.changed_at];
   if (input.owner.kind !== "run") parameters.push(input.run_id);
-  if (input.owner.kind === "cohort") parameters.push(JSON.stringify(input.cohort_stage_data ?? null));
+  if (input.owner.kind === "cohort") {
+    parameters.push(JSON.stringify(input.cohort_stage_data ?? null));
+    parameters.push(input.cohort_state ?? null);
+  }
   const stageDataAssignment = input.owner.kind === "cohort"
-    ? ",stage_data=COALESCE($9::jsonb,stage_data)"
+    ? ",stage_data=COALESCE($9::jsonb,stage_data),state=COALESCE($10::text,state)"
     : "";
   const rows = await tx.query<VersionRow>(
     `UPDATE oakridge.${target.table}
@@ -120,14 +129,15 @@ const insertTransition = async (
   await tx.query(
     `INSERT INTO oakridge.run_transition
        (id,run_id,owner_kind,owner_run_id,owner_stage_instance_id,owner_cohort_id,launch_reason,
-        prior_owner_version,resulting_owner_version,effect_descriptor,effect_workflow_id,actor,created_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13::timestamptz)`,
+        prior_owner_version,resulting_owner_version,event,from_state,to_state,effect_descriptor,effect_workflow_id,actor,created_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13::jsonb,$14,$15,$16,$17::timestamptz)`,
     [transition_id, input.run_id, input.owner.kind,
       input.owner.kind === "run" ? input.owner.id : null,
       input.owner.kind === "stage_instance" ? input.owner.id : null,
       input.owner.kind === "cohort" ? input.owner.id : null,
-      input.launch_reason, input.expected_version, resulting_version, JSON.stringify(effect),
-      effect_workflow_id, input.actor, input.changed_at],
+      input.launch_reason, input.expected_version, resulting_version,
+      JSON.stringify(input.event ?? { kind: "derive" }), input.from_state ?? null, input.to_state ?? null,
+      JSON.stringify(effect), effect_workflow_id, input.actor, input.changed_at],
   );
   return { transition_id, owner: input.owner, prior_owner_version: input.expected_version,
     resulting_owner_version: resulting_version, effect_descriptor: effect, effect_workflow_id };

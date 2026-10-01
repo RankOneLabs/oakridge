@@ -46,8 +46,12 @@ export interface RunTransitionRecord {
   readonly launch_reason: TransitionLaunchReason;
   readonly prior_owner_version: number;
   readonly resulting_owner_version: number;
+  readonly event: JsonValue;
+  readonly from_state: string | null;
+  readonly to_state: string | null;
   readonly effect_descriptor: TransitionEffectDescriptor;
   readonly effect_workflow_id: string;
+  readonly effects_started_at: string | null;
   readonly actor: string;
   readonly created_at: string;
 }
@@ -145,6 +149,7 @@ export interface OpenCohort {
   readonly id: CohortId;
   readonly cohort_key: string;
   readonly stage_data: JsonValue;
+  readonly depends_on?: readonly string[];
 }
 
 /** One declared output slot, read back off the stage's pinned contract. */
@@ -164,7 +169,7 @@ export interface OpenStageCohorts {
 
 export type OpenStageCohortsResult =
   | { readonly kind: "opened" | "already_open"; readonly cohort_ids: readonly CohortId[] }
-  | { readonly kind: "stage_not_found"; readonly detail: string };
+  | { readonly kind: "stage_not_found" | "stage_not_active"; readonly detail: string };
 
 /**
  * An adapter's decision about one cohort, committed under the cohort's own

@@ -66,3 +66,9 @@ export const waitGateIdFor = (artifact_id: ArtifactId): WaitId =>
   stableUuid(`v15-wait:${artifact_id}`) as WaitId;
 
 export const waitGateCommandWorkflowId = (artifact_id: ArtifactId): string => `v15-wait:${artifact_id}`;
+
+export const stageGateIdFor = (cohort_id: CohortId, gate: string, round: number): WaitId =>
+  stableUuid(`v15-gate:${cohort_id}:${gate}:${round}`) as WaitId;
+
+export const stageGateCommandWorkflowId = (cohort_id: CohortId, gate: string, round: number): string =>
+  `v15-gate:${cohort_id}:${gate}:${round}`;
