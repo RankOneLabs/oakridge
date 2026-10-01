@@ -96,12 +96,7 @@ export interface OakridgeRuntimeConfig {
   /** Bearer token required on state-changing requests; absent on a loopback bind. */
   readonly control_token?: string;
   readonly git_commands?: GitCommandRunner;
-  /**
-   * Reads the pull requests cohorts are waiting on. Absent when the backend has
-   * no credentials for the forge, in which case nothing polls and an operator
-   * confirms merges by hand through the same route.
-   */
-  readonly pull_request_reader?: PullRequestReader;
+  readonly pull_request_reader: PullRequestReader;
   readonly pull_request_poll_interval_ms?: number;
   readonly now?: () => string;
 }
@@ -112,13 +107,8 @@ export interface OakridgeRuntime {
   dispatch_launches(): Promise<number>;
   /** Writes the built-in workflow definitions. Safe to call repeatedly. */
   seed_builtins(): Promise<void>;
-  /**
-   * Asks the forge about every cohort parked on its pull request, and closes
-   * the waits whose pull requests have merged. Resolves to null when no reader
-   * is configured, which is a backend where merges are confirmed by hand.
-   */
-  poll_pull_requests(): Promise<readonly StagePullRequestPollOutcome[] | null>;
-  readonly pull_request_poll_interval_ms: number | null;
+  poll_pull_requests(): Promise<readonly StagePullRequestPollOutcome[]>;
+  readonly pull_request_poll_interval_ms: number;
   start_unstarted_effects(): Promise<number>;
   is_pull_request_poll_running(): boolean;
   pause_pull_request_polling(): Promise<() => void>;
@@ -148,11 +138,11 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const runs = new PostgresWorkflowRunRepository(sql);
   const promptTemplates = createPromptTemplateLoader(config.prompt_template_directory);
   const writer = new PostgresRunRecordWriter(sql, adapterRegistry);
-  const runRecords = new PostgresRunRecordRepository(sql, writer);
   const machineRegistry = new StageMachineRegistry();
   const registeredEffects = new Map<string, RegisteredEffect>();
   registerDevFlowMachine(machineRegistry, registeredEffects);
   const definitions = new PostgresWorkflowDefinitionRepository(sql, adapterRegistry, machineRegistry);
+  const stages = new PostgresStageInstanceRepository(sql);
   const startEffects = async (transition_ids: readonly RunTransitionId[]): Promise<void> => {
     if (transition_ids.length === 0) return;
     const rows = await sql.query<{ readonly id: string; readonly effect_workflow_id: string }>(
@@ -167,8 +157,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
       return stage ? loadStageInputs(stage.stage_contract, cohort_key) : {};
     },
     start_effects: startEffects, now });
-  runRecords.set_stage_event_applier(stageEvents);
-  const stages = new PostgresStageInstanceRepository(sql);
+  const runRecords = new PostgresRunRecordRepository(sql, writer, stageEvents);
   const artifacts = new PostgresArtifactRepository(sql);
   const collaboration = new PostgresCollaborationRepository(sql);
   const pullRequests = new PostgresDevFlowPullRequestRepository(sql);
@@ -392,19 +381,8 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     find_executor: findExecutorAdapter, now,
   });
 
-  /**
-   * A cohort fact from outside any machine's loop — the forge poller, an
-   * operator's confirmed merge, a verification the final-stage route performed.
-   *
-   * It goes through the cohort's own driver and the same single-writer commit
-   * the machine's step uses, then wakes the machine so it acts on the new state
-   * without waiting out its bounded recheck.
-   */
-  const pollPullRequests = (): Promise<readonly StagePullRequestPollOutcome[] | null> => {
-    const reader = config.pull_request_reader;
-    if (!reader) return Promise.resolve(null);
-    return trackDispatch(() => pollStagePullRequests({ sql, reader, stage_events: stageEvents }));
-  };
+  const pollPullRequests = (): Promise<readonly StagePullRequestPollOutcome[]> =>
+    trackDispatch(() => pollStagePullRequests({ sql, reader: config.pull_request_reader, stage_events: stageEvents }));
   const retryStageCohort = async (target: RetryCohortTarget, idempotency_key: string): Promise<RetryCohortResult> => {
     const cohort_id = target.kind === "cohort" ? target.cohort_id
       : (await runRecords.find_cohort_location(target.stage_instance_id,
@@ -458,7 +436,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   let isPullRequestPollClosing = false;
   let pullRequestTimer: ReturnType<typeof setInterval> | null = null;
   const startPullRequestTimer = (): void => {
-    if (!config.pull_request_reader || isPullRequestPollClosing || pullRequestTimer) return;
+    if (isPullRequestPollClosing || pullRequestTimer) return;
     pullRequestTimer = setInterval(() => {
       if (pullRequestPoll) return;
       pullRequestPoll = pollPullRequests()
@@ -503,8 +481,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
       now, send_run_wake: sendRunWakeHint },
     gate_resume: { records: runRecords, now, send_run_wake: sendRunWakeHint },
     cohort_pull_requests: { refresh: async (cohort_id) => {
-      const reader = config.pull_request_reader;
-      if (reader) await pollStagePullRequests({ sql, reader, stage_events: stageEvents }, cohort_id);
+      await pollStagePullRequests({ sql, reader: config.pull_request_reader, stage_events: stageEvents }, cohort_id);
       const rows = await sql.query<{ readonly state: string }>(
         "SELECT state FROM oakridge.cohort WHERE id=$1", [cohort_id]);
       return rows[0] ?? null;
@@ -535,7 +512,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     start_unstarted_effects: startUnstartedEffects,
     seed_builtins: () => seedBuiltins(definitions),
     poll_pull_requests: pollPullRequests,
-    pull_request_poll_interval_ms: config.pull_request_reader ? pullRequestPollIntervalMs : null,
+    pull_request_poll_interval_ms: pullRequestPollIntervalMs,
     is_pull_request_poll_running: () => pullRequestTimer !== null,
     async pause_pull_request_polling() {
       if (pullRequestTimer) clearInterval(pullRequestTimer);

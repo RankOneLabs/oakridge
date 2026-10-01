@@ -146,9 +146,9 @@ test("session message persistence makes delivery idempotent and readable by coho
       WHERE id='44444444-4444-4444-8444-444444444444'`, []);
     await sql.query(`INSERT INTO oakridge.run_transition
       (id,run_id,owner_kind,owner_cohort_id,launch_reason,prior_owner_version,resulting_owner_version,
-       effect_descriptor,effect_workflow_id,actor)
+       event,effect_descriptor,effect_workflow_id,actor)
       VALUES ('88888888-8888-4888-8888-888888888888','22222222-2222-4222-8222-222222222222','cohort',
-        '44444444-4444-4444-8444-444444444444','initial',0,1,'{"kind":"none"}',
+        '44444444-4444-4444-8444-444444444444','initial',0,1,'{"kind":"derive"}','{"kind":"none"}',
         'v15-effect:cohort:44444444-4444-4444-8444-444444444444:1','test')`, []);
     await sql.query(`INSERT INTO oakridge.attempt
       (id,run_id,stage_instance_id,cohort_id,attempt_number,status,adapter_type,request)

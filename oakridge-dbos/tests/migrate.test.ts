@@ -158,9 +158,9 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
     await sql.transaction(async (tx) => {
       await tx.query("UPDATE oakridge.cohort SET durable_version=durable_version+1 WHERE id='00000000-0000-4000-8000-000000000005'", []);
       await tx.query(`INSERT INTO oakridge.run_transition
-        (id,run_id,owner_kind,owner_cohort_id,launch_reason,prior_owner_version,resulting_owner_version,effect_descriptor,effect_workflow_id,actor)
+        (id,run_id,owner_kind,owner_cohort_id,launch_reason,prior_owner_version,resulting_owner_version,event,effect_descriptor,effect_workflow_id,actor)
         VALUES ('00000000-0000-4000-8000-000000000040','00000000-0000-4000-8000-000000000002','cohort',
-          '00000000-0000-4000-8000-000000000005','operator',0,1,'{"kind":"start_attempt"}','effect:test','operator')`, []);
+          '00000000-0000-4000-8000-000000000005','operator',0,1,'{"kind":"derive"}','{"kind":"start_attempt"}','effect:test','operator')`, []);
     });
     await sql.query(`INSERT INTO oakridge.attempt
       (id,run_id,stage_instance_id,cohort_id,attempt_number,status,adapter_type,request)
@@ -207,20 +207,14 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
         '00000000-0000-4000-8000-000000000005','gate','{}','gate:test')`, [gateId]);
     for (const artifactId of artifactIds) await sql.query(
       "INSERT INTO oakridge.wait_gate_artifact_revision (wait_gate_id,artifact_id,run_id) VALUES ($1,$2,'00000000-0000-4000-8000-000000000002')", [gateId, artifactId]);
-    await sql.query(`INSERT INTO oakridge.wait_gate_output_slot
-      (wait_gate_id,run_id,receiving_stage_instance_id,output_name,collection_key) VALUES
-      ($1,'00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000003','result',NULL),
-      ($1,'00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000003','report','a'),
-      ($1,'00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000004','assessment',NULL)`, [gateId]);
     await sql.query(`INSERT INTO oakridge.wait_gate
       (id,run_id,stage_instance_id,cohort_id,kind,closes_on,command_workflow_id) VALUES
       ('00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000002',
         '00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000005',
         'external','{}','wait:no-artifact')`, []);
-    expect((await sql.query<{ readonly revisions: string; readonly slots: string }>(`SELECT
-      (SELECT count(*)::text FROM oakridge.wait_gate_artifact_revision WHERE wait_gate_id=$1) AS revisions,
-      (SELECT count(*)::text FROM oakridge.wait_gate_output_slot WHERE wait_gate_id=$1) AS slots`, [gateId]))[0])
-      .toEqual({ revisions: "3", slots: "3" });
+    expect((await sql.query<{ readonly revisions: string }>(
+      "SELECT count(*)::text AS revisions FROM oakridge.wait_gate_artifact_revision WHERE wait_gate_id=$1", [gateId]))[0])
+      .toEqual({ revisions: "3" });
 
     await sql.query(`INSERT INTO oakridge.session_message
       (id,run_id,sender_kind,sender_id,recipient_kind,recipient_id,thread_id,message_id,body,delivery_key)
@@ -239,9 +233,9 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
     await sql.transaction(async (tx) => {
       await tx.query("UPDATE oakridge.stage_instance SET durable_version=durable_version+1 WHERE id='00000000-0000-4000-8000-000000000003'", []);
       await tx.query(`INSERT INTO oakridge.run_transition
-        (id,run_id,owner_kind,owner_stage_instance_id,launch_reason,prior_owner_version,resulting_owner_version,effect_descriptor,effect_workflow_id,actor)
+        (id,run_id,owner_kind,owner_stage_instance_id,launch_reason,prior_owner_version,resulting_owner_version,event,effect_descriptor,effect_workflow_id,actor)
         VALUES ('00000000-0000-4000-8000-000000000041','00000000-0000-4000-8000-000000000002','stage_instance',
-          '00000000-0000-4000-8000-000000000003','recovery',0,1,'{"kind":"none"}','effect:stage-test','system')`, []);
+          '00000000-0000-4000-8000-000000000003','recovery',0,1,'{"kind":"derive"}','{"kind":"none"}','effect:stage-test','system')`, []);
     });
     expect((await sql.query<{ readonly cohort_version: string; readonly stage_version: string; readonly run_version: string }>(`SELECT
       (SELECT durable_version::text FROM oakridge.cohort WHERE id='00000000-0000-4000-8000-000000000005') AS cohort_version,
@@ -250,9 +244,9 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
       .toEqual({ cohort_version: "1", stage_version: "1", run_version: "0" });
 
     await expect(sql.query(`INSERT INTO oakridge.run_transition
-      (id,run_id,owner_kind,owner_stage_instance_id,launch_reason,prior_owner_version,resulting_owner_version,effect_descriptor,effect_workflow_id,actor)
+      (id,run_id,owner_kind,owner_stage_instance_id,launch_reason,prior_owner_version,resulting_owner_version,event,effect_descriptor,effect_workflow_id,actor)
       VALUES ('00000000-0000-4000-8000-000000000042','00000000-0000-4000-8000-000000000002','stage_instance',
-        '00000000-0000-4000-8000-000000000003','recovery',41,42,'{"kind":"none"}','effect:invalid-version','system')`,
+        '00000000-0000-4000-8000-000000000003','recovery',41,42,'{"kind":"derive"}','{"kind":"none"}','effect:invalid-version','system')`,
     [])).rejects.toThrow("does not match persisted version");
   } finally {
     await sql.close();

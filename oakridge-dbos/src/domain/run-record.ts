@@ -193,37 +193,6 @@ export type RecordCohortEventResult =
   | { readonly kind: "recorded"; readonly transition: CommittedRunTransition }
   | { readonly kind: "cohort_not_found" | "version_conflict" | "owner_terminal" | "invalid_effect"; readonly detail: string };
 
-/**
- * A gate this cohort has had decided, and what the decision did to the slot it
- * held. The driver needs both: `release` and `revise` are the same closed wait
- * to core, and only the action tells the cohort which way to go next.
- */
-export interface DecidedCohortGate {
-  readonly wait_id: WaitId;
-  readonly output_name: string | null;
-  readonly action: string;
-  readonly artifact_id: ArtifactId | null;
-  readonly accepted: boolean;
-  readonly decided_at: string;
-}
-
-/**
- * A wait this cohort is parked on, and the revision it holds.
- *
- * The artifact is carried because *publication* is the fact a cohort machine
- * advances on. Acceptance is the gate's answer, not the agent's: a machine that
- * could only see accepted rows entered its review phase after the gate had
- * already decided, so the decision arrived at a phase that treats it as already
- * acted on and the cohort parked with nobody able to move it.
- */
-export interface OpenCohortWait {
-  readonly wait_id: WaitId;
-  readonly kind: "gate" | "handoff" | "external";
-  readonly output_name: string | null;
-  readonly artifact_id: ArtifactId | null;
-  readonly artifact_body?: JsonValue | null;
-}
-
 /** The cohort state a machine reads before applying its next event. */
 export interface CohortMachineState {
   readonly run_id: WorkflowRunId;
@@ -267,11 +236,7 @@ export interface CohortMachineState {
     readonly created_at: string;
     readonly ended_at: string | null;
   } | null;
-  readonly latest_assessment_published_at?: string | null;
   readonly accepted_outputs: readonly ArtifactEnvelope[];
-  /** Every open wait this cohort is parked on, oldest first. */
-  readonly open_waits: readonly OpenCohortWait[];
-  readonly decided_gates: readonly DecidedCohortGate[];
 }
 
 /* ------------------------------------------------------------------ *
@@ -418,8 +383,6 @@ export type PublishWorkOrderArtifactResult =
   | { readonly kind: "already_applied"; readonly artifact_id: ArtifactId; readonly run_id: WorkflowRunId; readonly cohort_id: CohortId; readonly record_version: RunRecordVersion }
   | { readonly kind: "work_not_found" | "invalid_capability" | "work_abandoned" | "work_not_active" | "slot_not_found"; readonly detail: string }
   | { readonly kind: "slot_already_released"; readonly artifact_id: ArtifactId; readonly detail: string }
-  /** A different, non-replay publish arrived while the slot is already parked pending an earlier one's wait. */
-  | { readonly kind: "slot_pending"; readonly wait_id: WaitId; readonly detail: string }
   | { readonly kind: "idempotency_conflict"; readonly artifact_id: ArtifactId; readonly detail: string }
   | { readonly kind: "refused"; readonly code: string; readonly detail: string }
   | { readonly kind: "enrichment_unavailable"; readonly detail: string };

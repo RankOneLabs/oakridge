@@ -21,7 +21,6 @@ test("compiles plural v15 into executor-independent materialization contracts", 
   expect(compiled.value.stages.build?.outputs.find((output) => output.name === "assessment")?.release.kind).toBe("gate");
   expect(compiled.value.stages.assessor).toBeUndefined();
   expect(compiled.value.edges.find((edge) => edge.consumer_stage === "build" && edge.consumer_input === "brief")?.delivery).toBe("unit_complete");
-  expect(compiled.value.transitions).not.toContainEqual(expect.objectContaining({ trigger: expect.objectContaining({ stage: "assessor" }) }));
 });
 
 /**
@@ -147,17 +146,4 @@ test("a schema-invalid stage config joins the all-at-once diagnostic report", as
     expect.objectContaining({ kind: "unbound_placeholder", stage_key: "build", placeholder: "MISSING" }),
     expect.objectContaining({ kind: "invalid_stage_config", stage_key: "invalid_build", contract_item: "config" }),
   ]));
-});
-
-test("automated assessment transitions are visible manifest flags without rejecting compilation", async () => {
-  const loaded = await loadDevFlowV15();
-  if (!loaded.ok) throw new Error(loaded.error.detail);
-  const transition = { trigger: { kind: "assessment_outcome" as const, stage: "assessor", item: "approved" },
-    launch: { stage: "build", session_role: "build" as const, launch_reason: "input_revision" as const } };
-  const compiled = compileWorkflowDefinition({ ...loaded.value, graph: { ...loaded.value.graph, transitions: [transition] } });
-  expect(compiled.ok).toBe(true);
-  if (!compiled.ok) return;
-  expect(compiled.value.flags).toContainEqual(expect.objectContaining({
-    kind: "automated_assessment_transition", stage_key: "build", trigger: "approved",
-  }));
 });

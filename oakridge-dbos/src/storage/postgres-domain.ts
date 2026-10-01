@@ -245,10 +245,8 @@ interface ArtifactRevisionRow {
 /**
  * One revision, from the four tables v15 splits an artifact across.
  *
- * The slot identity comes from `artifact_acceptance` once the revision has been
- * accepted, and from the wait's own `wait_gate_output_slot` while it is still
- * parked pending a gate — a gated artifact has no acceptance row yet, and the
- * review surface exists precisely to look at it in that state.
+ * Output identity comes from `artifact_acceptance` after acceptance and from
+ * `cohort_output` while the revision is awaiting a gate decision.
  */
 const ARTIFACT_REVISION_SOURCE = `
   FROM oakridge.artifact artifact

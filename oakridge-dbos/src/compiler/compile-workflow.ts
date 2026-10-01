@@ -323,10 +323,7 @@ export const compileWorkflowDefinition = (
   });
   const blockedByRequiredEdge = new Set(edges.filter((edge) => !readOwn(stages, edge.consumer_stage)?.inputs.find((input) => input.name === edge.consumer_input)?.optional).map((edge) => edge.consumer_stage));
   const source_stages = Object.keys(stages).filter((stageKey) => !blockedByRequiredEdge.has(stageKey)).sort();
-  const flags = (definition.graph.transitions ?? []).filter((transition) => transition.trigger.kind === "assessment_outcome")
-    .map((transition) => ({ kind: "automated_assessment_transition" as const, stage_key: transition.launch.stage,
-      session_role: transition.launch.session_role, contract_item: transition.trigger.item, trigger: transition.trigger.item }));
-  return ok({ manifest_version: 1, stages, edges, transitions: definition.graph.transitions ?? [], source_stages, flags });
+  return ok({ manifest_version: 1, stages, edges, source_stages });
 };
 
 export interface CompileManifestVersions {

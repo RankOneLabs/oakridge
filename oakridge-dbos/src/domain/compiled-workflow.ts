@@ -78,21 +78,11 @@ export interface CompiledEdge {
   readonly delivery: InputDelivery;
 }
 
-export interface CompiledTransition {
-  readonly trigger: { readonly kind: "stage_output" | "assessment_outcome" | "operator"; readonly stage: StageKey; readonly item: string };
-  readonly launch: { readonly stage: StageKey; readonly session_role: StageOperatorRole; readonly launch_reason: import("./delegated-session").SessionLaunchReasonName };
-}
-
 export interface CompiledWorkflowDefinition {
   readonly manifest_version: 1;
   readonly bundle_pin?: WorkflowRunBundlePin;
-  /** Policy findings preserved for operator review without making the definition structurally invalid. */
-  readonly flags?: readonly { readonly kind: "automated_assessment_transition"; readonly stage_key: StageKey;
-    readonly session_role: StageOperatorRole | null; readonly contract_item: string; readonly trigger: string }[];
   readonly stages: Readonly<Record<StageKey, CompiledStageContract>>;
   readonly edges: readonly CompiledEdge[];
-  /** Named revision and retry routes retained for the decision runtime. */
-  readonly transitions: readonly CompiledTransition[];
   readonly source_stages: readonly StageKey[];
 }
 

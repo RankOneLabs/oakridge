@@ -169,10 +169,7 @@ export const createCollaborationApp = (dependencies: CollaborationHttpDependenci
    * v1's `emit_revision` superseded an artifact's pending revision in place;
    * the v15 run record has no equivalent operation. `publish_artifact`
    * (`storage/postgres-run-record-repository.ts`) hands one artifact to a
-   * declared slot and refuses a second publication against that slot in every
-   * state a `current` artifact can be found in: `slot_pending` while the
-   * artifact awaits its gate, `slot_already_released` once the gate let it
-   * through. A replacement after a rejection is a *different attempt's* to
+   * declared machine output and refuses a conflicting publication. A replacement after a rejection is a *different attempt's* to
    * publish, which is what makes the revision chain a chain. There is nothing
    * here left to build a body edit on top of — no route can construct a publish
    * call that would succeed. The route stays mounted because kbbl's direct-edit
