@@ -277,3 +277,17 @@ test("listByArtifact reads back the stored workflow identity, not a raw undefine
   const [row] = store.listByArtifact("artifact-1");
   expect(row?.workflow).toEqual(workflow);
 });
+
+
+test("boot recovery preserves dispatch evidence for an initial-only session", () => {
+  const store = makeStore();
+  const { row } = claim(store, "recovered-initial", startSpecHash(SPEC));
+  const turn_key = "initial" as TurnKey;
+  store.acceptTurn({ sid: row.sid, turn_key, source: "initial", payload: "build it" });
+  expect(store.hasDispatchedTurns(row.sid)).toBe(false);
+  store.markTurnPrompting(row.sid, turn_key);
+  const started_at = store.getTurn(row.sid, turn_key)?.started_at;
+  store.bootSweep();
+  expect(store.getTurn(row.sid, turn_key)).toEqual(expect.objectContaining({ status: "accepted", started_at }));
+  expect(store.hasDispatchedTurns(row.sid)).toBe(true);
+});

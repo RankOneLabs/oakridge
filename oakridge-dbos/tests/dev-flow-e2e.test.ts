@@ -1,5 +1,5 @@
 /** Public v2 proof: real runtime, repositories, routes, workflows, gates and handoffs; only the agent is scripted. */
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { chromium, type Browser, type Page } from "@playwright/test";
 
 import type { OperatorParkedGate } from "../src/domain/operator-projections";
@@ -28,6 +28,19 @@ if (acceptanceEnabled) {
     sql = PgPostgresExecutor.connect(databaseUrl);
     browser = await chromium.launch({ headless: true });
   }, 120_000);
+
+  afterEach(async () => {
+    if (!oakridge) return;
+    // A failed assertion must not leave an agent running against the next
+    // test's fake forge/scenario. Cancel through the same public boundary.
+    const runs = await fetch(`${oakridge.base_url}/runs`).then((response) => response.json()) as readonly {
+      readonly id: string; readonly status: string;
+    }[];
+    for (const run of runs.filter((run) => run.status === "active" || run.status === "pending")) {
+      const response = await fetch(`${oakridge.base_url}/workflow_runs/${run.id}/cancel`, { method: "POST" });
+      if (!response.ok) throw new Error(`acceptance cleanup could not cancel ${run.id}: ${await response.text()}`);
+    }
+  }, 60_000);
 
   afterAll(async () => {
     if (oakridge) await oakridge.stop();

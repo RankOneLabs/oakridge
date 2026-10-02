@@ -292,9 +292,11 @@ export const createGitRepositoryFixture = async (): Promise<GitRepositoryFixture
       return output.trim().split(/\s+/)[0] || null;
     },
     async origin_branch_parent_sha(branch) {
-      if (!(await git(workingPath, ["ls-remote", "origin", `refs/heads/${branch}`])).trim()) return null;
-      await git(workingPath, ["fetch", "origin", branch]);
-      const commits = (await git(workingPath, ["rev-list", "--first-parent", "--max-count=2", `origin/${branch}`])).trim().split("\n");
+      // Observe the fixture's bare origin without mutating the build checkout's
+      // remote-tracking refs or FETCH_HEAD while its agent is fetching/pushing.
+      const head = (await git(originPath, ["for-each-ref", "--format=%(objectname)", `refs/heads/${branch}`])).trim();
+      if (!head) return null;
+      const commits = (await git(originPath, ["rev-list", "--first-parent", "--max-count=2", head])).trim().split("\n");
       return commits[1] ?? null;
     },
     // Committed from a scratch worktree so the fixture's own checkout is never

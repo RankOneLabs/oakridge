@@ -536,16 +536,22 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
    * capability issued to one attempt can never authenticate another.
    */
   async publish_artifact(request: PublishWorkOrderArtifact): Promise<PublishWorkOrderArtifactResult> {
-    return this.publishStageArtifact(request);
+    return this.publishStageArtifact(request, false);
   }
 
-  private async publishStageArtifact(request: PublishWorkOrderArtifact): Promise<PublishWorkOrderArtifactResult> {
+  check_artifact_publication(request: PublishWorkOrderArtifact): Promise<PublishWorkOrderArtifactResult | null> {
+    return this.publishStageArtifact(request, true);
+  }
+
+  private publishStageArtifact(request: PublishWorkOrderArtifact, check_only: false): Promise<PublishWorkOrderArtifactResult>;
+  private publishStageArtifact(request: PublishWorkOrderArtifact, check_only: true): Promise<PublishWorkOrderArtifactResult | null>;
+  private async publishStageArtifact(request: PublishWorkOrderArtifact, check_only: boolean): Promise<PublishWorkOrderArtifactResult | null> {
     const applier = this.stage_event_applier;
     const seed = await this.load_work_order_capability_seed();
     const expected = capabilityHash(capabilityFor(seed, request.attempt_id as unknown as import("../domain/primitives").WorkOrderId));
     const transition_ids: RunTransitionId[] = [];
     try {
-      const result = await this.sql.transaction(async (tx): Promise<PublishWorkOrderArtifactResult> => {
+      const result = await this.sql.transaction(async (tx): Promise<PublishWorkOrderArtifactResult | null> => {
         const location = await tx.query<{ readonly cohort_id: string }>(
           "SELECT cohort_id::text FROM oakridge.attempt WHERE id=$1", [request.attempt_id]);
         if (location[0]) await applier.lock_stage_cohorts_in(tx, location[0].cohort_id as CohortId);
@@ -600,6 +606,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
           return { kind: "refused", code: "awaiting_review", detail: "cohort is awaiting review" };
         if (replay[0]) return { kind: "idempotency_conflict", artifact_id: replay[0].id as ArtifactId,
             detail: "this attempt already published a different body into that output" };
+        if (check_only) return null;
         const tips = await tx.query<{ readonly id: string; readonly chain_id: string; readonly revision: number }>(
           `SELECT artifact.id::text,artifact.chain_id::text,artifact.revision
            FROM oakridge.cohort_output output JOIN oakridge.artifact artifact ON artifact.id=output.artifact_id

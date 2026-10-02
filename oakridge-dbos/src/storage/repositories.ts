@@ -113,6 +113,8 @@ export interface RunRecordRepository {
    * is accepted directly; a `gate` or `handoff` output is recorded and its slot
    * parked pending the wait that will decide it.
    */
+  /** Returns a replay/refusal after authorization, or null when a new publication may proceed. */
+  check_artifact_publication(request: PublishWorkOrderArtifact): Promise<PublishWorkOrderArtifactResult | null>;
   publish_artifact(request: PublishWorkOrderArtifact): Promise<PublishWorkOrderArtifactResult>;
   /** Decides an operator gate, releasing or invalidating the slots it holds. */
   decide_gate_wait(request: DecideGateWait): Promise<CloseRunOutputWaitResult>;

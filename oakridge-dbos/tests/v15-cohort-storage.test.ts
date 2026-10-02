@@ -21,6 +21,7 @@ import { createDevFlowAdapterRegistry } from "../src/adapters/dev-flow";
 import { attemptIdFor, sessionIdFor, transitionIdFor } from "../src/decision/ids";
 import type { AttemptId, CohortId, JsonValue, SessionId, StageInstanceId, WorkflowRunId } from "../src/domain/primitives";
 import type { WorkOrderId } from "../src/domain/primitives";
+import { publishWorkOrderArtifact } from "../src/runtime/publish-work-order-artifact";
 import { capabilityFor, capabilityHash } from "../src/runtime/resolve-work-order";
 import { applyMigrations } from "../src/storage/migrate";
 import { PostgresRunRecordWriter } from "../src/storage/postgres-run-record";
@@ -194,6 +195,16 @@ test("a lost publication response can be replayed while its build gate is open",
     });
     expect(await publish(prepared, attemptId(30), artifactId(31))).toMatchObject({
       kind: "refused", code: "awaiting_review",
+    });
+    const replay = { attempt_id: attemptId(30), capability: capabilityFor(prepared.seed, attemptId(30) as unknown as WorkOrderId),
+      output_name: "build_result", collection_key: null, body: { summary: artifactId(30) }, idempotency_key: null };
+    const dependencies = { records: prepared.records, now: () => "2026-09-29T00:00:00.000Z",
+      enrich: async () => { throw new Error("replay or invalid capability must not read GitHub"); } };
+    expect(await publishWorkOrderArtifact(replay, dependencies)).toMatchObject({
+      kind: "already_applied", artifact_id: artifactId(30),
+    });
+    expect(await publishWorkOrderArtifact({ ...replay, capability: "invalid" }, dependencies)).toMatchObject({
+      kind: "invalid_capability",
     });
     const rows = await prepared.sql.query<{ readonly artifacts: string; readonly transitions: string }>(
       `SELECT (SELECT count(*)::text FROM oakridge.artifact_owner WHERE cohort_id=$1) AS artifacts,

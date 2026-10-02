@@ -252,3 +252,25 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
     await sql.close();
   }
 }, 60_000);
+
+
+test("an existing pre-C2 baseline is rejected with the missing machine contract", async () => {
+  const scratch = await createScratchDatabase("oakridge_v15_pre_c2");
+  if (!scratch.ok) {
+    if (scratch.error.operation !== "reach_admin_endpoint") throw new Error(`${scratch.error.operation}: ${scratch.error.detail}`);
+    console.warn("v15 pre-C2 PostgreSQL check SKIPPED: no PostgreSQL reachable");
+    return;
+  }
+  scratches.push(scratch.value);
+  const sql = PgPostgresExecutor.connect(scratch.value.url);
+  try {
+    await applyMigrations(sql);
+    expect(await applyMigrations(sql)).toEqual([]);
+    await sql.query("ALTER TABLE oakridge.cohort DROP COLUMN state, DROP COLUMN round, DROP COLUMN depends_on", []);
+    await sql.query("DROP TABLE oakridge.cohort_output", []);
+    await sql.query("ALTER TABLE oakridge.run_transition DROP COLUMN event, DROP COLUMN from_state, DROP COLUMN to_state, DROP COLUMN effects_started_at", []);
+    await sql.query("ALTER TABLE oakridge.attempt ALTER COLUMN request SET NOT NULL", []);
+    await expect(applyMigrations(sql)).rejects.toThrow("cohort.state, cohort.round, cohort.depends_on, cohort_output.cohort_id");
+    await expect(applyMigrations(sql)).rejects.toThrow("attempt.request (nullable)");
+  } finally { await sql.close(); }
+});

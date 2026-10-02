@@ -497,10 +497,13 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
       now, send_run_wake: sendRunWakeHint },
     gate_resume: { records: runRecords, now, send_run_wake: sendRunWakeHint },
     cohort_pull_requests: { refresh: async (cohort_id) => {
-      await pollStagePullRequests({ sql, reader: config.pull_request_reader, stage_events: stageEvents }, cohort_id);
+      const outcomes = await pollStagePullRequests({ sql, reader: config.pull_request_reader, stage_events: stageEvents }, cohort_id);
+      if (outcomes.some((outcome) => outcome.kind === "unavailable")) return { ok: false, error: {
+        operation: "refresh_pull_request", cohort_id, detail: "GitHub pull request status is unavailable; try again later",
+      } };
       const rows = await sql.query<{ readonly state: string }>(
         "SELECT state FROM oakridge.cohort WHERE id=$1", [cohort_id]);
-      return rows[0] ?? null;
+      return { ok: true, value: rows[0] ?? null };
     } },
     collaboration: { artifacts, collaboration, policy_for_artifact_type: collaborationPolicy,
       messages, message_recipients: messageRecipients,

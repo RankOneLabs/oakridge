@@ -319,7 +319,7 @@ test("replacement-required verification exposes the current verification id", as
 
 test("cohort HTTP refresh returns the state observed from GitHub", async () => {
   const cohort_id = "00000000-0000-4000-8000-000000000020";
-  const app = createCohortPullRequestApp({ async refresh() { return { state: "awaiting_merge" }; } });
+  const app = createCohortPullRequestApp({ async refresh() { return { ok: true, value: { state: "awaiting_merge" } }; } });
   const response = await app.request(`/cohorts/${cohort_id}/pull_request/refresh`, { method: "POST" });
   expect(response.status).toBe(200);
   expect(await response.json()).toEqual({ state: "awaiting_merge" });
@@ -402,4 +402,27 @@ test("cohort preparation refuses a deleted stored canonical ref", async () => {
     prepared_at: "2026-09-29T00:00:00Z",
   });
   expect(result).toEqual({ ok: false, error: expect.objectContaining({ kind: "ref_lease_mismatch", detail: expect.stringContaining("missing") }) });
+});
+
+
+test("a failed GitHub refresh returns unavailable instead of stale success", async () => {
+  const app = createCohortPullRequestApp({ async refresh(cohort_id) {
+    return { ok: false, error: { operation: "refresh_pull_request", cohort_id, detail: "GitHub is unavailable" } };
+  } });
+  const response = await app.request("/cohorts/00000000-0000-4000-8000-000000000001/pull_request/refresh", { method: "POST" });
+  expect(response.status).toBe(503);
+  expect(await response.json()).toEqual({ error: "GitHub is unavailable" });
+});
+
+
+test("origin ancestry reads remain consistent while the agent advances its branch", async () => {
+  const fixture = await createGitRepositoryFixture();
+  try {
+    const initial = await fixture.origin_branch_sha(fixture.integration_branch);
+    const advancing = fixture.advance_origin_branch(fixture.integration_branch, "concurrent build");
+    const parents = await Promise.all(Array.from({ length: 20 }, () => fixture.origin_branch_parent_sha(fixture.integration_branch)));
+    await advancing;
+    expect(parents.every((parent) => parent === null || parent === initial)).toBe(true);
+    expect(await fixture.origin_branch_parent_sha(fixture.integration_branch)).toBe(initial);
+  } finally { await fixture.remove(); }
 });

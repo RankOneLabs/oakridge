@@ -751,8 +751,7 @@ export class AcpSessionStore {
       const ts = nowIso();
       this.db.prepare(
         `UPDATE acp_turns
-         SET status = 'accepted', started_at = NULL, completed_at = NULL,
-             failure_code = NULL, failure_detail = NULL
+         SET status = 'accepted', completed_at = NULL, failure_code = NULL, failure_detail = NULL
          WHERE source = 'initial' AND status IN ('prompting', 'unknown')
            AND sid IN (SELECT sid FROM acp_sessions WHERE resumable_key IS NOT NULL
              AND status NOT IN ('failed', 'fenced', 'ended'))`,

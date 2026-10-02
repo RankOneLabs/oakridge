@@ -4,7 +4,12 @@ The v15 migration is a destructive baseline. Run this procedure only after the
 workflow refactor epic has merged and the operator has scheduled a write-free
 maintenance window. Local development and end-to-end databases that recorded
 the old 0015 migration must also be dropped once: migration now refuses a
-ledger whose 0015 row does not describe its schema.
+ledger whose 0015 row does not describe its schema. This includes pre-C2 v15
+databases: the stage-machine baseline requires cohort state/round/dependencies,
+`cohort_output`, transition event/state/effect-start columns, and nullable
+`attempt.request`. An existing 0015 ledger does not upgrade those structures.
+Follow the backup and recreation procedure below; do not delete only the ledger
+or replay the baseline over existing tables.
 
 Oakridge on otto uses one PostgreSQL database for the application schema and
 DBOS: `postgres://oakridge:oakridge@127.0.0.1:54329/oakridge`.

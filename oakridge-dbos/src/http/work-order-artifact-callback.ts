@@ -6,7 +6,7 @@ import { publishWorkOrderArtifact } from "../runtime/publish-work-order-artifact
 import type { RunRecordRepository } from "../storage/repositories";
 
 export interface WorkOrderArtifactCallbackDependencies {
-  readonly records: Pick<RunRecordRepository, "publish_artifact">;
+  readonly records: Pick<RunRecordRepository, "publish_artifact" | "check_artifact_publication">;
   readonly enrich?: (input: { readonly attempt_id: AttemptId; readonly output_name: string; readonly body: JsonValue }) =>
     Promise<Result<JsonValue | null, { readonly code: string; readonly detail: string }>>;
   now(): string;
