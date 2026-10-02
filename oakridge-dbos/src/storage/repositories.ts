@@ -34,6 +34,7 @@ import type {
   SessionStatusWrite,
   RunDecision,
   RunRecordRepositoryError,
+  StageRosterError,
   StartAttempt,
   StartAttemptResult,
 } from "../domain/run-record";
@@ -86,7 +87,7 @@ export interface RunRecordRepository {
   decide_run(run_id: WorkflowRunId, decided_at: string): Promise<Result<RunDecision, RunRecordRepositoryError>>;
   /** Materializes a started stage's cohorts and their declared output slots. Idempotent. */
   open_stage_cohorts(input: OpenStageCohorts): Promise<OpenStageCohortsResult>;
-  fail_stage_roster(stage_instance_id: StageInstanceId, detail: string, failed_at: string): Promise<void>;
+  fail_stage_roster(stage_instance_id: StageInstanceId, detail: string, failed_at: string): Promise<Result<void, StageRosterError>>;
   /** Commits an adapter's cohort decision under the cohort's own durable version. */
   record_cohort_event(input: RecordCohortEvent): Promise<RecordCohortEventResult>;
   commit_cohort_launch(input: CommitCohortLaunch): Promise<Result<CohortLaunchCommitted, CohortLaunchCommitError>>;

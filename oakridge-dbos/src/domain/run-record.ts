@@ -132,6 +132,13 @@ export interface RunRecordRepositoryError {
   readonly detail: string;
 }
 
+export interface StageRosterError {
+  readonly operation: "fail_stage_roster";
+  readonly stage_instance_id: StageInstanceId;
+  readonly kind: "stage_not_found" | "version_conflict" | "invalid_effect";
+  readonly detail: string;
+}
+
 /* ------------------------------------------------------------------ *
  * Cohorts
  * ------------------------------------------------------------------ */

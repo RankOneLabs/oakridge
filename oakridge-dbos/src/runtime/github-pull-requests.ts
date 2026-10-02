@@ -147,6 +147,8 @@ export const pollCohortPullRequests = async (dependencies: CohortPullRequestPoll
 
 interface StagePullRequestRow {
   readonly cohort_id: string;
+  readonly verification_id: string;
+  readonly durable_version: string;
   readonly state: string;
   readonly owner: string;
   readonly name: string;
@@ -155,6 +157,13 @@ interface StagePullRequestRow {
   readonly latest_merged_at: string | null;
   readonly latest_head_sha: string | null;
   readonly latest_base_ref: string | null;
+}
+
+interface CurrentStagePullRequest {
+  readonly id: string;
+  readonly verification_id: string;
+  readonly durable_version: string;
+  readonly state: string;
 }
 
 export interface StagePullRequestPollOutcome {
@@ -173,6 +182,7 @@ export const pollStagePullRequests = async (dependencies: StagePullRequestPollDe
   only_cohort_id: CohortId | null = null): Promise<readonly StagePullRequestPollOutcome[]> => {
   const rows = await dependencies.sql.query<StagePullRequestRow>(
     `SELECT cohort.id::text AS cohort_id,cohort.state,pr.owner,pr.name,
+            verification.id::text AS verification_id,cohort.durable_version::text,
             pr.forge_pull_request_id AS number,
             latest.state AS latest_state,latest.merged_at::text AS latest_merged_at,
             latest.head_sha AS latest_head_sha,latest.base_ref AS latest_base_ref
@@ -203,27 +213,37 @@ export const pollStagePullRequests = async (dependencies: StagePullRequestPollDe
       continue;
     }
     const transition_ids: RunTransitionId[] = [];
-    const state = await dependencies.sql.transaction(async (tx): Promise<string> => {
+    const outcome = await dependencies.sql.transaction(async (tx): Promise<StagePullRequestPollOutcome> => {
       await dependencies.stage_events.lock_stage_cohorts_in(tx, cohort_id);
-      const pull = await tx.query<{ readonly id: string }>(
-        `SELECT verification.pull_request_id::text AS id FROM oakridge.dev_flow_build_cohort build
+      const pull = await tx.query<CurrentStagePullRequest>(
+        `SELECT verification.pull_request_id::text AS id,verification.id::text AS verification_id,
+                cohort.durable_version::text,cohort.state
+         FROM oakridge.dev_flow_build_cohort build
+         JOIN oakridge.cohort cohort ON cohort.id=build.cohort_id
          JOIN oakridge.pull_request_verification verification ON verification.id=build.current_verified_pull_request_id
          WHERE build.cohort_id=$1`, [cohort_id]);
-      if (!pull[0]) return row.state;
+      const current = pull[0];
+      // The GitHub read happened outside the lock. A retry, replacement PR or
+      // another observer may have advanced this cohort while it was in flight.
+      if (!current || current.verification_id !== row.verification_id
+        || current.durable_version !== row.durable_version) {
+        return { cohort_id, state: current?.state ?? row.state, kind: "unchanged" };
+      }
       await tx.query(
         `INSERT INTO oakridge.pull_request_observation
            (id,pull_request_id,head_ref,base_ref,head_sha,state,source,observed_at,merged_at,recorded_at)
          VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,'poll',$6::timestamptz,$7::timestamptz,clock_timestamp())`,
-        [pull[0].id, observation.head_branch, observation.base_branch, observation.head_sha,
+        [current.id, observation.head_branch, observation.base_branch, observation.head_sha,
           observation.state, observation.observed_at, observation.merged_at]);
       const applied = await dependencies.stage_events.apply_in(tx, cohort_id,
         { kind: "external_observed", source: "pr_watcher" as import("../domain/stage-machine").ObserverName,
           observation: observation as unknown as import("../domain/primitives").JsonValue }, transition_ids);
       if (!applied.ok || applied.value.kind === "refused") throw new Error(`PR observation refused: ${JSON.stringify(applied)}`);
-      return applied.value.kind === "applied" ? applied.value.to : row.state;
+      return { cohort_id, state: applied.value.kind === "applied" ? applied.value.to : row.state,
+        kind: "observed" };
     });
     await dependencies.stage_events.start_effects(transition_ids);
-    outcomes.push({ cohort_id, state, kind: "observed" });
+    outcomes.push(outcome);
   }
   return outcomes;
 };

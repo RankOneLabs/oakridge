@@ -155,6 +155,7 @@ export const runMachineWorkflow = DBOS.registerWorkflow(async (run_id: WorkflowR
  * ------------------------------------------------------------------ */
 
 type StageRosterResult = { readonly kind: "opened"; readonly cohort_ids: readonly CohortId[] }
+  | { readonly kind: "stage_not_active"; readonly detail: string }
   | { readonly kind: "roster_failed"; readonly detail: string };
 
 const openStageCohortsStep = DBOS.registerStep(
@@ -175,11 +176,13 @@ const openStageCohortsStep = DBOS.registerStep(
       if (cohorts.length === 0) throw new Error("cohort roster is empty");
     } catch (error) {
       const detail = String(error);
-      await records.fail_stage_roster(stage_instance_id, detail, now());
+      const failed = await records.fail_stage_roster(stage_instance_id, detail, now());
+      if (!failed.ok) throw new Error(`${failed.error.operation}:${failed.error.kind}:${failed.error.detail}`);
       await sendRunWakeHint(contract.run_id, `roster_failed:${stage_instance_id}`).catch(() => undefined);
       return { kind: "roster_failed", detail };
     }
     const opened = await records.open_stage_cohorts({ run_id: contract.run_id, stage_instance_id, cohorts, opened_at: now() });
+    if (opened.kind === "stage_not_active") return { kind: "stage_not_active", detail: opened.detail };
     if ("detail" in opened) throw new Error(opened.detail);
     return { kind: "opened", cohort_ids: opened.cohort_ids };
   },
@@ -206,7 +209,7 @@ export const stageMachineWorkflow = DBOS.registerWorkflow(async (stage_instance_
       await DBOS.sleepSeconds(MACHINE_FAILURE_BACKOFF_SECONDS);
       continue;
     }
-    if (result.kind === "roster_failed") return result;
+    if (result.kind !== "opened") return result;
     const { effects_sql, stage_events } = workflowServices();
     if (effects_sql && stage_events && result.cohort_ids.length > 0) {
       const effects = await effects_sql.query<{ readonly id: string }>(

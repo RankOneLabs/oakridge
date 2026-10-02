@@ -51,22 +51,31 @@ for (const [machine_name, machine] of Object.entries(machines)) {
   test(`${machine_name} paths reach a terminal or operator state`, () => {
     const states = machine.states;
     const exercised = new Set<number>();
-    const enumerate = (state: string, visited: Set<string>): boolean => {
-      const declaration = states[state as StateName];
+    const boundaries = new Set<StateName>([machine.initial]);
+    const enumerate = (state: StateName, visited: ReadonlySet<StateName>): boolean => {
+      const declaration = states[state];
       if (!declaration) return false;
-      if (["complete", "failed", "cancelled"].includes(declaration.status) || declaration.next_actor === "operator")
+      if (["complete", "failed", "cancelled"].includes(declaration.status)) return true;
+      if (visited.size > 0 && declaration.next_actor === "operator") {
+        boundaries.add(state);
         return true;
+      }
       if (visited.has(state)) return false;
       const next = new Set(visited);
       next.add(state);
-      const exits = machine.transitions.flatMap((row: Transition, index) => "to" in row
-        && !next.has(row.to)
-        && (typeof row.from === "string" ? row.from === state : declaration.status !== "complete")
-        ? [{ row, index }] : []);
-      for (const exit of exits) exercised.add(exit.index);
+      const exits = machine.transitions.flatMap((row: Transition, index) => {
+        if (typeof row.from === "string" && row.from !== state) return [];
+        exercised.add(index);
+        // Refusals and self-loops retain the state. Their guards and effects
+        // are exercised above; enumerate every progressing path here.
+        return "to" in row && row.to !== state ? [{ row, index }] : [];
+      });
       return exits.length > 0 && exits.every(({ row }) => "to" in row && enumerate(row.to, next));
     };
-    expect(enumerate(machine.initial, new Set())).toBe(true);
-    expect(exercised.size).toBeGreaterThan(0);
+    // Set iteration includes newly discovered gates, so paths resume at every
+    // operator boundary instead of silently stopping coverage at the first one.
+    for (const boundary of boundaries) expect(enumerate(boundary, new Set())).toBe(true);
+    expect([...exercised].sort((left, right) => left - right))
+      .toEqual(machine.transitions.map((_, index) => index));
   });
 }

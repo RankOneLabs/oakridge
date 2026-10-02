@@ -41,6 +41,7 @@ import type {
   SessionStatusWrite,
   RunDecision,
   RunRecordRepositoryError,
+  StageRosterError,
   StartAttempt,
   StartAttemptResult,
 } from "../domain/run-record";
@@ -275,20 +276,26 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
     return result;
   }
 
-  async fail_stage_roster(stage_instance_id: StageInstanceId, detail: string, failed_at: string): Promise<void> {
-    const rows = await this.sql.query<{ readonly run_id: string; readonly durable_version: string; readonly status: CoreStatus }>(
-      "SELECT run_id::text,durable_version::text,status FROM oakridge.stage_instance WHERE id=$1", [stage_instance_id]);
-    const stage = rows[0];
-    if (!stage) throw new Error(`stage instance '${stage_instance_id}' was not found`);
-    if (stage.status === "failed") return;
-    const committed = await this.writer.commit({
-      run_id: stage.run_id as WorkflowRunId, owner: { kind: "stage_instance", id: stage_instance_id },
-      expected_version: Number(stage.durable_version), launch_reason: "recovery",
-      change: { status: "failed", blocked_reason: null, next_actor: null,
-        outcome: { kind: "failed", code: "roster_failed", detail } },
-      effect: { kind: "none" }, actor: "core", changed_at: failed_at,
+  async fail_stage_roster(stage_instance_id: StageInstanceId, detail: string, failed_at: string): Promise<Result<void, StageRosterError>> {
+    return this.sql.transaction(async (tx) => {
+      const rows = await tx.query<{ readonly run_id: string; readonly durable_version: string; readonly status: CoreStatus }>(
+        "SELECT run_id::text,durable_version::text,status FROM oakridge.stage_instance WHERE id=$1 FOR UPDATE", [stage_instance_id]);
+      const stage = rows[0];
+      if (!stage) return err({ operation: "fail_stage_roster", stage_instance_id,
+        kind: "stage_not_found", detail: `stage instance '${stage_instance_id}' was not found` });
+      if (isTerminalStatus(stage.status)) return ok(undefined);
+      const committed = await this.writer.commit_in(tx, {
+        run_id: stage.run_id as WorkflowRunId, owner: { kind: "stage_instance", id: stage_instance_id },
+        expected_version: Number(stage.durable_version), launch_reason: "recovery",
+        change: { status: "failed", blocked_reason: null, next_actor: null,
+          outcome: { kind: "failed", code: "roster_failed", detail } },
+        effect: { kind: "none" }, actor: "core", changed_at: failed_at,
+      });
+      if (committed.ok || committed.error.kind === "owner_terminal") return ok(undefined);
+      return err({ operation: "fail_stage_roster", stage_instance_id,
+        kind: committed.error.kind === "owner_not_found" ? "stage_not_found" : committed.error.kind,
+        detail: `stage roster failure commit: ${committed.error.kind}` });
     });
-    if (!committed.ok) throw new Error(`stage roster failure commit: ${committed.error.kind}`);
   }
 
   async record_cohort_event(input: RecordCohortEvent): Promise<RecordCohortEventResult> {
@@ -561,8 +568,6 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         if (request.capability_hash !== expected) return { kind: "invalid_capability", detail: "work-order capability is invalid" };
         if (attempt.status === "cancelled") return { kind: "work_abandoned", detail: "attempt was cancelled" };
         if (attempt.status === "failed") return { kind: "work_not_active", detail: "attempt has failed" };
-        if (attempt.cohort_state === "build_review")
-          return { kind: "refused", code: "awaiting_review", detail: "cohort is awaiting review" };
         const declared = findDeclaredOutput(attempt.stage_contract, request.output_name);
         if (!declared) return { kind: "slot_not_found", detail: `stage does not declare output '${request.output_name}'` };
         const contract = attempt.stage_contract as unknown as import("../domain/compiled-workflow").CompiledStageContract;
@@ -589,9 +594,11 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
              AND output.collection_key IS NOT DISTINCT FROM $3
            ORDER BY output.round DESC LIMIT 1`,
           [request.attempt_id, request.output_name, collection_key, JSON.stringify(request.body)]);
-        if (replay[0]) return replay[0].same_body
-          ? { kind: "already_applied", artifact_id: replay[0].id as ArtifactId, run_id, cohort_id, record_version }
-          : { kind: "idempotency_conflict", artifact_id: replay[0].id as ArtifactId,
+        if (replay[0]?.same_body) return {
+          kind: "already_applied", artifact_id: replay[0].id as ArtifactId, run_id, cohort_id, record_version };
+        if (attempt.cohort_state === "build_review")
+          return { kind: "refused", code: "awaiting_review", detail: "cohort is awaiting review" };
+        if (replay[0]) return { kind: "idempotency_conflict", artifact_id: replay[0].id as ArtifactId,
             detail: "this attempt already published a different body into that output" };
         const tips = await tx.query<{ readonly id: string; readonly chain_id: string; readonly revision: number }>(
           `SELECT artifact.id::text,artifact.chain_id::text,artifact.revision

@@ -59,16 +59,16 @@ const BUILD_MACHINE: JsonValue = {
   initial: "working", stage_type: "delegated_session",
   states: {
     working: { status: "active", blocked_reason: null, next_actor: "agent", session_role: "build" },
-    review: { status: "blocked", blocked_reason: "gate", next_actor: "operator", session_role: null },
+    build_review: { status: "blocked", blocked_reason: "gate", next_actor: "operator", session_role: null },
     done: { status: "complete", blocked_reason: null, next_actor: null, session_role: null },
   },
   transitions: [
     { from: "working", on: { event: "artifact_published", output: "build_result" }, guard: null,
-      to: "review", effects: [{ name: "record_output", args: {} },
+      to: "build_review", effects: [{ name: "record_output", args: {} },
         { name: "open_gate", args: { gate: "build_result_review", outputs: ["build_result"] } }] },
-    { from: "review", on: { event: "gate_decided", gate: "build_result_review", action: "approve" },
+    { from: "build_review", on: { event: "gate_decided", gate: "build_result_review", action: "approve" },
       guard: null, to: "done", effects: [{ name: "accept_outputs", args: { outputs: ["build_result"] } }] },
-    { from: "review", on: { event: "gate_decided", gate: "build_result_review", action: "request_revision" },
+    { from: "build_review", on: { event: "gate_decided", gate: "build_result_review", action: "request_revision" },
       guard: null, to: "working", effects: [{ name: "new_round", args: {} },
         { name: "launch_session", args: { role: "build", reason: "input_revision" } }] },
   ],
@@ -180,6 +180,47 @@ const launchReplacement = async (
       session_id: sessionIdFor(replacement), idempotency_key: key, created_at: "2026-09-29T01:00:00Z" },
   });
 };
+
+test("a lost publication response can be replayed while its build gate is open", async () => {
+  const prepared = await prepare("oakridge_v15_review_replay");
+  if (!prepared) return;
+  try {
+    await openCohort(prepared.sql, STAGE_ID, cohortId(30), "replay");
+    await startAttempt(prepared.sql, { stage: STAGE_ID, cohort: cohortId(30), attempt: attemptId(30),
+      number: 1, status: "active", request: {} });
+    expect((await publish(prepared, attemptId(30), artifactId(30))).kind).toBe("published");
+    expect(await publish(prepared, attemptId(30), artifactId(30))).toMatchObject({
+      kind: "already_applied", artifact_id: artifactId(30),
+    });
+    expect(await publish(prepared, attemptId(30), artifactId(31))).toMatchObject({
+      kind: "refused", code: "awaiting_review",
+    });
+    const rows = await prepared.sql.query<{ readonly artifacts: string; readonly transitions: string }>(
+      `SELECT (SELECT count(*)::text FROM oakridge.artifact_owner WHERE cohort_id=$1) AS artifacts,
+              (SELECT count(*)::text FROM oakridge.run_transition WHERE owner_cohort_id=$1) AS transitions`, [cohortId(30)]);
+    expect(rows).toEqual([{ artifacts: "1", transitions: "1" }]);
+  } finally { await prepared.sql.close(); }
+});
+
+for (const status of ["complete", "failed", "cancelled"] as const) {
+  test(`a late roster failure leaves a ${status} stage terminal without another transition`, async () => {
+    const prepared = await prepare(`oakridge_v15_roster_${status}`);
+    if (!prepared) return;
+    try {
+      const writer = new PostgresRunRecordWriter(prepared.sql, createDevFlowAdapterRegistry());
+      const changed = await writer.commit({ run_id: RUN_ID, owner: { kind: "stage_instance", id: STAGE_ID },
+        expected_version: 0, launch_reason: "operator",
+        change: { status, blocked_reason: null, next_actor: null, outcome: { kind: status } },
+        effect: { kind: "none" }, actor: "test", changed_at: "2026-09-29T00:00:00Z" });
+      if (!changed.ok) throw new Error(JSON.stringify(changed.error));
+      expect(await prepared.records.fail_stage_roster(STAGE_ID, "late roster result", "2026-09-29T00:01:00Z"))
+        .toEqual({ ok: true, value: undefined });
+      expect(await prepared.sql.query<{ readonly status: string; readonly version: string }>(
+        "SELECT status,durable_version::text AS version FROM oakridge.stage_instance WHERE id=$1", [STAGE_ID]))
+        .toEqual([{ status, version: "1" }]);
+    } finally { await prepared.sql.close(); }
+  });
+}
 
 test("two cohorts of one stage instance each publish the stage's declared output", async () => {
   const prepared = await prepare("oakridge_v15_fan_out_publish");
