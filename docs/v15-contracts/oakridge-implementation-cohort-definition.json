@@ -1,0 +1,836 @@
+{
+  "workers": {
+    "build": {
+      "outputs": {
+        "build_result": {
+          "type": "dev.build_result",
+          "revision": "update"
+        },
+        "pr_summary": {
+          "type": "dev.pr_summary",
+          "revision": "update"
+        }
+      },
+      "action_points": {
+        "initial": {
+          "prompt": "workflow-config/prompts/dev-flow/v15/build/build/initial_build.md",
+          "inputs": {
+            "brief": {
+              "from": "inputs.brief"
+            },
+            "repository": {
+              "from": "inputs.repository"
+            }
+          }
+        },
+        "revise": {
+          "prompt": "workflow-config/prompts/dev-flow/v15/build/build/revise.md",
+          "inputs": {
+            "brief": {
+              "from": "inputs.brief"
+            },
+            "repository": {
+              "from": "inputs.repository"
+            },
+            "current_build": {
+              "from": "build.outputs"
+            },
+            "feedback": {
+              "from": "request.feedback"
+            }
+          }
+        },
+        "retry": {
+          "prompt": "workflow-config/prompts/dev-flow/v15/build/build/retry_after_lost_attempt.md",
+          "inputs": {
+            "work": {
+              "from": "build.interrupted.work"
+            },
+            "interrupted": {
+              "from": "build.interrupted.execution"
+            },
+            "build_result": {
+              "from": "build.interrupted.build_result"
+            },
+            "pr_summary": {
+              "from": "build.interrupted.pr_summary"
+            }
+          }
+        },
+        "replace_pr": {
+          "prompt": "workflow-config/prompts/dev-flow/v15/build/build/replacement_pr.md",
+          "inputs": {
+            "brief": {
+              "from": "inputs.brief"
+            },
+            "repository": {
+              "from": "inputs.repository"
+            },
+            "current_build": {
+              "from": "build.outputs"
+            },
+            "closed_pr": {
+              "from": "observations.pr"
+            }
+          }
+        }
+      },
+      "execution": {
+        "settings": {
+          "from": "run.builder"
+        },
+        "pre_authorized_tools": [],
+        "required_tools": [],
+        "yolo": false
+      }
+    },
+    "assessment": {
+      "outputs": {
+        "assessment": {
+          "type": "dev.assessment",
+          "revision": "update"
+        }
+      },
+      "action_points": {
+        "initial": {
+          "prompt": "workflow-config/prompts/dev-flow/v15/build/assessment/initial_assessment.md",
+          "inputs": {
+            "brief": {
+              "from": "inputs.brief"
+            },
+            "repository": {
+              "from": "inputs.repository"
+            },
+            "accepted_build": {
+              "from": "accepted_build"
+            }
+          }
+        },
+        "discuss": {
+          "prompt": "workflow-config/prompts/dev-flow/v15/build/assessment/discuss.md",
+          "inputs": {
+            "brief": {
+              "from": "inputs.brief"
+            },
+            "repository": {
+              "from": "inputs.repository"
+            },
+            "accepted_build": {
+              "from": "assessment.work.input.accepted_build"
+            },
+            "current_assessment": {
+              "from": "assessment.outputs.assessment"
+            },
+            "feedback": {
+              "from": "request.feedback"
+            }
+          }
+        },
+        "retry": {
+          "prompt": "workflow-config/prompts/dev-flow/v15/build/assessment/retry_after_lost_attempt.md",
+          "inputs": {
+            "work": {
+              "from": "assessment.interrupted.work"
+            },
+            "interrupted": {
+              "from": "assessment.interrupted.execution"
+            },
+            "assessment": {
+              "from": "assessment.interrupted.assessment"
+            }
+          }
+        }
+      },
+      "execution": {
+        "settings": {
+          "from": "run.planner"
+        },
+        "pre_authorized_tools": [],
+        "required_tools": [],
+        "yolo": false
+      }
+    }
+  },
+  "decision_tree": {
+    "kind": "match_cohort",
+    "cases": {
+      "complete": {
+        "kind": "match_request",
+        "cases": {
+          "none": {
+            "kind": "wait",
+            "reason": "cohort is terminal"
+          }
+        },
+        "otherwise": {
+          "kind": "reject",
+          "reason": "cohort is terminal"
+        }
+      },
+      "failed": {
+        "kind": "match_request",
+        "cases": {
+          "none": {
+            "kind": "wait",
+            "reason": "cohort is terminal"
+          }
+        },
+        "otherwise": {
+          "kind": "reject",
+          "reason": "cohort is terminal"
+        }
+      },
+      "cancelled": {
+        "kind": "match_request",
+        "cases": {
+          "none": {
+            "kind": "wait",
+            "reason": "cohort is terminal"
+          }
+        },
+        "otherwise": {
+          "kind": "reject",
+          "reason": "cohort is terminal"
+        }
+      }
+    },
+    "otherwise": {
+      "kind": "match_request",
+      "cases": {
+        "cancel": {
+          "kind": "apply",
+          "changes": [
+            {
+              "kind": "fence_execution",
+              "worker": "build"
+            },
+            {
+              "kind": "fence_execution",
+              "worker": "assessment"
+            },
+            {
+              "kind": "set_worker_state",
+              "worker": "build",
+              "state": "cancelled"
+            },
+            {
+              "kind": "set_worker_state",
+              "worker": "assessment",
+              "state": "cancelled"
+            },
+            {
+              "kind": "set_cohort_state",
+              "state": "cancelled"
+            }
+          ],
+          "actions": []
+        },
+        "abandon": {
+          "kind": "apply",
+          "changes": [
+            {
+              "kind": "fence_execution",
+              "worker": "build"
+            },
+            {
+              "kind": "fence_execution",
+              "worker": "assessment"
+            },
+            {
+              "kind": "set_cohort_state",
+              "state": "failed"
+            }
+          ],
+          "actions": []
+        }
+      },
+      "otherwise": {
+        "kind": "match_cohort",
+        "cases": {
+          "pending": {
+            "kind": "match_request",
+            "cases": {
+              "none": {
+                "kind": "apply",
+                "changes": [
+                  {
+                    "kind": "set_cohort_state",
+                    "state": "working"
+                  },
+                  {
+                    "kind": "set_worker_state",
+                    "worker": "build",
+                    "state": "working"
+                  }
+                ],
+                "actions": [
+                  {
+                    "worker": "build",
+                    "action_point": "initial"
+                  }
+                ]
+              }
+            },
+            "otherwise": {
+              "kind": "reject",
+              "reason": "cohort has not started"
+            }
+          },
+          "working": {
+            "kind": "match_worker",
+            "worker": "build",
+            "cases": {
+              "working": {
+                "kind": "match_request",
+                "cases": {
+                  "none": {
+                    "kind": "if",
+                    "fact": "build_outputs_ready",
+                    "then": {
+                      "kind": "apply",
+                      "changes": [
+                        {
+                          "kind": "fence_execution",
+                          "worker": "build"
+                        },
+                        {
+                          "kind": "set_worker_state",
+                          "worker": "build",
+                          "state": "awaiting_review"
+                        }
+                      ],
+                      "actions": []
+                    },
+                    "else": {
+                      "kind": "if",
+                      "fact": "build_execution_interrupted",
+                      "then": {
+                        "kind": "apply",
+                        "changes": [
+                          {
+                            "kind": "set_worker_state",
+                            "worker": "build",
+                            "state": "interrupted"
+                          }
+                        ],
+                        "actions": []
+                      },
+                      "else": {
+                        "kind": "wait",
+                        "reason": "builder response pending"
+                      }
+                    }
+                  }
+                },
+                "otherwise": {
+                  "kind": "reject",
+                  "reason": "builder is working"
+                }
+              },
+              "interrupted": {
+                "kind": "match_request",
+                "cases": {
+                  "retry_build": {
+                    "kind": "apply",
+                    "changes": [
+                      {
+                        "kind": "fence_execution",
+                        "worker": "build"
+                      },
+                      {
+                        "kind": "set_worker_state",
+                        "worker": "build",
+                        "state": "working"
+                      }
+                    ],
+                    "actions": [
+                      {
+                        "worker": "build",
+                        "action_point": "retry"
+                      }
+                    ]
+                  },
+                  "none": {
+                    "kind": "wait",
+                    "reason": "builder retry or abandonment required"
+                  }
+                },
+                "otherwise": {
+                  "kind": "reject",
+                  "reason": "builder is interrupted"
+                }
+              },
+              "awaiting_review": {
+                "kind": "match_request",
+                "cases": {
+                  "accept_build": {
+                    "kind": "apply",
+                    "changes": [
+                      {
+                        "kind": "accept_outputs",
+                        "worker": "build"
+                      },
+                      {
+                        "kind": "capture_accepted_build"
+                      },
+                      {
+                        "kind": "set_worker_state",
+                        "worker": "build",
+                        "state": "accepted"
+                      },
+                      {
+                        "kind": "set_worker_state",
+                        "worker": "assessment",
+                        "state": "working"
+                      }
+                    ],
+                    "actions": [
+                      {
+                        "worker": "assessment",
+                        "action_point": "initial"
+                      }
+                    ]
+                  },
+                  "request_build_changes": {
+                    "kind": "apply",
+                    "changes": [
+                      {
+                        "kind": "fence_execution",
+                        "worker": "build"
+                      },
+                      {
+                        "kind": "fence_execution",
+                        "worker": "assessment"
+                      },
+                      {
+                        "kind": "clear_acceptance",
+                        "worker": "build"
+                      },
+                      {
+                        "kind": "clear_acceptance",
+                        "worker": "assessment"
+                      },
+                      {
+                        "kind": "clear_accepted_build"
+                      },
+                      {
+                        "kind": "set_cohort_state",
+                        "state": "working"
+                      },
+                      {
+                        "kind": "set_worker_state",
+                        "worker": "assessment",
+                        "state": "pending"
+                      },
+                      {
+                        "kind": "set_worker_state",
+                        "worker": "build",
+                        "state": "working"
+                      }
+                    ],
+                    "actions": [
+                      {
+                        "worker": "build",
+                        "action_point": "revise"
+                      }
+                    ]
+                  },
+                  "replace_pr": {
+                    "kind": "if",
+                    "fact": "pr_closed_unmerged",
+                    "then": {
+                      "kind": "apply",
+                      "changes": [
+                        {
+                          "kind": "fence_execution",
+                          "worker": "build"
+                        },
+                        {
+                          "kind": "fence_execution",
+                          "worker": "assessment"
+                        },
+                        {
+                          "kind": "clear_acceptance",
+                          "worker": "build"
+                        },
+                        {
+                          "kind": "clear_acceptance",
+                          "worker": "assessment"
+                        },
+                        {
+                          "kind": "clear_accepted_build"
+                        },
+                        {
+                          "kind": "set_cohort_state",
+                          "state": "working"
+                        },
+                        {
+                          "kind": "set_worker_state",
+                          "worker": "assessment",
+                          "state": "pending"
+                        },
+                        {
+                          "kind": "set_worker_state",
+                          "worker": "build",
+                          "state": "working"
+                        }
+                      ],
+                      "actions": [
+                        {
+                          "worker": "build",
+                          "action_point": "replace_pr"
+                        }
+                      ]
+                    },
+                    "else": {
+                      "kind": "reject",
+                      "reason": "PR is not closed without merge"
+                    }
+                  },
+                  "none": {
+                    "kind": "wait",
+                    "reason": "build review required"
+                  }
+                },
+                "otherwise": {
+                  "kind": "reject",
+                  "reason": "request does not apply to build review"
+                }
+              },
+              "accepted": {
+                "kind": "match_request",
+                "cases": {
+                  "replace_pr": {
+                    "kind": "if",
+                    "fact": "pr_closed_unmerged",
+                    "then": {
+                      "kind": "apply",
+                      "changes": [
+                        {
+                          "kind": "fence_execution",
+                          "worker": "build"
+                        },
+                        {
+                          "kind": "fence_execution",
+                          "worker": "assessment"
+                        },
+                        {
+                          "kind": "clear_acceptance",
+                          "worker": "build"
+                        },
+                        {
+                          "kind": "clear_acceptance",
+                          "worker": "assessment"
+                        },
+                        {
+                          "kind": "clear_accepted_build"
+                        },
+                        {
+                          "kind": "set_cohort_state",
+                          "state": "working"
+                        },
+                        {
+                          "kind": "set_worker_state",
+                          "worker": "assessment",
+                          "state": "pending"
+                        },
+                        {
+                          "kind": "set_worker_state",
+                          "worker": "build",
+                          "state": "working"
+                        }
+                      ],
+                      "actions": [
+                        {
+                          "worker": "build",
+                          "action_point": "replace_pr"
+                        }
+                      ]
+                    },
+                    "else": {
+                      "kind": "reject",
+                      "reason": "PR is not closed without merge"
+                    }
+                  }
+                },
+                "otherwise": {
+                  "kind": "match_worker",
+                  "worker": "assessment",
+                  "cases": {
+                    "working": {
+                      "kind": "match_request",
+                      "cases": {
+                        "none": {
+                          "kind": "if",
+                          "fact": "assessment_response_ready",
+                          "then": {
+                            "kind": "apply",
+                            "changes": [
+                              {
+                                "kind": "fence_execution",
+                                "worker": "assessment"
+                              },
+                              {
+                                "kind": "set_worker_state",
+                                "worker": "assessment",
+                                "state": "awaiting_review"
+                              }
+                            ],
+                            "actions": []
+                          },
+                          "else": {
+                            "kind": "if",
+                            "fact": "assessment_execution_interrupted",
+                            "then": {
+                              "kind": "apply",
+                              "changes": [
+                                {
+                                  "kind": "set_worker_state",
+                                  "worker": "assessment",
+                                  "state": "interrupted"
+                                }
+                              ],
+                              "actions": []
+                            },
+                            "else": {
+                              "kind": "wait",
+                              "reason": "assessment response pending"
+                            }
+                          }
+                        }
+                      },
+                      "otherwise": {
+                        "kind": "reject",
+                        "reason": "assessor is working"
+                      }
+                    },
+                    "interrupted": {
+                      "kind": "match_request",
+                      "cases": {
+                        "retry_assessment": {
+                          "kind": "apply",
+                          "changes": [
+                            {
+                              "kind": "fence_execution",
+                              "worker": "assessment"
+                            },
+                            {
+                              "kind": "set_worker_state",
+                              "worker": "assessment",
+                              "state": "working"
+                            }
+                          ],
+                          "actions": [
+                            {
+                              "worker": "assessment",
+                              "action_point": "retry"
+                            }
+                          ]
+                        },
+                        "none": {
+                          "kind": "wait",
+                          "reason": "assessor retry or abandonment required"
+                        }
+                      },
+                      "otherwise": {
+                        "kind": "reject",
+                        "reason": "assessor is interrupted"
+                      }
+                    },
+                    "awaiting_review": {
+                      "kind": "match_request",
+                      "cases": {
+                        "accept_assessment": {
+                          "kind": "apply",
+                          "changes": [
+                            {
+                              "kind": "accept_outputs",
+                              "worker": "assessment"
+                            },
+                            {
+                              "kind": "set_worker_state",
+                              "worker": "assessment",
+                              "state": "accepted"
+                            },
+                            {
+                              "kind": "set_cohort_state",
+                              "state": "awaiting_merge"
+                            }
+                          ],
+                          "actions": []
+                        },
+                        "discuss_assessment": {
+                          "kind": "apply",
+                          "changes": [
+                            {
+                              "kind": "clear_acceptance",
+                              "worker": "assessment"
+                            },
+                            {
+                              "kind": "set_worker_state",
+                              "worker": "assessment",
+                              "state": "working"
+                            }
+                          ],
+                          "actions": [
+                            {
+                              "worker": "assessment",
+                              "action_point": "discuss"
+                            }
+                          ]
+                        },
+                        "request_implementation_changes": {
+                          "kind": "apply",
+                          "changes": [
+                            {
+                              "kind": "fence_execution",
+                              "worker": "build"
+                            },
+                            {
+                              "kind": "fence_execution",
+                              "worker": "assessment"
+                            },
+                            {
+                              "kind": "clear_acceptance",
+                              "worker": "build"
+                            },
+                            {
+                              "kind": "clear_acceptance",
+                              "worker": "assessment"
+                            },
+                            {
+                              "kind": "clear_accepted_build"
+                            },
+                            {
+                              "kind": "set_cohort_state",
+                              "state": "working"
+                            },
+                            {
+                              "kind": "set_worker_state",
+                              "worker": "assessment",
+                              "state": "pending"
+                            },
+                            {
+                              "kind": "set_worker_state",
+                              "worker": "build",
+                              "state": "working"
+                            }
+                          ],
+                          "actions": [
+                            {
+                              "worker": "build",
+                              "action_point": "revise"
+                            }
+                          ]
+                        },
+                        "none": {
+                          "kind": "wait",
+                          "reason": "assessment review required"
+                        }
+                      },
+                      "otherwise": {
+                        "kind": "reject",
+                        "reason": "request does not apply to assessment review"
+                      }
+                    }
+                  },
+                  "otherwise": {
+                    "kind": "reject",
+                    "reason": "invalid assessor state for accepted builder"
+                  }
+                }
+              }
+            },
+            "otherwise": {
+              "kind": "reject",
+              "reason": "invalid builder state for working cohort"
+            }
+          },
+          "awaiting_merge": {
+            "kind": "match_request",
+            "cases": {
+              "replace_pr": {
+                "kind": "if",
+                "fact": "pr_closed_unmerged",
+                "then": {
+                  "kind": "apply",
+                  "changes": [
+                    {
+                      "kind": "fence_execution",
+                      "worker": "build"
+                    },
+                    {
+                      "kind": "fence_execution",
+                      "worker": "assessment"
+                    },
+                    {
+                      "kind": "clear_acceptance",
+                      "worker": "build"
+                    },
+                    {
+                      "kind": "clear_acceptance",
+                      "worker": "assessment"
+                    },
+                    {
+                      "kind": "clear_accepted_build"
+                    },
+                    {
+                      "kind": "set_cohort_state",
+                      "state": "working"
+                    },
+                    {
+                      "kind": "set_worker_state",
+                      "worker": "assessment",
+                      "state": "pending"
+                    },
+                    {
+                      "kind": "set_worker_state",
+                      "worker": "build",
+                      "state": "working"
+                    }
+                  ],
+                  "actions": [
+                    {
+                      "worker": "build",
+                      "action_point": "replace_pr"
+                    }
+                  ]
+                },
+                "else": {
+                  "kind": "reject",
+                  "reason": "PR is not closed without merge"
+                }
+              },
+              "none": {
+                "kind": "if",
+                "fact": "pr_merged_at_accepted_head",
+                "then": {
+                  "kind": "apply",
+                  "changes": [
+                    {
+                      "kind": "set_cohort_state",
+                      "state": "complete"
+                    }
+                  ],
+                  "actions": []
+                },
+                "else": {
+                  "kind": "wait",
+                  "reason": "verified merge or PR replacement required"
+                }
+              }
+            },
+            "otherwise": {
+              "kind": "reject",
+              "reason": "request does not apply while awaiting merge"
+            }
+          }
+        },
+        "otherwise": {
+          "kind": "reject",
+          "reason": "invalid cohort state"
+        }
+      }
+    }
+  }
+}
