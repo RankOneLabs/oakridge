@@ -4,6 +4,8 @@ import { parseWorkflowDefinition, type AdapterRoleRegistry } from "../validation
 import type { PromptBundleRepository, WorkflowDefinitionRepository } from "./repositories";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 import { compileWorkflowManifest } from "../compiler/compile-workflow";
+import type { MachineRegistry } from "../domain/stage-machine";
+import { StageMachineRegistry } from "../runtime/executor-registry";
 
 interface DefinitionRow { readonly definition: unknown }
 interface PromptBundleRow { readonly hash: string; readonly version: number; readonly matrix: PromptBundle["matrix"] }
@@ -61,11 +63,12 @@ const decodeListedDefinition = (row: DefinitionRow, adapterRoles: AdapterRoleReg
 };
 
 export class PostgresWorkflowDefinitionRepository implements WorkflowDefinitionRepository, PromptBundleRepository {
-  constructor(private readonly sql: TransactionalSqlExecutor, private readonly adapter_roles: AdapterRoleRegistry) {}
+  constructor(private readonly sql: TransactionalSqlExecutor, private readonly adapter_roles: AdapterRoleRegistry,
+    private readonly machine_registry: MachineRegistry = new StageMachineRegistry()) {}
 
   async insert_immutable(definition: WorkflowDefinition, promptBundle: PromptBundle): Promise<WorkflowDefinition> {
     const compiled = compileWorkflowManifest(definition, promptBundle,
-      { adapter_version: "delegated-session-v1", artifact_schema_version: "v1" }, undefined, this.adapter_roles);
+      { adapter_version: "delegated-session-v1", artifact_schema_version: "v1" }, undefined, this.adapter_roles, this.machine_registry);
     if (!compiled.ok) throw new Error(`workflow definition does not compile: ${compiled.error.detail}`);
     return this.sql.transaction(async (transaction) => {
       const rows = await transaction.query<DefinitionRow>(

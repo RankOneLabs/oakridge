@@ -91,6 +91,9 @@ export interface CohortRecord {
   readonly run_id: WorkflowRunId;
   readonly stage_instance_id: StageInstanceId;
   readonly cohort_key: string;
+  readonly state: import("./stage-machine").StateName;
+  readonly round: number;
+  readonly depends_on: readonly string[];
   readonly status: CoreStatus;
   readonly blocked_reason: BlockedReason | null;
   readonly next_actor: NextActor | null;
@@ -112,7 +115,7 @@ export interface AttemptRecord {
   readonly attempt_number: number;
   readonly status: CoreStatus;
   readonly adapter_type: string;
-  readonly request: JsonValue;
+  readonly request: JsonValue | null;
   readonly outcome: JsonValue | null;
   readonly created_at: string;
   readonly started_at: string | null;

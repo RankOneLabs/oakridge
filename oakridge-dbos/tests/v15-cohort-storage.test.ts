@@ -21,6 +21,7 @@ import { createDevFlowAdapterRegistry } from "../src/adapters/dev-flow";
 import { attemptIdFor, sessionIdFor, transitionIdFor } from "../src/decision/ids";
 import type { AttemptId, CohortId, JsonValue, SessionId, StageInstanceId, WorkflowRunId } from "../src/domain/primitives";
 import type { WorkOrderId } from "../src/domain/primitives";
+import { publishWorkOrderArtifact } from "../src/runtime/publish-work-order-artifact";
 import { capabilityFor, capabilityHash } from "../src/runtime/resolve-work-order";
 import { applyMigrations } from "../src/storage/migrate";
 import { PostgresRunRecordWriter } from "../src/storage/postgres-run-record";
@@ -28,6 +29,8 @@ import { PostgresArtifactRepository } from "../src/storage/postgres-domain";
 import { PostgresCollaborationRepository } from "../src/storage/postgres-domain";
 import { PostgresOperatorProjectionRepository } from "../src/storage/postgres-operators";
 import { PostgresRunRecordRepository } from "../src/storage/postgres-run-record-repository";
+import { StageEventApplier } from "../src/storage/apply-stage-event";
+import { StageMachineRegistry } from "../src/runtime/executor-registry";
 import { PgPostgresExecutor, type TransactionalSqlExecutor } from "../src/storage/sql-executor";
 import { createScratchDatabase, type ScratchDatabase } from "./support/durable-database";
 
@@ -53,9 +56,38 @@ const gatedOutput = (name: string, artifact_type: string): JsonValue => ({
 });
 
 /** One gated output, which is what makes a publication park on a wait. */
-const STAGE_CONTRACT: JsonValue = { stage_key: "build", outputs: [gatedOutput("build_result", "dev.build_result")] };
+const BUILD_MACHINE: JsonValue = {
+  initial: "working", stage_type: "delegated_session",
+  states: {
+    working: { status: "active", blocked_reason: null, next_actor: "agent", session_role: "build" },
+    build_review: { status: "blocked", blocked_reason: "gate", next_actor: "operator", session_role: null },
+    done: { status: "complete", blocked_reason: null, next_actor: null, session_role: null },
+  },
+  transitions: [
+    { from: "working", on: { event: "artifact_published", output: "build_result" }, guard: null,
+      to: "build_review", effects: [{ name: "record_output", args: {} },
+        { name: "open_gate", args: { gate: "build_result_review", outputs: ["build_result"] } }] },
+    { from: "build_review", on: { event: "gate_decided", gate: "build_result_review", action: "approve" },
+      guard: null, to: "done", effects: [{ name: "accept_outputs", args: { outputs: ["build_result"] } }] },
+    { from: "build_review", on: { event: "gate_decided", gate: "build_result_review", action: "request_revision" },
+      guard: null, to: "working", effects: [{ name: "new_round", args: {} },
+        { name: "launch_session", args: { role: "build", reason: "input_revision" } }] },
+  ],
+};
+const COLLECTION_MACHINE: JsonValue = {
+  initial: "working", stage_type: "delegated_session",
+  states: { working: { status: "active", blocked_reason: null, next_actor: "agent", session_role: "brief" } },
+  transitions: [{ from: "working", on: { event: "artifact_published", output: "brief" }, guard: null,
+    to: "working", effects: [{ name: "record_output", args: {} },
+      { name: "accept_outputs", args: { outputs: ["brief"] } }] }],
+};
+const STAGE_CONTRACT: JsonValue = { stage_key: "build", outputs: [gatedOutput("build_result", "dev.build_result")],
+  materialization: { kind: "fan_out", max_parallel: 4 }, machine: BUILD_MACHINE,
+  executor: { executor_type: "delegated_session", definition_config: {} } };
 /** A collecting output: one cohort publishes it once per collection key. */
-const COLLECTION_CONTRACT: JsonValue = { stage_key: "brief_writer", outputs: [gatedOutput("brief", "dev.build_brief")] };
+const COLLECTION_CONTRACT: JsonValue = { stage_key: "brief_writer", outputs: [gatedOutput("brief", "dev.build_brief")],
+  materialization: { kind: "artifact_collections" }, machine: COLLECTION_MACHINE,
+  executor: { executor_type: "delegated_session", definition_config: {} } };
 
 const STAGES: readonly { readonly id: StageInstanceId; readonly key: string; readonly contract: JsonValue }[] = [
   { id: STAGE_ID, key: "build", contract: STAGE_CONTRACT },
@@ -94,13 +126,17 @@ const prepare = async (name: string): Promise<Prepared | null> => {
       VALUES ($1,$2,$3,'delegated_session',$4::jsonb,'active')`,
       [stage.id, RUN_ID, stage.key, JSON.stringify(stage.contract)]);
   }
-  const records = new PostgresRunRecordRepository(sql, new PostgresRunRecordWriter(sql, createDevFlowAdapterRegistry()));
+  const writer = new PostgresRunRecordWriter(sql, createDevFlowAdapterRegistry());
+  const stageEvents = new StageEventApplier({ sql, writer, registry: new StageMachineRegistry(),
+    registered_effects: new Map(), load_stage_inputs: async () => ({}),
+    start_effects: async () => {}, now: () => "2026-09-29T00:00:00.000Z" });
+  const records = new PostgresRunRecordRepository(sql, writer, stageEvents);
   return { url: scratch.value.url, sql, records, seed: await records.load_work_order_capability_seed() };
 };
 
 const openCohort = async (sql: Prepared["sql"], stage: StageInstanceId, cohort: CohortId, key: string): Promise<void> => {
-  await sql.query(`INSERT INTO oakridge.cohort (id,run_id,stage_instance_id,cohort_key,stage_data,status)
-    VALUES ($1,$2,$3,$4,'{}','active')`, [cohort, RUN_ID, stage, key]);
+  await sql.query(`INSERT INTO oakridge.cohort (id,run_id,stage_instance_id,cohort_key,stage_data,state,status)
+    VALUES ($1,$2,$3,$4,'{}','working','active')`, [cohort, RUN_ID, stage, key]);
 };
 
 const startAttempt = async (
@@ -146,6 +182,57 @@ const launchReplacement = async (
   });
 };
 
+test("a lost publication response can be replayed while its build gate is open", async () => {
+  const prepared = await prepare("oakridge_v15_review_replay");
+  if (!prepared) return;
+  try {
+    await openCohort(prepared.sql, STAGE_ID, cohortId(30), "replay");
+    await startAttempt(prepared.sql, { stage: STAGE_ID, cohort: cohortId(30), attempt: attemptId(30),
+      number: 1, status: "active", request: {} });
+    expect((await publish(prepared, attemptId(30), artifactId(30))).kind).toBe("published");
+    expect(await publish(prepared, attemptId(30), artifactId(30))).toMatchObject({
+      kind: "already_applied", artifact_id: artifactId(30),
+    });
+    expect(await publish(prepared, attemptId(30), artifactId(31))).toMatchObject({
+      kind: "refused", code: "awaiting_review",
+    });
+    const replay = { attempt_id: attemptId(30), capability: capabilityFor(prepared.seed, attemptId(30) as unknown as WorkOrderId),
+      output_name: "build_result", collection_key: null, body: { summary: artifactId(30) }, idempotency_key: null };
+    const dependencies = { records: prepared.records, now: () => "2026-09-29T00:00:00.000Z",
+      enrich: async () => { throw new Error("replay or invalid capability must not read GitHub"); } };
+    expect(await publishWorkOrderArtifact(replay, dependencies)).toMatchObject({
+      kind: "already_applied", artifact_id: artifactId(30),
+    });
+    expect(await publishWorkOrderArtifact({ ...replay, capability: "invalid" }, dependencies)).toMatchObject({
+      kind: "invalid_capability",
+    });
+    const rows = await prepared.sql.query<{ readonly artifacts: string; readonly transitions: string }>(
+      `SELECT (SELECT count(*)::text FROM oakridge.artifact_owner WHERE cohort_id=$1) AS artifacts,
+              (SELECT count(*)::text FROM oakridge.run_transition WHERE owner_cohort_id=$1) AS transitions`, [cohortId(30)]);
+    expect(rows).toEqual([{ artifacts: "1", transitions: "1" }]);
+  } finally { await prepared.sql.close(); }
+});
+
+for (const status of ["complete", "failed", "cancelled"] as const) {
+  test(`a late roster failure leaves a ${status} stage terminal without another transition`, async () => {
+    const prepared = await prepare(`oakridge_v15_roster_${status}`);
+    if (!prepared) return;
+    try {
+      const writer = new PostgresRunRecordWriter(prepared.sql, createDevFlowAdapterRegistry());
+      const changed = await writer.commit({ run_id: RUN_ID, owner: { kind: "stage_instance", id: STAGE_ID },
+        expected_version: 0, launch_reason: "operator",
+        change: { status, blocked_reason: null, next_actor: null, outcome: { kind: status } },
+        effect: { kind: "none" }, actor: "test", changed_at: "2026-09-29T00:00:00Z" });
+      if (!changed.ok) throw new Error(JSON.stringify(changed.error));
+      expect(await prepared.records.fail_stage_roster(STAGE_ID, "late roster result", "2026-09-29T00:01:00Z"))
+        .toEqual({ ok: true, value: undefined });
+      expect(await prepared.sql.query<{ readonly status: string; readonly version: string }>(
+        "SELECT status,durable_version::text AS version FROM oakridge.stage_instance WHERE id=$1", [STAGE_ID]))
+        .toEqual([{ status, version: "1" }]);
+    } finally { await prepared.sql.close(); }
+  });
+}
+
 test("two cohorts of one stage instance each publish the stage's declared output", async () => {
   const prepared = await prepare("oakridge_v15_fan_out_publish");
   if (!prepared) return;
@@ -157,10 +244,9 @@ test("two cohorts of one stage instance each publish the stage's declared output
 
     const first = await publish(prepared, attemptId(1), artifactId(1));
     const second = await publish(prepared, attemptId(2), artifactId(2));
-    expect(first.kind).toBe("pending");
-    expect(second.kind).toBe("pending");
-    if (first.kind !== "pending" || second.kind !== "pending") return;
-    expect(second.wait_id).not.toBe(first.wait_id);
+    expect(first.kind).toBe("published");
+    expect(second.kind).toBe("published");
+    if (first.kind !== "published" || second.kind !== "published") return;
     expect(second.cohort_id).toBe(cohortId(2));
 
     // Each cohort holds its own parked revision, and its own wait.
@@ -174,17 +260,21 @@ test("two cohorts of one stage instance each publish the stage's declared output
     ].sort((left, right) => left.cohort_id.localeCompare(right.cohort_id)));
 
     // Releasing one cohort's gate leaves the other's slot alone.
-    const released = await prepared.records.decide_gate_wait({ wait_id: first.wait_id, action: "approve",
+    const firstGate = (await prepared.sql.query<{ readonly id: string }>(
+      "SELECT id::text FROM oakridge.wait_gate WHERE cohort_id=$1", [cohortId(1)]))[0];
+    if (!firstGate) throw new Error("first cohort gate was not opened");
+    const released = await prepared.records.decide_gate_wait({ wait_id: firstGate.id as never, action: "approve",
       actor: "operator", detail: null, decided_at: "2026-09-29T00:01:00.000Z" });
-    expect(released.kind).toBe("released");
-    const secondState = await prepared.records.find_cohort_state(cohortId(2));
-    expect(secondState?.open_waits.map((wait) => wait.wait_id)).toEqual([second.wait_id]);
+    expect(released.kind).toBe("decided");
+    const secondWaits = await prepared.sql.query<{ readonly id: string }>(
+      "SELECT id::text FROM oakridge.wait_gate WHERE cohort_id=$1 AND status='open'", [cohortId(2)]);
+    expect(secondWaits).toHaveLength(1);
   } finally {
     await prepared.sql.close();
   }
 });
 
-test("a reopened build slot keeps acceptance history and accepts one new publication", async () => {
+test("publishing after new_round keeps revision 2 in revision 1's chain", async () => {
   const prepared = await prepare("oakridge_v15_reopened_build_slot");
   if (!prepared) return;
   try {
@@ -193,36 +283,23 @@ test("a reopened build slot keeps acceptance history and accepts one new publica
     await startAttempt(prepared.sql, { stage: STAGE_ID, cohort, attempt: attemptId(3),
       number: 1, status: "active", request: {} });
     const first = await publish(prepared, attemptId(3), artifactId(3));
-    if (first.kind !== "pending") throw new Error(`first publication was ${first.kind}`);
-    const released = await prepared.records.decide_gate_wait({ wait_id: first.wait_id, action: "approve",
-      actor: "operator", detail: null, decided_at: "2026-09-29T00:01:00.000Z" });
-    expect(released.kind).toBe("released");
-    const state = await prepared.records.find_cohort_state(cohort);
-    if (!state) throw new Error("cohort disappeared");
-    const replacement = attemptId(13);
-    const committed = await prepared.records.commit_cohort_launch({
-      event: { run_id: RUN_ID, cohort_id: cohort, expected_version: state.durable_version,
-        change: { status: "active", blocked_reason: null, next_actor: "agent", outcome: null },
-        stage_data: {}, reopen_output_names: ["build_result"],
-        effect: { kind: "start_attempt", cohort_id: cohort, attempt_number: 2 },
-        launch_reason: "gate_decided", actor: "core", recorded_at: "2026-09-29T00:02:00.000Z" },
-      attempt: { run_id: RUN_ID, stage_instance_id: STAGE_ID, cohort_id: cohort,
-        attempt_id: replacement, attempt_number: 2, adapter_type: "delegated_session",
-        request: {} as never, launch_transition_id: transitionIdFor({ kind: "cohort", id: cohort }, state.durable_version + 1),
-        session_id: sessionIdFor(replacement), idempotency_key: null, created_at: "2026-09-29T00:02:00.000Z" },
-    });
-    expect(committed.ok).toBe(true);
-    const second = await publish(prepared, replacement, artifactId(13));
-    expect(second.kind).toBe("pending");
-    if (second.kind !== "pending") return;
-    const secondReleased = await prepared.records.decide_gate_wait({ wait_id: second.wait_id, action: "approve",
-      actor: "operator", detail: null, decided_at: "2026-09-29T00:03:00.000Z" });
-    expect(secondReleased.kind).toBe("released");
-    const acceptances = await prepared.sql.query<{ readonly artifact_id: string; readonly is_live: boolean }>(
-      `SELECT artifact_id::text,(superseded_at IS NULL) AS is_live FROM oakridge.artifact_acceptance
-       WHERE cohort_id=$1 AND output_name='build_result' ORDER BY accepted_at`, [cohort]);
-    expect(acceptances).toEqual([{ artifact_id: artifactId(3), is_live: false },
-      { artifact_id: artifactId(13), is_live: true }]);
+    expect(first.kind).toBe("published");
+    const gate = (await prepared.sql.query<{ readonly id: string }>(
+      "SELECT id::text FROM oakridge.wait_gate WHERE cohort_id=$1 AND status='open'", [cohort]))[0];
+    if (!gate) throw new Error("round 1 gate was not opened");
+    const revised = await prepared.records.decide_gate_wait({ wait_id: gate.id as never, action: "request_revision",
+      actor: "operator", detail: "Please revise", decided_at: "2026-09-29T00:01:00.000Z" });
+    expect(revised.kind).toBe("decided");
+    const second = await publish(prepared, attemptIdFor(cohort, 2), artifactId(13));
+    expect(second.kind).toBe("published");
+    const revisions = await prepared.sql.query<{ readonly id: string; readonly chain_id: string;
+      readonly revision: number; readonly parent_artifact_id: string | null }>(
+      `SELECT id::text,chain_id::text,revision,parent_artifact_id::text FROM oakridge.artifact
+       WHERE id=ANY($1::uuid[]) ORDER BY revision`, [[artifactId(3), artifactId(13)]]);
+    expect(revisions).toEqual([
+      { id: artifactId(3), chain_id: artifactId(3), revision: 1, parent_artifact_id: null },
+      { id: artifactId(13), chain_id: artifactId(3), revision: 2, parent_artifact_id: artifactId(3) },
+    ]);
   } finally {
     await prepared.sql.close();
   }
@@ -243,9 +320,7 @@ test("a collecting output keeps one revision chain per collection key", async ()
 
     const foundation = await publish(prepared, attemptId(8), artifactId(8), { output_name: "brief", collection_key: "foundation" });
     const web = await publish(prepared, attemptId(8), artifactId(9), { output_name: "brief", collection_key: "web" });
-    expect([foundation.kind, web.kind]).toEqual(["pending", "pending"]);
-    if (foundation.kind !== "pending" || web.kind !== "pending") return;
-    expect(web.wait_id).not.toBe(foundation.wait_id);
+    expect([foundation.kind, web.kind]).toEqual(["published", "published"]);
 
     const chains = await prepared.sql.query<{ readonly id: string; readonly chain_id: string; readonly revision: number; readonly lifecycle: string }>(
       `SELECT artifact.id::text,artifact.chain_id::text,artifact.revision,artifact.lifecycle
@@ -254,16 +329,11 @@ test("a collecting output keeps one revision chain per collection key", async ()
         WHERE owner.cohort_id=$1 ORDER BY artifact.id`, [cohortId(8)]);
     // Two chains at revision 1, both still current: neither supersedes the other.
     expect(chains).toEqual([
-      { id: artifactId(8), chain_id: artifactId(8), revision: 1, lifecycle: "current" },
-      { id: artifactId(9), chain_id: artifactId(9), revision: 1, lifecycle: "current" },
+      { id: artifactId(8), chain_id: artifactId(8), revision: 1, lifecycle: "released" },
+      { id: artifactId(9), chain_id: artifactId(9), revision: 1, lifecycle: "released" },
     ]);
 
     // Both releases are visible to the downstream stage that collects them.
-    for (const wait of [foundation.wait_id, web.wait_id]) {
-      const released = await prepared.records.decide_gate_wait({ wait_id: wait, action: "approve",
-        actor: "operator", detail: null, decided_at: "2026-09-29T00:03:00.000Z" });
-      expect(released.kind).toBe("released");
-    }
     const artifacts = new PostgresArtifactRepository(prepared.sql);
     const collected = await artifacts.list_released_for_stage_output(COLLECTION_STAGE_ID, "brief");
     expect(collected.map((revision) => revision.collection_key as string | null)).toEqual(["foundation", "web"]);
@@ -372,8 +442,8 @@ test("binding after abandonment preserves cancelled attempt and session", async 
     await prepared.sql.query("UPDATE oakridge.cohort SET durable_version=1 WHERE id=$1", [cohortId(22)]);
     await prepared.sql.query(`INSERT INTO oakridge.run_transition
       (id,run_id,owner_kind,owner_cohort_id,launch_reason,prior_owner_version,resulting_owner_version,
-       effect_descriptor,effect_workflow_id,actor)
-      VALUES ($1,$2,'cohort',$3,'initial',0,1,'{"kind":"start_attempt"}','test:abandoned-bind','test')`,
+       event,effect_descriptor,effect_workflow_id,actor)
+      VALUES ($1,$2,'cohort',$3,'initial',0,1,'{"kind":"derive"}','{"kind":"start_attempt"}','test:abandoned-bind','test')`,
       [transition_id, RUN_ID, cohortId(22)]);
     await prepared.sql.query(`INSERT INTO oakridge.session
       (id,run_id,stage_instance_id,attempt_id,launch_transition_id,status,adapter_reference,ended_at)
@@ -463,7 +533,7 @@ test("concurrent publishes from two attempts of one cohort park exactly one revi
       publish(prepared, attemptId(26), artifactId(26)),
       publish(prepared, attemptId(27), artifactId(27)),
     ]);
-    expect(results.map((result) => result.kind).sort()).toEqual(["pending", "slot_pending"]);
+    expect(results.map((result) => result.kind).sort()).toEqual(["published", "refused"]);
     const rows = await prepared.sql.query<{ readonly count: string }>(
       "SELECT count(*)::text AS count FROM oakridge.wait_gate WHERE cohort_id=$1 AND status='open'", [cohortId(25)]);
     expect(rows[0]?.count).toBe("1");
@@ -482,8 +552,11 @@ test("same-key retries on two executors create one attempt and one transition", 
         inputs: [], declared_outputs: [{ name: "build_result", artifact_type: "dev.build_result", required: true }],
         expected_artifacts: [{ unit_id: "same-key", output_name: "build_result", artifact_type: "dev.build_result" }] } });
     const secondSql = PgPostgresExecutor.connect(prepared.url);
-    const secondRecords = new PostgresRunRecordRepository(secondSql,
-      new PostgresRunRecordWriter(secondSql, createDevFlowAdapterRegistry()));
+    const secondWriter = new PostgresRunRecordWriter(secondSql, createDevFlowAdapterRegistry());
+    const secondEvents = new StageEventApplier({ sql: secondSql, writer: secondWriter,
+      registry: new StageMachineRegistry(), registered_effects: new Map(),
+      load_stage_inputs: async () => ({}), start_effects: async () => {}, now: () => "2026-09-29T00:00:00.000Z" });
+    const secondRecords = new PostgresRunRecordRepository(secondSql, secondWriter, secondEvents);
     const retries = await Promise.all([
       launchReplacement(prepared.records, cohortId(26), RETRY_STAGE_ID,
         attemptIdFor(cohortId(26), 2), "retry-same"),
@@ -540,3 +613,81 @@ test("resolving a thread and binding a session move the invalidation cursor", as
     expect(await operator.get_invalidation_cursor()).not.toBe(beforeBind);
   } finally { await prepared.sql.close(); }
 });
+
+test("older attempts never fence their replacement sessions", async () => {
+  const prepared = await prepare("oakridge_review_stale_fence");
+  if (!prepared) throw new Error("PostgreSQL required");
+  const { sql, records } = prepared;
+  const cohort = cohortId(91);
+  try {
+    await openCohort(sql, STAGE_ID, cohort, "fence");
+    for (const index of [91, 92]) {
+      const attempt = attemptId(index);
+      await startAttempt(sql, { stage: STAGE_ID, cohort, attempt,
+        number: index - 90, status: "active", request: {} });
+      const written = await new PostgresRunRecordWriter(sql, createDevFlowAdapterRegistry()).commit({
+        run_id: RUN_ID, owner: { kind: "cohort", id: cohort }, expected_version: index - 91,
+        launch_reason: "initial", change: { status: "active", blocked_reason: null, next_actor: "agent", outcome: null },
+        effect: { kind: "none" }, actor: "test", changed_at: "2026-10-02T00:00:00Z",
+      });
+      if (!written.ok) throw new Error(JSON.stringify(written.error));
+      await sql.query(`INSERT INTO oakridge.session
+        (id,run_id,stage_instance_id,attempt_id,adapter_reference,kbbl_session_id,launch_transition_id)
+        VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7)`,
+        [sessionIdFor(attempt), RUN_ID, STAGE_ID, attempt,
+          JSON.stringify({ kind: "kbbl_session", session_id: `session-${index}` }),
+          `session-${index}`, written.value.transition_id]);
+    }
+    expect(await records.list_prior_sessions_to_fence(cohort, attemptId(91))).toEqual([]);
+    const prior = await records.list_prior_sessions_to_fence(cohort, attemptId(92));
+    expect(prior.map(session => session.attempt_id)).toEqual([attemptId(91)]);
+  } finally { await sql.close(); }
+});
+
+test("cancellation includes a roster committed while it waits for the stage lock", async () => {
+  const prepared = await prepare("oakridge_cancel_roster_race");
+  if (!prepared) throw new Error("PostgreSQL required");
+  const { sql } = prepared;
+  const cancellationMachine: JsonValue = {
+    initial: "working", stage_type: "delegated_session",
+    states: {
+      working: { status: "active", blocked_reason: null, next_actor: "agent", session_role: "build" },
+      cancelled: { status: "cancelled", blocked_reason: null, next_actor: null, session_role: null },
+    },
+    transitions: [{ from: "working", on: { event: "cancel" }, guard: null,
+      to: "cancelled", effects: [] }],
+  };
+  await sql.query("UPDATE oakridge.stage_instance SET stage_contract=jsonb_set(stage_contract,'{machine}',$2::jsonb) WHERE id=$1",
+    [STAGE_ID, JSON.stringify(cancellationMachine)]);
+  const reached = Promise.withResolvers<void>();
+  let cancellation: ReturnType<PostgresRunRecordRepository["cancel_run"]> | undefined;
+  const wrapped: TransactionalSqlExecutor = {
+    query: (query, parameters) => sql.query(query, parameters),
+    transaction: (work) => sql.transaction(tx => work({
+      query: <Row extends object>(query: string, parameters: readonly unknown[]) => {
+        if (query.includes("FROM oakridge.stage_instance") && query.includes("FOR UPDATE")) reached.resolve();
+        return tx.query<Row>(query, parameters);
+      },
+    })),
+  };
+  const writer = new PostgresRunRecordWriter(wrapped, createDevFlowAdapterRegistry());
+  const applier = new StageEventApplier({ sql: wrapped, writer, registry: new StageMachineRegistry(),
+    registered_effects: new Map(), load_stage_inputs: async () => ({}),
+    start_effects: async () => {}, now: () => "2026-10-02T00:00:01Z" });
+  const records = new PostgresRunRecordRepository(wrapped, writer, applier);
+  try {
+    await sql.transaction(async tx => {
+      await tx.query("SELECT id FROM oakridge.stage_instance WHERE id=$1 FOR UPDATE", [STAGE_ID]);
+      cancellation = records.cancel_run({ run_id: RUN_ID, actor: "operator", reason: null,
+        cancelled_at: "2026-10-02T00:00:01Z" });
+      await reached.promise;
+      // Commit a roster while cancellation is waiting on this stage. Its cohort
+      // snapshot must happen after this transaction releases the stage lock.
+      await tx.query(`INSERT INTO oakridge.cohort (id,run_id,stage_instance_id,cohort_key,stage_data,state,status)
+        VALUES ($1,$2,$3,'late','{}','working','active')`, [cohortId(90), RUN_ID, STAGE_ID]);
+    });
+    expect((await cancellation)?.kind).toBe("cancelled");
+    const rows = await sql.query<{ readonly status: string }>("SELECT status FROM oakridge.cohort WHERE id=$1", [cohortId(90)]);
+    expect(rows[0]?.status).toBe("cancelled");
+  } finally { await sql.close(); }
+}, 15_000);

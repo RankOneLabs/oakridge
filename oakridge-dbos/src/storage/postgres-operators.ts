@@ -239,6 +239,7 @@ export class PostgresDevFlowPullRequestRepository implements DevFlowPullRequestR
 
 interface V2GateProjectionRow extends GateProjectionRow {
   readonly wait_id: string;
+  readonly artifact_revision_ids: readonly string[];
   readonly repository_key: string | null;
   readonly run_state: CoreStatus;
 }
@@ -277,7 +278,7 @@ export interface ListRunEventsInput {
 
 interface V2RunProjectionRow { readonly id: string; readonly title: string | null; readonly repository_keys: readonly string[]; readonly workflow_name: string; readonly status: CoreStatus; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null; readonly current_stage: string | null; readonly stage_total: string; readonly stage_complete: string; readonly attention_count: string; readonly parked_count: string; readonly updated_at: string; readonly archived: boolean }
 interface V2StageProjectionRow { readonly stage_instance_id: string; readonly name: string; readonly stage_type: string; readonly operator_role: string | null; readonly status: CoreStatus; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null }
-interface V2UnitProjectionRow { readonly cohort_id: string; readonly stage_instance_id: string; readonly unit_id: string; readonly params: OperatorStageUnit["params"]; readonly status: CoreStatus; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null; readonly session_id: string | null; readonly gate_step: string | null }
+interface V2UnitProjectionRow { readonly cohort_id: string; readonly stage_instance_id: string; readonly unit_id: string; readonly params: OperatorStageUnit["params"]; readonly state: string; readonly status: CoreStatus; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null; readonly session_id: string | null; readonly gate_step: string | null }
 interface StageArtifactRow { readonly stage_instance_id: string; readonly id: string; readonly type_id: string; readonly version: number; readonly label: string | null; readonly created_at: string }
 interface DiagnosisSessionRow { readonly session_id: string; readonly stage_key: string; readonly cohort_id: string; readonly cohort_key: string; readonly attempt_number: number; readonly attempt_count: number; readonly status: CoreStatus; readonly created_at: string }
 /**
@@ -409,8 +410,10 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     // owning unit's own id, so an operator can tell cohort gates apart.
     const rows = await this.sql.query<V2GateProjectionRow>(
       `SELECT wait.id::text AS wait_id,run.id::text AS run_id,stage.stage_key AS stage_name,
-              wait.stage_instance_id::text,COALESCE(slot.collection_key,cohort.cohort_key) AS unit_id,
+              wait.stage_instance_id::text,cohort.cohort_key AS unit_id,
               revision.artifact_id::text AS artifact_revision_id,
+              ARRAY(SELECT linked.artifact_id::text FROM oakridge.wait_gate_artifact_revision linked
+                WHERE linked.wait_gate_id=wait.id ORDER BY linked.artifact_id) AS artifact_revision_ids,
               wait.closes_on->>'gate_step' AS gate_step,
               COALESCE(ARRAY(SELECT jsonb_array_elements_text(wait.closes_on->'actions')),ARRAY[]::text[]) AS actions,
               build_cohort.repository_key,run.status AS run_state
@@ -419,10 +422,6 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
        LEFT JOIN oakridge.stage_instance stage ON stage.id=wait.stage_instance_id
        LEFT JOIN oakridge.cohort cohort ON cohort.id=wait.cohort_id
        LEFT JOIN oakridge.dev_flow_build_cohort build_cohort ON build_cohort.cohort_id=cohort.id
-       LEFT JOIN LATERAL (
-         SELECT candidate.collection_key FROM oakridge.wait_gate_output_slot candidate
-         WHERE candidate.wait_gate_id=wait.id ORDER BY candidate.collection_key LIMIT 1
-       ) slot ON true
        LEFT JOIN LATERAL (
          SELECT linked.artifact_id FROM oakridge.wait_gate_artifact_revision linked
          WHERE linked.wait_gate_id=wait.id ORDER BY linked.artifact_id LIMIT 1
@@ -433,7 +432,8 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
        ORDER BY wait.opened_at,wait.id`, [run_id ?? null, requiredAttentionOnly]);
     return rows.map((row) => ({ id: row.wait_id, stage_instance_id: row.stage_instance_id as import("../domain/primitives").StageInstanceId, gate_type: row.gate_step, run_id: row.run_id as WorkflowRunId,
       stage_name: row.stage_name, unit_id: row.unit_id as UnitId, repository_key: row.repository_key,
-      artifact_revision_id: row.artifact_revision_id as ArtifactId | null, gate_step: row.gate_step, worktree: null,
+      artifact_revision_id: row.artifact_revision_id as ArtifactId | null,
+      artifact_revision_ids: row.artifact_revision_ids as ArtifactId[], gate_step: row.gate_step, worktree: null,
       resume_actions: row.actions,
       pr_url: null, run_state: row.run_state, actionable: selectGateActionability(row.run_state) }));
   }
@@ -539,9 +539,14 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
               transition.owner_kind,transition.owner_run_id::text,transition.owner_stage_instance_id::text,
               transition.owner_cohort_id::text,transition.launch_reason,
               transition.prior_owner_version::text,transition.resulting_owner_version::text,
+              transition.event,transition.from_state,transition.to_state,
+              cohort.cohort_key AS unit_label,
+              stage.stage_contract->'machine'->'states'->transition.to_state->>'next_actor' AS target_next_actor,
               transition.effect_descriptor,transition.effect_workflow_id,transition.actor,
               transition.created_at::text
        FROM oakridge.run_transition transition
+       LEFT JOIN oakridge.cohort cohort ON cohort.id=transition.owner_cohort_id
+       LEFT JOIN oakridge.stage_instance stage ON stage.id=cohort.stage_instance_id
        WHERE ($1::bigint IS NULL OR transition.sequence > $1::bigint)
          AND ($2::uuid IS NULL OR transition.run_id = $2::uuid)
        ORDER BY transition.sequence ASC LIMIT $3`, [after_sequence, run_id, limit]);
@@ -584,7 +589,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
        FROM oakridge.stage_instance stage WHERE stage.run_id=$1 ORDER BY stage.created_at,stage.stage_key`, [id]);
     const unitRows = await this.sql.query<V2UnitProjectionRow>(
       `SELECT cohort.id::text AS cohort_id,cohort.stage_instance_id::text,cohort.cohort_key AS unit_id,
-              cohort.stage_data AS params,cohort.status,cohort.blocked_reason,cohort.next_actor,
+              cohort.stage_data AS params,cohort.state,cohort.status,cohort.blocked_reason,cohort.next_actor,
               current_session.kbbl_session_id AS session_id,gate.gate_step
        FROM oakridge.cohort cohort
        LEFT JOIN LATERAL (
@@ -610,7 +615,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
         repository_key: selectStageUnitRepositoryKey(unit.params), params: unit.params,
         sid: unit.session_id,
         worktree: null, base_sha: null,
-        status: unit.status, blocked_reason: unit.blocked_reason, next_actor: unit.next_actor,
+        state: unit.state, status: unit.status, blocked_reason: unit.blocked_reason, next_actor: unit.next_actor,
         retryable: selectCohortRetryability(unit).kind === "retryable",
         gate: unit.gate_step,
       }));
@@ -655,8 +660,24 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
   }
 
   async get_run_diagnosis(id: WorkflowRunId): Promise<OperatorRunDiagnosis | null> {
-    const run = await this.getV2Run(id);
-    if (!run) return null;
+    const baseRun = await this.getV2Run(id);
+    if (!baseRun) return null;
+    const driftRows = await this.sql.query<{ readonly cohort_id: string; readonly accepted_head_sha: string; readonly merged_head_sha: string }>(
+      `SELECT build.cohort_id::text,verification.verified_head_sha AS accepted_head_sha,
+              observation.head_sha AS merged_head_sha
+       FROM oakridge.dev_flow_build_cohort build
+       JOIN oakridge.cohort cohort ON cohort.id=build.cohort_id
+       JOIN oakridge.pull_request_verification verification ON verification.id=build.current_verified_pull_request_id
+       JOIN oakridge.pull_request_merge_closure closure ON closure.cohort_id=build.cohort_id
+       JOIN LATERAL (SELECT head_sha FROM oakridge.pull_request_observation
+         WHERE pull_request_id=closure.pull_request_id AND merged_at IS NOT NULL
+         ORDER BY observed_at DESC,recorded_at DESC LIMIT 1) observation ON true
+       WHERE cohort.run_id=$1 AND observation.head_sha IS DISTINCT FROM verification.verified_head_sha`, [id]);
+    const driftByCohort = new Map(driftRows.map((row) => [row.cohort_id,
+      { accepted_head_sha: row.accepted_head_sha, merged_head_sha: row.merged_head_sha }]));
+    const run = { ...baseRun, stages: baseRun.stages.map((stage) => ({ ...stage, units: stage.units.map((unit) => ({
+      ...unit, ...(driftByCohort.has(unit.cohort_id) ? { merge_head_drift: driftByCohort.get(unit.cohort_id) } : {}),
+    })) })) };
     const sessionRows = await this.sql.query<DiagnosisSessionRow>(
       `SELECT session.kbbl_session_id AS session_id,stage.stage_key,attempt.cohort_id::text,cohort.cohort_key,
               attempt.attempt_number,(SELECT max(a2.attempt_number) FROM oakridge.attempt a2 WHERE a2.cohort_id=attempt.cohort_id)::int AS attempt_count,
@@ -714,12 +735,13 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
       const isMerge = gate.gate_step === "merge_confirmation";
       const cohort = cohorts.find((candidate) => candidate.run_id === gate.run_id && candidate.stage_instance_id === gate.stage_instance_id && candidate.unit_id === gate.unit_id);
       return {
-        id: `gate:${gate.id}:${gate.artifact_revision_id ?? "none"}:${gate.gate_step ?? "unknown"}`,
+        id: `gate:${gate.id}:${gate.gate_step ?? "unknown"}`,
         kind: isMerge ? "merge_confirmation" : "artifact_gate", state: "actionable", run_id: gate.run_id,
         workflow_name: names.get(gate.run_id) ?? "unknown", stage_instance_id: gate.stage_instance_id as StageInstanceId,
         stage_name: gate.stage_name, unit_id: gate.unit_id, repository_key: cohort?.repository_key ?? gate.repository_key, title: cohort?.title ?? null,
         lifecycle: cohort?.lifecycle ?? "blocked", blocked_reason: cohort?.blocked_reason ?? "gate", next_actor: cohort?.next_actor ?? "operator",
         artifact_revision_id: gate.artifact_revision_id,
+        artifact_revision_ids: gate.artifact_revision_ids,
         artifact_url: gate.artifact_revision_id ? `/artifact_details/${gate.artifact_revision_id}` : null,
         gate_id: gate.id, gate_url: `/oakridge/gates/${gate.id}`, resume_actions: gate.resume_actions, blocked_by: [], pr_url: gate.pr_url,
       };

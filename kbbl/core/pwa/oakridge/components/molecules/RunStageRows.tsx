@@ -17,7 +17,9 @@ function stageRowClass(status: string): string {
 
 interface RunStageRowProps {
   stage: StageDetail;
+  unitState?: string;
   onSelectArtifact?: (artifactId: string) => void;
+  abandon?: AbandonAction;
   retry?: {
     readonly onRetry: () => void;
     readonly isRetrying: boolean;
@@ -25,18 +27,28 @@ interface RunStageRowProps {
   };
 }
 
+interface AbandonAction {
+  readonly onAbandon: () => void;
+  readonly isAbandoning: boolean;
+  readonly error?: string;
+}
+
 /** A collapsed single-unit stage. Its optional retry still targets that one unit; it is never a stage-wide command. */
-export function RunStageRow({ stage, onSelectArtifact, retry }: RunStageRowProps) {
+export function RunStageRow({ stage, unitState, onSelectArtifact, retry, abandon }: RunStageRowProps) {
   return (
     <tr className={stageRowClass(stage.status)} data-testid="or-stage-row">
       <td className={`${tableCellClass} font-medium text-[var(--text-primary)]`} data-testid="or-stage-name">{stage.name}</td>
       <td className={`${tableCellClass} text-[var(--text-secondary)]`}>{stage.type}</td>
       <td className={tableCellClass}><div className="flex items-center gap-2">
         <StatusBadge status={stage.status} />
+        {unitState && <Chip tone="muted" testId="or-unit-state">{unitState}</Chip>}
         {stage.status === "blocked" && <Chip tone="warning" testId="or-stage-blocked-reason">
           {stage.blocked_reason} · next: {stage.next_actor}
         </Chip>}
         {retry && <Button size="xsmall" variant="danger" onClick={retry.onRetry} disabled={retry.isRetrying} data-testid="or-retry-unit-btn">{retry.isRetrying ? "Retrying…" : "Retry"}</Button>}
+        {abandon && <Button size="xsmall" variant="danger" onClick={abandon.onAbandon} disabled={abandon.isAbandoning}
+          data-testid="or-abandon-unit-btn">{abandon.isAbandoning ? "Abandoning…" : "Abandon"}</Button>}
+        {abandon?.error && <span role="alert" className="text-xs text-red-500">{abandon.error}</span>}
         {retry?.error && <span role="alert" className="text-xs text-red-500">{retry.error}</span>}
       </div></td>
       <ArtifactCell artifacts={stage.artifacts} onSelectArtifact={onSelectArtifact} />
@@ -56,6 +68,7 @@ interface RunUnitRowProps {
   retrying: boolean;
   retryError?: string;
   canRetry: boolean;
+  abandon?: AbandonAction;
   confirmMerge?: {
     readonly onConfirm: () => void;
     readonly isConfirming: boolean;
@@ -63,7 +76,7 @@ interface RunUnitRowProps {
   };
 }
 
-export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelectArtifact, onRetry, retrying, retryError, canRetry, confirmMerge }: RunUnitRowProps) {
+export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelectArtifact, onRetry, retrying, retryError, canRetry, abandon, confirmMerge }: RunUnitRowProps) {
   const brief = selectCohortBrief(unit);
   return (
     <tr className={stageRowClass(unit.status)} data-testid="or-stage-row">
@@ -76,11 +89,15 @@ export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelect
       <td className={`${tableCellClass} text-[var(--text-secondary)]`}>{stageType}</td>
       <td className={tableCellClass}><div className="flex items-center gap-2">
         <StatusBadge status={unit.status} />
+        {unit.state && <Chip tone="muted" testId="or-unit-state">{unit.state}</Chip>}
         {unit.status === "blocked" && <Chip tone="warning" testId="or-unit-blocked-reason">
           {unit.blocked_reason} · next: {unit.next_actor}
         </Chip>}
         {unit.gate && <Chip tone="warning">{unit.gate}</Chip>}
         {canRetry && <Button size="xsmall" variant="danger" onClick={() => onRetry(unit.unit_id)} disabled={retrying} data-testid="or-retry-unit-btn">{retrying ? "Retrying…" : "Retry"}</Button>}
+        {abandon && <Button size="xsmall" variant="danger" onClick={abandon.onAbandon} disabled={abandon.isAbandoning}
+          data-testid="or-abandon-unit-btn">{abandon.isAbandoning ? "Abandoning…" : "Abandon"}</Button>}
+        {abandon?.error && <span role="alert" className="text-xs text-red-500">{abandon.error}</span>}
         {retryError && <span role="alert" className="text-xs text-red-500">{retryError}</span>}
         {confirmMerge && (
           <Button

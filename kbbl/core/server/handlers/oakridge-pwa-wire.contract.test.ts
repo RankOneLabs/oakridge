@@ -20,7 +20,6 @@ const effectDescriptors = [
   { kind: "resume_wait" },
   { kind: "start_stage", stage_instance_id: "stage-1" },
   { kind: "start_attempt", cohort_id: "cohort-1", attempt_number: 1 },
-  { kind: "dev_flow_build_cohort_transition", event: { kind: "builder_attempt_lost" }, disposition: "transitioned" },
   { kind: "pull_request_observed", repository_key: "oakridge", pull_request_url: "https://example.test/pr/1", state: "open", source: "poll", merged_at: null },
   { kind: "pull_request_merge_confirmed", repository_key: "oakridge", pull_request_url: "https://example.test/pr/1", state: "merged", source: "operator", merged_at: "2026-09-29T00:00:00Z" },
   { kind: "future_effect" },
@@ -30,7 +29,23 @@ const rowFor = (effect_descriptor: RunEventRow["effect_descriptor"], index: numb
   sequence: String(index + 1), id: "20000000-0000-0000-0000-000000000001", run_id: RUN_ID,
   owner_kind: "run", owner_run_id: RUN_ID, owner_stage_instance_id: null, owner_cohort_id: null,
   launch_reason: "initial", prior_owner_version: String(index), resulting_owner_version: String(index + 1),
+  event: { kind: "derive" }, from_state: null, to_state: null, unit_label: null, target_next_actor: null,
   effect_descriptor, effect_workflow_id: `effect-${index}`, actor: "core", created_at: "2026-09-29T00:00:00Z",
+});
+
+test("a real cohort transition serializer is accepted by the PWA", async () => {
+  const row: RunEventRow = { ...rowFor({ kind: "stage_machine_effects", effects: [] }, 12),
+    owner_kind: "cohort", owner_run_id: null, owner_cohort_id: "cohort-1",
+    event: { kind: "gate_decided" }, from_state: "build_review", to_state: "assessing",
+    unit_label: "api", target_next_actor: "operator" };
+  const repository = { list_run_events: async () => [projectRunEvent(row)] } as unknown as OperatorProjectionRepository;
+  const response = await createOperatorProjectionApp(repository).request(`/run_events?run_id=${RUN_ID}`);
+  const wire: unknown = await response.json();
+  if (!Array.isArray(wire)) throw new Error("run events response is not an array");
+  expect(parseRunEventFrame({ ...wire[0], replayed: false }).effect).toEqual({
+    kind: "cohort_transition", cohort_id: "cohort-1", unit_label: "api", event_kind: "gate_decided",
+    from_state: "build_review", to_state: "assessing", next_actor: "operator", refusal: null,
+  });
 });
 
 test("every effect kind projected by projectRunEvent parses as a PWA frame", async () => {

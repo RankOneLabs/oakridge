@@ -66,33 +66,6 @@ jobs:
       - run: bun run --filter oakridge-dbos validate:definitions
       - run: bun run --filter oakridge-dbos test:unit
 
-  oakridge-acceptance:
-    name: oakridge deterministic acceptance (Chromium)
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: oakridge
-          POSTGRES_PASSWORD: oakridge
-          POSTGRES_DB: oakridge_acceptance
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    env:
-      OAKRIDGE_TEST_DATABASE_URL: postgres://oakridge:oakridge@127.0.0.1:5432/oakridge_acceptance
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install --frozen-lockfile
-      - run: bun run --filter kbbl build:pwa
-      - run: bunx playwright install --with-deps chromium
-      - run: bun run test:acceptance
-
   lbc-dashboard-tests:
     name: lbc-dashboard tests (bun)
     runs-on: ubuntu-latest

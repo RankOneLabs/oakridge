@@ -250,11 +250,11 @@ describe("RunDetail committed diagnosis", () => {
     expect(screen.getAllByTestId("or-retry-unit-btn")).toHaveLength(1);
   });
 
-  it("addresses merge confirmation with the route's stage and unit identity", async () => {
+  it("addresses merge refresh with the durable cohort identity", async () => {
     const unit = { cohort_id: "durable-cohort-uuid", unit_id: "web", sid: null, worktree: null, status: "blocked" as const, blocked_reason: "external" as const, next_actor: "external" as const, retryable: false, gate: null };
     const companion = { ...unit, cohort_id: "other-cohort", unit_id: "api", gate: null };
     const mergeDetail: RunDetail = { ...detail, stages: [{ ...detail.stages[0]!, stage_instance_id: "stage-build", units: [unit, companion] }] };
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ cohort_id: "stage-build:web", outcome: "accepted" }, 202));
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ state: "done" }));
 
     wrap(<RunDetailOrganism runId="run-1" run={mergeDetail} activeGates={[]} mergeWaits={[{
       cohort_id: "durable-cohort-uuid", stage_instance_id: "stage-build", unit_id: "web",
@@ -263,7 +263,7 @@ describe("RunDetail committed diagnosis", () => {
     fireEvent.click(screen.getByTestId("or-confirm-cohort-merged-btn"));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/cohorts/stage-build%3Aweb/pull_request");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/cohorts/durable-cohort-uuid/pull_request/refresh");
   });
 });
 

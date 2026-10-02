@@ -110,6 +110,9 @@ CREATE TABLE oakridge.cohort (
   run_id uuid NOT NULL,
   stage_instance_id uuid NOT NULL,
   cohort_key text NOT NULL CHECK (length(btrim(cohort_key)) > 0),
+  state text NOT NULL DEFAULT 'pending' CHECK (length(btrim(state)) > 0),
+  round integer NOT NULL DEFAULT 1 CHECK (round > 0),
+  depends_on text[] NOT NULL DEFAULT '{}',
   status oakridge.core_status NOT NULL DEFAULT 'pending',
   blocked_reason oakridge.blocked_reason,
   next_actor oakridge.next_actor,
@@ -140,7 +143,7 @@ CREATE TABLE oakridge.attempt (
   attempt_number integer NOT NULL CHECK (attempt_number > 0),
   status oakridge.attempt_status NOT NULL DEFAULT 'pending',
   adapter_type text NOT NULL CHECK (length(btrim(adapter_type)) > 0),
-  request jsonb NOT NULL,
+  request jsonb,
   idempotency_key text CHECK (idempotency_key IS NULL OR length(btrim(idempotency_key)) > 0),
   outcome jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -338,20 +341,16 @@ CREATE TABLE oakridge.wait_gate_artifact_revision (
   PRIMARY KEY (wait_gate_id, artifact_id)
 );
 
-CREATE TABLE oakridge.wait_gate_output_slot (
-  wait_gate_id uuid NOT NULL REFERENCES oakridge.wait_gate(id) ON DELETE CASCADE,
-  run_id uuid NOT NULL,
-  receiving_stage_instance_id uuid NOT NULL,
+CREATE TABLE oakridge.cohort_output (
+  cohort_id uuid NOT NULL REFERENCES oakridge.cohort(id) ON DELETE CASCADE,
+  round integer NOT NULL CHECK (round > 0),
   output_name text NOT NULL CHECK (length(btrim(output_name)) > 0),
   collection_key text,
-  UNIQUE NULLS NOT DISTINCT (wait_gate_id, receiving_stage_instance_id, output_name, collection_key),
-  FOREIGN KEY (run_id, wait_gate_id) REFERENCES oakridge.wait_gate(run_id, id) ON DELETE CASCADE,
-  FOREIGN KEY (run_id, receiving_stage_instance_id)
-    REFERENCES oakridge.stage_instance(run_id, id) ON DELETE CASCADE,
+  artifact_id uuid NOT NULL REFERENCES oakridge.artifact(id),
+  recorded_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE NULLS NOT DISTINCT (cohort_id, round, output_name, collection_key),
   CHECK (collection_key IS NULL OR length(collection_key) > 0)
 );
-CREATE INDEX wait_gate_output_slot_stage_idx
-  ON oakridge.wait_gate_output_slot (run_id, receiving_stage_instance_id, output_name);
 
 CREATE TABLE oakridge.run_transition (
   id uuid PRIMARY KEY,
@@ -364,8 +363,12 @@ CREATE TABLE oakridge.run_transition (
   launch_reason oakridge.transition_launch_reason NOT NULL,
   prior_owner_version bigint NOT NULL CHECK (prior_owner_version >= 0),
   resulting_owner_version bigint NOT NULL,
+  event jsonb NOT NULL,
+  from_state text,
+  to_state text,
   effect_descriptor jsonb NOT NULL,
   effect_workflow_id text NOT NULL UNIQUE,
+  effects_started_at timestamptz,
   actor text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
   FOREIGN KEY (run_id, owner_stage_instance_id)

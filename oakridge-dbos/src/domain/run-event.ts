@@ -28,6 +28,11 @@ export interface RunEventRow {
   readonly launch_reason: TransitionLaunchReason;
   readonly prior_owner_version: string;
   readonly resulting_owner_version: string;
+  readonly event: JsonValue;
+  readonly from_state: string | null;
+  readonly to_state: string | null;
+  readonly unit_label: string | null;
+  readonly target_next_actor: string | null;
   readonly effect_descriptor: JsonValue;
   readonly effect_workflow_id: string;
   readonly actor: string;
@@ -54,6 +59,13 @@ const isJsonObject = (value: JsonValue): value is { readonly [key: string]: Json
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 const decodeEffect = (row: RunEventRow): TransitionEffectDescriptor => {
+  if (row.owner_kind === "cohort" && row.owner_cohort_id !== null && row.from_state !== null
+    && row.to_state !== null && isJsonObject(row.event) && typeof row.event.kind === "string") {
+    return { kind: "cohort_transition", cohort_id: row.owner_cohort_id,
+      unit_label: row.unit_label ?? row.owner_cohort_id, event_kind: row.event.kind,
+      from_state: row.from_state, to_state: row.to_state,
+      next_actor: row.target_next_actor, refusal: null };
+  }
   const value = row.effect_descriptor;
   if (!isJsonObject(value)
     || !(Object.prototype.hasOwnProperty.call(value, "kind")) || typeof value.kind !== "string" || value.kind.length === 0) {

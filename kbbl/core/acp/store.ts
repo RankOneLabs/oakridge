@@ -745,15 +745,17 @@ export class AcpSessionStore {
       );
   }
 
-  /**
-   * Boot recovery sweep (§10.7), one transaction. `prompting` turns may
-   * or may not have reached an agent — mark them unknown, never retry.
-   * `accepted` turns provably never reached an agent — retain them for
-   * exactly-once dispatch when the controller next becomes live.
-   */
+  /** Boot recovery sweep, one transaction. */
   bootSweep(): BootSweepResult {
     const result = this.db.transaction((): BootSweepResult => {
       const ts = nowIso();
+      this.db.prepare(
+        `UPDATE acp_turns
+         SET status = 'accepted', completed_at = NULL, failure_code = NULL, failure_detail = NULL
+         WHERE source = 'initial' AND status IN ('prompting', 'unknown')
+           AND sid IN (SELECT sid FROM acp_sessions WHERE resumable_key IS NOT NULL
+             AND status NOT IN ('failed', 'fenced', 'ended'))`,
+      ).run();
       const unknownTurns = this.db
         .prepare(
           `UPDATE acp_turns

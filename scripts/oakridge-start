@@ -99,6 +99,18 @@ if [ -z "${DBOS_SYSTEM_DATABASE_URL:-}" ]; then
   DBOS_SYSTEM_DATABASE_URL="postgres://oakridge:oakridge@127.0.0.1:${POSTGRES_PORT}/oakridge"
 fi
 DBOS_APPLICATION_VERSION="${DBOS_APPLICATION_VERSION:-$(git -C "$OAKRIDGE_ROOT" rev-parse HEAD)}"
+if [ -z "${OAKRIDGE_GITHUB_TOKEN:-}" ]; then
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "oakridge: OAKRIDGE_GITHUB_TOKEN is required and gh is unavailable" >&2
+    exit 1
+  fi
+  OAKRIDGE_GITHUB_TOKEN="$(gh auth token)"
+  if [ -z "$OAKRIDGE_GITHUB_TOKEN" ]; then
+    echo "oakridge: gh auth token returned no token" >&2
+    exit 1
+  fi
+fi
+export OAKRIDGE_GITHUB_TOKEN
 
 dbos_pid=""
 kbbl_pid=""

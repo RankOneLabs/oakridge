@@ -30,10 +30,12 @@ describe("selectRunActivity", () => {
     const items = selectRunActivity([
       event({ sequence: "10", effect: { kind: "start_stage", stage_instance_id: "stage-1" }, owner: { kind: "stage_instance", id: "stage-1" } }),
       event({ sequence: "12", effect: { kind: "none" }, launch_reason: "gate_decided" }),
-      event({ sequence: "11", effect: { kind: "dev_flow_build_cohort_transition", event: { kind: "builder_attempt_lost", pull_request_url: null }, disposition: "recorded_only" } }),
+      event({ sequence: "11", effect: { kind: "cohort_transition", cohort_id: "cohort-1", unit_label: "api",
+        event_kind: "session_ended", from_state: "building", to_state: "retry_wait",
+        next_actor: "operator", refusal: null } }),
       event({ sequence: "13", run_id: "other-run" as WorkflowRunId }),
     ], run);
-    expect(items.map((item) => item.summary)).toEqual(["Gate decided", "Stage started"]);
+    expect(items.map((item) => item.summary)).toEqual(["Gate decided", "api: building → retry_wait", "Stage started"]);
   });
 
   it("shows an unknown effect without losing activity", () => {
@@ -41,10 +43,11 @@ describe("selectRunActivity", () => {
       .toBe("Recorded future_step");
   });
 
-  it("shows a transitioned dev-flow retry as launched activity", () => {
-    const retry = event({ effect: { kind: "dev_flow_build_cohort_transition",
-      event: { kind: "operator_retry_requested", pull_request_url: null }, disposition: "transitioned" } });
-    expect(selectRunActivity([retry], run)[0]?.summary).toBe("Retry launched");
+  it("shows a generic cohort transition", () => {
+    const retry = event({ effect: { kind: "cohort_transition", cohort_id: "cohort-1", unit_label: "api",
+      event_kind: "operator_retry", from_state: "retry_wait", to_state: "building",
+      next_actor: "agent", refusal: null } });
+    expect(selectRunActivity([retry], run)[0]?.summary).toBe("api: retry_wait → building");
   });
 });
 

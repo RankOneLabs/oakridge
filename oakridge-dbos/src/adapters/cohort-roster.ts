@@ -13,7 +13,6 @@ import { createHash } from "node:crypto";
 import { resolveBindingValue } from "../compiler/resolve-execution";
 import type { StageInputSet } from "../decision/commands";
 import type { CompiledStageContract } from "../domain/compiled-workflow";
-import type { ArtifactEnvelope } from "../domain/execution";
 import { readJsonPointer } from "../domain/json-pointer";
 import type { CohortId, JsonValue, StageInstanceId } from "../domain/primitives";
 
@@ -34,6 +33,7 @@ export const cohortIdFor = (stage_instance_id: StageInstanceId, cohort_key: stri
 export interface CohortRosterEntry {
   readonly cohort_key: string;
   readonly item: JsonValue;
+  readonly depends_on: readonly string[];
 }
 
 /**
@@ -54,13 +54,17 @@ export const resolveCohortRoster = (
   inputs: StageInputSet,
 ): readonly CohortRosterEntry[] => {
   const materialization = contract.materialization;
-  if (materialization.kind !== "fan_out") return [{ cohort_key: SCALAR_COHORT_KEY, item: null }];
+  if (materialization.kind !== "fan_out") return [{ cohort_key: SCALAR_COHORT_KEY, item: null, depends_on: [] }];
   const resolved = resolveBindingValue(materialization.over, { inputs, context: run_context, item: null });
   if (!resolved.ok) throw new Error(`stage '${contract.stage_key}' fan-out did not resolve: ${resolved.error.detail}`);
   if (!Array.isArray(resolved.value)) throw new Error(`stage '${contract.stage_key}' fan-out did not resolve to an array`);
   const entries = resolved.value.map((item, index) => {
     const key = readJsonPointer(item, materialization.unit_id_path);
-    return { cohort_key: typeof key === "string" && key.length > 0 ? key : String(index), item };
+    const dependencies = materialization.depends_on_path === null ? []
+      : readJsonPointer(item, materialization.depends_on_path);
+    return { cohort_key: typeof key === "string" && key.length > 0 ? key : String(index), item,
+      depends_on: Array.isArray(dependencies) && dependencies.every((dependency) => typeof dependency === "string")
+        ? dependencies as string[] : [] };
   });
   const keys = new Set<string>();
   for (const entry of entries) {
@@ -81,53 +85,4 @@ export const resolveCohortRoster = (
     }
   }
   return entries;
-};
-
-export const selectAcceptedCollectionDependencyCycle = (accepted: readonly ArtifactEnvelope[]): string | null => {
-  const briefs = accepted.filter((artifact) => artifact.artifact_type === "dev.build_brief" && artifact.collection_key);
-  const graph = new Map<string, readonly string[]>(briefs.map((artifact) => {
-    const dependencies = readJsonPointer(artifact.body, "/depends_on");
-    return [artifact.collection_key!, Array.isArray(dependencies)
-      ? dependencies.filter((dependency): dependency is string => typeof dependency === "string") : []];
-  }));
-  const visiting = new Set<string>();
-  const visited = new Set<string>();
-  const visit = (key: string): string | null => {
-    if (visiting.has(key)) return key;
-    if (visited.has(key)) return null;
-    visiting.add(key);
-    for (const dependency of graph.get(key) ?? []) {
-      if (!graph.has(dependency)) continue;
-      const cycle = visit(dependency);
-      if (cycle) return cycle;
-    }
-    visiting.delete(key);
-    visited.add(key);
-    return null;
-  };
-  for (const key of graph.keys()) {
-    const cycle = visit(key);
-    if (cycle) return `accepted brief dependency cycle includes '${cycle}'`;
-  }
-  return null;
-};
-
-/** Accepted output slots must cover every key pinned by a collection production. */
-export const selectCohortOutputsSatisfied = (
-  contract: CompiledStageContract,
-  context: { readonly inputs: StageInputSet; readonly run_context: JsonValue },
-  accepted: readonly ArtifactEnvelope[],
-): boolean => {
-  if (contract.materialization.kind !== "artifact_collections") {
-    return contract.outputs.every((output) => accepted.some((artifact) => artifact.output_name === output.name));
-  }
-  const expectedKeys = contract.materialization.productions.flatMap((production) => {
-    const resolved = resolveBindingValue(production.over,
-      { inputs: context.inputs, context: context.run_context, item: null });
-    if (!resolved.ok || !Array.isArray(resolved.value)) return [null];
-    return resolved.value.map((item) => readJsonPointer(item, production.id_path));
-  });
-  if (expectedKeys.length === 0 || expectedKeys.some((key) => typeof key !== "string" || key.length === 0)) return false;
-  return contract.outputs.every((output) => expectedKeys.every((key) =>
-    accepted.some((artifact) => artifact.output_name === output.name && artifact.collection_key === key)));
 };

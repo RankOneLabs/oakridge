@@ -15,7 +15,9 @@ import {
   operatorMergedObservation, reconcileCohortPullRequest,
   type CohortPullRequestReconciliation, type DevFlowBuildCohort, type ExpectedCohortPullRequest,
 } from "../domain/cohort-pull-request";
-import type { BuildCohortEvent } from "../adapters/dev-flow-build";
+type BuildCohortEvent =
+  | { readonly kind: "pull_request_mismatch"; readonly pull_request_url: string }
+  | { readonly kind: "pull_request_merged"; readonly pull_request_url: string; readonly head_sha: string };
 import { err, ok, type CohortId, type Result, type StageInstanceId, type UnitId, type WorkflowRunId } from "../domain/primitives";
 import type { PullRequestObservation } from "../domain/pull-request";
 import { parseGithubPullRequestIdentity, repositoriesMatch, type PullRequestVerificationId } from "../domain/pull-request";
@@ -87,9 +89,21 @@ export const prepareDevFlowBuildCohort = async (
   if (remoteHead === "" && existing) {
     return prepareFailure("ref_lease_mismatch", `stored cohort ref '${roles.canonical_ref}' is missing from origin`);
   }
+  let branchBase = input.repository.base_head_sha;
   if (remoteHead === "" && !existing) {
+    const base = await dependencies.git.run(input.repository.repository_path,
+      ["ls-remote", "origin", `refs/heads/${input.repository.base_branch}`]);
+    if (base.exit_code !== 0) return prepareFailure("git_read_failed", base.stderr.trim() || "could not read origin base ref");
+    const currentBase = base.stdout.trim().split(/\s+/)[0];
+    if (!currentBase) return prepareFailure("git_read_failed", "origin base ref is missing");
+    branchBase = currentBase;
+    // GitHub-created merge commits may not exist in this checkout yet. Fetch
+    // the exact observed object without updating shared remote-tracking refs.
+    const fetched = await dependencies.git.run(input.repository.repository_path,
+      ["fetch", "--no-write-fetch-head", "--refmap=", "origin", branchBase]);
+    if (fetched.exit_code !== 0) return prepareFailure("git_read_failed", fetched.stderr.trim() || "could not fetch origin base commit");
     const pushed = await dependencies.git.run(input.repository.repository_path,
-      ["push", `--force-with-lease=${ref}:`, "origin", `${input.repository.base_head_sha}:${ref}`]);
+      ["push", `--force-with-lease=${ref}:`, "origin", `${branchBase}:${ref}`]);
     if (pushed.exit_code !== 0) return prepareFailure("git_command_failed", pushed.stderr.trim() || "could not create origin cohort ref");
   }
   if (existing) return ok({ cohort: existing, branch_contract: renderCohortBranchContract(existing) });
@@ -97,7 +111,7 @@ export const prepareDevFlowBuildCohort = async (
     cohort_id: input.cohort_id, stage_instance_id: input.stage_instance_id, cohort_key: input.cohort_key,
     repository_key: input.repository.repository_key, repository_path: input.repository.repository_path,
     canonical_ref: roles.canonical_ref, expected_pr_base: roles.expected_pr_base,
-    recorded_head_sha: input.repository.base_head_sha, current_verified_pull_request_id: null,
+    recorded_head_sha: branchBase, current_verified_pull_request_id: null,
     created_at: input.prepared_at, updated_at: input.prepared_at,
   });
   if (!cohort.ok) return prepareFailure("cohort_storage_failed", cohort.error.detail);
@@ -105,7 +119,8 @@ export const prepareDevFlowBuildCohort = async (
 };
 
 export interface PullRequestForgeReader {
-  read(owner: string, name: string, number: number): Promise<PullRequestObservation | null>;
+  read(owner: string, name: string, number: number): Promise<PullRequestObservation | null
+    | Result<PullRequestObservation | null, import("./github-pull-requests").PullRequestReadError>>;
 }
 
 export interface VerifyCohortPullRequestInput {
@@ -154,7 +169,8 @@ export const verifyCohortPullRequest = async (
   if (!repositoriesMatch(identity.owner, identity.name, input.forge_repository.owner, input.forge_repository.name)) {
     return verificationFailure("repository_mismatch", "candidate URL does not belong to the cohort repository");
   }
-  const observation = await dependencies.reader.read(identity.owner, identity.name, identity.number).catch(() => null);
+  const reading = await dependencies.reader.read(identity.owner, identity.name, identity.number).catch(() => null);
+  const observation = reading && "ok" in reading ? reading.ok ? reading.value : null : reading;
   if (!observation) return verificationFailure("unreadable_pull_request", "forge did not return the candidate pull request");
   if (!repositoriesMatch(observation.owner, observation.name, input.forge_repository.owner, input.forge_repository.name)
       || observation.number !== identity.number || !repositoriesMatch(observation.owner, observation.name, identity.owner, identity.name)) {

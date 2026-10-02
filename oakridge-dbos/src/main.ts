@@ -42,12 +42,7 @@ const controlAccess = selectControlPlaneAccess({
   allow_insecure_non_loopback: process.env.ALLOW_INSECURE_NON_LOOPBACK_CONTROL === "1",
 });
 if (controlAccess.kind === "refused") throw new Error(controlAccess.detail);
-// Optional on purpose. Without a token nothing polls GitHub, and a cohort's
-// merge is confirmed by an operator through the same route the poller uses —
-// which is also the fallback when the token cannot see a given repository.
-const githubToken = process.env.OAKRIDGE_GITHUB_TOKEN?.trim();
-const pullRequestPollIntervalMs = Number(process.env.OAKRIDGE_PULL_REQUEST_POLL_SECONDS ?? "60") * 1_000;
-if (!Number.isFinite(pullRequestPollIntervalMs) || pullRequestPollIntervalMs < 5_000) throw new Error("OAKRIDGE_PULL_REQUEST_POLL_SECONDS must be at least 5 seconds");
+const githubToken = required("OAKRIDGE_GITHUB_TOKEN");
 
 DBOS.setConfig({ name: "oakridge", systemDatabaseUrl: databaseUrl, applicationVersion });
 
@@ -60,13 +55,13 @@ const runtime = await createOakridgeRuntime({
     ...(maxSilentMs !== null ? { max_silent_ms: maxSilentMs } : {}),
   })],
   prompt_template_directory: resolve(import.meta.dir, "../../workflow-config/prompts"),
-  ...(githubToken ? { pull_request_reader: new GithubPullRequestReader({ token: githubToken }) } : {}),
+  pull_request_reader: new GithubPullRequestReader({ token: githubToken }),
   ...(controlAccess.kind === "token_required" ? { control_token: controlAccess.token } : {}),
 });
-if (!githubToken) console.warn("OAKRIDGE_GITHUB_TOKEN is unset: cohort pull requests are not polled, so merges must be confirmed by an operator");
 
 await runtime.seed_builtins();
 await DBOS.launch();
+await runtime.start_unstarted_effects();
 
 // DBOS recovers a workflow only when its application_version matches this
 // executor's, so a version bump between two restarts leaves every in-flight run
@@ -90,22 +85,6 @@ const launchTimer = setInterval(() => {
     .finally(() => { launchDispatch = null; });
 }, 1_000);
 
-// A cohort's pull request merges at human pace and GitHub is rate limited, so
-// this sweeps far more slowly than the outbox dispatchers. Skipped entirely
-// when no reader is configured.
-let pullRequestPoll: Promise<unknown> | null = null;
-const pullRequestTimer = setInterval(() => {
-  if (pullRequestPoll) return;
-  pullRequestPoll = runtime.poll_pull_requests()
-    .then((outcomes) => {
-      for (const outcome of outcomes ?? []) {
-        if (outcome.resolution.kind === "refused") console.warn(`cohort ${outcome.stage_instance_id}:${outcome.unit_id} pull request refused: ${outcome.resolution.detail}`);
-      }
-    })
-    .catch((error: unknown) => { console.error("cohort pull request poll failed", error); })
-    .finally(() => { pullRequestPoll = null; });
-}, pullRequestPollIntervalMs);
-
 const server = Bun.serve({
   hostname: host,
   port,
@@ -124,11 +103,9 @@ const shutdown = (): Promise<void> => {
   if (shutdownPromise) return shutdownPromise;
   shutdownPromise = (async () => {
     clearInterval(launchTimer);
-    clearInterval(pullRequestTimer);
     server.stop();
     // clearInterval stops the next poll from starting; it does not settle one
     // already running, which would still be holding a connection when SQL closes.
-    await Promise.allSettled(pullRequestPoll ? [pullRequestPoll] : []);
     await DBOS.shutdown();
     await runtime.close();
   })();

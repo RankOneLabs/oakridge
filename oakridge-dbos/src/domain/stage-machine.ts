@@ -52,9 +52,9 @@ export type StageEvent =
   | { readonly kind: "operator_abandon"; readonly actor: string; readonly detail: string }
   | { readonly kind: "cancel"; readonly actor: string }
   | { readonly kind: "external_observed"; readonly source: ObserverName; readonly observation: JsonValue };
-export interface RoundOutput { readonly output: string; readonly collection_key: string | null; readonly artifact_id: ArtifactId }
+export interface RoundOutput { readonly output: string; readonly collection_key: string | null; readonly artifact_id: ArtifactId; readonly body: JsonValue }
 export interface GuardContext { readonly event: StageEvent; readonly stage_data: JsonValue; readonly round_outputs: readonly RoundOutput[]; readonly stage_inputs: StageInputSet; readonly registry: MachineRegistry }
-export type GuardPredicate = (context: GuardContext, args: JsonObject) => boolean;
+export type GuardPredicate = (context: GuardContext, args: JsonObject) => boolean | { readonly holds: boolean; readonly detail: string | null };
 export interface MachineRegistry {
   has_guard(stage_type: string, name: GuardName): boolean;
   has_effect(stage_type: string, name: EffectName): boolean;
@@ -66,4 +66,4 @@ export interface CompiledMachine extends MachineDefinition {
 }
 export type TransitionResult =
   | { readonly kind: "applied"; readonly from: StateName; readonly to: StateName; readonly effects: readonly EffectRef[]; readonly row_index: number }
-  | { readonly kind: "refused"; readonly from: StateName; readonly code: RefusalCode; readonly row_index: number | null };
+  | { readonly kind: "refused"; readonly from: StateName; readonly code: RefusalCode; readonly row_index: number | null; readonly detail?: string };

@@ -203,21 +203,20 @@ test("cancel_or_fence fences the session and a later observation reads cancelled
   expect(observed.observation.kind).toBe("cancelled");
 }, 20000);
 
-test("a mid-prompt agent crash reads as failure, never success", async () => {
+test("a mid-prompt transport loss reports terminal failure", async () => {
   makeHarness("crash_mid_prompt");
   const request = makeRequest({ execution_id: "exec-5" });
   const reference = await adapter.start_or_attach(request, "op-5" as ExecutorOperationId);
   if (reference.kind !== "kbbl_session") throw new Error("expected session");
 
   const deadline = Date.now() + 15_000;
-  for (;;) {
-    const observed = await adapter.observe_terminal("exec-5" as ExecutionId, reference);
-    if (observed.kind === "terminal") {
-      expect(observed.observation.kind).toBe("failed");
-      return;
-    }
-    if (Date.now() > deadline) throw new Error("never terminal");
+  while (harness.store.getInitialTurn(reference.session_id as KbblSessionId)?.status !== "unknown") {
+    if (Date.now() > deadline) throw new Error("transport loss was not recorded");
+    await Bun.sleep(50);
   }
+  const observed = await adapter.observe_terminal("exec-5" as ExecutionId, reference);
+  expect(observed.kind).toBe("terminal");
+  if (observed.kind === "terminal") expect(observed.observation.kind).toBe("failed");
 }, 20000);
 
 test("a slow turn observes as pending, not terminal", async () => {

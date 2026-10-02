@@ -33,7 +33,6 @@ const ownerIdentity = (owner: TransitionOwner): string => `${owner.kind}:${owner
 
 export const runMachineWorkflowId = (run_id: WorkflowRunId): string => `v15-run:${run_id}`;
 export const stageMachineWorkflowId = (stage_instance_id: StageInstanceId): string => `v15-stage:${stage_instance_id}`;
-export const cohortMachineWorkflowId = (cohort_id: CohortId): string => `v15-cohort:${cohort_id}`;
 
 export const transitionIdFor = (owner: TransitionOwner, resulting_version: number): RunTransitionId =>
   stableUuid(`v15-transition:${ownerIdentity(owner)}:${resulting_version}`) as RunTransitionId;
@@ -66,3 +65,9 @@ export const waitGateIdFor = (artifact_id: ArtifactId): WaitId =>
   stableUuid(`v15-wait:${artifact_id}`) as WaitId;
 
 export const waitGateCommandWorkflowId = (artifact_id: ArtifactId): string => `v15-wait:${artifact_id}`;
+
+export const stageGateIdFor = (cohort_id: CohortId, gate: string, round: number): WaitId =>
+  stableUuid(`v15-gate:${cohort_id}:${gate}:${round}`) as WaitId;
+
+export const stageGateCommandWorkflowId = (cohort_id: CohortId, gate: string, round: number): string =>
+  `v15-gate:${cohort_id}:${gate}:${round}`;

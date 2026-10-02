@@ -11,7 +11,7 @@ const cohortId = "33333333-3333-4333-8333-333333333333" as CohortId;
 
 test("a work-order capability, not mutable session identity, authorizes publication", async () => {
   let published: PublishWorkOrderArtifact | null = null;
-  const app = createWorkOrderArtifactCallbackApp({ records: { publish_artifact: async (request: PublishWorkOrderArtifact) => {
+  const app = createWorkOrderArtifactCallbackApp({ records: { check_artifact_publication: async () => null, publish_artifact: async (request: PublishWorkOrderArtifact) => {
     published = request;
     return { kind: "published", artifact_id: request.artifact_id, run_id: runId, cohort_id: cohortId, record_version: 4 as RunRecordVersion };
   } }, now: () => "2026-08-28T12:00:00.000Z" });
@@ -25,7 +25,7 @@ test("a work-order capability, not mutable session identity, authorizes publicat
 
 test("a gated output reports its pending wait rather than a release", async () => {
   const waitId = "88888888-8888-4888-8888-888888888888" as WaitId;
-  const app = createWorkOrderArtifactCallbackApp({ records: { publish_artifact: async (request: PublishWorkOrderArtifact) =>
+  const app = createWorkOrderArtifactCallbackApp({ records: { check_artifact_publication: async () => null, publish_artifact: async (request: PublishWorkOrderArtifact) =>
     ({ kind: "pending", artifact_id: request.artifact_id, wait_id: waitId, run_id: runId, cohort_id: cohortId, record_version: 5 as RunRecordVersion }) }, now: () => "2026-08-28T12:00:00.000Z" });
   const response = await app.request(`/work-orders/${workOrderId}/emit/plan`, { method: "PUT", headers: {
     "content-type": "application/json", "work-order-capability": "secret", "idempotency-key": "emit-2",
@@ -34,24 +34,36 @@ test("a gated output reports its pending wait rather than a release", async () =
   expect(await response.json()).toEqual(expect.objectContaining({ state: "pending", wait_id: waitId, record_version: 5 }));
 });
 
-test("a second publish while the slot is already pending is reported as a 409 with the existing wait id", async () => {
-  const waitId = "99999999-9999-4999-8999-999999999999" as WaitId;
-  const app = createWorkOrderArtifactCallbackApp({ records: { publish_artifact: async () =>
-    ({ kind: "slot_pending", wait_id: waitId, detail: "output slot 'plan' is already pending a decision" }) }, now: () => "2026-08-28T12:00:00.000Z" });
+test("a refused publication is reported as a 409 with its machine code", async () => {
+  const app = createWorkOrderArtifactCallbackApp({ records: { check_artifact_publication: async () => null, publish_artifact: async () =>
+    ({ kind: "refused", code: "wrong_state", detail: "publication is not allowed in this state" }) }, now: () => "2026-08-28T12:00:00.000Z" });
   const response = await app.request(`/work-orders/${workOrderId}/emit/plan`, { method: "PUT", headers: {
     "content-type": "application/json", "work-order-capability": "secret", "idempotency-key": "emit-3",
   }, body: JSON.stringify({ draft: true }) });
   expect(response.status).toBe(409);
-  expect(await response.json()).toEqual({ error: "output slot 'plan' is already pending a decision", code: "slot_pending", wait_id: waitId });
+  expect(await response.json()).toEqual({ error: "publication is not allowed in this state", code: "wrong_state" });
 });
 
 test("publication without its work-order capability never reaches the domain command", async () => {
   let calls = 0;
-  const app = createWorkOrderArtifactCallbackApp({ records: { publish_artifact: async () => {
+  const app = createWorkOrderArtifactCallbackApp({ records: { check_artifact_publication: async () => null, publish_artifact: async () => {
     calls += 1;
     throw new Error("unexpected");
   } }, now: () => "2026-08-28T12:00:00.000Z" });
   const response = await app.request(`/work-orders/${workOrderId}/emit/result`, { method: "PUT", headers: { "content-type": "application/json" }, body: "{}" });
   expect(response.status).toBe(401);
   expect(calls).toBe(0);
+});
+
+
+test("a new publication reports enrichment failure without committing", async () => {
+  const app = createWorkOrderArtifactCallbackApp({ records: {
+    check_artifact_publication: async () => null,
+    publish_artifact: async () => { throw new Error("must not commit unavailable enrichment"); },
+  }, enrich: async () => ({ ok: false, error: { code: "unavailable", detail: "GitHub unavailable" } }),
+  now: () => "2026-08-28T12:00:00.000Z" });
+  const response = await app.request(`/work-orders/${workOrderId}/emit/result`, { method: "PUT", headers: {
+    "content-type": "application/json", "work-order-capability": "secret",
+  }, body: "{}" });
+  expect(response.status).toBe(503);
 });

@@ -13,10 +13,10 @@ import { agent, ndJsonStream, PROTOCOL_VERSION, type AgentContext } from "@agent
 import { Readable, Writable } from "node:stream";
 
 import type { OperatorArtifactDetail, OperatorParkedGate, OperatorRunDetail, OperatorRunSummary, OperatorReviewInbox } from "../../src/domain/operator-projections";
-import type { ArtifactId, JsonValue, UnitId, WorkflowDefinitionId, WorkflowRunId } from "../../src/domain/primitives";
+import type { ArtifactId, JsonValue, WorkflowDefinitionId, WorkflowRunId } from "../../src/domain/primitives";
 import { sendRunWakeHint } from "../../src/http/dbos-transport";
 import type { SqlExecutor } from "../../src/storage/sql-executor";
-import { awaitCondition, cohortHeadBranch, cohortPullRequestUrl, type ScriptedAgentScenario } from "./dev-flow-harness";
+import { awaitCondition, type ScriptedAgentScenario } from "./dev-flow-harness";
 
 const readJson = async <Value>(response: Response, describe: string): Promise<Value> => {
   const text = await response.text();
@@ -50,7 +50,8 @@ export const launchRun = async (baseUrl: string, definitionId: WorkflowDefinitio
 export const awaitPendingGate = async (baseUrl: string, artifactId: ArtifactId, timeoutMs = 30_000): Promise<OperatorParkedGate> =>
   awaitCondition(`a pending gate for artifact ${artifactId}`, async () => {
     const gates = await readJson<readonly OperatorParkedGate[]>(await fetch(`${baseUrl}/gates`), "list pending gates");
-    return gates.find((gate) => gate.artifact_revision_id === artifactId) ?? null;
+    return gates.find((gate) => gate.artifact_revision_id === artifactId
+      || (gate as unknown as { readonly artifact_revision_ids?: readonly ArtifactId[] }).artifact_revision_ids?.includes(artifactId)) ?? null;
   }, timeoutMs);
 
 /**
@@ -69,7 +70,8 @@ export const decideGate = async (baseUrl: string, artifactId: ArtifactId, action
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ idempotency_key: `${action}:${artifactId}`, artifact_revision_id: artifactId,
-      gate_step: gate.gate_step, action, operator_comment: `integration test ${action}` }),
+      gate_step: gate.gate_step, action, operator_comment: `integration test ${action}`,
+      feedback: action === "request_revision" ? `integration test ${action}` : null }),
   });
   await readJson(response, `resume gate ${gate.id}`);
   return gate;
@@ -85,61 +87,16 @@ export const attemptGateDecision = async (baseUrl: string, artifactId: ArtifactI
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ idempotency_key: `${action}:${artifactId}`, artifact_revision_id: artifactId,
-      gate_step: gate.gate_step, action, operator_comment: `integration test ${action}` }),
+      gate_step: gate.gate_step, action, operator_comment: `integration test ${action}`,
+      feedback: action === "request_revision" ? `integration test ${action}` : null }),
   });
   const parsed = await response.json() as { readonly error?: string; readonly code?: string };
   return { status: response.status, error: parsed.error ?? "", ...(parsed.code ? { code: parsed.code } : {}) };
 };
 
-/** What the cohort pull request route made of the evidence. */
-export type CohortPullRequestAttempt =
-  | { readonly kind: "accepted"; readonly outcome: string }
-  | { readonly kind: "refused"; readonly detail: string };
-
-const postCohortEvidence = async (baseUrl: string, cohortId: string, body: unknown): Promise<CohortPullRequestAttempt> => {
-  const response = await fetch(`${baseUrl}/cohorts/${encodeURIComponent(cohortId)}/pull_request`, {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
-  });
-  const text = await response.text();
-  if (response.ok) return { kind: "accepted", outcome: (JSON.parse(text) as { outcome: { kind: string } }).outcome.kind };
-  if (response.status !== 404 && response.status !== 409) throw new Error(`cohort pull request evidence for ${cohortId} failed: ${response.status} ${text}`);
-  return { kind: "refused", detail: `${response.status} ${text}` };
-};
-
-/**
- * The operator's fallback: confirm by hand that a cohort's pull request merged.
- *
- * One attempt, no waiting. The handoff only reaches `awaiting_external` once
- * the assessor's decision has travelled to it, and the assessor cannot even
- * start until the caller has driven it — a helper that blocked here would stall
- * the very work it is waiting for.
- *
- * This is the same route the poller uses, and the confirmation is checked
- * against the same expectations as a polled observation. Driving it from a test
- * is not standing in for a missing participant any more: it is the button.
- */
-export const confirmCohortMerged = async (baseUrl: string, cohortId: string): Promise<CohortPullRequestAttempt> =>
-  postCohortEvidence(baseUrl, cohortId, {
-    kind: "operator_confirmation", idempotency_key: `confirm-merged:${cohortId}`, operator_comment: "integration test confirmed the merge",
-  });
-
-/** The poller's path: report what the forge said about a cohort's pull request. */
-export const observeCohortPullRequest = async (baseUrl: string, cohortId: string, observation: unknown): Promise<CohortPullRequestAttempt> =>
-  postCohortEvidence(baseUrl, cohortId, { kind: "observation", observation });
-
-/**
- * What `GithubPullRequestReader` would have produced for a merged cohort pull
- * request, built from the same values the faked agent reported opening.
- */
-export const mergedPullRequestObservation = (unitId: UnitId, baseBranch: string) => {
-  const url = cohortPullRequestUrl(unitId);
-  const number = Number(url.slice(url.lastIndexOf("/") + 1));
-  return {
-    provider: "github", owner: "RankOneLabs", name: "oakridge", number, url,
-    head_branch: cohortHeadBranch(unitId), base_branch: baseBranch, head_sha: "abc123",
-    state: "merged", source: "poll", observed_at: new Date().toISOString(), merged_at: new Date().toISOString(),
-  };
-};
+export const refreshCohortPullRequest = async (baseUrl: string, cohortId: string): Promise<{ readonly state: string }> =>
+  readJson(await fetch(`${baseUrl}/cohorts/${encodeURIComponent(cohortId)}/pull_request/refresh`, { method: "POST" }),
+    `refresh cohort pull request ${cohortId}`);
 
 /** An artifact as the operator surface serves it, current revision first. */
 export const readArtifact = async (baseUrl: string, artifactId: ArtifactId): Promise<OperatorArtifactDetail> =>
@@ -167,15 +124,12 @@ export interface DriveOptions<Value> {
   /** Stop when this returns non-null; it is polled after every pass. */
   readonly until: () => Promise<Value | null>;
   readonly timeout_ms: number;
-  readonly confirm_merges?: boolean;
 }
 
 export interface DriveOutcome<Value> {
   readonly value: Value;
   /** Execution workflow ids this drive emitted artifacts for and succeeded. */
   readonly driven: ReadonlySet<string>;
-  /** Cohort ids (`${stage_instance_id}:${unit_id}`) confirmed merged this drive. */
-  readonly confirmed: ReadonlySet<string>;
 }
 
 /**
@@ -184,14 +138,10 @@ export interface DriveOutcome<Value> {
  * that varies between scenarios — decide only the gates `options.decide`
  * says to.
  *
- * `driven` and `confirmed` accumulate for the lifetime of this call only; a
- * scenario that calls `driveRun` more than once (to vary the gate policy
- * between phases) gets a fresh count each call, exactly as an inline loop
- * restarted with fresh sets would.
+ * `driven` accumulates for the lifetime of this call only.
  */
 export const driveRun = async <Value>(baseUrl: string, agent: ScriptedAgentScenario, run: LaunchedRun, options: DriveOptions<Value>): Promise<DriveOutcome<Value>> => {
   const driven = new Set<string>();
-  const confirmed = new Set<string>();
   const decided = new Set<string>();
   const deadline = Date.now() + options.timeout_ms;
   for (;;) {
@@ -208,24 +158,15 @@ export const driveRun = async <Value>(baseUrl: string, agent: ScriptedAgentScena
       const requested = options.decide(gate);
       const action = requested === "approve" && gate.resume_actions.includes("confirm_merged") ? "confirm_merged" : requested;
       if (!action) continue;
-      if (!gate.artifact_revision_id) continue;
+      const artifactId = (gate as unknown as { readonly artifact_revision_ids?: readonly ArtifactId[] }).artifact_revision_ids?.[0]
+        ?? gate.artifact_revision_id;
+      if (!artifactId) continue;
       decided.add(gate.id);
-      await decideGate(baseUrl, gate.artifact_revision_id, action);
-    }
-
-    if (options.confirm_merges !== false) {
-      const inbox = await readReviewInbox(baseUrl);
-      for (const item of inbox.items) {
-        if (item.kind !== "pull_request_merge" || item.run_id !== run.run_id) continue;
-        const cohortId = `${item.stage_instance_id}:${item.unit_id}`;
-        expect(item.pr_url).toBe(cohortPullRequestUrl(item.unit_id as UnitId));
-        const result = await confirmCohortMerged(baseUrl, cohortId);
-        if (result.kind === "accepted" && result.outcome === "completed") confirmed.add(cohortId);
-      }
+      await decideGate(baseUrl, artifactId, action);
     }
 
     const value = await options.until();
-    if (value !== null) return { value, driven, confirmed };
+    if (value !== null) return { value, driven };
     if (Date.now() > deadline) {
       const diagnostic = { run: await readRun(baseUrl, run.run_id), gates: await listRunGates(baseUrl, run.run_id),
         inbox: (await readReviewInbox(baseUrl)).items.filter((item) => item.run_id === run.run_id),
@@ -317,9 +258,13 @@ const runFakeAcpAgent = (): void => {
     await client.notify("session/update", { sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } } });
   };
   const publishPromptBranch = async (branch: string): Promise<void> => {
-    const child = Bun.spawn(["git", "push", "origin", `HEAD:refs/heads/${branch}`], { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
-    if (exitCode !== 0) throw new Error(`fake agent could not publish '${branch}': ${stderr.trim() || stdout.trim()}`);
+    for (const args of [["-c", "user.name=oakridge e2e", "-c", "user.email=e2e@oakridge.invalid", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", `Build ${branch}`],
+      ["push", "origin", `HEAD:refs/heads/${branch}`]]) {
+      const child = Bun.spawn(["git", ...args], { cwd: process.cwd(), stdout: "pipe", stderr: "pipe",
+        env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" } });
+      const [stdout, stderr, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+      if (exitCode !== 0) throw new Error(`fake agent git ${args[0]} for '${branch}' failed: ${stderr.trim() || stdout.trim()}`);
+    }
   };
   const app = agent({ name: "oakridge-acceptance-agent" })
     .onRequest("initialize", () => ({ protocolVersion: PROTOCOL_VERSION, agentCapabilities: { loadSession: true, sessionCapabilities: { close: {} } } }))
@@ -332,6 +277,9 @@ const runFakeAcpAgent = (): void => {
       const prompt = ctx.params.prompt.map((block) => block.type === "text" ? block.text : "").join("");
       const scenario = await fetch(`${controlUrl}/scenario`).then((response) => response.json()) as {
         readonly strip_publication_contract?: boolean;
+        readonly pr_summary_mismatch?: string | null;
+        readonly pause_before_publication_role?: string | null;
+        readonly pause_before_publication_unit?: string | null;
       };
       const renderedPrompt = scenario.strip_publication_contract
         ? prompt.replace(/\n\n## Oakridge v2 artifact publication[\s\S]*$/, "")
@@ -362,20 +310,41 @@ const runFakeAcpAgent = (): void => {
         setTimeout(() => process.exit(1), 10);
         throw new Error("rendered prompt did not state the Oakridge publication contract");
       }
-      if (publication.head_branch) await publishPromptBranch(publication.head_branch);
+      if (publication.operator_role === "build" && publication.head_branch) await publishPromptBranch(publication.head_branch);
+      for (;;) {
+        const pause = await fetch(`${controlUrl}/scenario`).then((response) => response.json()) as {
+          readonly pause_before_publication_role?: string | null; readonly pause_before_publication_unit?: string | null };
+        if (pause.pause_before_publication_role !== publication.operator_role
+          && pause.pause_before_publication_unit !== publication.unit_id) break;
+        await Bun.sleep(100);
+      }
       const revision = (revisions.get(ctx.params.sessionId) ?? 0) + 1;
       revisions.set(ctx.params.sessionId, revision);
       for (const output of publication.outputs) {
-        const bodyResponse = await fetch(`${controlUrl}/artifact-body`, { method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ ...publication, ...output, revision }) });
-        if (!bodyResponse.ok) throw new Error(`fake artifact body failed: ${bodyResponse.status} ${await bodyResponse.text()}`);
-        const response = await fetch(`${publication.base_url}/work-orders/${publication.work_order_id}/emit/${output.output_name}`, {
-          method: "PUT", headers: { "content-type": "application/json", "work-order-capability": publication.capability,
-            "idempotency-key": `${publication.work_order_id}:${output.unit_id}:${output.output_name}:v${revision}`,
-            ...(output.unit_id !== publication.unit_id ? { "output-collection-key": output.unit_id } : {}) },
-          body: await bodyResponse.text(),
-        });
-        if (!response.ok) throw new Error(`fake publication ${output.output_name} failed: ${response.status} ${await response.text()}`);
+        for (let retryIndex = 0; retryIndex < 3; retryIndex += 1) {
+          const bodyResponse = await fetch(`${controlUrl}/artifact-body`, { method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ ...publication, ...output, revision, retry_index: retryIndex }) });
+          if (!bodyResponse.ok) throw new Error(`fake artifact body failed: ${bodyResponse.status} ${await bodyResponse.text()}`);
+          const response = await fetch(`${publication.base_url}/work-orders/${publication.work_order_id}/emit/${output.output_name}`, {
+            method: "PUT", headers: { "content-type": "application/json", "work-order-capability": publication.capability,
+              "idempotency-key": `${publication.work_order_id}:${output.unit_id}:${output.output_name}:v${revision}:${scenario.pr_summary_mismatch ? retryIndex : 0}`,
+              ...(output.unit_id !== publication.unit_id ? { "output-collection-key": output.unit_id } : {}) },
+            body: await bodyResponse.text(),
+          });
+          const responseBody = await response.text();
+          await fetch(`${controlUrl}/delivery`, { method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ execution_id: publication.work_order_id,
+              delivery_key: `publication:${output.output_name}:${response.status}:${retryIndex}`, prompt: responseBody }) });
+          if (response.ok) break;
+          for (;;) {
+            const control = await fetch(`${controlUrl}/scenario`).then((answer) => answer.json()) as {
+              readonly pause_after_refusal_output?: string | null };
+            if (control.pause_after_refusal_output !== output.output_name) break;
+            await Bun.sleep(100);
+          }
+          if (output.output_name === "pr_summary" && retryIndex < 2 && (response.status === 409 || response.status === 503)) continue;
+          throw new Error(`fake publication ${output.output_name} failed: ${response.status} ${responseBody}`);
+        }
       }
       await notify(ctx.client, ctx.params.sessionId, `published ${publication.outputs.map((output) => output.output_name).join(", ")}`);
       setTimeout(() => process.exit(0), 10);

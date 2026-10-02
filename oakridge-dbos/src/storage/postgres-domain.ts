@@ -245,10 +245,8 @@ interface ArtifactRevisionRow {
 /**
  * One revision, from the four tables v15 splits an artifact across.
  *
- * The slot identity comes from `artifact_acceptance` once the revision has been
- * accepted, and from the wait's own `wait_gate_output_slot` while it is still
- * parked pending a gate — a gated artifact has no acceptance row yet, and the
- * review surface exists precisely to look at it in that state.
+ * Output identity comes from `artifact_acceptance` after acceptance and from
+ * `cohort_output` while the revision is awaiting a gate decision.
  */
 const ARTIFACT_REVISION_SOURCE = `
   FROM oakridge.artifact artifact
@@ -257,20 +255,14 @@ const ARTIFACT_REVISION_SOURCE = `
   LEFT JOIN oakridge.artifact_provenance provenance ON provenance.artifact_id=artifact.id
   LEFT JOIN oakridge.cohort cohort ON cohort.id=owner.cohort_id
   LEFT JOIN oakridge.artifact superseded ON superseded.parent_artifact_id=artifact.id
-  LEFT JOIN LATERAL (
-    SELECT slot.receiving_stage_instance_id,slot.output_name,slot.collection_key
-    FROM oakridge.wait_gate_artifact_revision link
-    JOIN oakridge.wait_gate_output_slot slot ON slot.wait_gate_id=link.wait_gate_id
-    WHERE link.artifact_id=artifact.id
-    ORDER BY slot.output_name,slot.collection_key NULLS FIRST LIMIT 1
-  ) pending_slot ON acceptance.artifact_id IS NULL`;
+  LEFT JOIN oakridge.cohort_output pending_slot ON pending_slot.artifact_id=artifact.id`;
 
 const ARTIFACT_REVISION_COLUMNS = `
   artifact.id::text,artifact.chain_id::text,artifact.revision,artifact.parent_artifact_id::text,
   artifact.artifact_type,artifact.body,artifact.label,artifact.lifecycle,artifact.created_at::text,
   superseded.id::text AS superseded_by_artifact_id,
   owner.run_id::text,owner.cohort_id::text,
-  COALESCE(acceptance.receiving_stage_instance_id,pending_slot.receiving_stage_instance_id,
+  COALESCE(acceptance.receiving_stage_instance_id,
            owner.stage_instance_id,provenance.stage_instance_id)::text AS stage_instance_id,
   cohort.cohort_key AS unit_id,
   COALESCE(acceptance.output_name,pending_slot.output_name) AS output_name,
@@ -278,7 +270,7 @@ const ARTIFACT_REVISION_COLUMNS = `
   provenance.attempt_id::text,provenance.session_id::text`;
 
 /** Every artifact oakridge writes is either accepted into a slot or parked in one. */
-const ARTIFACT_HAS_SLOT = `COALESCE(acceptance.receiving_stage_instance_id,pending_slot.receiving_stage_instance_id,
+const ARTIFACT_HAS_SLOT = `COALESCE(acceptance.receiving_stage_instance_id,
   owner.stage_instance_id,provenance.stage_instance_id) IS NOT NULL`;
 
 const revisionLifecycle = (row: ArtifactRevisionRow): ArtifactRevisionLifecycle => {

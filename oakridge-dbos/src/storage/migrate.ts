@@ -26,18 +26,27 @@ export const applyMigrations = async (sql: TransactionalSqlExecutor, directory =
     });
   }
   if (appliedNames.has("0015_v15_baseline.sql")) {
-    const rows = await sql.query<{ readonly artifact_thread: string | null;
-      readonly dev_flow_build_cohort: string | null; readonly attempt_idempotency_key: boolean }>(
-      `SELECT to_regclass('oakridge.artifact_thread')::text AS artifact_thread,
-        to_regclass('oakridge.dev_flow_build_cohort')::text AS dev_flow_build_cohort,
-        EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='oakridge'
-          AND table_name='attempt' AND column_name='idempotency_key') AS attempt_idempotency_key`, []);
-    const schema = rows[0];
-    const missing = [
-      schema?.artifact_thread ? null : "artifact_thread",
-      schema?.attempt_idempotency_key ? null : "attempt.idempotency_key",
-      schema?.dev_flow_build_cohort ? null : "dev_flow_build_cohort",
-    ].filter((name): name is string => name !== null);
+    // Compare the contract required by the edited baseline, including nullability.
+    interface SchemaRequirement { readonly table_name: string; readonly column_name: string | null; readonly nullable?: boolean }
+    interface SchemaColumn { readonly table_name: string; readonly column_name: string; readonly is_nullable: string }
+    const requirements: readonly SchemaRequirement[] = [
+      { table_name: "artifact_thread", column_name: null },
+      { table_name: "attempt", column_name: "idempotency_key" },
+      { table_name: "dev_flow_build_cohort", column_name: null },
+      ...["state", "round", "depends_on"].map((column_name) => ({ table_name: "cohort", column_name })),
+      ...["cohort_id", "round", "output_name", "collection_key", "artifact_id", "recorded_at"]
+        .map((column_name) => ({ table_name: "cohort_output", column_name })),
+      ...["event", "from_state", "to_state", "effects_started_at"]
+        .map((column_name) => ({ table_name: "run_transition", column_name })),
+      { table_name: "attempt", column_name: "request", nullable: true },
+    ];
+    const columns = await sql.query<SchemaColumn>(
+      "SELECT table_name,column_name,is_nullable FROM information_schema.columns WHERE table_schema='oakridge'", []);
+    const missing = requirements.filter((requirement) => !columns.some((column) =>
+      column.table_name === requirement.table_name
+      && (requirement.column_name === null || column.column_name === requirement.column_name)
+      && (requirement.nullable !== true || column.is_nullable === "YES")))
+      .map((requirement) => `${requirement.table_name}${requirement.column_name ? `.${requirement.column_name}` : ""}${requirement.nullable ? " (nullable)" : ""}`);
     if (missing.length > 0) throw new Error(
       `oakridge migration ledger records 0015_v15_baseline.sql but schema diverges: missing ${missing.join(", ")}; drop and recreate this v15 database`);
   }

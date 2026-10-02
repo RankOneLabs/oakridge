@@ -1,5 +1,5 @@
 import { parseRunEvent } from "../wire";
-import type { BuildCohortEventKind, RunDetail, RunEvent } from "../types";
+import type { RunDetail, RunEvent } from "../types";
 
 const PAGE_SIZE = 500;
 
@@ -18,24 +18,6 @@ export type RunActivityRead =
   | { readonly kind: "pending" }
   | { readonly kind: "unavailable" };
 
-const buildLabels: Partial<Record<BuildCohortEventKind, string>> = {
-  stage_started: "Build started",
-  build_artifact_recorded: "Build output recorded",
-  pull_request_verified: "Pull request verified",
-  builder_attempt_lost: "Builder session lost",
-  operator_retry_requested: "Retry launched",
-  build_review_approved: "Build approved",
-  build_review_revision_requested: "Build revision requested",
-  assessment_artifact_recorded: "Assessment recorded",
-  assessment_outcome_observed: "Assessment outcome recorded",
-  assessor_attempt_lost: "Assessor session lost",
-  assessment_review_approved: "Assessment approved",
-  assessment_review_revision_requested: "Assessment revision requested",
-  pull_request_mismatch: "Pull request mismatch",
-  replacement_pull_request_required: "Replacement pull request required",
-  pull_request_merged: "Pull request merged",
-};
-
 const contextOf = (event: RunEvent, run: RunDetail): string | null => {
   if (event.owner.kind === "run") return null;
   if (event.owner.kind === "stage_instance") {
@@ -53,8 +35,9 @@ const summaryOf = (event: RunEvent): string | null => {
   switch (effect.kind) {
     case "start_stage": return "Stage started";
     case "start_attempt": return event.launch_reason === "retry" ? "Retry launched" : `Session launched (attempt ${effect.attempt_number})`;
-    case "dev_flow_build_cohort_transition":
-      return effect.disposition === "transitioned" ? buildLabels[effect.event.kind] ?? null : null;
+    case "cohort_transition":
+      return effect.event_kind === "gate_decided" ? "Gate decided"
+        : `${effect.unit_label}: ${effect.from_state} → ${effect.to_state}`;
     case "none":
       return event.launch_reason === "gate_decided" ? "Gate decided"
         : event.launch_reason === "operator" ? "Operator action" : null;

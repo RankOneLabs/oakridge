@@ -102,7 +102,7 @@ describe("run diagnosis workspace", () => {
       pull_request_url: "https://example.test/pr/1",
     }] };
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      if (init?.method === "POST") return json({ cohort_id: "stage-build:cohort-1", outcome: { kind: "completed" } });
+      if (init?.method === "POST") return json({ state: "done" });
       return String(input).endsWith("/diagnosis") ? json(waiting) : json([]);
     });
     renderWorkspace();
@@ -110,7 +110,7 @@ describe("run diagnosis workspace", () => {
     expect(screen.queryByTestId("or-retry-unit-btn")).toBeNull();
     fireEvent.click(await screen.findByTestId("or-confirm-cohort-merged-btn"));
     await waitFor(() => expect(fetchMock.mock.calls.some(([input, init]) =>
-      init?.method === "POST" && String(input).includes("/cohorts/stage-build%3Acohort-1/pull_request"))).toBe(true));
+      init?.method === "POST" && String(input).includes("/cohorts/cohort-1/pull_request/refresh"))).toBe(true));
   });
 
   it("a merge_confirmation gate alone does not offer cohort merge", async () => {

@@ -22,17 +22,18 @@ describe("selectRunFrameNotification", () => {
     expect(selectRunFrameNotification(frame(true))).toBeNull();
   });
 
-  it("reports lost builder attempts as errors", () => {
+  it("notifies when a declared target state needs an operator", () => {
     expect(selectRunFrameNotification({ ...frame(false), effect: {
-      kind: "dev_flow_build_cohort_transition",
-      event: { kind: "builder_attempt_lost", pull_request_url: null }, disposition: "transitioned",
-    } })?.kind).toBe("error");
+      kind: "cohort_transition", cohort_id: "cohort-1", unit_label: "api", event_kind: "session_ended",
+      from_state: "building", to_state: "retry_wait", next_actor: "operator", refusal: null,
+    } })?.kind).toBe("info");
   });
 
-  it("reports a transitioned dev-flow retry as a live info notification", () => {
-    const retry = { ...frame(false), effect: { kind: "dev_flow_build_cohort_transition" as const,
-      event: { kind: "operator_retry_requested" as const, pull_request_url: null }, disposition: "transitioned" } };
-    expect(selectRunFrameNotification(retry)).toMatchObject({ kind: "info", message: "Retry launched" });
+  it("does not notify when the target state belongs to an agent", () => {
+    const retry = { ...frame(false), effect: { kind: "cohort_transition" as const, cohort_id: "cohort-1",
+      unit_label: "api", event_kind: "operator_retry", from_state: "retry_wait", to_state: "building",
+      next_actor: "agent", refusal: null } };
+    expect(selectRunFrameNotification(retry)).toBeNull();
     expect(selectRunFrameNotification({ ...retry, replayed: true })).toBeNull();
   });
 });

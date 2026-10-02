@@ -1,7 +1,7 @@
 import type {
   CohortPullRequestReconciliation, CohortLifecycleSummary,
   ParkedGate, Project, ProjectId, RepositoryKey, ReviewInbox,
-  ReviewInboxItem, RunDetail, RunDiagnosis, RunDiagnosisSession, RunEvent, RunEventEffect, RunEventFrame, BuildCohortEventKind, SessionRunLocation, SessionMessageRecord, SessionMessageAccepted,
+  ReviewInboxItem, RunDetail, RunDiagnosis, RunDiagnosisSession, RunEvent, RunEventEffect, RunEventFrame, SessionRunLocation, SessionMessageRecord, SessionMessageAccepted,
   StageDetail, StageUnit, WorkflowRunId,
 } from "./types";
 import type { Result } from "../lib/result";
@@ -21,13 +21,6 @@ const number = (value: unknown, field: string): number => {
   return value;
 };
 
-const BUILD_EVENT_KINDS: ReadonlySet<string> = new Set<BuildCohortEventKind>([
-  "stage_started", "stale_gate_recorded", "build_artifact_recorded", "pull_request_verified",
-  "builder_attempt_lost", "build_review_approved", "build_review_revision_requested",
-  "assessment_artifact_recorded", "assessment_outcome_observed", "assessor_attempt_lost",
-  "operator_retry_requested", "assessment_review_approved", "assessment_review_revision_requested",
-  "pull_request_mismatch", "replacement_pull_request_required", "pull_request_merged",
-]);
 const LAUNCH_REASONS = new Set<RunEvent["launch_reason"]>([
   "initial", "dependency_satisfied", "artifact_accepted", "gate_decided", "operator", "retry", "recovery",
 ]);
@@ -48,15 +41,15 @@ const parseEffect = (value: unknown): RunEventEffect => {
       return { kind, cohort_id: string(effect.cohort_id, "effect.cohort_id"),
         attempt_number: number(effect.attempt_number, "effect.attempt_number"), attempt_id };
     }
-    case "dev_flow_build_cohort_transition": {
-      const event = object(effect.event, "effect.event");
-      const eventKind = string(event.kind, "effect.event.kind");
-      if (!BUILD_EVENT_KINDS.has(eventKind)) throw new Error("parse run event: invalid effect.event.kind");
-      const pull_request_url = event.pull_request_url ?? null;
-      if (!nullableString(pull_request_url)) throw new Error("parse run event: invalid effect.event.pull_request_url");
-      return { kind, event: { kind: eventKind as BuildCohortEventKind, pull_request_url },
-        disposition: string(effect.disposition, "effect.disposition") };
-    }
+    case "cohort_transition":
+      if (!nullableString(effect.next_actor)) throw new Error("parse run event: invalid effect.next_actor");
+      if (effect.refusal !== null) throw new Error("parse run event: invalid effect.refusal");
+      return { kind, cohort_id: string(effect.cohort_id, "effect.cohort_id"),
+        unit_label: string(effect.unit_label, "effect.unit_label"),
+        event_kind: string(effect.event_kind, "effect.event_kind"),
+        from_state: string(effect.from_state, "effect.from_state"),
+        to_state: string(effect.to_state, "effect.to_state"),
+        next_actor: effect.next_actor, refusal: null };
     case "pull_request_observed":
     case "pull_request_merge_confirmed":
       if (!nullableString(effect.merged_at)) throw new Error("parse run event: invalid effect.merged_at");
@@ -176,6 +169,9 @@ export function parseRunDetail(run: RawRunDetail): Result<RunDetail, ResponsePar
     for (const unit of stage.units ?? []) {
       const repositoryKey = parseOptionalRepositoryKey(unit.repository_key);
       if (!repositoryKey.ok) return repositoryKey;
+      if (unit.state !== undefined && (typeof unit.state !== "string" || !unit.state)) {
+        return err("parse run detail", "response contained an invalid cohort state");
+      }
       units.push({ ...unit, repository_key: repositoryKey.value });
     }
     stages.push({ ...stage, units: stage.units ? units : stage.units });
@@ -191,7 +187,11 @@ export function parseParkedGates(gates: RawParkedGate[]): Result<ParkedGate[], R
   for (const gate of gates) {
     const repositoryKey = parseOptionalRepositoryKey(gate.repository_key);
     if (!repositoryKey.ok) return repositoryKey;
-    parsed.push({ ...gate, repository_key: repositoryKey.value });
+    const revisions = gate.artifact_revision_ids ?? (gate.artifact_revision_id ? [gate.artifact_revision_id] : []);
+    if (!Array.isArray(revisions) || revisions.some((id) => typeof id !== "string")) {
+      return err("parse parked gates", "response contained invalid artifact revision ids");
+    }
+    parsed.push({ ...gate, repository_key: repositoryKey.value, artifact_revision_ids: revisions });
   }
   return ok(parsed);
 }

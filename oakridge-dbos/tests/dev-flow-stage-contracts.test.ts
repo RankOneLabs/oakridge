@@ -257,7 +257,7 @@ test("v15 has six stages and one prompt file for every stage, role, and reason c
   expect(cells.every((cell) => cell.template_path.startsWith("dev-flow/v15/"))).toBe(true);
 });
 
-test("all eight build loop prompt cells render the persisted cohort branch contract", async () => {
+test("all seven build loop prompt cells render the persisted cohort branch contract", async () => {
   const workflow = await loadCompiled();
   const build = workflow.stages.build!;
   const definition = build.executor.definition_config as DelegatedSessionDefinitionConfig;
@@ -268,7 +268,7 @@ test("all eight build loop prompt cells render the persisted cohort branch contr
   const web: MaterializedExecutionUnit = { unit_id: "web" as UnitId,
     parameters: { unit_id: "web", artifact: briefBody }, depends_on: [] };
 
-  expect(definition.prompt_matrix).toHaveLength(8);
+  expect(definition.prompt_matrix).toHaveLength(7);
   for (const [index, cell] of definition.prompt_matrix.entries()) {
     const template = await Bun.file(new URL(`../../workflow-config/prompts/${cell.template_path}`, import.meta.url)).text();
     const workOrder = await resolveWorkOrder({ run_id: runId, stage: build, stage_instance_id: stageInstanceId, unit: web,

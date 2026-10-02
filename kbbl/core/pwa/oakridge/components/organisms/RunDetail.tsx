@@ -5,6 +5,7 @@ import { useArchiveRun } from "../../hooks/useArchiveRun";
 import { useUnarchiveRun } from "../../hooks/useUnarchiveRun";
 import { useDeleteRun } from "../../hooks/useDeleteRun";
 import { useConfirmCohortMerged } from "../../hooks/useConfirmCohortMerged";
+import { useAbandonCohort } from "../../hooks/useAbandonCohort";
 import type { PullRequestMergeWait, RunDiagnosisGate, RunDetail as RunDetailRecord, StageDetail } from "../../types";
 import { RunParkedGateList } from "./ParkedGateList";
 import { RunStageRow, RunUnitRow } from "../molecules/RunStageRows";
@@ -49,6 +50,13 @@ export function RunDetail({ runId, run, activeGates, mergeWaits, onRunDeleted, o
   const unarchiveMutation = useUnarchiveRun(runId);
   const deleteMutation = useDeleteRun(runId);
   const confirmMergeMutation = useConfirmCohortMerged(runId);
+  const abandonMutation = useAbandonCohort(runId);
+
+  const requestAbandon = (cohortId: string, label: string): void => {
+    const detail = window.prompt(`Why abandon ${label}?`)?.trim();
+    if (!detail || !window.confirm(`Abandon ${label}? This ends its active session.`)) return;
+    abandonMutation.mutate({ cohortId, detail });
+  };
 
   const onRefresh = () => {
     void qc.invalidateQueries({ queryKey: ["oakridge", "run", runId] });
@@ -154,7 +162,6 @@ export function RunDetail({ runId, run, activeGates, mergeWaits, onRunDeleted, o
                 if (units != null && isFannedOut(stage)) {
                   return units.map((unit) => {
                     const cohortId = unit.cohort_id;
-                    const cohortRouteId = `${stage.stage_instance_id}:${unit.unit_id}`;
                     const canConfirmMerge = mergeWaits.some((wait) => wait.cohort_id === cohortId);
                     const unitArtifacts = stage.artifacts.filter(
                       (a) => a.label === unit.unit_id,
@@ -177,15 +184,21 @@ export function RunDetail({ runId, run, activeGates, mergeWaits, onRunDeleted, o
                           ? (retryMutation.error instanceof Error ? retryMutation.error.message : "Retry failed")
                           : undefined}
                         canRetry={unit.retryable}
+                        abandon={unit.status !== "complete" && unit.status !== "failed" && unit.status !== "cancelled" ? {
+                          onAbandon: () => requestAbandon(cohortId, unit.unit_id),
+                          isAbandoning: abandonMutation.isPending && abandonMutation.variables?.cohortId === cohortId,
+                          error: abandonMutation.isError && abandonMutation.variables?.cohortId === cohortId
+                            ? (abandonMutation.error instanceof Error ? abandonMutation.error.message : "Abandon failed") : undefined,
+                        } : undefined}
                         confirmMerge={canConfirmMerge ? {
                           onConfirm: () => confirmMergeMutation.mutate({
-                            cohortId: cohortRouteId,
+                            cohortId,
                             operatorComment: "Operator confirmed the pull request merged from the run workspace",
                           }),
                           isConfirming: confirmMergeMutation.isPending
-                            && confirmMergeMutation.variables?.cohortId === cohortRouteId,
+                            && confirmMergeMutation.variables?.cohortId === cohortId,
                           error: confirmMergeMutation.isError
-                            && confirmMergeMutation.variables?.cohortId === cohortRouteId
+                            && confirmMergeMutation.variables?.cohortId === cohortId
                             ? (confirmMergeMutation.error instanceof Error
                               ? confirmMergeMutation.error.message
                               : "Could not confirm the merge")
@@ -201,7 +214,14 @@ export function RunDetail({ runId, run, activeGates, mergeWaits, onRunDeleted, o
             <RunStageRow
                     key={stage.name}
                     stage={stage}
+                    unitState={unit?.state}
                     onSelectArtifact={onSelectArtifact}
+                    abandon={unit && unit.status !== "complete" && unit.status !== "failed" && unit.status !== "cancelled" ? {
+                      onAbandon: () => requestAbandon(unit.cohort_id, unit.unit_id),
+                      isAbandoning: abandonMutation.isPending && abandonMutation.variables?.cohortId === unit.cohort_id,
+                      error: abandonMutation.isError && abandonMutation.variables?.cohortId === unit.cohort_id
+                        ? (abandonMutation.error instanceof Error ? abandonMutation.error.message : "Abandon failed") : undefined,
+                    } : undefined}
                     retry={shouldOfferRetry ? {
                       onRetry: () => void retryMutation.mutate({ stageInstanceId: stage.stage_instance_id, unitId: unit.unit_id }),
                       isRetrying: retryMutation.isPending

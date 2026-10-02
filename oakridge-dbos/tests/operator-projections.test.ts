@@ -18,7 +18,6 @@ const definitionOf = (stage_keys: readonly string[], edges: readonly CompiledEdg
   manifest_version: 1,
   stages: Object.fromEntries(stage_keys.map((key) => [key, stage(key)])),
   edges,
-  transitions: [],
   source_stages: source_stages as readonly StageKey[],
 });
 

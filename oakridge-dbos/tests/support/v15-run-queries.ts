@@ -7,6 +7,44 @@ export interface BuildCohortRow {
   readonly state: string;
 }
 
+export interface CohortStateTraceStep {
+  readonly event_kind: string | null;
+  readonly from_state: string | null;
+  readonly to_state: string | null;
+}
+
+export const cohortStateTrace = (sql: SqlExecutor, run_id: WorkflowRunId, stage_key: string, cohort_key: string): Promise<readonly CohortStateTraceStep[]> =>
+  sql.query<CohortStateTraceStep>(`SELECT to_jsonb(transition)->'event'->>'kind' AS event_kind,
+      to_jsonb(transition)->>'from_state' AS from_state,
+      to_jsonb(transition)->>'to_state' AS to_state
+    FROM oakridge.run_transition transition
+    JOIN oakridge.cohort cohort ON cohort.id=transition.owner_cohort_id
+    JOIN oakridge.stage_instance stage ON stage.id=cohort.stage_instance_id
+    WHERE transition.run_id=$1 AND stage.stage_key=$2 AND cohort.cohort_key=$3
+    ORDER BY transition.created_at,transition.resulting_owner_version`, [run_id, stage_key, cohort_key]);
+
+export const cohortMachineState = async (sql: SqlExecutor, run_id: WorkflowRunId, stage_key: string, cohort_key: string): Promise<string | null> => {
+  const rows = await sql.query<{ readonly state: string | null }>(`SELECT to_jsonb(cohort)->>'state' AS state
+    FROM oakridge.cohort cohort JOIN oakridge.stage_instance stage ON stage.id=cohort.stage_instance_id
+    WHERE cohort.run_id=$1 AND stage.stage_key=$2 AND cohort.cohort_key=$3`, [run_id, stage_key, cohort_key]);
+  return rows[0]?.state ?? null;
+};
+
+export const stageCohortKeys = async (sql: SqlExecutor, run_id: WorkflowRunId, stage_key: string): Promise<readonly string[]> => {
+  const rows = await sql.query<{ readonly cohort_key: string }>(`SELECT cohort.cohort_key
+    FROM oakridge.cohort cohort JOIN oakridge.stage_instance stage ON stage.id=cohort.stage_instance_id
+    WHERE cohort.run_id=$1 AND stage.stage_key=$2 ORDER BY cohort.cohort_key`, [run_id, stage_key]);
+  return rows.map((row) => row.cohort_key);
+};
+
+export const runBaseBranch = async (sql: SqlExecutor, run_id: WorkflowRunId): Promise<string> => {
+  const rows = await sql.query<{ readonly base_branch: string | null }>(
+    "SELECT context->>'base_branch' AS base_branch FROM oakridge.workflow_run WHERE id=$1", [run_id]);
+  const base_branch = rows[0]?.base_branch;
+  if (!base_branch) throw new Error(`run '${run_id}' has no base branch`);
+  return base_branch;
+};
+
 export const buildUnitRows = (sql: SqlExecutor, run_id: WorkflowRunId): Promise<readonly BuildCohortRow[]> =>
   sql.query<BuildCohortRow>(`SELECT cohort.cohort_key AS unit_id, cohort.status::text AS state
     FROM oakridge.cohort cohort JOIN oakridge.stage_instance stage ON stage.id=cohort.stage_instance_id
@@ -47,10 +85,9 @@ export const workflowRunState = async (sql: SqlExecutor, run_id: WorkflowRunId):
 };
 
 export const openBriefGateUnitIds = async (sql: SqlExecutor, run_id: WorkflowRunId): Promise<ReadonlySet<string>> => {
-  const rows = await sql.query<{ readonly unit_id: string }>(`SELECT DISTINCT COALESCE(slot.collection_key, cohort.cohort_key) AS unit_id
+  const rows = await sql.query<{ readonly unit_id: string }>(`SELECT DISTINCT cohort.cohort_key AS unit_id
     FROM oakridge.wait_gate wait JOIN oakridge.cohort cohort ON cohort.id=wait.cohort_id
     JOIN oakridge.stage_instance stage ON stage.id=wait.stage_instance_id
-    LEFT JOIN oakridge.wait_gate_output_slot slot ON slot.wait_gate_id=wait.id
     WHERE wait.run_id=$1 AND stage.stage_key='brief_writer' AND wait.kind='gate' AND wait.status='open'`, [run_id]);
   return new Set(rows.map((row) => row.unit_id));
 };
@@ -97,7 +134,7 @@ export const buildStageRow = async (sql: SqlExecutor, run_id: WorkflowRunId): Pr
 export const attemptsAfterCancel = async (sql: SqlExecutor, run_id: WorkflowRunId): Promise<number> => {
   const rows = await sql.query<{ readonly count: string }>(`SELECT count(*)::text AS count FROM oakridge.attempt attempt
     WHERE attempt.run_id=$1 AND attempt.created_at >
-      (SELECT min(created_at) FROM oakridge.run_transition WHERE run_id=$1 AND launch_reason='operator'
-        AND effect_descriptor->>'kind'='none')`, [run_id]);
+      (SELECT min(created_at) FROM oakridge.run_transition WHERE run_id=$1
+        AND to_jsonb(run_transition)->'event'->>'kind'='cancel')`, [run_id]);
   return Number(rows[0]?.count ?? 0);
 };

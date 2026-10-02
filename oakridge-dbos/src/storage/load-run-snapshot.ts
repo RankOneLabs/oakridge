@@ -48,11 +48,17 @@ interface CohortSnapshotRow {
 }
 
 /**
- * `FOR UPDATE` on the run row alone. It is the run's decision lock: two
- * concurrent `decide_run` calls serialise here. Owner version checks cover
- * the stage and cohort rows each decision writes.
+ * Lock stages, cohorts, then the run, matching event ingress and cancellation.
+ * Stage locks prevent new rosters from appearing outside this snapshot.
  */
 export const loadRunSnapshot = async (tx: SqlExecutor, run_id: WorkflowRunId): Promise<Result<RunSnapshot, { readonly kind: "run_not_found"; readonly run_id: WorkflowRunId }>> => {
+  // The stage lock also excludes roster inserts that a cohort-only lock misses.
+  await tx.query(
+    `SELECT id FROM oakridge.stage_instance WHERE run_id=$1 ORDER BY stage_key FOR UPDATE`, [run_id]);
+  await tx.query(
+    `SELECT cohort.id FROM oakridge.cohort cohort
+     JOIN oakridge.stage_instance stage ON stage.id=cohort.stage_instance_id
+     WHERE cohort.run_id=$1 ORDER BY stage.stage_key,cohort.cohort_key FOR UPDATE OF cohort`, [run_id]);
   const runs = await tx.query<RunSnapshotRow>(
     "SELECT id::text,status,record_version::text,outcome FROM oakridge.workflow_run WHERE id=$1 FOR UPDATE", [run_id]);
   const runRow = runs[0];
