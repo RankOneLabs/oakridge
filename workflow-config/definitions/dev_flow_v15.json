@@ -902,36 +902,6 @@
          "on": {
            "event": "session_ended"
          },
-         "guard": {
-           "name": "session_lost_in_transport",
-           "negate": false,
-           "args": {
-             "codes": [
-               "acp_transport_lost"
-             ],
-             "max_relaunches": 2
-           }
-         },
-         "to": "building",
-         "effects": [
-           {
-             "name": "count_session_relaunch",
-             "args": {}
-           },
-           {
-             "name": "launch_session",
-             "args": {
-               "role": "build",
-               "reason": "retry_after_lost_attempt"
-             }
-           }
-         ]
-       },
-       {
-         "from": "building",
-         "on": {
-           "event": "session_ended"
-         },
          "guard": null,
          "to": "build_lost",
          "effects": []
@@ -1016,36 +986,6 @@
                "outputs": [
                  "assessment"
                ]
-             }
-           }
-         ]
-       },
-       {
-         "from": "assessing",
-         "on": {
-           "event": "session_ended"
-         },
-         "guard": {
-           "name": "session_lost_in_transport",
-           "negate": false,
-           "args": {
-             "codes": [
-               "acp_transport_lost"
-             ],
-             "max_relaunches": 2
-           }
-         },
-         "to": "assessing",
-         "effects": [
-           {
-             "name": "count_session_relaunch",
-             "args": {}
-           },
-           {
-             "name": "launch_session",
-             "args": {
-               "role": "assessment",
-               "reason": "retry_after_lost_attempt"
              }
            }
          ]
