@@ -1,5 +1,8 @@
 import { err, ok, type JsonValue, type Result } from "../domain/primitives";
 import { AdapterRegistry, type AdapterDecisionContext, type AdapterDecisionHandler } from "../runtime/executor-registry";
+import type { CohortDetailContributor } from "../domain/operator-projections";
+import type { TransactionalSqlExecutor } from "../storage/sql-executor";
+import { PostgresDevFlowCohortDetailContributor } from "../storage/postgres-dev-flow";
 
 interface PullRequestPayload {
   readonly repository_key: string;
@@ -50,3 +53,8 @@ export const createDevFlowAdapterRegistry = (): AdapterRegistry => {
   registerDevFlowAdapter(registry);
   return registry;
 };
+
+export const registerDevFlowCohortDetails = (
+  projections: { register_cohort_detail_contributor(contributor: CohortDetailContributor): void },
+  sql: TransactionalSqlExecutor,
+): void => projections.register_cohort_detail_contributor(new PostgresDevFlowCohortDetailContributor(sql));

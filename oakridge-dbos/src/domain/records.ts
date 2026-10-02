@@ -40,7 +40,6 @@ export interface ProjectRecord {
   readonly name: string;
   readonly repo_dir: string;
   readonly forge_repository: JsonValue | null;
-  readonly integration_branch: string | null;
   readonly created_at: string;
 }
 

@@ -266,22 +266,6 @@ export const advanceCohortRef = (
   input: AdvanceCohortRefInput,
 ): Promise<Result<{ readonly head_sha: string }, CohortRefAdvanceError>> => advanceCohortRefWithIntent(git, input, null);
 
-/** Advances origin first, then records the same lease in cohort storage for the next writer. */
-export const advanceStoredCohortRef = async (
-  dependencies: { readonly pull_requests: DevFlowPullRequestRepository; readonly git: GitCommandRunner; readonly now: () => string },
-  input: AdvanceCohortRefInput,
-): Promise<Result<DevFlowBuildCohort, CohortRefAdvanceError>> => {
-  const intent = await dependencies.pull_requests.begin_cohort_advance({ cohort_id: input.cohort.cohort_id,
-    expected_head_sha: input.cohort.recorded_head_sha, next_head_sha: input.next_head_sha, prepared_at: dependencies.now() });
-  if (!intent.ok) return refAdvanceFailure(intent.error.kind === "ref_lease_mismatch" ? "ref_lease_mismatch" : "git_command_failed", intent.error.detail);
-  const advanced = await advanceCohortRefWithIntent(dependencies.git, input, input.next_head_sha);
-  if (!advanced.ok) return advanced;
-  const stored = await dependencies.pull_requests.advance_cohort_head({ cohort_id: input.cohort.cohort_id,
-    expected_head_sha: input.cohort.recorded_head_sha, next_head_sha: advanced.value.head_sha, advanced_at: dependencies.now() });
-  if (!stored.ok) return refAdvanceFailure(stored.error.kind === "ref_lease_mismatch" ? "ref_lease_mismatch" : "git_command_failed", stored.error.detail);
-  return ok(stored.value);
-};
-
 /** How the evidence arrived. Both kinds are reconciled identically. */
 export type CohortPullRequestEvidence =
   | { readonly kind: "observation"; readonly observation: PullRequestObservation; readonly replace_verification_id?: PullRequestVerificationId | null }

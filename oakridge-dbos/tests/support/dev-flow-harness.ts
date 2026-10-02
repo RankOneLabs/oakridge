@@ -385,6 +385,7 @@ export const installIntegrationRuntime = async (databaseUrl: string, options: In
     if (!isDedicatedLocalDatabase && !isDisposableCiDatabase && process.env.OAKRIDGE_TEST_ALLOW_SCHEMA_DROP !== "1") {
       throw new Error(`refusing to drop schema 'oakridge' in database '${databaseName}': set OAKRIDGE_TEST_ALLOW_SCHEMA_DROP=1 to confirm it is disposable`);
     }
+    await migrationSql.query("DROP SCHEMA IF EXISTS dev_flow CASCADE", []);
     await migrationSql.query("DROP SCHEMA IF EXISTS oakridge CASCADE", []);
     await migrationSql.query("DROP SCHEMA IF EXISTS dbos CASCADE", []);
     await migrationSql.query("DROP TABLE IF EXISTS public.oakridge_schema_migration", []);

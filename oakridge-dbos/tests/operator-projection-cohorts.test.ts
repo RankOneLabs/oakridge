@@ -11,14 +11,14 @@ const waiting = (overrides: Partial<OperatorCohortSummary> = {}): OperatorCohort
   lifecycle: "blocked", blocked_reason: "external", next_actor: "external",
   completion: { build_complete: true, assessment_complete: true }, blocked_by: [],
   artifact_revision_id: null, artifact_url: null, gate_id: null, gate_url: null,
-  pr_url: "https://example.test/pr/1", pull_request_reconciliation: null, updated_at: "2026-09-29T00:00:00Z",
+  links: [{ key: "pull_request", label: "Open pull request", url: "https://example.test/pr/1" }], facts: [], updated_at: "2026-09-29T00:00:00Z",
   ...overrides,
 });
 
 test("only cohorts actually awaiting a pull request merge become merge waits", () => {
   const selected = selectPullRequestMergeWaits([
     waiting(), waiting({ id: "active", lifecycle: "active" }),
-    waiting({ id: "operator", next_actor: "operator" }), waiting({ id: "missing-pr", pr_url: null }),
+    waiting({ id: "operator", next_actor: "operator" }), waiting({ id: "missing-pr", links: [] }),
     waiting({ id: "retry", blocked_reason: "retry" }),
   ]);
   expect(selected).toEqual([{

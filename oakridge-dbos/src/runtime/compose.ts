@@ -1,3 +1,4 @@
+import { PostgresDevFlowPullRequestRepository } from "../storage/postgres-dev-flow";
 /**
  * How an Oakridge backend is assembled.
  *
@@ -21,7 +22,7 @@
 import { DBOS, DBOSClient } from "@dbos-inc/dbos-sdk";
 import type { Hono } from "hono";
 
-import { createDevFlowAdapterRegistry } from "../adapters/dev-flow";
+import { createDevFlowAdapterRegistry, registerDevFlowCohortDetails } from "../adapters/dev-flow";
 import { registerDevFlowMachine } from "../adapters/dev-flow-machine";
 import type { RegisteredEffect } from "../decision/stage-effects";
 import { parseRepositoryRefs } from "../domain/repository-refs";
@@ -56,7 +57,7 @@ import {
   PostgresStageInstanceRepository,
   PostgresWorkflowRunRepository,
 } from "../storage/postgres-domain";
-import { PostgresDevFlowPullRequestRepository, PostgresOperatorProjectionRepository } from "../storage/postgres-operators";
+import { PostgresOperatorProjectionRepository } from "../storage/postgres-operators";
 import { PostgresProjectRepository } from "../storage/postgres-projects";
 import { PostgresRunRecordWriter } from "../storage/postgres-run-record";
 import { PostgresRunRecordRepository } from "../storage/postgres-run-record-repository";
@@ -164,6 +165,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const pullRequests = new PostgresDevFlowPullRequestRepository(sql);
   const forgeRepositories = new PostgresForgeRepositoryRepository(sql);
   const projections = new PostgresOperatorProjectionRepository(sql, config.application_version, adapterRegistry);
+  registerDevFlowCohortDetails(projections, sql);
   const messages = new PostgresSessionMessageRepository(sql);
   const messageRecipients = new PostgresSessionMessageRecipientResolver(sql);
 
@@ -194,7 +196,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     const rows = await sql.query<{ readonly run_id: WorkflowRunId; readonly repository_key: string;
       readonly repository_path: string; readonly canonical_ref: string; readonly expected_pr_base: string }>(
       `SELECT attempt.run_id,build.repository_key,build.repository_path,build.canonical_ref,build.expected_pr_base
-       FROM oakridge.attempt attempt JOIN oakridge.dev_flow_build_cohort build ON build.cohort_id=attempt.cohort_id
+       FROM oakridge.attempt attempt JOIN dev_flow.build_cohort build ON build.cohort_id=attempt.cohort_id
        WHERE attempt.id=$1`, [input.attempt_id]);
     const roles = rows[0];
     const expected_repository = roles ? await forgeRepositories.find_forge_repository(roles.run_id, roles.repository_key) : null;

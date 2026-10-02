@@ -1,10 +1,12 @@
 import { expect, test } from "bun:test";
+import { DBOS } from "@dbos-inc/dbos-sdk";
+import { createScratchDatabase } from "./support/durable-database";
 
 import type { ExecutorAdapter, ExternalExecutionReference } from "../src/domain/execution";
-import type { SessionId } from "../src/domain/primitives";
-import type { AttemptExecution } from "../src/domain/run-record";
+import type { SessionId, WorkflowRunId, RunRecordVersion } from "../src/domain/primitives";
+import type { AttemptExecution, RunDecision } from "../src/domain/run-record";
 import type { RunRecordRepository } from "../src/storage/repositories";
-import { ensureAttemptSession } from "../src/workflows/run-record-topology";
+import { decodeRunDecisionStepResult, ensureAttemptSession, registerRunRecordWorkflowServices, runMachineWorkflow, type RunRecordWorkflowServices } from "../src/workflows/run-record-topology";
 
 test("ensureAttemptSession fences a session started for an abandoned attempt", async () => {
   const reference: ExternalExecutionReference = { kind: "kbbl_session", session_id: "late-session" as never };
@@ -85,3 +87,46 @@ for (const status of ["cancelled", "failed", "complete"] as const) {
     expect(result).toEqual({ kind: "abandoned" });
   });
 }
+
+
+test("a missing run ends across the durable step boundary, including after an IO retry", async () => {
+  const scratch = await createScratchDatabase("oakridge_missing_run_step_test");
+  if (!scratch.ok) {
+    if (scratch.error.operation !== "reach_admin_endpoint") throw new Error(`${scratch.error.operation}: ${scratch.error.detail}`);
+    console.warn("missing-run durable step PostgreSQL check SKIPPED: no PostgreSQL reachable");
+    return;
+  }
+  const workflowIds: string[] = [];
+  DBOS.setConfig({ name: "oakridge-missing-run-test", systemDatabaseUrl: scratch.value.url,
+    applicationVersion: "missing-run-test", logLevel: "error" });
+  try {
+    await DBOS.launch();
+    for (const shouldFailOnce of [false, true]) {
+      let calls = 0;
+      const records = { async decide_run(run_id: WorkflowRunId) {
+        calls++;
+        if (shouldFailOnce && calls === 1) throw new Error("temporary database outage");
+        return { ok: false, error: { operation: "decide_run", run_id, kind: "run_not_found", detail: "run deleted" } };
+      } } as unknown as RunRecordRepository;
+      registerRunRecordWorkflowServices({ records, now: () => new Date().toISOString() } as RunRecordWorkflowServices);
+      const workflowID = `missing-run-${shouldFailOnce}`;
+      workflowIds.push(workflowID);
+      const handle = await DBOS.startWorkflow(runMachineWorkflow, { workflowID })(
+        "00000000-0000-4000-8000-000000000099" as WorkflowRunId);
+      const result = await Promise.race([handle.getResult(), Bun.sleep(2500).then(() => "still_running")]);
+      expect({ result, calls }).toEqual({ result: null, calls: shouldFailOnce ? 2 : 1 });
+    }
+  } finally {
+    for (const id of workflowIds) await DBOS.cancelWorkflow(id);
+    await DBOS.shutdown();
+    await scratch.value.drop();
+  }
+}, 60_000);
+
+
+test("checkpointed decisions from before Result envelopes still replay", () => {
+  const decision: RunDecision = { run_id: "old-run" as WorkflowRunId, status: "complete",
+    record_version: 1 as RunRecordVersion, outcome: null, transitions: [] };
+  expect(decodeRunDecisionStepResult(JSON.parse(JSON.stringify(decision))))
+    .toEqual({ ok: true, value: decision });
+});

@@ -230,7 +230,8 @@ export const decodeTransitionRecord = (row: RunTransitionRecord): RunTransitionR
 export const writeSessionStatus = async (
   tx: SqlExecutor,
   input: { readonly session_id: SessionId; readonly status: SessionLifecycleStatus; readonly at: string },
-): Promise<SessionStatusWrite> => {
+): Promise<Result<SessionStatusWrite, { readonly operation: "write_session_status"; readonly session_id: SessionId; readonly kind: "session_not_found" | "storage_failed"; readonly detail: string }>> => {
+  try {
   const terminal = input.status === "complete" || input.status === "failed" || input.status === "cancelled";
   const sessions = await tx.query<{ readonly attempt_id: string }>(
     `UPDATE oakridge.session
@@ -241,8 +242,9 @@ export const writeSessionStatus = async (
      WHERE id=$1 AND ended_at IS NULL RETURNING attempt_id::text`, [input.session_id, input.status, input.at, terminal]);
   if (!sessions[0]) {
     const rows = await tx.query<{ readonly status: CoreStatus }>("SELECT status FROM oakridge.session WHERE id=$1", [input.session_id]);
-    if (!rows[0]) throw new Error(`session '${input.session_id}' was not found`);
-    return { kind: "already_ended", status: rows[0].status };
+    if (!rows[0]) return err({ operation: "write_session_status", session_id: input.session_id,
+      kind: "session_not_found", detail: `session '${input.session_id}' was not found` });
+    return ok({ kind: "already_ended", status: rows[0].status });
   }
   await tx.query(
     `UPDATE oakridge.attempt
@@ -253,7 +255,11 @@ export const writeSessionStatus = async (
      WHERE id=$1 AND ended_at IS NULL`,
     [sessions[0].attempt_id, input.status, input.at, terminal,
       terminal ? JSON.stringify({ kind: input.status === "complete" ? "succeeded" : input.status }) : null]);
-  return { kind: "written" };
+  return ok({ kind: "written" });
+  } catch (cause) {
+    return err({ operation: "write_session_status", session_id: input.session_id,
+      kind: "storage_failed", detail: String(cause) });
+  }
 };
 
 /** Abandons every unfinished attempt of a cohort — what a retry replaces. */

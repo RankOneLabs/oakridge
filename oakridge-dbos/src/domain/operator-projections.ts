@@ -102,13 +102,22 @@ export interface OperatorPullRequestObservation { readonly owner: string; readon
 export interface OperatorPullRequestMismatch { readonly kind: "missing_repository_identity" | "repository_mismatch" | "pull_request_mismatch" | "head_branch_mismatch" | "base_branch_mismatch" | "closed_without_merge" | "stale_observation"; readonly detail: string }
 export interface OperatorCohortPullRequestReconciliation { readonly repository_key: string; readonly observation: OperatorPullRequestObservation; readonly mismatch: OperatorPullRequestMismatch | null; readonly completed_at: string | null; readonly updated_at: string }
 export interface OperatorReviewInboxItem { readonly id: string; readonly kind: "artifact_gate" | "merge_confirmation" | "cohort_blocked" | "cohort_failed" | "cohort_retry" | "pull_request_mismatch" | "pull_request_merge"; readonly state: "actionable" | "blocked"; readonly run_id: WorkflowRunId; readonly workflow_name: string; readonly stage_instance_id: StageInstanceId; readonly stage_name: string; readonly unit_id: UnitId; readonly repository_key: string | null; readonly title: string | null; readonly lifecycle: OperatorCohortLifecycle; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null; readonly artifact_revision_id: ArtifactId | null; readonly artifact_revision_ids?: readonly ArtifactId[]; readonly artifact_url: string | null; readonly gate_id: string | null; readonly gate_url: string | null; readonly resume_actions: readonly string[]; readonly blocked_by: readonly string[]; readonly pr_url: string | null }
-export interface OperatorCohortSummary { readonly id: string; readonly run_id: WorkflowRunId; readonly workflow_name: string; readonly stage_instance_id: StageInstanceId; readonly stage_name: string; readonly unit_id: UnitId; readonly repository_key: string | null; readonly title: string | null; readonly lifecycle: OperatorCohortLifecycle; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null; readonly completion: { readonly build_complete: boolean; readonly assessment_complete: boolean }; readonly blocked_by: readonly string[]; readonly artifact_revision_id: ArtifactId | null; readonly artifact_url: string | null; readonly gate_id: string | null; readonly gate_url: string | null; readonly pr_url: string | null; readonly pull_request_reconciliation: OperatorCohortPullRequestReconciliation | null; readonly updated_at: string }
+export interface CohortDetailLink { readonly key: string; readonly label: string; readonly url: string }
+export interface CohortDetailFact { readonly key: string; readonly label: string; readonly value: string }
+export interface CohortDetail { readonly links: readonly CohortDetailLink[]; readonly facts: readonly CohortDetailFact[] }
+export interface CohortDetailContributor {
+  readonly stage_type: string;
+  read(cohort_ids: readonly CohortId[]): Promise<ReadonlyMap<CohortId, CohortDetail>>;
+  cursor(): Promise<string>;
+  enrich_run?(run: OperatorRunDetail): Promise<OperatorRunDetail>;
+}
+export interface OperatorCohortSummary { readonly id: string; readonly run_id: WorkflowRunId; readonly workflow_name: string; readonly stage_instance_id: StageInstanceId; readonly stage_name: string; readonly unit_id: UnitId; readonly repository_key: string | null; readonly title: string | null; readonly lifecycle: OperatorCohortLifecycle; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null; readonly completion: { readonly build_complete: boolean; readonly assessment_complete: boolean }; readonly blocked_by: readonly string[]; readonly artifact_revision_id: ArtifactId | null; readonly artifact_url: string | null; readonly gate_id: string | null; readonly gate_url: string | null; readonly links: readonly CohortDetailLink[]; readonly facts: readonly CohortDetailFact[]; readonly updated_at: string }
 
 export const selectPullRequestMergeWaits = (cohorts: readonly OperatorCohortSummary[]): readonly OperatorPullRequestMergeWait[] =>
   cohorts.filter((cohort) => cohort.lifecycle === "blocked" && cohort.blocked_reason === "external"
-    && cohort.next_actor === "external" && cohort.pr_url !== null)
+    && cohort.next_actor === "external" && cohort.links.some((link) => link.key === "pull_request"))
     .map((cohort) => ({ cohort_id: cohort.id as CohortId, stage_instance_id: cohort.stage_instance_id,
-      unit_id: cohort.unit_id, pull_request_url: cohort.pr_url as string }));
+      unit_id: cohort.unit_id, pull_request_url: cohort.links.find((link) => link.key === "pull_request")!.url }));
 /** The items list is the required-attention decision queue; completed and optional-attention history lives outside the inbox. */
 export interface OperatorReviewInbox { readonly cohorts: readonly OperatorCohortSummary[]; readonly items: readonly OperatorReviewInboxItem[]; readonly attention_count: number }
 export interface OperatorApplicationVersionInventory { readonly application_version: string | null; readonly run_count: number; readonly pending_run_count: number; readonly gated_run_count: number; readonly oldest_pending_at: string | null }

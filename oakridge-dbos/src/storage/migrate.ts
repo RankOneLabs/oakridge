@@ -27,23 +27,23 @@ export const applyMigrations = async (sql: TransactionalSqlExecutor, directory =
   }
   if (appliedNames.has("0015_v15_baseline.sql")) {
     // Compare the contract required by the edited baseline, including nullability.
-    interface SchemaRequirement { readonly table_name: string; readonly column_name: string | null; readonly nullable?: boolean }
-    interface SchemaColumn { readonly table_name: string; readonly column_name: string; readonly is_nullable: string }
+    interface SchemaRequirement { readonly table_schema: "oakridge" | "dev_flow"; readonly table_name: string; readonly column_name: string | null; readonly nullable?: boolean }
+    interface SchemaColumn { readonly table_schema: string; readonly table_name: string; readonly column_name: string; readonly is_nullable: string }
     const requirements: readonly SchemaRequirement[] = [
-      { table_name: "artifact_thread", column_name: null },
-      { table_name: "attempt", column_name: "idempotency_key" },
-      { table_name: "dev_flow_build_cohort", column_name: null },
-      ...["state", "round", "depends_on"].map((column_name) => ({ table_name: "cohort", column_name })),
+      { table_schema: "oakridge", table_name: "artifact_thread", column_name: null },
+      { table_schema: "oakridge", table_name: "attempt", column_name: "idempotency_key" },
+      { table_schema: "dev_flow", table_name: "build_cohort", column_name: null },
+      ...["state", "round", "depends_on"].map((column_name): SchemaRequirement => ({ table_schema: "oakridge", table_name: "cohort", column_name })),
       ...["cohort_id", "round", "output_name", "collection_key", "artifact_id", "recorded_at"]
-        .map((column_name) => ({ table_name: "cohort_output", column_name })),
+        .map((column_name): SchemaRequirement => ({ table_schema: "oakridge", table_name: "cohort_output", column_name })),
       ...["event", "from_state", "to_state", "effects_started_at"]
-        .map((column_name) => ({ table_name: "run_transition", column_name })),
-      { table_name: "attempt", column_name: "request", nullable: true },
+        .map((column_name): SchemaRequirement => ({ table_schema: "oakridge", table_name: "run_transition", column_name })),
+      { table_schema: "oakridge", table_name: "attempt", column_name: "request", nullable: true },
     ];
     const columns = await sql.query<SchemaColumn>(
-      "SELECT table_name,column_name,is_nullable FROM information_schema.columns WHERE table_schema='oakridge'", []);
+      "SELECT table_schema,table_name,column_name,is_nullable FROM information_schema.columns WHERE table_schema IN ('oakridge','dev_flow')", []);
     const missing = requirements.filter((requirement) => !columns.some((column) =>
-      column.table_name === requirement.table_name
+      column.table_schema === requirement.table_schema && column.table_name === requirement.table_name
       && (requirement.column_name === null || column.column_name === requirement.column_name)
       && (requirement.nullable !== true || column.is_nullable === "YES")))
       .map((requirement) => `${requirement.table_name}${requirement.column_name ? `.${requirement.column_name}` : ""}${requirement.nullable ? " (nullable)" : ""}`);

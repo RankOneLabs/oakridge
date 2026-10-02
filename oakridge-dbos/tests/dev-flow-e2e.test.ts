@@ -460,7 +460,7 @@ e2e("S8 watcher observes a real merge on its timer", async () => {
       timeout_ms: 90_000,
     });
     const closures = await sql.query<{ readonly count: string }>(`SELECT count(*)::text AS count
-      FROM oakridge.pull_request_merge_closure closure
+      FROM dev_flow.pull_request_merge_closure closure
       JOIN oakridge.cohort cohort ON cohort.id=closure.cohort_id
       WHERE cohort.run_id=$1 AND cohort.cohort_key='foundation'`, [launched.run_id]);
     expect(Number(closures[0]?.count ?? 0)).toBeGreaterThan(0);
@@ -513,9 +513,9 @@ e2e("S10 closed PR reopens, merges, or starts a replacement PR", async () => {
     expect(Number(replacementPublish.delivery_key.split(":")[2])).toBeGreaterThanOrEqual(200);
     expect(Number(replacementPublish.delivery_key.split(":")[2])).toBeLessThan(300);
     const bound = await sql.query<{ readonly forge_pull_request_id: string }>(`SELECT pr.forge_pull_request_id::text
-      FROM oakridge.dev_flow_build_cohort build
-      JOIN oakridge.pull_request_verification verification ON verification.id=build.current_verified_pull_request_id
-      JOIN oakridge.pull_request pr ON pr.id=verification.pull_request_id
+      FROM dev_flow.build_cohort build
+      JOIN dev_flow.pull_request_verification verification ON verification.id=build.current_verified_pull_request_id
+      JOIN dev_flow.pull_request pr ON pr.id=verification.pull_request_id
       WHERE build.cohort_id=$1`, [cohort.cohort_id]);
     expect(bound[0]?.forge_pull_request_id).toBe("99");
     const prompt = [...replacementAgent.launched.values()].map((launch) =>

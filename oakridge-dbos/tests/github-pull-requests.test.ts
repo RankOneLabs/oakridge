@@ -14,8 +14,8 @@ const cohort = (unitId: string, lifecycle: OperatorCohortLifecycle): OperatorCoh
   next_actor: lifecycle === "blocked" ? "external" : null,
   completion: { build_complete: true, assessment_complete: false },
   blocked_by: [],
-  artifact_revision_id: null, artifact_url: null, gate_id: null, gate_url: null, pr_url: null,
-  pull_request_reconciliation: null, updated_at: "2026-08-18T12:00:00.000Z",
+  artifact_revision_id: null, artifact_url: null, gate_id: null, gate_url: null, links: [], facts: [],
+  updated_at: "2026-08-18T12:00:00.000Z",
 });
 
 test("only cohorts parked on their pull request are polled", () => {

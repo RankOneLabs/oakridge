@@ -187,11 +187,11 @@ export const pollStagePullRequests = async (dependencies: StagePullRequestPollDe
             latest.state AS latest_state,latest.merged_at::text AS latest_merged_at,
             latest.head_sha AS latest_head_sha,latest.base_ref AS latest_base_ref
      FROM oakridge.cohort cohort JOIN oakridge.stage_instance stage ON stage.id=cohort.stage_instance_id
-     JOIN oakridge.dev_flow_build_cohort build ON build.cohort_id=cohort.id
-     JOIN oakridge.pull_request_verification verification ON verification.id=build.current_verified_pull_request_id
-     JOIN oakridge.pull_request pr ON pr.id=verification.pull_request_id
+     JOIN dev_flow.build_cohort build ON build.cohort_id=cohort.id
+     JOIN dev_flow.pull_request_verification verification ON verification.id=build.current_verified_pull_request_id
+     JOIN dev_flow.pull_request pr ON pr.id=verification.pull_request_id
      LEFT JOIN LATERAL (SELECT observation.state,observation.merged_at,observation.head_sha,observation.base_ref
-       FROM oakridge.pull_request_observation observation WHERE observation.pull_request_id=pr.id
+       FROM dev_flow.pull_request_observation observation WHERE observation.pull_request_id=pr.id
        ORDER BY observation.observed_at DESC,observation.recorded_at DESC LIMIT 1) latest ON true
      WHERE stage.stage_type='delegated_session' AND stage.stage_key='build'
        AND cohort.state IN ('awaiting_merge','pr_closed')
@@ -218,9 +218,9 @@ export const pollStagePullRequests = async (dependencies: StagePullRequestPollDe
       const pull = await tx.query<CurrentStagePullRequest>(
         `SELECT verification.pull_request_id::text AS id,verification.id::text AS verification_id,
                 cohort.durable_version::text,cohort.state
-         FROM oakridge.dev_flow_build_cohort build
+         FROM dev_flow.build_cohort build
          JOIN oakridge.cohort cohort ON cohort.id=build.cohort_id
-         JOIN oakridge.pull_request_verification verification ON verification.id=build.current_verified_pull_request_id
+         JOIN dev_flow.pull_request_verification verification ON verification.id=build.current_verified_pull_request_id
          WHERE build.cohort_id=$1`, [cohort_id]);
       const current = pull[0];
       // The GitHub read happened outside the lock. A retry, replacement PR or
@@ -230,7 +230,7 @@ export const pollStagePullRequests = async (dependencies: StagePullRequestPollDe
         return { cohort_id, state: current?.state ?? row.state, kind: "unchanged" };
       }
       await tx.query(
-        `INSERT INTO oakridge.pull_request_observation
+        `INSERT INTO dev_flow.pull_request_observation
            (id,pull_request_id,head_ref,base_ref,head_sha,state,source,observed_at,merged_at,recorded_at)
          VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,'poll',$6::timestamptz,$7::timestamptz,clock_timestamp())`,
         [current.id, observation.head_branch, observation.base_branch, observation.head_sha,

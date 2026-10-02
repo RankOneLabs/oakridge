@@ -75,7 +75,7 @@ export class DiagnosisSql implements TransactionalSqlExecutor {
   async query<Row extends object>(statement: string, _parameters: readonly unknown[]): Promise<readonly Row[]> {
     let rows: readonly object[];
     if (statement.includes("AS stage_total")) {
-      if (!statement.includes("FROM oakridge.wait_gate wait") || !statement.includes("verification.invalidated_at IS NULL")
+      if (!statement.includes("FROM oakridge.wait_gate wait") || statement.includes("dev_flow.")
         || !statement.includes("cohort.blocked_reason='retry'") || !statement.includes("cohort.next_actor='operator'")) {
         throw new Error("run attention_count must use the actionable inbox facts");
       }
@@ -95,7 +95,7 @@ export class DiagnosisSql implements TransactionalSqlExecutor {
       rows = this.fixture.artifacts ?? [];
     } else if (statement.includes("SELECT definition.definition")) {
       rows = [];
-    } else if (statement.includes("FROM oakridge.dev_flow_build_cohort build")) {
+    } else if (statement.includes("FROM dev_flow.build_cohort build")) {
       rows = [];
     } else if (statement.includes("FROM oakridge.session session") && statement.includes("attempt_count")) {
       if (!statement.includes("max(a2.attempt_number)") || !statement.includes("JOIN oakridge.cohort cohort")) {

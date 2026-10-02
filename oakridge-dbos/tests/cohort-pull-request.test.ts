@@ -7,7 +7,7 @@ import {
 import { invalidatePullRequestForReplacement, type PullRequestApproval, type PullRequestObservation, type PullRequestObservationId, type PullRequestId, type PullRequestVerificationId, type VerifiedPullRequestLink } from "../src/domain/pull-request";
 import type { ArtifactId, CohortId, StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
 import { renderCohortBranchContract, selectCohortBranchRoles } from "../src/domain/repository-refs";
-import { advanceCohortRef, advanceStoredCohortRef, prepareDevFlowBuildCohort, reconcileCohortEvidence, verifyAndBindCohortPullRequest, verifyCohortPullRequest } from "../src/runtime/cohort-pull-request";
+import { advanceCohortRef, prepareDevFlowBuildCohort, reconcileCohortEvidence, verifyAndBindCohortPullRequest, verifyCohortPullRequest } from "../src/runtime/cohort-pull-request";
 import { BunGitCommandRunner } from "../src/runtime/git-command-runner";
 import type { DevFlowPullRequestRepository } from "../src/storage/repositories";
 import { createCohortPullRequestApp } from "../src/http/cohort-pull-request";
@@ -357,38 +357,6 @@ test("cohort preparation creates the canonical ref and persists the roles render
   } finally {
     await fixture.remove();
   }
-});
-
-test("stored cohort advance records the same guarded head that was pushed", async () => {
-  const cohort = storedCohort("/repo", "old-head");
-  const commands: string[][] = [];
-  const git = { async run(_cwd: string, args: readonly string[]) {
-    commands.push([...args]);
-    if (args[0] === "ls-remote") return { exit_code: 0, stdout: "old-head\trefs/heads/cohort/foundation\n", stderr: "" };
-    return { exit_code: 0, stdout: "", stderr: "" };
-  } };
-  const repository = { async begin_cohort_advance() { return { ok: true as const, value: undefined }; },
-    async advance_cohort_head() { return { ok: true as const, value: { ...cohort, recorded_head_sha: "new-head" } }; } } as unknown as DevFlowPullRequestRepository;
-  const result = await advanceStoredCohortRef({ pull_requests: repository, git, now: () => "2026-09-29T00:00:00Z" },
-    { cohort, next_head_sha: "new-head" });
-  expect(result.ok && result.value.recorded_head_sha).toBe("new-head");
-  expect(commands.map((command) => command[0])).toEqual(["ls-remote", "merge-base", "push"]);
-});
-
-test("stored cohort advance recovers when origin already has the requested head", async () => {
-  const cohort = storedCohort("/repo", "old-head");
-  const commands: string[][] = [];
-  const git = { async run(_cwd: string, args: readonly string[]) {
-    commands.push([...args]);
-    if (args[0] === "ls-remote") return { exit_code: 0, stdout: "new-head\trefs/heads/cohort/foundation\n", stderr: "" };
-    return { exit_code: 0, stdout: "", stderr: "" };
-  } };
-  const repository = { async begin_cohort_advance() { return { ok: true as const, value: undefined }; },
-    async advance_cohort_head() { return { ok: true as const, value: { ...cohort, recorded_head_sha: "new-head" } }; } } as unknown as DevFlowPullRequestRepository;
-  const result = await advanceStoredCohortRef({ pull_requests: repository, git, now: () => "2026-09-29T00:00:00Z" },
-    { cohort, next_head_sha: "new-head" });
-  expect(result.ok && result.value.recorded_head_sha).toBe("new-head");
-  expect(commands.map((command) => command[0])).toEqual(["ls-remote", "merge-base"]);
 });
 
 test("cohort preparation refuses a deleted stored canonical ref", async () => {

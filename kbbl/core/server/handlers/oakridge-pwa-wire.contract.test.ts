@@ -10,7 +10,7 @@ import { createDevFlowAdapterRegistry } from "../../../../oakridge-dbos/src/adap
 import { PostgresOperatorProjectionRepository } from "../../../../oakridge-dbos/src/storage/postgres-operators";
 import type { OperatorProjectionRepository } from "../../../../oakridge-dbos/src/storage/postgres-operators";
 import { DiagnosisSql, stage } from "../../../../oakridge-dbos/tests/support/operator-sql-stub";
-import { parseRunEventFrame, parseProject, parseRunDiagnosis, parseSessionMessageAccepted, parseSessionMessageRecord } from "../../pwa/oakridge/wire";
+import { parseRunEventFrame, parseProject, parseReviewInbox, parseRunDiagnosis, parseSessionMessageAccepted, parseSessionMessageRecord } from "../../pwa/oakridge/wire";
 
 const RUN_ID = "10000000-0000-0000-0000-000000000001";
 
@@ -86,6 +86,26 @@ test("diagnosis from PostgresOperatorProjectionRepository parses", async () => {
   const response = await createOperatorProjectionApp(repository).request(`/runs/${RUN_ID}/diagnosis`);
   expect(response.status).toBe(200);
   expect(parseRunDiagnosis(await response.json()).run.id).toBe(RUN_ID);
+});
+
+test("review inbox serializer preserves contributed cohort links and facts", async () => {
+  const repository = { get_review_inbox: async () => ({
+    cohorts: [{ id: "30000000-0000-0000-0000-000000000001", run_id: RUN_ID, workflow_name: "dev flow",
+      stage_instance_id: "20000000-0000-0000-0000-000000000001", stage_name: "build", unit_id: "api",
+      repository_key: "oakridge", title: "API", lifecycle: "blocked", blocked_reason: "external", next_actor: "external",
+      completion: { build_complete: true, assessment_complete: false }, blocked_by: [], artifact_revision_id: null,
+      artifact_url: null, gate_id: null, gate_url: null,
+      links: [{ key: "pull_request", label: "Open pull request", url: "https://example.test/pr/1" }],
+      facts: [{ key: "review_state", label: "Review state", value: "open" }], updated_at: "2026-09-29T00:00:00Z" }],
+    items: [], attention_count: 0,
+  }) } as unknown as OperatorProjectionRepository;
+  const response = await createOperatorProjectionApp(repository).request("/review_inbox");
+  const parsed = parseReviewInbox(await response.json());
+  expect(parsed.ok).toBe(true);
+  if (parsed.ok) expect(parsed.value.cohorts[0]).toMatchObject({
+    links: [{ key: "pull_request", url: "https://example.test/pr/1" }],
+    facts: [{ key: "review_state", value: "open" }],
+  });
 });
 
 test("session message routes serialize records accepted by PWA guards", async () => {
