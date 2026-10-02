@@ -26,7 +26,7 @@ import { writeSessionStatus } from "../storage/postgres-run-record";
 import type { SessionEndOutcome } from "../domain/stage-machine";
 
 import { attemptWorkflowId, runMachineWorkflowId, stageMachineWorkflowId } from "../decision/ids";
-import { type AttemptExecution, type OpenCohort, type RunDecision, type TransitionEffectDescriptor } from "../domain/run-record";
+import { type AttemptExecution, type OpenCohort, type RunDecision, type RunRecordRepositoryError, type TransitionEffectDescriptor } from "../domain/run-record";
 import { cohortIdFor, resolveCohortRoster } from "../adapters/cohort-roster";
 import { ExecutorStartRejectedError, type ExecutionRequest, type ExecutorAdapter, type ExecutorObservationAttempt, type ExecutorUnavailable, type ExternalExecutionReference } from "../domain/execution";
 import type { AttemptId, CohortId, JsonValue, KbblSessionId, RunTransitionId, StageInstanceId, UnitId, WorkflowRunId } from "../domain/primitives";
@@ -87,11 +87,15 @@ const workflowServices = (): RunRecordWorkflowServices => {
 const decideRunStep = DBOS.registerStep(
   async (run_id: WorkflowRunId): Promise<RunDecision> => {
     const decided = await workflowServices().records.decide_run(run_id, workflowServices().now());
-    if (!decided.ok) throw new Error(`${decided.error.operation}:${decided.error.kind}:${decided.error.detail}`);
+    if (!decided.ok) throw new RunDecisionFailure(decided.error);
     return decided.value;
   },
   { name: "oakridgeV15DecideRunStep", retriesAllowed: true, maxAttempts: 5, intervalSeconds: 1, backoffRate: 2 },
 );
+
+class RunDecisionFailure extends Error {
+  constructor(readonly failure: RunRecordRepositoryError) { super(`${failure.operation}:${failure.kind}:${failure.detail}`); }
+}
 
 const isTerminal = (status: RunDecision["status"]): boolean =>
   status === "complete" || status === "failed" || status === "cancelled";
@@ -131,7 +135,7 @@ export const runMachineWorkflow = DBOS.registerWorkflow(async (run_id: WorkflowR
     } catch (error) {
       if (error instanceof DBOSErrors.DBOSWorkflowCancelledError) return null;
       const message = String(error);
-      if (message.includes("run_not_found")) return null;
+      if (error instanceof RunDecisionFailure && error.failure.kind === "run_not_found") return null;
       DBOS.logger.error(`run ${run_id}: decide failed, retrying in ${MACHINE_FAILURE_BACKOFF_SECONDS}s: ${message}`);
       await DBOS.sleepSeconds(MACHINE_FAILURE_BACKOFF_SECONDS);
       continue;
@@ -317,7 +321,8 @@ const recordAttemptOutcome = async (execution: AttemptExecution, status: "comple
   await effects_sql.transaction(async (tx) => {
     await stage_events.lock_stage_cohorts_in(tx, execution.cohort_id);
     const written = await writeSessionStatus(tx, { session_id: execution.session_id, status, at: now() });
-    if (written.kind === "already_ended") return;
+    if (!written.ok) throw new Error(`${written.error.operation}:${written.error.kind}:${written.error.detail}`);
+    if (written.value.kind === "already_ended") return;
     const applied = await stage_events.apply_in(tx, execution.cohort_id,
       { kind: "session_ended", attempt_id: execution.attempt_id, outcome }, transition_ids);
     if (!applied.ok) throw new Error(`${applied.error.kind}: ${applied.error.detail}`);

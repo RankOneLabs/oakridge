@@ -475,13 +475,18 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
            kbbl_session_id=COALESCE($3,kbbl_session_id),updated_at=clock_timestamp() WHERE id=$1`,
         [input.session_id, JSON.stringify(input.adapter_reference), input.kbbl_session_id]);
       const written = await writeSessionStatus(tx, { session_id: input.session_id, status: "active", at: input.bound_at });
-      return written.kind === "written" ? { kind: "bound" } : { kind: "attempt_ended", status: written.status };
+      if (!written.ok) throw new Error(`${written.error.operation}:${written.error.kind}:${written.error.detail}`);
+      return written.value.kind === "written" ? { kind: "bound" } : { kind: "attempt_ended", status: written.value.status };
     });
   }
 
   async observe_session(input: ObserveSession): Promise<SessionStatusWrite> {
-    return this.sql.transaction((tx) => writeSessionStatus(tx,
-      { session_id: input.session_id, status: statusFromHealth(input.health), at: input.observed_at }));
+    return this.sql.transaction(async (tx) => {
+      const written = await writeSessionStatus(tx,
+        { session_id: input.session_id, status: statusFromHealth(input.health), at: input.observed_at });
+      if (!written.ok) throw new Error(`${written.error.operation}:${written.error.kind}:${written.error.detail}`);
+      return written.value;
+    });
   }
 
   async mark_session_fenced(session_id: SessionId, fenced_at: string): Promise<void> {

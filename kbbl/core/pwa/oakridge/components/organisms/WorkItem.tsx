@@ -45,7 +45,8 @@ function workLabel(item: ReviewInboxItem): string {
 export function WorkItem({ item, cohort, isSettled = false, onSelectRun, onSelectArtifact }: { item: ReviewInboxItem; cohort?: CohortLifecycleSummary; isSettled?: boolean; onSelectRun: (id: string) => void; onSelectArtifact: (id: string) => void }) {
   const gate = isSettled ? null : itemToGate(item);
   const artifactRevisionIds = item.artifact_revision_ids ?? (item.artifact_revision_id ? [item.artifact_revision_id] : []);
-  const mismatch = cohort?.pull_request_reconciliation?.mismatch;
+  const mismatch = cohort?.facts?.find((fact) => fact.key === "mismatch")?.value
+    ?? cohort?.pull_request_reconciliation?.mismatch?.detail;
 
   return (
     <article className={isSettled ? "or-work-item or-work-item--settled" : "or-work-item"} data-testid={isSettled ? "or-review-inbox-settled-item" : "or-review-inbox-item"}>
@@ -60,7 +61,11 @@ export function WorkItem({ item, cohort, isSettled = false, onSelectRun, onSelec
             onClick={() => onSelectArtifact(artifactId)} data-testid="or-inbox-artifact-link">Review {artifactId}</Button>)}
           <Button variant="link" onClick={() => onSelectRun(item.run_id)} data-testid="or-inbox-run-link">View run details</Button>
           {item.pr_url && <a href={item.pr_url} target="_blank" rel="noopener noreferrer">Open pull request</a>}
+          {cohort?.links?.filter((link) => /^https?:\/\//i.test(link.url) && link.url !== item.pr_url)
+            .map((link) => <a key={link.key} href={link.url} target="_blank" rel="noopener noreferrer">{link.label}</a>)}
         </div>
+        {cohort?.facts?.filter((fact) => item.kind !== "pull_request_mismatch" || fact.key !== "mismatch")
+          .map((fact) => <p key={fact.key}>{fact.label}: {fact.value}</p>)}
       </div>
       <div className="or-work-item__decision">
         {isSettled && <p data-testid="or-inbox-settled">No longer needs your decision.</p>}
@@ -68,7 +73,7 @@ export function WorkItem({ item, cohort, isSettled = false, onSelectRun, onSelec
         {gate && <GateDecisionActions gate={gate} />}
         {!gate && item.kind === "pull_request_merge" && <PullRequestMergeAction item={item} cohort={cohort} />}
         {!gate && item.kind === "cohort_retry" && <CohortRetryAction item={item} />}
-        {!gate && item.kind === "pull_request_mismatch" && <><p>{mismatch?.detail ?? "The observed pull request does not match this cohort’s durable configuration."}</p><p>Correct the pull request repository or branches, then Oakridge will reconcile it automatically.</p></>}
+        {!gate && item.kind === "pull_request_mismatch" && <><p>{mismatch ?? "The observed pull request does not match this cohort’s durable configuration."}</p><p>Correct the pull request repository or branches, then Oakridge will reconcile it automatically.</p></>}
         {!gate && item.kind !== "pull_request_mismatch" && item.kind !== "pull_request_merge" && item.kind !== "cohort_retry" && <p>{item.kind === "cohort_failed" ? "This cohort failed and ended its run. Start a new run to try again." : "This work will continue automatically when its dependencies finish."}</p>}
         </>}
       </div>

@@ -100,28 +100,28 @@ const bindPullRequest: RegisteredEffect = async (tx, { cohort, event }) => {
   if (!pr || typeof pr.number !== "number" || typeof pr.owner !== "string" || typeof pr.name !== "string"
     || typeof pr.url !== "string" || typeof pr.head_sha !== "string") return effectFailure(cohort, "bind_pull_request", "PR enrichment is missing");
   const pull = await tx.query<{ readonly id: string }>(
-    `INSERT INTO oakridge.pull_request (id,provider,owner,name,forge_pull_request_id,url,created_at)
+    `INSERT INTO dev_flow.pull_request (id,provider,owner,name,forge_pull_request_id,url,created_at)
      VALUES (gen_random_uuid(),'github',$1,$2,$3,$4,clock_timestamp())
      ON CONFLICT (provider,lower(owner),lower(name),forge_pull_request_id)
      DO UPDATE SET url=EXCLUDED.url RETURNING id::text`, [pr.owner, pr.name, pr.number, pr.url]);
   const pull_id = pull[0]?.id;
   if (!pull_id) return effectFailure(cohort, "bind_pull_request", "PR could not be stored");
   const observation = await tx.query<{ readonly id: string }>(
-    `INSERT INTO oakridge.pull_request_observation
+    `INSERT INTO dev_flow.pull_request_observation
        (id,pull_request_id,head_ref,base_ref,head_sha,state,source,observed_at,merged_at,recorded_at)
      VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,'poll',$6::timestamptz,$7::timestamptz,clock_timestamp())
      RETURNING id::text`, [pull_id, pr.head_branch, pr.base_branch, pr.head_sha, pr.state,
       pr.observed_at, pr.merged_at]);
   await tx.query(
-    `UPDATE oakridge.pull_request_verification SET invalidated_at=clock_timestamp(),
+    `UPDATE dev_flow.pull_request_verification SET invalidated_at=clock_timestamp(),
        invalidation_reason='replaced' WHERE cohort_id=$1 AND invalidated_at IS NULL`, [cohort.id]);
   const verified = await tx.query<{ readonly id: string }>(
-    `INSERT INTO oakridge.pull_request_verification
+    `INSERT INTO dev_flow.pull_request_verification
        (id,cohort_id,pull_request_id,observation_id,verified_head_sha,verified_at)
      VALUES (gen_random_uuid(),$1,$2,$3,$4,clock_timestamp()) RETURNING id::text`,
     [cohort.id, pull_id, observation[0]?.id, pr.head_sha]);
   await tx.query(
-    `UPDATE oakridge.dev_flow_build_cohort SET current_verified_pull_request_id=$2,updated_at=clock_timestamp()
+    `UPDATE dev_flow.build_cohort SET current_verified_pull_request_id=$2,updated_at=clock_timestamp()
      WHERE cohort_id=$1`, [cohort.id, verified[0]?.id]);
   const data = objectOf(cohort.stage_data) ?? {};
   const enrichment = objectOf(event.enrichment ?? undefined);
@@ -132,11 +132,11 @@ const bindPullRequest: RegisteredEffect = async (tx, { cohort, event }) => {
 
 const unbindPullRequest: RegisteredEffect = async (tx, { cohort }) => {
   await tx.query(
-    `UPDATE oakridge.pull_request_verification SET invalidated_at=clock_timestamp(),
+    `UPDATE dev_flow.pull_request_verification SET invalidated_at=clock_timestamp(),
        invalidation_reason='replaced' WHERE id=(SELECT current_verified_pull_request_id
-       FROM oakridge.dev_flow_build_cohort WHERE cohort_id=$1) AND invalidated_at IS NULL`, [cohort.id]);
+       FROM dev_flow.build_cohort WHERE cohort_id=$1) AND invalidated_at IS NULL`, [cohort.id]);
   await tx.query(
-    `UPDATE oakridge.dev_flow_build_cohort SET current_verified_pull_request_id=NULL,updated_at=clock_timestamp()
+    `UPDATE dev_flow.build_cohort SET current_verified_pull_request_id=NULL,updated_at=clock_timestamp()
      WHERE cohort_id=$1`, [cohort.id]);
   return ok({ stage_data: { ...(objectOf(cohort.stage_data) ?? {}), pull_request: null } });
 };
@@ -146,12 +146,12 @@ const recordMerge: RegisteredEffect = async (tx: SqlExecutor, { cohort, event })
   const observation = objectOf(event.observation);
   if (!observation || typeof observation.merged_at !== "string") return effectFailure(cohort, "record_merge", "merge time is missing");
   const current = await tx.query<{ readonly pull_request_id: string }>(
-    `SELECT verification.pull_request_id::text FROM oakridge.dev_flow_build_cohort build
-     JOIN oakridge.pull_request_verification verification ON verification.id=build.current_verified_pull_request_id
+    `SELECT verification.pull_request_id::text FROM dev_flow.build_cohort build
+     JOIN dev_flow.pull_request_verification verification ON verification.id=build.current_verified_pull_request_id
      WHERE build.cohort_id=$1`, [cohort.id]);
   if (!current[0]) return effectFailure(cohort, "record_merge", "verified PR is missing");
   await tx.query(
-    `INSERT INTO oakridge.pull_request_merge_closure
+    `INSERT INTO dev_flow.pull_request_merge_closure
        (id,cohort_id,pull_request_id,idempotency_key,merged_at,confirmed_at)
      VALUES (gen_random_uuid(),$1,$2,$3,$4::timestamptz,clock_timestamp())
      ON CONFLICT (cohort_id) DO NOTHING`,

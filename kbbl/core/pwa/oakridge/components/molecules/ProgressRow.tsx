@@ -11,7 +11,8 @@ const LIFECYCLE_LABELS: Record<CohortLifecycle, string> = {
 };
 
 function lifecycleLabel(cohort: CohortLifecycleSummary): string {
-  if (cohort.lifecycle === "complete" && cohort.pull_request_reconciliation?.completed_at) {
+  if (cohort.lifecycle === "complete" && (cohort.facts?.some((fact) => fact.key === "merged_at")
+    || cohort.pull_request_reconciliation?.completed_at)) {
     return "Merged · complete";
   }
   if (cohort.lifecycle === "blocked" && cohort.blocked_reason && cohort.next_actor) {

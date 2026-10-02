@@ -201,6 +201,16 @@ export function parseReviewInbox(inbox: RawReviewInbox): Result<ReviewInbox, Res
   for (const cohort of inbox.cohorts) {
     const repositoryKey = parseOptionalRepositoryKey(cohort.repository_key);
     if (!repositoryKey.ok) return repositoryKey;
+    const links = cohort.links ?? [];
+    const facts = cohort.facts ?? [];
+    if (!Array.isArray(links) || links.some((link) => !link || typeof link.key !== "string"
+      || typeof link.label !== "string" || typeof link.url !== "string")) {
+      return err("parse review inbox", "response contained invalid cohort links");
+    }
+    if (!Array.isArray(facts) || facts.some((fact) => !fact || typeof fact.key !== "string"
+      || typeof fact.label !== "string" || typeof fact.value !== "string")) {
+      return err("parse review inbox", "response contained invalid cohort facts");
+    }
     let reconciliation: CohortPullRequestReconciliation | null | undefined = cohort.pull_request_reconciliation == null
       ? cohort.pull_request_reconciliation
       : undefined;
@@ -209,7 +219,8 @@ export function parseReviewInbox(inbox: RawReviewInbox): Result<ReviewInbox, Res
       if (!reconciliationKey.ok) return reconciliationKey;
       reconciliation = { ...cohort.pull_request_reconciliation, repository_key: reconciliationKey.value };
     }
-    cohorts.push({ ...cohort, repository_key: repositoryKey.value, pull_request_reconciliation: reconciliation });
+    cohorts.push({ ...cohort, repository_key: repositoryKey.value, links, facts,
+      pull_request_reconciliation: reconciliation });
   }
   const items: ReviewInboxItem[] = [];
   for (const item of inbox.items) {

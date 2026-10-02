@@ -3,7 +3,7 @@ import { readdir } from "node:fs/promises";
 
 import { applyMigrations, migrationNames } from "../src/storage/migrate";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
-import { PostgresDevFlowPullRequestRepository } from "../src/storage/postgres-operators";
+import { PostgresDevFlowCohortDetailContributor, PostgresDevFlowPullRequestRepository } from "../src/storage/postgres-dev-flow";
 import type { CohortId } from "../src/domain/primitives";
 import { createScratchDatabase, type ScratchDatabase } from "./support/durable-database";
 
@@ -29,7 +29,7 @@ test("an applied 0015 ledger without its schema fails with named divergence", as
       (name text PRIMARY KEY, applied_at timestamptz NOT NULL)`, []);
     await sql.query(`INSERT INTO public.oakridge_schema_migration (name,applied_at)
       VALUES ('0015_v15_baseline.sql',now())`, []);
-    await expect(applyMigrations(sql)).rejects.toThrow("artifact_thread, attempt.idempotency_key, dev_flow_build_cohort");
+    await expect(applyMigrations(sql)).rejects.toThrow("artifact_thread, attempt.idempotency_key, build_cohort");
   } finally { await sql.close(); }
 });
 
@@ -95,7 +95,7 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
       expected_pr_base: "release/web", recorded_head_sha: "head-web", current_verified_pull_request_id: null,
       created_at: "2026-09-29T09:00:00Z", updated_at: "2026-09-29T09:00:00Z" });
     expect(await sql.query<{ readonly repository_key: string; readonly expected_pr_base: string }>(
-      "SELECT repository_key,expected_pr_base FROM oakridge.dev_flow_build_cohort ORDER BY cohort_key", []))
+      "SELECT repository_key,expected_pr_base FROM dev_flow.build_cohort ORDER BY cohort_key", []))
       .toEqual([{ repository_key: "oakridge", expected_pr_base: "epic/oakridge" }, { repository_key: "web", expected_pr_base: "release/web" }]);
 
     const observed = (head_sha: string) => ({ provider: "github" as const, owner: "RankOneLabs", name: "oakridge", number: 42,
@@ -106,14 +106,17 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
       verified_at: "2026-09-29T10:00:02Z", replace_verification_id: null });
     expect(firstBinding.ok).toBe(true);
     if (!firstBinding.ok) throw new Error(firstBinding.error.detail);
-    await sql.query(`INSERT INTO oakridge.pull_request_approval (id,cohort_id,verification_id,approval_kind,approved_at)
-      VALUES ('00000000-0000-4000-8000-000000000060',$1,$2,'assessment_review','2026-09-29T10:00:03Z')`, [cohortId, firstBinding.value.id]);
+    const details = new PostgresDevFlowCohortDetailContributor(sql);
+    expect((await details.read([cohortId])).get(cohortId)?.links).toEqual([{
+      key: "pull_request", label: "Open pull request", url: observed("head-one").url,
+    }]);
+    expect(await details.cursor()).not.toBe("0");
     const advancedObservation = await pullRequests.observe({ observation: observed("head-two"), recorded_at: "2026-09-29T10:30:01Z" });
     const advancedBinding = await pullRequests.bind_verified({ cohort_id: cohortId, ...advancedObservation,
       verified_head_sha: "head-two", verified_at: "2026-09-29T10:30:02Z", replace_verification_id: null });
     expect(advancedBinding.ok && advancedBinding.value.binding).toBe("head_advanced");
     expect((await sql.query<{ readonly invalidation_reason: string | null }>(
-      "SELECT invalidation_reason FROM oakridge.pull_request_verification WHERE id=$1", [firstBinding.value.id]))[0]
+      "SELECT invalidation_reason FROM dev_flow.pull_request_verification WHERE id=$1", [firstBinding.value.id]))[0]
     ).toEqual({ invalidation_reason: "head_changed" });
     const replacementObservation = { ...observed("head-three"), number: 43, url: "https://github.com/RankOneLabs/oakridge/pull/43" };
     const secondObservation = await pullRequests.observe({ observation: replacementObservation, recorded_at: "2026-09-29T11:00:01Z" });
@@ -130,13 +133,14 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
     expect(await pullRequests.confirm_merge({ cohort_id: cohortId, pull_request_id: firstObservation.pull_request_id,
       idempotency_key: "stale-pr", merged_at: "2026-09-29T12:00:00Z", confirmed_at: "2026-09-29T12:00:01Z" }))
       .toEqual({ ok: false, error: expect.objectContaining({ kind: "pull_request_not_current" }) });
-    expect((await sql.query<{ readonly observations: string; readonly invalidated_approvals: string }>(`SELECT
-      (SELECT count(*)::text FROM oakridge.pull_request_observation) AS observations,
-      (SELECT count(*)::text FROM oakridge.pull_request_approval WHERE invalidated_at IS NOT NULL) AS invalidated_approvals`, []))[0])
-      .toEqual({ observations: "4", invalidated_approvals: "1" });
+    expect((await sql.query<{ readonly observations: string }>(`SELECT
+      (SELECT count(*)::text FROM dev_flow.pull_request_observation) AS observations`, []))[0])
+      .toEqual({ observations: "4" });
     const confirmation = { cohort_id: cohortId, pull_request_id: secondObservation.pull_request_id, idempotency_key: "merge-core",
       merged_at: "2026-09-29T12:00:00Z", confirmed_at: "2026-09-29T12:00:01Z" };
     expect((await pullRequests.confirm_merge(confirmation)).ok).toBe(true);
+    expect((await details.read([cohortId])).get(cohortId)?.facts).toContainEqual(
+      expect.objectContaining({ key: "merged_at", label: "Merged at" }));
     const replay = await pullRequests.confirm_merge({ ...confirmation, confirmed_at: "2026-09-29T13:00:00Z" });
     expect(replay.ok && replay.value.kind).toBe("replayed");
     const conflict = await pullRequests.confirm_merge({ ...confirmation, idempotency_key: "different" });

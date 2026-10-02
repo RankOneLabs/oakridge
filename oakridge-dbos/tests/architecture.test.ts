@@ -17,6 +17,33 @@ const FORBIDDEN_IDENTIFIERS = [
   "pull_request_merge_confirmed",
 ] as const;
 const DEV_FLOW_ROLES = ["spec", "plan", "brief", "build", "assessment", "final_integration"] as const;
+// Each exception owns an adapter-facing contract or composition point.
+const DEV_FLOW_SOURCE_ALLOWLIST = {
+  "adapters/dev-flow-machine.ts": "Registers the dev-flow machine adapter.",
+  "adapters/dev-flow.ts": "Implements dev-flow effects and registration.",
+  "compiler/resolve-execution.ts": "Carries an optional existing handoff URL into a delegated prompt.",
+  "domain/artifact-types.ts": "Registers the existing assessment artifact presentation.",
+  "domain/cohort-pull-request.ts": "Defines dev-flow cohort handoff facts.",
+  "domain/delegated-session.ts": "Carries an optional existing handoff URL in session context.",
+  "domain/dev-flow-artifacts.ts": "Defines assessment artifact validation.",
+  "domain/epic.ts": "Defines the dev-flow epic contract.",
+  "domain/gates.ts": "Maps the assessment artifact disposition.",
+  "domain/operator-projections.ts": "Keeps existing operator review item and diagnosis contracts.",
+  "domain/pull-request.ts": "Defines forge pull-request facts.",
+  "domain/repository-refs.ts": "Defines dev-flow branch roles.",
+  "http/app.ts": "Mounts the registered dev-flow refresh route.",
+  "http/cohort-pull-request.ts": "Exposes the dev-flow refresh route.",
+  "main.ts": "Wires the forge poller at process startup.",
+  "runtime/cohort-pull-request.ts": "Reconciles the dev-flow handoff.",
+  "runtime/compose.ts": "Wires dev-flow services and the contributor at composition.",
+  "runtime/github-pull-requests.ts": "Polls forge pull requests for the adapter.",
+  "runtime/resolve-work-order.ts": "Passes existing handoff context to the agent.",
+  "storage/migrate.ts": "Recognizes the retired dev-flow migration ledger name.",
+  "storage/postgres-dev-flow.ts": "Owns dev-flow persistence and projection details.",
+  "storage/postgres-operators.ts": "Keeps existing operator merge-wait and inbox contracts.",
+  "storage/repositories.ts": "Declares the dev-flow repository port used by its adapter.",
+} as const;
+const DEV_FLOW_IDENTIFIER = /dev_flow_build_cohort|pull_request|canonical_ref|dev\.assessment/;
 const isJsonObject = (value: JsonValue): value is { readonly [key: string]: JsonValue } =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -39,6 +66,31 @@ const treeSources = async (directory: string): Promise<readonly string[]> => {
     : Promise.resolve(entry.name.endsWith(".ts") ? [join(directory, entry.name)] : [])));
   return nested.flat();
 };
+
+test("dev-flow identifiers stay in the documented adapter allowlist", async () => {
+  const files = await treeSources(SOURCE);
+  const offenders = (await Promise.all(files.map(async (file) => ({
+    file: file.slice(SOURCE.length + 1), source: await readFile(file, "utf8"),
+  })))).filter(({ file, source }) => DEV_FLOW_IDENTIFIER.test(source)
+    && !(file in DEV_FLOW_SOURCE_ALLOWLIST)).map(({ file }) => file).sort();
+  expect(offenders).toEqual([]);
+});
+
+test("core records and persistence have no integration branch", async () => {
+  const files = [...await decisionSources(), join(SOURCE, "domain", "records.ts"),
+    ...(await readdir(join(SOURCE, "storage"))).filter((name) => name.startsWith("postgres-run-record") && name.endsWith(".ts"))
+      .map((name) => join(SOURCE, "storage", name))];
+  const offenders = (await Promise.all(files.map(async (file) => ({ file, source: await readFile(file, "utf8") }))))
+    .filter(({ source }) => source.includes("integration_branch")).map(({ file }) => file.slice(SOURCE.length + 1));
+  expect(offenders).toEqual([]);
+  expect(await readFile(join(SOURCE, "domain", "records.ts"), "utf8"))
+    .not.toMatch(/readonly\s+integration_branch\s*:/);
+});
+
+test("core operator projections never query adapter tables", async () => {
+  const source = await readFile(join(SOURCE, "storage", "postgres-operators.ts"), "utf8");
+  expect(source).not.toMatch(/(?:FROM|JOIN|UPDATE|INTO)\s+dev_flow\./i);
+});
 
 test("core decision sources contain no dev-flow payload, role, event, or sentinel identifiers", async () => {
   const files = [...await decisionSources(), join(SOURCE, "domain", "records.ts")];

@@ -3,11 +3,8 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ReviewInboxView } from "../views/ReviewInboxView";
-import { parseRepositoryKey } from "../repository-inputs";
 import type { ReviewInbox } from "../types";
 import type { CohortLifecycle } from "../types";
-
-const WEB_REPOSITORY_KEY = parseRepositoryKey("web")!;
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -151,15 +148,10 @@ describe("ReviewInboxView", () => {
       lifecycle: "blocked" as const,
       blocked_reason: "external" as const,
       next_actor: "operator" as const,
-      pull_request_reconciliation: {
-        repository_key: WEB_REPOSITORY_KEY,
-        observation: { owner: "wrong", name: "web", number: 42, url: "https://github.com/wrong/web/pull/42", head_branch: "cohort/web", base_branch: "main", state: "open" as const, observed_at: "2026-08-08T00:00:00Z" },
-        mismatch: { kind: "repository_mismatch" as const, detail: "observed pull request belongs to another repository" },
-        completed_at: null,
-        updated_at: "2026-08-08T00:00:00Z",
-      },
+      links: [{ key: "pull_request", label: "Open pull request", url: "https://github.com/wrong/web/pull/42" }],
+      facts: [{ key: "mismatch", label: "Mismatch", value: "observed pull request belongs to another repository" }],
     };
-    renderInbox({ cohorts: [mismatchCohort], items: [{ ...inbox.items[1], id: "mismatch-web", kind: "pull_request_mismatch", state: "blocked", lifecycle: "blocked", blocked_reason: "external", next_actor: "operator", pr_url: mismatchCohort.pull_request_reconciliation.observation.url }] });
+    renderInbox({ cohorts: [mismatchCohort], items: [{ ...inbox.items[1], id: "mismatch-web", kind: "pull_request_mismatch", state: "blocked", lifecycle: "blocked", blocked_reason: "external", next_actor: "operator", pr_url: null }] });
     expect(await screen.findByText("Pull request needs attention")).toBeTruthy();
     expect(screen.getByText("observed pull request belongs to another repository")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Open pull request" })).toBeTruthy();
@@ -193,13 +185,7 @@ describe("ReviewInboxView", () => {
       cohorts: [{
         ...inbox.cohorts[1],
         lifecycle: "complete",
-        pull_request_reconciliation: {
-          repository_key: WEB_REPOSITORY_KEY,
-          observation: { owner: "acme", name: "web", number: 42, url: "https://github.com/acme/web/pull/42", head_branch: "cohort/web", base_branch: "epic/full-parity", state: "merged", observed_at: "2026-08-08T00:00:00Z" },
-          mismatch: null,
-          completed_at: "2026-08-08T00:00:00Z",
-          updated_at: "2026-08-08T00:00:00Z",
-        },
+        facts: [{ key: "merged_at", label: "Merged at", value: "2026-08-08T00:00:00Z" }],
       }],
     });
     fireEvent.click(await screen.findByText("Finished recently (1)"));

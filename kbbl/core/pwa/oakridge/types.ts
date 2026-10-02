@@ -433,6 +433,8 @@ export interface CohortLifecycleSummary {
   artifact_url?: string | null;
   gate_id?: string | null;
   gate_url?: string | null;
+  links?: Array<{ key: string; label: string; url: string }>;
+  facts?: Array<{ key: string; label: string; value: string }>;
   pr_url?: string | null;
   pull_request_reconciliation?: CohortPullRequestReconciliation | null;
   updated_at: string;
