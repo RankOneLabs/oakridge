@@ -203,7 +203,7 @@ test("cancel_or_fence fences the session and a later observation reads cancelled
   expect(observed.observation.kind).toBe("cancelled");
 }, 20000);
 
-test("a mid-prompt transport loss remains pending, never success", async () => {
+test("a mid-prompt transport loss reports terminal failure", async () => {
   makeHarness("crash_mid_prompt");
   const request = makeRequest({ execution_id: "exec-5" });
   const reference = await adapter.start_or_attach(request, "op-5" as ExecutorOperationId);
@@ -214,7 +214,9 @@ test("a mid-prompt transport loss remains pending, never success", async () => {
     if (Date.now() > deadline) throw new Error("transport loss was not recorded");
     await Bun.sleep(50);
   }
-  expect((await adapter.observe_terminal("exec-5" as ExecutionId, reference)).kind).toBe("pending");
+  const observed = await adapter.observe_terminal("exec-5" as ExecutionId, reference);
+  expect(observed.kind).toBe("terminal");
+  if (observed.kind === "terminal") expect(observed.observation.kind).toBe("failed");
 }, 20000);
 
 test("a slow turn observes as pending, not terminal", async () => {

@@ -1,3 +1,4 @@
+import { repositoriesMatch } from "../domain/pull-request";
 import { err, ok, type JsonValue } from "../domain/primitives";
 import type { GuardContext, GuardName, ObserverName } from "../domain/stage-machine";
 import type { ArtifactEnvelope } from "../domain/execution";
@@ -18,6 +19,10 @@ const prMismatchDetail = (context: GuardContext): string | null => {
   const body = artifact_id === null ? null
     : objectOf(context.round_outputs.find((output) => output.artifact_id === artifact_id)?.body);
   if (!enrichment || !pr) return "pr.url could not be verified";
+  const expected = objectOf(enrichment.expected_repository);
+  if (!expected || typeof expected.owner !== "string" || typeof expected.name !== "string"
+    || typeof pr.owner !== "string" || typeof pr.name !== "string"
+    || !repositoriesMatch(pr.owner, pr.name, expected.owner, expected.name)) return "pr.repository does not match the cohort repository";
   if (pr.state !== "open") return "pr.state is not open";
   if (pr.base_branch !== enrichment.expected_pr_base || body?.base_branch !== enrichment.expected_pr_base)
     return "base.ref does not match the cohort base";

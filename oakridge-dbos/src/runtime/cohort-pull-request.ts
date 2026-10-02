@@ -97,6 +97,11 @@ export const prepareDevFlowBuildCohort = async (
     const currentBase = base.stdout.trim().split(/\s+/)[0];
     if (!currentBase) return prepareFailure("git_read_failed", "origin base ref is missing");
     branchBase = currentBase;
+    // GitHub-created merge commits may not exist in this checkout yet. Fetch
+    // the exact observed object without updating shared remote-tracking refs.
+    const fetched = await dependencies.git.run(input.repository.repository_path,
+      ["fetch", "--no-write-fetch-head", "--refmap=", "origin", branchBase]);
+    if (fetched.exit_code !== 0) return prepareFailure("git_read_failed", fetched.stderr.trim() || "could not fetch origin base commit");
     const pushed = await dependencies.git.run(input.repository.repository_path,
       ["push", `--force-with-lease=${ref}:`, "origin", `${branchBase}:${ref}`]);
     if (pushed.exit_code !== 0) return prepareFailure("git_command_failed", pushed.stderr.trim() || "could not create origin cohort ref");

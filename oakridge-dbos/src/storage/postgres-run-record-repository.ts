@@ -231,13 +231,11 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
   async open_stage_cohorts(input: OpenStageCohorts): Promise<OpenStageCohortsResult> {
     const transition_ids: RunTransitionId[] = [];
     const result = await this.sql.transaction(async (tx) => {
-      await tx.query(
-        `SELECT id FROM oakridge.cohort WHERE stage_instance_id=$1 ORDER BY cohort_key FOR UPDATE`,
-        [input.stage_instance_id]);
       const stages = await tx.query<{ readonly id: string; readonly status: CoreStatus; readonly stage_contract: JsonValue }>(
         "SELECT id::text,status,stage_contract FROM oakridge.stage_instance WHERE id=$1 AND run_id=$2 FOR UPDATE", [input.stage_instance_id, input.run_id]);
       if (!stages[0]) return { kind: "stage_not_found" as const, detail: `stage instance '${input.stage_instance_id}' was not found in run '${input.run_id}'` };
       if (stages[0].status !== "active") return { kind: "stage_not_active" as const, detail: `stage instance '${input.stage_instance_id}' is ${stages[0].status}` };
+      await tx.query("SELECT id FROM oakridge.cohort WHERE stage_instance_id=$1 ORDER BY cohort_key FOR UPDATE", [input.stage_instance_id]);
       const machine = (stages[0].stage_contract as { readonly machine?: { readonly initial?: string } }).machine;
       const initial = machine?.initial ?? "pending";
       let inserted = 0;
@@ -497,7 +495,8 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       `SELECT session.id::text AS session_id,session.attempt_id::text,session.adapter_reference
        FROM oakridge.session session
        JOIN oakridge.attempt attempt ON attempt.id=session.attempt_id
-       WHERE attempt.cohort_id=$1 AND session.attempt_id<>$2
+       WHERE attempt.cohort_id=$1 AND attempt.attempt_number <
+         (SELECT attempt_number FROM oakridge.attempt WHERE id=$2 AND cohort_id=$1)
          AND session.kbbl_session_id IS NOT NULL AND session.fenced_at IS NULL
        ORDER BY attempt.attempt_number`, [cohort_id, attempt_id]);
     return rows.map((row) => ({ session_id: row.session_id as SessionId,
@@ -709,14 +708,10 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
   /* ---------------------------- run lifecycle ---------------------------- */
 
   /**
-   * Cancels the run, then its stages and cohorts, each under its own version.
-   *
-   * The run's own transition commits first and alone, because that is the fact
-   * every other surface reads. A crash between it and the owner cancellations
-   * leaves a cancelled run with stages still marked active, so the sweep runs on
-   * the `already_terminal` path too: re-entry is the recovery, and a version that
-   * reports the run terminal before sweeping has none. Fencing the external
-   * sessions is the caller's, and is diagnostic cleanup rather than a domain fact.
+   * Cancels cohorts, stages and the run atomically under their owner versions.
+   * Stage locks exclude late roster commits before we enumerate the cohorts.
+   * Re-entry also sweeps remaining owners when the run is already terminal.
+   * The caller fences external sessions after the transaction commits.
    */
   async cancel_run(input: CancelRunRecord): Promise<CancelRunRecordResult> {
     return this.cancelStageRun(input);
@@ -726,6 +721,9 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
     const applier = this.stage_event_applier;
     const transition_ids: RunTransitionId[] = [];
     const result = await this.sql.transaction(async (tx): Promise<CancelRunRecordResult> => {
+      const stages = await tx.query<{ readonly id: string; readonly durable_version: string; readonly status: CoreStatus }>(
+        `SELECT id::text,durable_version::text,status FROM oakridge.stage_instance
+         WHERE run_id=$1 ORDER BY stage_key FOR UPDATE`, [input.run_id]);
       const cohorts = await tx.query<{ readonly id: string }>(
         `SELECT cohort.id::text FROM oakridge.cohort cohort
          JOIN oakridge.stage_instance stage ON stage.id=cohort.stage_instance_id
@@ -736,10 +734,8 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
           { kind: "cancel", actor: input.actor }, transition_ids);
         if (!applied.ok || applied.value.kind === "refused") throw new Error(`cancel cohort ${cohort.id}: ${JSON.stringify(applied)}`);
       }
-      const stages = await tx.query<{ readonly id: string; readonly durable_version: string }>(
-        `SELECT id::text,durable_version::text FROM oakridge.stage_instance
-         WHERE run_id=$1 AND status NOT IN ('complete','failed','cancelled') ORDER BY stage_key FOR UPDATE`, [input.run_id]);
       for (const stage of stages) {
+        if (isTerminalStatus(stage.status)) continue;
         const changed = await this.writer.commit_in(tx, {
           run_id: input.run_id, owner: { kind: "stage_instance", id: stage.id as StageInstanceId },
           expected_version: Number(stage.durable_version), launch_reason: "operator",

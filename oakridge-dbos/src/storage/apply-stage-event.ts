@@ -87,6 +87,8 @@ export class StageEventApplier {
     const location = await tx.query<{ readonly stage_instance_id: string }>(
       "SELECT stage_instance_id::text FROM oakridge.cohort WHERE id=$1", [cohort_id]);
     if (!location[0]) return [];
+    // All ingress, roster and run operations lock stages before their cohorts.
+    await tx.query("SELECT id FROM oakridge.stage_instance WHERE id=$1 FOR UPDATE", [location[0].stage_instance_id]);
     return tx.query<CohortRow>(
       `SELECT id::text,run_id::text,stage_instance_id::text,cohort_key,state,status,round,depends_on,
               durable_version::text,stage_data FROM oakridge.cohort

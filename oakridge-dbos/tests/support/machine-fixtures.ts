@@ -59,8 +59,8 @@ export const eventForRow = (row: Transition): StageEvent => {
       attempt_id: "attempt" as never, artifact_id: "artifact" as never,
       collection_key: row.on.output === "brief" ? "b" : null,
       enrichment: row.on.output === "pr_summary"
-        ? { pr: { state: "open", number: 1, base_branch: "main", head_branch: "cohort-a",
-          head_sha: "head" }, expected_pr_base: "main", canonical_ref: "cohort-a",
+        ? { pr: { owner: "RankOneLabs", name: "oakridge", state: "open", number: 1, base_branch: "main", head_branch: "cohort-a",
+          head_sha: "head" }, expected_repository: { owner: "RankOneLabs", name: "oakridge" }, expected_pr_base: "main", canonical_ref: "cohort-a",
           origin_head_sha: "head" } : null };
     case "gate_decided": return { kind: "gate_decided", gate_id: "gate" as never,
       gate: row.on.gate, action: row.on.action, actor: "operator", feedback: null };
@@ -87,8 +87,8 @@ export const contextForMachineRow = (machine_name: string, index: number, row: T
   }
   if (machine_name === "build_cohort") {
     if (index === 1 && event.kind === "artifact_published") {
-      event = { ...event, enrichment: { pr: { state: "open", number: 1, base_branch: "wrong",
-        head_branch: "cohort-a", head_sha: "head" }, expected_pr_base: "main",
+      event = { ...event, enrichment: { pr: { owner: "RankOneLabs", name: "oakridge", state: "open", number: 1, base_branch: "wrong",
+        head_branch: "cohort-a", head_sha: "head" }, expected_repository: { owner: "RankOneLabs", name: "oakridge" }, expected_pr_base: "main",
         canonical_ref: "cohort-a", origin_head_sha: "head" } };
     }
     if ((index === 3 || index === 5) && event.kind === "artifact_published")

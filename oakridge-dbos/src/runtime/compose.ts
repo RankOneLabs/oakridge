@@ -50,6 +50,7 @@ import { createApp } from "../http/app";
 import { registerDbosTransportClient, sendRunWakeHint } from "../http/dbos-transport";
 import { seedBuiltins } from "../seed/seed-builtins";
 import {
+  PostgresForgeRepositoryRepository,
   PostgresArtifactRepository,
   PostgresCollaborationRepository,
   PostgresStageInstanceRepository,
@@ -161,6 +162,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const artifacts = new PostgresArtifactRepository(sql);
   const collaboration = new PostgresCollaborationRepository(sql);
   const pullRequests = new PostgresDevFlowPullRequestRepository(sql);
+  const forgeRepositories = new PostgresForgeRepositoryRepository(sql);
   const projections = new PostgresOperatorProjectionRepository(sql, config.application_version, adapterRegistry);
   const messages = new PostgresSessionMessageRepository(sql);
   const messageRecipients = new PostgresSessionMessageRecipientResolver(sql);
@@ -189,13 +191,14 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     readonly output_name: string; readonly body: JsonValue }): Promise<Result<JsonValue | null,
       { readonly code: string; readonly detail: string }>> => {
     if (input.output_name !== "pr_summary") return ok(null);
-    const rows = await sql.query<{ readonly repository_path: string; readonly canonical_ref: string;
-      readonly expected_pr_base: string }>(
-      `SELECT build.repository_path,build.canonical_ref,build.expected_pr_base
+    const rows = await sql.query<{ readonly run_id: WorkflowRunId; readonly repository_key: string;
+      readonly repository_path: string; readonly canonical_ref: string; readonly expected_pr_base: string }>(
+      `SELECT attempt.run_id,build.repository_key,build.repository_path,build.canonical_ref,build.expected_pr_base
        FROM oakridge.attempt attempt JOIN oakridge.dev_flow_build_cohort build ON build.cohort_id=attempt.cohort_id
        WHERE attempt.id=$1`, [input.attempt_id]);
     const roles = rows[0];
-    const base = { expected_pr_base: roles?.expected_pr_base ?? null,
+    const expected_repository = roles ? await forgeRepositories.find_forge_repository(roles.run_id, roles.repository_key) : null;
+    const base = { expected_repository, expected_pr_base: roles?.expected_pr_base ?? null,
       canonical_ref: roles?.canonical_ref ?? null };
     const url = isJsonObject(input.body) && typeof input.body.pr_url === "string" ? input.body.pr_url : null;
     const identity = url ? parseGithubPullRequestIdentity(url) : null;
@@ -356,14 +359,16 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
         && candidate.session_role === role && candidate.launch_reason === reason
         && candidate.template_path === entry?.template_path);
       if (!cell) throw new Error(`pinned prompt bundle has no ${stage.stage_key}:${role}:${reason} cell`);
-      const review = reason.startsWith("revision_after_") ? await sql.query<{ readonly feedback: string | null;
+      const review = await sql.query<{ readonly feedback: string | null;
         readonly artifact_id: string; readonly body: JsonValue }>(
         `SELECT gate.outcome->>'feedback' AS feedback,artifact.id::text AS artifact_id,artifact.body
-         FROM oakridge.wait_gate gate
+         FROM oakridge.run_transition launch
+         JOIN oakridge.wait_gate gate ON gate.id=(launch.event->>'gate_id')::uuid
          JOIN oakridge.wait_gate_artifact_revision revision ON revision.wait_gate_id=gate.id
          JOIN oakridge.artifact artifact ON artifact.id=revision.artifact_id
-         WHERE gate.cohort_id=$1 AND gate.outcome->>'action'='request_revision'
-         ORDER BY gate.closed_at DESC,artifact.id`, [row.cohort_id]) : [];
+         WHERE launch.id=$1 AND launch.event->>'kind'='gate_decided'
+           AND launch.event->>'action'='request_revision' AND gate.cohort_id=$2
+         ORDER BY artifact.id`, [row.launch_transition_id, row.cohort_id]);
       const reviewPrompt = review.length > 0
         ? `\n\n## Previous review\nFeedback: ${review[0]?.feedback ?? ""}\n${review.map((item) =>
           `Artifact ${item.artifact_id}: ${JSON.stringify(item.body)}`).join("\n")}` : "";

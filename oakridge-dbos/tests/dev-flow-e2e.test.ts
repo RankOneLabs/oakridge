@@ -1021,3 +1021,31 @@ e2e("S21 operator edit on a gated artifact is refused through the route", async 
     agent.releaseAll();
   }
 }, 150_000);
+
+for (const stageName of ["spec_analyzer", "plan_writer", "brief_writer"]) {
+  e2e(`${stageName} revision receives the rejected artifact and operator feedback`, async () => {
+    const agent = scriptedAgentScenario({ cohorts: [{ id: "a" as UnitId, depends_on: [] }] });
+    const launched = await launchAgentRun(agent);
+    try {
+      const parked = await driveRun(oakridge.base_url, agent, launched, {
+        decide: gate => gate.stage_name === stageName ? null : "approve",
+        until: async () => (await listRunGates(oakridge.base_url, launched.run_id))
+          .find(gate => gate.stage_name === stageName) ?? null,
+        timeout_ms: 90_000,
+      });
+      const artifact = gateFirstArtifactId(parked.value);
+      const priorLaunches = new Set(agent.launched.keys());
+      await decideGate(oakridge.base_url, artifact, "request_revision");
+      const prompt = await awaitCondition("revision prompt with feedback", async () => {
+        const revision = [...agent.launched.entries()].find(([id, launch]) => !priorLaunches.has(id)
+          && String((launch.resolved_config as { readonly rendered_prompt?: string }).rendered_prompt).includes("input_revision"));
+        return revision ? (revision[1].resolved_config as { readonly rendered_prompt: string }).rendered_prompt : null;
+      }, 60_000);
+      expect(prompt).toContain("integration test request_revision");
+      expect(prompt).toContain(artifact);
+    } finally {
+      await fetch(`${oakridge.base_url}/workflow_runs/${launched.run_id}/cancel`, { method: "POST" });
+      agent.releaseAll();
+    }
+  }, 180_000);
+}

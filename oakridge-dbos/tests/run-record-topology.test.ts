@@ -18,6 +18,7 @@ test("ensureAttemptSession fences a session started for an abandoned attempt", a
     async cancel_or_fence(_attempt_id: unknown, target: ExternalExecutionReference) { cancelled.push(target); },
   } as ExecutorAdapter;
   const records = {
+    async find_attempt_execution() { return { status: "active" }; },
     async list_prior_sessions_to_fence() { return []; },
     async bind_session() { return { kind: "attempt_ended", status: "cancelled" } as const; },
     async mark_session_fenced(session_id: SessionId) { fenced.push(session_id); },
@@ -40,6 +41,7 @@ test("ensureAttemptSession does not fence an already fenced prior session", asyn
     async cancel_or_fence() { calls.push("fence"); },
   } as unknown as ExecutorAdapter;
   const records = {
+    async find_attempt_execution() { return { status: "active" }; },
     async list_prior_sessions_to_fence() { return []; },
     async bind_session() { return { kind: "bound" }; },
   } as unknown as RunRecordRepository;
@@ -59,6 +61,7 @@ test("ensureAttemptSession fences prior cohort sessions before starting a replac
     async cancel_or_fence() { calls.push("fence prior"); },
   } as unknown as ExecutorAdapter;
   const records = {
+    async find_attempt_execution() { return { status: "active" }; },
     async list_prior_sessions_to_fence() { return [{ session_id: "prior-row", attempt_id: "prior-attempt", adapter_reference: prior }]; },
     async mark_session_fenced() { calls.push("mark prior fenced"); },
     async observe_session() { calls.push("observe prior cancelled"); return { kind: "already_ended" }; },
@@ -69,3 +72,16 @@ test("ensureAttemptSession fences prior cohort sessions before starting a replac
   await ensureAttemptSession({ records, find_executor: () => adapter, now: () => "2026-09-29T01:00:00Z" }, execution);
   expect(calls).toEqual(["fence prior", "mark prior fenced", "observe prior cancelled", "start replacement"]);
 });
+
+for (const status of ["cancelled", "failed", "complete"] as const) {
+  test(`a delayed ${status} attempt never starts or fences another session`, async () => {
+    const records = {
+      async find_attempt_execution() { return { status }; },
+      async list_prior_sessions_to_fence() { throw new Error("must not fence replacements"); },
+    } as unknown as RunRecordRepository;
+    const result = await ensureAttemptSession({ records,
+      find_executor: () => { throw new Error("must not start a stale attempt"); }, now: () => "2026-10-02T00:00:00Z" },
+    { attempt_id: "old" } as AttemptExecution);
+    expect(result).toEqual({ kind: "abandoned" });
+  });
+}

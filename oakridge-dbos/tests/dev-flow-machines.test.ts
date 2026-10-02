@@ -79,3 +79,18 @@ for (const [machine_name, machine] of Object.entries(machines)) {
       .toEqual(machine.transitions.map((_, index) => index));
   });
 }
+
+
+for (const repository of [{ owner: "other", name: "oakridge" }, { owner: "RankOneLabs", name: "other" }]) {
+  test(`PR verification refuses repository ${repository.owner}/${repository.name} even with matching refs`, () => {
+    const machine = machines.build_cohort!;
+    const context = contextForMachineRow("build_cohort", 3, machine.transitions[3]!);
+    if (context.event.kind !== "artifact_published") throw new Error("fixture must publish");
+    const event = { ...context.event, enrichment: {
+      pr: { ...repository, state: "open", number: 1, base_branch: "main", head_branch: "cohort-a", head_sha: "head" },
+      expected_repository: { owner: "RankOneLabs", name: "oakridge" }, expected_pr_base: "main", canonical_ref: "cohort-a", origin_head_sha: "head",
+    } };
+    expect(transition({ ...machine, stage_type: "delegated_session" }, "building" as StateName, event, { ...context, event }))
+      .toMatchObject({ kind: "refused", code: "pr_mismatch", detail: expect.stringContaining("repository") });
+  });
+}

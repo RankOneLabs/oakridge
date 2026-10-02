@@ -341,6 +341,9 @@ export const ensureAttemptSession = async (
   execution: AttemptExecution,
 ): Promise<EnsureSessionAttempt> => {
     const { records, now } = deps;
+    // A durable retry may resume after another attempt replaced this one.
+    const current = await records.find_attempt_execution(execution.attempt_id);
+    if (!current || ["complete", "failed", "cancelled"].includes(current.status)) return { kind: "abandoned" };
     if (execution.request === null) return { kind: "rejected", detail: "attempt request is unresolved" };
     const adapter = deps.find_executor(execution.adapter_type);
     if (!adapter) throw new Error(`executor adapter '${execution.adapter_type}' is not registered`);
@@ -435,6 +438,7 @@ const observeSessionStep = DBOS.registerStep(
  */
 export const attemptWorkflow = DBOS.registerWorkflow(async (attempt_id: AttemptId): Promise<void> => {
   let execution = await loadAttemptStep(attempt_id);
+  if (["complete", "failed", "cancelled"].includes(execution.status)) return;
   if (execution.request === null) {
     const resolved = await resolveAttemptRequestStep(attempt_id);
     if (resolved.kind === "failed") {

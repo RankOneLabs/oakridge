@@ -404,7 +404,6 @@ test("cohort preparation refuses a deleted stored canonical ref", async () => {
   expect(result).toEqual({ ok: false, error: expect.objectContaining({ kind: "ref_lease_mismatch", detail: expect.stringContaining("missing") }) });
 });
 
-
 test("a failed GitHub refresh returns unavailable instead of stale success", async () => {
   const app = createCohortPullRequestApp({ async refresh(cohort_id) {
     return { ok: false, error: { operation: "refresh_pull_request", cohort_id, detail: "GitHub is unavailable" } };
@@ -413,7 +412,6 @@ test("a failed GitHub refresh returns unavailable instead of stale success", asy
   expect(response.status).toBe(503);
   expect(await response.json()).toEqual({ error: "GitHub is unavailable" });
 });
-
 
 test("origin ancestry reads remain consistent while the agent advances its branch", async () => {
   const fixture = await createGitRepositoryFixture();
@@ -424,5 +422,32 @@ test("origin ancestry reads remain consistent while the agent advances its branc
     await advancing;
     expect(parents.every((parent) => parent === null || parent === initial)).toBe(true);
     expect(await fixture.origin_branch_parent_sha(fixture.integration_branch)).toBe(initial);
+  } finally { await fixture.remove(); }
+});
+
+test("a dependent branch fetches a merge commit created only on origin", async () => {
+  const fixture = await createGitRepositoryFixture();
+  const git = new BunGitCommandRunner();
+  try {
+    const oldHead = await fixture.origin_branch_sha(fixture.integration_branch);
+    if (!oldHead) throw new Error("fixture has no head");
+    const tree = await git.run(fixture.origin_path, ["rev-parse", `${oldHead}^{tree}`]);
+    const commit = Bun.spawn(["git", "commit-tree", tree.stdout.trim(), "-p", oldHead, "-m", "external merge"], {
+      cwd: fixture.origin_path, stdout: "pipe", stderr: "pipe", env: { ...process.env,
+        GIT_AUTHOR_NAME: "test", GIT_AUTHOR_EMAIL: "test@invalid", GIT_COMMITTER_NAME: "test", GIT_COMMITTER_EMAIL: "test@invalid" },
+    });
+    const newHead = (await new Response(commit.stdout).text()).trim();
+    if (await commit.exited !== 0) throw new Error(await new Response(commit.stderr).text());
+    await git.run(fixture.origin_path, ["update-ref", `refs/heads/${fixture.integration_branch}`, newHead]);
+    expect((await git.run(fixture.path, ["cat-file", "-e", newHead])).exit_code).not.toBe(0);
+    const repository = { async find_cohort_for_unit() { return null; },
+      async create_cohort(value: DevFlowBuildCohort) { return { ok: true, value }; } } as unknown as DevFlowPullRequestRepository;
+    const result = await prepareDevFlowBuildCohort({ git, pull_requests: repository }, {
+      cohort_id: storedCohort(fixture.path, oldHead).cohort_id, stage_instance_id: expected.stage_instance_id, cohort_key: "foundation",
+      repository: { repository_key: "oakridge", repository_path: fixture.path, integration_branch: fixture.integration_branch,
+        base_branch: fixture.integration_branch, base_head_sha: oldHead }, prepared_at: "2026-10-02T00:00:00Z",
+    });
+    expect(result.ok).toBe(true);
+    expect(await fixture.origin_branch_sha(`cohort/${expected.stage_instance_id}/foundation`)).toBe(newHead);
   } finally { await fixture.remove(); }
 });

@@ -613,3 +613,81 @@ test("resolving a thread and binding a session move the invalidation cursor", as
     expect(await operator.get_invalidation_cursor()).not.toBe(beforeBind);
   } finally { await prepared.sql.close(); }
 });
+
+test("older attempts never fence their replacement sessions", async () => {
+  const prepared = await prepare("oakridge_review_stale_fence");
+  if (!prepared) throw new Error("PostgreSQL required");
+  const { sql, records } = prepared;
+  const cohort = cohortId(91);
+  try {
+    await openCohort(sql, STAGE_ID, cohort, "fence");
+    for (const index of [91, 92]) {
+      const attempt = attemptId(index);
+      await startAttempt(sql, { stage: STAGE_ID, cohort, attempt,
+        number: index - 90, status: "active", request: {} });
+      const written = await new PostgresRunRecordWriter(sql, createDevFlowAdapterRegistry()).commit({
+        run_id: RUN_ID, owner: { kind: "cohort", id: cohort }, expected_version: index - 91,
+        launch_reason: "initial", change: { status: "active", blocked_reason: null, next_actor: "agent", outcome: null },
+        effect: { kind: "none" }, actor: "test", changed_at: "2026-10-02T00:00:00Z",
+      });
+      if (!written.ok) throw new Error(JSON.stringify(written.error));
+      await sql.query(`INSERT INTO oakridge.session
+        (id,run_id,stage_instance_id,attempt_id,adapter_reference,kbbl_session_id,launch_transition_id)
+        VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7)`,
+        [sessionIdFor(attempt), RUN_ID, STAGE_ID, attempt,
+          JSON.stringify({ kind: "kbbl_session", session_id: `session-${index}` }),
+          `session-${index}`, written.value.transition_id]);
+    }
+    expect(await records.list_prior_sessions_to_fence(cohort, attemptId(91))).toEqual([]);
+    const prior = await records.list_prior_sessions_to_fence(cohort, attemptId(92));
+    expect(prior.map(session => session.attempt_id)).toEqual([attemptId(91)]);
+  } finally { await sql.close(); }
+});
+
+test("cancellation includes a roster committed while it waits for the stage lock", async () => {
+  const prepared = await prepare("oakridge_cancel_roster_race");
+  if (!prepared) throw new Error("PostgreSQL required");
+  const { sql } = prepared;
+  const cancellationMachine: JsonValue = {
+    initial: "working", stage_type: "delegated_session",
+    states: {
+      working: { status: "active", blocked_reason: null, next_actor: "agent", session_role: "build" },
+      cancelled: { status: "cancelled", blocked_reason: null, next_actor: null, session_role: null },
+    },
+    transitions: [{ from: "working", on: { event: "cancel" }, guard: null,
+      to: "cancelled", effects: [] }],
+  };
+  await sql.query("UPDATE oakridge.stage_instance SET stage_contract=jsonb_set(stage_contract,'{machine}',$2::jsonb) WHERE id=$1",
+    [STAGE_ID, JSON.stringify(cancellationMachine)]);
+  const reached = Promise.withResolvers<void>();
+  let cancellation: ReturnType<PostgresRunRecordRepository["cancel_run"]> | undefined;
+  const wrapped: TransactionalSqlExecutor = {
+    query: (query, parameters) => sql.query(query, parameters),
+    transaction: (work) => sql.transaction(tx => work({
+      query: <Row extends object>(query: string, parameters: readonly unknown[]) => {
+        if (query.includes("FROM oakridge.stage_instance") && query.includes("FOR UPDATE")) reached.resolve();
+        return tx.query<Row>(query, parameters);
+      },
+    })),
+  };
+  const writer = new PostgresRunRecordWriter(wrapped, createDevFlowAdapterRegistry());
+  const applier = new StageEventApplier({ sql: wrapped, writer, registry: new StageMachineRegistry(),
+    registered_effects: new Map(), load_stage_inputs: async () => ({}),
+    start_effects: async () => {}, now: () => "2026-10-02T00:00:01Z" });
+  const records = new PostgresRunRecordRepository(wrapped, writer, applier);
+  try {
+    await sql.transaction(async tx => {
+      await tx.query("SELECT id FROM oakridge.stage_instance WHERE id=$1 FOR UPDATE", [STAGE_ID]);
+      cancellation = records.cancel_run({ run_id: RUN_ID, actor: "operator", reason: null,
+        cancelled_at: "2026-10-02T00:00:01Z" });
+      await reached.promise;
+      // Commit a roster while cancellation is waiting on this stage. Its cohort
+      // snapshot must happen after this transaction releases the stage lock.
+      await tx.query(`INSERT INTO oakridge.cohort (id,run_id,stage_instance_id,cohort_key,stage_data,state,status)
+        VALUES ($1,$2,$3,'late','{}','working','active')`, [cohortId(90), RUN_ID, STAGE_ID]);
+    });
+    expect((await cancellation)?.kind).toBe("cancelled");
+    const rows = await sql.query<{ readonly status: string }>("SELECT status FROM oakridge.cohort WHERE id=$1", [cohortId(90)]);
+    expect(rows[0]?.status).toBe("cancelled");
+  } finally { await sql.close(); }
+}, 15_000);
