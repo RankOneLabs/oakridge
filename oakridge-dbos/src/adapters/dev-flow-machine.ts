@@ -1,5 +1,5 @@
 import { err, ok, type JsonValue } from "../domain/primitives";
-import type { GuardContext, GuardName, ObserverName } from "../domain/stage-machine";
+import type { GuardContext, GuardName, JsonObject, ObserverName } from "../domain/stage-machine";
 import type { ArtifactEnvelope } from "../domain/execution";
 import type { StageMachineRegistry } from "../runtime/executor-registry";
 import type { CohortEffectRow, RegisteredEffect } from "../decision/stage-effects";
@@ -155,6 +155,38 @@ const recordMerge: RegisteredEffect = async (tx: SqlExecutor, { cohort, event })
   return ok({ stage_data: null });
 };
 
+const SESSION_RELAUNCHES = "session_relaunches";
+
+const relaunchesOf = (stage_data: JsonValue): number => {
+  const recorded = objectOf(stage_data)?.[SESSION_RELAUNCHES];
+  return typeof recorded === "number" ? recorded : 0;
+};
+
+/**
+ * A session that ended because its transport died, not because the agent
+ * finished badly. Such an attempt lost its work through no decision of the
+ * run's, so it is relaunched rather than parked on an operator retry.
+ *
+ * Which codes qualify and how many free relaunches a cohort gets are
+ * declared in the machine config: that is workflow policy, and an uncapped
+ * relaunch would respawn forever against a broken executor.
+ */
+export const sessionLostInTransport = (context: GuardContext, args: JsonObject): boolean => {
+  if (context.event.kind !== "session_ended") return false;
+  const outcome = context.event.outcome;
+  if (outcome.kind !== "failed") return false;
+  const codes = args.codes;
+  if (!Array.isArray(codes) || !codes.includes(outcome.code)) return false;
+  const cap = args.max_relaunches;
+  return typeof cap === "number" && relaunchesOf(context.stage_data) < cap;
+};
+
+/** Spends one of the cohort's capped relaunches, so the guard can run out. */
+const countSessionRelaunch: RegisteredEffect = async (_tx, { cohort }) => {
+  const data = objectOf(cohort.stage_data) ?? {};
+  return ok({ stage_data: { ...data, [SESSION_RELAUNCHES]: relaunchesOf(cohort.stage_data) + 1 } });
+};
+
 export const registerDevFlowMachine = (registry: StageMachineRegistry,
   effects: Map<string, RegisteredEffect>): void => {
   const stage_type = "delegated_session";
@@ -167,10 +199,11 @@ export const registerDevFlowMachine = (registry: StageMachineRegistry,
     pr_closed_unmerged: prClosedUnmerged,
     briefs_cover_plan: briefsCoverPlan,
     briefs_acyclic: briefsAcyclic,
+    session_lost_in_transport: sessionLostInTransport,
   };
   for (const [name, predicate] of Object.entries(guards)) registry.register_guard(stage_type, name as GuardName, predicate);
   for (const [name, effect] of [["bind_pull_request", bindPullRequest], ["unbind_pull_request", unbindPullRequest],
-    ["record_merge", recordMerge]] as const) {
+    ["record_merge", recordMerge], ["count_session_relaunch", countSessionRelaunch]] as const) {
     registry.register_effect(stage_type, name as import("../domain/stage-machine").EffectName);
     effects.set(`${stage_type}:${name}`, effect);
   }

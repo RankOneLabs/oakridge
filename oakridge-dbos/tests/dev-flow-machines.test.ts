@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test";
+import { sessionLostInTransport } from "../src/adapters/dev-flow-machine";
 import { compileWorkflowDefinition } from "../src/compiler/compile-workflow";
 import { transition } from "../src/decision/stage-machine";
-import type { CompiledMachine, StateName, Transition } from "../src/domain/stage-machine";
+import type { AttemptId, JsonValue } from "../src/domain/primitives";
+import type { CompiledMachine, GuardContext, StageEvent, StateName, Transition } from "../src/domain/stage-machine";
 import { loadDevFlowV15 } from "../src/seed/dev-flow-v15";
 import { contextForMachineRow, machineRegistry } from "./support/machine-fixtures";
 
@@ -70,3 +72,57 @@ for (const [machine_name, machine] of Object.entries(machines)) {
     expect(exercised.size).toBeGreaterThan(0);
   });
 }
+
+const sessionEnded = (code: string): StageEvent => ({
+  kind: "session_ended", attempt_id: "attempt-1" as AttemptId,
+  outcome: { kind: "failed", code, detail: `session failed: ${code}` },
+});
+
+const guardArgs = { codes: ["acp_transport_lost"], max_relaunches: 2 };
+
+const lostInTransport = (event: StageEvent, stage_data: JsonValue): boolean =>
+  sessionLostInTransport({ event, stage_data, round_outputs: [], stage_inputs: {},
+    registry: machineRegistry() } as unknown as GuardContext, guardArgs);
+
+test("a transport-lost session is relaunched, a badly-finished one is not", () => {
+  expect(lostInTransport(sessionEnded("acp_transport_lost"), {})).toBe(true);
+  // An agent that ran and exited badly owns its outcome: that is the
+  // operator's retry, not a free relaunch.
+  expect(lostInTransport(sessionEnded("acp_prompt_failed"), {})).toBe(false);
+  expect(lostInTransport(sessionEnded("requested_model_unsupported"), {})).toBe(false);
+  // A kbbl restart is not a lost attempt. The session survives it and is
+  // re-attached by lazy respawn on the next prompt, so relaunching would
+  // spend a second attempt on work the first one still holds — which is
+  // what the S14 acceptance scenario pins.
+  expect(lostInTransport(sessionEnded("kbbl_restart"), {})).toBe(false);
+});
+
+test("only a failed session end can be a transport loss", () => {
+  expect(lostInTransport({ kind: "session_ended", attempt_id: "attempt-1" as AttemptId,
+    outcome: { kind: "exited", exit_code: 0 } }, {})).toBe(false);
+  expect(lostInTransport({ kind: "started" }, {})).toBe(false);
+});
+
+test("the relaunch cap stops a cohort respawning against a broken executor", () => {
+  const event = sessionEnded("acp_transport_lost");
+  expect(lostInTransport(event, { session_relaunches: 1 })).toBe(true);
+  expect(lostInTransport(event, { session_relaunches: 2 })).toBe(false);
+  expect(lostInTransport(event, { session_relaunches: 7 })).toBe(false);
+});
+
+test("both build roles relaunch on transport loss ahead of parking as lost", () => {
+  const build = machines.build_cohort as unknown as CompiledMachine | undefined;
+  if (!build) throw new Error("build_cohort machine is missing");
+  const pairs: readonly (readonly [StateName, StateName])[] = [
+    ["building", "build_lost"], ["assessing", "assess_lost"],
+  ] as unknown as readonly (readonly [StateName, StateName])[];
+  for (const [from, parked] of pairs) {
+    const rows = build.transitions.filter((row) => row.from === from && row.on.event === "session_ended");
+    const guarded = rows.findIndex((row) => row.guard?.name === "session_lost_in_transport");
+    const unguarded = rows.findIndex((row) => row.guard === null);
+    expect(guarded).toBeGreaterThanOrEqual(0);
+    // First match wins, so the guarded relaunch must precede the fallback.
+    expect(guarded).toBeLessThan(unguarded);
+    expect("to" in rows[unguarded]! ? rows[unguarded]!.to : null).toBe(parked);
+  }
+});

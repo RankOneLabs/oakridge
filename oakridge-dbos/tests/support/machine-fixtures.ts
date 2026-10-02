@@ -64,8 +64,16 @@ export const eventForRow = (row: Transition): StageEvent => {
           origin_head_sha: "head" } : null };
     case "gate_decided": return { kind: "gate_decided", gate_id: "gate" as never,
       gate: row.on.gate, action: row.on.action, actor: "operator", feedback: null };
-    case "session_ended": return { kind: "session_ended", attempt_id: "attempt" as never,
-      outcome: { kind: "exited", exit_code: 0 } };
+    // A guarded session end needs an outcome its own guard accepts, or the
+    // row can never be the one selected. The code comes from the row's
+    // declared codes so the fixture follows config rather than restating it.
+    case "session_ended": {
+      const codes = row.guard?.name === "session_lost_in_transport" ? row.guard.args.codes : null;
+      const code = Array.isArray(codes) && typeof codes[0] === "string" ? codes[0] : null;
+      return { kind: "session_ended", attempt_id: "attempt" as never,
+        outcome: code === null ? { kind: "exited", exit_code: 0 }
+          : { kind: "failed", code, detail: `session failed: ${code}` } };
+    }
     case "operator_retry": return { kind: "operator_retry", idempotency_key: "retry", actor: "operator" };
     case "operator_abandon": return { kind: "operator_abandon", actor: "operator", detail: "stop" };
     case "cancel": return { kind: "cancel", actor: "operator" };
@@ -97,10 +105,13 @@ export const contextForMachineRow = (machine_name: string, index: number, row: T
     if (event.kind === "artifact_published" && event.output === "pr_summary")
       round_outputs = [...round_outputs, { output: "pr_summary", collection_key: null,
         artifact_id: event.artifact_id, body: { branch: "cohort-a", base_branch: "main" } }];
+    // Keyed on the row's own guard rather than its index: a row inserted
+    // anywhere above would otherwise silently re-point these observations
+    // at the wrong rows.
     if (event.kind === "external_observed") {
-      event = { ...event, observation: index === 15 || index === 18
+      event = { ...event, observation: row.guard?.name === "pr_merged_into_base"
         ? { state: "merged", merged_at: "2026-01-01T00:00:00Z", base_branch: "main" }
-        : index === 16 || index === 19
+        : row.guard?.name === "pr_closed_unmerged"
           ? { state: "closed_unmerged", merged_at: null, base_branch: "main" }
           : { state: "open", merged_at: null, base_branch: "main" } };
     }
