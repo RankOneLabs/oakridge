@@ -67,31 +67,28 @@ interface V2StageProjectionRow { readonly stage_instance_id: string; readonly na
 interface V2UnitProjectionRow { readonly cohort_id: string; readonly stage_instance_id: string; readonly unit_id: string; readonly params: OperatorStageUnit["params"]; readonly state: string; readonly status: CoreStatus; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null; readonly session_id: string | null; readonly gate_step: string | null }
 interface StageArtifactRow { readonly stage_instance_id: string; readonly id: string; readonly type_id: string; readonly version: number; readonly label: string | null; readonly created_at: string }
 interface DiagnosisSessionRow { readonly session_id: string; readonly stage_key: string; readonly cohort_id: string; readonly cohort_key: string; readonly attempt_number: number; readonly attempt_count: number; readonly status: CoreStatus; readonly created_at: string }
-/**
- * A fan-out unit's parameters are the item the stage fanned out over, wrapped.
- *
- * `materializeUnits` stores the whole envelope — `{unit_id, artifact}` for an
- * artifact-driven fan-out — so a cohort's own fields sit under `artifact`, not
- * at the top. This row type used to claim they were top-level, and the fake
- * executor in the projection tests supplied them that way, so the type and its
- * test agreed with each other and both disagreed with every real row.
- */
-interface CohortUnitParameters { readonly artifact?: { readonly repository_key?: string; readonly title?: string } | null }
+/** The artifact-driven roster item is wrapped again by openStageCohortsStep. */
+interface CohortArtifactDetails { readonly repository_key: string | null; readonly title: string | null }
+interface CohortUnitParameters {
+  readonly artifact?: { readonly artifact?: { readonly repository_key?: string; readonly title?: string } | null } | null;
+}
 interface V2CohortProjectionRow { readonly cohort_id: string; readonly run_id: string; readonly workflow_name: string; readonly stage_instance_id: string; readonly stage_name: string; readonly unit_id: string; readonly params: CohortUnitParameters | null; readonly status: CoreStatus; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null; readonly artifact_revision_id: string | null; readonly stage_type: string; readonly updated_at: string }
 
-/**
- * `params.artifact.repository_key` off a fan-out item this run minted
- * (`{unit_id, artifact}` — see `CohortUnitParameters` above). Shared by the
- * run-detail and cohort projections so both report the same repository key
- * from the same source, rather than one deriving it and the other
- * hardcoding `null`.
- */
-function selectStageUnitRepositoryKey(params: unknown): string | null {
-  if (typeof params !== "object" || params === null) return null;
-  const artifact = (params as { readonly artifact?: unknown }).artifact;
+/** Read the artifact body inside the stored roster item, shared by all projections. */
+function selectStageUnitArtifact(params: unknown): CohortArtifactDetails | null {
+  if (typeof params !== "object" || params === null || !("artifact" in params)) return null;
+  const item = params.artifact;
+  if (typeof item !== "object" || item === null || !("artifact" in item)) return null;
+  const artifact = item.artifact;
   if (typeof artifact !== "object" || artifact === null) return null;
-  const repositoryKey = (artifact as { readonly repository_key?: unknown }).repository_key;
-  return typeof repositoryKey === "string" ? repositoryKey : null;
+  return {
+    repository_key: "repository_key" in artifact && typeof artifact.repository_key === "string" ? artifact.repository_key : null,
+    title: "title" in artifact && typeof artifact.title === "string" ? artifact.title : null,
+  };
+}
+
+function selectStageUnitRepositoryKey(params: unknown): string | null {
+  return selectStageUnitArtifact(params)?.repository_key ?? null;
 }
 
 
@@ -575,7 +572,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
         .map((row) => row.cohort_id as CohortId)));
     }
     return rows.map((row) => {
-      const artifact = row.artifact_revision_id as ArtifactId | null; const cohort = row.params?.artifact ?? null;
+      const artifact = row.artifact_revision_id as ArtifactId | null; const cohort = selectStageUnitArtifact(row.params);
       const detail = details.get(row.stage_type)?.get(row.cohort_id as CohortId);
       return { id: row.cohort_id,run_id: row.run_id as WorkflowRunId,workflow_name: row.workflow_name,stage_instance_id: row.stage_instance_id as import("../domain/primitives").StageInstanceId,stage_name: row.stage_name,unit_id: row.unit_id as UnitId,repository_key: selectStageUnitRepositoryKey(row.params),title: cohort?.title ?? null,lifecycle: row.status,blocked_reason: row.blocked_reason,next_actor: row.next_actor,completion: { build_complete: artifact !== null, assessment_complete: row.status === "complete" },blocked_by: [],artifact_revision_id: artifact,artifact_url: artifact ? `/artifact_details/${artifact}` : null,gate_id: null,gate_url: null,links: detail?.links ?? [],facts: detail?.facts ?? [],updated_at: row.updated_at };
     });

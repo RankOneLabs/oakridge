@@ -29,8 +29,8 @@ import { attemptWorkflowId, runMachineWorkflowId, stageMachineWorkflowId } from 
 import { type AttemptExecution, type OpenCohort, type RunDecision, type RunRecordRepositoryError, type TransitionEffectDescriptor } from "../domain/run-record";
 import { cohortIdFor, resolveCohortRoster } from "../adapters/cohort-roster";
 import { ExecutorStartRejectedError, type ExecutionRequest, type ExecutorAdapter, type ExecutorObservationAttempt, type ExecutorUnavailable, type ExternalExecutionReference } from "../domain/execution";
-import type { AttemptId, CohortId, JsonValue, KbblSessionId, RunTransitionId, StageInstanceId, UnitId, WorkflowRunId } from "../domain/primitives";
-import { executorOperationIdForWorkOrder, type ExecutionId, type WorkOrderId } from "../domain/primitives";
+import type { AttemptId, CohortId, JsonValue, KbblSessionId, Result, RunTransitionId, StageInstanceId, UnitId, WorkflowRunId } from "../domain/primitives";
+import { ok, executorOperationIdForWorkOrder, type ExecutionId, type WorkOrderId } from "../domain/primitives";
 import type { TransitionOwner } from "../domain/run-record";
 import type { StageInputSet } from "../decision/commands";
 import { parseStageInputEdges } from "../domain/stage-contract";
@@ -84,18 +84,24 @@ const workflowServices = (): RunRecordWorkflowServices => {
  * The run machine
  * ------------------------------------------------------------------ */
 
+// Earlier executions checkpointed successful RunDecision values without a Result
+// envelope. Accept that stored format when DBOS replays an existing workflow.
+type RunDecisionStepResult = Result<RunDecision, RunRecordRepositoryError>;
+export const decodeRunDecisionStepResult = (stored: RunDecision | RunDecisionStepResult): RunDecisionStepResult =>
+  "ok" in stored ? stored : ok(stored);
+
 const decideRunStep = DBOS.registerStep(
-  async (run_id: WorkflowRunId): Promise<RunDecision> => {
+  async (run_id: WorkflowRunId): Promise<Result<RunDecision, RunRecordRepositoryError>> => {
     const decided = await workflowServices().records.decide_run(run_id, workflowServices().now());
-    if (!decided.ok) throw new RunDecisionFailure(decided.error);
-    return decided.value;
+    // Missing runs are a durable outcome: DBOS wraps exhausted step errors and
+    // deserializes replayed errors, so exception identity cannot carry this fact.
+    if (!decided.ok && decided.error.kind !== "run_not_found") {
+      throw new Error(`${decided.error.operation}:${decided.error.kind}:${decided.error.detail}`);
+    }
+    return decided;
   },
   { name: "oakridgeV15DecideRunStep", retriesAllowed: true, maxAttempts: 5, intervalSeconds: 1, backoffRate: 2 },
 );
-
-class RunDecisionFailure extends Error {
-  constructor(readonly failure: RunRecordRepositoryError) { super(`${failure.operation}:${failure.kind}:${failure.detail}`); }
-}
 
 const isTerminal = (status: RunDecision["status"]): boolean =>
   status === "complete" || status === "failed" || status === "cancelled";
@@ -131,11 +137,15 @@ export const runMachineWorkflow = DBOS.registerWorkflow(async (run_id: WorkflowR
   for (;;) {
     let decision: RunDecision;
     try {
-      decision = await decideRunStep(run_id);
+      const decided = decodeRunDecisionStepResult(await decideRunStep(run_id));
+      if (!decided.ok) {
+        if (decided.error.kind === "run_not_found") return null;
+        throw new Error(`${decided.error.operation}:${decided.error.kind}:${decided.error.detail}`);
+      }
+      decision = decided.value;
     } catch (error) {
       if (error instanceof DBOSErrors.DBOSWorkflowCancelledError) return null;
       const message = String(error);
-      if (error instanceof RunDecisionFailure && error.failure.kind === "run_not_found") return null;
       DBOS.logger.error(`run ${run_id}: decide failed, retrying in ${MACHINE_FAILURE_BACKOFF_SECONDS}s: ${message}`);
       await DBOS.sleepSeconds(MACHINE_FAILURE_BACKOFF_SECONDS);
       continue;
