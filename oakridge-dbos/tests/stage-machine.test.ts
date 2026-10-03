@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { evaluateCohort, transition } from "../src/decision/stage-machine";
+import { evaluateCohort, evaluateV15Fact, transition } from "../src/decision/stage-machine";
 import type { ImplementationCohortDefinition, ImplementationCohortRecord, ArtifactRef } from "../src/domain/dev-flow-v15";
 import type { CompiledMachine, GuardContext, StageEvent, Transition } from "../src/domain/stage-machine";
 import { machineRegistry, reviewMachine } from "./support/machine-fixtures";
@@ -250,4 +250,25 @@ test("completed builder output is reviewable even when its execution was interru
     request: null, pr: null, available_artifacts: availableBuildRefs() });
   expect(selected.ok && selected.value.kind === "apply" && selected.value.changes).toContainEqual(
     { kind: "set_worker_state", worker: "build", state: "awaiting_review" });
+});
+
+test("spec readiness and interruption are independent facts over the same snapshot", () => {
+  const context = { stage: "spec_analysis" as const, cohort: {
+    spec: { active_execution_id: "spec-execution", response: { execution_id: "spec-execution", current: ref },
+      outputs: { spec_analysis: { id: ref.id, version: ref.version } },
+      interrupted: { execution: { execution_id: "spec-execution" } } },
+  } as never };
+  expect(evaluateV15Fact(context, "spec_outputs_ready")).toBe(true);
+  expect(evaluateV15Fact(context, "spec_execution_interrupted")).toBe(true);
+});
+
+test("a final merge must match the reviewed head", () => {
+  const target = { pr_summary: ref, pr_url: "https://example.test/pr/1", head_sha: "abc" as never };
+  const pr = { pr_url: target.pr_url, repository_key: "oakridge" as never,
+    head_branch: "final", base_branch: "epic/wf", head_sha: "wrong" as never, state: "merged" as const };
+  const cohort = {} as never;
+  expect(evaluateV15Fact({ stage: "final_integration", cohort, pr, reviewed_target: target },
+    "final_pr_merged_at_reviewed_head")).toBe(false);
+  expect(evaluateV15Fact({ stage: "final_integration", cohort, pr: { ...pr, head_sha: target.head_sha },
+    reviewed_target: target }, "final_pr_merged_at_reviewed_head")).toBe(true);
 });
