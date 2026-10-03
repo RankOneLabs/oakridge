@@ -50,11 +50,13 @@ test("a build revision renders each declared field and the pinned assessment evi
   }, artifacts: [
     { ref: { id: "result" as never, version: 3 }, artifact_type: "dev.build_result", body: { summary: "current build" } },
     { ref: { id: "assessment" as never, version: 4 }, artifact_type: "dev.assessment",
-      body: { verdict: "changes_requested", open_findings: ["missing check"], recommended_actions: ["add check"] } },
+      body: { verdict: "fail", findings: [{ criterion: "coverage", status: "not_met", description: "missing check" }],
+        recommended_next_actions: ["add check"] } },
   ], execution: { worker: "build", action_point: "revise", cohort_id: "one" }, repository });
   expect(prompt).toContain("## current_build");
   expect(prompt).toContain("current build");
   expect(prompt).toContain("missing check");
+  expect(prompt).toContain("open_findings");
   expect(prompt).toContain("add check");
   expect(prompt).toContain("Fix the finding");
   expect(prompt).toContain("Worktree base: current-base");

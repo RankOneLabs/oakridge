@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import type { ImplementationCohortInputs, ArtifactRef, PreparedImplementationRepository } from "../domain/dev-flow-v15";
 /**
  * How an Oakridge backend is assembled.
@@ -164,12 +165,15 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     },
     prepare_repository: async (cohort_id) => {
       const rows = await sql.query<{ readonly stage_instance_id: import("../domain/primitives").StageInstanceId;
-        readonly cohort_key: string; readonly frozen_inputs: ImplementationCohortInputs }>(
-        "SELECT stage_instance_id::text,cohort_key,frozen_inputs FROM oakridge.cohort WHERE id=$1", [cohort_id]);
+        readonly cohort_key: string; readonly state: string; readonly frozen_inputs: ImplementationCohortInputs }>(
+        "SELECT stage_instance_id::text,cohort_key,state,frozen_inputs FROM oakridge.cohort WHERE id=$1", [cohort_id]);
       const row = rows[0];
       if (!row) return err({ detail: "implementation cohort is missing" });
+      if (row.state === "awaiting_merge" || row.state === "complete" || row.state === "failed" || row.state === "cancelled")
+        return ok(undefined);
       const repository = row.frozen_inputs.repository;
-      if (repository.worktree_base_sha) return ok(undefined);
+      if (repository.worktree_base_sha) return existsSync(repository.worktree_path)
+        ? ok(undefined) : err({ detail: "prepared cohort worktree is missing" });
       const prepared = await prepareDevFlowBuildCohort({ pull_requests: cohortPullRequests, git }, {
         cohort_id, stage_instance_id: row.stage_instance_id, cohort_key: row.cohort_key,
         repository: row.frozen_inputs.repository.refs, prepared_at: now(),
@@ -178,6 +182,17 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
       if (prepared.value.cohort.canonical_ref !== repository.canonical_branch
         || prepared.value.cohort.expected_pr_base !== repository.expected_pr_base)
         return err({ detail: "prepared cohort branch disagrees with the frozen repository input" });
+      if (existsSync(repository.worktree_path)) {
+        const branch = await git.run(repository.worktree_path, ["rev-parse", "--abbrev-ref", "HEAD"]);
+        const ancestry = await git.run(repository.worktree_path,
+          ["merge-base", "--is-ancestor", prepared.value.worktree_base_sha, "HEAD"]);
+        if (branch.exit_code !== 0 || branch.stdout.trim() !== repository.canonical_branch || ancestry.exit_code !== 0)
+          return err({ detail: "prepared worktree does not match the cohort branch and observed base" });
+      } else {
+        const created = await git.run(repository.refs.repository_path, ["worktree", "add", "--no-track", "-b",
+          repository.canonical_branch, repository.worktree_path, prepared.value.worktree_base_sha]);
+        if (created.exit_code !== 0) return err({ detail: created.stderr.trim() || "could not create the cohort worktree" });
+      }
       await sql.query(`UPDATE oakridge.cohort SET frozen_inputs=jsonb_set(frozen_inputs,
         '{repository,worktree_base_sha}',to_jsonb($2::text))
         WHERE id=$1 AND frozen_inputs #>> '{repository,worktree_base_sha}' IS NULL`,
