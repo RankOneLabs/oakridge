@@ -10,7 +10,7 @@ import { publishWorkOrderArtifact } from "../src/runtime/publish-work-order-arti
 import { capabilityFor } from "../src/runtime/resolve-work-order";
 import { dispatchCohortExecution, stopCohortExecution, type CreatedWorkerSession, type WorkerSessionIO } from "../src/runtime/run-launch-dispatch";
 import type { ArtifactId, AttemptId, CohortId, ExecutionId, JsonValue, SessionId, StageInstanceId, WorkflowRunId, WorkOrderId } from "../src/domain/primitives";
-import type { ArtifactRef, ImplementationCohortDefinition, ImplementationCohortInputs, OperatorRequestEnvelope } from "../src/domain/dev-flow-v15";
+import type { ArtifactRef, ImplementationCohortDefinition, ImplementationCohortInputs, OperatorRequestEnvelope, VerifiedPrObservation } from "../src/domain/dev-flow-v15";
 import { createScratchDatabase, type ScratchDatabase } from "./support/durable-database";
 
 const scratches: ScratchDatabase[] = [];
@@ -33,6 +33,7 @@ interface Fixture {
   readonly created: readonly CreatedWorkerSession[];
   readonly stopped: readonly ExecutionId[];
   readonly io: WorkerSessionIO;
+  set_pr(observation: VerifiedPrObservation | null): void;
 }
 const prepare = async (name: string, should_fail_dispatch = false): Promise<Fixture> => {
   const scratch = await createScratchDatabase(name);
@@ -66,14 +67,16 @@ const prepare = async (name: string, should_fail_dispatch = false): Promise<Fixt
     },
     stop_session: async (session) => { stopped.push(session.execution_id); return { ok: true, value: undefined }; },
   };
+  let pr: VerifiedPrObservation | null = null;
   const ingress = new StageEventApplier({ sql, writer: new PostgresRunRecordWriter(sql, createDevFlowAdapterRegistry()), now: io.now,
+    observe_pr: async () => pr,
     dispatch_executions: async (ids) => { for (const id of ids) await dispatchCohortExecution(sql, id, io); } });
-  return { sql, ingress, io, created, stopped };
+  return { sql, ingress, io, created, stopped, set_pr: (observation) => { pr = observation; } };
 };
 
-const buildForReview = async (fixture: Fixture): Promise<{ readonly execution_id: ExecutionId; readonly outputs: { readonly build_result: ArtifactRef; readonly pr_summary: ArtifactRef } }> => {
-  expect((await fixture.ingress.advance(cohort_id, null)).ok).toBe(true);
-  const execution_id = fixture.created[0]!.execution_id;
+const buildForReview = async (fixture: Fixture, resumed_execution_id?: ExecutionId): Promise<{ readonly execution_id: ExecutionId; readonly outputs: { readonly build_result: ArtifactRef; readonly pr_summary: ArtifactRef } }> => {
+  if (!resumed_execution_id) expect((await fixture.ingress.advance(cohort_id, null)).ok).toBe(true);
+  const execution_id = resumed_execution_id ?? fixture.created[0]!.execution_id;
   const refs: ArtifactRef[] = [];
   for (const [output_name, body] of [["build_result", { summary: "built" }], ["pr_summary", { pr_url: "https://example.test/pr/1" }]] as const) {
     const result = await publishWorkerOutput(fixture.sql, { execution_id, artifact_id: randomUUID() as ArtifactId,
@@ -110,7 +113,7 @@ test("real cohort ingress consumes accept_build once and launches the assessor f
   } finally { await fixture.sql.close(); }
 });
 
-test("real publication requires both build outputs and records an unchanged discussion without a new revision", async () => {
+test("real storage runs both build feedback routes, discussion, and merge at the accepted head", async () => {
   const fixture = await prepare("oakridge_b3_publication");
   try {
     const records = new PostgresRunRecordRepository(fixture.sql,
@@ -124,18 +127,37 @@ test("real publication requires both build outputs and records an unchanged disc
         body, idempotency_key: `${execution_id}:${output_name}` }, { records, now: fixture.io.now,
         enrich: async () => ({ ok: true, value: output_name === "pr_summary" ? { origin_head_sha: "abc" } : null }) });
     };
+    const currentVersion = async () => Number((await fixture.sql.query<{ readonly durable_version: string }>(
+      "SELECT durable_version::text FROM oakridge.cohort WHERE id=$1", [cohort_id]))[0]!.durable_version);
+    const currentBuild = async () => (await fixture.sql.query<{ readonly response: {
+      readonly build_result: ArtifactRef; readonly pr_summary: ArtifactRef; readonly head_sha: string } }>(
+      "SELECT response FROM oakridge.cohort_worker WHERE cohort_id=$1 AND worker='build'", [cohort_id]))[0]!.response;
+    const prBody = { pr_url: "https://github.com/example/oakridge/pull/1", branch: "cohort/core",
+      base_branch: "epic/schema", repository_key: "oakridge", summary: "built" };
     expect((await fixture.ingress.advance(cohort_id, null)).ok).toBe(true);
     const build_execution = fixture.created[0]!.execution_id;
     expect((await publish(build_execution, "build_result", { repository_key: "oakridge", summary: "built" })).kind).toBe("published");
     expect((await fixture.sql.query<{ readonly state: string }>(
       "SELECT state FROM oakridge.cohort_worker WHERE cohort_id=$1 AND worker='build'", [cohort_id]))[0]?.state).toBe("working");
-    expect(await publish(build_execution, "pr_summary", { pr_url: "https://github.com/example/oakridge/pull/1",
-      branch: "cohort/core", base_branch: "epic/schema", repository_key: "oakridge", summary: "built" })).toMatchObject({ kind: "published" });
-    const build = (await fixture.sql.query<{ readonly response: { readonly build_result: ArtifactRef; readonly pr_summary: ArtifactRef; readonly head_sha: string } }>(
-      "SELECT response FROM oakridge.cohort_worker WHERE cohort_id=$1 AND worker='build'", [cohort_id]))[0]!.response;
-    const version = Number((await fixture.sql.query<{ readonly durable_version: string }>(
-      "SELECT durable_version::text FROM oakridge.cohort WHERE id=$1", [cohort_id]))[0]!.durable_version);
-    expect((await fixture.ingress.advance(cohort_id, { id: randomUUID() as never, cohort_id, expected_version: version,
+    expect((await publish(build_execution, "pr_summary", prBody)).kind).toBe("published");
+    let build = await currentBuild();
+    expect((await fixture.ingress.advance(cohort_id, { id: randomUUID() as never, cohort_id, expected_version: await currentVersion(),
+      request: { kind: "request_build_changes", feedback: { source: "build_review", text: "Add coverage",
+        target: { outputs: { build_result: build.build_result, pr_summary: build.pr_summary }, head_sha: build.head_sha as never } } } })).ok).toBe(true);
+    const review_revision = fixture.created.at(-1)!.execution_id;
+    expect(await publishWorkerOutput(fixture.sql, { execution_id: build_execution,
+      artifact_id: randomUUID() as ArtifactId, output_name: "build_result", collection_key: null,
+      artifact_type: "dev.build_result", body: { summary: "late write" }, expected: build.build_result,
+      at: fixture.io.now() })).toMatchObject({ ok: false, error: { kind: "publication_fenced" } });
+    expect((await fixture.sql.query<{ readonly action_point: string; readonly prompt: string; readonly resolved_input: {
+      readonly feedback: { readonly source: string } } }>(
+      "SELECT action_point,prompt,resolved_input FROM oakridge.execution_intent WHERE id=$1", [review_revision]))[0])
+      .toMatchObject({ action_point: "revise", prompt: "workflow-config/prompts/dev-flow/v15/build/build/revise.md",
+        resolved_input: { feedback: { source: "build_review" } } });
+    expect((await publish(review_revision, "build_result", { repository_key: "oakridge", summary: "revised" })).kind).toBe("published");
+    expect((await publish(review_revision, "pr_summary", prBody)).kind).toBe("published");
+    build = await currentBuild();
+    expect((await fixture.ingress.advance(cohort_id, { id: randomUUID() as never, cohort_id, expected_version: await currentVersion(),
       request: { kind: "accept_build", target: { outputs: { build_result: build.build_result, pr_summary: build.pr_summary },
         head_sha: build.head_sha as never } } })).ok).toBe(true);
     const assessment_execution = fixture.created.at(-1)!.execution_id;
@@ -147,13 +169,14 @@ test("real publication requires both build outputs and records an unchanged disc
     const accepted = (await fixture.sql.query<{ readonly accepted_build: import("../src/domain/dev-flow-v15").AcceptedBuild }>(
       "SELECT accepted_build FROM oakridge.cohort WHERE id=$1", [cohort_id]))[0]!.accepted_build;
     const assessment_ref = { id: assessment.chain_id, version: assessment.revision };
-    const discuss_version = Number((await fixture.sql.query<{ readonly durable_version: string }>(
-      "SELECT durable_version::text FROM oakridge.cohort WHERE id=$1", [cohort_id]))[0]!.durable_version);
-    expect((await fixture.ingress.advance(cohort_id, { id: randomUUID() as never, cohort_id, expected_version: discuss_version,
+    expect((await fixture.ingress.advance(cohort_id, { id: randomUUID() as never, cohort_id, expected_version: await currentVersion(),
       request: { kind: "discuss_assessment", feedback: { text: "Please reconsider", target: {
         assessment: assessment_ref, build: accepted } } } })).ok).toBe(true);
     const discussion_execution = fixture.created.at(-1)!.execution_id;
     const before = (await fixture.sql.query<{ readonly count: string }>("SELECT count(*)::text FROM oakridge.artifact", []))[0]!.count;
+    expect(await publish(discussion_execution, "assessment_unchanged", { assessment: assessment_ref,
+      build: { ...accepted, head_sha: "wrong" }, explanation: "wrong build" } as unknown as JsonValue))
+      .toMatchObject({ kind: "refused", code: "assessment_response_mismatch" });
     expect((await publish(discussion_execution, "assessment_unchanged", { assessment: assessment_ref,
       build: accepted, explanation: "The original evidence still satisfies the criterion." } as unknown as JsonValue)).kind).toBe("published");
     const after = (await fixture.sql.query<{ readonly count: string }>("SELECT count(*)::text FROM oakridge.artifact", []))[0]!.count;
@@ -162,6 +185,37 @@ test("real publication requires both build outputs and records an unchanged disc
       "SELECT state,response FROM oakridge.cohort_worker WHERE cohort_id=$1 AND worker='assessment'", [cohort_id]))[0])
       .toEqual({ state: "awaiting_review", response: expect.objectContaining({ kind: "unchanged",
         explanation: "The original evidence still satisfies the criterion." }) });
+    expect((await fixture.ingress.advance(cohort_id, { id: randomUUID() as never, cohort_id, expected_version: await currentVersion(),
+      request: { kind: "request_implementation_changes", feedback: { source: "assessment", text: "Fix the finding",
+        target: { assessment: assessment_ref, build: accepted } } } })).ok).toBe(true);
+    const assessment_revision = fixture.created.at(-1)!.execution_id;
+    expect((await fixture.sql.query<{ readonly action_point: string; readonly prompt: string; readonly resolved_input: {
+      readonly feedback: { readonly source: string }; readonly current_build: object } }>(
+      "SELECT action_point,prompt,resolved_input FROM oakridge.execution_intent WHERE id=$1", [assessment_revision]))[0])
+      .toMatchObject({ action_point: "revise", prompt: "workflow-config/prompts/dev-flow/v15/build/build/revise.md",
+        resolved_input: { feedback: { source: "assessment" }, current_build: accepted.outputs } });
+    expect((await publish(assessment_revision, "build_result", { repository_key: "oakridge", summary: "finding fixed" })).kind).toBe("published");
+    expect((await publish(assessment_revision, "pr_summary", prBody)).kind).toBe("published");
+    build = await currentBuild();
+    expect((await fixture.ingress.advance(cohort_id, { id: randomUUID() as never, cohort_id, expected_version: await currentVersion(),
+      request: { kind: "accept_build", target: { outputs: { build_result: build.build_result, pr_summary: build.pr_summary },
+        head_sha: build.head_sha as never } } })).ok).toBe(true);
+    const fresh_assessment_execution = fixture.created.at(-1)!.execution_id;
+    expect((await publish(fresh_assessment_execution, "assessment", { verdict: "pass", findings: [], recommended_next_actions: [] })).kind).toBe("published");
+    const freshAssessment = (await fixture.sql.query<{ readonly chain_id: ArtifactId; readonly revision: number }>(
+      `SELECT artifact.chain_id::text,artifact.revision FROM oakridge.worker_output output
+       JOIN oakridge.artifact artifact ON artifact.id=output.artifact_id
+       WHERE output.cohort_id=$1 AND output.worker='assessment'`, [cohort_id]))[0]!;
+    const freshAccepted = (await fixture.sql.query<{ readonly accepted_build: import("../src/domain/dev-flow-v15").AcceptedBuild }>(
+      "SELECT accepted_build FROM oakridge.cohort WHERE id=$1", [cohort_id]))[0]!.accepted_build;
+    expect((await fixture.ingress.advance(cohort_id, { id: randomUUID() as never, cohort_id, expected_version: await currentVersion(),
+      request: { kind: "accept_assessment", target: { assessment: { id: freshAssessment.chain_id, version: freshAssessment.revision },
+        build: freshAccepted } } })).ok).toBe(true);
+    fixture.set_pr({ pr_url: freshAccepted.pr_url, repository_key: "oakridge" as never, head_branch: "cohort/core",
+      base_branch: "epic/schema", head_sha: freshAccepted.head_sha, state: "merged" });
+    expect((await fixture.ingress.advance(cohort_id, null)).ok).toBe(true);
+    expect((await fixture.sql.query<{ readonly state: string }>(
+      "SELECT state FROM oakridge.cohort WHERE id=$1", [cohort_id]))[0]?.state).toBe("complete");
   } finally { await fixture.sql.close(); }
 });
 
@@ -177,6 +231,39 @@ test("dispatch replay creates one session and a durable stop converges once afte
     expect((await stopCohortExecution(fixture.sql, execution_id, fixture.io)).ok).toBe(true);
     expect(fixture.stopped).toEqual([execution_id]);
     expect((await fixture.sql.query<{ readonly status: string }>("SELECT status::text FROM oakridge.session", []))[0]?.status).toBe("cancelled");
+  } finally { await fixture.sql.close(); }
+});
+
+test("plain session exits leave outputs unready and both workers can retry", async () => {
+  const fixture = await prepare("oakridge_b3_worker_retries");
+  try {
+    const records = new PostgresRunRecordRepository(fixture.sql,
+      new PostgresRunRecordWriter(fixture.sql, createDevFlowAdapterRegistry()), fixture.ingress);
+    const version = async () => Number((await fixture.sql.query<{ readonly durable_version: string }>(
+      "SELECT durable_version::text FROM oakridge.cohort WHERE id=$1", [cohort_id]))[0]!.durable_version);
+    expect((await fixture.ingress.advance(cohort_id, null)).ok).toBe(true);
+    expect((await records.observe_session({ session_id: fixture.created[0]!.session_id,
+      health: { kind: "ended_succeeded", metadata: {}, observed_at: fixture.io.now() }, observed_at: fixture.io.now() })).kind).toBe("written");
+    expect((await fixture.sql.query<{ readonly state: string; readonly response: unknown }>(
+      "SELECT state,response FROM oakridge.cohort_worker WHERE cohort_id=$1 AND worker='build'", [cohort_id]))[0])
+      .toEqual({ state: "interrupted", response: null });
+    expect((await fixture.ingress.advance(cohort_id, { id: randomUUID() as never, cohort_id, expected_version: await version(),
+      request: { kind: "retry_build" } })).ok).toBe(true);
+    expect((await fixture.sql.query<{ readonly action_point: string }>(
+      "SELECT action_point FROM oakridge.execution_intent WHERE id=$1", [fixture.created.at(-1)!.execution_id]))[0]?.action_point).toBe("retry");
+    const build = await buildForReview(fixture, fixture.created.at(-1)!.execution_id);
+    expect((await fixture.ingress.advance(cohort_id, { id: randomUUID() as never, cohort_id, expected_version: await version(),
+      request: { kind: "accept_build", target: { outputs: build.outputs, head_sha: "abc" as never } } })).ok).toBe(true);
+    const assessor = fixture.created.at(-1)!;
+    expect((await records.observe_session({ session_id: assessor.session_id,
+      health: { kind: "ended_succeeded", metadata: {}, observed_at: fixture.io.now() }, observed_at: fixture.io.now() })).kind).toBe("written");
+    expect((await fixture.sql.query<{ readonly state: string; readonly response: unknown }>(
+      "SELECT state,response FROM oakridge.cohort_worker WHERE cohort_id=$1 AND worker='assessment'", [cohort_id]))[0])
+      .toEqual({ state: "interrupted", response: null });
+    expect((await fixture.ingress.advance(cohort_id, { id: randomUUID() as never, cohort_id, expected_version: await version(),
+      request: { kind: "retry_assessment" } })).ok).toBe(true);
+    expect((await fixture.sql.query<{ readonly action_point: string }>(
+      "SELECT action_point FROM oakridge.execution_intent WHERE id=$1", [fixture.created.at(-1)!.execution_id]))[0]?.action_point).toBe("retry");
   } finally { await fixture.sql.close(); }
 });
 

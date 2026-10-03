@@ -478,12 +478,20 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
   }
 
   async observe_session(input: ObserveSession): Promise<SessionStatusWrite> {
-    return this.sql.transaction(async (tx) => {
+    const written = await this.sql.transaction(async (tx) => {
       const written = await writeSessionStatus(tx,
         { session_id: input.session_id, status: statusFromHealth(input.health), at: input.observed_at });
       if (!written.ok) throw new Error(`${written.error.operation}:${written.error.kind}:${written.error.detail}`);
       return written.value;
     });
+    if (written.kind === "written" && input.health.kind !== "running") {
+      const rows = await this.sql.query<{ readonly cohort_id: CohortId }>(
+        `SELECT intent.cohort_id::text FROM oakridge.session session
+         JOIN oakridge.execution_intent intent ON intent.attempt_id=session.attempt_id
+         WHERE session.id=$1`, [input.session_id]);
+      if (rows[0]) await this.stage_event_applier.advance(rows[0].cohort_id, null);
+    }
+    return written;
   }
 
   async mark_session_fenced(session_id: SessionId, fenced_at: string): Promise<void> {
