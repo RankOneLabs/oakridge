@@ -26,6 +26,7 @@ const DEV_FLOW_SOURCE_ALLOWLIST = {
   "domain/cohort-pull-request.ts": "Defines dev-flow cohort handoff facts.",
   "domain/delegated-session.ts": "Carries an optional existing handoff URL in session context.",
   "domain/dev-flow-artifacts.ts": "Defines assessment artifact validation.",
+  "domain/dev-flow-v15.ts": "Owns the checked v15 unions and future evaluator; typed contract names belong here, outside core decision and records.",
   "domain/epic.ts": "Defines the dev-flow epic contract.",
   "domain/gates.ts": "Maps the assessment artifact disposition.",
   "domain/operator-projections.ts": "Keeps existing operator review item and diagnosis contracts.",
@@ -76,7 +77,9 @@ test("dev-flow identifiers stay in the documented adapter allowlist", async () =
   expect(offenders).toEqual([]);
 });
 
-test("core records and persistence have no integration branch", async () => {
+// The v15 typed contract names integration_branch. This assertion guards core
+// reach-through into adapter data while permitting that name in its declared home.
+test("core records and persistence have no adapter integration branch reach-through", async () => {
   const files = [...await decisionSources(), join(SOURCE, "domain", "records.ts"),
     ...(await readdir(join(SOURCE, "storage"))).filter((name) => name.startsWith("postgres-run-record") && name.endsWith(".ts"))
       .map((name) => join(SOURCE, "storage", name))];
@@ -92,7 +95,9 @@ test("core operator projections never query adapter tables", async () => {
   expect(source).not.toMatch(/(?:FROM|JOIN|UPDATE|INTO)\s+dev_flow\./i);
 });
 
-test("core decision sources contain no dev-flow payload, role, event, or sentinel identifiers", async () => {
+// Checked worker names are required by the v15 contract in dev-flow-v15.ts.
+// Core decision and generic records still cannot interpret those adapter roles.
+test("core decision and records do not interpret dev-flow identifiers", async () => {
   const files = [...await decisionSources(), join(SOURCE, "domain", "records.ts")];
   const violations = (await Promise.all(files.map(async (file) => ({ file, violations: coreBoundaryViolations(await readFile(file, "utf8")) }))))
     .filter((entry) => entry.violations.length > 0);
