@@ -1,4 +1,4 @@
-import { selectOutputAttention, type CompiledEdge, type CompiledGateStep, type CompiledOutputContract, type CompiledStageContract, type CompiledWorkflowDefinition, type MaterializationContract, type OutputReleaseContract } from "../domain/compiled-workflow";
+import { selectOutputAttention, type CompiledEdge, type CompiledGateStep, type CompiledOutputContract, type CompiledStageContract, type CompiledWorkflowDefinition, type OutputReleaseContract } from "../domain/compiled-workflow";
 import type { DelegatedSessionDefinitionConfig } from "../domain/delegated-session";
 import { err, ok, type JsonValue, type Result } from "../domain/primitives";
 import type { PromptBundle, StageNodeDefinition, WorkflowDefinition } from "../domain/workflow";
@@ -6,7 +6,7 @@ import { delegatedSessionDefinitionSchema, validateDelegatedSessionCardinality, 
 import { repositoryProvisioningDefinitionSchema } from "../validation/repository-provisioning";
 import { selectBuiltInGateDisposition } from "../domain/gates";
 import { readOwn } from "../domain/records";
-import { PROVISION_REPOSITORY_REFS_STAGE_TYPE, RUN_CONTEXT_REPOSITORY_KEY_POINTER, type RepositoryProvisioningDefinitionConfig } from "../domain/repository-refs";
+import { PROVISION_REPOSITORY_REFS_STAGE_TYPE, type RepositoryProvisioningDefinitionConfig } from "../domain/repository-refs";
 import { createDevFlowAdapterRegistry } from "../adapters/dev-flow";
 import type { AdapterRoleRegistry } from "../validation/workflow-definition";
 import type { CompiledMachine, EffectRef, EventMatch, MachineDefinition, MachineRegistry, Transition } from "../domain/stage-machine";
@@ -40,7 +40,7 @@ const stringArg = (effect: EffectRef, name: string): string | null => typeof eff
 const outputArgs = (effect: EffectRef): readonly string[] => Array.isArray(effect.args.outputs)
   ? effect.args.outputs.filter((value): value is string => typeof value === "string") : [];
 
-const validateMachine = (stage_key: string, stage_type: string, machine: MachineDefinition,
+const validateGraphMachine = (stage_key: string, stage_type: string, machine: MachineDefinition,
   outputs: readonly string[], gates: readonly { readonly name: string; readonly steps: readonly { readonly actions: readonly string[] }[] }[],
   promptCells: readonly { readonly session_role: string; readonly launch_reason: string }[], registry: MachineRegistry): readonly MachineDiagnostic[] => {
   const diagnostics: MachineDiagnostic[] = [];
@@ -157,7 +157,7 @@ export const WORKFLOW_VALIDATION_STEPS = [
 
 export interface StageTypeCompilation {
   readonly definition_config: DelegatedSessionDefinitionConfig | JsonValue;
-  readonly materialization: MaterializationContract;
+  readonly max_active_cohorts: number;
   output_release(output_name: string): OutputReleaseContract;
 }
 
@@ -186,19 +186,6 @@ const outputRelease = (outputName: string, config: DelegatedSessionDefinitionCon
   return { kind: "immediate" };
 };
 
-const materialization = (config: DelegatedSessionDefinitionConfig): MaterializationContract => {
-  if (config.artifact_productions.length > 0) return { kind: "artifact_collections", productions: config.artifact_productions };
-  if (config.fan_out) return {
-    kind: "fan_out",
-    over: config.fan_out.over,
-    unit_id_path: config.fan_out.unit_id_path,
-    depends_on_path: config.fan_out.depends_on_path ?? null,
-    max_parallel: config.fan_out.max_parallel ?? 8,
-    manual_admission: config.fan_out.manual_admission ?? false,
-  };
-  return { kind: "scalar" };
-};
-
 const delegatedSessionStageTypeCompiler: StageTypeCompiler = {
   compile(stageKey, rawConfig) {
   const parsed = delegatedSessionDefinitionSchema.safeParse(rawConfig);
@@ -206,7 +193,7 @@ const delegatedSessionStageTypeCompiler: StageTypeCompiler = {
   const config = parsed.data as DelegatedSessionDefinitionConfig;
   return ok({
     definition_config: config,
-    materialization: materialization(config),
+    max_active_cohorts: 1,
     output_release: (outputName) => outputRelease(outputName, config),
   });
   },
@@ -226,8 +213,7 @@ const repositoryProvisioningStageTypeCompiler: StageTypeCompiler = {
     const config = parsed.data as RepositoryProvisioningDefinitionConfig;
     return ok({
       definition_config: config as unknown as JsonValue,
-      materialization: { kind: "fan_out", over: config.repositories, unit_id_path: RUN_CONTEXT_REPOSITORY_KEY_POINTER,
-        depends_on_path: null, max_parallel: config.max_parallel, manual_admission: false },
+      max_active_cohorts: config.max_parallel,
       // Nothing reviews provisioned refs: they are a fact about a repository,
       // not a document. Gating them would park every run behind an approval of
       // a branch name the operator already chose.
@@ -264,7 +250,7 @@ const compileStage = (stageKey: string, node: StageNodeDefinition, registry: Sta
     operator_role: node.operator_role,
     inputs: node.inputs,
     outputs,
-    materialization: compiledConfig.value.materialization,
+    max_active_cohorts: compiledConfig.value.max_active_cohorts,
     executor: { executor_type: node.stage_type, definition_config: compiledConfig.value.definition_config },
     ...(machine ? { machine } : {}),
   });
@@ -292,7 +278,7 @@ export const compileWorkflowDefinition = (
         const promptCells = config?.success ? config.data.prompt_matrix
           : node.stage_type === PROVISION_REPOSITORY_REFS_STAGE_TYPE
             ? [{ session_role: "provision", launch_reason: "initial" }, { session_role: "provision", launch_reason: "operator_retry" }] : [];
-        diagnostics.push(...validateMachine(stageKey, node.stage_type, machine, node.outputs.map((output) => output.name), gateList, promptCells, machineRegistry));
+        diagnostics.push(...validateGraphMachine(stageKey, node.stage_type, machine, node.outputs.map((output) => output.name), gateList, promptCells, machineRegistry));
         machines[stageKey] = { ...machine, stage_type: node.stage_type };
       }
     }
@@ -361,3 +347,7 @@ export const compileWorkflowManifest = (
     prompt_bundle_hash: promptBundle.hash, adapter_version: versions.adapter_version,
     artifact_schema_version: versions.artifact_schema_version } });
 };
+
+// The authored v15 boundary validates cohort trees, not event machines.
+export { compileV15WorkflowDefinition, v15PromptReferences } from "./compile-v15";
+export { validateV15DecisionTree as validateMachine } from "../validation/v15-definition";

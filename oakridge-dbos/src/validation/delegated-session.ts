@@ -58,7 +58,7 @@ const outputGateSchema = z.object({
 });
 
 
-export const delegatedSessionDefinitionSchema = z.object({
+export const delegatedSessionDefinitionSchema = z.strictObject({
   machine: z.string().min(1).optional(),
   prompt_matrix: z.array(z.object({
     session_role: roleSchema,
@@ -80,16 +80,6 @@ export const delegatedSessionDefinitionSchema = z.object({
   required_build_set: z.array(z.string().min(1)).min(1).optional(),
   slot_bindings: z.record(z.string(), slotBindingSchema),
   workdir: slotBindingSchema,
-  fan_out: z.object({
-    over: slotBindingSchema,
-    unit_id_path: z.string().min(1),
-    session_mode: z.enum(["per_unit", "shared"]).default("per_unit"),
-    depends_on_path: z.string().nullable().optional(),
-    max_parallel: z.number().int().positive().default(8),
-    manual_admission: z.boolean().default(false),
-    item_bindings: z.record(z.string(), slotBindingSchema).default({}),
-    workdir: slotBindingSchema.optional(),
-  }).optional(),
   artifact_productions: z.array(z.object({ over: slotBindingSchema, id_path: z.string().min(1) })).default([]),
   gates: z.array(outputGateSchema).default([]),
   handoffs: z.array(z.object({
@@ -99,7 +89,6 @@ export const delegatedSessionDefinitionSchema = z.object({
     approved_wait: z.object({ kind: z.string().min(1), close_events: z.array(z.string().min(1)) }),
   })).default([]),
 }).superRefine((config, context) => {
-  if (config.fan_out && config.artifact_productions.length > 0) context.addIssue({ code: "custom", message: "fan_out and artifact_productions are mutually exclusive" });
   if (config.prompt_matrix.some((cell) => cell.session_role === "build" && cell.launch_reason === "initial_build")
     && !config.required_build_set) {
     context.addIssue({ code: "custom", message: "the build cohort requires required_build_set" });
@@ -156,7 +145,7 @@ export const validatePromptBundleBindings = (
   config: DelegatedSessionDefinitionConfig,
   promptContents: readonly { readonly session_role: StageOperatorRole; readonly launch_reason: SessionLaunchReasonName; readonly content: string }[],
 ): readonly DelegatedSessionDiagnostic[] => {
-  const bound = new Set([...Object.keys(config.slot_bindings), ...Object.keys(config.fan_out?.item_bindings ?? {}), "UNIT_ID", "STAGE_INSTANCE_ID"]);
+  const bound = new Set([...Object.keys(config.slot_bindings), "UNIT_ID", "STAGE_INSTANCE_ID"]);
   const diagnostics: DelegatedSessionDiagnostic[] = [];
   for (const declared of config.prompt_matrix) {
     const matches = promptContents.filter((prompt) => prompt.session_role === declared.session_role && prompt.launch_reason === declared.launch_reason).length;
@@ -189,7 +178,7 @@ export const validateDelegatedSessionContracts = (
     for (const tool of roleConfig.required_tools ?? []) if (!available.has(tool)) diagnostics.push({
       kind: "unavailable_tool", stage_key, session_role: roleConfig.session_role, contract_item: tool, tool,
     });
-    const bound = new Set([...Object.keys(config.slot_bindings), ...Object.keys(config.fan_out?.item_bindings ?? {}), "UNIT_ID", "STAGE_INSTANCE_ID"]);
+    const bound = new Set([...Object.keys(config.slot_bindings), "UNIT_ID", "STAGE_INSTANCE_ID"]);
     const templateValues = [roleConfig.session_name, typeof roleConfig.worktree?.branch_name === "string" ? roleConfig.worktree.branch_name : "",
       typeof roleConfig.worktree?.worktree_subdir === "string" ? roleConfig.worktree.worktree_subdir : "",
       typeof roleConfig.worktree?.base_ref === "string" ? roleConfig.worktree.base_ref : ""];

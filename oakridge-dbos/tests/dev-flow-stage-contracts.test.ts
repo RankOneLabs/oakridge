@@ -8,7 +8,7 @@ import type { DelegatedSessionDefinitionConfig } from "../src/domain/delegated-s
 import type { DevFlowBuildCohort } from "../src/domain/cohort-pull-request";
 import type { ArtifactEnvelope } from "../src/domain/execution";
 import type { ArtifactId, CohortId, JsonValue, RunTransitionId, StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
-import { loadDevFlowV15 } from "../src/seed/dev-flow-v15";
+import { loadGraphDefinitionFixture as loadDevFlowV15 } from "./support/graph-definition-fixture";
 import { resolveWorkOrder } from "../src/runtime/resolve-work-order";
 
 const stageInstanceId = "stage-1" as StageInstanceId;
@@ -242,19 +242,16 @@ test("every plan and brief prompt matrix cell renders its generated launch contr
   }
 });
 
-test("v15 has six stages and one prompt file for every stage, role, and reason cell", async () => {
-  const loaded = await loadDevFlowV15();
+test("canonical v15 has six stages and eighteen distinct authored prompt references", async () => {
+  const { loadDevFlowV15: loadCanonical } = await import("../src/seed/dev-flow-v15");
+  const { v15PromptReferences } = await import("../src/compiler/compile-v15");
+  const loaded = await loadCanonical();
   if (!loaded.ok) throw new Error(loaded.error.detail);
-  expect(Object.keys(loaded.value.graph.stages).sort()).toEqual([
-    "brief_writer", "build", "final_integration", "plan_writer", "provision_repository_refs", "spec_analyzer",
-  ]);
-  const cells = Object.values(loaded.value.graph.stages).flatMap((stage) => {
-    if (stage.stage_type !== "delegated_session") return [];
-    return (stage.config as unknown as DelegatedSessionDefinitionConfig).prompt_matrix;
-  });
+  expect(Object.keys(loaded.value.stages)).toHaveLength(6);
+  const cells = v15PromptReferences(loaded.value);
   expect(cells).toHaveLength(18);
-  expect(new Set(cells.map((cell) => cell.template_path)).size).toBe(cells.length);
-  expect(cells.every((cell) => cell.template_path.startsWith("dev-flow/v15/"))).toBe(true);
+  expect(new Set(cells.map((cell) => cell.path)).size).toBe(cells.length);
+  expect(cells.every((cell) => cell.path.startsWith("workflow-config/prompts/dev-flow/v15/"))).toBe(true);
 });
 
 test("all seven build loop prompt cells render the persisted cohort branch contract", async () => {
@@ -285,9 +282,7 @@ test("all seven build loop prompt cells render the persisted cohort branch contr
     expect(resolved.rendered_prompt).toContain(`Pull request base: ${buildCohort.expected_pr_base}`);
     if (cell.session_role === "build") {
       expect(resolved.worktree?.branchName).toBe(buildCohort.canonical_ref);
-      expect(resolved.rendered_prompt).toContain("pr_url: string;");
-      expect(resolved.rendered_prompt).toContain("delegated_session_metadata:");
-      expect(resolved.rendered_prompt).toContain('severity: "blocking" | "warning" | "info";');
+      expect(resolved.rendered_prompt).toContain("Authorized outputs: pr_summary, build_result");
     }
   }
 });

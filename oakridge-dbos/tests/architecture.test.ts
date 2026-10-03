@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { ok, type JsonValue } from "../src/domain/primitives";
 import { AdapterRegistry } from "../src/runtime/executor-registry";
 import { transitionEffectWorkflowId } from "../src/decision/ids";
-import { loadDevFlowV15 } from "../src/seed/dev-flow-v15";
+import { loadGraphDefinitionFixture as loadDevFlowV15 } from "./support/graph-definition-fixture";
 
 const SOURCE = new URL("../src", import.meta.url).pathname;
 const FORBIDDEN_IDENTIFIERS = [
@@ -19,6 +19,7 @@ const FORBIDDEN_IDENTIFIERS = [
 const DEV_FLOW_ROLES = ["spec", "plan", "brief", "build", "assessment", "final_integration"] as const;
 // Each exception owns an adapter-facing contract or composition point.
 const DEV_FLOW_SOURCE_ALLOWLIST = {
+  "validation/v15-definition.ts": "Validates the concrete dev-flow worker, output, input and decision-tree contracts.",
   "adapters/dev-flow-machine.ts": "Registers the dev-flow machine adapter.",
   "adapters/dev-flow.ts": "Implements dev-flow effects and registration.",
   "compiler/resolve-execution.ts": "Carries an optional existing handoff URL into a delegated prompt.",

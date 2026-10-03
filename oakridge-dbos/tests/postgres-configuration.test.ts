@@ -5,7 +5,7 @@ import type { WorkflowDefinition } from "../src/domain/workflow";
 import { PostgresProjectRepository } from "../src/storage/postgres-projects";
 import { PostgresWorkflowDefinitionRepository } from "../src/storage/postgres-workflow-definitions";
 import type { SqlExecutor, TransactionalSqlExecutor } from "../src/storage/sql-executor";
-import { loadDevFlowV15 } from "../src/seed/dev-flow-v15";
+import { loadGraphDefinitionFixture as loadDevFlowV15 } from "./support/graph-definition-fixture";
 import { createDevFlowAdapterRegistry } from "../src/adapters/dev-flow";
 import { createPromptBundle } from "../src/runtime/prompt-template";
 import { definitionWithMachine } from "./support/machine-fixtures";

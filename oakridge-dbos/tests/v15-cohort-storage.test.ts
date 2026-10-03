@@ -82,11 +82,11 @@ const COLLECTION_MACHINE: JsonValue = {
       { name: "accept_outputs", args: { outputs: ["brief"] } }] }],
 };
 const STAGE_CONTRACT: JsonValue = { stage_key: "build", outputs: [gatedOutput("build_result", "dev.build_result")],
-  materialization: { kind: "fan_out", max_parallel: 4 }, machine: BUILD_MACHINE,
+  max_active_cohorts: 4, machine: BUILD_MACHINE,
   executor: { executor_type: "delegated_session", definition_config: {} } };
 /** A collecting output: one cohort publishes it once per collection key. */
 const COLLECTION_CONTRACT: JsonValue = { stage_key: "brief_writer", outputs: [gatedOutput("brief", "dev.build_brief")],
-  materialization: { kind: "artifact_collections" }, machine: COLLECTION_MACHINE,
+  max_active_cohorts: 1, machine: COLLECTION_MACHINE,
   executor: { executor_type: "delegated_session", definition_config: {} } };
 
 const STAGES: readonly { readonly id: StageInstanceId; readonly key: string; readonly contract: JsonValue }[] = [

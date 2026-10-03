@@ -1,40 +1,20 @@
 import { resolve } from "node:path";
-
-import { compileWorkflowManifest } from "../compiler/compile-workflow";
-import { createPromptBundle, createPromptTemplateLoader } from "../runtime/prompt-template";
-import { parseWorkflowDefinition } from "./workflow-definition";
-import { createDevFlowAdapterRegistry } from "../adapters/dev-flow";
-import { registerDevFlowMachine } from "../adapters/dev-flow-machine";
-import { StageMachineRegistry } from "../runtime/executor-registry";
+import { compileV15WorkflowDefinition } from "../compiler/compile-v15";
+import { createPromptTemplateLoader } from "../runtime/prompt-template";
 
 const repositoryRoot = resolve(import.meta.dir, "../../..");
 const definitionsRoot = resolve(repositoryRoot, "workflow-config/definitions");
-const promptLoader = createPromptTemplateLoader(resolve(repositoryRoot, "workflow-config/prompts"));
-const failures: string[] = [];
-const adapterRoles = createDevFlowAdapterRegistry();
-const machineRegistry = new StageMachineRegistry();
-registerDevFlowMachine(machineRegistry, new Map());
-
-for await (const relativePath of new Bun.Glob("*.json").scan({ cwd: definitionsRoot })) {
-  const source = await Bun.file(resolve(definitionsRoot, relativePath)).json();
-  const parsed = parseWorkflowDefinition(source, adapterRoles);
-  if (!parsed.ok) {
-    failures.push(`${relativePath}: ${parsed.error.detail}`);
-    continue;
-  }
+const loader = createPromptTemplateLoader(repositoryRoot);
+let failures = 0;
+for await (const path of new Bun.Glob("*.json").scan({ cwd: definitionsRoot })) {
   try {
-    const bundle = await createPromptBundle(parsed.value, promptLoader);
-    const compiled = compileWorkflowManifest(parsed.value, bundle,
-      { adapter_version: "delegated-session-v1", artifact_schema_version: "v1" }, undefined, adapterRoles, machineRegistry);
-    if (!compiled.ok) failures.push(`${relativePath}: ${compiled.error.detail}`);
-  } catch (error) {
-    failures.push(`${relativePath}: ${error instanceof Error ? error.message : String(error)}`);
-  }
+    const compiled = await compileV15WorkflowDefinition(await Bun.file(resolve(definitionsRoot, path)).json(), loader);
+    if (!compiled.ok) { console.error(`${path}: ${compiled.error.kind}: ${compiled.error.path}: ${compiled.error.detail}`); failures++; continue; }
+    const paths = new Set(compiled.value.prompts.entries.map((entry) => entry.path));
+    for await (const prompt of new Bun.Glob("**/*.md").scan({ cwd: resolve(repositoryRoot, "workflow-config/prompts/dev-flow/v15") })) {
+      if (!paths.has(`workflow-config/prompts/dev-flow/v15/${prompt}`)) { console.error(`${path}: orphan prompt ${prompt}`); failures++; }
+    }
+    console.log(`${path}: six stages; ${compiled.value.prompts.entries.length} LLM action points with committed prompts`);
+  } catch (error) { console.error(`${path}: ${error instanceof Error ? error.message : String(error)}`); failures++; }
 }
-
-if (failures.length > 0) {
-  for (const failure of failures) console.error(failure);
-  process.exitCode = 1;
-} else {
-  console.log("all workflow definitions compiled to version 1 manifests");
-}
+if (failures > 0) process.exitCode = 1;

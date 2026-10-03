@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 
 import { createPromptBundle, type PromptTemplateLoader } from "../src/runtime/prompt-template";
-import { loadDevFlowV15 } from "../src/seed/dev-flow-v15";
+import { loadGraphDefinitionFixture as loadDevFlowV15 } from "./support/graph-definition-fixture";
 import { compileWorkflowManifest } from "../src/compiler/compile-workflow";
 
 test("prompt bundle hash covers template content without changing the definition version", async () => {

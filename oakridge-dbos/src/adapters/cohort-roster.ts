@@ -3,18 +3,15 @@
  * the roster a started stage fans out over, and the id one cohort key resolves
  * to.
  *
- * A stage's roster comes from its pinned `MaterializationContract`, so a run
+ * A stage's roster comes from its stage-local definition, so a run
  * fans out over the version it was launched with. A scalar stage is one cohort
  * keyed `"0"` — the key every projection, prompt binding and publication
  * callback already addresses a single-cohort stage by.
  */
 import { createHash } from "node:crypto";
 
-import { resolveBindingValue } from "../compiler/resolve-execution";
-import type { StageInputSet } from "../decision/commands";
 import type { CompiledStageContract } from "../domain/compiled-workflow";
-import { readJsonPointer } from "../domain/json-pointer";
-import type { CohortId, JsonValue, StageInstanceId } from "../domain/primitives";
+import { err, type Result, type CohortId, type JsonValue, type StageInstanceId } from "../domain/primitives";
 
 /** The key a stage with no fan-out addresses its single cohort by. */
 export const SCALAR_COHORT_KEY = "0";
@@ -29,60 +26,22 @@ export const cohortIdFor = (stage_instance_id: StageInstanceId, cohort_key: stri
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20)}` as CohortId;
 };
 
-/** One entry of a stage's roster: the key, and the item the stage fanned out over. */
+/** Named materialization arrives in B4; a generic fan-out is not a fallback. */
+export interface StageInitializationError {
+  readonly operation: "initialize_stage_cohorts";
+  readonly kind: "stage_initialization_unimplemented";
+  readonly stage_key: string;
+  readonly detail: string;
+}
 export interface CohortRosterEntry {
   readonly cohort_key: string;
   readonly item: JsonValue;
   readonly depends_on: readonly string[];
 }
-
-/**
- * Resolves the roster from the pinned contract, the run context and the stage's
- * resolved inputs.
- *
- * The inputs are not optional: dev-flow's build stage fans out over the `brief`
- * input, so a roster resolved against the context alone reports that input as
- * missing and the stage opens no cohorts at all.
- *
- * A fan-out whose binding does not resolve to an array is an operational
- * failure, not an empty roster: a stage that quietly opened no cohorts would
- * leave the stage active without cohorts or any work to complete it.
- */
 export const resolveCohortRoster = (
   contract: CompiledStageContract,
-  run_context: JsonValue,
-  inputs: StageInputSet,
-): readonly CohortRosterEntry[] => {
-  const materialization = contract.materialization;
-  if (materialization.kind !== "fan_out") return [{ cohort_key: SCALAR_COHORT_KEY, item: null, depends_on: [] }];
-  const resolved = resolveBindingValue(materialization.over, { inputs, context: run_context, item: null });
-  if (!resolved.ok) throw new Error(`stage '${contract.stage_key}' fan-out did not resolve: ${resolved.error.detail}`);
-  if (!Array.isArray(resolved.value)) throw new Error(`stage '${contract.stage_key}' fan-out did not resolve to an array`);
-  const entries = resolved.value.map((item, index) => {
-    const key = readJsonPointer(item, materialization.unit_id_path);
-    const dependencies = materialization.depends_on_path === null ? []
-      : readJsonPointer(item, materialization.depends_on_path);
-    return { cohort_key: typeof key === "string" && key.length > 0 ? key : String(index), item,
-      depends_on: Array.isArray(dependencies) && dependencies.every((dependency) => typeof dependency === "string")
-        ? dependencies as string[] : [] };
-  });
-  const keys = new Set<string>();
-  for (const entry of entries) {
-    if (keys.has(entry.cohort_key)) throw new Error(`stage '${contract.stage_key}' has duplicate cohort key '${entry.cohort_key}'`);
-    keys.add(entry.cohort_key);
-  }
-  if (materialization.depends_on_path !== null) {
-    for (const entry of entries) {
-      const dependencies = readJsonPointer(entry.item, materialization.depends_on_path);
-      if (!Array.isArray(dependencies) || dependencies.some((dependency) => typeof dependency !== "string")) {
-        throw new Error(`stage '${contract.stage_key}' unit '${entry.cohort_key}' has invalid dependencies`);
-      }
-      for (const dependency of dependencies) {
-        if (!keys.has(dependency as string)) {
-          throw new Error(`stage '${contract.stage_key}' unit '${entry.cohort_key}' has unknown dependency '${dependency}'`);
-        }
-      }
-    }
-  }
-  return entries;
-};
+): Result<readonly CohortRosterEntry[], StageInitializationError> => err({
+  operation: "initialize_stage_cohorts", kind: "stage_initialization_unimplemented",
+  stage_key: contract.stage_key,
+  detail: "Named v15 stage materialization is implemented by build boundary B4",
+});

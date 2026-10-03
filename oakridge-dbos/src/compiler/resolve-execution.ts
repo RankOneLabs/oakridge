@@ -124,7 +124,7 @@ const IDENTITY_SLOTS = ["UNIT_ID", "STAGE_INSTANCE_ID"] as const;
 /**
  * Reserved slot names read back out for `session_identity` after ordinary
  * binding resolution, rather than defined here: `dev_flow_v14`'s build stage
- * already binds `COHORT_TITLE` and `REPOSITORY_KEY` on its `fan_out.item_bindings`
+ * already binds `COHORT_TITLE` and `REPOSITORY_KEY` in its explicit `slot_bindings`
  * (and `REPOSITORY_KEY` alone on `assessor`), so reading them back needs no
  * definition change. A stage that binds neither yields a `session_identity`
  * with both fields `null` — the assessor stage has no title of its own by
@@ -163,12 +163,6 @@ export const resolveDelegatedExecution = (input: ResolveDelegatedExecutionInput)
     if (!value.ok) return failed(value.error);
     slots[name] = value.value;
   }
-  for (const [name, binding] of Object.entries(input.definition.fan_out?.item_bindings ?? {})) {
-    if (!selectedSlots.has(name)) continue;
-    const value = resolveBinding(binding, environment);
-    if (!value.ok) return failed(value.error);
-    slots[name] = value.value;
-  }
   const identity = {
     UNIT_ID: input.unit.unit_id,
     STAGE_INSTANCE_ID: input.stage_instance_id,
@@ -188,7 +182,7 @@ export const resolveDelegatedExecution = (input: ResolveDelegatedExecutionInput)
   const runtime = resolveBindable(roleConfig.runtime, environment);
   const model = resolveBindable(roleConfig.model, environment);
   const effort = resolveBindable(roleConfig.effort, environment);
-  const workdirBinding = input.definition.fan_out?.workdir ?? input.definition.workdir;
+  const workdirBinding = input.definition.workdir;
   const workdir = resolveBinding(workdirBinding, environment);
   if (!runtime.ok) return failed(runtime.error);
   if (!model.ok) return failed(model.error);

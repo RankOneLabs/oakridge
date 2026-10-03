@@ -3,8 +3,7 @@ import { z } from "zod";
 import { err, ok, type Result } from "../domain/primitives";
 import type { WorkflowDefinitionId } from "../domain/primitives";
 import type { MachineDefinition } from "../domain/stage-machine";
-import type { FanOutDefinition } from "../domain/delegated-session";
-import type { InputSlot, WorkflowDefinition } from "../domain/workflow";
+import type { WorkflowDefinition } from "../domain/workflow";
 import { delegatedSessionDefinitionSchema } from "./delegated-session";
 import { repositoryProvisioningDefinitionSchema } from "./repository-provisioning";
 import { PROVISION_REPOSITORY_REFS_STAGE_TYPE, REPOSITORY_REFS_ARTIFACT_TYPE } from "../domain/repository-refs";
@@ -95,28 +94,6 @@ export interface AdapterRoleRegistry {
   has_role(name: string): boolean;
 }
 
-/**
- * A `unit_complete` input is delivered one artifact at a time as its producer
- * releases each unit. Several inputs may arrive that way — dev-flow's assessor
- * takes both `build_result` and `brief` — but units are minted only from the
- * input the stage fans out `over`; the rest accumulate and feed those units.
- *
- * That leaves two shapes with no meaning at all, both of which strand the run
- * at runtime rather than reporting anything: a stage that consumes incremental
- * input without fanning out fails on the first artifact, and a fan-out driven
- * by a non-input binding has nothing to mint units from, so it waits forever.
- * Rejecting them here keeps the failure at definition time, where an operator
- * can still fix it.
- */
-const selectIncrementalInputViolation = (stageKey: string, inputs: readonly InputSlot[], fanOut: FanOutDefinition | null): string | null => {
-  const incremental = inputs.filter((slot) => slot.delivery === "unit_complete");
-  const first = incremental[0];
-  if (!first) return null;
-  if (!fanOut) return `stage '${stageKey}' consumes incremental input '${first.name}' but does not fan out`;
-  if (fanOut.over.from !== "input") return `stage '${stageKey}' fans out over a '${fanOut.over.from}' binding, so incremental input '${first.name}' drives nothing`;
-  return null;
-};
-
 const validateGraphReferences = (definition: WorkflowDefinition): Result<WorkflowDefinition, DefinitionValidationError> => {
   for (const [stageKey, stage] of Object.entries(definition.graph.stages)) {
     // A unit is discharged only by releasing its required outputs, so a stage
@@ -126,7 +103,6 @@ const validateGraphReferences = (definition: WorkflowDefinition): Result<Workflo
     if (stage.outputs.length === 0) {
       return err({ operation: "validate_workflow_graph", detail: `stage '${stageKey}' must declare at least one output` });
     }
-    let fanOut: FanOutDefinition | null = null;
     if (stage.stage_type === "delegated_session") {
       const config = delegatedSessionDefinitionSchema.safeParse(stage.config);
       if (!config.success) return err({ operation: "validate_workflow_graph", detail: `stage '${stageKey}' config invalid: ${z.prettifyError(config.error)}` });
@@ -135,7 +111,6 @@ const validateGraphReferences = (definition: WorkflowDefinition): Result<Workflo
       if (terminalOutput) {
         return err({ operation: "validate_workflow_graph", detail: `stage '${stageKey}' terminal output '${terminalOutput}' is not declared` });
       }
-      fanOut = config.data.fan_out ?? null;
     }
     if (stage.stage_type === PROVISION_REPOSITORY_REFS_STAGE_TYPE) {
       const config = repositoryProvisioningDefinitionSchema.safeParse(stage.config);
@@ -150,8 +125,6 @@ const validateGraphReferences = (definition: WorkflowDefinition): Result<Workflo
         return err({ operation: "validate_workflow_graph", detail: `stage '${stageKey}' output '${stage.outputs[0]?.name}' must have artifact type '${REPOSITORY_REFS_ARTIFACT_TYPE}'` });
       }
     }
-    const violation = selectIncrementalInputViolation(stageKey, stage.inputs, fanOut);
-    if (violation) return err({ operation: "validate_workflow_graph", detail: violation });
   }
   for (const edge of definition.graph.edges) {
     const producer = readOwn(definition.graph.stages, edge.from.stage);

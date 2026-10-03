@@ -1,12 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { expect, test } from "bun:test";
 
-import { resolveCohortRoster } from "../src/adapters/cohort-roster";
 import { createDevFlowAdapterRegistry } from "../src/adapters/dev-flow";
 import { compileWorkflowDefinition } from "../src/compiler/compile-workflow";
 import type { ArtifactEnvelope } from "../src/domain/execution";
 import type { ArtifactId, StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
-import { loadDevFlowV15 } from "../src/seed/dev-flow-v15";
+import { loadGraphDefinitionFixture as loadDevFlowV15 } from "./support/graph-definition-fixture";
 import { applyMigrations } from "../src/storage/migrate";
 import { PostgresOperatorProjectionRepository } from "../src/storage/postgres-operators";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
@@ -33,7 +32,7 @@ test("persisted fan-out identity reaches gates, inbox, cohorts and run detail", 
     const input: ArtifactEnvelope = { artifact_id: randomUUID() as ArtifactId, artifact_type: "dev.build_brief",
       output_name: "brief", unit_id: "api" as UnitId,
       body: { repository_key: "pipefitter", title: "Build API", depends_on: [] } };
-    const [entry] = resolveCohortRoster(build, {}, { brief: [input] });
+    const entry = { cohort_key: input.unit_id, item: { unit_id: input.unit_id, artifact: input.body } };
     if (!entry) throw new Error("build roster missing");
     const params = { unit_id: entry.cohort_key, artifact: entry.item };
     const runId = randomUUID() as WorkflowRunId;

@@ -23,7 +23,7 @@ const stage: CompiledStageContract = {
   operator_role: "build",
   inputs: [],
   outputs: [{ name: "result", artifact_type: "dev.result", release: { kind: "immediate" } }],
-  materialization: { kind: "scalar" },
+  max_active_cohorts: 1,
   executor: { executor_type: "delegated_session", definition_config: definition },
 };
 

@@ -1,6 +1,6 @@
 import type { JsonValue, UnitId } from "./primitives";
 import type { ArtifactTypeId, InputDelivery, StageKey, StageOperatorRole, StageTypeId, WorkflowRunBundlePin } from "./workflow";
-import type { DelegatedSessionDefinitionConfig, SlotBinding } from "./delegated-session";
+import type { DelegatedSessionDefinitionConfig } from "./delegated-session";
 import type { GateAction } from "./gates";
 import type { CompiledMachine } from "./stage-machine";
 
@@ -49,11 +49,6 @@ export const selectOutputAttention = (
     ? "optional"
     : "none");
 
-export type MaterializationContract =
-  | { readonly kind: "scalar" }
-  | { readonly kind: "artifact_collections"; readonly productions: readonly { readonly over: SlotBinding; readonly id_path: string }[] }
-  | { readonly kind: "fan_out"; readonly over: SlotBinding; readonly unit_id_path: string; readonly depends_on_path: string | null; readonly max_parallel: number; readonly manual_admission: boolean };
-
 export interface CompiledExecutorSelection {
   readonly executor_type: StageTypeId;
   readonly definition_config: DelegatedSessionDefinitionConfig | JsonValue;
@@ -65,7 +60,7 @@ export interface CompiledStageContract {
   readonly operator_role: StageOperatorRole | null;
   readonly inputs: readonly CompiledInputContract[];
   readonly outputs: readonly CompiledOutputContract[];
-  readonly materialization: MaterializationContract;
+  readonly max_active_cohorts: number;
   readonly executor: CompiledExecutorSelection;
   readonly machine?: CompiledMachine;
 }
