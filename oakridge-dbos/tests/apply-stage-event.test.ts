@@ -157,6 +157,20 @@ test("real storage runs both build feedback routes, discussion, and merge at the
     expect((await publish(review_revision, "build_result", { repository_key: "oakridge", summary: "revised" })).kind).toBe("published");
     expect((await publish(review_revision, "pr_summary", prBody)).kind).toBe("published");
     build = await currentBuild();
+    fixture.set_pr({ pr_url: prBody.pr_url, repository_key: "oakridge" as never, head_branch: "cohort/core",
+      base_branch: "epic/schema", head_sha: "abc" as never, state: "closed" });
+    expect((await fixture.ingress.advance(cohort_id, { id: randomUUID() as never, cohort_id, expected_version: await currentVersion(),
+      request: { kind: "replace_pr", target: { outputs: { build_result: build.build_result, pr_summary: build.pr_summary },
+        head_sha: build.head_sha as never } } })).ok).toBe(true);
+    const replacement = fixture.created.at(-1)!.execution_id;
+    expect((await fixture.sql.query<{ readonly action_point: string; readonly resolved_input: {
+      readonly closed_pr: { readonly state: string } } }>(
+      "SELECT action_point,resolved_input FROM oakridge.execution_intent WHERE id=$1", [replacement]))[0])
+      .toMatchObject({ action_point: "replace_pr", resolved_input: { closed_pr: { state: "closed" } } });
+    fixture.set_pr(null);
+    expect((await publish(replacement, "build_result", { repository_key: "oakridge", summary: "replacement" })).kind).toBe("published");
+    expect((await publish(replacement, "pr_summary", prBody)).kind).toBe("published");
+    build = await currentBuild();
     expect((await fixture.ingress.advance(cohort_id, { id: randomUUID() as never, cohort_id, expected_version: await currentVersion(),
       request: { kind: "accept_build", target: { outputs: { build_result: build.build_result, pr_summary: build.pr_summary },
         head_sha: build.head_sha as never } } })).ok).toBe(true);
