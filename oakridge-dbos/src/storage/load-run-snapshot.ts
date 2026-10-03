@@ -80,18 +80,18 @@ export const loadRunSnapshot = async (tx: SqlExecutor, run_id: WorkflowRunId): P
               CASE WHEN jsonb_typeof(stage.stage_contract->'${STAGE_CONTRACT_DEPENDENCY_KEY}')='array'
                    THEN stage.stage_contract->'${STAGE_CONTRACT_DEPENDENCY_KEY}' ELSE '[]'::jsonb END)),
               ARRAY[]::text[]) AS dependency_stage_instance_ids,
-            COALESCE(ARRAY(SELECT acceptance.artifact_id::text FROM oakridge.artifact_acceptance acceptance
+            COALESCE(ARRAY(SELECT acceptance.artifact_id::text FROM oakridge.worker_output acceptance
               JOIN oakridge.artifact_owner owner ON owner.artifact_id=acceptance.artifact_id
-              WHERE acceptance.receiving_stage_instance_id=stage.id AND owner.cohort_id IS NULL
+              WHERE owner.stage_instance_id=stage.id AND acceptance.acceptance_state='accepted'
               ORDER BY acceptance.artifact_id),ARRAY[]::text[]) AS accepted_artifact_ids
      FROM oakridge.stage_instance stage WHERE stage.run_id=$1 ORDER BY stage.id`, [run_id]);
 
   const cohortRows = await tx.query<CohortSnapshotRow>(
     `SELECT cohort.id::text,cohort.stage_instance_id::text,cohort.status,cohort.blocked_reason,cohort.next_actor,
             cohort.durable_version::text,cohort.outcome,
-            COALESCE(ARRAY(SELECT acceptance.artifact_id::text FROM oakridge.artifact_acceptance acceptance
+            COALESCE(ARRAY(SELECT acceptance.artifact_id::text FROM oakridge.worker_output acceptance
               JOIN oakridge.artifact_owner owner ON owner.artifact_id=acceptance.artifact_id
-              WHERE owner.cohort_id=cohort.id ORDER BY acceptance.artifact_id),ARRAY[]::text[]) AS accepted_artifact_ids
+              WHERE owner.cohort_id=cohort.id AND acceptance.acceptance_state='accepted' ORDER BY acceptance.artifact_id),ARRAY[]::text[]) AS accepted_artifact_ids
      FROM oakridge.cohort cohort WHERE cohort.run_id=$1 ORDER BY cohort.id`, [run_id]);
 
   const cohortsByStage = new Map<string, CohortSnapshot[]>();
@@ -196,7 +196,7 @@ export const loadImplementationCohortSnapshot = async (tx: SqlExecutor,
     outputs.find((candidate) => candidate.worker === worker && candidate.output_name === name);
   const materialize = (stored: V15OutputRow | undefined) => stored ? {
     ...artifactRefFromRevision({ chain_id: stored.chain_id as ArtifactId, revision: stored.revision }),
-    state: stored.acceptance_state,
+    type: stored.artifact_type, state: stored.acceptance_state,
     body: stored.body, provenance: { execution_id: stored.execution_id as ExecutionId,
       session_id: stored.session_id as SessionId | null },
   } : null;

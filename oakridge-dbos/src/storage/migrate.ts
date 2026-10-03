@@ -17,7 +17,7 @@ export const applyMigrations = async (sql: TransactionalSqlExecutor, directory =
     .filter((name) => appliedNames.has(name));
   if (retired.length > 0) throw new Error(
     `oakridge migration ledger records retired migrations ${retired.join(", ")}; drop and recreate this v15 database`);
-  if (appliedNames.has("0015_v15_baseline.sql")) {
+  if (appliedNames.has("0015_v15_baseline.sql") && !appliedNames.has("0016_v15_worker_ownership.sql")) {
     // Compare the contract required by the edited baseline, including nullability.
     interface SchemaRequirement { readonly table_schema: "oakridge" | "dev_flow"; readonly table_name: string; readonly column_name: string | null; readonly nullable?: boolean }
     interface SchemaColumn { readonly table_schema: string; readonly table_name: string; readonly column_name: string; readonly is_nullable: string }
@@ -41,6 +41,23 @@ export const applyMigrations = async (sql: TransactionalSqlExecutor, directory =
       .map((requirement) => `${requirement.table_name}${requirement.column_name ? `.${requirement.column_name}` : ""}${requirement.nullable ? " (nullable)" : ""}`);
     if (missing.length > 0) throw new Error(
       `oakridge migration ledger records 0015_v15_baseline.sql but schema diverges: missing ${missing.join(", ")}; drop and recreate this v15 database`);
+  }
+  if (appliedNames.has("0016_v15_worker_ownership.sql")) {
+    const columns = await sql.query<{ readonly table_name: string; readonly column_name: string; readonly is_nullable: string }>(
+      "SELECT table_name,column_name,is_nullable FROM information_schema.columns WHERE table_schema='oakridge'", []);
+    const required = [
+      { table_name: "attempt", column_name: "worker" },
+      { table_name: "cohort", column_name: "frozen_inputs" },
+      { table_name: "cohort_worker", column_name: "active_execution_id" },
+      { table_name: "worker_output", column_name: "acceptance_state" },
+      { table_name: "cohort_request_receipt", column_name: "request_id" },
+      { table_name: "execution_intent", column_name: "resolved_input" },
+    ];
+    const missing = required.filter((item) => !columns.some((column) => column.table_name === item.table_name && column.column_name === item.column_name));
+    if (missing.length) throw new Error(`0016_v15_worker_ownership.sql schema diverges: missing ${missing.map((item) => `${item.table_name}.${item.column_name}`).join(", ")}`);
+    if (columns.some((column) => column.table_name === "cohort_output" || column.table_name === "artifact_acceptance"
+      || column.table_name === "cohort" && ["round", "stage_data"].includes(column.column_name)))
+      throw new Error("0016 worker ownership schema retains retired cohort acceptance or input storage");
   }
   const pending = migrationNames(await readdir(directory)).filter((name) => !appliedNames.has(name));
   for (const name of pending) {

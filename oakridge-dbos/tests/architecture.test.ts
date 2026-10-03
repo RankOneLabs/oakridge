@@ -226,3 +226,23 @@ test("each cohort transition has one stable effect workflow address", () => {
   expect(transitionEffectWorkflowId({ kind: "cohort", id: first }, 1))
     .not.toBe(transitionEffectWorkflowId({ kind: "cohort", id: second }, 1));
 });
+
+// Retired event-row selection and SQL effect interpretation are replaced by a
+// pure typed tree and atomic selected-decision persistence. Ledger guards above
+// (single lifecycle writer, stable addresses, provenance) remain unchanged.
+test("the cohort evaluator and selected changes have no IO imports", async () => {
+  const files = ["decision/stage-machine.ts", "decision/stage-effects.ts"];
+  const sources = await Promise.all(files.map((file) => readFile(join(SOURCE, file), "utf8")));
+  expect(sources.join("\n")).not.toMatch(/(?:from\s+|import\s*\()["'][^"']*(?:storage|http|runtime|git|llm)[^"']*["']/i);
+});
+
+test("no source selects a first matching event transition", async () => {
+  const sources = await Promise.all((await treeSources(SOURCE)).map((file) => readFile(file, "utf8")));
+  expect(sources.join("\n")).not.toMatch(/export\s+const\s+transition\s*=|context\.registry\.guard\(|runStageEffectsIn/);
+});
+
+test("storage never interprets legacy effect names to select progression", async () => {
+  const files = await treeSources(join(SOURCE, "storage"));
+  const sources = await Promise.all(files.map((file) => readFile(file, "utf8")));
+  expect(sources.join("\n")).not.toMatch(/\.name\s*===\s*["'](?:launch_session|end_session|record_output|open_gate|accept_outputs|new_round)["']/);
+});

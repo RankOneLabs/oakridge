@@ -45,7 +45,7 @@ test("persisted fan-out identity reaches gates, inbox, cohorts and run detail", 
     await sql.query(`INSERT INTO oakridge.stage_instance (id,run_id,stage_key,stage_type,stage_contract,status)
       VALUES ($1,$2,'build','delegated_session',$3,'active')`, [stageId, runId, JSON.stringify(build)]);
     await sql.query(`INSERT INTO oakridge.cohort
-      (id,run_id,stage_instance_id,cohort_key,state,status,blocked_reason,next_actor,stage_data)
+      (id,run_id,stage_instance_id,cohort_key,state,status,blocked_reason,next_actor,frozen_inputs)
       VALUES ($1,$2,$3,$4,'build_review','blocked','gate','operator',$5)`,
       [cohortId, runId, stageId, entry.cohort_key, JSON.stringify(params)]);
     await sql.query(`INSERT INTO oakridge.wait_gate
@@ -63,7 +63,7 @@ test("persisted fan-out identity reaches gates, inbox, cohorts and run detail", 
       gate: "pipefitter", cohort: "pipefitter", title: "Build API", unit: "pipefitter", inbox: "pipefitter",
     });
     // Scalar cohorts have no fan-out item and must continue to report absence.
-    await sql.query("UPDATE oakridge.cohort SET stage_data='{\"unit_id\":\"0\",\"artifact\":null}' WHERE id=$1", [cohortId]);
+    await sql.query("UPDATE oakridge.cohort SET frozen_inputs='{\"unit_id\":\"0\",\"artifact\":null}' WHERE id=$1", [cohortId]);
     expect((await repository.list_pending_gates(runId))[0]?.repository_key).toBeNull();
   } finally {
     await sql.close();

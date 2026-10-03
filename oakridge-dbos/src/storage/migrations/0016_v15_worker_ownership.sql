@@ -7,7 +7,7 @@ DO $$ BEGIN
 END $$;
 
 ALTER TABLE oakridge.attempt
-  ADD COLUMN worker text NOT NULL DEFAULT 'build' CHECK (worker IN
+  ADD COLUMN worker text NOT NULL CHECK (worker IN
     ('provision','spec','plan','brief','build','assessment','final_integration'));
 ALTER TABLE oakridge.attempt DROP CONSTRAINT attempt_cohort_id_attempt_number_key;
 ALTER TABLE oakridge.attempt ADD CONSTRAINT attempt_cohort_worker_number_key
@@ -35,7 +35,7 @@ CREATE TABLE oakridge.cohort_worker (
 );
 
 ALTER TABLE oakridge.cohort
-  ADD COLUMN frozen_inputs jsonb NOT NULL DEFAULT '{}'::jsonb,
+  ADD COLUMN frozen_inputs jsonb NOT NULL CHECK (jsonb_typeof(frozen_inputs)='object' AND frozen_inputs <> '{}'::jsonb),
   ADD COLUMN accepted_build jsonb,
   ADD COLUMN activation_slot integer CHECK (activation_slot BETWEEN 1 AND 4);
 CREATE UNIQUE INDEX cohort_stage_activation_slot_unique
@@ -87,6 +87,7 @@ CREATE TABLE oakridge.execution_intent (
   status text NOT NULL DEFAULT 'pending' CHECK
     (status IN ('pending','dispatching','dispatched','interrupted','cancelled')),
   stop_requested_at timestamptz,
+  stop_completed_at timestamptz,
   session_id uuid UNIQUE REFERENCES oakridge.session(id),
   created_at timestamptz NOT NULL DEFAULT now(),
   FOREIGN KEY (cohort_id, worker) REFERENCES oakridge.cohort_worker(cohort_id, worker)
@@ -94,3 +95,9 @@ CREATE TABLE oakridge.execution_intent (
 ALTER TABLE oakridge.cohort_worker ADD CONSTRAINT cohort_worker_active_execution_fk
   FOREIGN KEY (active_execution_id) REFERENCES oakridge.execution_intent(id)
   DEFERRABLE INITIALLY DEFERRED;
+
+-- These are replaced, not parallel sources of acceptance or current inputs.
+DROP TABLE oakridge.cohort_output;
+DROP TABLE oakridge.artifact_acceptance;
+ALTER TABLE oakridge.cohort DROP COLUMN round, DROP COLUMN stage_data, DROP COLUMN stage_data_version;
+ALTER TABLE oakridge.artifact_provenance ADD COLUMN output_name text, ADD COLUMN collection_key text;

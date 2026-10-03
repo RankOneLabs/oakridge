@@ -49,7 +49,7 @@ export const createWorkOrderArtifactCallbackApp = (dependencies: WorkOrderArtifa
       const key = `${result.kind}:${result.artifact_id}:${result.record_version}`;
       await dependencies.send_run_wake?.(result.run_id, key).catch(() => undefined);
     }
-    if (result.kind === "published" || result.kind === "already_applied") return context.json({ artifact_id: result.artifact_id, state: "released", record_version: result.record_version }, status);
+    if (result.kind === "published" || result.kind === "already_applied") return context.json({ artifact_id: result.artifact_id, state: "unreviewed", record_version: result.record_version }, status);
     if (result.kind === "pending") return context.json({ artifact_id: result.artifact_id, state: "pending", wait_id: result.wait_id, record_version: result.record_version }, status);
     const failure = result;
     return context.json({ error: failure.detail, code: failure.kind === "refused" ? failure.code : failure.kind,

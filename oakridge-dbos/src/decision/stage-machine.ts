@@ -1,5 +1,3 @@
-import type { CompiledMachine, EventMatch, FromMatch, GuardContext, RefusalCode, StageEvent, StateName, TransitionResult } from "../domain/stage-machine";
-import { readOwn } from "../domain/records";
 import { err, ok, type Result } from "../domain/primitives";
 import type { ArtifactRef, CohortDecisionError, ImplementationCohortDefinition, ImplementationCohortRecord,
   OperatorRequest, ResolvedWorkerAction, SelectedDecision, VerifiedPrObservation, V15DecisionTree,
@@ -10,36 +8,6 @@ import type { ArtifactRef, CohortDecisionError, ImplementationCohortDefinition, 
   SpecAnalysisInputs, SpecRevisionInput, SpecWorkInput, PlanWorkInput, PlanningInputs,
   PlanRevisionInput, BriefWritingInputs, BriefRevisionInput, BriefRetryInput,
   ArtifactRetryInput, FinalIntegrationInputs, FinalRetryInput } from "../domain/dev-flow-v15";
-
-const isTerminal = (status: string): boolean => status === "complete" || status === "failed" || status === "cancelled";
-const matchesFrom = (machine: CompiledMachine, from: FromMatch, state: StateName): boolean =>
-  typeof from === "string" ? from === state : !isTerminal(readOwn(machine.states, state)?.status ?? "failed");
-const matchesEvent = (match: EventMatch, event: StageEvent): boolean => {
-  if (match.event !== event.kind) return false;
-  if (match.event === "artifact_published") return event.kind === "artifact_published" && match.output === event.output;
-  if (match.event === "gate_decided") return event.kind === "gate_decided" && match.gate === event.gate && match.action === event.action;
-  if (match.event === "external_observed") return event.kind === "external_observed" && match.source === event.source;
-  return true;
-};
-
-export const transition = (machine: CompiledMachine, state: StateName, event: StageEvent, context: GuardContext): TransitionResult => {
-  for (const [row_index, row] of machine.transitions.entries()) {
-    if (!matchesFrom(machine, row.from, state) || !matchesEvent(row.on, event)) continue;
-    let detail: string | null = null;
-    if (row.guard) {
-      const predicate = context.registry.guard(machine.stage_type, row.guard.name);
-      if (!predicate) continue;
-      const outcome = predicate({ ...context, event }, row.guard.args);
-      const holds = typeof outcome === "boolean" ? outcome : outcome.holds;
-      detail = typeof outcome === "boolean" ? null : outcome.detail;
-      if (row.guard.negate ? holds : !holds) continue;
-    }
-    return "to" in row
-      ? { kind: "applied", from: state, to: row.to, effects: row.effects, row_index }
-      : { kind: "refused", from: state, code: row.refuse, row_index, ...(detail ? { detail } : {}) };
-  }
-  return { kind: "refused", from: state, code: "no_transition" as RefusalCode, row_index: null };
-};
 
 export interface CohortEvaluationInput {
   readonly definition: ImplementationCohortDefinition;
@@ -94,7 +62,10 @@ export const assessmentResponseReady = (snapshot: ImplementationCohortRecord): b
   return response !== null && output !== null && snapshot.accepted_build !== null
     && response.execution_id === snapshot.assessment.active_execution_id
     && sameRef(response.assessment, { id: output.id, version: output.version })
-    && response.build.head_sha === snapshot.accepted_build.head_sha;
+    && response.build.head_sha === snapshot.accepted_build.head_sha
+    && response.build.pr_url === snapshot.accepted_build.pr_url
+    && sameRef(response.build.outputs.build_result, snapshot.accepted_build.outputs.build_result)
+    && sameRef(response.build.outputs.pr_summary, snapshot.accepted_build.outputs.pr_summary);
 };
 
 export const buildExecutionInterrupted = (snapshot: ImplementationCohortRecord): boolean =>
@@ -102,11 +73,15 @@ export const buildExecutionInterrupted = (snapshot: ImplementationCohortRecord):
 export const assessmentExecutionInterrupted = (snapshot: ImplementationCohortRecord): boolean =>
   snapshot.assessment.interrupted?.execution.execution_id === snapshot.assessment.active_execution_id;
 export const prClosedUnmerged = (snapshot: ImplementationCohortRecord, pr: VerifiedPrObservation | null): boolean =>
-  pr?.state === "closed" && pr.head_branch === snapshot.inputs.repository.canonical_branch
+  pr?.state === "closed"
+    && pr.pr_url === (snapshot.accepted_build?.pr_url ?? snapshot.build.outputs.pr_summary?.body.pr_url)
+    && pr.repository_key === snapshot.inputs.repository.refs.repository_key
+    && pr.head_branch === snapshot.inputs.repository.canonical_branch
     && pr.base_branch === snapshot.inputs.repository.expected_pr_base;
 export const prMergedAtAcceptedHead = (snapshot: ImplementationCohortRecord, pr: VerifiedPrObservation | null): boolean =>
   pr?.state === "merged" && snapshot.accepted_build !== null
     && pr.pr_url === snapshot.accepted_build.pr_url && pr.head_sha === snapshot.accepted_build.head_sha
+    && pr.repository_key === snapshot.inputs.repository.refs.repository_key
     && pr.head_branch === snapshot.inputs.repository.canonical_branch
     && pr.base_branch === snapshot.inputs.repository.expected_pr_base;
 

@@ -1,3 +1,4 @@
+import { legacyMachineVocabulary } from "../adapters/dev-flow-machine";
 import { selectOutputAttention, type CompiledEdge, type CompiledGateStep, type CompiledOutputContract, type CompiledStageContract, type CompiledWorkflowDefinition, type OutputReleaseContract } from "../domain/compiled-workflow";
 import type { DelegatedSessionDefinitionConfig } from "../domain/delegated-session";
 import { err, ok, type JsonValue, type Result } from "../domain/primitives";
@@ -11,11 +12,16 @@ import { createDevFlowAdapterRegistry } from "../adapters/dev-flow";
 import type { AdapterRoleRegistry } from "../validation/workflow-definition";
 import type { CompiledMachine, EffectRef, EventMatch, MachineDefinition, MachineRegistry, Transition } from "../domain/stage-machine";
 import { StageMachineRegistry } from "../runtime/executor-registry";
-import { registerDevFlowMachine } from "../adapters/dev-flow-machine";
 
-const defaultMachineRegistry = (): MachineRegistry => {
+
+export const createLegacyValidationRegistry = (): MachineRegistry => {
   const registry = new StageMachineRegistry();
-  registerDevFlowMachine(registry, new Map());
+  // Legacy graph validation only; these callbacks have no execution authority.
+  for (const name of legacyMachineVocabulary.guards)
+    registry.register_guard("delegated_session", name as never, () => false);
+  for (const name of legacyMachineVocabulary.effects)
+    registry.register_effect("delegated_session", name as never);
+  for (const name of legacyMachineVocabulary.observers) registry.register_observer("delegated_session", name as never);
   return registry;
 };
 
@@ -260,7 +266,7 @@ export const compileWorkflowDefinition = (
   definition: WorkflowDefinition,
   registry: StageTypeCompilerRegistry = builtInStageTypeCompilers,
   _adapterRegistry: AdapterRoleRegistry = createDevFlowAdapterRegistry(),
-  machineRegistry: MachineRegistry = defaultMachineRegistry(),
+  machineRegistry: MachineRegistry = createLegacyValidationRegistry(),
 ): Result<CompiledWorkflowDefinition, CompileWorkflowError> => {
   const diagnostics: (DelegatedSessionDiagnostic | MachineDiagnostic)[] = [];
   const machines: Record<string, CompiledMachine> = {};
@@ -324,7 +330,7 @@ export const compileWorkflowManifest = (
   versions: CompileManifestVersions,
   registry: StageTypeCompilerRegistry = builtInStageTypeCompilers,
   adapterRegistry: AdapterRoleRegistry = createDevFlowAdapterRegistry(),
-  machineRegistry: MachineRegistry = defaultMachineRegistry(),
+  machineRegistry: MachineRegistry = createLegacyValidationRegistry(),
 ): Result<CompiledWorkflowDefinition, CompileWorkflowError> => {
   const compiled = compileWorkflowDefinition(definition, registry, adapterRegistry, machineRegistry);
   const promptDiagnostics: DelegatedSessionDiagnostic[] = [];

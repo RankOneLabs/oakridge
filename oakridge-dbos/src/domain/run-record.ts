@@ -155,9 +155,8 @@ export interface StageRosterError {
 export interface OpenCohort {
   readonly id: CohortId;
   readonly cohort_key: string;
-  readonly stage_data: JsonValue;
   /** Frozen v15 inputs contain artifact references, never embedded artifact bodies. */
-  readonly frozen_inputs?: import("./dev-flow-v15").ImplementationCohortInputs
+  readonly frozen_inputs: import("./dev-flow-v15").ImplementationCohortInputs
     | import("./dev-flow-v15").RepositoryPreparationInputs
     | import("./dev-flow-v15").SpecAnalysisInputs
     | import("./dev-flow-v15").PlanningInputs
@@ -269,7 +268,7 @@ export interface StartAttempt {
   readonly stage_instance_id: StageInstanceId;
   readonly cohort_id: CohortId;
   /** Omitted only by callers of the pre-v15 launch path. */
-  readonly worker?: import("./dev-flow-v15").V15WorkerKey;
+  readonly worker: import("./dev-flow-v15").V15WorkerKey;
   readonly attempt_id: AttemptId;
   readonly attempt_number: number;
   readonly adapter_type: string;

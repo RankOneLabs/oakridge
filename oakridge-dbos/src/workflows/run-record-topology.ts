@@ -26,8 +26,7 @@ import { writeSessionStatus } from "../storage/postgres-run-record";
 import type { SessionEndOutcome } from "../domain/stage-machine";
 
 import { attemptWorkflowId, runMachineWorkflowId, stageMachineWorkflowId } from "../decision/ids";
-import { type AttemptExecution, type OpenCohort, type RunDecision, type RunRecordRepositoryError, type TransitionEffectDescriptor } from "../domain/run-record";
-import { cohortIdFor, resolveCohortRoster } from "../adapters/cohort-roster";
+import { type AttemptExecution, type RunDecision, type RunRecordRepositoryError, type TransitionEffectDescriptor } from "../domain/run-record";
 import { ExecutorStartRejectedError, type ExecutionRequest, type ExecutorAdapter, type ExecutorObservationAttempt, type ExecutorUnavailable, type ExternalExecutionReference } from "../domain/execution";
 import type { AttemptId, CohortId, JsonValue, KbblSessionId, Result, RunTransitionId, StageInstanceId, UnitId, WorkflowRunId } from "../domain/primitives";
 import { ok, executorOperationIdForWorkOrder, type ExecutionId, type WorkOrderId } from "../domain/primitives";
@@ -66,6 +65,7 @@ export interface RunRecordWorkflowServices {
   readonly artifacts: RunArtifactReadRepository;
   readonly effects_sql?: TransactionalSqlExecutor;
   readonly stage_events?: StageEventApplier;
+  dispatch_worker_execution?(execution_id: ExecutionId): Promise<void>;
   resolve_attempt_request?(attempt_id: AttemptId): Promise<ExecutionRequest>;
   /** The run's own context, which drivers resolve their bindings against. */
   find_run_context(run_id: WorkflowRunId): Promise<JsonValue | null>;
@@ -177,27 +177,11 @@ const openStageCohortsStep = DBOS.registerStep(
     const { records, stages, now } = workflowServices();
     const contract = await stages.find_contract(stage_instance_id);
     if (!contract) throw new Error(`stage instance '${stage_instance_id}' was not found`);
-    let cohorts: readonly OpenCohort[];
-    try {
-      const stage_contract = contract.stage_contract as unknown as import("../domain/compiled-workflow").CompiledStageContract;
-      const roster = resolveCohortRoster(stage_contract);
-      if (!roster.ok) return { kind: "roster_failed", detail: roster.error.detail };
-      cohorts = roster.value.map((entry) => ({
-        id: cohortIdFor(stage_instance_id, entry.cohort_key), cohort_key: entry.cohort_key,
-        depends_on: entry.depends_on, stage_data: { unit_id: entry.cohort_key, artifact: entry.item },
-      }));
-      if (cohorts.length === 0) throw new Error("cohort roster is empty");
-    } catch (error) {
-      const detail = String(error);
-      const failed = await records.fail_stage_roster(stage_instance_id, detail, now());
-      if (!failed.ok) throw new Error(`${failed.error.operation}:${failed.error.kind}:${failed.error.detail}`);
-      await sendRunWakeHint(contract.run_id, `roster_failed:${stage_instance_id}`).catch(() => undefined);
-      return { kind: "roster_failed", detail };
-    }
-    const opened = await records.open_stage_cohorts({ run_id: contract.run_id, stage_instance_id, cohorts, opened_at: now() });
-    if (opened.kind === "stage_not_active") return { kind: "stage_not_active", detail: opened.detail };
-    if ("detail" in opened) throw new Error(opened.detail);
-    return { kind: "opened", cohort_ids: opened.cohort_ids };
+    const detail = "named stage cohort materialization is not implemented until b4";
+    const failed = await records.fail_stage_roster(stage_instance_id, detail, now());
+    if (!failed.ok) throw new Error(`${failed.error.operation}:${failed.error.kind}:${failed.error.detail}`);
+    return { kind: "roster_failed", detail };
+
   },
   { name: "oakridgeV15OpenStageCohortsStep", retriesAllowed: true },
 );
@@ -551,3 +535,13 @@ export const stageEffectWorkflow = DBOS.registerWorkflow(async (transition_id: R
     }
   }
 }, { name: "oakridgeV15StageEffectWorkflow" });
+
+/** One recoverable workflow per selected worker execution, with stable IO identity. */
+const dispatchWorkerExecutionStep = DBOS.registerStep(async (execution_id: ExecutionId): Promise<void> => {
+  const dispatch = workflowServices().dispatch_worker_execution;
+  if (!dispatch) throw new Error("worker execution dispatch is not configured");
+  await dispatch(execution_id);
+}, { name: "oakridgeV15DispatchWorkerExecutionStep", retriesAllowed: true });
+export const workerExecutionWorkflow = DBOS.registerWorkflow(async (execution_id: ExecutionId): Promise<void> => {
+  await dispatchWorkerExecutionStep(execution_id);
+}, { name: "oakridgeV15WorkerExecutionWorkflow" });

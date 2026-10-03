@@ -37,8 +37,8 @@ test("selected cohort commit atomically reserves a slot and writes one launch wi
     await sql.query(`INSERT INTO oakridge.stage_instance (id,run_id,stage_key,stage_type,stage_contract,status)
       VALUES ($1,$2,'implementation','example','{}','active')`, [STAGE_ID, RUN_ID]);
     for (let index = 0; index < 5; index++) await sql.query(
-      `INSERT INTO oakridge.cohort (id,run_id,stage_instance_id,cohort_key,status)
-       VALUES ($1,$2,$3,$4,'pending')`, [cohortId(index), RUN_ID, STAGE_ID, `cohort-${index}`]);
+      `INSERT INTO oakridge.cohort (id,run_id,stage_instance_id,cohort_key,status,frozen_inputs)
+       VALUES ($1,$2,$3,$4,'pending','{"brief_notes":"fixture","repositories":[]}')`, [cohortId(index), RUN_ID, STAGE_ID, `cohort-${index}`]);
     const definition = (await Bun.file(new URL("../../workflow-config/definitions/dev_flow_v15.json", import.meta.url)).json())
       .stages.implementation.cohort as ImplementationCohortDefinition;
     const selected = { kind: "apply", expected_version: 0, changes: [
@@ -234,7 +234,7 @@ test("four sibling cohort machines commit concurrently on owner-local versions w
     await sql.query(`INSERT INTO oakridge.stage_instance (id,run_id,stage_key,stage_type,stage_contract,status)
       VALUES ($1,$2,'worker','example','{}','active')`, [STAGE_ID, RUN_ID]);
     for (let index = 0; index < 4; index += 1) await sql.query(
-      `INSERT INTO oakridge.cohort (id,run_id,stage_instance_id,cohort_key,status) VALUES ($1,$2,$3,$4,'active')`,
+      `INSERT INTO oakridge.cohort (id,run_id,stage_instance_id,cohort_key,status,frozen_inputs) VALUES ($1,$2,$3,$4,'active','{"brief_notes":"fixture","repositories":[]}')`,
       [cohortId(index), RUN_ID, STAGE_ID, `cohort-${index}`]);
 
     const registry = createDevFlowAdapterRegistry();
@@ -319,8 +319,8 @@ test("a concurrent commit loses the cohort version race", async () => {
         '{"definition_version":1,"prompt_bundle_hash":"test","adapter_version":"test","artifact_schema_version":"test"}','active')`, [RUN_ID]);
     await firstSql.query(`INSERT INTO oakridge.stage_instance (id,run_id,stage_key,stage_type,stage_contract,status)
       VALUES ($1,$2,'worker','example','{}','active')`, [STAGE_ID, RUN_ID]);
-    await firstSql.query(`INSERT INTO oakridge.cohort (id,run_id,stage_instance_id,cohort_key,status)
-      VALUES ($1,$2,$3,'racing','active')`, [cohortId(8), RUN_ID, STAGE_ID]);
+    await firstSql.query(`INSERT INTO oakridge.cohort (id,run_id,stage_instance_id,cohort_key,status,frozen_inputs)
+      VALUES ($1,$2,$3,'racing','active','{"brief_notes":"fixture","repositories":[]}')`, [cohortId(8), RUN_ID, STAGE_ID]);
     const registry = createDevFlowAdapterRegistry();
     const writerA = new PostgresRunRecordWriter(secondSql, registry);
     const writerB = new PostgresRunRecordWriter(firstSql, registry);

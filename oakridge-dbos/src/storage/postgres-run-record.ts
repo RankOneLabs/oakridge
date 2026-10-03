@@ -1,3 +1,4 @@
+import { selectedCohortState } from "../decision/stage-effects";
 import type { Command, Contradiction, Derivation, StatusChange } from "../decision/commands";
 import { derive } from "../decision/derive";
 import { transitionEffectWorkflowId, transitionIdFor } from "../decision/ids";
@@ -98,11 +99,10 @@ const updateOwner = async (
     input.change.next_actor, input.change.outcome === null ? null : JSON.stringify(input.change.outcome), input.changed_at];
   if (input.owner.kind !== "run") parameters.push(input.run_id);
   if (input.owner.kind === "cohort") {
-    parameters.push(input.cohort_stage_data === undefined ? null : JSON.stringify(input.cohort_stage_data));
     parameters.push(input.cohort_state ?? null);
   }
   const stageDataAssignment = input.owner.kind === "cohort"
-    ? ",stage_data=COALESCE($9::jsonb,stage_data),state=COALESCE($10::text,state)"
+    ? ",state=COALESCE($9::text,state)"
     : "";
   const rows = await tx.query<VersionRow>(
     `UPDATE oakridge.${target.table}
@@ -270,19 +270,19 @@ export const writeSessionStatus = async (
 /** Abandons unfinished attempts owned by the worker being replaced. */
 export const abandonCohortAttempts = async (
   tx: SqlExecutor,
-  input: { readonly cohort_id: import("../domain/primitives").CohortId; readonly worker?: import("../domain/dev-flow-v15").V15WorkerKey;
+  input: { readonly cohort_id: import("../domain/primitives").CohortId; readonly worker: import("../domain/dev-flow-v15").V15WorkerKey;
     readonly at: string; readonly reason: string },
 ): Promise<void> => {
   await tx.query(
     `UPDATE oakridge.session
      SET status='cancelled'::oakridge.session_status,ended_at=$2::timestamptz,updated_at=clock_timestamp()
      WHERE ended_at IS NULL AND attempt_id IN (SELECT id FROM oakridge.attempt WHERE cohort_id=$1 AND worker=$3 AND ended_at IS NULL)`,
-    [input.cohort_id, input.at, input.worker ?? "build"]);
+    [input.cohort_id, input.at, input.worker]);
   await tx.query(
     `UPDATE oakridge.attempt
      SET status='cancelled'::oakridge.attempt_status,ended_at=$2::timestamptz,outcome=$3::jsonb
      WHERE cohort_id=$1 AND worker=$4 AND ended_at IS NULL`,
-    [input.cohort_id, input.at, JSON.stringify({ kind: "cancelled", reason: input.reason }), input.worker ?? "build"]);
+    [input.cohort_id, input.at, JSON.stringify({ kind: "cancelled", reason: input.reason }), input.worker]);
 };
 
 export interface CommitSelectedCohortInput {
@@ -406,13 +406,14 @@ export const commitSelectedCohort = async (sql: TransactionalSqlExecutor,
         "SELECT durable_version::text,state,activation_slot FROM oakridge.cohort WHERE id=$1 AND stage_instance_id=$2 FOR UPDATE",
         [input.cohort_id, input.stage_instance_id]);
       if (!current[0]) throw new SelectedCohortAbort({ kind: "owner_stopped", detail: "cohort was not found" });
+      if (["complete", "failed", "cancelled"].includes(current[0].state))
+        throw new SelectedCohortAbort({ kind: "owner_stopped", detail: "cohort is terminal" });
       const actual_version = Number(current[0].durable_version);
       if (actual_version !== input.selected.expected_version)
         throw new SelectedCohortAbort({ kind: "version_conflict", expected_version: input.selected.expected_version, actual_version });
       if (input.request && (input.request.cohort_id !== input.cohort_id || input.request.expected_version !== actual_version))
         throw new SelectedCohortAbort({ kind: "invalid_decision", detail: "request does not name this cohort version" });
-      const states = input.selected.changes.filter((change) => change.kind === "set_cohort_state");
-      const next_state = states.at(-1)?.state ?? current[0].state;
+      const next_state = selectedCohortState(input.selected) ?? current[0].state;
       let slot = current[0].activation_slot;
       if (next_state === "working" || next_state === "awaiting_merge") {
         if (slot === null) {
@@ -484,6 +485,10 @@ export const commitSelectedCohort = async (sql: TransactionalSqlExecutor,
 export interface ClaimedExecutionIntent {
   readonly execution_id: ExecutionId;
   readonly attempt_id: string;
+  readonly worker: "build" | "assessment";
+  readonly cohort_id: CohortId;
+  readonly run_id: WorkflowRunId;
+  readonly stage_instance_id: StageInstanceId;
   readonly action_point: string;
   readonly resolved_input: JsonValue;
   readonly prompt: string;
@@ -494,12 +499,13 @@ export interface ClaimedExecutionIntent {
 export const claimExecutionIntent = async (sql: TransactionalSqlExecutor, execution_id: ExecutionId):
   Promise<Result<ClaimedExecutionIntent, { readonly kind: "not_found" | "stopped" | "already_dispatched" }>> =>
   sql.transaction(async (tx) => {
-    const rows = await tx.query<{ readonly attempt_id: string; readonly action_point: string;
+    const rows = await tx.query<{ readonly attempt_id: string; readonly worker: "build" | "assessment";
+      readonly cohort_id: CohortId; readonly run_id: WorkflowRunId; readonly stage_instance_id: StageInstanceId; readonly action_point: string;
       readonly resolved_input: JsonValue; readonly prompt: string; readonly settings: AgentSettings;
       readonly status: string; readonly stop_requested_at: string | null;
       readonly active_execution_id: string | null; readonly run_status: CoreStatus; readonly stage_status: CoreStatus;
       readonly cohort_state: string }>(
-      `SELECT intent.attempt_id::text,intent.action_point,intent.resolved_input,intent.prompt,intent.settings,
+      `SELECT intent.attempt_id::text,intent.worker,intent.cohort_id::text,cohort.run_id::text,cohort.stage_instance_id::text,intent.action_point,intent.resolved_input,intent.prompt,intent.settings,
         intent.status,intent.stop_requested_at::text,worker.active_execution_id,
         run.status AS run_status,stage.status AS stage_status,cohort.state AS cohort_state
        FROM oakridge.execution_intent intent
@@ -514,15 +520,17 @@ export const claimExecutionIntent = async (sql: TransactionalSqlExecutor, execut
       || row.run_status !== "active" || row.stage_status !== "active"
       || row.cohort_state === "cancelled" || row.cohort_state === "failed" || row.cohort_state === "complete"
       || row.status === "cancelled" || row.status === "interrupted") return err({ kind: "stopped" as const });
-    if (row.status !== "pending") return err({ kind: "already_dispatched" as const });
+    if (row.status !== "pending" && row.status !== "dispatching") return err({ kind: "already_dispatched" as const });
     await tx.query("UPDATE oakridge.execution_intent SET status='dispatching' WHERE id=$1", [execution_id]);
-    return ok({ execution_id, attempt_id: row.attempt_id, action_point: row.action_point,
+    return ok({ execution_id, attempt_id: row.attempt_id, worker: row.worker, cohort_id: row.cohort_id,
+      run_id: row.run_id, stage_instance_id: row.stage_instance_id, action_point: row.action_point,
       resolved_input: row.resolved_input, prompt: row.prompt, settings: row.settings });
   });
 
 export const recordExecutionDispatch = async (sql: TransactionalSqlExecutor, input: {
   readonly execution_id: ExecutionId;
   readonly session_id: SessionId | null;
+  readonly kbbl_session_id?: string | null;
   readonly detail: string | null;
   readonly at: string;
 }): Promise<void> => sql.transaction(async (tx) => {
@@ -538,26 +546,29 @@ export const recordExecutionDispatch = async (sql: TransactionalSqlExecutor, inp
   const rows = await tx.query<{ readonly attempt_id: string; readonly transition_id: string;
     readonly status: string; readonly stop_requested_at: string | null; readonly work: JsonValue | null;
     readonly run_id: string; readonly stage_instance_id: string; readonly cohort_id: string;
-    readonly worker: string }>(
+    readonly worker: string; readonly active_execution_id: string | null }>(
     `SELECT intent.attempt_id::text,intent.transition_id::text,intent.status,intent.stop_requested_at::text,
-      worker.work,attempt.run_id::text,attempt.stage_instance_id::text,intent.cohort_id::text,intent.worker
+      worker.work,worker.active_execution_id,attempt.run_id::text,attempt.stage_instance_id::text,intent.cohort_id::text,intent.worker
      FROM oakridge.execution_intent intent JOIN oakridge.attempt attempt ON attempt.id=intent.attempt_id
      JOIN oakridge.cohort_worker worker ON worker.cohort_id=intent.cohort_id AND worker.worker=intent.worker
      WHERE intent.id=$1 FOR UPDATE OF intent`, [input.execution_id]);
   const row = rows[0];
   if (!row || row.status === "dispatched" || row.status === "interrupted" || row.status === "cancelled") return;
   if (row.status !== "dispatching") throw new Error(`execution ${input.execution_id} was not claimed`);
-  const has_stopped = row.stop_requested_at !== null || stage[0]?.status !== "active" || run[0]?.status !== "active";
+  const has_stopped = row.stop_requested_at !== null || row.active_execution_id !== input.execution_id
+    || stage[0]?.status !== "active" || run[0]?.status !== "active";
   if (input.session_id !== null) {
     await tx.query(`INSERT INTO oakridge.session
-      (id,run_id,stage_instance_id,attempt_id,launch_transition_id,adapter_reference,status,fenced_at,created_at,ended_at)
-      VALUES ($1,$2,$3,$4,$5,'{"kind":"none"}'::jsonb,$6::oakridge.session_status,
-        $7::timestamptz,$8::timestamptz,$7::timestamptz)
+      (id,run_id,stage_instance_id,attempt_id,launch_transition_id,adapter_reference,status,fenced_at,created_at,ended_at,kbbl_session_id)
+      VALUES ($1,$2,$3,$4,$5,$10::jsonb,$6::oakridge.session_status,
+        $7::timestamptz,$8::timestamptz,$7::timestamptz,$9)
       ON CONFLICT (attempt_id) DO NOTHING`,
       [input.session_id, row.run_id, row.stage_instance_id, row.attempt_id, row.transition_id,
-        has_stopped ? "cancelled" : "active", has_stopped ? input.at : null, input.at]);
-    await tx.query("UPDATE oakridge.execution_intent SET status=$3,session_id=$2 WHERE id=$1",
-      [input.execution_id, input.session_id, has_stopped ? "interrupted" : "dispatched"]);
+        has_stopped ? "cancelled" : "active", has_stopped ? input.at : null, input.at, input.kbbl_session_id ?? null,
+        JSON.stringify(input.kbbl_session_id ? { kind: "kbbl_session", session_id: input.kbbl_session_id } : { kind: "none" })]);
+    await tx.query(`UPDATE oakridge.execution_intent SET status=$3,
+      session_id=(SELECT id FROM oakridge.session WHERE attempt_id=$2) WHERE id=$1`,
+      [input.execution_id, row.attempt_id, has_stopped ? "interrupted" : "dispatched"]);
   }
   if (input.session_id !== null && !has_stopped) {
     await tx.query("UPDATE oakridge.attempt SET status='active',started_at=COALESCE(started_at,$2::timestamptz) WHERE id=$1",
@@ -603,7 +614,20 @@ export type PublishWorkerOutputError =
 
 /** Publication authority belongs to the worker's current, unfenced execution. */
 export const publishWorkerOutput = async (sql: TransactionalSqlExecutor, input: PublishWorkerOutputInput):
-  Promise<Result<ArtifactRef, PublishWorkerOutputError>> => sql.transaction(async (tx) => {
+  Promise<Result<ArtifactRef, PublishWorkerOutputError>> => sql.transaction((tx) => publishWorkerOutputIn(tx, input));
+
+export const publishWorkerOutputIn = async (tx: SqlExecutor, input: PublishWorkerOutputInput):
+  Promise<Result<ArtifactRef, PublishWorkerOutputError>> => {
+  const locations = await tx.query<{ readonly stage_instance_id: string; readonly run_id: string; readonly cohort_id: string }>(
+    `SELECT cohort.stage_instance_id::text,cohort.run_id::text,cohort.id::text AS cohort_id
+     FROM oakridge.execution_intent intent JOIN oakridge.cohort cohort ON cohort.id=intent.cohort_id WHERE intent.id=$1`,
+    [input.execution_id]);
+  if (!locations[0]) return err({ kind: "execution_not_found", detail: `execution ${input.execution_id} was not found` });
+  // The writer and cancellation lock owners in this order. Publication cannot
+  // race past an owner stop or deadlock by locking the intent first.
+  await tx.query("SELECT id FROM oakridge.stage_instance WHERE id=$1 FOR SHARE", [locations[0].stage_instance_id]);
+  await tx.query("SELECT id FROM oakridge.workflow_run WHERE id=$1 FOR SHARE", [locations[0].run_id]);
+  await tx.query("SELECT id FROM oakridge.cohort WHERE id=$1 FOR UPDATE", [locations[0].cohort_id]);
   const rows = await tx.query<{ readonly cohort_id: string; readonly worker: string; readonly attempt_id: string;
     readonly run_id: string; readonly stage_instance_id: string; readonly session_id: string | null;
     readonly intent_status: string; readonly stop_requested_at: string | null;
@@ -645,9 +669,9 @@ export const publishWorkerOutput = async (sql: TransactionalSqlExecutor, input: 
   await tx.query(`INSERT INTO oakridge.artifact_owner (artifact_id,run_id,stage_instance_id,cohort_id)
     VALUES ($1,$2,$3,$4)`, [input.artifact_id, owner.run_id, owner.stage_instance_id, owner.cohort_id]);
   await tx.query(`INSERT INTO oakridge.artifact_provenance
-    (artifact_id,kind,run_id,stage_instance_id,attempt_id,session_id)
-    VALUES ($1,'stage_attempt',$2,$3,$4,$5)`,
-    [input.artifact_id, owner.run_id, owner.stage_instance_id, owner.attempt_id, owner.session_id]);
+    (artifact_id,kind,run_id,stage_instance_id,attempt_id,session_id,output_name,collection_key)
+    VALUES ($1,'stage_attempt',$2,$3,$4,$5,$6,$7)`,
+    [input.artifact_id, owner.run_id, owner.stage_instance_id, owner.attempt_id, owner.session_id, input.output_name, input.collection_key]);
   await tx.query(`INSERT INTO oakridge.worker_output
     (cohort_id,worker,output_name,collection_key,artifact_id,acceptance_state,reviewed_target,recorded_at)
     VALUES ($1,$2,$3,$4,$5,'unreviewed',NULL,$6::timestamptz)
@@ -655,4 +679,4 @@ export const publishWorkerOutput = async (sql: TransactionalSqlExecutor, input: 
       artifact_id=EXCLUDED.artifact_id,acceptance_state='unreviewed',reviewed_target=NULL,recorded_at=EXCLUDED.recorded_at`,
     [owner.cohort_id, owner.worker, input.output_name, input.collection_key, input.artifact_id, input.at]);
   return ok(artifactRefFromRevision({ chain_id: chain_id as ArtifactId, revision }));
-});
+};

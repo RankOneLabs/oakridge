@@ -251,27 +251,24 @@ interface ArtifactRevisionRow {
 const ARTIFACT_REVISION_SOURCE = `
   FROM oakridge.artifact artifact
   JOIN oakridge.artifact_owner owner ON owner.artifact_id=artifact.id
-  LEFT JOIN oakridge.artifact_acceptance acceptance ON acceptance.artifact_id=artifact.id
   LEFT JOIN oakridge.artifact_provenance provenance ON provenance.artifact_id=artifact.id
   LEFT JOIN oakridge.cohort cohort ON cohort.id=owner.cohort_id
   LEFT JOIN oakridge.artifact superseded ON superseded.parent_artifact_id=artifact.id
-  LEFT JOIN oakridge.cohort_output pending_slot ON pending_slot.artifact_id=artifact.id`;
+  LEFT JOIN oakridge.worker_output pending_slot ON pending_slot.artifact_id=artifact.id`;
 
 const ARTIFACT_REVISION_COLUMNS = `
   artifact.id::text,artifact.chain_id::text,artifact.revision,artifact.parent_artifact_id::text,
   artifact.artifact_type,artifact.body,artifact.label,artifact.lifecycle,artifact.created_at::text,
   superseded.id::text AS superseded_by_artifact_id,
   owner.run_id::text,owner.cohort_id::text,
-  COALESCE(acceptance.receiving_stage_instance_id,
-           owner.stage_instance_id,provenance.stage_instance_id)::text AS stage_instance_id,
+  COALESCE(owner.stage_instance_id,provenance.stage_instance_id)::text AS stage_instance_id,
   cohort.cohort_key AS unit_id,
-  COALESCE(acceptance.output_name,pending_slot.output_name) AS output_name,
-  COALESCE(acceptance.collection_key,pending_slot.collection_key) AS collection_key,
+  COALESCE(pending_slot.output_name,provenance.output_name) AS output_name,
+  COALESCE(pending_slot.collection_key,provenance.collection_key) AS collection_key,
   provenance.attempt_id::text,provenance.session_id::text`;
 
 /** Every artifact oakridge writes is either accepted into a slot or parked in one. */
-const ARTIFACT_HAS_SLOT = `COALESCE(acceptance.receiving_stage_instance_id,
-  owner.stage_instance_id,provenance.stage_instance_id) IS NOT NULL`;
+const ARTIFACT_HAS_SLOT = `COALESCE(owner.stage_instance_id,provenance.stage_instance_id) IS NOT NULL`;
 
 const revisionLifecycle = (row: ArtifactRevisionRow): ArtifactRevisionLifecycle => {
   if (row.lifecycle === "superseded") return { kind: "superseded", superseded_by_artifact_id: row.superseded_by_artifact_id as ArtifactId | null };
@@ -330,9 +327,9 @@ export class PostgresArtifactRepository implements ArtifactRevisionRepository, R
     const rows = await this.sql.query<ArtifactRevisionRow>(
       `SELECT ${ARTIFACT_REVISION_COLUMNS} ${ARTIFACT_REVISION_SOURCE}
        WHERE ${ARTIFACT_HAS_SLOT}
-         AND COALESCE(acceptance.receiving_stage_instance_id,pending_slot.receiving_stage_instance_id)=$1
-         AND COALESCE(acceptance.output_name,pending_slot.output_name)=$2
-         AND COALESCE(acceptance.collection_key,pending_slot.collection_key) IS NOT DISTINCT FROM $3
+         AND owner.stage_instance_id=$1
+         AND COALESCE(pending_slot.output_name,provenance.output_name)=$2
+         AND COALESCE(pending_slot.collection_key,provenance.collection_key) IS NOT DISTINCT FROM $3
          AND artifact.lifecycle IN ('current','released')
        ORDER BY artifact.revision DESC LIMIT 1`,
       [coordinate.stage_instance_id, coordinate.output_name, coordinate.collection_key ?? null]);
@@ -361,9 +358,9 @@ export class PostgresArtifactRepository implements ArtifactRevisionRepository, R
   async list_released_for_stage_output(stage_instance_id: StageInstanceId, output_name: string): Promise<readonly ArtifactRevision[]> {
     const rows = await this.sql.query<ArtifactRevisionRow>(
       `SELECT ${ARTIFACT_REVISION_COLUMNS} ${ARTIFACT_REVISION_SOURCE}
-       WHERE acceptance.receiving_stage_instance_id=$1 AND acceptance.output_name=$2
+       WHERE owner.stage_instance_id=$1 AND pending_slot.output_name=$2 AND pending_slot.acceptance_state='accepted'
          AND artifact.lifecycle IN ('current','released')
-       ORDER BY acceptance.collection_key NULLS FIRST,artifact.revision DESC`, [stage_instance_id, output_name]);
+       ORDER BY pending_slot.collection_key NULLS FIRST,artifact.revision DESC`, [stage_instance_id, output_name]);
     return rows.map(artifactRevision);
   }
 
