@@ -30,6 +30,7 @@ import { compileWorkflowDefinition } from "../compiler/compile-workflow";
 import { stageInstanceIdFor } from "../decision/ids";
 import { createLegacyValidationRegistry } from "../compiler/compile-workflow";
 import { DEV_FLOW_ARTIFACT_TYPES, findArtifactType } from "../domain/artifact-types";
+import { selectAssessmentRevisionContext } from "../domain/dev-flow-artifacts";
 import type { ArtifactEnvelope, ExecutionRequest, ExecutorAdapter } from "../domain/execution";
 import { err, ok, type AttemptId, type JsonValue, type Result, type UnitId, type WorkOrderId, type WorkflowRunId } from "../domain/primitives";
 import { parseGithubPullRequestIdentity, repositoriesMatch } from "../domain/pull-request";
@@ -393,7 +394,9 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
         if (!artifact) return err({ detail: `pinned input ${ref.id}@${ref.version} is unavailable` });
         inputs.push({ artifact_id: artifact.id as ArtifactEnvelope["artifact_id"], artifact_type: artifact.artifact_type,
           output_name: artifact.artifact_type, unit_id: cohort.cohort_key as UnitId, body: artifact.body, chain_id: ref.id });
-        referenced.push({ ref, artifact_type: artifact.artifact_type, body: artifact.body });
+        const revision_context = selectAssessmentRevisionContext(artifact.artifact_type, artifact.body);
+        referenced.push({ ref, artifact_type: artifact.artifact_type, body: artifact.body,
+          ...(revision_context ? { revision_context: revision_context as unknown as JsonValue } : {}) });
       }
       const declared_outputs = intent.worker === "build"
         ? [{ name: "build_result", artifact_type: "dev.build_result", required: true },

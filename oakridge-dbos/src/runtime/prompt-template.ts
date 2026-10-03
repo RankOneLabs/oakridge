@@ -4,7 +4,6 @@ import { createHash } from "node:crypto";
 import type { WorkflowDefinition, PromptBundle, PromptBundleEntry } from "../domain/workflow";
 import type { ArtifactRef, PreparedImplementationRepository } from "../domain/dev-flow-v15";
 import type { JsonValue } from "../domain/primitives";
-import { selectAssessmentRevisionContext } from "../domain/dev-flow-artifacts";
 
 export interface PromptTemplateLoader {
   load(path: string): Promise<string>;
@@ -51,6 +50,7 @@ export interface ReferencedActionArtifact {
   readonly ref: ArtifactRef;
   readonly artifact_type: string;
   readonly body: JsonValue;
+  readonly revision_context?: JsonValue;
 }
 
 export interface ActionPromptInput {
@@ -76,8 +76,8 @@ export const renderActionPrompt = (input: ActionPromptInput): string => {
     });
     const assessment = name === "feedback" && typeof value === "object" && value !== null && !Array.isArray(value)
       && (value as Readonly<Record<string, JsonValue>>).source === "assessment"
-      ? references.find((artifact) => artifact.artifact_type === "dev.assessment") : null;
-    const context = assessment ? selectAssessmentRevisionContext(assessment.artifact_type, assessment.body) : null;
+      ? references.find((artifact) => artifact.revision_context !== undefined) : null;
+    const context = assessment?.revision_context ?? null;
     return `## ${name}\n${JSON.stringify(value, null, 2)}${context
       ? `\n\n### Assessment revision context\n${JSON.stringify(context, null, 2)}` : ""}${references.map((artifact) =>
       `\n\n### Referenced ${artifact.artifact_type} ${artifact.ref.id}@${artifact.ref.version}\n${JSON.stringify(artifact.body, null, 2)}`).join("")}`;
