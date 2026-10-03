@@ -554,10 +554,13 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
     const result = await this.sql.transaction(async (tx): Promise<PublishWorkOrderArtifactResult | null> => {
       const rows = await tx.query<{ readonly execution_id: import("../domain/primitives").ExecutionId;
         readonly run_id: WorkflowRunId; readonly cohort_id: CohortId; readonly worker: "build" | "assessment";
-        readonly record_version: string; readonly stage_contract: { readonly cohort?: ImplementationCohortDefinition } }>(
+        readonly record_version: string; readonly stage_contract: { readonly cohort?: ImplementationCohortDefinition };
+        readonly resolved_input: JsonValue; readonly accepted_build: import("../domain/dev-flow-v15").AcceptedBuild | null }>(
         `SELECT intent.id AS execution_id,attempt.run_id::text,intent.cohort_id::text,intent.worker,
-          run.record_version::text,stage.stage_contract FROM oakridge.execution_intent intent
+          run.record_version::text,stage.stage_contract,intent.resolved_input,cohort.accepted_build
+         FROM oakridge.execution_intent intent
          JOIN oakridge.attempt attempt ON attempt.id=intent.attempt_id
+         JOIN oakridge.cohort cohort ON cohort.id=intent.cohort_id
          JOIN oakridge.stage_instance stage ON stage.id=attempt.stage_instance_id
          JOIN oakridge.workflow_run run ON run.id=attempt.run_id
          WHERE intent.attempt_id=$1`, [request.attempt_id]);
@@ -568,6 +571,17 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       const declared = outputs && Object.entries(outputs).find(([name]) => name === request.output_name)?.[1];
       if (!declared) return { kind: "slot_not_found", detail: `worker ${owner.worker} does not declare ${request.output_name}` };
       if (request.collection_key) return { kind: "slot_not_found", detail: "implementation outputs are not collections" };
+      const input = isObject(owner.resolved_input) ? owner.resolved_input : null;
+      const pinned_build = input && isObject(input.accepted_build) ? input.accepted_build
+        : input && isObject(input.work) && isObject(input.work.input) && isObject(input.work.input.accepted_build)
+          ? input.work.input.accepted_build : null;
+      if (owner.worker === "assessment" && (!owner.accepted_build || !pinned_build
+        || JSON.stringify(owner.accepted_build) !== JSON.stringify(pinned_build)))
+        return { kind: "refused", code: "accepted_build_mismatch", detail: "assessment is not pinned to the current accepted build" };
+      const evidence = isObject(request.enrichment ?? undefined) ? request.enrichment as Readonly<Record<string, JsonValue>> : null;
+      const verified_head = typeof evidence?.origin_head_sha === "string" ? evidence.origin_head_sha : null;
+      if (request.output_name === "pr_summary" && !verified_head)
+        return { kind: "refused", code: "pr_verification_failed", detail: "PR summary has no verified pushed head" };
       const current = await tx.query<{ readonly id: ArtifactId; readonly chain_id: ArtifactId; readonly revision: number;
         readonly attempt_id: AttemptId; readonly same_body: boolean }>(
         `SELECT artifact.id::text,artifact.chain_id::text,artifact.revision,provenance.attempt_id::text,
@@ -587,6 +601,28 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         output_name: request.output_name, collection_key: null, artifact_type: declared.type, body: request.body,
         expected: tip ? artifactRefFromRevision(tip) : null, at: request.published_at });
       if (!published.ok) return { kind: "refused", code: published.error.kind, detail: published.error.detail };
+      const current_outputs = await tx.query<{ readonly output_name: string; readonly chain_id: ArtifactId;
+        readonly revision: number; readonly attempt_id: AttemptId }>(
+        `SELECT output.output_name,artifact.chain_id::text,artifact.revision,provenance.attempt_id::text
+         FROM oakridge.worker_output output JOIN oakridge.artifact artifact ON artifact.id=output.artifact_id
+         JOIN oakridge.artifact_provenance provenance ON provenance.artifact_id=artifact.id
+         WHERE output.cohort_id=$1 AND output.worker=$2`, [owner.cohort_id, owner.worker]);
+      const current_ref = (name: string) => {
+        const row = current_outputs.find((candidate) => candidate.output_name === name && candidate.attempt_id === request.attempt_id);
+        return row ? artifactRefFromRevision(row) : null;
+      };
+      if (owner.worker === "build") {
+        const prior = await tx.query<{ readonly response: import("../domain/dev-flow-v15").BuildResponse | null }>(
+          "SELECT response FROM oakridge.cohort_worker WHERE cohort_id=$1 AND worker='build'", [owner.cohort_id]);
+        const response = { execution_id: owner.execution_id, build_result: current_ref("build_result"),
+          pr_summary: current_ref("pr_summary"), head_sha: verified_head ?? prior[0]?.response?.head_sha ?? null };
+        await tx.query("UPDATE oakridge.cohort_worker SET response=$2::jsonb WHERE cohort_id=$1 AND worker='build'",
+          [owner.cohort_id, JSON.stringify(response)]);
+      } else {
+        await tx.query("UPDATE oakridge.cohort_worker SET response=$2::jsonb WHERE cohort_id=$1 AND worker='assessment'",
+          [owner.cohort_id, JSON.stringify({ kind: "published", execution_id: owner.execution_id,
+            assessment: published.value, build: owner.accepted_build })]);
+      }
       return { kind: "published", artifact_id: request.artifact_id, ...identity };
     });
     // Publication is a fact. The tree, never the publication boundary, decides readiness.
