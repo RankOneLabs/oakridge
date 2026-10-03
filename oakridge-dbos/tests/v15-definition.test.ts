@@ -136,3 +136,44 @@ test("generic cohort materialization is unavailable at the B1 boundary", async (
   if (!compiled.ok) throw new Error(compiled.error.detail);
   expect(resolveCohortRoster(compiled.value.stages.build!)).toEqual({ ok: false, error: expect.objectContaining({ kind: "stage_initialization_unimplemented" }) });
 });
+
+// Read authored JSON directly: this independently checks every shipped tree,
+// rather than treating validator acceptance as proof of these properties.
+test("every shipped decision tree is finite with explicit match and conditional branches", async () => {
+  const source = await Bun.file(new URL("../../workflow-config/definitions/dev_flow_v15.json", import.meta.url)).json() as WorkflowDefinition;
+  for (const stage of Object.values(source.stages)) {
+    const pending: { tree: V15DecisionTree; ancestors: ReadonlySet<V15DecisionTree> }[] = [
+      { tree: stage.cohort.decision_tree, ancestors: new Set() },
+    ];
+    while (pending.length > 0) {
+      const { tree, ancestors } = pending.pop()!;
+      expect(tree).toBeDefined();
+      expect(ancestors.has(tree)).toBe(false);
+      const nextAncestors = new Set([...ancestors, tree]);
+      switch (tree.kind) {
+        case "match_cohort": case "match_worker": case "match_request":
+          expect(Object.hasOwn(tree, "otherwise")).toBe(true);
+          pending.push(...[...Object.values(tree.cases), tree.otherwise].map((child) => ({ tree: child!, ancestors: nextAncestors })));
+          break;
+        case "if":
+          expect(Object.hasOwn(tree, "then")).toBe(true);
+          expect(Object.hasOwn(tree, "else")).toBe(true);
+          pending.push({ tree: tree.then, ancestors: nextAncestors }, { tree: tree.else, ancestors: nextAncestors });
+          break;
+        case "apply": case "wait": case "reject": break;
+        default: throw new Error("Unknown authored tree node");
+      }
+    }
+  }
+});
+
+test("all three plan prompts describe the narrowed PlanBody", async () => {
+  const prompts = v15PromptReferences(await definition()).filter((reference) => reference.worker === "plan");
+  expect(prompts).toHaveLength(3);
+  for (const reference of prompts) {
+    const content = await Bun.file(resolve(import.meta.dir, "../..", reference.path)).text();
+    expect(content).not.toContain("dependency_order");
+    expect(content).toContain("`summary`, `cohorts`, `scope`, `acceptance_criteria`, and `risks`");
+    expect(content).toContain("`depends_on`");
+  }
+});
