@@ -68,6 +68,7 @@ interface KbblResolvedConfig {
   readonly artifact_id: string | null;
   readonly worktree: { readonly branchName: string; readonly worktreeSubdir: string; readonly baseRef?: string } | null;
   readonly publication: { readonly base_url: string; readonly work_order_id: string; readonly capability: string } | null;
+  readonly assessment_unchanged: { readonly assessment: JsonValue; readonly build: JsonValue } | null;
   readonly session_identity: KbblResolvedSessionIdentity;
 }
 
@@ -110,8 +111,11 @@ const parseResolvedConfig = (value: JsonValue): KbblResolvedConfig => {
   const rawPublication = value.publication;
   const publication = isObject(rawPublication) && typeof rawPublication.base_url === "string" && typeof rawPublication.work_order_id === "string" && typeof rawPublication.capability === "string"
     ? { base_url: rawPublication.base_url, work_order_id: rawPublication.work_order_id, capability: rawPublication.capability } : null;
+  const unchanged = isObject(value.assessment_unchanged) && isObject(value.assessment_unchanged.assessment)
+    && isObject(value.assessment_unchanged.build)
+    ? { assessment: value.assessment_unchanged.assessment, build: value.assessment_unchanged.build } : null;
   const session_identity = parseSessionIdentity(value.session_identity);
-  return { runtime, rendered_prompt: renderedPrompt, workdir, session_name: sessionName, model, effort, artifact_id: artifactId, worktree, publication, session_identity };
+  return { runtime, rendered_prompt: renderedPrompt, workdir, session_name: sessionName, model, effort, artifact_id: artifactId, worktree, publication, assessment_unchanged: unchanged, session_identity };
 };
 
 /**
@@ -187,7 +191,10 @@ const publicationInstructions = (config: KbblResolvedConfig, request: Pick<Execu
   const owed = expected.length > 0
     ? `\n\nPublish exactly these outputs and no others:\n${expectedOutputLines(request.unit_id, expected)}\n`
     : "";
-  return `${repositoryRefs}\n\n## Oakridge v2 artifact publication\n\nUse this run-owned endpoint instead of any stage/execution emit URL shown earlier:\n\nPUT ${config.publication.base_url.replace(/\/$/, "")}/work-orders/${config.publication.work_order_id}/emit/<output-name>\nWork-Order-Capability: ${config.publication.capability}\nIdempotency-Key: <stable key for this output payload>\nContent-Type: application/json\n\nFor a collection member, also send Output-Collection-Key. A successful executor exit does not satisfy the unit; publish every required output.\n${owed}`;
+  const unchanged = config.assessment_unchanged
+    ? `\nFor an unchanged discussion response, publish assessment_unchanged instead of assessment to the same endpoint. Send this JSON with your own explanation:\n${JSON.stringify({ ...config.assessment_unchanged, explanation: "Explain why the assessment remains unchanged" }, null, 2)}\n`
+    : "";
+  return `${repositoryRefs}\n\n## Oakridge v2 artifact publication\n\nUse this run-owned endpoint instead of any stage/execution emit URL shown earlier:\n\nPUT ${config.publication.base_url.replace(/\/$/, "")}/work-orders/${config.publication.work_order_id}/emit/<output-name>\nWork-Order-Capability: ${config.publication.capability}\nIdempotency-Key: <stable key for this output payload>\nContent-Type: application/json\n\nFor a collection member, also send Output-Collection-Key. A successful executor exit does not satisfy the unit; publish every required output.\n${owed}${unchanged}`;
 };
 
 const parseEnsureResponse = (value: unknown): EnsureSessionResponse => {

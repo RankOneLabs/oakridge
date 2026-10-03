@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { artifactRefFromRevision, type ImplementationCohortDefinition } from "../domain/dev-flow-v15";
 /**
  * The v15 run record.
@@ -555,9 +556,10 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       const rows = await tx.query<{ readonly execution_id: import("../domain/primitives").ExecutionId;
         readonly run_id: WorkflowRunId; readonly cohort_id: CohortId; readonly worker: "build" | "assessment";
         readonly record_version: string; readonly stage_contract: { readonly cohort?: ImplementationCohortDefinition };
-        readonly resolved_input: JsonValue; readonly accepted_build: import("../domain/dev-flow-v15").AcceptedBuild | null }>(
+        readonly resolved_input: JsonValue; readonly action_point: string;
+        readonly accepted_build: import("../domain/dev-flow-v15").AcceptedBuild | null }>(
         `SELECT intent.id AS execution_id,attempt.run_id::text,intent.cohort_id::text,intent.worker,
-          run.record_version::text,stage.stage_contract,intent.resolved_input,cohort.accepted_build
+          run.record_version::text,stage.stage_contract,intent.resolved_input,intent.action_point,cohort.accepted_build
          FROM oakridge.execution_intent intent
          JOIN oakridge.attempt attempt ON attempt.id=intent.attempt_id
          JOIN oakridge.cohort cohort ON cohort.id=intent.cohort_id
@@ -567,6 +569,54 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       const owner = rows[0];
       if (!owner) return { kind: "work_not_found", detail: "attempt has no selected worker execution" };
       if (request.capability_hash !== expected) return { kind: "invalid_capability", detail: "work-order capability is invalid" };
+      const identity = { run_id: owner.run_id, cohort_id: owner.cohort_id,
+        record_version: Number(owner.record_version) as RunRecordVersion };
+      if (request.output_name === "assessment_unchanged") {
+        if (owner.worker !== "assessment" || request.collection_key)
+          return { kind: "slot_not_found", detail: "unchanged assessment is available only to the assessor" };
+        const body = isObject(request.body) ? request.body : null;
+        const supplied_ref = body && isObject(body.assessment) ? body.assessment : null;
+        const supplied_build = body && isObject(body.build) ? body.build : null;
+        const explanation = body?.explanation;
+        const action_input = isObject(owner.resolved_input) ? owner.resolved_input : null;
+        const discussion = owner.action_point === "discuss" ? action_input
+          : owner.action_point === "retry" && action_input && isObject(action_input.work)
+            && action_input.work.action_point === "discuss" && isObject(action_input.work.input)
+              ? action_input.work.input : null;
+        const pinned_ref = discussion && isObject(discussion.current_assessment) ? discussion.current_assessment : null;
+        const pinned_build = discussion && isObject(discussion.accepted_build) ? discussion.accepted_build : null;
+        if (!discussion || !supplied_ref || !supplied_build || typeof explanation !== "string" || !explanation.trim()
+          || !isDeepStrictEqual(supplied_ref, pinned_ref)
+          || !isDeepStrictEqual(supplied_build, pinned_build)
+          || !isDeepStrictEqual(supplied_build, owner.accepted_build))
+          return { kind: "refused", code: "assessment_response_mismatch", detail: "unchanged response must identify the discussion's assessment and accepted build" };
+        const current = await tx.query<{ readonly artifact_id: ArtifactId; readonly chain_id: string; readonly revision: number;
+          readonly active_execution_id: string | null; readonly response: JsonValue | null;
+          readonly intent_status: string; readonly stop_requested_at: string | null }>(
+          `SELECT artifact.id::text AS artifact_id,artifact.chain_id::text,artifact.revision,
+             worker.active_execution_id,worker.response,intent.status AS intent_status,intent.stop_requested_at::text
+           FROM oakridge.execution_intent intent
+           JOIN oakridge.cohort_worker worker ON worker.cohort_id=intent.cohort_id AND worker.worker='assessment'
+           JOIN oakridge.worker_output output ON output.cohort_id=intent.cohort_id AND output.worker='assessment' AND output.output_name='assessment'
+           JOIN oakridge.artifact artifact ON artifact.id=output.artifact_id
+           WHERE intent.id=$1 FOR UPDATE OF intent,worker`, [owner.execution_id]);
+        const row = current[0];
+        if (!row || row.chain_id !== supplied_ref.id || row.revision !== supplied_ref.version)
+          return { kind: "refused", code: "stale_assessment", detail: "assessment content version is no longer current" };
+        const prior = isObject(row.response ?? undefined) ? row.response as Readonly<Record<string, JsonValue>> : null;
+        if (prior?.execution_id === owner.execution_id) return prior.explanation === explanation
+          ? { kind: "already_applied", artifact_id: row.artifact_id, ...identity }
+          : { kind: "idempotency_conflict", artifact_id: row.artifact_id, detail: "execution already recorded a different response" };
+        if (check_only) return null;
+        if (row.active_execution_id !== owner.execution_id || row.stop_requested_at !== null || row.intent_status !== "dispatched")
+          return { kind: "refused", code: "publication_fenced", detail: "assessment execution has no publication authority" };
+        await tx.query(`UPDATE oakridge.cohort_worker SET response=$3::jsonb WHERE cohort_id=$1 AND worker=$2`,
+          [owner.cohort_id, "assessment", JSON.stringify({ kind: "unchanged", execution_id: owner.execution_id,
+            assessment: supplied_ref, build: supplied_build, explanation: explanation.trim() })]);
+        await tx.query(`UPDATE oakridge.worker_output SET acceptance_state='unreviewed',reviewed_target=NULL
+          WHERE cohort_id=$1 AND worker='assessment' AND output_name='assessment'`, [owner.cohort_id]);
+        return { kind: "published", artifact_id: row.artifact_id, ...identity };
+      }
       const outputs = owner.stage_contract.cohort?.workers[owner.worker].outputs;
       const declared = outputs && Object.entries(outputs).find(([name]) => name === request.output_name)?.[1];
       if (!declared) return { kind: "slot_not_found", detail: `worker ${owner.worker} does not declare ${request.output_name}` };
@@ -576,12 +626,8 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         : input && isObject(input.work) && isObject(input.work.input) && isObject(input.work.input.accepted_build)
           ? input.work.input.accepted_build : null;
       if (owner.worker === "assessment" && (!owner.accepted_build || !pinned_build
-        || JSON.stringify(owner.accepted_build) !== JSON.stringify(pinned_build)))
+        || !isDeepStrictEqual(owner.accepted_build, pinned_build)))
         return { kind: "refused", code: "accepted_build_mismatch", detail: "assessment is not pinned to the current accepted build" };
-      const evidence = isObject(request.enrichment ?? undefined) ? request.enrichment as Readonly<Record<string, JsonValue>> : null;
-      const verified_head = typeof evidence?.origin_head_sha === "string" ? evidence.origin_head_sha : null;
-      if (request.output_name === "pr_summary" && !verified_head)
-        return { kind: "refused", code: "pr_verification_failed", detail: "PR summary has no verified pushed head" };
       const current = await tx.query<{ readonly id: ArtifactId; readonly chain_id: ArtifactId; readonly revision: number;
         readonly attempt_id: AttemptId; readonly same_body: boolean }>(
         `SELECT artifact.id::text,artifact.chain_id::text,artifact.revision,provenance.attempt_id::text,
@@ -591,12 +637,14 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
          WHERE output.cohort_id=$1 AND output.worker=$2 AND output.output_name=$3 AND output.collection_key IS NULL`,
         [owner.cohort_id, owner.worker, request.output_name, JSON.stringify(request.body)]);
       const tip = current[0];
-      const identity = { run_id: owner.run_id, cohort_id: owner.cohort_id,
-        record_version: Number(owner.record_version) as RunRecordVersion };
       if (tip?.attempt_id === request.attempt_id) return tip.same_body
         ? { kind: "already_applied", artifact_id: tip.id, ...identity }
         : { kind: "idempotency_conflict", artifact_id: tip.id, detail: "this execution already published a different body" };
       if (check_only) return null;
+      const evidence = isObject(request.enrichment ?? undefined) ? request.enrichment as Readonly<Record<string, JsonValue>> : null;
+      const verified_head = typeof evidence?.origin_head_sha === "string" ? evidence.origin_head_sha : null;
+      if (request.output_name === "pr_summary" && !verified_head)
+        return { kind: "refused", code: "pr_verification_failed", detail: "PR summary has no verified pushed head" };
       const published = await publishWorkerOutputIn(tx, { execution_id: owner.execution_id, artifact_id: request.artifact_id,
         output_name: request.output_name, collection_key: null, artifact_type: declared.type, body: request.body,
         expected: tip ? artifactRefFromRevision(tip) : null, at: request.published_at });
