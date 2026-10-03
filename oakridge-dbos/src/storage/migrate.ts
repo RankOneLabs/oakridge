@@ -17,14 +17,6 @@ export const applyMigrations = async (sql: TransactionalSqlExecutor, directory =
     .filter((name) => appliedNames.has(name));
   if (retired.length > 0) throw new Error(
     `oakridge migration ledger records retired migrations ${retired.join(", ")}; drop and recreate this v15 database`);
-  const pending = migrationNames(await readdir(directory)).filter((name) => !appliedNames.has(name));
-  for (const name of pending) {
-    const statement = await readFile(join(directory, name), "utf8");
-    await sql.transaction(async (transaction) => {
-      await transaction.query(statement, []);
-      await transaction.query("INSERT INTO public.oakridge_schema_migration (name, applied_at) VALUES ($1, now())", [name]);
-    });
-  }
   if (appliedNames.has("0015_v15_baseline.sql")) {
     // Compare the contract required by the edited baseline, including nullability.
     interface SchemaRequirement { readonly table_schema: "oakridge" | "dev_flow"; readonly table_name: string; readonly column_name: string | null; readonly nullable?: boolean }
@@ -49,6 +41,14 @@ export const applyMigrations = async (sql: TransactionalSqlExecutor, directory =
       .map((requirement) => `${requirement.table_name}${requirement.column_name ? `.${requirement.column_name}` : ""}${requirement.nullable ? " (nullable)" : ""}`);
     if (missing.length > 0) throw new Error(
       `oakridge migration ledger records 0015_v15_baseline.sql but schema diverges: missing ${missing.join(", ")}; drop and recreate this v15 database`);
+  }
+  const pending = migrationNames(await readdir(directory)).filter((name) => !appliedNames.has(name));
+  for (const name of pending) {
+    const statement = await readFile(join(directory, name), "utf8");
+    await sql.transaction(async (transaction) => {
+      await transaction.query(statement, []);
+      await transaction.query("INSERT INTO public.oakridge_schema_migration (name, applied_at) VALUES ($1, now())", [name]);
+    });
   }
   return pending;
 };

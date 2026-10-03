@@ -260,6 +260,8 @@ export interface StartAttempt {
   readonly run_id: WorkflowRunId;
   readonly stage_instance_id: StageInstanceId;
   readonly cohort_id: CohortId;
+  /** Omitted only by callers of the pre-v15 launch path. */
+  readonly worker?: import("./dev-flow-v15").V15WorkerKey;
   readonly attempt_id: AttemptId;
   readonly attempt_number: number;
   readonly adapter_type: string;

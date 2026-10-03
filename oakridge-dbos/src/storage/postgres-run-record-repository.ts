@@ -382,8 +382,8 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       if (!cohorts[0]) return err({ kind: "cohort_not_found" as const, detail: `cohort '${input.event.cohort_id}' was not found` });
       if (input.attempt.idempotency_key !== null) {
         const claimed = await tx.query<{ readonly id: string }>(
-          "SELECT id::text FROM oakridge.attempt WHERE cohort_id=$1 AND idempotency_key=$2",
-          [input.event.cohort_id, input.attempt.idempotency_key]);
+          "SELECT id::text FROM oakridge.attempt WHERE cohort_id=$1 AND worker=$2 AND idempotency_key=$3",
+          [input.event.cohort_id, input.attempt.worker ?? "build", input.attempt.idempotency_key]);
         if (claimed[0]) return ok({ kind: "already_created" as const, attempt_id: claimed[0].id as AttemptId,
           durable_version: Number(cohorts[0].durable_version) });
       }
@@ -436,8 +436,8 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       if (!cohorts[0]) return { kind: "cohort_not_found" as const, detail: `cohort '${input.cohort_id}' was not found in run '${input.run_id}'` };
       if (input.idempotency_key !== null) {
         const claimed = await tx.query<{ readonly id: string; readonly attempt_number: number }>(
-          "SELECT id::text,attempt_number FROM oakridge.attempt WHERE cohort_id=$1 AND idempotency_key=$2",
-          [input.cohort_id, input.idempotency_key]);
+          "SELECT id::text,attempt_number FROM oakridge.attempt WHERE cohort_id=$1 AND worker=$2 AND idempotency_key=$3",
+          [input.cohort_id, input.worker ?? "build", input.idempotency_key]);
         const existing = claimed[0];
         if (existing && existing.id !== input.attempt_id) {
           return { kind: "idempotency_conflict" as const,
@@ -445,10 +445,10 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         }
       }
       const inserted = await tx.query<{ readonly id: string }>(
-        `INSERT INTO oakridge.attempt (id,run_id,stage_instance_id,cohort_id,attempt_number,adapter_type,request,idempotency_key,created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9::timestamptz)
-         ON CONFLICT (cohort_id,attempt_number) DO NOTHING RETURNING id::text`,
-        [input.attempt_id, input.run_id, input.stage_instance_id, input.cohort_id, input.attempt_number,
+        `INSERT INTO oakridge.attempt (id,run_id,stage_instance_id,cohort_id,worker,attempt_number,adapter_type,request,idempotency_key,created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10::timestamptz)
+         ON CONFLICT (cohort_id,worker,attempt_number) DO NOTHING RETURNING id::text`,
+        [input.attempt_id, input.run_id, input.stage_instance_id, input.cohort_id, input.worker ?? "build", input.attempt_number,
           input.adapter_type, JSON.stringify(input.request), input.idempotency_key, input.created_at]);
       await tx.query(
         `INSERT INTO oakridge.session (id,run_id,stage_instance_id,attempt_id,launch_transition_id,adapter_reference,created_at)
