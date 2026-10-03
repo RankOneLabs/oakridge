@@ -230,7 +230,8 @@ export function ArtifactReview({ artifactId, gates }: ArtifactReviewProps) {
   const gateActions = artifactGate && isLatestRevision ? (
     <section className="or-artifact-decision-bar" data-testid="or-artifact-gate-actions">
       <div><strong>{artifactGate.gate_type === "merge_confirmation" ? "Confirm the merge" : "Make your decision"}</strong><p>{artifactGate.gate_type === "merge_confirmation" ? "Verify the pull request is merged, then continue the cohort." : "Approve this artifact or send clear changes back to the builder."}</p></div>
-      <GateDecisionActions gate={artifactGate} artifactRevisionId={revision.id} actionLabels={artifact.review?.action_labels} />
+      <GateDecisionActions gate={artifactGate} artifactRevisionId={revision.id} actionLabels={artifact.review?.action_labels}
+        actionConsequences={artifact.review?.action_consequences} />
     </section>
   ) : undefined;
 

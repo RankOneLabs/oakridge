@@ -25,10 +25,12 @@ function gate(id: string, revision: string, overrides: Partial<Pick<ParkedGate, 
   };
 }
 
-function wrapper(client: QueryClient, value: ParkedGate, onComplete = vi.fn(), artifactRevisionId?: string) {
+function wrapper(client: QueryClient, value: ParkedGate, onComplete = vi.fn(), artifactRevisionId?: string,
+  presentation?: { actionLabels: Record<string, string>; actionConsequences: Record<string, string> }) {
   return (
     <QueryClientProvider client={client}>
-      <GateDecisionActions gate={value} artifactRevisionId={artifactRevisionId} onComplete={onComplete} />
+      <GateDecisionActions gate={value} artifactRevisionId={artifactRevisionId} onComplete={onComplete}
+        actionLabels={presentation?.actionLabels} actionConsequences={presentation?.actionConsequences} />
     </QueryClientProvider>
   );
 }
@@ -36,6 +38,33 @@ function wrapper(client: QueryClient, value: ParkedGate, onComplete = vi.fn(), a
 afterEach(() => vi.restoreAllMocks());
 
 describe("GateDecisionActions", () => {
+  it("shows assessment acceptance, discussion, and implementation changes with distinct consequences", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ gate_id: "gate-a", resumed: true }), {
+      status: 200, headers: { "Content-Type": "application/json" },
+    }));
+    const presentation = {
+      actionLabels: { accept_assessment: "Accept assessment", discuss_assessment: "Discuss assessment",
+        request_implementation_changes: "Request implementation changes" },
+      actionConsequences: { accept_assessment: "Assessment accepted. The cohort awaits merge.",
+        discuss_assessment: "Feedback sent to the assessor for discussion.",
+        request_implementation_changes: "Feedback sent to the builder for implementation changes." },
+    };
+    for (const action of ["accept_assessment", "discuss_assessment", "request_implementation_changes"]) {
+      const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+      const view = render(wrapper(client, { ...gate(`gate-${action}`, "revision-a"),
+        resume_actions: ["accept_assessment", "discuss_assessment", "request_implementation_changes"] },
+      vi.fn(), undefined, presentation));
+      for (const label of Object.values(presentation.actionLabels)) expect(screen.getByRole("button", { name: label })).toBeTruthy();
+      fireEvent.click(screen.getByTestId(`or-decision-${action}`));
+      if (action !== "accept_assessment") {
+        fireEvent.change(screen.getByLabelText("What needs to change?"), { target: { value: "Please review" } });
+        fireEvent.click(screen.getByRole("button", { name: "Send feedback" }));
+      }
+      await waitFor(() => expect(screen.getByTestId("or-decision-success").textContent).toBe(presentation.actionConsequences[action as keyof typeof presentation.actionConsequences]));
+      view.unmount();
+    }
+    expect(presentation.actionConsequences.discuss_assessment).not.toContain("builder");
+  });
   it("submits the latest edited artifact revision", async () => {
     let requestBody: { artifact_revision_id: string } | undefined;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {

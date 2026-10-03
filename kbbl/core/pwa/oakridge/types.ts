@@ -337,6 +337,7 @@ export interface ArtifactReviewDescriptor {
   layout: "document" | "dag" | "report";
   sections: string[];
   action_labels: Record<string, string>;
+  action_consequences?: Record<string, string>;
 }
 
 export interface ArtifactTypeDescriptor {

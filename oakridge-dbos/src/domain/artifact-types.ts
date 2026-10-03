@@ -17,6 +17,7 @@ export interface ArtifactReviewDescriptor {
   readonly layout: "document" | "dag" | "report";
   readonly sections: readonly string[];
   readonly action_labels: Readonly<Record<string, string>>;
+  readonly action_consequences: Readonly<Record<string, string>>;
 }
 
 export interface ArtifactTypeDefinition {
@@ -27,10 +28,30 @@ export interface ArtifactTypeDefinition {
   readonly review: ArtifactReviewDescriptor | null;
 }
 
-const actions = { approve: "Approve", request_revision: "Request revision", confirm_merged: "Confirm merged", closed_without_merge: "Close without merge" } as const;
+interface ActionPresentation {
+  readonly labels: Readonly<Record<string, string>>;
+  readonly consequences: Readonly<Record<string, string>>;
+}
+
+const reviewActions: Readonly<Record<string, ActionPresentation>> = {
+  "dev.spec_analysis": { labels: { accept_analysis: "Accept analysis", revise_analysis: "Revise analysis" },
+    consequences: { accept_analysis: "Analysis accepted. Planning can begin.", revise_analysis: "Feedback sent to the analyst for revision." } },
+  "dev.plan": { labels: { accept_plan: "Accept plan", revise_plan: "Revise plan" },
+    consequences: { accept_plan: "Plan accepted. Brief writing can begin.", revise_plan: "Feedback sent to the planner for revision." } },
+  "dev.build_brief": { labels: { accept_briefs: "Accept briefs", revise_briefs: "Revise briefs" },
+    consequences: { accept_briefs: "Brief collection accepted. Implementation can begin.", revise_briefs: "The complete brief collection will be revised." } },
+  "dev.build_result": { labels: { accept_build: "Accept build", request_build_changes: "Request build changes" },
+    consequences: { accept_build: "Build accepted. Assessment can begin.", request_build_changes: "Feedback sent to the builder for revision." } },
+  "dev.assessment": { labels: { accept_assessment: "Accept assessment", discuss_assessment: "Discuss assessment", request_implementation_changes: "Request implementation changes" },
+    consequences: { accept_assessment: "Assessment accepted. The cohort awaits merge.", discuss_assessment: "Feedback sent to the assessor for discussion.", request_implementation_changes: "Feedback sent to the builder for implementation changes." } },
+  "dev.pr_summary": { labels: { confirm_merged: "Confirm merged", closed_without_merge: "Close without merge" },
+    consequences: { confirm_merged: "Merge confirmed. The cohort can continue.", closed_without_merge: "The pull request was closed without merge." } },
+};
+
 const artifactType = (id: string, component_id: string, capabilities: ArtifactCapabilities, anchor_schema: readonly string[] | null, layout: ArtifactReviewDescriptor["layout"], sections: readonly string[]): ArtifactTypeDefinition => ({
   id, component_id, capabilities, anchor_schema,
-  review: capabilities.reviewable ? { viewer: component_id, layout, sections, action_labels: actions } : null,
+  review: capabilities.reviewable ? { viewer: component_id, layout, sections,
+    action_labels: reviewActions[id]?.labels ?? {}, action_consequences: reviewActions[id]?.consequences ?? {} } : null,
 });
 
 // Exact presentation/capability contract from the retained Rust v2 dev-flow registry.

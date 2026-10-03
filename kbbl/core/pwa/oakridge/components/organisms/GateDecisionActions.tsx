@@ -11,6 +11,7 @@ interface GateDecisionActionsProps {
   gate: ParkedGate;
   artifactRevisionId?: string;
   actionLabels?: Record<string, string>;
+  actionConsequences?: Record<string, string>;
   onComplete?: () => void;
 }
 
@@ -27,7 +28,7 @@ function actionLabel(action: string): string {
 }
 
 function successMessage(action: string): string {
-  if (action === "request_revision") return "Changes requested. The cohort will return to its build step.";
+  if (action === "request_revision") return "Revision requested.";
   if (action === "confirm_merged") return "Merge confirmed. The cohort can continue.";
   return "Decision recorded. The cohort can continue.";
 }
@@ -36,7 +37,7 @@ export function GateDecisionActions(props: GateDecisionActionsProps) {
   return <GateDecisionActionsForGate key={props.gate.id} {...props} />;
 }
 
-function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {}, onComplete }: GateDecisionActionsProps) {
+function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {}, actionConsequences = {}, onComplete }: GateDecisionActionsProps) {
   const mutation = useResumeGate(gate.id, gate.run_id);
   const [feedbackAction, setFeedbackAction] = useState<string | null>(null);
   const [feedback, setFeedback] = useState("");
@@ -89,7 +90,7 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
   };
 
   if (completedAction) {
-    return <div className="or-decision-success" role="status" data-testid="or-decision-success">{successMessage(completedAction)}</div>;
+    return <div className="or-decision-success" role="status" data-testid="or-decision-success">{actionConsequences[completedAction] ?? successMessage(completedAction)}</div>;
   }
 
   return (
@@ -101,8 +102,8 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
       )}
       <div className="or-decision-actions__buttons">
         {gate.resume_actions.map((action) => {
-          const needsFeedback = action === "request_revision" || action === "rerun" || action === "reject" || action === "fail";
-          const isPrimary = action === "approve" || action === "confirm_merged" || action === "pass";
+          const needsFeedback = ["request_revision", "rerun", "reject", "fail", "revise_analysis", "revise_plan", "revise_briefs", "request_build_changes", "discuss_assessment", "request_implementation_changes"].includes(action);
+          const isPrimary = ["approve", "confirm_merged", "pass", "accept_analysis", "accept_plan", "accept_briefs", "accept_build", "accept_assessment"].includes(action);
           return (
             <Button
               key={action}
@@ -127,7 +128,8 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
             onChange={(event) => setFeedback(event.target.value)}
             rows={4}
             autoFocus
-            placeholder="Give the builder specific, actionable feedback."
+            placeholder={feedbackAction === "discuss_assessment" ? "Give the assessor specific feedback for discussion."
+              : "Give specific, actionable feedback."}
           />
           <div className="or-decision-feedback__buttons">
             <Button variant="secondary" className={`${decisionButtonClass} text-[var(--text-primary)]!`} onClick={() => setFeedbackAction(null)}>Cancel</Button>

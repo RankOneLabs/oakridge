@@ -22,6 +22,16 @@ test("provisioned repository refs carry no review surface", () => {
   expect(refs?.capabilities).toEqual({ reviewable: false, commentable: false, atom_editable: false, review_items: false });
 });
 
+test("assessment review actions have separate routes and consequences", () => {
+  const review = findArtifactType("dev.assessment")?.review;
+  expect(Object.keys(review?.action_labels ?? {})).toEqual([
+    "accept_assessment", "discuss_assessment", "request_implementation_changes",
+  ]);
+  expect(new Set(Object.values(review?.action_labels ?? {})).size).toBe(3);
+  expect(new Set(Object.values(review?.action_consequences ?? {})).size).toBe(3);
+  expect(review?.action_consequences.discuss_assessment).toContain("assessor");
+});
+
 test("v15 artifact identity comes from the stored chain and revision", () => {
   expect(artifactRefFromRevision({ chain_id: "chain" as ArtifactId, revision: 3 })).toEqual({ id: "chain" as ArtifactId, version: 3 });
 });
