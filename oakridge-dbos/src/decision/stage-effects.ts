@@ -59,17 +59,19 @@ const launchSession = async (tx: SqlExecutor, context: StageEffectContext, args:
   const reason = stringArg(args, "reason");
   if (!role || !reason) return err({ operation: "stage_effect", effect: "launch_session", cohort_id: context.cohort.id,
     detail: "role and reason are required" });
+  const worker = role === "assessor" || role === "assessment" ? "assessment" : "build";
   const rows = await tx.query<{ readonly attempt_number: number }>(
-    "SELECT COALESCE(MAX(attempt_number),0)+1 AS attempt_number FROM oakridge.attempt WHERE cohort_id=$1", [context.cohort.id]);
+    "SELECT COALESCE(MAX(attempt_number),0)+1 AS attempt_number FROM oakridge.attempt WHERE cohort_id=$1 AND worker=$2",
+    [context.cohort.id, worker]);
   const attempt_number = rows[0]?.attempt_number ?? 1;
-  const attempt_id = attemptIdFor(context.cohort.id, attempt_number);
+  const attempt_id = attemptIdFor(context.cohort.id, attempt_number, worker);
   const session_id = sessionIdFor(attempt_id);
-  await abandonCohortAttempts(tx, { cohort_id: context.cohort.id, at: context.at, reason: "replaced_by_launch" });
+  await abandonCohortAttempts(tx, { cohort_id: context.cohort.id, worker, at: context.at, reason: "replaced_by_launch" });
   await tx.query(
     `INSERT INTO oakridge.attempt
-       (id,run_id,stage_instance_id,cohort_id,attempt_number,adapter_type,request,idempotency_key,created_at)
-     VALUES ($1,$2,$3,$4,$5,$6,NULL,$7,$8::timestamptz)`,
-    [attempt_id, context.cohort.run_id, context.cohort.stage_instance_id, context.cohort.id, attempt_number,
+       (id,run_id,stage_instance_id,cohort_id,worker,attempt_number,adapter_type,request,idempotency_key,created_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,NULL,$8,$9::timestamptz)`,
+    [attempt_id, context.cohort.run_id, context.cohort.stage_instance_id, context.cohort.id, worker, attempt_number,
       context.cohort.stage_contract.executor.executor_type,
       context.event.kind === "operator_retry" ? context.event.idempotency_key : null, context.at]);
   await tx.query(

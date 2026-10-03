@@ -410,7 +410,8 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
            WHERE cohort_id=$1 AND output_name=ANY($2) AND superseded_at IS NULL`,
           [input.event.cohort_id, input.event.reopen_output_names]);
       }
-      await abandonCohortAttempts(tx, { cohort_id: input.event.cohort_id, at: input.event.recorded_at,
+      await abandonCohortAttempts(tx, { cohort_id: input.event.cohort_id, worker: input.attempt.worker,
+        at: input.event.recorded_at,
         reason: "replaced by cohort launch" });
       const started = await this.startAttemptIn(tx, { ...input.attempt,
         launch_transition_id: committed.value.transition_id });

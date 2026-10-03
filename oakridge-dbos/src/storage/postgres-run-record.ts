@@ -262,19 +262,20 @@ export const writeSessionStatus = async (
   }
 };
 
-/** Abandons every unfinished attempt of a cohort — what a retry replaces. */
+/** Abandons unfinished attempts owned by the worker being replaced. */
 export const abandonCohortAttempts = async (
   tx: SqlExecutor,
-  input: { readonly cohort_id: import("../domain/primitives").CohortId; readonly at: string; readonly reason: string },
+  input: { readonly cohort_id: import("../domain/primitives").CohortId; readonly worker?: import("../domain/dev-flow-v15").V15WorkerKey;
+    readonly at: string; readonly reason: string },
 ): Promise<void> => {
   await tx.query(
     `UPDATE oakridge.session
      SET status='cancelled'::oakridge.session_status,ended_at=$2::timestamptz,updated_at=clock_timestamp()
-     WHERE ended_at IS NULL AND attempt_id IN (SELECT id FROM oakridge.attempt WHERE cohort_id=$1 AND ended_at IS NULL)`,
-    [input.cohort_id, input.at]);
+     WHERE ended_at IS NULL AND attempt_id IN (SELECT id FROM oakridge.attempt WHERE cohort_id=$1 AND worker=$3 AND ended_at IS NULL)`,
+    [input.cohort_id, input.at, input.worker ?? "build"]);
   await tx.query(
     `UPDATE oakridge.attempt
      SET status='cancelled'::oakridge.attempt_status,ended_at=$2::timestamptz,outcome=$3::jsonb
-     WHERE cohort_id=$1 AND ended_at IS NULL`,
-    [input.cohort_id, input.at, JSON.stringify({ kind: "cancelled", reason: input.reason })]);
+     WHERE cohort_id=$1 AND worker=$4 AND ended_at IS NULL`,
+    [input.cohort_id, input.at, JSON.stringify({ kind: "cancelled", reason: input.reason }), input.worker ?? "build"]);
 };

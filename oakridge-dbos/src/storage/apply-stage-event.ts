@@ -134,8 +134,11 @@ export class StageEventApplier {
     if (isTerminal(cohort.status)) return ok({ kind: "ignored", reason: "cohort_terminal" });
     const attempt_id = attemptedId(event);
     if (attempt_id !== null) {
+      const owner = await tx.query<{ readonly worker: string }>(
+        "SELECT worker FROM oakridge.attempt WHERE id=$1 AND cohort_id=$2", [attempt_id, cohort_id]);
       const latest = await tx.query<LatestAttemptRow>(
-        "SELECT id::text FROM oakridge.attempt WHERE cohort_id=$1 ORDER BY attempt_number DESC LIMIT 1", [cohort_id]);
+        "SELECT id::text FROM oakridge.attempt WHERE cohort_id=$1 AND worker=$2 ORDER BY attempt_number DESC LIMIT 1",
+        [cohort_id, owner[0]?.worker ?? ""]);
       if (latest[0]?.id !== attempt_id) return event.kind === "session_ended"
         ? ok({ kind: "ignored", reason: "stale_attempt" })
         : ok({ kind: "refused", code: "stale_attempt", from, detail: "attempt was replaced" });

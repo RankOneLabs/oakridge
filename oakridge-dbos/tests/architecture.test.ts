@@ -96,10 +96,11 @@ test("core operator projections never query adapter tables", async () => {
   expect(source).not.toMatch(/(?:FROM|JOIN|UPDATE|INTO)\s+dev_flow\./i);
 });
 
-// Checked worker names are required by the v15 contract in dev-flow-v15.ts.
-// Core decision and generic records still cannot interpret those adapter roles.
-test("core decision and records do not interpret dev-flow identifiers", async () => {
-  const files = [...await decisionSources(), join(SOURCE, "domain", "records.ts")];
+// The v15 evaluator and launch identity now own checked worker names. The
+// generic run derivation and records remain independent of those roles.
+test("generic run derivation and records do not interpret dev-flow identifiers", async () => {
+  const files = [join(SOURCE, "decision", "derive.ts"), join(SOURCE, "decision", "commands.ts"),
+    join(SOURCE, "decision", "snapshot.ts"), join(SOURCE, "domain", "records.ts")];
   const violations = (await Promise.all(files.map(async (file) => ({ file, violations: coreBoundaryViolations(await readFile(file, "utf8")) }))))
     .filter((entry) => entry.violations.length > 0);
   expect(violations).toEqual([]);

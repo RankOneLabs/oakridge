@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { transition } from "../src/decision/stage-machine";
+import { evaluateCohort, transition } from "../src/decision/stage-machine";
+import type { ImplementationCohortDefinition, ImplementationCohortRecord, ArtifactRef } from "../src/domain/dev-flow-v15";
 import type { CompiledMachine, GuardContext, StageEvent, Transition } from "../src/domain/stage-machine";
 import { machineRegistry, reviewMachine } from "./support/machine-fixtures";
 
@@ -51,4 +52,54 @@ test("any_nonterminal matches pending but not complete", () => {
 test("a refusal row returns its code", () => {
   const row = { from: "pending", on: { event: "started" }, guard: null, refuse: "not_ready" } as Transition;
   expect(transition(machine([row]), "pending" as never, started, context(started))).toMatchObject({ kind: "refused", code: "not_ready", row_index: 0 });
+});
+
+const ref = { id: "00000000-0000-4000-8000-000000000001", version: 1 } as ArtifactRef;
+const evaluatorDefinition = async (): Promise<ImplementationCohortDefinition> =>
+  (await Bun.file(new URL("../../workflow-config/definitions/dev_flow_v15.json", import.meta.url)).json()).stages.implementation.cohort;
+const pendingCohort = (): ImplementationCohortRecord => ({
+  id: "00000000-0000-4000-8000-000000000010" as never,
+  key: "core" as never,
+  version: 0,
+  state: "pending",
+  depends_on: [],
+  inputs: { brief: ref, repository: {
+    refs: { repository_key: "oakridge" as never, repository_path: "/repo", integration_branch: "epic/wf",
+      base_branch: "epic/schema", base_head_sha: "abc" as never },
+    worktree_path: "/repo/worktree", worktree_base_sha: "abc" as never,
+    canonical_branch: "cohort/core", expected_pr_base: "epic/schema",
+  } },
+  build: { state: "pending", outputs: { build_result: null, pr_summary: null }, sessions: [],
+    active_execution_id: null, work: null, response: null, interrupted: null },
+  assessment: { state: "pending", outputs: { assessment: null }, sessions: [],
+    active_execution_id: null, work: null, response: null, interrupted: null },
+  accepted_build: null,
+});
+
+test("the committed implementation tree starts a pending cohort with resolved frozen inputs", async () => {
+  const selected = evaluateCohort({ definition: await evaluatorDefinition(), snapshot: pendingCohort(),
+    request: null, pr: null, available_artifacts: [ref] });
+  expect(selected).toEqual({ ok: true, value: {
+    kind: "apply", expected_version: 0,
+    changes: [{ kind: "set_cohort_state", state: "working" }, { kind: "set_worker_state", worker: "build", state: "working" }],
+    actions: [{ worker: "build", action: { action_point: "initial", input: {
+      brief: ref, repository: pendingCohort().inputs.repository as never,
+    } } }],
+  } });
+});
+
+test("a request invalid for the current state is a typed decision error", async () => {
+  const selected = evaluateCohort({ definition: await evaluatorDefinition(), snapshot: pendingCohort(),
+    request: { kind: "retry_build" }, pr: null, available_artifacts: [ref] });
+  expect(selected).toEqual({ ok: false, error: expect.objectContaining({
+    kind: "invalid_request", operation: "evaluate_cohort", cohort_id: pendingCohort().id,
+  }) });
+});
+
+test("an inconsistent accepted builder is rejected before walking the tree", async () => {
+  const snapshot = { ...pendingCohort(), state: "working" as const,
+    build: { ...pendingCohort().build, state: "accepted" as const } };
+  const selected = evaluateCohort({ definition: await evaluatorDefinition(), snapshot,
+    request: null, pr: null, available_artifacts: [ref] });
+  expect(selected).toEqual({ ok: false, error: expect.objectContaining({ kind: "invalid_state" }) });
 });
