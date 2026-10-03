@@ -181,3 +181,10 @@ export const operatorMergedObservation = (expected: ExpectedCohortPullRequest, c
     state: "merged", source: "manual_recheck", observed_at: confirmedAt, merged_at: confirmedAt,
   };
 };
+
+/** Forge and origin evidence read by the implementation publication boundary. */
+export interface ImplementationPublicationEvidence {
+  readonly pr: PullRequestObservation;
+  readonly origin_head_sha: string;
+  readonly replace_verification_id: PullRequestVerificationId | null;
+}

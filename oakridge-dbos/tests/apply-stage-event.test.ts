@@ -53,6 +53,9 @@ const prepare = async (name: string, should_fail_dispatch = false): Promise<Fixt
   for (const worker of ["build", "assessment"]) await sql.query("INSERT INTO oakridge.cohort_worker (cohort_id,worker) VALUES ($1,$2)", [cohort_id, worker]);
   await sql.query("INSERT INTO oakridge.artifact (id,chain_id,revision,artifact_type,body) VALUES ($1,$1,1,'dev.build_brief','{}')", [brief.id]);
   await sql.query("INSERT INTO oakridge.artifact_owner (artifact_id,run_id) VALUES ($1,$2)", [brief.id, run_id]);
+  await sql.query(`INSERT INTO dev_flow.build_cohort
+    (cohort_id,stage_instance_id,cohort_key,repository_key,repository_path,canonical_ref,expected_pr_base,recorded_head_sha,created_at,updated_at)
+    VALUES ($1,$2,'core','oakridge','/repo','cohort/core','epic/schema','abc',now(),now())`, [cohort_id, stage_id]);
   const created: CreatedWorkerSession[] = [];
   const stopped: ExecutionId[] = [];
   const io: WorkerSessionIO = {
@@ -125,7 +128,10 @@ test("real storage runs both build feedback routes, discussion, and merge at the
       return publishWorkOrderArtifact({ attempt_id: row.attempt_id,
         capability: capabilityFor(seed, row.attempt_id as unknown as WorkOrderId), output_name, collection_key: null,
         body, idempotency_key: `${execution_id}:${output_name}` }, { records, now: fixture.io.now,
-        enrich: async () => ({ ok: true, value: output_name === "pr_summary" ? { origin_head_sha: "abc" } : null }) });
+        enrich: async () => ({ ok: true, value: output_name === "pr_summary" ? { origin_head_sha: "abc", replace_verification_id: null,
+          pr: { provider: "github", owner: "example", name: "oakridge", number: 1,
+            url: "https://github.com/example/oakridge/pull/1", head_branch: "cohort/core", base_branch: "epic/schema",
+            head_sha: "abc", state: "open", source: "poll", observed_at: fixture.io.now(), merged_at: null } } : null }) });
     };
     const currentVersion = async () => Number((await fixture.sql.query<{ readonly durable_version: string }>(
       "SELECT durable_version::text FROM oakridge.cohort WHERE id=$1", [cohort_id]))[0]!.durable_version);

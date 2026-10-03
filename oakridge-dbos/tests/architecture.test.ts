@@ -37,6 +37,8 @@ const DEV_FLOW_SOURCE_ALLOWLIST = {
   "http/cohort-pull-request.ts": "Exposes the dev-flow refresh route.",
   "main.ts": "Wires the forge poller at process startup.",
   "runtime/cohort-pull-request.ts": "Reconciles the dev-flow handoff.",
+  "runtime/implementation-worker-session.ts": "Resolves pinned implementation action inputs at the kbbl session boundary.",
+  "runtime/implementation-publication.ts": "Reads forge and origin evidence for implementation publication without writing bindings.",
   "runtime/compose.ts": "Wires dev-flow services and the contributor at composition.",
   "runtime/github-pull-requests.ts": "Polls forge pull requests for the adapter.",
   "runtime/resolve-work-order.ts": "Passes existing handoff context to the agent.",

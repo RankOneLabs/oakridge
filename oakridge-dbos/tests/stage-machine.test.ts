@@ -25,6 +25,15 @@ const pendingCohort = (): ImplementationCohortRecord => ({
   accepted_build: null,
 });
 
+test("implementation activation rejects an absent worktree base before selecting an execution", async () => {
+  const pending = pendingCohort();
+  const snapshot = { ...pending, inputs: { ...pending.inputs,
+    repository: { ...pending.inputs.repository, worktree_base_sha: null } } };
+  expect(evaluateCohort({ definition: await evaluatorDefinition(), snapshot, request: null,
+    pr: null, available_artifacts: [ref] })).toMatchObject({ ok: false,
+    error: { detail: expect.stringContaining("unavailable input inputs.repository") } });
+});
+
 test("the committed implementation tree starts a pending cohort with resolved frozen inputs", async () => {
   const selected = evaluateCohort({ definition: await evaluatorDefinition(), snapshot: pendingCohort(),
     request: null, pr: null, available_artifacts: [ref] });

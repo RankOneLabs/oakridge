@@ -1,6 +1,5 @@
-import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import type { ImplementationCohortInputs, ArtifactRef, PreparedImplementationRepository } from "../domain/dev-flow-v15";
+import type { ImplementationCohortInputs } from "../domain/dev-flow-v15";
 /**
  * How an Oakridge backend is assembled.
  *
@@ -30,10 +29,8 @@ import { compileWorkflowDefinition } from "../compiler/compile-workflow";
 import { stageInstanceIdFor } from "../decision/ids";
 import { createLegacyValidationRegistry } from "../compiler/compile-workflow";
 import { DEV_FLOW_ARTIFACT_TYPES, findArtifactType } from "../domain/artifact-types";
-import { selectAssessmentRevisionContext } from "../domain/dev-flow-artifacts";
-import type { ArtifactEnvelope, ExecutionRequest, ExecutorAdapter } from "../domain/execution";
-import { err, ok, type AttemptId, type JsonValue, type Result, type UnitId, type WorkOrderId, type WorkflowRunId } from "../domain/primitives";
-import { parseGithubPullRequestIdentity, repositoriesMatch } from "../domain/pull-request";
+import type { ExecutorAdapter } from "../domain/execution";
+import { err, ok, type AttemptId, type JsonValue, type UnitId, type WorkflowRunId } from "../domain/primitives";
 import type { GitCommandRunner } from "../domain/repository-provisioning";
 import type { InitializeStageInstance } from "../domain/run-record";
 import type { RetryCohortResult, RetryCohortTarget } from "../domain/run-record";
@@ -67,14 +64,13 @@ import "../workflows/collaboration-responder";
 import { DbosRunLaunchClient } from "./dbos-run-launch-client";
 import { DbosCollaborationPingClient, PostgresSessionMessageRecipientResolver, PostgresSessionMessageRepository } from "./collaboration-ping";
 import { BunGitCommandRunner } from "./git-command-runner";
-import { createPromptTemplateLoader, renderActionPrompt, type ReferencedActionArtifact } from "./prompt-template";
+import { createPromptTemplateLoader } from "./prompt-template";
 import { GitProjectRepositoryIdentityResolver } from "./project-identity";
-import { dispatchRunLaunches, dispatchCohortExecution, stopCohortExecution, type WorkerSessionIO } from "./run-launch-dispatch";
+import { dispatchRunLaunches, dispatchCohortExecution, stopCohortExecution } from "./run-launch-dispatch";
+import { createImplementationWorkerSessionIO } from "./implementation-worker-session";
+import { createImplementationPublicationEnricher } from "./implementation-publication";
 import { publishWorkOrderArtifact } from "./publish-work-order-artifact";
-import { prepareDevFlowBuildCohort, verifyAndBindCohortPullRequest, verifyCohortPullRequest } from "./cohort-pull-request";
-
-const isJsonObject = (value: JsonValue): value is { readonly [key: string]: JsonValue } =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+import { prepareDevFlowBuildCohort, verifyCohortPullRequest } from "./cohort-pull-request";
 
 export interface OakridgeRuntimeConfig {
   readonly database_url: string;
@@ -231,59 +227,8 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
 
   registerDbosTransportClient(client);
   for (const adapter of config.executor_adapters) registerExecutorAdapter(adapter);
-  const enrichStagePublication = async (input: { readonly attempt_id: AttemptId;
-    readonly output_name: string; readonly body: JsonValue }): Promise<Result<JsonValue | null,
-      { readonly code: string; readonly detail: string }>> => {
-    if (input.output_name !== "pr_summary") return ok(null);
-    const rows = await sql.query<{ readonly run_id: WorkflowRunId; readonly repository_key: string;
-      readonly repository_path: string; readonly canonical_ref: string; readonly expected_pr_base: string;
-      readonly stage_instance_id: import("../domain/primitives").StageInstanceId; readonly cohort_key: string;
-      readonly action_point: string }>(
-      `SELECT attempt.run_id,build.repository_key,build.repository_path,build.canonical_ref,build.expected_pr_base,
-         build.stage_instance_id,build.cohort_key,intent.action_point
-       FROM oakridge.attempt attempt JOIN dev_flow.build_cohort build ON build.cohort_id=attempt.cohort_id
-       JOIN oakridge.execution_intent intent ON intent.attempt_id=attempt.id
-       WHERE attempt.id=$1`, [input.attempt_id]);
-    const roles = rows[0];
-    const expected_repository = roles ? await forgeRepositories.find_forge_repository(roles.run_id, roles.repository_key) : null;
-    const base = { expected_repository, expected_pr_base: roles?.expected_pr_base ?? null,
-      canonical_ref: roles?.canonical_ref ?? null };
-    const url = isJsonObject(input.body) && typeof input.body.pr_url === "string" ? input.body.pr_url : null;
-    const identity = url ? parseGithubPullRequestIdentity(url) : null;
-    const invalid = (detail: string) => err({ code: "pr_verification_failed", detail });
-    if (!url || !identity || !roles || !expected_repository) return invalid("PR identity or repository authority is missing");
-    if (!isJsonObject(input.body) || input.body.repository_key !== roles.repository_key
-      || input.body.branch !== roles.canonical_ref || input.body.base_branch !== roles.expected_pr_base)
-      return invalid("PR summary disagrees with the cohort repository or branch contract");
-    if (!repositoriesMatch(identity.owner, identity.name, expected_repository.owner, expected_repository.name))
-      return invalid("PR URL belongs to a different repository");
-    const reader = config.pull_request_reader;
-    if (!reader) return err({ code: "enrichment_unavailable", detail: "GitHub reader is not configured" });
-    const reading = await reader.read(identity.owner, identity.name, identity.number);
-    if (!reading.ok) return err({ code: "enrichment_unavailable", detail: reading.error.detail });
-    if (reading.value === null) return invalid("PR was not found at the forge");
-    const observed = reading.value;
-    if (!repositoriesMatch(observed.owner, observed.name, expected_repository.owner, expected_repository.name)
-      || observed.number !== identity.number || observed.head_branch !== roles.canonical_ref
-      || observed.base_branch !== roles.expected_pr_base || !observed.head_sha)
-      return invalid("forge PR observation disagrees with the cohort repository, branches, or head");
-    const ref = `refs/heads/${roles.canonical_ref}`;
-    let remote: Awaited<ReturnType<GitCommandRunner["run"]>>;
-    try { remote = await git.run(roles.repository_path, ["ls-remote", "origin", ref]); }
-    catch (error) { return err({ code: "enrichment_unavailable", detail: String(error) }); }
-    if (remote.exit_code !== 0) return err({ code: "enrichment_unavailable", detail: remote.stderr.trim() || "origin could not be read" });
-    const origin_head_sha = remote.stdout.trim().split(/\s+/)[0] || null;
-    if (origin_head_sha !== observed.head_sha) return invalid("forge PR head differs from the pushed cohort head");
-    const cohort = await cohortPullRequests.find_cohort_for_unit(roles.stage_instance_id, roles.cohort_key as UnitId);
-    if (!cohort) return invalid("prepared cohort repository is missing");
-    const current = await cohortPullRequests.find_current_for_unit(roles.stage_instance_id, roles.cohort_key as UnitId);
-    const bound = await verifyAndBindCohortPullRequest({ pull_requests: cohortPullRequests,
-      reader: config.pull_request_reader, git, now }, { cohort, forge_repository: expected_repository,
-      candidate_url: url, replace_verification_id: roles.action_point === "replace_pr"
-        ? current?.cohort.current_verified_pull_request_id ?? null : null });
-    if (!bound.ok) return invalid(bound.error.detail);
-    return ok({ ...base, pr: bound.value.observation as unknown as JsonValue, origin_head_sha: bound.value.head_sha });
-  };
+  const enrichStagePublication = createImplementationPublicationEnricher({ sql, git,
+    pull_requests: cohortPullRequests, forge_repositories: forgeRepositories, reader: config.pull_request_reader });
   registerExecutorAdapter(new RepositoryProvisioningAdapter({
     git,
     publish_work_order: async (request) => {
@@ -360,94 +305,8 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     return bundle.matrix;
   };
 
-  const workerSessionIO: WorkerSessionIO = {
-    now,
-    create_session: async (intent) => {
-      const rows = await sql.query<{ readonly frozen_inputs: ImplementationCohortInputs; readonly cohort_key: string }>(
-        "SELECT frozen_inputs,cohort_key FROM oakridge.cohort WHERE id=$1", [intent.cohort_id]);
-      const cohort = rows[0];
-      const repository = cohort?.frozen_inputs.repository;
-      if (!repository?.worktree_base_sha)
-        return err({ detail: "prepared implementation repository is missing" });
-      const bundle = await promptBundleOf(intent.run_id);
-      const prompt = bundle.find((entry) => entry.template_path === intent.prompt);
-      if (!prompt) return err({ detail: `pinned prompt ${intent.prompt} is unavailable` });
-      const source = intent.resolved_input;
-      const refs: ArtifactRef[] = [];
-      const collect = (value: JsonValue): void => {
-        if (Array.isArray(value)) { for (const member of value) collect(member); return; }
-        if (!isJsonObject(value)) return;
-        if (typeof value.id === "string" && typeof value.version === "number") {
-          refs.push({ id: value.id as ArtifactRef["id"], version: value.version }); return;
-        }
-        for (const member of Object.values(value)) collect(member);
-      };
-      collect(source);
-      const inputs: ArtifactEnvelope[] = [];
-      const referenced: ReferencedActionArtifact[] = [];
-      for (const ref of refs) {
-        const artifacts = await sql.query<{ readonly id: string; readonly artifact_type: string; readonly body: JsonValue }>(
-          `SELECT artifact.id::text,artifact.artifact_type,artifact.body FROM oakridge.artifact artifact
-           JOIN oakridge.artifact_owner owner ON owner.artifact_id=artifact.id
-           WHERE artifact.chain_id=$1 AND artifact.revision=$2 AND owner.run_id=$3`, [ref.id, ref.version, intent.run_id]);
-        const artifact = artifacts[0];
-        if (!artifact) return err({ detail: `pinned input ${ref.id}@${ref.version} is unavailable` });
-        inputs.push({ artifact_id: artifact.id as ArtifactEnvelope["artifact_id"], artifact_type: artifact.artifact_type,
-          output_name: artifact.artifact_type, unit_id: cohort.cohort_key as UnitId, body: artifact.body, chain_id: ref.id });
-        const revision_context = selectAssessmentRevisionContext(artifact.artifact_type, artifact.body);
-        referenced.push({ ref, artifact_type: artifact.artifact_type, body: artifact.body,
-          ...(revision_context ? { revision_context: revision_context as unknown as JsonValue } : {}) });
-      }
-      const declared_outputs = intent.worker === "build"
-        ? [{ name: "build_result", artifact_type: "dev.build_result", required: true },
-          { name: "pr_summary", artifact_type: "dev.pr_summary", required: true }]
-        : [{ name: "assessment", artifact_type: "dev.assessment", required: true }];
-      const adapter = findExecutorAdapter("delegated_session");
-      if (!adapter) return err({ detail: "delegated session integration is unavailable" });
-      const context = await runContextOf(intent.run_id);
-      const base_url = isJsonObject(context ?? null) && typeof (context as { readonly oakridge_url?: JsonValue }).oakridge_url === "string"
-        ? (context as { readonly oakridge_url: string }).oakridge_url : "";
-      if (!base_url) return err({ detail: "run publication URL is unavailable" });
-      const discussion = intent.worker === "assessment" && isJsonObject(source)
-        ? intent.action_point === "discuss" ? source
-          : intent.action_point === "retry" && isJsonObject(source.work) && source.work.action_point === "discuss"
-            && isJsonObject(source.work.input) ? source.work.input : null
-        : null;
-      const unchanged = discussion && isJsonObject(discussion.current_assessment) && isJsonObject(discussion.accepted_build)
-        ? { assessment: discussion.current_assessment, build: discussion.accepted_build } : null;
-      const { capabilityFor } = await import("./resolve-work-order");
-      const request: ExecutionRequest = {
-        execution_id: intent.execution_id, stage_instance_id: intent.stage_instance_id, unit_id: cohort.cohort_key as UnitId,
-        executor_type: "delegated_session", inputs, declared_outputs,
-        expected_artifacts: declared_outputs.map((output) => ({ unit_id: cohort.cohort_key as UnitId,
-          output_name: output.name, artifact_type: output.artifact_type })),
-        resolved_config: { ...intent.settings, session_name: intent.execution_id, workdir: repository.worktree_path,
-          rendered_prompt: renderActionPrompt({ template: prompt.content,
-            fields: source as Readonly<Record<string, JsonValue>>, artifacts: referenced,
-            execution: { worker: intent.worker, action_point: intent.action_point, cohort_id: intent.cohort_id },
-            repository: repository as PreparedImplementationRepository }),
-          publication: { base_url, work_order_id: intent.attempt_id,
-            capability: capabilityFor(await runRecords.load_work_order_capability_seed(), intent.attempt_id as WorkOrderId) },
-          ...(unchanged ? { assessment_unchanged: unchanged } : {}),
-          session_identity: { run_id: intent.run_id, stage_instance_id: intent.stage_instance_id, unit_id: cohort.cohort_key,
-            cohort_id: intent.cohort_id, operator_role: intent.worker, cohort_title: null,
-            repository_key: repository.refs.repository_key },
-        },
-      };
-      const { executorOperationIdForWorkOrder } = await import("../domain/primitives");
-      const started = await adapter.start_or_attach(request, executorOperationIdForWorkOrder(intent.attempt_id as WorkOrderId));
-      if (started.kind !== "kbbl_session") return err({ detail: started.kind === "executor_unavailable" ? started.detail : "integration did not create an agent session" });
-      return ok({ execution_id: intent.execution_id, session_id: randomUUID() as import("../domain/primitives").SessionId,
-        kbbl_session_id: started.session_id });
-    },
-    stop_session: async (session) => {
-      const adapter = findExecutorAdapter("delegated_session");
-      if (!adapter) return err({ detail: "delegated session integration is unavailable" });
-      const stopped = await adapter.cancel_or_fence(session.execution_id,
-        { kind: "kbbl_session", session_id: session.kbbl_session_id });
-      return stopped?.kind === "executor_unavailable" ? err({ detail: stopped.detail }) : ok(undefined);
-    },
-  };
+  const workerSessionIO = createImplementationWorkerSessionIO({ sql, records: runRecords,
+    prompt_bundle: promptBundleOf, run_context: runContextOf, find_executor: findExecutorAdapter, now });
   const dispatchWorkerExecution = async (execution_id: import("../domain/primitives").ExecutionId): Promise<void> => {
     const dispatched = await dispatchCohortExecution(sql, execution_id, workerSessionIO);
     if (!dispatched.ok && dispatched.error.kind === "stop_failed") throw new Error(dispatched.error.detail);

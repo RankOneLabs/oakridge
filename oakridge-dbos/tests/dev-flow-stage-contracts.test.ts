@@ -111,23 +111,7 @@ test("seeded spec and plan stages resolve their real prompts and release contrac
   expect(brief.outputs[0]?.release.kind).toBe("gate");
 });
 
-test("seeded build stage resolves a cohort's real prompt, worktree, and release contract", async () => {
-  const workflow = await loadCompiled();
-  const build = workflow.stages.build!;
-  const briefBody = { cohort_id: "web", repository_key: "oakridge", title: "Web", goal: "ui", files_in_scope: [], next_action: "build", decisions_made: [], acceptance_criteria: ["ui works"], depends_on: ["foundation"] };
-  const brief = envelope("brief-2", "dev.build_brief", "brief", "web", briefBody);
-  const web: MaterializedExecutionUnit = { unit_id: "web" as UnitId, parameters: { unit_id: "web", artifact: briefBody }, depends_on: ["foundation" as UnitId] };
-  const inputs = { brief: [brief], repository_refs: repositoryRefs };
-  const execution = await resolveStage(build, web, inputs);
-  expect(execution).toEqual({ ok: true, value: expect.objectContaining({ workdir: "/repo/oakridge", rendered_prompt: expect.stringContaining("- ID: web"),
-    worktree: { branchName: "cohort/stage-1/web", worktreeSubdir: "stage-1/web", baseRef: "epic/test" } }) });
-  expect(build.outputs.find((output) => output.name === "build_result")?.release).toEqual(expect.objectContaining({ kind: "gate", gate_name: "build_review" }));
-  expect(build.outputs.find((output) => output.name === "assessment")?.release).toEqual(expect.objectContaining({ kind: "gate", gate_name: "assessment_review" }));
-  const buildDefinition = build.executor.definition_config as DelegatedSessionDefinitionConfig;
-  expect(buildDefinition.gates.find((gate) => gate.name === "build_review")?.steps).toEqual([
-    { type: "artifact_approval", actions: ["approve", "request_revision"] },
-  ]);
-});
+
 
 /**
  * The build stage reads its repository from the provisioning stage's artifact,
@@ -167,28 +151,7 @@ test("a build unit whose repository was never provisioned resolves to a named fa
   expect(execution).toEqual({ ok: false, error: expect.objectContaining({ detail: expect.stringContaining("input lookup key 'absent' matched 0 entries") }) });
 });
 
-test("the build stage's assessor role resolves its prompt in the same cohort", async () => {
-  const workflow = await loadCompiled();
-  const build = workflow.stages.build!;
-  const briefBody = { cohort_id: "web", repository_key: "oakridge", title: "Web", goal: "ui", files_in_scope: [], next_action: "build", decisions_made: [], acceptance_criteria: ["ui works"], depends_on: [] };
-  const brief = envelope("brief-2", "dev.build_brief", "brief", "web", briefBody);
-  const result = envelope("result-2", "dev.build_result", "build_result", "web", { repository_key: "oakridge", summary: "web done" });
-  const web: MaterializedExecutionUnit = { unit_id: "web" as UnitId, parameters: { unit_id: "web", artifact: briefBody }, depends_on: [] };
-  const definition = build.executor.definition_config as DelegatedSessionDefinitionConfig;
-  const prompt = definition.prompt_matrix.find((entry) => entry.session_role === "assessment" && entry.launch_reason === "initial_assessment");
-  if (!prompt) throw new Error("missing initial assessor prompt");
-  const template = await Bun.file(new URL(`../../workflow-config/prompts/${prompt.template_path}`, import.meta.url)).text();
-  const workOrder = await resolveWorkOrder({ run_id: runId, stage: build, stage_instance_id: stageInstanceId, unit: web,
-    inputs: { brief: [brief], repository_refs: repositoryRefs }, accepted_cohort_outputs: [result], context, outputs: [],
-    identity: "assessment:initial", capability_seed: "test-seed",
-    session_launch: { reason: { transition_id: "11111111-1111-4111-8111-111111111111" as RunTransitionId, name: "initial_assessment" },
-      session_role: "assessment", prompt: { template_path: prompt.template_path, content: template }, existing_pull_request: "https://example.test/pull/7" } });
-  const rendered = (workOrder.request.resolved_config as { readonly rendered_prompt: string }).rendered_prompt;
-  expect(rendered).toContain("ui works");
-  expect(rendered).toContain("web done");
-  expect(rendered).not.toContain("base works");
-  expect(build.outputs.find((output) => output.name === "assessment")?.release).toEqual(expect.objectContaining({ kind: "gate", gate_name: "assessment_review" }));
-});
+
 
 test("every spec prompt matrix cell renders the generated contract for valid and invalid slots", async () => {
   const workflow = await loadCompiled();
@@ -254,38 +217,7 @@ test("canonical v15 has six stages and eighteen distinct authored prompt referen
   expect(cells.every((cell) => cell.path.startsWith("workflow-config/prompts/dev-flow/v15/"))).toBe(true);
 });
 
-test("all seven build loop prompt cells render the persisted cohort branch contract", async () => {
-  const workflow = await loadCompiled();
-  const build = workflow.stages.build!;
-  const definition = build.executor.definition_config as DelegatedSessionDefinitionConfig;
-  const briefBody = { cohort_id: "web", repository_key: "oakridge", title: "Web", goal: "ui", files_in_scope: [],
-    next_action: "build", decisions_made: [], acceptance_criteria: ["ui works"], depends_on: [] };
-  const brief = envelope("brief-2", "dev.build_brief", "brief", "web", briefBody);
-  const result = envelope("result-2", "dev.build_result", "build_result", "web", { repository_key: "oakridge", summary: "web done" });
-  const web: MaterializedExecutionUnit = { unit_id: "web" as UnitId,
-    parameters: { unit_id: "web", artifact: briefBody }, depends_on: [] };
 
-  expect(definition.prompt_matrix).toHaveLength(7);
-  for (const [index, cell] of definition.prompt_matrix.entries()) {
-    const template = await Bun.file(new URL(`../../workflow-config/prompts/${cell.template_path}`, import.meta.url)).text();
-    const workOrder = await resolveWorkOrder({ run_id: runId, stage: build, stage_instance_id: stageInstanceId, unit: web,
-      inputs: { brief: [brief], repository_refs: repositoryRefs }, accepted_cohort_outputs: [result], context, outputs: [],
-      identity: `matrix:${index}`, capability_seed: "test-seed", build_cohort: buildCohort,
-      session_launch: { reason: { transition_id: `11111111-1111-4111-8111-${String(index).padStart(12, "0")}` as RunTransitionId,
-        name: cell.launch_reason }, session_role: cell.session_role,
-        prompt: { template_path: cell.template_path, content: template },
-        existing_pull_request: cell.launch_reason === "initial_build" ? null : "https://example.test/pull/7" } });
-    const resolved = workOrder.request.resolved_config as { readonly rendered_prompt: string; readonly worktree?: { readonly branchName: string } };
-    expect(resolved.rendered_prompt).toContain("## Generated session contract");
-    expect(resolved.rendered_prompt).toContain(`Launch reason: ${cell.launch_reason}`);
-    expect(resolved.rendered_prompt).toContain(`Canonical cohort ref: ${buildCohort.canonical_ref}`);
-    expect(resolved.rendered_prompt).toContain(`Pull request base: ${buildCohort.expected_pr_base}`);
-    if (cell.session_role === "build") {
-      expect(resolved.worktree?.branchName).toBe(buildCohort.canonical_ref);
-      expect(resolved.rendered_prompt).toContain("Authorized outputs: pr_summary, build_result");
-    }
-  }
-});
 
 test("final integration renders its stored canonical ref and pull request base", async () => {
   const workflow = await loadCompiled();
@@ -313,4 +245,19 @@ test("final integration renders its stored canonical ref and pull request base",
   expect(resolved.rendered_prompt).toContain(`Canonical cohort ref: ${finalCohort.canonical_ref}`);
   expect(resolved.rendered_prompt).toContain(`Pull request base: ${finalCohort.expected_pr_base}`);
   expect(stage.outputs[0]?.release).toEqual(expect.objectContaining({ kind: "gate", gate_name: "final_integration_review" }));
+});
+
+// B3 rendering and worktree behavior are covered through kbbl in implementation-boundaries.test.ts.
+// Graph fixture rendering belongs to the remaining B4 stage migration.
+test("every implementation action prompt uses labeled inputs without placeholder variables", async () => {
+  const { loadDevFlowV15: loadCanonical } = await import("../src/seed/dev-flow-v15");
+  const { v15PromptReferences } = await import("../src/compiler/compile-v15");
+  const loaded = await loadCanonical();
+  if (!loaded.ok) throw new Error(loaded.error.detail);
+  const prompts = v15PromptReferences(loaded.value).filter((entry) => entry.stage_key === "implementation");
+  expect(prompts).toHaveLength(7);
+  for (const prompt of prompts) {
+    const content = await Bun.file(new URL(`../../${prompt.path}`, import.meta.url)).text();
+    expect(content).not.toMatch(/\{\{[^}]+\}\}/);
+  }
 });
