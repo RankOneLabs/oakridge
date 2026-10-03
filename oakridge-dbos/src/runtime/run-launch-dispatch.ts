@@ -1,5 +1,8 @@
 import type { WorkflowRunRepository } from "../storage/repositories";
 import type { Result, RootWorkflowId, WorkflowRunId } from "../domain/primitives";
+import { evaluateCohort, type CohortEvaluationInput } from "../decision/stage-machine";
+import type { CohortDecisionError, OperatorRequestEnvelope, SelectedDecision } from "../domain/dev-flow-v15";
+import type { CommitSelectedCohortError, CommittedSelectedCohort } from "../storage/postgres-run-record";
 
 export interface RunStartRequest {
   readonly workflow_id: RootWorkflowId;
@@ -56,4 +59,36 @@ export const dispatchRunLaunches = async (
     }
     if (page.length < PAGE_SIZE || failed > 0) return started;
   }
+};
+
+export interface CohortProgressionPort {
+  readonly load: () => Promise<Omit<CohortEvaluationInput, "request">>;
+  readonly commit: (decision: Extract<SelectedDecision, { readonly kind: "apply" }>,
+    request: OperatorRequestEnvelope | null) => Promise<Result<CommittedSelectedCohort, CommitSelectedCohortError>>;
+  readonly dispatch: (execution_ids: CommittedSelectedCohort["execution_ids"]) => Promise<void>;
+}
+
+export type CohortProgressionError = CohortDecisionError | CommitSelectedCohortError
+  | { readonly kind: "progression_limit"; readonly detail: string };
+
+/** A request is offered until one commit consumes it; automatic decisions then run to quiescence. */
+export const advanceCohortUntilWait = async (port: CohortProgressionPort,
+  request: OperatorRequestEnvelope | null): Promise<Result<{ readonly commits: number; readonly reason: string }, CohortProgressionError>> => {
+  let pending_request = request;
+  let commits = 0;
+  for (let index = 0; index < 128; index++) {
+    const snapshot = await port.load();
+    const selected = evaluateCohort({ ...snapshot, request: pending_request?.request ?? null });
+    if (!selected.ok) return selected;
+    if (selected.value.kind === "wait") return { ok: true, value: { commits, reason: selected.value.reason } };
+    const committed = await port.commit(selected.value, pending_request);
+    if (!committed.ok) {
+      if (committed.error.kind === "version_conflict") continue;
+      return committed;
+    }
+    commits++;
+    pending_request = null;
+    await port.dispatch(committed.value.execution_ids);
+  }
+  return { ok: false, error: { kind: "progression_limit", detail: "cohort did not reach a wait in 128 commits" } };
 };

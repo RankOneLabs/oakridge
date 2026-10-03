@@ -52,6 +52,12 @@ const currentBuild = (snapshot: ImplementationCohortRecord) => {
     ? { build_result: { id: build_result.id, version: build_result.version },
         pr_summary: { id: pr_summary.id, version: pr_summary.version } } : null;
 };
+const acceptedBuildForAction = (snapshot: ImplementationCohortRecord, request: OperatorRequest | null) => {
+  if (snapshot.accepted_build) return snapshot.accepted_build;
+  if (request?.kind !== "accept_build" || !sameBuildTarget(snapshot, request.target)) return null;
+  const pr_url = snapshot.build.outputs.pr_summary?.body.pr_url;
+  return pr_url ? { outputs: request.target.outputs, head_sha: request.target.head_sha, pr_url } : null;
+};
 const sameBuildTarget = (snapshot: ImplementationCohortRecord, target: BuildReviewTarget): boolean => {
   const outputs = currentBuild(snapshot);
   return outputs !== null && sameRef(outputs.build_result, target.outputs.build_result)
@@ -133,6 +139,24 @@ const invalidCombination = (snapshot: ImplementationCohortRecord): string | null
 const artifactAvailable = (ref: ArtifactRef, available: readonly ArtifactRef[]): boolean =>
   available.some((candidate) => sameRef(candidate, ref));
 
+const referencedArtifacts = (value: unknown): readonly ArtifactRef[] => {
+  if (value === null || typeof value !== "object") return [];
+  if (Array.isArray(value)) return value.flatMap(referencedArtifacts);
+  if ("id" in value && "version" in value && typeof value.id === "string" && typeof value.version === "number")
+    return [value as ArtifactRef];
+  return Object.values(value).flatMap(referencedArtifacts);
+};
+
+const requiredActionFields: Readonly<Record<string, readonly string[]>> = {
+  "build.initial": ["brief", "repository"],
+  "build.revise": ["brief", "repository", "current_build", "feedback"],
+  "build.retry": ["work", "interrupted", "build_result", "pr_summary"],
+  "build.replace_pr": ["brief", "repository", "current_build", "closed_pr"],
+  "assessment.initial": ["brief", "repository", "accepted_build"],
+  "assessment.discuss": ["brief", "repository", "accepted_build", "current_assessment", "feedback"],
+  "assessment.retry": ["work", "interrupted", "assessment"],
+};
+
 const resolveImplementationAction = (input: CohortEvaluationInput, action: V15WorkerAction):
   Result<ResolvedWorkerAction, string> => {
   const { snapshot, request, definition, pr, available_artifacts } = input;
@@ -140,6 +164,10 @@ const resolveImplementationAction = (input: CohortEvaluationInput, action: V15Wo
   const configured = definition.workers[action.worker].action_points[action.action_point as never] as
     { readonly prompt: string; readonly inputs: Readonly<Record<string, { readonly from: string }>> } | undefined;
   if (!configured?.prompt.trim()) return err(`missing prompt for ${action.worker}.${action.action_point}`);
+  const expectedFields = requiredActionFields[`${action.worker}.${action.action_point}`];
+  if (!expectedFields || expectedFields.length !== Object.keys(configured.inputs).length
+    || expectedFields.some((field) => !(field in configured.inputs)))
+    return err(`incomplete input bindings for ${action.worker}.${action.action_point}`);
   const build = currentBuild(snapshot);
   const interruptedBuild = snapshot.build.interrupted;
   const interruptedAssessment = snapshot.assessment.interrupted;
@@ -153,7 +181,7 @@ const resolveImplementationAction = (input: CohortEvaluationInput, action: V15Wo
     "build.interrupted.build_result": interruptedBuild?.build_result ?? null,
     "build.interrupted.pr_summary": interruptedBuild?.pr_summary ?? null,
     "observations.pr": pr,
-    "accepted_build": snapshot.accepted_build,
+    "accepted_build": acceptedBuildForAction(snapshot, request),
     "assessment.work.input.accepted_build": snapshot.assessment.work?.input.accepted_build ?? null,
     "assessment.outputs.assessment": snapshot.assessment.outputs.assessment
       ? { id: snapshot.assessment.outputs.assessment.id, version: snapshot.assessment.outputs.assessment.version } : null,
@@ -168,10 +196,7 @@ const resolveImplementationAction = (input: CohortEvaluationInput, action: V15Wo
       return err(`unavailable input ${binding.from} for ${action.worker}.${action.action_point}.${field}`);
     resolved[field] = value;
   }
-  const referenced = [snapshot.inputs.brief, ...Object.values(resolved).flatMap((value) => {
-    if (typeof value === "object" && value !== null && "id" in value && "version" in value) return [value as ArtifactRef];
-    return [];
-  })];
+  const referenced = referencedArtifacts(resolved);
   for (const ref of referenced) if (!artifactAvailable(ref, available_artifacts)) return err(`artifact ${ref.id}@${ref.version} is unavailable`);
   if (action.worker === "build") return ok({ worker: "build", action: { action_point: action.action_point,
     input: resolved } as ResolvedWorkerAction & never });
@@ -205,9 +230,10 @@ export const evaluateCohort = (input: CohortEvaluationInput): Result<SelectedDec
       case "wait": return ok({ kind: "wait", reason: node.reason });
       case "reject": return fail(request ? "invalid_request" : "invalid_state", node.reason);
       case "apply": {
+        const changes = node.changes;
         const workerStates = new Set<string>();
         const cohortStates = new Set<string>();
-        for (const change of node.changes) {
+        for (const change of changes) {
           if (change.kind === "set_worker_state") workerStates.add(`${change.worker}:${change.state}`);
           if (change.kind === "set_cohort_state") cohortStates.add(change.state);
           if ("worker" in change && change.worker !== "build" && change.worker !== "assessment")
@@ -216,9 +242,17 @@ export const evaluateCohort = (input: CohortEvaluationInput): Result<SelectedDec
         if (cohortStates.size > 1 || [...workerStates].some((entry) =>
           [...workerStates].filter((candidate) => candidate.startsWith(`${entry.split(":")[0]}:`)).length > 1))
           return fail("invalid_definition", "contradictory state writes");
+        if (changes.some((change) => change.kind === "capture_accepted_build")
+          && changes.some((change) => change.kind === "clear_accepted_build"))
+          return fail("invalid_definition", "captured build is both set and cleared");
+        if (changes.some((change) => change.kind === "accept_outputs"
+          && changes.some((candidate) => candidate.kind === "clear_acceptance" && candidate.worker === change.worker)))
+          return fail("invalid_definition", "acceptance is both set and cleared");
         const actions: ResolvedWorkerAction[] = [];
         for (const action of node.actions) {
-          if (!node.changes.some((change: V15Change) => change.kind === "set_worker_state"
+          if (actions.some((candidate) => candidate.worker === action.worker))
+            return fail("invalid_definition", `multiple actions for worker ${action.worker}`);
+          if (!changes.some((change: V15Change) => change.kind === "set_worker_state"
             && change.worker === action.worker && change.state === "working"))
             return fail("invalid_definition", `action ${action.worker}.${action.action_point} lacks working state`);
           const resolved = resolveImplementationAction(input, action);
@@ -226,7 +260,7 @@ export const evaluateCohort = (input: CohortEvaluationInput): Result<SelectedDec
           actions.push(resolved.value);
         }
         return ok({ kind: "apply", expected_version: snapshot.version,
-          changes: node.changes as readonly CohortChange[], actions });
+          changes: changes as readonly CohortChange[], actions });
       }
     }
   }
