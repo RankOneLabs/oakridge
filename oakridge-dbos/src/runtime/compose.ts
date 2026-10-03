@@ -55,6 +55,7 @@ import { PostgresOperatorProjectionRepository } from "../storage/postgres-operat
 import { PostgresProjectRepository } from "../storage/postgres-projects";
 import { PostgresRunRecordWriter } from "../storage/postgres-run-record";
 import { PostgresRunRecordRepository } from "../storage/postgres-run-record-repository";
+import { PostgresDevFlowPullRequestRepository } from "../storage/postgres-dev-flow";
 import { StageEventApplier } from "../storage/apply-stage-event";
 import { PostgresWorkflowDefinitionRepository } from "../storage/postgres-workflow-definitions";
 import { PgPostgresExecutor } from "../storage/sql-executor";
@@ -68,6 +69,7 @@ import { createPromptTemplateLoader, renderActionPrompt, type ReferencedActionAr
 import { GitProjectRepositoryIdentityResolver } from "./project-identity";
 import { dispatchRunLaunches, dispatchCohortExecution, stopCohortExecution, type WorkerSessionIO } from "./run-launch-dispatch";
 import { publishWorkOrderArtifact } from "./publish-work-order-artifact";
+import { prepareDevFlowBuildCohort } from "./cohort-pull-request";
 
 const isJsonObject = (value: JsonValue): value is { readonly [key: string]: JsonValue } =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -125,6 +127,8 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   }
   const now = config.now ?? (() => new Date().toISOString());
   const sql = PgPostgresExecutor.connect(config.database_url);
+  const git = config.git_commands ?? new BunGitCommandRunner();
+  const cohortPullRequests = new PostgresDevFlowPullRequestRepository(sql);
   const client = await DBOSClient.create({ systemDatabaseUrl: config.database_url });
 
   const adapterRegistry = createDevFlowAdapterRegistry();
@@ -137,6 +141,28 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const definitions = new PostgresWorkflowDefinitionRepository(sql, adapterRegistry, machineRegistry);
   const stages = new PostgresStageInstanceRepository(sql);
   const stageEvents = new StageEventApplier({ sql, writer,
+    prepare_repository: async (cohort_id) => {
+      const rows = await sql.query<{ readonly stage_instance_id: import("../domain/primitives").StageInstanceId;
+        readonly cohort_key: string; readonly frozen_inputs: ImplementationCohortInputs }>(
+        "SELECT stage_instance_id::text,cohort_key,frozen_inputs FROM oakridge.cohort WHERE id=$1", [cohort_id]);
+      const row = rows[0];
+      if (!row) return err({ detail: "implementation cohort is missing" });
+      const repository = row.frozen_inputs.repository;
+      if (repository.worktree_base_sha) return ok(undefined);
+      const prepared = await prepareDevFlowBuildCohort({ pull_requests: cohortPullRequests, git }, {
+        cohort_id, stage_instance_id: row.stage_instance_id, cohort_key: row.cohort_key,
+        repository: row.frozen_inputs.repository.refs, prepared_at: now(),
+      });
+      if (!prepared.ok) return err({ detail: prepared.error.detail });
+      if (prepared.value.cohort.canonical_ref !== repository.canonical_branch
+        || prepared.value.cohort.expected_pr_base !== repository.expected_pr_base)
+        return err({ detail: "prepared cohort branch disagrees with the frozen repository input" });
+      await sql.query(`UPDATE oakridge.cohort SET frozen_inputs=jsonb_set(frozen_inputs,
+        '{repository,worktree_base_sha}',to_jsonb($2::text))
+        WHERE id=$1 AND frozen_inputs #>> '{repository,worktree_base_sha}' IS NULL`,
+      [cohort_id, prepared.value.worktree_base_sha]);
+      return ok(undefined);
+    },
     dispatch_executions: async (ids) => {
       for (const execution_id of ids) await DBOS.startWorkflow(workerExecutionWorkflow,
         { workflowID: `v15-worker:${execution_id}` })(execution_id);
@@ -169,7 +195,6 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
 
   registerDbosTransportClient(client);
   for (const adapter of config.executor_adapters) registerExecutorAdapter(adapter);
-  const git = config.git_commands ?? new BunGitCommandRunner();
   const enrichStagePublication = async (input: { readonly attempt_id: AttemptId;
     readonly output_name: string; readonly body: JsonValue }): Promise<Result<JsonValue | null,
       { readonly code: string; readonly detail: string }>> => {

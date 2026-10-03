@@ -55,6 +55,8 @@ export interface PrepareDevFlowBuildCohortInput {
 export interface PreparedDevFlowBuildCohort {
   readonly cohort: DevFlowBuildCohort;
   readonly branch_contract: string;
+  /** The observed run-base head used to create this cohort's ref. */
+  readonly worktree_base_sha: string;
 }
 
 export interface PrepareDevFlowBuildCohortError {
@@ -106,7 +108,8 @@ export const prepareDevFlowBuildCohort = async (
       ["push", `--force-with-lease=${ref}:`, "origin", `${branchBase}:${ref}`]);
     if (pushed.exit_code !== 0) return prepareFailure("git_command_failed", pushed.stderr.trim() || "could not create origin cohort ref");
   }
-  if (existing) return ok({ cohort: existing, branch_contract: renderCohortBranchContract(existing) });
+  if (existing) return ok({ cohort: existing, branch_contract: renderCohortBranchContract(existing),
+    worktree_base_sha: existing.recorded_head_sha });
   const cohort = await dependencies.pull_requests.create_cohort({
     cohort_id: input.cohort_id, stage_instance_id: input.stage_instance_id, cohort_key: input.cohort_key,
     repository_key: input.repository.repository_key, repository_path: input.repository.repository_path,
@@ -115,7 +118,7 @@ export const prepareDevFlowBuildCohort = async (
     created_at: input.prepared_at, updated_at: input.prepared_at,
   });
   if (!cohort.ok) return prepareFailure("cohort_storage_failed", cohort.error.detail);
-  return ok({ cohort: cohort.value, branch_contract: renderCohortBranchContract(cohort.value) });
+  return ok({ cohort: cohort.value, branch_contract: renderCohortBranchContract(cohort.value), worktree_base_sha: branchBase });
 };
 
 export interface PullRequestForgeReader {
