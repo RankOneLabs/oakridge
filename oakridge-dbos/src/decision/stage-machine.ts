@@ -1,4 +1,5 @@
 import { err, ok, type Result } from "../domain/primitives";
+import { validatePlanCohorts } from "./schedule-cohorts";
 import type { ArtifactRef, CohortDecisionError, ImplementationCohortDefinition, ImplementationCohortRecord,
   OperatorRequest, ResolvedWorkerAction, SelectedDecision, VerifiedPrObservation, V15DecisionTree,
   V15Fact, V15WorkerAction, V15Change, CohortChange, BuildReviewTarget, AssessmentReviewTarget,
@@ -119,8 +120,12 @@ export const specOutputsReady = (cohort: SpecAnalysisCohortRecord): boolean =>
   reviewOutputReady(cohort.spec.active_execution_id, cohort.spec.response, cohort.spec.outputs.spec_analysis);
 export const specExecutionInterrupted = (cohort: SpecAnalysisCohortRecord): boolean =>
   reviewExecutionInterrupted(cohort.spec.active_execution_id, cohort.spec.interrupted);
-export const planOutputsReady = (cohort: PlanningCohortRecord): boolean =>
-  reviewOutputReady(cohort.plan.active_execution_id, cohort.plan.response, cohort.plan.outputs.plan);
+export const planOutputsReady = (cohort: PlanningCohortRecord): boolean => {
+  if (!reviewOutputReady(cohort.plan.active_execution_id, cohort.plan.response, cohort.plan.outputs.plan)) return false;
+  const plan = cohort.plan.outputs.plan;
+  return plan !== null && validatePlanCohorts(plan.body,
+    new Set(cohort.inputs.repositories.map((repository) => repository.repository_key))).ok;
+};
 export const planExecutionInterrupted = (cohort: PlanningCohortRecord): boolean =>
   reviewExecutionInterrupted(cohort.plan.active_execution_id, cohort.plan.interrupted);
 export const briefOutputsReady = (cohort: BriefWritingCohortRecord): boolean => {
@@ -134,17 +139,28 @@ export const briefOutputsReady = (cohort: BriefWritingCohortRecord): boolean => 
 };
 export const briefExecutionInterrupted = (cohort: BriefWritingCohortRecord): boolean =>
   reviewExecutionInterrupted(cohort.brief.active_execution_id, cohort.brief.interrupted);
-export const finalOutputsReady = (cohort: FinalIntegrationCohortRecord): boolean =>
+const finalPrMatchesRepository = (cohort: FinalIntegrationCohortRecord, pr: VerifiedPrObservation | null): boolean =>
+  pr !== null && pr.repository_key === cohort.inputs.repository.repository_key
+    && pr.head_branch === cohort.inputs.repository.base_branch
+    && pr.base_branch === cohort.inputs.repository.integration_branch;
+export const finalOutputsReady = (cohort: FinalIntegrationCohortRecord, pr: VerifiedPrObservation | null): boolean =>
   reviewOutputReady(cohort.final_integration.active_execution_id, cohort.final_integration.response,
-    cohort.final_integration.outputs.pr_summary);
+    cohort.final_integration.outputs.pr_summary)
+  && finalPrMatchesRepository(cohort, pr)
+  && pr?.pr_url === cohort.final_integration.outputs.pr_summary?.body.pr_url
+  && pr?.head_sha !== null;
 export const finalExecutionInterrupted = (cohort: FinalIntegrationCohortRecord): boolean =>
   reviewExecutionInterrupted(cohort.final_integration.active_execution_id, cohort.final_integration.interrupted);
-export const finalPrMergedAtReviewedHead = (pr: VerifiedPrObservation | null,
-  target: FinalPrReviewTarget | null): boolean =>
-  pr?.state === "merged" && target !== null && pr.pr_url === target.pr_url && pr.head_sha === target.head_sha;
-export const finalPrClosedUnmerged = (pr: VerifiedPrObservation | null,
-  target: FinalPrReviewTarget | null): boolean =>
-  pr?.state === "closed" && target !== null && pr.pr_url === target.pr_url && pr.head_sha === target.head_sha;
+export const finalPrMergedAtReviewedHead = (cohort: FinalIntegrationCohortRecord,
+  pr: VerifiedPrObservation | null, target: FinalPrReviewTarget | null): boolean =>
+  finalPrMatchesRepository(cohort, pr) && pr?.state === "merged" && target !== null
+  && sameRef(target.pr_summary, currentRef(cohort.final_integration.outputs.pr_summary))
+  && pr.pr_url === target.pr_url && pr.head_sha === target.head_sha;
+export const finalPrClosedUnmerged = (cohort: FinalIntegrationCohortRecord,
+  pr: VerifiedPrObservation | null, target: FinalPrReviewTarget | null): boolean =>
+  finalPrMatchesRepository(cohort, pr) && pr?.state === "closed" && target !== null
+  && sameRef(target.pr_summary, currentRef(cohort.final_integration.outputs.pr_summary))
+  && pr.pr_url === target.pr_url && pr.head_sha === target.head_sha;
 
 /** Every authored v15 fact is a fixed transform over a typed snapshot. */
 export const evaluateV15Fact = (context: V15FactContext, fact: V15Fact): boolean | null => {
@@ -168,10 +184,10 @@ export const evaluateV15Fact = (context: V15FactContext, fact: V15Fact): boolean
     case "implementation": return implementationFact(fact, context.cohort, context.pr);
     case "final_integration":
       switch (fact) {
-        case "final_outputs_ready": return finalOutputsReady(context.cohort);
+        case "final_outputs_ready": return finalOutputsReady(context.cohort, context.pr);
         case "final_execution_interrupted": return finalExecutionInterrupted(context.cohort);
-        case "final_pr_merged_at_reviewed_head": return finalPrMergedAtReviewedHead(context.pr, context.reviewed_target);
-        case "final_pr_closed_unmerged": return finalPrClosedUnmerged(context.pr, context.reviewed_target);
+        case "final_pr_merged_at_reviewed_head": return finalPrMergedAtReviewedHead(context.cohort, context.pr, context.reviewed_target);
+        case "final_pr_closed_unmerged": return finalPrClosedUnmerged(context.cohort, context.pr, context.reviewed_target);
         default: return null;
       }
   }
