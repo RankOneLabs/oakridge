@@ -526,6 +526,15 @@ export const recordExecutionDispatch = async (sql: TransactionalSqlExecutor, inp
   readonly detail: string | null;
   readonly at: string;
 }): Promise<void> => sql.transaction(async (tx) => {
+  const location = await tx.query<{ readonly run_id: string; readonly stage_instance_id: string }>(
+    `SELECT attempt.run_id::text,attempt.stage_instance_id::text
+     FROM oakridge.execution_intent intent JOIN oakridge.attempt attempt ON attempt.id=intent.attempt_id
+     WHERE intent.id=$1`, [input.execution_id]);
+  if (!location[0]) return;
+  const stage = await tx.query<{ readonly status: CoreStatus }>(
+    "SELECT status FROM oakridge.stage_instance WHERE id=$1 FOR SHARE", [location[0].stage_instance_id]);
+  const run = await tx.query<{ readonly status: CoreStatus }>(
+    "SELECT status FROM oakridge.workflow_run WHERE id=$1 FOR SHARE", [location[0].run_id]);
   const rows = await tx.query<{ readonly attempt_id: string; readonly transition_id: string;
     readonly status: string; readonly stop_requested_at: string | null; readonly work: JsonValue | null;
     readonly run_id: string; readonly stage_instance_id: string; readonly cohort_id: string;
@@ -538,23 +547,29 @@ export const recordExecutionDispatch = async (sql: TransactionalSqlExecutor, inp
   const row = rows[0];
   if (!row || row.status === "dispatched" || row.status === "interrupted" || row.status === "cancelled") return;
   if (row.status !== "dispatching") throw new Error(`execution ${input.execution_id} was not claimed`);
-  if (input.session_id !== null && row.stop_requested_at === null) {
+  const has_stopped = row.stop_requested_at !== null || stage[0]?.status !== "active" || run[0]?.status !== "active";
+  if (input.session_id !== null) {
     await tx.query(`INSERT INTO oakridge.session
-      (id,run_id,stage_instance_id,attempt_id,launch_transition_id,adapter_reference,status,created_at)
-      VALUES ($1,$2,$3,$4,$5,'{"kind":"none"}'::jsonb,'active',$6::timestamptz)
+      (id,run_id,stage_instance_id,attempt_id,launch_transition_id,adapter_reference,status,fenced_at,created_at,ended_at)
+      VALUES ($1,$2,$3,$4,$5,'{"kind":"none"}'::jsonb,$6::oakridge.session_status,
+        $7::timestamptz,$8::timestamptz,$7::timestamptz)
       ON CONFLICT (attempt_id) DO NOTHING`,
-      [input.session_id, row.run_id, row.stage_instance_id, row.attempt_id, row.transition_id, input.at]);
-    await tx.query("UPDATE oakridge.execution_intent SET status='dispatched',session_id=$2 WHERE id=$1",
-      [input.execution_id, input.session_id]);
+      [input.session_id, row.run_id, row.stage_instance_id, row.attempt_id, row.transition_id,
+        has_stopped ? "cancelled" : "active", has_stopped ? input.at : null, input.at]);
+    await tx.query("UPDATE oakridge.execution_intent SET status=$3,session_id=$2 WHERE id=$1",
+      [input.execution_id, input.session_id, has_stopped ? "interrupted" : "dispatched"]);
+  }
+  if (input.session_id !== null && !has_stopped) {
     await tx.query("UPDATE oakridge.attempt SET status='active',started_at=COALESCE(started_at,$2::timestamptz) WHERE id=$1",
       [row.attempt_id, input.at]);
   } else {
-    await tx.query("UPDATE oakridge.execution_intent SET status='interrupted' WHERE id=$1", [input.execution_id]);
+    if (input.session_id === null) await tx.query(
+      "UPDATE oakridge.execution_intent SET status='interrupted' WHERE id=$1", [input.execution_id]);
     await tx.query(`UPDATE oakridge.cohort_worker SET state='interrupted',interrupted=$4::jsonb
       WHERE cohort_id=$1 AND worker=$2 AND active_execution_id=$3`,
       [row.cohort_id, row.worker, input.execution_id,
         JSON.stringify({ work: row.work, execution: { execution_id: input.execution_id,
-          session_id: null, detail: input.detail ?? "dispatch stopped" } })]);
+          session_id: input.session_id, detail: input.detail ?? "dispatch stopped" } })]);
     await tx.query(`UPDATE oakridge.attempt SET status='failed',ended_at=$2::timestamptz,
       outcome=$3::jsonb WHERE id=$1 AND ended_at IS NULL`,
       [row.attempt_id, input.at, JSON.stringify({ kind: "dispatch_failed", detail: input.detail })]);

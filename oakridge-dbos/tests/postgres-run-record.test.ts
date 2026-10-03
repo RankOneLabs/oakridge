@@ -201,7 +201,16 @@ test("selected cohort commit atomically reserves a slot and writes one launch wi
       active_assessor: loaded.value.assessment.active_execution_id,
     }) as unknown).toEqual({ build: { text: "new builder" }, assessment: { text: "assessor still live" },
       active_assessor: assessorExecution });
+    const cancelledDuringDispatch = intents[3]!.id as never;
+    expect((await claimExecutionIntent(sql, cancelledDuringDispatch)).ok).toBe(true);
     await sql.query("UPDATE oakridge.stage_instance SET status='cancelled',ended_at=now() WHERE id=$1", [STAGE_ID]);
+    await recordExecutionDispatch(sql, { execution_id: cancelledDuringDispatch,
+      session_id: "00000000-0000-4000-8100-000000000100" as never,
+      detail: null, at: "2026-10-02T12:07:00Z" });
+    expect((await sql.query<{ readonly status: string; readonly fenced: boolean }>(
+      `SELECT session.status::text,session.fenced_at IS NOT NULL AS fenced
+       FROM oakridge.session session JOIN oakridge.execution_intent intent ON intent.session_id=session.id
+       WHERE intent.id=$1`, [cancelledDuringDispatch]))[0]).toEqual({ status: "cancelled", fenced: true });
     expect(await claimExecutionIntent(sql, intents[2]!.id as never)).toEqual({ ok: false, error: { kind: "stopped" } });
   } finally { await sql.close(); }
 });
