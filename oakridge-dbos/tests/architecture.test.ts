@@ -20,7 +20,7 @@ const DEV_FLOW_ROLES = ["spec", "plan", "brief", "build", "assessment", "final_i
 // Each exception owns an adapter-facing contract or composition point.
 const DEV_FLOW_SOURCE_ALLOWLIST = {
   "validation/v15-definition.ts": "Validates the concrete dev-flow worker, output, input and decision-tree contracts.",
-  "adapters/dev-flow-machine.ts": "Registers the dev-flow machine adapter.",
+  "adapters/dev-flow-machine.ts": "Exports legacy names used only to validate graph fixtures during cutover.",
   "adapters/dev-flow.ts": "Implements dev-flow effects and registration.",
   "compiler/resolve-execution.ts": "Carries an optional existing handoff URL into a delegated prompt.",
   "domain/artifact-types.ts": "Registers the existing assessment artifact presentation.",
@@ -241,8 +241,24 @@ test("no source selects a first matching event transition", async () => {
   expect(sources.join("\n")).not.toMatch(/export\s+const\s+transition\s*=|context\.registry\.guard\(|runStageEffectsIn/);
 });
 
+const LEGACY_EFFECT_INTERPRETATION = /(?:\.name\s*===\s*["'](?:launch_session|end_session|record_output|open_gate|accept_outputs|new_round)["']|switch\s*\(\s*(?:[\w.]+\.name|(?:effect_)?name)\s*\)\s*\{[\s\S]*?\bcase\s+["'](?:launch_session|end_session|record_output|open_gate|accept_outputs|new_round)["'])/;
+
 test("storage never interprets legacy effect names to select progression", async () => {
   const files = await treeSources(join(SOURCE, "storage"));
   const sources = await Promise.all(files.map((file) => readFile(file, "utf8")));
-  expect(sources.join("\n")).not.toMatch(/\.name\s*===\s*["'](?:launch_session|end_session|record_output|open_gate|accept_outputs|new_round)["']/);
+  expect(sources.join("\n")).not.toMatch(LEGACY_EFFECT_INTERPRETATION);
+});
+
+test("the effect interpretation rule catches equality and switch cases", () => {
+  expect([
+    'effect.name === "launch_session"',
+    "switch (effect.name) { case 'end_session': stop(); }",
+    'switch (name) { case "record_output": write(); case "new_round": advance(); }',
+    'switch (effect_name) { case "open_gate": open(); }',
+    "switch (effect.name) { case 'accept_outputs': accept(); }",
+  ].map((source) => LEGACY_EFFECT_INTERPRETATION.test(source))).toEqual([true, true, true, true, true]);
+});
+
+test("applying a typed selected change is not legacy effect interpretation", () => {
+  expect(LEGACY_EFFECT_INTERPRETATION.test('switch (change.kind) { case "accept_outputs": apply(); }')).toBe(false);
 });

@@ -272,5 +272,12 @@ test("an applied worker-ownership schema is rejected when its required columns d
     expect(await applyMigrations(sql)).toEqual([]);
     await sql.query("ALTER TABLE oakridge.cohort DROP COLUMN frozen_inputs", []);
     await expect(applyMigrations(sql)).rejects.toThrow("cohort.frozen_inputs");
+    // These are retained ledger requirements, unlike round and cohort_output.
+    await sql.query("ALTER TABLE oakridge.cohort DROP COLUMN state, DROP COLUMN depends_on", []);
+    await sql.query("ALTER TABLE oakridge.run_transition DROP COLUMN event, DROP COLUMN from_state, DROP COLUMN to_state, DROP COLUMN effects_started_at", []);
+    await sql.query("ALTER TABLE oakridge.attempt ALTER COLUMN request SET NOT NULL", []);
+    await expect(applyMigrations(sql)).rejects.toThrow("cohort.state, cohort.depends_on");
+    await expect(applyMigrations(sql)).rejects.toThrow("run_transition.event, run_transition.from_state, run_transition.to_state, run_transition.effects_started_at");
+    await expect(applyMigrations(sql)).rejects.toThrow("attempt.request (nullable)");
   } finally { await sql.close(); }
 });

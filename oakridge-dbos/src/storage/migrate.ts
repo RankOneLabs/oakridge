@@ -17,24 +17,28 @@ export const applyMigrations = async (sql: TransactionalSqlExecutor, directory =
     .filter((name) => appliedNames.has(name));
   if (retired.length > 0) throw new Error(
     `oakridge migration ledger records retired migrations ${retired.join(", ")}; drop and recreate this v15 database`);
-  if (appliedNames.has("0015_v15_baseline.sql") && !appliedNames.has("0016_v15_worker_ownership.sql")) {
-    // Compare the contract required by the edited baseline, including nullability.
+  if (appliedNames.has("0015_v15_baseline.sql")) {
+    // Retained ledger requirements remain checked after worker ownership applies.
     interface SchemaRequirement { readonly table_schema: "oakridge" | "dev_flow"; readonly table_name: string; readonly column_name: string | null; readonly nullable?: boolean }
     interface SchemaColumn { readonly table_schema: string; readonly table_name: string; readonly column_name: string; readonly is_nullable: string }
     const requirements: readonly SchemaRequirement[] = [
       { table_schema: "oakridge", table_name: "artifact_thread", column_name: null },
       { table_schema: "oakridge", table_name: "attempt", column_name: "idempotency_key" },
       { table_schema: "dev_flow", table_name: "build_cohort", column_name: null },
-      ...["state", "round", "depends_on"].map((column_name): SchemaRequirement => ({ table_schema: "oakridge", table_name: "cohort", column_name })),
-      ...["cohort_id", "round", "output_name", "collection_key", "artifact_id", "recorded_at"]
-        .map((column_name): SchemaRequirement => ({ table_schema: "oakridge", table_name: "cohort_output", column_name })),
+      ...["state", "depends_on"].map((column_name): SchemaRequirement => ({ table_schema: "oakridge", table_name: "cohort", column_name })),
+
       ...["event", "from_state", "to_state", "effects_started_at"]
         .map((column_name): SchemaRequirement => ({ table_schema: "oakridge", table_name: "run_transition", column_name })),
       { table_schema: "oakridge", table_name: "attempt", column_name: "request", nullable: true },
     ];
+    const retiredRequirements: readonly SchemaRequirement[] = appliedNames.has("0016_v15_worker_ownership.sql") ? [] : [
+      { table_schema: "oakridge", table_name: "cohort", column_name: "round" },
+      ...["cohort_id", "round", "output_name", "collection_key", "artifact_id", "recorded_at"]
+        .map((column_name): SchemaRequirement => ({ table_schema: "oakridge", table_name: "cohort_output", column_name })),
+    ];
     const columns = await sql.query<SchemaColumn>(
       "SELECT table_schema,table_name,column_name,is_nullable FROM information_schema.columns WHERE table_schema IN ('oakridge','dev_flow')", []);
-    const missing = requirements.filter((requirement) => !columns.some((column) =>
+    const missing = [...requirements, ...retiredRequirements].filter((requirement) => !columns.some((column) =>
       column.table_schema === requirement.table_schema && column.table_name === requirement.table_name
       && (requirement.column_name === null || column.column_name === requirement.column_name)
       && (requirement.nullable !== true || column.is_nullable === "YES")))
