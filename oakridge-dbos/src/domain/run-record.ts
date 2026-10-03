@@ -156,6 +156,14 @@ export interface OpenCohort {
   readonly id: CohortId;
   readonly cohort_key: string;
   readonly stage_data: JsonValue;
+  /** Frozen v15 inputs contain artifact references, never embedded artifact bodies. */
+  readonly frozen_inputs?: import("./dev-flow-v15").ImplementationCohortInputs
+    | import("./dev-flow-v15").RepositoryPreparationInputs
+    | import("./dev-flow-v15").SpecAnalysisInputs
+    | import("./dev-flow-v15").PlanningInputs
+    | import("./dev-flow-v15").BriefWritingInputs
+    | import("./dev-flow-v15").FinalIntegrationInputs;
+  readonly workers?: readonly import("./dev-flow-v15").V15WorkerKey[];
   readonly depends_on?: readonly string[];
 }
 

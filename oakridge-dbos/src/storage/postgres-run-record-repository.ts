@@ -241,12 +241,15 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       let inserted = 0;
       for (const cohort of input.cohorts) {
         const rows = await tx.query<{ readonly id: string }>(
-          `INSERT INTO oakridge.cohort (id,run_id,stage_instance_id,cohort_key,state,depends_on,stage_data,created_at)
-           VALUES ($1,$2,$3,$4,$5,$6::text[],$7::jsonb,$8::timestamptz)
+          `INSERT INTO oakridge.cohort (id,run_id,stage_instance_id,cohort_key,state,depends_on,stage_data,frozen_inputs,created_at)
+           VALUES ($1,$2,$3,$4,$5,$6::text[],$7::jsonb,$8::jsonb,$9::timestamptz)
            ON CONFLICT (run_id,stage_instance_id,cohort_key) DO NOTHING RETURNING id::text`,
           [cohort.id, input.run_id, input.stage_instance_id, cohort.cohort_key, initial,
-            cohort.depends_on ?? [], JSON.stringify(cohort.stage_data), input.opened_at]);
+            cohort.depends_on ?? [], JSON.stringify(cohort.stage_data), JSON.stringify(cohort.frozen_inputs ?? {}), input.opened_at]);
         inserted += rows.length;
+        for (const worker of cohort.workers ?? []) await tx.query(
+          "INSERT INTO oakridge.cohort_worker (cohort_id,worker) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+          [cohort.id, worker]);
       }
       const stored = await tx.query<{ readonly id: string }>(
         "SELECT id::text FROM oakridge.cohort WHERE stage_instance_id=$1 ORDER BY cohort_key", [input.stage_instance_id]);

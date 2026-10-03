@@ -14,6 +14,12 @@ import type { CohortSnapshot, RunDecisionSnapshot, RunSnapshot, StageSnapshot } 
 import { err, ok, type ArtifactId, type CohortId, type JsonValue, type Result, type RunRecordVersion, type StageInstanceId, type WorkflowRunId } from "../domain/primitives";
 import type { BlockedReason, CoreStatus, NextActor } from "../domain/records";
 import type { SqlExecutor } from "./sql-executor";
+import { artifactRefFromRevision, type ImplementationCohortInputs, type ImplementationCohortRecord,
+  BuildWorkerRecord, AssessmentWorkerRecord, BuildResultArtifact, PrSummaryArtifact,
+  AssessmentArtifact, AcceptedBuild, BuildWorkInput, AssessmentWorkInput,
+  BuildResponse, AssessmentResponse, BuildInterruptedRecord, AssessmentInterruptedRecord,
+  WorkerState, CohortState, ArtifactState, SessionState } from "../domain/dev-flow-v15";
+import type { ExecutionId, SessionId } from "../domain/primitives";
 
 /** The key `initialize_run` writes a stage's decision edges under. */
 export const STAGE_CONTRACT_DEPENDENCY_KEY = "dependency_stage_instance_ids";
@@ -109,4 +115,116 @@ export const loadRunSnapshot = async (tx: SqlExecutor, run_id: WorkflowRunId): P
   }));
 
   return ok({ run, stages });
+};
+
+interface V15CohortRow {
+  readonly id: string;
+  readonly cohort_key: string;
+  readonly durable_version: string;
+  readonly state: CohortState;
+  readonly depends_on: readonly string[];
+  readonly frozen_inputs: ImplementationCohortInputs;
+  readonly accepted_build: AcceptedBuild | null;
+}
+interface V15WorkerRow {
+  readonly worker: "build" | "assessment";
+  readonly state: WorkerState;
+  readonly active_execution_id: string | null;
+  readonly work: BuildWorkInput | AssessmentWorkInput | null;
+  readonly response: BuildResponse | AssessmentResponse | null;
+  readonly interrupted: BuildInterruptedRecord | AssessmentInterruptedRecord | null;
+}
+interface V15OutputRow {
+  readonly worker: "build" | "assessment";
+  readonly output_name: string;
+  readonly chain_id: string;
+  readonly revision: number;
+  readonly artifact_type: string;
+  readonly acceptance_state: ArtifactState;
+  readonly body: JsonValue;
+  readonly execution_id: string;
+  readonly session_id: string | null;
+}
+interface V15SessionRow {
+  readonly worker: "build" | "assessment";
+  readonly id: string;
+  readonly execution_id: string;
+  readonly action_point: string;
+  readonly status: string;
+}
+
+const sessionState = (status: string): SessionState => {
+  if (status === "active" || status === "pending") return "running";
+  if (status === "cancelled") return "cancelled";
+  if (status === "failed") return "interrupted";
+  return "finished";
+};
+
+/** One authoritative implementation snapshot, assembled from per-worker rows. */
+export const loadImplementationCohortSnapshot = async (tx: SqlExecutor,
+  cohort_id: CohortId): Promise<Result<ImplementationCohortRecord, { readonly kind: "cohort_not_found" | "invalid_snapshot";
+    readonly cohort_id: CohortId; readonly detail: string }>> => {
+  const cohorts = await tx.query<V15CohortRow>(
+    `SELECT id::text,cohort_key,durable_version::text,state,depends_on,frozen_inputs,accepted_build
+     FROM oakridge.cohort WHERE id=$1`, [cohort_id]);
+  const row = cohorts[0];
+  if (!row) return err({ kind: "cohort_not_found", cohort_id, detail: "cohort was not found" });
+  if (!row.frozen_inputs || typeof row.frozen_inputs !== "object" || !("brief" in row.frozen_inputs)
+    || !("repository" in row.frozen_inputs))
+    return err({ kind: "invalid_snapshot", cohort_id, detail: "frozen implementation inputs are missing" });
+  const workers = await tx.query<V15WorkerRow>(
+    `SELECT worker,state,active_execution_id,work,response,interrupted
+     FROM oakridge.cohort_worker WHERE cohort_id=$1 AND worker IN ('build','assessment')`, [cohort_id]);
+  const buildRow = workers.find((worker) => worker.worker === "build");
+  const assessmentRow = workers.find((worker) => worker.worker === "assessment");
+  if (!buildRow || !assessmentRow)
+    return err({ kind: "invalid_snapshot", cohort_id, detail: "implementation worker rows are missing" });
+  const outputs = await tx.query<V15OutputRow>(
+    `SELECT output.worker,output.output_name,artifact.chain_id::text,artifact.revision,
+      artifact.artifact_type,output.acceptance_state,artifact.body,intent.id AS execution_id,
+      provenance.session_id::text
+     FROM oakridge.worker_output output
+     JOIN oakridge.artifact artifact ON artifact.id=output.artifact_id
+     JOIN oakridge.artifact_provenance provenance ON provenance.artifact_id=artifact.id
+     JOIN oakridge.execution_intent intent ON intent.attempt_id=provenance.attempt_id
+     WHERE output.cohort_id=$1 ORDER BY output.worker,output.output_name`, [cohort_id]);
+  const sessions = await tx.query<V15SessionRow>(
+    `SELECT intent.worker,session.id::text,intent.id AS execution_id,intent.action_point,session.status::text
+     FROM oakridge.execution_intent intent JOIN oakridge.session session ON session.id=intent.session_id
+     WHERE intent.cohort_id=$1 ORDER BY session.created_at`, [cohort_id]);
+  const output = (worker: "build" | "assessment", name: string) =>
+    outputs.find((candidate) => candidate.worker === worker && candidate.output_name === name);
+  const materialize = (stored: V15OutputRow | undefined) => stored ? {
+    ...artifactRefFromRevision({ chain_id: stored.chain_id as ArtifactId, revision: stored.revision }),
+    state: stored.acceptance_state,
+    body: stored.body, provenance: { execution_id: stored.execution_id as ExecutionId,
+      session_id: stored.session_id as SessionId | null },
+  } : null;
+  const build: BuildWorkerRecord = {
+    state: buildRow.state, active_execution_id: buildRow.active_execution_id as ExecutionId | null,
+    work: buildRow.work as BuildWorkInput | null, response: buildRow.response as BuildResponse | null,
+    interrupted: buildRow.interrupted as BuildInterruptedRecord | null,
+    outputs: { build_result: materialize(output("build", "build_result")) as BuildResultArtifact | null,
+      pr_summary: materialize(output("build", "pr_summary")) as PrSummaryArtifact | null },
+    sessions: sessions.filter((session) => session.worker === "build").map((session) => ({
+      id: session.id as SessionId, execution_id: session.execution_id as ExecutionId,
+      action_point: session.action_point as "initial" | "revise" | "retry" | "replace_pr",
+      state: sessionState(session.status),
+    })),
+  };
+  const assessment: AssessmentWorkerRecord = {
+    state: assessmentRow.state, active_execution_id: assessmentRow.active_execution_id as ExecutionId | null,
+    work: assessmentRow.work as AssessmentWorkInput | null,
+    response: assessmentRow.response as AssessmentResponse | null,
+    interrupted: assessmentRow.interrupted as AssessmentInterruptedRecord | null,
+    outputs: { assessment: materialize(output("assessment", "assessment")) as AssessmentArtifact | null },
+    sessions: sessions.filter((session) => session.worker === "assessment").map((session) => ({
+      id: session.id as SessionId, execution_id: session.execution_id as ExecutionId,
+      action_point: session.action_point as "initial" | "discuss" | "retry",
+      state: sessionState(session.status),
+    })),
+  };
+  return ok({ id: row.id as CohortId, key: row.cohort_key as ImplementationCohortRecord["key"],
+    version: Number(row.durable_version), state: row.state, depends_on: row.depends_on as readonly CohortId[],
+    inputs: row.frozen_inputs, build, assessment, accepted_build: row.accepted_build });
 };

@@ -8,6 +8,7 @@ import { PostgresRunRecordWriter, claimExecutionIntent, commitSelectedCohort,
 import type { ImplementationCohortDefinition } from "../src/domain/dev-flow-v15";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
 import { createScratchDatabase, type ScratchDatabase } from "./support/durable-database";
+import { loadImplementationCohortSnapshot } from "../src/storage/load-run-snapshot";
 
 const RUN_ID = "00000000-0000-4000-8100-000000000001" as WorkflowRunId;
 const STAGE_ID = "00000000-0000-4000-8100-000000000002" as StageInstanceId;
@@ -181,6 +182,16 @@ test("selected cohort commit atomically reserves a slot and writes one launch wi
        JOIN oakridge.artifact artifact ON artifact.id=output.artifact_id
        WHERE output.cohort_id=$1 AND output.worker='assessment'`, [cohortId(2)]))[0])
       .toEqual({ acceptance_state: "unreviewed", body: { text: "assessor still live" } });
+    await sql.query("UPDATE oakridge.cohort SET frozen_inputs=$2::jsonb WHERE id=$1",
+      [cohortId(2), JSON.stringify({ brief: selected.actions[0].action.input.brief,
+        repository: selected.actions[0].action.input.repository })]);
+    const loaded = await loadImplementationCohortSnapshot(sql, cohortId(2));
+    expect((loaded.ok && {
+      build: loaded.value.build.outputs.build_result?.body,
+      assessment: loaded.value.assessment.outputs.assessment?.body,
+      active_assessor: loaded.value.assessment.active_execution_id,
+    }) as unknown).toEqual({ build: { text: "new builder" }, assessment: { text: "assessor still live" },
+      active_assessor: assessorExecution });
     await sql.query("UPDATE oakridge.stage_instance SET status='cancelled',ended_at=now() WHERE id=$1", [STAGE_ID]);
     expect(await claimExecutionIntent(sql, intents[2]!.id as never)).toEqual({ ok: false, error: { kind: "stopped" } });
   } finally { await sql.close(); }
