@@ -11,7 +11,8 @@ import type { RunTransitionRecord, SessionStatusWrite, TransitionEffectDescripto
 import type { AdapterRegistry } from "../runtime/executor-registry";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 import { attemptIdFor } from "../decision/ids";
-import type { AgentSettings, ImplementationCohortDefinition, OperatorRequestEnvelope, SelectedDecision,
+import type { AgentSettings, AssessmentResponse, BuildResponse, BriefCollection, InterruptedExecution,
+  ProvisionResponse, ReviewResponse, ImplementationCohortDefinition, OperatorRequestEnvelope, SelectedDecision,
   V15WorkerKey, ResolvedWorkerAction, CohortChange, BuildReviewTarget, AssessmentReviewTarget } from "../domain/dev-flow-v15";
 import type { ArtifactId, CohortId, ExecutionId, StageInstanceId } from "../domain/primitives";
 import { artifactRefFromRevision, type ArtifactRef } from "../domain/dev-flow-v15";
@@ -20,6 +21,73 @@ const CORE_EFFECT_NAMES = new Set(["none", "start_stage", "start_attempt", "deli
 
 /** `oakridge.session_status` and `oakridge.attempt_status` share this vocabulary. */
 export type SessionLifecycleStatus = CoreStatus;
+
+type SessionWorkerResponse = BuildResponse | AssessmentResponse | ProvisionResponse
+  | ReviewResponse<ArtifactRef | BriefCollection>;
+
+interface SessionWorkerOwner {
+  readonly id: ExecutionId;
+  readonly cohort_id: CohortId;
+  readonly worker: V15WorkerKey;
+  readonly work: JsonValue | null;
+  readonly response: SessionWorkerResponse | null;
+  readonly active_execution_id: ExecutionId | null;
+  readonly state: string;
+  readonly stop_requested_at: string | null;
+}
+
+interface SessionWorkerOutput {
+  readonly output_name: string;
+  readonly collection_key: string | null;
+  readonly chain_id: ArtifactId;
+  readonly revision: number;
+}
+
+type SessionWorkerInterruption =
+  | { readonly execution: InterruptedExecution }
+  | { readonly work: JsonValue; readonly execution: InterruptedExecution; readonly build_result: ArtifactRef | null; readonly pr_summary: ArtifactRef | null }
+  | { readonly work: JsonValue; readonly execution: InterruptedExecution; readonly assessment: ArtifactRef | null }
+  | { readonly work: JsonValue; readonly execution: InterruptedExecution; readonly current: ArtifactRef | null | BriefCollection };
+
+interface SessionWorkerInterruptionInput {
+  readonly owner: SessionWorkerOwner;
+  readonly session_id: SessionId;
+  readonly outputs: readonly SessionWorkerOutput[];
+}
+
+const hasSessionWorkerResponse = (owner: SessionWorkerOwner): boolean => {
+  const response = owner.response;
+  if (!response || response.execution_id !== owner.id) return false;
+  switch (owner.worker) {
+    case "build": return "build_result" in response && response.build_result != null && response.pr_summary != null && typeof response.head_sha === "string";
+    case "assessment": return "assessment" in response && response.assessment != null;
+    case "provision": return "outcome" in response && response.outcome != null;
+    case "spec": case "plan": case "brief": case "final_integration": return "current" in response && response.current != null;
+  }
+};
+
+/** Mirrors the v15 retry bindings: build/assessment refs, review current, or provision execution. */
+const sessionWorkerInterruption = (input: SessionWorkerInterruptionInput): SessionWorkerInterruption => {
+  const { owner, outputs } = input;
+  const execution: InterruptedExecution = { execution_id: owner.id, session_id: input.session_id,
+    detail: "session ended before the required publication was complete" };
+  const ref = (name: string): ArtifactRef | null => {
+    const row = outputs.find((candidate) => candidate.output_name === name);
+    return row ? artifactRefFromRevision(row) : null;
+  };
+  const work = owner.work;
+  switch (owner.worker) {
+    case "provision": return { execution };
+    case "build": return { work, execution, build_result: ref("build_result"), pr_summary: ref("pr_summary") };
+    case "assessment": return { work, execution, assessment: ref("assessment") };
+    case "spec": return { work, execution, current: ref("spec_analysis") };
+    case "plan": return { work, execution, current: ref("plan") };
+    case "final_integration": return { work, execution, current: ref("pr_summary") };
+    case "brief": return { work, execution, current: { members: outputs.flatMap((row) =>
+      row.output_name === "briefs" && row.collection_key !== null
+        ? [{ cohort_key: row.collection_key as BriefCollection["members"][number]["cohort_key"], ref: artifactRefFromRevision(row) }] : []) } };
+  }
+};
 
 export interface CommitTransitionInput {
   readonly run_id: WorkflowRunId;
@@ -260,6 +328,27 @@ export const writeSessionStatus = async (
      WHERE id=$1 AND ended_at IS NULL`,
     [sessions[0].attempt_id, input.status, input.at, terminal,
       terminal ? JSON.stringify({ kind: input.status === "complete" ? "succeeded" : input.status }) : null]);
+  if (terminal) {
+    const owners = await tx.query<SessionWorkerOwner>(
+      `SELECT intent.id,intent.cohort_id::text,intent.worker,worker.work,worker.response,
+         worker.active_execution_id,worker.state,intent.stop_requested_at::text
+       FROM oakridge.execution_intent intent JOIN oakridge.cohort_worker worker
+         ON worker.cohort_id=intent.cohort_id AND worker.worker=intent.worker
+       WHERE intent.attempt_id=$1 FOR UPDATE OF intent,worker`, [sessions[0].attempt_id]);
+    const owner = owners[0];
+    if (owner && owner.active_execution_id === owner.id && owner.state === "working"
+      && owner.stop_requested_at === null && !hasSessionWorkerResponse(owner)) {
+      const outputs = await tx.query<SessionWorkerOutput>(
+        `SELECT output.output_name,output.collection_key,artifact.chain_id::text,artifact.revision
+         FROM oakridge.worker_output output JOIN oakridge.artifact artifact ON artifact.id=output.artifact_id
+         WHERE output.cohort_id=$1 AND output.worker=$2 ORDER BY output.output_name,output.collection_key`,
+        [owner.cohort_id, owner.worker]);
+      const interrupted = sessionWorkerInterruption({ owner, session_id: input.session_id, outputs });
+      await tx.query("UPDATE oakridge.cohort_worker SET interrupted=$3::jsonb WHERE cohort_id=$1 AND worker=$2",
+        [owner.cohort_id, owner.worker, JSON.stringify(interrupted)]);
+      await tx.query("UPDATE oakridge.execution_intent SET status='interrupted' WHERE id=$1", [owner.id]);
+    }
+  }
   return ok({ kind: "written" });
   } catch (cause) {
     return err({ operation: "write_session_status", session_id: input.session_id,

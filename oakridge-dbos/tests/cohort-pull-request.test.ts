@@ -359,17 +359,73 @@ test("cohort preparation creates the canonical ref and persists the roles render
   }
 });
 
-test("cohort preparation refuses a deleted stored canonical ref", async () => {
+test("cohort preparation recreates a missing owned ref from the recorded SHA", async () => {
   const cohort = { ...storedCohort("/repo", "old-head"), canonical_ref: `cohort/${expected.stage_instance_id}/foundation` };
   const repository = { async find_cohort_for_unit() { return cohort; } } as unknown as DevFlowPullRequestRepository;
-  const git = { async run() { return { exit_code: 0, stdout: "", stderr: "" }; } };
+  const commands: string[][] = [];
+  const git = { async run(_path: string, args: readonly string[]) {
+    commands.push([...args]); return { exit_code: 0, stdout: "", stderr: "" };
+  } };
   const result = await prepareDevFlowBuildCohort({ pull_requests: repository, git }, {
     cohort_id: cohort.cohort_id, stage_instance_id: cohort.stage_instance_id, cohort_key: cohort.cohort_key,
     repository: { repository_key: cohort.repository_key, repository_path: cohort.repository_path,
       integration_branch: "main", base_branch: cohort.expected_pr_base, base_head_sha: cohort.recorded_head_sha },
     prepared_at: "2026-09-29T00:00:00Z",
   });
-  expect(result).toEqual({ ok: false, error: expect.objectContaining({ kind: "ref_lease_mismatch", detail: expect.stringContaining("missing") }) });
+  expect(result.ok && result.value.worktree_base_sha).toBe("old-head");
+  expect(commands).toContainEqual(["push", `--force-with-lease=refs/heads/${cohort.canonical_ref}:`, "origin",
+    `old-head:refs/heads/${cohort.canonical_ref}`]);
+});
+
+for (const crash_point of ["before_push", "after_push"] as const) test(`cohort preparation recovers ${crash_point} using its stored ownership`, async () => {
+  const fixture = await createGitRepositoryFixture();
+  try {
+    const canonicalRef = `cohort/${expected.stage_instance_id}/foundation`;
+    let stored: DevFlowBuildCohort | null = null;
+    const repository = {
+      async find_cohort_for_unit() { return stored; },
+      async create_cohort(cohort: DevFlowBuildCohort) { stored ??= cohort; return { ok: true, value: stored }; },
+    } as unknown as DevFlowPullRequestRepository;
+    const baseHead = (await fixture.origin_branch_sha(fixture.integration_branch))!;
+    const input = { cohort_id: storedCohort(fixture.path, baseHead).cohort_id, stage_instance_id: expected.stage_instance_id,
+      cohort_key: "foundation", repository: { repository_key: "oakridge", repository_path: fixture.path,
+        integration_branch: fixture.integration_branch, base_branch: fixture.integration_branch, base_head_sha: baseHead },
+      prepared_at: "2026-10-03T00:00:00Z" };
+    const git = new BunGitCommandRunner();
+    const crashing = { async run(path: string, args: readonly string[]) {
+      if (args[0] === "push") {
+        expect(stored).toMatchObject({ recorded_head_sha: baseHead, canonical_ref: canonicalRef });
+        if (crash_point === "after_push") expect((await git.run(path, args)).exit_code).toBe(0);
+        throw new Error("simulated process crash");
+      }
+      return git.run(path, args);
+    } };
+    await expect(prepareDevFlowBuildCohort({ pull_requests: repository, git: crashing }, input)).rejects.toThrow("simulated process crash");
+    // The run base moves while the process is down; preparation must keep its pinned SHA.
+    await fixture.advance_origin_branch(fixture.integration_branch, "later base");
+    const recovered = await prepareDevFlowBuildCohort({ pull_requests: repository, git }, input);
+    expect(recovered.ok && recovered.value.worktree_base_sha).toBe(baseHead);
+    expect(await fixture.origin_branch_sha(canonicalRef)).toBe(baseHead);
+  } finally { await fixture.remove(); }
+});
+
+test("cohort preparation leaves an unowned origin ref untouched", async () => {
+  const fixture = await createGitRepositoryFixture();
+  try {
+    const git = new BunGitCommandRunner();
+    const canonicalRef = `cohort/${expected.stage_instance_id}/foundation`;
+    const baseHead = (await fixture.origin_branch_sha(fixture.integration_branch))!;
+    await git.run(fixture.path, ["push", "origin", `${baseHead}:refs/heads/${canonicalRef}`]);
+    const repository = { async find_cohort_for_unit() { return null; },
+      async create_cohort() { throw new Error("must not adopt an unowned ref"); } } as unknown as DevFlowPullRequestRepository;
+    expect(await prepareDevFlowBuildCohort({ pull_requests: repository, git }, {
+      cohort_id: storedCohort(fixture.path, baseHead).cohort_id, stage_instance_id: expected.stage_instance_id,
+      cohort_key: "foundation", repository: { repository_key: "oakridge", repository_path: fixture.path,
+        integration_branch: fixture.integration_branch, base_branch: fixture.integration_branch, base_head_sha: baseHead },
+      prepared_at: "2026-10-03T00:00:00Z",
+    })).toMatchObject({ ok: false, error: { kind: "ref_lease_mismatch" } });
+    expect(await fixture.origin_branch_sha(canonicalRef)).toBe(baseHead);
+  } finally { await fixture.remove(); }
 });
 
 test("a failed GitHub refresh returns unavailable instead of stale success", async () => {
@@ -416,6 +472,7 @@ test("a dependent branch fetches a merge commit created only on origin", async (
         base_branch: fixture.integration_branch, base_head_sha: oldHead }, prepared_at: "2026-10-02T00:00:00Z",
     });
     expect(result.ok).toBe(true);
+    expect(result.ok && result.value.worktree_base_sha).toBe(newHead);
     expect(await fixture.origin_branch_sha(`cohort/${expected.stage_instance_id}/foundation`)).toBe(newHead);
   } finally { await fixture.remove(); }
 });

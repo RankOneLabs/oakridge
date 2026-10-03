@@ -44,6 +44,8 @@ export const publishWorkOrderArtifact = async (
   const enriched = dependencies.enrich
     ? await dependencies.enrich({ attempt_id: command.attempt_id, output_name: command.output_name, body: command.body })
     : { ok: true as const, value: null };
-  if (!enriched.ok) return { kind: "enrichment_unavailable", detail: enriched.error.detail };
+  if (!enriched.ok) return enriched.error.code === "pr_verification_failed"
+    ? { kind: "refused", code: enriched.error.code, detail: enriched.error.detail }
+    : { kind: "enrichment_unavailable", detail: enriched.error.detail };
   return dependencies.records.publish_artifact({ ...request, enrichment: enriched.value });
 };

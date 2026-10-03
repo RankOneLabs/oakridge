@@ -70,12 +70,7 @@ export interface ResolveWorkOrderInput {
   readonly unit: MaterializedExecutionUnit;
   /** Already per-unit — `derive`'s own `selectInputsForUnit`, not re-filtered here. */
   readonly inputs: StageInputSet;
-  /**
-   * Accepted outputs already persisted for this cohort and unit. The build
-   * adapter's c8 composition loads these from run_output_slot before launching
-   * a later role; keeping them separate prevents same-stage outputs from being
-   * mistaken for graph inputs.
-   */
+  /** Persisted same-cohort outputs selected for this launch, including a builder's current outputs on revision. */
   readonly accepted_cohort_outputs?: readonly ArtifactEnvelope[];
   readonly context: JsonValue;
   /** The slots this execution is expected to fill, read off the stage's pinned contract. */
@@ -95,7 +90,6 @@ export interface ResolveWorkOrderInput {
 interface ExecutionRequestInput extends ResolveWorkOrderInput { readonly work_order_id: WorkOrderId; readonly capability: string }
 
 const inputsForSessionLaunch = (input: ExecutionRequestInput): StageInputSet => {
-  if (input.session_launch?.session_role !== "assessment") return input.inputs;
   const accepted = (input.accepted_cohort_outputs ?? []).filter((artifact) => artifact.unit_id === input.unit.unit_id);
   if (accepted.length === 0) return input.inputs;
   const grouped: Record<string, ArtifactEnvelope[]> = {};

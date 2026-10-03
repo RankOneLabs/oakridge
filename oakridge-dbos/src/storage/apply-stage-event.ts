@@ -32,6 +32,7 @@ export interface ApplyStageEventDependencies {
   readonly now: () => string;
   readonly dispatch_executions?: (ids: readonly ExecutionId[]) => Promise<void>;
   readonly observe_pr?: (cohort_id: CohortId) => Promise<VerifiedPrObservation | null>;
+  readonly prepare_repository?: (cohort_id: CohortId) => Promise<Result<void, { readonly detail: string }>>;
 }
 export type CohortIngressError = CohortProgressionError | {
   readonly kind: "cohort_not_found" | "invalid_snapshot" | "stage_not_supported";
@@ -101,8 +102,11 @@ export class StageEventApplier {
     try {
       const replay = request ? await this.request_replay(cohort_id, request) : null;
       if (replay) return replay;
+      const is_termination = request?.request.kind === "cancel" || request?.request.kind === "abandon";
+      const prepared = is_termination ? undefined : await this.dependencies.prepare_repository?.(cohort_id);
+      if (prepared && !prepared.ok) return err({ kind: "invalid_snapshot", cohort_id, detail: prepared.error.detail });
       // Verified IO observations are supplied as facts, never as decisions.
-      const pr = await this.dependencies.observe_pr?.(cohort_id) ?? null;
+      const pr = is_termination ? null : await this.dependencies.observe_pr?.(cohort_id) ?? null;
       let loaded: Awaited<ReturnType<StageEventApplier["load_in"]>>;
       const result = await advanceCohortUntilWait({
         load: async () => {

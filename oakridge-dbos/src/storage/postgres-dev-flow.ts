@@ -1,9 +1,9 @@
 import type { StageInstanceId, UnitId, CohortId } from "../domain/primitives";
-import type { DevFlowBuildCohort } from "../domain/cohort-pull-request";
+import type { DevFlowBuildCohort, ImplementationPublicationEvidence } from "../domain/cohort-pull-request";
 import type { PullRequest, PullRequestId, PullRequestMergeClosure, PullRequestMergeClosureId, PullRequestObservation, PullRequestObservationId, PullRequestVerificationId, StoredPullRequestObservation } from "../domain/pull-request";
 import { err, ok, type Result } from "../domain/primitives";
 import type { CurrentVerifiedCohortPullRequest, DevFlowPullRequestRepository } from "./repositories";
-import type { TransactionalSqlExecutor } from "./sql-executor";
+import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 import type { CohortDetail, CohortDetailContributor, OperatorRunDetail } from "../domain/operator-projections";
 
 interface DevFlowCohortDetailRow {
@@ -109,6 +109,11 @@ const buildCohortFromRow = (row: BuildCohortRow): DevFlowBuildCohort => ({
 const BUILD_COHORT_COLUMNS = `cohort_id::text,stage_instance_id::text,cohort_key,repository_key,repository_path,
   canonical_ref,expected_pr_base,recorded_head_sha,current_verified_pull_request_id::text,created_at::text,updated_at::text`;
 
+type ObservePullRequestInput = Parameters<DevFlowPullRequestRepository["observe"]>[0];
+type StoredObservationIdentity = Awaited<ReturnType<DevFlowPullRequestRepository["observe"]>>;
+type BindVerifiedPullRequestInput = Parameters<DevFlowPullRequestRepository["bind_verified"]>[0];
+type BindVerifiedPullRequestResult = Awaited<ReturnType<DevFlowPullRequestRepository["bind_verified"]>>;
+
 /** PostgreSQL implementation of the shared cohort/final-stage PR entity. */
 export class PostgresDevFlowPullRequestRepository implements DevFlowPullRequestRepository {
   constructor(private readonly sql: TransactionalSqlExecutor) {}
@@ -210,47 +215,51 @@ export class PostgresDevFlowPullRequestRepository implements DevFlowPullRequestR
     return { cohort, pull_request, observation };
   }
 
-  async observe(input: { readonly observation: PullRequestObservation; readonly recorded_at: string }): Promise<{ readonly pull_request_id: PullRequestId; readonly observation_id: PullRequestObservationId }> {
-    return this.sql.transaction(async (tx) => {
-      const pullRequests = await tx.query<{ readonly id: string }>(`INSERT INTO dev_flow.pull_request
-        (id,provider,owner,name,forge_pull_request_id,url,created_at)
-        VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,$6)
-        ON CONFLICT (provider,lower(owner),lower(name),forge_pull_request_id) DO UPDATE SET url=EXCLUDED.url
-        RETURNING id::text`, [input.observation.provider, input.observation.owner,
-        input.observation.name, input.observation.number, input.observation.url, input.recorded_at]);
-      const pullRequestId = pullRequests[0]!.id as PullRequestId;
-      const observations = await tx.query<{ readonly id: string }>(`INSERT INTO dev_flow.pull_request_observation
-        (id,pull_request_id,head_ref,base_ref,head_sha,state,source,observed_at,merged_at,recorded_at)
-        VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id::text`,
-      [pullRequestId, input.observation.head_branch, input.observation.base_branch, input.observation.head_sha,
-        input.observation.state, input.observation.source, input.observation.observed_at, input.observation.merged_at, input.recorded_at]);
-      return { pull_request_id: pullRequestId, observation_id: observations[0]!.id as PullRequestObservationId };
-    });
+  async observe(input: ObservePullRequestInput): Promise<StoredObservationIdentity> {
+    return this.sql.transaction((tx) => PostgresDevFlowPullRequestRepository.observe_in(tx, input));
   }
 
-  async bind_verified(input: { readonly cohort_id: CohortId; readonly pull_request_id: PullRequestId; readonly observation_id: PullRequestObservationId; readonly verified_head_sha: string; readonly verified_at: string; readonly replace_verification_id: PullRequestVerificationId | null }): Promise<Result<{ readonly id: PullRequestVerificationId; readonly binding: "created" | "replaced" | "head_advanced" }, { readonly kind: "replacement_required" | "replacement_conflict" | "build_cohort_not_found"; readonly detail: string }>> {
-    return this.sql.transaction(async (tx) => {
-      const rows = await tx.query<{ readonly current_verified_pull_request_id: string | null }>(
-        "SELECT current_verified_pull_request_id::text FROM dev_flow.build_cohort WHERE cohort_id=$1 FOR UPDATE", [input.cohort_id]);
-      if (!rows[0]) return err({ kind: "build_cohort_not_found", detail: "build cohort is missing" });
-      const current = rows[0].current_verified_pull_request_id;
-      const prior = current === null ? null : (await tx.query<{ readonly pull_request_id: string }>(
-        "SELECT pull_request_id::text FROM dev_flow.pull_request_verification WHERE id=$1", [current]))[0] ?? null;
-      const isHeadAdvance = prior?.pull_request_id === input.pull_request_id;
-      if (current !== null && !isHeadAdvance && input.replace_verification_id === null) return err({ kind: "replacement_required", detail: "cohort already has a verified pull request; replacement must name it" });
-      if (current !== null && !isHeadAdvance && current !== input.replace_verification_id) return err({ kind: "replacement_conflict", detail: "current verified pull request changed before replacement" });
-      if (current !== null) {
-        await tx.query("UPDATE dev_flow.pull_request_verification SET invalidated_at=$2,invalidation_reason=$3 WHERE id=$1 AND invalidated_at IS NULL",
-          [current, input.verified_at, isHeadAdvance ? "head_changed" : "replaced"]);
-      }
-      const inserted = await tx.query<{ readonly id: string }>(`INSERT INTO dev_flow.pull_request_verification
-        (id,cohort_id,pull_request_id,observation_id,verified_head_sha,verified_at)
-        VALUES (gen_random_uuid(),$1,$2,$3,$4,$5) RETURNING id::text`,
-      [input.cohort_id, input.pull_request_id, input.observation_id, input.verified_head_sha, input.verified_at]);
-      const id = inserted[0]!.id as PullRequestVerificationId;
-      await tx.query("UPDATE dev_flow.build_cohort SET current_verified_pull_request_id=$2,updated_at=$3 WHERE cohort_id=$1", [input.cohort_id, id, input.verified_at]);
-      return ok({ id, binding: current === null ? "created" : isHeadAdvance ? "head_advanced" : "replaced" });
-    });
+  static async observe_in(tx: SqlExecutor, input: ObservePullRequestInput): Promise<StoredObservationIdentity> {
+    const pullRequests = await tx.query<{ readonly id: string }>(`INSERT INTO dev_flow.pull_request
+      (id,provider,owner,name,forge_pull_request_id,url,created_at)
+      VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,$6)
+      ON CONFLICT (provider,lower(owner),lower(name),forge_pull_request_id) DO UPDATE SET url=EXCLUDED.url
+      RETURNING id::text`, [input.observation.provider, input.observation.owner,
+      input.observation.name, input.observation.number, input.observation.url, input.recorded_at]);
+    const pullRequestId = pullRequests[0]!.id as PullRequestId;
+    const observations = await tx.query<{ readonly id: string }>(`INSERT INTO dev_flow.pull_request_observation
+      (id,pull_request_id,head_ref,base_ref,head_sha,state,source,observed_at,merged_at,recorded_at)
+      VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id::text`,
+    [pullRequestId, input.observation.head_branch, input.observation.base_branch, input.observation.head_sha,
+      input.observation.state, input.observation.source, input.observation.observed_at, input.observation.merged_at, input.recorded_at]);
+    return { pull_request_id: pullRequestId, observation_id: observations[0]!.id as PullRequestObservationId };
+  }
+
+  async bind_verified(input: BindVerifiedPullRequestInput): Promise<BindVerifiedPullRequestResult> {
+    return this.sql.transaction((tx) => PostgresDevFlowPullRequestRepository.bind_verified_in(tx, input));
+  }
+
+  static async bind_verified_in(tx: SqlExecutor, input: BindVerifiedPullRequestInput): Promise<BindVerifiedPullRequestResult> {
+    const rows = await tx.query<{ readonly current_verified_pull_request_id: string | null }>(
+      "SELECT current_verified_pull_request_id::text FROM dev_flow.build_cohort WHERE cohort_id=$1 FOR UPDATE", [input.cohort_id]);
+    if (!rows[0]) return err({ kind: "build_cohort_not_found", detail: "build cohort is missing" });
+    const current = rows[0].current_verified_pull_request_id;
+    const prior = current === null ? null : (await tx.query<{ readonly pull_request_id: string }>(
+      "SELECT pull_request_id::text FROM dev_flow.pull_request_verification WHERE id=$1", [current]))[0] ?? null;
+    const isHeadAdvance = prior?.pull_request_id === input.pull_request_id;
+    if (current !== null && !isHeadAdvance && input.replace_verification_id === null) return err({ kind: "replacement_required", detail: "cohort already has a verified pull request; replacement must name it" });
+    if (current !== null && !isHeadAdvance && current !== input.replace_verification_id) return err({ kind: "replacement_conflict", detail: "current verified pull request changed before replacement" });
+    if (current !== null) {
+      await tx.query("UPDATE dev_flow.pull_request_verification SET invalidated_at=$2,invalidation_reason=$3 WHERE id=$1 AND invalidated_at IS NULL",
+        [current, input.verified_at, isHeadAdvance ? "head_changed" : "replaced"]);
+    }
+    const inserted = await tx.query<{ readonly id: string }>(`INSERT INTO dev_flow.pull_request_verification
+      (id,cohort_id,pull_request_id,observation_id,verified_head_sha,verified_at)
+      VALUES (gen_random_uuid(),$1,$2,$3,$4,$5) RETURNING id::text`,
+    [input.cohort_id, input.pull_request_id, input.observation_id, input.verified_head_sha, input.verified_at]);
+    const id = inserted[0]!.id as PullRequestVerificationId;
+    await tx.query("UPDATE dev_flow.build_cohort SET current_verified_pull_request_id=$2,updated_at=$3 WHERE cohort_id=$1", [input.cohort_id, id, input.verified_at]);
+    return ok({ id, binding: current === null ? "created" : isHeadAdvance ? "head_advanced" : "replaced" });
   }
 
   async confirm_merge(input: { readonly cohort_id: CohortId; readonly pull_request_id: PullRequestId; readonly idempotency_key: string; readonly merged_at: string; readonly confirmed_at: string }): Promise<Result<{ readonly kind: "created" | "replayed"; readonly closure: PullRequestMergeClosure }, { readonly kind: "idempotency_conflict" | "pull_request_not_current" | "missing_merged_evidence"; readonly detail: string }>> {
@@ -288,3 +297,35 @@ export class PostgresDevFlowPullRequestRepository implements DevFlowPullRequestR
     });
   }
 }
+
+/** Commit verified PR evidence within the artifact transaction, after execution fencing. */
+interface RecordImplementationPublicationInput {
+  readonly cohort_id: CohortId;
+  readonly enrichment: import("../domain/primitives").JsonValue | null;
+  readonly at: string;
+}
+
+export const recordImplementationPublicationIn = async (tx: SqlExecutor, input: RecordImplementationPublicationInput):
+  Promise<Result<void, { readonly code: string; readonly detail: string }>> => {
+  const evidence = input.enrichment as unknown as ImplementationPublicationEvidence | null;
+  if (!evidence?.pr) return err({ code: "pr_verification_failed", detail: "verified PR observation is missing" });
+  const observation = evidence.pr;
+  if (typeof evidence.origin_head_sha !== "string" || observation.head_sha !== evidence.origin_head_sha)
+    return err({ code: "pr_verification_failed", detail: "verified PR evidence disagrees with the pushed head" });
+  const current = await tx.query<{ readonly pull_request_id: string; readonly verified_head_sha: string }>(
+    `SELECT verification.pull_request_id::text,verification.verified_head_sha
+     FROM dev_flow.build_cohort cohort
+     LEFT JOIN dev_flow.pull_request_verification verification ON verification.id=cohort.current_verified_pull_request_id
+     WHERE cohort.cohort_id=$1 FOR UPDATE OF cohort`, [input.cohort_id]);
+  const stored = await PostgresDevFlowPullRequestRepository.observe_in(tx, { observation, recorded_at: input.at });
+  if (evidence.replace_verification_id !== null
+    && (observation.state !== "open" || current[0]?.pull_request_id === stored.pull_request_id))
+    return err({ code: "pr_verification_failed", detail: "replacement must identify a different, open PR" });
+  if (current[0]?.pull_request_id === stored.pull_request_id && current[0].verified_head_sha === evidence.origin_head_sha)
+    return ok(undefined);
+  const bound = await PostgresDevFlowPullRequestRepository.bind_verified_in(tx, { ...stored, cohort_id: input.cohort_id,
+    verified_head_sha: evidence.origin_head_sha, verified_at: input.at,
+    replace_verification_id: typeof evidence.replace_verification_id === "string"
+      ? evidence.replace_verification_id as PullRequestVerificationId : null });
+  return bound.ok ? ok(undefined) : err({ code: "pr_verification_failed", detail: bound.error.detail });
+};

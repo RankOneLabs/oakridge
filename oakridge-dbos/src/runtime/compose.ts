@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
-import type { ImplementationCohortInputs, ArtifactRef } from "../domain/dev-flow-v15";
+import { existsSync } from "node:fs";
+import type { ImplementationCohortInputs } from "../domain/dev-flow-v15";
 /**
  * How an Oakridge backend is assembled.
  *
@@ -29,9 +29,8 @@ import { compileWorkflowDefinition } from "../compiler/compile-workflow";
 import { stageInstanceIdFor } from "../decision/ids";
 import { createLegacyValidationRegistry } from "../compiler/compile-workflow";
 import { DEV_FLOW_ARTIFACT_TYPES, findArtifactType } from "../domain/artifact-types";
-import type { ArtifactEnvelope, ExecutionRequest, ExecutorAdapter } from "../domain/execution";
-import { err, ok, type AttemptId, type JsonValue, type Result, type UnitId, type WorkOrderId, type WorkflowRunId } from "../domain/primitives";
-import { parseGithubPullRequestIdentity } from "../domain/pull-request";
+import type { ExecutorAdapter } from "../domain/execution";
+import { err, ok, type AttemptId, type JsonValue, type UnitId, type WorkflowRunId } from "../domain/primitives";
 import type { GitCommandRunner } from "../domain/repository-provisioning";
 import type { InitializeStageInstance } from "../domain/run-record";
 import type { RetryCohortResult, RetryCohortTarget } from "../domain/run-record";
@@ -55,6 +54,7 @@ import { PostgresOperatorProjectionRepository } from "../storage/postgres-operat
 import { PostgresProjectRepository } from "../storage/postgres-projects";
 import { PostgresRunRecordWriter } from "../storage/postgres-run-record";
 import { PostgresRunRecordRepository } from "../storage/postgres-run-record-repository";
+import { PostgresDevFlowPullRequestRepository } from "../storage/postgres-dev-flow";
 import { StageEventApplier } from "../storage/apply-stage-event";
 import { PostgresWorkflowDefinitionRepository } from "../storage/postgres-workflow-definitions";
 import { PgPostgresExecutor } from "../storage/sql-executor";
@@ -66,11 +66,11 @@ import { DbosCollaborationPingClient, PostgresSessionMessageRecipientResolver, P
 import { BunGitCommandRunner } from "./git-command-runner";
 import { createPromptTemplateLoader } from "./prompt-template";
 import { GitProjectRepositoryIdentityResolver } from "./project-identity";
-import { dispatchRunLaunches, dispatchCohortExecution, stopCohortExecution, type WorkerSessionIO } from "./run-launch-dispatch";
+import { dispatchRunLaunches, dispatchCohortExecution, stopCohortExecution } from "./run-launch-dispatch";
+import { createImplementationWorkerSessionIO } from "./implementation-worker-session";
+import { createImplementationPublicationEnricher } from "./implementation-publication";
 import { publishWorkOrderArtifact } from "./publish-work-order-artifact";
-
-const isJsonObject = (value: JsonValue): value is { readonly [key: string]: JsonValue } =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+import { prepareDevFlowBuildCohort, verifyCohortPullRequest } from "./cohort-pull-request";
 
 export interface OakridgeRuntimeConfig {
   readonly database_url: string;
@@ -125,6 +125,8 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   }
   const now = config.now ?? (() => new Date().toISOString());
   const sql = PgPostgresExecutor.connect(config.database_url);
+  const git = config.git_commands ?? new BunGitCommandRunner();
+  const cohortPullRequests = new PostgresDevFlowPullRequestRepository(sql);
   const client = await DBOSClient.create({ systemDatabaseUrl: config.database_url });
 
   const adapterRegistry = createDevFlowAdapterRegistry();
@@ -136,7 +138,67 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const machineRegistry = createLegacyValidationRegistry();
   const definitions = new PostgresWorkflowDefinitionRepository(sql, adapterRegistry, machineRegistry);
   const stages = new PostgresStageInstanceRepository(sql);
+  const forgeRepositories = new PostgresForgeRepositoryRepository(sql);
   const stageEvents = new StageEventApplier({ sql, writer,
+    observe_pr: async (cohort_id) => {
+      const rows = await sql.query<{ readonly run_id: WorkflowRunId; readonly stage_instance_id: import("../domain/primitives").StageInstanceId;
+        readonly cohort_key: string }>(
+        "SELECT run_id::text,stage_instance_id::text,cohort_key FROM oakridge.cohort WHERE id=$1", [cohort_id]);
+      const row = rows[0];
+      if (!row) return null;
+      const current = await cohortPullRequests.find_current_for_unit(row.stage_instance_id, row.cohort_key as UnitId);
+      if (!current) return null;
+      const forge = await forgeRepositories.find_forge_repository(row.run_id, current.cohort.repository_key);
+      if (!forge) return null;
+      const verified = await verifyCohortPullRequest({ reader: config.pull_request_reader, git }, {
+        cohort: current.cohort, forge_repository: forge, candidate_url: current.pull_request.url,
+      });
+      if (!verified.ok) return null;
+      const observation = verified.value.observation;
+      return { pr_url: observation.url, repository_key: current.cohort.repository_key as never,
+        head_branch: observation.head_branch, base_branch: observation.base_branch,
+        head_sha: verified.value.pushed_head_sha as never,
+        state: observation.state === "closed_unmerged" ? "closed" : observation.state };
+    },
+    prepare_repository: async (cohort_id) => {
+      const rows = await sql.query<{ readonly stage_instance_id: import("../domain/primitives").StageInstanceId;
+        readonly stage_key: string; readonly cohort_key: string; readonly state: string; readonly frozen_inputs: ImplementationCohortInputs }>(
+        `SELECT cohort.stage_instance_id::text,stage.stage_key,cohort.cohort_key,cohort.state,cohort.frozen_inputs
+         FROM oakridge.cohort cohort JOIN oakridge.stage_instance stage ON stage.id=cohort.stage_instance_id
+         WHERE cohort.id=$1`, [cohort_id]);
+      const row = rows[0];
+      if (!row) return err({ detail: "implementation cohort is missing" });
+      if (row.stage_key !== "implementation") return ok(undefined);
+      if (row.state === "awaiting_merge" || row.state === "complete" || row.state === "failed" || row.state === "cancelled")
+        return ok(undefined);
+      const repository = row.frozen_inputs.repository;
+      if (repository.worktree_base_sha) return existsSync(repository.worktree_path)
+        ? ok(undefined) : err({ detail: "prepared cohort worktree is missing" });
+      const prepared = await prepareDevFlowBuildCohort({ pull_requests: cohortPullRequests, git }, {
+        cohort_id, stage_instance_id: row.stage_instance_id, cohort_key: row.cohort_key,
+        repository: row.frozen_inputs.repository.refs, prepared_at: now(),
+      });
+      if (!prepared.ok) return err({ detail: prepared.error.detail });
+      if (prepared.value.cohort.canonical_ref !== repository.canonical_branch
+        || prepared.value.cohort.expected_pr_base !== repository.expected_pr_base)
+        return err({ detail: "prepared cohort branch disagrees with the frozen repository input" });
+      if (existsSync(repository.worktree_path)) {
+        const branch = await git.run(repository.worktree_path, ["rev-parse", "--abbrev-ref", "HEAD"]);
+        const ancestry = await git.run(repository.worktree_path,
+          ["merge-base", "--is-ancestor", prepared.value.worktree_base_sha, "HEAD"]);
+        if (branch.exit_code !== 0 || branch.stdout.trim() !== repository.canonical_branch || ancestry.exit_code !== 0)
+          return err({ detail: "prepared worktree does not match the cohort branch and observed base" });
+      } else {
+        const created = await git.run(repository.refs.repository_path, ["worktree", "add", "--no-track", "-b",
+          repository.canonical_branch, repository.worktree_path, prepared.value.worktree_base_sha]);
+        if (created.exit_code !== 0) return err({ detail: created.stderr.trim() || "could not create the cohort worktree" });
+      }
+      await sql.query(`UPDATE oakridge.cohort SET frozen_inputs=jsonb_set(frozen_inputs,
+        '{repository,worktree_base_sha}',to_jsonb($2::text))
+        WHERE id=$1 AND frozen_inputs #>> '{repository,worktree_base_sha}' IS NULL`,
+      [cohort_id, prepared.value.worktree_base_sha]);
+      return ok(undefined);
+    },
     dispatch_executions: async (ids) => {
       for (const execution_id of ids) await DBOS.startWorkflow(workerExecutionWorkflow,
         { workflowID: `v15-worker:${execution_id}` })(execution_id);
@@ -144,7 +206,6 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const runRecords = new PostgresRunRecordRepository(sql, writer, stageEvents);
   const artifacts = new PostgresArtifactRepository(sql);
   const collaboration = new PostgresCollaborationRepository(sql);
-  const forgeRepositories = new PostgresForgeRepositoryRepository(sql);
   const projections = new PostgresOperatorProjectionRepository(sql, config.application_version, adapterRegistry);
   registerDevFlowCohortDetails(projections, sql);
   const messages = new PostgresSessionMessageRepository(sql);
@@ -169,36 +230,8 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
 
   registerDbosTransportClient(client);
   for (const adapter of config.executor_adapters) registerExecutorAdapter(adapter);
-  const git = config.git_commands ?? new BunGitCommandRunner();
-  const enrichStagePublication = async (input: { readonly attempt_id: AttemptId;
-    readonly output_name: string; readonly body: JsonValue }): Promise<Result<JsonValue | null,
-      { readonly code: string; readonly detail: string }>> => {
-    if (input.output_name !== "pr_summary") return ok(null);
-    const rows = await sql.query<{ readonly run_id: WorkflowRunId; readonly repository_key: string;
-      readonly repository_path: string; readonly canonical_ref: string; readonly expected_pr_base: string }>(
-      `SELECT attempt.run_id,build.repository_key,build.repository_path,build.canonical_ref,build.expected_pr_base
-       FROM oakridge.attempt attempt JOIN dev_flow.build_cohort build ON build.cohort_id=attempt.cohort_id
-       WHERE attempt.id=$1`, [input.attempt_id]);
-    const roles = rows[0];
-    const expected_repository = roles ? await forgeRepositories.find_forge_repository(roles.run_id, roles.repository_key) : null;
-    const base = { expected_repository, expected_pr_base: roles?.expected_pr_base ?? null,
-      canonical_ref: roles?.canonical_ref ?? null };
-    const url = isJsonObject(input.body) && typeof input.body.pr_url === "string" ? input.body.pr_url : null;
-    const identity = url ? parseGithubPullRequestIdentity(url) : null;
-    if (!identity || !roles) return ok({ ...base, pr: null, origin_head_sha: null });
-    const reader = config.pull_request_reader;
-    if (!reader) return err({ code: "enrichment_unavailable", detail: "GitHub reader is not configured" });
-    const reading = await reader.read(identity.owner, identity.name, identity.number);
-    if (!reading.ok) return err({ code: "enrichment_unavailable", detail: reading.error.detail });
-    if (reading.value === null) return ok({ ...base, pr: null, origin_head_sha: null });
-    const ref = `refs/heads/${roles.canonical_ref}`;
-    let remote: Awaited<ReturnType<GitCommandRunner["run"]>>;
-    try { remote = await git.run(roles.repository_path, ["ls-remote", "origin", ref]); }
-    catch (error) { return err({ code: "enrichment_unavailable", detail: String(error) }); }
-    if (remote.exit_code !== 0) return err({ code: "enrichment_unavailable", detail: remote.stderr.trim() || "origin could not be read" });
-    const origin_head_sha = remote.stdout.trim().split(/\s+/)[0] || null;
-    return ok({ ...base, pr: reading.value as unknown as JsonValue, origin_head_sha });
-  };
+  const enrichStagePublication = createImplementationPublicationEnricher({ sql, git,
+    pull_requests: cohortPullRequests, forge_repositories: forgeRepositories, reader: config.pull_request_reader });
   registerExecutorAdapter(new RepositoryProvisioningAdapter({
     git,
     publish_work_order: async (request) => {
@@ -275,80 +308,8 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     return bundle.matrix;
   };
 
-  const workerSessionIO: WorkerSessionIO = {
-    now,
-    create_session: async (intent) => {
-      const rows = await sql.query<{ readonly frozen_inputs: ImplementationCohortInputs; readonly cohort_key: string }>(
-        "SELECT frozen_inputs,cohort_key FROM oakridge.cohort WHERE id=$1", [intent.cohort_id]);
-      const cohort = rows[0];
-      if (!cohort?.frozen_inputs.repository.worktree_base_sha)
-        return err({ detail: "prepared implementation repository is missing" });
-      const bundle = await promptBundleOf(intent.run_id);
-      const prompt = bundle.find((entry) => entry.template_path === intent.prompt);
-      if (!prompt) return err({ detail: `pinned prompt ${intent.prompt} is unavailable` });
-      const repository = cohort.frozen_inputs.repository;
-      const source = intent.resolved_input;
-      const refs: ArtifactRef[] = [];
-      const collect = (value: JsonValue): void => {
-        if (Array.isArray(value)) { for (const member of value) collect(member); return; }
-        if (!isJsonObject(value)) return;
-        if (typeof value.id === "string" && typeof value.version === "number") {
-          refs.push({ id: value.id as ArtifactRef["id"], version: value.version }); return;
-        }
-        for (const member of Object.values(value)) collect(member);
-      };
-      collect(source);
-      const inputs: ArtifactEnvelope[] = [];
-      for (const ref of refs) {
-        const artifacts = await sql.query<{ readonly id: string; readonly artifact_type: string; readonly body: JsonValue }>(
-          `SELECT artifact.id::text,artifact.artifact_type,artifact.body FROM oakridge.artifact artifact
-           JOIN oakridge.artifact_owner owner ON owner.artifact_id=artifact.id
-           WHERE artifact.chain_id=$1 AND artifact.revision=$2 AND owner.run_id=$3`, [ref.id, ref.version, intent.run_id]);
-        const artifact = artifacts[0];
-        if (!artifact) return err({ detail: `pinned input ${ref.id}@${ref.version} is unavailable` });
-        inputs.push({ artifact_id: artifact.id as ArtifactEnvelope["artifact_id"], artifact_type: artifact.artifact_type,
-          output_name: artifact.artifact_type, unit_id: cohort.cohort_key as UnitId, body: artifact.body, chain_id: ref.id });
-      }
-      const declared_outputs = intent.worker === "build"
-        ? [{ name: "build_result", artifact_type: "dev.build_result", required: true },
-          { name: "pr_summary", artifact_type: "dev.pr_summary", required: true }]
-        : [{ name: "assessment", artifact_type: "dev.assessment", required: true }];
-      const adapter = findExecutorAdapter("delegated_session");
-      if (!adapter) return err({ detail: "delegated session integration is unavailable" });
-      const context = await runContextOf(intent.run_id);
-      const base_url = isJsonObject(context ?? null) && typeof (context as { readonly oakridge_url?: JsonValue }).oakridge_url === "string"
-        ? (context as { readonly oakridge_url: string }).oakridge_url : "";
-      if (!base_url) return err({ detail: "run publication URL is unavailable" });
-      const { capabilityFor } = await import("./resolve-work-order");
-      const request: ExecutionRequest = {
-        execution_id: intent.execution_id, stage_instance_id: intent.stage_instance_id, unit_id: cohort.cohort_key as UnitId,
-        executor_type: "delegated_session", inputs, declared_outputs,
-        expected_artifacts: declared_outputs.map((output) => ({ unit_id: cohort.cohort_key as UnitId,
-          output_name: output.name, artifact_type: output.artifact_type })),
-        resolved_config: { ...intent.settings, session_name: intent.execution_id, workdir: repository.worktree_path,
-          rendered_prompt: `${prompt.content}\n\n## Declared action input\n${JSON.stringify(source, null, 2)}\n\n${inputs.map((artifact) =>
-            `## Input ${artifact.artifact_type} (${artifact.chain_id})\n${JSON.stringify(artifact.body, null, 2)}`).join("\n\n")}`,
-          publication: { base_url, work_order_id: intent.attempt_id,
-            capability: capabilityFor(await runRecords.load_work_order_capability_seed(), intent.attempt_id as WorkOrderId) },
-          session_identity: { run_id: intent.run_id, stage_instance_id: intent.stage_instance_id, unit_id: cohort.cohort_key,
-            cohort_id: intent.cohort_id, operator_role: intent.worker, cohort_title: null,
-            repository_key: repository.refs.repository_key },
-        },
-      };
-      const { executorOperationIdForWorkOrder } = await import("../domain/primitives");
-      const started = await adapter.start_or_attach(request, executorOperationIdForWorkOrder(intent.attempt_id as WorkOrderId));
-      if (started.kind !== "kbbl_session") return err({ detail: started.kind === "executor_unavailable" ? started.detail : "integration did not create an agent session" });
-      return ok({ execution_id: intent.execution_id, session_id: randomUUID() as import("../domain/primitives").SessionId,
-        kbbl_session_id: started.session_id });
-    },
-    stop_session: async (session) => {
-      const adapter = findExecutorAdapter("delegated_session");
-      if (!adapter) return err({ detail: "delegated session integration is unavailable" });
-      const stopped = await adapter.cancel_or_fence(session.execution_id,
-        { kind: "kbbl_session", session_id: session.kbbl_session_id });
-      return stopped?.kind === "executor_unavailable" ? err({ detail: stopped.detail }) : ok(undefined);
-    },
-  };
+  const workerSessionIO = createImplementationWorkerSessionIO({ sql, records: runRecords,
+    prompt_bundle: promptBundleOf, run_context: runContextOf, find_executor: findExecutorAdapter, now });
   const dispatchWorkerExecution = async (execution_id: import("../domain/primitives").ExecutionId): Promise<void> => {
     const dispatched = await dispatchCohortExecution(sql, execution_id, workerSessionIO);
     if (!dispatched.ok && dispatched.error.kind === "stop_failed") throw new Error(dispatched.error.detail);

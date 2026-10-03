@@ -67,3 +67,16 @@ test("a new publication reports enrichment failure without committing", async ()
   }, body: "{}" });
   expect(response.status).toBe(503);
 });
+
+test("a mismatched PR observation is refused before publication", async () => {
+  const app = createWorkOrderArtifactCallbackApp({ records: {
+    check_artifact_publication: async () => null,
+    publish_artifact: async () => { throw new Error("must not write an unverified PR"); },
+  }, enrich: async () => ({ ok: false, error: { code: "pr_verification_failed", detail: "head branch mismatch" } }),
+  now: () => "2026-08-28T12:00:00.000Z" });
+  const response = await app.request(`/work-orders/${workOrderId}/emit/pr_summary`, { method: "PUT", headers: {
+    "content-type": "application/json", "work-order-capability": "secret",
+  }, body: "{}" });
+  expect(response.status).toBe(409);
+  expect(await response.json()).toEqual({ error: "head branch mismatch", code: "pr_verification_failed" });
+});
