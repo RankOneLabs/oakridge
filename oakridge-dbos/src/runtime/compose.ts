@@ -31,7 +31,7 @@ import { createLegacyValidationRegistry } from "../compiler/compile-workflow";
 import { DEV_FLOW_ARTIFACT_TYPES, findArtifactType } from "../domain/artifact-types";
 import type { ArtifactEnvelope, ExecutionRequest, ExecutorAdapter } from "../domain/execution";
 import { err, ok, type AttemptId, type JsonValue, type Result, type UnitId, type WorkOrderId, type WorkflowRunId } from "../domain/primitives";
-import { parseGithubPullRequestIdentity } from "../domain/pull-request";
+import { parseGithubPullRequestIdentity, repositoriesMatch } from "../domain/pull-request";
 import type { GitCommandRunner } from "../domain/repository-provisioning";
 import type { InitializeStageInstance } from "../domain/run-record";
 import type { RetryCohortResult, RetryCohortTarget } from "../domain/run-record";
@@ -185,19 +185,31 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
       canonical_ref: roles?.canonical_ref ?? null };
     const url = isJsonObject(input.body) && typeof input.body.pr_url === "string" ? input.body.pr_url : null;
     const identity = url ? parseGithubPullRequestIdentity(url) : null;
-    if (!identity || !roles) return ok({ ...base, pr: null, origin_head_sha: null });
+    const invalid = (detail: string) => err({ code: "pr_verification_failed", detail });
+    if (!identity || !roles || !expected_repository) return invalid("PR identity or repository authority is missing");
+    if (!isJsonObject(input.body) || input.body.repository_key !== roles.repository_key
+      || input.body.branch !== roles.canonical_ref || input.body.base_branch !== roles.expected_pr_base)
+      return invalid("PR summary disagrees with the cohort repository or branch contract");
+    if (!repositoriesMatch(identity.owner, identity.name, expected_repository.owner, expected_repository.name))
+      return invalid("PR URL belongs to a different repository");
     const reader = config.pull_request_reader;
     if (!reader) return err({ code: "enrichment_unavailable", detail: "GitHub reader is not configured" });
     const reading = await reader.read(identity.owner, identity.name, identity.number);
     if (!reading.ok) return err({ code: "enrichment_unavailable", detail: reading.error.detail });
-    if (reading.value === null) return ok({ ...base, pr: null, origin_head_sha: null });
+    if (reading.value === null) return invalid("PR was not found at the forge");
+    const observed = reading.value;
+    if (!repositoriesMatch(observed.owner, observed.name, expected_repository.owner, expected_repository.name)
+      || observed.number !== identity.number || observed.head_branch !== roles.canonical_ref
+      || observed.base_branch !== roles.expected_pr_base || !observed.head_sha)
+      return invalid("forge PR observation disagrees with the cohort repository, branches, or head");
     const ref = `refs/heads/${roles.canonical_ref}`;
     let remote: Awaited<ReturnType<GitCommandRunner["run"]>>;
     try { remote = await git.run(roles.repository_path, ["ls-remote", "origin", ref]); }
     catch (error) { return err({ code: "enrichment_unavailable", detail: String(error) }); }
     if (remote.exit_code !== 0) return err({ code: "enrichment_unavailable", detail: remote.stderr.trim() || "origin could not be read" });
     const origin_head_sha = remote.stdout.trim().split(/\s+/)[0] || null;
-    return ok({ ...base, pr: reading.value as unknown as JsonValue, origin_head_sha });
+    if (origin_head_sha !== observed.head_sha) return invalid("forge PR head differs from the pushed cohort head");
+    return ok({ ...base, pr: observed as unknown as JsonValue, origin_head_sha });
   };
   registerExecutorAdapter(new RepositoryProvisioningAdapter({
     git,
