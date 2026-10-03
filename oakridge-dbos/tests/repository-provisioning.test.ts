@@ -2,8 +2,8 @@ import { expect, test } from "bun:test";
 
 import { RepositoryProvisioningAdapter } from "../src/adapters/repository-provisioning";
 import type { ExecutionRequest } from "../src/domain/execution";
-import type { ExecutionId, JsonValue, StageInstanceId, UnitId } from "../src/domain/primitives";
-import { describeRepositoryProvisioningFailure, provisionRepositoryRefs, type GitCommandOutcome, type GitCommandRunner } from "../src/domain/repository-provisioning";
+import type { CohortId, ExecutionId, JsonValue, RepositoryKey, StageInstanceId, UnitId } from "../src/domain/primitives";
+import { describeRepositoryProvisioningFailure, provisionFailureFromAdapter, provisionRepositoryRefs, type GitCommandOutcome, type GitCommandRunner, type RepositoryProvisioningFailure } from "../src/domain/repository-provisioning";
 import { parseResolvedRepositoryProvisioningConfig, parseBaseBranch, parseRunContextRepository, selectBaseBranch, type RunContextRepository } from "../src/domain/repository-refs";
 import { runExclusive } from "../src/runtime/keyed-mutex";
 
@@ -12,6 +12,22 @@ const BASE_BRANCH = "epic/response-edits";
 const provision = (git: GitCommandRunner, overrides: { readonly integration_branch?: string } = {}) =>
   provisionRepositoryRefs({ repository: { ...repository, ...overrides }, base_branch: BASE_BRANCH }, git);
 const EPIC_HEAD = "94b43e4ab2c2ea1c44acb546534cb8df0aea92c6";
+
+test("all repository failures retain their adapter evidence and cohort identity", () => {
+  const failures: readonly RepositoryProvisioningFailure[] = [
+    { kind: "not_a_git_repository", repository_key: "scout", repository_path: "/repos/scout" },
+    { kind: "missing_integration_branch", repository_key: "scout", repository_path: "/repos/scout", integration_branch: "main", detail: "missing" },
+    { kind: "base_branch_unavailable", repository_key: "scout", repository_path: "/repos/scout", base_branch: BASE_BRANCH, detail: "denied" },
+    { kind: "git_command_failed", repository_key: "scout", repository_path: "/repos/scout", command: "git fetch", detail: "offline" },
+  ];
+  for (const failure of failures) {
+    expect(provisionFailureFromAdapter({ cohort_id: "cohort-1" as CohortId,
+      repository_key: "scout" as RepositoryKey, failure })).toEqual(expect.objectContaining({
+      operation: "provision_repository_refs", cohort_id: "cohort-1", repository_key: "scout",
+      kind: failure.kind, detail: describeRepositoryProvisioningFailure(failure), evidence: failure,
+    }));
+  }
+});
 
 /** A git that answers from a script, and records the commands it was asked for. */
 const scriptedGit = (script: (args: readonly string[], call: number) => Partial<GitCommandOutcome> | undefined) => {

@@ -2,6 +2,7 @@
 import type { ArtifactId, CohortId, CohortKey, CommitSha, ExecutionId, RepositoryKey, RequestId, SessionId, StageInstanceId, WorkflowRunId } from "./primitives";
 import type { ArtifactRecord } from "./artifacts";
 import type { AssessmentBody, BuildBriefBody, BuildResultBody, PlanBody, PrSummaryBody, SpecAnalysisBody } from "./dev-flow-artifacts";
+import type { ProvisionExecution, ProvisionOutcome } from "./repository-provisioning";
 export type WorkerState =
   | "pending"
   | "working"
@@ -768,28 +769,9 @@ export interface RepositoryRefsArtifact {
   provenance: ArtifactProvenance;
 }
 
-export interface ProvisionFailure {
-  operation: "provision_repository_refs";
-  cohort_id: CohortId;
-  repository_key: RepositoryKey;
-  detail: string;
-  kind: "not_a_git_repository" | "missing_integration_branch" | "base_branch_unavailable" | "git_command_failed";
-}
-
-export type ProvisionOutcome =
-  | { kind: "succeeded"; output: ArtifactRef }
-  | { kind: "failed"; failure: ProvisionFailure };
-
 export interface ProvisionResponse {
   execution_id: ExecutionId;
   outcome: ProvisionOutcome;
-}
-
-export interface ProvisionExecution {
-  execution_id: ExecutionId;
-  action_point: "initial" | "retry";
-  state: SessionState;
-  outcome: ProvisionOutcome | null;
 }
 
 export interface ProvisionWorkerRecord {

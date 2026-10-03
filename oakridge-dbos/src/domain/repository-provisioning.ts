@@ -1,5 +1,42 @@
 import { err, ok, type Result } from "./primitives";
+import type { CohortId, ExecutionId, RepositoryKey } from "./primitives";
+import type { ArtifactRef, InterruptedExecution, SessionState } from "./dev-flow-v15";
 import type { RepositoryRefs, RunContextRepository } from "./repository-refs";
+
+/** A repository operation has an execution history, but never an agent session. */
+export interface ProvisionFailure {
+  readonly operation: "provision_repository_refs";
+  readonly cohort_id: CohortId;
+  readonly repository_key: RepositoryKey;
+  readonly kind: RepositoryProvisioningFailure["kind"];
+  readonly detail: string;
+  readonly evidence: RepositoryProvisioningFailure;
+}
+
+export type ProvisionOutcome =
+  | { readonly kind: "succeeded"; readonly output: ArtifactRef }
+  | { readonly kind: "failed"; readonly failure: ProvisionFailure };
+
+export interface ProvisionExecution {
+  readonly execution_id: ExecutionId;
+  readonly action_point: "initial" | "retry";
+  readonly state: SessionState;
+  readonly outcome: ProvisionOutcome | null;
+}
+
+export interface InterruptedProvisionExecution {
+  readonly execution: InterruptedExecution;
+}
+
+export const provisionFailureFromAdapter = (input: {
+  readonly cohort_id: CohortId;
+  readonly repository_key: RepositoryKey;
+  readonly failure: RepositoryProvisioningFailure;
+}): ProvisionFailure => ({
+  operation: "provision_repository_refs", cohort_id: input.cohort_id,
+  repository_key: input.repository_key, kind: input.failure.kind,
+  detail: describeRepositoryProvisioningFailure(input.failure), evidence: input.failure,
+});
 
 /**
  * Guaranteeing that a repository has the refs a run assumes.
