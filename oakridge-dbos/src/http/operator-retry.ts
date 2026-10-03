@@ -1,14 +1,44 @@
+import { z } from "zod";
+import type { OperatorRequestEnvelope } from "../domain/dev-flow-v15";
+import type { CohortIngressError } from "../storage/apply-stage-event";
+import type { Result } from "../domain/primitives";
 import { Hono, type Context } from "hono";
 
 import { parseUuidId, type CohortId, type StageInstanceId } from "../domain/primitives";
 import type { RetryCohortResult, RetryCohortTarget } from "../domain/run-record";
 
 export interface OperatorRetryHttpDependencies {
+  submit_request?(request: OperatorRequestEnvelope): Promise<Result<{ readonly commits: number; readonly reason: string }, CohortIngressError>>;
   retry_through_driver(target: RetryCohortTarget, idempotency_key: string): Promise<RetryCohortResult>;
   abandon?(cohort_id: CohortId, detail: string): Promise<{ readonly kind: "applied"; readonly state: string }
     | { readonly kind: "refused"; readonly code: string; readonly detail: string }
     | { readonly kind: "not_found" }>;
 }
+
+// Mirrors the implementation OperatorRequest union; unknown fields are refused
+// before any decision owner is loaded or mutated.
+const artifactRef = z.object({ id: z.uuid(), version: z.number().int().positive() }).strict();
+const buildTarget = z.object({ outputs: z.object({ build_result: artifactRef, pr_summary: artifactRef }).strict(),
+  head_sha: z.string().min(1) }).strict();
+const acceptedBuild = buildTarget.extend({ pr_url: z.string().url() }).strict();
+const assessmentTarget = z.object({ assessment: artifactRef, build: acceptedBuild }).strict();
+const operatorRequest = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("accept_build"), target: buildTarget }).strict(),
+  z.object({ kind: z.literal("replace_pr"), target: buildTarget }).strict(),
+  z.object({ kind: z.literal("accept_assessment"), target: assessmentTarget }).strict(),
+  z.object({ kind: z.literal("request_build_changes"), feedback: z.object({
+    source: z.literal("build_review"), text: z.string().trim().min(1), target: buildTarget }).strict() }).strict(),
+  z.object({ kind: z.literal("request_implementation_changes"), feedback: z.object({
+    source: z.literal("assessment"), text: z.string().trim().min(1), target: assessmentTarget }).strict() }).strict(),
+  z.object({ kind: z.literal("discuss_assessment"), feedback: z.object({
+    text: z.string().trim().min(1), target: assessmentTarget }).strict() }).strict(),
+  z.object({ kind: z.literal("retry_build") }).strict(),
+  z.object({ kind: z.literal("retry_assessment") }).strict(),
+  z.object({ kind: z.literal("cancel") }).strict(),
+  z.object({ kind: z.literal("abandon"), reason: z.string().trim().min(1) }).strict(),
+]);
+const requestEnvelope = z.object({ id: z.uuid(), expected_version: z.number().int().nonnegative(),
+  request: operatorRequest }).strict();
 
 /**
  * Operator retry of a cohort, addressed either by the cohort row id or by the
@@ -20,6 +50,17 @@ export interface OperatorRetryHttpDependencies {
  */
 export const createOperatorRetryApp = (dependencies: OperatorRetryHttpDependencies): Hono => {
   const app = new Hono();
+  app.post("/cohorts/:cohortId/requests", async (http) => {
+    const cohort_id = parseUuidId<CohortId>(http.req.param("cohortId"));
+    if (!cohort_id) return http.json({ error: "invalid cohort id" }, 400);
+    const parsed = requestEnvelope.safeParse(await http.req.json().catch(() => null));
+    if (!parsed.success) return http.json({ error: parsed.error.message }, 422);
+    if (!dependencies.submit_request) return http.json({ error: "cohort request ingress is unavailable" }, 503);
+    const request = { ...parsed.data, cohort_id } as OperatorRequestEnvelope;
+    const result = await dependencies.submit_request(request);
+    if (!result.ok) return http.json({ error: result.error }, result.error.kind === "cohort_not_found" ? 404 : 409);
+    return http.json(result.value, 202);
+  });
   const retry = async (http: Context, target: RetryCohortTarget) => {
     const idempotencyKey = http.req.header("idempotency-key")?.trim();
     if (!idempotencyKey) return http.json({ error: "Idempotency-Key header is required" }, 400);

@@ -1,96 +1,169 @@
+/** Replaces the retired event-row matrix with every authored implementation leaf. */
 import { expect, test } from "bun:test";
-import { compileWorkflowDefinition } from "../src/compiler/compile-workflow";
-import { transition } from "../src/decision/stage-machine";
-import type { CompiledMachine, StateName, Transition } from "../src/domain/stage-machine";
-import { loadGraphDefinitionFixture as loadDevFlowV15 } from "./support/graph-definition-fixture";
-import { contextForMachineRow, machineRegistry } from "./support/machine-fixtures";
+import { evaluateCohort } from "../src/decision/stage-machine";
+import type { ArtifactRef, ImplementationCohortDefinition, ImplementationCohortRecord, OperatorRequest,
+  WorkerState, CohortState, VerifiedPrObservation, ResolvedWorkerAction, CohortChange, V15DecisionTree } from "../src/domain/dev-flow-v15";
 
-const loaded = await loadDevFlowV15();
-if (!loaded.ok) throw new Error(loaded.error.detail);
-const definition = loaded.value;
-const machines = definition.machines ?? {};
-
-const sameGroup = (machine: CompiledMachine, earlier: Transition, current: Transition, from: StateName): boolean => {
-  const fromMatches = typeof earlier.from === "string" ? earlier.from === from
-    : !["complete", "failed", "cancelled"].includes(machine.states[from]?.status ?? "failed");
-  return fromMatches && JSON.stringify(earlier.on) === JSON.stringify(current.on);
+const definition = (await Bun.file(new URL("../../workflow-config/definitions/dev_flow_v15.json", import.meta.url)).json())
+  .stages.implementation.cohort as ImplementationCohortDefinition;
+const brief = { id: "00000000-0000-4000-8000-000000000001", version: 1 } as ArtifactRef;
+const outputs = { build_result: { ...brief, id: "00000000-0000-4000-8000-000000000002" as ArtifactRef["id"] },
+  pr_summary: { ...brief, id: "00000000-0000-4000-8000-000000000003" as ArtifactRef["id"] } };
+const assessmentRef = { ...brief, id: "00000000-0000-4000-8000-000000000004" as ArtifactRef["id"] };
+const repository = { refs: { repository_key: "oakridge" as never, repository_path: "/repo",
+  integration_branch: "epic/wf", base_branch: "epic/schema", base_head_sha: "abc" as never },
+  worktree_path: "/repo/worktree", worktree_base_sha: "abc" as never,
+  canonical_branch: "cohort/core", expected_pr_base: "epic/schema" };
+const buildTarget = { outputs, head_sha: "abc" as never };
+const accepted = { ...buildTarget, pr_url: "https://example.test/pr/1" };
+const assessmentTarget = { assessment: assessmentRef, build: accepted };
+const buildWork = { action_point: "initial" as const, input: { brief, repository } };
+const assessmentWork = { action_point: "initial" as const, input: { brief, repository, accepted_build: accepted } };
+const buildInterruption = { work: buildWork, execution: { execution_id: "build-execution" as never,
+  session_id: null, detail: "transport lost" }, ...outputs };
+const assessmentInterruption = { work: assessmentWork, execution: { execution_id: "assessment-execution" as never,
+  session_id: null, detail: "transport lost" }, assessment: assessmentRef };
+const buildFeedback = { source: "build_review" as const, text: "revise", target: buildTarget };
+const assessmentFeedback = { source: "assessment" as const, text: "revise", target: assessmentTarget };
+const requests: Readonly<Record<string, OperatorRequest | null>> = {
+  none: null, retry_build: { kind: "retry_build" }, retry_assessment: { kind: "retry_assessment" },
+  accept_build: { kind: "accept_build", target: buildTarget },
+  accept_assessment: { kind: "accept_assessment", target: assessmentTarget },
+  request_build_changes: { kind: "request_build_changes", feedback: buildFeedback },
+  discuss_assessment: { kind: "discuss_assessment", feedback: assessmentFeedback },
+  request_implementation_changes: { kind: "request_implementation_changes", feedback: assessmentFeedback },
+  replace_pr: { kind: "replace_pr", target: buildTarget }, cancel: { kind: "cancel" },
+  abandon: { kind: "abandon", reason: "stop" },
 };
+interface LeafCase {
+  readonly name: string;
+  readonly state: string;
+  readonly build: string;
+  readonly assessment: string;
+  readonly request: string;
+  readonly facts: { readonly build_outputs_ready?: boolean; readonly build_execution_interrupted?: boolean;
+    readonly assessment_response_ready?: boolean; readonly assessment_execution_interrupted?: boolean;
+    readonly pr_closed_unmerged?: boolean; readonly pr_merged_at_accepted_head?: boolean };
+  readonly expected: { readonly kind: "wait"; readonly reason: string }
+    | { readonly kind: "reject"; readonly reason: string }
+    | { readonly kind: "apply"; readonly changes: readonly CohortChange[];
+        readonly actions: readonly { readonly worker: "build" | "assessment"; readonly action_point: string }[] };
+}
+// Concrete cases derived once from the committed contract, not from the implementation under test.
+const cases: readonly LeafCase[] = [
+  {"name":"match_cohort=complete / match_request=none","state":"complete","build":"pending","assessment":"pending","request":"none","facts":{},"expected":{"kind":"wait","reason":"cohort is terminal"}},
+  {"name":"match_cohort=complete / match_request=otherwise","state":"complete","build":"pending","assessment":"pending","request":"retry_build","facts":{},"expected":{"kind":"reject","reason":"cohort is terminal"}},
+  {"name":"match_cohort=failed / match_request=none","state":"failed","build":"pending","assessment":"pending","request":"none","facts":{},"expected":{"kind":"wait","reason":"cohort is terminal"}},
+  {"name":"match_cohort=failed / match_request=otherwise","state":"failed","build":"pending","assessment":"pending","request":"retry_build","facts":{},"expected":{"kind":"reject","reason":"cohort is terminal"}},
+  {"name":"match_cohort=cancelled / match_request=none","state":"cancelled","build":"pending","assessment":"pending","request":"none","facts":{},"expected":{"kind":"wait","reason":"cohort is terminal"}},
+  {"name":"match_cohort=cancelled / match_request=otherwise","state":"cancelled","build":"pending","assessment":"pending","request":"retry_build","facts":{},"expected":{"kind":"reject","reason":"cohort is terminal"}},
+  {"name":"match_cohort=otherwise / match_request=cancel","state":"pending","build":"pending","assessment":"pending","request":"cancel","facts":{},"expected":{"kind":"apply","changes":[{"kind":"fence_execution","worker":"build"},{"kind":"fence_execution","worker":"assessment"},{"kind":"set_worker_state","worker":"build","state":"cancelled"},{"kind":"set_worker_state","worker":"assessment","state":"cancelled"},{"kind":"set_cohort_state","state":"cancelled"}],"actions":[]}},
+  {"name":"match_cohort=otherwise / match_request=abandon","state":"pending","build":"pending","assessment":"pending","request":"abandon","facts":{},"expected":{"kind":"apply","changes":[{"kind":"fence_execution","worker":"build"},{"kind":"fence_execution","worker":"assessment"},{"kind":"set_cohort_state","state":"failed"}],"actions":[]}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=pending / match_request=none","state":"pending","build":"pending","assessment":"pending","request":"none","facts":{},"expected":{"kind":"apply","changes":[{"kind":"set_cohort_state","state":"working"},{"kind":"set_worker_state","worker":"build","state":"working"}],"actions":[{"worker":"build","action_point":"initial"}]}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=pending / match_request=otherwise","state":"pending","build":"pending","assessment":"pending","request":"retry_build","facts":{},"expected":{"kind":"reject","reason":"cohort has not started"}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=working / match_worker:build=working / match_request=none / build_outputs_ready=true","state":"working","build":"working","assessment":"pending","request":"none","facts":{"build_outputs_ready":true},"expected":{"kind":"apply","changes":[{"kind":"fence_execution","worker":"build"},{"kind":"set_worker_state","worker":"build","state":"awaiting_review"}],"actions":[]}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=working / match_worker:build=working / match_request=none / build_outputs_ready=false / build_execution_interrupted=true","state":"working","build":"working","assessment":"pending","request":"none","facts":{"build_outputs_ready":false,"build_execution_interrupted":true},"expected":{"kind":"apply","changes":[{"kind":"set_worker_state","worker":"build","state":"interrupted"}],"actions":[]}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=working / match_worker:build=working / match_request=none / build_outputs_ready=false / build_execution_interrupted=false","state":"working","build":"working","assessment":"pending","request":"none","facts":{"build_outputs_ready":false,"build_execution_interrupted":false},"expected":{"kind":"wait","reason":"builder response pending"}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=working / match_worker:build=working / match_request=otherwise","state":"working","build":"working","assessment":"pending","request":"retry_build","facts":{},"expected":{"kind":"reject","reason":"builder is working"}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=working / match_worker:build=interrupted / match_request=retry_build","state":"working","build":"interrupted","assessment":"pending","request":"retry_build","facts":{},"expected":{"kind":"apply","changes":[{"kind":"fence_execution","worker":"build"},{"kind":"set_worker_state","worker":"build","state":"working"}],"actions":[{"worker":"build","action_point":"retry"}]}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=working / match_worker:build=interrupted / match_request=none","state":"working","build":"interrupted","assessment":"pending","request":"none","facts":{},"expected":{"kind":"wait","reason":"builder retry or abandonment required"}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=working / match_worker:build=interrupted / match_request=otherwise","state":"working","build":"interrupted","assessment":"pending","request":"retry_assessment","facts":{},"expected":{"kind":"reject","reason":"builder is interrupted"}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=working / match_worker:build=awaiting_review / match_request=accept_build","state":"working","build":"awaiting_review","assessment":"pending","request":"accept_build","facts":{},"expected":{"kind":"apply","changes":[{"kind":"accept_outputs","worker":"build"},{"kind":"capture_accepted_build"},{"kind":"set_worker_state","worker":"build","state":"accepted"},{"kind":"set_worker_state","worker":"assessment","state":"working"}],"actions":[{"worker":"assessment","action_point":"initial"}]}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=working / match_worker:build=awaiting_review / match_request=request_build_changes","state":"working","build":"awaiting_review","assessment":"pending","request":"request_build_changes","facts":{},"expected":{"kind":"apply","changes":[{"kind":"fence_execution","worker":"build"},{"kind":"fence_execution","worker":"assessment"},{"kind":"clear_acceptance","worker":"build"},{"kind":"clear_acceptance","worker":"assessment"},{"kind":"clear_accepted_build"},{"kind":"set_cohort_state","state":"working"},{"kind":"set_worker_state","worker":"assessment","state":"pending"},{"kind":"set_worker_state","worker":"build","state":"working"}],"actions":[{"worker":"build","action_point":"revise"}]}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=working / match_worker:build=awaiting_review / match_request=replace_pr / pr_closed_unmerged=true","state":"working","build":"awaiting_review","assessment":"pending","request":"replace_pr","facts":{"pr_closed_unmerged":true},"expected":{"kind":"apply","changes":[{"kind":"fence_execution","worker":"build"},{"kind":"fence_execution","worker":"assessment"},{"kind":"clear_acceptance","worker":"build"},{"kind":"clear_acceptance","worker":"assessment"},{"kind":"clear_accepted_build"},{"kind":"set_cohort_state","state":"working"},{"kind":"set_worker_state","worker":"assessment","state":"pending"},{"kind":"set_worker_state","worker":"build","state":"working"}],"actions":[{"worker":"build","action_point":"replace_pr"}]}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=working / match_worker:build=awaiting_review / match_request=replace_pr / pr_closed_unmerged=false","state":"working","build":"awaiting_review","assessment":"pending","request":"replace_pr","facts":{"pr_closed_unmerged":false},"expected":{"kind":"reject","reason":"PR is not closed without merge"}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=working / match_worker:build=awaiting_review / match_request=none","state":"working","build":"awaiting_review","assessment":"pending","request":"none","facts":{},"expected":{"kind":"wait","reason":"build review required"}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=working / match_worker:build=awaiting_review / match_request=otherwise","state":"working","build":"awaiting_review","assessment":"pending","request":"retry_build","facts":{},"expected":{"kind":"reject","reason":"request does not apply to build review"}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=working / match_worker:build=accepted / match_request=replace_pr / pr_closed_unmerged=true","state":"working","build":"accepted","assessment":"pending","request":"replace_pr","facts":{"pr_closed_unmerged":true},"expected":{"kind":"apply","changes":[{"kind":"fence_execution","worker":"build"},{"kind":"fence_execution","worker":"assessment"},{"kind":"clear_acceptance","worker":"build"},{"kind":"clear_acceptance","worker":"assessment"},{"kind":"clear_accepted_build"},{"kind":"set_cohort_state","state":"working"},{"kind":"set_worker_state","worker":"assessment","state":"pending"},{"kind":"set_worker_state","worker":"build","state":"working"}],"actions":[{"worker":"build","action_point":"replace_pr"}]}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=working / match_worker:build=accepted / match_request=replace_pr / pr_closed_unmerged=false","state":"working","build":"accepted","assessment":"pending","request":"replace_pr","facts":{"pr_closed_unmerged":false},"expected":{"kind":"reject","reason":"PR is not closed without merge"}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=working / match_worker:build=accepted / match_request=otherwise / match_worker:assessment=working / match_request=none / assessment_response_ready=true","state":"working","build":"accepted","assessment":"working","request":"none","facts":{"assessment_response_ready":true},"expected":{"kind":"apply","changes":[{"kind":"fence_execution","worker":"assessment"},{"kind":"set_worker_state","worker":"assessment","state":"awaiting_review"}],"actions":[]}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=working / match_worker:build=accepted / match_request=otherwise / match_worker:assessment=working / match_request=none / assessment_response_ready=false / assessment_execution_interrupted=true","state":"working","build":"accepted","assessment":"working","request":"none","facts":{"assessment_response_ready":false,"assessment_execution_interrupted":true},"expected":{"kind":"apply","changes":[{"kind":"set_worker_state","worker":"assessment","state":"interrupted"}],"actions":[]}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=working / match_worker:build=accepted / match_request=otherwise / match_worker:assessment=working / match_request=none / assessment_response_ready=false / assessment_execution_interrupted=false","state":"working","build":"accepted","assessment":"working","request":"none","facts":{"assessment_response_ready":false,"assessment_execution_interrupted":false},"expected":{"kind":"wait","reason":"assessment response pending"}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=working / match_worker:build=accepted / match_request=otherwise / match_worker:assessment=working / match_request=otherwise","state":"working","build":"accepted","assessment":"working","request":"retry_build","facts":{},"expected":{"kind":"reject","reason":"assessor is working"}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=working / match_worker:build=accepted / match_request=otherwise / match_worker:assessment=interrupted / match_request=retry_assessment","state":"working","build":"accepted","assessment":"interrupted","request":"retry_assessment","facts":{},"expected":{"kind":"apply","changes":[{"kind":"fence_execution","worker":"assessment"},{"kind":"set_worker_state","worker":"assessment","state":"working"}],"actions":[{"worker":"assessment","action_point":"retry"}]}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=working / match_worker:build=accepted / match_request=otherwise / match_worker:assessment=interrupted / match_request=none","state":"working","build":"accepted","assessment":"interrupted","request":"none","facts":{},"expected":{"kind":"wait","reason":"assessor retry or abandonment required"}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=working / match_worker:build=accepted / match_request=otherwise / match_worker:assessment=interrupted / match_request=otherwise","state":"working","build":"accepted","assessment":"interrupted","request":"retry_build","facts":{},"expected":{"kind":"reject","reason":"assessor is interrupted"}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=working / match_worker:build=accepted / match_request=otherwise / match_worker:assessment=awaiting_review / match_request=accept_assessment","state":"working","build":"accepted","assessment":"awaiting_review","request":"accept_assessment","facts":{},"expected":{"kind":"apply","changes":[{"kind":"accept_outputs","worker":"assessment"},{"kind":"set_worker_state","worker":"assessment","state":"accepted"},{"kind":"set_cohort_state","state":"awaiting_merge"}],"actions":[]}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=working / match_worker:build=accepted / match_request=otherwise / match_worker:assessment=awaiting_review / match_request=discuss_assessment","state":"working","build":"accepted","assessment":"awaiting_review","request":"discuss_assessment","facts":{},"expected":{"kind":"apply","changes":[{"kind":"clear_acceptance","worker":"assessment"},{"kind":"set_worker_state","worker":"assessment","state":"working"}],"actions":[{"worker":"assessment","action_point":"discuss"}]}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=working / match_worker:build=accepted / match_request=otherwise / match_worker:assessment=awaiting_review / match_request=request_implementation_changes","state":"working","build":"accepted","assessment":"awaiting_review","request":"request_implementation_changes","facts":{},"expected":{"kind":"apply","changes":[{"kind":"fence_execution","worker":"build"},{"kind":"fence_execution","worker":"assessment"},{"kind":"clear_acceptance","worker":"build"},{"kind":"clear_acceptance","worker":"assessment"},{"kind":"clear_accepted_build"},{"kind":"set_cohort_state","state":"working"},{"kind":"set_worker_state","worker":"assessment","state":"pending"},{"kind":"set_worker_state","worker":"build","state":"working"}],"actions":[{"worker":"build","action_point":"revise"}]}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=working / match_worker:build=accepted / match_request=otherwise / match_worker:assessment=awaiting_review / match_request=none","state":"working","build":"accepted","assessment":"awaiting_review","request":"none","facts":{},"expected":{"kind":"wait","reason":"assessment review required"}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=working / match_worker:build=accepted / match_request=otherwise / match_worker:assessment=awaiting_review / match_request=otherwise","state":"working","build":"accepted","assessment":"awaiting_review","request":"retry_build","facts":{},"expected":{"kind":"reject","reason":"request does not apply to assessment review"}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=working / match_worker:build=accepted / match_request=otherwise / match_worker:assessment=otherwise","state":"working","build":"accepted","assessment":"pending","request":"none","facts":{},"expected":{"kind":"reject","reason":"invalid assessor state for accepted builder"}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=working / match_worker:build=otherwise","state":"working","build":"pending","assessment":"pending","request":"none","facts":{},"expected":{"kind":"reject","reason":"invalid builder state for working cohort"}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=awaiting_merge / match_request=replace_pr / pr_closed_unmerged=true","state":"awaiting_merge","build":"accepted","assessment":"accepted","request":"replace_pr","facts":{"pr_closed_unmerged":true},"expected":{"kind":"apply","changes":[{"kind":"fence_execution","worker":"build"},{"kind":"fence_execution","worker":"assessment"},{"kind":"clear_acceptance","worker":"build"},{"kind":"clear_acceptance","worker":"assessment"},{"kind":"clear_accepted_build"},{"kind":"set_cohort_state","state":"working"},{"kind":"set_worker_state","worker":"assessment","state":"pending"},{"kind":"set_worker_state","worker":"build","state":"working"}],"actions":[{"worker":"build","action_point":"replace_pr"}]}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=awaiting_merge / match_request=replace_pr / pr_closed_unmerged=false","state":"awaiting_merge","build":"accepted","assessment":"accepted","request":"replace_pr","facts":{"pr_closed_unmerged":false},"expected":{"kind":"reject","reason":"PR is not closed without merge"}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=awaiting_merge / match_request=none / pr_merged_at_accepted_head=true","state":"awaiting_merge","build":"accepted","assessment":"accepted","request":"none","facts":{"pr_merged_at_accepted_head":true},"expected":{"kind":"apply","changes":[{"kind":"set_cohort_state","state":"complete"}],"actions":[]}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=awaiting_merge / match_request=none / pr_merged_at_accepted_head=false","state":"awaiting_merge","build":"accepted","assessment":"accepted","request":"none","facts":{"pr_merged_at_accepted_head":false},"expected":{"kind":"wait","reason":"verified merge or PR replacement required"}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=awaiting_merge / match_request=otherwise","state":"awaiting_merge","build":"accepted","assessment":"accepted","request":"retry_build","facts":{},"expected":{"kind":"reject","reason":"request does not apply while awaiting merge"}},
+  {"name":"match_cohort=otherwise / match_request=otherwise / match_cohort=otherwise","state":"invalid","build":"pending","assessment":"pending","request":"none","facts":{},"expected":{"kind":"reject","reason":"invalid cohort state"}}
+];
 
-test("the real dev-flow v15 definition validates with registered machines", () => {
-  const compiled = compileWorkflowDefinition(definition, undefined, undefined, machineRegistry());
-  expect(compiled.ok).toBe(true);
-  if (!compiled.ok) throw new Error(compiled.error.detail);
-  expect(Object.values(compiled.value.stages).every((stage) => stage.machine !== undefined)).toBe(true);
+const snapshotFor = (item: LeafCase): ImplementationCohortRecord => ({
+  id: "00000000-0000-4000-8000-000000000010" as never, key: "core" as never, version: 7,
+  state: item.state as CohortState, depends_on: [], inputs: { brief, repository },
+  build: { state: item.build as WorkerState, active_execution_id: "build-execution" as never,
+    outputs: { build_result: { ...outputs.build_result, type: "dev.build_result", state: "unreviewed", body: {} as never,
+      provenance: { execution_id: "build-execution" as never, session_id: null } },
+      pr_summary: { ...outputs.pr_summary, type: "dev.pr_summary", state: "unreviewed", body: { pr_url: accepted.pr_url } as never,
+        provenance: { execution_id: "build-execution" as never, session_id: null } } },
+    sessions: [], work: buildWork,
+    response: (item.facts.build_outputs_ready ?? ["awaiting_review", "accepted"].includes(item.build)) ? { execution_id: "build-execution" as never, ...outputs, head_sha: buildTarget.head_sha } : null,
+    interrupted: item.facts.build_execution_interrupted || item.build === "interrupted" ? buildInterruption : null },
+  assessment: { state: item.assessment as WorkerState, active_execution_id: "assessment-execution" as never,
+    outputs: { assessment: { ...assessmentRef, type: "dev.assessment", state: "unreviewed", body: {} as never,
+      provenance: { execution_id: "assessment-execution" as never, session_id: null } } },
+    sessions: [], work: assessmentWork,
+    response: item.facts.assessment_response_ready ? { kind: "published", execution_id: "assessment-execution" as never,
+      assessment: assessmentRef, build: accepted } : null,
+    interrupted: item.facts.assessment_execution_interrupted || item.assessment === "interrupted" ? assessmentInterruption : null },
+  accepted_build: item.build === "accepted" ? accepted : null,
 });
-
-for (const [machine_name, machine] of Object.entries(machines)) {
-  for (const [index, row] of machine.transitions.entries()) {
-    test(`${machine_name} row ${index} selects its declared outcome and effects`, () => {
-      const context = contextForMachineRow(machine_name, index, row);
-      const from = (typeof row.from === "string" ? row.from
-        : row.on.event === "artifact_published" ? "build_lost" : machine.initial) as StateName;
-      const result = transition({ ...machine, stage_type: "delegated_session" } as CompiledMachine,
-        from, context.event, context);
-      for (const earlier of machine.transitions.slice(0, index)) {
-        if (!sameGroup({ ...machine, stage_type: "delegated_session" } as CompiledMachine, earlier, row, from)) continue;
-        expect(earlier.guard).not.toBeNull();
-        if (!earlier.guard) continue;
-        const predicate = context.registry.guard("delegated_session", earlier.guard.name);
-        expect(predicate).toBeDefined();
-        if (!predicate) continue;
-        const outcome = predicate(context, earlier.guard.args);
-        const holds = typeof outcome === "boolean" ? outcome : outcome.holds;
-        expect(earlier.guard.negate ? !holds : holds).toBe(false);
-      }
-      expect(result.row_index).toBe(index);
-      if ("to" in row) expect(result).toMatchObject({ kind: "applied", to: row.to, effects: row.effects });
-      else expect(result).toMatchObject({ kind: "refused", code: row.refuse });
-    });
+const prFor = (item: LeafCase): VerifiedPrObservation => ({
+  pr_url: accepted.pr_url, repository_key: repository.refs.repository_key,
+  head_branch: repository.canonical_branch, base_branch: repository.expected_pr_base,
+  head_sha: "abc" as never, state: item.facts.pr_closed_unmerged ? "closed" : item.facts.pr_merged_at_accepted_head ? "merged" : "open",
+});
+const expectedAction = (worker: string, action_point: string, request: OperatorRequest | null,
+  pr: VerifiedPrObservation): ResolvedWorkerAction => {
+  if (worker === "build") {
+    if (action_point === "initial") return { worker, action: buildWork };
+    if (action_point === "retry") return { worker, action: { action_point, input: {
+      work: buildWork, interrupted: buildInterruption.execution, ...outputs } } };
+    if (action_point === "replace_pr") return { worker, action: { action_point, input: {
+      brief, repository, current_build: outputs, closed_pr: pr } } };
+    return { worker, action: { action_point: "revise", input: { brief, repository, current_build: outputs,
+      feedback: request && "feedback" in request ? request.feedback as typeof buildFeedback : buildFeedback } } };
   }
-
-  test(`${machine_name} paths reach a terminal or operator state`, () => {
-    const states = machine.states;
-    const exercised = new Set<number>();
-    const boundaries = new Set<StateName>([machine.initial]);
-    const enumerate = (state: StateName, visited: ReadonlySet<StateName>): boolean => {
-      const declaration = states[state];
-      if (!declaration) return false;
-      if (["complete", "failed", "cancelled"].includes(declaration.status)) return true;
-      if (visited.size > 0 && declaration.next_actor === "operator") {
-        boundaries.add(state);
-        return true;
-      }
-      if (visited.has(state)) return false;
-      const next = new Set(visited);
-      next.add(state);
-      const exits = machine.transitions.flatMap((row: Transition, index) => {
-        if (typeof row.from === "string" && row.from !== state) return [];
-        exercised.add(index);
-        // Refusals and self-loops retain the state. Their guards and effects
-        // are exercised above; enumerate every progressing path here.
-        return "to" in row && row.to !== state ? [{ row, index }] : [];
-      });
-      return exits.length > 0 && exits.every(({ row }) => "to" in row && enumerate(row.to, next));
-    };
-    // Set iteration includes newly discovered gates, so paths resume at every
-    // operator boundary instead of silently stopping coverage at the first one.
-    for (const boundary of boundaries) expect(enumerate(boundary, new Set())).toBe(true);
-    expect([...exercised].sort((left, right) => left - right))
-      .toEqual(machine.transitions.map((_, index) => index));
-  });
-}
-
-
-for (const repository of [{ owner: "other", name: "oakridge" }, { owner: "RankOneLabs", name: "other" }]) {
-  test(`PR verification refuses repository ${repository.owner}/${repository.name} even with matching refs`, () => {
-    const machine = machines.build_cohort!;
-    const context = contextForMachineRow("build_cohort", 3, machine.transitions[3]!);
-    if (context.event.kind !== "artifact_published") throw new Error("fixture must publish");
-    const event = { ...context.event, enrichment: {
-      pr: { ...repository, state: "open", number: 1, base_branch: "main", head_branch: "cohort-a", head_sha: "head" },
-      expected_repository: { owner: "RankOneLabs", name: "oakridge" }, expected_pr_base: "main", canonical_ref: "cohort-a", origin_head_sha: "head",
-    } };
-    expect(transition({ ...machine, stage_type: "delegated_session" }, "building" as StateName, event, { ...context, event }))
-      .toMatchObject({ kind: "refused", code: "pr_mismatch", detail: expect.stringContaining("repository") });
-  });
-}
+  if (action_point === "initial") return { worker: "assessment", action: assessmentWork };
+  if (action_point === "retry") return { worker: "assessment", action: { action_point, input: {
+    work: assessmentWork, interrupted: assessmentInterruption.execution, assessment: assessmentRef } } };
+  return { worker: "assessment", action: { action_point: "discuss", input: {
+    brief, repository, accepted_build: accepted, current_assessment: assessmentRef, feedback: assessmentFeedback } } };
+};
+for (const item of cases) test(`implementation leaf: ${item.name}`, () => {
+  const request = requests[item.request] ?? null;
+  const pr = prFor(item);
+  const result = evaluateCohort({ definition, snapshot: snapshotFor(item), request, pr,
+    available_artifacts: [brief, outputs.build_result, outputs.pr_summary, assessmentRef] });
+  if (item.expected.kind === "reject") expect(result).toEqual({ ok: false, error: {
+    kind: request ? "invalid_request" : "invalid_state", operation: "evaluate_cohort",
+    cohort_id: snapshotFor(item).id, detail: item.expected.reason,
+  } });
+  else if (item.expected.kind === "wait") expect(result).toEqual({ ok: true, value: { kind: "wait", reason: item.expected.reason } });
+  else expect(result).toEqual({ ok: true, value: { kind: "apply", expected_version: 7,
+    changes: item.expected.changes, actions: item.expected.actions.map((action) => expectedAction(action.worker, action.action_point, request, pr)),
+  } });
+});
+const authoredLeafPaths = (node: V15DecisionTree, path: readonly string[] = []): readonly string[] => {
+  if (node.kind === "apply" || node.kind === "wait" || node.kind === "reject") return [path.join(" / ")];
+  if (node.kind === "if") return [
+    ...authoredLeafPaths(node.then, [...path, `${node.fact}=true`]),
+    ...authoredLeafPaths(node.else, [...path, `${node.fact}=false`]),
+  ];
+  const label = node.kind === "match_worker" ? `${node.kind}:${node.worker}` : node.kind;
+  return [...Object.entries(node.cases).flatMap(([key, child]) => authoredLeafPaths(child, [...path, `${label}=${key}`])),
+    ...authoredLeafPaths(node.otherwise, [...path, `${label}=otherwise`])];
+};
+test("the implementation matrix covers each authored leaf exactly once", () => {
+  expect(cases.map((item) => item.name).sort()).toEqual([...authoredLeafPaths(definition.decision_tree)].sort());
+});

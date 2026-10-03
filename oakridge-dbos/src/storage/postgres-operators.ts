@@ -205,7 +205,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
                 WHERE linked.wait_gate_id=wait.id ORDER BY linked.artifact_id) AS artifact_revision_ids,
               wait.closes_on->>'gate_step' AS gate_step,
               COALESCE(ARRAY(SELECT jsonb_array_elements_text(wait.closes_on->'actions')),ARRAY[]::text[]) AS actions,
-              cohort.stage_data AS params,run.status AS run_state
+              cohort.frozen_inputs AS params,run.status AS run_state
        FROM oakridge.wait_gate wait
        JOIN oakridge.workflow_run run ON run.id=wait.run_id
        LEFT JOIN oakridge.stage_instance stage ON stage.id=wait.stage_instance_id
@@ -300,7 +300,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
          COALESCE((SELECT max(updated_at)::text FROM dbos.workflow_status), '0'),
          COALESCE((SELECT max(sequence)::text FROM oakridge.run_transition), '0'),
          COALESCE((SELECT max(created_at)::text FROM oakridge.artifact), '0'),
-         COALESCE((SELECT max(accepted_at)::text FROM oakridge.artifact_acceptance), '0'),
+         COALESCE((SELECT max(recorded_at)::text FROM oakridge.worker_output), '0'),
          COALESCE((SELECT max(closed_at)::text FROM oakridge.wait_gate), '0'),
          COALESCE((SELECT max(created_at)::text FROM oakridge.session_message), '0'),
          COALESCE((SELECT max(updated_at)::text FROM oakridge.session), '0'),
@@ -373,7 +373,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
        FROM oakridge.stage_instance stage WHERE stage.run_id=$1 ORDER BY stage.created_at,stage.stage_key`, [id]);
     const unitRows = await this.sql.query<V2UnitProjectionRow>(
       `SELECT cohort.id::text AS cohort_id,cohort.stage_instance_id::text,cohort.cohort_key AS unit_id,
-              cohort.stage_data AS params,cohort.state,cohort.status,cohort.blocked_reason,cohort.next_actor,
+              cohort.frozen_inputs AS params,cohort.state,cohort.status,cohort.blocked_reason,cohort.next_actor,
               current_session.kbbl_session_id AS session_id,gate.gate_step
        FROM oakridge.cohort cohort
        LEFT JOIN LATERAL (
@@ -555,7 +555,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
   private async listV2Cohorts(run_id: WorkflowRunId | null = null): Promise<readonly OperatorCohortSummary[]> {
     const rows = await this.sql.query<V2CohortProjectionRow>(`SELECT cohort.id::text AS cohort_id,run.id::text AS run_id,
       definition.name AS workflow_name,stage.id::text AS stage_instance_id,stage.stage_key AS stage_name,
-      cohort.cohort_key AS unit_id,cohort.stage_data AS params,cohort.status,cohort.blocked_reason,cohort.next_actor,
+      cohort.cohort_key AS unit_id,cohort.frozen_inputs AS params,cohort.status,cohort.blocked_reason,cohort.next_actor,
       artifact.id::text AS artifact_revision_id,
       stage.stage_type,
       GREATEST(cohort.created_at,COALESCE(cohort.ended_at,cohort.created_at),COALESCE(artifact.created_at,cohort.created_at))::text AS updated_at

@@ -9,9 +9,9 @@ import { createScratchDatabase, type ScratchDatabase } from "./support/durable-d
 
 const MIGRATIONS = new URL("../src/storage/migrations", import.meta.url).pathname;
 const BASELINE = "0015_v15_baseline.sql";
-const MIGRATION_SET = [BASELINE];
+const MIGRATION_SET = [BASELINE, "0016_v15_worker_ownership.sql"];
 
-test("the v15 baseline is the only migration", async () => {
+test("v15 worker ownership follows the immutable baseline", async () => {
   expect(migrationNames(await readdir(MIGRATIONS))).toEqual(MIGRATION_SET);
 });
 
@@ -75,7 +75,7 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
       (id,run_id,stage_key,stage_type,stage_contract,status)
       VALUES ($1,'00000000-0000-4000-8000-000000000002',$2,'test','{}','active')`, [id, key]);
     await sql.query(`INSERT INTO oakridge.cohort
-      (id,run_id,stage_instance_id,cohort_key,status,stage_data)
+      (id,run_id,stage_instance_id,cohort_key,status,frozen_inputs)
       VALUES ('00000000-0000-4000-8000-000000000005','00000000-0000-4000-8000-000000000002',
         '00000000-0000-4000-8000-000000000003','core','active','{"version":1}')`, []);
     const cohortId = "00000000-0000-4000-8000-000000000005" as CohortId;
@@ -86,9 +86,9 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
       expected_pr_base: "epic/oakridge", recorded_head_sha: "head-one", current_verified_pull_request_id: null,
       created_at: "2026-09-29T09:00:00Z", updated_at: "2026-09-29T09:00:00Z" });
     await sql.query(`INSERT INTO oakridge.cohort
-      (id,run_id,stage_instance_id,cohort_key,status,stage_data)
+      (id,run_id,stage_instance_id,cohort_key,status,frozen_inputs)
       VALUES ('00000000-0000-4000-8000-000000000055','00000000-0000-4000-8000-000000000002',
-        '00000000-0000-4000-8000-000000000003','web','active','{}')`, []);
+        '00000000-0000-4000-8000-000000000003','web','active','{"brief_notes":"fixture","repositories":[]}')`, []);
     await pullRequests.create_cohort({ cohort_id: "00000000-0000-4000-8000-000000000055" as CohortId,
       stage_instance_id: "00000000-0000-4000-8000-000000000003" as import("../src/domain/primitives").StageInstanceId,
       cohort_key: "web", repository_key: "web", repository_path: "/repo/web", canonical_ref: "cohort/web",
@@ -167,9 +167,9 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
           '00000000-0000-4000-8000-000000000005','operator',0,1,'{"kind":"derive"}','{"kind":"start_attempt"}','effect:test','operator')`, []);
     });
     await sql.query(`INSERT INTO oakridge.attempt
-      (id,run_id,stage_instance_id,cohort_id,attempt_number,status,adapter_type,request)
+      (id,run_id,stage_instance_id,cohort_id,attempt_number,status,adapter_type,request,worker)
       VALUES ('00000000-0000-4000-8000-000000000006','00000000-0000-4000-8000-000000000002',
-        '00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000005',1,'active','kbbl','{}')`, []);
+        '00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000005',1,'active','kbbl','{}','build')`, []);
     await sql.query(`INSERT INTO oakridge.session
       (id,run_id,stage_instance_id,attempt_id,launch_transition_id,status,kbbl_session_id,adapter_reference)
       VALUES ('00000000-0000-4000-8000-000000000007','00000000-0000-4000-8000-000000000002',
@@ -258,7 +258,7 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
 }, 60_000);
 
 
-test("an existing pre-C2 baseline is rejected with the missing machine contract", async () => {
+test("an applied worker-ownership schema is rejected when its required columns diverge", async () => {
   const scratch = await createScratchDatabase("oakridge_v15_pre_c2");
   if (!scratch.ok) {
     if (scratch.error.operation !== "reach_admin_endpoint") throw new Error(`${scratch.error.operation}: ${scratch.error.detail}`);
@@ -270,11 +270,14 @@ test("an existing pre-C2 baseline is rejected with the missing machine contract"
   try {
     await applyMigrations(sql);
     expect(await applyMigrations(sql)).toEqual([]);
-    await sql.query("ALTER TABLE oakridge.cohort DROP COLUMN state, DROP COLUMN round, DROP COLUMN depends_on", []);
-    await sql.query("DROP TABLE oakridge.cohort_output", []);
+    await sql.query("ALTER TABLE oakridge.cohort DROP COLUMN frozen_inputs", []);
+    await expect(applyMigrations(sql)).rejects.toThrow("cohort.frozen_inputs");
+    // These are retained ledger requirements, unlike round and cohort_output.
+    await sql.query("ALTER TABLE oakridge.cohort DROP COLUMN state, DROP COLUMN depends_on", []);
     await sql.query("ALTER TABLE oakridge.run_transition DROP COLUMN event, DROP COLUMN from_state, DROP COLUMN to_state, DROP COLUMN effects_started_at", []);
     await sql.query("ALTER TABLE oakridge.attempt ALTER COLUMN request SET NOT NULL", []);
-    await expect(applyMigrations(sql)).rejects.toThrow("cohort.state, cohort.round, cohort.depends_on, cohort_output.cohort_id");
+    await expect(applyMigrations(sql)).rejects.toThrow("cohort.state, cohort.depends_on");
+    await expect(applyMigrations(sql)).rejects.toThrow("run_transition.event, run_transition.from_state, run_transition.to_state, run_transition.effects_started_at");
     await expect(applyMigrations(sql)).rejects.toThrow("attempt.request (nullable)");
   } finally { await sql.close(); }
 });

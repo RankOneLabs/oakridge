@@ -72,3 +72,23 @@ test("operator retry distinguishes not found from malformed identity", async () 
     .request("/run-units/not-a-uuid/retry", { method: "PUT", headers: { "Idempotency-Key": "retry" } })).status).toBe(400);
   expect((await request({ kind: "cohort_not_found", detail: "missing" }, {}).response).status).toBe(400);
 });
+
+test("a typed worker request reaches cohort ingress with the path identity and expected version", async () => {
+  let received: import("../src/domain/dev-flow-v15").OperatorRequestEnvelope | null = null;
+  const app = createOperatorRetryApp({ retry_through_driver: async () => created,
+    submit_request: async (request) => { received = request; return { ok: true, value: { commits: 1, reason: "builder response pending" } }; } });
+  const body = { id: "00000000-0000-4000-8000-000000000090", expected_version: 7, request: { kind: "retry_build" } };
+  const response = await app.request(`/cohorts/${cohortId}/requests`, { method: "POST", body: JSON.stringify(body),
+    headers: { "content-type": "application/json" } });
+  expect<unknown>({ status: response.status, received }).toEqual({ status: 202, received: { ...body, cohort_id: cohortId } });
+});
+
+test("an unknown request field is refused before cohort ingress can mutate", async () => {
+  let calls = 0;
+  const app = createOperatorRetryApp({ retry_through_driver: async () => created,
+    submit_request: async () => { calls++; return { ok: true, value: { commits: 1, reason: "wait" } }; } });
+  const response = await app.request(`/cohorts/${cohortId}/requests`, { method: "POST", body: JSON.stringify({
+    id: "00000000-0000-4000-8000-000000000090", expected_version: 7, request: { kind: "retry_build", worker: "assessment" },
+  }), headers: { "content-type": "application/json" } });
+  expect({ status: response.status, calls }).toEqual({ status: 422, calls: 0 });
+});

@@ -20,7 +20,7 @@ const DEV_FLOW_ROLES = ["spec", "plan", "brief", "build", "assessment", "final_i
 // Each exception owns an adapter-facing contract or composition point.
 const DEV_FLOW_SOURCE_ALLOWLIST = {
   "validation/v15-definition.ts": "Validates the concrete dev-flow worker, output, input and decision-tree contracts.",
-  "adapters/dev-flow-machine.ts": "Registers the dev-flow machine adapter.",
+  "adapters/dev-flow-machine.ts": "Exports legacy names used only to validate graph fixtures during cutover.",
   "adapters/dev-flow.ts": "Implements dev-flow effects and registration.",
   "compiler/resolve-execution.ts": "Carries an optional existing handoff URL into a delegated prompt.",
   "domain/artifact-types.ts": "Registers the existing assessment artifact presentation.",
@@ -96,10 +96,11 @@ test("core operator projections never query adapter tables", async () => {
   expect(source).not.toMatch(/(?:FROM|JOIN|UPDATE|INTO)\s+dev_flow\./i);
 });
 
-// Checked worker names are required by the v15 contract in dev-flow-v15.ts.
-// Core decision and generic records still cannot interpret those adapter roles.
-test("core decision and records do not interpret dev-flow identifiers", async () => {
-  const files = [...await decisionSources(), join(SOURCE, "domain", "records.ts")];
+// The v15 evaluator and launch identity now own checked worker names. The
+// generic run derivation and records remain independent of those roles.
+test("generic run derivation and records do not interpret dev-flow identifiers", async () => {
+  const files = [join(SOURCE, "decision", "derive.ts"), join(SOURCE, "decision", "commands.ts"),
+    join(SOURCE, "decision", "snapshot.ts"), join(SOURCE, "domain", "records.ts")];
   const violations = (await Promise.all(files.map(async (file) => ({ file, violations: coreBoundaryViolations(await readFile(file, "utf8")) }))))
     .filter((entry) => entry.violations.length > 0);
   expect(violations).toEqual([]);
@@ -224,4 +225,40 @@ test("each cohort transition has one stable effect workflow address", () => {
     .toBe(transitionEffectWorkflowId({ kind: "cohort", id: first }, 1));
   expect(transitionEffectWorkflowId({ kind: "cohort", id: first }, 1))
     .not.toBe(transitionEffectWorkflowId({ kind: "cohort", id: second }, 1));
+});
+
+// Retired event-row selection and SQL effect interpretation are replaced by a
+// pure typed tree and atomic selected-decision persistence. Ledger guards above
+// (single lifecycle writer, stable addresses, provenance) remain unchanged.
+test("the cohort evaluator and selected changes have no IO imports", async () => {
+  const files = ["decision/stage-machine.ts", "decision/stage-effects.ts"];
+  const sources = await Promise.all(files.map((file) => readFile(join(SOURCE, file), "utf8")));
+  expect(sources.join("\n")).not.toMatch(/(?:from\s+|import\s*\()["'][^"']*(?:storage|http|runtime|git|llm)[^"']*["']/i);
+});
+
+test("no source selects a first matching event transition", async () => {
+  const sources = await Promise.all((await treeSources(SOURCE)).map((file) => readFile(file, "utf8")));
+  expect(sources.join("\n")).not.toMatch(/export\s+const\s+transition\s*=|context\.registry\.guard\(|runStageEffectsIn/);
+});
+
+const LEGACY_EFFECT_INTERPRETATION = /(?:\.name\s*===\s*["'](?:launch_session|end_session|record_output|open_gate|accept_outputs|new_round)["']|switch\s*\(\s*(?:[\w.]+\.name|(?:effect_)?name)\s*\)\s*\{[\s\S]*?\bcase\s+["'](?:launch_session|end_session|record_output|open_gate|accept_outputs|new_round)["'])/;
+
+test("storage never interprets legacy effect names to select progression", async () => {
+  const files = await treeSources(join(SOURCE, "storage"));
+  const sources = await Promise.all(files.map((file) => readFile(file, "utf8")));
+  expect(sources.join("\n")).not.toMatch(LEGACY_EFFECT_INTERPRETATION);
+});
+
+test("the effect interpretation rule catches equality and switch cases", () => {
+  expect([
+    'effect.name === "launch_session"',
+    "switch (effect.name) { case 'end_session': stop(); }",
+    'switch (name) { case "record_output": write(); case "new_round": advance(); }',
+    'switch (effect_name) { case "open_gate": open(); }',
+    "switch (effect.name) { case 'accept_outputs': accept(); }",
+  ].map((source) => LEGACY_EFFECT_INTERPRETATION.test(source))).toEqual([true, true, true, true, true]);
+});
+
+test("applying a typed selected change is not legacy effect interpretation", () => {
+  expect(LEGACY_EFFECT_INTERPRETATION.test('switch (change.kind) { case "accept_outputs": apply(); }')).toBe(false);
 });

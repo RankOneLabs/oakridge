@@ -92,7 +92,8 @@ export interface RunRecordRepository {
   record_cohort_event(input: RecordCohortEvent): Promise<RecordCohortEventResult>;
   commit_cohort_launch(input: CommitCohortLaunch): Promise<Result<CohortLaunchCommitted, CohortLaunchCommitError>>;
   /** What a cohort machine reads before applying its next event. */
-  find_cohort_state(cohort_id: CohortId): Promise<CohortMachineState | null>;
+  find_cohort_state(cohort_id: CohortId,
+    worker?: import("../domain/dev-flow-v15").V15WorkerKey): Promise<CohortMachineState | null>;
   list_stage_cohort_ids(stage_instance_id: StageInstanceId): Promise<readonly CohortId[]>;
   /** The attempt and session a committed launch transition names. Idempotent on the attempt number. */
   start_attempt(input: StartAttempt): Promise<StartAttemptResult>;
@@ -103,7 +104,8 @@ export interface RunRecordRepository {
   observe_session(input: ObserveSession): Promise<SessionStatusWrite>;
   mark_session_fenced(session_id: import("../domain/primitives").SessionId, fenced_at: string): Promise<void>;
   list_prior_sessions_to_fence(cohort_id: CohortId, attempt_id: AttemptId): Promise<readonly import("../domain/run-record").PriorSessionToFence[]>;
-  find_cohort_retry_claim(cohort_id: CohortId, idempotency_key: string): Promise<{
+  find_cohort_retry_claim(cohort_id: CohortId, idempotency_key: string,
+    worker?: import("../domain/dev-flow-v15").V15WorkerKey): Promise<{
     readonly attempt_id: AttemptId; readonly attempt_number: number; readonly durable_version: number } | null>;
   /** The secret every attempt's publication capability is derived from. */
   load_work_order_capability_seed(): Promise<string>;

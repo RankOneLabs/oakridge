@@ -46,8 +46,9 @@ export const transitionEffectWorkflowId = (owner: TransitionOwner, resulting_ver
  * launched them and the attempt number it selected. Deterministic so a replayed
  * dispatch of the same launch transition finds the rows it already made.
  */
-export const attemptIdFor = (cohort_id: CohortId, attempt_number: number): AttemptId =>
-  stableUuid(`v15-attempt:${cohort_id}:${attempt_number}`) as AttemptId;
+export const attemptIdFor = (cohort_id: CohortId, attempt_number: number,
+  worker: import("../domain/dev-flow-v15").V15WorkerKey = "build"): AttemptId =>
+  stableUuid(`v15-attempt:${cohort_id}:${worker === "build" ? "" : `${worker}:`}${attempt_number}`) as AttemptId;
 
 export const sessionIdFor = (attempt_id: AttemptId): SessionId =>
   stableUuid(`v15-session:${attempt_id}`) as SessionId;

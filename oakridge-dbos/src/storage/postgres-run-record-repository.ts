@@ -1,3 +1,4 @@
+import { artifactRefFromRevision, type ImplementationCohortDefinition } from "../domain/dev-flow-v15";
 /**
  * The v15 run record.
  *
@@ -14,7 +15,6 @@ import type { ArtifactEnvelope, ExecutionRequest, ExternalExecutionReference } f
 import { err, ok, type ArtifactId, type AttemptId, type CohortId, type JsonValue, type Result, type RunRecordVersion, type RunTransitionId, type SessionId, type StageInstanceId, type UnitId, type WorkflowRunId } from "../domain/primitives";
 import type { BlockedReason, CoreStatus, NextActor } from "../domain/records";
 import type { DeleteRunResult } from "../domain/runs";
-import { findDeclaredOutput } from "../domain/stage-contract";
 import type {
   AttemptExecution,
   BindSessionResult,
@@ -47,7 +47,7 @@ import type {
 } from "../domain/run-record";
 import { capabilityFor, capabilityHash } from "../runtime/resolve-work-order";
 import { loadRunSnapshot } from "./load-run-snapshot";
-import { abandonCohortAttempts, writeSessionStatus, type PostgresRunRecordWriter } from "./postgres-run-record";
+import { abandonCohortAttempts, writeSessionStatus, publishWorkerOutputIn, type PostgresRunRecordWriter } from "./postgres-run-record";
 import type { StageEventApplier } from "./apply-stage-event";
 import type { RunRecordRepository } from "./repositories";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
@@ -99,7 +99,7 @@ interface CohortVersionRow {
 
 const COHORT_STATE_COLUMNS = `cohort.id::text,cohort.run_id::text,cohort.stage_instance_id::text,stage.stage_key,
   cohort.cohort_key,cohort.status,cohort.blocked_reason,cohort.next_actor,
-  cohort.durable_version::text,cohort.stage_data`;
+  cohort.durable_version::text,cohort.frozen_inputs AS stage_data`;
 
 interface AttemptRow {
   readonly id: string;
@@ -241,12 +241,15 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       let inserted = 0;
       for (const cohort of input.cohorts) {
         const rows = await tx.query<{ readonly id: string }>(
-          `INSERT INTO oakridge.cohort (id,run_id,stage_instance_id,cohort_key,state,depends_on,stage_data,created_at)
+          `INSERT INTO oakridge.cohort (id,run_id,stage_instance_id,cohort_key,state,depends_on,frozen_inputs,created_at)
            VALUES ($1,$2,$3,$4,$5,$6::text[],$7::jsonb,$8::timestamptz)
            ON CONFLICT (run_id,stage_instance_id,cohort_key) DO NOTHING RETURNING id::text`,
           [cohort.id, input.run_id, input.stage_instance_id, cohort.cohort_key, initial,
-            cohort.depends_on ?? [], JSON.stringify(cohort.stage_data), input.opened_at]);
+            cohort.depends_on ?? [], JSON.stringify(cohort.frozen_inputs), input.opened_at]);
         inserted += rows.length;
+        for (const worker of cohort.workers ?? []) await tx.query(
+          "INSERT INTO oakridge.cohort_worker (cohort_id,worker) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+          [cohort.id, worker]);
       }
       const stored = await tx.query<{ readonly id: string }>(
         "SELECT id::text FROM oakridge.cohort WHERE stage_instance_id=$1 ORDER BY cohort_key", [input.stage_instance_id]);
@@ -316,7 +319,8 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
     } };
   }
 
-  async find_cohort_state(cohort_id: CohortId): Promise<CohortMachineState | null> {
+  async find_cohort_state(cohort_id: CohortId,
+    worker: import("../domain/dev-flow-v15").V15WorkerKey = "build"): Promise<CohortMachineState | null> {
     return this.sql.transaction(async (tx) => {
     await tx.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ", []);
     const rows = await tx.query<CohortVersionRow>(
@@ -328,13 +332,13 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
     const attempts = await tx.query<{ readonly attempt_count: string; readonly open_attempt_id: string | null }>(
         `SELECT count(*)::text AS attempt_count,
                 (SELECT open.id::text FROM oakridge.attempt open
-                  WHERE open.cohort_id=$1 AND open.ended_at IS NULL
+                  WHERE open.cohort_id=$1 AND open.worker=$2 AND open.ended_at IS NULL
                   ORDER BY open.attempt_number DESC LIMIT 1) AS open_attempt_id
-         FROM oakridge.attempt WHERE cohort_id=$1`, [cohort_id]);
+         FROM oakridge.attempt WHERE cohort_id=$1 AND worker=$2`, [cohort_id, worker]);
     const latest = await tx.query<{ readonly attempt_id: string; readonly attempt_number: number;
       readonly status: CoreStatus; readonly created_at: string; readonly ended_at: string | null }>(
       `SELECT id::text AS attempt_id,attempt_number,status,created_at::text,ended_at::text
-       FROM oakridge.attempt WHERE cohort_id=$1 ORDER BY attempt_number DESC LIMIT 1`, [cohort_id]);
+       FROM oakridge.attempt WHERE cohort_id=$1 AND worker=$2 ORDER BY attempt_number DESC LIMIT 1`, [cohort_id, worker]);
     return {
       run_id: row.run_id as WorkflowRunId, stage_instance_id: row.stage_instance_id as StageInstanceId,
       stage_key: row.stage_key, cohort_id: row.id as CohortId, cohort_key: row.cohort_key, status: row.status,
@@ -355,11 +359,11 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
     }>(
       `SELECT artifact.id::text AS artifact_id,artifact.artifact_type,acceptance.output_name,
               cohort.cohort_key AS unit_id,acceptance.collection_key,artifact.body,artifact.chain_id::text
-       FROM oakridge.artifact_acceptance acceptance
+       FROM oakridge.worker_output acceptance
        JOIN oakridge.artifact artifact ON artifact.id=acceptance.artifact_id
        JOIN oakridge.artifact_owner owner ON owner.artifact_id=artifact.id
        JOIN oakridge.cohort cohort ON cohort.id=owner.cohort_id
-       WHERE owner.cohort_id=$1 AND artifact.lifecycle IN ('current','released')
+       WHERE owner.cohort_id=$1 AND acceptance.acceptance_state='accepted'
        ORDER BY acceptance.output_name,artifact.revision DESC`, [cohort_id]);
     return rows.map((row) => ({ artifact_id: row.artifact_id as ArtifactId, artifact_type: row.artifact_type,
       output_name: row.output_name, unit_id: row.unit_id as UnitId, collection_key: row.collection_key,
@@ -382,8 +386,8 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       if (!cohorts[0]) return err({ kind: "cohort_not_found" as const, detail: `cohort '${input.event.cohort_id}' was not found` });
       if (input.attempt.idempotency_key !== null) {
         const claimed = await tx.query<{ readonly id: string }>(
-          "SELECT id::text FROM oakridge.attempt WHERE cohort_id=$1 AND idempotency_key=$2",
-          [input.event.cohort_id, input.attempt.idempotency_key]);
+          "SELECT id::text FROM oakridge.attempt WHERE cohort_id=$1 AND worker=$2 AND idempotency_key=$3",
+          [input.event.cohort_id, input.attempt.worker, input.attempt.idempotency_key]);
         if (claimed[0]) return ok({ kind: "already_created" as const, attempt_id: claimed[0].id as AttemptId,
           durable_version: Number(cohorts[0].durable_version) });
       }
@@ -397,20 +401,12 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         kind: committed.error.kind === "owner_not_found" ? "cohort_not_found" : committed.error.kind,
         detail: JSON.stringify(committed.error),
       });
-      if (input.event.reopen_output_names.length > 0) {
-        await tx.query(
-          `UPDATE oakridge.artifact SET lifecycle='superseded'
-           WHERE lifecycle='released' AND id IN (
-             SELECT acceptance.artifact_id FROM oakridge.artifact_acceptance acceptance
-             WHERE acceptance.cohort_id=$1 AND acceptance.output_name=ANY($2)
-               AND acceptance.superseded_at IS NULL)`,
-          [input.event.cohort_id, input.event.reopen_output_names]);
-        await tx.query(
-          `UPDATE oakridge.artifact_acceptance SET superseded_at=clock_timestamp()
-           WHERE cohort_id=$1 AND output_name=ANY($2) AND superseded_at IS NULL`,
-          [input.event.cohort_id, input.event.reopen_output_names]);
-      }
-      await abandonCohortAttempts(tx, { cohort_id: input.event.cohort_id, at: input.event.recorded_at,
+      if (input.event.reopen_output_names.length > 0) await tx.query(
+        `UPDATE oakridge.worker_output SET acceptance_state='unreviewed',reviewed_target=NULL,recorded_at=$3::timestamptz
+         WHERE cohort_id=$1 AND output_name=ANY($2) AND worker=$4`,
+        [input.event.cohort_id, input.event.reopen_output_names, input.event.recorded_at, input.attempt.worker]);
+      await abandonCohortAttempts(tx, { cohort_id: input.event.cohort_id, worker: input.attempt.worker,
+        at: input.event.recorded_at,
         reason: "replaced by cohort launch" });
       const started = await this.startAttemptIn(tx, { ...input.attempt,
         launch_transition_id: committed.value.transition_id });
@@ -436,8 +432,8 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       if (!cohorts[0]) return { kind: "cohort_not_found" as const, detail: `cohort '${input.cohort_id}' was not found in run '${input.run_id}'` };
       if (input.idempotency_key !== null) {
         const claimed = await tx.query<{ readonly id: string; readonly attempt_number: number }>(
-          "SELECT id::text,attempt_number FROM oakridge.attempt WHERE cohort_id=$1 AND idempotency_key=$2",
-          [input.cohort_id, input.idempotency_key]);
+          "SELECT id::text,attempt_number FROM oakridge.attempt WHERE cohort_id=$1 AND worker=$2 AND idempotency_key=$3",
+          [input.cohort_id, input.worker, input.idempotency_key]);
         const existing = claimed[0];
         if (existing && existing.id !== input.attempt_id) {
           return { kind: "idempotency_conflict" as const,
@@ -445,10 +441,10 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         }
       }
       const inserted = await tx.query<{ readonly id: string }>(
-        `INSERT INTO oakridge.attempt (id,run_id,stage_instance_id,cohort_id,attempt_number,adapter_type,request,idempotency_key,created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9::timestamptz)
-         ON CONFLICT (cohort_id,attempt_number) DO NOTHING RETURNING id::text`,
-        [input.attempt_id, input.run_id, input.stage_instance_id, input.cohort_id, input.attempt_number,
+        `INSERT INTO oakridge.attempt (id,run_id,stage_instance_id,cohort_id,worker,attempt_number,adapter_type,request,idempotency_key,created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10::timestamptz)
+         ON CONFLICT (cohort_id,worker,attempt_number) DO NOTHING RETURNING id::text`,
+        [input.attempt_id, input.run_id, input.stage_instance_id, input.cohort_id, input.worker, input.attempt_number,
           input.adapter_type, JSON.stringify(input.request), input.idempotency_key, input.created_at]);
       await tx.query(
         `INSERT INTO oakridge.session (id,run_id,stage_instance_id,attempt_id,launch_transition_id,adapter_reference,created_at)
@@ -500,7 +496,9 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       `SELECT session.id::text AS session_id,session.attempt_id::text,session.adapter_reference
        FROM oakridge.session session
        JOIN oakridge.attempt attempt ON attempt.id=session.attempt_id
-       WHERE attempt.cohort_id=$1 AND attempt.attempt_number <
+       WHERE attempt.cohort_id=$1 AND attempt.worker =
+         (SELECT worker FROM oakridge.attempt WHERE id=$2 AND cohort_id=$1)
+         AND attempt.attempt_number <
          (SELECT attempt_number FROM oakridge.attempt WHERE id=$2 AND cohort_id=$1)
          AND session.kbbl_session_id IS NOT NULL AND session.fenced_at IS NULL
        ORDER BY attempt.attempt_number`, [cohort_id, attempt_id]);
@@ -508,13 +506,14 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       attempt_id: row.attempt_id as AttemptId, adapter_reference: row.adapter_reference }));
   }
 
-  async find_cohort_retry_claim(cohort_id: CohortId, idempotency_key: string): Promise<{
+  async find_cohort_retry_claim(cohort_id: CohortId, idempotency_key: string,
+    worker: import("../domain/dev-flow-v15").V15WorkerKey = "build"): Promise<{
     readonly attempt_id: AttemptId; readonly attempt_number: number; readonly durable_version: number } | null> {
     const rows = await this.sql.query<{ readonly attempt_id: string; readonly attempt_number: number;
       readonly durable_version: string }>(
       `SELECT attempt.id::text AS attempt_id,attempt.attempt_number,cohort.durable_version::text
        FROM oakridge.attempt attempt JOIN oakridge.cohort cohort ON cohort.id=attempt.cohort_id
-       WHERE attempt.cohort_id=$1 AND attempt.idempotency_key=$2`, [cohort_id, idempotency_key]);
+       WHERE attempt.cohort_id=$1 AND attempt.worker=$3 AND attempt.idempotency_key=$2`, [cohort_id, idempotency_key, worker]);
     const row = rows[0];
     return row ? { attempt_id: row.attempt_id as AttemptId, attempt_number: row.attempt_number,
       durable_version: Number(row.durable_version) } : null;
@@ -550,102 +549,49 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
   private publishStageArtifact(request: PublishWorkOrderArtifact, check_only: false): Promise<PublishWorkOrderArtifactResult>;
   private publishStageArtifact(request: PublishWorkOrderArtifact, check_only: true): Promise<PublishWorkOrderArtifactResult | null>;
   private async publishStageArtifact(request: PublishWorkOrderArtifact, check_only: boolean): Promise<PublishWorkOrderArtifactResult | null> {
-    const applier = this.stage_event_applier;
     const seed = await this.load_work_order_capability_seed();
     const expected = capabilityHash(capabilityFor(seed, request.attempt_id as unknown as import("../domain/primitives").WorkOrderId));
-    const transition_ids: RunTransitionId[] = [];
-    try {
-      const result = await this.sql.transaction(async (tx): Promise<PublishWorkOrderArtifactResult | null> => {
-        const location = await tx.query<{ readonly cohort_id: string }>(
-          "SELECT cohort_id::text FROM oakridge.attempt WHERE id=$1", [request.attempt_id]);
-        if (location[0]) await applier.lock_stage_cohorts_in(tx, location[0].cohort_id as CohortId);
-        const rows = await tx.query<{ readonly run_id: string; readonly cohort_id: string;
-          readonly stage_instance_id: string; readonly stage_contract: JsonValue; readonly status: CoreStatus;
-          readonly cohort_state: string;
-          readonly session_id: string | null; readonly record_version: string;
-          readonly effect_descriptor: JsonValue | null }>(
-          `SELECT attempt.run_id::text,attempt.cohort_id::text,attempt.stage_instance_id::text,
-                  stage.stage_contract,attempt.status,cohort.state AS cohort_state,session.id::text AS session_id,
-                  run.record_version::text,launch.effect_descriptor
-           FROM oakridge.attempt attempt JOIN oakridge.cohort cohort ON cohort.id=attempt.cohort_id
-           JOIN oakridge.stage_instance stage ON stage.id=attempt.stage_instance_id
-           JOIN oakridge.workflow_run run ON run.id=attempt.run_id
-           LEFT JOIN oakridge.session session ON session.attempt_id=attempt.id
-           LEFT JOIN oakridge.run_transition launch ON launch.id=session.launch_transition_id
-           WHERE attempt.id=$1 FOR UPDATE OF attempt`, [request.attempt_id]);
-        const attempt = rows[0];
-        if (!attempt) return { kind: "work_not_found", detail: `attempt '${request.attempt_id}' was not found` };
-        if (request.capability_hash !== expected) return { kind: "invalid_capability", detail: "work-order capability is invalid" };
-        if (attempt.status === "cancelled") return { kind: "work_abandoned", detail: "attempt was cancelled" };
-        if (attempt.status === "failed") return { kind: "work_not_active", detail: "attempt has failed" };
-        const declared = findDeclaredOutput(attempt.stage_contract, request.output_name);
-        if (!declared) return { kind: "slot_not_found", detail: `stage does not declare output '${request.output_name}'` };
-        const contract = attempt.stage_contract as unknown as import("../domain/compiled-workflow").CompiledStageContract;
-        if (contract.stage_type === "delegated_session") {
-          const descriptor = attempt.effect_descriptor;
-          const launch = isObject(descriptor) && Array.isArray(descriptor.effects)
-            ? descriptor.effects.find((effect) => isObject(effect) && effect.name === "launch_session") : null;
-          const role = isObject(launch) && isObject(launch.args) && typeof launch.args.role === "string" ? launch.args.role : null;
-          const config = contract.executor.definition_config as import("../domain/delegated-session").DelegatedSessionDefinitionConfig;
-          const allowed = config.role_configs.find((candidate) => candidate.session_role === role)?.authorized_outputs ?? [];
-          if (!allowed.includes(request.output_name)) return { kind: "slot_not_found",
-            detail: `session role '${role}' cannot publish '${request.output_name}'` };
-        }
-        const cohort_id = attempt.cohort_id as CohortId;
-        const run_id = attempt.run_id as WorkflowRunId;
-        const record_version = Number(attempt.record_version) as RunRecordVersion;
-        const collection_key = request.collection_key ?? null;
-        const replay = await tx.query<{ readonly id: string; readonly same_body: boolean }>(
-          `SELECT artifact.id::text,artifact.body=$4::jsonb AS same_body
-           FROM oakridge.cohort_output output
-           JOIN oakridge.artifact artifact ON artifact.id=output.artifact_id
-           JOIN oakridge.artifact_provenance provenance ON provenance.artifact_id=artifact.id
-           WHERE provenance.attempt_id=$1 AND output.output_name=$2
-             AND output.collection_key IS NOT DISTINCT FROM $3
-           ORDER BY output.round DESC LIMIT 1`,
-          [request.attempt_id, request.output_name, collection_key, JSON.stringify(request.body)]);
-        if (replay[0]?.same_body) return {
-          kind: "already_applied", artifact_id: replay[0].id as ArtifactId, run_id, cohort_id, record_version };
-        if (attempt.cohort_state === "build_review")
-          return { kind: "refused", code: "awaiting_review", detail: "cohort is awaiting review" };
-        if (replay[0]) return { kind: "idempotency_conflict", artifact_id: replay[0].id as ArtifactId,
-            detail: "this attempt already published a different body into that output" };
-        if (check_only) return null;
-        const tips = await tx.query<{ readonly id: string; readonly chain_id: string; readonly revision: number }>(
-          `SELECT artifact.id::text,artifact.chain_id::text,artifact.revision
-           FROM oakridge.cohort_output output JOIN oakridge.artifact artifact ON artifact.id=output.artifact_id
-           WHERE output.cohort_id=$1 AND output.output_name=$2
-             AND output.collection_key IS NOT DISTINCT FROM $3
-           ORDER BY output.round DESC,artifact.revision DESC LIMIT 1`, [cohort_id, request.output_name, collection_key]);
-        const tip = tips[0];
-        if (tip) await tx.query("UPDATE oakridge.artifact SET lifecycle='superseded' WHERE id=$1 AND lifecycle='current'", [tip.id]);
-        await tx.query(
-          `INSERT INTO oakridge.artifact (id,chain_id,revision,parent_artifact_id,artifact_type,body,label,created_at)
-           VALUES ($1,$2,$3,$4,$5,$6::jsonb,NULL,$7::timestamptz)`,
-          [request.artifact_id, tip?.chain_id ?? request.artifact_id, (tip?.revision ?? 0) + 1,
-            tip?.id ?? null, declared.artifact_type, JSON.stringify(request.body), request.published_at]);
-        await tx.query(
-          "INSERT INTO oakridge.artifact_owner (artifact_id,run_id,stage_instance_id,cohort_id) VALUES ($1,$2,$3,$4)",
-          [request.artifact_id, run_id, attempt.stage_instance_id, cohort_id]);
-        await tx.query(
-          `INSERT INTO oakridge.artifact_provenance
-             (artifact_id,kind,run_id,stage_instance_id,attempt_id,session_id)
-           VALUES ($1,'stage_attempt',$2,$3,$4,$5)`,
-          [request.artifact_id, run_id, attempt.stage_instance_id, request.attempt_id, attempt.session_id]);
-        const applied = await applier.apply_in(tx, cohort_id, { kind: "artifact_published", attempt_id: request.attempt_id,
-          output: request.output_name, collection_key, artifact_id: request.artifact_id,
-          enrichment: request.enrichment ?? null }, transition_ids);
-        if (!applied.ok) throw new PublishAbort("effect_failed", applied.error.detail);
-        if (applied.value.kind === "refused") throw new PublishAbort(applied.value.code, applied.value.detail);
-        if (applied.value.kind === "ignored") throw new PublishAbort(applied.value.reason, "publication did not advance cohort");
-        return { kind: "published", artifact_id: request.artifact_id, run_id, cohort_id, record_version };
-      });
-      await applier.start_effects(transition_ids);
-      return result;
-    } catch (error) {
-      if (error instanceof PublishAbort) return { kind: "refused", code: error.code, detail: error.detail };
-      throw error;
-    }
+    const result = await this.sql.transaction(async (tx): Promise<PublishWorkOrderArtifactResult | null> => {
+      const rows = await tx.query<{ readonly execution_id: import("../domain/primitives").ExecutionId;
+        readonly run_id: WorkflowRunId; readonly cohort_id: CohortId; readonly worker: "build" | "assessment";
+        readonly record_version: string; readonly stage_contract: { readonly cohort?: ImplementationCohortDefinition } }>(
+        `SELECT intent.id AS execution_id,attempt.run_id::text,intent.cohort_id::text,intent.worker,
+          run.record_version::text,stage.stage_contract FROM oakridge.execution_intent intent
+         JOIN oakridge.attempt attempt ON attempt.id=intent.attempt_id
+         JOIN oakridge.stage_instance stage ON stage.id=attempt.stage_instance_id
+         JOIN oakridge.workflow_run run ON run.id=attempt.run_id
+         WHERE intent.attempt_id=$1`, [request.attempt_id]);
+      const owner = rows[0];
+      if (!owner) return { kind: "work_not_found", detail: "attempt has no selected worker execution" };
+      if (request.capability_hash !== expected) return { kind: "invalid_capability", detail: "work-order capability is invalid" };
+      const outputs = owner.stage_contract.cohort?.workers[owner.worker].outputs;
+      const declared = outputs && Object.entries(outputs).find(([name]) => name === request.output_name)?.[1];
+      if (!declared) return { kind: "slot_not_found", detail: `worker ${owner.worker} does not declare ${request.output_name}` };
+      if (request.collection_key) return { kind: "slot_not_found", detail: "implementation outputs are not collections" };
+      const current = await tx.query<{ readonly id: ArtifactId; readonly chain_id: ArtifactId; readonly revision: number;
+        readonly attempt_id: AttemptId; readonly same_body: boolean }>(
+        `SELECT artifact.id::text,artifact.chain_id::text,artifact.revision,provenance.attempt_id::text,
+          artifact.body=$4::jsonb AS same_body FROM oakridge.worker_output output
+         JOIN oakridge.artifact artifact ON artifact.id=output.artifact_id
+         JOIN oakridge.artifact_provenance provenance ON provenance.artifact_id=artifact.id
+         WHERE output.cohort_id=$1 AND output.worker=$2 AND output.output_name=$3 AND output.collection_key IS NULL`,
+        [owner.cohort_id, owner.worker, request.output_name, JSON.stringify(request.body)]);
+      const tip = current[0];
+      const identity = { run_id: owner.run_id, cohort_id: owner.cohort_id,
+        record_version: Number(owner.record_version) as RunRecordVersion };
+      if (tip?.attempt_id === request.attempt_id) return tip.same_body
+        ? { kind: "already_applied", artifact_id: tip.id, ...identity }
+        : { kind: "idempotency_conflict", artifact_id: tip.id, detail: "this execution already published a different body" };
+      if (check_only) return null;
+      const published = await publishWorkerOutputIn(tx, { execution_id: owner.execution_id, artifact_id: request.artifact_id,
+        output_name: request.output_name, collection_key: null, artifact_type: declared.type, body: request.body,
+        expected: tip ? artifactRefFromRevision(tip) : null, at: request.published_at });
+      if (!published.ok) return { kind: "refused", code: published.error.kind, detail: published.error.detail };
+      return { kind: "published", artifact_id: request.artifact_id, ...identity };
+    });
+    // Publication is a fact. The tree, never the publication boundary, decides readiness.
+    if (result?.kind === "published") await this.stage_event_applier.advance(result.cohort_id, null);
+    return result;
   }
 
   decide_gate_wait(request: DecideGateWait): Promise<CloseRunOutputWaitResult> {
