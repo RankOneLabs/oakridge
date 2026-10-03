@@ -416,6 +416,7 @@ test("a dependent branch fetches a merge commit created only on origin", async (
         base_branch: fixture.integration_branch, base_head_sha: oldHead }, prepared_at: "2026-10-02T00:00:00Z",
     });
     expect(result.ok).toBe(true);
+    expect(result.ok && result.value.worktree_base_sha).toBe(newHead);
     expect(await fixture.origin_branch_sha(`cohort/${expected.stage_instance_id}/foundation`)).toBe(newHead);
   } finally { await fixture.remove(); }
 });

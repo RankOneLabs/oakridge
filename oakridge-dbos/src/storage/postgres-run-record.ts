@@ -260,6 +260,44 @@ export const writeSessionStatus = async (
      WHERE id=$1 AND ended_at IS NULL`,
     [sessions[0].attempt_id, input.status, input.at, terminal,
       terminal ? JSON.stringify({ kind: input.status === "complete" ? "succeeded" : input.status }) : null]);
+  if (terminal) {
+    const owners = await tx.query<{ readonly id: ExecutionId; readonly cohort_id: CohortId;
+      readonly worker: "build" | "assessment"; readonly work: JsonValue | null;
+      readonly response: JsonValue | null; readonly active_execution_id: ExecutionId | null;
+      readonly state: string; readonly stop_requested_at: string | null }>(
+      `SELECT intent.id,intent.cohort_id::text,intent.worker,worker.work,worker.response,
+         worker.active_execution_id,worker.state,intent.stop_requested_at::text
+       FROM oakridge.execution_intent intent JOIN oakridge.cohort_worker worker
+         ON worker.cohort_id=intent.cohort_id AND worker.worker=intent.worker
+       WHERE intent.attempt_id=$1 FOR UPDATE OF intent,worker`, [sessions[0].attempt_id]);
+    const owner = owners[0];
+    const response = owner?.response && typeof owner.response === "object" && !Array.isArray(owner.response)
+      ? owner.response as Readonly<Record<string, JsonValue>> : null;
+    const has_response = owner?.worker === "build"
+      ? response?.build_result !== null && response?.build_result !== undefined
+        && response?.pr_summary !== null && response?.pr_summary !== undefined && typeof response?.head_sha === "string"
+      : response?.assessment !== null && response?.assessment !== undefined;
+    if (owner && owner.active_execution_id === owner.id && owner.state === "working"
+      && owner.stop_requested_at === null && !has_response && owner.work) {
+      const outputs = await tx.query<{ readonly output_name: string; readonly chain_id: ArtifactId; readonly revision: number }>(
+        `SELECT output.output_name,artifact.chain_id::text,artifact.revision
+         FROM oakridge.worker_output output JOIN oakridge.artifact artifact ON artifact.id=output.artifact_id
+         JOIN oakridge.artifact_provenance provenance ON provenance.artifact_id=artifact.id
+         WHERE output.cohort_id=$1 AND output.worker=$2 AND provenance.attempt_id=$3`,
+        [owner.cohort_id, owner.worker, sessions[0].attempt_id]);
+      const ref = (name: string): ArtifactRef | null => {
+        const row = outputs.find((candidate) => candidate.output_name === name);
+        return row ? artifactRefFromRevision(row) : null;
+      };
+      const interrupted = { work: owner.work, execution: { execution_id: owner.id,
+        session_id: input.session_id, detail: "session ended before the required publication was complete" },
+        ...(owner.worker === "build" ? { build_result: ref("build_result"), pr_summary: ref("pr_summary") }
+          : { assessment: ref("assessment") }) };
+      await tx.query("UPDATE oakridge.cohort_worker SET interrupted=$3::jsonb WHERE cohort_id=$1 AND worker=$2",
+        [owner.cohort_id, owner.worker, JSON.stringify(interrupted)]);
+      await tx.query("UPDATE oakridge.execution_intent SET status='interrupted' WHERE id=$1", [owner.id]);
+    }
+  }
   return ok({ kind: "written" });
   } catch (cause) {
     return err({ operation: "write_session_status", session_id: input.session_id,

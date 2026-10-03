@@ -99,3 +99,31 @@ test("an assessor work order injects its cohort's persisted build result", async
   expect(rendered).toContain("built from persisted output");
   expect(workOrder.request.inputs.map((artifact) => String(artifact.artifact_id))).toEqual(["44444444-4444-4444-8444-444444444444"]);
 });
+
+test("a build revision receives its current build outputs", async () => {
+  const revisionDefinition: DelegatedSessionDefinitionConfig = {
+    ...definition,
+    slot_bindings: { ...definition.slot_bindings, BUILD_RESULT: { from: "input", input_name: "build_result", path: null },
+      PR_SUMMARY: { from: "input", input_name: "pr_summary", path: null } },
+  };
+  const revisionStage: CompiledStageContract = { ...stage, executor: { executor_type: "delegated_session", definition_config: revisionDefinition } };
+  const workOrder = await resolveWorkOrder({
+    run_id: RUN_ID, stage: revisionStage, stage_instance_id: STAGE_INSTANCE_ID,
+    unit: { unit_id: "cohort-one" as UnitId, parameters: null, depends_on: [] },
+    inputs: {}, accepted_cohort_outputs: [
+      { artifact_id: "44444444-4444-4444-8444-444444444444" as ArtifactId, artifact_type: "dev.build_result",
+        output_name: "build_result", unit_id: "cohort-one" as UnitId, body: { summary: "current implementation" } },
+      { artifact_id: "55555555-5555-4555-8555-555555555555" as ArtifactId, artifact_type: "dev.pr_summary",
+        output_name: "pr_summary", unit_id: "cohort-one" as UnitId, body: { pr_url: "https://example.test/pull/7" } },
+    ],
+    context: {}, outputs: [{ output_name: "result", artifact_type: "dev.result", release: { kind: "immediate" }, attention: "none" }],
+    identity: "revision:build", capability_seed: "test-seed",
+    session_launch: { reason: { transition_id: "33333333-3333-4333-8333-333333333333" as RunTransitionId,
+      name: "revision_after_assessment" }, session_role: "build",
+      prompt: { template_path: "build.md", content: "Revise {{BUILD_RESULT}} at {{PR_SUMMARY}}" }, existing_pull_request: null },
+  });
+  const prompt = (workOrder.request.resolved_config as { readonly rendered_prompt: string }).rendered_prompt;
+  expect(prompt).toContain("current implementation");
+  expect(prompt).toContain("https://example.test/pull/7");
+  expect(workOrder.request.inputs).toHaveLength(2);
+});
