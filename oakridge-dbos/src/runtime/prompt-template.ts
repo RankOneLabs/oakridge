@@ -2,6 +2,8 @@ import { readFile } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { createHash } from "node:crypto";
 import type { WorkflowDefinition, PromptBundle, PromptBundleEntry } from "../domain/workflow";
+import type { ArtifactRef, PreparedImplementationRepository } from "../domain/dev-flow-v15";
+import type { JsonValue } from "../domain/primitives";
 
 export interface PromptTemplateLoader {
   load(path: string): Promise<string>;
@@ -42,4 +44,40 @@ export const createPromptBundle = async (definition: WorkflowDefinition, loader:
       .localeCompare(`${right.stage_key ?? ""}:${right.session_role}:${right.launch_reason}:${right.template_path}`));
   const hash = createHash("sha256").update(JSON.stringify(matrix)).digest("hex");
   return { version: 1, hash, matrix };
+};
+
+export interface ReferencedActionArtifact {
+  readonly ref: ArtifactRef;
+  readonly artifact_type: string;
+  readonly body: JsonValue;
+}
+
+export interface ActionPromptInput {
+  readonly template: string;
+  readonly fields: Readonly<Record<string, JsonValue>>;
+  readonly artifacts: readonly ReferencedActionArtifact[];
+  readonly execution: { readonly worker: string; readonly action_point: string; readonly cohort_id: string };
+  readonly repository: PreparedImplementationRepository;
+}
+
+/** Render only the selected action's fields and the exact immutable revisions they reference. */
+export const renderActionPrompt = (input: ActionPromptInput): string => {
+  const sections = Object.entries(input.fields).map(([name, value]) => {
+    const references = input.artifacts.filter((artifact) => {
+      const contains = (candidate: JsonValue): boolean => {
+        if (Array.isArray(candidate)) return candidate.some(contains);
+        if (candidate === null || typeof candidate !== "object") return false;
+        const object = candidate as Readonly<Record<string, JsonValue>>;
+        if (object.id === artifact.ref.id && object.version === artifact.ref.version) return true;
+        return Object.values(object).some(contains);
+      };
+      return contains(value);
+    });
+    return `## ${name}\n${JSON.stringify(value, null, 2)}${references.map((artifact) =>
+      `\n\n### Referenced ${artifact.artifact_type} ${artifact.ref.id}@${artifact.ref.version}\n${JSON.stringify(artifact.body, null, 2)}`).join("")}`;
+  });
+  const repository = input.repository;
+  return [input.template.trimEnd(), ...sections,
+    `## Execution and repository contract\nWorker: ${input.execution.worker}\nAction: ${input.execution.action_point}\nCohort: ${input.execution.cohort_id}\nWorktree: ${repository.worktree_path}\nWorktree base: ${repository.worktree_base_sha}\nCanonical cohort ref: ${repository.canonical_branch}\nPull request base: ${repository.expected_pr_base}`,
+  ].join("\n\n");
 };

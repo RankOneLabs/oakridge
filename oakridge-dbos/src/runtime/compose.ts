@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { ImplementationCohortInputs, ArtifactRef } from "../domain/dev-flow-v15";
+import type { ImplementationCohortInputs, ArtifactRef, PreparedImplementationRepository } from "../domain/dev-flow-v15";
 /**
  * How an Oakridge backend is assembled.
  *
@@ -64,7 +64,7 @@ import "../workflows/collaboration-responder";
 import { DbosRunLaunchClient } from "./dbos-run-launch-client";
 import { DbosCollaborationPingClient, PostgresSessionMessageRecipientResolver, PostgresSessionMessageRepository } from "./collaboration-ping";
 import { BunGitCommandRunner } from "./git-command-runner";
-import { createPromptTemplateLoader } from "./prompt-template";
+import { createPromptTemplateLoader, renderActionPrompt, type ReferencedActionArtifact } from "./prompt-template";
 import { GitProjectRepositoryIdentityResolver } from "./project-identity";
 import { dispatchRunLaunches, dispatchCohortExecution, stopCohortExecution, type WorkerSessionIO } from "./run-launch-dispatch";
 import { publishWorkOrderArtifact } from "./publish-work-order-artifact";
@@ -281,12 +281,12 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
       const rows = await sql.query<{ readonly frozen_inputs: ImplementationCohortInputs; readonly cohort_key: string }>(
         "SELECT frozen_inputs,cohort_key FROM oakridge.cohort WHERE id=$1", [intent.cohort_id]);
       const cohort = rows[0];
-      if (!cohort?.frozen_inputs.repository.worktree_base_sha)
+      const repository = cohort?.frozen_inputs.repository;
+      if (!repository?.worktree_base_sha)
         return err({ detail: "prepared implementation repository is missing" });
       const bundle = await promptBundleOf(intent.run_id);
       const prompt = bundle.find((entry) => entry.template_path === intent.prompt);
       if (!prompt) return err({ detail: `pinned prompt ${intent.prompt} is unavailable` });
-      const repository = cohort.frozen_inputs.repository;
       const source = intent.resolved_input;
       const refs: ArtifactRef[] = [];
       const collect = (value: JsonValue): void => {
@@ -299,6 +299,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
       };
       collect(source);
       const inputs: ArtifactEnvelope[] = [];
+      const referenced: ReferencedActionArtifact[] = [];
       for (const ref of refs) {
         const artifacts = await sql.query<{ readonly id: string; readonly artifact_type: string; readonly body: JsonValue }>(
           `SELECT artifact.id::text,artifact.artifact_type,artifact.body FROM oakridge.artifact artifact
@@ -308,6 +309,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
         if (!artifact) return err({ detail: `pinned input ${ref.id}@${ref.version} is unavailable` });
         inputs.push({ artifact_id: artifact.id as ArtifactEnvelope["artifact_id"], artifact_type: artifact.artifact_type,
           output_name: artifact.artifact_type, unit_id: cohort.cohort_key as UnitId, body: artifact.body, chain_id: ref.id });
+        referenced.push({ ref, artifact_type: artifact.artifact_type, body: artifact.body });
       }
       const declared_outputs = intent.worker === "build"
         ? [{ name: "build_result", artifact_type: "dev.build_result", required: true },
@@ -326,8 +328,10 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
         expected_artifacts: declared_outputs.map((output) => ({ unit_id: cohort.cohort_key as UnitId,
           output_name: output.name, artifact_type: output.artifact_type })),
         resolved_config: { ...intent.settings, session_name: intent.execution_id, workdir: repository.worktree_path,
-          rendered_prompt: `${prompt.content}\n\n## Declared action input\n${JSON.stringify(source, null, 2)}\n\n${inputs.map((artifact) =>
-            `## Input ${artifact.artifact_type} (${artifact.chain_id})\n${JSON.stringify(artifact.body, null, 2)}`).join("\n\n")}`,
+          rendered_prompt: renderActionPrompt({ template: prompt.content,
+            fields: source as Readonly<Record<string, JsonValue>>, artifacts: referenced,
+            execution: { worker: intent.worker, action_point: intent.action_point, cohort_id: intent.cohort_id },
+            repository: repository as PreparedImplementationRepository }),
           publication: { base_url, work_order_id: intent.attempt_id,
             capability: capabilityFor(await runRecords.load_work_order_capability_seed(), intent.attempt_id as WorkOrderId) },
           session_identity: { run_id: intent.run_id, stage_instance_id: intent.stage_instance_id, unit_id: cohort.cohort_key,
