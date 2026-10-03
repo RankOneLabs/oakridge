@@ -167,6 +167,15 @@ test("selected cohort commit atomically reserves a slot and writes one launch wi
     expect((await claimExecutionIntent(sql, newBuilderExecution)).ok).toBe(true);
     await recordExecutionDispatch(sql, { execution_id: newBuilderExecution,
       session_id: "00000000-0000-4000-8100-000000000097" as never, detail: null, at: "2026-10-02T12:06:00Z" });
+    await recordExecutionDispatch(sql, { execution_id: newBuilderExecution,
+      session_id: "00000000-0000-4000-8100-000000000097" as never, detail: null, at: "2026-10-02T12:06:00Z" });
+    expect((await sql.query<{ readonly attempts: string; readonly sessions: string; readonly old_fenced: string }>(
+      `SELECT (SELECT count(*)::text FROM oakridge.attempt WHERE cohort_id=$1 AND worker='build') AS attempts,
+        (SELECT count(*)::text FROM oakridge.session session JOIN oakridge.attempt attempt ON attempt.id=session.attempt_id
+         WHERE attempt.cohort_id=$1 AND attempt.worker='build') AS sessions,
+        (SELECT count(*)::text FROM oakridge.session session JOIN oakridge.execution_intent intent ON intent.session_id=session.id
+         WHERE intent.id=$2 AND session.fenced_at IS NOT NULL) AS old_fenced`,
+      [cohortId(2), builderExecution]))[0]).toEqual({ attempts: "2", sessions: "2", old_fenced: "1" });
     expect((await publishWorkerOutput(sql, { execution_id: newBuilderExecution,
       artifact_id: "00000000-0000-4000-8100-000000000098" as never,
       output_name: "build_result", collection_key: null, artifact_type: "test.output",

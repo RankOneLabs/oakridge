@@ -319,7 +319,8 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
     } };
   }
 
-  async find_cohort_state(cohort_id: CohortId): Promise<CohortMachineState | null> {
+  async find_cohort_state(cohort_id: CohortId,
+    worker: import("../domain/dev-flow-v15").V15WorkerKey = "build"): Promise<CohortMachineState | null> {
     return this.sql.transaction(async (tx) => {
     await tx.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ", []);
     const rows = await tx.query<CohortVersionRow>(
@@ -331,13 +332,13 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
     const attempts = await tx.query<{ readonly attempt_count: string; readonly open_attempt_id: string | null }>(
         `SELECT count(*)::text AS attempt_count,
                 (SELECT open.id::text FROM oakridge.attempt open
-                  WHERE open.cohort_id=$1 AND open.ended_at IS NULL
+                  WHERE open.cohort_id=$1 AND open.worker=$2 AND open.ended_at IS NULL
                   ORDER BY open.attempt_number DESC LIMIT 1) AS open_attempt_id
-         FROM oakridge.attempt WHERE cohort_id=$1`, [cohort_id]);
+         FROM oakridge.attempt WHERE cohort_id=$1 AND worker=$2`, [cohort_id, worker]);
     const latest = await tx.query<{ readonly attempt_id: string; readonly attempt_number: number;
       readonly status: CoreStatus; readonly created_at: string; readonly ended_at: string | null }>(
       `SELECT id::text AS attempt_id,attempt_number,status,created_at::text,ended_at::text
-       FROM oakridge.attempt WHERE cohort_id=$1 ORDER BY attempt_number DESC LIMIT 1`, [cohort_id]);
+       FROM oakridge.attempt WHERE cohort_id=$1 AND worker=$2 ORDER BY attempt_number DESC LIMIT 1`, [cohort_id, worker]);
     return {
       run_id: row.run_id as WorkflowRunId, stage_instance_id: row.stage_instance_id as StageInstanceId,
       stage_key: row.stage_key, cohort_id: row.id as CohortId, cohort_key: row.cohort_key, status: row.status,
@@ -504,7 +505,9 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       `SELECT session.id::text AS session_id,session.attempt_id::text,session.adapter_reference
        FROM oakridge.session session
        JOIN oakridge.attempt attempt ON attempt.id=session.attempt_id
-       WHERE attempt.cohort_id=$1 AND attempt.attempt_number <
+       WHERE attempt.cohort_id=$1 AND attempt.worker =
+         (SELECT worker FROM oakridge.attempt WHERE id=$2 AND cohort_id=$1)
+         AND attempt.attempt_number <
          (SELECT attempt_number FROM oakridge.attempt WHERE id=$2 AND cohort_id=$1)
          AND session.kbbl_session_id IS NOT NULL AND session.fenced_at IS NULL
        ORDER BY attempt.attempt_number`, [cohort_id, attempt_id]);
@@ -512,13 +515,14 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       attempt_id: row.attempt_id as AttemptId, adapter_reference: row.adapter_reference }));
   }
 
-  async find_cohort_retry_claim(cohort_id: CohortId, idempotency_key: string): Promise<{
+  async find_cohort_retry_claim(cohort_id: CohortId, idempotency_key: string,
+    worker: import("../domain/dev-flow-v15").V15WorkerKey = "build"): Promise<{
     readonly attempt_id: AttemptId; readonly attempt_number: number; readonly durable_version: number } | null> {
     const rows = await this.sql.query<{ readonly attempt_id: string; readonly attempt_number: number;
       readonly durable_version: string }>(
       `SELECT attempt.id::text AS attempt_id,attempt.attempt_number,cohort.durable_version::text
        FROM oakridge.attempt attempt JOIN oakridge.cohort cohort ON cohort.id=attempt.cohort_id
-       WHERE attempt.cohort_id=$1 AND attempt.idempotency_key=$2`, [cohort_id, idempotency_key]);
+       WHERE attempt.cohort_id=$1 AND attempt.worker=$3 AND attempt.idempotency_key=$2`, [cohort_id, idempotency_key, worker]);
     const row = rows[0];
     return row ? { attempt_id: row.attempt_id as AttemptId, attempt_number: row.attempt_number,
       durable_version: Number(row.durable_version) } : null;
