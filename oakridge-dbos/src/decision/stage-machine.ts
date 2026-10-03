@@ -1,5 +1,6 @@
 import { err, ok, type Result } from "../domain/primitives";
 import { validatePlanCohorts } from "./schedule-cohorts";
+import { finalPullRequestMatchesPreparedRepository } from "../domain/cohort-pull-request";
 import type { ArtifactRef, CohortDecisionError, ImplementationCohortDefinition, ImplementationCohortRecord,
   OperatorRequest, ResolvedWorkerAction, SelectedDecision, VerifiedPrObservation, V15DecisionTree,
   V15Fact, V15WorkerAction, V15Change, CohortChange, BuildReviewTarget, AssessmentReviewTarget,
@@ -139,26 +140,22 @@ export const briefOutputsReady = (cohort: BriefWritingCohortRecord): boolean => 
 };
 export const briefExecutionInterrupted = (cohort: BriefWritingCohortRecord): boolean =>
   reviewExecutionInterrupted(cohort.brief.active_execution_id, cohort.brief.interrupted);
-const finalPrMatchesRepository = (cohort: FinalIntegrationCohortRecord, pr: VerifiedPrObservation | null): boolean =>
-  pr !== null && pr.repository_key === cohort.inputs.repository.repository_key
-    && pr.head_branch === cohort.inputs.repository.base_branch
-    && pr.base_branch === cohort.inputs.repository.integration_branch;
 export const finalOutputsReady = (cohort: FinalIntegrationCohortRecord, pr: VerifiedPrObservation | null): boolean =>
   reviewOutputReady(cohort.final_integration.active_execution_id, cohort.final_integration.response,
     cohort.final_integration.outputs.pr_summary)
-  && finalPrMatchesRepository(cohort, pr)
+  && finalPullRequestMatchesPreparedRepository(cohort, pr)
   && pr?.pr_url === cohort.final_integration.outputs.pr_summary?.body.pr_url
   && pr?.head_sha !== null;
 export const finalExecutionInterrupted = (cohort: FinalIntegrationCohortRecord): boolean =>
   reviewExecutionInterrupted(cohort.final_integration.active_execution_id, cohort.final_integration.interrupted);
 export const finalPrMergedAtReviewedHead = (cohort: FinalIntegrationCohortRecord,
   pr: VerifiedPrObservation | null, target: FinalPrReviewTarget | null): boolean =>
-  finalPrMatchesRepository(cohort, pr) && pr?.state === "merged" && target !== null
+  finalPullRequestMatchesPreparedRepository(cohort, pr) && pr?.state === "merged" && target !== null
   && sameRef(target.pr_summary, currentRef(cohort.final_integration.outputs.pr_summary))
   && pr.pr_url === target.pr_url && pr.head_sha === target.head_sha;
 export const finalPrClosedUnmerged = (cohort: FinalIntegrationCohortRecord,
   pr: VerifiedPrObservation | null, target: FinalPrReviewTarget | null): boolean =>
-  finalPrMatchesRepository(cohort, pr) && pr?.state === "closed" && target !== null
+  finalPullRequestMatchesPreparedRepository(cohort, pr) && pr?.state === "closed" && target !== null
   && sameRef(target.pr_summary, currentRef(cohort.final_integration.outputs.pr_summary))
   && pr.pr_url === target.pr_url && pr.head_sha === target.head_sha;
 

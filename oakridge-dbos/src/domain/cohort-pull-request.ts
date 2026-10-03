@@ -13,10 +13,18 @@
 import type { ForgeRepositoryIdentity } from "./epic";
 import type { ArtifactId, CohortId, StageInstanceId, UnitId, WorkflowRunId } from "./primitives";
 import type { PullRequestVerificationId } from "./pull-request";
+import type { FinalIntegrationCohortRecord, VerifiedPrObservation } from "./dev-flow-v15";
 import {
   parseGithubPullRequestIdentity, pullRequestMismatch, pullRequestUrlsMatch, repositoriesMatch,
   type PullRequestMismatch, type PullRequestObservation,
 } from "./pull-request";
+
+/** Final PR branch roles are adapter-owned facts from the prepared repository. */
+export const finalPullRequestMatchesPreparedRepository = (
+  cohort: FinalIntegrationCohortRecord, pr: VerifiedPrObservation | null,
+): boolean => pr !== null && pr.repository_key === cohort.inputs.repository.repository_key
+  && pr.head_branch === cohort.inputs.repository.base_branch
+  && pr.base_branch === cohort.inputs.repository.integration_branch;
 
 /**
  * Adapter-owned build identity. `cohort_key` is unique only inside its stage;
