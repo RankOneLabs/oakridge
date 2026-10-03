@@ -1,25 +1,17 @@
 import { expect, test } from "bun:test";
 
 import type { ProjectId, WorkflowDefinitionId } from "../src/domain/primitives";
-import type { PromptBundle, WorkflowDefinition } from "../src/domain/workflow";
+import type { PromptBundle } from "../src/domain/workflow";
+import canonical from "../../workflow-config/definitions/dev_flow_v15.json";
+import type { StoredWorkflowDefinition } from "../src/domain/dev-flow-v15";
 import type { PersistWorkflowRunLaunch } from "../src/domain/runs";
 import { runRecordWorkflowId } from "../src/domain/workflow-ids";
 import { createRunLaunchApp } from "../src/http/run-launch";
 import { deterministicRunId, launchRun, type LaunchRunDependencies } from "../src/runtime/launch-run";
 import type { RunStartRequest } from "../src/runtime/run-launch-dispatch";
 
-// A definition that reads the context, because a definition that reads nothing
-// cannot show whether the launch gate checks anything.
-const graph = { stages: { analyze: { stage_type: "delegated_session", operator_role: "spec", inputs: [], outputs: [{ name: "analysis", artifact_type: "dev.analysis" }],
-  config: {
-    prompt_matrix: ["initial", "operator_retry", "input_revision"].map((launch_reason) => ({ session_role: "spec", launch_reason, template_path: "analyze.md" })),
-    role_configs: [{ session_role: "spec", runtime: { from: "context", path: "/planner_runtime" }, effort: { from: "context", path: "/planner_effort" },
-      session_name: "analyze-{{STAGE_INSTANCE_ID}}", authorized_outputs: ["analysis"] }],
-    slot_bindings: { NOTES: { from: "context", path: "/brief_notes" }, URL: { from: "context", path: "/oakridge_url" } },
-    workdir: { from: "literal", value: "/repo" }, artifact_productions: [], gates: [], handoffs: [],
-  } } }, edges: [] };
 const definition = { id: "ef2b47a4-d1bd-44ee-840a-e4f7b27570db" as WorkflowDefinitionId, name: "flow", version: 11,
-  graph, archived: false, created_at: "2026-08-15T00:00:00Z" } as unknown as WorkflowDefinition;
+  definition: { ...canonical, version: 11 }, archived: false, created_at: "2026-08-15T00:00:00Z" } as unknown as StoredWorkflowDefinition;
 const promptBundle: PromptBundle = { version: 1, hash: "prompt-bundle-11", matrix: [
   { session_role: "spec", launch_reason: "initial", template_path: "analyze.md", content: "Analyze {{NOTES}}" },
   { session_role: "spec", launch_reason: "operator_retry", template_path: "analyze.md", content: "Retry {{NOTES}}" },
@@ -28,7 +20,9 @@ const promptBundle: PromptBundle = { version: 1, hash: "prompt-bundle-11", matri
 const project = { id: "af2b47a4-d1bd-44ee-840a-e4f7b27570db" as ProjectId, name: "Oakridge", repo_dir: "/workspace/oakridge",
   forge_repository: null, base_branch: null, created_at: "2026-08-15T00:00:00Z" };
 // `planner_effort: null` is what the launcher sends for "the runtime's default".
-const context = { brief_notes: "Replace orchestration", oakridge_url: "http://oakridge", planner_runtime: "claude-code", planner_effort: null };
+const context = { brief_notes: "Replace orchestration", oakridge_url: "http://oakridge", base_branch: "epic/work",
+  repositories: [{ key: "oakridge", path: project.repo_dir, integration_branch: "main", forge_repository: null }],
+  planner: { runtime: "claude-code", model: null, effort: null }, builder: { runtime: "codex", model: null, effort: null } };
 const body = { workflow_def_id: definition.id, project_id: project.id, context, epic_profile: null };
 
 const mountedFixture = (options: { readonly archived?: boolean; readonly start_run_result?: "ok" | "err" } = {}) => {
@@ -139,7 +133,7 @@ test("a run whose DBOS start fails is still created and reported", async () => {
   }
 });
 
-test("v2 launch identity cannot collide with a legacy root history", async () => {
+test("the launch uses the durable run workflow identity", async () => {
   const subject = mountedFixture();
   const launched = await launchRun({ ...body, idempotency_key: "launch-1" }, subject.dependencies);
   expect(launched.ok).toBe(true);
@@ -192,15 +186,15 @@ test("a launch declaring repositories proceeds without checking their branches",
  * discovered in flight. The refusal names all of them at once, before anything
  * has started.
  */
-test("a launch whose context the definition cannot read is refused, naming every missing pointer", async () => {
+test("missing grouped agent settings are rejected before persistence", async () => {
   const subject = mountedFixture();
   const response = await request(subject.app, { ...body, context: { brief_notes: "only the notes" } });
   expect(response.status).toBe(400);
   const failure = await response.json() as { readonly error: string; readonly code: string };
-  expect(failure.code).toBe("context_requirements_unmet");
-  expect(failure.error).toContain("/planner_runtime (analyze)");
-  expect(failure.error).toContain("/oakridge_url (analyze)");
-  expect(failure.error).toContain("'flow' v11");
+  expect(failure.code).toBe("invalid_context");
+  expect(failure.error).toContain("context.planner");
+
+
   // Refused means refused: nothing was persisted and nothing was started.
   expect(subject.stored()).toBeNull();
   expect(subject.starts()).toHaveLength(0);
@@ -229,9 +223,9 @@ test("a context that is not a JSON object is refused before anything reads it", 
 
 test("a runtime the executor could never run is refused at the request, naming the field", async () => {
   const subject = mountedFixture();
-  const response = await request(subject.app, { ...body, context: { ...context, planner_runtime: "gpt-5" } });
+  const response = await request(subject.app, { ...body, context: { ...context, planner: { ...context.planner, runtime: "gpt-5" } } });
   expect(response.status).toBe(400);
-  expect((await response.json() as { readonly error: string }).error).toContain("context.planner_runtime");
+  expect((await response.json() as { readonly error: string }).error).toContain("context.planner.runtime");
 });
 
 /**
@@ -239,18 +233,18 @@ test("a runtime the executor could never run is refused at the request, naming t
  * accepts it, so the launch gate must too — a presence test, not a truthiness
  * one.
  */
-test("a null value satisfies the pointer that reads it", async () => {
+test("null effort selects the runtime default", async () => {
   const subject = mountedFixture();
   expect((await request(subject.app)).status).toBe(201);
-  expect(subject.stored()?.run.context).toEqual(expect.objectContaining({ planner_effort: null }));
+  expect(subject.stored()?.run.context).toEqual(expect.objectContaining({ planner: expect.objectContaining({ effort: null }) }));
 });
 
 test("dropping that null key entirely is a different thing, and is refused", async () => {
   const subject = mountedFixture();
-  const { planner_effort: _omitted, ...withoutEffort } = context;
-  const response = await request(subject.app, { ...body, context: withoutEffort });
+  const { effort: _omitted, ...withoutEffort } = context.planner;
+  const response = await request(subject.app, { ...body, context: { ...context, planner: withoutEffort } });
   expect(response.status).toBe(400);
-  expect((await response.json() as { readonly error: string }).error).toContain("/planner_effort (analyze)");
+  expect((await response.json() as { readonly error: string }).error).toContain("context.planner.effort");
 });
 
 /**

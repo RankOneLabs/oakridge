@@ -15,7 +15,7 @@ export const selectRunNotification = (event: RunEvent): RunNotification | null =
     message = `${effect.unit_label} needs operator action (${effect.to_state})`;
   } else if (effect.kind === "pull_request_merge_confirmed") {
     kind = "success"; message = "Pull request merge confirmed";
-  } else if (effect.kind === "start_attempt" && event.launch_reason === "retry") {
+  } else if (effect.kind === "worker_decision" && effect.actions.some((action) => action.action_point === "retry")) {
     kind = "info"; message = "Retry launched";
   } else return null;
   return { kind, message, href: `#oakridge/run/${encodeURIComponent(event.run_id)}` };

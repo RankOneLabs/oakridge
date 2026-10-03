@@ -1,8 +1,9 @@
+import type { JsonObject } from "./stage-machine";
 import type { JsonValue, StageInstanceId } from "./primitives";
 import { err, ok, type Result } from "./primitives";
-import { readJsonPointer } from "./json-pointer";
-import type { SlotBinding } from "./delegated-session";
 import type { FinalMergePolicy, ForgeRepositoryIdentity } from "./epic";
+
+const isJsonObject = (value: JsonValue): value is JsonObject => typeof value === "object" && value !== null && !Array.isArray(value);
 
 /**
  * The branches a run works against, and how a stage comes to hold them.
@@ -64,7 +65,6 @@ export interface RunContextRepository {
 }
 
 /** Where a repository entry carries its key — the unit id the stage fans out on. */
-export const RUN_CONTEXT_REPOSITORY_KEY_POINTER = "/key";
 
 /** What one provisioned repository looks like once the stage has guaranteed it. */
 export interface RepositoryRefs {
@@ -84,12 +84,12 @@ export interface RepositoryRefsParseError {
 }
 
 export const parseRepositoryRefs = (body: JsonValue): Result<RepositoryRefs, RepositoryRefsParseError> => {
-  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+  if (!isJsonObject(body)) {
     return err({ operation: "parse_repository_refs", detail: "repository refs body must be an object" });
   }
   const fields = ["repository_key", "repository_path", "integration_branch", "base_branch", "base_head_sha"] as const;
   for (const field of fields) {
-    const value = readJsonPointer(body, `/${field}`);
+    const value = body[field];
     if (typeof value !== "string" || value.length === 0) {
       return err({ operation: "parse_repository_refs", detail: `repository refs '${field}' must be a non-empty string` });
     }
@@ -135,16 +135,16 @@ const nonEmptyString = (value: JsonValue | undefined, field: string): Result<str
  * argument.
  */
 export const parseRunContextRepository = (value: JsonValue): Result<RunContextRepository, RunContextRepositoryError> => {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (!isJsonObject(value)) {
     return err({ operation: "parse_run_context_repository", detail: "repository must be a JSON object" });
   }
-  const key = nonEmptyString(readJsonPointer(value, "/key"), "key");
+  const key = nonEmptyString(value.key, "key");
   if (!key.ok) return key;
-  const path = nonEmptyString(readJsonPointer(value, "/path"), "path");
+  const path = nonEmptyString(value.path, "path");
   if (!path.ok) return path;
-  const integrationBranch = nonEmptyString(readJsonPointer(value, "/integration_branch"), "integration_branch");
+  const integrationBranch = nonEmptyString(value.integration_branch, "integration_branch");
   if (!integrationBranch.ok) return integrationBranch;
-  const forge = parseForgeRepository(readJsonPointer(value, "/forge_repository"));
+  const forge = parseForgeRepository(value.forge_repository);
   if (!forge.ok) return forge;
   return ok({ key: key.value, path: path.value, integration_branch: integrationBranch.value, forge_repository: forge.value });
 };
@@ -157,12 +157,12 @@ export const parseRunContextRepository = (value: JsonValue): Result<RunContextRe
  */
 export const parseForgeRepository = (value: JsonValue | undefined): Result<ForgeRepositoryIdentity | null, RunContextRepositoryError> => {
   if (value === undefined || value === null) return ok(null);
-  if (typeof value !== "object" || Array.isArray(value)) {
+  if (!isJsonObject(value)) {
     return err({ operation: "parse_run_context_repository", detail: "repository 'forge_repository' must be an object or null" });
   }
-  const provider = readJsonPointer(value, "/provider");
-  const owner = readJsonPointer(value, "/owner");
-  const name = readJsonPointer(value, "/name");
+  const provider = value.provider;
+  const owner = value.owner;
+  const name = value.name;
   if (provider !== "github" || typeof owner !== "string" || owner.length === 0 || typeof name !== "string" || name.length === 0) {
     return err({ operation: "parse_run_context_repository", detail: "repository 'forge_repository' must be {provider:'github',owner,name}" });
   }
@@ -170,7 +170,6 @@ export const parseForgeRepository = (value: JsonValue | undefined): Result<Forge
 };
 
 /** Where the epic's merge policy sits on a prepared run context. */
-export const RUN_CONTEXT_FINAL_MERGE_POLICY_POINTER = "/final_merge_policy";
 
 /**
  * The epic's merge policy, read back off the run context. `guarded` is the
@@ -221,69 +220,4 @@ export const parseBaseBranch = (value: JsonValue): Result<string, BaseBranchErro
     return err({ operation: "parse_base_branch", detail: `base branch must not have leading or trailing whitespace, got ${JSON.stringify(value)}` });
   }
   return ok(value);
-};
-
-/**
- * What the provisioning stage is configured with: where its repositories are,
- * which branch to guarantee in each, and how many it may do at once.
- * Deliberately one knob and two locations — the entry shape is
- * `RunContextRepository`, not a set of pointers a definition gets to reinvent.
- */
-export interface RepositoryProvisioningDefinitionConfig {
-  readonly repositories: SlotBinding;
-  readonly base_branch: SlotBinding;
-  readonly max_parallel: number;
-}
-
-/** What one provisioning unit resolves to, once its repository is in hand. */
-export interface ResolvedRepositoryProvisioningConfig {
-  readonly executor_type: typeof PROVISION_REPOSITORY_REFS_STAGE_TYPE;
-  readonly output_name: string;
-  readonly repository: RunContextRepository;
-  readonly base_branch: string;
-  /** Present only on the v2 run-owned path. Legacy execution projection calls omit it. */
-  readonly publication?: { readonly work_order_id: string; readonly capability: string };
-}
-
-export interface ResolvedRepositoryProvisioningError {
-  readonly operation: "parse_resolved_repository_provisioning";
-  readonly detail: string;
-}
-
-/**
- * Reads a resolved config back off the wire. The execution request carries it
- * as `JsonValue` — it has been through the workflow journal — so the executor
- * narrows it rather than assuming the shape it was written with.
- */
-export const parseResolvedRepositoryProvisioningConfig = (value: JsonValue): Result<ResolvedRepositoryProvisioningConfig, ResolvedRepositoryProvisioningError> => {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return err({ operation: "parse_resolved_repository_provisioning", detail: "resolved config must be a JSON object" });
-  }
-  if (readJsonPointer(value, "/executor_type") !== PROVISION_REPOSITORY_REFS_STAGE_TYPE) {
-    return err({ operation: "parse_resolved_repository_provisioning", detail: `resolved config is not a '${PROVISION_REPOSITORY_REFS_STAGE_TYPE}' config` });
-  }
-  const outputName = readJsonPointer(value, "/output_name");
-  if (typeof outputName !== "string" || outputName.length === 0) {
-    return err({ operation: "parse_resolved_repository_provisioning", detail: "resolved config 'output_name' must be a non-empty string" });
-  }
-  const baseBranch = readJsonPointer(value, "/base_branch");
-  if (typeof baseBranch !== "string" || baseBranch.length === 0) {
-    return err({ operation: "parse_resolved_repository_provisioning", detail: "resolved config 'base_branch' must be a non-empty string" });
-  }
-  const repository = readJsonPointer(value, "/repository");
-  if (repository === undefined) return err({ operation: "parse_resolved_repository_provisioning", detail: "resolved config has no 'repository'" });
-  const parsed = parseRunContextRepository(repository);
-  if (!parsed.ok) return err({ operation: "parse_resolved_repository_provisioning", detail: parsed.error.detail });
-  const rawPublication = readJsonPointer(value, "/publication");
-  let publication: ResolvedRepositoryProvisioningConfig["publication"];
-  if (rawPublication !== undefined) {
-    const workOrderId = readJsonPointer(rawPublication, "/work_order_id");
-    const capability = readJsonPointer(rawPublication, "/capability");
-    if (typeof workOrderId !== "string" || workOrderId.length === 0 || typeof capability !== "string" || capability.length === 0) {
-      return err({ operation: "parse_resolved_repository_provisioning", detail: "resolved publication authority is invalid" });
-    }
-    publication = { work_order_id: workOrderId, capability };
-  }
-  return ok({ executor_type: PROVISION_REPOSITORY_REFS_STAGE_TYPE, output_name: outputName, repository: parsed.value, base_branch: baseBranch,
-    ...(publication ? { publication } : {}) });
 };

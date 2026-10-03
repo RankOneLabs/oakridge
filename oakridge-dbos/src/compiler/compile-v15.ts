@@ -18,7 +18,7 @@ export interface CompiledV15WorkflowDefinition {
 }
 export type CompileV15Error = V15DefinitionError | {
   readonly operation: "compile_v15_definition";
-  readonly kind: "prompt_unavailable" | "prompt_totality";
+  readonly kind: "prompt_unavailable" | "prompt_totality" | "unbound_placeholder";
   readonly path: string;
   readonly detail: string;
 };
@@ -43,6 +43,9 @@ export const compileV15WorkflowDefinition = async (source: unknown, loader: Prom
     try {
       const content = await loader.load(reference.path);
       if (content.trim().length === 0) return err({ operation: "compile_v15_definition", kind: "prompt_unavailable", path: reference.path, detail: "Prompt content is empty" });
+      const placeholder = content.match(/\{\{[^{}]+\}\}/);
+      if (placeholder) return err({ operation: "compile_v15_definition", kind: "unbound_placeholder",
+        path: reference.path, detail: `unbound_placeholder: ${placeholder[0]}; action inputs are appended as typed data` });
       entries.push({ ...reference, content });
     } catch (error) {
       return err({ operation: "compile_v15_definition", kind: "prompt_unavailable", path: reference.path, detail: error instanceof Error ? error.message : String(error) });

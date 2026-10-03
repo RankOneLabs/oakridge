@@ -174,7 +174,7 @@ export function RunDetail({ runId, run, activeGates, mergeWaits, onRunDeleted, o
                         unit={unit}
                         unitArtifacts={unitArtifacts}
                         onSelectArtifact={onSelectArtifact}
-                        onRetry={(unitId) => void retryMutation.mutate({ stageInstanceId: stage.stage_instance_id, unitId })}
+                        onRetry={(unitId, worker) => void retryMutation.mutate({ stageInstanceId: stage.stage_instance_id, unitId, worker })}
                         retrying={retryMutation.isPending
                           && retryMutation.variables?.stageInstanceId === stage.stage_instance_id
                           && retryMutation.variables.unitId === unit.unit_id}
@@ -215,6 +215,8 @@ export function RunDetail({ runId, run, activeGates, mergeWaits, onRunDeleted, o
                     key={stage.name}
                     stage={stage}
                     unitState={unit?.state}
+                    workers={unit?.workers ?? []}
+                    onRetryWorker={(worker) => { if (unit) retryMutation.mutate({ stageInstanceId: stage.stage_instance_id, unitId: unit.unit_id, worker }); }}
                     onSelectArtifact={onSelectArtifact}
                     abandon={unit && unit.status !== "complete" && unit.status !== "failed" && unit.status !== "cancelled" ? {
                       onAbandon: () => requestAbandon(unit.cohort_id, unit.unit_id),

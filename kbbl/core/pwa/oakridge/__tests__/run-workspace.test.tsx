@@ -27,7 +27,7 @@ const diagnosis: RunDiagnosis = {
       delegated_kbbl_sid: "sid-build",
       worktree: null,
       units: [{
-        cohort_id: "cohort-1",
+        version: 0, workers: [], brief: null, cohort_id: "cohort-1",
         unit_id: "cohort-1",
         sid: "sid-build",
         worktree: null,
@@ -44,8 +44,7 @@ const diagnosis: RunDiagnosis = {
     stage_key: "build",
     cohort_id: "cohort-1",
     cohort_key: "cohort-1",
-    attempt_number: 1,
-    attempt_count: 1,
+    worker: "build", execution_id: "execution-1", action_point: "initial_build", is_current: true,
     status: "blocked",
   }],
   current_session: null,
@@ -54,8 +53,7 @@ const diagnosis: RunDiagnosis = {
     stage_key: "build",
     cohort_id: "cohort-1",
     cohort_key: "cohort-1",
-    attempt_number: 1,
-    attempt_count: 1,
+    worker: "build", execution_id: "execution-1", action_point: "initial_build", is_current: true,
     status: "blocked",
   }],
   active_gates: [{
@@ -126,7 +124,7 @@ describe("run diagnosis workspace", () => {
 
   it("Retry shows only for retryable units", async () => {
     const retryable: RunDiagnosis = { ...diagnosis, run: { ...diagnosis.run, stages: [{
-      ...diagnosis.run.stages[0]!, units: [{ ...diagnosis.run.stages[0]!.units![0]!, retryable: true }],
+      ...diagnosis.run.stages[0]!, units: [{ ...diagnosis.run.stages[0]!.units![0]!, retryable: true, workers: [{ worker: "provision", record: { state: "interrupted", active_execution_id: null, outputs: { repository_refs: null }, response: null, interrupted: null, executions: [] } }] }],
     }] } };
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
       String(input).endsWith("/diagnosis") ? json(retryable) : json([]));

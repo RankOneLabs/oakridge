@@ -1,5 +1,4 @@
 import { useWorkflowDef } from "../../hooks/useWorkflowDef";
-import { WorkflowGraph } from "../molecules/WorkflowGraph";
 import { Button } from "../../../components/atoms/Button";
 
 interface WorkflowDefDetailProps {
@@ -40,11 +39,14 @@ export function WorkflowDefDetail({
         </Button>
       </header>
 
-      <WorkflowGraph graph={definition.graph} />
+      <ul className="flex flex-col gap-3">{Object.entries(definition.definition.stages).map(([key, stage]) => <li key={key} data-testid="or-def-stage">
+        <h3>{key}</h3><p>After: {stage.prerequisites.join(", ") || "run launch"}</p>
+        <p>Workers: {Object.keys(stage.cohort.workers).join(", ")}</p>
+      </li>)}</ul>
 
       <details className="or-def-detail__raw">
         <summary>Raw definition JSON</summary>
-        <pre>{JSON.stringify(definition.graph, null, 2)}</pre>
+        <pre>{JSON.stringify(definition.definition, null, 2)}</pre>
       </details>
     </div>
   );

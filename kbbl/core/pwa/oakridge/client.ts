@@ -17,8 +17,6 @@ import type {
   ParkedGate,
   ArtifactDetail,
   ArtifactTypeDescriptor,
-  GateResumeRequest,
-  GateResumeResponse,
   CollabThread,
   PostThreadRequest,
   PostMessageRequest,
@@ -31,7 +29,6 @@ import type {
   RunDiagnosis,
 } from "./types";
 import type { Result } from "../lib/result";
-import { randomUuid } from "../lib/random-uuid";
 
 const API = "/oakridge/api";
 
@@ -91,22 +88,6 @@ async function oakridgePost<T>(path: string, body: unknown, options: OakridgePos
   }
   if (res.status === 204 || res.headers.get("content-length") === "0") {
     return undefined as unknown as T;
-  }
-  return (await res.json()) as T;
-}
-
-interface OakridgePutOptions { readonly idempotency_key: string }
-
-/** A bodiless, idempotent PUT — the shape of oakridge's operator commands (retry). */
-async function oakridgePut<T>(path: string, options: OakridgePutOptions): Promise<T> {
-  const res = await fetch(`${API}${path}`, {
-    method: "PUT",
-    headers: { "Idempotency-Key": options.idempotency_key },
-  });
-  if (!res.ok) {
-    const b = await res.json().catch(() => null) as unknown;
-    const detail = selectFailureDetail(b, `oakridge PUT ${path}: ${res.status}`);
-    throw new Error(detail);
   }
   return (await res.json()) as T;
 }
@@ -185,9 +166,7 @@ export function fetchArtifact(id: string): Promise<ArtifactDetail> {
   return oakridgeGet<ArtifactDetail>(`/artifact_details/${encodeURIComponent(id)}`);
 }
 
-export function resumeGate(gateId: string, req: GateResumeRequest): Promise<GateResumeResponse> {
-  return oakridgePost<GateResumeResponse>(`/gates/${encodeURIComponent(gateId)}/resume`, req);
-}
+
 
 /**
  * Confirms a cohort's pull request merged, when Oakridge cannot see the
@@ -199,10 +178,6 @@ export function resumeGate(gateId: string, req: GateResumeRequest): Promise<Gate
  */
 export function confirmCohortMerged(cohortId: string): Promise<CohortPullRequestResponse> {
   return oakridgePost<CohortPullRequestResponse>(`/cohorts/${encodeURIComponent(cohortId)}/pull_request/refresh`, {});
-}
-
-export function abandonCohort(cohortId: string, detail: string): Promise<{ readonly state: string }> {
-  return oakridgePost<{ readonly state: string }>(`/cohorts/${encodeURIComponent(cohortId)}/abandon`, { detail });
 }
 
 export function fetchProjects(): Promise<Project[]> {
@@ -278,17 +253,11 @@ export function deleteRun(runId: string): Promise<void> {
   return oakridgeDelete(`/workflow_runs/${encodeURIComponent(runId)}`);
 }
 
-/**
- * Operator retry of one run unit — the recovery for a rejected output or a
- * dead executor. Oakridge keys the request on `Idempotency-Key`; a fresh key
- * per click is a fresh decision, and a repeat of the same key returns the
- * work order it already created.
- */
-export function retryRunUnit(stageInstanceId: string, unitId: string): Promise<unknown> {
-  return oakridgePut<unknown>(
-    `/stage_instances/${encodeURIComponent(stageInstanceId)}/units/${encodeURIComponent(unitId)}/retry`,
-    { idempotency_key: randomUuid() },
-  );
+export function submitCohortRequest(input: { readonly cohort_id: string; readonly expected_version: number;
+  readonly request: import("../../../../oakridge-dbos/src/domain/dev-flow-v15").V15OperatorRequest; readonly id: string }): Promise<unknown> {
+  return oakridgePost(`/cohorts/${encodeURIComponent(input.cohort_id)}/requests`, {
+    id: input.id, expected_version: input.expected_version, request: input.request,
+  });
 }
 
 export function fetchArtifactTypes(): Promise<ArtifactTypeDescriptor[]> {

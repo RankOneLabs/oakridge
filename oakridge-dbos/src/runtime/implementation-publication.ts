@@ -5,6 +5,8 @@ import type { ImplementationPublicationEvidence } from "../domain/cohort-pull-re
 import type { SqlExecutor } from "../storage/sql-executor";
 import type { DevFlowPullRequestRepository, ForgeRepositoryRepository } from "../storage/repositories";
 import type { PullRequestReader } from "./github-pull-requests";
+import { verifyFinalIntegrationPullRequest } from "./final-integration";
+import type { PrSummaryBody } from "../domain/dev-flow-artifacts";
 
 const isJsonObject = (value: JsonValue): value is { readonly [key: string]: JsonValue } =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -39,6 +41,17 @@ export const createImplementationPublicationEnricher = (dependencies: Implementa
   return async (input: ImplementationPublicationCommand): Promise<Result<JsonValue | null,
     { readonly code: string; readonly detail: string }>> => {
     if (input.output_name !== "pr_summary") return ok(null);
+    const owners = await sql.query<{ readonly cohort_id: import("../domain/primitives").CohortId; readonly stage_key: string }>(
+      `SELECT attempt.cohort_id::text,stage.stage_key FROM oakridge.attempt attempt
+       JOIN oakridge.stage_instance stage ON stage.id=attempt.stage_instance_id WHERE attempt.id=$1`, [input.attempt_id]);
+    if (owners[0]?.stage_key === "final_integration") {
+      if (!isJsonObject(input.body) || typeof input.body.pr_url !== "string" || typeof input.body.repository_key !== "string"
+        || typeof input.body.branch !== "string" || typeof input.body.base_branch !== "string")
+        return err({ code: "pr_verification_failed", detail: "final PR summary is missing its identity or branches" });
+      const verified = await verifyFinalIntegrationPullRequest(dependencies, {
+        cohort_id: owners[0].cohort_id, summary: input.body as unknown as PrSummaryBody });
+      return verified.ok ? ok({ origin_head_sha: verified.value.head_sha, pr: verified.value } as unknown as JsonValue) : verified;
+    }
     const rows = await sql.query<ImplementationPublicationRow>(
       `SELECT attempt.run_id,build.repository_key,build.repository_path,build.canonical_ref,build.expected_pr_base,
          build.stage_instance_id,build.cohort_key,intent.action_point

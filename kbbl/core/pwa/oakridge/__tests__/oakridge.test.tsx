@@ -240,8 +240,8 @@ describe("RunDetail committed diagnosis", () => {
 
   it("offers retry only for the committed retry reason", () => {
     const units = [
-      { cohort_id: "cohort-gate", unit_id: "gate", sid: null, worktree: null, status: "blocked" as const, blocked_reason: "gate" as const, next_actor: "operator" as const, retryable: false, gate: "artifact_review" },
-      { cohort_id: "cohort-retry", unit_id: "retry", sid: null, worktree: null, status: "blocked" as const, blocked_reason: "retry" as const, next_actor: "operator" as const, retryable: true, gate: null },
+      { version: 0, workers: [], brief: null, cohort_id: "cohort-gate", unit_id: "gate", sid: null, worktree: null, status: "blocked" as const, blocked_reason: "gate" as const, next_actor: "operator" as const, retryable: false, gate: "artifact_review" },
+      { version: 0, workers: [{ worker: "provision" as const, record: { state: "interrupted" as const, active_execution_id: null, outputs: { repository_refs: null }, response: null, interrupted: null, executions: [] } }], brief: null, cohort_id: "cohort-retry", unit_id: "retry", sid: null, worktree: null, status: "blocked" as const, blocked_reason: "retry" as const, next_actor: "operator" as const, retryable: true, gate: null },
     ];
     const retryDetail: RunDetail = { ...detail, stages: [{ ...detail.stages[0]!, units }] };
 
@@ -251,8 +251,8 @@ describe("RunDetail committed diagnosis", () => {
   });
 
   it("addresses merge refresh with the durable cohort identity", async () => {
-    const unit = { cohort_id: "durable-cohort-uuid", unit_id: "web", sid: null, worktree: null, status: "blocked" as const, blocked_reason: "external" as const, next_actor: "external" as const, retryable: false, gate: null };
-    const companion = { ...unit, cohort_id: "other-cohort", unit_id: "api", gate: null };
+    const unit = { version: 0, workers: [], brief: null, cohort_id: "durable-cohort-uuid", unit_id: "web", sid: null, worktree: null, status: "blocked" as const, blocked_reason: "external" as const, next_actor: "external" as const, retryable: false, gate: null };
+    const companion = { ...unit, version: 0, workers: [], brief: null, cohort_id: "other-cohort", unit_id: "api", gate: null };
     const mergeDetail: RunDetail = { ...detail, stages: [{ ...detail.stages[0]!, stage_instance_id: "stage-build", units: [unit, companion] }] };
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ state: "done" }));
 
@@ -313,7 +313,7 @@ describe("GlobalParkedGateList", () => {
 
     expect(await screen.findByTestId("or-gate-card")).toBeTruthy();
     expect(screen.getByTestId("or-gate-stranded").textContent).toBe("Run failed — gate stranded");
-    expect((screen.getByTestId("or-decision-approve") as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByTestId("or-decision-actions")).toBeNull();
   });
 });
 

@@ -7,7 +7,7 @@ import { PgPostgresExecutor } from "../src/storage/sql-executor";
 import { PostgresRunRecordWriter, publishWorkerOutput, requestExecutionStop, writeSessionStatus } from "../src/storage/postgres-run-record";
 import { PostgresRunRecordRepository } from "../src/storage/postgres-run-record-repository";
 import { publishWorkOrderArtifact } from "../src/runtime/publish-work-order-artifact";
-import { capabilityFor } from "../src/runtime/resolve-work-order";
+import { capabilityFor } from "../src/runtime/publication-capability";
 import { dispatchCohortExecution, stopCohortExecution, type CreatedWorkerSession, type WorkerSessionIO } from "../src/runtime/run-launch-dispatch";
 import type { ArtifactId, AttemptId, CohortId, ExecutionId, JsonValue, SessionId, StageInstanceId, WorkflowRunId, WorkOrderId } from "../src/domain/primitives";
 import type { ArtifactRef, ImplementationCohortDefinition, ImplementationCohortInputs, OperatorRequestEnvelope, VerifiedPrObservation } from "../src/domain/dev-flow-v15";
@@ -297,14 +297,6 @@ test("an integration failure records an interrupted worker with no fabricated se
   } finally { await fixture.sql.close(); }
 });
 
-test("legacy event-list ingress cannot mutate a cohort or dispatch work", async () => {
-  const fixture = await prepare("oakridge_b2_retired_event");
-  try {
-    expect(await fixture.ingress.apply(cohort_id, { kind: "started" })).toMatchObject({ ok: false, error: { kind: "event_model_retired" } });
-    expect((await fixture.sql.query<{ readonly transitions: string }>("SELECT count(*)::text AS transitions FROM oakridge.run_transition", []))[0])
-      .toEqual({ transitions: "0" });
-  } finally { await fixture.sql.close(); }
-});
 
 for (const kind of ["cancel", "abandon"] as const) test(`${kind} succeeds during repository and forge failures`, async () => {
   const fixture = await prepare(`oakridge_b3_offline_${kind}`);
@@ -328,7 +320,7 @@ for (const kind of ["cancel", "abandon"] as const) test(`${kind} succeeds during
   } finally { await fixture.sql.close(); }
 });
 
-for (const worker of ["spec", "plan", "brief", "final_integration", "provision"] as const)
+for (const worker of ["spec", "plan", "brief", "final_integration"] as const)
   test(`${worker} terminal interruption retains its retry contract and current outputs`, async () => {
     const fixture = await prepare(`oakridge_b3_terminal_${worker}`);
     try {
@@ -355,8 +347,7 @@ for (const worker of ["spec", "plan", "brief", "final_integration", "provision"]
         session_id: session.session_id, status: "failed", at: fixture.io.now() }))).toEqual({ ok: true, value: { kind: "written" } });
       const execution = { execution_id: session.execution_id, session_id: session.session_id,
         detail: "session ended before the required publication was complete" };
-      const expected = worker === "provision" ? { execution }
-        : { work, execution, current: worker === "brief"
+      const expected = { work, execution, current: worker === "brief"
           ? { members: [{ cohort_key: "api", ref: refs[0] }, { cohort_key: "web", ref: refs[1] }] } : refs[0] };
       expect((await fixture.sql.query("SELECT interrupted FROM oakridge.cohort_worker WHERE cohort_id=$1 AND worker=$2",
         [cohort_id, worker]))[0]).toEqual({ interrupted: expected });

@@ -1,6 +1,6 @@
+import type * as V15 from "./dev-flow-v15";
+import type { ExecutionId } from "./primitives";
 import type { ArtifactId, CohortId, JsonValue, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "./primitives";
-import type { CompiledWorkflowDefinition } from "./compiled-workflow";
-import type { StageKey } from "./workflow";
 import type { BlockedReason, CoreStatus, NextActor } from "./records";
 
 export type OperatorRunStatus = CoreStatus;
@@ -41,7 +41,16 @@ export interface OperatorSessionRunLocation {
   /** `oakridge.work_order.id` (0011:67) — the attempt whose attachment named the session. */
   readonly work_order_id: WorkOrderId;
 }
-export interface OperatorStageUnit { readonly cohort_id: CohortId; readonly unit_id: UnitId; readonly repository_key: string | null; readonly params: JsonValue | null; readonly sid: string | null; readonly worktree: { readonly branch: string; readonly path: string; readonly base_ref: string } | null; readonly base_sha: string | null; readonly state: string; readonly status: OperatorStageStatus; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null; readonly retryable: boolean; readonly gate: string | null; readonly merge_head_drift?: { readonly accepted_head_sha: string; readonly merged_head_sha: string } }
+export type OperatorWorkerRecord =
+  | { readonly worker: "provision"; readonly record: V15.ProvisionWorkerRecord }
+  | { readonly worker: "spec"; readonly record: V15.SpecWorkerRecord }
+  | { readonly worker: "plan"; readonly record: V15.PlanWorkerRecord }
+  | { readonly worker: "brief"; readonly record: V15.BriefWorkerRecord }
+  | { readonly worker: "build"; readonly record: V15.BuildWorkerRecord }
+  | { readonly worker: "assessment"; readonly record: V15.AssessmentWorkerRecord }
+  | { readonly worker: "final_integration"; readonly record: V15.FinalWorkerRecord };
+
+export interface OperatorStageUnit { readonly workers: readonly OperatorWorkerRecord[]; readonly version: number; readonly cohort_id: CohortId; readonly unit_id: UnitId; readonly repository_key: string | null; readonly brief: import("./dev-flow-artifacts").BuildBriefBody | null; readonly sid: string | null; readonly worktree: { readonly branch: string; readonly path: string; readonly base_ref: string } | null; readonly base_sha: string | null; readonly state: string; readonly status: OperatorStageStatus; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null; readonly retryable: boolean; readonly gate: string | null; readonly merge_head_drift?: { readonly accepted_head_sha: string; readonly merged_head_sha: string } }
 export interface OperatorStageDetail { readonly stage_instance_id: StageInstanceId; readonly name: string; readonly type: string; readonly operator_role: string | null; readonly status: OperatorStageStatus; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null; readonly artifacts: readonly OperatorStageArtifact[]; readonly delegated_kbbl_sid: string | null; readonly worktree: OperatorStageUnit["worktree"]; readonly units: readonly OperatorStageUnit[] }
 /**
  * `epic_profile` and `run_record` are gone from this payload. Both were already
@@ -64,8 +73,10 @@ export interface OperatorRunDiagnosisSession {
   readonly stage_key: string;
   readonly cohort_id: CohortId;
   readonly cohort_key: string;
-  readonly attempt_number: number;
-  readonly attempt_count: number;
+  readonly worker: V15.V15WorkerKey;
+  readonly execution_id: ExecutionId;
+  readonly action_point: string;
+  readonly is_current: boolean;
   readonly status: CoreStatus;
 }
 export interface OperatorRunDiagnosisGate extends OperatorParkedGate { readonly cohort_id: CohortId | null }
@@ -95,8 +106,8 @@ export interface OperatorRunDiagnosis {
 
 /** A gate's decision only takes effect while its run is still active. */
 export const selectGateActionability = (run_state: CoreStatus): boolean => run_state === "active" || run_state === "blocked";
-export interface OperatorArtifactRevision { readonly id: ArtifactId; readonly status: "draft" | "approved" | "rejected"; readonly lifecycle: "current" | "superseded" | "withdrawn" | "released"; readonly created_at: string; readonly body: JsonValue; readonly validation: JsonValue }
-export interface OperatorArtifactDetail { readonly id: ArtifactId; readonly requested_revision_id: ArtifactId; readonly current_revision_id: ArtifactId | null; readonly type_id: string; readonly component_id: string | null; readonly capabilities: { readonly reviewable: boolean; readonly commentable: boolean; readonly atom_editable: boolean; readonly review_items: boolean } | null; readonly anchor_schema: readonly string[] | null; readonly review: JsonValue | null; readonly run_id: WorkflowRunId; readonly producing_stage: string; readonly label: string | null; readonly revisions: readonly OperatorArtifactRevision[] }
+export interface OperatorArtifactRevision { readonly id: ArtifactId; readonly status: V15.ArtifactState; readonly lifecycle: "current" | "superseded" | "withdrawn" | "released"; readonly created_at: string; readonly body: JsonValue; readonly validation: JsonValue }
+export interface OperatorArtifactDetail { readonly review_error: { readonly detail: string } | null; readonly review_context: import("./v15-operator-review").OperatorArtifactReviewContext | null; readonly id: ArtifactId; readonly requested_revision_id: ArtifactId; readonly current_revision_id: ArtifactId | null; readonly type_id: string; readonly component_id: string | null; readonly capabilities: { readonly reviewable: boolean; readonly commentable: boolean; readonly atom_editable: boolean; readonly review_items: boolean } | null; readonly anchor_schema: readonly string[] | null; readonly review: JsonValue | null; readonly run_id: WorkflowRunId; readonly producing_stage: string; readonly label: string | null; readonly revisions: readonly OperatorArtifactRevision[] }
 export type OperatorCohortLifecycle = CoreStatus;
 export interface OperatorPullRequestObservation { readonly owner: string; readonly name: string; readonly number: number; readonly url: string; readonly head_branch: string; readonly base_branch: string; readonly state: "open" | "merged" | "closed_unmerged"; readonly observed_at: string }
 export interface OperatorPullRequestMismatch { readonly kind: "missing_repository_identity" | "repository_mismatch" | "pull_request_mismatch" | "head_branch_mismatch" | "base_branch_mismatch" | "closed_without_merge" | "stale_observation"; readonly detail: string }
@@ -123,49 +134,14 @@ export interface OperatorReviewInbox { readonly cohorts: readonly OperatorCohort
 export interface OperatorApplicationVersionInventory { readonly application_version: string | null; readonly run_count: number; readonly pending_run_count: number; readonly gated_run_count: number; readonly oldest_pending_at: string | null }
 
 
-/**
- * Run detail lists every definition stage even before it has a row (spec
- * §3.6 — a `stage_instance` row is now created only when a stage becomes
- * ready). This orders the stages that have none yet: a Kahn topological sort
- * over `definition.edges` at stage granularity, ties broken by `stage_key`,
- * seeded from `definition.source_stages` — the same "no blocking required
- * input" stages the compiler already identifies as having nothing to wait on.
- * A cycle or an unreachable stage (which `derive`'s own closure check would
- * reject before this ever runs against a real definition) is not thrown on
- * here — a projection lists every stage rather than erroring the whole run
- * detail over a graph anomaly; the leftover stages are appended in
- * `stage_key` order.
- */
-export const selectPendingStageOrder = (definition: CompiledWorkflowDefinition, stored_stage_keys: readonly StageKey[]): readonly StageKey[] => {
-  const stageKeys = (Object.keys(definition.stages) as StageKey[]).sort();
-  const inDegree = new Map<StageKey, number>(stageKeys.map((key) => [key, 0]));
-  const dependents = new Map<StageKey, Set<StageKey>>(stageKeys.map((key) => [key, new Set<StageKey>()]));
-  for (const edge of definition.edges) {
-    const outgoing = dependents.get(edge.producer_stage);
-    if (!outgoing || outgoing.has(edge.consumer_stage)) continue;
-    outgoing.add(edge.consumer_stage);
-    inDegree.set(edge.consumer_stage, (inDegree.get(edge.consumer_stage) ?? 0) + 1);
+/** Canonical prerequisite order, shared by pending and materialized stage projections. */
+export const selectV15StageOrder = (definition: V15.WorkflowDefinition): readonly V15.StageKey[] => {
+  const remaining = new Set(Object.keys(definition.stages) as V15.StageKey[]);
+  const order: V15.StageKey[] = [];
+  while (remaining.size) {
+    const ready = [...remaining].filter((key) => definition.stages[key].prerequisites.every((dependency) => order.includes(dependency))).sort();
+    if (!ready.length) throw new Error("stored stage prerequisites contain a cycle");
+    for (const key of ready) { order.push(key); remaining.delete(key); }
   }
-
-  const ready = new Set<StageKey>(definition.source_stages);
-  for (const key of stageKeys) if ((inDegree.get(key) ?? 0) === 0) ready.add(key);
-
-  const visited = new Set<StageKey>();
-  const order: StageKey[] = [];
-  while (ready.size > 0) {
-    const next = [...ready].sort()[0] as StageKey;
-    ready.delete(next);
-    if (visited.has(next)) continue;
-    visited.add(next);
-    order.push(next);
-    for (const dependent of dependents.get(next) ?? []) {
-      const remaining = (inDegree.get(dependent) ?? 0) - 1;
-      inDegree.set(dependent, remaining);
-      if (remaining <= 0 && !visited.has(dependent)) ready.add(dependent);
-    }
-  }
-  for (const key of stageKeys) if (!visited.has(key)) order.push(key);
-
-  const stored = new Set(stored_stage_keys);
-  return order.filter((key) => !stored.has(key));
+  return order;
 };

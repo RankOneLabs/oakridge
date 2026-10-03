@@ -1,14 +1,11 @@
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
-import { compileV15WorkflowDefinition, v15PromptReferences } from "../src/compiler/compile-workflow";
+import { compileV15WorkflowDefinition, v15PromptReferences } from "../src/compiler/compile-v15";
 import { parseV15WorkflowDefinition } from "../src/validation/v15-definition";
 import { loadDevFlowV15 } from "../src/seed/dev-flow-v15";
 import { createPromptTemplateLoader } from "../src/runtime/prompt-template";
 import { artifactRefFromRevision, V15_WORKER_KEYS, V15_FACTS, V15_CHANGE_KINDS, type V15DecisionTree, type WorkflowDefinition } from "../src/domain/dev-flow-v15";
 import type { ArtifactId } from "../src/domain/primitives";
-import { resolveCohortRoster } from "../src/adapters/cohort-roster";
-import { compileWorkflowDefinition } from "../src/compiler/compile-workflow";
-import { loadGraphDefinitionFixture } from "./support/graph-definition-fixture";
 
 const definition = async (): Promise<WorkflowDefinition> => {
   const loaded = await loadDevFlowV15();
@@ -129,13 +126,7 @@ test("the live prompt directory contains exactly the declared eighteen files", a
   const actual = [...new Bun.Glob("**/*.md").scanSync({ cwd: resolve(import.meta.dir, "../../workflow-config/prompts/dev-flow/v15") })].map((path) => `workflow-config/prompts/dev-flow/v15/${path}`).sort();
   expect(actual).toEqual(declared);
 });
-test("generic cohort materialization is unavailable at the B1 boundary", async () => {
-  const fixture = await loadGraphDefinitionFixture();
-  if (!fixture.ok) throw new Error(fixture.error.detail);
-  const compiled = compileWorkflowDefinition(fixture.value);
-  if (!compiled.ok) throw new Error(compiled.error.detail);
-  expect(resolveCohortRoster(compiled.value.stages.build!)).toEqual({ ok: false, error: expect.objectContaining({ kind: "stage_initialization_unimplemented" }) });
-});
+
 
 // Read authored JSON directly: this independently checks every shipped tree,
 // rather than treating validator acceptance as proof of these properties.

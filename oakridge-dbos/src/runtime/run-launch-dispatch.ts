@@ -1,8 +1,10 @@
 import type { WorkflowRunRepository } from "../storage/repositories";
 import type { Result, RootWorkflowId, WorkflowRunId } from "../domain/primitives";
 import { evaluateCohort, type CohortEvaluationInput } from "../decision/stage-machine";
-import type { CohortDecisionError, OperatorRequestEnvelope, SelectedDecision } from "../domain/dev-flow-v15";
+import type { CohortDecisionError, OperatorRequestEnvelope } from "../domain/dev-flow-v15";
 import type { CommitSelectedCohortError, CommittedSelectedCohort } from "../storage/postgres-run-record";
+import { evaluateV15Cohort, type V15EvaluationInput, type V15SelectedDecision } from "../decision/stage-machine";
+import type { V15OperatorRequestEnvelope } from "../domain/dev-flow-v15";
 
 export interface RunStartRequest {
   readonly workflow_id: RootWorkflowId;
@@ -62,9 +64,9 @@ export const dispatchRunLaunches = async (
 };
 
 export interface CohortProgressionPort {
-  readonly load: () => Promise<Omit<CohortEvaluationInput, "request">>;
-  readonly commit: (decision: Extract<SelectedDecision, { readonly kind: "apply" }>,
-    request: OperatorRequestEnvelope | null) => Promise<Result<CommittedSelectedCohort, CommitSelectedCohortError>>;
+  readonly load: () => Promise<Omit<CohortEvaluationInput, "request"> | Omit<V15EvaluationInput, "request">>;
+  readonly commit: (decision: Extract<V15SelectedDecision, { readonly kind: "apply" }>,
+    request: V15OperatorRequestEnvelope | null) => Promise<Result<CommittedSelectedCohort, CommitSelectedCohortError>>;
   readonly dispatch: (execution_ids: CommittedSelectedCohort["execution_ids"]) => Promise<void>;
 }
 
@@ -73,18 +75,21 @@ export type CohortProgressionError = CohortDecisionError | CommitSelectedCohortE
 
 /** A request is offered until one commit consumes it; automatic decisions then run to quiescence. */
 export const advanceCohortUntilWait = async (port: CohortProgressionPort,
-  request: OperatorRequestEnvelope | null): Promise<Result<{ readonly commits: number; readonly reason: string }, CohortProgressionError>> => {
+  request: V15OperatorRequestEnvelope | null): Promise<Result<{ readonly commits: number; readonly reason: string }, CohortProgressionError>> => {
   let pending_request = request;
   let commits = 0;
   let has_version_conflict = false;
   for (let index = 0; index < 128; index++) {
     const snapshot = await port.load();
-    if (pending_request && pending_request.expected_version !== snapshot.snapshot.version) {
+    const version = "context" in snapshot ? snapshot.context.cohort.version : snapshot.snapshot.version;
+    if (pending_request && pending_request.expected_version !== version) {
       if (!has_version_conflict) return { ok: false, error: { kind: "version_conflict",
-        expected_version: pending_request.expected_version, actual_version: snapshot.snapshot.version } };
-      pending_request = { ...pending_request, expected_version: snapshot.snapshot.version };
+        expected_version: pending_request.expected_version, actual_version: version } };
+      pending_request = { ...pending_request, expected_version: version };
     }
-    const selected = evaluateCohort({ ...snapshot, request: pending_request?.request ?? null });
+    const selected = "context" in snapshot
+      ? evaluateV15Cohort({ ...snapshot, request: pending_request?.request ?? null })
+      : evaluateCohort({ ...snapshot, request: pending_request?.request as OperatorRequestEnvelope["request"] ?? null });
     if (!selected.ok) return selected;
     if (selected.value.kind === "wait") return { ok: true, value: { commits, reason: selected.value.reason } };
     const committed = await port.commit(selected.value, pending_request);
@@ -121,6 +126,8 @@ export const dispatchCohortExecution = async (
   const { claimExecutionIntent, recordExecutionDispatch } = await import("../storage/postgres-run-record");
   const claimed = await claimExecutionIntent(sql, execution_id);
   if (!claimed.ok) return { ok: true, value: undefined };
+  if (claimed.value.worker === "provision") return { ok: false, error: {
+    kind: "dispatch_failed", detail: "provision operation cannot enter session dispatch" } };
   // Exceptions are normalized at the integration boundary, including uncertain
   // start outcomes. Recovery attaches using the same execution identity.
   let created: Awaited<ReturnType<WorkerSessionIO["create_session"]>>;

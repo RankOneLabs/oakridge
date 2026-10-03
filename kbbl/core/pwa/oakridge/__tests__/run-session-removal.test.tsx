@@ -37,7 +37,7 @@ beforeEach(() => {
     const body = url.endsWith("/diagnosis") ? {
       run,
       sessions: attempts.map((attempt, index) => ({ session_id: attempt.session_id, stage_key: attempt.stage_key,
-        cohort_id: attempt.unit_id, cohort_key: attempt.unit_id, attempt_number: index + 1, attempt_count: attempts.length, status: "complete" })),
+        cohort_id: attempt.unit_id, cohort_key: attempt.unit_id, worker: "build", execution_id: `execution-${index}`, action_point: "initial_build", is_current: index === attempts.length - 1, status: "complete" })),
       current_session: null, sessions_awaiting_action: [], active_gates: [], pull_request_merge_waits: [], recent_artifacts: [],
       stage_progress: { total: 0, pending: 0, active: 0, blocked: 0, complete: 0, failed: 0, cancelled: 0 },
     } : [];
@@ -68,7 +68,7 @@ it("on a fresh page hides previously deleted sessions and drops their saved pane
   await screen.findByTestId("or-run-workspace");
   expect(visibleSessions()).toEqual(["existing"]);
   expect(screen.queryByTestId("or-run-pane-session")).toBeNull();
-  expect(screen.getByTestId("or-sidebar-session-attempt").textContent).toBe("attempt 2 of 2");
+  expect(screen.getByTestId("or-sidebar-session-attempt").textContent).toBe("build · initial_build");
 });
 
 it("does not infer deletion before inventory arrives, then reconciles the first snapshot", async () => {

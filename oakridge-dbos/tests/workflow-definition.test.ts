@@ -15,7 +15,7 @@ const delegatedConfig = (fan_out: unknown) => ({
   prompt_matrix: ["initial", "operator_retry", "input_revision"].map((launch_reason) => ({ session_role: "build", launch_reason, template_path: "p.md" })),
   role_configs: [{ session_role: "build", runtime: "claude-code", session_name: "s", authorized_outputs: ["out"] }],
   slot_bindings: {}, workdir: { from: "literal", value: "/repo" }, fan_out,
-  artifact_productions: [], gates: [], handoffs: [],
+  gates: [], handoffs: [],
 });
 
 /** A two-stage graph with one edge from `a.out` into the named input on `b`. */

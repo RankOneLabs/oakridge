@@ -1701,7 +1701,6 @@
             "input_name": "repository_refs",
             "path": "/0/artifact/repository_path"
           },
-          "artifact_productions": [],
           "gates": [
             {
               "name": "spec_analysis_gate",
@@ -1804,7 +1803,6 @@
             "input_name": "repository_refs",
             "path": "/0/artifact/repository_path"
           },
-          "artifact_productions": [],
           "gates": [
             {
               "name": "plan_gate",
@@ -1906,16 +1904,6 @@
             "input_name": "repository_refs",
             "path": "/0/artifact/repository_path"
           },
-          "artifact_productions": [
-            {
-              "over": {
-                "from": "input",
-                "input_name": "plan",
-                "path": "/cohorts"
-              },
-              "id_path": "/id"
-            }
-          ],
           "gates": [
             {
               "name": "brief_gate",
@@ -2132,7 +2120,6 @@
             "item_key_path": "/artifact/repository_key",
             "value_path": "/artifact/repository_path"
           },
-          "artifact_productions": [],
           "gates": [
             {
               "name": "build_review",
@@ -2276,7 +2263,6 @@
             "from": "item",
             "path": "/artifact/repository_path"
           },
-          "artifact_productions": [],
           "gates": [
             {
               "name": "final_integration_review",

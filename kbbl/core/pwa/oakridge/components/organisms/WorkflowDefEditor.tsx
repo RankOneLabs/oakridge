@@ -1,293 +1,51 @@
-import { Button } from "../../../components/atoms/Button";
 import { useEffect, useMemo, useState } from "react";
+import { Button } from "../../../components/atoms/Button";
 import { useWorkflowDef } from "../../hooks/useWorkflowDef";
 import { useCreateWorkflowDef } from "../../hooks/useCreateWorkflowDef";
-import { useArtifactTypes } from "../../hooks/useArtifactTypes";
-import {
-  defaultRuntimeIdForConfig,
-  runtimeDescriptorsForConfig,
-  useServerConfig,
-} from "../../../hooks/useServerConfig";
-import type { EdgeDef } from "../../types";
-import { StageEditor } from "./StageEditor";
-import { defaultStageEntry, type StageFormEntry } from "../../lib/stage-form";
-import { EdgeEditor } from "./EdgeEditor";
-import { buildWorkflowGraph, validateWorkflowDefinition, workflowDefinitionToFormState } from "../../lib/workflow-definition-form";
+import { validateWorkflowDefinition, workflowDefinitionToFormState } from "../../lib/workflow-definition-form";
 import { WorkflowJsonPreview } from "../molecules/WorkflowJsonPreview";
+import canonicalDefinition from "../../../../../../workflow-config/definitions/dev_flow_v15.json";
 
-const inputClass =
-  "w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-3 py-1.5 text-sm text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none";
-const labelClass = "block text-xs font-medium text-[var(--text-muted)] mb-1";
-
-// ── Component ─────────────────────────────────────────────────────────────────
-
-interface WorkflowDefEditorProps {
-  cloneFromId: string | null;
-  onBack: () => void;
-  onCreated: () => void;
-}
+interface WorkflowDefEditorProps { readonly cloneFromId: string | null; readonly onBack: () => void; readonly onCreated: () => void }
 
 export function WorkflowDefEditor({ cloneFromId, onBack, onCreated }: WorkflowDefEditorProps) {
   const cloneQuery = useWorkflowDef(cloneFromId);
-  const artifactTypesQuery = useArtifactTypes();
   const createMutation = useCreateWorkflowDef();
-  const serverConfig = useServerConfig();
-
-  const runtimeDescriptors = useMemo(
-    () => runtimeDescriptorsForConfig(serverConfig),
-    [serverConfig],
-  );
-  const defaultRuntimeId = useMemo(
-    () => defaultRuntimeIdForConfig(serverConfig),
-    [serverConfig],
-  );
-  const defaultRuntime = runtimeDescriptors.find((r) => r.id === defaultRuntimeId) ?? runtimeDescriptors[0];
-  const modelOptions = defaultRuntime?.models ?? [];
-  const effortOptions = defaultRuntime?.efforts ?? [];
-
-  const artifactTypeOptions = useMemo(
-    () =>
-      (artifactTypesQuery.data ?? []).map((t) => ({ value: t.id, label: t.id })),
-    [artifactTypesQuery.data],
-  );
-
-  // Form state
-  const [name, setName] = useState("");
-  const [version, setVersion] = useState(1);
-  const [stages, setStages] = useState<StageFormEntry[]>([]);
-  const [edges, setEdges] = useState<EdgeDef[]>([]);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-
-  // Load from clone source when available
-  const cloneLoaded = cloneQuery.data;
+  const [source, setSource] = useState(() => JSON.stringify(canonicalDefinition, null, 2));
   const [populated, setPopulated] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   useEffect(() => {
-    if (cloneLoaded && !populated) {
-      setName(cloneLoaded.name);
-      setVersion(cloneLoaded.version + 1);
-      const { stages: s, edges: e } = workflowDefinitionToFormState(cloneLoaded);
-      setStages(s);
-      setEdges(e);
-      setPopulated(true);
-    }
-  }, [cloneLoaded, populated]);
-
-  const stageKeys = stages.map((s) => s.stageKey);
-
-  const addStage = () => {
-    const key = `stage_${stages.length + 1}`;
-    setStages((prev) => [...prev, defaultStageEntry(key)]);
-  };
-
-  const updateStage = (i: number, patch: Partial<StageFormEntry>) => {
-    setStages((prev) => prev.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
-  };
-
-  const updateStageKey = (i: number, newKey: string) => {
-    const oldKey = stages[i]?.stageKey;
-    setStages((prev) => prev.map((s, idx) => (idx === i ? { ...s, stageKey: newKey } : s)));
-    // Keep edges pointing at the renamed stage; a stale key makes the graph
-    // non-submittable.
-    if (oldKey && oldKey !== newKey) {
-      setEdges((prev) =>
-        prev.map((edge) => ({
-          from: edge.from.stage === oldKey ? { ...edge.from, stage: newKey } : edge.from,
-          to: edge.to.stage === oldKey ? { ...edge.to, stage: newKey } : edge.to,
-        })),
-      );
-    }
-  };
-
-  const removeStage = (i: number) => {
-    const stageKey = stages[i]?.stageKey;
-    setStages((prev) => prev.filter((_, idx) => idx !== i));
-    // Drop edges connected to the removed stage; dangling edges make the graph
-    // non-submittable.
-    if (stageKey) {
-      setEdges((prev) =>
-        prev.filter((edge) => edge.from.stage !== stageKey && edge.to.stage !== stageKey),
-      );
-    }
-  };
-
-  const validationResult = useMemo(
-    () => validateWorkflowDefinition({ stages, edges, name }),
-    [stages, edges, name],
-  );
-  const validationErrors = validationResult.ok ? [] : validationResult.error.details;
-  const graph = useMemo(() => buildWorkflowGraph(stages, edges), [stages, edges]);
-  const previewJson = useMemo(
-    () => JSON.stringify({ name, version, graph }, null, 2),
-    [name, version, graph],
-  );
-
-  const pending = createMutation.isPending;
-
-  const onSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!validationResult.ok) return;
+    if (cloneQuery.data && !populated) { setSource(workflowDefinitionToFormState(cloneQuery.data)); setPopulated(true); }
+  }, [cloneQuery.data, populated]);
+  const validated = useMemo(() => validateWorkflowDefinition(source), [source]);
+  if (cloneFromId && cloneQuery.isPending) return <div data-testid="or-def-editor-loading">Loading definition…</div>;
+  if (cloneFromId && cloneQuery.isError) return <div role="alert" data-testid="or-def-editor-load-error">Failed to load definition</div>;
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!validated.ok) return;
     setSubmitError(null);
-    try {
-      await createMutation.mutateAsync({ name, version, graph });
-      onCreated();
-    } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : "Failed to create workflow definition");
-    }
+    try { await createMutation.mutateAsync(validated.value); onCreated(); }
+    catch (cause) { setSubmitError(cause instanceof Error ? cause.message : "Failed to create definition"); }
   };
-
-  const isClone = cloneFromId !== null;
-  const title = isClone ? "Clone Workflow Definition" : "New Workflow Definition";
-
-  if (isClone && cloneQuery.isPending) {
-    return (
-      <div className="py-6 text-sm text-[var(--text-muted)]" data-testid="or-def-editor-loading">
-        Loading definition…
-      </div>
-    );
-  }
-
-  if (isClone && cloneQuery.isError) {
-    return (
-      <div
-        className="rounded-md border border-[var(--danger-card-border)] bg-[var(--danger-bg)] px-4 py-3 text-sm text-[var(--danger-fg)]"
-        role="alert"
-        data-testid="or-def-editor-load-error"
-      >
-        {cloneQuery.error instanceof Error
-          ? cloneQuery.error.message
-          : "Failed to load definition"}
-      </div>
-    );
-  }
-
-  return (
-    <div className="or-page or-page--wide" data-testid="or-def-editor">
-      <header className="or-page-header or-page-header--back">
-        <Button variant="secondary" type="button" onClick={onBack}>
-          Back
-        </Button>
-        <div><span className="or-page-kicker">Workflow authoring</span><h2 className="or-page-title">{title}</h2><p className="or-page-summary">Define typed stages, bindings, transitions, and fan-out behavior.</p></div>
-      </header>
-
-      <div className="grid grid-cols-[minmax(0,1fr)_360px] items-start gap-6">
-        {/* Left: form */}
-        <form className="flex flex-col gap-5" onSubmit={(e) => void onSubmit(e)}>
-          {/* Metadata */}
-          <section className="flex flex-col gap-3">
-            <label className="flex flex-col gap-1">
-              <span className={labelClass}>Name</span>
-              <input
-                type="text"
-                className={inputClass}
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                disabled={pending}
-                placeholder="v2_dev_flow"
-                required
-                data-testid="or-def-name"
-              />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className={labelClass}>Version</span>
-              <input
-                type="number"
-                className={inputClass}
-                value={version}
-                min={1}
-                onChange={(e) =>
-                  setVersion(Math.max(1, parseInt(e.target.value, 10) || 1))
-                }
-                disabled={pending}
-                data-testid="or-def-version"
-              />
-            </label>
-          </section>
-
-          {/* Stages */}
-          <section className="flex flex-col gap-3">
-            <div className="flex items-center justify-between">
-              <h3 className="m-0 text-sm font-semibold text-[var(--text-primary)]">Stages</h3>
-              <Button variant="secondary"
-                type="button"
-                onClick={addStage}
-                disabled={pending}
-              >
-                + Add stage
-              </Button>
-            </div>
-            {stages.length === 0 && (
-              <p className="text-sm text-[var(--text-muted)]">
-                No stages yet. Add at least one to define the workflow.
-              </p>
-            )}
-            {stages.map((stage, i) => (
-              <StageEditor
-                key={stage._uid}
-                stageKey={stage.stageKey}
-                entry={stage}
-                onChangeKey={(k) => updateStageKey(i, k)}
-                onChange={(patch) => updateStage(i, patch)}
-                onRemove={() => removeStage(i)}
-                artifactTypes={artifactTypeOptions}
-                modelOptions={modelOptions}
-                effortOptions={effortOptions}
-                disabled={pending}
-              />
-            ))}
-          </section>
-
-          {/* Edges */}
-          <section>
-            <EdgeEditor
-              edges={edges}
-              stageKeys={stageKeys}
-              onChange={setEdges}
-              disabled={pending}
-            />
-          </section>
-
-          {/* Validation errors */}
-          {validationErrors.length > 0 && (
-            <ul
-              className="rounded-md border border-amber-500 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:bg-amber-950 dark:text-amber-300"
-              data-testid="or-def-validation-errors"
-            >
-              {validationErrors.map((err, i) => (
-                <li key={i}>{err}</li>
-              ))}
-            </ul>
-          )}
-
-          {submitError && (
-            <div
-              className="rounded-md border border-[var(--danger-card-border)] bg-[var(--danger-bg)] px-4 py-3 text-sm text-[var(--danger-fg)]"
-              role="alert"
-              data-testid="or-def-submit-error"
-            >
-              {submitError}
-            </div>
-          )}
-
-          <div className="flex justify-end gap-3">
-            <Button variant="secondary"
-              type="button"
-              onClick={onBack}
-              disabled={pending}
-            >
-              Cancel
-            </Button>
-            <Button variant="primary"
-              type="submit"
-              disabled={pending || validationErrors.length > 0 || stages.length === 0}
-              data-testid="or-def-submit"
-            >
-              {pending ? "Creating…" : "Create definition"}
-            </Button>
-          </div>
-        </form>
-
-        <WorkflowJsonPreview json={previewJson} />
-      </div>
-    </div>
-  );
+  return <div className="or-page or-page--wide" data-testid="or-def-editor">
+    <header className="or-page-header or-page-header--back">
+      <Button variant="secondary" onClick={onBack}>Back</Button>
+      <div><span className="or-page-kicker">Workflow authoring</span><h2 className="or-page-title">{cloneFromId ? "Clone Workflow Definition" : "New Workflow Definition"}</h2>
+        <p className="or-page-summary">Configure stage prerequisites, workers, action points and decision trees.</p></div>
+    </header>
+    <form onSubmit={(event) => void submit(event)} className="grid gap-6 lg:grid-cols-2">
+      <section className="flex flex-col gap-3">
+        <label htmlFor="workflow-contract" className="text-sm font-semibold">Workflow contract</label>
+        <textarea id="workflow-contract" value={source} onChange={(event) => setSource(event.target.value)} disabled={createMutation.isPending}
+          className="min-h-[65vh] w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] p-3 font-mono text-xs"
+          spellCheck={false} data-testid="or-def-contract" />
+        {!validated.ok && <ul role="alert" data-testid="or-def-validation-errors">{validated.error.details.map((detail) => <li key={detail}>{detail}</li>)}</ul>}
+        {submitError && <p role="alert" data-testid="or-def-submit-error">{submitError}</p>}
+        <div className="flex justify-end gap-3"><Button variant="secondary" type="button" onClick={onBack}>Cancel</Button>
+          <Button variant="primary" type="submit" disabled={!validated.ok || createMutation.isPending} data-testid="or-def-submit">
+            {createMutation.isPending ? "Creating…" : "Create definition"}</Button></div>
+      </section>
+      <WorkflowJsonPreview json={validated.ok ? JSON.stringify(validated.value, null, 2) : source} />
+    </form>
+  </div>;
 }

@@ -1,5 +1,6 @@
 import { err, ok, type Result } from "../domain/primitives";
-import { validatePlanCohorts } from "./schedule-cohorts";
+import { validatePlanCohorts, validateBriefCollection } from "./schedule-cohorts";
+import type { PlanBody } from "../domain/dev-flow-artifacts";
 import { finalPullRequestMatchesPreparedRepository } from "../domain/cohort-pull-request";
 import type { ArtifactRef, CohortDecisionError, ImplementationCohortDefinition, ImplementationCohortRecord,
   OperatorRequest, ResolvedWorkerAction, SelectedDecision, VerifiedPrObservation, V15DecisionTree,
@@ -91,7 +92,7 @@ export type V15FactContext =
   | { readonly stage: "repository_preparation"; readonly cohort: RepositoryPreparationCohortRecord }
   | { readonly stage: "spec_analysis"; readonly cohort: SpecAnalysisCohortRecord }
   | { readonly stage: "planning"; readonly cohort: PlanningCohortRecord }
-  | { readonly stage: "brief_writing"; readonly cohort: BriefWritingCohortRecord }
+  | { readonly stage: "brief_writing"; readonly cohort: BriefWritingCohortRecord; readonly accepted_plan?: PlanBody }
   | { readonly stage: "implementation"; readonly cohort: ImplementationCohortRecord; readonly pr: VerifiedPrObservation | null }
   | { readonly stage: "final_integration"; readonly cohort: FinalIntegrationCohortRecord;
       readonly pr: VerifiedPrObservation | null; readonly reviewed_target: FinalPrReviewTarget | null };
@@ -129,11 +130,14 @@ export const planOutputsReady = (cohort: PlanningCohortRecord): boolean => {
 };
 export const planExecutionInterrupted = (cohort: PlanningCohortRecord): boolean =>
   reviewExecutionInterrupted(cohort.plan.active_execution_id, cohort.plan.interrupted);
-export const briefOutputsReady = (cohort: BriefWritingCohortRecord): boolean => {
+export const briefOutputsReady = (cohort: BriefWritingCohortRecord, plan?: PlanBody): boolean => {
   const response = cohort.brief.response;
   if (response?.execution_id !== cohort.brief.active_execution_id || !response?.current) return false;
   const stored = cohort.brief.outputs.briefs;
-  return response.current.members.length === stored.length
+  return plan !== undefined && validateBriefCollection(plan.cohorts, stored.map((member) => member.artifact.body)).ok
+    && stored.every((member) => member.artifact.provenance.execution_id === cohort.brief.active_execution_id)
+    && new Set(response.current.members.map((member) => member.cohort_key)).size === response.current.members.length
+    && response.current.members.length === stored.length
     && response.current.members.every((member) => stored.some((candidate) =>
       candidate.cohort_key === member.cohort_key
       && sameRef(member.ref, { id: candidate.artifact.id, version: candidate.artifact.version })));
@@ -176,7 +180,7 @@ export const evaluateV15Fact = (context: V15FactContext, fact: V15Fact): boolean
       return fact === "plan_outputs_ready" ? planOutputsReady(context.cohort)
         : fact === "plan_execution_interrupted" ? planExecutionInterrupted(context.cohort) : null;
     case "brief_writing":
-      return fact === "brief_outputs_ready" ? briefOutputsReady(context.cohort)
+      return fact === "brief_outputs_ready" ? briefOutputsReady(context.cohort, context.accepted_plan)
         : fact === "brief_execution_interrupted" ? briefExecutionInterrupted(context.cohort) : null;
     case "implementation": return implementationFact(fact, context.cohort, context.pr);
     case "final_integration":
@@ -477,7 +481,8 @@ const genericReviewIsCurrent = (context: V15FactContext, request: V15OperatorReq
       if (request.kind !== "accept_briefs" && request.kind !== "revise_briefs") return true;
       const target = request.kind === "accept_briefs" ? request.target : request.feedback.target;
       const stored = context.cohort.brief.outputs.briefs;
-      return target.members.length === stored.length && target.members.every((member) => stored.some((candidate) =>
+      return new Set(target.members.map((member) => member.cohort_key)).size === target.members.length
+        && target.members.length === stored.length && target.members.every((member) => stored.some((candidate) =>
         candidate.cohort_key === member.cohort_key && sameRef(member.ref, currentRef(candidate.artifact))));
     }
     case "final_integration":

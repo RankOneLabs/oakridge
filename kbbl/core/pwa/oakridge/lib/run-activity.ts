@@ -34,7 +34,9 @@ const summaryOf = (event: RunEvent): string | null => {
   const effect = event.effect;
   switch (effect.kind) {
     case "start_stage": return "Stage started";
-    case "start_attempt": return event.launch_reason === "retry" ? "Retry launched" : `Session launched (attempt ${effect.attempt_number})`;
+    case "worker_decision": return effect.actions.length
+      ? effect.actions.map((action) => `${action.worker}: ${action.action_point}`).join(", ")
+      : `${effect.from_state} → ${effect.to_state}`;
     case "cohort_transition":
       return effect.event_kind === "gate_decided" ? "Gate decided"
         : `${effect.unit_label}: ${effect.from_state} → ${effect.to_state}`;

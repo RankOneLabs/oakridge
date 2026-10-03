@@ -461,6 +461,16 @@ export interface WorkflowDefinition {
   stages: V15StageDefinitions;
 }
 
+/** Registry metadata surrounds the canonical definition stored verbatim in SQL. */
+export interface StoredWorkflowDefinition {
+  readonly id: import("./primitives").WorkflowDefinitionId;
+  readonly name: string;
+  readonly version: number;
+  readonly definition: WorkflowDefinition;
+  readonly archived: boolean;
+  readonly created_at: string;
+}
+
 export type AuthoredWorkflowDefinition = Omit<WorkflowDefinition, "version"> & { version: number };
 
 export interface StageRecord<Cohort> {

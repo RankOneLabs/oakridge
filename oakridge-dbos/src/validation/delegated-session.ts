@@ -80,7 +80,6 @@ export const delegatedSessionDefinitionSchema = z.strictObject({
   required_build_set: z.array(z.string().min(1)).min(1).optional(),
   slot_bindings: z.record(z.string(), slotBindingSchema),
   workdir: slotBindingSchema,
-  artifact_productions: z.array(z.object({ over: slotBindingSchema, id_path: z.string().min(1) })).default([]),
   gates: z.array(outputGateSchema).default([]),
   handoffs: z.array(z.object({
     name: z.string().min(1),
@@ -134,7 +133,6 @@ export const validateDelegatedSessionCardinality = (
   ...duplicateDiagnostics(stage_key, session_role, "role_configs", config.role_configs.map((entry) => entry.session_role)),
   ...duplicateDiagnostics(stage_key, session_role, "gates", config.gates.map((entry) => entry.name)),
   ...duplicateDiagnostics(stage_key, session_role, "handoffs", config.handoffs.map((entry) => entry.name)),
-  ...duplicateDiagnostics(stage_key, session_role, "artifact_productions", config.artifact_productions.map((entry) => `${JSON.stringify(entry.over)}:${entry.id_path}`)),
   ...duplicateDiagnostics(stage_key, session_role, "release_outputs", [...config.gates.flatMap((gate) => gate.outputs), ...config.handoffs.flatMap((handoff) => handoff.outputs)]),
 ];
 

@@ -3,7 +3,7 @@ import { agent, ndJsonStream, PROTOCOL_VERSION } from "@agentclientprotocol/sdk"
 import { Readable, Writable } from "node:stream";
 import type { JsonValue } from "../../src/domain/primitives";
 
-export interface AgentPublication { readonly output_name: string; readonly body: JsonValue }
+export interface AgentPublication { readonly output_name: string; readonly body: JsonValue; readonly collection_key?: string }
 export type ImplementationAgentPlan =
   | { readonly kind: "publish"; readonly commit_build: boolean; readonly publications: readonly AgentPublication[] }
   | { readonly kind: "exit_without_publication" };
@@ -64,7 +64,8 @@ const run = async (): Promise<void> => {
       }
       for (const publication of plan.publications) {
         const response = await fetch(`${launch.base_url}/work-orders/${launch.attempt_id}/emit/${publication.output_name}`, {
-          method: "PUT", headers: { "content-type": "application/json", "work-order-capability": capability },
+          method: "PUT", headers: { "content-type": "application/json", "work-order-capability": capability,
+            ...(publication.collection_key ? { "output-collection-key": publication.collection_key } : {}) },
           body: JSON.stringify(publication.body),
         });
         const delivery: ImplementationAgentDelivery = { attempt_id: launch.attempt_id, output_name: publication.output_name,

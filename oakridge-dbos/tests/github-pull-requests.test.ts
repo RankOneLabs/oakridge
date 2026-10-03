@@ -3,8 +3,7 @@ import { expect, test } from "bun:test";
 import type { OperatorCohortLifecycle, OperatorCohortSummary } from "../src/domain/operator-projections";
 import type { StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
 import { GithubPullRequestReader, pollStagePullRequests, selectCohortsAwaitingReview } from "../src/runtime/github-pull-requests";
-import type { StageEventApplier } from "../src/storage/apply-stage-event";
-import type { SqlExecutor, TransactionalSqlExecutor } from "../src/storage/sql-executor";
+import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
 
 const cohort = (unitId: string, lifecycle: OperatorCohortLifecycle): OperatorCohortSummary => ({
   id: `stage:${unitId}`, run_id: "00000000-0000-4000-8000-000000000001" as WorkflowRunId, workflow_name: "dev flow",
@@ -43,39 +42,14 @@ const readerReturning = (status: number, payload: unknown) => {
   return { reader: new GithubPullRequestReader({ token: "test-token" }, http), calls };
 };
 
-for (const change of ["replacement_pr", "new_transition", "unchanged"] as const) {
-  test(`an in-flight PR poll checks the current binding and version: ${change}`, async () => {
-    const writes: string[] = [];
-    const { reader } = readerReturning(200, githubPayload({ state: "closed", merged: true,
-      merged_at: "2026-08-18T11:00:00Z" }));
-    const sql = {
-      query: async () => [{ cohort_id: "cohort", run_id: "run", state: "awaiting_merge",
-        owner: "RankOneLabs", name: "oakridge", number: 440, verification_id: "original",
-        durable_version: "4", latest_state: "open", latest_merged_at: null,
-        latest_head_sha: "abc123", latest_base_ref: "epic/tiers" }],
-      transaction: async <Value>(run: (tx: SqlExecutor) => Promise<Value>): Promise<Value> => run({
-        query: async (statement: string) => {
-          if (statement.trimStart().startsWith("SELECT")) return [{ id: "pull-request",
-            verification_id: change === "replacement_pr" ? "replacement" : "original",
-            durable_version: change === "new_transition" ? "5" : "4", state: "awaiting_merge" }];
-          writes.push(statement);
-          return [];
-        },
-      } as unknown as SqlExecutor),
-    } as unknown as TransactionalSqlExecutor;
-    const stage_events = {
-      lock_stage_cohorts_in: async () => [],
-      apply_in: async () => { writes.push("apply"); return { ok: true,
-        value: { kind: "applied", to: "done" } }; },
-      start_effects: async () => {},
-    } as unknown as StageEventApplier;
-    await pollStagePullRequests({ sql, reader, stage_events });
-    if (change === "unchanged") {
-      expect(writes).toHaveLength(2);
-      expect(writes[1]).toBe("apply");
-    } else expect(writes).toEqual([]);
-  });
-}
+test("the poller delegates merge verification to canonical cohort ingress", async () => {
+  let calls = 0;
+  const sql = { async query(statement: string) { return statement.includes("AS cohort_id")
+    ? [{ cohort_id: "cohort", state: "awaiting_merge" }] : [{ state: "complete" }]; } } as unknown as TransactionalSqlExecutor;
+  const stage_events = { async advance() { calls++; return { ok: true as const, value: { commits: 1, reason: "complete" } }; } };
+  expect(await pollStagePullRequests({ sql, stage_events })).toEqual([{ cohort_id: "cohort" as never, state: "complete", kind: "observed" }]);
+  expect(calls).toBe(1);
+});
 
 test("an open pull request reads as open", async () => {
   const { reader, calls } = readerReturning(200, githubPayload());

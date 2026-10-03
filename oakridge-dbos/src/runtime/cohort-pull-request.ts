@@ -168,10 +168,20 @@ export interface CohortPullRequestVerificationError {
 const verificationFailure = (kind: CohortPullRequestVerificationError["kind"], detail: string): Result<never, CohortPullRequestVerificationError> =>
   err({ operation: "verify_cohort_pull_request", kind, detail });
 
+export interface PreparedPullRequestBranches {
+  readonly repository_path: string;
+  readonly canonical_ref: string;
+  readonly expected_pr_base: string;
+}
+export interface VerifyPreparedPullRequestInput {
+  readonly repository: PreparedPullRequestBranches;
+  readonly forge_repository: VerifyCohortPullRequestInput["forge_repository"];
+  readonly candidate_url: string;
+}
 /** Reads both authorities. No field from an agent artifact can satisfy verification. */
-export const verifyCohortPullRequest = async (
+export const verifyPreparedPullRequest = async (
   dependencies: { readonly reader: PullRequestForgeReader; readonly git: GitCommandRunner },
-  input: VerifyCohortPullRequestInput,
+  input: VerifyPreparedPullRequestInput,
 ): Promise<Result<VerifiedCohortPullRequest, CohortPullRequestVerificationError>> => {
   const identity = parseGithubPullRequestIdentity(input.candidate_url);
   if (!identity) return verificationFailure("invalid_pull_request_url", "candidate URL is not a canonical GitHub pull request URL");
@@ -185,14 +195,14 @@ export const verifyCohortPullRequest = async (
       || observation.number !== identity.number || !repositoriesMatch(observation.owner, observation.name, identity.owner, identity.name)) {
     return verificationFailure("repository_mismatch", "forge observation does not match the candidate repository and pull request id");
   }
-  if (observation.head_branch !== input.cohort.canonical_ref) {
-    return verificationFailure("head_ref_mismatch", `forge head '${observation.head_branch}' does not match '${input.cohort.canonical_ref}'`);
+  if (observation.head_branch !== input.repository.canonical_ref) {
+    return verificationFailure("head_ref_mismatch", `forge head '${observation.head_branch}' does not match '${input.repository.canonical_ref}'`);
   }
-  if (observation.base_branch !== input.cohort.expected_pr_base) {
-    return verificationFailure("base_ref_mismatch", `forge base '${observation.base_branch}' does not match '${input.cohort.expected_pr_base}'`);
+  if (observation.base_branch !== input.repository.expected_pr_base) {
+    return verificationFailure("base_ref_mismatch", `forge base '${observation.base_branch}' does not match '${input.repository.expected_pr_base}'`);
   }
   if (!observation.head_sha) return verificationFailure("missing_head_commit", "forge observation has no head commit");
-  const remote = await dependencies.git.run(input.cohort.repository_path, ["ls-remote", "origin", `refs/heads/${input.cohort.canonical_ref}`]);
+  const remote = await dependencies.git.run(input.repository.repository_path, ["ls-remote", "origin", `refs/heads/${input.repository.canonical_ref}`]);
   if (remote.exit_code !== 0) return verificationFailure("git_read_failed", remote.stderr.trim() || "could not read the cohort ref from origin");
   const pushedHead = remote.stdout.trim().split(/\s+/)[0] ?? "";
   if (pushedHead === "" || pushedHead !== observation.head_sha) {
@@ -200,6 +210,12 @@ export const verifyCohortPullRequest = async (
   }
   return ok({ observation, pushed_head_sha: pushedHead });
 };
+
+export const verifyCohortPullRequest = (
+  dependencies: { readonly reader: PullRequestForgeReader; readonly git: GitCommandRunner },
+  input: VerifyCohortPullRequestInput,
+): Promise<Result<VerifiedCohortPullRequest, CohortPullRequestVerificationError>> =>
+  verifyPreparedPullRequest(dependencies, { repository: input.cohort, forge_repository: input.forge_repository, candidate_url: input.candidate_url });
 
 /** Verify against forge and origin, then retain the verified binding. */
 export const verifyAndBindCohortPullRequest = async (

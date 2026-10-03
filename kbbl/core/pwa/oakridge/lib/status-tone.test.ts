@@ -14,7 +14,7 @@ const unit = {
   pending: "muted", active: "info", blocked: "warning", failed: "danger", complete: "success", cancelled: "muted",
 } satisfies Record<StageUnitStatus, ChipTone>;
 const display = { ...run } satisfies Record<RunDisplayStatus, ChipTone>;
-const artifact = { draft: "warning", approved: "success", rejected: "danger" } satisfies Record<ArtifactRevisionStatus, ChipTone>;
+const artifact = { unreviewed: "warning", accepted: "success", changes_requested: "warning" } satisfies Record<ArtifactRevisionStatus, ChipTone>;
 const severity = { blocking: "danger", warning: "warning", info: "info" } satisfies Record<FindingSeverity, ChipTone>;
 const verdict = { pass: "success", pass_with_notes: "warning", fail: "danger" } satisfies Record<AssessmentVerdict, ChipTone>;
 const prReview = {

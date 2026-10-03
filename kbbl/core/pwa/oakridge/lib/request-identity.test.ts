@@ -6,9 +6,8 @@ import { selectRequestIdentity } from "./request-identity";
 const launchRequest = (notes: string): CreateRunRequest => ({
   workflow_def_id: "definition-1", project_id: null,
   context: {
-    brief_notes: notes, repositories: [{ key: "repo" as RepositoryKey, path: "/repo", integration_branch: "main" }], worktree_path: "/repo",
-    base_branch: "epic/x", oakridge_url: "http://oakridge", planner_runtime: "claude-code", planner_model: "sonnet", planner_effort: null,
-    worker_runtime: "claude-code", worker_model: "sonnet", worker_effort: null,
+    brief_notes: notes, repositories: [{ key: "repo" as RepositoryKey, path: "/repo", integration_branch: "main" }],
+    base_branch: "epic/x", oakridge_url: "http://oakridge", planner: { runtime: "claude-code", model: "sonnet", effort: null }, builder: { runtime: "claude-code", model: "sonnet", effort: null },
   },
   epic_profile: {
     title: "Build it", slug: "build-it", final_merge_policy: "guarded",

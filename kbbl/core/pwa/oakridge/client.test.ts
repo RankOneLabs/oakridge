@@ -14,9 +14,8 @@ const createRunRequest = (): CreateRunRequest => ({
   workflow_def_id: "definition-1",
   project_id: null,
   context: {
-    brief_notes: "Build it", repositories: [{ key: "repo" as RepositoryKey, path: "/repo", integration_branch: "main" }], worktree_path: "/repo",
-    base_branch: "epic/x", oakridge_url: "http://oakridge", planner_runtime: "claude-code", planner_model: "sonnet", planner_effort: null,
-    worker_runtime: "claude-code", worker_model: "sonnet", worker_effort: null,
+    brief_notes: "Build it", repositories: [{ key: "repo" as RepositoryKey, path: "/repo", integration_branch: "main" }],
+    base_branch: "epic/x", oakridge_url: "http://oakridge", planner: { runtime: "claude-code", model: "sonnet", effort: null }, builder: { runtime: "claude-code", model: "sonnet", effort: null },
   },
   epic_profile: {
     title: "Build it", slug: "build-it", final_merge_policy: "guarded",
@@ -57,7 +56,7 @@ describe("Oakridge response parsing", () => {
         artifacts: [],
         delegated_kbbl_sid: null,
         worktree: null,
-        units: [{ cohort_id: "cohort-api", unit_id: "api", repository_key: "  ", sid: null, worktree: null, status: "pending", blocked_reason: null, next_actor: "core", gate: null }],
+        units: [{ version: 0, workers: [], brief: null, cohort_id: "cohort-api", unit_id: "api", repository_key: "  ", sid: null, worktree: null, status: "pending", blocked_reason: null, next_actor: "core", gate: null }],
       }],
       parked_count: 0,
       updated_at: "2026-08-08T00:00:00Z",

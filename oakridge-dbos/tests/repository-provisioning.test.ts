@@ -1,10 +1,8 @@
 import { expect, test } from "bun:test";
 
-import { RepositoryProvisioningAdapter } from "../src/adapters/repository-provisioning";
-import type { ExecutionRequest } from "../src/domain/execution";
-import type { CohortId, ExecutionId, JsonValue, RepositoryKey, StageInstanceId, UnitId } from "../src/domain/primitives";
+import type { CohortId, RepositoryKey } from "../src/domain/primitives";
 import { describeRepositoryProvisioningFailure, provisionFailureFromAdapter, provisionRepositoryRefs, type GitCommandOutcome, type GitCommandRunner, type RepositoryProvisioningFailure } from "../src/domain/repository-provisioning";
-import { parseResolvedRepositoryProvisioningConfig, parseBaseBranch, parseRunContextRepository, selectBaseBranch, type RunContextRepository } from "../src/domain/repository-refs";
+import { parseBaseBranch, parseRunContextRepository, selectBaseBranch, type RunContextRepository } from "../src/domain/repository-refs";
 import { runExclusive } from "../src/runtime/keyed-mutex";
 
 const repository: RunContextRepository = { key: "scout", path: "/repos/scout", integration_branch: "main", forge_repository: null };
@@ -145,91 +143,6 @@ test("provisioning ends with the local tracking ref resolvable", async () => {
     command: "git rev-parse --verify origin/epic/response-edits^{commit}" }) });
 });
 
-const executionRequest = (resolved_config: JsonValue): ExecutionRequest => ({
-  execution_id: "stage-1:scout" as ExecutionId,
-  stage_instance_id: "11111111-1111-4111-8111-111111111111" as StageInstanceId,
-  unit_id: "scout" as UnitId,
-  executor_type: "provision_repository_refs",
-  resolved_config,
-  inputs: [],
-  declared_outputs: [{ name: "repository_refs", artifact_type: "dev.repository_refs", required: true }],
-  expected_artifacts: [{ unit_id: "scout" as UnitId, output_name: "repository_refs", artifact_type: "dev.repository_refs" }],
-});
-
-// v2's `resolveWorkOrder` always resolves a `publication` authority for this
-// stage (`resolve-work-order.ts:75-76`), so every real config carries one.
-const resolvedConfig = { executor_type: "provision_repository_refs", output_name: "repository_refs", base_branch: BASE_BRANCH, repository,
-  publication: { work_order_id: "11111111-1111-4111-8111-111111111112", capability: "work-secret" } } as unknown as JsonValue;
-
-const adapterWith = (git: GitCommandRunner) => {
-  const published: unknown[] = [];
-  const adapter = new RepositoryProvisioningAdapter({
-    git,
-    async publish_work_order(request) {
-      published.push(request);
-      return { kind: "published", artifact_id: "artifact-1" as never, run_id: "run-1" as never,
-        cohort_id: "cohort-1" as never, record_version: 1 as never };
-    },
-  });
-  return { adapter, published };
-};
-
-/**
- * The outcome travels in the reference, which is the value the execution
- * workflow checkpoints. An adapter remembering it in a map instead would answer
- * correctly until a restart or a rerun replayed the start step from its journal
- * into an empty process.
- */
-test("the provisioning executor carries its outcome in the reference it returns", async () => {
-  const git = scriptedGit(publishedEpic);
-  const subject = adapterWith(git.runner);
-  const request = executionRequest(resolvedConfig);
-  const reference = await subject.adapter.start_or_attach(request, "attempt-1");
-  expect(reference).toEqual({ kind: "completed", observation: { kind: "succeeded", metadata: { base_branch: "epic/response-edits", base_head_sha: EPIC_HEAD } } });
-  expect(subject.published).toEqual([expect.objectContaining({ work_order_id: "11111111-1111-4111-8111-111111111112", capability: "work-secret",
-    output_name: "repository_refs", idempotency_key: "stage-1:scout:repository_refs", body: expect.objectContaining({ base_head_sha: EPIC_HEAD }) })]);
-
-  // A second adapter — standing in for the process after a restart — reports
-  // the same terminal state from the reference alone.
-  const observed = await adapterWith(git.runner).adapter.observe_terminal(request.execution_id, reference);
-  expect(observed).toEqual({ kind: "terminal", observation: { kind: "succeeded", metadata: { base_branch: "epic/response-edits", base_head_sha: EPIC_HEAD } } });
-});
-
-/**
- * A git failure is this unit's terminal outcome, not an exception. Throwing
- * inside the retrying step that carries it kills the observer and leaves the
- * execution waiting on a message that can no longer arrive.
- */
-test("a provisioning failure becomes a named terminal observation rather than a throw", async () => {
-  const git = scriptedGit((args) => (args[0] === "rev-parse" && args[1] === "--git-dir" ? { exit_code: 128 } : undefined));
-  const subject = adapterWith(git.runner);
-  const reference = await subject.adapter.start_or_attach(executionRequest(resolvedConfig), "attempt-1");
-  expect(reference).toEqual({ kind: "completed", observation: { kind: "failed", code: "not_a_git_repository",
-    detail: "repository 'scout' is not a git repository at /repos/scout" } });
-  expect(subject.published).toEqual([]);
-});
-
-/** v2's resolved config always carries a `publication` authority; one that does not is refused rather than silently unpublished. */
-test("a resolved config with no publication authority fails the unit rather than falling back to a legacy emit", async () => {
-  const subject = adapterWith(scriptedGit(publishedEpic).runner);
-  const withoutPublication = { executor_type: "provision_repository_refs", output_name: "repository_refs", base_branch: BASE_BRANCH, repository } as unknown as JsonValue;
-  const reference = await subject.adapter.start_or_attach(executionRequest(withoutPublication), "attempt-1");
-  expect(reference).toEqual({ kind: "completed", observation: expect.objectContaining({ code: "v2_publication_unavailable" }) });
-  expect(subject.published).toEqual([]);
-});
-
-test("a resolved config the executor cannot read fails the unit rather than the process", async () => {
-  const subject = adapterWith(scriptedGit(publishedEpic).runner);
-  const reference = await subject.adapter.start_or_attach(executionRequest({ executor_type: "provision_repository_refs", output_name: "repository_refs", base_branch: BASE_BRANCH, repository: { key: "scout" } }), "attempt-1");
-  expect(reference).toEqual({ kind: "completed", observation: expect.objectContaining({ code: "invalid_resolved_config" }) });
-});
-
-test("an observation with no completed reference says so rather than reporting success", async () => {
-  const subject = adapterWith(scriptedGit(publishedEpic).runner);
-  expect(await subject.adapter.observe_terminal("stage-1:scout" as ExecutionId, { kind: "none" }))
-    .toEqual({ kind: "terminal", observation: expect.objectContaining({ code: "provisioning_not_started" }) });
-});
-
 test("a run context repository is parsed, so a missing field is named where it is missing", () => {
   expect(parseRunContextRepository({ key: "scout", path: "/repos/scout", integration_branch: "main" }))
     .toEqual({ ok: true, value: { key: "scout", path: "/repos/scout", integration_branch: "main", forge_repository: null } });
@@ -246,16 +159,6 @@ test("a run context repository is parsed, so a missing field is named where it i
     .toEqual({ ok: false, error: expect.objectContaining({ detail: "repository must be a JSON object" }) });
 });
 
-test("a resolved provisioning config refuses a payload belonging to another executor", () => {
-  expect(parseResolvedRepositoryProvisioningConfig({ executor_type: "delegated_session", output_name: "x", repository } as unknown as JsonValue))
-    .toEqual({ ok: false, error: expect.objectContaining({ detail: "resolved config is not a 'provision_repository_refs' config" }) });
-});
-
-/**
- * One selector, because the epic profile the operator reads and the run context
- * the stages read both need the default — and a default that drifts between
- * them names two different branches for the same run.
- */
 test("the epic branch default is the epic slug unless the repository names one", () => {
   expect(selectBaseBranch("epic/custom", "tiers-page")).toBe("epic/custom");
   expect(selectBaseBranch(null, "tiers-page")).toBe("epic/tiers-page");

@@ -1,14 +1,16 @@
 import { expect, test } from "bun:test";
 
 import type { ProjectId, WorkflowDefinitionId } from "../src/domain/primitives";
-import type { WorkflowDefinition } from "../src/domain/workflow";
+import type { StoredWorkflowDefinition } from "../src/domain/dev-flow-v15";
 import { PostgresProjectRepository } from "../src/storage/postgres-projects";
 import { PostgresWorkflowDefinitionRepository } from "../src/storage/postgres-workflow-definitions";
 import type { SqlExecutor, TransactionalSqlExecutor } from "../src/storage/sql-executor";
-import { loadGraphDefinitionFixture as loadDevFlowV15 } from "./support/graph-definition-fixture";
-import { createDevFlowAdapterRegistry } from "../src/adapters/dev-flow";
-import { createPromptBundle } from "../src/runtime/prompt-template";
-import { definitionWithMachine } from "./support/machine-fixtures";
+import { loadDevFlowV15 } from "../src/seed/dev-flow-v15";
+import { compileV15WorkflowDefinition } from "../src/compiler/compile-v15";
+const source = await loadDevFlowV15();
+if (!source.ok) throw new Error(source.error.detail);
+const definition: StoredWorkflowDefinition = { id: "00000000-0000-4000-8000-000000000002" as WorkflowDefinitionId,
+  name: source.value.key, version: source.value.version, definition: source.value, archived: false, created_at: "2026-08-15T12:00:00Z" };
 
 class StubSql implements TransactionalSqlExecutor {
   readonly calls: Array<{ statement: string; parameters: readonly unknown[] }> = [];
@@ -18,12 +20,16 @@ class StubSql implements TransactionalSqlExecutor {
   transaction<Value>(operation: (transaction: SqlExecutor) => Promise<Value>): Promise<Value> { this.transaction_calls += 1; return operation(this); }
 }
 
-test("stored workflow definition retains machine table and stage reference", async () => {
-  const definition = await definitionWithMachine();
-  const sql = new StubSql([{ definition: structuredClone(definition) }]);
-  const stored = await new PostgresWorkflowDefinitionRepository(sql, createDevFlowAdapterRegistry()).find_by_id(definition.id);
-  expect(stored?.machines?.spec_review?.transitions).toEqual(definition.machines?.spec_review?.transitions);
-  expect((stored?.graph.stages.spec_analyzer?.config as { readonly machine: string }).machine).toBe("spec_review");
+test("stored workflow definition retains the canonical workers and decision trees", async () => {
+  const sql = new StubSql([definition]);
+  const stored = await new PostgresWorkflowDefinitionRepository(sql).find_by_id(definition.id);
+  expect(stored).toEqual(definition);
+});
+
+test("stored legacy graph documents are rejected", async () => {
+  const sql = new StubSql([{ ...definition, definition: { graph: { stages: {}, edges: [] } } }]);
+  await expect(new PostgresWorkflowDefinitionRepository(sql).find_by_id(definition.id))
+    .rejects.toThrow("stored workflow definition is invalid");
 });
 
 test("project repository persists and decodes the public project model", async () => {
@@ -49,35 +55,28 @@ test("project repository updates the mutable project fields", async () => {
 
 test("workflow definition list passes explicit archival policy to SQL", async () => {
   const sql = new StubSql([]);
-  await new PostgresWorkflowDefinitionRepository(sql, createDevFlowAdapterRegistry()).list(true);
+  await new PostgresWorkflowDefinitionRepository(sql).list(true);
   expect(sql.calls[0]?.parameters).toEqual([true]);
   expect(sql.calls[0]?.statement).toContain("$1::boolean OR NOT archived");
 });
 
-test("workflow definition archival updates the query column and stored domain document", async () => {
-  const definition: WorkflowDefinition = { id: "00000000-0000-4000-8000-000000000002" as WorkflowDefinitionId, name: "flow", version: 1, graph: { stages: {}, edges: [] }, archived: true, created_at: "2026-08-15T12:00:00Z" };
-  const sql = new StubSql([{ definition }]);
-  const updated = await new PostgresWorkflowDefinitionRepository(sql, createDevFlowAdapterRegistry()).set_archived(definition.id, true);
+test("workflow definition archival changes registry metadata without rewriting the contract", async () => {
+  const sql = new StubSql([{ ...definition, archived: true }]);
+  const updated = await new PostgresWorkflowDefinitionRepository(sql).set_archived(definition.id, true);
   expect(updated?.archived).toBe(true);
-  expect(sql.calls[0]?.statement).toContain("jsonb_set");
-  expect(sql.calls[0]?.parameters).toEqual([definition.id, true]);
+  expect(sql.calls[0]?.statement).not.toContain("jsonb_set");
+  expect(updated?.definition).toEqual(source.value);
 });
 
-test("immutable reseeding ignores archive state and preserves the stored archive value", async () => {
-  const stored: WorkflowDefinition = { id: "00000000-0000-4000-8000-000000000002" as WorkflowDefinitionId, name: "flow", version: 1, graph: { stages: {}, edges: [] }, archived: true, created_at: "2026-08-15T12:00:00Z" };
-  const sql = new StubSql([{ definition: stored, hash: "empty", version: 1, matrix: [] }]);
-  const result = await new PostgresWorkflowDefinitionRepository(sql, createDevFlowAdapterRegistry()).insert_immutable({ ...stored, archived: false }, { version: 1, hash: "empty", matrix: [] });
-  expect(result.archived).toBe(true);
-  expect(sql.transaction_calls).toBe(1);
-  expect(sql.calls).toHaveLength(3);
-  expect(sql.calls[0]?.statement).toContain("definition - 'archived' = EXCLUDED.definition - 'archived'");
-});
-
-test("definition registration runs prompt-body placeholder validation before storage", async () => {
-  const loaded = await loadDevFlowV15();
-  if (!loaded.ok) throw new Error(loaded.error.detail);
-  const bundle = await createPromptBundle(loaded.value, { load: async (path) => path === "dev-flow/v15/build/build/initial_build.md" ? "{{MISSPELLED_SLOT}}" : "valid" });
+test("definition registration validates prompt placeholders before storage", async () => {
+  const compiled = await compileV15WorkflowDefinition(source.value, { load: async () => "valid" });
+  if (!compiled.ok) throw new Error(compiled.error.detail);
   const sql = new StubSql([]);
-  await expect(new PostgresWorkflowDefinitionRepository(sql, createDevFlowAdapterRegistry()).insert_immutable(loaded.value, bundle)).rejects.toThrow("unbound_placeholder");
+  const entry = compiled.value.prompts.entries[0];
+  if (!entry) throw new Error("fixture has no prompt");
+  const invalid = { ...compiled.value.prompts, entries: compiled.value.prompts.entries.map((candidate) =>
+    candidate.path === entry.path ? { ...candidate, content: "{{MISSPELLED_SLOT}}" } : candidate) };
+  await expect(new PostgresWorkflowDefinitionRepository(sql).insert_v15_immutable(source.value, invalid))
+    .rejects.toThrow("unbound_placeholder");
   expect(sql.calls).toHaveLength(0);
 });

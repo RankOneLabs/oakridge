@@ -73,8 +73,8 @@ describe("the artifact pane", () => {
     // ArtifactReview organism, not a pane-local reimplementation.
     expect(detail.getAttribute("data-review-layout")).toBe("report");
     expect(screen.getByTestId("or-threads-section")).toBeTruthy();
-    expect(await screen.findByTestId("or-artifact-gate-actions")).toBeTruthy();
-    expect(screen.getByTestId("or-decision-approve").textContent).toContain("Approve the build");
+    expect(await screen.findByTestId("or-decision-actions")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Accept build" }).textContent).toContain("Accept build");
   });
 
   it("shows the pane's own chrome instead of a route-level back button", async () => {

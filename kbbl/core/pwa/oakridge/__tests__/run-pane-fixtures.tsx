@@ -64,8 +64,8 @@ const RUN: RunDetail = {
       delegated_kbbl_sid: null,
       worktree: null,
       units: [
-        { cohort_id: "c1", unit_id: "c1", sid: "sid-c1", worktree: null, status: "blocked", blocked_reason: "gate", next_actor: "operator", retryable: false, gate: "artifact_review" },
-        { cohort_id: "c2", unit_id: "c2", sid: "sid-c2", worktree: null, status: "active", blocked_reason: null, next_actor: "agent", retryable: false, gate: null },
+        { version: 0, workers: [], brief: null, cohort_id: "c1", unit_id: "c1", sid: "sid-c1", worktree: null, status: "blocked", blocked_reason: "gate", next_actor: "operator", retryable: false, gate: "artifact_review" },
+        { version: 0, workers: [], brief: null, cohort_id: "c2", unit_id: "c2", sid: "sid-c2", worktree: null, status: "active", blocked_reason: null, next_actor: "agent", retryable: false, gate: null },
       ],
     },
   ],
@@ -103,6 +103,7 @@ const GATES: ParkedGate[] = [
 ];
 
 const ARTIFACT: ArtifactDetail = {
+  review_context: { cohort_id: "cohort" as never, expected_version: 1, worker: "build", target: { outputs: { build_result: { id: "art-build" as never, version: 1 }, pr_summary: { id: "pr" as never, version: 1 } }, head_sha: "head" as never } },
   id: "art-build",
   type_id: "dev.build_result",
   component_id: null,
@@ -119,7 +120,7 @@ const ARTIFACT: ArtifactDetail = {
   revisions: [
     {
       id: "rev-1",
-      status: "approved",
+      status: "accepted",
       created_at: "2026-09-01T09:00:00Z",
       body: { summary: "Two panes, one renderer" },
       validation: null,
@@ -160,9 +161,9 @@ export const makeFetch = (): FetchHandler =>
     if (url.includes("/runs/") && url.includes("/diagnosis")) return json({
       run: RUN,
       sessions: SESSIONS.map((attempt) => ({ session_id: attempt.session_id, stage_key: attempt.stage_key,
-        cohort_id: attempt.unit_id, cohort_key: attempt.unit_id, attempt_number: 1, attempt_count: 1, status: "active" })),
-      current_session: { session_id: "sid-c2", stage_key: "build", cohort_id: "c2", cohort_key: "c2", attempt_number: 1, attempt_count: 1, status: "active" },
-      sessions_awaiting_action: [{ session_id: "sid-c1", stage_key: "build", cohort_id: "c1", cohort_key: "c1", attempt_number: 1, attempt_count: 1, status: "blocked" }],
+        cohort_id: attempt.unit_id, cohort_key: attempt.unit_id, worker: "build", execution_id: "execution-1", action_point: "initial_build", is_current: true, status: "active" })),
+      current_session: { session_id: "sid-c2", stage_key: "build", cohort_id: "c2", cohort_key: "c2", worker: "build", execution_id: "execution-1", action_point: "initial_build", is_current: true, status: "active" },
+      sessions_awaiting_action: [{ session_id: "sid-c1", stage_key: "build", cohort_id: "c1", cohort_key: "c1", worker: "build", execution_id: "execution-1", action_point: "initial_build", is_current: true, status: "blocked" }],
       active_gates: GATES.map((gate) => ({ ...gate, cohort_id: gate.unit_id })),
       pull_request_merge_waits: [],
       recent_artifacts: [{ artifact_id: "art-build", type_id: "dev.build_result", revision: 1, stage_name: "build", label: null, created_at: "2026-09-01T09:00:00Z" }],

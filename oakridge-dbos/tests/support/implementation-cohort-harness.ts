@@ -1,9 +1,15 @@
+import { DBOS } from "@dbos-inc/dbos-sdk";
+import { createOakridgeRuntime, type OakridgeRuntime } from "../../src/runtime/compose";
+import { observeCohortPullRequest } from "../../src/runtime/observe-cohort-pull-request";
+import { prepareCohortRepository } from "../../src/runtime/prepare-cohort-repository";
+import { dispatchProvisionExecution } from "../../src/runtime/provision-execution";
+import { discoverFinalIntegrationPullRequest } from "../../src/runtime/final-integration";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { ArtifactRef, AcceptedBuild, BuildResponse, ImplementationCohortDefinition, ImplementationCohortInputs,
-  OperatorRequest } from "../../src/domain/dev-flow-v15";
+  OperatorRequest, V15OperatorRequest, WorkflowDefinition } from "../../src/domain/dev-flow-v15";
 import type { CohortId, ExecutionId, StageInstanceId, WorkflowRunId } from "../../src/domain/primitives";
 import { createDevFlowAdapterRegistry } from "../../src/adapters/dev-flow";
 import { KbblExecutorAdapter } from "../../src/adapters/kbbl";
@@ -11,7 +17,6 @@ import { createWorkOrderArtifactCallbackApp } from "../../src/http/work-order-ar
 import { createImplementationWorkerSessionIO } from "../../src/runtime/implementation-worker-session";
 import { createImplementationPublicationEnricher } from "../../src/runtime/implementation-publication";
 import { GithubPullRequestReader } from "../../src/runtime/github-pull-requests";
-import { verifyCohortPullRequest } from "../../src/runtime/cohort-pull-request";
 import { dispatchCohortExecution } from "../../src/runtime/run-launch-dispatch";
 import { BunGitCommandRunner } from "../../src/runtime/git-command-runner";
 import { seedBuiltins } from "../../src/seed/seed-builtins";
@@ -46,7 +51,7 @@ export interface ForgeFixture {
 }
 
 /** Seeds only a prepared B3 cohort. Full-run stage materialization belongs to B4. */
-export const createImplementationCohortHarness = async () => {
+export const createImplementationCohortHarness = async (options: { readonly full_run?: boolean; readonly full_runtime?: boolean } = {}) => {
   const scratch = await createScratchDatabase(`oakridge_b3_${randomUUID().replaceAll("-", "")}`);
   if (!scratch.ok) throw new Error(scratch.error.detail);
   const sql = PgPostgresExecutor.connect(scratch.value.url);
@@ -73,16 +78,25 @@ export const createImplementationCohortHarness = async () => {
     return new Response(null, { status: 404 });
   } });
   const forgeServer = Bun.serve({ port: 0, async fetch(request) {
-    const match = new URL(request.url).pathname.match(/^\/repos\/example\/oakridge\/pulls\/(\d+)$/);
+    const path = new URL(request.url).pathname;
+    if (path === "/repos/example/oakridge/pulls") return Response.json([{ number: forge.number }]);
+    const match = path.match(/^\/repos\/example\/oakridge\/pulls\/(\d+)$/);
     if (!match) return new Response(null, { status: 404 });
-    const head = forge.head_sha ?? (await runGit(repo, ["ls-remote", "origin", "refs/heads/cohort/core"])).split(/\s+/)[0];
+    const head = forge.head_sha ?? (await runGit(repo, ["ls-remote", "origin", `refs/heads/${forge.head_branch}`])).split(/\s+/)[0];
     return Response.json({ number: forge.number, html_url: `https://github.com/example/oakridge/pull/${match[1]}`,
       state: forge.state, merged: forge.merged_at !== null, merged_at: forge.merged_at,
       head: { ref: forge.head_branch, sha: head }, base: { ref: forge.base_branch } });
   } });
   let kbbl: ReturnType<typeof Bun.spawn> | null = null;
   let server: ReturnType<typeof Bun.serve> | null = null;
+  let runtime: OakridgeRuntime | null = null;
   const close = async () => {
+    if (runtime) {
+      const workflows = await sql.query<{ readonly workflow_uuid: string }>("SELECT workflow_uuid FROM dbos.workflow_status", []);
+      for (const workflow of workflows) await DBOS.cancelWorkflow(workflow.workflow_uuid);
+      await DBOS.shutdown();
+      await runtime.close();
+    }
     if (kbbl) { kbbl.kill(); await kbbl.exited; }
     server?.stop(true); control.stop(true); forgeServer.stop(true);
     await sql.close(); await scratch.value.drop(); await rm(root, { recursive: true, force: true });
@@ -93,13 +107,14 @@ export const createImplementationCohortHarness = async () => {
       "commit", "--allow-empty", "-m", "base"]);
     const base = await runGit(repo, ["rev-parse", "HEAD"]);
     await runGit(repo, ["branch", "epic/schema", base]);
+    if (options.full_run) await runGit(repo, ["branch", "main", base]);
     await runGit(root, ["clone", "--bare", "--shared", repo, origin]);
     await runGit(repo, ["remote", "add", "origin", origin]);
     await applyMigrations(sql);
-    const definitions = new PostgresWorkflowDefinitionRepository(sql, createDevFlowAdapterRegistry());
+    const definitions = new PostgresWorkflowDefinitionRepository(sql);
     await seedBuiltins(definitions);
-    const definition = (await Bun.file(resolve(import.meta.dir, "../../../workflow-config/definitions/dev_flow_v15.json")).json())
-      .stages.implementation.cohort as ImplementationCohortDefinition;
+    const workflow = await Bun.file(resolve(import.meta.dir, "../../../workflow-config/definitions/dev_flow_v15.json")).json() as WorkflowDefinition;
+    const definition = workflow.stages.implementation.cohort as ImplementationCohortDefinition;
     const definitionId = (await sql.query<{ readonly id: string }>("SELECT id::text FROM oakridge.workflow_definition", []))[0]!.id;
     const bundle = (await definitions.find_bound_prompt_bundle(definitionId as never))!;
     const run_id = randomUUID() as WorkflowRunId;
@@ -110,12 +125,14 @@ export const createImplementationCohortHarness = async () => {
       refs: { repository_key: "oakridge" as never, repository_path: repo, integration_branch: "epic/schema",
         base_branch: "epic/schema", base_head_sha: base as never }, worktree_path: repo, worktree_base_sha: base as never,
       canonical_branch: "cohort/core", expected_pr_base: "epic/schema" } };
-    const context = { builder: { runtime: "claude-code", model: null, effort: null },
+    const context = { brief_notes: "Boundary proof", base_branch: "epic/schema", builder: { runtime: "claude-code", model: null, effort: null },
       planner: { runtime: "claude-code", model: null, effort: null }, oakridge_url: "",
-      repositories: [{ key: "oakridge", path: repo, integration_branch: "epic/schema", forge_repository: { provider: "github", owner: "example", name: "oakridge" } }] };
+      repositories: [{ key: "oakridge", path: repo, integration_branch: options.full_run ? "main" : "epic/schema", forge_repository: { provider: "github", owner: "example", name: "oakridge" } }] };
     await sql.query(`INSERT INTO oakridge.workflow_run (id,workflow_definition_id,context,bundle_pin,status)
       VALUES ($1,$2,$3::jsonb,$4::jsonb,'active')`, [run_id, definitionId, JSON.stringify(context),
       JSON.stringify({ definition_version: 1, prompt_bundle_hash: bundle.hash, adapter_version: "test", artifact_schema_version: "v1" })]);
+    const pullRequests = new PostgresDevFlowPullRequestRepository(sql);
+    if (!options.full_run) {
     await sql.query(`INSERT INTO oakridge.stage_instance (id,run_id,stage_key,stage_type,stage_contract,status)
       VALUES ($1,$2,'implementation','delegated_session',$3::jsonb,'active')`, [stage_id, run_id, JSON.stringify({ cohort: definition })]);
     await sql.query(`INSERT INTO oakridge.cohort (id,run_id,stage_instance_id,cohort_key,state,status,frozen_inputs)
@@ -124,11 +141,11 @@ export const createImplementationCohortHarness = async () => {
     await sql.query("INSERT INTO oakridge.artifact (id,chain_id,revision,artifact_type,body) VALUES ($1,$1,1,'dev.build_brief',$2::jsonb)",
       [brief.id, JSON.stringify({ title: "Boundary proof", acceptance_criteria: ["check both outputs"] })]);
     await sql.query("INSERT INTO oakridge.artifact_owner (artifact_id,run_id) VALUES ($1,$2)", [brief.id, run_id]);
-    const pullRequests = new PostgresDevFlowPullRequestRepository(sql);
     const prepared = await pullRequests.create_cohort({ cohort_id, stage_instance_id: stage_id, cohort_key: "core", repository_key: "oakridge",
       repository_path: repo, canonical_ref: "cohort/core", expected_pr_base: "epic/schema", recorded_head_sha: base,
       current_verified_pull_request_id: null, created_at: now(), updated_at: now() });
     if (!prepared.ok) throw new Error(prepared.error.detail);
+    }
     const portProbe = Bun.serve({ port: 0, fetch: () => new Response() });
     const port = portProbe.port!; portProbe.stop(true);
     const config = join(root, "config.json");
@@ -147,36 +164,50 @@ export const createImplementationCohortHarness = async () => {
     const reader = new GithubPullRequestReader({ token: "fixture", api_base_url: `http://127.0.0.1:${forgeServer.port}` });
     const writer = new PostgresRunRecordWriter(sql, createDevFlowAdapterRegistry());
     const ingress = new StageEventApplier({ sql, writer, now,
-      observe_pr: async () => {
-        const current = await pullRequests.find_current_for_unit(stage_id, "core" as never);
-        if (!current) return null;
-        const observation = await verifyCohortPullRequest({ reader, git }, { cohort: current.cohort,
-          forge_repository: { owner: "example", name: "oakridge" }, candidate_url: current.pull_request.url });
-        return observation.ok ? { pr_url: observation.value.observation.url, repository_key: "oakridge" as never,
-          head_branch: observation.value.observation.head_branch, base_branch: observation.value.observation.base_branch,
-          head_sha: observation.value.pushed_head_sha as never,
-          state: observation.value.observation.state === "closed_unmerged" ? "closed" : observation.value.observation.state } : null;
-      },
+      observe_pr: (id) => observeCohortPullRequest({ sql, git, reader, pull_requests: pullRequests,
+        forge_repositories: new PostgresForgeRepositoryRepository(sql) }, id),
+      ...(options.full_run ? { prepare_repository: (id: CohortId) => prepareCohortRepository({ sql, git, pull_requests: pullRequests, now }, id) } : {}),
       dispatch_executions: async (ids) => { for (const id of ids) {
-        const result = await dispatchCohortExecution(sql, id, io);
+        const worker = (await sql.query<{ readonly worker: string }>("SELECT worker FROM oakridge.execution_intent WHERE id=$1", [id]))[0]?.worker;
+        const result = worker === "provision" ? await dispatchProvisionExecution({ sql, git, now, advance: (cohort) => ingress.advance(cohort, null) }, id)
+          : await dispatchCohortExecution(sql, id, io);
         if (!result.ok) throw new Error(result.error.detail);
       } } });
     const records = new PostgresRunRecordRepository(sql, writer, ingress);
-    const io = createImplementationWorkerSessionIO({ sql, records, now, find_executor: () => adapter,
-      prompt_bundle: async () => bundle.matrix, run_context: async () => context });
+    const io = createImplementationWorkerSessionIO({ sql, git, records, now, find_executor: () => adapter,
+      prompt_bundle: async () => bundle.matrix, run_context: async () => context,
+      discover_final_pr: (id) => discoverFinalIntegrationPullRequest({ sql, git, reader }, id) });
     const enrich = createImplementationPublicationEnricher({ sql, git, pull_requests: pullRequests,
       forge_repositories: new PostgresForgeRepositoryRepository(sql), reader });
     const app = createWorkOrderArtifactCallbackApp({ records, now, enrich });
     server = Bun.serve({ port: 0, fetch: app.fetch });
     context.oakridge_url = `http://127.0.0.1:${server.port}`;
     await sql.query("UPDATE oakridge.workflow_run SET context=$2::jsonb WHERE id=$1", [run_id, JSON.stringify(context)]);
-    const advance = async (request: OperatorRequest | null = null) => {
+    if (options.full_runtime) {
+      DBOS.setConfig({ name: "oakridge-b4-shadow", systemDatabaseUrl: scratch.value.url, applicationVersion: "b4-shadow", logLevel: "warn" });
+      runtime = await createOakridgeRuntime({ database_url: scratch.value.url, application_version: "b4-shadow", executor_adapters: [adapter],
+        git_commands: git, pull_request_reader: reader, prompt_template_directory: resolve(import.meta.dir, "../../../workflow-config/prompts"),
+        pull_request_poll_interval_ms: 1_000, now });
+      const oakridgePort = server.port;
+      server.stop(true);
+      server = Bun.serve({ port: oakridgePort, fetch: runtime.app.fetch });
+      await DBOS.launch();
+      await runtime.dispatch_launches();
+    }
+    const advanceCohort = async (id: CohortId, request: V15OperatorRequest | null = null) => {
       const version = Number((await sql.query<{ readonly durable_version: string }>(
-        "SELECT durable_version::text FROM oakridge.cohort WHERE id=$1", [cohort_id]))[0]!.durable_version);
-      const result = await ingress.advance(cohort_id, request ? { id: randomUUID() as never, cohort_id, expected_version: version, request } : null);
+        "SELECT durable_version::text FROM oakridge.cohort WHERE id=$1", [id]))[0]!.durable_version);
+      if (runtime && request) {
+        const response = await runtime.app.request(`/cohorts/${id}/requests`, { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id: randomUUID(), expected_version: version, request }) });
+        if (response.status !== 202) throw new Error(await response.text());
+        return await response.json() as { commits: number; reason: string };
+      }
+      const result = await ingress.advance(id, request ? { id: randomUUID() as never, cohort_id: id, expected_version: version, request } : null);
       if (!result.ok) throw new Error(JSON.stringify(result.error));
       return result.value;
     };
+    const advance = (request: OperatorRequest | null = null) => advanceCohort(cohort_id, request);
     const launch = async (index: number) => waitFor(`launch ${index}`, async () => launches[index] ?? null);
     const execute = async (index: number, plan: ImplementationAgentPlan) => {
       const selected = await launch(index); plans.set(selected.attempt_id, plan);
@@ -196,7 +227,7 @@ export const createImplementationCohortHarness = async () => {
          JOIN oakridge.artifact artifact ON artifact.id=output.artifact_id WHERE output.cohort_id=$1 AND output.worker='assessment'`, [cohort_id]))[0]!;
       return { id: row.chain_id as never, version: row.revision };
     };
-    return { sql, database_url: scratch.value.url, ingress, io, enrich, records, adapter, cohort_id, run_id, stage_id, launches, deliveries, forge, advance, launch, execute,
+    return { runtime, git, runGit, repo, origin, reader, context, workflow, pullRequests, advanceCohort, sql, database_url: scratch.value.url, ingress, io, enrich, records, adapter, cohort_id, run_id, stage_id, launches, deliveries, forge, advance, launch, execute,
       build, accepted, assessment, close, app, now,
       execution: async (index: number): Promise<ExecutionId> => {
         const selected = await launch(index);

@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 
-import { createGateResumeApp, type GateResumeDependencies } from "./gate-resume";
 import { createCohortPullRequestApp, type CohortPullRequestHttpDependencies } from "./cohort-pull-request";
 import { createCollaborationApp, type CollaborationHttpDependencies } from "./collaboration";
 import { createOperatorProjectionApp } from "./operator-projections";
@@ -24,7 +23,6 @@ export interface OakridgeHttpDependencies {
   readonly run_lifecycle: RunLifecycleHttpDependencies;
   readonly domain_reads: DomainReadHttpDependencies;
   readonly work_order_artifact_callback: WorkOrderArtifactCallbackDependencies;
-  readonly gate_resume: GateResumeDependencies;
   readonly cohort_pull_requests: CohortPullRequestHttpDependencies;
   readonly collaboration: CollaborationHttpDependencies;
   readonly operator_projections: OperatorProjectionRepository;
@@ -43,7 +41,6 @@ export const createApp = (dependencies: OakridgeHttpDependencies): Hono => {
   app.route("/", createRunLifecycleApp(dependencies.run_lifecycle));
   app.route("/", createDomainReadApp(dependencies.domain_reads));
   app.route("/", createWorkOrderArtifactCallbackApp(dependencies.work_order_artifact_callback));
-  app.route("/", createGateResumeApp(dependencies.gate_resume));
   app.route("/", createCohortPullRequestApp(dependencies.cohort_pull_requests));
   app.route("/", createCollaborationApp(dependencies.collaboration));
   app.route("/", createOperatorProjectionApp(dependencies.operator_projections));

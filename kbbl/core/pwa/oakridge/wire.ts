@@ -35,11 +35,17 @@ const parseEffect = (value: unknown): RunEventEffect => {
       return { kind };
     case "start_stage":
       return { kind, stage_instance_id: string(effect.stage_instance_id, "effect.stage_instance_id") };
-    case "start_attempt": {
-      const attempt_id = effect.attempt_id ?? null;
-      if (!nullableString(attempt_id)) throw new Error("parse run event: invalid effect.attempt_id");
-      return { kind, cohort_id: string(effect.cohort_id, "effect.cohort_id"),
-        attempt_number: number(effect.attempt_number, "effect.attempt_number"), attempt_id };
+    case "worker_decision": {
+      if (!Array.isArray(effect.changes) || !Array.isArray(effect.actions)) throw new Error("parse run event: invalid worker decision");
+      const actions = effect.actions.map((value) => {
+        const action = object(value, "effect.actions[]");
+        const worker = string(action.worker, "action.worker");
+        if (!["provision", "spec", "plan", "brief", "build", "assessment", "final_integration"].includes(worker)) throw new Error("parse run event: invalid worker");
+        return { worker: worker as import("../../../../oakridge-dbos/src/domain/dev-flow-v15").V15WorkerKey,
+          action_point: string(action.action_point, "action.action_point") };
+      });
+      return { kind, cohort_id: string(effect.cohort_id, "effect.cohort_id"), from_state: string(effect.from_state, "effect.from_state"),
+        to_state: string(effect.to_state, "effect.to_state"), changes: effect.changes as import("../../../../oakridge-dbos/src/domain/dev-flow-v15").V15Change[], actions };
     }
     case "cohort_transition":
       if (!nullableString(effect.next_actor)) throw new Error("parse run event: invalid effect.next_actor");
@@ -279,8 +285,10 @@ const parseDiagnosisSession = (value: unknown, field: string): RunDiagnosisSessi
   textField(session.stage_key, `${field}.stage_key`);
   textField(session.cohort_id, `${field}.cohort_id`);
   textField(session.cohort_key, `${field}.cohort_key`);
-  numericField(session.attempt_number, `${field}.attempt_number`);
-  numericField(session.attempt_count, `${field}.attempt_count`);
+  textField(session.worker, `${field}.worker`);
+  textField(session.execution_id, `${field}.execution_id`);
+  textField(session.action_point, `${field}.action_point`);
+  if (typeof session.is_current !== "boolean") throw new Error(`${field}.is_current must be a boolean`);
   statusField(session.status, `${field}.status`);
   return session as unknown as RunDiagnosisSession;
 };
