@@ -204,7 +204,7 @@ export class StageEventApplier {
         `SELECT id::text,run_id::text,stage_instance_id::text,cohort_key,state,status,round,depends_on,
                 durable_version::text,stage_data
          FROM oakridge.cohort WHERE stage_instance_id=$1 ORDER BY cohort_key`, [cohort.stage_instance_id]);
-      const max_parallel = stage_contract.materialization.kind === "fan_out" ? stage_contract.materialization.max_parallel : 1;
+      const max_parallel = stage_contract.max_active_cohorts;
       const startable = new Set(selectStartableCohorts(siblings.map((sibling) => ({
         cohort_key: sibling.cohort_key, state_status: sibling.status, depends_on: sibling.depends_on,
       })), max_parallel));

@@ -177,13 +177,12 @@ const openStageCohortsStep = DBOS.registerStep(
     const { records, stages, now } = workflowServices();
     const contract = await stages.find_contract(stage_instance_id);
     if (!contract) throw new Error(`stage instance '${stage_instance_id}' was not found`);
-    const run_context = await workflowServices().find_run_context(contract.run_id);
-    if (run_context === null) throw new Error(`run '${contract.run_id}' was not found`);
-    const inputs = await loadStageInputs(contract.stage_contract, null);
     let cohorts: readonly OpenCohort[];
     try {
       const stage_contract = contract.stage_contract as unknown as import("../domain/compiled-workflow").CompiledStageContract;
-      cohorts = resolveCohortRoster(stage_contract, run_context, inputs).map((entry) => ({
+      const roster = resolveCohortRoster(stage_contract);
+      if (!roster.ok) return { kind: "roster_failed", detail: roster.error.detail };
+      cohorts = roster.value.map((entry) => ({
         id: cohortIdFor(stage_instance_id, entry.cohort_key), cohort_key: entry.cohort_key,
         depends_on: entry.depends_on, stage_data: { unit_id: entry.cohort_key, artifact: entry.item },
       }));

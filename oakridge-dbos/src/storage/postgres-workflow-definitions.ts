@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { WorkflowDefinitionId } from "../domain/primitives";
 import type { PromptBundle, WorkflowDefinition } from "../domain/workflow";
 import { parseWorkflowDefinition, type AdapterRoleRegistry } from "../validation/workflow-definition";
@@ -6,9 +7,16 @@ import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 import { compileWorkflowManifest } from "../compiler/compile-workflow";
 import type { MachineRegistry } from "../domain/stage-machine";
 import { StageMachineRegistry } from "../runtime/executor-registry";
+import type { WorkflowDefinition as V15WorkflowDefinition } from "../domain/dev-flow-v15";
+import { compileV15WorkflowDefinition, type V15PromptBundle } from "../compiler/compile-v15";
 
 interface DefinitionRow { readonly definition: unknown }
 interface PromptBundleRow { readonly hash: string; readonly version: number; readonly matrix: PromptBundle["matrix"] }
+
+const v15DefinitionId = (definition: Pick<V15WorkflowDefinition, "key" | "version">): WorkflowDefinitionId => {
+  const hex = createHash("sha256").update(`workflow-definition:${definition.key}:${definition.version}`).digest("hex").slice(0, 32);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20)}` as WorkflowDefinitionId;
+};
 
 const decodePromptBundleRow = (row: PromptBundleRow): PromptBundle => {
   if (row.version !== 1) throw new Error(`prompt bundle '${row.hash}' has unsupported version ${row.version}; expected 1`);
@@ -65,6 +73,36 @@ const decodeListedDefinition = (row: DefinitionRow, adapterRoles: AdapterRoleReg
 export class PostgresWorkflowDefinitionRepository implements WorkflowDefinitionRepository, PromptBundleRepository {
   constructor(private readonly sql: TransactionalSqlExecutor, private readonly adapter_roles: AdapterRoleRegistry,
     private readonly machine_registry: MachineRegistry = new StageMachineRegistry()) {}
+
+  /** Canonical data is stored verbatim; it is never lowered into the old graph. */
+  async insert_v15_immutable(definition: V15WorkflowDefinition, prompts: V15PromptBundle): Promise<void> {
+    const compiled = await compileV15WorkflowDefinition(definition, { async load(path) {
+      const entry = prompts.entries.find((candidate) => candidate.path === path);
+      if (!entry) throw new Error(`prompt '${path}' is absent from the supplied bundle`);
+      return entry.content;
+    } });
+    if (!compiled.ok) throw new Error(`v15 definition does not compile: ${compiled.error.detail}`);
+    if (compiled.value.prompts.hash !== prompts.hash) throw new Error("v15 prompt bundle hash does not match its content");
+    const definitionId = v15DefinitionId(definition);
+    await this.sql.transaction(async (transaction) => {
+      const rows = await transaction.query<{ readonly id: string }>(
+        `INSERT INTO oakridge.workflow_definition (id,name,version,definition,archived)
+         VALUES ($1,$2,$3,$4::jsonb,false)
+         ON CONFLICT (name,version) DO UPDATE SET name=EXCLUDED.name
+         WHERE oakridge.workflow_definition.definition=EXCLUDED.definition
+         RETURNING id::text`, [definitionId, definition.key, definition.version, JSON.stringify(definition)]);
+      const row = rows[0];
+      if (!row) throw new Error(`v15 definition ${definition.key}@${definition.version} conflicts with immutable stored content`);
+      // The existing prompt-bundle table stores the compiled worker/action
+      // coordinates, with no role registry or executable conversion involved.
+      const bundle: PromptBundle = { version: 1, hash: prompts.hash, matrix: prompts.entries.map((entry) => ({
+        stage_key: entry.stage_key, session_role: entry.worker, launch_reason: entry.action_point,
+        template_path: entry.path, content: entry.content,
+      })) };
+      await insertPromptBundle(transaction, bundle);
+      await bindPromptBundle(transaction, row.id as WorkflowDefinitionId, prompts.hash);
+    });
+  }
 
   async insert_immutable(definition: WorkflowDefinition, promptBundle: PromptBundle): Promise<WorkflowDefinition> {
     const compiled = compileWorkflowManifest(definition, promptBundle,

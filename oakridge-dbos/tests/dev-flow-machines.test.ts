@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { compileWorkflowDefinition } from "../src/compiler/compile-workflow";
 import { transition } from "../src/decision/stage-machine";
 import type { CompiledMachine, StateName, Transition } from "../src/domain/stage-machine";
-import { loadDevFlowV15 } from "../src/seed/dev-flow-v15";
+import { loadGraphDefinitionFixture as loadDevFlowV15 } from "./support/graph-definition-fixture";
 import { contextForMachineRow, machineRegistry } from "./support/machine-fixtures";
 
 const loaded = await loadDevFlowV15();

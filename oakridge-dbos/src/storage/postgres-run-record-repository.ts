@@ -255,8 +255,8 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
           readonly status: CoreStatus; readonly depends_on: readonly string[] }>(
           `SELECT id::text,cohort_key,status,depends_on FROM oakridge.cohort
            WHERE stage_instance_id=$1 ORDER BY cohort_key`, [input.stage_instance_id]);
-        const contract = stages[0].stage_contract as { readonly materialization?: { readonly max_parallel?: number } };
-        const max_parallel = contract.materialization?.max_parallel ?? 1;
+        const contract = stages[0].stage_contract as { readonly max_active_cohorts?: number };
+        const max_parallel = contract.max_active_cohorts ?? 1;
         const selected = new Set(selectStartableCohorts(schedulable.map((cohort) => ({
           cohort_key: cohort.cohort_key, state_status: cohort.status, depends_on: cohort.depends_on,
         })), max_parallel));

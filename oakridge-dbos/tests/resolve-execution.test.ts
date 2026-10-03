@@ -1,22 +1,22 @@
 import { expect, test } from "bun:test";
 import { resolveBinding, resolveDelegatedExecution } from "../src/compiler/resolve-execution";
-import type { Bindable, DelegatedSessionDefinitionConfig, FanOutDefinition, SlotBinding } from "../src/domain/delegated-session";
+import type { Bindable, DelegatedSessionDefinitionConfig, SlotBinding } from "../src/domain/delegated-session";
 import type { StageOperatorRole } from "../src/domain/workflow";
 import type { CohortId, StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
-import { loadDevFlowV15 } from "../src/seed/dev-flow-v15";
+import { loadGraphDefinitionFixture as loadDevFlowV15 } from "./support/graph-definition-fixture";
 import { delegatedSessionDefinitionSchema } from "../src/validation/delegated-session";
 
 const RUN_ID = "run-1" as WorkflowRunId;
 
 interface LegacyFixture {
   readonly runtime: Bindable; readonly prompt_template_path: string; readonly slot_bindings: Readonly<Record<string, SlotBinding>>;
-  readonly workdir: SlotBinding; readonly session_name: string; readonly model?: Bindable; readonly effort?: Bindable; readonly fan_out?: FanOutDefinition;
+  readonly workdir: SlotBinding; readonly session_name: string; readonly model?: Bindable; readonly effort?: Bindable; readonly item_bindings?: Readonly<Record<string, SlotBinding>>; readonly item_workdir?: SlotBinding;
 }
 const sessionDefinition = (role: StageOperatorRole, fixture: LegacyFixture): DelegatedSessionDefinitionConfig => ({
   prompt_matrix: (["initial", "operator_retry", "input_revision"] as const).map((launch_reason) => ({ session_role: role, launch_reason, template_path: fixture.prompt_template_path })),
   role_configs: [{ session_role: role, runtime: fixture.runtime, session_name: fixture.session_name, model: fixture.model, effort: fixture.effort,
     authorized_outputs: ["result"], pre_authorized_tools: [], required_tools: [] }],
-  slot_bindings: fixture.slot_bindings, workdir: fixture.workdir, ...(fixture.fan_out ? { fan_out: fixture.fan_out } : {}),
+  slot_bindings: { ...fixture.slot_bindings, ...fixture.item_bindings }, workdir: fixture.item_workdir ?? fixture.workdir,
   artifact_productions: [], gates: [], handoffs: [],
 });
 
@@ -56,7 +56,7 @@ test("production execution resolution retains v11 prompt and runtime semantics",
     runtime: { from: "context", path: "/worker_runtime" }, prompt_template_path: "dev-flow/build_v2.md",
     slot_bindings: { COHORT_TITLE: { from: "literal", value: "" } }, workdir: { from: "literal", value: "/" },
     session_name: "build-{{STAGE_INSTANCE_ID}}-{{UNIT_ID}}", model: { from: "context", path: "/worker_model" },
-    fan_out: { over: { from: "input", input_name: "brief" }, unit_id_path: "/unit_id", item_bindings: { COHORT_TITLE: { from: "item", path: "/artifact/title" } }, workdir: { from: "context_lookup", collection_path: "/repositories", collection_key_path: "/key", item_key_path: "/artifact/repository_key", value_path: "/path" } },
+    item_bindings: { COHORT_TITLE: { from: "item", path: "/artifact/title" } }, item_workdir: { from: "context_lookup", collection_path: "/repositories", collection_key_path: "/key", item_key_path: "/artifact/repository_key", value_path: "/path" },
   });
   const result = resolveDelegatedExecution({ definition, environment: { inputs: {}, context: { worker_runtime: "claude-code", worker_model: "opus", repositories: [{ key: "web", path: "/repo/web" }] }, item: null }, unit: { unit_id: "web" as UnitId, depends_on: [], parameters: { artifact: { title: "Build web", repository_key: "web" } } }, stage_instance_id: "stage-1" as StageInstanceId, prompt_template: "{{COHORT_TITLE}} ({{UNIT_ID}})", run_id: RUN_ID, operator_role: "build" });
   expect(result).toEqual({ ok: true, value: expect.objectContaining({ runtime: "claude-code", rendered_prompt: expect.stringContaining("Build web (web)\n\n## Generated session contract"), workdir: "/repo/web", session_name: "build-stage-1-web", model: "opus" }) });
@@ -67,9 +67,8 @@ test("session_identity carries the run/stage/unit identity and the cohort title 
     runtime: { from: "context", path: "/worker_runtime" }, prompt_template_path: "dev-flow/build_v2.md",
     slot_bindings: {}, workdir: { from: "literal", value: "/" },
     session_name: "build-{{STAGE_INSTANCE_ID}}-{{UNIT_ID}}", model: { from: "context", path: "/worker_model" },
-    fan_out: { over: { from: "input", input_name: "brief" }, unit_id_path: "/unit_id",
-      item_bindings: { COHORT_TITLE: { from: "item", path: "/artifact/title" }, REPOSITORY_KEY: { from: "item", path: "/artifact/repository_key" } },
-      workdir: { from: "literal", value: "/repo/web" } },
+    item_bindings: { COHORT_TITLE: { from: "item", path: "/artifact/title" }, REPOSITORY_KEY: { from: "item", path: "/artifact/repository_key" } },
+    item_workdir: { from: "literal", value: "/repo/web" },
   });
   const result = resolveDelegatedExecution({
     definition, environment: { inputs: {}, context: { worker_runtime: "claude-code", worker_model: "opus" }, item: null },
@@ -88,8 +87,7 @@ test("session_identity's cohort_title is null when the stage binds no COHORT_TIT
     runtime: { from: "context", path: "/planner_runtime" }, prompt_template_path: "dev-flow/assessor_v2.md",
     slot_bindings: {}, workdir: { from: "literal", value: "/repo/web" }, session_name: "assessor-{{STAGE_INSTANCE_ID}}-{{UNIT_ID}}",
     model: { from: "context", path: "/planner_model" },
-    fan_out: { over: { from: "input", input_name: "build_result" }, unit_id_path: "/unit_id",
-      item_bindings: { REPOSITORY_KEY: { from: "item", path: "/artifact/repository_key" } } },
+    item_bindings: { REPOSITORY_KEY: { from: "item", path: "/artifact/repository_key" } },
   });
   const result = resolveDelegatedExecution({
     definition, environment: { inputs: {}, context: { planner_runtime: "claude-code", planner_model: "opus" }, item: null },
@@ -122,7 +120,7 @@ test("a definition cannot rebind the slots that identify the execution", () => {
       OAKRIDGE_URL: { from: "literal", value: "https://oakridge.test" },
     },
     workdir: { from: "literal", value: "/" }, session_name: "build-{{STAGE_INSTANCE_ID}}-{{UNIT_ID}}",
-    fan_out: { over: { from: "input", input_name: "brief" }, unit_id_path: "/unit_id", item_bindings: {}, workdir: { from: "literal", value: "/repo" } },
+    item_bindings: {}, item_workdir: { from: "literal", value: "/repo" },
   });
 
   const result = resolveDelegatedExecution({

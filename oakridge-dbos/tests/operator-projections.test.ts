@@ -5,7 +5,7 @@ import type { StageKey } from "../src/domain/workflow";
 
 const stage = (stage_key: string): CompiledStageContract => ({
   stage_key: stage_key as StageKey, stage_type: "delegated_session", operator_role: null,
-  inputs: [], outputs: [], materialization: { kind: "scalar" },
+  inputs: [], outputs: [], max_active_cohorts: 1,
   executor: { executor_type: "delegated_session", definition_config: {} },
 });
 

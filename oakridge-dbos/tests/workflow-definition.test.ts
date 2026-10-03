@@ -31,7 +31,7 @@ const producer = { stage_type: "stub", config: {}, inputs: [], outputs: [{ name:
 
 describe("versioned workflow definition compatibility", () => {
   test("all three schemas retain machines and per-stage machine names", async () => {
-    const source = await Bun.file(new URL("../../workflow-config/definitions/dev_flow_v15.json", import.meta.url)).json();
+    const source = await Bun.file(new URL("./support/graph-definition-fixture.json", import.meta.url)).json();
     source.machines = { spec_review: reviewMachine() };
     source.graph.stages.spec_analyzer.config.machine = "spec_review";
     source.graph.stages.provision_repository_refs.config.machine = "provision_review";
@@ -55,7 +55,7 @@ describe("versioned workflow definition compatibility", () => {
   });
 
   test("a delegated stage without operator_role is refused", async () => {
-    const source = await Bun.file(new URL("../../workflow-config/definitions/dev_flow_v15.json", import.meta.url)).json();
+    const source = await Bun.file(new URL("./support/graph-definition-fixture.json", import.meta.url)).json();
     delete source.graph.stages.build.operator_role;
     const result = parseWorkflowDefinition(source);
     expect(result).toEqual({ ok: false, error: expect.objectContaining({
@@ -65,7 +65,7 @@ describe("versioned workflow definition compatibility", () => {
 
 
   test("parses a declared output attention while keeping it optional", async () => {
-    const source = await Bun.file(new URL("../../workflow-config/definitions/dev_flow_v15.json", import.meta.url)).json();
+    const source = await Bun.file(new URL("./support/graph-definition-fixture.json", import.meta.url)).json();
     source.graph.stages.provision_repository_refs.outputs[0].attention = "optional";
     const result = parseWorkflowDefinition(source);
     expect(result.ok).toBe(true);
@@ -117,31 +117,31 @@ describe("versioned workflow definition compatibility", () => {
     expect(result.ok).toBe(false);
   });
 
-  test("rejects an incremental input on a stage that does not fan out", () => {
+  test("retains input delivery metadata without generic fan-out validation", () => {
     const result = parseWorkflowDefinition(definitionWith("in", {
       a: producer,
       b: { stage_type: "stub", config: {}, inputs: [{ name: "in", artifact_type: "a", delivery: "unit_complete" }], outputs: [{ name: "out", artifact_type: "b" }] },
     }));
-    expect(result).toEqual({ ok: false, error: expect.objectContaining({ detail: expect.stringContaining("does not fan out") }) });
+    expect(result.ok).toBe(true);
   });
 
-  test("rejects an incremental input on a fan-out driven by something other than an input", () => {
+  test("rejects removed generic fan-out configuration over context", () => {
     const result = parseWorkflowDefinition(definitionWith("in", {
       a: producer,
       b: { stage_type: "delegated_session", operator_role: "build", outputs: [{ name: "out", artifact_type: "b" }], inputs: [{ name: "in", artifact_type: "a", delivery: "unit_complete" }],
         config: delegatedConfig({ over: { from: "context", path: "/repositories" }, unit_id_path: "/unit_id" }) },
     }));
-    expect(result).toEqual({ ok: false, error: expect.objectContaining({ detail: expect.stringContaining("drives nothing") }) });
+    expect(result).toEqual({ ok: false, error: expect.objectContaining({ detail: expect.stringContaining("fan_out") }) });
   });
 
-  test("accepts several incremental inputs when one of them is the fan-out driver", () => {
+  test("rejects removed generic fan-out configuration over inputs", () => {
     const result = parseWorkflowDefinition(definitionWith("driver", {
       a: producer,
       b: { stage_type: "delegated_session", operator_role: "build", outputs: [{ name: "out", artifact_type: "b" }],
         inputs: [{ name: "driver", artifact_type: "a", delivery: "unit_complete" }, { name: "companion", artifact_type: "a", delivery: "unit_complete" }],
         config: delegatedConfig({ over: { from: "input", input_name: "driver" }, unit_id_path: "/unit_id" }) },
     }));
-    expect(result.ok).toBe(true);
+    expect(result).toEqual({ ok: false, error: expect.objectContaining({ detail: expect.stringContaining("fan_out") }) });
   });
 
   // A unit is satisfied when every required output slot is released; a stage

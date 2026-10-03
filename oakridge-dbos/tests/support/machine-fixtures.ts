@@ -1,7 +1,7 @@
 import type { WorkflowDefinition } from "../../src/domain/workflow";
 import type { MachineDefinition, GuardContext, StageEvent, Transition } from "../../src/domain/stage-machine";
 import { StageMachineRegistry } from "../../src/runtime/executor-registry";
-import { loadDevFlowV15 } from "../../src/seed/dev-flow-v15";
+import { loadGraphDefinitionFixture as loadDevFlowV15 } from "./graph-definition-fixture";
 import { registerDevFlowMachine } from "../../src/adapters/dev-flow-machine";
 
 export const machineRegistry = (): StageMachineRegistry => {

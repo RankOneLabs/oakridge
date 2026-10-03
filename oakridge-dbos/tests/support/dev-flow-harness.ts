@@ -34,7 +34,7 @@ import { GithubPullRequestReader } from "../../src/runtime/github-pull-requests"
 import { applyMigrations } from "../../src/storage/migrate";
 import { PgPostgresExecutor } from "../../src/storage/sql-executor";
 import type { SqlExecutor } from "../../src/storage/sql-executor";
-import { loadDevFlowV15 } from "../../src/seed/dev-flow-v15";
+import { loadGraphDefinitionFixture as loadDevFlowV15 } from "./graph-definition-fixture";
 
 /**
  * How an execution behaves, for the scenario currently running.

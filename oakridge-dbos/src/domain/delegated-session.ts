@@ -52,17 +52,6 @@ export type Bindable = string | SlotBinding;
 export interface WorktreeIdentity { readonly branchName: string; readonly worktreeSubdir: string; readonly baseRef?: string }
 export interface WorktreeTemplate { readonly branch_name: Bindable; readonly worktree_subdir: Bindable; readonly base_ref?: Bindable }
 
-export interface FanOutDefinition {
-  readonly over: SlotBinding;
-  readonly unit_id_path: string;
-  readonly session_mode?: "per_unit" | "shared";
-  readonly depends_on_path?: string | null;
-  readonly max_parallel?: number;
-  readonly manual_admission?: boolean;
-  readonly item_bindings?: Readonly<Record<string, SlotBinding>>;
-  readonly workdir?: SlotBinding;
-}
-
 export interface ArtifactCollectionDefinition { readonly over: SlotBinding; readonly id_path: string }
 export interface OutputGateStep { readonly type: "artifact_approval" | "merge_confirmation"; readonly actions: readonly string[] }
 export interface OutputGateDefinition {
@@ -126,7 +115,6 @@ export interface DelegatedSessionDefinitionConfig {
   readonly required_build_set?: readonly string[];
   readonly slot_bindings: Readonly<Record<string, SlotBinding>>;
   readonly workdir: SlotBinding;
-  readonly fan_out?: FanOutDefinition;
   readonly artifact_productions: readonly ArtifactCollectionDefinition[];
   readonly gates: readonly OutputGateDefinition[];
   readonly handoffs: readonly OutputHandoffDefinition[];

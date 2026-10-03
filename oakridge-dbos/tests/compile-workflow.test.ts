@@ -2,9 +2,9 @@ import { expect, test } from "bun:test";
 
 import { compileWorkflowDefinition, type StageTypeCompiler } from "../src/compiler/compile-workflow";
 import { ok } from "../src/domain/primitives";
-import { loadDevFlowV15 } from "../src/seed/dev-flow-v15";
+import { loadGraphDefinitionFixture as loadDevFlowV15 } from "./support/graph-definition-fixture";
 
-test("compiles plural v15 into executor-independent materialization contracts", async () => {
+test("compiles plural v15 into executor contracts without generic materialization", async () => {
   const loaded = await loadDevFlowV15();
   if (!loaded.ok) throw new Error(loaded.error.detail);
   const compiled = compileWorkflowDefinition(loaded.value);
@@ -15,8 +15,8 @@ test("compiles plural v15 into executor-independent materialization contracts", 
   // directory; it declares the provisioned refs now, so the branch a planner
   // reasons about is guaranteed to exist before the planner does.
   expect(compiled.value.source_stages).toEqual(["provision_repository_refs"]);
-  expect(compiled.value.stages.brief_writer?.materialization.kind).toBe("artifact_collections");
-  expect(compiled.value.stages.build?.materialization.kind).toBe("fan_out");
+  expect(compiled.value.stages.brief_writer?.max_active_cohorts).toBe(1);
+  expect(compiled.value.stages.build).not.toHaveProperty("materialization");
   expect(compiled.value.stages.build?.outputs.find((output) => output.name === "build_result")?.release.kind).toBe("gate");
   expect(compiled.value.stages.build?.outputs.find((output) => output.name === "assessment")?.release.kind).toBe("gate");
   expect(compiled.value.stages.assessor).toBeUndefined();
@@ -35,8 +35,7 @@ test("compiles the provisioning stage into one unreviewed unit per repository", 
   if (!compiled.ok) throw new Error(compiled.error.detail);
   const provisioning = compiled.value.stages.provision_repository_refs;
   expect(provisioning?.executor.executor_type).toBe("provision_repository_refs");
-  expect(provisioning?.materialization).toEqual({ kind: "fan_out", over: { from: "context", path: "/repositories" },
-    unit_id_path: "/key", depends_on_path: null, max_parallel: 4, manual_admission: false });
+  expect(provisioning?.max_active_cohorts).toBe(4);
   expect(provisioning?.outputs).toEqual([{ name: "repository_refs", artifact_type: "dev.repository_refs", release: { kind: "immediate" } }]);
 });
 
@@ -61,7 +60,7 @@ test("accepts a non-session executor through the stage-type compiler registry", 
   const headlessCompiler: StageTypeCompiler = {
     compile: (_stageKey, config) => ok({
       definition_config: config,
-      materialization: { kind: "scalar" },
+      max_active_cohorts: 1,
       output_release: () => ({ kind: "immediate" }),
     }),
   };

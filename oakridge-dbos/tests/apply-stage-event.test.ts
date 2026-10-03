@@ -35,7 +35,7 @@ for (const [name, dependencies] of [
       }
       if (/FROM oakridge\.cohort\s+WHERE stage_instance_id=\$1/.test(statement)) return cohorts;
       if (statement.includes("FROM oakridge.stage_instance")) return [{ status: "active", stage_contract: {
-        machine, materialization: { kind: "fan_out", max_parallel: 4 }, outputs: [], inputs: [],
+        machine, max_active_cohorts: 4, outputs: [], inputs: [],
       } }];
       if (statement.includes("FROM oakridge.workflow_run")) return [{ status: "active" }];
       return [];

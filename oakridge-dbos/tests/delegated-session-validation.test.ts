@@ -53,13 +53,12 @@ test("delegated session validation rejects duplicate durable gate step identitie
   expect(result.error.issues.map((issue) => issue.message)).toContain("output_gate step type 'artifact_approval' must be unique");
 });
 
-const fanOutDefinition = (fanOut: Record<string, unknown>) => ({
+const sessionDefinition = () => ({
   prompt_matrix: ["initial", "operator_retry", "input_revision"].map((launch_reason) => ({ session_role: "build", launch_reason, template_path: "prompts/example.md" })),
   role_configs: [{ session_role: "build", runtime: "claude-code", session_name: "example", authorized_outputs: ["result"] }],
   slot_bindings: {},
   workdir: { from: "literal" as const, value: "." },
   artifact_productions: [], gates: [], handoffs: [],
-  fan_out: { over: { from: "input" as const, input_name: "units" }, unit_id_path: "/id", ...fanOut },
 });
 
 test("two gates and two handoffs are valid plural terminal policies", () => {
@@ -73,7 +72,7 @@ test("two gates and two handoffs are valid plural terminal policies", () => {
 });
 
 test("a required output with no authorized producer reports its stage and output", () => {
-  const parsed = delegatedSessionDefinitionSchema.parse({ ...fanOutDefinition({}),
+  const parsed = delegatedSessionDefinitionSchema.parse({ ...sessionDefinition(),
     role_configs: [{ session_role: "build", runtime: "claude-code", session_name: "example", authorized_outputs: [] }],
   }) as DelegatedSessionDefinitionConfig;
   expect(validateDelegatedSessionContracts("build", "build", ["result"], parsed)).toContainEqual(expect.objectContaining({
@@ -82,7 +81,7 @@ test("a required output with no authorized producer reports its stage and output
 });
 
 test("the selected operator role must have a runtime and prompt contract", () => {
-  const parsed = delegatedSessionDefinitionSchema.parse(fanOutDefinition({})) as DelegatedSessionDefinitionConfig;
+  const parsed = delegatedSessionDefinitionSchema.parse(sessionDefinition()) as DelegatedSessionDefinitionConfig;
   expect(validateDelegatedSessionContracts("build", "assessment", ["result"], parsed)).toContainEqual(expect.objectContaining({
     kind: "selected_role_missing", stage_key: "build", session_role: "assessment", contract_item: "operator_role",
   }));
