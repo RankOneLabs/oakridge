@@ -485,7 +485,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       if (!written.ok) throw new Error(`${written.error.operation}:${written.error.kind}:${written.error.detail}`);
       return written.value;
     });
-    if (written.kind === "written" && input.health.kind !== "running") {
+    if (input.health.kind !== "running") {
       const rows = await this.sql.query<{ readonly cohort_id: CohortId }>(
         `SELECT intent.cohort_id::text FROM oakridge.session session
          JOIN oakridge.execution_intent intent ON intent.attempt_id=session.attempt_id

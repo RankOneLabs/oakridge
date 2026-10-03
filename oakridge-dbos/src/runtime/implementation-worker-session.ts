@@ -50,19 +50,19 @@ export const createImplementationWorkerSessionIO = (dependencies: Implementation
       const prompt = bundle.find((entry) => entry.template_path === intent.prompt);
       if (!prompt) return err({ detail: `pinned prompt ${intent.prompt} is unavailable` });
       const source = intent.resolved_input;
-      const refs: ArtifactRef[] = [];
+      const refs = new Map<string, ArtifactRef>();
       const collect = (value: JsonValue): void => {
         if (Array.isArray(value)) { for (const member of value) collect(member); return; }
         if (!isJsonObject(value)) return;
         if (typeof value.id === "string" && typeof value.version === "number") {
-          refs.push({ id: value.id as ArtifactRef["id"], version: value.version }); return;
+          refs.set(`${value.id}@${value.version}`, { id: value.id as ArtifactRef["id"], version: value.version }); return;
         }
         for (const member of Object.values(value)) collect(member);
       };
       collect(source);
       const inputs: ArtifactEnvelope[] = [];
       const referenced: ReferencedActionArtifact[] = [];
-      for (const ref of refs) {
+      for (const ref of refs.values()) {
         const artifacts = await sql.query<PinnedActionArtifactRow>(
           `SELECT artifact.id::text,artifact.artifact_type,artifact.body FROM oakridge.artifact artifact
            JOIN oakridge.artifact_owner owner ON owner.artifact_id=artifact.id

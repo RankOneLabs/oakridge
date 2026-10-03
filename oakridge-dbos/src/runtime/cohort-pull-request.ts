@@ -74,7 +74,7 @@ export const prepareDevFlowBuildCohort = async (
   input: PrepareDevFlowBuildCohortInput,
 ): Promise<Result<PreparedDevFlowBuildCohort, PrepareDevFlowBuildCohortError>> => {
   const roles = selectCohortBranchRoles(input.stage_instance_id, input.cohort_key, input.repository);
-  const existing = await dependencies.pull_requests.find_cohort_for_unit(input.stage_instance_id, input.cohort_key as UnitId);
+  let existing = await dependencies.pull_requests.find_cohort_for_unit(input.stage_instance_id, input.cohort_key as UnitId);
   if (existing && (existing.cohort_id !== input.cohort_id || existing.repository_key !== input.repository.repository_key
       || existing.repository_path !== input.repository.repository_path || existing.canonical_ref !== roles.canonical_ref
       || existing.expected_pr_base !== roles.expected_pr_base)) {
@@ -90,17 +90,26 @@ export const prepareDevFlowBuildCohort = async (
   if (remoteHead !== "" && remoteHead !== expectedHead) {
     return prepareFailure("ref_lease_mismatch", `origin cohort ref already points at '${remoteHead}', expected '${expectedHead}'`);
   }
-  if (remoteHead === "" && existing) {
-    return prepareFailure("ref_lease_mismatch", `stored cohort ref '${roles.canonical_ref}' is missing from origin`);
-  }
-  let branchBase = existing?.recorded_head_sha ?? null;
-  if (remoteHead === "" && !existing) {
+  if (!existing) {
     const base = await dependencies.git.run(input.repository.repository_path,
       ["ls-remote", "origin", `refs/heads/${input.repository.base_branch}`]);
     if (base.exit_code !== 0) return prepareFailure("git_read_failed", base.stderr.trim() || "could not read origin base ref");
     const currentBase = base.stdout.trim().split(/\s+/)[0];
     if (!currentBase) return prepareFailure("git_read_failed", "origin base ref is missing");
-    branchBase = currentBase;
+    // The committed row owns this exact ref and SHA before any remote mutation.
+    // A retry uses that state even if the run base has advanced meanwhile.
+    const stored = await dependencies.pull_requests.create_cohort({
+      cohort_id: input.cohort_id, stage_instance_id: input.stage_instance_id, cohort_key: input.cohort_key,
+      repository_key: input.repository.repository_key, repository_path: input.repository.repository_path,
+      canonical_ref: roles.canonical_ref, expected_pr_base: roles.expected_pr_base,
+      recorded_head_sha: currentBase, current_verified_pull_request_id: null,
+      created_at: input.prepared_at, updated_at: input.prepared_at,
+    });
+    if (!stored.ok) return prepareFailure("cohort_storage_failed", stored.error.detail);
+    existing = stored.value;
+  }
+  const branchBase = existing.recorded_head_sha;
+  if (remoteHead === "") {
     // GitHub-created merge commits may not exist in this checkout yet. Fetch
     // the exact observed object without updating shared remote-tracking refs.
     const fetched = await dependencies.git.run(input.repository.repository_path,
@@ -108,20 +117,14 @@ export const prepareDevFlowBuildCohort = async (
     if (fetched.exit_code !== 0) return prepareFailure("git_read_failed", fetched.stderr.trim() || "could not fetch origin base commit");
     const pushed = await dependencies.git.run(input.repository.repository_path,
       ["push", `--force-with-lease=${ref}:`, "origin", `${branchBase}:${ref}`]);
-    if (pushed.exit_code !== 0) return prepareFailure("git_command_failed", pushed.stderr.trim() || "could not create origin cohort ref");
+    if (pushed.exit_code !== 0) {
+      // A concurrent retry may have created the same owned ref already.
+      const reconciled = await dependencies.git.run(input.repository.repository_path, ["ls-remote", "origin", ref]);
+      if (reconciled.exit_code !== 0 || reconciled.stdout.trim().split(/\s+/)[0] !== branchBase)
+        return prepareFailure("git_command_failed", pushed.stderr.trim() || "could not create origin cohort ref");
+    }
   }
-  if (existing) return ok({ cohort: existing, branch_contract: renderCohortBranchContract(existing),
-    worktree_base_sha: existing.recorded_head_sha });
-  if (!branchBase) return prepareFailure("git_read_failed", "current run-base head was not resolved");
-  const cohort = await dependencies.pull_requests.create_cohort({
-    cohort_id: input.cohort_id, stage_instance_id: input.stage_instance_id, cohort_key: input.cohort_key,
-    repository_key: input.repository.repository_key, repository_path: input.repository.repository_path,
-    canonical_ref: roles.canonical_ref, expected_pr_base: roles.expected_pr_base,
-    recorded_head_sha: branchBase, current_verified_pull_request_id: null,
-    created_at: input.prepared_at, updated_at: input.prepared_at,
-  });
-  if (!cohort.ok) return prepareFailure("cohort_storage_failed", cohort.error.detail);
-  return ok({ cohort: cohort.value, branch_contract: renderCohortBranchContract(cohort.value), worktree_base_sha: branchBase });
+  return ok({ cohort: existing, branch_contract: renderCohortBranchContract(existing), worktree_base_sha: branchBase });
 };
 
 export interface PullRequestForgeReader {

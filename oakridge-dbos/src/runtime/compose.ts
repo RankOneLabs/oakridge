@@ -162,10 +162,13 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     },
     prepare_repository: async (cohort_id) => {
       const rows = await sql.query<{ readonly stage_instance_id: import("../domain/primitives").StageInstanceId;
-        readonly cohort_key: string; readonly state: string; readonly frozen_inputs: ImplementationCohortInputs }>(
-        "SELECT stage_instance_id::text,cohort_key,state,frozen_inputs FROM oakridge.cohort WHERE id=$1", [cohort_id]);
+        readonly stage_key: string; readonly cohort_key: string; readonly state: string; readonly frozen_inputs: ImplementationCohortInputs }>(
+        `SELECT cohort.stage_instance_id::text,stage.stage_key,cohort.cohort_key,cohort.state,cohort.frozen_inputs
+         FROM oakridge.cohort cohort JOIN oakridge.stage_instance stage ON stage.id=cohort.stage_instance_id
+         WHERE cohort.id=$1`, [cohort_id]);
       const row = rows[0];
       if (!row) return err({ detail: "implementation cohort is missing" });
+      if (row.stage_key !== "implementation") return ok(undefined);
       if (row.state === "awaiting_merge" || row.state === "complete" || row.state === "failed" || row.state === "cancelled")
         return ok(undefined);
       const repository = row.frozen_inputs.repository;

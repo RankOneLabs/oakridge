@@ -63,6 +63,7 @@ export interface ActionPromptInput {
 
 /** Render only the selected action's fields and the exact immutable revisions they reference. */
 export const renderActionPrompt = (input: ActionPromptInput): string => {
+  const rendered_artifacts = new Set<string>();
   const sections = Object.entries(input.fields).map(([name, value]) => {
     const references = input.artifacts.filter((artifact) => {
       const contains = (candidate: JsonValue): boolean => {
@@ -78,8 +79,14 @@ export const renderActionPrompt = (input: ActionPromptInput): string => {
       && (value as Readonly<Record<string, JsonValue>>).source === "assessment"
       ? references.find((artifact) => artifact.revision_context !== undefined) : null;
     const context = assessment?.revision_context ?? null;
+    const first_references = references.filter((artifact) => {
+      const key = `${artifact.ref.id}@${artifact.ref.version}`;
+      if (rendered_artifacts.has(key)) return false;
+      rendered_artifacts.add(key);
+      return true;
+    });
     return `## ${name}\n${JSON.stringify(value, null, 2)}${context
-      ? `\n\n### Assessment revision context\n${JSON.stringify(context, null, 2)}` : ""}${references.map((artifact) =>
+      ? `\n\n### Assessment revision context\n${JSON.stringify(context, null, 2)}` : ""}${first_references.map((artifact) =>
       `\n\n### Referenced ${artifact.artifact_type} ${artifact.ref.id}@${artifact.ref.version}\n${JSON.stringify(artifact.body, null, 2)}`).join("")}`;
   });
   const repository = input.repository;

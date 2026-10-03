@@ -5,6 +5,11 @@ import type { AgentPublication } from "./support/implementation-agent";
 import type { BuildReviewTarget } from "../src/domain/dev-flow-v15";
 import type { JsonValue, SessionId } from "../src/domain/primitives";
 import { requestExecutionStop } from "../src/storage/postgres-run-record";
+import { createOakridgeRuntime } from "../src/runtime/compose";
+import { BunGitCommandRunner } from "../src/runtime/git-command-runner";
+import { prepareDevFlowBuildCohort } from "../src/runtime/cohort-pull-request";
+import { PostgresDevFlowPullRequestRepository } from "../src/storage/postgres-dev-flow";
+import type { ImplementationCohortInputs } from "../src/domain/dev-flow-v15";
 
 type Harness = Awaited<ReturnType<typeof createImplementationCohortHarness>>;
 const prBody = { pr_url: "https://github.com/example/oakridge/pull/1", repository_key: "oakridge",
@@ -40,8 +45,22 @@ test("both workers retry through kbbl after a real agent exits without publishin
       });
       expect(terminal.kind).toBe("succeeded");
       if (terminal.kind !== "succeeded") throw new Error(`Unexpected terminal outcome: ${terminal.kind}`);
-      await fixture.records.observe_session({ session_id: session.id,
-        health: { kind: "ended_succeeded", metadata: terminal.metadata, observed_at: fixture.now() }, observed_at: fixture.now() });
+      const observation = { session_id: session.id,
+        health: { kind: "ended_succeeded" as const, metadata: terminal.metadata, observed_at: fixture.now() }, observed_at: fixture.now() };
+      if (index === 0) {
+        const advance = fixture.ingress.advance.bind(fixture.ingress);
+        fixture.ingress.advance = async () => { throw new Error("crash after terminal commit"); };
+        await expect(fixture.records.observe_session(observation)).rejects.toThrow("crash after terminal commit");
+        expect((await fixture.sql.query("SELECT status FROM oakridge.session WHERE id=$1", [session.id]))[0])
+          .toEqual({ status: "complete" });
+        expect((await fixture.sql.query("SELECT state FROM oakridge.cohort_worker WHERE cohort_id=$1 AND worker='build'",
+          [fixture.cohort_id]))[0]).toEqual({ state: "working" });
+        fixture.ingress.advance = advance;
+        expect(await fixture.records.observe_session(observation)).toMatchObject({ kind: "already_ended" });
+        const version = await fixture.sql.query("SELECT durable_version FROM oakridge.cohort WHERE id=$1", [fixture.cohort_id]);
+        await fixture.records.observe_session(observation);
+        expect(await fixture.sql.query("SELECT durable_version FROM oakridge.cohort WHERE id=$1", [fixture.cohort_id])).toEqual(version);
+      } else await fixture.records.observe_session(observation);
     };
     await fixture.advance();
     await fixture.execute(0, { kind: "exit_without_publication" });
@@ -87,6 +106,7 @@ test("B3 runs both revision routes, discussion, fresh assessment, PR replacement
     const discussion = await fixture.launch(3);
     expect(discussion.prompt).toContain("Recheck the finding");
     expect(discussion.prompt).toContain("assessment_unchanged");
+    expect(discussion.prompt.match(/"summary": "current implementation"/g)).toHaveLength(1);
     const before = await writeCounts(fixture);
     expect((await fixture.execute(3, { kind: "publish", commit_build: false, publications: [{ output_name: "assessment_unchanged",
       body: { assessment, build: accepted, explanation: "The evidence still shows the missing check." } as unknown as JsonValue }] })).map((delivery) => delivery.status)).toEqual([201]);
@@ -100,6 +120,7 @@ test("B3 runs both revision routes, discussion, fresh assessment, PR replacement
     expect(assessmentRevision.prompt).toContain("missing check");
     expect(assessmentRevision.prompt).toContain("add check");
     expect(assessmentRevision.prompt).toContain("Fix the finding");
+    expect(assessmentRevision.prompt.match(/"summary": "current implementation"/g)).toHaveLength(1);
     expect((await fixture.execute(4, { kind: "publish", commit_build: true, publications: buildPublications })).map((delivery) => delivery.status)).toEqual([201, 201]);
     await fixture.advance({ kind: "accept_build", target: await buildTarget(fixture) });
     const freshBuild = await fixture.accepted();
@@ -112,6 +133,15 @@ test("B3 runs both revision routes, discussion, fresh assessment, PR replacement
     const replacement = await fixture.launch(6);
     expect(replacement.prompt).toContain("# Build Agent — Replacement Pull Request");
     expect(replacement.prompt).not.toContain("{{");
+    const beforeReplacement = await writeCounts(fixture);
+    for (const candidate of [{ number: 1, state: "closed" }, { number: 1, state: "open" }, { number: 2, state: "closed" }] as const) {
+      fixture.forge.number = candidate.number; fixture.forge.state = candidate.state;
+      const response = await fixture.app.request(`/work-orders/${replacement.attempt_id}/emit/pr_summary`, {
+        method: "PUT", headers: { "content-type": "application/json", "work-order-capability": replacement.capability },
+        body: JSON.stringify({ ...prBody, pr_url: `https://github.com/example/oakridge/pull/${candidate.number}` }) });
+      expect([response.status, (await response.json() as { code: string }).code]).toEqual([409, "pr_verification_failed"]);
+      expect(await writeCounts(fixture)).toEqual(beforeReplacement);
+    }
     fixture.forge.number = 2; fixture.forge.state = "open";
     expect((await fixture.execute(6, { kind: "publish", commit_build: true, publications: [
       { output_name: "pr_summary", body: { ...prBody, pr_url: "https://github.com/example/oakridge/pull/2" } },
@@ -159,6 +189,56 @@ test("publish rejects repository, URL, branch, base and forge head mismatches wi
       expect(await writeCounts(fixture)).toEqual(before);
       Object.assign(fixture.forge, { [mismatch]: prior });
     }
+  } finally { await fixture.close(); }
+}, 30_000);
+
+test("application composition skips implementation preparation for other stages", async () => {
+  const fixture = await createImplementationCohortHarness();
+  let runtime: Awaited<ReturnType<typeof createOakridgeRuntime>> | null = null;
+  try {
+    runtime = await createOakridgeRuntime({ database_url: fixture.database_url, application_version: "b3-stage-guard-test",
+      executor_adapters: [], prompt_template_directory: "workflow-config/prompts",
+      git_commands: { async run() { throw new Error("other stages must not prepare implementation repositories"); } },
+      pull_request_reader: { async read() { throw new Error("other stages must not read a PR"); } } });
+    for (const stage_key of ["spec_analysis", "planning", "brief_writing", "final_integration"]) {
+      await fixture.sql.query("UPDATE oakridge.stage_instance SET stage_key=$2,stage_contract='{}'::jsonb WHERE id=$1",
+        [fixture.stage_id, stage_key]);
+      await fixture.sql.query("UPDATE oakridge.cohort SET frozen_inputs=$2::jsonb WHERE id=$1", [fixture.cohort_id,
+        JSON.stringify(stage_key === "final_integration" ? { repository: { refs: [] } } : { original: "other stage input" })]);
+      const response = await runtime.app.request(`/cohorts/${fixture.cohort_id}/requests`, { method: "POST",
+        headers: { "content-type": "application/json" }, body: JSON.stringify({ id: crypto.randomUUID(), expected_version: 0,
+          request: { kind: "retry_build" } }) });
+      expect([response.status, (await response.json() as { error: { kind: string } }).error.kind]).toEqual([409, "stage_not_supported"]);
+    }
+    expect(await fixture.sql.query("SELECT id FROM oakridge.execution_intent", [])).toEqual([]);
+  } finally { await runtime?.close(); await fixture.close(); }
+}, 30_000);
+
+test("preparation recovers after a push with a new repository instance and its committed PostgreSQL state", async () => {
+  const fixture = await createImplementationCohortHarness();
+  try {
+    const frozen = (await fixture.sql.query<{ readonly frozen_inputs: ImplementationCohortInputs }>(
+      "SELECT frozen_inputs FROM oakridge.cohort WHERE id=$1", [fixture.cohort_id]))[0]!.frozen_inputs;
+    await fixture.sql.query("DELETE FROM dev_flow.build_cohort WHERE cohort_id=$1", [fixture.cohort_id]);
+    const git = new BunGitCommandRunner();
+    const input = { cohort_id: fixture.cohort_id, stage_instance_id: fixture.stage_id, cohort_key: "core",
+      repository: frozen.repository.refs, prepared_at: fixture.now() };
+    const crashing = { async run(path: string, args: readonly string[]) {
+      const result = await git.run(path, args);
+      if (args[0] === "push") {
+        expect(result.exit_code).toBe(0);
+        throw new Error("process died after origin accepted the push");
+      }
+      return result;
+    } };
+    await expect(prepareDevFlowBuildCohort({ git: crashing,
+      pull_requests: new PostgresDevFlowPullRequestRepository(fixture.sql) }, input)).rejects.toThrow("process died");
+    const recovered = await prepareDevFlowBuildCohort({ git,
+      pull_requests: new PostgresDevFlowPullRequestRepository(fixture.sql) }, input);
+    expect(recovered).toMatchObject({ ok: true, value: { worktree_base_sha: frozen.repository.worktree_base_sha,
+      cohort: { canonical_ref: `cohort/${fixture.stage_id}/core` } } });
+    expect((await fixture.sql.query("SELECT count(*)::integer AS count FROM dev_flow.build_cohort", []))[0]).toEqual({ count: 1 });
+    expect(fixture.launches).toEqual([]);
   } finally { await fixture.close(); }
 }, 30_000);
 

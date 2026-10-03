@@ -4,7 +4,7 @@ import { createDevFlowAdapterRegistry } from "../src/adapters/dev-flow";
 import { StageEventApplier } from "../src/storage/apply-stage-event";
 import { applyMigrations } from "../src/storage/migrate";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
-import { PostgresRunRecordWriter, publishWorkerOutput, requestExecutionStop } from "../src/storage/postgres-run-record";
+import { PostgresRunRecordWriter, publishWorkerOutput, requestExecutionStop, writeSessionStatus } from "../src/storage/postgres-run-record";
 import { PostgresRunRecordRepository } from "../src/storage/postgres-run-record-repository";
 import { publishWorkOrderArtifact } from "../src/runtime/publish-work-order-artifact";
 import { capabilityFor } from "../src/runtime/resolve-work-order";
@@ -305,3 +305,64 @@ test("legacy event-list ingress cannot mutate a cohort or dispatch work", async 
       .toEqual({ transitions: "0" });
   } finally { await fixture.sql.close(); }
 });
+
+for (const kind of ["cancel", "abandon"] as const) test(`${kind} succeeds during repository and forge failures`, async () => {
+  const fixture = await prepare(`oakridge_b3_offline_${kind}`);
+  try {
+    expect((await fixture.ingress.advance(cohort_id, null)).ok).toBe(true);
+    const ingress = new StageEventApplier({ sql: fixture.sql,
+      writer: new PostgresRunRecordWriter(fixture.sql, createDevFlowAdapterRegistry()), now: fixture.io.now,
+      prepare_repository: async () => { throw new Error("repository is offline"); },
+      observe_pr: async () => { throw new Error("forge is offline"); },
+      dispatch_executions: async (ids) => { for (const id of ids) await dispatchCohortExecution(fixture.sql, id, fixture.io); } });
+    const request: OperatorRequestEnvelope = { id: randomUUID() as never, cohort_id, expected_version: 1,
+      request: kind === "cancel" ? { kind } : { kind, reason: "repository is offline" } };
+    expect((await ingress.advance(cohort_id, request)).ok).toBe(true);
+    expect((await fixture.sql.query("SELECT state FROM oakridge.cohort WHERE id=$1", [cohort_id]))[0])
+      .toEqual({ state: kind === "cancel" ? "cancelled" : "failed" });
+    expect((await fixture.sql.query("SELECT stop_requested_at IS NOT NULL AS fenced FROM oakridge.execution_intent", []))[0])
+      .toEqual({ fenced: true });
+    expect((await fixture.sql.query("SELECT fenced_at IS NOT NULL AS fenced FROM oakridge.session", []))[0])
+      .toEqual({ fenced: true });
+    expect(await ingress.advance(cohort_id, request)).toMatchObject({ ok: true, value: { commits: 0 } });
+  } finally { await fixture.sql.close(); }
+});
+
+for (const worker of ["spec", "plan", "brief", "final_integration", "provision"] as const)
+  test(`${worker} terminal interruption retains its retry contract and current outputs`, async () => {
+    const fixture = await prepare(`oakridge_b3_terminal_${worker}`);
+    try {
+      await fixture.ingress.advance(cohort_id, null);
+      const session = fixture.created[0]!;
+      const work = { action_point: "initial", input: { fixture: worker } };
+      await fixture.sql.transaction(async (tx) => {
+        await tx.query(`INSERT INTO oakridge.cohort_worker (cohort_id,worker,state,work,active_execution_id)
+          VALUES ($1,$2,'working',$3::jsonb,$4)`, [cohort_id, worker, JSON.stringify(work), session.execution_id]);
+        await tx.query("UPDATE oakridge.execution_intent SET worker=$2 WHERE id=$1", [session.execution_id, worker]);
+        await tx.query("UPDATE oakridge.cohort_worker SET active_execution_id=NULL WHERE cohort_id=$1 AND worker='build'", [cohort_id]);
+      });
+      const output_name = worker === "spec" ? "spec_analysis" : worker === "plan" ? "plan"
+        : worker === "brief" ? "briefs" : worker === "final_integration" ? "pr_summary" : "repository_refs";
+      const refs: ArtifactRef[] = [];
+      for (const collection_key of worker === "brief" ? ["api", "web"] : [null]) {
+        const result = await publishWorkerOutput(fixture.sql, { execution_id: session.execution_id,
+          artifact_id: randomUUID() as ArtifactId, output_name, collection_key, artifact_type: `dev.${output_name}`,
+          body: { partial: true }, expected: null, at: fixture.io.now() });
+        if (!result.ok) throw new Error(result.error.detail);
+        refs.push(result.value);
+      }
+      expect(await fixture.sql.transaction((tx) => writeSessionStatus(tx, {
+        session_id: session.session_id, status: "failed", at: fixture.io.now() }))).toEqual({ ok: true, value: { kind: "written" } });
+      const execution = { execution_id: session.execution_id, session_id: session.session_id,
+        detail: "session ended before the required publication was complete" };
+      const expected = worker === "provision" ? { execution }
+        : { work, execution, current: worker === "brief"
+          ? { members: [{ cohort_key: "api", ref: refs[0] }, { cohort_key: "web", ref: refs[1] }] } : refs[0] };
+      expect((await fixture.sql.query("SELECT interrupted FROM oakridge.cohort_worker WHERE cohort_id=$1 AND worker=$2",
+        [cohort_id, worker]))[0]).toEqual({ interrupted: expected });
+      expect(await fixture.sql.transaction((tx) => writeSessionStatus(tx, {
+        session_id: session.session_id, status: "failed", at: fixture.io.now() }))).toMatchObject({ ok: true, value: { kind: "already_ended" } });
+      expect((await fixture.sql.query("SELECT interrupted FROM oakridge.cohort_worker WHERE cohort_id=$1 AND worker=$2",
+        [cohort_id, worker]))[0]).toEqual({ interrupted: expected });
+    } finally { await fixture.sql.close(); }
+  });

@@ -318,6 +318,9 @@ export const recordImplementationPublicationIn = async (tx: SqlExecutor, input: 
      LEFT JOIN dev_flow.pull_request_verification verification ON verification.id=cohort.current_verified_pull_request_id
      WHERE cohort.cohort_id=$1 FOR UPDATE OF cohort`, [input.cohort_id]);
   const stored = await PostgresDevFlowPullRequestRepository.observe_in(tx, { observation, recorded_at: input.at });
+  if (evidence.replace_verification_id !== null
+    && (observation.state !== "open" || current[0]?.pull_request_id === stored.pull_request_id))
+    return err({ code: "pr_verification_failed", detail: "replacement must identify a different, open PR" });
   if (current[0]?.pull_request_id === stored.pull_request_id && current[0].verified_head_sha === evidence.origin_head_sha)
     return ok(undefined);
   const bound = await PostgresDevFlowPullRequestRepository.bind_verified_in(tx, { ...stored, cohort_id: input.cohort_id,

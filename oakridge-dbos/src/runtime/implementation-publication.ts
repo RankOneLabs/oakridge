@@ -74,6 +74,12 @@ export const createImplementationPublicationEnricher = (dependencies: Implementa
     const cohort = await cohortPullRequests.find_cohort_for_unit(roles.stage_instance_id, roles.cohort_key as UnitId);
     if (!cohort) return invalid("prepared cohort repository is missing");
     const current = await cohortPullRequests.find_current_for_unit(roles.stage_instance_id, roles.cohort_key as UnitId);
+    if (roles.action_point === "replace_pr") {
+      if (!current) return invalid("replacement has no current verified PR");
+      if (observed.state !== "open") return invalid("replacement PR must be open");
+      if (current.pull_request.forge_pull_request_id === observed.number)
+        return invalid("replacement must identify a different PR");
+    }
     const evidence: ImplementationPublicationEvidence = { pr: observed, origin_head_sha,
       replace_verification_id: roles.action_point === "replace_pr"
         ? current?.cohort.current_verified_pull_request_id ?? null : null };

@@ -196,7 +196,7 @@ export const createImplementationCohortHarness = async () => {
          JOIN oakridge.artifact artifact ON artifact.id=output.artifact_id WHERE output.cohort_id=$1 AND output.worker='assessment'`, [cohort_id]))[0]!;
       return { id: row.chain_id as never, version: row.revision };
     };
-    return { sql, ingress, io, enrich, records, adapter, cohort_id, run_id, stage_id, launches, deliveries, forge, advance, launch, execute,
+    return { sql, database_url: scratch.value.url, ingress, io, enrich, records, adapter, cohort_id, run_id, stage_id, launches, deliveries, forge, advance, launch, execute,
       build, accepted, assessment, close, app, now,
       execution: async (index: number): Promise<ExecutionId> => {
         const selected = await launch(index);
