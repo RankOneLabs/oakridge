@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { evaluateCohort, evaluateV15Fact, transition } from "../src/decision/stage-machine";
+import { evaluateCohort, evaluateV15Cohort, evaluateV15Fact, transition } from "../src/decision/stage-machine";
 import type { ImplementationCohortDefinition, ImplementationCohortRecord, ArtifactRef } from "../src/domain/dev-flow-v15";
 import type { CompiledMachine, GuardContext, StageEvent, Transition } from "../src/domain/stage-machine";
 import { machineRegistry, reviewMachine } from "./support/machine-fixtures";
@@ -271,4 +271,34 @@ test("a final merge must match the reviewed head", () => {
     "final_pr_merged_at_reviewed_head")).toBe(false);
   expect(evaluateV15Fact({ stage: "final_integration", cohort, pr: { ...pr, head_sha: target.head_sha },
     reviewed_target: target }, "final_pr_merged_at_reviewed_head")).toBe(true);
+});
+
+test("each single-worker v15 stage resolves its initial leaf from frozen inputs", async () => {
+  const definition = await Bun.file(new URL("../../workflow-config/definitions/dev_flow_v15.json", import.meta.url)).json();
+  const base = { id: pendingCohort().id, key: "cohort" as never, version: 0,
+    state: "pending" as const, depends_on: [] };
+  const cases = [
+    { stage: "repository_preparation", worker: "provision", inputs: {
+      repository: { key: "oakridge", path: "/repo", integration_branch: "epic/wf", forge_repository: null },
+      base_branch: "epic/schema",
+    }, extra: { provision: { state: "pending", interrupted: null } }, refs: [] },
+    { stage: "spec_analysis", worker: "spec", inputs: { brief_notes: "brief", repositories: [
+      { repository_key: "oakridge", ref },
+    ] }, extra: { spec: { state: "pending", outputs: { spec_analysis: null }, interrupted: null } }, refs: [ref] },
+    { stage: "planning", worker: "plan", inputs: { spec_analysis: ref, repositories: [] },
+      extra: { plan: { state: "pending", outputs: { plan: null }, interrupted: null } }, refs: [ref] },
+    { stage: "brief_writing", worker: "brief", inputs: { plan: ref, repositories: [] },
+      extra: { brief: { state: "pending", outputs: { briefs: [] }, interrupted: null } }, refs: [ref] },
+    { stage: "final_integration", worker: "final_integration", inputs: {
+      repository: { repository_key: "oakridge", repository_path: "/repo", integration_branch: "epic/wf",
+        base_branch: "epic/schema", base_head_sha: "abc" }, completed_cohorts: [],
+    }, extra: { final_integration: { state: "pending", interrupted: null } }, refs: [] },
+  ] as const;
+  for (const item of cases) {
+    const result = evaluateV15Cohort({ definition: definition.stages[item.stage].cohort,
+      context: { stage: item.stage, cohort: { ...base, inputs: item.inputs, ...item.extra },
+        ...(item.stage === "final_integration" ? { pr: null, reviewed_target: null } : {}) } as never,
+      request: null, available_artifacts: item.refs });
+    expect(result.ok && result.value.kind === "apply" && result.value.actions[0]?.worker).toBe(item.worker);
+  }
 });
