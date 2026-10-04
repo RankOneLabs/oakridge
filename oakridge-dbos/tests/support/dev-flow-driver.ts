@@ -16,7 +16,6 @@ import type { OperatorArtifactDetail, OperatorParkedGate, OperatorRunDetail, Ope
 import type { ArtifactId, JsonValue, WorkflowDefinitionId, WorkflowRunId } from "../../src/domain/primitives";
 import { sendRunWakeHint } from "../../src/http/dbos-transport";
 import type { SqlExecutor } from "../../src/storage/sql-executor";
-import { awaitCondition, type ScriptedAgentScenario } from "./dev-flow-harness";
 
 const readJson = async <Value>(response: Response, describe: string): Promise<Value> => {
   const text = await response.text();
@@ -46,54 +45,6 @@ export const launchRun = async (baseUrl: string, definitionId: WorkflowDefinitio
   return { run_id: summary.id, root_workflow_id: summary.current_attempt_root_workflow_id };
 };
 
-/** The gate an artifact is parked in, once the operator surface shows it. */
-export const awaitPendingGate = async (baseUrl: string, artifactId: ArtifactId, timeoutMs = 30_000): Promise<OperatorParkedGate> =>
-  awaitCondition(`a pending gate for artifact ${artifactId}`, async () => {
-    const gates = await readJson<readonly OperatorParkedGate[]>(await fetch(`${baseUrl}/gates`), "list pending gates");
-    return gates.find((gate) => gate.artifact_revision_id === artifactId
-      || (gate as unknown as { readonly artifact_revision_ids?: readonly ArtifactId[] }).artifact_revision_ids?.includes(artifactId)) ?? null;
-  }, timeoutMs);
-
-/**
- * The operator's decision on a parked gate.
- *
- * For the assessor this is also what resolves the build's handoff: the gate's
- * `revision_target` is `upstream_handoff`, so the same request that decides the
- * assessment carries the downstream decision back to the build unit that has
- * been waiting on it. That routing is the route's job, and driving it here is
- * the point — it is the edge no test had ever exercised.
- */
-export const decideGate = async (baseUrl: string, artifactId: ArtifactId, action: string): Promise<OperatorParkedGate> => {
-  const gate = await awaitPendingGate(baseUrl, artifactId);
-  if (!gate.resume_actions.includes(action)) throw new Error(`gate ${gate.id} does not offer action '${action}': ${gate.resume_actions.join(", ")}`);
-  const response = await fetch(`${baseUrl}/gates/${gate.id}/resume`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ idempotency_key: `${action}:${artifactId}`, artifact_revision_id: artifactId,
-      gate_step: gate.gate_step, action, operator_comment: `integration test ${action}`,
-      feedback: action === "request_revision" ? `integration test ${action}` : null }),
-  });
-  await readJson(response, `resume gate ${gate.id}`);
-  return gate;
-};
-
-/** A gate decision the route refused, for a caller asserting the refusal. */
-export interface RefusedGateDecision { readonly status: number; readonly error: string; readonly code?: string }
-
-/** Posts a gate decision and reports the refusal rather than throwing on it. */
-export const attemptGateDecision = async (baseUrl: string, artifactId: ArtifactId, action: string): Promise<RefusedGateDecision> => {
-  const gate = await awaitPendingGate(baseUrl, artifactId);
-  const response = await fetch(`${baseUrl}/gates/${gate.id}/resume`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ idempotency_key: `${action}:${artifactId}`, artifact_revision_id: artifactId,
-      gate_step: gate.gate_step, action, operator_comment: `integration test ${action}`,
-      feedback: action === "request_revision" ? `integration test ${action}` : null }),
-  });
-  const parsed = await response.json() as { readonly error?: string; readonly code?: string };
-  return { status: response.status, error: parsed.error ?? "", ...(parsed.code ? { code: parsed.code } : {}) };
-};
-
 export const refreshCohortPullRequest = async (baseUrl: string, cohortId: string): Promise<{ readonly state: string }> =>
   readJson(await fetch(`${baseUrl}/cohorts/${encodeURIComponent(cohortId)}/pull_request/refresh`, { method: "POST" }),
     `refresh cohort pull request ${cohortId}`);
@@ -111,73 +62,6 @@ export const readReviewInbox = async (baseUrl: string): Promise<OperatorReviewIn
 /** The gates parked against one run, as `GET /runs/:id/gates` reports them. */
 export const listRunGates = async (baseUrl: string, runId: LaunchedRun["run_id"]): Promise<readonly OperatorParkedGate[]> =>
   readJson<readonly OperatorParkedGate[]>(await fetch(`${baseUrl}/runs/${runId}/gates`), `list gates for run ${runId}`);
-
-/**
- * One driven pass of the loop every scenario shares: emit whatever agents
- * owe, decide whichever parked gates the scenario's policy allows, confirm
- * every cohort merge waiting in the review inbox, then check whether the
- * scenario's own condition has been reached.
- */
-export interface DriveOptions<Value> {
-  /** Decide a parked gate, or leave it open. Called with the gate as `GET /gates` lists it. */
-  readonly decide: (gate: OperatorParkedGate) => string | null;
-  /** Stop when this returns non-null; it is polled after every pass. */
-  readonly until: () => Promise<Value | null>;
-  readonly timeout_ms: number;
-}
-
-export interface DriveOutcome<Value> {
-  readonly value: Value;
-  /** Execution workflow ids this drive emitted artifacts for and succeeded. */
-  readonly driven: ReadonlySet<string>;
-}
-
-/**
- * Drives a launched run the way every participant but the operator's gate
- * policy really does: emit artifacts, confirm merges, and — the one thing
- * that varies between scenarios — decide only the gates `options.decide`
- * says to.
- *
- * `driven` accumulates for the lifetime of this call only.
- */
-export const driveRun = async <Value>(baseUrl: string, agent: ScriptedAgentScenario, run: LaunchedRun, options: DriveOptions<Value>): Promise<DriveOutcome<Value>> => {
-  const driven = new Set<string>();
-  const decided = new Set<string>();
-  const deadline = Date.now() + options.timeout_ms;
-  for (;;) {
-    for (const [workflowId] of agent.launched) {
-      if (driven.has(workflowId)) continue;
-      driven.add(workflowId);
-    }
-
-    // `listV2PendingGates` reports a collection-key gate's `unit_id` as the
-    // collection key itself (spec §3.7), so the gate the API lists is passed
-    // to `options.decide` as-is — no re-keying against the emitted artifact.
-    for (const gate of await listRunGates(baseUrl, run.run_id)) {
-      if (decided.has(gate.id)) continue;
-      const requested = options.decide(gate);
-      const action = requested === "approve" && gate.resume_actions.includes("confirm_merged") ? "confirm_merged" : requested;
-      if (!action) continue;
-      const artifactId = (gate as unknown as { readonly artifact_revision_ids?: readonly ArtifactId[] }).artifact_revision_ids?.[0]
-        ?? gate.artifact_revision_id;
-      if (!artifactId) continue;
-      decided.add(gate.id);
-      await decideGate(baseUrl, artifactId, action);
-    }
-
-    const value = await options.until();
-    if (value !== null) return { value, driven };
-    if (Date.now() > deadline) {
-      const diagnostic = { run: await readRun(baseUrl, run.run_id), gates: await listRunGates(baseUrl, run.run_id),
-        inbox: (await readReviewInbox(baseUrl)).items.filter((item) => item.run_id === run.run_id),
-        deliveries: agent.deliveries,
-        launches: [...agent.launched.entries()].map(([id, launch]) => ({ id, expected: launch.expected_artifacts,
-          prompt_tail: String((launch.resolved_config as { readonly rendered_prompt?: string }).rendered_prompt).slice(-700) })) };
-      throw new Error(`driveRun timed out after ${options.timeout_ms}ms waiting for run ${run.run_id}'s condition: ${JSON.stringify(diagnostic)}`);
-    }
-    await Bun.sleep(50);
-  }
-};
 
 /** `record_version` and how many transitions have been written for one run — invariant 7's measurement. */
 export interface RunRecordFingerprint {

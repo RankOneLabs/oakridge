@@ -2,11 +2,11 @@ import { test, expect } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { prepareV15StageFixture as prepare } from "./support/v15-stage-fixture";
 import { materializeStageInStorage } from "../src/storage/materialize-stage";
+import { PostgresRunRecordRepository } from "../src/storage/postgres-run-record-repository";
 import { StageEventApplier } from "../src/storage/apply-stage-event";
 import { PostgresRunRecordWriter } from "../src/storage/postgres-run-record";
-import { createDevFlowAdapterRegistry } from "../src/adapters/dev-flow";
 import { dispatchProvisionExecution } from "../src/runtime/provision-execution";
-import type { CohortId, ExecutionId } from "../src/domain/primitives";
+import type { CohortId, ExecutionId, WorkflowRunId } from "../src/domain/primitives";
 import type { GitCommandRunner } from "../src/domain/repository-provisioning";
 const now = () => new Date().toISOString();
 
@@ -24,7 +24,7 @@ for (const failure_kind of ["not_a_git_repository", "missing_integration_branch"
           || failure_kind === "git_command_failed" && args[0] === "ls-remote";
         return should_fail ? { exit_code: 1, stdout: "", stderr: "controlled Git failure" } : fixture.git.run(directory, args);
       } };
-      const ingress = new StageEventApplier({ sql: fixture.sql, writer: new PostgresRunRecordWriter(fixture.sql, createDevFlowAdapterRegistry()), now,
+      const ingress = new StageEventApplier({ sql: fixture.sql, writer: new PostgresRunRecordWriter(fixture.sql), now,
         dispatch_executions: async (ids) => { for (const id of ids) await dispatchProvisionExecution({ sql: fixture.sql, git, now,
           advance: (cohort) => ingress.advance(cohort, null) }, id); } });
       await ingress.advance(cohort_id, null);
@@ -46,7 +46,7 @@ test("provisioning publishes mechanically with null session provenance and stabl
     expect(await materializeStageInStorage(fixture.sql, { stage_instance_id: fixture.stage_id, at: now() })).toEqual(first);
     const cohort_id = first.value.cohort_ids[0]!;
     const ingress = new StageEventApplier({ sql: fixture.sql,
-      writer: new PostgresRunRecordWriter(fixture.sql, createDevFlowAdapterRegistry()), now,
+      writer: new PostgresRunRecordWriter(fixture.sql), now,
       dispatch_executions: async (ids) => { for (const id of ids) {
         const dispatched = await dispatchProvisionExecution({ sql: fixture.sql, git: fixture.git, now,
           advance: (cohort) => ingress.advance(cohort, null) }, id);
@@ -77,7 +77,7 @@ test("a provision operation lost after remote push retries without rewinding the
       return result;
     } };
     const ingress = new StageEventApplier({ sql: fixture.sql,
-      writer: new PostgresRunRecordWriter(fixture.sql, createDevFlowAdapterRegistry()), now,
+      writer: new PostgresRunRecordWriter(fixture.sql), now,
       dispatch_executions: async (ids) => { for (const id of ids) await dispatchProvisionExecution({
         sql: fixture.sql, git, now, advance: (cohort) => ingress.advance(cohort, null) }, id); } });
     expect((await ingress.advance(cohort_id, null)).ok).toBe(true);
@@ -109,5 +109,28 @@ test("invalid stage membership leaves initialization and all cohort rows untouch
     expect((await fixture.sql.query("SELECT initialized_at FROM oakridge.stage_instance WHERE id=$1", [fixture.stage_id]))[0])
       .toEqual({ initialized_at: null });
     expect(await fixture.sql.query("SELECT id FROM oakridge.cohort", [])).toEqual([]);
+  } finally { await fixture.close(); }
+});
+
+
+test("S13 cancellation racing roster opening leaves no work with execution authority", async () => {
+  const fixture = await prepare();
+  try {
+    const writer = new PostgresRunRecordWriter(fixture.sql);
+    const ingress = new StageEventApplier({ sql: fixture.sql, writer, now });
+    const records = new PostgresRunRecordRepository(fixture.sql, writer, ingress);
+    const [opened, cancelled] = await Promise.all([
+      materializeStageInStorage(fixture.sql, { stage_instance_id: fixture.stage_id, at: now() }),
+      records.cancel_run({ run_id: fixture.run_id as WorkflowRunId, actor: "operator", reason: "cancel roster race", cancelled_at: now() }),
+    ]);
+    expect(opened.ok).toBe(true);
+    expect(cancelled.kind).toBe("cancelled");
+    expect((await fixture.sql.query<{ readonly status: string }>("SELECT status FROM oakridge.workflow_run WHERE id=$1", [fixture.run_id]))[0]?.status).toBe("cancelled");
+    const ids = await fixture.sql.query<{ readonly id: CohortId; readonly state: string }>("SELECT id,state FROM oakridge.cohort", []);
+    for (const cohort of ids) {
+      expect(cohort.state).toBe("cancelled");
+      expect((await ingress.advance(cohort.id, null)).ok).toBe(true);
+    }
+    expect(await fixture.sql.query("SELECT id FROM oakridge.execution_intent", [])).toEqual([]);
   } finally { await fixture.close(); }
 });

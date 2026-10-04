@@ -2,12 +2,12 @@ import { expect, test } from "bun:test";
 
 import {
   operatorMergedObservation, reconcileCohortPullRequest, withCompletion,
-  type CohortPullRequestReconciliation, type DevFlowBuildCohort, type ExpectedCohortPullRequest,
+  type CohortPullRequestReconciliation, type CohortRepositoryRecord, type ExpectedCohortPullRequest,
 } from "../src/domain/cohort-pull-request";
 import { invalidatePullRequestForReplacement, type PullRequestApproval, type PullRequestObservation, type PullRequestObservationId, type PullRequestId, type PullRequestVerificationId, type VerifiedPullRequestLink } from "../src/domain/pull-request";
 import type { ArtifactId, CohortId, StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
 import { renderCohortBranchContract, selectCohortBranchRoles } from "../src/domain/repository-refs";
-import { advanceCohortRef, prepareDevFlowBuildCohort, reconcileCohortEvidence, verifyAndBindCohortPullRequest, verifyCohortPullRequest } from "../src/runtime/cohort-pull-request";
+import { advanceCohortRef, prepareCohortRepositoryRecord, reconcileCohortEvidence, verifyAndBindCohortPullRequest, verifyCohortPullRequest } from "../src/runtime/cohort-pull-request";
 import { BunGitCommandRunner } from "../src/runtime/git-command-runner";
 import type { DevFlowPullRequestRepository } from "../src/storage/repositories";
 import { createCohortPullRequestApp } from "../src/http/cohort-pull-request";
@@ -186,7 +186,7 @@ test("operator confirmation completes an awaiting-merge cohort without forge or 
   expect(events).toEqual([{ kind: "pull_request_merged", pull_request_url: expected.url, head_sha: "reviewed-head" }]);
 });
 
-const storedCohort = (repositoryPath: string, head: string): DevFlowBuildCohort => ({
+const storedCohort = (repositoryPath: string, head: string): CohortRepositoryRecord => ({
   cohort_id: "00000000-0000-4000-8000-000000000010" as CohortId,
   stage_instance_id: expected.stage_instance_id,
   cohort_key: "foundation",
@@ -337,14 +337,14 @@ test("cohort preparation creates the canonical ref and persists the roles render
   const fixture = await createGitRepositoryFixture();
   try {
     const canonicalRef = `cohort/${expected.stage_instance_id}/foundation`;
-    let stored: DevFlowBuildCohort | null = null;
+    let stored: CohortRepositoryRecord | null = null;
     const repository = {
       async find_cohort_for_unit() { return stored; },
-      async create_cohort(cohort: DevFlowBuildCohort) { stored = cohort; return { ok: true, value: cohort }; },
+      async create_cohort(cohort: CohortRepositoryRecord) { stored = cohort; return { ok: true, value: cohort }; },
     } as unknown as DevFlowPullRequestRepository;
     const baseHead = await fixture.origin_branch_sha(fixture.integration_branch);
     if (!baseHead) throw new Error("fixture integration branch is missing");
-    const result = await prepareDevFlowBuildCohort({ pull_requests: repository, git: new BunGitCommandRunner() }, {
+    const result = await prepareCohortRepositoryRecord({ pull_requests: repository, git: new BunGitCommandRunner() }, {
       cohort_id: storedCohort(fixture.path, baseHead).cohort_id, stage_instance_id: expected.stage_instance_id,
       cohort_key: "foundation", repository: { repository_key: "oakridge", repository_path: fixture.path,
         integration_branch: fixture.integration_branch, base_branch: fixture.integration_branch, base_head_sha: baseHead },
@@ -366,7 +366,7 @@ test("cohort preparation recreates a missing owned ref from the recorded SHA", a
   const git = { async run(_path: string, args: readonly string[]) {
     commands.push([...args]); return { exit_code: 0, stdout: "", stderr: "" };
   } };
-  const result = await prepareDevFlowBuildCohort({ pull_requests: repository, git }, {
+  const result = await prepareCohortRepositoryRecord({ pull_requests: repository, git }, {
     cohort_id: cohort.cohort_id, stage_instance_id: cohort.stage_instance_id, cohort_key: cohort.cohort_key,
     repository: { repository_key: cohort.repository_key, repository_path: cohort.repository_path,
       integration_branch: "main", base_branch: cohort.expected_pr_base, base_head_sha: cohort.recorded_head_sha },
@@ -381,10 +381,10 @@ for (const crash_point of ["before_push", "after_push"] as const) test(`cohort p
   const fixture = await createGitRepositoryFixture();
   try {
     const canonicalRef = `cohort/${expected.stage_instance_id}/foundation`;
-    let stored: DevFlowBuildCohort | null = null;
+    let stored: CohortRepositoryRecord | null = null;
     const repository = {
       async find_cohort_for_unit() { return stored; },
-      async create_cohort(cohort: DevFlowBuildCohort) { stored ??= cohort; return { ok: true, value: stored }; },
+      async create_cohort(cohort: CohortRepositoryRecord) { stored ??= cohort; return { ok: true, value: stored }; },
     } as unknown as DevFlowPullRequestRepository;
     const baseHead = (await fixture.origin_branch_sha(fixture.integration_branch))!;
     const input = { cohort_id: storedCohort(fixture.path, baseHead).cohort_id, stage_instance_id: expected.stage_instance_id,
@@ -400,10 +400,10 @@ for (const crash_point of ["before_push", "after_push"] as const) test(`cohort p
       }
       return git.run(path, args);
     } };
-    await expect(prepareDevFlowBuildCohort({ pull_requests: repository, git: crashing }, input)).rejects.toThrow("simulated process crash");
+    await expect(prepareCohortRepositoryRecord({ pull_requests: repository, git: crashing }, input)).rejects.toThrow("simulated process crash");
     // The run base moves while the process is down; preparation must keep its pinned SHA.
     await fixture.advance_origin_branch(fixture.integration_branch, "later base");
-    const recovered = await prepareDevFlowBuildCohort({ pull_requests: repository, git }, input);
+    const recovered = await prepareCohortRepositoryRecord({ pull_requests: repository, git }, input);
     expect(recovered.ok && recovered.value.worktree_base_sha).toBe(baseHead);
     expect(await fixture.origin_branch_sha(canonicalRef)).toBe(baseHead);
   } finally { await fixture.remove(); }
@@ -418,7 +418,7 @@ test("cohort preparation leaves an unowned origin ref untouched", async () => {
     await git.run(fixture.path, ["push", "origin", `${baseHead}:refs/heads/${canonicalRef}`]);
     const repository = { async find_cohort_for_unit() { return null; },
       async create_cohort() { throw new Error("must not adopt an unowned ref"); } } as unknown as DevFlowPullRequestRepository;
-    expect(await prepareDevFlowBuildCohort({ pull_requests: repository, git }, {
+    expect(await prepareCohortRepositoryRecord({ pull_requests: repository, git }, {
       cohort_id: storedCohort(fixture.path, baseHead).cohort_id, stage_instance_id: expected.stage_instance_id,
       cohort_key: "foundation", repository: { repository_key: "oakridge", repository_path: fixture.path,
         integration_branch: fixture.integration_branch, base_branch: fixture.integration_branch, base_head_sha: baseHead },
@@ -465,8 +465,8 @@ test("a dependent branch fetches a merge commit created only on origin", async (
     await git.run(fixture.origin_path, ["update-ref", `refs/heads/${fixture.integration_branch}`, newHead]);
     expect((await git.run(fixture.path, ["cat-file", "-e", newHead])).exit_code).not.toBe(0);
     const repository = { async find_cohort_for_unit() { return null; },
-      async create_cohort(value: DevFlowBuildCohort) { return { ok: true, value }; } } as unknown as DevFlowPullRequestRepository;
-    const result = await prepareDevFlowBuildCohort({ git, pull_requests: repository }, {
+      async create_cohort(value: CohortRepositoryRecord) { return { ok: true, value }; } } as unknown as DevFlowPullRequestRepository;
+    const result = await prepareCohortRepositoryRecord({ git, pull_requests: repository }, {
       cohort_id: storedCohort(fixture.path, oldHead).cohort_id, stage_instance_id: expected.stage_instance_id, cohort_key: "foundation",
       repository: { repository_key: "oakridge", repository_path: fixture.path, integration_branch: fixture.integration_branch,
         base_branch: fixture.integration_branch, base_head_sha: oldHead }, prepared_at: "2026-10-02T00:00:00Z",

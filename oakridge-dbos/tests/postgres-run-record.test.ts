@@ -1,7 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 
-import { ok, type CohortId, type JsonValue, type RunRecordVersion, type StageInstanceId, type WorkflowRunId } from "../src/domain/primitives";
-import { createDevFlowAdapterRegistry } from "../src/adapters/dev-flow";
+import { ok, type CohortId, type RunRecordVersion, type StageInstanceId, type WorkflowRunId } from "../src/domain/primitives";
 import { applyMigrations } from "../src/storage/migrate";
 import { PostgresRunRecordWriter, claimExecutionIntent, commitSelectedCohort,
   publishWorkerOutput, recordExecutionDispatch, requestExecutionStop } from "../src/storage/postgres-run-record";
@@ -237,26 +236,14 @@ test("four sibling cohort machines commit concurrently on owner-local versions w
       `INSERT INTO oakridge.cohort (id,run_id,stage_instance_id,cohort_key,status,frozen_inputs) VALUES ($1,$2,$3,$4,'active','{"brief_notes":"fixture","repositories":[]}')`,
       [cohortId(index), RUN_ID, STAGE_ID, `cohort-${index}`]);
 
-    const registry = createDevFlowAdapterRegistry();
-    const customEvent = "example_adapter_finished";
-    registry.register_decision<{ readonly output_id: string }>({
-      name: customEvent,
-      decode(value: JsonValue) {
-        if (typeof value === "object" && value !== null && !Array.isArray(value)
-          && "output_id" in value && typeof value.output_id === "string") return ok({ output_id: value.output_id });
-        return { ok: false, error: "output_id is required" };
-      },
-      guard: () => ok(undefined),
-      effect: (context, payload) => ({ kind: context.event_name, output_id: payload.output_id }),
-    });
-    const writer = new PostgresRunRecordWriter(sql, registry);
+    const writer = new PostgresRunRecordWriter(sql);
     const results = await Promise.all(Array.from({ length: 4 }, (_, index) => writer.commit({
       run_id: RUN_ID,
       owner: { kind: "cohort", id: cohortId(index) },
       expected_version: 0,
       launch_reason: "artifact_accepted",
       change: { status: "complete", blocked_reason: null, next_actor: null, outcome: { kind: "succeeded" } },
-      effect: index === 1 ? { kind: customEvent, output_id: "artifact-1" } : { kind: "none" },
+      effect: { kind: "none" },
       actor: "test",
       changed_at: "2026-09-28T12:00:00.000Z",
     })));
@@ -272,8 +259,7 @@ test("four sibling cohort machines commit concurrently on owner-local versions w
       effect_descriptor->>'kind' AS effect_name,count(DISTINCT effect_workflow_id)::text AS workflow_count
       FROM oakridge.run_transition WHERE run_id=$1 GROUP BY effect_descriptor->>'kind' ORDER BY effect_name`, [RUN_ID]);
     expect(effects).toEqual([
-      { effect_name: customEvent, workflow_count: "1" },
-      { effect_name: "none", workflow_count: "3" },
+      { effect_name: "none", workflow_count: "4" },
     ]);
 
     const stageDecision = await writer.decide({
@@ -321,9 +307,8 @@ test("a concurrent commit loses the cohort version race", async () => {
       VALUES ($1,$2,'worker','example','{}','active')`, [STAGE_ID, RUN_ID]);
     await firstSql.query(`INSERT INTO oakridge.cohort (id,run_id,stage_instance_id,cohort_key,status,frozen_inputs)
       VALUES ($1,$2,$3,'racing','active','{"brief_notes":"fixture","repositories":[]}')`, [cohortId(8), RUN_ID, STAGE_ID]);
-    const registry = createDevFlowAdapterRegistry();
-    const writerA = new PostgresRunRecordWriter(secondSql, registry);
-    const writerB = new PostgresRunRecordWriter(firstSql, registry);
+    const writerA = new PostgresRunRecordWriter(secondSql);
+    const writerB = new PostgresRunRecordWriter(firstSql);
     const input = { run_id: RUN_ID, owner: { kind: "cohort" as const, id: cohortId(8) }, expected_version: 0,
       launch_reason: "operator" as const,
       change: { status: "blocked" as const, blocked_reason: "operator" as const, next_actor: "operator" as const, outcome: null },

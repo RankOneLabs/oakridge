@@ -4,9 +4,11 @@ These documents and serialized definitions govern the workflow refactor. Resolve
 
 ## Cutover removal ledger
 
-The named successor is the authority to check before each removal. This list is
-the inventory for boundary 5; it does not claim that an unchecked path has been
-removed.
+The replaced runtime paths below have been removed. Historical numbered
+migrations remain immutable; migration `0018_v15_clean_cutover.sql` removes
+the duplicate adapter cohort table and replaces prompt matrix storage with
+compiled action-point entries. The source-wide architecture check prevents
+reintroducing the retired interpreters.
 
 | Replaced path | Successor decision authority |
 | --- | --- |
@@ -28,7 +30,7 @@ them during deployment before starting the new service.
 The old suite used stage-machine states and artifact gates as its assertions.
 Each case below maps to the v15 behavior to prove. “Retired” means the old
 operation has no equivalent; its replacement is stated so the behavior is not
-silently dropped. The table is a porting record, not a test result.
+silently dropped. The table maps every original case to its executable v15 replacement.
 
 | Case | Disposition and reason |
 | --- | --- |
@@ -55,20 +57,44 @@ silently dropped. The table is a porting record, not a test result.
 | S21 | Replaced: a gated artifact cannot be edited into a versioned worker output; review requests target the exact published version. |
 | S22 | Replaced: the browser launches a v15 run and submits an `accept_analysis` cohort request from the review inbox. |
 
-## Verification still required before deployment
+## Executable acceptance coverage
 
-The cutover is incomplete while the old S1–S19 and S21 assertions still call
-`/gates/:id/resume` and inspect retired stage-machine states. The S20 and S22
-ports exercise real PostgreSQL, kbbl agent and browser boundaries; the other
-cases require v15 cohort-request assertions against those same boundaries.
+`bun run test:acceptance` in `oakridge-dbos` builds the kbbl PWA and runs every
+suite below. Agent scenarios use scripted ACP agents behind a real kbbl
+process, real Git repositories and PostgreSQL; forge responses are fixture
+HTTP observations. Browser cases use Chromium against the built operator UI.
 
-The repository also retains legacy declarations outside this boundary's file
-scope: the generic stage-machine and adapter guard registry, the effect-name
-writer contract, prompt-matrix storage and validation, and the `build_cohort`
-table and projections. The stage aggregation in `decision/derive.ts` currently
-chooses cancellation before failure when both occur. That order conflicts with
-the required failure precedence, so the mixed-outcome acceptance case cannot
-pass until that decision authority changes.
+| Cases | Executable boundary |
+| --- | --- |
+| S1, S8, S9, S14, S18, S19 | `v15-full-run-shadow.test.ts`: all six stages, dependency ordering, exact final confirmation, invalid plan graphs and brief dependencies, three backend process crashes/restarts, and definition/prompt pinning after a newer definition is inserted. |
+| S2, S3, S4, S5, S8, S10, S11, S12, S15, S16, S17 | `dev-flow-e2e.test.ts`: production publication/request HTTP boundaries, forged identity variants, forge outages/recovery, revisions, merge predicates, fencing, request replay/stale-version rejection, and failure-before-cancellation propagation retaining completed results. |
+| S2, S5, S6, S7, S10, S12 | `implementation-boundaries.test.ts`: real kbbl worker retries, both builder revision routes, changed and unchanged assessment discussion, PR replacement, atomic publication/fencing and preparation recovery. |
+| S13, S16 | `v15-stage-runtime.test.ts`: concurrent roster opening/cancellation, cancellation before stage initialization, frozen membership replay, and session-free provisioning recovery. |
+| S6, S7, S12, S16 | `apply-stage-event.test.ts`: selected execution/session replay, recoverable stop intent, interruptions/retries and cancellation during unavailable IO. |
+| S15, S16 | `v15-cohort-storage.test.ts`: lost publication response replay, conflicting identity reuse, and concurrent competing publications. |
+| S20, S21, S22 | `dev-flow-browser.test.ts`: missing pinned publication prompt, refused artifact overwrite, browser run launch and exact `accept_analysis` request. |
 
-The operator must separately plan service deployment and any database reset.
-No application startup path should reset production data.
+`bun run test:unit` additionally checks the entire strict definition/compiler,
+all authored evaluator leaves, readiness and materialization, owner-local
+contention, and architecture/migration invariants. `bun run typecheck` and
+`bun run validate:definitions` check types and the committed six-stage,
+eighteen-prompt definition.
+
+Failure is evaluated before cancellation. The coordinator durably fences
+unfinished siblings before recording their stage/run's terminal outcome;
+completed artifacts and acceptance records remain intact. Repository identity
+comes from frozen cohort inputs; only the current/pending repository head and
+verified PR binding are mutable cohort fields.
+
+## Deployment handoff
+
+Stop every old backend and DBOS worker, archive run evidence needed outside
+the service, create a fresh application database, apply all numbered migrations
+and start the backend to seed v15 definitions. Use a new application version.
+There is no old-run adoption, fallback or conversion path. Migration `0018`
+refuses nonempty run or prompt ledgers and startup validates the final schema; application
+startup never resets data. Existing completed v15 migrations can restart in
+place and keep their frozen definitions and selected executions.
+
+Deployment, database reset, assessment approval and merging remain operator
+actions. The verification command is reproducible evidence, not a merge decision.

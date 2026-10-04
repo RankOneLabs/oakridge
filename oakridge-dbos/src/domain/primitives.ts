@@ -74,3 +74,7 @@ export type Result<Value, ErrorValue> =
 
 export const ok = <Value>(value: Value): Result<Value, never> => ({ ok: true, value });
 export const err = <ErrorValue>(error: ErrorValue): Result<never, ErrorValue> => ({ ok: false, error });
+
+/** Owner state stored in the durable transition ledger. */
+export type StateName = string & { readonly __brand: "StateName" };
+export type JsonObject = { readonly [key: string]: JsonValue };

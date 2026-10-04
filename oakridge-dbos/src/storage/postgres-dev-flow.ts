@@ -1,10 +1,20 @@
 import type { StageInstanceId, UnitId, CohortId } from "../domain/primitives";
-import type { DevFlowBuildCohort, ImplementationPublicationEvidence } from "../domain/cohort-pull-request";
+import type { CohortRepositoryRecord, ImplementationPublicationEvidence } from "../domain/cohort-pull-request";
 import type { PullRequest, PullRequestId, PullRequestMergeClosure, PullRequestMergeClosureId, PullRequestObservation, PullRequestObservationId, PullRequestVerificationId, StoredPullRequestObservation } from "../domain/pull-request";
 import { err, ok, type Result } from "../domain/primitives";
 import type { CurrentVerifiedCohortPullRequest, DevFlowPullRequestRepository } from "./repositories";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 import type { CohortDetail, CohortDetailContributor, OperatorRunDetail } from "../domain/operator-projections";
+
+/** Project prepared repository facts from the v15 owner; only the head lease and PR binding are mutable. */
+export const COHORT_REPOSITORY_SOURCE = `(SELECT id AS cohort_id,stage_instance_id,cohort_key,
+  frozen_inputs #>> '{repository,refs,repository_key}' AS repository_key,
+  frozen_inputs #>> '{repository,refs,repository_path}' AS repository_path,
+  frozen_inputs #>> '{repository,canonical_branch}' AS canonical_ref,
+  frozen_inputs #>> '{repository,expected_pr_base}' AS expected_pr_base,
+  repository_head_sha AS recorded_head_sha,current_verified_pull_request_id,
+  created_at,COALESCE(ended_at,started_at,created_at) AS updated_at
+  FROM oakridge.cohort WHERE repository_head_sha IS NOT NULL)`;
 
 interface DevFlowCohortDetailRow {
   readonly cohort_id: string;
@@ -25,7 +35,7 @@ export class PostgresDevFlowCohortDetailContributor implements CohortDetailContr
     const rows = await this.sql.query<DevFlowCohortDetailRow>(`SELECT build.cohort_id::text,
       request.url,observation.state,COALESCE(closure.confirmed_at,observation.merged_at)::text AS merged_at,
       verification.verified_head_sha,merged.head_sha AS merged_head_sha
-      FROM dev_flow.build_cohort build
+      FROM ${COHORT_REPOSITORY_SOURCE} build
       LEFT JOIN dev_flow.pull_request_verification verification
         ON verification.id=build.current_verified_pull_request_id AND verification.invalidated_at IS NULL
       LEFT JOIN dev_flow.pull_request request ON request.id=verification.pull_request_id
@@ -51,7 +61,7 @@ export class PostgresDevFlowCohortDetailContributor implements CohortDetailContr
 
   async cursor(): Promise<string> {
     const rows = await this.sql.query<{ readonly cursor: string }>(`SELECT GREATEST(
-      COALESCE((SELECT max(updated_at)::text FROM dev_flow.build_cohort),'0'),
+      COALESCE((SELECT max(ended_at)::text FROM oakridge.cohort),'0'),
       COALESCE((SELECT max(recorded_at)::text FROM dev_flow.pull_request_observation),'0'),
       COALESCE((SELECT max(verified_at)::text FROM dev_flow.pull_request_verification),'0'),
       COALESCE((SELECT max(confirmed_at)::text FROM dev_flow.pull_request_merge_closure),'0')) AS cursor`, []);
@@ -62,7 +72,7 @@ export class PostgresDevFlowCohortDetailContributor implements CohortDetailContr
     const rows = await this.sql.query<{ readonly cohort_id: string; readonly accepted_head_sha: string; readonly merged_head_sha: string }>(
       `SELECT build.cohort_id::text,verification.verified_head_sha AS accepted_head_sha,
               observation.head_sha AS merged_head_sha
-       FROM dev_flow.build_cohort build
+       FROM ${COHORT_REPOSITORY_SOURCE} build
        JOIN oakridge.cohort cohort ON cohort.id=build.cohort_id
        JOIN dev_flow.pull_request_verification verification ON verification.id=build.current_verified_pull_request_id
        JOIN dev_flow.pull_request_merge_closure closure ON closure.cohort_id=build.cohort_id
@@ -92,21 +102,21 @@ interface CurrentPullRequestRow {
   readonly observed_at: string; readonly merged_at: string | null; readonly recorded_at: string;
 }
 
-interface BuildCohortRow {
+interface CohortRepositoryRow {
   readonly cohort_id: string; readonly stage_instance_id: string; readonly cohort_key: string;
   readonly repository_key: string; readonly repository_path: string; readonly canonical_ref: string;
   readonly expected_pr_base: string; readonly recorded_head_sha: string;
   readonly current_verified_pull_request_id: string | null; readonly created_at: string; readonly updated_at: string;
 }
 
-const buildCohortFromRow = (row: BuildCohortRow): DevFlowBuildCohort => ({
+const cohortRepositoryFromRow = (row: CohortRepositoryRow): CohortRepositoryRecord => ({
   ...row,
   cohort_id: row.cohort_id as CohortId,
   stage_instance_id: row.stage_instance_id as StageInstanceId,
   current_verified_pull_request_id: row.current_verified_pull_request_id as PullRequestVerificationId | null,
 });
 
-const BUILD_COHORT_COLUMNS = `cohort_id::text,stage_instance_id::text,cohort_key,repository_key,repository_path,
+const COHORT_REPOSITORY_COLUMNS = `cohort_id::text,stage_instance_id::text,cohort_key,repository_key,repository_path,
   canonical_ref,expected_pr_base,recorded_head_sha,current_verified_pull_request_id::text,created_at::text,updated_at::text`;
 
 type ObservePullRequestInput = Parameters<DevFlowPullRequestRepository["observe"]>[0];
@@ -118,20 +128,31 @@ type BindVerifiedPullRequestResult = Awaited<ReturnType<DevFlowPullRequestReposi
 export class PostgresDevFlowPullRequestRepository implements DevFlowPullRequestRepository {
   constructor(private readonly sql: TransactionalSqlExecutor) {}
 
-  async create_cohort(cohort: DevFlowBuildCohort): Promise<Result<DevFlowBuildCohort,
+  async create_cohort(cohort: CohortRepositoryRecord): Promise<Result<CohortRepositoryRecord,
     { readonly kind: "cohort_not_stored" | "identity_conflict" | "storage_failed"; readonly detail: string }>> {
     try {
     return await this.sql.transaction(async (tx) => {
-      await tx.query(`INSERT INTO dev_flow.build_cohort
-        (cohort_id,stage_instance_id,cohort_key,repository_key,repository_path,canonical_ref,expected_pr_base,recorded_head_sha,created_at,updated_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (cohort_id) DO NOTHING`,
-      [cohort.cohort_id, cohort.stage_instance_id, cohort.cohort_key, cohort.repository_key, cohort.repository_path,
-        cohort.canonical_ref, cohort.expected_pr_base, cohort.recorded_head_sha, cohort.created_at, cohort.updated_at]);
-      const rows = await tx.query<BuildCohortRow>(`SELECT ${BUILD_COHORT_COLUMNS}
-        FROM dev_flow.build_cohort WHERE cohort_id=$1`, [cohort.cohort_id]);
+      const authority = await tx.query<CohortRepositoryRow>(`SELECT ${COHORT_REPOSITORY_COLUMNS}
+        FROM (SELECT id AS cohort_id,stage_instance_id,cohort_key,
+          frozen_inputs #>> '{repository,refs,repository_key}' AS repository_key,
+          frozen_inputs #>> '{repository,refs,repository_path}' AS repository_path,
+          frozen_inputs #>> '{repository,canonical_branch}' AS canonical_ref,
+          frozen_inputs #>> '{repository,expected_pr_base}' AS expected_pr_base,
+          repository_head_sha AS recorded_head_sha,current_verified_pull_request_id,created_at,created_at AS updated_at
+          FROM oakridge.cohort WHERE id=$1 FOR UPDATE) prepared`, [cohort.cohort_id]);
+      const owner = authority[0];
+      if (!owner) return err({ kind: "cohort_not_stored" as const, detail: "v15 cohort owner is missing" });
+      if (owner.stage_instance_id !== cohort.stage_instance_id || owner.cohort_key !== cohort.cohort_key
+        || owner.repository_key !== cohort.repository_key || owner.repository_path !== cohort.repository_path
+        || owner.canonical_ref !== cohort.canonical_ref || owner.expected_pr_base !== cohort.expected_pr_base)
+        return err({ kind: "identity_conflict" as const, detail: "prepared repository disagrees with frozen v15 authority" });
+      await tx.query("UPDATE oakridge.cohort SET repository_head_sha=COALESCE(repository_head_sha,$2) WHERE id=$1",
+        [cohort.cohort_id, cohort.recorded_head_sha]);
+      const rows = await tx.query<CohortRepositoryRow>(`SELECT ${COHORT_REPOSITORY_COLUMNS}
+        FROM ${COHORT_REPOSITORY_SOURCE} prepared WHERE cohort_id=$1`, [cohort.cohort_id]);
       const stored = rows[0];
       if (!stored) return err({ kind: "cohort_not_stored" as const, detail: `build cohort '${cohort.cohort_id}' was not stored` });
-      const result = buildCohortFromRow(stored);
+      const result = cohortRepositoryFromRow(stored);
       const immutableMatches = result.stage_instance_id === cohort.stage_instance_id && result.cohort_key === cohort.cohort_key
         && result.repository_key === cohort.repository_key && result.repository_path === cohort.repository_path
         && result.canonical_ref === cohort.canonical_ref && result.expected_pr_base === cohort.expected_pr_base;
@@ -144,35 +165,37 @@ export class PostgresDevFlowPullRequestRepository implements DevFlowPullRequestR
     }
   }
 
-  async advance_cohort_head(input: { readonly cohort_id: CohortId; readonly expected_head_sha: string; readonly next_head_sha: string; readonly advanced_at: string }): Promise<Result<DevFlowBuildCohort, { readonly kind: "cohort_not_found" | "ref_lease_mismatch"; readonly detail: string }>> {
-    const rows = await this.sql.query<BuildCohortRow>(`UPDATE dev_flow.build_cohort
-      SET recorded_head_sha=$3,pending_head_sha=NULL,updated_at=$4
-      WHERE cohort_id=$1 AND recorded_head_sha=$2 AND pending_head_sha=$3
-      RETURNING ${BUILD_COHORT_COLUMNS}`, [input.cohort_id, input.expected_head_sha, input.next_head_sha, input.advanced_at]);
-    if (rows[0]) return ok(buildCohortFromRow(rows[0]));
+  async advance_cohort_head(input: { readonly cohort_id: CohortId; readonly expected_head_sha: string; readonly next_head_sha: string; readonly advanced_at: string }): Promise<Result<CohortRepositoryRecord, { readonly kind: "cohort_not_found" | "ref_lease_mismatch"; readonly detail: string }>> {
+    const updated = await this.sql.query<{ readonly id: string }>(`UPDATE oakridge.cohort
+      SET repository_head_sha=$3,pending_repository_head_sha=NULL
+      WHERE id=$1 AND repository_head_sha=$2 AND pending_repository_head_sha=$3 RETURNING id::text`,
+      [input.cohort_id, input.expected_head_sha, input.next_head_sha]);
+    const rows = updated.length ? await this.sql.query<CohortRepositoryRow>(`SELECT ${COHORT_REPOSITORY_COLUMNS}
+      FROM ${COHORT_REPOSITORY_SOURCE} prepared WHERE cohort_id=$1`, [input.cohort_id]) : [];
+    if (rows[0]) return ok(cohortRepositoryFromRow(rows[0]));
     const current = await this.sql.query<{ readonly recorded_head_sha: string }>(
-      "SELECT recorded_head_sha FROM dev_flow.build_cohort WHERE cohort_id=$1", [input.cohort_id]);
+      "SELECT repository_head_sha AS recorded_head_sha FROM oakridge.cohort WHERE id=$1", [input.cohort_id]);
     if (!current[0]) return err({ kind: "cohort_not_found", detail: `build cohort '${input.cohort_id}' was not found` });
     return err({ kind: "ref_lease_mismatch", detail: `stored cohort head moved from '${input.expected_head_sha}' to '${current[0].recorded_head_sha}'` });
   }
 
   async begin_cohort_advance(input: { readonly cohort_id: CohortId; readonly expected_head_sha: string; readonly next_head_sha: string; readonly prepared_at: string }): Promise<Result<void, { readonly kind: "cohort_not_found" | "ref_lease_mismatch"; readonly detail: string }>> {
-    const rows = await this.sql.query<{ readonly cohort_id: string }>(`UPDATE dev_flow.build_cohort
-      SET pending_head_sha=$3,updated_at=$4
-      WHERE cohort_id=$1 AND recorded_head_sha=$2 AND (pending_head_sha IS NULL OR pending_head_sha=$3)
-      RETURNING cohort_id::text`, [input.cohort_id, input.expected_head_sha, input.next_head_sha, input.prepared_at]);
+    const rows = await this.sql.query<{ readonly cohort_id: string }>(`UPDATE oakridge.cohort
+      SET pending_repository_head_sha=$3
+      WHERE id=$1 AND repository_head_sha=$2 AND (pending_repository_head_sha IS NULL OR pending_repository_head_sha=$3)
+      RETURNING id::text AS cohort_id`, [input.cohort_id, input.expected_head_sha, input.next_head_sha]);
     if (rows[0]) return ok(undefined);
     const current = await this.sql.query<{ readonly recorded_head_sha: string }>(
-      "SELECT recorded_head_sha FROM dev_flow.build_cohort WHERE cohort_id=$1", [input.cohort_id]);
+      "SELECT repository_head_sha AS recorded_head_sha FROM oakridge.cohort WHERE id=$1", [input.cohort_id]);
     if (!current[0]) return err({ kind: "cohort_not_found", detail: `build cohort '${input.cohort_id}' was not found` });
     return err({ kind: "ref_lease_mismatch", detail: "another cohort ref advance is already pending or the stored head changed" });
   }
 
-  async find_cohort_for_unit(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<DevFlowBuildCohort | null> {
-    const rows = await this.sql.query<BuildCohortRow>(`SELECT ${BUILD_COHORT_COLUMNS}
-      FROM dev_flow.build_cohort WHERE stage_instance_id=$1 AND cohort_key=$2`, [stage_instance_id, unit_id]);
+  async find_cohort_for_unit(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<CohortRepositoryRecord | null> {
+    const rows = await this.sql.query<CohortRepositoryRow>(`SELECT ${COHORT_REPOSITORY_COLUMNS}
+      FROM ${COHORT_REPOSITORY_SOURCE} prepared WHERE stage_instance_id=$1 AND cohort_key=$2`, [stage_instance_id, unit_id]);
     const row = rows[0];
-    return row ? buildCohortFromRow(row) : null;
+    return row ? cohortRepositoryFromRow(row) : null;
   }
 
   async find_current_for_unit(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<CurrentVerifiedCohortPullRequest | null> {
@@ -184,7 +207,7 @@ export class PostgresDevFlowPullRequestRepository implements DevFlowPullRequestR
       pull_request.forge_pull_request_id::text,pull_request.url,pull_request.created_at::text AS pull_request_created_at,
       observation.id::text AS observation_id,observation.head_ref,observation.base_ref,observation.head_sha,
       observation.state,observation.source,observation.observed_at::text,observation.merged_at::text,observation.recorded_at::text
-      FROM dev_flow.build_cohort cohort
+      FROM ${COHORT_REPOSITORY_SOURCE} cohort
       JOIN dev_flow.pull_request_verification verification
         ON verification.id=cohort.current_verified_pull_request_id AND verification.invalidated_at IS NULL
       JOIN dev_flow.pull_request pull_request ON pull_request.id=verification.pull_request_id
@@ -194,7 +217,7 @@ export class PostgresDevFlowPullRequestRepository implements DevFlowPullRequestR
       WHERE cohort.stage_instance_id=$1 AND cohort.cohort_key=$2`, [stage_instance_id, unit_id]);
     const row = rows[0];
     if (!row) return null;
-    const cohort: DevFlowBuildCohort = {
+    const cohort: CohortRepositoryRecord = {
       cohort_id: row.cohort_id as CohortId, stage_instance_id: row.stage_instance_id as StageInstanceId,
       cohort_key: row.cohort_key, repository_key: row.repository_key, repository_path: row.repository_path,
       canonical_ref: row.canonical_ref, expected_pr_base: row.expected_pr_base, recorded_head_sha: row.recorded_head_sha,
@@ -241,8 +264,8 @@ export class PostgresDevFlowPullRequestRepository implements DevFlowPullRequestR
 
   static async bind_verified_in(tx: SqlExecutor, input: BindVerifiedPullRequestInput): Promise<BindVerifiedPullRequestResult> {
     const rows = await tx.query<{ readonly current_verified_pull_request_id: string | null }>(
-      "SELECT current_verified_pull_request_id::text FROM dev_flow.build_cohort WHERE cohort_id=$1 FOR UPDATE", [input.cohort_id]);
-    if (!rows[0]) return err({ kind: "build_cohort_not_found", detail: "build cohort is missing" });
+      "SELECT current_verified_pull_request_id::text FROM oakridge.cohort WHERE id=$1 FOR UPDATE", [input.cohort_id]);
+    if (!rows[0]) return err({ kind: "cohort_repository_not_found", detail: "build cohort is missing" });
     const current = rows[0].current_verified_pull_request_id;
     const prior = current === null ? null : (await tx.query<{ readonly pull_request_id: string }>(
       "SELECT pull_request_id::text FROM dev_flow.pull_request_verification WHERE id=$1", [current]))[0] ?? null;
@@ -258,14 +281,14 @@ export class PostgresDevFlowPullRequestRepository implements DevFlowPullRequestR
       VALUES (gen_random_uuid(),$1,$2,$3,$4,$5) RETURNING id::text`,
     [input.cohort_id, input.pull_request_id, input.observation_id, input.verified_head_sha, input.verified_at]);
     const id = inserted[0]!.id as PullRequestVerificationId;
-    await tx.query("UPDATE dev_flow.build_cohort SET current_verified_pull_request_id=$2,updated_at=$3 WHERE cohort_id=$1", [input.cohort_id, id, input.verified_at]);
+    await tx.query("UPDATE oakridge.cohort SET current_verified_pull_request_id=$2 WHERE id=$1", [input.cohort_id, id]);
     return ok({ id, binding: current === null ? "created" : isHeadAdvance ? "head_advanced" : "replaced" });
   }
 
   async confirm_merge(input: { readonly cohort_id: CohortId; readonly pull_request_id: PullRequestId; readonly idempotency_key: string; readonly merged_at: string; readonly confirmed_at: string }): Promise<Result<{ readonly kind: "created" | "replayed"; readonly closure: PullRequestMergeClosure }, { readonly kind: "idempotency_conflict" | "pull_request_not_current" | "missing_merged_evidence"; readonly detail: string }>> {
     return this.sql.transaction(async (tx) => {
       const cohorts = await tx.query<{ readonly current_verified_pull_request_id: string | null }>(
-        "SELECT current_verified_pull_request_id::text FROM dev_flow.build_cohort WHERE cohort_id=$1 FOR UPDATE", [input.cohort_id]);
+        "SELECT current_verified_pull_request_id::text FROM oakridge.cohort WHERE id=$1 FOR UPDATE", [input.cohort_id]);
       if (!cohorts[0]?.current_verified_pull_request_id) return err({ kind: "pull_request_not_current", detail: "cohort has no current verified pull request" });
       const existing = await tx.query<{ readonly id: string; readonly cohort_id: string; readonly pull_request_id: string; readonly idempotency_key: string; readonly merged_at: string; readonly confirmed_at: string }>(
         "SELECT id::text,cohort_id::text,pull_request_id::text,idempotency_key,merged_at::text,confirmed_at::text FROM dev_flow.pull_request_merge_closure WHERE cohort_id=$1 FOR UPDATE", [input.cohort_id]);
@@ -314,9 +337,9 @@ export const recordImplementationPublicationIn = async (tx: SqlExecutor, input: 
     return err({ code: "pr_verification_failed", detail: "verified PR evidence disagrees with the pushed head" });
   const current = await tx.query<{ readonly pull_request_id: string; readonly verified_head_sha: string }>(
     `SELECT verification.pull_request_id::text,verification.verified_head_sha
-     FROM dev_flow.build_cohort cohort
+     FROM ${COHORT_REPOSITORY_SOURCE} cohort
      LEFT JOIN dev_flow.pull_request_verification verification ON verification.id=cohort.current_verified_pull_request_id
-     WHERE cohort.cohort_id=$1 FOR UPDATE OF cohort`, [input.cohort_id]);
+     WHERE cohort.cohort_id=$1`, [input.cohort_id]);
   const stored = await PostgresDevFlowPullRequestRepository.observe_in(tx, { observation, recorded_at: input.at });
   if (evidence.replace_verification_id !== null
     && (observation.state !== "open" || current[0]?.pull_request_id === stored.pull_request_id))

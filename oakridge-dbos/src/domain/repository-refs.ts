@@ -1,4 +1,4 @@
-import type { JsonObject } from "./stage-machine";
+import type { JsonObject } from "./primitives";
 import type { JsonValue, StageInstanceId } from "./primitives";
 import { err, ok, type Result } from "./primitives";
 import type { FinalMergePolicy, ForgeRepositoryIdentity } from "./epic";

@@ -9,7 +9,7 @@ import { createScratchDatabase, type ScratchDatabase } from "./support/durable-d
 
 const MIGRATIONS = new URL("../src/storage/migrations", import.meta.url).pathname;
 const BASELINE = "0015_v15_baseline.sql";
-const MIGRATION_SET = [BASELINE, "0016_v15_worker_ownership.sql", "0017_v15_operation_execution.sql"];
+const MIGRATION_SET = [BASELINE, "0016_v15_worker_ownership.sql", "0017_v15_operation_execution.sql", "0018_v15_clean_cutover.sql"];
 
 test("v15 worker ownership follows the immutable baseline", async () => {
   expect(migrationNames(await readdir(MIGRATIONS))).toEqual(MIGRATION_SET);
@@ -77,7 +77,7 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
     await sql.query(`INSERT INTO oakridge.cohort
       (id,run_id,stage_instance_id,cohort_key,status,frozen_inputs)
       VALUES ('00000000-0000-4000-8000-000000000005','00000000-0000-4000-8000-000000000002',
-        '00000000-0000-4000-8000-000000000003','core','active','{"version":1}')`, []);
+        '00000000-0000-4000-8000-000000000003','core','active','{"repository":{"refs":{"repository_key":"oakridge","repository_path":"/repo/oakridge"},"canonical_branch":"cohort/core","expected_pr_base":"epic/oakridge"}}')`, []);
     const cohortId = "00000000-0000-4000-8000-000000000005" as CohortId;
     const pullRequests = new PostgresDevFlowPullRequestRepository(sql);
     await pullRequests.create_cohort({ cohort_id: cohortId,
@@ -88,14 +88,14 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
     await sql.query(`INSERT INTO oakridge.cohort
       (id,run_id,stage_instance_id,cohort_key,status,frozen_inputs)
       VALUES ('00000000-0000-4000-8000-000000000055','00000000-0000-4000-8000-000000000002',
-        '00000000-0000-4000-8000-000000000003','web','active','{"brief_notes":"fixture","repositories":[]}')`, []);
+        '00000000-0000-4000-8000-000000000003','web','active','{"repository":{"refs":{"repository_key":"web","repository_path":"/repo/web"},"canonical_branch":"cohort/web","expected_pr_base":"release/web"}}')`, []);
     await pullRequests.create_cohort({ cohort_id: "00000000-0000-4000-8000-000000000055" as CohortId,
       stage_instance_id: "00000000-0000-4000-8000-000000000003" as import("../src/domain/primitives").StageInstanceId,
       cohort_key: "web", repository_key: "web", repository_path: "/repo/web", canonical_ref: "cohort/web",
       expected_pr_base: "release/web", recorded_head_sha: "head-web", current_verified_pull_request_id: null,
       created_at: "2026-09-29T09:00:00Z", updated_at: "2026-09-29T09:00:00Z" });
     expect(await sql.query<{ readonly repository_key: string; readonly expected_pr_base: string }>(
-      "SELECT repository_key,expected_pr_base FROM dev_flow.build_cohort ORDER BY cohort_key", []))
+      "SELECT frozen_inputs #>> '{repository,refs,repository_key}' AS repository_key,frozen_inputs #>> '{repository,expected_pr_base}' AS expected_pr_base FROM oakridge.cohort ORDER BY cohort_key", []))
       .toEqual([{ repository_key: "oakridge", expected_pr_base: "epic/oakridge" }, { repository_key: "web", expected_pr_base: "release/web" }]);
 
     const observed = (head_sha: string) => ({ provider: "github" as const, owner: "RankOneLabs", name: "oakridge", number: 42,
@@ -279,5 +279,38 @@ test("an applied worker-ownership schema is rejected when its required columns d
     await expect(applyMigrations(sql)).rejects.toThrow("cohort.state, cohort.depends_on");
     await expect(applyMigrations(sql)).rejects.toThrow("run_transition.event, run_transition.from_state, run_transition.to_state, run_transition.effects_started_at");
     await expect(applyMigrations(sql)).rejects.toThrow("attempt.request (nullable)");
+  } finally { await sql.close(); }
+});
+
+
+test("an applied clean-cutover ledger rejects a retained adapter cohort table", async () => {
+  const scratch = await createScratchDatabase("oakridge_v15_cutover_divergence");
+  if (!scratch.ok) throw new Error(scratch.error.detail);
+  scratches.push(scratch.value);
+  const sql = PgPostgresExecutor.connect(scratch.value.url);
+  try {
+    await applyMigrations(sql);
+    await sql.query("CREATE TABLE dev_flow.build_cohort (cohort_id uuid)", []);
+    await expect(applyMigrations(sql)).rejects.toThrow("0018_v15_clean_cutover.sql schema diverges");
+  } finally { await sql.close(); }
+});
+
+
+test("clean cutover refuses an existing prompt ledger without deleting or converting it", async () => {
+  const scratch = await createScratchDatabase("oakridge_v15_cutover_refusal");
+  if (!scratch.ok) throw new Error(scratch.error.detail);
+  scratches.push(scratch.value);
+  const sql = PgPostgresExecutor.connect(scratch.value.url);
+  try {
+    await sql.query("CREATE TABLE public.oakridge_schema_migration (name text PRIMARY KEY,applied_at timestamptz NOT NULL)", []);
+    for (const name of MIGRATION_SET.slice(0, -1)) await sql.transaction(async (tx) => {
+      await tx.query(await Bun.file(`${MIGRATIONS}/${name}`).text(), []);
+      await tx.query("INSERT INTO public.oakridge_schema_migration VALUES ($1,now())", [name]);
+    });
+    await sql.query("INSERT INTO oakridge.prompt_bundle (hash,version,matrix) VALUES ('retained',1,'[]')", []);
+    await expect(applyMigrations(sql)).rejects.toThrow("0018 requires an empty v15 run and prompt ledger");
+    expect(await sql.query("SELECT hash,version,matrix FROM oakridge.prompt_bundle", []))
+      .toEqual([{ hash: "retained", version: 1, matrix: [] }]);
+    expect(await sql.query("SELECT name FROM public.oakridge_schema_migration WHERE name='0018_v15_clean_cutover.sql'", [])).toEqual([]);
   } finally { await sql.close(); }
 });

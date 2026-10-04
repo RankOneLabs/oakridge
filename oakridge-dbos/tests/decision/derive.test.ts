@@ -50,7 +50,7 @@ test("all complete cohorts complete their stage on the stage version", () => {
   });
 });
 
-test("a cancelled cohort wins over a failed cohort in the same active stage", () => {
+test("a failed cohort wins over a cancelled cohort in the same active stage", () => {
   const value = stage(1, { status: "active", durable_version: 6, cohorts: [
     cohort(1, { status: "failed", outcome: { reason: "failed" } }),
     cohort(2, { status: "cancelled", outcome: { reason: "operator" } }),
@@ -61,7 +61,7 @@ test("a cancelled cohort wins over a failed cohort in the same active stage", ()
     run_id: RUN_ID,
     stage_instance_id: value.id,
     expected_version: 6,
-    change: { status: "cancelled", blocked_reason: null, next_actor: null, outcome: { reason: "operator" } },
+    change: { status: "failed", blocked_reason: null, next_actor: null, outcome: { reason: "failed" } },
     effect: { kind: "none" },
   }]);
 });
@@ -87,7 +87,7 @@ test("completed stages complete the run against the run record version", () => {
   });
 });
 
-test("a cancelled stage deterministically wins over a failed stage", () => {
+test("a failed stage deterministically wins over a cancelled stage", () => {
   const result = derive(snapshot([
     stage(1, { status: "failed", outcome: { code: "failed" } }),
     stage(2, { status: "cancelled", outcome: { reason: "operator" } }),
@@ -95,7 +95,7 @@ test("a cancelled stage deterministically wins over a failed stage", () => {
   expect(result.ok && result.value.commands[0]).toMatchObject({
     kind: "transition_run",
     expected_version: 9,
-    change: { status: "cancelled", outcome: { reason: "operator" } },
+    change: { status: "failed", outcome: { code: "failed" } },
   });
 });
 
@@ -153,8 +153,10 @@ test("all six statuses across the six-stage graph follow the table-free run orac
     }));
     const cancelled = selected.indexOf("cancelled");
     const failed = selected.indexOf("failed");
-    const expected: typeof actual = cancelled >= 0 ? [{ kind: "transition_run", target: RUN_ID, status: "cancelled" }]
-      : failed >= 0 ? [{ kind: "transition_run", target: RUN_ID, status: "failed" }]
+    const unfinished = selected.flatMap((status, index) => ["pending", "active", "blocked"].includes(status)
+      ? [{ kind: "transition_stage" as const, target: stageId(index + 1), status: "cancelled" as const }] : []);
+    const expected: typeof actual = failed >= 0 ? [...unfinished, { kind: "transition_run", target: RUN_ID, status: "failed" }]
+      : cancelled >= 0 ? [...unfinished, { kind: "transition_run", target: RUN_ID, status: "cancelled" }]
         : selected.every((status) => status === "complete") ? [{ kind: "transition_run", target: RUN_ID, status: "complete" }]
           : selected.flatMap((status, index) => status === "pending"
             && dependencies[index]!.every((dependency) => selected[dependency] === "complete")

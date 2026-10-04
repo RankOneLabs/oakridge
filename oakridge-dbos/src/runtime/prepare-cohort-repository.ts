@@ -4,7 +4,7 @@ import { err, ok, type CohortId, type Result } from "../domain/primitives";
 import type { GitCommandRunner } from "../domain/repository-provisioning";
 import type { SqlExecutor } from "../storage/sql-executor";
 import type { DevFlowPullRequestRepository } from "../storage/repositories";
-import { prepareDevFlowBuildCohort } from "./cohort-pull-request";
+import { prepareCohortRepositoryRecord } from "./cohort-pull-request";
 import { prepareFinalIntegrationWorktree } from "./final-integration";
 export interface CohortPreparationDependencies { readonly sql: SqlExecutor; readonly git: GitCommandRunner;
   readonly pull_requests: DevFlowPullRequestRepository; readonly now: () => string }
@@ -26,7 +26,7 @@ export const prepareCohortRepository = async (dependencies: CohortPreparationDep
       const repository = row.frozen_inputs.repository;
       if (repository.worktree_base_sha) return existsSync(repository.worktree_path)
         ? ok(undefined) : err({ detail: "prepared cohort worktree is missing" });
-      const prepared = await prepareDevFlowBuildCohort({ pull_requests: dependencies.pull_requests, git: dependencies.git }, {
+      const prepared = await prepareCohortRepositoryRecord({ pull_requests: dependencies.pull_requests, git: dependencies.git }, {
         cohort_id, stage_instance_id: row.stage_instance_id, cohort_key: row.cohort_key,
         repository: row.frozen_inputs.repository.refs, prepared_at: dependencies.now(),
       });

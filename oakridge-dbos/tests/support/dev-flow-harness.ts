@@ -34,6 +34,7 @@ import { createOakridgeRuntime, type OakridgeRuntime } from "../../src/runtime/c
 import { GithubPullRequestReader } from "../../src/runtime/github-pull-requests";
 import { applyMigrations } from "../../src/storage/migrate";
 import { PgPostgresExecutor } from "../../src/storage/sql-executor";
+import type { ScratchDatabase } from "./durable-database";
 import type { SqlExecutor } from "../../src/storage/sql-executor";
 import { loadDevFlowV15 } from "../../src/seed/dev-flow-v15";
 
@@ -182,19 +183,19 @@ let activeForgeRefs: Map<string, { readonly head_branch: string; readonly base_b
 export const removePinnedPromptCell = async (
   sql: SqlExecutor, run_id: WorkflowRunId, stage_key: string, role: string, reason: string,
 ): Promise<() => Promise<void>> => {
-  const rows = await sql.query<{ readonly hash: string; readonly matrix: readonly PromptBundleEntry[] }>(
-    `SELECT bundle.hash,bundle.matrix FROM oakridge.workflow_run run
+  const rows = await sql.query<{ readonly hash: string; readonly entries: readonly PromptBundleEntry[] }>(
+    `SELECT bundle.hash,bundle.entries FROM oakridge.workflow_run run
      JOIN oakridge.prompt_bundle bundle ON bundle.hash=run.bundle_pin->>'prompt_bundle_hash'
      WHERE run.id=$1`, [run_id]);
   const bundle = rows[0];
   if (!bundle) throw new Error(`run '${run_id}' has no bound prompt bundle`);
-  const reduced = bundle.matrix.filter((cell) => !(cell.stage_key === stage_key
-    && cell.session_role === role && cell.launch_reason === reason));
-  if (reduced.length === bundle.matrix.length) throw new Error(`prompt cell ${stage_key}:${role}:${reason} is missing`);
-  await sql.query("UPDATE oakridge.prompt_bundle SET matrix=$2::jsonb WHERE hash=$1",
+  const reduced = bundle.entries.filter((cell) => !(cell.stage_key === stage_key
+    && cell.worker === role && cell.action_point === reason));
+  if (reduced.length === bundle.entries.length) throw new Error(`prompt cell ${stage_key}:${role}:${reason} is missing`);
+  await sql.query("UPDATE oakridge.prompt_bundle SET entries=$2::jsonb WHERE hash=$1",
     [bundle.hash, JSON.stringify(reduced)]);
-  return async () => { await sql.query("UPDATE oakridge.prompt_bundle SET matrix=$2::jsonb WHERE hash=$1",
-    [bundle.hash, JSON.stringify(bundle.matrix)]); };
+  return async () => { await sql.query("UPDATE oakridge.prompt_bundle SET entries=$2::jsonb WHERE hash=$1",
+    [bundle.hash, JSON.stringify(bundle.entries)]); };
 };
 
 /** The one branch the harness's runs provision and build on. */
@@ -356,6 +357,7 @@ export interface IntegrationRuntime {
 }
 
 export interface InstallIntegrationRuntimeOptions {
+  readonly scratch_database?: ScratchDatabase;
   /**
    * Overrides the prompt-template root the runtime is built with. Scenario 8
    * (spec §5.2) needs a *writable* copy of `workflow-config/prompts` so it can
@@ -383,7 +385,7 @@ export const installIntegrationRuntime = async (databaseUrl: string, options: In
     const databaseName = new URL(databaseUrl).pathname.replace(/^\//, "");
     const isDedicatedLocalDatabase = databaseName === "oakridge_e2e";
     const isDisposableCiDatabase = process.env.CI === "true" && process.env.OAKRIDGE_TEST_DATABASE_URL === databaseUrl;
-    if (!isDedicatedLocalDatabase && !isDisposableCiDatabase && process.env.OAKRIDGE_TEST_ALLOW_SCHEMA_DROP !== "1") {
+    if (options.scratch_database?.url !== databaseUrl && !isDedicatedLocalDatabase && !isDisposableCiDatabase && process.env.OAKRIDGE_TEST_ALLOW_SCHEMA_DROP !== "1") {
       throw new Error(`refusing to drop schema 'oakridge' in database '${databaseName}': set OAKRIDGE_TEST_ALLOW_SCHEMA_DROP=1 to confirm it is disposable`);
     }
     await migrationSql.query("DROP SCHEMA IF EXISTS dev_flow CASCADE", []);

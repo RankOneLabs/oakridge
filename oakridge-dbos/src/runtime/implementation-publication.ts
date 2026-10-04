@@ -1,3 +1,4 @@
+import { COHORT_REPOSITORY_SOURCE } from "../storage/postgres-dev-flow";
 import { err, ok, type AttemptId, type JsonValue, type Result, type UnitId, type WorkflowRunId } from "../domain/primitives";
 import { parseGithubPullRequestIdentity, repositoriesMatch } from "../domain/pull-request";
 import type { GitCommandRunner } from "../domain/repository-provisioning";
@@ -55,7 +56,7 @@ export const createImplementationPublicationEnricher = (dependencies: Implementa
     const rows = await sql.query<ImplementationPublicationRow>(
       `SELECT attempt.run_id,build.repository_key,build.repository_path,build.canonical_ref,build.expected_pr_base,
          build.stage_instance_id,build.cohort_key,intent.action_point
-       FROM oakridge.attempt attempt JOIN dev_flow.build_cohort build ON build.cohort_id=attempt.cohort_id
+       FROM oakridge.attempt attempt JOIN ${COHORT_REPOSITORY_SOURCE} build ON build.cohort_id=attempt.cohort_id
        JOIN oakridge.execution_intent intent ON intent.attempt_id=attempt.id
        WHERE attempt.id=$1`, [input.attempt_id]);
     const roles = rows[0];

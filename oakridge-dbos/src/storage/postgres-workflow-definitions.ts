@@ -9,7 +9,7 @@ import type { WorkflowDefinition as V15WorkflowDefinition } from "../domain/dev-
 import { compileV15WorkflowDefinition, type V15PromptBundle } from "../compiler/compile-v15";
 
 interface DefinitionRow { readonly id: WorkflowDefinitionId; readonly name: string; readonly version: number; readonly definition: unknown; readonly archived: boolean; readonly created_at: string }
-interface PromptBundleRow { readonly hash: string; readonly version: number; readonly matrix: PromptBundle["matrix"] }
+interface PromptBundleRow { readonly hash: string; readonly version: number; readonly entries: PromptBundle["entries"] }
 
 const v15DefinitionId = (definition: Pick<V15WorkflowDefinition, "key" | "version">): WorkflowDefinitionId => {
   const hex = createHash("sha256").update(`workflow-definition:${definition.key}:${definition.version}`).digest("hex").slice(0, 32);
@@ -18,20 +18,20 @@ const v15DefinitionId = (definition: Pick<V15WorkflowDefinition, "key" | "versio
 
 const decodePromptBundleRow = (row: PromptBundleRow): PromptBundle => {
   if (row.version !== 1) throw new Error(`prompt bundle '${row.hash}' has unsupported version ${row.version}; expected 1`);
-  return { hash: row.hash, version: 1, matrix: row.matrix };
+  return { hash: row.hash, version: 1, entries: row.entries };
 };
 
 const insertPromptBundle = async (sql: SqlExecutor, bundle: PromptBundle): Promise<PromptBundle> => {
   const rows = await sql.query<PromptBundleRow>(
-    `INSERT INTO oakridge.prompt_bundle (hash,version,matrix) VALUES ($1,$2,$3::jsonb)
+    `INSERT INTO oakridge.prompt_bundle (hash,version,entries) VALUES ($1,$2,$3::jsonb)
      ON CONFLICT (hash) DO UPDATE SET hash=EXCLUDED.hash
-     WHERE oakridge.prompt_bundle.version=EXCLUDED.version AND oakridge.prompt_bundle.matrix=EXCLUDED.matrix
-     RETURNING hash,version,matrix`,
+     WHERE oakridge.prompt_bundle.version=EXCLUDED.version AND oakridge.prompt_bundle.entries=EXCLUDED.entries
+     RETURNING hash,version,entries`,
     // Serialised here, not handed over as an array: `pg` renders a JS array as a
     // PostgreSQL *array* literal (`{"a","b"}`), which `::jsonb` then rejects as
-    // malformed JSON. The prompt matrix is the one jsonb column in this module
+    // malformed JSON. The prompt entries are the one jsonb column in this module
     // whose value is an array, so it is the one that hit it.
-    [bundle.hash, bundle.version, JSON.stringify(bundle.matrix)],
+    [bundle.hash, bundle.version, JSON.stringify(bundle.entries)],
   );
   const row = rows[0];
   if (!row) throw new Error(`prompt bundle '${bundle.hash}' conflicts with stored content`);
@@ -74,12 +74,7 @@ export class PostgresWorkflowDefinitionRepository implements WorkflowDefinitionR
          RETURNING id::text`, [definitionId, definition.key, definition.version, JSON.stringify(definition)]);
       const row = rows[0];
       if (!row) throw new Error(`v15 definition ${definition.key}@${definition.version} conflicts with immutable stored content`);
-      // The existing prompt-bundle table stores the compiled worker/action
-      // coordinates, with no role registry or executable conversion involved.
-      const bundle: PromptBundle = { version: 1, hash: prompts.hash, matrix: prompts.entries.map((entry) => ({
-        stage_key: entry.stage_key, session_role: entry.worker, launch_reason: entry.action_point,
-        template_path: entry.path, content: entry.content,
-      })) };
+      const bundle: PromptBundle = { version: 1, hash: prompts.hash, entries: prompts.entries };
       await insertPromptBundle(transaction, bundle);
       await bindPromptBundle(transaction, row.id as WorkflowDefinitionId, prompts.hash);
     });
@@ -87,7 +82,7 @@ export class PostgresWorkflowDefinitionRepository implements WorkflowDefinitionR
 
   async insert_immutable(record: WorkflowDefinition, promptBundle: PromptBundle): Promise<WorkflowDefinition> {
     const compiled = await compileV15WorkflowDefinition(record.definition, { async load(path) {
-      const entry = promptBundle.matrix.find((candidate) => candidate.template_path === path);
+      const entry = promptBundle.entries.find((candidate) => candidate.path === path);
       if (!entry) throw new Error(`pinned prompt '${path}' is missing`);
       return entry.content;
     } });
@@ -109,14 +104,14 @@ export class PostgresWorkflowDefinitionRepository implements WorkflowDefinitionR
 
   async find_prompt_bundle(hash: string): Promise<PromptBundle | null> {
     const rows = await this.sql.query<PromptBundleRow>(
-      "SELECT hash,version,matrix FROM oakridge.prompt_bundle WHERE hash=$1", [hash]);
+      "SELECT hash,version,entries FROM oakridge.prompt_bundle WHERE hash=$1", [hash]);
     const row = rows[0];
     return row ? decodePromptBundleRow(row) : null;
   }
 
   async find_bound_prompt_bundle(definition_id: WorkflowDefinitionId): Promise<PromptBundle | null> {
     const rows = await this.sql.query<PromptBundleRow>(
-      `SELECT bundle.hash,bundle.version,bundle.matrix
+      `SELECT bundle.hash,bundle.version,bundle.entries
        FROM oakridge.workflow_definition_prompt_bundle binding
        JOIN oakridge.prompt_bundle bundle ON bundle.hash=binding.prompt_bundle_hash
        WHERE binding.workflow_definition_id=$1`, [definition_id]);

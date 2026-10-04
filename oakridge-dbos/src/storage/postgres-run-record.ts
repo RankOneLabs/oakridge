@@ -5,9 +5,8 @@ import type { RunSnapshot } from "../decision/snapshot";
 import { err, ok, type Result, type RunTransitionId, type SessionId, type WorkflowRunId } from "../domain/primitives";
 import type { CoreStatus } from "../domain/records";
 import type { JsonValue } from "../domain/primitives";
-import type { StateName } from "../domain/stage-machine";
+import type { StateName } from "../domain/primitives";
 import type { RunTransitionRecord, SessionStatusWrite, TransitionEffectDescriptor, TransitionLaunchReason, TransitionOwner } from "../domain/run-record";
-import type { AdapterRegistry } from "../runtime/executor-registry";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 import { attemptIdFor } from "../decision/ids";
 import type { AgentSettings, AssessmentResponse, BuildResponse, BriefCollection, InterruptedExecution,
@@ -154,17 +153,9 @@ const ownerTable = (owner: TransitionOwner): { readonly table: "workflow_run" | 
   return { table: "cohort", version_column: "durable_version" };
 };
 
-const checkedEffect = (
-  registry: AdapterRegistry,
-  effect: TransitionEffectDescriptor,
-  actor: string,
-): Result<TransitionEffectDescriptor, CommitTransitionError> => {
-  if (CORE_EFFECT_NAMES.has(effect.kind)) return ok(effect);
-  const dispatched = registry.dispatch(effect.kind, effect, actor);
-  if (!dispatched.ok) return err({ kind: "invalid_effect", effect_name: effect.kind,
-    detail: "detail" in dispatched.error ? dispatched.error.detail : dispatched.error.kind });
-  return ok(dispatched.value.effect);
-};
+const checkedEffect = (effect: TransitionEffectDescriptor): Result<TransitionEffectDescriptor, CommitTransitionError> =>
+  CORE_EFFECT_NAMES.has(effect.kind) ? ok(effect) : err({ kind: "invalid_effect", effect_name: effect.kind,
+    detail: "only typed core ledger effects are supported" });
 
 const updateOwner = async (
   tx: SqlExecutor,
@@ -177,7 +168,7 @@ const updateOwner = async (
     input.change.next_actor, input.change.outcome === null ? null : JSON.stringify(input.change.outcome), input.changed_at];
   if (input.owner.kind !== "run") parameters.push(input.run_id);
   if (input.owner.kind === "cohort") {
-    parameters.push(input.cohort_state ?? null);
+    parameters.push(input.cohort_state ?? (input.change.status === "cancelled" ? "cancelled" : null));
   }
   const stageDataAssignment = input.owner.kind === "cohort"
     ? ",state=COALESCE($9::text,state)"
@@ -192,7 +183,19 @@ const updateOwner = async (
      RETURNING ${target.version_column}::text AS version,status`,
     parameters,
   );
-  if (rows[0]) return ok(Number(rows[0].version));
+  if (rows[0]) {
+    if (input.owner.kind === "cohort" && input.change.status === "cancelled") {
+      // Cancellation's fixed storage meaning revokes publication before its
+      // containing stage/run can publish a terminal outcome. Stop IO recovers.
+      await tx.query("UPDATE oakridge.cohort_worker SET state='cancelled',active_execution_id=NULL WHERE cohort_id=$1", [input.owner.id]);
+      await tx.query("UPDATE oakridge.cohort SET activation_slot=NULL WHERE id=$1", [input.owner.id]);
+      await tx.query(`UPDATE oakridge.execution_intent SET stop_requested_at=COALESCE(stop_requested_at,$2::timestamptz),
+        status=CASE WHEN status='pending' THEN 'cancelled' ELSE status END WHERE cohort_id=$1`, [input.owner.id, input.changed_at]);
+      await tx.query(`UPDATE oakridge.session SET fenced_at=COALESCE(fenced_at,$2::timestamptz)
+        WHERE attempt_id IN (SELECT id FROM oakridge.attempt WHERE cohort_id=$1)`, [input.owner.id, input.changed_at]);
+    }
+    return ok(Number(rows[0].version));
+  }
   const current = await tx.query<VersionRow>(
     `SELECT ${target.version_column}::text AS version,status FROM oakridge.${target.table} WHERE id=$1`, [input.owner.id]);
   if (!current[0]) return err({ kind: "owner_not_found", owner: input.owner });
@@ -246,9 +249,9 @@ class DecisionTransactionAbort extends Error {
   constructor(readonly reason: CommitTransitionError) { super("decision transaction aborted"); }
 }
 
-export const commitTransitionIn = async (tx: SqlExecutor, registry: AdapterRegistry,
+export const commitTransitionIn = async (tx: SqlExecutor,
   input: CommitTransitionInput): Promise<Result<CommittedTransition, CommitTransitionError>> => {
-  const effect = checkedEffect(registry, input.effect, input.actor);
+  const effect = checkedEffect(input.effect);
   if (!effect.ok) return effect;
   const version = await updateOwner(tx, input);
   if (!version.ok) return version;
@@ -257,14 +260,14 @@ export const commitTransitionIn = async (tx: SqlExecutor, registry: AdapterRegis
 
 /** The only writer for run, stage-instance, and cohort lifecycle status. */
 export class PostgresRunRecordWriter {
-  constructor(private readonly sql: TransactionalSqlExecutor, private readonly registry: AdapterRegistry) {}
+  constructor(private readonly sql: TransactionalSqlExecutor) {}
 
   commit(input: CommitTransitionInput): Promise<Result<CommittedTransition, CommitTransitionError>> {
-    return this.sql.transaction((tx) => commitTransitionIn(tx, this.registry, input));
+    return this.sql.transaction((tx) => commitTransitionIn(tx, input));
   }
 
   commit_in(tx: SqlExecutor, input: CommitTransitionInput): Promise<Result<CommittedTransition, CommitTransitionError>> {
-    return commitTransitionIn(tx, this.registry, input);
+    return commitTransitionIn(tx, input);
   }
 
   /** Load, derive, and apply one whole-run decision under a single transaction. */
@@ -276,7 +279,7 @@ export class PostgresRunRecordWriter {
         const derivation = (input.decide_snapshot ?? derive)(snapshot.value);
         if (!derivation.ok) return derivation;
         const commits = derivation.value.commands.map((command) => transitionInputFor(command, input));
-        const effects = commits.map((commit) => checkedEffect(this.registry, commit.effect, commit.actor));
+        const effects = commits.map((commit) => checkedEffect(commit.effect));
         const invalid = effects.find((effect) => !effect.ok);
         if (invalid && !invalid.ok) throw new DecisionTransactionAbort(invalid.error);
         const transitions: CommittedTransition[] = [];

@@ -90,7 +90,7 @@ export interface CohortRecord {
   readonly run_id: WorkflowRunId;
   readonly stage_instance_id: StageInstanceId;
   readonly cohort_key: string;
-  readonly state: import("./stage-machine").StateName;
+  readonly state: import("./primitives").StateName;
   readonly round: number;
   readonly depends_on: readonly string[];
   readonly status: CoreStatus;

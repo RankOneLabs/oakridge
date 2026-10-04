@@ -1,5 +1,6 @@
 import { parseReviewArtifact } from "../validation/review-artifacts";
-import { validateBriefCollection } from "../decision/schedule-cohorts";
+import type { PlanningInputs } from "../domain/dev-flow-v15";
+import { validatePlanCohorts, validateBriefCollection } from "../decision/schedule-cohorts";
 import type { PlanBody } from "../domain/dev-flow-artifacts";
 import { isDeepStrictEqual } from "node:util";
 import { artifactRefFromRevision } from "../domain/dev-flow-v15";
@@ -276,7 +277,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
            JOIN oakridge.cohort cohort ON cohort.id=intent.cohort_id
            JOIN oakridge.stage_instance stage ON stage.id=attempt.stage_instance_id
            JOIN oakridge.workflow_run run ON run.id=attempt.run_id
-           WHERE intent.attempt_id=$1`, [request.attempt_id]);
+           WHERE intent.attempt_id=$1 FOR UPDATE OF cohort`, [request.attempt_id]);
         const owner = rows[0];
         if (!owner) return { kind: "work_not_found", detail: "attempt has no selected worker execution" };
         if (request.capability_hash !== expected) return { kind: "invalid_capability", detail: "work-order capability is invalid" };
@@ -334,6 +335,14 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         if (!declared) return { kind: "slot_not_found", detail: `worker ${owner.worker} does not declare ${request.output_name}` };
         const validated = parseReviewArtifact(declared.type, request.body);
         if (!validated.ok) return { kind: "refused", code: "invalid_artifact_body", detail: validated.error.detail };
+        if (validated.value?.type === "dev.plan") {
+          const rows = await tx.query<{ readonly frozen_inputs: PlanningInputs }>(
+            "SELECT frozen_inputs FROM oakridge.cohort WHERE id=$1", [owner.cohort_id]);
+          const inputs = rows[0]?.frozen_inputs;
+          if (!inputs) return { kind: "refused", code: "missing_plan_inputs", detail: "planning cohort has no frozen inputs" };
+          const graph = validatePlanCohorts(validated.value.body, new Set(inputs.repositories.map((repository) => repository.repository_key)));
+          if (!graph.ok) return { kind: "refused", code: "invalid_plan_graph", detail: graph.error.detail };
+        }
         if (validated.value?.type === "dev.build_brief") {
           const plans = await tx.query<{ readonly body: PlanBody }>(`SELECT artifact.body FROM oakridge.cohort cohort
             JOIN oakridge.artifact artifact ON artifact.chain_id=(cohort.frozen_inputs #>> '{plan,id}')::uuid

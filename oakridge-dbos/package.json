@@ -7,8 +7,8 @@
     "migrate": "bun run src/migrate.ts",
     "start": "bun run src/main.ts",
     "test": "bun run test:unit",
-    "test:unit": "find src tests -name '*.test.ts' ! -name 'dev-flow-e2e.test.ts' -print0 | xargs -0 -n1 bun test",
-    "test:acceptance": "bun run --filter kbbl build:pwa && OAKRIDGE_ACCEPTANCE=1 bun test tests/dev-flow-e2e.test.ts",
+    "test:unit": "find src tests -name '*.test.ts' ! -name 'dev-flow-e2e.test.ts' ! -name 'dev-flow-browser.test.ts' -print0 | xargs -0 -n1 bun test",
+    "test:acceptance": "bun run --filter kbbl build:pwa && OAKRIDGE_ACCEPTANCE=1 bun test tests/dev-flow-browser.test.ts && bun test tests/dev-flow-e2e.test.ts && bun test tests/v15-full-run-shadow.test.ts && bun test tests/implementation-boundaries.test.ts && bun test tests/v15-stage-runtime.test.ts && bun test tests/apply-stage-event.test.ts && bun test tests/v15-cohort-storage.test.ts",
     "validate:definitions": "bun run src/validation/validate-definition-files.ts",
     "typecheck": "bunx tsc --noEmit -p tsconfig.json"
   },

@@ -1,17 +1,11 @@
 import { createHash } from "node:crypto";
-import type { StageKey, V15WorkerKey, WorkflowDefinition } from "../domain/dev-flow-v15";
+import type { V15WorkerKey, WorkflowDefinition } from "../domain/dev-flow-v15";
 import { err, ok, type Result } from "../domain/primitives";
 import type { PromptTemplateLoader } from "../runtime/prompt-template";
 import { parseV15WorkflowDefinition, type V15DefinitionError, V15_STAGE_KEYS } from "../validation/v15-definition";
 
-export interface V15PromptReference {
-  readonly stage_key: StageKey;
-  readonly worker: V15WorkerKey;
-  readonly action_point: string;
-  readonly path: string;
-}
-export interface V15PromptEntry extends V15PromptReference { readonly content: string }
-export interface V15PromptBundle { readonly hash: string; readonly entries: readonly V15PromptEntry[] }
+import type { V15PromptReference, V15PromptEntry, V15PromptBundle } from "../domain/dev-flow-v15";
+export type { V15PromptReference, V15PromptEntry, V15PromptBundle } from "../domain/dev-flow-v15";
 export interface CompiledV15WorkflowDefinition {
   readonly definition: WorkflowDefinition;
   readonly prompts: V15PromptBundle;

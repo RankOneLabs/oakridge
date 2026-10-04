@@ -7,7 +7,7 @@ import type { JsonValue, SessionId } from "../src/domain/primitives";
 import { requestExecutionStop } from "../src/storage/postgres-run-record";
 import { createOakridgeRuntime } from "../src/runtime/compose";
 import { BunGitCommandRunner } from "../src/runtime/git-command-runner";
-import { prepareDevFlowBuildCohort } from "../src/runtime/cohort-pull-request";
+import { prepareCohortRepositoryRecord } from "../src/runtime/cohort-pull-request";
 import { PostgresDevFlowPullRequestRepository } from "../src/storage/postgres-dev-flow";
 import type { ImplementationCohortInputs } from "../src/domain/dev-flow-v15";
 
@@ -148,9 +148,9 @@ test("B3 runs both revision routes, discussion, fresh assessment, PR replacement
       buildPublications[1]!,
     ] })).map((delivery) => delivery.status)).toEqual([201, 201]);
     expect((await fixture.sql.query<{ readonly number: number }>(
-      `SELECT pr.forge_pull_request_id::integer AS number FROM dev_flow.build_cohort cohort
+      `SELECT pr.forge_pull_request_id::integer AS number FROM oakridge.cohort cohort
        JOIN dev_flow.pull_request_verification verification ON verification.id=cohort.current_verified_pull_request_id
-       JOIN dev_flow.pull_request pr ON pr.id=verification.pull_request_id WHERE cohort.cohort_id=$1`,
+       JOIN dev_flow.pull_request pr ON pr.id=verification.pull_request_id WHERE cohort.id=$1`,
       [fixture.cohort_id]))[0]?.number).toBe(2);
     await fixture.advance({ kind: "accept_build", target: await buildTarget(fixture) });
     const replacementBuild = await fixture.accepted();
@@ -219,7 +219,9 @@ test("preparation recovers after a push with a new repository instance and its c
   try {
     const frozen = (await fixture.sql.query<{ readonly frozen_inputs: ImplementationCohortInputs }>(
       "SELECT frozen_inputs FROM oakridge.cohort WHERE id=$1", [fixture.cohort_id]))[0]!.frozen_inputs;
-    await fixture.sql.query("DELETE FROM dev_flow.build_cohort WHERE cohort_id=$1", [fixture.cohort_id]);
+    await fixture.sql.query(`UPDATE oakridge.cohort SET repository_head_sha=NULL,
+      frozen_inputs=jsonb_set(frozen_inputs,'{repository,canonical_branch}',to_jsonb($2::text)) WHERE id=$1`,
+      [fixture.cohort_id, `cohort/${fixture.stage_id}/core`]);
     const git = new BunGitCommandRunner();
     const input = { cohort_id: fixture.cohort_id, stage_instance_id: fixture.stage_id, cohort_key: "core",
       repository: frozen.repository.refs, prepared_at: fixture.now() };
@@ -231,13 +233,13 @@ test("preparation recovers after a push with a new repository instance and its c
       }
       return result;
     } };
-    await expect(prepareDevFlowBuildCohort({ git: crashing,
+    await expect(prepareCohortRepositoryRecord({ git: crashing,
       pull_requests: new PostgresDevFlowPullRequestRepository(fixture.sql) }, input)).rejects.toThrow("process died");
-    const recovered = await prepareDevFlowBuildCohort({ git,
+    const recovered = await prepareCohortRepositoryRecord({ git,
       pull_requests: new PostgresDevFlowPullRequestRepository(fixture.sql) }, input);
     expect(recovered).toMatchObject({ ok: true, value: { worktree_base_sha: frozen.repository.worktree_base_sha,
       cohort: { canonical_ref: `cohort/${fixture.stage_id}/core` } } });
-    expect((await fixture.sql.query("SELECT count(*)::integer AS count FROM dev_flow.build_cohort", []))[0]).toEqual({ count: 1 });
+    expect((await fixture.sql.query("SELECT count(*)::integer AS count FROM oakridge.cohort WHERE repository_head_sha IS NOT NULL", []))[0]).toEqual({ count: 1 });
     expect(fixture.launches).toEqual([]);
   } finally { await fixture.close(); }
 }, 30_000);
