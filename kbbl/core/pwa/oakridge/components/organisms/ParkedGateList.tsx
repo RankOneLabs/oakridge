@@ -2,7 +2,6 @@ import { Button } from "../../../components/atoms/Button";
 import { useQueryClient } from "@tanstack/react-query";
 import { useGates } from "../../hooks/useGates";
 import type { ParkedGate } from "../../types";
-import { GateDecisionActions } from "./GateDecisionActions";
 
 const chipClass =
   "inline-block rounded border border-[var(--border-muted)] bg-[var(--bg-surface)] px-2 py-0.5 text-xs font-medium text-[var(--text-secondary)]";
@@ -95,7 +94,8 @@ function GateCard({ gate, onNavigateRun, onNavigateArtifact }: GateCardProps) {
         </div>
       ))}
 
-      <GateDecisionActions gate={gate} />
+      {!gate.actionable && <p data-testid="or-gate-stranded">Run {gate.run_state} — gate stranded</p>}
+      <p className="text-sm text-[var(--text-secondary)]">Open an artifact to review the worker’s current outputs.</p>
     </div>
   );
 }

@@ -1,5 +1,6 @@
+import type { StoredWorkflowDefinition as WorkflowDefinition } from "../domain/dev-flow-v15";
 import type { ArtifactId, AttemptId, CohortId, JsonValue, ProjectId, Result, StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId } from "../domain/primitives";
-import type { PromptBundle, StageInstance, WorkflowDefinition } from "../domain/workflow";
+import type { PromptBundle, StageInstance } from "../domain/workflow";
 import type { CollaborationMessage, CollaborationThread, CollaborationThreadWithMessages, MessageId, ThreadId, ThreadStatus } from "../domain/collaboration";
 import type { ArtifactCoordinate, ArtifactRevision } from "../domain/artifacts";
 import type { SessionHold } from "../domain/session-hold";
@@ -10,33 +11,17 @@ import type { DevFlowBuildCohort } from "../domain/cohort-pull-request";
 import type { PullRequest, PullRequestId, PullRequestMergeClosure, PullRequestObservation, PullRequestObservationId, PullRequestVerificationId, StoredPullRequestObservation } from "../domain/pull-request";
 import type { WorkflowRunRecord } from "../domain/records";
 import type {
-  AttemptExecution,
-  BindSessionResult,
-  BindSession,
-  CohortLaunchCommitted,
-  CohortLaunchCommitError,
-  CommitCohortLaunch,
   CancelRunRecord,
   CancelRunRecordResult,
-  CloseRunOutputWaitResult,
-  CohortMachineState,
-  DecideGateWait,
-  GateDecisionRecord,
   InitializeRun,
   InitializeRunResult,
   ObserveSession,
-  OpenStageCohorts,
-  OpenStageCohortsResult,
   PublishWorkOrderArtifact,
   PublishWorkOrderArtifactResult,
-  RecordCohortEvent,
-  RecordCohortEventResult,
   SessionStatusWrite,
   RunDecision,
   RunRecordRepositoryError,
   StageRosterError,
-  StartAttempt,
-  StartAttemptResult,
 } from "../domain/run-record";
 
 export interface WorkflowDefinitionRepository {
@@ -85,28 +70,12 @@ export interface RunRecordRepository {
   initialize_run(input: InitializeRun): Promise<InitializeRunResult>;
   /** Load, derive and commit one whole-run decision. The run machine's only step. */
   decide_run(run_id: WorkflowRunId, decided_at: string): Promise<Result<RunDecision, RunRecordRepositoryError>>;
-  /** Materializes a started stage's cohorts and their declared output slots. Idempotent. */
-  open_stage_cohorts(input: OpenStageCohorts): Promise<OpenStageCohortsResult>;
   fail_stage_roster(stage_instance_id: StageInstanceId, detail: string, failed_at: string): Promise<Result<void, StageRosterError>>;
-  /** Commits an adapter's cohort decision under the cohort's own durable version. */
-  record_cohort_event(input: RecordCohortEvent): Promise<RecordCohortEventResult>;
-  commit_cohort_launch(input: CommitCohortLaunch): Promise<Result<CohortLaunchCommitted, CohortLaunchCommitError>>;
-  /** What a cohort machine reads before applying its next event. */
-  find_cohort_state(cohort_id: CohortId,
-    worker?: import("../domain/dev-flow-v15").V15WorkerKey): Promise<CohortMachineState | null>;
   list_stage_cohort_ids(stage_instance_id: StageInstanceId): Promise<readonly CohortId[]>;
-  /** The attempt and session a committed launch transition names. Idempotent on the attempt number. */
-  start_attempt(input: StartAttempt): Promise<StartAttemptResult>;
-  find_attempt_execution(attempt_id: AttemptId): Promise<AttemptExecution | null>;
-  /** Records the adapter handle an ensured session is addressed by. */
-  bind_session(input: BindSession): Promise<BindSessionResult>;
   /** The session's own lifecycle, and its attempt's, from what the adapter reported. */
   observe_session(input: ObserveSession): Promise<SessionStatusWrite>;
   mark_session_fenced(session_id: import("../domain/primitives").SessionId, fenced_at: string): Promise<void>;
   list_prior_sessions_to_fence(cohort_id: CohortId, attempt_id: AttemptId): Promise<readonly import("../domain/run-record").PriorSessionToFence[]>;
-  find_cohort_retry_claim(cohort_id: CohortId, idempotency_key: string,
-    worker?: import("../domain/dev-flow-v15").V15WorkerKey): Promise<{
-    readonly attempt_id: AttemptId; readonly attempt_number: number; readonly durable_version: number } | null>;
   /** The secret every attempt's publication capability is derived from. */
   load_work_order_capability_seed(): Promise<string>;
   /**
@@ -118,8 +87,6 @@ export interface RunRecordRepository {
   /** Returns a replay/refusal after authorization, or null when a new publication may proceed. */
   check_artifact_publication(request: PublishWorkOrderArtifact): Promise<PublishWorkOrderArtifactResult | null>;
   publish_artifact(request: PublishWorkOrderArtifact): Promise<PublishWorkOrderArtifactResult>;
-  /** Decides an operator gate, releasing or invalidating the slots it holds. */
-  decide_gate_wait(request: DecideGateWait): Promise<CloseRunOutputWaitResult>;
   find_cohort_location(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<{
     readonly run_id: WorkflowRunId; readonly cohort_id: CohortId; readonly status: import("../domain/records").CoreStatus;
   } | null>;
@@ -145,15 +112,17 @@ export interface RunArtifactReadRepository {
   list_released_for_stage_output(stage_instance_id: StageInstanceId, output_name: string): Promise<readonly ArtifactRevision[]>;
 }
 
+export interface ArtifactAcceptanceReadRepository {
+  find_acceptance_state(artifact_revision_id: ArtifactId): Promise<import("../domain/dev-flow-v15").ArtifactState | null>;
+}
+
 /**
  * How a decided gate labelled one revision. Replaces v14's
  * `GateDecisionAuditRepository`, whose only production reader was this label —
  * v15 records the decision on `wait_gate.outcome` and the transition ledger,
  * so there was no second fact left for a table to hold.
  */
-export interface GateDecisionReadRepository {
-  find_for_revision(artifact_revision_id: ArtifactId): Promise<GateDecisionRecord | null>;
-}
+
 
 export interface SessionHoldRepository {
   /** The live execution holding this agent session, if any. */

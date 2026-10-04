@@ -12,7 +12,7 @@ import { formatRelative } from "../../../lib/time";
 import { ThreadSidebar } from "../../../review/shared/ThreadSidebar";
 import { ThreadView } from "../../../review/shared/ThreadView";
 import type { Thread, Message } from "../../../review/shared/types";
-import { GateDecisionActions } from "./GateDecisionActions";
+import { WorkerReviewActions } from "./WorkerReviewActions";
 import { ArtifactJsonRevisionPanel } from "../molecules/ArtifactJsonRevisionPanel";
 import { ArtifactRevisionNavigation } from "../molecules/ArtifactRevisionNavigation";
 import { ArtifactReviewShell } from "./ArtifactReviewShell";
@@ -36,7 +36,7 @@ interface ArtifactReviewProps {
   gates: readonly RunDiagnosisGate[];
 }
 
-export function ArtifactReview({ artifactId, gates }: ArtifactReviewProps) {
+export function ArtifactReview({ artifactId }: ArtifactReviewProps) {
   const query = useArtifact(artifactId);
   const [selectedRevIdx, setSelectedRevIdx] = useState<number | null>(null);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
@@ -52,8 +52,6 @@ export function ArtifactReview({ artifactId, gates }: ArtifactReviewProps) {
     : Math.min(selectedRevIdx, Math.max(0, revisions.length - 1));
   const revision = revisions[revIdx] as ArtifactRevision | undefined;
   const atomEdit = useAtomEdit(revision?.id ?? artifactId, artifactId);
-  const revisionIds = new Set(revisions.map((candidate) => candidate.id));
-  const artifactGate = gates.find((gate) => gate.artifact_revision_id !== null && revisionIds.has(gate.artifact_revision_id));
 
   useEffect(() => {
     setSelectedRevIdx(null);
@@ -138,6 +136,7 @@ export function ArtifactReview({ artifactId, gates }: ArtifactReviewProps) {
 
   const header = (
       <header className="or-artifact-detail__header">
+        {artifact.review_error && <FeedbackMessage tone="danger">{artifact.review_error.detail}</FeedbackMessage>}
         <h2 className="or-artifact-detail__title" data-testid="or-artifact-type">
           {artifact.type_id}
         </h2>
@@ -227,10 +226,10 @@ export function ArtifactReview({ artifactId, gates }: ArtifactReviewProps) {
       ) : undefined;
 
   const isLatestRevision = revision !== undefined && revIdx === revisions.length - 1;
-  const gateActions = artifactGate && isLatestRevision ? (
+  const gateActions = artifact.review_context && isLatestRevision ? (
     <section className="or-artifact-decision-bar" data-testid="or-artifact-gate-actions">
-      <div><strong>{artifactGate.gate_type === "merge_confirmation" ? "Confirm the merge" : "Make your decision"}</strong><p>{artifactGate.gate_type === "merge_confirmation" ? "Verify the pull request is merged, then continue the cohort." : "Approve this artifact or send clear changes back to the builder."}</p></div>
-      <GateDecisionActions gate={artifactGate} artifactRevisionId={revision.id} actionLabels={artifact.review?.action_labels} />
+      <div><strong>Make your decision</strong><p>Review the current worker output and submit your decision.</p></div>
+      <WorkerReviewActions key={`${artifact.review_context.cohort_id}:${artifact.review_context.expected_version}`} context={artifact.review_context} runId={artifact.run_id} />
     </section>
   ) : undefined;
 

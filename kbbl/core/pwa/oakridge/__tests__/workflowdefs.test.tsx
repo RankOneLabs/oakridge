@@ -7,6 +7,10 @@ import { WorkflowDefListView } from "../views/WorkflowDefListView";
 import { WorkflowDefEditorView } from "../views/WorkflowDefEditorView";
 import { WorkflowDefDetailView } from "../views/WorkflowDefDetailView";
 import type { WorkflowDefFull } from "../types";
+import canonicalDefinition from "../../../../../workflow-config/definitions/dev_flow_v15.json";
+import { validateWorkflowDefinition } from "../lib/workflow-definition-form";
+const parsed = validateWorkflowDefinition(JSON.stringify(canonicalDefinition));
+if (!parsed.ok) throw new Error("invalid canonical fixture");
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -34,44 +38,9 @@ afterEach(() => vi.restoreAllMocks());
 // Fixtures
 // ──────────────────────────────────────────────────────────────────────────────
 
-const DEF_FIXTURE: WorkflowDefFull = {
-  id: "def-1",
-  name: "v2_dev_flow",
-  version: 3,
-  graph: { stages: {}, edges: [] },
-  created_at: "2026-07-01T00:00:00Z",
-};
-
-const DEF_WITH_STAGES: WorkflowDefFull = {
-  id: "def-2",
-  name: "v2_staged",
-  version: 1,
-  graph: {
-    stages: {
-      build: {
-        stage_type: "delegated_session",
-        config: {
-          runtime: "claude-code",
-          prompt_template_path: "build.md",
-          slot_bindings: {},
-          workdir: { from: "context", path: "/workdir" },
-          session_name: "build-session",
-          model: null,
-          effort: null,
-          worktree: null,
-          pre_authorized_tools: [],
-          yolo: false,
-          fan_out: null,
-          gate_output: null,
-        },
-        inputs: [{ name: "plan", artifact_type: "spec_v2" }],
-        outputs: [{ name: "result", artifact_type: "build_output" }],
-      },
-    },
-    edges: [],
-  },
-  created_at: "2026-07-01T01:00:00Z",
-};
+const DEF_FIXTURE: WorkflowDefFull = { id: "def-1", name: "v2_dev_flow", version: 3,
+  definition: parsed.value, archived: false, created_at: "2026-07-01T00:00:00Z" };
+const DEF_WITH_STAGES: WorkflowDefFull = { ...DEF_FIXTURE, id: "def-2", name: "v2_staged", version: 1 };
 
 // ──────────────────────────────────────────────────────────────────────────────
 // WorkflowDefListView
@@ -131,16 +100,14 @@ describe("WorkflowDefListView", () => {
 });
 
 describe("WorkflowDefDetailView", () => {
-  it("shows stages, slots, connections, and expandable configuration", async () => {
+  it("shows canonical stages, prerequisites and workers", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json(DEF_WITH_STAGES));
     wrap(<WorkflowDefDetailView definitionId="def-2" onBack={() => {}} onClone={() => {}} />);
 
     expect(await screen.findByTestId("or-def-detail")).toBeTruthy();
-    expect(screen.getAllByTestId("or-def-stage")).toHaveLength(1);
-    expect(screen.getByText("plan")).toBeTruthy();
-    expect(screen.getByText("result")).toBeTruthy();
-    expect(screen.getByText("No connections.")).toBeTruthy();
-    expect(screen.getByText("Stage configuration")).toBeTruthy();
+    expect(screen.getAllByTestId("or-def-stage")).toHaveLength(6);
+    expect(screen.getByText("planning")).toBeTruthy();
+    expect(screen.getByText("Workers: build, assessment")).toBeTruthy();
   });
 });
 
@@ -181,46 +148,18 @@ describe("WorkflowDefEditor", () => {
     expect(await screen.findByTestId("or-def-editor-load-error")).toBeTruthy();
   });
 
-  it("submit is disabled when no stages are defined", async () => {
+  it("refuses a retired graph rather than offering fan-out controls", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(makeEditorFetch());
     wrap(<WorkflowDefEditorView cloneFromId={null} onBack={() => {}} onCreated={() => {}} />);
-    await screen.findByTestId("or-def-editor");
-    fireEvent.change(screen.getByTestId("or-def-name"), { target: { value: "my_flow" } });
-    const btn = screen.getByTestId("or-def-submit") as HTMLButtonElement;
-    expect(btn.disabled).toBe(true);
-  });
-
-  it("shows validation error when name is empty", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(makeEditorFetch());
-    wrap(<WorkflowDefEditorView cloneFromId={null} onBack={() => {}} onCreated={() => {}} />);
-    await screen.findByTestId("or-def-editor");
-    // Name starts empty — validation errors panel should be present immediately
+    fireEvent.change(await screen.findByTestId("or-def-contract"), { target: { value: JSON.stringify({ graph: { stages: {}, edges: [] } }) } });
+    expect((screen.getByTestId("or-def-submit") as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByTestId("or-def-validation-errors")).toBeTruthy();
   });
 
-  it("populates form from clone source and bumps version", async () => {
+  it("clones the canonical contract and increments its immutable version", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(makeEditorFetch({ def: DEF_WITH_STAGES }));
     wrap(<WorkflowDefEditorView cloneFromId="def-2" onBack={() => {}} onCreated={() => {}} />);
-    // editor appears (not loading state) once data loads
-    expect(await screen.findByTestId("or-def-editor")).toBeTruthy();
-    // version field should show original + 1
-    const versionInput = screen.getByTestId("or-def-version") as HTMLInputElement;
-    expect(parseInt(versionInput.value, 10)).toBe(DEF_WITH_STAGES.version + 1);
-    // name field should be pre-filled
-    const nameInput = screen.getByTestId("or-def-name") as HTMLInputElement;
-    expect(nameInput.value).toBe(DEF_WITH_STAGES.name);
-  });
-
-  it("keeps a slot binding row mounted while its name is edited", async () => {
-    const build = DEF_WITH_STAGES.graph.stages.build;
-    const def: WorkflowDefFull = {
-      ...DEF_WITH_STAGES,
-      graph: { ...DEF_WITH_STAGES.graph, stages: { build: { ...build, config: { ...build.config, slot_bindings: { SPEC: { from: "literal", value: "x" } } } } } },
-    };
-    vi.spyOn(globalThis, "fetch").mockImplementation(makeEditorFetch({ def }));
-    wrap(<WorkflowDefEditorView cloneFromId="def-2" onBack={() => {}} onCreated={() => {}} />);
-    const keyInput = await screen.findByLabelText("Slot binding key");
-    fireEvent.change(keyInput, { target: { value: "SPECS" } });
-    expect(screen.getByLabelText("Slot binding key")).toBe(keyInput);
+    const source = await screen.findByTestId("or-def-contract") as HTMLTextAreaElement;
+    expect(JSON.parse(source.value)).toEqual({ ...DEF_WITH_STAGES.definition, version: DEF_WITH_STAGES.version + 1 });
   });
 });

@@ -63,6 +63,20 @@ export const applyMigrations = async (sql: TransactionalSqlExecutor, directory =
       || column.table_name === "cohort" && ["round", "stage_data"].includes(column.column_name)))
       throw new Error("0016 worker ownership schema retains retired cohort acceptance or input storage");
   }
+  if (appliedNames.has("0017_v15_operation_execution.sql")) {
+    const columns = await sql.query<{ readonly table_name: string; readonly column_name: string; readonly is_nullable: string }>(
+      "SELECT table_name,column_name,is_nullable FROM information_schema.columns WHERE table_schema='oakridge'", []);
+    const required = [
+      { table_name: "execution_intent", column_name: "operation" },
+      { table_name: "execution_intent", column_name: "operation_outcome" },
+      { table_name: "stage_instance", column_name: "initialized_at" },
+      { table_name: "cohort", column_name: "materialization_position" },
+      { table_name: "artifact", column_name: "acceptance_state" },
+    ];
+    const missing = required.filter((item) => !columns.some((column) => column.table_name === item.table_name && column.column_name === item.column_name));
+    if (missing.length || ["prompt", "settings"].some((name) => !columns.some((column) => column.table_name === "execution_intent" && column.column_name === name && column.is_nullable === "YES")))
+      throw new Error("0017_v15_operation_execution.sql schema diverges from session-free operation ownership");
+  }
   const pending = migrationNames(await readdir(directory)).filter((name) => !appliedNames.has(name));
   for (const name of pending) {
     const statement = await readFile(join(directory, name), "utf8");

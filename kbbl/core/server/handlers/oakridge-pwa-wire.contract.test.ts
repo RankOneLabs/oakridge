@@ -19,7 +19,6 @@ const effectDescriptors = [
   { kind: "deliver_message" },
   { kind: "resume_wait" },
   { kind: "start_stage", stage_instance_id: "stage-1" },
-  { kind: "start_attempt", cohort_id: "cohort-1", attempt_number: 1 },
   { kind: "pull_request_observed", repository_key: "oakridge", pull_request_url: "https://example.test/pr/1", state: "open", source: "poll", merged_at: null },
   { kind: "pull_request_merge_confirmed", repository_key: "oakridge", pull_request_url: "https://example.test/pr/1", state: "merged", source: "operator", merged_at: "2026-09-29T00:00:00Z" },
   { kind: "future_effect" },
@@ -61,10 +60,18 @@ test("every effect kind projected by projectRunEvent parses as a PWA frame", asy
 });
 
 test("a malformed known effect names its bad field while future effects remain visible", () => {
-  const malformed = projectRunEvent(rowFor({ kind: "start_attempt", cohort_id: "cohort-1", attempt_number: "wrong" }, 9));
-  expect(() => parseRunEventFrame({ ...malformed, replayed: false })).toThrow("effect.attempt_number");
+  expect(() => projectRunEvent(rowFor({ kind: "start_attempt", cohort_id: "cohort-1", attempt_number: "wrong" }, 9)))
+    .toThrow("retired start_attempt");
   const future = projectRunEvent(rowFor({ kind: "future_effect" }, 10));
   expect(parseRunEventFrame({ ...future, replayed: false }).effect).toEqual({ kind: "unrecognized", effect_kind: "future_effect" });
+});
+
+test("a committed selected worker decision reaches the PWA without attempt counters", async () => {
+  const row: RunEventRow = { ...rowFor({ kind: "selected_decision", changes: [], actions: [{ worker: "brief", action_point: "revise" }] }, 13),
+    owner_kind: "cohort", owner_run_id: null, owner_cohort_id: "cohort-1", from_state: "working", to_state: "working" };
+  const projected = projectRunEvent(row);
+  expect(parseRunEventFrame({ ...projected, replayed: false }).effect).toEqual({ kind: "worker_decision", cohort_id: "cohort-1",
+    from_state: "working", to_state: "working", changes: [], actions: [{ worker: "brief", action_point: "revise" }] });
 });
 
 test("GET /projects parses the server's integration branch", async () => {

@@ -1,3 +1,5 @@
+import { CohortWorkers } from "./CohortWorkers";
+import type { V15WorkerKey } from "../../../../../../oakridge-dbos/src/domain/dev-flow-v15";
 import type { StageDetail, StageUnit } from "../../types";
 import { StatusBadge } from "../atoms/StatusBadge";
 import { Button } from "../../../components/atoms/Button";
@@ -18,6 +20,8 @@ function stageRowClass(status: string): string {
 interface RunStageRowProps {
   stage: StageDetail;
   unitState?: string;
+  workers: StageUnit["workers"];
+  onRetryWorker: (worker: V15WorkerKey) => void;
   onSelectArtifact?: (artifactId: string) => void;
   abandon?: AbandonAction;
   retry?: {
@@ -34,7 +38,7 @@ interface AbandonAction {
 }
 
 /** A collapsed single-unit stage. Its optional retry still targets that one unit; it is never a stage-wide command. */
-export function RunStageRow({ stage, unitState, onSelectArtifact, retry, abandon }: RunStageRowProps) {
+export function RunStageRow({ stage, unitState, onSelectArtifact, retry, abandon, workers, onRetryWorker }: RunStageRowProps) {
   return (
     <tr className={stageRowClass(stage.status)} data-testid="or-stage-row">
       <td className={`${tableCellClass} font-medium text-[var(--text-primary)]`} data-testid="or-stage-name">{stage.name}</td>
@@ -45,7 +49,7 @@ export function RunStageRow({ stage, unitState, onSelectArtifact, retry, abandon
         {stage.status === "blocked" && <Chip tone="warning" testId="or-stage-blocked-reason">
           {stage.blocked_reason} · next: {stage.next_actor}
         </Chip>}
-        {retry && <Button size="xsmall" variant="danger" onClick={retry.onRetry} disabled={retry.isRetrying} data-testid="or-retry-unit-btn">{retry.isRetrying ? "Retrying…" : "Retry"}</Button>}
+        <CohortWorkers workers={workers} onRetry={onRetryWorker} retrying={retry?.isRetrying ?? false} />
         {abandon && <Button size="xsmall" variant="danger" onClick={abandon.onAbandon} disabled={abandon.isAbandoning}
           data-testid="or-abandon-unit-btn">{abandon.isAbandoning ? "Abandoning…" : "Abandon"}</Button>}
         {abandon?.error && <span role="alert" className="text-xs text-red-500">{abandon.error}</span>}
@@ -64,7 +68,7 @@ interface RunUnitRowProps {
   unit: StageUnit;
   unitArtifacts: StageDetail["artifacts"];
   onSelectArtifact?: (artifactId: string) => void;
-  onRetry: (unitId: string) => void;
+  onRetry: (unitId: string, worker: V15WorkerKey) => void;
   retrying: boolean;
   retryError?: string;
   canRetry: boolean;
@@ -76,7 +80,7 @@ interface RunUnitRowProps {
   };
 }
 
-export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelectArtifact, onRetry, retrying, retryError, canRetry, abandon, confirmMerge }: RunUnitRowProps) {
+export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelectArtifact, onRetry, retrying, retryError, abandon, confirmMerge }: RunUnitRowProps) {
   const brief = selectCohortBrief(unit);
   return (
     <tr className={stageRowClass(unit.status)} data-testid="or-stage-row">
@@ -94,7 +98,7 @@ export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelect
           {unit.blocked_reason} · next: {unit.next_actor}
         </Chip>}
         {unit.gate && <Chip tone="warning">{unit.gate}</Chip>}
-        {canRetry && <Button size="xsmall" variant="danger" onClick={() => onRetry(unit.unit_id)} disabled={retrying} data-testid="or-retry-unit-btn">{retrying ? "Retrying…" : "Retry"}</Button>}
+        <CohortWorkers workers={unit.workers} onRetry={(worker) => onRetry(unit.unit_id, worker)} retrying={retrying} />
         {abandon && <Button size="xsmall" variant="danger" onClick={abandon.onAbandon} disabled={abandon.isAbandoning}
           data-testid="or-abandon-unit-btn">{abandon.isAbandoning ? "Abandoning…" : "Abandon"}</Button>}
         {abandon?.error && <span role="alert" className="text-xs text-red-500">{abandon.error}</span>}

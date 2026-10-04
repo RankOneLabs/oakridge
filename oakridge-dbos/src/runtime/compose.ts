@@ -1,5 +1,9 @@
-import { existsSync } from "node:fs";
-import type { ImplementationCohortInputs } from "../domain/dev-flow-v15";
+import { observeCohortPullRequest } from "./observe-cohort-pull-request";
+import { prepareCohortRepository } from "./prepare-cohort-repository";
+import { selectArtifactReviewContext } from "../domain/v15-operator-review";
+import { loadStageCohortContext } from "../storage/load-stage-cohort";
+import { observeWorkerExecution } from "./observe-worker-execution";
+import { observeFinalIntegrationPullRequest, discoverFinalIntegrationPullRequest } from "./final-integration";
 /**
  * How an Oakridge backend is assembled.
  *
@@ -20,25 +24,19 @@ import type { ImplementationCohortInputs } from "../domain/dev-flow-v15";
  * what it registers is the v15 topology: one machine per decision owner rather
  * than one root workflow that asked for the whole run's next move.
  */
-import { DBOS, DBOSClient } from "@dbos-inc/dbos-sdk";
+import { DBOSClient } from "@dbos-inc/dbos-sdk";
 import type { Hono } from "hono";
 
 import { createDevFlowAdapterRegistry, registerDevFlowCohortDetails } from "../adapters/dev-flow";
-import { RepositoryProvisioningAdapter } from "../adapters/repository-provisioning";
-import { compileWorkflowDefinition } from "../compiler/compile-workflow";
 import { stageInstanceIdFor } from "../decision/ids";
-import { createLegacyValidationRegistry } from "../compiler/compile-workflow";
 import { DEV_FLOW_ARTIFACT_TYPES, findArtifactType } from "../domain/artifact-types";
 import type { ExecutorAdapter } from "../domain/execution";
-import { err, ok, type AttemptId, type JsonValue, type UnitId, type WorkflowRunId } from "../domain/primitives";
+import { type JsonValue, type WorkflowRunId } from "../domain/primitives";
 import type { GitCommandRunner } from "../domain/repository-provisioning";
 import type { InitializeStageInstance } from "../domain/run-record";
-import type { RetryCohortResult, RetryCohortTarget } from "../domain/run-record";
 import { selectOrphanedVersionRuns, type OrphanedVersionRuns } from "../domain/workflow-recovery";
 import type { PromptBundleEntry } from "../domain/workflow";
-import { parseWorkflowDefinition } from "../validation/workflow-definition";
 import { STAGE_CONTRACT_DEPENDENCY_KEY } from "../storage/load-run-snapshot";
-import { STAGE_CONTRACT_INPUT_EDGES_KEY } from "../domain/stage-contract";
 import { pollStagePullRequests, type PullRequestReader, type StagePullRequestPollOutcome } from "./github-pull-requests";
 import { createApp } from "../http/app";
 import { registerDbosTransportClient, sendRunWakeHint } from "../http/dbos-transport";
@@ -59,7 +57,7 @@ import { StageEventApplier } from "../storage/apply-stage-event";
 import { PostgresWorkflowDefinitionRepository } from "../storage/postgres-workflow-definitions";
 import { PgPostgresExecutor } from "../storage/sql-executor";
 import { findExecutorAdapter, registerExecutorAdapter } from "./executor-registry";
-import { registerRunRecordWorkflowServices, workerExecutionWorkflow } from "../workflows/run-record-topology";
+import { registerRunRecordWorkflowServices, WORKER_EXECUTION_WORKFLOW_NAME } from "../workflows/run-record-topology";
 import "../workflows/collaboration-responder";
 import { DbosRunLaunchClient } from "./dbos-run-launch-client";
 import { DbosCollaborationPingClient, PostgresSessionMessageRecipientResolver, PostgresSessionMessageRepository } from "./collaboration-ping";
@@ -68,9 +66,8 @@ import { createPromptTemplateLoader } from "./prompt-template";
 import { GitProjectRepositoryIdentityResolver } from "./project-identity";
 import { dispatchRunLaunches, dispatchCohortExecution, stopCohortExecution } from "./run-launch-dispatch";
 import { createImplementationWorkerSessionIO } from "./implementation-worker-session";
+import { dispatchProvisionExecution } from "./provision-execution";
 import { createImplementationPublicationEnricher } from "./implementation-publication";
-import { publishWorkOrderArtifact } from "./publish-work-order-artifact";
-import { prepareDevFlowBuildCohort, verifyCohortPullRequest } from "./cohort-pull-request";
 
 export interface OakridgeRuntimeConfig {
   readonly database_url: string;
@@ -135,73 +132,16 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const runs = new PostgresWorkflowRunRepository(sql);
   const promptTemplates = createPromptTemplateLoader(config.prompt_template_directory);
   const writer = new PostgresRunRecordWriter(sql, adapterRegistry);
-  const machineRegistry = createLegacyValidationRegistry();
-  const definitions = new PostgresWorkflowDefinitionRepository(sql, adapterRegistry, machineRegistry);
+  const definitions = new PostgresWorkflowDefinitionRepository(sql);
   const stages = new PostgresStageInstanceRepository(sql);
   const forgeRepositories = new PostgresForgeRepositoryRepository(sql);
   const stageEvents = new StageEventApplier({ sql, writer,
-    observe_pr: async (cohort_id) => {
-      const rows = await sql.query<{ readonly run_id: WorkflowRunId; readonly stage_instance_id: import("../domain/primitives").StageInstanceId;
-        readonly cohort_key: string }>(
-        "SELECT run_id::text,stage_instance_id::text,cohort_key FROM oakridge.cohort WHERE id=$1", [cohort_id]);
-      const row = rows[0];
-      if (!row) return null;
-      const current = await cohortPullRequests.find_current_for_unit(row.stage_instance_id, row.cohort_key as UnitId);
-      if (!current) return null;
-      const forge = await forgeRepositories.find_forge_repository(row.run_id, current.cohort.repository_key);
-      if (!forge) return null;
-      const verified = await verifyCohortPullRequest({ reader: config.pull_request_reader, git }, {
-        cohort: current.cohort, forge_repository: forge, candidate_url: current.pull_request.url,
-      });
-      if (!verified.ok) return null;
-      const observation = verified.value.observation;
-      return { pr_url: observation.url, repository_key: current.cohort.repository_key as never,
-        head_branch: observation.head_branch, base_branch: observation.base_branch,
-        head_sha: verified.value.pushed_head_sha as never,
-        state: observation.state === "closed_unmerged" ? "closed" : observation.state };
-    },
-    prepare_repository: async (cohort_id) => {
-      const rows = await sql.query<{ readonly stage_instance_id: import("../domain/primitives").StageInstanceId;
-        readonly stage_key: string; readonly cohort_key: string; readonly state: string; readonly frozen_inputs: ImplementationCohortInputs }>(
-        `SELECT cohort.stage_instance_id::text,stage.stage_key,cohort.cohort_key,cohort.state,cohort.frozen_inputs
-         FROM oakridge.cohort cohort JOIN oakridge.stage_instance stage ON stage.id=cohort.stage_instance_id
-         WHERE cohort.id=$1`, [cohort_id]);
-      const row = rows[0];
-      if (!row) return err({ detail: "implementation cohort is missing" });
-      if (row.stage_key !== "implementation") return ok(undefined);
-      if (row.state === "awaiting_merge" || row.state === "complete" || row.state === "failed" || row.state === "cancelled")
-        return ok(undefined);
-      const repository = row.frozen_inputs.repository;
-      if (repository.worktree_base_sha) return existsSync(repository.worktree_path)
-        ? ok(undefined) : err({ detail: "prepared cohort worktree is missing" });
-      const prepared = await prepareDevFlowBuildCohort({ pull_requests: cohortPullRequests, git }, {
-        cohort_id, stage_instance_id: row.stage_instance_id, cohort_key: row.cohort_key,
-        repository: row.frozen_inputs.repository.refs, prepared_at: now(),
-      });
-      if (!prepared.ok) return err({ detail: prepared.error.detail });
-      if (prepared.value.cohort.canonical_ref !== repository.canonical_branch
-        || prepared.value.cohort.expected_pr_base !== repository.expected_pr_base)
-        return err({ detail: "prepared cohort branch disagrees with the frozen repository input" });
-      if (existsSync(repository.worktree_path)) {
-        const branch = await git.run(repository.worktree_path, ["rev-parse", "--abbrev-ref", "HEAD"]);
-        const ancestry = await git.run(repository.worktree_path,
-          ["merge-base", "--is-ancestor", prepared.value.worktree_base_sha, "HEAD"]);
-        if (branch.exit_code !== 0 || branch.stdout.trim() !== repository.canonical_branch || ancestry.exit_code !== 0)
-          return err({ detail: "prepared worktree does not match the cohort branch and observed base" });
-      } else {
-        const created = await git.run(repository.refs.repository_path, ["worktree", "add", "--no-track", "-b",
-          repository.canonical_branch, repository.worktree_path, prepared.value.worktree_base_sha]);
-        if (created.exit_code !== 0) return err({ detail: created.stderr.trim() || "could not create the cohort worktree" });
-      }
-      await sql.query(`UPDATE oakridge.cohort SET frozen_inputs=jsonb_set(frozen_inputs,
-        '{repository,worktree_base_sha}',to_jsonb($2::text))
-        WHERE id=$1 AND frozen_inputs #>> '{repository,worktree_base_sha}' IS NULL`,
-      [cohort_id, prepared.value.worktree_base_sha]);
-      return ok(undefined);
-    },
+    observe_pr: (cohort_id) => observeCohortPullRequest({ sql, git, reader: config.pull_request_reader,
+      pull_requests: cohortPullRequests, forge_repositories: forgeRepositories }, cohort_id),
+    prepare_repository: (cohort_id) => prepareCohortRepository({ sql, git, pull_requests: cohortPullRequests, now }, cohort_id),
     dispatch_executions: async (ids) => {
-      for (const execution_id of ids) await DBOS.startWorkflow(workerExecutionWorkflow,
-        { workflowID: `v15-worker:${execution_id}` })(execution_id);
+      for (const execution_id of ids) await client.enqueuePortable({ queueName: "_dbos_internal_queue", workflowName: WORKER_EXECUTION_WORKFLOW_NAME,
+        workflowID: `v15-worker:${execution_id}`, appVersion: config.application_version }, [execution_id]);
     }, now });
   const runRecords = new PostgresRunRecordRepository(sql, writer, stageEvents);
   const artifacts = new PostgresArtifactRepository(sql);
@@ -232,20 +172,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   for (const adapter of config.executor_adapters) registerExecutorAdapter(adapter);
   const enrichStagePublication = createImplementationPublicationEnricher({ sql, git,
     pull_requests: cohortPullRequests, forge_repositories: forgeRepositories, reader: config.pull_request_reader });
-  registerExecutorAdapter(new RepositoryProvisioningAdapter({
-    git,
-    publish_work_order: async (request) => {
-      const result = await publishWorkOrderArtifact({
-        attempt_id: request.work_order_id as unknown as AttemptId, capability: request.capability,
-        output_name: request.output_name, collection_key: null, body: request.body,
-        idempotency_key: request.idempotency_key,
-      }, { records: runRecords, now });
-      if (result.kind === "published" || result.kind === "pending" || result.kind === "already_applied") {
-        await sendRunWakeHint(result.run_id, `provision:${result.artifact_id}`).catch(() => undefined);
-      }
-      return result;
-    },
-  }));
+
 
   /**
    * The stage contract a run's stages are opened with, compiled from the
@@ -262,36 +189,12 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     if (!launch) throw new Error(`workflow run '${run_id}' was not found`);
     const definition = await definitions.find_by_id(launch.workflow_definition_id);
     if (!definition) throw new Error(`workflow definition '${launch.workflow_definition_id}' was not found`);
-    const parsed = parseWorkflowDefinition(definition, adapterRegistry);
-    if (!parsed.ok) throw new Error(`run ${run_id}'s definition is invalid: ${parsed.error.detail}`);
-    const compiled = compileWorkflowDefinition(parsed.value, undefined, adapterRegistry, machineRegistry);
-    if (!compiled.ok) throw new Error(`run ${run_id}'s definition does not compile: ${compiled.error.detail}`);
-    const producers = new Map<string, Set<string>>();
-    for (const edge of compiled.value.edges) {
-      const existing = producers.get(edge.consumer_stage) ?? new Set<string>();
-      existing.add(edge.producer_stage);
-      producers.set(edge.consumer_stage, existing);
-    }
-    const collecting = new Map<string, boolean>();
-    for (const [stage_key, contract] of Object.entries(compiled.value.stages)) {
-      for (const input of contract.inputs) collecting.set(`${stage_key}:${input.name}`, input.collect);
-    }
-    return Object.entries(compiled.value.stages).map(([stage_key, contract]) => ({
-      id: stageInstanceIdFor(run_id, stage_key),
-      stage_key,
-      stage_type: contract.stage_type,
-      stage_contract: { ...(contract as unknown as Record<string, JsonValue>),
-        [STAGE_CONTRACT_DEPENDENCY_KEY]: [...(producers.get(stage_key) ?? [])].sort()
-          .map((producer) => stageInstanceIdFor(run_id, producer) as string),
-        [STAGE_CONTRACT_INPUT_EDGES_KEY]: compiled.value.edges
-          .filter((edge) => edge.consumer_stage === stage_key)
-          .map((edge) => ({ input_name: edge.consumer_input,
-            producer_stage_instance_id: stageInstanceIdFor(run_id, edge.producer_stage) as string,
-            producer_output: edge.producer_output,
-            collect: collecting.get(`${stage_key}:${edge.consumer_input}`) === true })),
-      } as JsonValue,
-      dependency_stage_instance_ids: [...(producers.get(stage_key) ?? [])].sort()
-        .map((producer) => stageInstanceIdFor(run_id, producer)),
+    const source = definition.definition;
+    return Object.entries(source.stages).map(([stage_key, contract]) => ({
+      id: stageInstanceIdFor(run_id, stage_key), stage_key,
+      stage_type: stage_key === "repository_preparation" ? "provision_repository_refs" : "delegated_session",
+      stage_contract: { ...contract, [STAGE_CONTRACT_DEPENDENCY_KEY]: contract.prerequisites.map((key: import("../domain/dev-flow-v15").StageKey) => stageInstanceIdFor(run_id, key)) } as unknown as JsonValue,
+      dependency_stage_instance_ids: contract.prerequisites.map((key: import("../domain/dev-flow-v15").StageKey) => stageInstanceIdFor(run_id, key)),
     }));
   };
 
@@ -308,53 +211,40 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     return bundle.matrix;
   };
 
-  const workerSessionIO = createImplementationWorkerSessionIO({ sql, records: runRecords,
-    prompt_bundle: promptBundleOf, run_context: runContextOf, find_executor: findExecutorAdapter, now });
+  const workerSessionIO = createImplementationWorkerSessionIO({ sql, git, records: runRecords,
+    prompt_bundle: promptBundleOf, run_context: runContextOf, find_executor: findExecutorAdapter, now,
+    discover_final_pr: (cohort_id) => discoverFinalIntegrationPullRequest({ sql, git, reader: config.pull_request_reader }, cohort_id) });
   const dispatchWorkerExecution = async (execution_id: import("../domain/primitives").ExecutionId): Promise<void> => {
-    const dispatched = await dispatchCohortExecution(sql, execution_id, workerSessionIO);
+    const intents = await sql.query<{ readonly worker: string }>("SELECT worker FROM oakridge.execution_intent WHERE id=$1", [execution_id]);
+    const dispatched = intents[0]?.worker === "provision"
+      ? await dispatchProvisionExecution({ sql, git, now, advance: (cohort_id) => stageEvents.advance(cohort_id, null) }, execution_id)
+      : await dispatchCohortExecution(sql, execution_id, workerSessionIO);
     if (!dispatched.ok && dispatched.error.kind === "stop_failed") throw new Error(dispatched.error.detail);
     if (!dispatched.ok) console.warn(`worker execution ${execution_id}: ${dispatched.error.detail}`);
   };
 
   registerRunRecordWorkflowServices({
-    records: runRecords, stages, artifacts, effects_sql: sql, stage_events: stageEvents, find_run_context: runContextOf,
+    records: runRecords, effects_sql: sql, stage_events: stageEvents,
+    initialize_run: async (run_id) => {
+      await runRecords.initialize_run({ run_id, stages: await compileRunStages(run_id), initialized_at: now() });
+    },
     dispatch_worker_execution: dispatchWorkerExecution,
-    find_executor: findExecutorAdapter, now,
+    observe_worker_execution: async (execution_id) => {
+      const observed = await observeWorkerExecution({ sql, adapter: findExecutorAdapter("delegated_session"), stage_events: stageEvents, now }, execution_id);
+      if (!observed.ok) throw new Error(observed.error.detail);
+      return observed.value;
+    },
+    now,
   });
 
   const pollPullRequests = (): Promise<readonly StagePullRequestPollOutcome[]> =>
-    trackDispatch(() => pollStagePullRequests({ sql, reader: config.pull_request_reader, stage_events: stageEvents }));
-  const retryStageCohort = async (target: RetryCohortTarget, idempotency_key: string): Promise<RetryCohortResult> => {
-    const cohort_id = target.kind === "cohort" ? target.cohort_id
-      : (await runRecords.find_cohort_location(target.stage_instance_id,
-        target.cohort_key as import("../domain/primitives").UnitId))?.cohort_id;
-    if (!cohort_id) return { kind: "cohort_not_found", detail: "cohort not found" };
-    const readClaim = () => runRecords.find_cohort_retry_claim(cohort_id, idempotency_key);
-    const claim = await readClaim();
-    const location = await sql.query<{ readonly run_id: string; readonly durable_version: string }>(
-      "SELECT run_id::text,durable_version::text FROM oakridge.cohort WHERE id=$1", [cohort_id]);
-    if (!location[0]) return { kind: "cohort_not_found", detail: "cohort not found" };
-    if (!claim) {
-      const applied = await stageEvents.apply(cohort_id, { kind: "operator_retry", idempotency_key, actor: "operator" });
-      if (!applied.ok) return { kind: "refused", code: applied.error.kind, detail: applied.error.detail };
-      if (applied.value.kind === "refused") {
-        const raced = await readClaim();
-        if (!raced) return { kind: "refused", code: applied.value.code, detail: applied.value.detail };
-      } else if (applied.value.kind === "ignored") return { kind: "refused", code: applied.value.reason,
-        detail: "cohort is terminal" };
-    }
-    const stored = await readClaim();
-    if (!stored) return { kind: "refused", code: "attempt_missing", detail: "retry did not create an attempt" };
-    return { kind: claim ? "already_created" : "created", run_id: location[0].run_id as WorkflowRunId,
-      cohort_id, attempt_id: stored.attempt_id, attempt_number: stored.attempt_number,
-      durable_version: stored.durable_version };
-  };
+    trackDispatch(() => pollStagePullRequests({ sql, stage_events: stageEvents }));
   const startUnstartedEffects = async (): Promise<number> => {
     const intents = await sql.query<{ readonly id: import("../domain/primitives").ExecutionId }>(
       `SELECT id FROM oakridge.execution_intent WHERE status IN ('pending','dispatching')
        AND stop_requested_at IS NULL ORDER BY created_at LIMIT 100`, []);
-    for (const intent of intents) await DBOS.startWorkflow(workerExecutionWorkflow,
-      { workflowID: `v15-worker:${intent.id}` })(intent.id);
+    for (const intent of intents) await client.enqueuePortable({ queueName: "_dbos_internal_queue", workflowName: WORKER_EXECUTION_WORKFLOW_NAME,
+      workflowID: `v15-worker:${intent.id}`, appVersion: config.application_version }, [intent.id]);
 
     const stops = await sql.query<{ readonly id: import("../domain/primitives").ExecutionId }>(
       `SELECT id FROM oakridge.execution_intent WHERE stop_requested_at IS NOT NULL AND stop_completed_at IS NULL
@@ -405,30 +295,20 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const app = createApp({
     configuration: { projects, definitions, project_identity: projectIdentity, now,
       prompt_templates: promptTemplates, adapter_roles: adapterRegistry },
-    operator_retry: { retry_through_driver: retryStageCohort,
-      submit_request: (envelope) => stageEvents.advance(envelope.cohort_id, envelope),
-      abandon: async (cohort_id, detail) => {
-        const result = await stageEvents.apply(cohort_id, { kind: "operator_abandon", actor: "operator", detail });
-        if (result.ok && result.value.kind === "applied") {
-          const run = await sql.query<{ readonly run_id: string }>(
-            "SELECT run_id::text FROM oakridge.cohort WHERE id=$1", [cohort_id]);
-          if (run[0]) await sendRunWakeHint(run[0].run_id as WorkflowRunId, `abandon:${result.value.transition_id}`);
-        }
-        if (!result.ok) return result.error.kind === "cohort_not_found"
-          ? { kind: "not_found" as const }
-          : { kind: "refused" as const, code: result.error.kind, detail: result.error.detail };
-        return result.value.kind === "applied"
-          ? { kind: "applied" as const, state: result.value.to }
-          : { kind: "refused" as const, code: result.value.kind === "refused" ? result.value.code : result.value.reason,
-            detail: result.value.kind === "refused" ? result.value.detail : "cohort is terminal" };
-      } },
+    operator_retry: { submit_request: async (envelope) => {
+      const result = await stageEvents.advance(envelope.cohort_id, envelope);
+      if (result.ok) {
+        const cohorts = await sql.query<{ readonly run_id: WorkflowRunId }>("SELECT run_id::text FROM oakridge.cohort WHERE id=$1", [envelope.cohort_id]);
+        if (cohorts[0]) await sendRunWakeHint(cohorts[0].run_id, `request:${envelope.id}`);
+      }
+      return result;
+    } },
     run_lifecycle: { records: runRecords },
     domain_reads: { stages, artifacts, session_holds: projections, session_run_locations: projections },
     work_order_artifact_callback: { records: runRecords, enrich: enrichStagePublication,
       now, send_run_wake: sendRunWakeHint },
-    gate_resume: { records: runRecords, now, send_run_wake: sendRunWakeHint },
     cohort_pull_requests: { refresh: async (cohort_id) => {
-      const outcomes = await pollStagePullRequests({ sql, reader: config.pull_request_reader, stage_events: stageEvents }, cohort_id);
+      const outcomes = await pollStagePullRequests({ sql, stage_events: stageEvents }, cohort_id);
       if (outcomes.some((outcome) => outcome.kind === "unavailable")) return { ok: false, error: {
         operation: "refresh_pull_request", cohort_id, detail: "GitHub pull request status is unavailable; try again later",
       } };
@@ -441,7 +321,21 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
       send_message: (input) => collaborationPings.enqueue(input),
       ping_thread: (input) => collaborationPings.enqueue(input) },
     operator_projections: projections,
-    artifact_detail: { artifacts, stages, audits: artifacts, presentation_for_type: presentation, artifact_types: DEV_FLOW_ARTIFACT_TYPES },
+    artifact_detail: { artifacts, stages, acceptance: artifacts, presentation_for_type: presentation, artifact_types: DEV_FLOW_ARTIFACT_TYPES,
+      review_context: async (revision) => {
+        if (!revision.cohort_id) return { ok: true as const, value: null };
+        const stage = await stages.find_by_id(revision.stage_instance_id);
+        if (!stage) return { ok: true as const, value: null };
+        const snapshot = await loadStageCohortContext(sql, revision.cohort_id, stage.stage_key as import("../domain/dev-flow-v15").StageKey);
+        if (!snapshot.ok) throw new Error(snapshot.error.detail);
+        let context = snapshot.value;
+        if (context.stage === "final_integration") {
+          const observed = await observeFinalIntegrationPullRequest({ sql, git, reader: config.pull_request_reader }, revision.cohort_id);
+          if (!observed.ok) return { ok: false as const, error: { detail: observed.error.detail } };
+          context = { ...context, pr: observed.value };
+        }
+        return { ok: true as const, value: selectArtifactReviewContext(context, { id: revision.chain_id, version: revision.version }) };
+      } },
     run_launch: { definitions, projects, runs, projections,
       start_run: async (request) => {
         // Every stage instance exists before the root machine runs, because

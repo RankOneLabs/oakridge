@@ -32,14 +32,9 @@ export function buildRunExecutionContext(input: BuildRunExecutionContextInput): 
       brief_notes: input.brief_notes,
       base_branch: input.base_branch,
       repositories: input.repositories,
-      worktree_path: worktreePath,
       oakridge_url: input.oakridge_url,
-      planner_runtime: input.planner.runtime,
-      planner_model: input.planner.model,
-      planner_effort: input.planner.effort ?? null,
-      worker_runtime: input.worker.runtime,
-      worker_model: input.worker.model,
-      worker_effort: input.worker.effort ?? null,
+      planner: { runtime: input.planner.runtime, model: input.planner.model, effort: input.planner.effort ?? null },
+      builder: { runtime: input.worker.runtime, model: input.worker.model, effort: input.worker.effort ?? null },
     },
   };
 }

@@ -6,7 +6,7 @@ interface CohortBriefProps {
   unit: StageUnit;
 }
 
-function TextList({ label, values }: { label: string; values?: string[] }) {
+function TextList({ label, values }: { label: string; values?: readonly string[] }) {
   if (!values?.length) return null;
   return (
     <div>
@@ -18,7 +18,7 @@ function TextList({ label, values }: { label: string; values?: string[] }) {
   );
 }
 
-function DecisionList({ decisions }: { decisions: BuildBrief["decisions_made"] }) {
+function DecisionList({ decisions }: { decisions: readonly BuildBrief["decisions_made"][number][] }) {
   if (!decisions.length) return null;
   return (
     <div>

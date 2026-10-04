@@ -1,72 +1,18 @@
-import { randomUUID } from "node:crypto";
 import { expect, test } from "bun:test";
-
 import { createDevFlowAdapterRegistry } from "../src/adapters/dev-flow";
-import { compileWorkflowDefinition } from "../src/compiler/compile-workflow";
-import type { ArtifactEnvelope } from "../src/domain/execution";
-import type { ArtifactId, StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
-import { loadGraphDefinitionFixture as loadDevFlowV15 } from "./support/graph-definition-fixture";
-import { applyMigrations } from "../src/storage/migrate";
 import { PostgresOperatorProjectionRepository } from "../src/storage/postgres-operators";
-import { PgPostgresExecutor } from "../src/storage/sql-executor";
-import { createScratchDatabase } from "./support/durable-database";
+import { createImplementationCohortHarness } from "./support/implementation-cohort-harness";
 
-// Use the shipped definition and roster resolver: hand-written flat parameters
-// hid the extra artifact envelope stored by openStageCohortsStep.
-test("persisted fan-out identity reaches gates, inbox, cohorts and run detail", async () => {
-  const scratch = await createScratchDatabase("oakridge_projection_identity_test");
-  if (!scratch.ok) {
-    if (scratch.error.operation !== "reach_admin_endpoint") throw new Error(`${scratch.error.operation}: ${scratch.error.detail}`);
-    console.warn("projection identity PostgreSQL check SKIPPED: no PostgreSQL reachable");
-    return;
-  }
-  const sql = PgPostgresExecutor.connect(scratch.value.url);
+test("frozen implementation repository and brief identity reach run detail and the review inbox", async () => {
+  const fixture = await createImplementationCohortHarness();
   try {
-    await applyMigrations(sql);
-    const loaded = await loadDevFlowV15();
-    if (!loaded.ok) throw new Error(loaded.error.detail);
-    const compiled = compileWorkflowDefinition(loaded.value);
-    if (!compiled.ok) throw new Error(compiled.error.detail);
-    const build = compiled.value.stages.build;
-    if (!build) throw new Error("build stage missing");
-    const input: ArtifactEnvelope = { artifact_id: randomUUID() as ArtifactId, artifact_type: "dev.build_brief",
-      output_name: "brief", unit_id: "api" as UnitId,
-      body: { repository_key: "pipefitter", title: "Build API", depends_on: [] } };
-    const entry = { cohort_key: input.unit_id, item: { unit_id: input.unit_id, artifact: input.body } };
-    if (!entry) throw new Error("build roster missing");
-    const params = { unit_id: entry.cohort_key, artifact: entry.item };
-    const runId = randomUUID() as WorkflowRunId;
-    const stageId = randomUUID() as StageInstanceId;
-    const cohortId = randomUUID();
-    await sql.query(`INSERT INTO oakridge.workflow_definition (id,name,version,definition)
-      VALUES ($1,$2,$3,$4)`, [loaded.value.id, loaded.value.name, loaded.value.version, JSON.stringify(loaded.value)]);
-    await sql.query(`INSERT INTO oakridge.workflow_run (id,workflow_definition_id,context,bundle_pin,status)
-      VALUES ($1,$2,'{}','{}','active')`, [runId, loaded.value.id]);
-    await sql.query(`INSERT INTO oakridge.stage_instance (id,run_id,stage_key,stage_type,stage_contract,status)
-      VALUES ($1,$2,'build','delegated_session',$3,'active')`, [stageId, runId, JSON.stringify(build)]);
-    await sql.query(`INSERT INTO oakridge.cohort
-      (id,run_id,stage_instance_id,cohort_key,state,status,blocked_reason,next_actor,frozen_inputs)
-      VALUES ($1,$2,$3,$4,'build_review','blocked','gate','operator',$5)`,
-      [cohortId, runId, stageId, entry.cohort_key, JSON.stringify(params)]);
-    await sql.query(`INSERT INTO oakridge.wait_gate
-      (id,run_id,stage_instance_id,cohort_id,kind,closes_on,command_workflow_id)
-      VALUES ($1,$2,$3,$4,'gate','{"gate_step":"artifact_approval","actions":["approve"]}','identity-gate')`,
-      [randomUUID(), runId, stageId, cohortId]);
-    const repository = new PostgresOperatorProjectionRepository(sql, "test", createDevFlowAdapterRegistry());
-    const gates = await repository.list_pending_gates(runId);
-    const cohorts = await repository.list_cohorts();
-    const run = await repository.get_run(runId);
-    const inbox = await repository.get_review_inbox();
-    expect({ gate: gates[0]?.repository_key, cohort: cohorts[0]?.repository_key,
-      title: cohorts[0]?.title, unit: run?.stages.find(stage => stage.stage_instance_id === stageId)?.units[0]?.repository_key,
-      inbox: inbox.items[0]?.repository_key }).toEqual({
-      gate: "pipefitter", cohort: "pipefitter", title: "Build API", unit: "pipefitter", inbox: "pipefitter",
-    });
-    // Scalar cohorts have no fan-out item and must continue to report absence.
-    await sql.query("UPDATE oakridge.cohort SET frozen_inputs='{\"unit_id\":\"0\",\"artifact\":null}' WHERE id=$1", [cohortId]);
-    expect((await repository.list_pending_gates(runId))[0]?.repository_key).toBeNull();
-  } finally {
-    await sql.close();
-    await scratch.value.drop();
-  }
+    await fixture.sql.query("UPDATE oakridge.cohort_worker SET state='awaiting_review' WHERE cohort_id=$1 AND worker='build'", [fixture.cohort_id]);
+    const projections = new PostgresOperatorProjectionRepository(fixture.sql, "shadow", createDevFlowAdapterRegistry());
+    const run = await projections.get_run(fixture.run_id);
+    const inbox = await projections.get_review_inbox();
+    const unit = run?.stages.find((stage) => stage.name === "implementation")?.units[0];
+    expect({ repository: unit?.repository_key, branch: unit?.worktree?.branch, workers: unit?.workers.map((worker) => worker.worker) })
+      .toEqual({ repository: "oakridge", branch: "cohort/core", workers: ["build", "assessment"] });
+    expect(inbox.items[0]).toEqual(expect.objectContaining({ repository_key: "oakridge", title: "Boundary proof", stage_name: "implementation" }));
+  } finally { await fixture.close(); }
 }, 30_000);

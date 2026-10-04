@@ -11,20 +11,18 @@
 import type { ArtifactCoordinate, ArtifactRevision, ArtifactRevisionLifecycle } from "../domain/artifacts";
 import type { CollaborationMessage, CollaborationThread, CollaborationThreadWithMessages, MessageId, ThreadId, ThreadStatus } from "../domain/collaboration";
 import { parseRunContextRepository } from "../domain/repository-refs";
-import { selectBuiltInGateDisposition } from "../domain/gates";
 import type { JsonValue } from "../domain/primitives";
-import { err, ok, type ArtifactId, type AttemptId, type CohortId, type OutputCollectionKey, type ProjectId, type SessionId, type StageInstanceId, type UnitId, type WaitId, type WorkflowDefinitionId, type WorkflowRunId } from "../domain/primitives";
+import { err, ok, type ArtifactId, type AttemptId, type CohortId, type OutputCollectionKey, type ProjectId, type SessionId, type StageInstanceId, type UnitId, type WorkflowDefinitionId, type WorkflowRunId } from "../domain/primitives";
 import type { BlockedReason, CoreStatus, NextActor, WorkflowRunRecord } from "../domain/records";
 import { runRecordWorkflowId } from "../domain/workflow-ids";
 import type { CreateWorkflowRunResult, PersistWorkflowRunLaunch, SetRunArchiveResult, UnstartedRun, WorkflowRunLaunchRecord, WorkflowRunListFilter } from "../domain/runs";
 import type { RunContext } from "../domain/run-context";
-import type { GateDecisionRecord } from "../domain/run-record";
 import type { StageInstance, StageInstanceLifecycle, StageOutcome, WorkflowRunBundlePin } from "../domain/workflow";
 import type {
+  ArtifactAcceptanceReadRepository,
   ArtifactRevisionRepository,
   CollaborationRepository,
   ForgeRepositoryRepository,
-  GateDecisionReadRepository,
   RunArtifactReadRepository,
   StageInstanceRepository,
   WorkflowRunRepository,
@@ -297,7 +295,7 @@ const artifactRevision = (row: ArtifactRevisionRow): ArtifactRevision => ({
   created_at: row.created_at,
 });
 
-export class PostgresArtifactRepository implements ArtifactRevisionRepository, RunArtifactReadRepository, GateDecisionReadRepository {
+export class PostgresArtifactRepository implements ArtifactRevisionRepository, RunArtifactReadRepository, ArtifactAcceptanceReadRepository {
   constructor(private readonly sql: SqlExecutor) {}
 
   async find_by_id(id: ArtifactId): Promise<ArtifactRevision | null> {
@@ -369,27 +367,13 @@ export class PostgresArtifactRepository implements ArtifactRevisionRepository, R
    * it. `wait_gate.outcome` is written by the decision itself, so there is no
    * separate audit row to fall out of step with it.
    */
-  async find_for_revision(artifact_revision_id: ArtifactId): Promise<GateDecisionRecord | null> {
-    const rows = await this.sql.query<{
-      readonly wait_id: string; readonly gate_step: string | null; readonly action: string | null;
-      readonly actor: string | null; readonly detail: string | null; readonly closed_at: string;
-    }>(
-      `SELECT wait.id::text AS wait_id,wait.closes_on->>'gate_step' AS gate_step,
-              wait.outcome->>'action' AS action,wait.outcome->>'actor' AS actor,
-              wait.outcome->>'detail' AS detail,wait.closed_at::text AS closed_at
-       FROM oakridge.wait_gate wait
-       JOIN oakridge.wait_gate_artifact_revision link ON link.wait_gate_id=wait.id
-       WHERE link.artifact_id=$1 AND wait.kind='gate' AND wait.status='closed'
-       ORDER BY wait.closed_at DESC,wait.id DESC LIMIT 1`, [artifact_revision_id]);
-    const row = rows[0];
-    if (!row || row.action === null) return null;
-    return { wait_id: row.wait_id as WaitId, artifact_revision_id, gate_step: row.gate_step,
-      action: row.action, actor: row.actor ?? "unknown", detail: row.detail, decided_at: row.closed_at };
+  async find_acceptance_state(artifact_revision_id: ArtifactId): Promise<import("../domain/dev-flow-v15").ArtifactState | null> {
+    const rows = await this.sql.query<{ readonly acceptance_state: import("../domain/dev-flow-v15").ArtifactState }>(
+      "SELECT acceptance_state FROM oakridge.artifact WHERE id=$1", [artifact_revision_id]);
+    return rows[0]?.acceptance_state ?? null;
   }
-}
 
-/** Whether an action's built-in disposition released the artifact it decided. */
-export const isGateReleaseAction = (action: string): boolean => selectBuiltInGateDisposition(action) === "release";
+}
 
 /* ------------------------------------------------------------------ *
  * Artifact threads

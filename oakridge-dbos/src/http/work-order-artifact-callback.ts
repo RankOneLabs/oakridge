@@ -15,9 +15,8 @@ export interface WorkOrderArtifactCallbackDependencies {
   /** Wakes the publishing cohort's machine, which is what acts on a new artifact. */
 }
 
-const statusOf = (result: PublishWorkOrderArtifactResult): 200 | 201 | 202 | 401 | 404 | 409 | 503 => {
+const statusOf = (result: PublishWorkOrderArtifactResult): 200 | 201 | 401 | 404 | 409 | 503 => {
   if (result.kind === "published") return 201;
-  if (result.kind === "pending") return 202;
   if (result.kind === "already_applied") return 200;
   if (result.kind === "invalid_capability") return 401;
   if (result.kind === "enrichment_unavailable") return 503;
@@ -42,7 +41,7 @@ export const createWorkOrderArtifactCallbackApp = (dependencies: WorkOrderArtifa
     const result = await publishWorkOrderArtifact({ attempt_id: attemptId, capability, output_name: context.req.param("outputName") ?? "",
       collection_key: collectionKey as OutputCollectionKey | null, body, idempotency_key: context.req.header("idempotency-key")?.trim() || null }, dependencies);
     const status = statusOf(result);
-    if (result.kind === "published" || result.kind === "already_applied" || result.kind === "pending") {
+    if (result.kind === "published" || result.kind === "already_applied") {
       // A hint only ever tells a machine "ask again" — sent fire-and-forget,
       // never on the response's critical path, and never required for the
       // publication itself to be correct.
@@ -50,10 +49,9 @@ export const createWorkOrderArtifactCallbackApp = (dependencies: WorkOrderArtifa
       await dependencies.send_run_wake?.(result.run_id, key).catch(() => undefined);
     }
     if (result.kind === "published" || result.kind === "already_applied") return context.json({ artifact_id: result.artifact_id, state: "unreviewed", record_version: result.record_version }, status);
-    if (result.kind === "pending") return context.json({ artifact_id: result.artifact_id, state: "pending", wait_id: result.wait_id, record_version: result.record_version }, status);
     const failure = result;
     return context.json({ error: failure.detail, code: failure.kind === "refused" ? failure.code : failure.kind,
-      ...(failure.kind === "slot_already_released" || failure.kind === "idempotency_conflict" ? { artifact_id: failure.artifact_id } : {}) }, status);
+      ...(failure.kind === "idempotency_conflict" ? { artifact_id: failure.artifact_id } : {}) }, status);
   };
   app.put("/work-orders/:workOrderId/emit/:outputName", publish);
   return app;

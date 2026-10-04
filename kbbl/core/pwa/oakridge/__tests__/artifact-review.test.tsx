@@ -50,7 +50,7 @@ const ARTIFACT_FIXTURE: ArtifactDetail = {
   revisions: [
     {
       id: "rev-1",
-      status: "approved",
+      status: "accepted",
       created_at: "2026-07-01T09:00:00Z",
       body: { title: "Spec body" },
       validation: { valid: true },
@@ -78,7 +78,7 @@ describe("ArtifactReview", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json(ARTIFACT_FIXTURE));
     wrap(<ArtifactReview artifactId="art-1" gates={[]} />);
     const status = await screen.findByTestId("or-revision-status");
-    expect(status.textContent).toBe("approved");
+    expect(status.textContent).toBe("accepted");
   });
 
   it("uses the review descriptor layout and action labels for an artifact-local gate", async () => {
@@ -88,6 +88,7 @@ describe("ArtifactReview", () => {
         ...ARTIFACT_FIXTURE.revisions[0]!,
         body: { details: "Second", summary: "First" },
       }],
+      review_context: { cohort_id: "cohort-1" as never, expected_version: 3, worker: "spec", target: { id: "art-1" as never, version: 1 } },
       review: {
         viewer: "json",
         layout: "report",
@@ -103,8 +104,8 @@ describe("ArtifactReview", () => {
     wrap(<ArtifactReview artifactId="art-1" gates={[{ ...DIAGNOSIS_GATE, artifact_revision_id: "rev-1", resume_actions: ["approve"] }]} />);
 
     await waitFor(() => expect(screen.getByTestId("or-artifact-detail").getAttribute("data-review-layout")).toBe("report"));
-    expect(await screen.findByTestId("or-artifact-gate-actions")).toBeTruthy();
-    expect(screen.getByTestId("or-decision-approve").textContent).toContain("Approve discrepancy report");
+    expect(await screen.findByTestId("or-decision-actions")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Accept analysis" }).textContent).toContain("Accept analysis");
     const sections = Array.from(screen.getByTestId("or-descriptor-sections").querySelectorAll("[data-artifact-section]"));
     expect(sections.map((section) => section.getAttribute("data-artifact-section"))).toEqual(["summary", "details"]);
   });
@@ -112,9 +113,10 @@ describe("ArtifactReview", () => {
   it("uses diagnosis gates and only offers actions for the selected revision", async () => {
     const artifact: ArtifactDetail = {
       ...ARTIFACT_FIXTURE,
+      review_context: { cohort_id: "cohort-1" as never, expected_version: 3, worker: "spec", target: { id: "art-1" as never, version: 2 } },
       revisions: [
         ARTIFACT_FIXTURE.revisions[0]!,
-        { ...ARTIFACT_FIXTURE.revisions[0]!, id: "rev-2", status: "draft" },
+        { ...ARTIFACT_FIXTURE.revisions[0]!, id: "rev-2", status: "unreviewed" },
       ],
     };
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
@@ -127,9 +129,9 @@ describe("ArtifactReview", () => {
     wrap(<ArtifactReview artifactId="art-1" gates={[{ ...DIAGNOSIS_GATE, artifact_revision_id: "rev-2" }]} />);
 
     await screen.findByTestId("or-artifact-type");
-    expect(await screen.findByTestId("or-artifact-gate-actions")).toBeTruthy();
+    expect(await screen.findByTestId("or-decision-actions")).toBeTruthy();
     fireEvent.click(screen.getByTestId("or-rev-tab-0"));
-    expect(screen.queryByTestId("or-artifact-gate-actions")).toBeNull();
+    expect(screen.queryByTestId("or-decision-actions")).toBeNull();
     expect(fetchSpy.mock.calls.some(([input]) => String(input).includes("/runs/run-1/gates"))).toBe(false);
   });
 

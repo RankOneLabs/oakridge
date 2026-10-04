@@ -27,21 +27,9 @@ const epicProfile = z.object({
     forge_repository: forgeRepository.nullable().optional().transform((value) => value ?? null) })),
 });
 
-/**
- * The run context, as far as this boundary can know it.
- *
- * Deliberately loose about keys and strict about the ones it names. It was
- * `z.json()` — a scalar was a valid context, and `planner_runtime: 7` reached
- * the stage that would have run on it. But an authored definition may read any
- * pointer it likes, so a closed key list here would be a second copy of a
- * contract that lives in the definition. Which keys a given run *must* carry is
- * answered by the definition, at launch, in `unsatisfiedContextRequirements`.
- *
- * What is named here is the vocabulary every shipped dev-flow definition reads:
- * getting one of these wrong is a typo, and the failure it causes is many
- * stages away from the request that made it.
- */
+/** Grouped agent settings are required; project metadata supplies repository defaults. */
 const runtimeId = z.enum(DELEGATED_RUNTIME_IDS);
+const settings = z.object({ runtime: runtimeId, model: z.string().nullable(), effort: z.string().nullable() });
 const contextSchema = z.looseObject({
   brief_notes: z.string().optional(),
   oakridge_url: z.string().min(1).optional(),
@@ -53,12 +41,8 @@ const contextSchema = z.looseObject({
     { message: "must not have leading or trailing whitespace" }).optional(),
   // A model belongs to the runtime it was chosen from, so the pair travels
   // together; a null model is "whatever the runtime defaults to", not "absent".
-  planner_runtime: runtimeId.optional(),
-  planner_model: z.string().nullable().optional(),
-  planner_effort: z.string().nullable().optional(),
-  worker_runtime: runtimeId.optional(),
-  worker_model: z.string().nullable().optional(),
-  worker_effort: z.string().nullable().optional(),
+  planner: settings,
+  builder: settings,
   // `key` and `path` are what every consumer of a repository entry reads. The
   // branch fields are added by `prepareRunContext` from the epic profile, so a
   // caller supplying them is not required to.
@@ -67,7 +51,7 @@ const contextSchema = z.looseObject({
 
 const launchSchema = z.object({ workflow_def_id: z.string().uuid(),
   project_id: z.string().uuid().nullable().optional().transform((value) => value ?? null),
-  context: contextSchema.optional().default({}),
+  context: contextSchema,
   epic_profile: epicProfile.nullable().optional().transform((value) => value ?? null) });
 
 /** Which fields a rejected request got wrong — a bare 400 makes the operator guess. */

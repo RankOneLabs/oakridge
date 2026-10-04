@@ -219,15 +219,42 @@ test("spec readiness and interruption are independent facts over the same snapsh
   expect(evaluateV15Fact(context, "spec_execution_interrupted")).toBe(true);
 });
 
+test("plan readiness rejects an empty plan even when publication completed", () => {
+  const cohort = { inputs: { repositories: [{ repository_key: "oakridge", ref }] },
+    plan: { active_execution_id: "plan-execution", response: { execution_id: "plan-execution", current: ref },
+      outputs: { plan: { id: ref.id, version: ref.version, body: { cohorts: [] } } } } } as never;
+  expect(evaluateV15Fact({ stage: "planning", cohort }, "plan_outputs_ready")).toBe(false);
+});
+
+test("final readiness requires a verified PR at the prepared base branch", () => {
+  const pr = { pr_url: "https://example.test/pr/1", repository_key: "oakridge" as never,
+    head_branch: "epic/schema", base_branch: "epic/wf", head_sha: "abc" as never, state: "open" as const };
+  const cohort = { inputs: { repository: { repository_key: "oakridge", base_branch: "epic/schema",
+    integration_branch: "epic/wf" } }, final_integration: { active_execution_id: "final-execution",
+    response: { execution_id: "final-execution", current: ref },
+    outputs: { pr_summary: { ...ref, body: { pr_url: pr.pr_url } } } } } as never;
+  expect(evaluateV15Fact({ stage: "final_integration", cohort, pr, reviewed_target: null }, "final_outputs_ready")).toBe(true);
+  expect(evaluateV15Fact({ stage: "final_integration", cohort, pr: { ...pr, head_branch: "other" },
+    reviewed_target: null }, "final_outputs_ready")).toBe(false);
+});
+
 test("a final merge must match the reviewed head", () => {
   const target = { pr_summary: ref, pr_url: "https://example.test/pr/1", head_sha: "abc" as never };
   const pr = { pr_url: target.pr_url, repository_key: "oakridge" as never,
-    head_branch: "final", base_branch: "epic/wf", head_sha: "wrong" as never, state: "merged" as const };
-  const cohort = {} as never;
+    head_branch: "epic/schema", base_branch: "epic/wf", head_sha: "wrong" as never, state: "merged" as const };
+  const cohort = { inputs: { repository: { repository_key: "oakridge", base_branch: "epic/schema", integration_branch: "epic/wf" } },
+    final_integration: { outputs: { pr_summary: { id: ref.id, version: ref.version } } } } as never;
   expect(evaluateV15Fact({ stage: "final_integration", cohort, pr, reviewed_target: target },
     "final_pr_merged_at_reviewed_head")).toBe(false);
   expect(evaluateV15Fact({ stage: "final_integration", cohort, pr: { ...pr, head_sha: target.head_sha },
     reviewed_target: target }, "final_pr_merged_at_reviewed_head")).toBe(true);
+  for (const moved of [{ ...pr, head_sha: target.head_sha, head_branch: "other" },
+    { ...pr, head_sha: target.head_sha, base_branch: "other" },
+    { ...pr, head_sha: target.head_sha, repository_key: "other" },
+    { ...pr, head_sha: target.head_sha, pr_url: "https://example.test/pr/2" }]) {
+    expect(evaluateV15Fact({ stage: "final_integration", cohort, pr: moved as never, reviewed_target: target },
+      "final_pr_merged_at_reviewed_head")).toBe(false);
+  }
 });
 
 test("each single-worker v15 stage resolves its initial leaf from frozen inputs", async () => {

@@ -9,7 +9,7 @@ import { createScratchDatabase, type ScratchDatabase } from "./support/durable-d
 
 const MIGRATIONS = new URL("../src/storage/migrations", import.meta.url).pathname;
 const BASELINE = "0015_v15_baseline.sql";
-const MIGRATION_SET = [BASELINE, "0016_v15_worker_ownership.sql"];
+const MIGRATION_SET = [BASELINE, "0016_v15_worker_ownership.sql", "0017_v15_operation_execution.sql"];
 
 test("v15 worker ownership follows the immutable baseline", async () => {
   expect(migrationNames(await readdir(MIGRATIONS))).toEqual(MIGRATION_SET);

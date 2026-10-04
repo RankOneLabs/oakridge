@@ -1,24 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { validateWorkflowDefinition } from "./workflow-definition-form";
+import { validateWorkflowDefinition, workflowDefinitionToFormState } from "./workflow-definition-form";
+import canonicalDefinition from "../../../../../workflow-config/definitions/dev_flow_v15.json";
+import type { WorkflowDefFull } from "../types";
 
-describe("validateWorkflowDefinition", () => {
-  it("returns contextual validation errors", () => {
-    const result = validateWorkflowDefinition({ name: "", stages: [], edges: [] });
-
-    expect(result).toEqual({
-      ok: false,
-      error: {
-        operation: "validate_workflow_definition",
-        entityId: "new_workflow_definition",
-        details: ["Name is required."],
-      },
-    });
+describe("canonical workflow authoring", () => {
+  it("reports invalid JSON before submission", () => {
+    expect(validateWorkflowDefinition("{").ok).toBe(false);
   });
-
-  it("returns success for a valid empty graph", () => {
-    expect(validateWorkflowDefinition({ name: "workflow", stages: [], edges: [] })).toEqual({
-      ok: true,
-      value: null,
-    });
+  it("rejects retired graph and fan-out configuration", () => {
+    expect(validateWorkflowDefinition(JSON.stringify({ name: "workflow", version: 1, graph: { stages: {}, edges: [] } })).ok).toBe(false);
+  });
+  it("validates every canonical worker and decision tree with the shared contract", () => {
+    expect(validateWorkflowDefinition(JSON.stringify(canonicalDefinition))).toEqual({ ok: true, value: canonicalDefinition });
+  });
+  it("clones immutable content into the next definition version", () => {
+    const parsed = validateWorkflowDefinition(JSON.stringify(canonicalDefinition));
+    if (!parsed.ok) throw new Error("invalid fixture");
+    const record: WorkflowDefFull = { id: "definition", name: parsed.value.key, version: parsed.value.version,
+      definition: parsed.value, archived: false, created_at: "2026-10-03T00:00:00Z" };
+    expect(JSON.parse(workflowDefinitionToFormState(record))).toEqual({ ...parsed.value, version: parsed.value.version + 1 });
   });
 });

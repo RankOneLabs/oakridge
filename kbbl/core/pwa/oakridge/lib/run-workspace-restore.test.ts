@@ -52,8 +52,8 @@ const RUN: RunDetail = {
       delegated_kbbl_sid: null,
       worktree: null,
       units: [
-        { cohort_id: "c1", unit_id: "c1", sid: "sid-c1", worktree: null, status: "complete", blocked_reason: null, next_actor: null, retryable: false, gate: null },
-        { cohort_id: "c2", unit_id: "c2", sid: "sid-c2", worktree: null, status: "active", blocked_reason: null, next_actor: "agent", retryable: false, gate: null },
+        { version: 0, workers: [], brief: null, cohort_id: "c1", unit_id: "c1", sid: "sid-c1", worktree: null, status: "complete", blocked_reason: null, next_actor: null, retryable: false, gate: null },
+        { version: 0, workers: [], brief: null, cohort_id: "c2", unit_id: "c2", sid: "sid-c2", worktree: null, status: "active", blocked_reason: null, next_actor: "agent", retryable: false, gate: null },
       ],
     },
   ],

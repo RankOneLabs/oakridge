@@ -8,7 +8,6 @@ const definition = {
   role_configs: [{ session_role: "build", runtime: "claude-code", session_name: "example", authorized_outputs: ["result"] }],
   slot_bindings: {},
   workdir: { from: "literal" as const, value: "." },
-  artifact_productions: [],
   handoffs: [],
   gates: [{
     name: "result_gate",
@@ -58,7 +57,7 @@ const sessionDefinition = () => ({
   role_configs: [{ session_role: "build", runtime: "claude-code", session_name: "example", authorized_outputs: ["result"] }],
   slot_bindings: {},
   workdir: { from: "literal" as const, value: "." },
-  artifact_productions: [], gates: [], handoffs: [],
+  gates: [], handoffs: [],
 });
 
 test("two gates and two handoffs are valid plural terminal policies", () => {

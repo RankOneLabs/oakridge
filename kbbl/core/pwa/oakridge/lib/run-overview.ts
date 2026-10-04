@@ -40,9 +40,8 @@ export interface RunSidebarSessionsView {
   readonly is_session_list_known: true;
 }
 
-const attemptLabel = (session: RunDiagnosisSession): string => session.attempt_count > 1
-  ? `attempt ${session.attempt_number} of ${session.attempt_count}`
-  : `attempt ${session.attempt_number}`;
+export const selectSessionActionLabel = (session: RunDiagnosisSession): string =>
+  `${session.worker} · ${session.action_point}`;
 
 export const selectRunSidebarSessions = (
   diagnosis: RunDiagnosis,
@@ -54,9 +53,9 @@ export const selectRunSidebarSessions = (
     session_id: session.session_id as Sid,
     stage_key: session.stage_key,
     unit_id: session.cohort_key,
-    attempt_label: attemptLabel(session),
+    attempt_label: selectSessionActionLabel(session),
     status: session.status,
-    is_current: session.attempt_number === session.attempt_count,
+    is_current: session.is_current,
     requires_operator_action: diagnosis.sessions_awaiting_action.some((candidate) => candidate.session_id === session.session_id),
   })),
 });

@@ -19,6 +19,10 @@ const FORBIDDEN_IDENTIFIERS = [
 const DEV_FLOW_ROLES = ["spec", "plan", "brief", "build", "assessment", "final_integration"] as const;
 // Each exception owns an adapter-facing contract or composition point.
 const DEV_FLOW_SOURCE_ALLOWLIST = {
+  "runtime/prepare-cohort-repository.ts": "Prepares canonical implementation and final repository worktrees.",
+  "runtime/observe-cohort-pull-request.ts": "Reads and verifies canonical cohort PR observations.",
+  "domain/v15-operator-review.ts": "Projects exact canonical worker targets for operator decisions.",
+  "runtime/final-integration.ts": "Verifies and discovers final PRs against frozen repository authority.",
   "validation/v15-definition.ts": "Validates the concrete dev-flow worker, output, input and decision-tree contracts.",
   "adapters/dev-flow-machine.ts": "Exports legacy names used only to validate graph fixtures during cutover.",
   "adapters/dev-flow.ts": "Implements dev-flow effects and registration.",
@@ -181,7 +185,6 @@ test("core never reads final integration branch or merge policy", async () => {
   expect(core).not.toContain(".final_merge_policy");
   const adapter = await readFile(join(SOURCE, "domain", "repository-refs.ts"), "utf8");
   expect(adapter).toContain("integration_branch");
-  expect(adapter).toContain("final_merge_policy");
 });
 
 /**

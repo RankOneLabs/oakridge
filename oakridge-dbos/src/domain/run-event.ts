@@ -1,6 +1,15 @@
+import type { V15WorkerKey, V15Change } from "./dev-flow-v15";
 import type { CohortId, JsonValue, RunTransitionId, StageInstanceId, WorkflowRunId } from "./primitives";
 import type { RunTransitionOperation, TransitionEffectDescriptor, TransitionLaunchReason, TransitionOwner } from "./run-record";
 
+export type OperatorRunEffect = Exclude<TransitionEffectDescriptor, { readonly kind: "start_attempt" }> | {
+  readonly kind: "worker_decision";
+  readonly cohort_id: CohortId;
+  readonly from_state: string;
+  readonly to_state: string;
+  readonly changes: readonly V15Change[];
+  readonly actions: readonly { readonly worker: V15WorkerKey; readonly action_point: string }[];
+};
 /** The notification projection of the v15 transition ledger. */
 export interface RunEvent {
   readonly sequence: string;
@@ -11,7 +20,7 @@ export interface RunEvent {
   readonly prior_owner_version: number;
   readonly resulting_owner_version: number;
   readonly operation: RunTransitionOperation;
-  readonly effect: TransitionEffectDescriptor;
+  readonly effect: OperatorRunEffect;
   readonly effect_workflow_id: string;
   readonly actor: string;
   readonly occurred_at: string;
@@ -58,7 +67,15 @@ const decodeOwner = (row: RunEventRow): TransitionOwner => {
 const isJsonObject = (value: JsonValue): value is { readonly [key: string]: JsonValue } =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const decodeEffect = (row: RunEventRow): TransitionEffectDescriptor => {
+const decodeEffect = (row: RunEventRow): OperatorRunEffect => {
+  const descriptor = row.effect_descriptor;
+  if (isJsonObject(descriptor) && descriptor.kind === "selected_decision") {
+    if (!row.owner_cohort_id || !row.from_state || !row.to_state || !Array.isArray(descriptor.changes) || !Array.isArray(descriptor.actions))
+      throw new Error(`run event '${row.sequence}' has an invalid selected decision`);
+    return { kind: "worker_decision", cohort_id: row.owner_cohort_id as CohortId, from_state: row.from_state, to_state: row.to_state,
+      changes: descriptor.changes as unknown as readonly V15Change[],
+      actions: descriptor.actions as unknown as readonly { readonly worker: V15WorkerKey; readonly action_point: string }[] };
+  }
   if (row.owner_kind === "cohort" && row.owner_cohort_id !== null && row.from_state !== null
     && row.to_state !== null && isJsonObject(row.event) && typeof row.event.kind === "string") {
     return { kind: "cohort_transition", cohort_id: row.owner_cohort_id,
@@ -71,7 +88,8 @@ const decodeEffect = (row: RunEventRow): TransitionEffectDescriptor => {
     || !(Object.prototype.hasOwnProperty.call(value, "kind")) || typeof value.kind !== "string" || value.kind.length === 0) {
     throw new Error(`run event '${row.sequence}' has an invalid effect descriptor`);
   }
-  return value as TransitionEffectDescriptor;
+  if (value.kind === "start_attempt") throw new Error("retired start_attempt effect cannot be projected");
+  return value as OperatorRunEffect;
 };
 
 export const projectRunEvent = (row: RunEventRow): RunEvent => {

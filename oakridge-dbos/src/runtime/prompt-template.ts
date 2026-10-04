@@ -58,7 +58,7 @@ export interface ActionPromptInput {
   readonly fields: Readonly<Record<string, JsonValue>>;
   readonly artifacts: readonly ReferencedActionArtifact[];
   readonly execution: { readonly worker: string; readonly action_point: string; readonly cohort_id: string };
-  readonly repository: PreparedImplementationRepository;
+  readonly repository: PreparedImplementationRepository | null;
 }
 
 /** Render only the selected action's fields and the exact immutable revisions they reference. */
@@ -91,6 +91,7 @@ export const renderActionPrompt = (input: ActionPromptInput): string => {
   });
   const repository = input.repository;
   return [input.template.trimEnd(), ...sections,
-    `## Execution and repository contract\nWorker: ${input.execution.worker}\nAction: ${input.execution.action_point}\nCohort: ${input.execution.cohort_id}\nWorktree: ${repository.worktree_path}\nWorktree base: ${repository.worktree_base_sha}\nCanonical cohort ref: ${repository.canonical_branch}\nPull request base: ${repository.expected_pr_base}`,
+    `## Execution contract\nWorker: ${input.execution.worker}\nAction: ${input.execution.action_point}\nCohort: ${input.execution.cohort_id}${repository
+      ? `\nWorktree: ${repository.worktree_path}\nWorktree base: ${repository.worktree_base_sha}\nCanonical cohort ref: ${repository.canonical_branch}\nPull request base: ${repository.expected_pr_base}` : ""}`,
   ].join("\n\n");
 };

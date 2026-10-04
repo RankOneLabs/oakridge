@@ -1,7 +1,6 @@
 // View-model types for the oakridge operator surface.
 // These are typed at the PWA boundary and cover what the operator UI needs.
 
-import type { RuntimeId } from "../../runtime";
 
 export interface OakridgeConfig {
   available: boolean;
@@ -43,7 +42,7 @@ export interface WorkflowDefSummary {
   archived?: boolean;
   // GET /workflow_defs returns the full def today; keep this optional for a
   // future trimmed summary response.
-  graph?: WorkflowGraph;
+  definition?: import("../../../../oakridge-dbos/src/domain/dev-flow-v15").WorkflowDefinition;
 }
 
 // Each role ships runtime, model, and effort together. A model is only valid
@@ -54,15 +53,9 @@ export interface CreateRunContext {
   /** The one branch this run builds on. Every build unit's PR targets it. */
   base_branch: string;
   repositories: RepositoryInput[];
-  // Compatibility input for workflow definitions older than dev-flow v2.
-  worktree_path: string;
   oakridge_url: string;
-  planner_runtime: RuntimeId;
-  planner_model: string;
-  planner_effort: string | null;
-  worker_runtime: RuntimeId;
-  worker_model: string;
-  worker_effort: string | null;
+  planner: import("../../../../oakridge-dbos/src/domain/dev-flow-v15").AgentSettings;
+  builder: import("../../../../oakridge-dbos/src/domain/dev-flow-v15").AgentSettings;
 }
 
 export type RepositoryKey = string & { readonly __brand: "RepositoryKey" };
@@ -73,7 +66,9 @@ export type JsonValue = null | boolean | number | string | readonly JsonValue[] 
 export type RunEventEffect =
   | { readonly kind: "none" | "deliver_message" | "resume_wait" }
   | { readonly kind: "start_stage"; readonly stage_instance_id: string }
-  | { readonly kind: "start_attempt"; readonly cohort_id: string; readonly attempt_number: number; readonly attempt_id: string | null }
+  | { readonly kind: "worker_decision"; readonly cohort_id: string; readonly from_state: string; readonly to_state: string;
+      readonly changes: readonly import("../../../../oakridge-dbos/src/domain/dev-flow-v15").V15Change[];
+      readonly actions: readonly { readonly worker: import("../../../../oakridge-dbos/src/domain/dev-flow-v15").V15WorkerKey; readonly action_point: string }[] }
   | { readonly kind: "cohort_transition"; readonly cohort_id: string; readonly unit_label: string;
       readonly event_kind: string; readonly from_state: string; readonly to_state: string;
       readonly next_actor: string | null; readonly refusal: null }
@@ -197,11 +192,13 @@ export interface StageArtifact {
 }
 
 export interface StageUnit {
+  version: number;
+  workers: readonly import("../../../../oakridge-dbos/src/domain/operator-projections").OperatorWorkerRecord[];
   cohort_id: string;
   unit_id: string;
   state?: string;
   repository_key?: RepositoryKey | null;
-  params?: StageUnitParams | null;
+  brief: import("../../../../oakridge-dbos/src/domain/dev-flow-artifacts").BuildBriefBody | null;
   sid: string | null;
   worktree: WorktreeMetadata | null;
   base_sha?: string | null;
@@ -210,19 +207,6 @@ export interface StageUnit {
   next_actor: NextActor | null;
   retryable: boolean;
   gate: string | null;
-}
-
-/**
- * `run_unit.parameters` verbatim (`GET /runs/:id`, `postgres-operators.ts`):
- * the fan-out item `derive` minted — `{unit_id, artifact}` — not the
- * `dev.plan` cohort shape this used to wrongly claim. `artifact` is
- * `unknown` because its real type varies by producing stage (a build unit's
- * is a `dev.build_brief` body; an assessor unit's is `dev.build_result`);
- * narrow it with a type guard, never trust the shape blind.
- */
-export interface StageUnitParams {
-  unit_id?: string;
-  artifact?: unknown;
 }
 
 export interface StageDetail {
@@ -256,8 +240,10 @@ export interface RunDiagnosisSession {
   stage_key: string;
   cohort_id: string;
   cohort_key: string;
-  attempt_number: number;
-  attempt_count: number;
+  worker: import("../../../../oakridge-dbos/src/domain/dev-flow-v15").V15WorkerKey;
+  execution_id: string;
+  action_point: string;
+  is_current: boolean;
   status: CoreStatus;
 }
 
@@ -308,57 +294,7 @@ export interface SessionRunLocation {
   work_order_id: string;
 }
 
-export interface ArtifactRevision {
-  id: string;
-  status: ArtifactRevisionStatus;
-  created_at: string;
-  body: JsonValue;
-  validation: unknown;
-}
-
-/** Mirrors the revision status returned by the artifact API. */
-export type ArtifactRevisionStatus = "draft" | "approved" | "rejected";
-/** Mirrors `FindingSeverity` in oakridge-dbos/src/domain/dev-flow-artifacts.ts. */
-export type FindingSeverity = "blocking" | "warning" | "info";
-/** Mirrors `AssessmentVerdict` in oakridge-dbos/src/domain/dev-flow-artifacts.ts. */
-export type AssessmentVerdict = "pass" | "pass_with_notes" | "fail";
-/** Mirrors `PrReviewStatus` in oakridge-dbos/src/domain/dev-flow-artifacts.ts. */
-export type PrReviewStatus = "draft" | "ready" | "changes_requested" | "approved" | "merged" | "closed";
-
-export interface ArtifactCapabilities {
-  reviewable: boolean;
-  commentable: boolean;
-  atom_editable: boolean;
-  review_items: boolean;
-}
-
-export interface ArtifactReviewDescriptor {
-  viewer: string;
-  layout: "document" | "dag" | "report";
-  sections: string[];
-  action_labels: Record<string, string>;
-}
-
-export interface ArtifactTypeDescriptor {
-  id: string;
-  component_id: string;
-  capabilities: ArtifactCapabilities;
-  anchor_schema: string[] | null;
-  review?: ArtifactReviewDescriptor | null;
-}
-
-export interface ArtifactDetail {
-  id: string;
-  type_id: string;
-  component_id: string | null;
-  capabilities: ArtifactCapabilities | null;
-  anchor_schema: string[] | null;
-  review?: ArtifactReviewDescriptor | null;
-  run_id: string;
-  producing_stage: string;
-  label?: string | null;
-  revisions: ArtifactRevision[];
-}
+export type { ArtifactRevision, ArtifactRevisionStatus, FindingSeverity, AssessmentVerdict, PrReviewStatus, ArtifactCapabilities, ArtifactReviewDescriptor, ArtifactTypeDescriptor, ArtifactDetail } from "./artifact-types";
 
 export interface ParkedGate {
   id: string;
@@ -378,20 +314,6 @@ export interface ParkedGate {
   run_state: RunState;
   /** Whether a decision on this gate can still take effect. `false` means the run moved on (or ended) while the gate sat open — render it stranded. */
   actionable: boolean;
-}
-
-export interface GateResumeRequest {
-  idempotency_key: string;
-  artifact_revision_id: string;
-  gate_step: string;
-  action: string;
-  operator_comment: string;
-  feedback: string;
-}
-
-export interface GateResumeResponse {
-  gate_id: string;
-  resumed: boolean;
 }
 
 /**
@@ -537,45 +459,7 @@ export interface PostMessageRequest {
   author: string;
 }
 
-/** Mirrors the run-scoped oakridge.session_message HTTP resource. */
-export interface SessionMessageParty {
-  kind: "core" | "agent" | "service" | "operator";
-  id: string | null;
-}
-
-interface SessionMessageRecordFields {
-  id: string;
-  run_id: string;
-  cohort_id: string | null;
-  sender: SessionMessageParty;
-  recipient: SessionMessageParty;
-  thread_id: string;
-  message_id: string;
-  artifact_thread_id: string | null;
-  body: JsonValue;
-  delivery_key: string;
-  created_at: string;
-}
-
-/** Mirrors the backend delivery-state union and excludes impossible combinations. */
-export type SessionMessageRecord =
-  | (SessionMessageRecordFields & { delivery_status: "pending"; delivery_result: null; delivered_at: null })
-  | (SessionMessageRecordFields & { delivery_status: "delivered"; delivery_result: { kind: "delivered" }; delivered_at: string })
-  | (SessionMessageRecordFields & { delivery_status: "failed"; delivery_result: { kind: "failed"; detail: string }; delivered_at: null });
-
-export interface PostSessionMessageRequest {
-  recipient: SessionMessageParty;
-  thread_id: string;
-  message_id?: string;
-  artifact_thread_id?: string | null;
-  body: JsonValue;
-}
-
-export interface SessionMessageAccepted {
-  kind: "accepted";
-  message: SessionMessageRecord;
-  workflow_id: string;
-}
+export type { SessionMessageParty, SessionMessageRecord, PostSessionMessageRequest, SessionMessageAccepted } from "./session-message-types";
 
 export interface PostAtomEditRequest {
   anchor: string;
@@ -588,131 +472,12 @@ export interface PostAtomEditRequest {
 // Mirror the oakridge-dbos workflow-definition contract so form output matches what
 // POST /workflow_defs and GET /workflow_defs/:id round-trip.
 
-export type SlotBindingSource =
-  | "input"
-  | "context"
-  | "literal"
-  | "item"
-  | "context_lookup"
-  | "input_lookup";
-
-export type SlotBinding =
-  | { from: "input"; input_name: string; path?: string | null }
-  | { from: "context"; path: string }
-  | { from: "literal"; value: string }
-  | { from: "item"; path: string }
-  | {
-      from: "context_lookup";
-      collection_path: string;
-      collection_key_path: string;
-      item_key_path: string;
-      value_path: string;
-    }
-  // `context_lookup`'s sibling, keyed off a named input instead of the run
-  // context. The seeded dev flow binds every cohort's expected PR base through
-  // one of these; it was missing from this union, so the authoring UI could not
-  // name the variant it was editing and replaced it on the first interaction.
-  | {
-      from: "input_lookup";
-      input_name: string;
-      collection_key_path: string;
-      item_key_path: string;
-      value_path: string;
-    };
-
-// Bindable: a bare string literal OR a SlotBinding.
-export type Bindable = string | SlotBinding;
-
-export interface WorktreeTemplate {
-  branch_name: string;
-  worktree_subdir: string;
-  // A `Bindable`, not a string: the seeded dev flow resolves a cohort's base ref
-  // through an `input_lookup` on the provisioned repository refs. Typed as a
-  // string here, it rendered as `[object Object]` in a text input and became one
-  // the moment anyone typed in it.
-  base_ref?: Bindable | null;
-}
-
-// camelCase matches the executor's WorktreeIdentity wire contract.
-export interface WorktreeIdentity {
-  branchName: string;
-  worktreeSubdir: string;
-  baseRef?: string | null;
-}
-
-export interface FanOutConfig {
-  over: SlotBinding;
-  unit_id_path: string;
-  depends_on_path?: string | null;
-  max_parallel?: number;
-  item_bindings?: Record<string, SlotBinding>;
-  workdir?: SlotBinding | null;
-  worktree?: WorktreeTemplate | null;
-  inherit_worktree_from?: string | null;
-}
-
-export interface DelegatedSessionStageConfig {
-  // Bindable like model/effort, but required: oakridge-dbos errors rather than
-  // defaulting when a bound runtime resolves to nothing.
-  runtime: Bindable;
-  prompt_template_path: string;
-  slot_bindings: Record<string, SlotBinding>;
-  workdir: SlotBinding;
-  session_name: string;
-  model?: Bindable | null;
-  effort?: Bindable | null;
-  worktree?: WorktreeIdentity | null;
-  pre_authorized_tools?: string[];
-  yolo?: boolean;
-  fan_out?: FanOutConfig | null;
-  gate_output?: string | null;
-}
-
-export interface InputSlotDef {
-  name: string;
-  artifact_type: string;
-  optional?: boolean;
-  collect?: boolean;
-  delivery?: "stage_complete" | "unit_complete";
-}
-
-export interface OutputSlotDef {
-  name: string;
-  artifact_type: string;
-}
-
-export interface StageNodeDef {
-  stage_type: string;
-  config: DelegatedSessionStageConfig;
-  inputs: InputSlotDef[];
-  outputs: OutputSlotDef[];
-}
-
-export interface EdgeEndpoint {
-  stage: string;
-  slot: string;
-}
-
-export interface EdgeDef {
-  from: EdgeEndpoint;
-  to: EdgeEndpoint;
-}
-
-export interface WorkflowGraph {
-  stages: Record<string, StageNodeDef>;
-  edges: EdgeDef[];
-}
-
 export interface WorkflowDefFull {
-  id: string;
-  name: string;
-  version: number;
-  graph: WorkflowGraph;
-  created_at: string;
+  readonly id: string;
+  readonly name: string;
+  readonly version: number;
+  readonly definition: import("../../../../oakridge-dbos/src/domain/dev-flow-v15").WorkflowDefinition;
+  readonly archived: boolean;
+  readonly created_at: string;
 }
-
-export interface WorkflowDefInput {
-  name: string;
-  version: number;
-  graph: WorkflowGraph;
-}
+export type WorkflowDefInput = import("../../../../oakridge-dbos/src/domain/dev-flow-v15").WorkflowDefinition;

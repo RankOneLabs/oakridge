@@ -15,7 +15,7 @@ const UNIT_TONE = {
 } satisfies Record<StageUnitStatus, ChipTone>;
 
 const DISPLAY_TONE = { ...RUN_TONE } satisfies Record<RunDisplayStatus, ChipTone>;
-const ARTIFACT_TONE = { draft: "warning", approved: "success", rejected: "danger" } satisfies Record<ArtifactRevisionStatus, ChipTone>;
+const ARTIFACT_TONE = { unreviewed: "warning", accepted: "success", changes_requested: "danger" } satisfies Record<ArtifactRevisionStatus, ChipTone>;
 const SEVERITY_TONE = { blocking: "danger", warning: "warning", info: "info" } satisfies Record<FindingSeverity, ChipTone>;
 const VERDICT_TONE = { pass: "success", pass_with_notes: "warning", fail: "danger" } satisfies Record<AssessmentVerdict, ChipTone>;
 // `draft` and `approved` share a key with ArtifactRevisionStatus, so they must keep the same tone.

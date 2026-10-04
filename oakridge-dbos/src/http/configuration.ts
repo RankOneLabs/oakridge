@@ -3,12 +3,13 @@ import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "zod";
 
-import { parseUuidId, type JsonValue, type ProjectId, type WorkflowDefinitionId } from "../domain/primitives";
-import type { CreateWorkflowDefinition, WorkflowGraph } from "../domain/workflow";
+import { parseUuidId, type ProjectId, type WorkflowDefinitionId } from "../domain/primitives";
+import type { StoredWorkflowDefinition } from "../domain/dev-flow-v15";
+import { compileV15WorkflowDefinition } from "../compiler/compile-v15";
 import type { ProjectRepository, WorkflowDefinitionRepository } from "../storage/repositories";
 import type { ProjectRepositoryIdentityResolver } from "../domain/projects";
-import { parseWorkflowDefinition, type AdapterRoleRegistry } from "../validation/workflow-definition";
-import { createPromptBundle, type PromptTemplateLoader } from "../runtime/prompt-template";
+import { type AdapterRoleRegistry } from "../validation/workflow-definition";
+import { type PromptTemplateLoader } from "../runtime/prompt-template";
 
 export interface ConfigurationHttpDependencies {
   readonly projects: ProjectRepository;
@@ -21,25 +22,6 @@ export interface ConfigurationHttpDependencies {
 }
 
 const createProjectSchema = z.object({ name: z.string().trim().min(1), repo_dir: z.string().trim().min(1) });
-const createDefinitionSchema = z.object({ name: z.string().trim().min(1), version: z.number().int().positive(), graph: z.json() });
-type JsonObject = { readonly [key: string]: JsonValue };
-const isJsonObject = (value: JsonValue): value is JsonObject => typeof value === "object" && value !== null && !Array.isArray(value);
-
-const normalizePublicGraph = (graph: JsonValue): JsonValue => {
-  if (!isJsonObject(graph)) return graph;
-  const stages = graph.stages;
-  if (!isJsonObject(stages)) return graph;
-  const normalizedStages = Object.fromEntries(Object.entries(stages).map(([stageKey, stage]) => {
-    if (!isJsonObject(stage) || !Array.isArray(stage.inputs)) return [stageKey, stage];
-    const inputs = stage.inputs.map((input) => {
-      if (!isJsonObject(input) || input.delivery !== "stage_complete") return input;
-      return { ...input, delivery: "producer_complete" };
-    });
-    return [stageKey, { ...stage, inputs }];
-  }));
-  return { ...graph, stages: normalizedStages } as JsonValue;
-};
-
 export const createConfigurationApp = (dependencies: ConfigurationHttpDependencies): Hono => {
   const app = new Hono();
   const newId = dependencies.new_id ?? randomUUID;
@@ -80,18 +62,17 @@ export const createConfigurationApp = (dependencies: ConfigurationHttpDependenci
     return definition ? http.json(definition) : http.json({ error: "workflow definition not found" }, 404);
   });
   app.post("/workflow_defs", async (http) => {
-    const parsed = createDefinitionSchema.safeParse(await http.req.json().catch(() => null));
-    if (!parsed.success) return http.json({ error: "invalid workflow definition" }, 400);
-    const request: CreateWorkflowDefinition = { ...parsed.data, graph: normalizePublicGraph(parsed.data.graph) as unknown as WorkflowGraph };
-    const definition = parseWorkflowDefinition({ ...request, id: newId(), created_at: dependencies.now(), archived: false }, dependencies.adapter_roles);
-    if (!definition.ok) return http.json({ error: definition.error.detail }, 400);
+    const compiled = await compileV15WorkflowDefinition(await http.req.json().catch(() => null), dependencies.prompt_templates);
+    if (!compiled.ok) return http.json({ error: compiled.error.detail, code: compiled.error.kind }, 400);
+    const record: StoredWorkflowDefinition = { id: newId() as WorkflowDefinitionId, name: compiled.value.definition.key,
+      version: compiled.value.definition.version, definition: compiled.value.definition, archived: false, created_at: dependencies.now() };
     try {
-      const bundle = await createPromptBundle(definition.value, dependencies.prompt_templates);
-      return http.json(await dependencies.definitions.insert_immutable(definition.value, bundle), 201);
-    } catch (error) {
-      return http.json({ error: error instanceof Error ? error.message : "workflow definition conflicts with stored content" }, 409);
-    }
+      return http.json(await dependencies.definitions.insert_immutable(record, { version: 1, hash: compiled.value.prompts.hash,
+        matrix: compiled.value.prompts.entries.map((entry) => ({ stage_key: entry.stage_key, session_role: entry.worker,
+          launch_reason: entry.action_point, template_path: entry.path, content: entry.content })) }), 201);
+    } catch (error) { return http.json({ error: String(error) }, 409); }
   });
+
   app.post("/workflow_defs/:id/archive", async (http) => {
     const definitionId = parseUuidId<WorkflowDefinitionId>(http.req.param("id"));
     const definition = definitionId && await dependencies.definitions.set_archived(definitionId, true);

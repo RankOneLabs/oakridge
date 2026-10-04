@@ -49,7 +49,7 @@ describe("buildRunExecutionContext", () => {
       oakridge_url: "http://oakridge",
       planner: { runtime: "claude-code", model: "opus" },
       worker: { runtime: "claude-code", model: "sonnet" },
-    })).toEqual({ ok: true, value: expect.objectContaining({ planner_effort: null, worker_effort: null }) });
+    })).toEqual({ ok: true, value: expect.objectContaining({ planner: expect.objectContaining({ effort: null }), builder: expect.objectContaining({ effort: null }) }) });
   });
 
   it("rejects an empty repository list instead of creating an empty worktree path", () => {

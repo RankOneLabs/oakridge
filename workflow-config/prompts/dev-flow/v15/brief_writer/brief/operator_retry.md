@@ -4,8 +4,8 @@ The earlier brief-writing attempt did not finish the required collection. Recons
 
 ## Approved plan
 
-{{PLAN}}
+Read the accepted `plan` artifact referenced by the pinned action input appended below.
 
 Every brief requires `cohort_id`, `repository_key`, `title`, `depends_on`, `goal`, `files_in_scope`, `decisions_made` (`decision`, `rationale`), `approaches_rejected` (`approach`, `reason`), `acceptance_criteria`, and `next_action`.
 
-Use the Oakridge work order publication contract appended to this prompt. Publish each owed cohort to `{{OAKRIDGE_URL}}` as its own collection member. Stop only after all required briefs are confirmed.
+Use the Oakridge work order publication contract appended to this prompt. Publish each owed cohort through the appended publication endpoint as its own `briefs` collection member. Stop only after all required briefs are confirmed.

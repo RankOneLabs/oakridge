@@ -18,6 +18,9 @@ const stableUuid = (identity: string): string => {
 export const stageInstanceIdFor = (run_id: WorkflowRunId, stage_key: StageKey): StageInstanceId =>
   stableUuid(`${run_id}:stage:${stage_key}`) as StageInstanceId;
 
+export const cohortIdFor = (stage_instance_id: StageInstanceId, cohort_key: string): CohortId =>
+  stableUuid(`v15-cohort:${stage_instance_id}:${cohort_key}`) as CohortId;
+
 export const runUnitIdFor = (run_id: WorkflowRunId, stage_key: StageKey, unit_id: UnitId): RunUnitId =>
   stableUuid(`${run_id}:${stage_key}:unit:${unit_id}`) as RunUnitId;
 

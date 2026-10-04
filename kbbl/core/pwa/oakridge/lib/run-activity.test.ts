@@ -7,14 +7,14 @@ afterEach(() => vi.unstubAllGlobals());
 
 const run = {
   id: "run-1",
-  stages: [{ stage_instance_id: "stage-1", name: "build", units: [{ cohort_id: "cohort-1", unit_id: "api" }] }],
-} as RunDetail;
+  stages: [{ stage_instance_id: "stage-1", name: "build", units: [{ version: 0, workers: [], brief: null, cohort_id: "cohort-1", unit_id: "api" }] }],
+} as unknown as RunDetail;
 
 const event = (overrides: Partial<RunEvent> = {}): RunEvent => ({
   sequence: "1", transition_id: "transition-1", run_id: "run-1" as WorkflowRunId,
   owner: { kind: "cohort", id: "cohort-1" }, launch_reason: "initial",
   prior_owner_version: 0, resulting_owner_version: 1,
-  effect: { kind: "start_attempt", cohort_id: "cohort-1", attempt_number: 1, attempt_id: null },
+  effect: { kind: "worker_decision", cohort_id: "cohort-1", from_state: "working", to_state: "working", changes: [], actions: [{ worker: "build", action_point: "retry" }] },
   effect_workflow_id: null, actor: "core", occurred_at: "2026-09-27T10:00:00Z",
   ...overrides,
 });
@@ -22,7 +22,7 @@ const event = (overrides: Partial<RunEvent> = {}): RunEvent => ({
 describe("selectRunActivity", () => {
   it("labels cohort-owned events with stage and unit", () => {
     expect(selectRunActivity([event()], run)[0]).toMatchObject({
-      summary: "Session launched (attempt 1)", context: "build · api",
+      summary: "build: retry", context: "build · api",
     });
   });
 

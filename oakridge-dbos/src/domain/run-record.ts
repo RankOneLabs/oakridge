@@ -1,22 +1,19 @@
-import type { OutputAttention, OutputReleaseContract } from "./compiled-workflow";
-import type { ArtifactEnvelope, ExecutionRequest, ExecutorTerminalObservation, ExternalExecutionReference } from "./execution";
-import type { BlockedReason, CoreStatus, NextActor } from "./records";
+import type { ExecutorTerminalObservation, ExternalExecutionReference } from "./execution";
+import type { CoreStatus } from "./records";
 import type {
   ArtifactId,
   AttemptId,
   CohortId,
   JsonValue,
-  KbblSessionId,
   OutputCollectionKey,
   RunRecordVersion,
   RunTransitionId,
   SessionId,
   StageInstanceId,
-  WaitId,
   WorkflowDefinitionId,
   WorkflowRunId,
 } from "./primitives";
-import type { ArtifactTypeId, StageKey, StageOutcome, WorkflowRunBundlePin } from "./workflow";
+import type { StageKey, StageOutcome, WorkflowRunBundlePin } from "./workflow";
 
 export type TransitionLaunchReason = "initial" | "dependency_satisfied" | "artifact_accepted" | "gate_decided" | "operator" | "retry" | "recovery";
 export type TransitionOwner =
@@ -143,192 +140,13 @@ export interface StageRosterError {
  * Cohorts
  * ------------------------------------------------------------------ */
 
-/**
- * A cohort a started stage fans out over, with the adapter state it opens with.
- *
- * It declares no output slots. v15 has no per-cohort slot table and does not
- * need one: the stage's `stage_contract` is pinned when the stage opens, and
- * every output's `artifact_type`, `release` and `attention` is read from there
- * at publication — one source, rather than a copy per cohort that a later
- * definition version could disagree with.
- */
-export interface OpenCohort {
-  readonly id: CohortId;
-  readonly cohort_key: string;
-  /** Frozen v15 inputs contain artifact references, never embedded artifact bodies. */
-  readonly frozen_inputs: import("./dev-flow-v15").ImplementationCohortInputs
-    | import("./dev-flow-v15").RepositoryPreparationInputs
-    | import("./dev-flow-v15").SpecAnalysisInputs
-    | import("./dev-flow-v15").PlanningInputs
-    | import("./dev-flow-v15").BriefWritingInputs
-    | import("./dev-flow-v15").FinalIntegrationInputs;
-  readonly workers?: readonly import("./dev-flow-v15").V15WorkerKey[];
-  readonly depends_on?: readonly string[];
-}
-
-/** One declared output slot, read back off the stage's pinned contract. */
-export interface DeclaredOutputSlot {
-  readonly output_name: string;
-  readonly artifact_type: ArtifactTypeId;
-  readonly release: OutputReleaseContract;
-  readonly attention: OutputAttention;
-}
-
-export interface OpenStageCohorts {
-  readonly run_id: WorkflowRunId;
-  readonly stage_instance_id: StageInstanceId;
-  readonly cohorts: readonly OpenCohort[];
-  readonly opened_at: string;
-}
-
-export type OpenStageCohortsResult =
-  | { readonly kind: "opened" | "already_open"; readonly cohort_ids: readonly CohortId[] }
-  | { readonly kind: "stage_not_found" | "stage_not_active"; readonly detail: string };
-
-/**
- * An adapter's decision about one cohort, committed under the cohort's own
- * durable version. The projected status is the adapter's; the effect name is
- * validated by the application registry before it is written.
- */
-export interface RecordCohortEvent {
-  readonly run_id: WorkflowRunId;
-  readonly cohort_id: CohortId;
-  readonly expected_version: number;
-  readonly change: { readonly status: CoreStatus; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null; readonly outcome: JsonValue | null };
-  readonly stage_data: JsonValue;
-  readonly reopen_output_names: readonly string[];
-  readonly effect: TransitionEffectDescriptor;
-  readonly launch_reason: TransitionLaunchReason;
-  readonly actor: string;
-  readonly recorded_at: string;
-}
-
-export type RecordCohortEventResult =
-  | { readonly kind: "recorded"; readonly transition: CommittedRunTransition }
-  | { readonly kind: "cohort_not_found" | "version_conflict" | "owner_terminal" | "invalid_effect"; readonly detail: string };
-
-/** The cohort state a machine reads before applying its next event. */
-export interface CohortMachineState {
-  readonly run_id: WorkflowRunId;
-  readonly stage_instance_id: StageInstanceId;
-  readonly stage_key: StageKey;
-  readonly cohort_id: CohortId;
-  readonly cohort_key: string;
-  readonly status: CoreStatus;
-  /**
-   * Carried beside the status because a driver has to know whether the
-   * projection it is about to commit is the one already committed — otherwise a
-   * cohort parked on its gate would re-commit "blocked on a gate" on every
-   * bounded recheck, burning an owner version per tick.
-   */
-  readonly blocked_reason: BlockedReason | null;
-  readonly next_actor: NextActor | null;
-  readonly durable_version: number;
-  readonly stage_data: JsonValue;
-  /**
-   * How many attempts this cohort has already had. The next launch is
-   * `attempt_count + 1`, which is exactly the uniqueness
-   * `oakridge.attempt UNIQUE (cohort_id, attempt_number)` enforces — so a
-   * replayed launch dispatch lands on the attempt it already created.
-   */
-  readonly attempt_count: number;
-  /**
-   * The cohort's newest attempt that has not ended, whoever created it.
-   *
-   * Carried because a cohort machine is the only thing that starts an attempt's
-   * workflow, and two paths create attempts outside it — an operator retry and an
-   * adapter event. Its workflow id is derived from the attempt id, so the machine
-   * can start this one on every pass: a duplicate start is a no-op, and it also
-   * recovers a crash between the launch commit and the start, which neither
-   * off-machine caller could.
-   */
-  readonly latest_unfinished_attempt_id: AttemptId | null;
-  readonly latest_attempt: {
-    readonly attempt_id: AttemptId;
-    readonly attempt_number: number;
-    readonly status: CoreStatus;
-    readonly created_at: string;
-    readonly ended_at: string | null;
-  } | null;
-  readonly accepted_outputs: readonly ArtifactEnvelope[];
-}
-
-/* ------------------------------------------------------------------ *
- * Attempts and sessions
- * ------------------------------------------------------------------ */
-
-/**
- * The attempt a cohort's launch transition names. Created idempotently on
- * `(cohort_id, attempt_number)`: the transition that selected it is durable, so
- * a replayed dispatch must find the attempt it already made rather than open a
- * second one.
- */
-export interface StartAttempt {
-  readonly run_id: WorkflowRunId;
-  readonly stage_instance_id: StageInstanceId;
-  readonly cohort_id: CohortId;
-  /** Omitted only by callers of the pre-v15 launch path. */
-  readonly worker: import("./dev-flow-v15").V15WorkerKey;
-  readonly attempt_id: AttemptId;
-  readonly attempt_number: number;
-  readonly adapter_type: string;
-  readonly request: ExecutionRequest;
-  readonly launch_transition_id: RunTransitionId;
-  readonly session_id: SessionId;
-  /** Present only for an operator retry; `null` for a machine-selected launch. */
-  readonly idempotency_key: string | null;
-  readonly created_at: string;
-}
-
-export type StartAttemptResult =
-  | { readonly kind: "started" | "already_started"; readonly attempt_id: AttemptId; readonly session_id: SessionId }
-  | { readonly kind: "cohort_not_found"; readonly detail: string }
-  | { readonly kind: "idempotency_conflict"; readonly detail: string }
-
-/** Everything the attempt workflow needs to drive one adapter execution. */
-export interface AttemptExecution {
-  readonly attempt_id: AttemptId;
-  readonly session_id: SessionId;
-  readonly run_id: WorkflowRunId;
-  readonly stage_instance_id: StageInstanceId;
-  readonly stage_key: StageKey;
-  readonly cohort_id: CohortId;
-  readonly cohort_key: string;
-  readonly attempt_number: number;
-  readonly status: CoreStatus;
-  readonly adapter_type: string;
-  readonly request: ExecutionRequest | null;
-  readonly adapter_reference: ExternalExecutionReference | null;
-  readonly kbbl_session_id: KbblSessionId | null;
-}
-
 export interface PriorSessionToFence {
   readonly session_id: SessionId;
   readonly attempt_id: AttemptId;
   readonly adapter_reference: ExternalExecutionReference;
 }
 
-export interface BindSession {
-  readonly session_id: SessionId;
-  readonly adapter_reference: ExternalExecutionReference;
-  readonly kbbl_session_id: KbblSessionId | null;
-  readonly bound_at: string;
-}
-
-export type BindSessionResult = { readonly kind: "bound" } | { readonly kind: "attempt_ended"; readonly status: CoreStatus };
 export type SessionStatusWrite = { readonly kind: "written" } | { readonly kind: "already_ended"; readonly status: CoreStatus };
-
-export interface CommitCohortLaunch {
-  readonly event: RecordCohortEvent;
-  readonly attempt: StartAttempt;
-}
-
-export type CohortLaunchCommitted =
-  | { readonly kind: "created"; readonly attempt_id: AttemptId; readonly durable_version: number; readonly transition: CommittedRunTransition }
-  | { readonly kind: "already_created"; readonly attempt_id: AttemptId; readonly durable_version: number };
-
-export type CohortLaunchCommitError =
-  | { readonly kind: "cohort_not_found" | "version_conflict" | "owner_terminal" | "invalid_effect" | "idempotency_conflict"; readonly detail: string };
 
 export type ExecutorHealthObservation =
   | { readonly kind: "running"; readonly observed_at: string }
@@ -355,29 +173,6 @@ export interface ObserveSession {
   readonly observed_at: string;
 }
 
-/** Which cohort an operator retry addresses — both forms name exactly one row. */
-export type RetryCohortTarget =
-  | { readonly kind: "cohort"; readonly cohort_id: CohortId }
-  | { readonly kind: "stage_cohort"; readonly stage_instance_id: StageInstanceId; readonly cohort_key: string };
-
-export type RetryCohortResult =
-  | {
-      readonly kind: "created" | "already_created";
-      readonly run_id: WorkflowRunId;
-      readonly cohort_id: CohortId;
-      readonly attempt_id: AttemptId;
-      readonly attempt_number: number;
-      readonly durable_version: number;
-    }
-  | { readonly kind: "cohort_not_found"; readonly detail: string }
-  | { readonly kind: "not_retryable"; readonly reason: "terminal" | "gate_pending" | "work_in_progress" | "not_lost" }
-  | { readonly kind: "idempotency_conflict"; readonly detail: string }
-  | { readonly kind: "refused"; readonly code: string; readonly detail: string };
-
-/* ------------------------------------------------------------------ *
- * Artifacts and waits
- * ------------------------------------------------------------------ */
-
 export interface PublishWorkOrderArtifact {
   readonly artifact_id: ArtifactId;
   /** The attempt whose capability authorizes this publication. */
@@ -394,53 +189,11 @@ export interface PublishWorkOrderArtifact {
 
 export type PublishWorkOrderArtifactResult =
   | { readonly kind: "published"; readonly artifact_id: ArtifactId; readonly run_id: WorkflowRunId; readonly cohort_id: CohortId; readonly record_version: RunRecordVersion }
-  /** A gated or handoff release policy: the artifact is recorded and its slot parked pending the opened wait's decision. */
-  | { readonly kind: "pending"; readonly artifact_id: ArtifactId; readonly wait_id: WaitId; readonly run_id: WorkflowRunId; readonly cohort_id: CohortId; readonly record_version: RunRecordVersion }
   | { readonly kind: "already_applied"; readonly artifact_id: ArtifactId; readonly run_id: WorkflowRunId; readonly cohort_id: CohortId; readonly record_version: RunRecordVersion }
   | { readonly kind: "work_not_found" | "invalid_capability" | "work_abandoned" | "work_not_active" | "slot_not_found"; readonly detail: string }
-  | { readonly kind: "slot_already_released"; readonly artifact_id: ArtifactId; readonly detail: string }
   | { readonly kind: "idempotency_conflict"; readonly artifact_id: ArtifactId; readonly detail: string }
   | { readonly kind: "refused"; readonly code: string; readonly detail: string }
   | { readonly kind: "enrichment_unavailable"; readonly detail: string };
-
-export interface DecideGateWait {
-  readonly wait_id: WaitId;
-  readonly action: string;
-  readonly actor: string;
-  readonly detail: string | null;
-  readonly decided_at: string;
-}
-
-export type CloseRunOutputWaitResult =
-  | { readonly kind: "decided"; readonly run_id: WorkflowRunId; readonly cohort_id: CohortId; readonly record_version: RunRecordVersion }
-  | { readonly kind: "already_decided"; readonly detail: string; readonly code: string }
-  | { readonly kind: "invalid_action"; readonly detail: string; readonly code: string }
-  | { readonly kind: "invalid_feedback"; readonly detail: string; readonly code: string }
-  | { readonly kind: "refused"; readonly detail: string; readonly code: string }
-  | { readonly kind: "released"; readonly artifact_id: ArtifactId; readonly run_id: WorkflowRunId; readonly cohort_id: CohortId | null; readonly record_version: RunRecordVersion }
-  | { readonly kind: "invalidated"; readonly run_id: WorkflowRunId; readonly cohort_id: CohortId | null; readonly record_version: RunRecordVersion }
-  | { readonly kind: "already_applied"; readonly run_id: WorkflowRunId; readonly cohort_id: CohortId | null; readonly record_version: RunRecordVersion }
-  | { readonly kind: "wait_not_found"; readonly detail: string }
-  | { readonly kind: "wait_conflict"; readonly detail: string };
-
-/**
- * What a decided gate did to one artifact revision.
- *
- * This replaces v14's `gate_decision_audit` table, whose only production
- * reader was artifact detail's per-revision draft/approved/rejected label.
- * v15 already writes the decision to `wait_gate.outcome` and the transition
- * ledger, with `wait_gate_artifact_revision` linking the wait to the revision
- * it decided, so the fact has a home and the table had nothing left to add.
- */
-export interface GateDecisionRecord {
-  readonly wait_id: WaitId;
-  readonly artifact_revision_id: ArtifactId;
-  readonly gate_step: string | null;
-  readonly action: string;
-  readonly actor: string;
-  readonly detail: string | null;
-  readonly decided_at: string;
-}
 
 /* ------------------------------------------------------------------ *
  * Run lifecycle

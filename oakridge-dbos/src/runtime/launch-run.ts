@@ -4,8 +4,8 @@ import type { OperatorRunSummary } from "../domain/operator-projections";
 import { err, ok, type Result, type WorkflowRunId } from "../domain/primitives";
 import type { CreateWorkflowRunRequest } from "../domain/runs";
 import { runRecordWorkflowId } from "../domain/workflow-ids";
-import { contextRequirementsOf, describeUnsatisfiedRequirements, unsatisfiedContextRequirements } from "../compiler/context-requirements";
-import { compileWorkflowManifest } from "../compiler/compile-workflow";
+import { parseV15WorkflowDefinition } from "../validation/v15-definition";
+import { parseRunInputs } from "../validation/run-inputs";
 import { prepareRunContext } from "./prepare-run-context";
 import type { RunStartError, RunStartRequest } from "./run-launch-dispatch";
 import type { OperatorProjectionRepository } from "../storage/postgres-operators";
@@ -63,34 +63,17 @@ export const launchRun = async (request: RunLaunchRequest, dependencies: LaunchR
   if (!bundlePin) {
     const promptBundle = await dependencies.definitions.find_bound_prompt_bundle(definition.id);
     if (!promptBundle) return launchFailure("definition_invalid", `workflow definition '${request.workflow_def_id}' has no bound prompt bundle`);
-    const compiled = compileWorkflowManifest(definition, promptBundle, {
-      adapter_version: dependencies.adapter_version,
-      artifact_schema_version: dependencies.artifact_schema_version,
-    });
-    if (!compiled.ok) return launchFailure("definition_invalid", `workflow definition '${request.workflow_def_id}' does not compile: ${compiled.error.detail}`);
-    bundlePin = compiled.value.bundle_pin ?? null;
+    const parsed = parseV15WorkflowDefinition(definition.definition);
+    if (!parsed.ok) return launchFailure("definition_invalid", parsed.error.detail);
+    bundlePin = { definition_version: definition.version, prompt_bundle_hash: promptBundle.hash,
+      adapter_version: dependencies.adapter_version, artifact_schema_version: dependencies.artifact_schema_version };
   }
-  if (!bundlePin) return launchFailure("definition_invalid", `workflow definition '${request.workflow_def_id}' did not produce a bundle pin`);
+  if (!bundlePin) return launchFailure("definition_invalid", "workflow definition has no bundle pin");
   const project = request.project_id ? await dependencies.projects.find_by_id(request.project_id) : null;
   if (request.project_id && !project) return launchFailure("project_not_found", `project '${request.project_id}' was not found`);
   const context = prepareRunContext({ caller_context: request.context, project, epic_profile: request.epic_profile });
-
-  // The context is checked against the definition that will read it, not against
-  // a key list kept here — the definition is authored, so a second list would
-  // drift from it. What is checkable now is exactly what is knowable now: every
-  // pointer the definition dereferences resolves to something. A launch that
-  // fails this ran until the stage holding the pointer and died there, one
-  // missing key per run.
-  const unsatisfied = unsatisfiedContextRequirements(context, contextRequirementsOf(definition.graph));
-  if (unsatisfied.length > 0) {
-    return launchFailure("context_requirements_unmet",
-      `run context does not satisfy '${definition.name}' v${definition.version}: ${describeUnsatisfiedRequirements(unsatisfied)}`);
-  }
-
-  // What is *behind* a pointer stays the owning stage's business. A repository
-  // path that resolves but is not a git repository is a provisioning outcome the
-  // operator can see and retry, not a launch refusal — that requirement has one
-  // owner, and it is not the participant that can only ever say no.
+  const validated = parseRunInputs(context);
+  if (!validated.ok) return launchFailure("invalid_context", validated.error.detail);
 
   const createdAt = existing?.created_at ?? dependencies.now();
   // The epic configuration is already folded into `context` by

@@ -2,13 +2,8 @@ import { Hono } from "hono";
 
 import type { OperatorArtifactDetail, OperatorArtifactRevision } from "../domain/operator-projections";
 import type { ArtifactTypeDefinition } from "../domain/artifact-types";
-import { parseUuidId, type ArtifactId } from "../domain/primitives";
-import type { ArtifactRevisionRepository, GateDecisionReadRepository, StageInstanceRepository } from "../storage/repositories";
-import { selectBuiltInGateDisposition } from "../domain/gates";
-
-/** A decided wait records the action name only, so its disposition comes from the shared vocabulary. */
-const isReleaseAction = (action: string): boolean => selectBuiltInGateDisposition(action) === "release";
-
+import { parseUuidId, ok, type Result, type ArtifactId } from "../domain/primitives";
+import type { ArtifactRevisionRepository, ArtifactAcceptanceReadRepository, StageInstanceRepository } from "../storage/repositories";
 export interface ArtifactTypePresentation {
   readonly component_id: string;
   readonly capabilities: NonNullable<OperatorArtifactDetail["capabilities"]>;
@@ -18,13 +13,8 @@ export interface ArtifactTypePresentation {
 export interface ArtifactDetailDependencies {
   readonly artifacts: ArtifactRevisionRepository;
   readonly stages: StageInstanceRepository;
-  /**
-   * Per-revision draft/approved/rejected, read from the wait that decided it.
-   * v14 read a `gate_decision_audit` row here; v15 writes the decision to
-   * `wait_gate.outcome` and the transition ledger, so the label comes from the
-   * wait and the response body is unchanged.
-   */
-  readonly audits: GateDecisionReadRepository;
+  readonly acceptance: ArtifactAcceptanceReadRepository;
+  readonly review_context?: (revision: import("../domain/artifacts").ArtifactRevision) => Promise<Result<OperatorArtifactDetail["review_context"], { readonly detail: string }>>;
   readonly presentation_for_type: (artifact_type: string) => ArtifactTypePresentation | null;
   readonly artifact_types?: readonly ArtifactTypeDefinition[];
 }
@@ -42,12 +32,13 @@ export const createArtifactDetailApp = (dependencies: ArtifactDetailDependencies
     const chain = await dependencies.artifacts.list_chain(requested.chain_id);
     const revisions: OperatorArtifactRevision[] = [];
     for (const revision of chain) {
-      const decision = await dependencies.audits.find_for_revision(revision.id);
-      const status: OperatorArtifactRevision["status"] = !decision ? "draft" : isReleaseAction(decision.action) ? "approved" : "rejected";
+      const status = await dependencies.acceptance.find_acceptance_state(revision.id) ?? "unreviewed";
       revisions.push({ id: revision.id, status, lifecycle: revision.lifecycle.kind, created_at: revision.created_at, body: revision.body, validation: {} });
     }
     const presentation = dependencies.presentation_for_type(requested.artifact_type);
+    const review = await dependencies.review_context?.(chain.at(-1) ?? requested) ?? ok(null);
     const detail: OperatorArtifactDetail = {
+      review_context: review.ok ? review.value : null, review_error: review.ok ? null : review.error,
       id: requested.id, requested_revision_id: requested.id,
       current_revision_id: chain.find((revision) => revision.lifecycle.kind === "current")?.id ?? null,
       type_id: requested.artifact_type, component_id: presentation?.component_id ?? null,

@@ -1,6 +1,6 @@
 import { Button } from "../../../components/atoms/Button";
 import type { ArtifactId, Sid } from "../../../lib/ids";
-import type { RunOverview } from "../../lib/run-overview";
+import { selectSessionActionLabel, type RunOverview } from "../../lib/run-overview";
 import type { RunWorkspacePane } from "../../lib/run-workspace";
 import type { RunActivityRead } from "../../lib/run-activity";
 import { StatusBadge } from "../atoms/StatusBadge";
@@ -12,11 +12,6 @@ interface RunOverviewPaneProps {
 }
 
 const rowButtonClass = "w-full justify-start! border-[var(--border-subtle)]! py-2! text-left";
-const attemptLabel = (attempt: { attempt_number: number; attempt_count: number }): string =>
-  attempt.attempt_count > 1
-    ? `attempt ${attempt.attempt_number} of ${attempt.attempt_count}`
-    : `attempt ${attempt.attempt_number}`;
-
 /** Presentational only: every lifecycle and attention fact comes from the diagnosis read. */
 export function RunOverviewPane({ overview, activity, onOpenPane }: RunOverviewPaneProps) {
   const openSession = (sessionId: Sid) => onOpenPane({ kind: "session", session_id: sessionId });
@@ -47,7 +42,7 @@ export function RunOverviewPane({ overview, activity, onOpenPane }: RunOverviewP
         ) : (
           <Button variant="secondary" type="button" className={rowButtonClass}
             onClick={() => openSession(currentSession.session_id as Sid)} data-testid="or-overview-current-session">
-            {currentSession.stage_key} · {currentSession.cohort_key} · {attemptLabel(currentSession)}
+            {currentSession.stage_key} · {currentSession.cohort_key} · {selectSessionActionLabel(currentSession)}
           </Button>
         )}
       </section>
@@ -62,7 +57,7 @@ export function RunOverviewPane({ overview, activity, onOpenPane }: RunOverviewP
               <li key={session.session_id}>
                 <Button variant="secondary" type="button" className={rowButtonClass}
                   onClick={() => openSession(session.session_id as Sid)} data-testid="or-overview-awaiting-session">
-                  {session.stage_key} · {session.cohort_key} · {attemptLabel(session)}
+                  {session.stage_key} · {session.cohort_key} · {selectSessionActionLabel(session)}
                 </Button>
               </li>
             ))}

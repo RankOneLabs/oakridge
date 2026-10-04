@@ -1,6 +1,7 @@
+import { InboxWorkerReview } from "./InboxWorkerReview";
 import { Button } from "../../../components/atoms/Button";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
-import { GateDecisionActions } from "./GateDecisionActions";
+
 import { useConfirmCohortMerged } from "../../hooks/useConfirmCohortMerged";
 import { useRetryStuck } from "../../hooks/useRetryStuck";
 import type { CohortLifecycleSummary, ParkedGate, ReviewInboxItem } from "../../types";
@@ -70,7 +71,7 @@ export function WorkItem({ item, cohort, isSettled = false, onSelectRun, onSelec
       <div className="or-work-item__decision">
         {isSettled && <p data-testid="or-inbox-settled">No longer needs your decision.</p>}
         {!isSettled && <>
-        {gate && <GateDecisionActions gate={gate} />}
+        {(item.kind === "artifact_gate" || item.kind === "merge_confirmation") && item.artifact_revision_id && <InboxWorkerReview artifactId={item.artifact_revision_id} runId={item.run_id} />}
         {!gate && item.kind === "pull_request_merge" && <PullRequestMergeAction item={item} cohort={cohort} />}
         {!gate && item.kind === "cohort_retry" && <CohortRetryAction item={item} />}
         {!gate && item.kind === "pull_request_mismatch" && <><p>{mismatch ?? "The observed pull request does not match this cohort’s durable configuration."}</p><p>Correct the pull request repository or branches, then Oakridge will reconcile it automatically.</p></>}

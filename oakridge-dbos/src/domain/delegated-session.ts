@@ -52,7 +52,6 @@ export type Bindable = string | SlotBinding;
 export interface WorktreeIdentity { readonly branchName: string; readonly worktreeSubdir: string; readonly baseRef?: string }
 export interface WorktreeTemplate { readonly branch_name: Bindable; readonly worktree_subdir: Bindable; readonly base_ref?: Bindable }
 
-export interface ArtifactCollectionDefinition { readonly over: SlotBinding; readonly id_path: string }
 export interface OutputGateStep { readonly type: "artifact_approval" | "merge_confirmation"; readonly actions: readonly string[] }
 export interface OutputGateDefinition {
   readonly name: string;
@@ -115,7 +114,6 @@ export interface DelegatedSessionDefinitionConfig {
   readonly required_build_set?: readonly string[];
   readonly slot_bindings: Readonly<Record<string, SlotBinding>>;
   readonly workdir: SlotBinding;
-  readonly artifact_productions: readonly ArtifactCollectionDefinition[];
   readonly gates: readonly OutputGateDefinition[];
   readonly handoffs: readonly OutputHandoffDefinition[];
 }

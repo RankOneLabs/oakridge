@@ -146,36 +146,9 @@ const parseSessionIdentity = (value: JsonValue): KbblResolvedSessionIdentity => 
  * request's own `unit_id` marks a scalar), so a retry that owes one member of
  * a collection tells the agent to emit that member and nothing else.
  */
-const authorizedOutputNames = (renderedPrompt: string): ReadonlySet<string> | null => {
-  const line = [...renderedPrompt.matchAll(/^Authorized outputs: (.+)$/gm)].at(-1)?.[1];
-  return line ? new Set(line.split(",").map((name) => name.trim()).filter(Boolean)) : null;
-};
-
-/**
- * The committed role owns only the outputs named by its generated session
- * contract. A build cohort declares assessment beside its builder outputs, and
- * the stage-level request consequently carries all three slots; forwarding all
- * three tells the builder to impersonate its assessor. Brief writing is the
- * other plural case: one scalar session publishes a collection whose keys come
- * from the accepted plan it received.
- */
-export const selectPromptExpectedArtifacts = (config: Pick<KbblResolvedConfig, "rendered_prompt">, request: Pick<ExecutionRequest, "unit_id" | "inputs" | "declared_outputs" | "expected_artifacts">): readonly ExpectedArtifactContract[] => {
-  const authorized = authorizedOutputNames(config.rendered_prompt);
-  if (!authorized) return request.expected_artifacts;
-  const filtered = request.expected_artifacts.filter((expected) => authorized.has(expected.output_name));
-  if (!authorized.has("brief")) return filtered;
-  const isInitialCollectionPlaceholder = filtered.length === 1 && filtered[0]?.unit_id === request.unit_id;
-  if (!isInitialCollectionPlaceholder) return filtered;
-  const plan = request.inputs.find((input) => input.artifact_type === "dev.plan")?.body;
-  if (plan === undefined || !isObject(plan) || !Array.isArray(plan.cohorts)) return filtered;
-  const artifactType = request.declared_outputs.find((output) => output.name === "brief")?.artifact_type;
-  if (!artifactType) return filtered;
-  const members = plan.cohorts.flatMap((cohort): ExpectedArtifactContract[] =>
-    isObject(cohort) && typeof cohort.id === "string" && cohort.id.length > 0
-      ? [{ unit_id: cohort.id as UnitId, output_name: "brief", artifact_type: artifactType }]
-      : []);
-  return members.length > 0 ? members : filtered;
-};
+/** The selected worker owns this typed output list; prompt text cannot widen or narrow it. */
+export const selectPromptExpectedArtifacts = (_config: Pick<KbblResolvedConfig, "rendered_prompt">,
+  request: Pick<ExecutionRequest, "unit_id" | "inputs" | "declared_outputs" | "expected_artifacts">): readonly ExpectedArtifactContract[] => request.expected_artifacts;
 
 const expectedOutputLines = (unitId: UnitId, expectedArtifacts: readonly ExpectedArtifactContract[]): string =>
   expectedArtifacts.map((expected) => expected.unit_id === unitId

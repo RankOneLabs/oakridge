@@ -2,13 +2,16 @@ import { expect, test } from "bun:test";
 
 import type { Project } from "../src/domain/projects";
 import type { ProjectId, WorkflowDefinitionId } from "../src/domain/primitives";
-import type { WorkflowDefinition } from "../src/domain/workflow";
+import type { StoredWorkflowDefinition as WorkflowDefinition } from "../src/domain/dev-flow-v15";
+import { loadDevFlowV15 } from "../src/seed/dev-flow-v15";
+const loaded = await loadDevFlowV15();
+if (!loaded.ok) throw new Error(loaded.error.detail);
 import { createConfigurationApp } from "../src/http/configuration";
 import type { ProjectRepository, WorkflowDefinitionRepository } from "../src/storage/repositories";
 import { createDevFlowAdapterRegistry } from "../src/adapters/dev-flow";
 
 const project: Project = { id: "00000000-0000-4000-8000-000000000001" as ProjectId, name: "Oakridge", repo_dir: "/code/oakridge", created_at: "2026-08-15T12:00:00Z", forge_repository: null, integration_branch: null };
-const definition: WorkflowDefinition = { id: "00000000-0000-4000-8000-000000000002" as WorkflowDefinitionId, name: "flow", version: 1, archived: false, created_at: "2026-08-15T12:00:00Z", graph: { stages: {}, edges: [] } };
+const definition: WorkflowDefinition = { id: "00000000-0000-4000-8000-000000000002" as WorkflowDefinitionId, name: "flow", version: 1, archived: false, created_at: "2026-08-15T12:00:00Z", definition: loaded.value };
 
 const fixture = (generatedId = project.id as string, identity: Project["forge_repository"] = null, baseBranch: string | null = null, shouldFailProjectInsert = false) => {
   const projects: Project[] = [];
@@ -65,22 +68,17 @@ test("project creation persists resolved forge identity and base branch", async 
   expect(subject.projects[0]).toEqual(expect.objectContaining({ forge_repository: identity, integration_branch: "main" }));
 });
 
-test("workflow definition creation owns identifiers and normalizes the legacy delivery name", async () => {
+test("workflow definition creation stores the canonical worker and decision-tree contract", async () => {
   const subject = fixture(definition.id);
-  const response = await subject.app.request("/workflow_defs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "flow", version: 1, graph: { stages: { review: { stage_type: "stub", config: {}, inputs: [{ name: "input", artifact_type: "dev.input", delivery: "stage_complete" }], outputs: [{ name: "review", artifact_type: "dev.review" }] } }, edges: [] } }) });
+  const response = await subject.app.request("/workflow_defs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(loaded.value) });
   expect(response.status).toBe(201);
-  expect(await response.json()).toEqual(expect.objectContaining({ id: definition.id, name: "flow", version: 1, archived: false, graph: { stages: { review: expect.objectContaining({ inputs: [expect.objectContaining({ delivery: "producer_complete" })] }) }, edges: [] } }));
+  expect(await response.json()).toEqual(expect.objectContaining({ id: definition.id, definition: loaded.value }));
 });
 
-test("workflow definition creation rejects an unregistered adapter role", async () => {
+test("workflow definition creation rejects the retired graph contract before storage", async () => {
   const subject = fixture(definition.id);
-  const response = await subject.app.request("/workflow_defs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({
-    name: "flow", version: 1, graph: { stages: {
-      review: { stage_type: "stub", operator_role: "misspelled_role", config: {}, inputs: [], outputs: [{ name: "review", artifact_type: "dev.review" }] },
-    }, edges: [] },
-  }) });
+  const response = await subject.app.request("/workflow_defs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "flow", version: 1, graph: { stages: {}, edges: [] } }) });
   expect(response.status).toBe(400);
-  expect(await response.json()).toEqual({ error: "workflow references unregistered adapter role(s): misspelled_role" });
   expect(subject.definitions).toEqual([]);
 });
 

@@ -2,7 +2,6 @@ import { expect, test } from "bun:test";
 import type { WorkflowDefinition } from "../src/domain/dev-flow-v15";
 import type { V15PromptBundle } from "../src/compiler/compile-v15";
 import { seedBuiltins, type V15DefinitionSeedRepository } from "../src/seed/seed-builtins";
-import { createDevFlowAdapterRegistry } from "../src/adapters/dev-flow";
 import { PostgresWorkflowDefinitionRepository } from "../src/storage/postgres-workflow-definitions";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
 import { applyMigrations } from "../src/storage/migrate";
@@ -40,7 +39,7 @@ test("PostgreSQL stores canonical definition data and enforces version immutabil
   const sql = PgPostgresExecutor.connect(scratch.value.url);
   try {
     await applyMigrations(sql);
-    const repository = new PostgresWorkflowDefinitionRepository(sql, createDevFlowAdapterRegistry());
+    const repository = new PostgresWorkflowDefinitionRepository(sql);
     await seedBuiltins(repository);
     await seedBuiltins(repository);
     const rows = await sql.query<{ readonly definition: WorkflowDefinition; readonly id: string }>("SELECT id::text,definition FROM oakridge.workflow_definition WHERE name=$1", ["dev_flow_v15"]);

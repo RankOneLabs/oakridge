@@ -1,16 +1,14 @@
 import { createHash } from "node:crypto";
 import type { WorkflowDefinitionId } from "../domain/primitives";
-import type { PromptBundle, WorkflowDefinition } from "../domain/workflow";
-import { parseWorkflowDefinition, type AdapterRoleRegistry } from "../validation/workflow-definition";
+import type { PromptBundle } from "../domain/workflow";
+import type { StoredWorkflowDefinition as WorkflowDefinition } from "../domain/dev-flow-v15";
+import { parseV15WorkflowDefinition } from "../validation/v15-definition";
 import type { PromptBundleRepository, WorkflowDefinitionRepository } from "./repositories";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
-import { compileWorkflowManifest } from "../compiler/compile-workflow";
-import type { MachineRegistry } from "../domain/stage-machine";
-import { StageMachineRegistry } from "../runtime/executor-registry";
 import type { WorkflowDefinition as V15WorkflowDefinition } from "../domain/dev-flow-v15";
 import { compileV15WorkflowDefinition, type V15PromptBundle } from "../compiler/compile-v15";
 
-interface DefinitionRow { readonly definition: unknown }
+interface DefinitionRow { readonly id: WorkflowDefinitionId; readonly name: string; readonly version: number; readonly definition: unknown; readonly archived: boolean; readonly created_at: string }
 interface PromptBundleRow { readonly hash: string; readonly version: number; readonly matrix: PromptBundle["matrix"] }
 
 const v15DefinitionId = (definition: Pick<V15WorkflowDefinition, "key" | "version">): WorkflowDefinitionId => {
@@ -47,32 +45,15 @@ const bindPromptBundle = async (sql: SqlExecutor, definition_id: WorkflowDefinit
   );
 };
 
-const decodeDefinition = (row: DefinitionRow, adapterRoles: AdapterRoleRegistry): WorkflowDefinition => {
-  const parsed = parseWorkflowDefinition(row.definition, adapterRoles);
+const decodeDefinition = (row: DefinitionRow): WorkflowDefinition => {
+  const parsed = parseV15WorkflowDefinition(row.definition);
   if (!parsed.ok) throw new Error(`stored workflow definition is invalid: ${parsed.error.detail}`);
-  return parsed.value;
-};
-
-/**
- * A stored definition, or nothing when it can no longer be read.
- *
- * Asking for one definition by id and getting a throw is right — the caller
- * named it and cannot proceed without it. Listing them is different: a
- * definition retired by a schema change is still a row, and mapping the strict
- * decode across every row meant one unreadable row took down the whole list,
- * so the launcher offered the operator nothing at all rather than everything
- * that still works.
- */
-const decodeListedDefinition = (row: DefinitionRow, adapterRoles: AdapterRoleRegistry): WorkflowDefinition | null => {
-  const parsed = parseWorkflowDefinition(row.definition, adapterRoles);
-  if (parsed.ok) return parsed.value;
-  console.warn(`oakridge: omitting a stored workflow definition that no longer parses: ${parsed.error.detail}`);
-  return null;
+  return { id: row.id, name: row.name, version: row.version, definition: parsed.value,
+    archived: row.archived, created_at: row.created_at };
 };
 
 export class PostgresWorkflowDefinitionRepository implements WorkflowDefinitionRepository, PromptBundleRepository {
-  constructor(private readonly sql: TransactionalSqlExecutor, private readonly adapter_roles: AdapterRoleRegistry,
-    private readonly machine_registry: MachineRegistry = new StageMachineRegistry()) {}
+  constructor(private readonly sql: TransactionalSqlExecutor) {}
 
   /** Canonical data is stored verbatim; it is never lowered into the old graph. */
   async insert_v15_immutable(definition: V15WorkflowDefinition, prompts: V15PromptBundle): Promise<void> {
@@ -104,27 +85,18 @@ export class PostgresWorkflowDefinitionRepository implements WorkflowDefinitionR
     });
   }
 
-  async insert_immutable(definition: WorkflowDefinition, promptBundle: PromptBundle): Promise<WorkflowDefinition> {
-    const compiled = compileWorkflowManifest(definition, promptBundle,
-      { adapter_version: "delegated-session-v1", artifact_schema_version: "v1" }, undefined, this.adapter_roles, this.machine_registry);
-    if (!compiled.ok) throw new Error(`workflow definition does not compile: ${compiled.error.detail}`);
-    return this.sql.transaction(async (transaction) => {
-      const rows = await transaction.query<DefinitionRow>(
-        `INSERT INTO oakridge.workflow_definition (id, name, version, definition, archived, created_at)
-         VALUES ($1, $2, $3, $4::jsonb, $5, $6::timestamptz)
-         ON CONFLICT (name, version) DO UPDATE
-           SET name = EXCLUDED.name
-           WHERE oakridge.workflow_definition.definition - 'archived' = EXCLUDED.definition - 'archived'
-         RETURNING definition`,
-        [definition.id, definition.name, definition.version, definition, definition.archived, definition.created_at],
-      );
-      const row = rows[0];
-      if (!row) throw new Error(`workflow definition ${definition.name}@${definition.version} conflicts with immutable stored content`);
-      const stored = decodeDefinition(row, this.adapter_roles);
-      await insertPromptBundle(transaction, promptBundle);
-      await bindPromptBundle(transaction, stored.id, promptBundle.hash);
-      return stored;
-    });
+  async insert_immutable(record: WorkflowDefinition, promptBundle: PromptBundle): Promise<WorkflowDefinition> {
+    const compiled = await compileV15WorkflowDefinition(record.definition, { async load(path) {
+      const entry = promptBundle.matrix.find((candidate) => candidate.template_path === path);
+      if (!entry) throw new Error(`pinned prompt '${path}' is missing`);
+      return entry.content;
+    } });
+    if (!compiled.ok) throw new Error(compiled.error.detail);
+    if (compiled.value.prompts.hash !== promptBundle.hash) throw new Error("prompt bundle content hash mismatch");
+    await this.insert_v15_immutable(compiled.value.definition, compiled.value.prompts);
+    const stored = await this.find_by_name_version(record.definition.key, record.definition.version);
+    if (!stored) throw new Error("stored definition is missing after insertion");
+    return stored;
   }
 
   async insert_prompt_bundle(bundle: PromptBundle): Promise<PromptBundle> {
@@ -154,37 +126,37 @@ export class PostgresWorkflowDefinitionRepository implements WorkflowDefinitionR
 
   async find_by_id(id: WorkflowDefinitionId): Promise<WorkflowDefinition | null> {
     const rows = await this.sql.query<DefinitionRow>(
-      "SELECT definition FROM oakridge.workflow_definition WHERE id = $1",
+      "SELECT id::text,name,version,definition,archived,created_at::text FROM oakridge.workflow_definition WHERE id = $1",
       [id],
     );
-    return rows[0] ? decodeDefinition(rows[0], this.adapter_roles) : null;
+    return rows[0] ? decodeDefinition(rows[0]) : null;
   }
 
   async find_by_name_version(name: string, version: number): Promise<WorkflowDefinition | null> {
     const rows = await this.sql.query<DefinitionRow>(
-      "SELECT definition FROM oakridge.workflow_definition WHERE name = $1 AND version = $2",
+      "SELECT id::text,name,version,definition,archived,created_at::text FROM oakridge.workflow_definition WHERE name = $1 AND version = $2",
       [name, version],
     );
-    return rows[0] ? decodeDefinition(rows[0], this.adapter_roles) : null;
+    return rows[0] ? decodeDefinition(rows[0]) : null;
   }
 
   async list(include_archived = false): Promise<readonly WorkflowDefinition[]> {
     const rows = await this.sql.query<DefinitionRow>(
-      "SELECT definition FROM oakridge.workflow_definition WHERE $1::boolean OR NOT archived ORDER BY name, version DESC",
+      "SELECT id::text,name,version,definition,archived,created_at::text FROM oakridge.workflow_definition WHERE $1::boolean OR NOT archived ORDER BY name, version DESC",
       [include_archived],
     );
-    return rows.map((row) => decodeListedDefinition(row, this.adapter_roles))
+    return rows.map((row) => decodeDefinition(row))
       .filter((definition): definition is WorkflowDefinition => definition !== null);
   }
 
   async set_archived(id: WorkflowDefinitionId, archived: boolean): Promise<WorkflowDefinition | null> {
     const rows = await this.sql.query<DefinitionRow>(
       `UPDATE oakridge.workflow_definition
-       SET archived = $2, definition = jsonb_set(definition, '{archived}', to_jsonb($2::boolean), true)
+       SET archived = $2
        WHERE id = $1
-       RETURNING definition`,
+       RETURNING id::text,name,version,definition,archived,created_at::text`,
       [id, archived],
     );
-    return rows[0] ? decodeDefinition(rows[0], this.adapter_roles) : null;
+    return rows[0] ? decodeDefinition(rows[0]) : null;
   }
 }
