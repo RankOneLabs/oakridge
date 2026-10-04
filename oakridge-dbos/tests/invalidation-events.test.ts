@@ -62,7 +62,7 @@ const runEvent = (sequence: string): RunEvent => ({
   run_id: "00000000-0000-4000-8000-000000000001" as WorkflowRunId,
   owner: { kind: "run", id: "00000000-0000-4000-8000-000000000001" as WorkflowRunId },
   launch_reason: "operator", prior_owner_version: 3, resulting_owner_version: 4,
-  operation: "run_cancelled", effect: { kind: "run_cancelled" },
+  operation: "run_cancelled", effect: { kind: "unrecognized", effect_kind: "run_cancelled" },
   effect_workflow_id: "v15-effect:run:00000000-0000-4000-8000-000000000001:4",
   actor: "operator", occurred_at: "2026-09-26T12:00:00.000Z",
 });

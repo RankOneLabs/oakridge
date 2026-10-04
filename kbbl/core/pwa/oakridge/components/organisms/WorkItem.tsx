@@ -8,7 +8,7 @@ import type { CohortLifecycleSummary, ParkedGate, ReviewInboxItem } from "../../
 
 function itemToGate(item: ReviewInboxItem): ParkedGate | null {
   if (item.kind !== "artifact_gate" && item.kind !== "merge_confirmation") return null;
-  if (!item.gate_id || !item.artifact_revision_id || item.resume_actions.length === 0) return null;
+  if (!item.gate_id || !item.artifact_revision_id) return null;
   const mergeConfirmation = item.kind === "merge_confirmation";
   return {
     id: item.gate_id,
@@ -75,7 +75,7 @@ export function WorkItem({ item, cohort, isSettled = false, onSelectRun, onSelec
         {!gate && item.kind === "pull_request_merge" && <PullRequestMergeAction item={item} cohort={cohort} />}
         {!gate && item.kind === "cohort_retry" && <CohortRetryAction item={item} />}
         {!gate && item.kind === "pull_request_mismatch" && <><p>{mismatch ?? "The observed pull request does not match this cohort’s durable configuration."}</p><p>Correct the pull request repository or branches, then Oakridge will reconcile it automatically.</p></>}
-        {!gate && item.kind !== "pull_request_mismatch" && item.kind !== "pull_request_merge" && item.kind !== "cohort_retry" && <p>{item.kind === "cohort_failed" ? "This cohort failed and ended its run. Start a new run to try again." : "This work will continue automatically when its dependencies finish."}</p>}
+        {!gate && item.kind !== "pull_request_mismatch" && item.kind !== "pull_request_merge" && item.kind !== "cohort_retry" && item.kind !== "artifact_gate" && item.kind !== "merge_confirmation" && <p>{item.kind === "cohort_failed" ? "This cohort failed and ended its run. Start a new run to try again." : "This work will continue automatically when its dependencies finish."}</p>}
         </>}
       </div>
     </article>
@@ -114,7 +114,7 @@ function PullRequestMergeAction({ item, cohort }: { item: ReviewInboxItem; cohor
     >
       {confirmation.isPending ? "Checking…" : "Check GitHub merge"}
     </Button>
-    {confirmation.data && <FeedbackMessage>{confirmation.data.state === "done"
+    {confirmation.data && <FeedbackMessage>{confirmation.data.state === "complete"
       ? "GitHub reports this PR merged." : "GitHub still reports this PR open"}</FeedbackMessage>}
     {confirmation.isError && <FeedbackMessage tone="danger">{confirmation.error instanceof Error ? confirmation.error.message : "Could not confirm the merge"}</FeedbackMessage>}
   </>;

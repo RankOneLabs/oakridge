@@ -9,7 +9,8 @@ import { createScratchDatabase, type ScratchDatabase } from "./support/durable-d
 import { cohortMachineState } from "./support/v15-run-queries";
 const acceptanceEnabled = process.env.OAKRIDGE_ACCEPTANCE === "1";
 let scratch: ScratchDatabase | null = null;
-const e2e = acceptanceEnabled ? test : test.skip;
+if (!acceptanceEnabled) throw new Error("browser acceptance requires OAKRIDGE_ACCEPTANCE=1; run test:acceptance");
+const e2e = test;
 let oakridge: IntegrationRuntime;
 let sql: PgPostgresExecutor;
 let browser: Browser;

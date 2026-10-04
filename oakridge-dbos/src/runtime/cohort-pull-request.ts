@@ -11,38 +11,13 @@
  * identity comes from the cohort's current verified PR link; agent-authored
  * artifact bodies never become verification evidence.
  */
-import {
-  operatorMergedObservation, reconcileCohortPullRequest,
-  type CohortPullRequestReconciliation, type CohortRepositoryRecord, type ExpectedCohortPullRequest,
-} from "../domain/cohort-pull-request";
-type BuildCohortEvent =
-  | { readonly kind: "pull_request_mismatch"; readonly pull_request_url: string }
-  | { readonly kind: "pull_request_merged"; readonly pull_request_url: string; readonly head_sha: string };
-import { err, ok, type CohortId, type Result, type StageInstanceId, type UnitId, type WorkflowRunId } from "../domain/primitives";
+import type { CohortRepositoryRecord } from "../domain/cohort-pull-request";
+import { err, ok, type CohortId, type Result, type StageInstanceId, type UnitId } from "../domain/primitives";
 import type { PullRequestObservation } from "../domain/pull-request";
 import { parseGithubPullRequestIdentity, repositoriesMatch, type PullRequestVerificationId } from "../domain/pull-request";
 import type { GitCommandRunner } from "../domain/repository-provisioning";
 import { renderCohortBranchContract, selectCohortBranchRoles, type RepositoryRefs } from "../domain/repository-refs";
-import type { DevFlowPullRequestRepository, ForgeRepositoryRepository, RunRecordRepository } from "../storage/repositories";
-
-export interface CohortPullRequestDependencies {
-  readonly pull_requests: DevFlowPullRequestRepository;
-  /**
-   * The forge identity a candidate pull request URL is checked against, read
-   * from the run's own context. It used to come from `epic_workflow_profile`,
-   * which v15 does not have; what matters for the check is unchanged — the
-   * identity is launch configuration, never a field an agent's artifact
-   * supplied.
-   */
-  readonly forge_repositories: ForgeRepositoryRepository;
-  readonly reader: PullRequestForgeReader;
-  readonly git: GitCommandRunner;
-  readonly records: Pick<RunRecordRepository, "find_cohort_location">;
-  readonly now: () => string;
-  readonly record_build_event: (cohort_id: CohortId, event: BuildCohortEvent) => Promise<void>;
-  /** Wakes the run's root sooner than its bounded recheck after a merge. */
-  readonly send_run_wake?: (run_id: WorkflowRunId, idempotency_key: string) => Promise<void>;
-}
+import type { DevFlowPullRequestRepository } from "../storage/repositories";
 
 export interface PrepareCohortRepositoryRecordInput {
   readonly cohort_id: CohortId;
@@ -205,6 +180,11 @@ export const verifyPreparedPullRequest = async (
   const remote = await dependencies.git.run(input.repository.repository_path, ["ls-remote", "origin", `refs/heads/${input.repository.canonical_ref}`]);
   if (remote.exit_code !== 0) return verificationFailure("git_read_failed", remote.stderr.trim() || "could not read the cohort ref from origin");
   const pushedHead = remote.stdout.trim().split(/\s+/)[0] ?? "";
+  // A merged PR retains its head SHA at the forge after GitHub deletes the
+  // branch. Missing refs are valid only for a confirmed merge; an existing ref
+  // must still match, and callers compare this SHA with the reviewed head.
+  if (pushedHead === "" && observation.state === "merged" && observation.merged_at !== null)
+    return ok({ observation, pushed_head_sha: observation.head_sha });
   if (pushedHead === "" || pushedHead !== observation.head_sha) {
     return verificationFailure("head_commit_mismatch", `forge head '${observation.head_sha}' is not pushed origin head '${pushedHead || "missing"}'`);
   }
@@ -250,207 +230,4 @@ export const verifyAndBindCohortPullRequest = async (
   if (!verificationId) return verificationFailure("unreadable_pull_request", "verified pull request binding was not retained");
   return ok({ ...verified.value, ...stored, verification_id: verificationId, binding,
     pull_request_url: verified.value.observation.url, head_sha: verified.value.pushed_head_sha });
-};
-
-export interface AdvanceCohortRefInput { readonly cohort: CohortRepositoryRecord; readonly next_head_sha: string }
-export interface CohortRefAdvanceError {
-  readonly operation: "advance_cohort_ref";
-  readonly kind: "ref_lease_mismatch" | "non_descendant_head" | "git_command_failed";
-  readonly detail: string;
-}
-const refAdvanceFailure = (kind: CohortRefAdvanceError["kind"], detail: string): Result<never, CohortRefAdvanceError> =>
-  err({ operation: "advance_cohort_ref", kind, detail });
-
-/** An ancestry check protects reviewed work; the push lease protects the check itself. */
-const advanceCohortRefWithIntent = async (
-  git: GitCommandRunner,
-  input: AdvanceCohortRefInput,
-  leaseIntentHeadSha: string | null,
-): Promise<Result<{ readonly head_sha: string }, CohortRefAdvanceError>> => {
-  const ref = `refs/heads/${input.cohort.canonical_ref}`;
-  const remote = await git.run(input.cohort.repository_path, ["ls-remote", "origin", ref]);
-  if (remote.exit_code !== 0) return refAdvanceFailure("git_command_failed", remote.stderr.trim() || "could not read origin ref");
-  const remoteHead = remote.stdout.trim().split(/\s+/)[0] ?? "";
-  const isRecoveringRecordedIntent = remoteHead === input.next_head_sha && leaseIntentHeadSha === input.next_head_sha;
-  if (remoteHead !== input.cohort.recorded_head_sha && !isRecoveringRecordedIntent) {
-    return refAdvanceFailure("ref_lease_mismatch", `origin moved from recorded head '${input.cohort.recorded_head_sha}' to '${remoteHead || "missing"}'`);
-  }
-  const ancestry = await git.run(input.cohort.repository_path, ["merge-base", "--is-ancestor", input.cohort.recorded_head_sha, input.next_head_sha]);
-  if (ancestry.exit_code === 1) return refAdvanceFailure("non_descendant_head", "next cohort head does not descend from the recorded head");
-  if (ancestry.exit_code !== 0) return refAdvanceFailure("git_command_failed", ancestry.stderr.trim() || "could not check cohort ref ancestry");
-  if (remoteHead !== input.next_head_sha) {
-    const pushed = await git.run(input.cohort.repository_path, ["push", `--force-with-lease=${ref}:${input.cohort.recorded_head_sha}`, "origin", `${input.next_head_sha}:${ref}`]);
-    if (pushed.exit_code !== 0) return refAdvanceFailure("ref_lease_mismatch", pushed.stderr.trim() || "origin refused the cohort ref lease");
-  }
-  return ok({ head_sha: input.next_head_sha });
-};
-
-/** Strict low-level check; crash recovery is available only through the storage-backed wrapper below. */
-export const advanceCohortRef = (
-  git: GitCommandRunner,
-  input: AdvanceCohortRefInput,
-): Promise<Result<{ readonly head_sha: string }, CohortRefAdvanceError>> => advanceCohortRefWithIntent(git, input, null);
-
-/** How the evidence arrived. Both kinds are reconciled identically. */
-export type CohortPullRequestEvidence =
-  | { readonly kind: "observation"; readonly observation: PullRequestObservation; readonly replace_verification_id?: PullRequestVerificationId | null }
-  | { readonly kind: "operator_confirmation"; readonly idempotency_key: string; readonly operator_comment: string };
-
-export interface CohortPullRequestError {
-  readonly operation: "reconcile_cohort_pull_request";
-  readonly kind: "cohort_not_found" | "not_a_pull_request_cohort" | "missing_pull_request_evidence" | "mismatch";
-  readonly detail: string;
-  readonly reconciliation?: CohortPullRequestReconciliation;
-  readonly current_verification_id?: PullRequestVerificationId | null;
-}
-
-/**
- * What became of the evidence.
- *
- * A merge event completes an awaiting_merge build cohort; earlier observations
- * are retained by the pull request repository and can be rechecked later.
- */
-export type CohortPullRequestResolution =
-  | { readonly kind: "completed" }
-  | { readonly kind: "already_completed" }
-  | { readonly kind: "waiting" }
-  | { readonly kind: "ignored_stale" };
-
-export interface ResolvedCohortPullRequest {
-  readonly resolution: CohortPullRequestResolution;
-  readonly reconciliation: CohortPullRequestReconciliation;
-  readonly verification_id: PullRequestVerificationId;
-}
-
-const failure = (kind: CohortPullRequestError["kind"], detail: string, options: Pick<CohortPullRequestError, "reconciliation" | "current_verification_id"> = {}): Result<never, CohortPullRequestError> =>
-  err({ operation: "reconcile_cohort_pull_request", kind, detail, ...options });
-
-interface CohortExpectation {
-  readonly expected: ExpectedCohortPullRequest;
-  readonly status: import("../domain/records").CoreStatus;
-}
-
-/** Everything the run already knows about this cohort's pull request. */
-const loadCohortExpectation = async (
-  dependencies: CohortPullRequestDependencies,
-  stageInstanceId: StageInstanceId,
-  unitId: UnitId,
-): Promise<Result<CohortExpectation, CohortPullRequestError>> => {
-  const location = await dependencies.records.find_cohort_location(stageInstanceId, unitId);
-  if (!location) return failure("cohort_not_found", `no cohort for stage '${stageInstanceId}' unit '${unitId}'`);
-  const verified = await dependencies.pull_requests.find_current_for_unit(stageInstanceId, unitId);
-  if (!verified) return failure("missing_pull_request_evidence", `unit '${unitId}' has no independently verified pull request`);
-
-  return ok({
-    status: location.status,
-    expected: {
-      run_id: location.run_id, stage_instance_id: stageInstanceId, unit_id: unitId,
-      repository_key: verified.cohort.repository_key,
-      url: verified.pull_request.url,
-      head_branch: verified.cohort.canonical_ref,
-      base_branch: verified.cohort.expected_pr_base,
-      forge_repository: { provider: "github", owner: verified.pull_request.owner, name: verified.pull_request.name },
-    },
-  });
-};
-
-const independentlyVerifyAndBind = async (
-  dependencies: CohortPullRequestDependencies,
-  stageInstanceId: StageInstanceId,
-  unitId: UnitId,
-  candidateUrl: string,
-  replaceVerificationId: PullRequestVerificationId | null,
-): Promise<Result<BoundVerifiedCohortPullRequest, CohortPullRequestError>> => {
-  const location = await dependencies.records.find_cohort_location(stageInstanceId, unitId);
-  const cohort = await dependencies.pull_requests.find_cohort_for_unit(stageInstanceId, unitId);
-  if (!location || !cohort) return failure("cohort_not_found", `no stored build cohort for stage '${stageInstanceId}' unit '${unitId}'`);
-  const forgeRepository = await dependencies.forge_repositories.find_forge_repository(location.run_id, cohort.repository_key);
-  if (!forgeRepository) return failure("missing_pull_request_evidence", `repository '${cohort.repository_key}' has no forge identity`);
-  const verified = await verifyAndBindCohortPullRequest({ pull_requests: dependencies.pull_requests,
-    reader: dependencies.reader, git: dependencies.git, now: dependencies.now }, {
-    cohort, forge_repository: forgeRepository, candidate_url: candidateUrl,
-    replace_verification_id: replaceVerificationId,
-  });
-  if (!verified.ok) {
-    const replacement = verified.error.kind === "replacement_required" || verified.error.kind === "replacement_conflict";
-    return failure("mismatch", verified.error.detail, {
-      ...(replacement ? { current_verification_id: verified.error.current_verification_id } : {}),
-    });
-  }
-  return ok(verified.value);
-};
-
-/** The cohort's expectations, for a caller that wants to observe it. */
-export const findCohortPullRequestExpectation = async (
-  dependencies: CohortPullRequestDependencies,
-  stageInstanceId: StageInstanceId,
-  unitId: UnitId,
-): Promise<Result<ExpectedCohortPullRequest, CohortPullRequestError>> => {
-  const loaded = await loadCohortExpectation(dependencies, stageInstanceId, unitId);
-  return loaded.ok ? ok(loaded.value.expected) : loaded;
-};
-
-export const reconcileCohortEvidence = async (
-  dependencies: CohortPullRequestDependencies,
-  stageInstanceId: StageInstanceId,
-  unitId: UnitId,
-  evidence: CohortPullRequestEvidence,
-): Promise<Result<ResolvedCohortPullRequest, CohortPullRequestError>> => {
-  let verified: BoundVerifiedCohortPullRequest | null = null;
-  if (evidence.kind === "observation") {
-    const result = await independentlyVerifyAndBind(dependencies, stageInstanceId, unitId, evidence.observation.url, evidence.replace_verification_id ?? null);
-    if (!result.ok) return result;
-    verified = result.value;
-  } else {
-    const current = await dependencies.pull_requests.find_current_for_unit(stageInstanceId, unitId);
-    if (!current) return failure("missing_pull_request_evidence", "cohort has no verified pull request to recheck");
-  }
-  const loaded = await loadCohortExpectation(dependencies, stageInstanceId, unitId);
-  if (!loaded.ok) return loaded;
-  const { expected, status } = loaded.value;
-  const now = dependencies.now();
-  const current = await dependencies.pull_requests.find_current_for_unit(stageInstanceId, unitId);
-  if (!current || !current.cohort.current_verified_pull_request_id) {
-    return failure("missing_pull_request_evidence", "verified pull request link disappeared before reconciliation");
-  }
-  const observation = evidence.kind === "operator_confirmation"
-    ? operatorMergedObservation(expected, now)
-    : current.observation;
-  if (!observation) return failure("missing_pull_request_evidence", "verified pull request has no canonical identity");
-  const reconciled = reconcileCohortPullRequest({ expected,
-    observation, previous: null, reconciled_at: now });
-  const verificationId = current.cohort.current_verified_pull_request_id;
-
-  if (reconciled.outcome.kind === "mismatch") {
-    await dependencies.record_build_event(current.cohort.cohort_id,
-      { kind: "pull_request_mismatch", pull_request_url: observation.url });
-    return failure("mismatch", reconciled.outcome.mismatch.detail, { reconciliation: reconciled.reconciliation,
-      current_verification_id: verificationId });
-  }
-  if (verified && Date.parse(observation.observed_at) > Date.parse(verified.observation.observed_at)) {
-    return ok({ resolution: { kind: "ignored_stale" }, reconciliation: reconciled.reconciliation, verification_id: verificationId });
-  }
-  if (status === "complete") {
-    return ok({ resolution: { kind: "already_completed" }, reconciliation: { ...reconciled.reconciliation, completed_at: now }, verification_id: verificationId });
-  }
-  if (reconciled.outcome.kind === "waiting") {
-    return ok({ resolution: { kind: "waiting" }, reconciliation: reconciled.reconciliation, verification_id: verificationId });
-  }
-  const verifiedHeadSha = current.observation.head_sha;
-  if (!verifiedHeadSha) return failure("missing_pull_request_evidence", "verified pull request has no head commit");
-
-  const idempotencyKey = evidence.kind === "operator_confirmation"
-    ? evidence.idempotency_key
-    : `forge:${current.pull_request.id}:${observation.merged_at}`;
-  const closure = await dependencies.pull_requests.confirm_merge({ cohort_id: current.cohort.cohort_id,
-    pull_request_id: current.pull_request.id, idempotency_key: idempotencyKey,
-    merged_at: observation.merged_at!, confirmed_at: now });
-  if (!closure.ok) return failure("mismatch", closure.error.detail, { reconciliation: reconciled.reconciliation,
-    current_verification_id: verificationId });
-
-  await dependencies.record_build_event(current.cohort.cohort_id,
-    { kind: "pull_request_merged", pull_request_url: observation.url, head_sha: verifiedHeadSha });
-  const completed = { ...reconciled.reconciliation, completed_at: now };
-  await dependencies.send_run_wake?.(expected.run_id, `pull_request_merged:${current.cohort.cohort_id}`).catch(() => undefined);
-  return ok({ resolution: { kind: "completed" }, reconciliation: completed, verification_id: verificationId });
 };

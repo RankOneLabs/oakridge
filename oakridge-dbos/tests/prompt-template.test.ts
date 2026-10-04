@@ -8,11 +8,11 @@ describe("production prompt template loading", () => {
   const loader = createPromptTemplateLoader(resolve(import.meta.dir, "../../workflow-config/prompts"));
 
   test.each([
-    "dev-flow/spec_analyzer_v2.md",
-    "dev-flow/plan_writer_v2.md",
-    "dev-flow/brief_writer.md",
-    "dev-flow/build_v2.md",
-    "dev-flow/assessor_v2.md",
+    "dev-flow/v15/spec_analyzer/spec/initial.md",
+    "dev-flow/v15/plan_writer/plan/initial.md",
+    "dev-flow/v15/brief_writer/brief/initial.md",
+    "dev-flow/v15/build/build/initial_build.md",
+    "dev-flow/v15/build/assessment/initial_assessment.md",
     "collab/ping_responder.md",
   ])("loads production template %s from workflow-config", async (path) => {
     const template = await loader.load(path);

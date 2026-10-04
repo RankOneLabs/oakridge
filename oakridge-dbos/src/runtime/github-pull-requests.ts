@@ -12,14 +12,10 @@
  * Nothing here decides that a wait is over; it only reports what GitHub said.
  */
 import type { PullRequestObservation } from "../domain/pull-request";
-import { parseGithubPullRequestIdentity } from "../domain/pull-request";
 import { err, ok, type Result } from "../domain/primitives";
-import type { StageInstanceId, UnitId } from "../domain/primitives";
-import type { OperatorCohortSummary } from "../domain/operator-projections";
 import type { CohortId } from "../domain/primitives";
 import type { StageEventApplier } from "../storage/apply-stage-event";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
-import { findCohortPullRequestExpectation, reconcileCohortEvidence, type CohortPullRequestDependencies, type CohortPullRequestResolution } from "./cohort-pull-request";
 
 export interface PullRequestBranchQuery { readonly owner: string; readonly name: string; readonly head_branch: string; readonly base_branch: string }
 /** Reads one pull request's current state. Absent when it cannot be read. */
@@ -125,56 +121,6 @@ export class GithubPullRequestReader implements PullRequestReader {
   }
 }
 
-export interface CohortPullRequestPollDependencies extends CohortPullRequestDependencies {
-  /** The cohorts the run is currently waiting on, from the operator projection. */
-  list_cohorts(): Promise<readonly OperatorCohortSummary[]>;
-  readonly reader: PullRequestReader;
-}
-
-export interface CohortPollOutcome {
-  readonly stage_instance_id: StageInstanceId;
-  readonly unit_id: UnitId;
-  readonly resolution: CohortPullRequestResolution | { readonly kind: "unreadable" } | { readonly kind: "refused"; readonly detail: string };
-}
-
-/** Cohorts whose handoff is parked on the external review, and nothing else. */
-export const selectCohortsAwaitingReview = (cohorts: readonly OperatorCohortSummary[]): readonly OperatorCohortSummary[] =>
-  cohorts.filter((cohort) => cohort.lifecycle === "blocked" && cohort.blocked_reason === "external"
-    && cohort.next_actor === "external");
-
-/**
- * One sweep. Errors are per-cohort: a pull request that cannot be read, or a
- * mismatch that has to be recorded and looked at, must not stop the sweep from
- * reaching the cohorts behind it.
- */
-export const pollCohortPullRequests = async (dependencies: CohortPullRequestPollDependencies): Promise<readonly CohortPollOutcome[]> => {
-  const outcomes: CohortPollOutcome[] = [];
-  for (const cohort of selectCohortsAwaitingReview(await dependencies.list_cohorts())) {
-    const expectation = await findCohortPullRequestExpectation(dependencies, cohort.stage_instance_id, cohort.unit_id);
-    if (!expectation.ok) {
-      outcomes.push({ stage_instance_id: cohort.stage_instance_id, unit_id: cohort.unit_id, resolution: { kind: "refused", detail: expectation.error.detail } });
-      continue;
-    }
-    const identity = parseGithubPullRequestIdentity(expectation.value.url);
-    if (!identity) {
-      outcomes.push({ stage_instance_id: cohort.stage_instance_id, unit_id: cohort.unit_id, resolution: { kind: "refused", detail: "reported pull request URL is not a canonical GitHub URL" } });
-      continue;
-    }
-    const reading = await dependencies.reader.read(identity.owner, identity.name, identity.number).catch(() => null);
-    const observation = reading?.ok ? reading.value : null;
-    if (!observation) {
-      outcomes.push({ stage_instance_id: cohort.stage_instance_id, unit_id: cohort.unit_id, resolution: { kind: "unreadable" } });
-      continue;
-    }
-    const reconciled = await reconcileCohortEvidence(dependencies, cohort.stage_instance_id, cohort.unit_id, { kind: "observation", observation });
-    outcomes.push({
-      stage_instance_id: cohort.stage_instance_id, unit_id: cohort.unit_id,
-      resolution: reconciled.ok ? reconciled.value.resolution : { kind: "refused", detail: reconciled.error.detail },
-    });
-  }
-  return outcomes;
-};
-
 export interface StagePullRequestPollOutcome {
   readonly cohort_id: CohortId;
   readonly state: string;
@@ -192,13 +138,15 @@ export const pollStagePullRequests = async (dependencies: StagePullRequestPollDe
      JOIN oakridge.stage_instance stage ON stage.id=cohort.stage_instance_id
      JOIN oakridge.workflow_run run ON run.id=cohort.run_id
      WHERE run.status='active' AND stage.status='active'
-       AND (stage.stage_key='implementation' AND cohort.state='awaiting_merge'
-         OR stage.stage_key='final_integration' AND EXISTS (SELECT 1 FROM oakridge.cohort_worker worker
-           WHERE worker.cohort_id=cohort.id AND worker.state='awaiting_review'))
+       AND (stage.stage_key='implementation' AND cohort.current_verified_pull_request_id IS NOT NULL
+         OR stage.stage_key='final_integration' AND EXISTS (SELECT 1 FROM oakridge.worker_output output
+           WHERE output.cohort_id=cohort.id AND output.output_name='pr_summary'))
        AND ($1::uuid IS NULL OR cohort.id=$1) ORDER BY cohort.id`, [only_cohort_id]);
   const outcomes: StagePullRequestPollOutcome[] = [];
   for (const row of rows) {
-    const advanced = await dependencies.stage_events.advance(row.cohort_id, null);
+    let advanced: Awaited<ReturnType<StageEventApplier["advance"]>>;
+    try { advanced = await dependencies.stage_events.advance(row.cohort_id, null); }
+    catch { outcomes.push({ ...row, kind: "unavailable" }); continue; }
     if (!advanced.ok) { outcomes.push({ ...row, kind: "unavailable" }); continue; }
     const latest = await dependencies.sql.query<{ readonly state: string }>("SELECT state FROM oakridge.cohort WHERE id=$1", [row.cohort_id]);
     outcomes.push({ cohort_id: row.cohort_id, state: latest[0]?.state ?? row.state,

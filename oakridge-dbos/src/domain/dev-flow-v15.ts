@@ -3,13 +3,8 @@ import type { ArtifactId, CohortId, CohortKey, CommitSha, ExecutionId, Repositor
 import type { ArtifactRecord } from "./artifacts";
 import type { AssessmentBody, BuildBriefBody, BuildResultBody, PlanBody, PrSummaryBody, SpecAnalysisBody } from "./dev-flow-artifacts";
 import type { ProvisionExecution, ProvisionOutcome } from "./repository-provisioning";
-export type WorkerState =
-  | "pending"
-  | "working"
-  | "awaiting_review"
-  | "accepted"
-  | "interrupted"
-  | "cancelled";
+export const WORKER_STATES = ["pending", "working", "awaiting_review", "accepted", "interrupted", "cancelled"] as const;
+export type WorkerState = typeof WORKER_STATES[number];
 
 export type CohortState =
   | "pending"
@@ -310,33 +305,10 @@ export interface AssessmentWorkerRecord extends AssessmentWorker {
 }
 
 
-export type BindingSource =
-  | "inputs.brief"
-  | "inputs.repository"
-  | "build.outputs"
-  | "request.feedback"
-  | "build.interrupted.work"
-  | "build.interrupted.execution"
-  | "build.interrupted.build_result"
-  | "build.interrupted.pr_summary"
-  | "observations.pr"
-  | "accepted_build"
-  | "assessment.work.input.accepted_build"
-  | "assessment.outputs.assessment"
-  | "assessment.interrupted.work"
-  | "assessment.interrupted.execution"
-  | "assessment.interrupted.assessment";
-
-export interface InputBinding {
-  from: BindingSource;
-}
-
-export type InputBindings<Input> = { [Field in keyof Input]: InputBinding };
-
-export interface PromptAction<Input> {
-  prompt: string;
-  inputs: InputBindings<Input>;
-}
+export type BindingSource = V15BindingSource;
+export type InputBinding = V15InputBinding;
+export type InputBindings<Input> = V15InputBindings<Input>;
+export type PromptAction<Input> = V15PromptAction<Input>;
 
 export type BuildInitialAction = PromptAction<BuildInitialInput>;
 export type BuildReviseAction = PromptAction<BuildReviseInput>;
@@ -363,38 +335,13 @@ export type AssessmentResponse =
 
 export type WorkerKey = "build" | "assessment";
 export type RequestKind = OperatorRequest["kind"] | "none";
-export type StateCases<State extends string> = { [Value in State]?: DecisionTree };
-
-export type DecisionTree =
-  | { kind: "match_cohort"; cases: StateCases<CohortState>; otherwise: DecisionTree }
-  | { kind: "match_worker"; worker: WorkerKey; cases: StateCases<WorkerState>; otherwise: DecisionTree }
-  | { kind: "match_request"; cases: StateCases<RequestKind>; otherwise: DecisionTree }
-  | { kind: "if"; fact: CohortFact; then: DecisionTree; else: DecisionTree }
-  | { kind: "apply"; changes: readonly CohortChange[]; actions: readonly WorkerAction[] }
-  | { kind: "wait"; reason: string }
-  | { kind: "reject"; reason: string };
-
-export type CohortFact =
-  | "build_outputs_ready"
-  | "assessment_response_ready"
-  | "build_execution_interrupted"
-  | "assessment_execution_interrupted"
-  | "pr_closed_unmerged"
-  | "pr_merged_at_accepted_head";
-
-export type CohortChange =
-  | { kind: "set_cohort_state"; state: CohortState }
-  | { kind: "set_worker_state"; worker: WorkerKey; state: WorkerState }
-  | { kind: "accept_outputs"; worker: WorkerKey }
-  | { kind: "clear_acceptance"; worker: WorkerKey }
-  | { kind: "capture_accepted_build" }
-  | { kind: "clear_accepted_build" }
-  | { kind: "fence_execution"; worker: WorkerKey };
-
-export type WorkerAction =
-  | { worker: "build"; action_point: "initial" | "revise" | "retry" | "replace_pr" }
-  | { worker: "assessment"; action_point: "initial" | "discuss" | "retry" };
-
+export type StateCases<State extends string> = V15StateCases<State>;
+export type DecisionTree = V15DecisionTree;
+export type CohortFact = Extract<V15Fact, "build_outputs_ready" | "assessment_response_ready"
+  | "build_execution_interrupted" | "assessment_execution_interrupted"
+  | "pr_closed_unmerged" | "pr_merged_at_accepted_head">;
+export type CohortChange = V15Change;
+export type WorkerAction = Extract<V15WorkerAction, { worker: WorkerKey }>;
 
 export type ResolvedBuildAction =
   | BuildWorkInput
@@ -839,44 +786,7 @@ export interface V15RunRecord {
 }
 
 
-export type V15BindingSource =
-  | "accepted_build"
-  | "assessment.interrupted.assessment"
-  | "assessment.interrupted.execution"
-  | "assessment.interrupted.work"
-  | "assessment.outputs.assessment"
-  | "assessment.work.input.accepted_build"
-  | "brief.interrupted.current"
-  | "brief.interrupted.execution"
-  | "brief.interrupted.work"
-  | "brief.outputs.briefs"
-  | "build.interrupted.build_result"
-  | "build.interrupted.execution"
-  | "build.interrupted.pr_summary"
-  | "build.interrupted.work"
-  | "build.outputs"
-  | "final_integration.interrupted.current"
-  | "final_integration.interrupted.execution"
-  | "inputs"
-  | "inputs.base_branch"
-  | "inputs.brief"
-  | "inputs.brief_notes"
-  | "inputs.completed_cohorts"
-  | "inputs.plan"
-  | "inputs.repositories"
-  | "inputs.repository"
-  | "inputs.spec_analysis"
-  | "observations.pr"
-  | "plan.interrupted.current"
-  | "plan.interrupted.execution"
-  | "plan.interrupted.work"
-  | "plan.outputs.plan"
-  | "provision.interrupted.execution"
-  | "request.feedback"
-  | "spec.interrupted.current"
-  | "spec.interrupted.execution"
-  | "spec.interrupted.work"
-  | "spec.outputs.spec_analysis";
+export type V15BindingSource = typeof V15_BINDING_SOURCES[number];
 
 export interface V15InputBinding {
   from: V15BindingSource;
@@ -920,14 +830,7 @@ export type V15WorkerKey = "provision" | "spec" | "plan" | "brief" | "build" | "
 export type V15RequestKind = V15OperatorRequest["kind"] | "none";
 export type V15StateCases<State extends string> = { [Value in State]?: V15DecisionTree };
 
-export type V15Fact =
-  | CohortFact
-  | "provision_outputs_ready" | "provision_failed" | "provision_execution_interrupted"
-  | "spec_outputs_ready" | "spec_execution_interrupted"
-  | "plan_outputs_ready" | "plan_execution_interrupted"
-  | "brief_outputs_ready" | "brief_execution_interrupted"
-  | "final_outputs_ready" | "final_execution_interrupted"
-  | "final_pr_merged_at_reviewed_head" | "final_pr_closed_unmerged";
+export type V15Fact = typeof V15_FACTS[number];
 
 export type V15Change =
   | { kind: "set_cohort_state"; state: CohortState }
@@ -939,7 +842,8 @@ export type V15Change =
   | { kind: "clear_accepted_build" };
 
 export type V15WorkerAction =
-  | WorkerAction
+  | { worker: "build"; action_point: "initial" | "revise" | "retry" | "replace_pr" }
+  | { worker: "assessment"; action_point: "initial" | "discuss" | "retry" }
   | { worker: "provision"; action_point: "initial" | "retry" }
   | { worker: "spec" | "plan" | "brief"; action_point: "initial" | "revise" | "retry" }
   | { worker: "final_integration"; action_point: "initial" | "retry" };
@@ -986,7 +890,7 @@ export type WorkerPublication =
 export interface SpecAnalysisArtifact { id: ArtifactId; type: "dev.spec_analysis"; version: number; state: ArtifactState; body: SpecAnalysisBody; provenance: ArtifactProvenance }
 export interface PlanArtifact { id: ArtifactId; type: "dev.plan"; version: number; state: ArtifactState; body: PlanBody; provenance: ArtifactProvenance }
 export interface BuildBriefArtifact { id: ArtifactId; type: "dev.build_brief"; version: number; state: ArtifactState; body: BuildBriefBody; provenance: ArtifactProvenance }
-export type AcceptanceMetadata = "unreviewed" | "accepted" | "changes_requested";
+export type AcceptanceMetadata = ArtifactState;
 /** ArtifactRef.id -> artifact.chain_id; ArtifactRef.version -> artifact.revision. */
 export const artifactRefFromRevision = (artifact: Pick<ArtifactRecord, "chain_id" | "revision">): ArtifactRef => ({ id: artifact.chain_id, version: artifact.revision });
 

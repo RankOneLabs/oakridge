@@ -63,6 +63,7 @@ const parseEffect = (value: unknown): RunEventEffect => {
         pull_request_url: string(effect.pull_request_url, "effect.pull_request_url"),
         state: string(effect.state, "effect.state"), source: string(effect.source, "effect.source"),
         merged_at: effect.merged_at };
+    case "unrecognized": return { kind, effect_kind: string(effect.effect_kind, "effect.effect_kind") };
     default:
       return { kind: "unrecognized", effect_kind: kind };
   }

@@ -18,7 +18,8 @@ DBOS: `postgres://oakridge:oakridge@127.0.0.1:54329/oakridge`.
 when launching it; this procedure sends SIGTERM to that PID only.
 
 From the Oakridge checkout, prevent new admissions and wait for in-flight
-database writes before taking the dump. Set `OAKRIDGE_START_PID` to the
+database writes. Stop every API and DBOS writer before taking the dump; disable
+automatic restarts for the maintenance window. Set `OAKRIDGE_START_PID` to the
 captured PID of the currently running `scripts/oakridge-start` process.
 
 ```bash
@@ -27,15 +28,19 @@ oakridge_start_pid="${OAKRIDGE_START_PID:?set the captured scripts/oakridge-star
 dump_name="oakridge-pre-v15-$(date -u +%Y%m%dT%H%M%SZ).dump"
 dump_path="/srv/oakridge/backups/v15/${dump_name}"
 
+kill -TERM "$oakridge_start_pid"
+while kill -0 "$oakridge_start_pid" 2>/dev/null; do sleep 1; done
+# Verify every API/DBOS writer has exited before continuing.
+# The PostgreSQL container stays up for backup and migration.
 ssh willie "mkdir -p /srv/oakridge/backups/v15"
 docker exec oakridge-postgres pg_dump -U oakridge -d oakridge -Fc \
   | ssh willie "cat > '${dump_path}'"
 ssh willie "test -s '${dump_path}'"
-printf 'willie:%s\n' "$dump_path" > oakridge-dbos/src/storage/v15-baseline-dump-path.txt
+ssh willie "sha256sum '${dump_path}'"
+mkdir -p /srv/oakridge/backups/v15
+printf 'willie:%s\n' "$dump_path" > /srv/oakridge/backups/v15/baseline-dump-path.txt
 
-kill -TERM "$oakridge_start_pid"
-while kill -0 "$oakridge_start_pid" 2>/dev/null; do sleep 1; done
-
+# Complete the separate-database restore check before this destructive step.
 docker exec -i oakridge-postgres psql -U oakridge -d oakridge -v ON_ERROR_STOP=1 <<'SQL'
 DROP SCHEMA IF EXISTS oakridge CASCADE;
 DROP SCHEMA IF EXISTS dbos CASCADE;
@@ -47,7 +52,11 @@ oakridge_start_pid=$!
 printf 'Oakridge start PID: %s\n' "$oakridge_start_pid"
 ```
 
-Do not stop the running process until the remote `test -s` succeeds and
-`v15-baseline-dump-path.txt` contains the full `willie:` path. The baseline
-is the only SQL file in `src/storage/migrations/`. Keep admission paused until
-the restarted HTTP API serves requests and the operator releases maintenance.
+Keep all writers stopped until the remote dump is verified and the backup
+receipt outside the checkout contains the full `willie:` path. Restore the dump
+into a separate database and check it before dropping the live schemas. The
+migration directory contains the ordered baseline and follow-up migrations
+0015–0019; the migrator applies the complete set. A pre-v15 schema or divergent
+ledger is rejected with a cutover error and is never upgraded in place. Keep
+admission paused until the restarted HTTP API serves requests, migrations have
+completed, and the operator releases maintenance.

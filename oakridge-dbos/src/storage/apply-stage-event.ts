@@ -5,6 +5,7 @@ import type { AgentSettings, VerifiedPrObservation, V15RunInputs } from "../doma
 import { artifactRefFromRevision } from "../domain/dev-flow-v15";
 import { err, ok, type ArtifactId, type CohortId, type ExecutionId, type Result, type RunTransitionId, type StageInstanceId, type WorkflowRunId } from "../domain/primitives";
 import type { StateName } from "../domain/primitives";
+import { selectStartableCohorts, type SchedulableCohort } from "../decision/schedule-cohorts";
 import { commitSelectedCohort, type PostgresRunRecordWriter } from "./postgres-run-record";
 import { loadStageCohortContext } from "./load-stage-cohort";
 import type { StageKey, V15OperatorRequestEnvelope, V15WorkerKey, AgentExecutionDefinition } from "../domain/dev-flow-v15";
@@ -95,8 +96,21 @@ export class StageEventApplier {
       : err({ kind: "invalid_decision", detail: "request identity was reused for different work" });
   }
 
-  async advance(cohort_id: CohortId, request: V15OperatorRequestEnvelope | null):
-    Promise<Result<{ readonly commits: number; readonly reason: string }, CohortIngressError>> {
+  advance(cohort_id: CohortId, request: V15OperatorRequestEnvelope | null) {
+    return this.advance_with_observation({ cohort_id, request, should_observe_pr: true });
+  }
+
+  /** Local wake hints recheck durable facts without consuming forge API quota. */
+  advance_local(cohort_id: CohortId) {
+    return this.advance_with_observation({ cohort_id, request: null, should_observe_pr: false });
+  }
+
+  private async advance_with_observation(input: {
+    readonly cohort_id: CohortId;
+    readonly request: V15OperatorRequestEnvelope | null;
+    readonly should_observe_pr: boolean;
+  }): Promise<Result<{ readonly commits: number; readonly reason: string }, CohortIngressError>> {
+    const { cohort_id, request, should_observe_pr } = input;
     try {
       const replay = request ? await this.request_replay(cohort_id, request) : null;
       if (replay) return replay;
@@ -105,10 +119,23 @@ export class StageEventApplier {
         if (rows[0] && ["complete", "failed", "cancelled"].includes(rows[0].state)) return ok({ commits: 0, reason: "cohort terminal" });
       }
       const is_termination = request?.request.kind === "cancel" || request?.request.kind === "abandon";
+      if (!is_termination) {
+        const membership = await this.dependencies.sql.query<SchedulableCohort & { readonly max_parallel: number }>(
+          `SELECT cohort.id::text AS cohort_key,cohort.status AS state_status,cohort.depends_on,
+            COALESCE((stage.stage_contract->>'max_active_cohorts')::int,4) AS max_parallel
+           FROM oakridge.cohort cohort JOIN oakridge.stage_instance stage ON stage.id=cohort.stage_instance_id
+           WHERE cohort.stage_instance_id=(SELECT stage_instance_id FROM oakridge.cohort WHERE id=$1)
+           ORDER BY cohort.materialization_position,cohort.cohort_key`, [cohort_id]);
+        const current = membership.find((cohort) => cohort.cohort_key === cohort_id);
+        if (current?.state_status === "pending" && !selectStartableCohorts(membership, current.max_parallel).includes(cohort_id))
+          return request ? err({ kind: "invalid_request", operation: "evaluate_cohort", cohort_id,
+            detail: "cohort is waiting for prerequisites or stage capacity" })
+            : ok({ commits: 0, reason: "waiting for prerequisites or stage capacity" });
+      }
       const prepared = is_termination ? undefined : await this.dependencies.prepare_repository?.(cohort_id);
       if (prepared && !prepared.ok) return err({ kind: "invalid_snapshot", cohort_id, detail: prepared.error.detail });
       // Verified IO observations are supplied as facts, never as decisions.
-      const observed = is_termination ? null : await this.dependencies.observe_pr?.(cohort_id) ?? null;
+      const observed = is_termination || !should_observe_pr ? null : await this.dependencies.observe_pr?.(cohort_id) ?? null;
       if (observed && "ok" in observed && !observed.ok)
         return err({ kind: "invalid_snapshot", cohort_id, detail: observed.error.detail });
       const pr = observed && "ok" in observed ? observed.value : observed;

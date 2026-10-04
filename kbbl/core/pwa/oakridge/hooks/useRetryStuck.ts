@@ -1,3 +1,4 @@
+import { selectWorkerAttention } from "../../../../../oakridge-dbos/src/domain/worker-attention";
 import { useRef } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchRun, submitCohortRequest } from "../client";
@@ -15,7 +16,7 @@ export function useRetryStuck(runId: string) {
     const run = await fetchRun(runId);
     const unit = run.stages.find((stage) => stage.stage_instance_id === target.stageInstanceId)?.units?.find((unit) => unit.unit_id === target.unitId);
     if (!unit) throw new Error("Cohort is missing");
-    const interrupted = unit.workers.filter((worker) => worker.record.state === "interrupted" && (!target.worker || target.worker === worker.worker));
+    const interrupted = unit.workers.filter((worker) => selectWorkerAttention(worker).can_retry && (!target.worker || target.worker === worker.worker));
     if (interrupted.length !== 1) throw new Error("Select an interrupted worker to retry");
     const envelope = { cohort_id: unit.cohort_id, expected_version: unit.version, id: randomUuid(),
       request: selectWorkerRetryRequest(interrupted[0]!.worker) };

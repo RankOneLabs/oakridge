@@ -48,14 +48,14 @@ test("both workers retry through kbbl after a real agent exits without publishin
       const observation = { session_id: session.id,
         health: { kind: "ended_succeeded" as const, metadata: terminal.metadata, observed_at: fixture.now() }, observed_at: fixture.now() };
       if (index === 0) {
-        const advance = fixture.ingress.advance.bind(fixture.ingress);
-        fixture.ingress.advance = async () => { throw new Error("crash after terminal commit"); };
+        const advance = fixture.ingress.advance_local.bind(fixture.ingress);
+        fixture.ingress.advance_local = async () => { throw new Error("crash after terminal commit"); };
         await expect(fixture.records.observe_session(observation)).rejects.toThrow("crash after terminal commit");
         expect((await fixture.sql.query("SELECT status FROM oakridge.session WHERE id=$1", [session.id]))[0])
           .toEqual({ status: "complete" });
         expect((await fixture.sql.query("SELECT state FROM oakridge.cohort_worker WHERE cohort_id=$1 AND worker='build'",
           [fixture.cohort_id]))[0]).toEqual({ state: "working" });
-        fixture.ingress.advance = advance;
+        fixture.ingress.advance_local = advance;
         expect(await fixture.records.observe_session(observation)).toMatchObject({ kind: "already_ended" });
         const version = await fixture.sql.query("SELECT durable_version FROM oakridge.cohort WHERE id=$1", [fixture.cohort_id]);
         await fixture.records.observe_session(observation);

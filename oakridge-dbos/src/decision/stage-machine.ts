@@ -1,10 +1,11 @@
+import { V15_PAYLOAD_CONTRACTS } from "../domain/v15-action-inputs";
 import { err, ok, type Result } from "../domain/primitives";
 import { validatePlanCohorts, validateBriefCollection } from "./schedule-cohorts";
 import type { PlanBody } from "../domain/dev-flow-artifacts";
 import { finalPullRequestMatchesPreparedRepository } from "../domain/cohort-pull-request";
 import type { ArtifactRef, CohortDecisionError, ImplementationCohortDefinition, ImplementationCohortRecord,
   OperatorRequest, ResolvedWorkerAction, SelectedDecision, VerifiedPrObservation, V15DecisionTree,
-  V15Fact, V15WorkerAction, V15Change, CohortChange, BuildReviewTarget, AssessmentReviewTarget,
+  V15Fact, V15WorkerAction, V15Change, BuildReviewTarget, AssessmentReviewTarget,
   RepositoryPreparationCohortRecord, SpecAnalysisCohortRecord, PlanningCohortRecord,
   BriefWritingCohortRecord, FinalIntegrationCohortRecord, FinalPrReviewTarget,
   V15OperatorRequest, V15WorkerKey, RepositoryPreparationInputs, ProvisionRetryInput,
@@ -194,6 +195,20 @@ export const evaluateV15Fact = (context: V15FactContext, fact: V15Fact): boolean
   }
 };
 
+/** Publication completeness is a domain fact, independent of session exit. */
+export const workerResponseReady = (context: V15FactContext, worker: V15WorkerKey): boolean => {
+  switch (context.stage) {
+    case "repository_preparation": return provisionOutputsReady(context.cohort);
+    case "spec_analysis": return specOutputsReady(context.cohort);
+    case "planning": return planOutputsReady(context.cohort);
+    case "brief_writing": return briefOutputsReady(context.cohort, context.accepted_plan);
+    case "implementation": return worker === "build" ? buildOutputsReady(context.cohort)
+      : worker === "assessment" && assessmentResponseReady(context.cohort);
+    case "final_integration": return reviewOutputReady(context.cohort.final_integration.active_execution_id,
+      context.cohort.final_integration.response, context.cohort.final_integration.outputs.pr_summary);
+  }
+};
+
 const implementationFact = (fact: V15Fact, snapshot: ImplementationCohortRecord, pr: VerifiedPrObservation | null): boolean | null => {
   switch (fact) {
     case "build_outputs_ready": return buildOutputsReady(snapshot);
@@ -237,27 +252,9 @@ const referencedArtifacts = (value: unknown): readonly ArtifactRef[] => {
   return Object.values(value).flatMap(referencedArtifacts);
 };
 
-const requiredActionFields: Readonly<Record<string, readonly string[]>> = {
-  "provision.initial": ["repository", "base_branch"],
-  "provision.retry": ["original", "interrupted"],
-  "spec.initial": ["brief_notes", "repositories"],
-  "spec.revise": ["original", "current", "feedback"],
-  "spec.retry": ["work", "interrupted", "current"],
-  "plan.initial": ["spec_analysis", "repositories"],
-  "plan.revise": ["original", "current", "feedback"],
-  "plan.retry": ["work", "interrupted", "current"],
-  "brief.initial": ["plan", "repositories"],
-  "brief.revise": ["original", "current", "feedback"],
-  "brief.retry": ["work", "interrupted", "current"],
-  "final_integration.initial": ["repository", "completed_cohorts"],
-  "final_integration.retry": ["original", "interrupted", "current"],
-  "build.initial": ["brief", "repository"],
-  "build.revise": ["brief", "repository", "current_build", "feedback"],
-  "build.retry": ["work", "interrupted", "build_result", "pr_summary"],
-  "build.replace_pr": ["brief", "repository", "current_build", "closed_pr"],
-  "assessment.initial": ["brief", "repository", "accepted_build"],
-  "assessment.discuss": ["brief", "repository", "accepted_build", "current_assessment", "feedback"],
-  "assessment.retry": ["work", "interrupted", "assessment"],
+const actionFields = (worker: V15WorkerKey, point: string): readonly string[] | null => {
+  const action = V15_PAYLOAD_CONTRACTS.find((contract) => contract.worker === worker)?.actions[point];
+  return action ? Object.keys(action.fields) : null;
 };
 
 const resolveImplementationAction = (input: CohortEvaluationInput, action: V15WorkerAction):
@@ -267,7 +264,7 @@ const resolveImplementationAction = (input: CohortEvaluationInput, action: V15Wo
   const configured = definition.workers[action.worker].action_points[action.action_point as never] as
     { readonly prompt: string; readonly inputs: Readonly<Record<string, { readonly from: string }>> } | undefined;
   if (!configured?.prompt.trim()) return err(`missing prompt for ${action.worker}.${action.action_point}`);
-  const expectedFields = requiredActionFields[`${action.worker}.${action.action_point}`];
+  const expectedFields = actionFields(action.worker, action.action_point);
   if (!expectedFields || expectedFields.length !== Object.keys(configured.inputs).length
     || expectedFields.some((field) => !(field in configured.inputs)))
     return err(`incomplete input bindings for ${action.worker}.${action.action_point}`);
@@ -307,68 +304,10 @@ const resolveImplementationAction = (input: CohortEvaluationInput, action: V15Wo
     input: resolved } as ResolvedWorkerAction & never });
 };
 
-export const evaluateCohort = (input: CohortEvaluationInput): Result<SelectedDecision, CohortDecisionError> => {
-  const { snapshot, request, definition, pr } = input;
-  const fail = (kind: CohortDecisionError["kind"], detail: string): Result<SelectedDecision, CohortDecisionError> =>
-    err({ kind, operation: "evaluate_cohort", cohort_id: snapshot.id, detail });
-  const contradiction = invalidCombination(snapshot);
-  if (contradiction) return fail("invalid_state", contradiction);
-  if (request && !reviewIsCurrent(snapshot, request)) return fail("stale_review", `${request.kind} target is not current`);
-  let node: V15DecisionTree = definition.decision_tree;
-  for (let depth = 0; depth < 256; depth++) {
-    switch (node.kind) {
-      case "match_cohort": node = node.cases[snapshot.state] ?? node.otherwise; break;
-      case "match_worker": {
-        if (node.worker !== "build" && node.worker !== "assessment") return fail("invalid_definition", `unknown worker ${node.worker}`);
-        node = node.cases[snapshot[node.worker].state] ?? node.otherwise;
-        break;
-      }
-      case "match_request": node = node.cases[request?.kind ?? "none"] ?? node.otherwise; break;
-      case "if": {
-        const fact = implementationFact(node.fact, snapshot, pr);
-        if (fact === null) return fail("invalid_definition", `unsupported fact ${node.fact}`);
-        node = fact ? node.then : node.else;
-        break;
-      }
-      case "wait": return ok({ kind: "wait", reason: node.reason });
-      case "reject": return fail(request ? "invalid_request" : "invalid_state", node.reason);
-      case "apply": {
-        const changes = node.changes;
-        const workerStates = new Set<string>();
-        const cohortStates = new Set<string>();
-        for (const change of changes) {
-          if (change.kind === "set_worker_state") workerStates.add(`${change.worker}:${change.state}`);
-          if (change.kind === "set_cohort_state") cohortStates.add(change.state);
-          if ("worker" in change && change.worker !== "build" && change.worker !== "assessment")
-            return fail("invalid_definition", `change names unavailable worker ${change.worker}`);
-        }
-        if (cohortStates.size > 1 || [...workerStates].some((entry) =>
-          [...workerStates].filter((candidate) => candidate.startsWith(`${entry.split(":")[0]}:`)).length > 1))
-          return fail("invalid_definition", "contradictory state writes");
-        if (changes.some((change) => change.kind === "capture_accepted_build")
-          && changes.some((change) => change.kind === "clear_accepted_build"))
-          return fail("invalid_definition", "captured build is both set and cleared");
-        if (changes.some((change) => change.kind === "accept_outputs"
-          && changes.some((candidate) => candidate.kind === "clear_acceptance" && candidate.worker === change.worker)))
-          return fail("invalid_definition", "acceptance is both set and cleared");
-        const actions: ResolvedWorkerAction[] = [];
-        for (const action of node.actions) {
-          if (actions.some((candidate) => candidate.worker === action.worker))
-            return fail("invalid_definition", `multiple actions for worker ${action.worker}`);
-          if (!changes.some((change: V15Change) => change.kind === "set_worker_state"
-            && change.worker === action.worker && change.state === "working"))
-            return fail("invalid_definition", `action ${action.worker}.${action.action_point} lacks working state`);
-          const resolved = resolveImplementationAction(input, action);
-          if (!resolved.ok) return fail("unavailable_input", resolved.error);
-          actions.push(resolved.value);
-        }
-        return ok({ kind: "apply", expected_version: snapshot.version,
-          changes: changes as readonly CohortChange[], actions });
-      }
-    }
-  }
-  return fail("invalid_definition", "decision tree exceeded maximum depth");
-};
+/** Implementation callers use the same evaluator and tree walk as every stage. */
+export const evaluateCohort = (input: CohortEvaluationInput): Result<SelectedDecision, CohortDecisionError> =>
+  evaluateV15Cohort({ definition: input.definition, context: { stage: "implementation", cohort: input.snapshot, pr: input.pr },
+    request: input.request, available_artifacts: input.available_artifacts }) as Result<SelectedDecision, CohortDecisionError>;
 
 export type V15ResolvedAction = ResolvedWorkerAction
   | { readonly worker: "provision"; readonly action: { readonly action_point: "initial"; readonly input: RepositoryPreparationInputs }
@@ -487,9 +426,8 @@ const genericReviewIsCurrent = (context: V15FactContext, request: V15OperatorReq
     }
     case "final_integration":
       return request.kind === "confirm_merged" || request.kind === "closed_without_merge"
-        ? context.reviewed_target !== null && sameRef(request.target.pr_summary, context.reviewed_target.pr_summary)
-          && request.target.head_sha === context.reviewed_target.head_sha
-          && request.target.pr_url === context.reviewed_target.pr_url : true;
+        ? sameRef(request.target.pr_summary, currentRef(context.cohort.final_integration.outputs.pr_summary))
+          && request.target.pr_url === context.cohort.final_integration.outputs.pr_summary?.body.pr_url : true;
     default: return true;
   }
 };
@@ -500,7 +438,7 @@ const resolveGenericAction = (input: V15EvaluationInput, action: V15WorkerAction
   const configured = input.definition.workers[action.worker]?.action_points[action.action_point];
   if (!configured || !configured.prompt?.trim() && configured.operation !== "provision_repository_refs")
     return err(`missing prompt or operation for ${action.worker}.${action.action_point}`);
-  const required = requiredActionFields[`${action.worker}.${action.action_point}`];
+  const required = actionFields(action.worker, action.action_point);
   if (!required || required.length !== Object.keys(configured.inputs).length
     || required.some((field) => !(field in configured.inputs)))
     return err(`incomplete input bindings for ${action.worker}.${action.action_point}`);
@@ -517,25 +455,31 @@ const resolveGenericAction = (input: V15EvaluationInput, action: V15WorkerAction
   return ok({ worker: action.worker, action: { action_point: action.action_point, input: resolved } } as unknown as V15ResolvedAction);
 };
 
-/** The same tree walk applies to the five single-worker v15 stages. */
+/** The exact review target is checked both at selection and under the commit lock. */
+export const isCohortReviewCurrent = (context: V15FactContext, request: V15OperatorRequest): boolean =>
+  context.stage === "implementation" ? reviewIsCurrent(context.cohort, request as OperatorRequest)
+    : genericReviewIsCurrent(context, request);
+
+/** One tree walk evaluates every v15 stage. */
 export const evaluateV15Cohort = (input: V15EvaluationInput): Result<V15SelectedDecision, CohortDecisionError> => {
   const { context, request } = input;
-  if (context.stage === "implementation") return evaluateCohort({
-    definition: input.definition as ImplementationCohortDefinition, snapshot: context.cohort,
-    request: request as OperatorRequest | null, pr: context.pr,
-    available_artifacts: input.available_artifacts,
-  });
   const fail = (kind: CohortDecisionError["kind"], detail: string): Result<V15SelectedDecision, CohortDecisionError> =>
     err({ kind, operation: "evaluate_cohort", cohort_id: context.cohort.id, detail });
-  if (request && !genericReviewIsCurrent(context, request)) return fail("stale_review", `${request.kind} target is not current`);
+  if (context.stage === "implementation") {
+    const contradiction = invalidCombination(context.cohort);
+    if (contradiction) return fail("invalid_state", contradiction);
+  }
+  if (request && !isCohortReviewCurrent(context, request)) return fail("stale_review", `${request.kind} target is not current`);
   let node = input.definition.decision_tree;
   for (let depth = 0; depth < 256; depth++) {
     switch (node.kind) {
       case "match_cohort": node = node.cases[context.cohort.state] ?? node.otherwise; break;
       case "match_worker": {
-        const worker = genericWorker(context);
-        if (node.worker !== worker.key) return fail("invalid_definition", `unknown worker ${node.worker}`);
-        node = node.cases[worker.state as import("../domain/dev-flow-v15").WorkerState] ?? node.otherwise;
+        const state = context.stage === "implementation"
+          ? node.worker === "build" || node.worker === "assessment" ? context.cohort[node.worker].state : null
+          : node.worker === genericWorker(context).key ? genericWorker(context).state : null;
+        if (state === null) return fail("invalid_definition", `unknown worker ${node.worker}`);
+        node = node.cases[state as import("../domain/dev-flow-v15").WorkerState] ?? node.otherwise;
         break;
       }
       case "match_request": node = node.cases[request?.kind ?? "none"] ?? node.otherwise; break;
@@ -552,16 +496,27 @@ export const evaluateV15Cohort = (input: V15EvaluationInput): Result<V15Selected
         const states = changes.filter((change) => change.kind === "set_cohort_state");
         const workerStates = changes.filter((change) => change.kind === "set_worker_state");
         if (new Set(states.map((change) => change.state)).size > 1
-          || new Set(workerStates.map((change) => change.state)).size > 1
-          || changes.some((change) => "worker" in change && change.worker !== genericWorker(context).key))
+          || workerStates.some((change) => workerStates.some((other) => change.worker === other.worker && change.state !== other.state))
+          || changes.some((change) => "worker" in change && (context.stage === "implementation"
+            ? change.worker !== "build" && change.worker !== "assessment" : change.worker !== genericWorker(context).key)))
           return fail("invalid_definition", "contradictory or mismatched state changes");
+        if (changes.some((change) => change.kind === "capture_accepted_build")
+          && changes.some((change) => change.kind === "clear_accepted_build"))
+          return fail("invalid_definition", "captured build is both set and cleared");
+        if (changes.some((change) => change.kind === "accept_outputs"
+          && changes.some((other) => other.kind === "clear_acceptance" && other.worker === change.worker)))
+          return fail("invalid_definition", "acceptance is both set and cleared");
         const actions: V15ResolvedAction[] = [];
         for (const action of node.actions) {
           if (actions.some((candidate) => candidate.worker === action.worker))
             return fail("invalid_definition", `multiple actions for worker ${action.worker}`);
           if (!workerStates.some((change) => change.worker === action.worker && change.state === "working"))
             return fail("invalid_definition", `action ${action.worker}.${action.action_point} lacks working state`);
-          const resolved = resolveGenericAction(input, action);
+          const resolved = context.stage === "implementation"
+            ? resolveImplementationAction({ definition: input.definition as ImplementationCohortDefinition,
+              snapshot: context.cohort, request: request as OperatorRequest | null,
+              pr: context.pr, available_artifacts: input.available_artifacts }, action)
+            : resolveGenericAction(input, action);
           if (!resolved.ok) return fail("unavailable_input", resolved.error);
           actions.push(resolved.value);
         }

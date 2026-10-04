@@ -135,7 +135,15 @@ test("the six-stage workflow uses real shadow kbbl agents, frozen cohorts, indep
       fixture.forge.head_branch = loaded.value.cohort.inputs.repository.canonical_branch;
       fixture.forge.base_branch = "epic/schema";
       fixture.forge.state = "open"; fixture.forge.merged_at = null; fixture.forge.head_sha = null; fixture.forge.number = index + 1;
-      if (index === 0) { await fixture.launch(launch_index); await restartAt("working"); }
+      const launch = await fixture.launch(launch_index);
+      if (index === 1) {
+        const base = await fixture.runGit(fixture.origin, ["rev-parse", "refs/heads/epic/schema"]);
+        const worktree = launch.prompt.match(/^Worktree: (.+)$/m)?.[1];
+        if (!worktree) throw new Error("builder worktree missing");
+        // The second cohort's base must include the first cohort's merged work.
+        expect(await fixture.runGit(worktree, ["merge-base", base, "HEAD"])).toBe(base);
+      }
+      if (index === 0) await restartAt("working");
       await publish([{ output_name: "build_result", body: { repository_key: "oakridge", summary: "built", changed_files: [], tests: { passed: 1, failed: 0 }, known_issues: [] } },
         { output_name: "pr_summary", body: { repository_key: "oakridge", branch: fixture.forge.head_branch, base_branch: "epic/schema",
           pr_url: `https://github.com/example/oakridge/pull/${index + 1}`, summary: "built" } }], true);

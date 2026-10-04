@@ -16,6 +16,7 @@ const FORBIDDEN_IDENTIFIERS = [
 const DEV_FLOW_ROLES = ["spec", "plan", "brief", "build", "assessment", "final_integration"] as const;
 // Each exception owns an adapter-facing contract or composition point.
 const DEV_FLOW_SOURCE_ALLOWLIST = {
+  "domain/run-event.ts": "Defines the shared typed audit wire contract without selecting progression.",
   "runtime/prepare-cohort-repository.ts": "Prepares canonical implementation and final repository worktrees.",
   "runtime/observe-cohort-pull-request.ts": "Reads and verifies canonical cohort PR observations.",
   "domain/v15-operator-review.ts": "Projects exact canonical worker targets for operator decisions.",
@@ -30,7 +31,6 @@ const DEV_FLOW_SOURCE_ALLOWLIST = {
   "domain/dev-flow-artifacts.ts": "Defines assessment artifact validation.",
   "domain/dev-flow-v15.ts": "Owns the checked v15 unions and future evaluator; typed contract names belong here, outside core decision and records.",
   "domain/epic.ts": "Defines the dev-flow epic contract.",
-  "domain/gates.ts": "Maps the assessment artifact disposition.",
   "domain/operator-projections.ts": "Keeps existing operator review item and diagnosis contracts.",
   "domain/pull-request.ts": "Defines forge pull-request facts.",
   "domain/repository-refs.ts": "Defines dev-flow branch roles.",
@@ -192,7 +192,7 @@ test("each cohort transition has one stable effect workflow address", () => {
 // pure typed tree and atomic selected-decision persistence. Ledger guards above
 // (single lifecycle writer, stable addresses, provenance) remain unchanged.
 test("the cohort evaluator and selected changes have no IO imports", async () => {
-  const files = ["decision/stage-machine.ts", "decision/stage-effects.ts"];
+  const files = ["decision/stage-machine.ts", "domain/v15-action-inputs.ts"];
   const sources = await Promise.all(files.map((file) => readFile(join(SOURCE, file), "utf8")));
   expect(sources.join("\n")).not.toMatch(/(?:from\s+|import\s*\()["'][^"']*(?:storage|http|runtime|git|llm)[^"']*["']/i);
 });

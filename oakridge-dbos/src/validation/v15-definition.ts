@@ -1,10 +1,13 @@
+import { WORKER_STATES } from "../domain/dev-flow-v15";
+import { V15_PAYLOAD_CONTRACTS, type BindingType } from "../domain/v15-action-inputs";
+export { V15_PAYLOAD_CONTRACTS } from "../domain/v15-action-inputs";
 import { z } from "zod";
 import { err, ok, type Result } from "../domain/primitives";
 import { V15_BINDING_SOURCES, V15_FACTS, V15_WORKER_KEYS, type WorkflowDefinition, type StageKey, type V15WorkerKey, type V15DecisionTree, type V15Change, type V15BindingSource } from "../domain/dev-flow-v15";
 
 export const V15_STAGE_KEYS = ["repository_preparation", "spec_analysis", "planning", "brief_writing", "implementation", "final_integration"] as const satisfies readonly StageKey[];
 const cohortStates = ["pending", "working", "awaiting_merge", "complete", "failed", "cancelled"] as const;
-const workerStates = ["pending", "working", "awaiting_review", "interrupted", "accepted", "failed", "cancelled"] as const;
+const workerStates = WORKER_STATES;
 export type V15DefinitionErrorKind = "invalid_shape" | "unknown_field" | "action_ambiguous" | "action_missing" | "action_target_invalid" | "source_unavailable" | "source_type_mismatch" | "payload_coverage" | "worker_outside_cohort" | "action_point_undeclared" | "contradictory_changes" | "cyclic_tree" | "invalid_tree_reference" | "invalid_prerequisites";
 export interface V15DefinitionError {
   readonly operation: "validate_v15_definition";
@@ -36,7 +39,7 @@ const node = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("reject"), reason: z.string().min(1) }),
 ]);
 const cohort = (workers: z.ZodType) => z.strictObject({ workers, decision_tree: z.unknown() });
-const stage = (workers: z.ZodType) => z.strictObject({ prerequisites: z.array(z.enum(V15_STAGE_KEYS)), max_active_cohorts: z.number().int().positive(), cohort: cohort(workers) });
+const stage = (workers: z.ZodType) => z.strictObject({ prerequisites: z.array(z.enum(V15_STAGE_KEYS)), max_active_cohorts: z.number().int().positive().max(4), cohort: cohort(workers) });
 const promptWorker = (outputs: z.ZodType, actionPoints: z.ZodType = reviewActions) => z.strictObject({ execution, outputs, action_points: actionPoints });
 const definitionSchema = z.strictObject({
   key: z.literal("dev_flow_v15"), version: z.number().int().positive(),
@@ -53,39 +56,6 @@ const definitionSchema = z.strictObject({
   }),
 });
 
-type BindingType = "text" | "run_repository" | "repository_refs" | "prepared_repository" | "artifact_ref" | "nullable_artifact_ref" | "repositories" | "brief_collection" | "completed_cohorts" | "build_outputs" | "accepted_build" | "interruption" | "build_work" | "assessment_work" | "spec_work" | "plan_work" | "brief_work" | "artifact_feedback" | "brief_feedback" | "build_feedback" | "assessment_feedback" | "pr_observation" | "provision_inputs" | "spec_inputs" | "plan_inputs" | "brief_inputs" | "final_inputs";
-interface PayloadContract { readonly fields: Readonly<Record<string, BindingType>>; readonly available: readonly V15BindingSource[] }
-interface WorkerPayloadContracts { readonly worker: V15WorkerKey; readonly actions: Readonly<Record<string, PayloadContract>> }
-const payload = (fields: PayloadContract["fields"], available: PayloadContract["available"]): PayloadContract => ({ fields, available });
-// Destination field types mirror the named inputs in the committed schemas.
-// Availability is action-local; knowing a source name alone never makes its
-// value available during initial work, another worker's retry, or revision.
-export const V15_PAYLOAD_CONTRACTS: readonly WorkerPayloadContracts[] = [
-  { worker: "provision", actions: { initial: payload({ repository: "run_repository", base_branch: "text" }, ["inputs.repository", "inputs.base_branch"]), retry: payload({ original: "provision_inputs", interrupted: "interruption" }, ["inputs", "provision.interrupted.execution"]) } },
-  ...(["spec", "plan", "brief"] as const).map((worker): WorkerPayloadContracts => {
-    const current: V15BindingSource = worker === "spec" ? "spec.outputs.spec_analysis" : worker === "plan" ? "plan.outputs.plan" : "brief.outputs.briefs";
-    const initial = worker === "spec" ? payload({ brief_notes: "text", repositories: "repositories" }, ["inputs.brief_notes", "inputs.repositories"])
-      : worker === "plan" ? payload({ spec_analysis: "artifact_ref", repositories: "repositories" }, ["inputs.spec_analysis", "inputs.repositories"])
-        : payload({ plan: "artifact_ref", repositories: "repositories" }, ["inputs.plan", "inputs.repositories"]);
-    return { worker, actions: { initial, revise: payload({ original: `${worker}_inputs`, current: worker === "brief" ? "brief_collection" : "artifact_ref", feedback: worker === "brief" ? "brief_feedback" : "artifact_feedback" }, ["inputs", current, "request.feedback"]),
-      retry: payload({ work: `${worker}_work`, interrupted: "interruption", current: worker === "brief" ? "brief_collection" : "nullable_artifact_ref" }, [`${worker}.interrupted.work`, `${worker}.interrupted.execution`, `${worker}.interrupted.current`]) } };
-  }),
-  { worker: "build", actions: {
-    initial: payload({ brief: "artifact_ref", repository: "prepared_repository" }, ["inputs.brief", "inputs.repository"]),
-    revise: payload({ brief: "artifact_ref", repository: "prepared_repository", current_build: "build_outputs", feedback: "build_feedback" }, ["inputs.brief", "inputs.repository", "build.outputs", "request.feedback"]),
-    retry: payload({ work: "build_work", interrupted: "interruption", build_result: "nullable_artifact_ref", pr_summary: "nullable_artifact_ref" }, ["build.interrupted.work", "build.interrupted.execution", "build.interrupted.build_result", "build.interrupted.pr_summary"]),
-    replace_pr: payload({ brief: "artifact_ref", repository: "prepared_repository", current_build: "build_outputs", closed_pr: "pr_observation" }, ["inputs.brief", "inputs.repository", "build.outputs", "observations.pr"]),
-  } },
-  { worker: "assessment", actions: {
-    initial: payload({ brief: "artifact_ref", repository: "prepared_repository", accepted_build: "accepted_build" }, ["inputs.brief", "inputs.repository", "accepted_build"]),
-    discuss: payload({ brief: "artifact_ref", repository: "prepared_repository", accepted_build: "accepted_build", current_assessment: "artifact_ref", feedback: "assessment_feedback" }, ["inputs.brief", "inputs.repository", "assessment.work.input.accepted_build", "assessment.outputs.assessment", "request.feedback"]),
-    retry: payload({ work: "assessment_work", interrupted: "interruption", assessment: "nullable_artifact_ref" }, ["assessment.interrupted.work", "assessment.interrupted.execution", "assessment.interrupted.assessment"]),
-  } },
-  { worker: "final_integration", actions: {
-    initial: payload({ repository: "repository_refs", completed_cohorts: "completed_cohorts" }, ["inputs.repository", "inputs.completed_cohorts"]),
-    retry: payload({ original: "final_inputs", interrupted: "interruption", current: "nullable_artifact_ref" }, ["inputs", "final_integration.interrupted.execution", "final_integration.interrupted.current"]),
-  } },
-];
 const inputTypes: Readonly<Record<StageKey, BindingType>> = { repository_preparation: "provision_inputs", spec_analysis: "spec_inputs", planning: "plan_inputs", brief_writing: "brief_inputs", implementation: "prepared_repository", final_integration: "final_inputs" };
 const sourceType = (source: V15BindingSource, stageKey: StageKey, worker: V15WorkerKey): BindingType => {
   if (source === "inputs") return inputTypes[stageKey];

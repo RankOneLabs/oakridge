@@ -1,3 +1,4 @@
+import { ExecutorStartRejectedError } from "../domain/execution";
 import type { WorkflowRunRepository } from "../storage/repositories";
 import type { Result, RootWorkflowId, WorkflowRunId } from "../domain/primitives";
 import { evaluateCohort, type CohortEvaluationInput } from "../decision/stage-machine";
@@ -78,14 +79,12 @@ export const advanceCohortUntilWait = async (port: CohortProgressionPort,
   request: V15OperatorRequestEnvelope | null): Promise<Result<{ readonly commits: number; readonly reason: string }, CohortProgressionError>> => {
   let pending_request = request;
   let commits = 0;
-  let has_version_conflict = false;
   for (let index = 0; index < 128; index++) {
     const snapshot = await port.load();
     const version = "context" in snapshot ? snapshot.context.cohort.version : snapshot.snapshot.version;
     if (pending_request && pending_request.expected_version !== version) {
-      if (!has_version_conflict) return { ok: false, error: { kind: "version_conflict",
+      return { ok: false, error: { kind: "version_conflict",
         expected_version: pending_request.expected_version, actual_version: version } };
-      pending_request = { ...pending_request, expected_version: version };
     }
     const selected = "context" in snapshot
       ? evaluateV15Cohort({ ...snapshot, request: pending_request?.request ?? null })
@@ -94,7 +93,7 @@ export const advanceCohortUntilWait = async (port: CohortProgressionPort,
     if (selected.value.kind === "wait") return { ok: true, value: { commits, reason: selected.value.reason } };
     const committed = await port.commit(selected.value, pending_request);
     if (!committed.ok) {
-      if (committed.error.kind === "version_conflict") { has_version_conflict = true; continue; }
+      if (committed.error.kind === "version_conflict" && !pending_request) continue;
       return committed;
     }
     commits++;
@@ -132,7 +131,12 @@ export const dispatchCohortExecution = async (
   // start outcomes. Recovery attaches using the same execution identity.
   let created: Awaited<ReturnType<WorkerSessionIO["create_session"]>>;
   try { created = await io.create_session(claimed.value); }
-  catch (cause) { created = { ok: false, error: { detail: String(cause) } }; }
+  catch (cause) {
+    // A lost response may hide a live session. Keep this intent dispatching so
+    // DBOS retries start_or_attach with the original operation identity.
+    if (!(cause instanceof ExecutorStartRejectedError)) throw cause;
+    created = { ok: false, error: { detail: cause.message } };
+  }
   await recordExecutionDispatch(sql, { execution_id,
     session_id: created.ok ? created.value.session_id : null,
     kbbl_session_id: created.ok ? created.value.kbbl_session_id : null,

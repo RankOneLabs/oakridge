@@ -287,7 +287,7 @@ test("plain session exits leave outputs unready and both workers can retry", asy
 test("an integration failure records an interrupted worker with no fabricated session", async () => {
   const fixture = await prepare("oakridge_b2_dispatch_failure", true);
   try {
-    expect(await fixture.ingress.advance(cohort_id, null)).toEqual({ ok: true, value: { commits: 1, reason: "builder retry or abandonment required" } });
+    expect(await fixture.ingress.advance(cohort_id, null)).toEqual({ ok: true, value: { commits: 2, reason: "builder retry or abandonment required" } });
     expect((await fixture.sql.query<{ readonly session_count: string; readonly state: string }>(
       `SELECT (SELECT count(*)::text FROM oakridge.session) AS session_count,state
        FROM oakridge.cohort_worker WHERE worker='build'`, []))[0]).toEqual({ session_count: "0", state: "interrupted" });
@@ -354,3 +354,54 @@ for (const worker of ["spec", "plan", "brief", "final_integration"] as const)
         [cohort_id, worker]))[0]).toEqual({ interrupted: expected });
     } finally { await fixture.sql.close(); }
   });
+
+for (const cancel_during_outage of [false, true]) test(`lost start response reattaches the original session${cancel_during_outage ? " and honors cancellation" : ""}`, async () => {
+  const fixture = await prepare(`oakridge_lost_start_${cancel_during_outage}`);
+  try {
+    let execution_id: ExecutionId | null = null;
+    const uncertain_io: WorkerSessionIO = { ...fixture.io, create_session: async (intent) => {
+      execution_id = intent.execution_id;
+      await fixture.io.create_session(intent);
+      throw new Error("response lost after kbbl started");
+    } };
+    const ingress = new StageEventApplier({ sql: fixture.sql, writer: new PostgresRunRecordWriter(fixture.sql), now: fixture.io.now,
+      dispatch_executions: async (ids) => { for (const id of ids) await dispatchCohortExecution(fixture.sql, id, uncertain_io); } });
+    await expect(ingress.advance_local(cohort_id)).rejects.toThrow("response lost after kbbl started");
+    expect((await fixture.sql.query("SELECT state FROM oakridge.cohort_worker WHERE worker='build'", []))[0]).toEqual({ state: "working" });
+    expect((await fixture.sql.query("SELECT status,session_id FROM oakridge.execution_intent", []))[0]).toEqual({ status: "dispatching", session_id: null });
+    if (!execution_id) throw new Error("execution missing");
+    if (cancel_during_outage) {
+      const records = new PostgresRunRecordRepository(fixture.sql, new PostgresRunRecordWriter(fixture.sql), ingress);
+      await records.cancel_run({ run_id, reason: null, cancelled_at: fixture.io.now(), actor: "operator" });
+    } else {
+      const retry = await fixture.ingress.advance(cohort_id, { id: randomUUID() as never, cohort_id, expected_version: 1, request: { kind: "retry_build" } });
+      expect(retry.ok).toBe(false);
+    }
+    expect((await dispatchCohortExecution(fixture.sql, execution_id, fixture.io)).ok).toBe(true);
+    expect(fixture.created).toHaveLength(1);
+    expect(fixture.stopped).toEqual(cancel_during_outage ? [execution_id] : []);
+  } finally { await fixture.sql.close(); }
+});
+
+test("local progression never reads the forge", async () => {
+  const fixture = await prepare("oakridge_local_progression");
+  try {
+    const ingress = new StageEventApplier({ sql: fixture.sql, writer: new PostgresRunRecordWriter(fixture.sql), now: fixture.io.now,
+      observe_pr: async () => { throw new Error("unexpected forge call"); },
+      dispatch_executions: async (ids) => { for (const id of ids) await dispatchCohortExecution(fixture.sql, id, fixture.io); } });
+    expect((await ingress.advance_local(cohort_id)).ok).toBe(true);
+    expect((await ingress.advance_local(cohort_id)).ok).toBe(true);
+  } finally { await fixture.sql.close(); }
+});
+
+test("run deletion removes published outputs and execution references", async () => {
+  const fixture = await prepare("oakridge_delete_outputs");
+  try {
+    await buildForReview(fixture);
+    const records = new PostgresRunRecordRepository(fixture.sql, new PostgresRunRecordWriter(fixture.sql), fixture.ingress);
+    await records.cancel_run({ run_id, reason: null, cancelled_at: fixture.io.now(), actor: "operator" });
+    for (const created of fixture.created) await stopCohortExecution(fixture.sql, created.execution_id, fixture.io);
+    expect(await records.delete_run(run_id)).toMatchObject({ kind: "deleted" });
+    expect(await fixture.sql.query("SELECT id FROM oakridge.artifact", [])).toEqual([]);
+  } finally { await fixture.sql.close(); }
+});

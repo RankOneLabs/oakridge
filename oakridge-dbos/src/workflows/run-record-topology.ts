@@ -179,9 +179,14 @@ const advanceStageCohortsStep = DBOS.registerStep(async (stage_instance_id: Stag
     "SELECT id::text,state FROM oakridge.cohort WHERE stage_instance_id=$1 ORDER BY materialization_position,cohort_key", [stage_instance_id]);
   for (const row of rows) {
     if (["complete", "failed", "cancelled"].includes(row.state)) continue;
-    const advanced = await stage_events.advance(row.id, null);
-    if (!advanced.ok && advanced.error.kind !== "capacity_full" && advanced.error.kind !== "owner_stopped")
-      throw new Error(`cohort ${row.id}: ${advanced.error.kind}:${"detail" in advanced.error ? advanced.error.detail : ""}`);
+    try {
+      const advanced = await stage_events.advance_local(row.id);
+      if (!advanced.ok && advanced.error.kind !== "capacity_full" && advanced.error.kind !== "dependency_incomplete" && advanced.error.kind !== "owner_stopped")
+        DBOS.logger.error(`cohort ${row.id}: ${advanced.error.kind}:${"detail" in advanced.error ? advanced.error.detail : ""}`);
+    } catch (cause) {
+      // Retry this cohort on the next bounded recheck, while reaching siblings.
+      DBOS.logger.error(`cohort ${row.id}: recheck failed: ${String(cause)}`);
+    }
   }
   const state = await effects_sql.query<{ readonly run_id: WorkflowRunId; readonly status: string; readonly version: string; readonly cohorts_version: string }>(
     `SELECT run_id::text,status,durable_version::text AS version,

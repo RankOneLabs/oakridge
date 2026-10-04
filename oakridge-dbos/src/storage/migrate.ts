@@ -13,6 +13,12 @@ export const applyMigrations = async (sql: TransactionalSqlExecutor, directory =
     (name text PRIMARY KEY, applied_at timestamptz NOT NULL)`, []);
   const applied = await sql.query<{ readonly name: string }>("SELECT name FROM public.oakridge_schema_migration", []);
   const appliedNames = new Set(applied.map((row) => row.name));
+  if (!appliedNames.has("0015_v15_baseline.sql")) {
+    const existing = await sql.query<{ readonly schema_name: string }>(
+      "SELECT schema_name FROM information_schema.schemata WHERE schema_name='oakridge'", []);
+    if (existing.length > 0) throw new Error(
+      "oakridge database predates the v15 baseline; stop writers, back up the database, and recreate it using docs/v15-cutover.md");
+  }
   const retired = ["0016_dev_flow_pull_requests.sql", "0017_artifact_threads_and_attempt_idempotency.sql"]
     .filter((name) => appliedNames.has(name));
   if (retired.length > 0) throw new Error(

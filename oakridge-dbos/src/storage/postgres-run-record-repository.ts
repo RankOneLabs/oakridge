@@ -202,7 +202,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         `SELECT intent.cohort_id::text FROM oakridge.session session
          JOIN oakridge.execution_intent intent ON intent.attempt_id=session.attempt_id
          WHERE session.id=$1`, [input.session_id]);
-      if (rows[0]) await this.stage_event_applier.advance(rows[0].cohort_id, null);
+      if (rows[0]) await this.stage_event_applier.advance_local(rows[0].cohort_id);
     }
     return written;
   }
@@ -263,6 +263,12 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
     let result: PublishWorkOrderArtifactResult | null;
     try {
       result = await this.sql.transaction(async (tx): Promise<PublishWorkOrderArtifactResult | null> => {
+        const locations = await tx.query<{ readonly stage_instance_id: StageInstanceId; readonly run_id: WorkflowRunId; readonly cohort_id: CohortId }>(
+          "SELECT stage_instance_id::text,run_id::text,cohort_id::text FROM oakridge.attempt WHERE id=$1", [request.attempt_id]);
+        if (!locations[0]) return { kind: "work_not_found", detail: "attempt has no selected worker execution" };
+        await tx.query("SELECT id FROM oakridge.stage_instance WHERE id=$1 FOR SHARE", [locations[0].stage_instance_id]);
+        await tx.query("SELECT id FROM oakridge.workflow_run WHERE id=$1 FOR SHARE", [locations[0].run_id]);
+        await tx.query("SELECT id FROM oakridge.cohort WHERE id=$1 FOR UPDATE", [locations[0].cohort_id]);
         const rows = await tx.query<{ readonly execution_id: import("../domain/primitives").ExecutionId;
           readonly run_id: WorkflowRunId; readonly cohort_id: CohortId; readonly worker: import("../domain/dev-flow-v15").V15WorkerKey;
           readonly record_version: string; readonly stage_contract: { readonly cohort?: {
@@ -277,7 +283,7 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
            JOIN oakridge.cohort cohort ON cohort.id=intent.cohort_id
            JOIN oakridge.stage_instance stage ON stage.id=attempt.stage_instance_id
            JOIN oakridge.workflow_run run ON run.id=attempt.run_id
-           WHERE intent.attempt_id=$1 FOR UPDATE OF cohort`, [request.attempt_id]);
+           WHERE intent.attempt_id=$1`, [request.attempt_id]);
         const owner = rows[0];
         if (!owner) return { kind: "work_not_found", detail: "attempt has no selected worker execution" };
         if (request.capability_hash !== expected) return { kind: "invalid_capability", detail: "work-order capability is invalid" };
@@ -469,6 +475,8 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       const stages = await tx.query<{ readonly id: string; readonly durable_version: string; readonly status: CoreStatus }>(
         `SELECT id::text,durable_version::text,status FROM oakridge.stage_instance
          WHERE run_id=$1 ORDER BY stage_key FOR UPDATE`, [input.run_id]);
+      const runs = await tx.query<{ readonly record_version: string; readonly status: CoreStatus }>(
+        "SELECT record_version::text,status FROM oakridge.workflow_run WHERE id=$1 FOR UPDATE", [input.run_id]);
       const cohorts = await tx.query<{ readonly id: string }>(
         `SELECT cohort.id::text FROM oakridge.cohort cohort
          JOIN oakridge.stage_instance stage ON stage.id=cohort.stage_instance_id
@@ -489,8 +497,6 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         });
         if (!changed.ok) throw new Error(`cancel stage ${stage.id}: ${changed.error.kind}`);
       }
-      const runs = await tx.query<{ readonly record_version: string; readonly status: CoreStatus }>(
-        "SELECT record_version::text,status FROM oakridge.workflow_run WHERE id=$1 FOR UPDATE", [input.run_id]);
       const run = runs[0];
       if (!run) return { kind: "run_not_found", detail: `workflow run '${input.run_id}' was not found` };
       if (isTerminalStatus(run.status)) return { kind: "already_terminal", run_id: input.run_id,
@@ -560,7 +566,9 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
       // lives on `artifact_owner`), so its bodies would simply be left behind.
       for (const statement of [
         "DELETE FROM oakridge.session_message WHERE run_id=$1",
-        "DELETE FROM oakridge.wait_gate WHERE run_id=$1",
+        "DELETE FROM oakridge.worker_output WHERE cohort_id IN (SELECT id FROM oakridge.cohort WHERE run_id=$1)",
+        "UPDATE oakridge.cohort_worker SET active_execution_id=NULL WHERE cohort_id IN (SELECT id FROM oakridge.cohort WHERE run_id=$1)",
+        "DELETE FROM oakridge.execution_intent WHERE cohort_id IN (SELECT id FROM oakridge.cohort WHERE run_id=$1)",
         "DELETE FROM oakridge.artifact WHERE id IN (SELECT artifact_id FROM oakridge.artifact_owner WHERE run_id=$1)",
         "DELETE FROM oakridge.session WHERE run_id=$1",
         "DELETE FROM oakridge.attempt WHERE run_id=$1",

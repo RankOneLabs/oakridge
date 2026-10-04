@@ -2,14 +2,8 @@
  * The database an end-to-end test runs against.
  *
  * These tests drive the real DBOS runtime rather than a stub of it, so they
- * need a real PostgreSQL. That is a heavier prerequisite than the rest of the
- * suite, which is pure in-memory — so a missing database skips them rather
- * than failing. CI provides one as a service container; locally, the dev
- * stack's container is already listening.
- *
- * The skip is deliberately loud at the call site: a silently-skipped e2e is
- * indistinguishable from a passing one, which is the failure mode this whole
- * layer exists to stop.
+ * need a real PostgreSQL. Missing or unreachable databases fail the suite so
+ * an unexecuted persistence test cannot be reported as passing.
  *
  * **Never the dev stack's own database.** These tests build the real backend
  * and launch runs through the real route, so every one writes real
@@ -45,8 +39,13 @@ const TEST_DATABASE_NAME = "oakridge_e2e";
  */
 export const findTestDatabaseUrl = async (): Promise<string | null> => {
   const configured = process.env.OAKRIDGE_TEST_DATABASE_URL;
-  if (configured) return (await isReachable(configured)) ? configured : null;
-  if (!(await isReachable(DEV_STACK_ADMIN_URL))) return null;
+  if (configured) {
+    if (!(await isReachable(configured))) throw new Error("configured OAKRIDGE_TEST_DATABASE_URL is unreachable");
+    return configured;
+  }
+  if ((process.env.CI || process.env.OAKRIDGE_ACCEPTANCE === "1") && !(await isReachable(DEV_STACK_ADMIN_URL)))
+    throw new Error("acceptance and CI require a reachable PostgreSQL server");
+  if (!(await isReachable(DEV_STACK_ADMIN_URL))) throw new Error("tests require a reachable PostgreSQL server");
   return ensureTestDatabase(DEV_STACK_ADMIN_URL);
 };
 
@@ -71,8 +70,7 @@ const ensureTestDatabase = async (adminUrl: string): Promise<string | null> => {
     // 42P04 is "database already exists" — another test process won the race,
     // which is the outcome we wanted anyway.
     if (typeof error === "object" && error !== null && (error as { code?: string }).code === "42P04") return testUrl;
-    console.warn(`dev-flow e2e SKIPPED: could not prepare '${TEST_DATABASE_NAME}': ${error instanceof Error ? error.message : String(error)}`);
-    return null;
+    throw error;
   } finally {
     await admin.close();
   }
@@ -117,7 +115,7 @@ export interface ScratchDatabaseError {
  * it — the migration is already applied there. This gives such a test an empty
  * database it owns and destroys.
  *
- * A `Result` rather than a nullable: "no PostgreSQL here" is a skip and
+ * A `Result` rather than a nullable: "no PostgreSQL here" and
  * "CREATE DATABASE was refused" is a failure, and a caller that cannot tell
  * them apart reports a broken environment as a clean skip.
  */
@@ -162,9 +160,7 @@ export const createScratchDatabase = async (name: string): Promise<Result<Scratc
 
 /**
  * Whether a server is actually accepting connections, rather than merely
- * configured. An unreachable URL from the environment should skip like an
- * absent one — the alternative is a suite that fails on every machine where
- * the dev stack happens to be stopped.
+ * configured. An unreachable endpoint is a failed prerequisite.
  */
 const isReachable = async (url: string): Promise<boolean> => {
   const parsed = parsePostgresUrl(url);

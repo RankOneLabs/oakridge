@@ -123,11 +123,7 @@ test("a modeled idempotency conflict is returned without enqueueing", async () =
 
 test("session message persistence makes delivery idempotent and readable by cohort", async () => {
   const scratch = await createScratchDatabase("oakridge_session_message_test");
-  if (!scratch.ok) {
-    if (scratch.error.operation !== "reach_admin_endpoint") throw new Error(`${scratch.error.operation}: ${scratch.error.detail}`);
-    console.warn("session message PostgreSQL check SKIPPED: no PostgreSQL reachable");
-    return;
-  }
+  if (!scratch.ok) throw new Error(`${scratch.error.operation}: ${scratch.error.detail}`);
   scratches.push(scratch.value);
   const sql = PgPostgresExecutor.connect(scratch.value.url);
   try {
@@ -139,9 +135,9 @@ test("session message persistence makes delivery idempotent and readable by coho
         '{"definition_version":1,"prompt_bundle_hash":"test","adapter_version":"test","artifact_schema_version":"test"}','active')`, []);
     await sql.query(`INSERT INTO oakridge.stage_instance (id,run_id,stage_key,stage_type,stage_contract,status)
       VALUES ('33333333-3333-4333-8333-333333333333','22222222-2222-4222-8222-222222222222','build','test','{}','active')`, []);
-    await sql.query(`INSERT INTO oakridge.cohort (id,run_id,stage_instance_id,cohort_key,status,frozen_inputs)
+    await sql.query(`INSERT INTO oakridge.cohort (id,run_id,stage_instance_id,cohort_key,state,status,frozen_inputs)
       VALUES ('44444444-4444-4444-8444-444444444444','22222222-2222-4222-8222-222222222222',
-        '33333333-3333-4333-8333-333333333333','build-1','active','{"brief_notes":"fixture","repositories":[]}')`, []);
+        '33333333-3333-4333-8333-333333333333','build-1','working','active','{"brief_notes":"fixture","repositories":[]}')`, []);
     await sql.query(`UPDATE oakridge.cohort SET durable_version=1
       WHERE id='44444444-4444-4444-8444-444444444444'`, []);
     await sql.query(`INSERT INTO oakridge.run_transition

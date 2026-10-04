@@ -197,8 +197,22 @@ test("S17 failure wins over cancellation, fences unfinished siblings, and retain
     }
     await fixture.advanceCohort(unfinished);
     const sibling = await fixture.launch(1);
-    await fixture.sql.query(`INSERT INTO oakridge.worker_output (cohort_id,worker,output_name,artifact_id,acceptance_state,reviewed_target)
-      SELECT $1,worker,output_name,artifact_id,'accepted','{}'::jsonb FROM oakridge.worker_output WHERE cohort_id=$2`, [completed, fixture.cohort_id]);
+    // Completed sibling output is independently owned; it cannot share the
+    // still-unreviewed current artifact of another cohort.
+    await fixture.sql.transaction(async (tx) => {
+      const outputs = await tx.query<{ readonly worker: string; readonly output_name: string; readonly artifact_type: string; readonly body: JsonValue }>(
+        `SELECT output.worker,output.output_name,artifact.artifact_type,artifact.body FROM oakridge.worker_output output
+         JOIN oakridge.artifact artifact ON artifact.id=output.artifact_id WHERE output.cohort_id=$1`, [fixture.cohort_id]);
+      for (const output of outputs) {
+        const artifact_id = randomUUID();
+        await tx.query(`INSERT INTO oakridge.artifact (id,chain_id,revision,artifact_type,body,acceptance_state)
+          VALUES ($1,$1,1,$2,$3::jsonb,'accepted')`, [artifact_id, output.artifact_type, JSON.stringify(output.body)]);
+        await tx.query("INSERT INTO oakridge.artifact_owner (artifact_id,run_id,stage_instance_id,cohort_id) VALUES ($1,$2,$3,$4)",
+          [artifact_id, fixture.run_id, fixture.stage_id, completed]);
+        await tx.query(`INSERT INTO oakridge.worker_output (cohort_id,worker,output_name,artifact_id,acceptance_state,reviewed_target)
+          VALUES ($1,$2,$3,$4,'accepted','{}'::jsonb)`, [completed, output.worker, output.output_name, artifact_id]);
+      }
+    });
     const results = await fixture.sql.query("SELECT artifact_id,acceptance_state FROM oakridge.worker_output WHERE cohort_id=$1 ORDER BY artifact_id", [completed]);
     await fixture.advance({ kind: "abandon", reason: "Cannot finish" });
     const writer = new PostgresRunRecordWriter(fixture.sql);

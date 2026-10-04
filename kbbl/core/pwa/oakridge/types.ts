@@ -1,3 +1,12 @@
+/** IDs are validated and branded at the UI boundary; JSON carries strings. */
+type OperatorWire<Value> = Value extends string & { readonly __brand: string } ? string
+  : Value extends number & { readonly __brand: string } ? number
+  : Value extends readonly (infer Member)[] ? OperatorWire<Member>[]
+  : Value extends object ? { -readonly [Key in keyof Value]: OperatorWire<Value[Key]> } : Value;
+type OperatorFields<Source, Required extends keyof Source, Optional extends keyof Source = never> =
+  OperatorWire<Pick<Source, Required>> & Partial<OperatorWire<Pick<Source, Optional>>>;
+
+import type * as Operator from "../../../../oakridge-dbos/src/domain/operator-projections";
 // View-model types for the oakridge operator surface.
 // These are typed at the PWA boundary and cover what the operator UI needs.
 
@@ -63,32 +72,12 @@ export type CohortId = string & { readonly __brand: "CohortId" };
 export type WorkflowRunId = string & { readonly __brand: "WorkflowRunId" };
 export type JsonValue = null | boolean | number | string | readonly JsonValue[] | { readonly [key: string]: JsonValue };
 
-export type RunEventEffect =
-  | { readonly kind: "none" | "deliver_message" | "resume_wait" }
-  | { readonly kind: "start_stage"; readonly stage_instance_id: string }
-  | { readonly kind: "worker_decision"; readonly cohort_id: string; readonly from_state: string; readonly to_state: string;
-      readonly changes: readonly import("../../../../oakridge-dbos/src/domain/dev-flow-v15").V15Change[];
-      readonly actions: readonly { readonly worker: import("../../../../oakridge-dbos/src/domain/dev-flow-v15").V15WorkerKey; readonly action_point: string }[] }
-  | { readonly kind: "cohort_transition"; readonly cohort_id: string; readonly unit_label: string;
-      readonly event_kind: string; readonly from_state: string; readonly to_state: string;
-      readonly next_actor: string | null; readonly refusal: null }
-  | { readonly kind: "pull_request_observed" | "pull_request_merge_confirmed"; readonly repository_key: string; readonly pull_request_url: string; readonly state: string; readonly source: string; readonly merged_at: string | null }
-  | { readonly kind: "unrecognized"; readonly effect_kind: string };
-
-/** Mirrors the v15 run transition projection in oakridge-dbos/src/domain/run-event.ts. */
-export interface RunEvent {
-  readonly sequence: string;
-  readonly transition_id: string;
-  readonly run_id: WorkflowRunId;
-  readonly owner: { readonly kind: "run" | "stage_instance" | "cohort"; readonly id: string };
-  readonly launch_reason: "initial" | "dependency_satisfied" | "artifact_accepted" | "gate_decided" | "operator" | "retry" | "recovery";
-  readonly prior_owner_version: number;
-  readonly resulting_owner_version: number;
+export type RunEventEffect = OperatorWire<import("../../../../oakridge-dbos/src/domain/run-event").OperatorRunEffect>;
+export type RunEvent = OperatorFields<import("../../../../oakridge-dbos/src/domain/run-event").RunEvent,
+  "sequence" | "transition_id" | "run_id" | "owner" | "launch_reason" | "prior_owner_version" | "resulting_owner_version" | "actor" | "occurred_at", "operation"> & {
   readonly effect: RunEventEffect;
   readonly effect_workflow_id: string | null;
-  readonly actor: string;
-  readonly occurred_at: string;
-}
+};
 
 export type RunEventFrame = RunEvent & { readonly replayed: boolean };
 
@@ -142,31 +131,18 @@ export interface CreateRunRequest {
   epic_profile: EpicProfileConfig;
 }
 
-export type CoreStatus = "pending" | "active" | "blocked" | "complete" | "failed" | "cancelled";
-export type BlockedReason = "dependency" | "gate" | "capacity" | "external" | "operator" | "retry";
-export type NextActor = "core" | "agent" | "service" | "operator" | "external";
+export type CoreStatus = import("../../../../oakridge-dbos/src/domain/records").CoreStatus;
+export type BlockedReason = import("../../../../oakridge-dbos/src/domain/records").BlockedReason;
+export type NextActor = import("../../../../oakridge-dbos/src/domain/records").NextActor;
 export type RunStatus = CoreStatus;
 export type RunDisplayStatus = RunStatus;
 
 /** The run's committed lifecycle status carried on a gate row. */
 export type RunState = CoreStatus;
 
-export interface RunSummary {
-  id: string;
-  title: string | null;
-  repository_keys: string[];
-  workflow_name: string;
-  status: RunStatus;
-  blocked_reason: BlockedReason | null;
-  next_actor: NextActor | null;
-  current_stage: string | null;
-  stage_total: number;
-  stage_complete: number;
-  attention_count: number;
-  parked_count: number;
-  updated_at: string;
-  archived?: boolean;
-}
+export type RunSummary = OperatorFields<Operator.OperatorRunSummary,
+  "id" | "title" | "repository_keys" | "workflow_name" | "status" | "blocked_reason" | "next_actor" | "current_stage" | "stage_total" | "stage_complete" | "attention_count" | "parked_count" | "updated_at",
+  "archived">;
 
 export interface WorktreeMetadata {
   branch: string;
@@ -177,95 +153,41 @@ export interface WorktreeMetadata {
 export type StageStatus = CoreStatus;
 export type StageUnitStatus = StageStatus;
 
-export interface StageArtifact {
-  id: string;
-  type_id: string;
-  version: number;
-  label?: string | null;
-  /**
-   * `OperatorStageArtifact.created_at` (`oakridge-dbos`
-   * `src/domain/operator-projections.ts`): when *this version* was written,
-   * i.e. the slot's latest visible release — not the artifact chain's birth.
-   * Optional because a backend older than this field still answers without it.
-   */
-  created_at?: string;
-}
+export type StageArtifact = OperatorFields<Operator.OperatorStageArtifact,
+  "id" | "type_id" | "version",
+  "label" | "created_at">;
 
-export interface StageUnit {
-  version: number;
+export type StageUnit = OperatorFields<Operator.OperatorStageUnit,
+  "version" | "cohort_id" | "unit_id" | "brief" | "sid" | "worktree" | "status" | "blocked_reason" | "next_actor" | "retryable" | "gate",
+  "state" | "base_sha"> & {
   workers: readonly import("../../../../oakridge-dbos/src/domain/operator-projections").OperatorWorkerRecord[];
-  cohort_id: string;
-  unit_id: string;
-  state?: string;
   repository_key?: RepositoryKey | null;
-  brief: import("../../../../oakridge-dbos/src/domain/dev-flow-artifacts").BuildBriefBody | null;
-  sid: string | null;
-  worktree: WorktreeMetadata | null;
-  base_sha?: string | null;
-  status: StageStatus;
-  blocked_reason: BlockedReason | null;
-  next_actor: NextActor | null;
-  retryable: boolean;
-  gate: string | null;
-}
+};
 
-export interface StageDetail {
-  stage_instance_id: string;
-  name: string;
-  type: string;
-  status: StageStatus;
-  blocked_reason: BlockedReason | null;
-  next_actor: NextActor | null;
+export type StageDetail = OperatorFields<Operator.OperatorStageDetail,
+  "stage_instance_id" | "name" | "type" | "status" | "blocked_reason" | "next_actor" | "delegated_kbbl_sid" | "worktree"> & {
   artifacts: StageArtifact[];
-  delegated_kbbl_sid: string | null;
-  worktree: WorktreeMetadata | null;
   units?: StageUnit[];
-}
+};
 
-export interface RunDetail {
-  id: string;
-  title: string | null;
-  repository_keys: string[];
-  workflow_name: string;
-  status: RunStatus;
-  blocked_reason: BlockedReason | null;
-  next_actor: NextActor | null;
+export type RunDetail = OperatorFields<Operator.OperatorRunDetail,
+  "id" | "title" | "repository_keys" | "workflow_name" | "status" | "blocked_reason" | "next_actor" | "parked_count" | "updated_at"> & {
   stages: StageDetail[];
-  parked_count: number;
-  updated_at: string;
-}
+};
 
-export interface RunDiagnosisSession {
-  session_id: string;
-  stage_key: string;
-  cohort_id: string;
-  cohort_key: string;
-  worker: import("../../../../oakridge-dbos/src/domain/dev-flow-v15").V15WorkerKey;
-  execution_id: string;
-  action_point: string;
-  is_current: boolean;
-  status: CoreStatus;
-}
+export type RunDiagnosisSession = OperatorFields<Operator.OperatorRunDiagnosisSession,
+  "session_id" | "stage_key" | "cohort_id" | "cohort_key" | "worker" | "execution_id" | "action_point" | "is_current" | "status">;
 
 export interface RunDiagnosisGate extends ParkedGate { cohort_id: string | null }
 
-export interface PullRequestMergeWait {
-  cohort_id: string;
-  stage_instance_id: string;
-  unit_id: string;
-  pull_request_url: string;
-}
+export type PullRequestMergeWait = OperatorFields<Operator.OperatorPullRequestMergeWait,
+  "cohort_id" | "stage_instance_id" | "unit_id" | "pull_request_url">;
 
-export interface RunDiagnosisArtifact {
-  artifact_id: string;
-  type_id: string;
-  revision: number;
-  stage_name: string;
-  label: string | null;
-  created_at: string;
-}
+export type RunDiagnosisArtifact = OperatorFields<Operator.OperatorRunDiagnosisArtifact,
+  "artifact_id" | "type_id" | "revision" | "stage_name" | "label" | "created_at">;
 
-export interface RunDiagnosis {
+export type RunDiagnosis = OperatorFields<Operator.OperatorRunDiagnosis,
+  never> & {
   run: RunDetail;
   sessions: RunDiagnosisSession[];
   current_session: RunDiagnosisSession | null;
@@ -274,7 +196,7 @@ export interface RunDiagnosis {
   pull_request_merge_waits: PullRequestMergeWait[];
   recent_artifacts: RunDiagnosisArtifact[];
   stage_progress: Record<CoreStatus, number> & { total: number };
-}
+};
 
 
 /**
@@ -286,35 +208,18 @@ export interface RunDiagnosis {
  * work order finished and its cleanup completed. It is not a session *hold*,
  * which answers whether the session is safe to close.
  */
-export interface SessionRunLocation {
+export type SessionRunLocation = OperatorFields<Operator.OperatorSessionRunLocation,
+  "stage_instance_id" | "stage_key" | "unit_id" | "work_order_id"> & {
   run_id: WorkflowRunId;
-  stage_instance_id: string;
-  stage_key: string;
-  unit_id: string;
-  work_order_id: string;
-}
+};
 
 export type { ArtifactRevision, ArtifactRevisionStatus, FindingSeverity, AssessmentVerdict, PrReviewStatus, ArtifactCapabilities, ArtifactReviewDescriptor, ArtifactTypeDescriptor, ArtifactDetail } from "./artifact-types";
 
-export interface ParkedGate {
-  id: string;
-  stage_instance_id: string | null;
-  gate_type: string;
-  gate_step: string | null;
-  run_id: string;
-  stage_name: string;
-  unit_id: string;
+export type ParkedGate = OperatorFields<Operator.OperatorParkedGate,
+  "id" | "stage_instance_id" | "gate_type" | "gate_step" | "run_id" | "stage_name" | "unit_id" | "artifact_revision_id" | "worktree" | "resume_actions" | "run_state" | "actionable",
+  "artifact_revision_ids" | "pr_url"> & {
   repository_key?: RepositoryKey | null;
-  artifact_revision_id: string | null;
-  artifact_revision_ids?: string[];
-  worktree: WorktreeMetadata | null;
-  resume_actions: string[];
-  pr_url?: string | null;
-  /** The run's persisted state at read time — a gate stays listed whatever it is. */
-  run_state: RunState;
-  /** Whether a decision on this gate can still take effect. `false` means the run moved on (or ended) while the gate sat open — render it stranded. */
-  actionable: boolean;
-}
+};
 
 /**
  * The operator confirming a cohort's pull request merged, when Oakridge cannot
@@ -336,31 +241,14 @@ export interface CohortCompletion {
   assessment_complete: boolean;
 }
 
-export interface CohortLifecycleSummary {
-  id: string;
-  run_id: string;
-  workflow_name: string;
-  stage_instance_id: string;
-  stage_name: string;
-  unit_id: string;
+export type CohortLifecycleSummary = OperatorFields<Operator.OperatorCohortSummary,
+  "id" | "run_id" | "workflow_name" | "stage_instance_id" | "stage_name" | "unit_id" | "lifecycle" | "blocked_reason" | "next_actor" | "completion" | "blocked_by" | "updated_at",
+  "title" | "artifact_revision_id" | "artifact_url" | "gate_id" | "gate_url" | "links" | "facts"> & {
   repository_key?: RepositoryKey | null;
-  title?: string | null;
-  lifecycle: CohortLifecycle;
-  blocked_reason: BlockedReason | null;
-  next_actor: NextActor | null;
-  completion: CohortCompletion;
-  blocked_by: string[];
-  artifact_revision_id?: string | null;
   artifact_revision_ids?: string[];
-  artifact_url?: string | null;
-  gate_id?: string | null;
-  gate_url?: string | null;
-  links?: Array<{ key: string; label: string; url: string }>;
-  facts?: Array<{ key: string; label: string; value: string }>;
   pr_url?: string | null;
   pull_request_reconciliation?: CohortPullRequestReconciliation | null;
-  updated_at: string;
-}
+};
 
 export type ReviewInboxItemKind =
   | "artifact_gate"
@@ -373,36 +261,19 @@ export type ReviewInboxItemKind =
 
 export type ReviewInboxItemState = "actionable" | "blocked";
 
-export interface ReviewInboxItem {
-  id: string;
-  kind: ReviewInboxItemKind;
-  state: ReviewInboxItemState;
-  run_id: string;
-  workflow_name: string;
-  stage_instance_id: string;
-  stage_name: string;
-  unit_id: string;
+export type ReviewInboxItem = OperatorFields<Operator.OperatorReviewInboxItem,
+  "id" | "kind" | "state" | "run_id" | "workflow_name" | "stage_instance_id" | "stage_name" | "unit_id" | "lifecycle" | "blocked_reason" | "next_actor" | "resume_actions" | "blocked_by",
+  "title" | "artifact_revision_id" | "artifact_revision_ids" | "artifact_url" | "gate_id" | "gate_url" | "pr_url"> & {
   repository_key?: RepositoryKey | null;
-  lifecycle: CohortLifecycle;
-  blocked_reason: BlockedReason | null;
-  next_actor: NextActor | null;
-  title?: string | null;
-  artifact_revision_id?: string | null;
-  artifact_revision_ids?: string[];
-  artifact_url?: string | null;
-  gate_id?: string | null;
-  gate_url?: string | null;
-  resume_actions: string[];
-  blocked_by: string[];
-  pr_url?: string | null;
-}
+};
 
 /** The items list is the required-attention decision queue; completed and optional-attention history lives outside the inbox. */
-export interface ReviewInbox {
+export type ReviewInbox = OperatorFields<Operator.OperatorReviewInbox,
+  never> & {
   cohorts: CohortLifecycleSummary[];
   items: ReviewInboxItem[];
   attention_count: number;
-}
+};
 
 export interface PullRequestObservation {
   owner: string;

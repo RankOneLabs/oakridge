@@ -1,3 +1,6 @@
+import { selectWorkerAttention } from "../domain/worker-attention";
+import { selectArtifactReviewContext } from "../domain/v15-operator-review";
+import { selectWorkerReviewRequestKinds } from "../domain/v15-review-actions";
 import type { ArtifactId, ExecutionId, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "../domain/primitives";
 import { selectGateActionability, selectV15StageOrder, selectPullRequestMergeWaits, type OperatorApplicationVersionInventory, type OperatorCohortSummary, type CohortDetailContributor, type OperatorParkedGate, type OperatorReviewInbox, type OperatorReviewInboxItem, type OperatorRunDetail, type OperatorRunDiagnosis, type OperatorRunDiagnosisSession, type OperatorRunSummary, type OperatorSessionRunLocation, type OperatorStageArtifact, type OperatorStageDetail, type OperatorStageUnit } from "../domain/operator-projections";
 import type { SqlExecutor } from "./sql-executor";
@@ -187,13 +190,19 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
       const context = await loadStageCohortContext(this.sql, row.cohort_id as CohortId, row.stage_name as StageKey);
       if (!context.ok) throw new Error(context.error.detail);
       const repository = selectCohortRepositoryView(context.value, row.stage_instance_id as StageInstanceId);
+      const first_artifact = row.artifact_revision_ids[0];
+      const artifact = first_artifact ? (await this.sql.query<{ readonly revision: number }>(
+        "SELECT revision FROM oakridge.artifact WHERE id=$1", [first_artifact]))[0] : null;
+      const review = artifact && first_artifact ? selectArtifactReviewContext(context.value,
+        { id: first_artifact as ArtifactId, version: artifact.revision }) : null;
       return { id: `${row.cohort_id}:${row.worker}`, stage_instance_id: row.stage_instance_id as StageInstanceId,
         gate_type: row.worker, run_id: row.run_id as WorkflowRunId, stage_name: row.stage_name,
         unit_id: row.unit_id as UnitId, ...repository,
         artifact_revision_id: (row.artifact_revision_ids[0] ?? null) as ArtifactId | null,
         artifact_revision_ids: row.artifact_revision_ids as ArtifactId[],
         gate_step: row.worker === "final_integration" ? "merge_confirmation" : row.worker,
-        resume_actions: [], pr_url: null, run_state: row.run_state,
+        resume_actions: review ? selectWorkerReviewRequestKinds(review) : [],
+        pr_url: review?.worker === "final_integration" ? review.target.pr_url : null, run_state: row.run_state,
         actionable: selectGateActionability(row.run_state) };
     }));
   }
@@ -368,7 +377,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
           workers, version: context.value.cohort.version,
           sid: unit.session_id,
           state: unit.state, status: unit.status, blocked_reason: unit.blocked_reason, next_actor: unit.next_actor,
-          retryable: workers.some((worker) => worker.record.state === "interrupted"), gate: null };
+          retryable: workers.some((worker) => selectWorkerAttention(worker).can_retry), gate: null };
       }));
       const artifacts = artifactRows.filter((artifact) => artifact.stage_instance_id === stage.stage_instance_id)
         .map((artifact): OperatorStageArtifact => ({ id: artifact.id as ArtifactId, type_id: artifact.type_id, version: artifact.version, label: artifact.label, created_at: artifact.created_at }));
@@ -433,7 +442,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     }));
     const current_session = [...sessions].reverse().find((session) => session.status === "active" && session.is_current) ?? null;
     const awaitingWorkers = new Set(run.stages.flatMap((stage) => stage.units.flatMap((unit) => unit.workers
-      .filter((worker) => worker.record.state === "awaiting_review" || worker.record.state === "interrupted")
+      .filter((worker) => selectWorkerAttention(worker).needs_attention)
       .map((worker) => `${unit.cohort_id}:${worker.worker}`))));
     const sessions_awaiting_action = sessions.filter((session) => session.is_current
       && awaitingWorkers.has(`${session.cohort_id}:${session.worker}`));
@@ -544,8 +553,8 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
       const context = await loadStageCohortContext(this.sql, row.cohort_id as CohortId, row.stage_name as StageKey);
       if (!context.ok) throw new Error(context.error.detail);
       const workers = selectCohortWorkerRecords(context.value);
-      const needsRetry = workers.some((worker) => worker.record.state === "interrupted");
-      const needsReview = workers.some((worker) => worker.record.state === "awaiting_review");
+      const needsRetry = workers.some((worker) => selectWorkerAttention(worker).can_retry);
+      const needsReview = workers.some((worker) => selectWorkerAttention(worker).needs_review);
       const repository = selectCohortRepositoryView(context.value, row.stage_instance_id as StageInstanceId);
       const artifact = row.artifact_revision_id as ArtifactId | null;
       const title = row.title;

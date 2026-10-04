@@ -1,4 +1,5 @@
 import type { Command, Contradiction, Derivation, StatusChange } from "../decision/commands";
+import { selectStartableCohorts, type SchedulableCohort } from "../decision/schedule-cohorts";
 import { derive } from "../decision/derive";
 import { transitionEffectWorkflowId, transitionIdFor } from "../decision/ids";
 import type { RunSnapshot } from "../decision/snapshot";
@@ -55,24 +56,15 @@ interface SessionWorkerInterruptionInput {
   readonly outputs: readonly SessionWorkerOutput[];
 }
 
-const hasSessionWorkerResponse = (owner: SessionWorkerOwner): boolean => {
-  const response = owner.response;
-  if (!response || response.execution_id !== owner.id) return false;
-  switch (owner.worker) {
-    case "build": return "build_result" in response && response.build_result != null && response.pr_summary != null && typeof response.head_sha === "string";
-    case "assessment": return "assessment" in response && response.assessment != null;
-    case "provision": return "outcome" in response && response.outcome != null;
-    case "spec": case "plan": case "brief": case "final_integration": return "current" in response && response.current != null;
-  }
-};
-
 const hasCompleteSessionWorkerResponse = async (tx: SqlExecutor, owner: SessionWorkerOwner): Promise<boolean> => {
-  if (!hasSessionWorkerResponse(owner)) return false;
-  if (owner.worker !== "plan" && owner.worker !== "brief") return true;
   const { loadStageCohortContext } = await import("./load-stage-cohort");
-  const { evaluateV15Fact } = await import("../decision/stage-machine");
-  const snapshot = await loadStageCohortContext(tx, owner.cohort_id, owner.worker === "plan" ? "planning" : "brief_writing");
-  return snapshot.ok && evaluateV15Fact(snapshot.value, owner.worker === "plan" ? "plan_outputs_ready" : "brief_outputs_ready") === true;
+  const { workerResponseReady } = await import("../decision/stage-machine");
+  const rows = await tx.query<{ readonly stage_key: import("../domain/dev-flow-v15").StageKey }>(
+    `SELECT stage.stage_key FROM oakridge.cohort cohort JOIN oakridge.stage_instance stage
+     ON stage.id=cohort.stage_instance_id WHERE cohort.id=$1`, [owner.cohort_id]);
+  if (!rows[0]) return false;
+  const snapshot = await loadStageCohortContext(tx, owner.cohort_id, rows[0].stage_key);
+  return snapshot.ok && workerResponseReady(snapshot.value, owner.worker);
 };
 
 /** Mirrors the v15 retry bindings: build/assessment refs, review current, or provision execution. */
@@ -318,6 +310,14 @@ export const writeSessionStatus = async (
   input: { readonly session_id: SessionId; readonly status: SessionLifecycleStatus; readonly at: string },
 ): Promise<Result<SessionStatusWrite, { readonly operation: "write_session_status"; readonly session_id: SessionId; readonly kind: "session_not_found" | "storage_failed"; readonly detail: string }>> => {
   try {
+  const location = await tx.query<{ readonly stage_instance_id: StageInstanceId; readonly run_id: WorkflowRunId; readonly cohort_id: CohortId }>(
+    `SELECT session.stage_instance_id::text,session.run_id::text,attempt.cohort_id::text FROM oakridge.session session
+     JOIN oakridge.attempt attempt ON attempt.id=session.attempt_id WHERE session.id=$1`, [input.session_id]);
+  if (location[0]) {
+    await tx.query("SELECT id FROM oakridge.stage_instance WHERE id=$1 FOR SHARE", [location[0].stage_instance_id]);
+    await tx.query("SELECT id FROM oakridge.workflow_run WHERE id=$1 FOR SHARE", [location[0].run_id]);
+    await tx.query("SELECT id FROM oakridge.cohort WHERE id=$1 FOR UPDATE", [location[0].cohort_id]);
+  }
   const terminal = input.status === "complete" || input.status === "failed" || input.status === "cancelled";
   const sessions = await tx.query<{ readonly attempt_id: string }>(
     `UPDATE oakridge.session
@@ -401,7 +401,7 @@ export interface CommitSelectedCohortInput {
 
 export type CommitSelectedCohortError =
   | { readonly kind: "version_conflict"; readonly expected_version: number; readonly actual_version: number }
-  | { readonly kind: "owner_stopped" | "capacity_full" | "invalid_decision"; readonly detail: string };
+  | { readonly kind: "owner_stopped" | "capacity_full" | "dependency_incomplete" | "invalid_decision"; readonly detail: string };
 
 export interface CommittedSelectedCohort {
   readonly transition_id: RunTransitionId;
@@ -431,6 +431,7 @@ const directlyReviewedWorker = (request: V15OperatorRequestEnvelope | null): V15
 };
 
 const selectedCoreStatus = (state: string): CoreStatus => {
+  if (state === "pending") return "pending";
   if (state === "complete") return "complete";
   if (state === "failed") return "failed";
   if (state === "cancelled") return "cancelled";
@@ -508,8 +509,8 @@ export const commitSelectedCohort = async (sql: TransactionalSqlExecutor,
   input: CommitSelectedCohortInput): Promise<Result<CommittedSelectedCohort, CommitSelectedCohortError>> => {
   try {
     return await sql.transaction(async (tx) => {
-      const stage = await tx.query<{ readonly status: CoreStatus; readonly stage_contract: { readonly max_active_cohorts?: number } }>(
-        "SELECT status,stage_contract FROM oakridge.stage_instance WHERE id=$1 AND run_id=$2 FOR UPDATE",
+      const stage = await tx.query<{ readonly status: CoreStatus; readonly stage_key: import("../domain/dev-flow-v15").StageKey; readonly stage_contract: { readonly max_active_cohorts?: number } }>(
+        "SELECT status,stage_key,stage_contract FROM oakridge.stage_instance WHERE id=$1 AND run_id=$2 FOR UPDATE",
         [input.stage_instance_id, input.run_id]);
       const run = await tx.query<{ readonly status: CoreStatus }>(
         "SELECT status FROM oakridge.workflow_run WHERE id=$1 FOR SHARE", [input.run_id]);
@@ -527,12 +528,25 @@ export const commitSelectedCohort = async (sql: TransactionalSqlExecutor,
         throw new SelectedCohortAbort({ kind: "version_conflict", expected_version: input.selected.expected_version, actual_version });
       if (input.request && (input.request.cohort_id !== input.cohort_id || input.request.expected_version !== actual_version))
         throw new SelectedCohortAbort({ kind: "invalid_decision", detail: "request does not name this cohort version" });
+      if (input.request && stage[0]) {
+        const { loadStageCohortContext } = await import("./load-stage-cohort");
+        const { isCohortReviewCurrent } = await import("../decision/stage-machine");
+        const snapshot = await loadStageCohortContext(tx, input.cohort_id, stage[0].stage_key);
+        if (!snapshot.ok || !isCohortReviewCurrent(snapshot.value, input.request.request))
+          throw new SelectedCohortAbort({ kind: "invalid_decision", detail: "review target changed before commit" });
+      }
       const next_state = input.selected.changes.find((change) => change.kind === "set_cohort_state")?.state ?? current[0].state;
-      if (current[0].state === "pending" && next_state === "working") {
-        const dependencies = await tx.query<{ readonly id: string; readonly state: string }>(
-          "SELECT id::text,state FROM oakridge.cohort WHERE id=ANY($1::uuid[])", [current[0].depends_on]);
-        if (dependencies.length !== current[0].depends_on.length || dependencies.some((dependency) => dependency.state !== "complete"))
-          throw new SelectedCohortAbort({ kind: "capacity_full", detail: "cohort prerequisites are not complete" });
+      const membership = await tx.query<SchedulableCohort>(
+        `SELECT id::text AS cohort_key,status AS state_status,depends_on FROM oakridge.cohort
+         WHERE stage_instance_id=$1 ORDER BY materialization_position,cohort_key`, [input.stage_instance_id]);
+      const limit = stage[0]?.stage_contract.max_active_cohorts ?? 4;
+      if (current[0].state === "pending" && next_state === "working"
+        && !selectStartableCohorts(membership, limit).includes(input.cohort_id)) {
+        const prerequisites_complete = current[0].depends_on.every((id) =>
+          membership.some((cohort) => cohort.cohort_key === id && cohort.state_status === "complete"));
+        throw new SelectedCohortAbort(prerequisites_complete
+          ? { kind: "capacity_full", detail: "four cohorts already hold stage slots" }
+          : { kind: "dependency_incomplete", detail: "cohort prerequisites are not complete" });
       }
       let slot = current[0].activation_slot;
       if (next_state === "working" || next_state === "awaiting_merge") {
@@ -540,7 +554,6 @@ export const commitSelectedCohort = async (sql: TransactionalSqlExecutor,
           const occupied = await tx.query<{ readonly activation_slot: number }>(
             "SELECT activation_slot FROM oakridge.cohort WHERE stage_instance_id=$1 AND activation_slot IS NOT NULL",
             [input.stage_instance_id]);
-          const limit = stage[0]?.stage_contract.max_active_cohorts ?? 4;
           slot = [1, 2, 3, 4].slice(0, limit).find((candidate) => !occupied.some((row) => row.activation_slot === candidate)) ?? null;
           if (slot === null) throw new SelectedCohortAbort({ kind: "capacity_full", detail: "four cohorts already hold stage slots" });
         }
@@ -645,10 +658,10 @@ export const claimExecutionIntent = async (sql: TransactionalSqlExecutor, execut
        WHERE intent.id=$1 FOR UPDATE OF intent`, [execution_id]);
     const row = rows[0];
     if (!row) return err({ kind: "not_found" as const });
-    if (row.stop_requested_at !== null || row.active_execution_id !== execution_id
+    if (row.status !== "dispatching" && (row.stop_requested_at !== null || row.active_execution_id !== execution_id
       || row.run_status !== "active" || row.stage_status !== "active"
       || row.cohort_state === "cancelled" || row.cohort_state === "failed" || row.cohort_state === "complete"
-      || row.status === "cancelled" || row.status === "interrupted") return err({ kind: "stopped" as const });
+      || row.status === "cancelled" || row.status === "interrupted")) return err({ kind: "stopped" as const });
     if (row.status !== "pending" && row.status !== "dispatching") return err({ kind: "already_dispatched" as const });
     await tx.query("UPDATE oakridge.execution_intent SET status='dispatching' WHERE id=$1", [execution_id]);
     const owner: ClaimedExecutionOwner = { execution_id, attempt_id: row.attempt_id, cohort_id: row.cohort_id,
@@ -708,7 +721,7 @@ export const recordExecutionDispatch = async (sql: TransactionalSqlExecutor, inp
   } else {
     if (input.session_id === null) await tx.query(
       "UPDATE oakridge.execution_intent SET status='interrupted' WHERE id=$1", [input.execution_id]);
-    await tx.query(`UPDATE oakridge.cohort_worker SET state='interrupted',interrupted=$4::jsonb
+    await tx.query(`UPDATE oakridge.cohort_worker SET interrupted=$4::jsonb
       WHERE cohort_id=$1 AND worker=$2 AND active_execution_id=$3`,
       [row.cohort_id, row.worker, input.execution_id,
         JSON.stringify({ work: row.work, execution: { execution_id: input.execution_id,

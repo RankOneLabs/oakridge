@@ -9,7 +9,7 @@ import { createScratchDatabase, type ScratchDatabase } from "./support/durable-d
 
 const MIGRATIONS = new URL("../src/storage/migrations", import.meta.url).pathname;
 const BASELINE = "0015_v15_baseline.sql";
-const MIGRATION_SET = [BASELINE, "0016_v15_worker_ownership.sql", "0017_v15_operation_execution.sql", "0018_v15_clean_cutover.sql"];
+const MIGRATION_SET = [BASELINE, "0016_v15_worker_ownership.sql", "0017_v15_operation_execution.sql", "0018_v15_clean_cutover.sql", "0019_v15_state_consistency.sql"];
 
 test("v15 worker ownership follows the immutable baseline", async () => {
   expect(migrationNames(await readdir(MIGRATIONS))).toEqual(MIGRATION_SET);
@@ -17,11 +17,7 @@ test("v15 worker ownership follows the immutable baseline", async () => {
 
 test("an applied 0015 ledger without its schema fails with named divergence", async () => {
   const scratch = await createScratchDatabase("oakridge_v15_ledger_divergence");
-  if (!scratch.ok) {
-    if (scratch.error.operation !== "reach_admin_endpoint") throw new Error(`${scratch.error.operation}: ${scratch.error.detail}`);
-    console.warn("v15 ledger PostgreSQL check SKIPPED: no PostgreSQL reachable");
-    return;
-  }
+  if (!scratch.ok) throw new Error(`${scratch.error.operation}: ${scratch.error.detail}`);
   scratches.push(scratch.value);
   const sql = PgPostgresExecutor.connect(scratch.value.url);
   try {
@@ -35,11 +31,7 @@ test("an applied 0015 ledger without its schema fails with named divergence", as
 
 test("a retired migration ledger is rejected even when its tables exist", async () => {
   const scratch = await createScratchDatabase("oakridge_v15_retired_ledger");
-  if (!scratch.ok) {
-    if (scratch.error.operation !== "reach_admin_endpoint") throw new Error(`${scratch.error.operation}: ${scratch.error.detail}`);
-    console.warn("v15 retired-ledger PostgreSQL check SKIPPED: no PostgreSQL reachable");
-    return;
-  }
+  if (!scratch.ok) throw new Error(`${scratch.error.operation}: ${scratch.error.detail}`);
   scratches.push(scratch.value);
   const sql = PgPostgresExecutor.connect(scratch.value.url);
   try {
@@ -52,13 +44,9 @@ test("a retired migration ledger is rejected even when its tables exist", async 
 const scratches: ScratchDatabase[] = [];
 afterAll(async () => { for (const scratch of scratches) await scratch.drop(); }, 30_000);
 
-test("v15 baseline represents import artifacts, multi-slot gates, messages, and owner-local versions", async () => {
+test("v15 baseline represents import artifacts, worker review ownership, messages, and owner-local versions", async () => {
   const scratch = await createScratchDatabase("oakridge_v15_baseline_test");
-  if (!scratch.ok) {
-    if (scratch.error.operation !== "reach_admin_endpoint") throw new Error(`${scratch.error.operation}: ${scratch.error.detail}`);
-    console.warn("v15 baseline PostgreSQL check SKIPPED: no PostgreSQL reachable");
-    return;
-  }
+  if (!scratch.ok) throw new Error(`${scratch.error.operation}: ${scratch.error.detail}`);
   scratches.push(scratch.value);
   const sql = PgPostgresExecutor.connect(scratch.value.url);
   try {
@@ -77,7 +65,7 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
     await sql.query(`INSERT INTO oakridge.cohort
       (id,run_id,stage_instance_id,cohort_key,status,frozen_inputs)
       VALUES ('00000000-0000-4000-8000-000000000005','00000000-0000-4000-8000-000000000002',
-        '00000000-0000-4000-8000-000000000003','core','active','{"repository":{"refs":{"repository_key":"oakridge","repository_path":"/repo/oakridge"},"canonical_branch":"cohort/core","expected_pr_base":"epic/oakridge"}}')`, []);
+        '00000000-0000-4000-8000-000000000003','core','pending','{"repository":{"refs":{"repository_key":"oakridge","repository_path":"/repo/oakridge"},"canonical_branch":"cohort/core","expected_pr_base":"epic/oakridge"}}')`, []);
     const cohortId = "00000000-0000-4000-8000-000000000005" as CohortId;
     const pullRequests = new PostgresDevFlowPullRequestRepository(sql);
     await pullRequests.create_cohort({ cohort_id: cohortId,
@@ -88,7 +76,7 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
     await sql.query(`INSERT INTO oakridge.cohort
       (id,run_id,stage_instance_id,cohort_key,status,frozen_inputs)
       VALUES ('00000000-0000-4000-8000-000000000055','00000000-0000-4000-8000-000000000002',
-        '00000000-0000-4000-8000-000000000003','web','active','{"repository":{"refs":{"repository_key":"web","repository_path":"/repo/web"},"canonical_branch":"cohort/web","expected_pr_base":"release/web"}}')`, []);
+        '00000000-0000-4000-8000-000000000003','web','pending','{"repository":{"refs":{"repository_key":"web","repository_path":"/repo/web"},"canonical_branch":"cohort/web","expected_pr_base":"release/web"}}')`, []);
     await pullRequests.create_cohort({ cohort_id: "00000000-0000-4000-8000-000000000055" as CohortId,
       stage_instance_id: "00000000-0000-4000-8000-000000000003" as import("../src/domain/primitives").StageInstanceId,
       cohort_key: "web", repository_key: "web", repository_path: "/repo/web", canonical_ref: "cohort/web",
@@ -204,21 +192,7 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
       "SELECT kind,session_id::text FROM oakridge.artifact_provenance WHERE artifact_id=$1", [artifactIds[0]]))[0])
       .toEqual({ kind: "import", session_id: null });
 
-    const gateId = "00000000-0000-4000-8000-000000000020";
-    await sql.query(`INSERT INTO oakridge.wait_gate
-      (id,run_id,stage_instance_id,cohort_id,kind,closes_on,command_workflow_id)
-      VALUES ($1,'00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000003',
-        '00000000-0000-4000-8000-000000000005','gate','{}','gate:test')`, [gateId]);
-    for (const artifactId of artifactIds) await sql.query(
-      "INSERT INTO oakridge.wait_gate_artifact_revision (wait_gate_id,artifact_id,run_id) VALUES ($1,$2,'00000000-0000-4000-8000-000000000002')", [gateId, artifactId]);
-    await sql.query(`INSERT INTO oakridge.wait_gate
-      (id,run_id,stage_instance_id,cohort_id,kind,closes_on,command_workflow_id) VALUES
-      ('00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000002',
-        '00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000005',
-        'external','{}','wait:no-artifact')`, []);
-    expect((await sql.query<{ readonly revisions: string }>(
-      "SELECT count(*)::text AS revisions FROM oakridge.wait_gate_artifact_revision WHERE wait_gate_id=$1", [gateId]))[0])
-      .toEqual({ revisions: "3" });
+    expect((await sql.query("SELECT to_regclass('oakridge.wait_gate') AS gate, to_regclass('oakridge.wait_gate_artifact_revision') AS revision", []))[0]).toEqual({ gate: null, revision: null });
 
     await sql.query(`INSERT INTO oakridge.session_message
       (id,run_id,sender_kind,sender_id,recipient_kind,recipient_id,thread_id,message_id,body,delivery_key)
@@ -260,11 +234,7 @@ test("v15 baseline represents import artifacts, multi-slot gates, messages, and 
 
 test("an applied worker-ownership schema is rejected when its required columns diverge", async () => {
   const scratch = await createScratchDatabase("oakridge_v15_pre_c2");
-  if (!scratch.ok) {
-    if (scratch.error.operation !== "reach_admin_endpoint") throw new Error(`${scratch.error.operation}: ${scratch.error.detail}`);
-    console.warn("v15 pre-C2 PostgreSQL check SKIPPED: no PostgreSQL reachable");
-    return;
-  }
+  if (!scratch.ok) throw new Error(`${scratch.error.operation}: ${scratch.error.detail}`);
   scratches.push(scratch.value);
   const sql = PgPostgresExecutor.connect(scratch.value.url);
   try {
@@ -273,7 +243,7 @@ test("an applied worker-ownership schema is rejected when its required columns d
     await sql.query("ALTER TABLE oakridge.cohort DROP COLUMN frozen_inputs", []);
     await expect(applyMigrations(sql)).rejects.toThrow("cohort.frozen_inputs");
     // These are retained ledger requirements, unlike round and cohort_output.
-    await sql.query("ALTER TABLE oakridge.cohort DROP COLUMN state, DROP COLUMN depends_on", []);
+    await sql.query("ALTER TABLE oakridge.cohort DROP COLUMN state CASCADE, DROP COLUMN depends_on", []);
     await sql.query("ALTER TABLE oakridge.run_transition DROP COLUMN event, DROP COLUMN from_state, DROP COLUMN to_state, DROP COLUMN effects_started_at", []);
     await sql.query("ALTER TABLE oakridge.attempt ALTER COLUMN request SET NOT NULL", []);
     await expect(applyMigrations(sql)).rejects.toThrow("cohort.state, cohort.depends_on");
@@ -303,7 +273,7 @@ test("clean cutover refuses an existing prompt ledger without deleting or conver
   const sql = PgPostgresExecutor.connect(scratch.value.url);
   try {
     await sql.query("CREATE TABLE public.oakridge_schema_migration (name text PRIMARY KEY,applied_at timestamptz NOT NULL)", []);
-    for (const name of MIGRATION_SET.slice(0, -1)) await sql.transaction(async (tx) => {
+    for (const name of MIGRATION_SET.slice(0, 3)) await sql.transaction(async (tx) => {
       await tx.query(await Bun.file(`${MIGRATIONS}/${name}`).text(), []);
       await tx.query("INSERT INTO public.oakridge_schema_migration VALUES ($1,now())", [name]);
     });

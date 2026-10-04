@@ -156,7 +156,8 @@ export const createImplementationWorkerSessionIO = (dependencies: Implementation
       };
       const { executorOperationIdForWorkOrder } = await import("../domain/primitives");
       const started = await adapter.start_or_attach(request, executorOperationIdForWorkOrder(intent.attempt_id as WorkOrderId));
-      if (started.kind !== "kbbl_session") return err({ detail: started.kind === "executor_unavailable" ? started.detail : "integration did not create an agent session" });
+      if (started.kind === "executor_unavailable") throw new Error(started.detail);
+      if (started.kind !== "kbbl_session") return err({ detail: "integration did not create an agent session" });
       return ok({ execution_id: intent.execution_id, session_id: randomUUID() as import("../domain/primitives").SessionId,
         kbbl_session_id: started.session_id });
     },

@@ -33,7 +33,7 @@ export const observeWorkerExecution = async (dependencies: WorkerObservationDepe
     if (!row || row.worker === "provision" || ["cancelled", "interrupted"].includes(row.status)) return ok({ kind: "terminal" });
     if (!row.session_id || !row.kbbl_session_id) return ok({ kind: "waiting" });
     if (row.ended_at) {
-      const advanced = await dependencies.stage_events.advance(row.cohort_id, null);
+      const advanced = await dependencies.stage_events.advance_local(row.cohort_id);
       return advanced.ok ? ok({ kind: "terminal" }) : err({ operation: "observe_worker_execution", execution_id,
         detail: "detail" in advanced.error ? advanced.error.detail : advanced.error.kind });
     }
@@ -43,12 +43,12 @@ export const observeWorkerExecution = async (dependencies: WorkerObservationDepe
     if (observation.kind === "executor_unavailable") return err({ operation: "observe_worker_execution", execution_id, detail: observation.detail });
     if (observation.kind !== "terminal") return ok({ kind: "waiting" });
     // Live artifacts can already have moved the worker to review while the agent was running.
-    await dependencies.stage_events.advance(row.cohort_id, null);
+    await dependencies.stage_events.advance_local(row.cohort_id);
     const outcome = observation.observation;
     const written = await dependencies.sql.transaction((tx) => writeSessionStatus(tx, { session_id: row.session_id!,
       status: outcome.kind === "succeeded" ? "complete" : outcome.kind === "cancelled" ? "cancelled" : "failed", at: dependencies.now() }));
     if (!written.ok) return err({ operation: "observe_worker_execution", execution_id, detail: written.error.detail });
-    const advanced = await dependencies.stage_events.advance(row.cohort_id, null);
+    const advanced = await dependencies.stage_events.advance_local(row.cohort_id);
     return advanced.ok ? ok({ kind: "terminal" }) : err({ operation: "observe_worker_execution", execution_id,
       detail: "detail" in advanced.error ? advanced.error.detail : advanced.error.kind });
   } catch (cause) {

@@ -241,8 +241,8 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     trackDispatch(() => pollStagePullRequests({ sql, stage_events: stageEvents }));
   const startUnstartedEffects = async (): Promise<number> => {
     const intents = await sql.query<{ readonly id: import("../domain/primitives").ExecutionId }>(
-      `SELECT id FROM oakridge.execution_intent WHERE status IN ('pending','dispatching')
-       AND stop_requested_at IS NULL ORDER BY created_at LIMIT 100`, []);
+      `SELECT id FROM oakridge.execution_intent WHERE status='dispatching' OR (status='pending'
+       AND stop_requested_at IS NULL) ORDER BY created_at LIMIT 100`, []);
     for (const intent of intents) await client.enqueuePortable({ queueName: "_dbos_internal_queue", workflowName: WORKER_EXECUTION_WORKFLOW_NAME,
       workflowID: `v15-worker:${intent.id}`, appVersion: config.application_version }, [intent.id]);
 

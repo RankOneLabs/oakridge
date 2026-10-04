@@ -19,11 +19,7 @@ afterAll(async () => { for (const scratch of scratches) await scratch.drop(); })
 
 test("selected cohort commit atomically reserves a slot and writes one launch without a session", async () => {
   const scratch = await createScratchDatabase("oakridge_v15_selected_commit");
-  if (!scratch.ok) {
-    if (scratch.error.operation !== "reach_admin_endpoint") throw new Error(`${scratch.error.operation}: ${scratch.error.detail}`);
-    console.warn("selected commit PostgreSQL check SKIPPED: no PostgreSQL reachable");
-    return;
-  }
+  if (!scratch.ok) throw new Error(`${scratch.error.operation}: ${scratch.error.detail}`);
   scratches.push(scratch.value);
   const sql = PgPostgresExecutor.connect(scratch.value.url);
   try {
@@ -36,8 +32,8 @@ test("selected cohort commit atomically reserves a slot and writes one launch wi
     await sql.query(`INSERT INTO oakridge.stage_instance (id,run_id,stage_key,stage_type,stage_contract,status)
       VALUES ($1,$2,'implementation','example','{}','active')`, [STAGE_ID, RUN_ID]);
     for (let index = 0; index < 5; index++) await sql.query(
-      `INSERT INTO oakridge.cohort (id,run_id,stage_instance_id,cohort_key,status,frozen_inputs)
-       VALUES ($1,$2,$3,$4,'pending','{"brief_notes":"fixture","repositories":[]}')`, [cohortId(index), RUN_ID, STAGE_ID, `cohort-${index}`]);
+      `INSERT INTO oakridge.cohort (id,run_id,stage_instance_id,cohort_key,state,status,frozen_inputs)
+       VALUES ($1,$2,$3,$4,'pending','pending','{"brief_notes":"fixture","repositories":[]}')`, [cohortId(index), RUN_ID, STAGE_ID, `cohort-${index}`]);
     const definition = (await Bun.file(new URL("../../workflow-config/definitions/dev_flow_v15.json", import.meta.url)).json())
       .stages.implementation.cohort as ImplementationCohortDefinition;
     const selected = { kind: "apply", expected_version: 0, changes: [
@@ -75,8 +71,8 @@ test("selected cohort commit atomically reserves a slot and writes one launch wi
     for (const [artifact_id, worker, output_name] of [
       [buildArtifact, "build", "build_result"], [assessmentArtifact, "assessment", "assessment"],
     ] as const) {
-      await sql.query(`INSERT INTO oakridge.artifact (id,chain_id,revision,artifact_type,body)
-        VALUES ($1,$1,1,'test.output',$2::jsonb)`, [artifact_id, JSON.stringify({ worker, content: "unchanged" })]);
+      await sql.query(`INSERT INTO oakridge.artifact (id,chain_id,revision,artifact_type,body,acceptance_state)
+        VALUES ($1,$1,1,'test.output',$2::jsonb,'accepted')`, [artifact_id, JSON.stringify({ worker, content: "unchanged" })]);
       await sql.query(`INSERT INTO oakridge.worker_output
         (cohort_id,worker,output_name,artifact_id,acceptance_state,reviewed_target)
         VALUES ($1,$2,$3,$4,'accepted','{}'::jsonb)`, [cohortId(0), worker, output_name, artifact_id]);
@@ -84,25 +80,19 @@ test("selected cohort commit atomically reserves a slot and writes one launch wi
     const discussion = await commitSelectedCohort(sql, { ...input(0),
       selected: { kind: "apply", expected_version: 1,
         changes: [{ kind: "clear_acceptance", worker: "assessment" }], actions: [] },
-      request: { id: "00000000-0000-4000-8100-000000000080" as never,
-        cohort_id: cohortId(0), expected_version: 1,
-        request: { kind: "discuss_assessment", feedback: { text: "please clarify",
-          target: { assessment: { id: assessmentArtifact as never, version: 1 },
-            build: { outputs: { build_result: { id: buildArtifact as never, version: 1 },
-              pr_summary: { id: buildArtifact as never, version: 1 } }, pr_url: "https://example.test/pr/1", head_sha: "abc" as never } } } },
-      },
+      request: null,
     });
     expect(discussion.ok).toBe(true);
     expect(await sql.query<{ readonly worker: string; readonly acceptance_state: string; readonly body: unknown }>(
       `SELECT output.worker,output.acceptance_state,artifact.body
        FROM oakridge.worker_output output JOIN oakridge.artifact artifact ON artifact.id=output.artifact_id
        WHERE output.cohort_id=$1 ORDER BY output.worker`, [cohortId(0)]))
-      .toEqual([{ worker: "assessment", acceptance_state: "changes_requested", body: { worker: "assessment", content: "unchanged" } },
+      .toEqual([{ worker: "assessment", acceptance_state: "unreviewed", body: { worker: "assessment", content: "unchanged" } },
         { worker: "build", acceptance_state: "accepted", body: { worker: "build", content: "unchanged" } }]);
     expect((await sql.query<{ readonly receipts: string; readonly intents: string }>(
       `SELECT (SELECT count(*)::text FROM oakridge.cohort_request_receipt) AS receipts,
         (SELECT count(*)::text FROM oakridge.execution_intent) AS intents`, []))[0])
-      .toEqual({ receipts: "1", intents: "4" });
+      .toEqual({ receipts: "0", intents: "4" });
     const intents = await sql.query<{ readonly id: string; readonly cohort_id: string }>(
       "SELECT id,cohort_id::text FROM oakridge.execution_intent ORDER BY cohort_id", []);
     const firstExecution = intents[0]!.id as never;
@@ -216,11 +206,7 @@ test("selected cohort commit atomically reserves a slot and writes one launch wi
 
 test("four sibling cohort machines commit concurrently on owner-local versions without retry", async () => {
   const scratch = await createScratchDatabase("oakridge_v15_cohort_contention");
-  if (!scratch.ok) {
-    if (scratch.error.operation !== "reach_admin_endpoint") throw new Error(`${scratch.error.operation}: ${scratch.error.detail}`);
-    console.warn("cohort contention PostgreSQL check SKIPPED: no PostgreSQL reachable");
-    return;
-  }
+  if (!scratch.ok) throw new Error(`${scratch.error.operation}: ${scratch.error.detail}`);
   scratches.push(scratch.value);
   const sql = PgPostgresExecutor.connect(scratch.value.url);
   try {
@@ -233,7 +219,7 @@ test("four sibling cohort machines commit concurrently on owner-local versions w
     await sql.query(`INSERT INTO oakridge.stage_instance (id,run_id,stage_key,stage_type,stage_contract,status)
       VALUES ($1,$2,'worker','example','{}','active')`, [STAGE_ID, RUN_ID]);
     for (let index = 0; index < 4; index += 1) await sql.query(
-      `INSERT INTO oakridge.cohort (id,run_id,stage_instance_id,cohort_key,status,frozen_inputs) VALUES ($1,$2,$3,$4,'active','{"brief_notes":"fixture","repositories":[]}')`,
+      `INSERT INTO oakridge.cohort (id,run_id,stage_instance_id,cohort_key,state,status,frozen_inputs) VALUES ($1,$2,$3,$4,'working','active','{"brief_notes":"fixture","repositories":[]}')`,
       [cohortId(index), RUN_ID, STAGE_ID, `cohort-${index}`]);
 
     const writer = new PostgresRunRecordWriter(sql);
@@ -242,6 +228,7 @@ test("four sibling cohort machines commit concurrently on owner-local versions w
       owner: { kind: "cohort", id: cohortId(index) },
       expected_version: 0,
       launch_reason: "artifact_accepted",
+      cohort_state: "complete" as never,
       change: { status: "complete", blocked_reason: null, next_actor: null, outcome: { kind: "succeeded" } },
       effect: { kind: "none" },
       actor: "test",
@@ -288,11 +275,7 @@ test("four sibling cohort machines commit concurrently on owner-local versions w
 
 test("a concurrent commit loses the cohort version race", async () => {
   const scratch = await createScratchDatabase("oakridge_v15_version_race");
-  if (!scratch.ok) {
-    if (scratch.error.operation !== "reach_admin_endpoint") throw new Error(`${scratch.error.operation}: ${scratch.error.detail}`);
-    console.warn("cohort race PostgreSQL check SKIPPED: no PostgreSQL reachable");
-    return;
-  }
+  if (!scratch.ok) throw new Error(`${scratch.error.operation}: ${scratch.error.detail}`);
   scratches.push(scratch.value);
   const firstSql = PgPostgresExecutor.connect(scratch.value.url);
   const secondSql = PgPostgresExecutor.connect(scratch.value.url);
@@ -305,13 +288,13 @@ test("a concurrent commit loses the cohort version race", async () => {
         '{"definition_version":1,"prompt_bundle_hash":"test","adapter_version":"test","artifact_schema_version":"test"}','active')`, [RUN_ID]);
     await firstSql.query(`INSERT INTO oakridge.stage_instance (id,run_id,stage_key,stage_type,stage_contract,status)
       VALUES ($1,$2,'worker','example','{}','active')`, [STAGE_ID, RUN_ID]);
-    await firstSql.query(`INSERT INTO oakridge.cohort (id,run_id,stage_instance_id,cohort_key,status,frozen_inputs)
-      VALUES ($1,$2,$3,'racing','active','{"brief_notes":"fixture","repositories":[]}')`, [cohortId(8), RUN_ID, STAGE_ID]);
+    await firstSql.query(`INSERT INTO oakridge.cohort (id,run_id,stage_instance_id,cohort_key,state,status,frozen_inputs)
+      VALUES ($1,$2,$3,'racing','working','active','{"brief_notes":"fixture","repositories":[]}')`, [cohortId(8), RUN_ID, STAGE_ID]);
     const writerA = new PostgresRunRecordWriter(secondSql);
     const writerB = new PostgresRunRecordWriter(firstSql);
     const input = { run_id: RUN_ID, owner: { kind: "cohort" as const, id: cohortId(8) }, expected_version: 0,
       launch_reason: "operator" as const,
-      change: { status: "blocked" as const, blocked_reason: "operator" as const, next_actor: "operator" as const, outcome: null },
+      change: { status: "active" as const, blocked_reason: null, next_actor: "operator" as const, outcome: null },
       effect: { kind: "none" as const }, actor: "race", changed_at: "2026-09-29T01:00:00Z" };
     const race = await firstSql.transaction(async (tx) => {
       await tx.query("SELECT id FROM oakridge.cohort WHERE id=$1 FOR UPDATE", [cohortId(8)]);

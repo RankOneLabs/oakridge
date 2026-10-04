@@ -8,7 +8,6 @@ import { expect, test } from "bun:test";
 import { Hono } from "hono";
 
 import { hasOwn, readOwn } from "../src/domain/records";
-import { selectBuiltInGateDisposition } from "../src/domain/gates";
 import { createDomainReadApp } from "../src/http/domain-reads";
 import { createOperatorProjectionApp } from "../src/http/operator-projections";
 import type { OperatorProjectionRepository } from "../src/storage/postgres-operators";
@@ -29,10 +28,6 @@ test("a plain lookup answers for inherited names and an own-property lookup does
 test("retired graphs and inherited stage names are rejected by the strict v15 parser", () => {
   const parsed = parseV15WorkflowDefinition({ graph: { stages: { constructor: {} }, edges: [] } });
   expect(parsed.ok).toBe(false);
-});
-
-test("an inherited name is not a gate action", () => {
-  for (const key of INHERITED) expect(selectBuiltInGateDisposition(key)).toBe("terminal");
 });
 
 /**
