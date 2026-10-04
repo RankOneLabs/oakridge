@@ -1004,3 +1004,13 @@ const checkedVocabularyCoverage: readonly [
   CompleteVocabulary<V15Change["kind"], typeof V15_CHANGE_KINDS[number]>,
 ] = [true, true, true, true];
 void checkedVocabularyCoverage;
+
+/** Pinned prompts mirror the checked stage/worker/action declarations. */
+export interface V15PromptReference {
+  readonly stage_key: StageKey;
+  readonly worker: V15WorkerKey;
+  readonly action_point: string;
+  readonly path: string;
+}
+export interface V15PromptEntry extends V15PromptReference { readonly content: string }
+export interface V15PromptBundle { readonly hash: string; readonly entries: readonly V15PromptEntry[] }

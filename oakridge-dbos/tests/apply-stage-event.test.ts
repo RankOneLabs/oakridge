@@ -1,6 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { createDevFlowAdapterRegistry } from "../src/adapters/dev-flow";
 import { StageEventApplier } from "../src/storage/apply-stage-event";
 import { applyMigrations } from "../src/storage/migrate";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
@@ -53,9 +52,7 @@ const prepare = async (name: string, should_fail_dispatch = false): Promise<Fixt
   for (const worker of ["build", "assessment"]) await sql.query("INSERT INTO oakridge.cohort_worker (cohort_id,worker) VALUES ($1,$2)", [cohort_id, worker]);
   await sql.query("INSERT INTO oakridge.artifact (id,chain_id,revision,artifact_type,body) VALUES ($1,$1,1,'dev.build_brief','{}')", [brief.id]);
   await sql.query("INSERT INTO oakridge.artifact_owner (artifact_id,run_id) VALUES ($1,$2)", [brief.id, run_id]);
-  await sql.query(`INSERT INTO dev_flow.build_cohort
-    (cohort_id,stage_instance_id,cohort_key,repository_key,repository_path,canonical_ref,expected_pr_base,recorded_head_sha,created_at,updated_at)
-    VALUES ($1,$2,'core','oakridge','/repo','cohort/core','epic/schema','abc',now(),now())`, [cohort_id, stage_id]);
+  await sql.query("UPDATE oakridge.cohort SET repository_head_sha='abc' WHERE id=$1", [cohort_id]);
   const created: CreatedWorkerSession[] = [];
   const stopped: ExecutionId[] = [];
   const io: WorkerSessionIO = {
@@ -71,7 +68,7 @@ const prepare = async (name: string, should_fail_dispatch = false): Promise<Fixt
     stop_session: async (session) => { stopped.push(session.execution_id); return { ok: true, value: undefined }; },
   };
   let pr: VerifiedPrObservation | null = null;
-  const ingress = new StageEventApplier({ sql, writer: new PostgresRunRecordWriter(sql, createDevFlowAdapterRegistry()), now: io.now,
+  const ingress = new StageEventApplier({ sql, writer: new PostgresRunRecordWriter(sql), now: io.now,
     observe_pr: async () => pr,
     dispatch_executions: async (ids) => { for (const id of ids) await dispatchCohortExecution(sql, id, io); } });
   return { sql, ingress, io, created, stopped, set_pr: (observation) => { pr = observation; } };
@@ -120,7 +117,7 @@ test("real storage runs both build feedback routes, discussion, and merge at the
   const fixture = await prepare("oakridge_b3_publication");
   try {
     const records = new PostgresRunRecordRepository(fixture.sql,
-      new PostgresRunRecordWriter(fixture.sql, createDevFlowAdapterRegistry()), fixture.ingress);
+      new PostgresRunRecordWriter(fixture.sql), fixture.ingress);
     const seed = await records.load_work_order_capability_seed();
     const publish = async (execution_id: ExecutionId, output_name: string, body: JsonValue) => {
       const row = (await fixture.sql.query<{ readonly attempt_id: AttemptId }>(
@@ -258,7 +255,7 @@ test("plain session exits leave outputs unready and both workers can retry", asy
   const fixture = await prepare("oakridge_b3_worker_retries");
   try {
     const records = new PostgresRunRecordRepository(fixture.sql,
-      new PostgresRunRecordWriter(fixture.sql, createDevFlowAdapterRegistry()), fixture.ingress);
+      new PostgresRunRecordWriter(fixture.sql), fixture.ingress);
     const version = async () => Number((await fixture.sql.query<{ readonly durable_version: string }>(
       "SELECT durable_version::text FROM oakridge.cohort WHERE id=$1", [cohort_id]))[0]!.durable_version);
     expect((await fixture.ingress.advance(cohort_id, null)).ok).toBe(true);
@@ -303,7 +300,7 @@ for (const kind of ["cancel", "abandon"] as const) test(`${kind} succeeds during
   try {
     expect((await fixture.ingress.advance(cohort_id, null)).ok).toBe(true);
     const ingress = new StageEventApplier({ sql: fixture.sql,
-      writer: new PostgresRunRecordWriter(fixture.sql, createDevFlowAdapterRegistry()), now: fixture.io.now,
+      writer: new PostgresRunRecordWriter(fixture.sql), now: fixture.io.now,
       prepare_repository: async () => { throw new Error("repository is offline"); },
       observe_pr: async () => { throw new Error("forge is offline"); },
       dispatch_executions: async (ids) => { for (const id of ids) await dispatchCohortExecution(fixture.sql, id, fixture.io); } });

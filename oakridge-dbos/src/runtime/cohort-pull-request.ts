@@ -13,7 +13,7 @@
  */
 import {
   operatorMergedObservation, reconcileCohortPullRequest,
-  type CohortPullRequestReconciliation, type DevFlowBuildCohort, type ExpectedCohortPullRequest,
+  type CohortPullRequestReconciliation, type CohortRepositoryRecord, type ExpectedCohortPullRequest,
 } from "../domain/cohort-pull-request";
 type BuildCohortEvent =
   | { readonly kind: "pull_request_mismatch"; readonly pull_request_url: string }
@@ -44,7 +44,7 @@ export interface CohortPullRequestDependencies {
   readonly send_run_wake?: (run_id: WorkflowRunId, idempotency_key: string) => Promise<void>;
 }
 
-export interface PrepareDevFlowBuildCohortInput {
+export interface PrepareCohortRepositoryRecordInput {
   readonly cohort_id: CohortId;
   readonly stage_instance_id: StageInstanceId;
   readonly cohort_key: string;
@@ -52,27 +52,27 @@ export interface PrepareDevFlowBuildCohortInput {
   readonly prepared_at: string;
 }
 
-export interface PreparedDevFlowBuildCohort {
-  readonly cohort: DevFlowBuildCohort;
+export interface PreparedCohortRepositoryRecord {
+  readonly cohort: CohortRepositoryRecord;
   readonly branch_contract: string;
   /** The observed run-base head used to create this cohort's ref. */
   readonly worktree_base_sha: string;
 }
 
-export interface PrepareDevFlowBuildCohortError {
-  readonly operation: "prepare_dev_flow_build_cohort";
+export interface PrepareCohortRepositoryRecordError {
+  readonly operation: "prepare_cohort_repository";
   readonly kind: "git_read_failed" | "ref_lease_mismatch" | "git_command_failed" | "cohort_storage_failed";
   readonly detail: string;
 }
 
-const prepareFailure = (kind: PrepareDevFlowBuildCohortError["kind"], detail: string): Result<never, PrepareDevFlowBuildCohortError> =>
-  err({ operation: "prepare_dev_flow_build_cohort", kind, detail });
+const prepareFailure = (kind: PrepareCohortRepositoryRecordError["kind"], detail: string): Result<never, PrepareCohortRepositoryRecordError> =>
+  err({ operation: "prepare_cohort_repository", kind, detail });
 
 /** Creates the canonical ref and stores the exact same branch roles rendered into the agent contract. */
-export const prepareDevFlowBuildCohort = async (
+export const prepareCohortRepositoryRecord = async (
   dependencies: { readonly pull_requests: DevFlowPullRequestRepository; readonly git: GitCommandRunner },
-  input: PrepareDevFlowBuildCohortInput,
-): Promise<Result<PreparedDevFlowBuildCohort, PrepareDevFlowBuildCohortError>> => {
+  input: PrepareCohortRepositoryRecordInput,
+): Promise<Result<PreparedCohortRepositoryRecord, PrepareCohortRepositoryRecordError>> => {
   const roles = selectCohortBranchRoles(input.stage_instance_id, input.cohort_key, input.repository);
   let existing = await dependencies.pull_requests.find_cohort_for_unit(input.stage_instance_id, input.cohort_key as UnitId);
   if (existing && (existing.cohort_id !== input.cohort_id || existing.repository_key !== input.repository.repository_key
@@ -133,7 +133,7 @@ export interface PullRequestForgeReader {
 }
 
 export interface VerifyCohortPullRequestInput {
-  readonly cohort: DevFlowBuildCohort;
+  readonly cohort: CohortRepositoryRecord;
   readonly forge_repository: { readonly owner: string; readonly name: string };
   readonly candidate_url: string;
 }
@@ -154,7 +154,7 @@ export interface BoundVerifiedCohortPullRequest extends VerifiedCohortPullReques
 
 export interface PullRequestBindingError {
   readonly operation: "verify_cohort_pull_request";
-  readonly kind: "replacement_required" | "replacement_conflict" | "build_cohort_not_found";
+  readonly kind: "replacement_required" | "replacement_conflict" | "cohort_repository_not_found";
   readonly detail: string;
   readonly current_verification_id: PullRequestVerificationId | null;
 }
@@ -252,7 +252,7 @@ export const verifyAndBindCohortPullRequest = async (
     pull_request_url: verified.value.observation.url, head_sha: verified.value.pushed_head_sha });
 };
 
-export interface AdvanceCohortRefInput { readonly cohort: DevFlowBuildCohort; readonly next_head_sha: string }
+export interface AdvanceCohortRefInput { readonly cohort: CohortRepositoryRecord; readonly next_head_sha: string }
 export interface CohortRefAdvanceError {
   readonly operation: "advance_cohort_ref";
   readonly kind: "ref_lease_mismatch" | "non_descendant_head" | "git_command_failed";

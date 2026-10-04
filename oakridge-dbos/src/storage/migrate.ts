@@ -24,7 +24,9 @@ export const applyMigrations = async (sql: TransactionalSqlExecutor, directory =
     const requirements: readonly SchemaRequirement[] = [
       { table_schema: "oakridge", table_name: "artifact_thread", column_name: null },
       { table_schema: "oakridge", table_name: "attempt", column_name: "idempotency_key" },
-      { table_schema: "dev_flow", table_name: "build_cohort", column_name: null },
+      ...(appliedNames.has("0018_v15_clean_cutover.sql") ? [] : [
+        { table_schema: "dev_flow" as const, table_name: "build_cohort", column_name: null },
+      ]),
       ...["state", "depends_on"].map((column_name): SchemaRequirement => ({ table_schema: "oakridge", table_name: "cohort", column_name })),
 
       ...["event", "from_state", "to_state", "effects_started_at"]
@@ -76,6 +78,17 @@ export const applyMigrations = async (sql: TransactionalSqlExecutor, directory =
     const missing = required.filter((item) => !columns.some((column) => column.table_name === item.table_name && column.column_name === item.column_name));
     if (missing.length || ["prompt", "settings"].some((name) => !columns.some((column) => column.table_name === "execution_intent" && column.column_name === name && column.is_nullable === "YES")))
       throw new Error("0017_v15_operation_execution.sql schema diverges from session-free operation ownership");
+  }
+  if (appliedNames.has("0018_v15_clean_cutover.sql")) {
+    interface CutoverColumn { readonly table_schema: string; readonly table_name: string; readonly column_name: string }
+    const columns = await sql.query<CutoverColumn>(
+      "SELECT table_schema,table_name,column_name FROM information_schema.columns WHERE table_schema IN ('oakridge','dev_flow')", []);
+    const required = ["repository_head_sha", "pending_repository_head_sha", "current_verified_pull_request_id"];
+    if (required.some((name) => !columns.some((column) => column.table_schema === "oakridge" && column.table_name === "cohort" && column.column_name === name))
+      || !columns.some((column) => column.table_schema === "oakridge" && column.table_name === "prompt_bundle" && column.column_name === "entries")
+      || columns.some((column) => column.table_schema === "dev_flow" && column.table_name === "build_cohort"
+        || column.table_schema === "oakridge" && column.table_name === "prompt_bundle" && column.column_name === "matrix"))
+      throw new Error("0018_v15_clean_cutover.sql schema diverges from cohort ownership and action-point prompt entries");
   }
   const pending = migrationNames(await readdir(directory)).filter((name) => !appliedNames.has(name));
   for (const name of pending) {

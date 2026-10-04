@@ -31,7 +31,7 @@ export const finalPullRequestMatchesPreparedRepository = (
  * the repository and both branch roles are persisted once and reused by the
  * prompt and PR verifier.
  */
-export interface DevFlowBuildCohort {
+export interface CohortRepositoryRecord {
   readonly cohort_id: CohortId;
   readonly stage_instance_id: StageInstanceId;
   readonly cohort_key: string;

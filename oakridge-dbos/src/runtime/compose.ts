@@ -131,7 +131,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const projectIdentity = new GitProjectRepositoryIdentityResolver();
   const runs = new PostgresWorkflowRunRepository(sql);
   const promptTemplates = createPromptTemplateLoader(config.prompt_template_directory);
-  const writer = new PostgresRunRecordWriter(sql, adapterRegistry);
+  const writer = new PostgresRunRecordWriter(sql);
   const definitions = new PostgresWorkflowDefinitionRepository(sql);
   const stages = new PostgresStageInstanceRepository(sql);
   const forgeRepositories = new PostgresForgeRepositoryRepository(sql);
@@ -208,7 +208,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     if (!launch) throw new Error(`workflow run '${run_id}' was not found`);
     const bundle = await definitions.find_prompt_bundle(launch.bundle_pin.prompt_bundle_hash);
     if (!bundle) throw new Error(`run '${run_id}' is pinned to prompt bundle '${launch.bundle_pin.prompt_bundle_hash}', which is not stored`);
-    return bundle.matrix;
+    return bundle.entries;
   };
 
   const workerSessionIO = createImplementationWorkerSessionIO({ sql, git, records: runRecords,

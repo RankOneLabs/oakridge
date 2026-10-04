@@ -31,35 +31,34 @@ bun run migrate
 bun run start
 ```
 
-## V2 clean cutover
+## V15 clean cutover
 
-The run-record topology is the only supported topology. For the first v2
-deployment, stop every old Oakridge/DBOS worker, archive evidence needed
-outside the service, recreate the Oakridge application database, run every
-numbered migration from zero, and seed the built-in definitions by starting
-the backend. Use a new `DBOS_APPLICATION_VERSION` for this cutover.
+V15 uses the checked cohort decision trees, worker-owned output acceptance and
+immutable stage membership. Repository identity is frozen on each cohort;
+selected execution intents carry their prompts, settings and typed inputs.
+The compiled prompt bundle stores stage/worker/action entries directly.
 
-There is deliberately no adoption or backfill path. Startup refuses a database
-containing legacy workflow-attempt identities or attempt-owned stages rather
-than silently treating them as v2 runs. A healthy v2 database can be restarted
-in place: v2 attempts use the `v2-run:` namespace and stages are owned directly
-by the run record. Migration `0016` creates the database-owned work-order
-capability seed; operators do not provision that secret externally.
-
-Changed artifact content creates a new immutable revision and supersedes the
-prior unreleased revision. Executors can withdraw the current unreleased
-revision with `POST /artifacts/:artifact_id/withdraw`; released revisions
-require a run-owned retry instead.
-
-`DBOS_APPLICATION_VERSION` is intentionally required. Do not reuse a version
-after changing durable workflow-operation order.
+Stop the old backend and DBOS workers, archive any run evidence to retain,
+create a fresh application database, apply every numbered migration and start
+the backend to seed the built-in v15 definition. Migration `0018` refuses
+nonempty run or prompt ledgers. Startup checks the completed schema and never resets it.
+There is no old-run adoption or conversion path. Use a new
+`DBOS_APPLICATION_VERSION`; restart a migrated v15 database in place using
+its existing application version to recover active workflows.
 
 ## Verify
 
 ```bash
-bun test
+bun run test:unit
+bun run test:acceptance
 bun run typecheck
+bun run validate:definitions
 ```
+
+The acceptance command builds the kbbl PWA, runs Chromium UI checks and
+exercises real PostgreSQL, Git, kbbl ACP workers and backend process crash
+recovery. The S1–S22 replacement mapping and removal ledger are in
+[`docs/v15-contracts/README.md`](../docs/v15-contracts/README.md).
 
 The production entry point is `src/main.ts`. Operational guidance is in
 `../docs/oakridge-v2-runbook.md`.

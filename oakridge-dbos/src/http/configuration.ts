@@ -8,7 +8,7 @@ import type { StoredWorkflowDefinition } from "../domain/dev-flow-v15";
 import { compileV15WorkflowDefinition } from "../compiler/compile-v15";
 import type { ProjectRepository, WorkflowDefinitionRepository } from "../storage/repositories";
 import type { ProjectRepositoryIdentityResolver } from "../domain/projects";
-import { type AdapterRoleRegistry } from "../validation/workflow-definition";
+import { type AdapterRoleRegistry } from "../runtime/executor-registry";
 import { type PromptTemplateLoader } from "../runtime/prompt-template";
 
 export interface ConfigurationHttpDependencies {
@@ -68,8 +68,7 @@ export const createConfigurationApp = (dependencies: ConfigurationHttpDependenci
       version: compiled.value.definition.version, definition: compiled.value.definition, archived: false, created_at: dependencies.now() };
     try {
       return http.json(await dependencies.definitions.insert_immutable(record, { version: 1, hash: compiled.value.prompts.hash,
-        matrix: compiled.value.prompts.entries.map((entry) => ({ stage_key: entry.stage_key, session_role: entry.worker,
-          launch_reason: entry.action_point, template_path: entry.path, content: entry.content })) }), 201);
+        entries: compiled.value.prompts.entries }), 201);
     } catch (error) { return http.json({ error: String(error) }, 409); }
   });
 

@@ -12,10 +12,10 @@ import type { RunStartRequest } from "../src/runtime/run-launch-dispatch";
 
 const definition = { id: "ef2b47a4-d1bd-44ee-840a-e4f7b27570db" as WorkflowDefinitionId, name: "flow", version: 11,
   definition: { ...canonical, version: 11 }, archived: false, created_at: "2026-08-15T00:00:00Z" } as unknown as StoredWorkflowDefinition;
-const promptBundle: PromptBundle = { version: 1, hash: "prompt-bundle-11", matrix: [
-  { session_role: "spec", launch_reason: "initial", template_path: "analyze.md", content: "Analyze {{NOTES}}" },
-  { session_role: "spec", launch_reason: "operator_retry", template_path: "analyze.md", content: "Retry {{NOTES}}" },
-  { session_role: "spec", launch_reason: "input_revision", template_path: "analyze.md", content: "Revise {{NOTES}}" },
+const promptBundle: PromptBundle = { version: 1, hash: "prompt-bundle-11", entries: [
+  { stage_key: "spec_analysis", worker: "spec", action_point: "initial", path: "analyze.md", content: "Analyze {{NOTES}}" },
+  { stage_key: "spec_analysis", worker: "spec", action_point: "retry", path: "analyze.md", content: "Retry {{NOTES}}" },
+  { stage_key: "spec_analysis", worker: "spec", action_point: "revise", path: "analyze.md", content: "Revise {{NOTES}}" },
 ] };
 const project = { id: "af2b47a4-d1bd-44ee-840a-e4f7b27570db" as ProjectId, name: "Oakridge", repo_dir: "/workspace/oakridge",
   forge_repository: null, base_branch: null, created_at: "2026-08-15T00:00:00Z" };

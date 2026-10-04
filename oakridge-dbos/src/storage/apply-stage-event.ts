@@ -4,7 +4,7 @@ import { advanceCohortUntilWait, type CohortProgressionError } from "../runtime/
 import type { AgentSettings, VerifiedPrObservation, V15RunInputs } from "../domain/dev-flow-v15";
 import { artifactRefFromRevision } from "../domain/dev-flow-v15";
 import { err, ok, type ArtifactId, type CohortId, type ExecutionId, type Result, type RunTransitionId, type StageInstanceId, type WorkflowRunId } from "../domain/primitives";
-import type { StateName } from "../domain/stage-machine";
+import type { StateName } from "../domain/primitives";
 import { commitSelectedCohort, type PostgresRunRecordWriter } from "./postgres-run-record";
 import { loadStageCohortContext } from "./load-stage-cohort";
 import type { StageKey, V15OperatorRequestEnvelope, V15WorkerKey, AgentExecutionDefinition } from "../domain/dev-flow-v15";

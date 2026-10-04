@@ -2,7 +2,7 @@ import type { ArtifactId, ExecutionId, StageInstanceId, UnitId, WorkflowRunId, W
 import { selectGateActionability, selectV15StageOrder, selectPullRequestMergeWaits, type OperatorApplicationVersionInventory, type OperatorCohortSummary, type CohortDetailContributor, type OperatorParkedGate, type OperatorReviewInbox, type OperatorReviewInboxItem, type OperatorRunDetail, type OperatorRunDiagnosis, type OperatorRunDiagnosisSession, type OperatorRunSummary, type OperatorSessionRunLocation, type OperatorStageArtifact, type OperatorStageDetail, type OperatorStageUnit } from "../domain/operator-projections";
 import type { SqlExecutor } from "./sql-executor";
 import type { BlockedReason, CoreStatus, NextActor } from "../domain/records";
-import { type AdapterRoleRegistry } from "../validation/workflow-definition";
+import { type AdapterRoleRegistry } from "../runtime/executor-registry";
 import { stageInstanceIdFor } from "../decision/ids";
 import type { StageKey, V15WorkerKey } from "../domain/dev-flow-v15";
 import { parseV15WorkflowDefinition } from "../validation/v15-definition";

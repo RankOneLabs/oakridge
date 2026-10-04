@@ -1,51 +1,10 @@
-import { err, ok, type JsonValue, type Result } from "../domain/primitives";
-import { AdapterRegistry, type AdapterDecisionContext, type AdapterDecisionHandler } from "../runtime/executor-registry";
+import { AdapterRegistry } from "../runtime/executor-registry";
 import type { CohortDetailContributor } from "../domain/operator-projections";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
 import { PostgresDevFlowCohortDetailContributor } from "../storage/postgres-dev-flow";
 
-interface PullRequestPayload {
-  readonly repository_key: string;
-  readonly pull_request_url: string;
-  readonly state: string;
-  readonly source: string;
-  readonly merged_at: string | null;
-}
-
-const isObject = (value: JsonValue): value is { readonly [key: string]: JsonValue } =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-const decodePullRequest = (value: JsonValue): Result<PullRequestPayload, string> => {
-  if (!isObject(value) || typeof value.repository_key !== "string" || typeof value.pull_request_url !== "string"
-    || typeof value.state !== "string" || typeof value.source !== "string"
-    || !(value.merged_at === null || typeof value.merged_at === "string")) {
-    return err("pull request event payload is invalid");
-  }
-  return ok({ repository_key: value.repository_key, pull_request_url: value.pull_request_url,
-    state: value.state, source: value.source, merged_at: value.merged_at });
-};
-
-const allow = (): Result<void, string> => ok(undefined);
-const effect = (context: AdapterDecisionContext, payload: PullRequestPayload) => ({
-  kind: context.event_name,
-  repository_key: payload.repository_key,
-  pull_request_url: payload.pull_request_url,
-  state: payload.state,
-  source: payload.source,
-  merged_at: payload.merged_at,
-});
-
-const pullRequestHandler = (name: string): AdapterDecisionHandler<PullRequestPayload> => ({
-  name,
-  decode: decodePullRequest,
-  guard: allow,
-  effect,
-});
-
 export const registerDevFlowAdapter = (registry: AdapterRegistry): void => {
   for (const role of ["spec", "plan", "brief", "build", "assessment", "final_integration", "provision"]) registry.register_role(role);
-  registry.register_decision(pullRequestHandler("pull_request_observed"));
-  registry.register_decision(pullRequestHandler("pull_request_merge_confirmed"));
 };
 
 export const createDevFlowAdapterRegistry = (): AdapterRegistry => {

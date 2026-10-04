@@ -7,7 +7,7 @@ import type { SessionHold } from "../domain/session-hold";
 import type { OperatorSessionRunLocation } from "../domain/operator-projections";
 import type { CreateProject, Project, UpdateProject } from "../domain/projects";
 import type { CreateWorkflowRunResult, DeleteRunResult, PersistWorkflowRunLaunch, SetRunArchiveResult, UnstartedRun, WorkflowRunLaunchRecord, WorkflowRunListFilter } from "../domain/runs";
-import type { DevFlowBuildCohort } from "../domain/cohort-pull-request";
+import type { CohortRepositoryRecord } from "../domain/cohort-pull-request";
 import type { PullRequest, PullRequestId, PullRequestMergeClosure, PullRequestObservation, PullRequestObservationId, PullRequestVerificationId, StoredPullRequestObservation } from "../domain/pull-request";
 import type { WorkflowRunRecord } from "../domain/records";
 import type {
@@ -145,21 +145,21 @@ export interface SessionRunLocationRepository {
 }
 
 export interface CurrentVerifiedCohortPullRequest {
-  readonly cohort: DevFlowBuildCohort;
+  readonly cohort: CohortRepositoryRecord;
   readonly pull_request: PullRequest;
   readonly observation: StoredPullRequestObservation;
 }
 
 /** Storage boundary shared by cohort and final-stage adapters. */
 export interface DevFlowPullRequestRepository {
-  create_cohort(cohort: DevFlowBuildCohort): Promise<Result<DevFlowBuildCohort,
+  create_cohort(cohort: CohortRepositoryRecord): Promise<Result<CohortRepositoryRecord,
     { readonly kind: "cohort_not_stored" | "identity_conflict" | "storage_failed"; readonly detail: string }>>;
   begin_cohort_advance(input: { readonly cohort_id: CohortId; readonly expected_head_sha: string; readonly next_head_sha: string; readonly prepared_at: string }): Promise<Result<void, { readonly kind: "cohort_not_found" | "ref_lease_mismatch"; readonly detail: string }>>;
-  advance_cohort_head(input: { readonly cohort_id: CohortId; readonly expected_head_sha: string; readonly next_head_sha: string; readonly advanced_at: string }): Promise<Result<DevFlowBuildCohort, { readonly kind: "cohort_not_found" | "ref_lease_mismatch"; readonly detail: string }>>;
-  find_cohort_for_unit(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<DevFlowBuildCohort | null>;
+  advance_cohort_head(input: { readonly cohort_id: CohortId; readonly expected_head_sha: string; readonly next_head_sha: string; readonly advanced_at: string }): Promise<Result<CohortRepositoryRecord, { readonly kind: "cohort_not_found" | "ref_lease_mismatch"; readonly detail: string }>>;
+  find_cohort_for_unit(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<CohortRepositoryRecord | null>;
   find_current_for_unit(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<CurrentVerifiedCohortPullRequest | null>;
   observe(input: { readonly observation: PullRequestObservation; readonly recorded_at: string }): Promise<{ readonly pull_request_id: PullRequestId; readonly observation_id: PullRequestObservationId }>;
-  bind_verified(input: { readonly cohort_id: CohortId; readonly pull_request_id: PullRequestId; readonly observation_id: PullRequestObservationId; readonly verified_head_sha: string; readonly verified_at: string; readonly replace_verification_id: PullRequestVerificationId | null }): Promise<Result<{ readonly id: PullRequestVerificationId; readonly binding: "created" | "replaced" | "head_advanced" }, { readonly kind: "replacement_required" | "replacement_conflict" | "build_cohort_not_found"; readonly detail: string }>>;
+  bind_verified(input: { readonly cohort_id: CohortId; readonly pull_request_id: PullRequestId; readonly observation_id: PullRequestObservationId; readonly verified_head_sha: string; readonly verified_at: string; readonly replace_verification_id: PullRequestVerificationId | null }): Promise<Result<{ readonly id: PullRequestVerificationId; readonly binding: "created" | "replaced" | "head_advanced" }, { readonly kind: "replacement_required" | "replacement_conflict" | "cohort_repository_not_found"; readonly detail: string }>>;
   confirm_merge(input: { readonly cohort_id: CohortId; readonly pull_request_id: PullRequestId; readonly idempotency_key: string; readonly merged_at: string; readonly confirmed_at: string }): Promise<Result<{ readonly kind: "created" | "replayed"; readonly closure: PullRequestMergeClosure }, { readonly kind: "idempotency_conflict" | "pull_request_not_current" | "missing_merged_evidence"; readonly detail: string }>>;
 }
 
@@ -186,7 +186,7 @@ export interface CollaborationRepository {
  *
  * Read from the run context rather than a profile row: the epic's
  * `forge_repository` and `final_merge_policy` live there now, and the cohort
- * itself is 0016's `dev_flow_build_cohort`.
+ * is retained as a typed branch lease over the v15 cohort's frozen repository.
  */
 export interface ForgeRepositoryRepository {
   find_forge_repository(run_id: WorkflowRunId, repository_key: string): Promise<{ readonly owner: string; readonly name: string } | null>;

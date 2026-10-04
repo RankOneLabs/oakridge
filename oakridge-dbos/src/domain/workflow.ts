@@ -1,7 +1,4 @@
-import type { JsonValue, StageInstanceId, WorkflowDefinitionId, WorkflowRunId } from "./primitives";
-import type { OutputAttention } from "./compiled-workflow";
-import type { PromptMatrixEntry } from "./delegated-session";
-import type { MachineDefinition } from "./stage-machine";
+import type { StageInstanceId, WorkflowRunId } from "./primitives";
 
 export type StageKey = string;
 export type StageTypeId = string;
@@ -13,60 +10,13 @@ export type InputDelivery = "producer_complete" | "unit_complete";
  */
 export type StageOperatorRole = string;
 
-export interface InputSlot {
-  readonly name: string;
-  readonly artifact_type: ArtifactTypeId;
-  readonly optional: boolean;
-  readonly collect: boolean;
-  readonly delivery: InputDelivery;
-}
+/** A pinned v15 action-point prompt, persisted in oakridge.prompt_bundle. */
+export type PromptBundleEntry = import("./dev-flow-v15").V15PromptEntry;
 
-export interface OutputSlot {
-  readonly name: string;
-  readonly artifact_type: ArtifactTypeId;
-  readonly attention?: OutputAttention;
-}
-
-export interface EdgeEndpoint { readonly stage: StageKey; readonly slot: string }
-export interface Edge { readonly from: EdgeEndpoint; readonly to: EdgeEndpoint }
-export interface WorkflowTransition {
-  readonly trigger: { readonly kind: "stage_output" | "assessment_outcome" | "operator"; readonly stage: StageKey; readonly item: string };
-  readonly launch: { readonly stage: StageKey; readonly session_role: StageOperatorRole; readonly launch_reason: import("./delegated-session").SessionLaunchReasonName };
-}
-
-export interface StageNodeDefinition {
-  readonly stage_type: StageTypeId;
-  readonly operator_role: StageOperatorRole | null;
-  readonly config: JsonValue;
-  readonly inputs: readonly InputSlot[];
-  readonly outputs: readonly OutputSlot[];
-}
-
-export interface WorkflowGraph {
-  readonly stages: Readonly<Record<StageKey, StageNodeDefinition>>;
-  readonly edges: readonly Edge[];
-  readonly transitions?: readonly WorkflowTransition[];
-}
-
-export interface WorkflowDefinition {
-  readonly id: WorkflowDefinitionId;
-  readonly name: string;
-  readonly version: number;
-  readonly graph: WorkflowGraph;
-  readonly machines?: Readonly<Record<string, MachineDefinition>>;
-  readonly created_at: string;
-  readonly archived: boolean;
-}
-
-export interface PromptBundleEntry extends PromptMatrixEntry {
-  /** Stage identity prevents equal role/reason cells in different stages from colliding. */
-  readonly stage_key?: StageKey;
-  readonly content: string;
-}
 export interface PromptBundle {
   readonly version: 1;
   readonly hash: string;
-  readonly matrix: readonly PromptBundleEntry[];
+  readonly entries: readonly PromptBundleEntry[];
 }
 
 /** The immutable versions selected once for a run. */
@@ -75,12 +25,6 @@ export interface WorkflowRunBundlePin {
   readonly prompt_bundle_hash: string;
   readonly adapter_version: string;
   readonly artifact_schema_version: string;
-}
-
-export interface CreateWorkflowDefinition {
-  readonly name: string;
-  readonly version: number;
-  readonly graph: WorkflowGraph;
 }
 
 export type StageOutcome =

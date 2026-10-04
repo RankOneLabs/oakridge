@@ -2,10 +2,7 @@ import { expect, test } from "bun:test";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { ok, type JsonValue } from "../src/domain/primitives";
-import { AdapterRegistry } from "../src/runtime/executor-registry";
 import { transitionEffectWorkflowId } from "../src/decision/ids";
-import { loadGraphDefinitionFixture as loadDevFlowV15 } from "./support/graph-definition-fixture";
 
 const SOURCE = new URL("../src", import.meta.url).pathname;
 const FORBIDDEN_IDENTIFIERS = [
@@ -24,7 +21,7 @@ const DEV_FLOW_SOURCE_ALLOWLIST = {
   "domain/v15-operator-review.ts": "Projects exact canonical worker targets for operator decisions.",
   "runtime/final-integration.ts": "Verifies and discovers final PRs against frozen repository authority.",
   "validation/v15-definition.ts": "Validates the concrete dev-flow worker, output, input and decision-tree contracts.",
-  "adapters/dev-flow-machine.ts": "Exports legacy names used only to validate graph fixtures during cutover.",
+  "adapters/dev-flow-machine.ts": "Validates concrete PR and collection observations; has no progression authority.",
   "adapters/dev-flow.ts": "Implements dev-flow effects and registration.",
   "compiler/resolve-execution.ts": "Carries an optional existing handoff URL into a delegated prompt.",
   "domain/artifact-types.ts": "Registers the existing assessment artifact presentation.",
@@ -52,9 +49,6 @@ const DEV_FLOW_SOURCE_ALLOWLIST = {
   "storage/repositories.ts": "Declares the dev-flow repository port used by its adapter.",
 } as const;
 const DEV_FLOW_IDENTIFIER = /dev_flow_build_cohort|pull_request|canonical_ref|dev\.assessment/;
-const isJsonObject = (value: JsonValue): value is { readonly [key: string]: JsonValue } =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
 export const coreBoundaryViolations = (source: string): readonly string[] => {
   const identifiers = FORBIDDEN_IDENTIFIERS.filter((identifier) => source.includes(identifier));
   const roles = DEV_FLOW_ROLES.filter((role) => source.includes(`"${role}"`) || source.includes(`'${role}'`));
@@ -116,26 +110,6 @@ test("the architecture rule rejects a dev-flow role introduced into core", () =>
   expect(coreBoundaryViolations('const operator_role = "build";')).toContain("build");
 });
 
-test("a newly registered adapter event decodes, guards, and selects its effect without a core edit", () => {
-  const registry = new AdapterRegistry();
-  const eventName = "example_adapter_finished";
-  registry.register_decision<{ readonly output_id: string }>({
-    name: eventName,
-    decode(value: JsonValue) {
-      if (isJsonObject(value) && typeof value.output_id === "string") {
-        return ok({ output_id: value.output_id });
-      }
-      return { ok: false, error: "output_id is required" };
-    },
-    guard: () => ok(undefined),
-    effect: (context, payload) => ({ kind: context.event_name, output_id: payload.output_id }),
-  });
-  expect(registry.dispatch(eventName, { output_id: "artifact-1" }, "adapter")).toEqual({ ok: true, value: {
-    payload: { output_id: "artifact-1" },
-    effect: { kind: eventName, output_id: "artifact-1" },
-  } });
-});
-
 test("source contains no second pending-effect store", async () => {
   const files = await decisionSources();
   const source = (await Promise.all(files.map((file) => readFile(file, "utf8")))).join("\n");
@@ -150,28 +124,10 @@ test("the baseline stores arbitrary registered effects without event-name checks
   expect(baseline).toContain("effect_workflow_id text NOT NULL UNIQUE");
 });
 
-test("adapter launch reason names require no core decision or migration edit", async () => {
-  const decision = (await Promise.all((await decisionSources()).map((file) => readFile(file, "utf8")))).join("\n");
-  const baseline = await readFile(join(SOURCE, "storage", "migrations", "0015_v15_baseline.sql"), "utf8");
-  const loaded = await loadDevFlowV15();
-  if (!loaded.ok) throw new Error(loaded.error.detail);
-  const reasons = new Set(Object.values(loaded.value.machines ?? {}).flatMap((machine) => machine.transitions
-    .flatMap((row) => "effects" in row ? row.effects : [])
-    .filter((effect) => effect.name === "launch_session")
-    .map((effect) => effect.args.reason)
-    .filter((reason): reason is string => typeof reason === "string")));
-  for (const reason of reasons) {
-    if (reason === "initial" || reason === "operator_retry") continue;
-    expect(decision).not.toContain(`"${reason}"`);
-    expect(baseline).not.toContain(`'${reason}'`);
-  }
-});
-
 test("operator and downstream roles are not closed over dev-flow names", async () => {
   const sources = await Promise.all([
     join(SOURCE, "domain", "workflow.ts"),
-    join(SOURCE, "validation", "workflow-definition.ts"),
-    join(SOURCE, "validation", "delegated-session.ts"),
+    join(SOURCE, "runtime", "executor-registry.ts"),
   ].map((file) => readFile(file, "utf8")));
   const combined = sources.join("\n");
   expect(combined).not.toMatch(/StageOperatorRole\s*=\s*["'](?:spec|plan|brief|build|assessment|final_integration)/);
@@ -246,6 +202,18 @@ test("no source selects a first matching event transition", async () => {
   expect(sources.join("\n")).not.toMatch(/export\s+const\s+transition\s*=|context\.registry\.guard\(|runStageEffectsIn/);
 });
 
+test("the dev-flow adapter has no PR guard or event progression registration", async () => {
+  const source = await readFile(join(SOURCE, "adapters", "dev-flow.ts"), "utf8");
+  expect(source).not.toMatch(/register_decision|guard\s*:|pull_request_observed|pull_request_merge_confirmed/);
+});
+
+test("runtime composition registers only the v15 run, stage and worker topology", async () => {
+  const source = await readFile(join(SOURCE, "runtime", "compose.ts"), "utf8");
+  expect(source).not.toMatch(/StageMachineRegistry|registerStageMachine|transitionWorkflow|legacyRunWorkflow|convertOldRun/);
+  expect(source).toContain("registerRunRecordWorkflowServices");
+  expect(source).toContain("WORKER_EXECUTION_WORKFLOW_NAME");
+});
+
 const LEGACY_EFFECT_INTERPRETATION = /(?:\.name\s*===\s*["'](?:launch_session|end_session|record_output|open_gate|accept_outputs|new_round)["']|switch\s*\(\s*(?:[\w.]+\.name|(?:effect_)?name)\s*\)\s*\{[\s\S]*?\bcase\s+["'](?:launch_session|end_session|record_output|open_gate|accept_outputs|new_round)["'])/;
 
 test("storage never interprets legacy effect names to select progression", async () => {
@@ -266,4 +234,13 @@ test("the effect interpretation rule catches equality and switch cases", () => {
 
 test("applying a typed selected change is not legacy effect interpretation", () => {
   expect(LEGACY_EFFECT_INTERPRETATION.test('switch (change.kind) { case "accept_outputs": apply(); }')).toBe(false);
+});
+
+// Clean cutover is src-wide; retained migration history is checked separately.
+test("no runtime source retains a replaced v15 interpreter or conversion path", async () => {
+  const sources = await Promise.all((await treeSources(SOURCE)).map((file) => readFile(file, "utf8")));
+  const source = sources.join("\n");
+  expect(source).not.toMatch(/register_guard|register_decision|StageMachineRegistry|MachineDefinition|CompiledMachine|CompiledWorkflowDefinition|WorkflowGraph|PromptMatrixEntry|DelegatedSessionDefinitionConfig|createPromptBundle|prompt_matrix|convertOldRun|legacyRunWorkflow/);
+  expect(source).not.toMatch(LEGACY_EFFECT_INTERPRETATION);
+  expect(source).not.toMatch(/(?:FROM|JOIN|UPDATE|INTO)\s+dev_flow\.build_cohort/i);
 });

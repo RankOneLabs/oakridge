@@ -12,9 +12,7 @@ import { selectBuiltInGateDisposition } from "../src/domain/gates";
 import { createDomainReadApp } from "../src/http/domain-reads";
 import { createOperatorProjectionApp } from "../src/http/operator-projections";
 import type { OperatorProjectionRepository } from "../src/storage/postgres-operators";
-import { parseWorkflowDefinition } from "../src/validation/workflow-definition";
-import { createDevFlowAdapterRegistry } from "../src/adapters/dev-flow";
-import { delegatedSessionDefinitionSchema } from "../src/validation/delegated-session";
+import { parseV15WorkflowDefinition } from "../src/validation/v15-definition";
 
 const INHERITED = ["constructor", "toString", "__proto__"] as const;
 
@@ -28,29 +26,13 @@ test("a plain lookup answers for inherited names and an own-property lookup does
   expect(readOwn(record, "build")).toBe("real");
 });
 
-test("an edge naming an inherited stage is rejected rather than crashing the parser", () => {
-  const parsed = parseWorkflowDefinition({
-    id: "00000000-0000-4000-8000-000000000000", name: "flow", version: 1, created_at: "2026-08-17T00:00:00Z",
-    graph: {
-      stages: { build: { stage_type: "stub", config: {}, inputs: [], outputs: [{ name: "result", artifact_type: "dev.result" }] } },
-      edges: [{ from: { stage: "constructor", slot: "result" }, to: { stage: "build", slot: "input" } }],
-    },
-  }, createDevFlowAdapterRegistry());
+test("retired graphs and inherited stage names are rejected by the strict v15 parser", () => {
+  const parsed = parseV15WorkflowDefinition({ graph: { stages: { constructor: {} }, edges: [] } });
   expect(parsed.ok).toBe(false);
-  if (parsed.ok) return;
-  expect(parsed.error.detail).toContain("edge references unknown stage");
 });
 
 test("an inherited name is not a gate action", () => {
-  for (const key of INHERITED) {
-    expect(selectBuiltInGateDisposition(key)).toBe("terminal");
-    const result = delegatedSessionDefinitionSchema.safeParse({
-      runtime: "claude_code", prompt_template_path: "prompts/example.md", slot_bindings: {},
-      workdir: { from: "literal" as const, value: "." }, session_name: "example",
-      output_gate: { output: "result", steps: [{ type: "artifact_approval" as const, actions: [key] }] },
-    });
-    expect(result.success).toBe(false);
-  }
+  for (const key of INHERITED) expect(selectBuiltInGateDisposition(key)).toBe("terminal");
 });
 
 /**

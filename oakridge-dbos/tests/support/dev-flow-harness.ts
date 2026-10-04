@@ -26,15 +26,17 @@ import { join, resolve } from "node:path";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
 import type { ExecutionRequest } from "../../src/domain/execution";
-import type { JsonValue, StageInstanceId, UnitId, WorkflowRunId } from "../../src/domain/primitives";
-import type { PromptBundleEntry, StageOperatorRole, WorkflowDefinition } from "../../src/domain/workflow";
+import type { JsonValue, StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId } from "../../src/domain/primitives";
+import type { PromptBundleEntry, StageOperatorRole } from "../../src/domain/workflow";
+import type { WorkflowDefinition } from "../../src/domain/dev-flow-v15";
 import { KbblExecutorAdapter } from "../../src/adapters/kbbl";
 import { createOakridgeRuntime, type OakridgeRuntime } from "../../src/runtime/compose";
 import { GithubPullRequestReader } from "../../src/runtime/github-pull-requests";
 import { applyMigrations } from "../../src/storage/migrate";
 import { PgPostgresExecutor } from "../../src/storage/sql-executor";
+import type { ScratchDatabase } from "./durable-database";
 import type { SqlExecutor } from "../../src/storage/sql-executor";
-import { loadGraphDefinitionFixture as loadDevFlowV15 } from "./graph-definition-fixture";
+import { loadDevFlowV15 } from "../../src/seed/dev-flow-v15";
 
 /**
  * How an execution behaves, for the scenario currently running.
@@ -181,19 +183,19 @@ let activeForgeRefs: Map<string, { readonly head_branch: string; readonly base_b
 export const removePinnedPromptCell = async (
   sql: SqlExecutor, run_id: WorkflowRunId, stage_key: string, role: string, reason: string,
 ): Promise<() => Promise<void>> => {
-  const rows = await sql.query<{ readonly hash: string; readonly matrix: readonly PromptBundleEntry[] }>(
-    `SELECT bundle.hash,bundle.matrix FROM oakridge.workflow_run run
+  const rows = await sql.query<{ readonly hash: string; readonly entries: readonly PromptBundleEntry[] }>(
+    `SELECT bundle.hash,bundle.entries FROM oakridge.workflow_run run
      JOIN oakridge.prompt_bundle bundle ON bundle.hash=run.bundle_pin->>'prompt_bundle_hash'
      WHERE run.id=$1`, [run_id]);
   const bundle = rows[0];
   if (!bundle) throw new Error(`run '${run_id}' has no bound prompt bundle`);
-  const reduced = bundle.matrix.filter((cell) => !(cell.stage_key === stage_key
-    && cell.session_role === role && cell.launch_reason === reason));
-  if (reduced.length === bundle.matrix.length) throw new Error(`prompt cell ${stage_key}:${role}:${reason} is missing`);
-  await sql.query("UPDATE oakridge.prompt_bundle SET matrix=$2::jsonb WHERE hash=$1",
+  const reduced = bundle.entries.filter((cell) => !(cell.stage_key === stage_key
+    && cell.worker === role && cell.action_point === reason));
+  if (reduced.length === bundle.entries.length) throw new Error(`prompt cell ${stage_key}:${role}:${reason} is missing`);
+  await sql.query("UPDATE oakridge.prompt_bundle SET entries=$2::jsonb WHERE hash=$1",
     [bundle.hash, JSON.stringify(reduced)]);
-  return async () => { await sql.query("UPDATE oakridge.prompt_bundle SET matrix=$2::jsonb WHERE hash=$1",
-    [bundle.hash, JSON.stringify(bundle.matrix)]); };
+  return async () => { await sql.query("UPDATE oakridge.prompt_bundle SET entries=$2::jsonb WHERE hash=$1",
+    [bundle.hash, JSON.stringify(bundle.entries)]); };
 };
 
 /** The one branch the harness's runs provision and build on. */
@@ -338,7 +340,7 @@ export interface IntegrationRuntime {
   readonly kbbl_url: string;
   readonly kbbl_pid: number;
   restart_kbbl(): Promise<void>;
-  readonly definition: WorkflowDefinition;
+  readonly definition: WorkflowDefinition & { readonly id: WorkflowDefinitionId };
   readonly application_version: string;
   /** The repository the seeded flow's runs provision and build in. */
   readonly repository: GitRepositoryFixture;
@@ -355,6 +357,7 @@ export interface IntegrationRuntime {
 }
 
 export interface InstallIntegrationRuntimeOptions {
+  readonly scratch_database?: ScratchDatabase;
   /**
    * Overrides the prompt-template root the runtime is built with. Scenario 8
    * (spec §5.2) needs a *writable* copy of `workflow-config/prompts` so it can
@@ -382,7 +385,7 @@ export const installIntegrationRuntime = async (databaseUrl: string, options: In
     const databaseName = new URL(databaseUrl).pathname.replace(/^\//, "");
     const isDedicatedLocalDatabase = databaseName === "oakridge_e2e";
     const isDisposableCiDatabase = process.env.CI === "true" && process.env.OAKRIDGE_TEST_DATABASE_URL === databaseUrl;
-    if (!isDedicatedLocalDatabase && !isDisposableCiDatabase && process.env.OAKRIDGE_TEST_ALLOW_SCHEMA_DROP !== "1") {
+    if (options.scratch_database?.url !== databaseUrl && !isDedicatedLocalDatabase && !isDisposableCiDatabase && process.env.OAKRIDGE_TEST_ALLOW_SCHEMA_DROP !== "1") {
       throw new Error(`refusing to drop schema 'oakridge' in database '${databaseName}': set OAKRIDGE_TEST_ALLOW_SCHEMA_DROP=1 to confirm it is disposable`);
     }
     await migrationSql.query("DROP SCHEMA IF EXISTS dev_flow CASCADE", []);
@@ -560,6 +563,9 @@ export const installIntegrationRuntime = async (databaseUrl: string, options: In
     activeForgeRefs = null;
     throw error;
   }
+  const definitions = await harnessSql.query<{ readonly id: WorkflowDefinitionId }>(
+    "SELECT id::text FROM oakridge.workflow_definition WHERE name=$1 AND version=$2", [loaded.value.key, loaded.value.version]);
+  if (!definitions[0]) throw new Error("seeded v15 definition is missing");
   const startedRuns: string[] = [];
 
   return {
@@ -573,7 +579,7 @@ export const installIntegrationRuntime = async (databaseUrl: string, options: In
       kbbl = startKbbl();
       await awaitKbbl();
     },
-    definition: loaded.value,
+    definition: { ...loaded.value, id: definitions[0].id },
     application_version: applicationVersion,
     repository,
     started_runs: startedRuns,
@@ -625,8 +631,12 @@ export const executionOperatorRole = (request: ExecutionRequest): StageOperatorR
  */
 export const artifactBody = (request: ExecutionRequest, unitId: UnitId, outputName: string, revision = 1): JsonValue => {
   const operatorRole = executionOperatorRole(request);
-  if (operatorRole === "spec") return { requirements: [{ id: "R1", description: `harness v${revision}` }] };
-  if (operatorRole === "plan") return { cohorts: activeCohortPlan.map(({ id }) => ({ id })) };
+  if (operatorRole === "spec") return { summary: `harness v${revision}`, source_spec_refs: [], findings: [],
+    requirements: [{ id: "R1", description: `harness v${revision}`, status: "implementable" }], risks: [] };
+  if (operatorRole === "plan") return { summary: `harness v${revision}`,
+    scope: { in_scope: ["acceptance"], out_of_scope: [] }, acceptance_criteria: ["passes"], risks: [],
+    cohorts: activeCohortPlan.map(({ id, depends_on }) => ({ id, repository_key: "oakridge", title: String(id),
+      scope: "acceptance", depends_on, description: null, files_in_scope: [], decisions: [], acceptance_criteria: ["passes"] })) };
   if (operatorRole === "brief") {
     const dependsOn = activeCohortPlan.find((entry) => entry.id === unitId)?.depends_on ?? [];
     return { cohort_id: unitId, repository_key: "oakridge", title: String(unitId), goal: "harness", files_in_scope: [],
@@ -637,7 +647,8 @@ export const artifactBody = (request: ExecutionRequest, unitId: UnitId, outputNa
     // request reconciler reads one of them — so the harness has to emit the
     // right shape into the right slot rather than one body into both.
     if (outputName === "pr_summary") {
-      return { pr_url: cohortPullRequestUrl(unitId), branch: cohortHeadBranch(unitId), summary: `built ${unitId} v${revision}`, review_status: "ready" };
+      return { repository_key: "oakridge", pr_url: cohortPullRequestUrl(unitId), branch: cohortHeadBranch(unitId),
+        base_branch: HARNESS_BASE_BRANCH, summary: `built ${unitId} v${revision}` };
     }
     return { repository_key: "oakridge", summary: `built ${unitId} v${revision}`, changed_files: [],
       tests: { passed: 1, failed: 0, output: "ok" }, delegated_session_metadata: null, known_issues: [] };
@@ -653,8 +664,8 @@ export const runContext = (oakridgeUrl: string, repositoryPath: string) => ({
   repositories: [{ key: "oakridge", path: repositoryPath, integration_branch: HARNESS_INTEGRATION_BRANCH,
     forge_repository: { provider: "github", owner: "RankOneLabs", name: "oakridge" } }],
   oakridge_url: oakridgeUrl,
-  planner_runtime: "claude-code" as const, planner_model: null, planner_effort: null,
-  worker_runtime: "claude-code" as const, worker_model: null, worker_effort: null,
+  planner: { runtime: "claude-code" as const, model: null, effort: null },
+  builder: { runtime: "claude-code" as const, model: null, effort: null },
 });
 
 /**

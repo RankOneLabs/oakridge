@@ -1,5 +1,5 @@
-import { DBOS } from "@dbos-inc/dbos-sdk";
-import { createOakridgeRuntime, type OakridgeRuntime } from "../../src/runtime/compose";
+import { createOperatorRetryApp } from "../../src/http/operator-retry";
+import type { ImplementationRuntimeConfig } from "./implementation-runtime";
 import { observeCohortPullRequest } from "../../src/runtime/observe-cohort-pull-request";
 import { prepareCohortRepository } from "../../src/runtime/prepare-cohort-repository";
 import { dispatchProvisionExecution } from "../../src/runtime/provision-execution";
@@ -11,7 +11,6 @@ import { randomUUID } from "node:crypto";
 import type { ArtifactRef, AcceptedBuild, BuildResponse, ImplementationCohortDefinition, ImplementationCohortInputs,
   OperatorRequest, V15OperatorRequest, WorkflowDefinition } from "../../src/domain/dev-flow-v15";
 import type { CohortId, ExecutionId, StageInstanceId, WorkflowRunId } from "../../src/domain/primitives";
-import { createDevFlowAdapterRegistry } from "../../src/adapters/dev-flow";
 import { KbblExecutorAdapter } from "../../src/adapters/kbbl";
 import { createWorkOrderArtifactCallbackApp } from "../../src/http/work-order-artifact-callback";
 import { createImplementationWorkerSessionIO } from "../../src/runtime/implementation-worker-session";
@@ -42,6 +41,7 @@ export const waitFor = async <Value>(label: string, read: () => Promise<Value | 
 };
 
 export interface ForgeFixture {
+  http_status: number;
   state: "open" | "closed";
   merged_at: string | null;
   head_sha: string | null;
@@ -67,7 +67,7 @@ export const createImplementationCohortHarness = async (options: { readonly full
   const launches: ImplementationAgentLaunch[] = [];
   const deliveries: ImplementationAgentDelivery[] = [];
   const plans = new Map<string, ImplementationAgentPlan>();
-  const forge: ForgeFixture = { state: "open", merged_at: null, head_sha: null,
+  const forge: ForgeFixture = { http_status: 200, state: "open", merged_at: null, head_sha: null,
     head_branch: "cohort/core", base_branch: "epic/schema", number: 1 };
   const now = () => new Date().toISOString();
   const control = Bun.serve({ port: 0, async fetch(request) {
@@ -79,6 +79,7 @@ export const createImplementationCohortHarness = async (options: { readonly full
   } });
   const forgeServer = Bun.serve({ port: 0, async fetch(request) {
     const path = new URL(request.url).pathname;
+    if (forge.http_status !== 200) return new Response("forge unavailable", { status: forge.http_status });
     if (path === "/repos/example/oakridge/pulls") return Response.json([{ number: forge.number }]);
     const match = path.match(/^\/repos\/example\/oakridge\/pulls\/(\d+)$/);
     if (!match) return new Response(null, { status: 404 });
@@ -89,14 +90,9 @@ export const createImplementationCohortHarness = async (options: { readonly full
   } });
   let kbbl: ReturnType<typeof Bun.spawn> | null = null;
   let server: ReturnType<typeof Bun.serve> | null = null;
-  let runtime: OakridgeRuntime | null = null;
+  let backend: ReturnType<typeof Bun.spawn> | null = null;
   const close = async () => {
-    if (runtime) {
-      const workflows = await sql.query<{ readonly workflow_uuid: string }>("SELECT workflow_uuid FROM dbos.workflow_status", []);
-      for (const workflow of workflows) await DBOS.cancelWorkflow(workflow.workflow_uuid);
-      await DBOS.shutdown();
-      await runtime.close();
-    }
+    if (backend) { backend.kill("SIGKILL"); await backend.exited; }
     if (kbbl) { kbbl.kill(); await kbbl.exited; }
     server?.stop(true); control.stop(true); forgeServer.stop(true);
     await sql.close(); await scratch.value.drop(); await rm(root, { recursive: true, force: true });
@@ -130,7 +126,7 @@ export const createImplementationCohortHarness = async (options: { readonly full
       repositories: [{ key: "oakridge", path: repo, integration_branch: options.full_run ? "main" : "epic/schema", forge_repository: { provider: "github", owner: "example", name: "oakridge" } }] };
     await sql.query(`INSERT INTO oakridge.workflow_run (id,workflow_definition_id,context,bundle_pin,status)
       VALUES ($1,$2,$3::jsonb,$4::jsonb,'active')`, [run_id, definitionId, JSON.stringify(context),
-      JSON.stringify({ definition_version: 1, prompt_bundle_hash: bundle.hash, adapter_version: "test", artifact_schema_version: "v1" })]);
+      JSON.stringify({ definition_version: workflow.version, prompt_bundle_hash: bundle.hash, adapter_version: "test", artifact_schema_version: "v1" })]);
     const pullRequests = new PostgresDevFlowPullRequestRepository(sql);
     if (!options.full_run) {
     await sql.query(`INSERT INTO oakridge.stage_instance (id,run_id,stage_key,stage_type,stage_contract,status)
@@ -162,7 +158,7 @@ export const createImplementationCohortHarness = async (options: { readonly full
     });
     const adapter = new KbblExecutorAdapter({ base_url: `http://127.0.0.1:${port}`, executor_function_identity: run_id, observe_wait_ms: 100 });
     const reader = new GithubPullRequestReader({ token: "fixture", api_base_url: `http://127.0.0.1:${forgeServer.port}` });
-    const writer = new PostgresRunRecordWriter(sql, createDevFlowAdapterRegistry());
+    const writer = new PostgresRunRecordWriter(sql);
     const ingress = new StageEventApplier({ sql, writer, now,
       observe_pr: (id) => observeCohortPullRequest({ sql, git, reader, pull_requests: pullRequests,
         forge_repositories: new PostgresForgeRepositoryRepository(sql) }, id),
@@ -175,30 +171,43 @@ export const createImplementationCohortHarness = async (options: { readonly full
       } } });
     const records = new PostgresRunRecordRepository(sql, writer, ingress);
     const io = createImplementationWorkerSessionIO({ sql, git, records, now, find_executor: () => adapter,
-      prompt_bundle: async () => bundle.matrix, run_context: async () => context,
+      prompt_bundle: async () => bundle.entries, run_context: async () => context,
       discover_final_pr: (id) => discoverFinalIntegrationPullRequest({ sql, git, reader }, id) });
     const enrich = createImplementationPublicationEnricher({ sql, git, pull_requests: pullRequests,
       forge_repositories: new PostgresForgeRepositoryRepository(sql), reader });
     const app = createWorkOrderArtifactCallbackApp({ records, now, enrich });
+    app.route("/", createOperatorRetryApp({ submit_request: (request) => ingress.advance(request.cohort_id, request) }));
     server = Bun.serve({ port: 0, fetch: app.fetch });
     context.oakridge_url = `http://127.0.0.1:${server.port}`;
     await sql.query("UPDATE oakridge.workflow_run SET context=$2::jsonb WHERE id=$1", [run_id, JSON.stringify(context)]);
-    if (options.full_runtime) {
-      DBOS.setConfig({ name: "oakridge-b4-shadow", systemDatabaseUrl: scratch.value.url, applicationVersion: "b4-shadow", logLevel: "warn" });
-      runtime = await createOakridgeRuntime({ database_url: scratch.value.url, application_version: "b4-shadow", executor_adapters: [adapter],
-        git_commands: git, pull_request_reader: reader, prompt_template_directory: resolve(import.meta.dir, "../../../workflow-config/prompts"),
-        pull_request_poll_interval_ms: 1_000, now });
-      const oakridgePort = server.port;
-      server.stop(true);
-      server = Bun.serve({ port: oakridgePort, fetch: runtime.app.fetch });
-      await DBOS.launch();
-      await runtime.dispatch_launches();
-    }
+    const oakridgePort = server.port!;
+    const runtimeConfig: ImplementationRuntimeConfig = { database_url: scratch.value.url, kbbl_url: `http://127.0.0.1:${port}`,
+      forge_url: `http://127.0.0.1:${forgeServer.port}`, executor_identity: run_id, port: oakridgePort };
+    const runtimeConfigPath = join(root, "runtime.json");
+    await Bun.write(runtimeConfigPath, JSON.stringify(runtimeConfig));
+    const startRuntime = async () => {
+      server?.stop(true);
+      backend = Bun.spawn([process.execPath, resolve(import.meta.dir, "implementation-runtime.ts"), runtimeConfigPath],
+        { cwd: resolve(import.meta.dir, "../.."), stdout: "ignore", stderr: "pipe" });
+      await waitFor("backend process", async () => {
+        if (backend!.exitCode !== null) throw new Error(`backend exited: ${await new Response(backend!.stderr as ReadableStream<Uint8Array>).text()}`);
+        return await fetch(`${context.oakridge_url}/runs`).then((response) => response.ok ? true : null).catch(() => null);
+      });
+    };
+    if (options.full_runtime) await startRuntime();
+    const restart = async () => {
+      if (!backend) throw new Error("restart requires the full runtime");
+      backend.kill("SIGKILL");
+      await backend.exited;
+      await startRuntime();
+    };
+    const httpRequest = (path: string, init?: RequestInit) => options.full_runtime
+      ? fetch(`${context.oakridge_url}${path}`, init) : app.request(path, init);
     const advanceCohort = async (id: CohortId, request: V15OperatorRequest | null = null) => {
       const version = Number((await sql.query<{ readonly durable_version: string }>(
         "SELECT durable_version::text FROM oakridge.cohort WHERE id=$1", [id]))[0]!.durable_version);
-      if (runtime && request) {
-        const response = await runtime.app.request(`/cohorts/${id}/requests`, { method: "POST", headers: { "content-type": "application/json" },
+      if (request) {
+        const response = await httpRequest(`/cohorts/${id}/requests`, { method: "POST", headers: { "content-type": "application/json" },
           body: JSON.stringify({ id: randomUUID(), expected_version: version, request }) });
         if (response.status !== 202) throw new Error(await response.text());
         return await response.json() as { commits: number; reason: string };
@@ -227,7 +236,7 @@ export const createImplementationCohortHarness = async (options: { readonly full
          JOIN oakridge.artifact artifact ON artifact.id=output.artifact_id WHERE output.cohort_id=$1 AND output.worker='assessment'`, [cohort_id]))[0]!;
       return { id: row.chain_id as never, version: row.revision };
     };
-    return { runtime, git, runGit, repo, origin, reader, context, workflow, pullRequests, advanceCohort, sql, database_url: scratch.value.url, ingress, io, enrich, records, adapter, cohort_id, run_id, stage_id, launches, deliveries, forge, advance, launch, execute,
+    return { request: httpRequest, pollPullRequests: () => httpRequest("/__test/poll", { method: "POST" }), restart, git, runGit, repo, origin, reader, context, workflow, pullRequests, advanceCohort, sql, database_url: scratch.value.url, ingress, io, enrich, records, adapter, cohort_id, run_id, stage_id, launches, deliveries, forge, advance, launch, execute,
       build, accepted, assessment, close, app, now,
       execution: async (index: number): Promise<ExecutionId> => {
         const selected = await launch(index);

@@ -76,7 +76,7 @@ export const createImplementationWorkerSessionIO = (dependencies: Implementation
       if (cohort.stage_key === "implementation" && !repository?.worktree_base_sha)
         return err({ detail: "prepared implementation repository is missing" });
       const bundle = await promptBundleOf(intent.run_id);
-      const prompt = bundle.find((entry) => entry.template_path === intent.prompt);
+      const prompt = bundle.find((entry) => entry.path === intent.prompt);
       if (!prompt) return err({ detail: `pinned prompt ${intent.prompt} is unavailable` });
       const discovered = final && intent.action_point === "retry" ? await dependencies.discover_final_pr?.(intent.cohort_id) : undefined;
       if (final && intent.action_point === "retry" && !discovered) return err({ detail: "final PR discovery is unavailable" });
