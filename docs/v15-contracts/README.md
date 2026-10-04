@@ -54,3 +54,21 @@ silently dropped. The table is a porting record, not a test result.
 | S20 | Replaced: missing publication authority interrupts the selected worker; v15 keeps its cohort available for an explicit retry. |
 | S21 | Replaced: a gated artifact cannot be edited into a versioned worker output; review requests target the exact published version. |
 | S22 | Replaced: the browser launches a v15 run and submits an `accept_analysis` cohort request from the review inbox. |
+
+## Verification still required before deployment
+
+The cutover is incomplete while the old S1–S19 and S21 assertions still call
+`/gates/:id/resume` and inspect retired stage-machine states. The S20 and S22
+ports exercise real PostgreSQL, kbbl agent and browser boundaries; the other
+cases require v15 cohort-request assertions against those same boundaries.
+
+The repository also retains legacy declarations outside this boundary's file
+scope: the generic stage-machine and adapter guard registry, the effect-name
+writer contract, prompt-matrix storage and validation, and the `build_cohort`
+table and projections. The stage aggregation in `decision/derive.ts` currently
+chooses cancellation before failure when both occur. That order conflicts with
+the required failure precedence, so the mixed-outcome acceptance case cannot
+pass until that decision authority changes.
+
+The operator must separately plan service deployment and any database reset.
+No application startup path should reset production data.
