@@ -22,3 +22,35 @@ removed.
 Deployment and any database reset are separate operator actions. Existing runs
 from the replaced storage model cannot be resumed; the operator must retire
 them during deployment before starting the new service.
+
+## S1–S22 acceptance disposition
+
+The old suite used stage-machine states and artifact gates as its assertions.
+Each case below maps to the v15 behavior to prove. “Retired” means the old
+operation has no equivalent; its replacement is stated so the behavior is not
+silently dropped. The table is a porting record, not a test result.
+
+| Case | Disposition and reason |
+| --- | --- |
+| S1 | Replaced: six-stage run and dependency-ordered implementation cohorts supersede the gate-driven straight-through run. |
+| S2 | Replaced: publication verifies repository, PR number, branch, base and head against frozen cohort authority; replacement PR uses a typed request. All original mismatch variants map here. |
+| S3 | Replaced: unreadable forge observations remain unavailable and cannot authorize publication. |
+| S4 | Replaced: `request_build_changes` pins build-review feedback and launches the builder revision action. |
+| S5 | Replaced: `request_implementation_changes` pins assessment feedback and launches the same builder revision action with fresh assessment. |
+| S6 | Replaced: an interrupted build worker is retried through a versioned operator request and a stable execution identity. |
+| S7 | Replaced: an interrupted assessment worker is retried without changing the accepted build. |
+| S8 | Replaced: forge polling supplies an observation; the implementation tree completes only after a merge at the accepted head. |
+| S9 | Retired: the old build-gate “Confirm merged” action is gone. Final integration alone requires operator confirmation of the exact observed PR and head. |
+| S10 | Replaced: a closed unmerged PR remains in `awaiting_merge` until a merge, replacement or abandonment is selected. |
+| S11 | Replaced: a merged PR at a different head cannot satisfy the accepted build's merge predicate. |
+| S12 | Replaced: run cancellation fences selected execution intents and closes unfinished cohorts while retaining completed results. |
+| S13 | Replaced: roster opening and cancellation serialize through durable owner state, so a cancelled cohort cannot start work. |
+| S14 | Replaced: restart reattaches to the selected execution and preserves worker output and acceptance versions. |
+| S15 | Replaced: publication after the worker enters review is refused without a new artifact revision. |
+| S16 | Retired: deciding the same generic gate twice is no longer an operation. The versioned cohort request deduplicates by request identity and rejects a stale version. |
+| S17 | Replaced: abandoning a live implementation cohort fails its stage and run and fences unfinished siblings. |
+| S18 | Replaced: cyclic brief dependencies fail collection validation before implementation materialization. |
+| S19 | Replaced: an unknown brief dependency fails collection validation before implementation materialization. |
+| S20 | Replaced: missing publication authority interrupts the selected worker; v15 keeps its cohort available for an explicit retry. |
+| S21 | Replaced: a gated artifact cannot be edited into a versioned worker output; review requests target the exact published version. |
+| S22 | Replaced: the browser launches a v15 run and submits an `accept_analysis` cohort request from the review inbox. |

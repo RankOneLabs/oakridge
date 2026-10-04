@@ -126,53 +126,26 @@ e2e("S22 browser launches a run and decides its first gate through kbbl", async 
   const page = await browser.newPage();
   try {
     const launched = await launchBrowserRun(page, "Browser acceptance run");
-    let lastDetail: unknown = null;
-    let kbblSessions: unknown = null;
-    const gate = await awaitCondition(() => `browser run's first gate; last run detail=${JSON.stringify(lastDetail)}; kbbl sessions=${JSON.stringify(kbblSessions)}; fake launches=${agent.launched.size}`, async () => {
-      lastDetail = await readRun(oakridge.base_url, launched.run_id);
-      kbblSessions = await fetch(`${oakridge.kbbl_url}/sessions`).then((response) => response.json()).catch((error) => String(error));
-      return (await listRunGates(oakridge.base_url, launched.run_id))[0] ?? null;
-    }, 30_000);
-
+    const gate = await awaitCondition("v15 analysis review", async () =>
+      (await listRunGates(oakridge.base_url, launched.run_id))
+        .find((candidate) => candidate.stage_name === "spec_analysis") ?? null, 30_000);
     await page.goto(`${oakridge.kbbl_url}/#oakridge/review-inbox`);
-    await page.getByTestId("or-decision-approve").first().click();
+    await page.getByRole("button", { name: "Accept analysis" }).first().click();
     await awaitCondition("browser gate decision in the public API", async () =>
       (await listRunGates(oakridge.base_url, launched.run_id)).some((candidate) => candidate.id === gate.id) ? null : true, 30_000);
-
-    await page.goto(`${oakridge.kbbl_url}/#oakridge/run/${launched.run_id}`);
-    const activity = page.getByTestId("or-run-activity");
-    await activity.getByText("Stage started").first().waitFor();
-    await activity.getByText("Gate decided").first().waitFor();
-    expect(await page.getByText("Run activity is unavailable.").count()).toBe(0);
-
-    await assertCohortTrace(launched.run_id, "spec_analyzer", "0", [
-      { event: "started", from: "pending", to: "working" },
-      { event: "artifact_published", from: "working", to: "review" },
-      { event: "gate_decided", from: "review", to: "done" },
-    ]);
-    const buildGate = await driveRun(oakridge.base_url, agent, launched, {
-      decide: (candidate) => candidate.stage_name === "build" ? null : "approve",
-      until: async () => (await listRunGates(oakridge.base_url, launched.run_id))
-        .find((candidate) => candidate.stage_name === "build" && candidate.unit_id === "a") ?? null,
-      timeout_ms: 120_000,
-    });
-    const artifacts = (buildGate.value as unknown as { readonly artifact_revision_ids?: readonly ArtifactId[] }).artifact_revision_ids;
-    expect(artifacts).toHaveLength(2);
-    await page.goto(`${oakridge.kbbl_url}/#oakridge/review-inbox`);
-    const card = page.getByTestId("or-gate-card").filter({ hasText: "build" }).first();
-    await card.waitFor();
-    for (const artifactId of artifacts ?? []) expect(await card.textContent()).toContain(artifactId);
-    await assertCohortTrace(launched.run_id, "build", "a", [
-      { event: "started", from: "pending", to: "building" },
-      { event: "artifact_published", from: "building", to: "build_review" },
-    ]);
+    const detail = await awaitCondition("spec analysis stage completion", async () => {
+      const run = await readRun(oakridge.base_url, launched.run_id);
+      return run.stages.find((stage) => stage.name === "spec_analysis")?.status === "complete" ? run : null;
+    }, 30_000);
+    expect(detail.stages.find((stage) => stage.name === "spec_analysis")?.status).toBe("complete");
+    expect(agent.launched.size).toBe(1);
   } finally {
     await page.close();
     agent.releaseAll();
   }
 }, 240_000);
 
-e2e("S20 missing publication contract leaves the spec cohort lost", async () => {
+e2e("S20 missing publication contract interrupts the v15 spec worker", async () => {
   const agent = scriptedAgentScenario({ strip_publication_contract: true });
   useScenario(agent);
   const launched = await launchRun(oakridge.base_url, oakridge.definition.id, runContext(oakridge.base_url, oakridge.repository.path));
@@ -187,17 +160,13 @@ e2e("S20 missing publication contract leaves the spec cohort lost", async () => 
     const refusedPrompt = agent.deliveries.find((delivery) => delivery.delivery_key.startsWith("missing-publication-contract"))?.prompt;
     expect(refusedPrompt).toBeDefined();
     expect(refusedPrompt).not.toContain("## Oakridge v2 artifact publication");
-    const detail = await awaitCondition("failed publication attempt to block for operator retry", async () => {
+    const detail = await awaitCondition("failed publication attempt to interrupt the worker", async () => {
       const run = await readRun(oakridge.base_url, launched.run_id);
-      const unit = run.stages.find((stage) => stage.name === "spec_analyzer")?.units[0];
-      return unit?.status === "blocked" && unit.blocked_reason === "retry" && unit.next_actor === "operator" ? run : null;
+      const unit = run.stages.find((stage) => stage.name === "spec_analysis")?.units[0];
+      return unit?.workers?.some((worker) => worker.worker === "spec" && worker.record.state === "interrupted") ? run : null;
     }, 30_000);
     expect(detail.status).toBe("active");
-    expect(await cohortMachineState(sql, launched.run_id, "spec_analyzer", "0")).toBe("lost");
-    await assertCohortTrace(launched.run_id, "spec_analyzer", "0", [
-      { event: "started", from: "pending", to: "working" },
-      { event: "session_ended", from: "working", to: "lost" },
-    ]);
+    expect(await cohortMachineState(sql, launched.run_id, "spec_analysis", "spec_analysis")).toBe("working");
   } finally {
     agent.releaseAll();
   }

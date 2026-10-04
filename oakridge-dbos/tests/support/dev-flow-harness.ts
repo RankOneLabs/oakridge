@@ -26,15 +26,16 @@ import { join, resolve } from "node:path";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
 import type { ExecutionRequest } from "../../src/domain/execution";
-import type { JsonValue, StageInstanceId, UnitId, WorkflowRunId } from "../../src/domain/primitives";
-import type { PromptBundleEntry, StageOperatorRole, WorkflowDefinition } from "../../src/domain/workflow";
+import type { JsonValue, StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId } from "../../src/domain/primitives";
+import type { PromptBundleEntry, StageOperatorRole } from "../../src/domain/workflow";
+import type { WorkflowDefinition } from "../../src/domain/dev-flow-v15";
 import { KbblExecutorAdapter } from "../../src/adapters/kbbl";
 import { createOakridgeRuntime, type OakridgeRuntime } from "../../src/runtime/compose";
 import { GithubPullRequestReader } from "../../src/runtime/github-pull-requests";
 import { applyMigrations } from "../../src/storage/migrate";
 import { PgPostgresExecutor } from "../../src/storage/sql-executor";
 import type { SqlExecutor } from "../../src/storage/sql-executor";
-import { loadGraphDefinitionFixture as loadDevFlowV15 } from "./graph-definition-fixture";
+import { loadDevFlowV15 } from "../../src/seed/dev-flow-v15";
 
 /**
  * How an execution behaves, for the scenario currently running.
@@ -338,7 +339,7 @@ export interface IntegrationRuntime {
   readonly kbbl_url: string;
   readonly kbbl_pid: number;
   restart_kbbl(): Promise<void>;
-  readonly definition: WorkflowDefinition;
+  readonly definition: WorkflowDefinition & { readonly id: WorkflowDefinitionId };
   readonly application_version: string;
   /** The repository the seeded flow's runs provision and build in. */
   readonly repository: GitRepositoryFixture;
@@ -560,6 +561,9 @@ export const installIntegrationRuntime = async (databaseUrl: string, options: In
     activeForgeRefs = null;
     throw error;
   }
+  const definitions = await harnessSql.query<{ readonly id: WorkflowDefinitionId }>(
+    "SELECT id::text FROM oakridge.workflow_definition WHERE name=$1 AND version=$2", [loaded.value.key, loaded.value.version]);
+  if (!definitions[0]) throw new Error("seeded v15 definition is missing");
   const startedRuns: string[] = [];
 
   return {
@@ -573,7 +577,7 @@ export const installIntegrationRuntime = async (databaseUrl: string, options: In
       kbbl = startKbbl();
       await awaitKbbl();
     },
-    definition: loaded.value,
+    definition: { ...loaded.value, id: definitions[0].id },
     application_version: applicationVersion,
     repository,
     started_runs: startedRuns,
@@ -625,8 +629,12 @@ export const executionOperatorRole = (request: ExecutionRequest): StageOperatorR
  */
 export const artifactBody = (request: ExecutionRequest, unitId: UnitId, outputName: string, revision = 1): JsonValue => {
   const operatorRole = executionOperatorRole(request);
-  if (operatorRole === "spec") return { requirements: [{ id: "R1", description: `harness v${revision}` }] };
-  if (operatorRole === "plan") return { cohorts: activeCohortPlan.map(({ id }) => ({ id })) };
+  if (operatorRole === "spec") return { summary: `harness v${revision}`, source_spec_refs: [], findings: [],
+    requirements: [{ id: "R1", description: `harness v${revision}`, status: "implementable" }], risks: [] };
+  if (operatorRole === "plan") return { summary: `harness v${revision}`,
+    scope: { in_scope: ["acceptance"], out_of_scope: [] }, acceptance_criteria: ["passes"], risks: [],
+    cohorts: activeCohortPlan.map(({ id, depends_on }) => ({ id, repository_key: "oakridge", title: String(id),
+      scope: "acceptance", depends_on, description: null, files_in_scope: [], decisions: [], acceptance_criteria: ["passes"] })) };
   if (operatorRole === "brief") {
     const dependsOn = activeCohortPlan.find((entry) => entry.id === unitId)?.depends_on ?? [];
     return { cohort_id: unitId, repository_key: "oakridge", title: String(unitId), goal: "harness", files_in_scope: [],
@@ -637,7 +645,8 @@ export const artifactBody = (request: ExecutionRequest, unitId: UnitId, outputNa
     // request reconciler reads one of them — so the harness has to emit the
     // right shape into the right slot rather than one body into both.
     if (outputName === "pr_summary") {
-      return { pr_url: cohortPullRequestUrl(unitId), branch: cohortHeadBranch(unitId), summary: `built ${unitId} v${revision}`, review_status: "ready" };
+      return { repository_key: "oakridge", pr_url: cohortPullRequestUrl(unitId), branch: cohortHeadBranch(unitId),
+        base_branch: HARNESS_BASE_BRANCH, summary: `built ${unitId} v${revision}` };
     }
     return { repository_key: "oakridge", summary: `built ${unitId} v${revision}`, changed_files: [],
       tests: { passed: 1, failed: 0, output: "ok" }, delegated_session_metadata: null, known_issues: [] };
@@ -653,8 +662,8 @@ export const runContext = (oakridgeUrl: string, repositoryPath: string) => ({
   repositories: [{ key: "oakridge", path: repositoryPath, integration_branch: HARNESS_INTEGRATION_BRANCH,
     forge_repository: { provider: "github", owner: "RankOneLabs", name: "oakridge" } }],
   oakridge_url: oakridgeUrl,
-  planner_runtime: "claude-code" as const, planner_model: null, planner_effort: null,
-  worker_runtime: "claude-code" as const, worker_model: null, worker_effort: null,
+  planner: { runtime: "claude-code" as const, model: null, effort: null },
+  builder: { runtime: "claude-code" as const, model: null, effort: null },
 });
 
 /**
