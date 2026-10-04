@@ -246,6 +246,18 @@ test("no source selects a first matching event transition", async () => {
   expect(sources.join("\n")).not.toMatch(/export\s+const\s+transition\s*=|context\.registry\.guard\(|runStageEffectsIn/);
 });
 
+test("the dev-flow adapter has no PR guard or event progression registration", async () => {
+  const source = await readFile(join(SOURCE, "adapters", "dev-flow.ts"), "utf8");
+  expect(source).not.toMatch(/register_decision|guard\s*:|pull_request_observed|pull_request_merge_confirmed/);
+});
+
+test("runtime composition registers only the v15 run, stage and worker topology", async () => {
+  const source = await readFile(join(SOURCE, "runtime", "compose.ts"), "utf8");
+  expect(source).not.toMatch(/StageMachineRegistry|registerStageMachine|transitionWorkflow|legacyRunWorkflow|convertOldRun/);
+  expect(source).toContain("registerRunRecordWorkflowServices");
+  expect(source).toContain("WORKER_EXECUTION_WORKFLOW_NAME");
+});
+
 const LEGACY_EFFECT_INTERPRETATION = /(?:\.name\s*===\s*["'](?:launch_session|end_session|record_output|open_gate|accept_outputs|new_round)["']|switch\s*\(\s*(?:[\w.]+\.name|(?:effect_)?name)\s*\)\s*\{[\s\S]*?\bcase\s+["'](?:launch_session|end_session|record_output|open_gate|accept_outputs|new_round)["'])/;
 
 test("storage never interprets legacy effect names to select progression", async () => {
