@@ -55,9 +55,10 @@ export const createImplementationPublicationEnricher = (dependencies: Implementa
     }
     const rows = await sql.query<ImplementationPublicationRow>(
       `SELECT attempt.run_id,build.repository_key,build.repository_path,build.canonical_ref,build.expected_pr_base,
-         build.stage_instance_id,build.cohort_key,intent.action_point
+         build.stage_instance_id,build.cohort_key,worker.work->>'action_point' AS action_point
        FROM oakridge.attempt attempt JOIN ${COHORT_REPOSITORY_SOURCE} build ON build.cohort_id=attempt.cohort_id
        JOIN oakridge.execution_intent intent ON intent.attempt_id=attempt.id
+       JOIN oakridge.cohort_worker worker ON worker.cohort_id=intent.cohort_id AND worker.worker=intent.worker
        WHERE attempt.id=$1`, [input.attempt_id]);
     const roles = rows[0];
     const expected_repository = roles ? await forgeRepositories.find_forge_repository(roles.run_id, roles.repository_key) : null;

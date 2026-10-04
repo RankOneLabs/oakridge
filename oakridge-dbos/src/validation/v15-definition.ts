@@ -1,4 +1,5 @@
 import { WORKER_STATES } from "../domain/dev-flow-v15";
+import { V15_REQUIRED_STAGE_PRODUCERS } from "../domain/dev-flow-v15";
 import { V15_PAYLOAD_CONTRACTS, type BindingType } from "../domain/v15-action-inputs";
 export { V15_PAYLOAD_CONTRACTS } from "../domain/v15-action-inputs";
 import { z } from "zod";
@@ -167,6 +168,9 @@ const checkTree = (stageKey: StageKey, stageValue: DeclaredStage): Result<void, 
         const worker = stageValue.cohort.workers[launch.worker];
         if (!worker) return failure("worker_outside_cohort", visit.path, `Worker '${launch.worker}' is not owned by this cohort`);
         if (!Object.hasOwn(worker.action_points, launch.action_point)) return failure("action_point_undeclared", visit.path, `Action point '${launch.worker}.${launch.action_point}' is undeclared`);
+        if (!tree.changes.some((change) => change.kind === "set_worker_state" && "worker" in change
+          && change.worker === launch.worker && "state" in change && change.state === "working"))
+          return failure("contradictory_changes", visit.path, `An action requires '${launch.worker}' to be working after the decision`);
         if (!launchSourcesAvailable(launch, visit.context, tree.changes as readonly V15Change[])) return failure("source_unavailable", visit.path, `The branch does not establish inputs for '${launch.worker}.${launch.action_point}'`);
         if (launches.has(launch.worker)) return failure("contradictory_changes", visit.path, "A leaf cannot launch the same worker twice");
         launches.add(launch.worker);
@@ -207,6 +211,16 @@ export const parseV15WorkflowDefinition = (input: unknown): Result<WorkflowDefin
   for (const key of V15_STAGE_KEYS) {
     const current = stages[key];
     if (new Set(current.prerequisites).size !== current.prerequisites.length) return failure("invalid_prerequisites", key, "Duplicate prerequisite");
+    const ancestors = new Set<StageKey>();
+    const pending = [...current.prerequisites];
+    while (pending.length) {
+      const dependency = pending.pop()!;
+      if (ancestors.has(dependency)) continue;
+      ancestors.add(dependency);
+      pending.push(...stages[dependency].prerequisites);
+    }
+    if (V15_REQUIRED_STAGE_PRODUCERS[key].some((producer) => !ancestors.has(producer)))
+      return failure("invalid_prerequisites", key, "Prerequisites must wait for every required artifact producer");
     const checkedActions = checkActions(key, current.cohort.workers);
     if (!checkedActions.ok) return checkedActions;
     const checkedTree = checkTree(key, current);

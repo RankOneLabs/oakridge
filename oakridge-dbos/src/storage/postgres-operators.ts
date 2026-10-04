@@ -1,5 +1,5 @@
 import { selectWorkerAttention } from "../domain/worker-attention";
-import { selectArtifactReviewContext } from "../domain/v15-operator-review";
+import { selectAvailableArtifactReviewContext } from "../domain/v15-operator-review";
 import { selectWorkerReviewRequestKinds } from "../domain/v15-review-actions";
 import type { ArtifactId, ExecutionId, StageInstanceId, UnitId, WorkflowRunId, WorkOrderId } from "../domain/primitives";
 import { selectGateActionability, selectV15StageOrder, selectPullRequestMergeWaits, type OperatorApplicationVersionInventory, type OperatorCohortSummary, type CohortDetailContributor, type OperatorParkedGate, type OperatorReviewInbox, type OperatorReviewInboxItem, type OperatorRunDetail, type OperatorRunDiagnosis, type OperatorRunDiagnosisSession, type OperatorRunSummary, type OperatorSessionRunLocation, type OperatorStageArtifact, type OperatorStageDetail, type OperatorStageUnit } from "../domain/operator-projections";
@@ -7,10 +7,10 @@ import type { SqlExecutor } from "./sql-executor";
 import type { BlockedReason, CoreStatus, NextActor } from "../domain/records";
 import { type AdapterRoleRegistry } from "../runtime/executor-registry";
 import { stageInstanceIdFor } from "../decision/ids";
-import type { StageKey, V15WorkerKey } from "../domain/dev-flow-v15";
+import { artifactRefFromRevision, type StageKey, type V15WorkerKey, type VerifiedPrObservation } from "../domain/dev-flow-v15";
 import { parseV15WorkflowDefinition } from "../validation/v15-definition";
-import { loadStageCohortContext } from "./load-stage-cohort";
-import { selectCohortWorkerRecords, selectCohortRepositoryView } from "../domain/cohort-operator-view";
+import { loadStageCohortContext, loadStageCohortEvaluation } from "./load-stage-cohort";
+import { selectCohortWorkerRecords, selectCohortRepositoryView, selectCohortLifecycleView } from "../domain/cohort-operator-view";
 import { selectSessionHoldClaim, type SessionHold } from "../domain/session-hold";
 import type { SessionHoldRepository, SessionRunLocationRepository } from "./repositories";
 import { runRecordWorkflowId } from "../domain/workflow-ids";
@@ -76,6 +76,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     private readonly sql: SqlExecutor,
     private readonly executor_application_version: string,
     _adapter_roles: AdapterRoleRegistry,
+    private readonly observe_pr?: (cohort_id: CohortId) => Promise<import("../domain/primitives").Result<VerifiedPrObservation | null, { readonly detail: string }>>,
   ) {}
 
   private readonly cohort_detail_contributors = new Map<string, CohortDetailContributor>();
@@ -173,28 +174,32 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
               stage.stage_key AS stage_name,stage.id::text AS stage_instance_id,cohort.cohort_key AS unit_id,
               ARRAY(SELECT output.artifact_id::text FROM oakridge.worker_output output
                     WHERE output.cohort_id=cohort.id AND output.worker=worker.worker
-                      AND EXISTS (SELECT 1 FROM oakridge.artifact_provenance provenance
-                        JOIN oakridge.execution_intent intent ON intent.attempt_id=provenance.attempt_id
-                        WHERE provenance.artifact_id=output.artifact_id AND intent.id=worker.active_execution_id)
                     ORDER BY output.output_name,output.collection_key) AS artifact_revision_ids,
               run.status AS run_state
        FROM oakridge.cohort_worker worker
        JOIN oakridge.cohort cohort ON cohort.id=worker.cohort_id
        JOIN oakridge.stage_instance stage ON stage.id=cohort.stage_instance_id
        JOIN oakridge.workflow_run run ON run.id=cohort.run_id
-       WHERE worker.state='awaiting_review' AND run.archived=false
+       WHERE (worker.state='awaiting_review' OR (worker.worker='build' AND cohort.state='awaiting_merge')) AND run.archived=false
          AND ($1::uuid IS NULL OR run.id=$1::uuid)
          AND (NOT $2::boolean OR run.status='active')
        ORDER BY stage.created_at,cohort.materialization_position,worker.worker`, [run_id ?? null, requiredAttentionOnly]);
-    return Promise.all(rows.map(async (row): Promise<OperatorParkedGate> => {
+    const gates = await Promise.all(rows.map(async (row): Promise<OperatorParkedGate | null> => {
       const context = await loadStageCohortContext(this.sql, row.cohort_id as CohortId, row.stage_name as StageKey);
       if (!context.ok) throw new Error(context.error.detail);
       const repository = selectCohortRepositoryView(context.value, row.stage_instance_id as StageInstanceId);
       const first_artifact = row.artifact_revision_ids[0];
-      const artifact = first_artifact ? (await this.sql.query<{ readonly revision: number }>(
-        "SELECT revision FROM oakridge.artifact WHERE id=$1", [first_artifact]))[0] : null;
-      const review = artifact && first_artifact ? selectArtifactReviewContext(context.value,
-        { id: first_artifact as ArtifactId, version: artifact.revision }) : null;
+      const artifact = first_artifact ? (await this.sql.query<{ readonly chain_id: ArtifactId; readonly revision: number }>(
+        "SELECT chain_id::text,revision FROM oakridge.artifact WHERE id=$1", [first_artifact]))[0] : null;
+      let observedContext = context.value;
+      if (observedContext.stage === "implementation" || observedContext.stage === "final_integration") {
+        const observed = await this.observe_pr?.(row.cohort_id as CohortId);
+        if (observed?.ok) observedContext = { ...observedContext, pr: observed.value };
+      }
+      const evaluation = await loadStageCohortEvaluation(this.sql, observedContext);
+      if (!evaluation.ok) throw new Error(evaluation.error.detail);
+      const review = artifact ? selectAvailableArtifactReviewContext(evaluation.value, artifactRefFromRevision(artifact)) : null;
+      if (context.value.cohort.state === "awaiting_merge" && !review?.allowed_request_kinds?.length) return null;
       return { id: `${row.cohort_id}:${row.worker}`, stage_instance_id: row.stage_instance_id as StageInstanceId,
         gate_type: row.worker, run_id: row.run_id as WorkflowRunId, stage_name: row.stage_name,
         unit_id: row.unit_id as UnitId, ...repository,
@@ -205,6 +210,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
         pr_url: review?.worker === "final_integration" ? review.target.pr_url : null, run_state: row.run_state,
         actionable: selectGateActionability(row.run_state) };
     }));
+    return gates.filter((gate): gate is OperatorParkedGate => gate !== null);
   }
 
   async list_runs(filter: "active" | "archived" | "all" = "active"): Promise<readonly OperatorRunSummary[]> {
@@ -376,7 +382,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
           ...selectCohortRepositoryView(context.value, stage.stage_instance_id as StageInstanceId), brief: unit.brief,
           workers, version: context.value.cohort.version,
           sid: unit.session_id,
-          state: unit.state, status: unit.status, blocked_reason: unit.blocked_reason, next_actor: unit.next_actor,
+          state: unit.state, ...selectCohortLifecycleView(context.value, unit),
           retryable: workers.some((worker) => selectWorkerAttention(worker).can_retry), gate: null };
       }));
       const artifacts = artifactRows.filter((artifact) => artifact.stage_instance_id === stage.stage_instance_id)
@@ -512,6 +518,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     // surface offered a way to close. The poller normally closes it; the item
     // is `actionable` because an operator has to be able to when it cannot.
     for (const wait of selectPullRequestMergeWaits(cohorts)) {
+      if (allGates.some((gate) => gate.stage_instance_id === wait.stage_instance_id && gate.unit_id === wait.unit_id)) continue;
       const cohort = cohorts.find((candidate) => candidate.id === wait.cohort_id);
       if (!cohort) continue;
       items.push({ id: `${cohort.id}:pull_request_merge`, kind: "pull_request_merge", state: "actionable", run_id: cohort.run_id,
@@ -519,7 +526,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
         unit_id: cohort.unit_id, repository_key: cohort.repository_key, title: cohort.title, lifecycle: cohort.lifecycle,
         blocked_reason: cohort.blocked_reason, next_actor: cohort.next_actor,
         artifact_revision_id: cohort.artifact_revision_id, artifact_url: cohort.artifact_url, gate_id: null,
-        gate_url: null, resume_actions: ["confirm_merged"], blocked_by: [], pr_url: cohort.links.find((link) => link.key === "pull_request")?.url ?? null });
+        gate_url: null, resume_actions: [], blocked_by: [], pr_url: cohort.links.find((link) => link.key === "pull_request")?.url ?? null });
     }
     return { cohorts, items, attention_count: items.filter((item) => item.state === "actionable").length };
   }
@@ -552,14 +559,12 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     return Promise.all(rows.map(async (row) => {
       const context = await loadStageCohortContext(this.sql, row.cohort_id as CohortId, row.stage_name as StageKey);
       if (!context.ok) throw new Error(context.error.detail);
-      const workers = selectCohortWorkerRecords(context.value);
-      const needsRetry = workers.some((worker) => selectWorkerAttention(worker).can_retry);
-      const needsReview = workers.some((worker) => selectWorkerAttention(worker).needs_review);
+      const lifecycle = selectCohortLifecycleView(context.value, row);
       const repository = selectCohortRepositoryView(context.value, row.stage_instance_id as StageInstanceId);
       const artifact = row.artifact_revision_id as ArtifactId | null;
       const title = row.title;
       const detail = details.get(row.stage_type)?.get(row.cohort_id as CohortId);
-      return { id: row.cohort_id,run_id: row.run_id as WorkflowRunId,workflow_name: row.workflow_name,stage_instance_id: row.stage_instance_id as import("../domain/primitives").StageInstanceId,stage_name: row.stage_name,unit_id: row.unit_id as UnitId,repository_key: repository.repository_key,title,lifecycle: needsRetry || needsReview ? "blocked" : row.status,blocked_reason: needsRetry ? "retry" : needsReview ? "gate" : row.blocked_reason,next_actor: needsRetry || needsReview ? "operator" : row.next_actor,completion: { build_complete: context.value.stage === "implementation" && context.value.cohort.build.state === "accepted", assessment_complete: context.value.stage === "implementation" && context.value.cohort.assessment.state === "accepted" },blocked_by: [],artifact_revision_id: artifact,artifact_url: artifact ? `/artifact_details/${artifact}` : null,gate_id: null,gate_url: null,links: detail?.links ?? [],facts: detail?.facts ?? [],updated_at: row.updated_at };
+      return { id: row.cohort_id,run_id: row.run_id as WorkflowRunId,workflow_name: row.workflow_name,stage_instance_id: row.stage_instance_id as import("../domain/primitives").StageInstanceId,stage_name: row.stage_name,unit_id: row.unit_id as UnitId,repository_key: repository.repository_key,title,lifecycle: lifecycle.status,blocked_reason: lifecycle.blocked_reason,next_actor: lifecycle.next_actor,completion: { build_complete: context.value.stage === "implementation" && context.value.cohort.build.state === "accepted", assessment_complete: context.value.stage === "implementation" && context.value.cohort.assessment.state === "accepted" },blocked_by: [],artifact_revision_id: artifact,artifact_url: artifact ? `/artifact_details/${artifact}` : null,gate_id: null,gate_url: null,links: detail?.links ?? [],facts: detail?.facts ?? [],updated_at: row.updated_at };
     }));
   }
 }

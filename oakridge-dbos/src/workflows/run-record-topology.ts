@@ -66,15 +66,28 @@ const initializeRunStep = DBOS.registerStep(async (run_id: WorkflowRunId): Promi
   await workflowServices().initialize_run?.(run_id);
 }, { name: "oakridgeV15InitializeRunStep", retriesAllowed: true });
 
+interface RecoverableRunDecision extends RunDecision {
+  readonly stages_to_start: readonly StageInstanceId[];
+}
+
 const decideRunStep = DBOS.registerStep(
-  async (run_id: WorkflowRunId): Promise<Result<RunDecision, RunRecordRepositoryError>> => {
+  async (run_id: WorkflowRunId): Promise<Result<RecoverableRunDecision, RunRecordRepositoryError>> => {
     const decided = await workflowServices().records.decide_run(run_id, workflowServices().now());
     // Missing runs are a durable outcome: DBOS wraps exhausted step errors and
     // deserializes replayed errors, so exception identity cannot carry this fact.
     if (!decided.ok && decided.error.kind !== "run_not_found") {
       throw new Error(`${decided.error.operation}:${decided.error.kind}:${decided.error.detail}`);
     }
-    return decided;
+    if (!decided.ok) return decided;
+    const sql = workflowServices().effects_sql;
+    // A stage activation commits before DBOS saves this step's result. A retry
+    // must recover the active stage even when decide_run emits no new transition.
+    const stages = sql ? await sql.query<{ readonly id: StageInstanceId }>(
+      `SELECT stage.id::text FROM oakridge.stage_instance stage
+       JOIN oakridge.workflow_run run ON run.id=stage.run_id
+       WHERE stage.run_id=$1 AND stage.status='active' AND run.status='active'
+       ORDER BY stage.created_at,stage.id`, [run_id]) : [];
+    return { ok: true, value: { ...decided.value, stages_to_start: stages.map((stage) => stage.id) } };
   },
   { name: "oakridgeV15DecideRunStep", retriesAllowed: true, maxAttempts: 5, intervalSeconds: 1, backoffRate: 2 },
 );
@@ -111,7 +124,7 @@ export const RUN_MACHINE_WORKFLOW_NAME = "oakridgeV15RunWorkflow";
  */
 export const runMachineWorkflow = DBOS.registerWorkflow(async (run_id: WorkflowRunId): Promise<RunMachineResult | null> => {
   for (;;) {
-    let decision: RunDecision;
+    let decision: RecoverableRunDecision;
     try {
       await initializeRunStep(run_id);
       const decided = await decideRunStep(run_id);
@@ -127,9 +140,10 @@ export const runMachineWorkflow = DBOS.registerWorkflow(async (run_id: WorkflowR
       await DBOS.sleepSeconds(MACHINE_FAILURE_BACKOFF_SECONDS);
       continue;
     }
-    for (const transition of decision.transitions) {
-      const stage = startedStageOf(transition.effect);
-      if (!stage) continue;
+    // Older cached DBOS step results contain only the transition list.
+    const stages = new Set([...(decision.stages_to_start ?? []),
+      ...decision.transitions.map((transition) => startedStageOf(transition.effect)).filter((stage) => stage !== null)]);
+    for (const stage of stages) {
       // Addressed by the stage's own machine id, not the transition's effect id:
       // one stage has one machine, and a replayed dispatch must join it rather
       // than start a second.

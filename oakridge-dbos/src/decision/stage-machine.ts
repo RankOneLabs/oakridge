@@ -150,19 +150,22 @@ export const finalOutputsReady = (cohort: FinalIntegrationCohortRecord, pr: Veri
     cohort.final_integration.outputs.pr_summary)
   && finalPullRequestMatchesPreparedRepository(cohort, pr)
   && pr?.pr_url === cohort.final_integration.outputs.pr_summary?.body.pr_url
-  && pr?.head_sha !== null;
+  && Boolean(cohort.final_integration.response?.head_sha)
+  && pr?.head_sha === cohort.final_integration.response?.head_sha;
 export const finalExecutionInterrupted = (cohort: FinalIntegrationCohortRecord): boolean =>
   reviewExecutionInterrupted(cohort.final_integration.active_execution_id, cohort.final_integration.interrupted);
 export const finalPrMergedAtReviewedHead = (cohort: FinalIntegrationCohortRecord,
   pr: VerifiedPrObservation | null, target: FinalPrReviewTarget | null): boolean =>
   finalPullRequestMatchesPreparedRepository(cohort, pr) && pr?.state === "merged" && target !== null
   && sameRef(target.pr_summary, currentRef(cohort.final_integration.outputs.pr_summary))
-  && pr.pr_url === target.pr_url && pr.head_sha === target.head_sha;
+  && pr.pr_url === target.pr_url && pr.head_sha === target.head_sha
+  && target.head_sha === cohort.final_integration.response?.head_sha;
 export const finalPrClosedUnmerged = (cohort: FinalIntegrationCohortRecord,
   pr: VerifiedPrObservation | null, target: FinalPrReviewTarget | null): boolean =>
   finalPullRequestMatchesPreparedRepository(cohort, pr) && pr?.state === "closed" && target !== null
   && sameRef(target.pr_summary, currentRef(cohort.final_integration.outputs.pr_summary))
-  && pr.pr_url === target.pr_url && pr.head_sha === target.head_sha;
+  && pr.pr_url === target.pr_url && pr.head_sha === target.head_sha
+  && target.head_sha === cohort.final_integration.response?.head_sha;
 
 /** Every authored v15 fact is a fixed transform over a typed snapshot. */
 export const evaluateV15Fact = (context: V15FactContext, fact: V15Fact): boolean | null => {

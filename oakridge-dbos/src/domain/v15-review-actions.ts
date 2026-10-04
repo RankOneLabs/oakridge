@@ -1,9 +1,9 @@
-import type { OperatorArtifactReviewContext } from "./v15-operator-review";
+import type { OperatorArtifactReviewContext, OperatorArtifactReviewTarget } from "./v15-operator-review";
 import type { V15OperatorRequest, V15WorkerKey } from "./dev-flow-v15";
 export type WorkerReviewAction =
   | { readonly kind: "immediate"; readonly label: string; readonly consequence: string; readonly request: V15OperatorRequest }
   | { readonly kind: "feedback"; readonly label: string; readonly consequence: string; readonly request: (text: string) => V15OperatorRequest };
-export const selectWorkerReviewActions = (context: OperatorArtifactReviewContext): readonly WorkerReviewAction[] => {
+export const selectWorkerReviewActionCandidates = (context: OperatorArtifactReviewTarget): readonly WorkerReviewAction[] => {
   switch (context.worker) {
     case "spec": return [
       { kind: "immediate", label: "Accept analysis", consequence: "Accept this analysis and continue to planning.", request: { kind: "accept_analysis", target: context.target } },
@@ -33,6 +33,11 @@ export const selectWorkerReviewActions = (context: OperatorArtifactReviewContext
     ];
   }
 };
+
+/** The server evaluates candidates against the pinned tree before offering them. */
+export const selectWorkerReviewActions = (context: OperatorArtifactReviewContext): readonly WorkerReviewAction[] =>
+  selectWorkerReviewActionCandidates(context).filter((action) =>
+    context.allowed_request_kinds.includes((action.kind === "immediate" ? action.request : action.request("review feedback")).kind));
 
 export const selectWorkerReviewRequestKinds = (context: OperatorArtifactReviewContext): readonly string[] =>
   selectWorkerReviewActions(context).map((action) => (action.kind === "immediate" ? action.request : action.request("")).kind);

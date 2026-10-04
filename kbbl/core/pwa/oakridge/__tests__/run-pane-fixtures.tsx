@@ -103,7 +103,7 @@ const GATES: ParkedGate[] = [
 ];
 
 const ARTIFACT: ArtifactDetail = {
-  review_context: { cohort_id: "cohort" as never, expected_version: 1, worker: "build", target: { outputs: { build_result: { id: "art-build" as never, version: 1 }, pr_summary: { id: "pr" as never, version: 1 } }, head_sha: "head" as never } },
+  review_context: { cohort_id: "cohort" as never, expected_version: 1, worker: "build", target: { outputs: { build_result: { id: "art-build" as never, version: 1 }, pr_summary: { id: "pr" as never, version: 1 } }, head_sha: "head" as never }, allowed_request_kinds: ["accept_build", "request_build_changes"] },
   id: "art-build",
   type_id: "dev.build_result",
   component_id: null,

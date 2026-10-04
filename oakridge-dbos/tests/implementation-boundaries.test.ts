@@ -1,17 +1,31 @@
 import { expect, test } from "bun:test";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createImplementationCohortHarness, waitFor } from "./support/implementation-cohort-harness";
 import type { AgentPublication } from "./support/implementation-agent";
 import type { BuildReviewTarget } from "../src/domain/dev-flow-v15";
-import type { JsonValue, SessionId } from "../src/domain/primitives";
+import type { JsonValue, SessionId, CohortId } from "../src/domain/primitives";
 import { requestExecutionStop } from "../src/storage/postgres-run-record";
 import { createOakridgeRuntime } from "../src/runtime/compose";
 import { BunGitCommandRunner } from "../src/runtime/git-command-runner";
 import { prepareCohortRepositoryRecord } from "../src/runtime/cohort-pull-request";
 import { PostgresDevFlowPullRequestRepository } from "../src/storage/postgres-dev-flow";
 import type { ImplementationCohortInputs } from "../src/domain/dev-flow-v15";
+import { PostgresOperatorProjectionRepository } from "../src/storage/postgres-operators";
+import { PostgresForgeRepositoryRepository } from "../src/storage/postgres-domain";
+import { createDevFlowAdapterRegistry, registerDevFlowCohortDetails } from "../src/adapters/dev-flow";
+import { observeCohortPullRequest } from "../src/runtime/observe-cohort-pull-request";
+import { prepareFinalIntegrationWorktree, observeFinalIntegrationPullRequest } from "../src/runtime/final-integration";
+import { loadStageCohortContext } from "../src/storage/load-stage-cohort";
+import { selectArtifactReviewContext } from "../src/domain/v15-operator-review";
 
 type Harness = Awaited<ReturnType<typeof createImplementationCohortHarness>>;
+const operatorProjections = (fixture: Harness) => {
+  const projections = new PostgresOperatorProjectionRepository(fixture.sql, "test", createDevFlowAdapterRegistry(),
+    (id) => observeCohortPullRequest({ sql: fixture.sql, git: fixture.git, reader: fixture.reader,
+      pull_requests: fixture.pullRequests, forge_repositories: new PostgresForgeRepositoryRepository(fixture.sql) }, id));
+  registerDevFlowCohortDetails(projections, fixture.sql);
+  return projections;
+};
 const prBody = { pr_url: "https://github.com/example/oakridge/pull/1", repository_key: "oakridge",
   branch: "cohort/core", base_branch: "epic/schema", summary: "boundary proof" };
 const buildPublications: readonly AgentPublication[] = [
@@ -30,6 +44,52 @@ const writeCounts = async (fixture: Harness) => (await fixture.sql.query<{ reado
   `SELECT (SELECT count(*)::text FROM oakridge.artifact) AS artifacts,
     (SELECT count(*)::text FROM dev_flow.pull_request_observation) AS observations,
     (SELECT count(*)::text FROM dev_flow.pull_request_verification) AS bindings`, []))[0]!;
+
+test("moving the final PR head cannot silently replace published review evidence", async () => {
+  const fixture = await createImplementationCohortHarness();
+  try {
+    const stage = randomUUID();
+    const cohort = randomUUID() as CohortId;
+    const repository = { repository_key: "oakridge", repository_path: fixture.repo, base_branch: "cohort/core",
+      integration_branch: "epic/schema", base_head_sha: await fixture.runGit(fixture.repo, ["rev-parse", "HEAD"]) };
+    await fixture.sql.query(`INSERT INTO oakridge.stage_instance (id,run_id,stage_key,stage_type,stage_contract,status)
+      VALUES ($1,$2,'final_integration','delegated_session',$3::jsonb,'active')`,
+      [stage, fixture.run_id, JSON.stringify(fixture.workflow.stages.final_integration)]);
+    await fixture.sql.query(`INSERT INTO oakridge.cohort (id,run_id,stage_instance_id,cohort_key,state,status,frozen_inputs)
+      VALUES ($1,$2,$3,'oakridge','pending','pending',$4::jsonb)`,
+      [cohort, fixture.run_id, stage, JSON.stringify({ repository, completed_cohorts: [] })]);
+    await fixture.sql.query("INSERT INTO oakridge.cohort_worker (cohort_id,worker) VALUES ($1,'final_integration')", [cohort]);
+    const dependencies = { sql: fixture.sql, git: fixture.git, reader: fixture.reader };
+    const prepared = await prepareFinalIntegrationWorktree(dependencies, cohort);
+    if (!prepared.ok) throw new Error(prepared.error.detail);
+    await fixture.advanceCohort(cohort);
+    expect((await fixture.execute(0, { kind: "publish", commit_build: false,
+      publications: [{ output_name: "pr_summary", body: { ...prBody, review_status: null } }] })).map((delivery) => delivery.status)).toEqual([201]);
+    await fixture.advanceCohort(cohort);
+    const snapshot = await loadStageCohortContext(fixture.sql, cohort, "final_integration");
+    const observed = await observeFinalIntegrationPullRequest(dependencies, cohort);
+    if (!snapshot.ok || snapshot.value.stage !== "final_integration" || !observed.ok || !observed.value)
+      throw new Error("final review unavailable");
+    const summary = snapshot.value.cohort.final_integration.outputs.pr_summary!;
+    const review = selectArtifactReviewContext({ ...snapshot.value, pr: observed.value }, summary);
+    if (review?.worker !== "final_integration") throw new Error("final review context unavailable");
+    await fixture.runGit(fixture.repo, ["-c", "user.name=Review", "-c", "user.email=review@example.invalid",
+      "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "move final head without publishing evidence"]);
+    await fixture.runGit(fixture.repo, ["push", "origin", "HEAD:refs/heads/cohort/core"]);
+    fixture.forge.state = "closed"; fixture.forge.merged_at = fixture.now();
+    expect(await observeFinalIntegrationPullRequest(dependencies, cohort))
+      .toMatchObject({ ok: false, error: { code: "pr_verification_failed" } });
+    const movedHead = await fixture.runGit(fixture.repo, ["rev-parse", "HEAD"]);
+    for (const head_sha of [review.target.head_sha, movedHead]) {
+      expect(await fixture.ingress.advance(cohort, { id: randomUUID() as never, cohort_id: cohort,
+        expected_version: review.expected_version, request: { kind: "confirm_merged", target: { ...review.target, head_sha: head_sha as never } } }))
+        .toMatchObject({ ok: false });
+    }
+    expect((await fixture.sql.query(`SELECT cohort.state,worker.response->>'head_sha' AS head_sha
+      FROM oakridge.cohort cohort JOIN oakridge.cohort_worker worker ON worker.cohort_id=cohort.id
+      WHERE cohort.id=$1`, [cohort]))[0]).toEqual({ state: "working", head_sha: review.target.head_sha });
+  } finally { await fixture.close(); }
+}, 60_000);
 
 test("both workers retry through kbbl after a real agent exits without publishing", async () => {
   const fixture = await createImplementationCohortHarness();
@@ -88,14 +148,19 @@ test("both workers retry through kbbl after a real agent exits without publishin
 test("B3 runs both revision routes, discussion, fresh assessment, PR replacement and merge through kbbl", async () => {
   const fixture = await createImplementationCohortHarness();
   try {
+    const projections = operatorProjections(fixture);
     await fixture.advance();
     expect((await fixture.execute(0, { kind: "publish", commit_build: true, publications: buildPublications })).map((delivery) => delivery.status)).toEqual([201, 201]);
+    expect((await projections.list_pending_gates(fixture.run_id))[0]?.resume_actions)
+      .toEqual(["accept_build", "request_build_changes"]);
     await fixture.advance({ kind: "request_build_changes", feedback: { source: "build_review", text: "Add coverage", target: await buildTarget(fixture) } });
     const reviewRevision = await fixture.launch(1);
     expect(reviewRevision.prompt).toContain("# Build revision");
     expect(reviewRevision.prompt).toContain("current implementation");
     expect(reviewRevision.prompt).toContain("Add coverage");
     expect((await fixture.execute(1, { kind: "publish", commit_build: true, publications: buildPublications })).map((delivery) => delivery.status)).toEqual([201, 201]);
+    expect((await projections.list_pending_gates(fixture.run_id))[0]?.resume_actions)
+      .toEqual(["accept_build", "request_build_changes"]);
     await fixture.advance({ kind: "accept_build", target: await buildTarget(fixture) });
     const accepted = await fixture.accepted();
     expect((await fixture.launch(2)).prompt).toContain(accepted.head_sha);
@@ -112,6 +177,9 @@ test("B3 runs both revision routes, discussion, fresh assessment, PR replacement
       body: { assessment, build: accepted, explanation: "The evidence still shows the missing check." } as unknown as JsonValue }] })).map((delivery) => delivery.status)).toEqual([201]);
     expect(await writeCounts(fixture)).toEqual(before);
     expect(await fixture.accepted()).toEqual(accepted);
+    const unchangedGate = (await projections.list_pending_gates(fixture.run_id))[0];
+    expect(unchangedGate).toMatchObject({ gate_type: "assessment", artifact_revision_id: expect.any(String),
+      resume_actions: ["accept_assessment", "request_implementation_changes", "discuss_assessment"] });
     await fixture.advance({ kind: "request_implementation_changes", feedback: { source: "assessment", text: "Fix the finding",
       target: { assessment, build: accepted } } });
     const assessmentRevision = await fixture.launch(4);
@@ -128,7 +196,14 @@ test("B3 runs both revision routes, discussion, fresh assessment, PR replacement
     expect((await fixture.execute(5, { kind: "publish", commit_build: false, publications: [{ output_name: "assessment",
       body: { verdict: "pass", findings: [], recommended_next_actions: [] } }] })).map((delivery) => delivery.status)).toEqual([201]);
     await fixture.advance({ kind: "accept_assessment", target: { assessment: await fixture.assessment(), build: freshBuild } });
+    const inbox = await projections.get_review_inbox();
+    expect(inbox.items).toEqual([expect.objectContaining({ kind: "pull_request_merge", resume_actions: [] })]);
+    expect((await projections.get_run_diagnosis(fixture.run_id))?.pull_request_merge_waits)
+      .toEqual([expect.objectContaining({ cohort_id: fixture.cohort_id })]);
+    expect((await projections.get_run(fixture.run_id))?.stages[0]?.units[0])
+      .toMatchObject({ status: "blocked", blocked_reason: "external", next_actor: "external" });
     fixture.forge.state = "closed";
+    expect((await projections.list_pending_gates(fixture.run_id))[0]?.resume_actions).toEqual(["replace_pr"]);
     await fixture.advance({ kind: "replace_pr", target: await buildTarget(fixture) });
     const replacement = await fixture.launch(6);
     expect(replacement.prompt).toContain("# Build Agent — Replacement Pull Request");
@@ -142,8 +217,22 @@ test("B3 runs both revision routes, discussion, fresh assessment, PR replacement
       expect([response.status, (await response.json() as { code: string }).code]).toEqual([409, "pr_verification_failed"]);
       expect(await writeCounts(fixture)).toEqual(beforeReplacement);
     }
+    await fixture.execute(6, { kind: "exit_without_publication" });
+    const execution = await fixture.execution(6);
+    const session = (await fixture.sql.query<{ readonly id: SessionId; readonly kbbl_session_id: string }>(
+      `SELECT session.id::text,session.kbbl_session_id FROM oakridge.execution_intent intent
+       JOIN oakridge.session session ON session.id=intent.session_id WHERE intent.id=$1`, [execution]))[0]!;
+    const terminal = await waitFor("replacement agent exit", async () => {
+      const observation = await fixture.adapter.observe_terminal(execution, { kind: "kbbl_session", session_id: session.kbbl_session_id });
+      return observation.kind === "terminal" ? observation.observation : null;
+    });
+    if (terminal.kind !== "succeeded") throw new Error(`Unexpected terminal outcome: ${terminal.kind}`);
+    await fixture.records.observe_session({ session_id: session.id, observed_at: fixture.now(),
+      health: { kind: "ended_succeeded", metadata: terminal.metadata, observed_at: fixture.now() } });
+    fixture.forge.number = 1; fixture.forge.state = "closed";
+    await fixture.advance({ kind: "retry_build" });
     fixture.forge.number = 2; fixture.forge.state = "open";
-    expect((await fixture.execute(6, { kind: "publish", commit_build: true, publications: [
+    expect((await fixture.execute(7, { kind: "publish", commit_build: true, publications: [
       { output_name: "pr_summary", body: { ...prBody, pr_url: "https://github.com/example/oakridge/pull/2" } },
       buildPublications[1]!,
     ] })).map((delivery) => delivery.status)).toEqual([201, 201]);
@@ -154,7 +243,7 @@ test("B3 runs both revision routes, discussion, fresh assessment, PR replacement
       [fixture.cohort_id]))[0]?.number).toBe(2);
     await fixture.advance({ kind: "accept_build", target: await buildTarget(fixture) });
     const replacementBuild = await fixture.accepted();
-    expect((await fixture.execute(7, { kind: "publish", commit_build: false, publications: [{ output_name: "assessment",
+    expect((await fixture.execute(8, { kind: "publish", commit_build: false, publications: [{ output_name: "assessment",
       body: { verdict: "pass", findings: [], recommended_next_actions: [] } }] })).map((delivery) => delivery.status)).toEqual([201]);
     await fixture.advance({ kind: "accept_assessment", target: { assessment: await fixture.assessment(), build: replacementBuild } });
     fixture.forge.state = "closed"; fixture.forge.merged_at = fixture.now();

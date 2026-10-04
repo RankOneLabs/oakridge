@@ -26,6 +26,11 @@ const brief = (cohort_id: string, overrides: Partial<BuildBriefBody> = {}): Buil
   ...overrides,
 });
 
+test("plans reject repeated dependencies before brief writing freezes the graph", () => {
+  expect(validatePlanCohorts(plan([planCohort("a"), planCohort("b", { depends_on: ["a", "a"] })]), new Set(["oakridge"])))
+    .toMatchObject({ ok: false, error: { kind: "duplicate_dependency", cohort_key: "b" } });
+});
+
 test("plan readiness reports distinct graph and repository errors", () => {
   const repositories = new Set(["oakridge"]);
   const failures: readonly [PlanBody, string][] = [

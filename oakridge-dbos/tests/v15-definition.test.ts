@@ -79,7 +79,22 @@ test("a leaf cannot name an undeclared action point", async () => {
   expect(check(withTree(await definition(), { kind: "apply", changes: [], actions: [{ worker: "build", action_point: "invented" }] }))).toBe("action_point_undeclared");
 });
 test("retry input is unavailable without an interrupted-worker branch", async () => {
-  expect(check(withTree(await definition(), { kind: "apply", changes: [], actions: [{ worker: "build", action_point: "retry" }] }))).toBe("source_unavailable");
+  expect(check(withTree(await definition(), { kind: "apply", changes: [{ kind: "set_worker_state", worker: "build", state: "working" }], actions: [{ worker: "build", action_point: "retry" }] }))).toBe("source_unavailable");
+});
+test("a launch cannot omit the worker's working state", async () => {
+  expect(check(withTree(await definition(), { kind: "match_cohort", cases: { pending: {
+    kind: "apply", changes: [], actions: [{ worker: "build", action_point: "initial" }],
+  } }, otherwise: { kind: "wait", reason: "working" } }))).toBe("contradictory_changes");
+});
+test("stage prerequisites cannot omit required artifact producers", async () => {
+  const source = await definition();
+  source.stages.planning.prerequisites = [];
+  expect(check(source)).toBe("invalid_prerequisites");
+});
+test("required producers may be reached through transitive prerequisites", async () => {
+  const source = await definition();
+  source.stages.planning.prerequisites = ["spec_analysis"];
+  expect(check(source)).toBe("valid");
 });
 test("a leaf cannot write conflicting worker states", async () => {
   expect(check(withTree(await definition(), { kind: "apply", changes: [{ kind: "set_worker_state", worker: "build", state: "accepted" }, { kind: "set_worker_state", worker: "build", state: "cancelled" }], actions: [] }))).toBe("contradictory_changes");

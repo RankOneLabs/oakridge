@@ -10,6 +10,7 @@ afterEach(() => vi.clearAllMocks());
 
 it("assessment review explains all three routes and discussion sends feedback to the assessor", async () => {
   const context: OperatorArtifactReviewContext = { worker: "assessment", cohort_id: "cohort" as never, expected_version: 7,
+    allowed_request_kinds: ["accept_assessment", "request_implementation_changes", "discuss_assessment"],
     target: { assessment: { id: "assessment" as never, version: 2 }, build: {
       outputs: { build_result: { id: "build" as never, version: 1 }, pr_summary: { id: "pr" as never, version: 1 } },
       pr_url: "https://github.com/example/repo/pull/1", head_sha: "sha" as never } } };

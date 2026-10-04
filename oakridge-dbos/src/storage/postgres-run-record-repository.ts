@@ -434,7 +434,8 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
           const current = owner.worker === "brief" ? { members: current_outputs.filter((row) => row.attempt_id === request.attempt_id)
             .map((row) => ({ cohort_key: row.collection_key, ref: artifactRefFromRevision(row) })) } : published.value;
           await tx.query("UPDATE oakridge.cohort_worker SET response=$3::jsonb WHERE cohort_id=$1 AND worker=$2",
-            [owner.cohort_id, owner.worker, JSON.stringify({ execution_id: owner.execution_id, current })]);
+            [owner.cohort_id, owner.worker, JSON.stringify({ execution_id: owner.execution_id, current,
+              ...(owner.worker === "final_integration" ? { head_sha: verified_head } : {}) })]);
         }
         return { kind: "published", artifact_id: request.artifact_id, ...identity };
       });

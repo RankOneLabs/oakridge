@@ -40,7 +40,7 @@ export const prepareV15StageFixture = async () => {
     await sql.query(`INSERT INTO oakridge.stage_instance (id,run_id,stage_key,stage_type,stage_contract,status)
       VALUES ($1,$2,'repository_preparation','provision_repository_refs',$3::jsonb,'active')`,
       [stage_id, run_id, JSON.stringify({ ...definition.value.stages.repository_preparation, dependency_stage_instance_ids: [] })]);
-    return { sql, root, git, repository, origin, runGit, stage_id, run_id, definition: definition.value, context,
+    return { sql, database_url: scratch.value.url, root, git, repository, origin, runGit, stage_id, run_id, definition: definition.value, context,
       close: async () => { await sql.close(); await scratch.value.drop(); await rm(root, { recursive: true, force: true }); } };
   } catch (cause) { await sql.close(); await scratch.value.drop(); await rm(root, { recursive: true, force: true }); throw cause; }
 };

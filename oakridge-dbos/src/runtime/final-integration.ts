@@ -35,10 +35,17 @@ export const verifyFinalIntegrationPullRequest = async (dependencies: FinalInteg
 };
 export const observeFinalIntegrationPullRequest = async (dependencies: FinalIntegrationVerificationDependencies, cohort_id: CohortId):
   Promise<Result<VerifiedPrObservation | null, FinalIntegrationVerificationError>> => {
-  const rows = await dependencies.sql.query<{ readonly body: PrSummaryBody }>(
-    `SELECT artifact.body FROM oakridge.worker_output output JOIN oakridge.artifact artifact ON artifact.id=output.artifact_id
+  const rows = await dependencies.sql.query<{ readonly body: PrSummaryBody; readonly head_sha: string | null }>(
+    `SELECT artifact.body,worker.response->>'head_sha' AS head_sha FROM oakridge.worker_output output
+     JOIN oakridge.artifact artifact ON artifact.id=output.artifact_id
+     JOIN oakridge.cohort_worker worker ON worker.cohort_id=output.cohort_id AND worker.worker=output.worker
      WHERE output.cohort_id=$1 AND output.worker='final_integration' AND output.output_name='pr_summary'`, [cohort_id]);
-  return rows[0] ? verifyFinalIntegrationPullRequest(dependencies, { cohort_id, summary: rows[0].body }) : ok(null);
+  const published = rows[0];
+  if (!published) return ok(null);
+  const observed = await verifyFinalIntegrationPullRequest(dependencies, { cohort_id, summary: published.body });
+  if (!observed.ok) return observed;
+  return published.head_sha && published.head_sha === observed.value.head_sha ? observed
+    : err({ code: "pr_verification_failed", detail: "Final pull request head differs from the published review evidence" });
 };
 
 /** Prepare a detached worktree from the pushed run branch, without modifying the project checkout. */

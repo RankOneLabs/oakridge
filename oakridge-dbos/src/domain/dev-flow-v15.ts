@@ -385,6 +385,15 @@ export type StageKey =
   | "final_integration";
 
 export type StageState = "pending" | "working" | "complete" | "failed" | "cancelled";
+/** Accepted artifact producers required by each stage's typed input contract. */
+export const V15_REQUIRED_STAGE_PRODUCERS: Readonly<Record<StageKey, readonly StageKey[]>> = {
+  repository_preparation: [],
+  spec_analysis: ["repository_preparation"],
+  planning: ["repository_preparation", "spec_analysis"],
+  brief_writing: ["repository_preparation", "planning"],
+  implementation: ["repository_preparation", "planning", "brief_writing"],
+  final_integration: ["repository_preparation", "planning", "implementation"],
+};
 export type RunState = StageState;
 
 export interface StageDefinition<Cohort> {
@@ -715,7 +724,13 @@ export type SpecWorkerRecord = ReviewWorkerRecord<SpecWorkInput, SpecStoredOutpu
 export type PlanWorkerRecord = ReviewWorkerRecord<PlanWorkInput, PlanStoredOutputs, ArtifactRef | null, "initial" | "revise" | "retry">;
 export type BriefWorkerRecord = ReviewWorkerRecord<BriefWorkInput, BriefStoredOutputs, BriefCollection, "initial" | "revise" | "retry">;
 export interface FinalWorkInput { action_point: "initial"; input: FinalIntegrationInputs }
-export type FinalWorkerRecord = ReviewWorkerRecord<FinalWorkInput, FinalStoredOutputs, ArtifactRef | null, "initial" | "retry">;
+/** The pushed head verified when this summary revision was published. */
+export interface FinalReviewResponse extends ReviewResponse<ArtifactRef | null> {
+  head_sha: CommitSha;
+}
+export type FinalWorkerRecord = Omit<ReviewWorkerRecord<FinalWorkInput, FinalStoredOutputs, ArtifactRef | null, "initial" | "retry">, "response"> & {
+  response: FinalReviewResponse | null;
+};
 
 export interface RepositoryRefsArtifact {
   id: ArtifactId;

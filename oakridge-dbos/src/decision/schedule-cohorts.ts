@@ -3,7 +3,7 @@ import type { BuildBriefBody, PlanBody, PlanCohort } from "../domain/dev-flow-ar
 import { err, ok, type Result } from "../domain/primitives";
 
 export type PlanCohortErrorKind = "empty_plan" | "invalid_cohort_key" | "duplicate_cohort_key"
-  | "unknown_repository" | "self_dependency" | "unknown_dependency" | "cyclic_dependency";
+  | "unknown_repository" | "self_dependency" | "unknown_dependency" | "duplicate_dependency" | "cyclic_dependency";
 export interface PlanCohortError {
   readonly operation: "validate_plan_cohorts";
   readonly kind: PlanCohortErrorKind;
@@ -29,6 +29,8 @@ export const validatePlanCohorts = (plan: PlanBody, repository_keys: ReadonlySet
     byKey.set(cohort.id, cohort);
   }
   for (const cohort of plan.cohorts) {
+    if (new Set(cohort.depends_on).size !== cohort.depends_on.length)
+      return fail("duplicate_dependency", cohort.id, `cohort '${cohort.id}' repeats a dependency`);
     for (const dependency of cohort.depends_on) {
       if (dependency === cohort.id) return fail("self_dependency", cohort.id, `cohort '${cohort.id}' depends on itself`);
       if (!byKey.has(dependency)) return fail("unknown_dependency", cohort.id,

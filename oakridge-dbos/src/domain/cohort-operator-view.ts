@@ -2,6 +2,24 @@ import { join } from "node:path";
 import type { V15FactContext } from "../decision/stage-machine";
 import type { OperatorWorkerRecord, OperatorStageUnit } from "./operator-projections";
 import type { StageInstanceId } from "./primitives";
+import type { CoreStatus, BlockedReason, NextActor } from "./records";
+import { selectWorkerAttention } from "./worker-attention";
+
+export interface CohortLifecycleView {
+  readonly status: CoreStatus;
+  readonly blocked_reason: BlockedReason | null;
+  readonly next_actor: NextActor | null;
+}
+export const selectCohortLifecycleView = (context: V15FactContext, stored: CohortLifecycleView): CohortLifecycleView => {
+  const state = context.cohort.state;
+  if (state === "complete" || state === "failed" || state === "cancelled")
+    return { status: state, blocked_reason: null, next_actor: null };
+  if (state === "awaiting_merge") return { status: "blocked", blocked_reason: "external", next_actor: "external" };
+  const attention = selectCohortWorkerRecords(context).map(selectWorkerAttention);
+  if (attention.some((worker) => worker.can_retry)) return { status: "blocked", blocked_reason: "retry", next_actor: "operator" };
+  if (attention.some((worker) => worker.needs_review)) return { status: "blocked", blocked_reason: "gate", next_actor: "operator" };
+  return stored;
+};
 
 export interface CohortRepositoryView {
   readonly repository_key: string | null;

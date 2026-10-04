@@ -2,12 +2,11 @@
 import { type V15EvaluationInput, type V15CompiledCohortDefinition } from "../decision/stage-machine";
 import { advanceCohortUntilWait, type CohortProgressionError } from "../runtime/run-launch-dispatch";
 import type { AgentSettings, VerifiedPrObservation, V15RunInputs } from "../domain/dev-flow-v15";
-import { artifactRefFromRevision } from "../domain/dev-flow-v15";
-import { err, ok, type ArtifactId, type CohortId, type ExecutionId, type Result, type RunTransitionId, type StageInstanceId, type WorkflowRunId } from "../domain/primitives";
+import { err, ok, type CohortId, type ExecutionId, type Result, type RunTransitionId, type StageInstanceId, type WorkflowRunId } from "../domain/primitives";
 import type { StateName } from "../domain/primitives";
 import { selectStartableCohorts, type SchedulableCohort } from "../decision/schedule-cohorts";
 import { commitSelectedCohort, type PostgresRunRecordWriter } from "./postgres-run-record";
-import { loadStageCohortContext } from "./load-stage-cohort";
+import { loadStageCohortContext, loadStageCohortEvaluation } from "./load-stage-cohort";
 import type { StageKey, V15OperatorRequestEnvelope, V15WorkerKey, AgentExecutionDefinition } from "../domain/dev-flow-v15";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 
@@ -68,9 +67,8 @@ export class StageEventApplier {
         detail: "this stage has no pinned cohort decision tree" });
     const snapshot = await loadStageCohortContext(tx, cohort_id, location.stage_key);
     if (!snapshot.ok) throw new IngressAbort(snapshot.error);
-    const artifacts = await tx.query<{ readonly chain_id: ArtifactId; readonly revision: number }>(
-      `SELECT artifact.chain_id::text,artifact.revision FROM oakridge.artifact artifact
-       JOIN oakridge.artifact_owner owner ON owner.artifact_id=artifact.id WHERE owner.run_id=$1`, [location.run_id]);
+    const evaluation = await loadStageCohortEvaluation(tx, snapshot.value);
+    if (!evaluation.ok) throw new IngressAbort(evaluation.error);
     const settingsFor = (source: "run.builder" | "run.planner") => source === "run.builder"
       ? location.context.builder : location.context.planner;
     const settings: Partial<Record<V15WorkerKey, AgentSettings>> = {};
@@ -81,8 +79,7 @@ export class StageEventApplier {
         detail: `run is missing pinned settings for ${key}` });
       settings[key as V15WorkerKey] = settingsFor(source);
     }
-    return { location, evaluation: { definition, context: snapshot.value,
-      available_artifacts: artifacts.map(artifactRefFromRevision) }, settings };
+    return { location, evaluation: evaluation.value, settings };
   }
 
   private async request_replay(cohort_id: CohortId, request: V15OperatorRequestEnvelope):

@@ -2,6 +2,9 @@ import { expect, test } from "bun:test";
 import { evaluateCohort, evaluateV15Cohort, evaluateV15Fact } from "../src/decision/stage-machine";
 import type { ImplementationCohortDefinition, ImplementationCohortRecord, ArtifactRef } from "../src/domain/dev-flow-v15";
 import { advanceCohortUntilWait } from "../src/runtime/run-launch-dispatch";
+import { selectAvailableArtifactReviewContext } from "../src/domain/v15-operator-review";
+import { loadDevFlowV15 } from "../src/seed/dev-flow-v15";
+import { parseV15WorkflowDefinition } from "../src/validation/v15-definition";
 
 const ref = { id: "00000000-0000-4000-8000-000000000001", version: 1 } as ArtifactRef;
 const evaluatorDefinition = async (): Promise<ImplementationCohortDefinition> =>
@@ -82,6 +85,23 @@ const buildTarget = () => ({ outputs: {
   pr_summary: { id: "00000000-0000-4000-8000-000000000003" as never, version: 1 },
 }, head_sha: "abc" as never });
 const availableBuildRefs = () => [ref, buildTarget().outputs.build_result, buildTarget().outputs.pr_summary];
+
+test("operator controls follow a valid definition change without a separate policy edit", async () => {
+  const loaded = await loadDevFlowV15();
+  if (!loaded.ok) throw new Error(loaded.error.detail);
+  const source = structuredClone(loaded.value);
+  const input = { context: { stage: "implementation" as const, cohort: buildReviewCohort(), pr: null },
+    available_artifacts: availableBuildRefs() };
+  const selected = buildTarget().outputs.build_result;
+  const original = selectAvailableArtifactReviewContext({ ...input, definition: source.stages.implementation.cohort }, selected);
+  source.stages.implementation.cohort.decision_tree = { kind: "match_request", cases: {
+    accept_build: { kind: "reject", reason: "build acceptance is disabled by this definition" },
+  }, otherwise: source.stages.implementation.cohort.decision_tree };
+  expect(parseV15WorkflowDefinition(source).ok).toBe(true);
+  const changed = selectAvailableArtifactReviewContext({ ...input, definition: source.stages.implementation.cohort }, selected);
+  expect({ original: original?.allowed_request_kinds, changed: changed?.allowed_request_kinds })
+    .toEqual({ original: ["accept_build", "request_build_changes"], changed: ["request_build_changes"] });
+});
 
 test("accept_build resolves the assessment launch from current build content", async () => {
   const selected = evaluateCohort({ definition: await evaluatorDefinition(), snapshot: buildReviewCohort(),
@@ -231,7 +251,7 @@ test("final readiness requires a verified PR at the prepared base branch", () =>
     head_branch: "epic/schema", base_branch: "epic/wf", head_sha: "abc" as never, state: "open" as const };
   const cohort = { inputs: { repository: { repository_key: "oakridge", base_branch: "epic/schema",
     integration_branch: "epic/wf" } }, final_integration: { active_execution_id: "final-execution",
-    response: { execution_id: "final-execution", current: ref },
+    response: { execution_id: "final-execution", current: ref, head_sha: pr.head_sha },
     outputs: { pr_summary: { ...ref, body: { pr_url: pr.pr_url } } } } } as never;
   expect(evaluateV15Fact({ stage: "final_integration", cohort, pr, reviewed_target: null }, "final_outputs_ready")).toBe(true);
   expect(evaluateV15Fact({ stage: "final_integration", cohort, pr: { ...pr, head_branch: "other" },
@@ -243,7 +263,7 @@ test("a final merge must match the reviewed head", () => {
   const pr = { pr_url: target.pr_url, repository_key: "oakridge" as never,
     head_branch: "epic/schema", base_branch: "epic/wf", head_sha: "wrong" as never, state: "merged" as const };
   const cohort = { inputs: { repository: { repository_key: "oakridge", base_branch: "epic/schema", integration_branch: "epic/wf" } },
-    final_integration: { outputs: { pr_summary: { id: ref.id, version: ref.version } } } } as never;
+    final_integration: { response: { head_sha: target.head_sha }, outputs: { pr_summary: { id: ref.id, version: ref.version } } } } as never;
   expect(evaluateV15Fact({ stage: "final_integration", cohort, pr, reviewed_target: target },
     "final_pr_merged_at_reviewed_head")).toBe(false);
   expect(evaluateV15Fact({ stage: "final_integration", cohort, pr: { ...pr, head_sha: target.head_sha },

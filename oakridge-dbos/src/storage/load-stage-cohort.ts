@@ -1,6 +1,6 @@
 import type * as V15 from "../domain/dev-flow-v15";
 import { artifactRefFromRevision } from "../domain/dev-flow-v15";
-import type { V15FactContext } from "../decision/stage-machine";
+import type { V15FactContext, V15EvaluationInput, V15CompiledCohortDefinition } from "../decision/stage-machine";
 import { err, ok, type CohortId, type CohortKey, type ArtifactId, type ExecutionId, type SessionId, type Result } from "../domain/primitives";
 import type { SqlExecutor } from "./sql-executor";
 import { loadImplementationCohortSnapshot } from "./load-run-snapshot";
@@ -128,4 +128,19 @@ export const loadStageCohortContext = async (tx: SqlExecutor, cohort_id: CohortI
       cohort: { ...base, inputs: row.frozen_inputs as V15.FinalIntegrationInputs,
         final_integration: { ...owner, outputs: { pr_summary: output("pr_summary") } } as V15.FinalWorkerRecord } });
   }
+};
+
+/** Operator actions use the same pinned definition and artifact ledger as ingress. */
+export const loadStageCohortEvaluation = async (tx: SqlExecutor, context: V15FactContext):
+  Promise<Result<Omit<V15EvaluationInput, "request">, StageCohortSnapshotError>> => {
+  const rows = await tx.query<{ readonly definition: V15CompiledCohortDefinition }>(
+    `SELECT stage.stage_contract->'cohort' AS definition FROM oakridge.cohort cohort
+     JOIN oakridge.stage_instance stage ON stage.id=cohort.stage_instance_id WHERE cohort.id=$1`, [context.cohort.id]);
+  if (!rows[0]?.definition) return err({ kind: "invalid_snapshot", cohort_id: context.cohort.id,
+    detail: "cohort has no pinned decision tree" });
+  const artifacts = await tx.query<{ readonly chain_id: ArtifactId; readonly revision: number }>(
+    `SELECT artifact.chain_id::text,artifact.revision FROM oakridge.artifact artifact
+     JOIN oakridge.artifact_owner owner ON owner.artifact_id=artifact.id
+     JOIN oakridge.cohort cohort ON cohort.run_id=owner.run_id WHERE cohort.id=$1`, [context.cohort.id]);
+  return ok({ context, definition: rows[0].definition, available_artifacts: artifacts.map(artifactRefFromRevision) });
 };

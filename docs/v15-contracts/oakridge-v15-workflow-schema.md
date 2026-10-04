@@ -393,7 +393,12 @@ type SpecWorkerRecord = ReviewWorkerRecord<SpecWorkInput, SpecStoredOutputs, Art
 type PlanWorkerRecord = ReviewWorkerRecord<PlanWorkInput, PlanStoredOutputs, ArtifactRef | null, "initial" | "revise" | "retry">;
 type BriefWorkerRecord = ReviewWorkerRecord<BriefWorkInput, BriefStoredOutputs, BriefCollection, "initial" | "revise" | "retry">;
 interface FinalWorkInput { action_point: "initial"; input: FinalIntegrationInputs }
-type FinalWorkerRecord = ReviewWorkerRecord<FinalWorkInput, FinalStoredOutputs, ArtifactRef | null, "initial" | "retry">;
+interface FinalReviewResponse extends ReviewResponse<ArtifactRef | null> {
+  head_sha: CommitSha;
+}
+type FinalWorkerRecord = Omit<ReviewWorkerRecord<FinalWorkInput, FinalStoredOutputs, ArtifactRef | null, "initial" | "retry">, "response"> & {
+  response: FinalReviewResponse | null;
+};
 
 interface RepositoryRefsArtifact {
   id: ArtifactId;
@@ -672,7 +677,7 @@ Otherwise final worker awaiting_review:
 Any other state combination: reject.
 ```
 
-The facts are `final_outputs_ready`, `final_execution_interrupted`, `final_pr_merged_at_reviewed_head`, and `final_pr_closed_unmerged`. A merge observation alone does not complete this cohort: final integration requires the operator's confirmation. Neither the worker nor the interpreter performs a merge. A confirmation must be checked against a current verified observation; operator acceptance of assessment verdicts does not waive PR identity, branch, base, or commit checks.
+The facts are `final_outputs_ready`, `final_execution_interrupted`, `final_pr_merged_at_reviewed_head`, and `final_pr_closed_unmerged`. A merge observation alone does not complete this cohort: final integration requires the operator's confirmation. Neither the worker nor the interpreter performs a merge. Publication stores the verified pushed head in `FinalReviewResponse.head_sha` alongside the exact summary reference. Review targets and later observations must match that retained head; a missing head is a verification failure. A confirmation must be checked against a current verified observation; operator acceptance of assessment verdicts does not waive PR identity, branch, base, or commit checks.
 
 Retry reuses a matching existing final PR before opening another. V15 has no final implementation-revision or closed-PR replacement route; closure fails the stage and run as in the current flow. A moved or mismatched head cannot be confirmed under an old review target; display the verification failure and allow cancellation/abandonment rather than silently rewriting accepted evidence.
 

@@ -1,9 +1,9 @@
 import { observeCohortPullRequest } from "./observe-cohort-pull-request";
 import { prepareCohortRepository } from "./prepare-cohort-repository";
-import { selectArtifactReviewContext } from "../domain/v15-operator-review";
-import { loadStageCohortContext } from "../storage/load-stage-cohort";
+import { selectAvailableArtifactReviewContext } from "../domain/v15-operator-review";
+import { loadStageCohortContext, loadStageCohortEvaluation } from "../storage/load-stage-cohort";
 import { observeWorkerExecution } from "./observe-worker-execution";
-import { observeFinalIntegrationPullRequest, discoverFinalIntegrationPullRequest } from "./final-integration";
+import { discoverFinalIntegrationPullRequest } from "./final-integration";
 /**
  * How an Oakridge backend is assembled.
  *
@@ -135,9 +135,10 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const definitions = new PostgresWorkflowDefinitionRepository(sql);
   const stages = new PostgresStageInstanceRepository(sql);
   const forgeRepositories = new PostgresForgeRepositoryRepository(sql);
+  const observePr = (cohort_id: import("../domain/primitives").CohortId) => observeCohortPullRequest({ sql, git,
+    reader: config.pull_request_reader, pull_requests: cohortPullRequests, forge_repositories: forgeRepositories }, cohort_id);
   const stageEvents = new StageEventApplier({ sql, writer,
-    observe_pr: (cohort_id) => observeCohortPullRequest({ sql, git, reader: config.pull_request_reader,
-      pull_requests: cohortPullRequests, forge_repositories: forgeRepositories }, cohort_id),
+    observe_pr: observePr,
     prepare_repository: (cohort_id) => prepareCohortRepository({ sql, git, pull_requests: cohortPullRequests, now }, cohort_id),
     dispatch_executions: async (ids) => {
       for (const execution_id of ids) await client.enqueuePortable({ queueName: "_dbos_internal_queue", workflowName: WORKER_EXECUTION_WORKFLOW_NAME,
@@ -146,7 +147,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const runRecords = new PostgresRunRecordRepository(sql, writer, stageEvents);
   const artifacts = new PostgresArtifactRepository(sql);
   const collaboration = new PostgresCollaborationRepository(sql);
-  const projections = new PostgresOperatorProjectionRepository(sql, config.application_version, adapterRegistry);
+  const projections = new PostgresOperatorProjectionRepository(sql, config.application_version, adapterRegistry, observePr);
   registerDevFlowCohortDetails(projections, sql);
   const messages = new PostgresSessionMessageRepository(sql);
   const messageRecipients = new PostgresSessionMessageRecipientResolver(sql);
@@ -329,12 +330,14 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
         const snapshot = await loadStageCohortContext(sql, revision.cohort_id, stage.stage_key as import("../domain/dev-flow-v15").StageKey);
         if (!snapshot.ok) throw new Error(snapshot.error.detail);
         let context = snapshot.value;
-        if (context.stage === "final_integration") {
-          const observed = await observeFinalIntegrationPullRequest({ sql, git, reader: config.pull_request_reader }, revision.cohort_id);
+        if (context.stage === "final_integration" || context.stage === "implementation") {
+          const observed = await observePr(revision.cohort_id);
           if (!observed.ok) return { ok: false as const, error: { detail: observed.error.detail } };
           context = { ...context, pr: observed.value };
         }
-        return { ok: true as const, value: selectArtifactReviewContext(context, { id: revision.chain_id, version: revision.version }) };
+        const evaluation = await loadStageCohortEvaluation(sql, context);
+        if (!evaluation.ok) throw new Error(evaluation.error.detail);
+        return { ok: true as const, value: selectAvailableArtifactReviewContext(evaluation.value, { id: revision.chain_id, version: revision.version }) };
       } },
     run_launch: { definitions, projects, runs, projections,
       start_run: async (request) => {

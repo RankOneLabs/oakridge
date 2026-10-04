@@ -88,7 +88,7 @@ describe("ArtifactReview", () => {
         ...ARTIFACT_FIXTURE.revisions[0]!,
         body: { details: "Second", summary: "First" },
       }],
-      review_context: { cohort_id: "cohort-1" as never, expected_version: 3, worker: "spec", target: { id: "art-1" as never, version: 1 } },
+      review_context: { cohort_id: "cohort-1" as never, expected_version: 3, worker: "spec", target: { id: "art-1" as never, version: 1 }, allowed_request_kinds: ["accept_analysis", "revise_analysis"] },
       review: {
         viewer: "json",
         layout: "report",
@@ -113,7 +113,7 @@ describe("ArtifactReview", () => {
   it("uses diagnosis gates and only offers actions for the selected revision", async () => {
     const artifact: ArtifactDetail = {
       ...ARTIFACT_FIXTURE,
-      review_context: { cohort_id: "cohort-1" as never, expected_version: 3, worker: "spec", target: { id: "art-1" as never, version: 2 } },
+      review_context: { cohort_id: "cohort-1" as never, expected_version: 3, worker: "spec", target: { id: "art-1" as never, version: 2 }, allowed_request_kinds: ["accept_analysis", "revise_analysis"] },
       revisions: [
         ARTIFACT_FIXTURE.revisions[0]!,
         { ...ARTIFACT_FIXTURE.revisions[0]!, id: "rev-2", status: "unreviewed" },
