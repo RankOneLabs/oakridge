@@ -73,6 +73,16 @@ async function oakridgeGet<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+/** A received HTTP failure, distinct from a request with an unknown delivery outcome. */
+export class OakridgeHttpError extends Error {
+  constructor(readonly status: number, detail: string) { super(detail); this.name = "OakridgeHttpError"; }
+}
+
+/** Cohort routes reject invalid requests with 4xx; 5xx may follow a committed request. */
+export function selectIsDefinitiveRequestFailure(error: unknown): boolean {
+  return error instanceof OakridgeHttpError && error.status >= 400 && error.status < 500;
+}
+
 interface OakridgePostOptions { readonly idempotency_key?: string }
 
 async function oakridgePost<T>(path: string, body: unknown, options: OakridgePostOptions = {}): Promise<T> {
@@ -84,7 +94,7 @@ async function oakridgePost<T>(path: string, body: unknown, options: OakridgePos
   if (!res.ok) {
     const b = await res.json().catch(() => null) as unknown;
     const detail = selectFailureDetail(b, `oakridge POST ${path}: ${res.status}`);
-    throw new Error(detail);
+    throw new OakridgeHttpError(res.status, detail);
   }
   if (res.status === 204 || res.headers.get("content-length") === "0") {
     return undefined as unknown as T;

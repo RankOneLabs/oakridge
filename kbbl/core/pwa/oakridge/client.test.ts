@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createRun, fetchRun, fetchSessionRun } from "./client";
+import { createRun, fetchRun, fetchSessionRun, submitCohortRequest, OakridgeHttpError, selectIsDefinitiveRequestFailure } from "./client";
 import { parseOakridgeRunEventFrame } from "./wire";
 import type { CreateRunRequest, RepositoryKey } from "./types";
 
@@ -24,6 +24,16 @@ const createRunRequest = (): CreateRunRequest => ({
 });
 
 describe("Oakridge response parsing", () => {
+  it("preserves a cohort rejection's HTTP status for retry recovery", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ detail: "version conflict" }), { status: 409 }));
+    await expect(submitCohortRequest({ cohort_id: "cohort", expected_version: 7, id: "request", request: { kind: "retry_provision" } }))
+      .rejects.toMatchObject({ status: 409, message: "version conflict" });
+  });
+
+  it("retains delivery identity when a transport or server failure leaves the outcome uncertain", () => {
+    expect([new TypeError("network lost"), new OakridgeHttpError(503, "unavailable")].map(selectIsDefinitiveRequestFailure)).toEqual([false, false]);
+  });
+
   it("rejects a gate event that omits its required slot continuation", () => {
     expect(parseOakridgeRunEventFrame(JSON.stringify({
       sequence: "7", operation: "gate_decided", occurred_at: "2026-09-26T12:00:00.000Z", replayed: false,

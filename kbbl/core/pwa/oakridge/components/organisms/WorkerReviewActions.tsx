@@ -4,7 +4,7 @@ import type { OperatorArtifactReviewContext } from "../../../../../../oakridge-d
 import type { V15OperatorRequest } from "../../../../../../oakridge-dbos/src/domain/dev-flow-v15";
 import { Button } from "../../../components/atoms/Button";
 import { randomUuid } from "../../../lib/random-uuid";
-import { submitCohortRequest } from "../../client";
+import { selectIsDefinitiveRequestFailure, submitCohortRequest } from "../../client";
 import { selectWorkerReviewActions, type WorkerReviewAction } from "../../lib/worker-review-actions";
 
 interface WorkerReviewActionsProps { readonly context: OperatorArtifactReviewContext; readonly runId: string }
@@ -20,6 +20,12 @@ export function WorkerReviewActions({ context, runId }: WorkerReviewActionsProps
     let id = identities.current.get(key);
     if (!id) { id = randomUuid(); identities.current.set(key, id); }
     return submitCohortRequest({ cohort_id: context.cohort_id, expected_version: context.expected_version, request, id });
+  }, onError: (error, request) => {
+    if (!selectIsDefinitiveRequestFailure(error)) return;
+    identities.current.delete(JSON.stringify({ context, request }));
+    void client.invalidateQueries({ queryKey: ["oakridge", "run", runId] });
+    void client.invalidateQueries({ queryKey: ["oakridge", "artifact"] });
+    void client.invalidateQueries({ queryKey: ["oakridge", "review-inbox"] });
   }, onSuccess: () => {
     setCompleted(true);
     void client.invalidateQueries({ queryKey: ["oakridge", "run", runId] });

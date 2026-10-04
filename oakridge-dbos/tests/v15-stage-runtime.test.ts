@@ -10,6 +10,37 @@ import type { CohortId, ExecutionId } from "../src/domain/primitives";
 import type { GitCommandRunner } from "../src/domain/repository-provisioning";
 const now = () => new Date().toISOString();
 
+test("concurrent provision executions serialize Git operations on the same working copy", async () => {
+  const fixture = await prepare();
+  try {
+    const repository = fixture.context.repositories[0];
+    if (!repository) throw new Error("fixture repository is missing");
+    await fixture.sql.query("UPDATE oakridge.workflow_run SET context=$2::jsonb WHERE id=$1", [fixture.run_id,
+      JSON.stringify({ ...fixture.context, repositories: [repository, { ...repository, key: "second" }] })]);
+    const opened = await materializeStageInStorage(fixture.sql, { stage_instance_id: fixture.stage_id, at: now() });
+    if (!opened.ok || opened.value.kind !== "opened") throw new Error("stage did not open");
+    let active_commands = 0;
+    let maximum_active_commands = 0;
+    const git: GitCommandRunner = { async run(directory, args) {
+      active_commands += 1;
+      maximum_active_commands = Math.max(maximum_active_commands, active_commands);
+      try { await Bun.sleep(5); return await fixture.git.run(directory, args); }
+      finally { active_commands -= 1; }
+    } };
+    const ingress = new StageEventApplier({ sql: fixture.sql,
+      writer: new PostgresRunRecordWriter(fixture.sql, createDevFlowAdapterRegistry()), now,
+      dispatch_executions: async (ids) => { for (const id of ids) {
+        const result = await dispatchProvisionExecution({ sql: fixture.sql, git, now,
+          advance: (cohort) => ingress.advance(cohort, null) }, id);
+        if (!result.ok) throw new Error(result.error.detail);
+      } } });
+    const results = await Promise.all(opened.value.cohort_ids.map((id) => ingress.advance(id, null)));
+    expect(results.every((result) => result.ok)).toBe(true);
+    expect((await fixture.sql.query<{ readonly count: string }>("SELECT count(*)::text FROM oakridge.artifact", []))[0]?.count).toBe("2");
+    expect(maximum_active_commands).toBe(1);
+  } finally { await fixture.close(); }
+});
+
 for (const failure_kind of ["not_a_git_repository", "missing_integration_branch", "base_branch_unavailable", "git_command_failed"] as const) {
   test(`provisioning records ${failure_kind} as a known failed cohort with its original evidence`, async () => {
     const fixture = await prepare();

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { runExclusive } from "./keyed-mutex";
 import type { GitCommandRunner, ProvisionOutcome } from "../domain/repository-provisioning";
 import { provisionRepositoryRefs, provisionFailureFromAdapter } from "../domain/repository-provisioning";
 import type { RepositoryPreparationInputs, ProvisionRetryInput } from "../domain/dev-flow-v15";
@@ -34,7 +35,7 @@ export const dispatchProvisionExecution = async (dependencies: ProvisionExecutio
   const resolved = claimed.value.resolved_input as unknown as RepositoryPreparationInputs | ProvisionRetryInput;
   const input = "original" in resolved ? resolved.original : resolved;
   let provisioned: Awaited<ReturnType<typeof provisionRepositoryRefs>>;
-  try { provisioned = await provisionRepositoryRefs(input, git); }
+  try { provisioned = await runExclusive(input.repository.path, () => provisionRepositoryRefs(input, git)); }
   catch (cause) {
     // No outcome is known: preserve the original inputs for an explicit retry.
     const at = now();

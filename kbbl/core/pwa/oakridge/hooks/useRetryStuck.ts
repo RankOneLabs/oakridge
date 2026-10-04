@@ -1,6 +1,6 @@
 import { useRef } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { fetchRun, submitCohortRequest } from "../client";
+import { fetchRun, selectIsDefinitiveRequestFailure, submitCohortRequest } from "../client";
 import { selectWorkerRetryRequest } from "../lib/worker-retry-request";
 import { randomUuid } from "../../lib/random-uuid";
 import type { V15WorkerKey } from "../../../../../oakridge-dbos/src/domain/dev-flow-v15";
@@ -21,5 +21,9 @@ export function useRetryStuck(runId: string) {
       request: selectWorkerRetryRequest(interrupted[0]!.worker) };
     deliveries.current.set(key, envelope);
     return submitCohortRequest(envelope);
+  }, onError: (error, target) => {
+    if (!selectIsDefinitiveRequestFailure(error)) return;
+    deliveries.current.delete(JSON.stringify(target));
+    void client.invalidateQueries({ queryKey: ["oakridge", "run", runId] });
   }, onSuccess: (_result, target) => { deliveries.current.delete(JSON.stringify(target)); void client.invalidateQueries({ queryKey: ["oakridge", "run", runId] }); } });
 }

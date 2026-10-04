@@ -1,6 +1,6 @@
 import { useRef } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { fetchRun, submitCohortRequest } from "../client";
+import { fetchRun, selectIsDefinitiveRequestFailure, submitCohortRequest } from "../client";
 import { randomUuid } from "../../lib/random-uuid";
 export function useAbandonCohort(runId: string) {
   const client = useQueryClient();
@@ -15,6 +15,10 @@ export function useAbandonCohort(runId: string) {
     const envelope = { cohort_id: unit.cohort_id, expected_version: unit.version, id: randomUuid(), request: { kind: "abandon" as const, reason: detail } };
     deliveries.current.set(key, envelope);
     return submitCohortRequest(envelope);
+  }, onError: (error, target) => {
+    if (!selectIsDefinitiveRequestFailure(error)) return;
+    deliveries.current.delete(JSON.stringify(target));
+    void client.invalidateQueries({ queryKey: ["oakridge", "run", runId] });
   }, onSuccess: (_result, target) => {
     deliveries.current.delete(JSON.stringify(target));
     void client.invalidateQueries({ queryKey: ["oakridge", "runs"] });

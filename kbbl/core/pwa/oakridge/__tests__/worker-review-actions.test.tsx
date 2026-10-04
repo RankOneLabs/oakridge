@@ -2,10 +2,10 @@ import { afterEach, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { WorkerReviewActions } from "../components/organisms/WorkerReviewActions";
-import { submitCohortRequest } from "../client";
+import { OakridgeHttpError, submitCohortRequest } from "../client";
 import type { OperatorArtifactReviewContext } from "../../../../../oakridge-dbos/src/domain/v15-operator-review";
 
-vi.mock("../client", () => ({ submitCohortRequest: vi.fn().mockResolvedValue({ commits: 1 }) }));
+vi.mock("../client", async (importOriginal) => ({ ...await importOriginal<typeof import("../client")>(), submitCohortRequest: vi.fn().mockResolvedValue({ commits: 1 }) }));
 afterEach(() => vi.clearAllMocks());
 
 it("assessment review explains all three routes and discussion sends feedback to the assessor", async () => {
@@ -25,4 +25,27 @@ it("assessment review explains all three routes and discussion sends feedback to
   await waitFor(() => expect(submitCohortRequest).toHaveBeenCalledWith(expect.objectContaining({
     cohort_id: "cohort", expected_version: 7, request: { kind: "discuss_assessment", feedback: { text: "Explain the finding", target: context.target } },
   })));
+});
+
+it.each([true, false])("review retry handles definitive rejection=%s", async (isDefinitive) => {
+  const context: OperatorArtifactReviewContext = { worker: "spec", cohort_id: "cohort" as never, expected_version: 7,
+    target: { id: "brief" as never, version: 1 } };
+  const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+  const invalidate = vi.spyOn(client, "invalidateQueries");
+  vi.mocked(submitCohortRequest).mockRejectedValueOnce(isDefinitive ? new OakridgeHttpError(409, "version conflict") : new TypeError("network lost"));
+  const view = render(<QueryClientProvider client={client}><WorkerReviewActions context={context} runId="run" /></QueryClientProvider>);
+  fireEvent.click(screen.getByRole("button", { name: "Accept analysis" }));
+  await screen.findByRole("alert");
+  const first = vi.mocked(submitCohortRequest).mock.calls[0]?.[0];
+  if (isDefinitive) {
+    expect(invalidate.mock.calls.map(([filters]) => filters?.queryKey)).toEqual([
+      ["oakridge", "run", "run"], ["oakridge", "artifact"], ["oakridge", "review-inbox"],
+    ]);
+    view.rerender(<QueryClientProvider client={client}><WorkerReviewActions context={{ ...context, expected_version: 8 }} runId="run" /></QueryClientProvider>);
+  } else expect(invalidate).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Accept analysis" }));
+  await screen.findByText("Decision recorded.");
+  const second = vi.mocked(submitCohortRequest).mock.calls[1]?.[0];
+  expect(second?.expected_version).toBe(isDefinitive ? 8 : 7);
+  expect(second?.id === first?.id).toBe(!isDefinitive);
 });
