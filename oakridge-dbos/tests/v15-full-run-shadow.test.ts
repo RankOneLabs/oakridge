@@ -58,7 +58,7 @@ test("the six-stage workflow uses real shadow kbbl agents, frozen cohorts, indep
     };
     const publish = async (publications: readonly import("./support/implementation-agent").AgentPublication[], commit_build = false) => {
       const answers = await fixture.execute(launch_index++, { kind: "publish", commit_build, publications });
-      expect(answers.map((answer) => answer.status)).toEqual(publications.map(() => 201));
+      expect(answers.map((answer) => answer.status), JSON.stringify(answers)).toEqual(publications.map(() => 201));
     };
     const provision = (await open("repository_preparation"))[0]!;
     await waitFor("provision completion", async () => (await fixture.sql.query<{ readonly state: string }>("SELECT state FROM oakridge.cohort WHERE id=$1", [provision]))[0]?.state === "complete" ? true : null);

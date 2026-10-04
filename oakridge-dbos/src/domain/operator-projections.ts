@@ -18,7 +18,7 @@ export interface OperatorWorkflowAttempt { readonly root_workflow_id: string; re
  * differ exactly while a revision is awaiting review — which is precisely what
  * the operator needs a route to, and what a downstream stage must not see yet.
  */
-export interface OperatorStageArtifact { readonly id: ArtifactId; readonly type_id: string; readonly version: number; readonly label: string | null; readonly created_at: string }
+export interface OperatorStageArtifact { readonly cohort_id: CohortId | null; readonly id: ArtifactId; readonly type_id: string; readonly version: number; readonly label: string | null; readonly created_at: string }
 
 
 /**

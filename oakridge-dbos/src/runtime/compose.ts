@@ -60,7 +60,7 @@ import { findExecutorAdapter, registerExecutorAdapter } from "./executor-registr
 import { registerRunRecordWorkflowServices, WORKER_EXECUTION_WORKFLOW_NAME } from "../workflows/run-record-topology";
 import "../workflows/collaboration-responder";
 import { DbosRunLaunchClient } from "./dbos-run-launch-client";
-import { DbosCollaborationPingClient, PostgresSessionMessageRecipientResolver, PostgresSessionMessageRepository } from "./collaboration-ping";
+import { DbosCollaborationPingClient, PostgresSessionMessageRecipientResolver, PostgresSessionMessageRepository, recoverPendingSessionMessages } from "./collaboration-ping";
 import { BunGitCommandRunner } from "./git-command-runner";
 import { createPromptTemplateLoader } from "./prompt-template";
 import { GitProjectRepositoryIdentityResolver } from "./project-identity";
@@ -254,7 +254,9 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
       const stopped = await stopCohortExecution(sql, intent.id, workerSessionIO);
       if (!stopped.ok) console.warn(`worker execution ${intent.id}: ${stopped.error.detail}`);
     }
-    return intents.length + stops.length;
+    const recovered_messages = await recoverPendingSessionMessages({ messages, recipients: messageRecipients,
+      pings: collaborationPings, now });
+    return intents.length + stops.length + recovered_messages;
   };
 
   let effectSweep: Promise<unknown> | null = null;

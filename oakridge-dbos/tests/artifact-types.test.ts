@@ -42,3 +42,7 @@ test("v15 checked names cover the serialized worker, fact, and binding vocabular
   expect(V15_BINDING_SOURCES).toContain("assessment.work.input.accepted_build");
   expect(V15_CHANGE_KINDS).toEqual(["set_cohort_state", "set_worker_state", "accept_outputs", "clear_acceptance", "fence_execution", "capture_accepted_build", "clear_accepted_build"]);
 });
+
+test("run-owned publications advertise review and comments without unsupported operator edits", () => {
+  expect(DEV_FLOW_ARTIFACT_TYPES.filter((type) => type.capabilities.atom_editable)).toEqual([]);
+});

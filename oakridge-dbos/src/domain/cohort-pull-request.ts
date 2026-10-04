@@ -64,3 +64,11 @@ export interface ImplementationPublicationEvidence {
   readonly origin_head_sha: string;
   readonly replace_verification_id: PullRequestVerificationId | null;
 }
+
+/** Preparation failures are observations; uncertain IO remains recoverable. */
+export interface CohortPreparationError {
+  readonly operation: "prepare_cohort_repository";
+  readonly cohort_id: import("./primitives").CohortId;
+  readonly kind: "invalid_repository" | "unavailable";
+  readonly detail: string;
+}

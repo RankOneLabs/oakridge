@@ -3,7 +3,7 @@ import type { DBOSClient } from "@dbos-inc/dbos-sdk";
 
 import type { DeliverSessionMessage, SessionMessage, SessionMessageRecord, SessionMessageRepository, SessionThreadId, SessionThreadMessageId } from "../src/domain/collaboration";
 import type { DeliveryKey, ExecutionId, SessionMessageId, WorkflowRunId } from "../src/domain/primitives";
-import { DbosCollaborationPingClient, PostgresSessionMessageRecipientResolver, PostgresSessionMessageRepository } from "../src/runtime/collaboration-ping";
+import { DbosCollaborationPingClient, PostgresSessionMessageRecipientResolver, PostgresSessionMessageRepository, recoverPendingSessionMessages } from "../src/runtime/collaboration-ping";
 import { applyMigrations } from "../src/storage/migrate";
 import { PgPostgresExecutor, type SqlExecutor } from "../src/storage/sql-executor";
 import { createScratchDatabase, type ScratchDatabase } from "./support/durable-database";
@@ -149,14 +149,20 @@ test("session message persistence makes delivery idempotent and readable by coho
     await sql.query(`INSERT INTO oakridge.attempt
       (id,run_id,stage_instance_id,cohort_id,attempt_number,status,adapter_type,request,worker)
       VALUES ('55555555-5555-4555-8555-555555555555','22222222-2222-4222-8222-222222222222',
-        '33333333-3333-4333-8333-333333333333','44444444-4444-4444-8444-444444444444',1,'active','delegated_session',
-        '{"execution_id":"execution-1"}','build')`, []);
+        '33333333-3333-4333-8333-333333333333','44444444-4444-4444-8444-444444444444',1,'active','kbbl',
+        '{"worker":"build","action":{"action_point":"initial","input":{}}}','build')`, []);
     await sql.query(`INSERT INTO oakridge.session
       (id,run_id,stage_instance_id,attempt_id,launch_transition_id,status,kbbl_session_id,adapter_reference)
       VALUES ('66666666-6666-4666-8666-666666666666','22222222-2222-4222-8222-222222222222',
         '33333333-3333-4333-8333-333333333333','55555555-5555-4555-8555-555555555555',
         '88888888-8888-4888-8888-888888888888','active','kbbl-1',
         '{"kind":"kbbl_session","session_id":"kbbl-1"}')`, []);
+    await sql.query("INSERT INTO oakridge.cohort_worker (cohort_id,worker) VALUES ('44444444-4444-4444-8444-444444444444','build')", []);
+    await sql.query(`INSERT INTO oakridge.execution_intent
+      (id,cohort_id,worker,attempt_id,transition_id,action_point,resolved_input,prompt,settings,status,session_id)
+      VALUES ('execution-1','44444444-4444-4444-8444-444444444444','build',
+        '55555555-5555-4555-8555-555555555555','88888888-8888-4888-8888-888888888888',
+        'initial','{}','prompt','{}','dispatched','66666666-6666-4666-8666-666666666666')`, []);
     const repository = new PostgresSessionMessageRepository(sql);
     const message: SessionMessage = {
       id: "11111111-1111-4111-8111-111111111111" as SessionMessageId,
@@ -176,6 +182,23 @@ test("session message persistence makes delivery idempotent and readable by coho
     expect(await repository.put_pending({ ...message, id: "66666666-6666-4666-8666-666666666666" as SessionMessageId, delivery_key: "delivery-2" as DeliveryKey })).toEqual({
       kind: "idempotency_conflict", detail: "message 'review/message-1' was already submitted with a different delivery key",
     });
+    let unavailable = true;
+    const enqueued: DeliverSessionMessage[] = [];
+    const dbos = { enqueuePortable: async (_options: unknown, args: readonly DeliverSessionMessage[]) => {
+      if (unavailable) throw new Error("enqueue unavailable");
+      enqueued.push(...args);
+    } } as unknown as DBOSClient;
+    const recipients = new PostgresSessionMessageRecipientResolver(sql);
+    const pings = new DbosCollaborationPingClient(dbos, "app-v1", repository);
+    const resolved = await recipients.resolve(message);
+    if (resolved.kind !== "resolved") throw new Error(resolved.detail);
+    await expect(pings.enqueue({ message, target: resolved.target, prompt: JSON.stringify(message.body) }))
+      .rejects.toThrow("enqueue unavailable");
+    unavailable = false;
+    expect(await recoverPendingSessionMessages({ messages: repository, recipients, pings,
+      now: () => "2026-09-28T12:02:00Z" })).toBe(1);
+    expect(enqueued).toEqual([{ message: (await repository.list_pending(100))[0],
+      target: resolved.target, prompt: JSON.stringify(message.body) }]);
     const delivered = await repository.record_delivery_result(message.id, { kind: "delivered" }, "2026-09-28T12:02:00Z");
     expect(delivered).toEqual(expect.objectContaining({ delivery_status: "delivered", delivery_result: { kind: "delivered" }, delivered_at: expect.any(String) }));
     expect(await repository.find_by_delivery_key(message.run_id, message.delivery_key)).toEqual(delivered);

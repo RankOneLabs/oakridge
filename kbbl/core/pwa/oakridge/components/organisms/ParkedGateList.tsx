@@ -1,3 +1,4 @@
+import { selectGateLabel } from "../../lib/stage-unit-params";
 import { Button } from "../../../components/atoms/Button";
 import { useQueryClient } from "@tanstack/react-query";
 import { useGates } from "../../hooks/useGates";
@@ -15,11 +16,7 @@ interface GateCardProps {
   onNavigateArtifact?: (artifactRevisionId: string) => void;
 }
 
-function gateTypeLabel(gateType: string): string {
-  if (gateType === "artifact_approval") return "Artifact review";
-  if (gateType === "merge_confirmation") return "Merge confirmation";
-  return "Operator decision";
-}
+
 
 function GateCard({ gate, onNavigateRun, onNavigateArtifact }: GateCardProps) {
   return (
@@ -28,11 +25,11 @@ function GateCard({ gate, onNavigateRun, onNavigateArtifact }: GateCardProps) {
       data-testid="or-gate-card"
     >
       <div className="flex flex-wrap items-center gap-2.5">
-        <span className={chipClass} data-testid="or-gate-type">{gateTypeLabel(gate.gate_type)}</span>
+        <span className={chipClass} data-testid="or-gate-type">{selectGateLabel(gate.gate_type)}</span>
         <span className="text-sm text-[var(--text-secondary)]" data-testid="or-gate-stage">
           {gate.stage_name}
         </span>
-        {gate.unit_id && gate.unit_id !== "0" && (
+        {gate.unit_id && (
           <span
             className="rounded bg-[var(--bg-elevated)] px-1.5 py-0.5 text-xs font-mono text-[var(--text-muted)]"
             data-testid="or-gate-unit-id"

@@ -18,3 +18,12 @@ export function selectFailureDetail(body: unknown, fallback: string): string {
   if (typeof candidate.kind === "string" && candidate.kind.length > 0) return candidate.kind;
   return fallback;
 }
+
+/** A received HTTP rejection is distinct from an uncertain network delivery. */
+export class OakridgeHttpError extends Error {
+  constructor(readonly status: number, detail: string) { super(detail); this.name = "OakridgeHttpError"; }
+}
+
+export const isDefinitiveRequestRejection = (cause: unknown): boolean =>
+  cause instanceof OakridgeHttpError && cause.status >= 400 && cause.status < 500
+    && cause.status !== 408 && cause.status !== 429;

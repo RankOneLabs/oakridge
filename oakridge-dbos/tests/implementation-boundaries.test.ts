@@ -4,7 +4,7 @@ import { createImplementationCohortHarness, waitFor } from "./support/implementa
 import type { AgentPublication } from "./support/implementation-agent";
 import type { BuildReviewTarget } from "../src/domain/dev-flow-v15";
 import type { JsonValue, SessionId, CohortId } from "../src/domain/primitives";
-import { requestExecutionStop } from "../src/storage/postgres-run-record";
+import { requestExecutionStop, writeSessionStatus } from "../src/storage/postgres-run-record";
 import { createOakridgeRuntime } from "../src/runtime/compose";
 import { BunGitCommandRunner } from "../src/runtime/git-command-runner";
 import { prepareCohortRepositoryRecord } from "../src/runtime/cohort-pull-request";
@@ -390,3 +390,52 @@ test("cohort activation refuses a missing prepared base without launching kbbl",
     expect(fixture.launches).toEqual([]);
   } finally { await fixture.close(); }
 }, 30_000);
+
+for (const moved_head of [false, true]) test(`partial build retry ${moved_head ? "refuses carried evidence at a moved head" : "carries the verified PR and publishes only the missing result"}`, async () => {
+  const fixture = await createImplementationCohortHarness();
+  try {
+    await fixture.advance();
+    await fixture.execute(0, { kind: "publish", commit_build: true, publications: [buildPublications[0]!] });
+    const prior = await fixture.build();
+    const execution_id = await fixture.execution(0);
+    const [session] = await fixture.sql.query<{ readonly id: SessionId }>(
+      "SELECT session_id::text AS id FROM oakridge.execution_intent WHERE id=$1", [execution_id]);
+    if (!session) throw new Error("partial build session missing");
+    await fixture.sql.transaction((tx) => writeSessionStatus(tx, { session_id: session.id, status: "complete", at: fixture.now() }));
+    await fixture.advance();
+    await fixture.advance({ kind: "retry_build" });
+    const delivered = await fixture.execute(1, { kind: "publish", commit_build: moved_head, publications: [buildPublications[1]!] });
+    if (moved_head) {
+      expect(delivered[0]?.status).not.toBe(201);
+      expect(await fixture.sql.query("SELECT artifact_id FROM oakridge.worker_output WHERE cohort_id=$1 AND output_name='build_result'", [fixture.cohort_id])).toEqual([]);
+    } else {
+      expect(delivered.map((delivery) => delivery.status)).toEqual([201]);
+      expect(await fixture.build()).toMatchObject({ pr_summary: prior.pr_summary, head_sha: prior.head_sha, build_result: expect.any(Object) });
+      expect((await fixture.sql.query("SELECT state FROM oakridge.cohort_worker WHERE cohort_id=$1 AND worker='build'", [fixture.cohort_id]))[0])
+        .toEqual({ state: "awaiting_review" });
+      const run = await operatorProjections(fixture).get_run(fixture.run_id);
+      expect(run?.stages.find((stage) => stage.name === "implementation")?.artifacts.map((artifact) => artifact.cohort_id))
+        .toEqual([fixture.cohort_id, fixture.cohort_id]);
+    }
+  } finally { await fixture.close(); }
+}, 60_000);
+
+test("retrying revised work cannot carry outputs from the preceding work", async () => {
+  const fixture = await createImplementationCohortHarness();
+  try {
+    await fixture.advance();
+    await fixture.execute(0, { kind: "publish", commit_build: true, publications: buildPublications });
+    await fixture.advance({ kind: "request_build_changes", feedback: { source: "build_review", target: await buildTarget(fixture), text: "revise" } });
+    const execution_id = await fixture.execution(1);
+    const [session] = await fixture.sql.query<{ readonly id: SessionId }>(
+      "SELECT session_id::text AS id FROM oakridge.execution_intent WHERE id=$1", [execution_id]);
+    if (!session) throw new Error("revision session missing");
+    await fixture.sql.transaction((tx) => writeSessionStatus(tx, { session_id: session.id, status: "complete", at: fixture.now() }));
+    await fixture.advance();
+    await fixture.advance({ kind: "retry_build" });
+    await fixture.execute(2, { kind: "publish", commit_build: false, publications: [buildPublications[1]!] });
+    expect(await fixture.build()).toMatchObject({ pr_summary: null, head_sha: null });
+    expect((await fixture.sql.query("SELECT state FROM oakridge.cohort_worker WHERE cohort_id=$1 AND worker='build'", [fixture.cohort_id]))[0])
+      .toEqual({ state: "working" });
+  } finally { await fixture.close(); }
+}, 60_000);

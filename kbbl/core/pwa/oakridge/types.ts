@@ -155,7 +155,7 @@ export type StageUnitStatus = StageStatus;
 
 export type StageArtifact = OperatorFields<Operator.OperatorStageArtifact,
   "id" | "type_id" | "version",
-  "label" | "created_at">;
+  "cohort_id" | "label" | "created_at">;
 
 export type StageUnit = OperatorFields<Operator.OperatorStageUnit,
   "version" | "cohort_id" | "unit_id" | "brief" | "sid" | "worktree" | "status" | "blocked_reason" | "next_actor" | "retryable" | "gate",

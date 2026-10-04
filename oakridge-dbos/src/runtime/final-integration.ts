@@ -1,3 +1,4 @@
+import type { CohortPreparationError } from "../domain/cohort-pull-request";
 import { runExclusive } from "./keyed-mutex";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -50,12 +51,14 @@ export const observeFinalIntegrationPullRequest = async (dependencies: FinalInte
 
 /** Prepare a detached worktree from the pushed run branch, without modifying the project checkout. */
 export const prepareFinalIntegrationWorktree = async (dependencies: Pick<FinalIntegrationVerificationDependencies, "sql" | "git">,
-  cohort_id: CohortId): Promise<Result<void, { readonly detail: string }>> => {
+  cohort_id: CohortId): Promise<Result<void, CohortPreparationError>> => {
+  const failure = (kind: CohortPreparationError["kind"], detail: string): Result<never, CohortPreparationError> =>
+    err({ operation: "prepare_cohort_repository", cohort_id, kind, detail });
   const rows = await dependencies.sql.query<{ readonly frozen_inputs: FinalIntegrationInputs; readonly stage_instance_id: string;
     readonly cohort_key: string; readonly state: string }>(
     "SELECT frozen_inputs,stage_instance_id::text,cohort_key,state FROM oakridge.cohort WHERE id=$1", [cohort_id]);
   const row = rows[0];
-  if (!row) return err({ detail: "final integration cohort is missing" });
+  if (!row) return failure("invalid_repository", "final integration cohort is missing");
   if (["complete", "failed", "cancelled"].includes(row.state)) return ok(undefined);
   const repository = row.frozen_inputs.repository;
   const worktree = join(repository.repository_path, ".worktrees", "oakridge", row.stage_instance_id, row.cohort_key);
@@ -68,14 +71,14 @@ export const prepareFinalIntegrationWorktree = async (dependencies: Pick<FinalIn
       ]);
       return actual.exit_code === 0 && expected.exit_code === 0 && head.exit_code === 0
         && actual.stdout.trim() === expected.stdout.trim()
-        ? ok(undefined) : err({ detail: "final integration worktree does not belong to the frozen repository" });
+        ? ok(undefined) : failure("invalid_repository", "final integration worktree does not belong to the frozen repository");
     }
     const fetched = await dependencies.git.run(repository.repository_path, ["fetch", "origin", repository.base_branch]);
-    if (fetched.exit_code !== 0) return err({ detail: fetched.stderr.trim() || "could not fetch the run branch" });
+    if (fetched.exit_code !== 0) return failure("unavailable", fetched.stderr.trim() || "could not fetch the run branch");
     const head = await dependencies.git.run(repository.repository_path, ["rev-parse", "FETCH_HEAD"]);
-    if (head.exit_code !== 0) return err({ detail: "could not resolve the pushed run branch" });
+    if (head.exit_code !== 0) return failure("invalid_repository", "could not resolve the pushed run branch");
     const created = await dependencies.git.run(repository.repository_path, ["worktree", "add", "--detach", worktree, head.stdout.trim()]);
-    return created.exit_code === 0 ? ok(undefined) : err({ detail: created.stderr.trim() || "could not prepare final integration worktree" });
+    return created.exit_code === 0 ? ok(undefined) : failure("invalid_repository", created.stderr.trim() || "could not prepare final integration worktree");
   });
 };
 

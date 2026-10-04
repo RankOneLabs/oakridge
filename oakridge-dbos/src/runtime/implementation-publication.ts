@@ -1,3 +1,4 @@
+import { observeCohortPullRequest } from "./observe-cohort-pull-request";
 import { COHORT_REPOSITORY_SOURCE } from "../storage/postgres-dev-flow";
 import { err, ok, type AttemptId, type JsonValue, type Result, type UnitId, type WorkflowRunId } from "../domain/primitives";
 import { parseGithubPullRequestIdentity, repositoriesMatch } from "../domain/pull-request";
@@ -41,7 +42,22 @@ export const createImplementationPublicationEnricher = (dependencies: Implementa
   const { sql, git, pull_requests: cohortPullRequests, forge_repositories: forgeRepositories, reader } = dependencies;
   return async (input: ImplementationPublicationCommand): Promise<Result<JsonValue | null,
     { readonly code: string; readonly detail: string }>> => {
-    if (input.output_name !== "pr_summary") return ok(null);
+    if (input.output_name !== "pr_summary") {
+      if (input.output_name !== "build_result") return ok(null);
+      const rows = await sql.query<{ readonly cohort_id: import("../domain/primitives").CohortId;
+        readonly head_sha: string | null; readonly action_point: string }>(
+        `SELECT intent.cohort_id::text,intent.action_point,worker.response->>'head_sha' AS head_sha
+         FROM oakridge.execution_intent intent JOIN oakridge.cohort_worker worker
+           ON worker.cohort_id=intent.cohort_id AND worker.worker=intent.worker
+         WHERE intent.attempt_id=$1 AND intent.worker='build'`, [input.attempt_id]);
+      const row = rows[0];
+      if (!row || row.action_point !== "retry" || !row.head_sha) return ok(null);
+      const observed = await observeCohortPullRequest(dependencies, row.cohort_id);
+      if (!observed.ok) return err({ code: "enrichment_unavailable", detail: observed.error.detail });
+      if (!observed.value || observed.value.head_sha !== row.head_sha)
+        return err({ code: "retry_publication_head_changed", detail: "carried publications belong to a different pushed commit; republish the PR summary first" });
+      return ok({ origin_head_sha: observed.value.head_sha });
+    }
     const owners = await sql.query<{ readonly cohort_id: import("../domain/primitives").CohortId; readonly stage_key: string }>(
       `SELECT attempt.cohort_id::text,stage.stage_key FROM oakridge.attempt attempt
        JOIN oakridge.stage_instance stage ON stage.id=attempt.stage_instance_id WHERE attempt.id=$1`, [input.attempt_id]);

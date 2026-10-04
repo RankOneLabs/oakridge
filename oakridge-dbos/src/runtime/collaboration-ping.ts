@@ -1,6 +1,6 @@
 import type { DBOSClient } from "@dbos-inc/dbos-sdk";
 
-import { isTerminalSessionMessageDelivery, type DeliverSessionMessage, type SessionMessage, type SessionMessageDeliveryResult, type SessionMessageEnqueueResult, type SessionMessageRecipientResolution, type SessionMessageRecipientResolver, type SessionMessageRecord, type SessionMessageRepository, type SessionThreadId, type SessionThreadMessageId } from "../domain/collaboration";
+import { isTerminalSessionMessageDelivery, type DeliverSessionMessage, type SessionMessage, type SessionMessageDeliveryResult, type SessionMessageEnqueueResult, type SessionMessageRecipientResolution, type SessionMessageRecipientResolver, type SessionMessageRecord, type SessionMessageRepository, type SessionThreadId, type SessionThreadMessageId, renderSessionMessagePrompt } from "../domain/collaboration";
 import type { ExternalExecutionReference } from "../domain/execution";
 import { parseUuidId, type CohortId, type DeliveryKey, type ExecutionId, type JsonValue, type SessionId, type SessionMessageId, type WorkflowRunId } from "../domain/primitives";
 import type { SqlExecutor, TransactionalSqlExecutor } from "../storage/sql-executor";
@@ -36,9 +36,9 @@ export class PostgresSessionMessageRecipientResolver implements SessionMessageRe
     }
     const sessionId = parseUuidId<SessionId>(input.recipient.id);
     if (!sessionId) return { kind: "recipient_not_deliverable", detail: "agent recipient id must be a session UUID" };
-    const rows = await this.sql.query<SessionMessageRecipientRow>(`SELECT attempt.cohort_id::text,attempt.request->>'execution_id' AS execution_id,
-      attempt.adapter_type AS executor_type,session.adapter_reference
-      FROM oakridge.session session JOIN oakridge.attempt attempt ON attempt.id=session.attempt_id
+    const rows = await this.sql.query<SessionMessageRecipientRow>(`SELECT intent.cohort_id::text,intent.id AS execution_id,
+      'delegated_session' AS executor_type,session.adapter_reference
+      FROM oakridge.session session JOIN oakridge.execution_intent intent ON intent.session_id=session.id
       WHERE session.run_id=$1 AND session.id=$2`, [input.run_id, sessionId]);
     const row = rows[0];
     if (!row) return { kind: "recipient_not_deliverable", detail: `recipient session '${sessionId}' was not found in run '${input.run_id}'` };
@@ -149,6 +149,12 @@ export class PostgresSessionMessageRepository implements SessionMessageRepositor
     });
   }
 
+  async list_pending(limit: number): Promise<readonly SessionMessageRecord[]> {
+    const rows = await this.sql.query<SessionMessageRow>(`SELECT ${SESSION_MESSAGE_COLUMNS}
+      FROM oakridge.session_message WHERE delivery_status='pending' ORDER BY created_at,id LIMIT $1`, [limit]);
+    return rows.map(sessionMessageRecord);
+  }
+
   async list_for_run(run_id: WorkflowRunId, cohort_id?: CohortId): Promise<readonly SessionMessageRecord[]> {
     const rows = await this.sql.query<SessionMessageRow>(`SELECT ${SESSION_MESSAGE_COLUMNS}
       FROM oakridge.session_message WHERE run_id=$1 AND ($2::uuid IS NULL OR cohort_id=$2)
@@ -180,3 +186,24 @@ export class DbosCollaborationPingClient implements CollaborationPingClient {
     return { kind: "accepted", message: persisted.message, workflow_id: workflowId };
   }
 }
+
+export interface SessionMessageRecoveryDependencies {
+  readonly messages: Pick<PostgresSessionMessageRepository, "list_pending" | "record_delivery_result">;
+  readonly recipients: SessionMessageRecipientResolver;
+  readonly pings: CollaborationPingClient;
+  readonly now: () => string;
+}
+
+/** The message row is the durable admission; enqueueing can be replayed by key. */
+export const recoverPendingSessionMessages = async (dependencies: SessionMessageRecoveryDependencies): Promise<number> => {
+  const pending = await dependencies.messages.list_pending(100);
+  for (const message of pending) {
+    const resolution = await dependencies.recipients.resolve({ run_id: message.run_id, recipient: message.recipient });
+    if (resolution.kind !== "resolved") {
+      await dependencies.messages.record_delivery_result(message.id, { kind: "failed", detail: resolution.detail }, dependencies.now());
+      continue;
+    }
+    await dependencies.pings.enqueue({ message, target: resolution.target, prompt: renderSessionMessagePrompt(message.body) });
+  }
+  return pending.length;
+};

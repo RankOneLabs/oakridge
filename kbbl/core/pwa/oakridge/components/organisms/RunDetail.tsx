@@ -1,3 +1,4 @@
+import { selectStageHasCohortRows, selectCohortArtifacts } from "../../lib/stage-unit-params";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCancelRun } from "../../hooks/useCancelRun";
 import { useRetryStuck } from "../../hooks/useRetryStuck";
@@ -16,13 +17,6 @@ import { Chip } from "../../../components/atoms/Chip";
 const tableHeaderClass =
   "border-b border-[var(--border-subtle)] px-3 py-2 text-left text-xs font-semibold uppercase text-[var(--text-muted)]";
 
-function isFannedOut(stage: StageDetail): boolean {
-  return (
-    stage.units != null &&
-    stage.units.length > 0 &&
-    !(stage.units.length === 1 && stage.units[0].unit_id === "0")
-  );
-}
 
 interface RunDetailProps {
   runId: string;
@@ -159,13 +153,11 @@ export function RunDetail({ runId, run, activeGates, mergeWaits, onRunDeleted, o
             <tbody>
               {run.stages.flatMap((stage: StageDetail) => {
                 const units = stage.units;
-                if (units != null && isFannedOut(stage)) {
+                if (units != null && selectStageHasCohortRows(stage, mergeWaits)) {
                   return units.map((unit) => {
                     const cohortId = unit.cohort_id;
                     const canConfirmMerge = mergeWaits.some((wait) => wait.cohort_id === cohortId);
-                    const unitArtifacts = stage.artifacts.filter(
-                      (a) => a.label === unit.unit_id,
-                    );
+                    const unitArtifacts = selectCohortArtifacts(stage, cohortId);
                     return (
                 <RunUnitRow
                         key={`${stage.name}:${unit.unit_id}`}
@@ -193,7 +185,6 @@ export function RunDetail({ runId, run, activeGates, mergeWaits, onRunDeleted, o
                         confirmMerge={canConfirmMerge ? {
                           onConfirm: () => confirmMergeMutation.mutate({
                             cohortId,
-                            operatorComment: "Operator confirmed the pull request merged from the run workspace",
                           }),
                           isConfirming: confirmMergeMutation.isPending
                             && confirmMergeMutation.variables?.cohortId === cohortId,
@@ -201,7 +192,7 @@ export function RunDetail({ runId, run, activeGates, mergeWaits, onRunDeleted, o
                             && confirmMergeMutation.variables?.cohortId === cohortId
                             ? (confirmMergeMutation.error instanceof Error
                               ? confirmMergeMutation.error.message
-                              : "Could not confirm the merge")
+                              : "Could not recheck the merge")
                             : undefined,
                         } : undefined}
                       />

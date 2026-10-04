@@ -422,8 +422,18 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
         if (owner.worker === "build") {
           const prior = await tx.query<{ readonly response: import("../domain/dev-flow-v15").BuildResponse | null }>(
             "SELECT response FROM oakridge.cohort_worker WHERE cohort_id=$1 AND worker='build'", [owner.cohort_id]);
-          const response = { execution_id: owner.execution_id, build_result: current_ref("build_result"),
-            pr_summary: current_ref("pr_summary"), head_sha: verified_head ?? prior[0]?.response?.head_sha ?? null };
+          const previous = prior[0]?.response;
+          const same_head = previous?.execution_id === owner.execution_id && previous.head_sha !== null
+            && (verified_head === null || previous.head_sha === verified_head);
+          const carried_ref = (name: "build_result" | "pr_summary") => {
+            const ref = same_head ? previous?.[name] : null;
+            const row = current_outputs.find((candidate) => candidate.output_name === name);
+            return ref && row?.chain_id === ref.id && row.revision === ref.version ? ref : null;
+          };
+          const response = { execution_id: owner.execution_id,
+            build_result: current_ref("build_result") ?? carried_ref("build_result"),
+            pr_summary: current_ref("pr_summary") ?? carried_ref("pr_summary"),
+            head_sha: verified_head ?? previous?.head_sha ?? null };
           await tx.query("UPDATE oakridge.cohort_worker SET response=$2::jsonb WHERE cohort_id=$1 AND worker='build'",
             [owner.cohort_id, JSON.stringify(response)]);
         } else if (owner.worker === "assessment") {
@@ -520,16 +530,15 @@ export class PostgresRunRecordRepository implements RunRecordRepository {
 
 
   private async listSessionsToFence(run_id: WorkflowRunId): Promise<readonly CancelledRunSession[]> {
-    const rows = await this.sql.query<{ readonly session_id: string; readonly attempt_id: string; readonly adapter_type: string; readonly adapter_reference: JsonValue }>(
-      `SELECT session.id::text AS session_id,session.attempt_id::text,attempt.adapter_type,session.adapter_reference
+    const rows = await this.sql.query<{ readonly session_id: string; readonly attempt_id: string; readonly executor_type: string; readonly adapter_reference: JsonValue }>(
+      `SELECT session.id::text AS session_id,session.attempt_id::text,'delegated_session' AS executor_type,session.adapter_reference
        FROM oakridge.session session
-       JOIN oakridge.attempt attempt ON attempt.id=session.attempt_id
        WHERE session.run_id=$1 AND session.fenced_at IS NULL`, [run_id]);
     return rows.flatMap((row) => {
       const reference = deliverableReference(row.adapter_reference);
       if (!reference || reference.kind === "none") return [];
       return [{ session_id: row.session_id as SessionId, attempt_id: row.attempt_id as AttemptId,
-        executor_type: row.adapter_type, external_reference: reference }];
+        executor_type: row.executor_type, external_reference: reference }];
     });
   }
 

@@ -1,4 +1,5 @@
 /** Cohort ingress: snapshots -> pure decisions -> atomic commits -> durable IO. */
+import type { CohortPreparationError } from "../domain/cohort-pull-request";
 import { type V15EvaluationInput, type V15CompiledCohortDefinition } from "../decision/stage-machine";
 import { advanceCohortUntilWait, type CohortProgressionError } from "../runtime/run-launch-dispatch";
 import type { AgentSettings, VerifiedPrObservation, V15RunInputs } from "../domain/dev-flow-v15";
@@ -35,7 +36,7 @@ export interface ApplyStageEventDependencies {
   readonly now: () => string;
   readonly dispatch_executions?: (ids: readonly ExecutionId[]) => Promise<void>;
   readonly observe_pr?: (cohort_id: CohortId) => Promise<VerifiedPrObservation | null | Result<VerifiedPrObservation | null, { readonly detail: string }>>;
-  readonly prepare_repository?: (cohort_id: CohortId) => Promise<Result<void, { readonly detail: string }>>;
+  readonly prepare_repository?: (cohort_id: CohortId) => Promise<Result<void, CohortPreparationError>>;
 }
 export type CohortIngressError = CohortProgressionError | {
   readonly kind: "cohort_not_found" | "invalid_snapshot" | "stage_not_supported";
@@ -129,8 +130,14 @@ export class StageEventApplier {
             detail: "cohort is waiting for prerequisites or stage capacity" })
             : ok({ commits: 0, reason: "waiting for prerequisites or stage capacity" });
       }
+      const preparation_version = !is_termination && this.dependencies.prepare_repository
+        ? (await this.dependencies.sql.query<{ readonly version: string }>(
+          "SELECT durable_version::text AS version FROM oakridge.cohort WHERE id=$1", [cohort_id]))[0]?.version : undefined;
       const prepared = is_termination ? undefined : await this.dependencies.prepare_repository?.(cohort_id);
-      if (prepared && !prepared.ok) return err({ kind: "invalid_snapshot", cohort_id, detail: prepared.error.detail });
+      if (prepared && !prepared.ok) {
+        if (prepared.error.kind === "invalid_repository") return this.record_preparation_failure(prepared.error, Number(preparation_version));
+        return err({ kind: "invalid_snapshot", cohort_id, detail: prepared.error.detail });
+      }
       // Verified IO observations are supplied as facts, never as decisions.
       const observed = is_termination || !should_observe_pr ? null : await this.dependencies.observe_pr?.(cohort_id) ?? null;
       if (observed && "ok" in observed && !observed.ok)
@@ -169,6 +176,39 @@ export class StageEventApplier {
     }
   }
 
+  private async record_preparation_failure(failure: CohortPreparationError, expected_version: number):
+    Promise<Result<{ readonly commits: number; readonly reason: string }, CohortIngressError>> {
+    return this.dependencies.sql.transaction(async (tx) => {
+      const locations = await tx.query<{ readonly run_id: WorkflowRunId; readonly stage_instance_id: StageInstanceId }>(
+        "SELECT run_id::text,stage_instance_id::text FROM oakridge.cohort WHERE id=$1", [failure.cohort_id]);
+      const location = locations[0];
+      if (!location) return err({ kind: "cohort_not_found", cohort_id: failure.cohort_id, detail: failure.detail });
+      const stages = await tx.query<{ readonly status: string }>(
+        "SELECT status FROM oakridge.stage_instance WHERE id=$1 FOR UPDATE", [location.stage_instance_id]);
+      const runs = await tx.query<{ readonly status: string }>(
+        "SELECT status FROM oakridge.workflow_run WHERE id=$1 FOR SHARE", [location.run_id]);
+      const owners = await tx.query<{ readonly state: StateName; readonly version: string }>(
+        "SELECT state,durable_version::text AS version FROM oakridge.cohort WHERE id=$1 FOR UPDATE", [failure.cohort_id]);
+      const owner = owners[0];
+      if (!owner || ["complete", "failed", "cancelled"].includes(owner.state)
+        || stages[0]?.status !== "active" || runs[0]?.status !== "active")
+        return ok({ commits: 0, reason: "owner stopped during preparation" });
+      if (Number(owner.version) !== expected_version)
+        return err({ kind: "version_conflict", expected_version, actual_version: Number(owner.version) });
+      const committed = await this.dependencies.writer.commit_in(tx, {
+        run_id: location.run_id, owner: { kind: "cohort", id: failure.cohort_id }, expected_version: Number(owner.version),
+        launch_reason: "recovery", change: { status: "failed", blocked_reason: null, next_actor: null,
+          outcome: { kind: "failed", operation: failure.operation, cohort_id: failure.cohort_id,
+            failure: { kind: failure.kind, detail: failure.detail } } },
+        effect: { kind: "none" }, cohort_state: "failed" as StateName,
+        actor: "core", changed_at: this.dependencies.now(),
+      });
+      if (!committed.ok) return err({ kind: "invalid_snapshot", cohort_id: failure.cohort_id,
+        detail: `preparation failure could not commit: ${committed.error.kind}` });
+      return ok({ commits: 1, reason: failure.detail });
+    });
+  }
+
   async cancel_in(tx: SqlExecutor, cohort_id: CohortId, actor: string): Promise<Result<ApplyOutcome, ApplyStageEventError>> {
     const rows = await tx.query<{ readonly state: StateName; readonly durable_version: string; readonly run_id: WorkflowRunId }>(
       "SELECT state,durable_version::text,run_id::text FROM oakridge.cohort WHERE id=$1 FOR UPDATE", [cohort_id]);
@@ -183,12 +223,6 @@ export class StageEventApplier {
       actor, changed_at: this.dependencies.now(),
     });
     if (!committed.ok) return err({ operation: "apply_stage_event", cohort_id, kind: "effect_failed", detail: committed.error.kind });
-    await tx.query("UPDATE oakridge.cohort_worker SET state='cancelled' WHERE cohort_id=$1", [cohort_id]);
-    await tx.query("UPDATE oakridge.cohort SET activation_slot=NULL WHERE id=$1", [cohort_id]);
-    await tx.query(`UPDATE oakridge.execution_intent SET stop_requested_at=COALESCE(stop_requested_at,$2::timestamptz),
-      status=CASE WHEN status='pending' THEN 'cancelled' ELSE status END WHERE cohort_id=$1`, [cohort_id, this.dependencies.now()]);
-    await tx.query(`UPDATE oakridge.session SET fenced_at=COALESCE(fenced_at,$2::timestamptz)
-      WHERE attempt_id IN (SELECT id FROM oakridge.attempt WHERE cohort_id=$1)`, [cohort_id, this.dependencies.now()]);
     return ok({ kind: "applied", transition_id: committed.value.transition_id, from: row.state, to: "cancelled" as StateName });
   }
 }

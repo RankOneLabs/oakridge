@@ -111,7 +111,7 @@ export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelect
             disabled={confirmMerge.isConfirming}
             data-testid="or-confirm-cohort-merged-btn"
           >
-            {confirmMerge.isConfirming ? "Confirming…" : "Confirm merge"}
+            {confirmMerge.isConfirming ? "Rechecking…" : "Recheck merge"}
           </Button>
         )}
         {confirmMerge?.error && <span role="alert" className="text-xs text-red-500">{confirmMerge.error}</span>}

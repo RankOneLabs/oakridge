@@ -1,4 +1,4 @@
-import { selectFailureDetail } from "./lib/client-errors";
+import { OakridgeHttpError, selectFailureDetail } from "./lib/client-errors";
 export { selectFailureDetail } from "./lib/client-errors";
 // API client for the Oakridge backend proxy at /oakridge/api/*.
 // All paths are same-origin relative so the PWA needs no CORS config.
@@ -52,7 +52,7 @@ async function oakridgeGet<T>(path: string): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => null) as unknown;
     const detail = selectFailureDetail(body, `oakridge ${path}: ${res.status}`);
-    throw new Error(detail);
+    throw new OakridgeHttpError(res.status, detail);
   }
   return (await res.json()) as T;
 }
@@ -68,7 +68,7 @@ async function oakridgePost<T>(path: string, body: unknown, options: OakridgePos
   if (!res.ok) {
     const b = await res.json().catch(() => null) as unknown;
     const detail = selectFailureDetail(b, `oakridge POST ${path}: ${res.status}`);
-    throw new Error(detail);
+    throw new OakridgeHttpError(res.status, detail);
   }
   if (res.status === 204 || res.headers.get("content-length") === "0") {
     return undefined as unknown as T;
@@ -81,7 +81,7 @@ async function oakridgeDelete(path: string): Promise<void> {
   if (!res.ok) {
     const b = await res.json().catch(() => null) as unknown;
     const detail = selectFailureDetail(b, `oakridge DELETE ${path}: ${res.status}`);
-    throw new Error(detail);
+    throw new OakridgeHttpError(res.status, detail);
   }
 }
 
@@ -94,7 +94,7 @@ async function oakridgePatch<T>(path: string, body: unknown): Promise<T> {
   if (!res.ok) {
     const b = await res.json().catch(() => null) as unknown;
     const detail = selectFailureDetail(b, `oakridge PATCH ${path}: ${res.status}`);
-    throw new Error(detail);
+    throw new OakridgeHttpError(res.status, detail);
   }
   return (await res.json()) as T;
 }
@@ -153,12 +153,7 @@ export function fetchArtifact(id: string): Promise<ArtifactDetail> {
 
 
 /**
- * Confirms a cohort's pull request merged, when Oakridge cannot see the
- * repository for itself.
- *
- * This is the fallback behind the GitHub poller, not a second path: the backend
- * checks a confirmation against the same expectations it checks a polled
- * observation against, so this asserts only that the merge happened.
+ * Requests a fresh forge observation through the same path as the poller.
  */
 export function confirmCohortMerged(cohortId: string): Promise<CohortPullRequestResponse> {
   return oakridgePost<CohortPullRequestResponse>(`/cohorts/${encodeURIComponent(cohortId)}/pull_request/refresh`, {});

@@ -13,7 +13,7 @@ import type { ArtifactRef, ImplementationCohortDefinition, ImplementationCohortI
 import { createScratchDatabase, type ScratchDatabase } from "./support/durable-database";
 
 const scratches: ScratchDatabase[] = [];
-afterAll(async () => { for (const scratch of scratches) await scratch.drop(); });
+afterAll(async () => { for (const scratch of scratches) await scratch.drop(); }, 30_000);
 const definition = (await Bun.file(new URL("../../workflow-config/definitions/dev_flow_v15.json", import.meta.url)).json())
   .stages.implementation.cohort as ImplementationCohortDefinition;
 const run_id = "00000000-0000-4000-8900-000000000001" as WorkflowRunId;
@@ -394,6 +394,21 @@ test("local progression never reads the forge", async () => {
   } finally { await fixture.sql.close(); }
 });
 
+test("terminal run cancellation recovery resolves kbbl sessions through the delegated executor", async () => {
+  const fixture = await prepare("oakridge_terminal_cancel_executor");
+  try {
+    await fixture.ingress.advance(cohort_id, null);
+    const records = new PostgresRunRecordRepository(fixture.sql, new PostgresRunRecordWriter(fixture.sql), fixture.ingress);
+    await records.cancel_run({ run_id, reason: null, cancelled_at: fixture.io.now(), actor: "operator" });
+    // A historical terminal run can still contain an unfenced external session.
+    await fixture.sql.query("UPDATE oakridge.session SET fenced_at=NULL WHERE run_id=$1", [run_id]);
+    const recovered = await records.cancel_run({ run_id, reason: null, cancelled_at: fixture.io.now(), actor: "operator" });
+    expect(recovered).toMatchObject({ kind: "already_terminal", sessions_to_fence: [
+      { session_id: fixture.created[0]!.session_id, executor_type: "delegated_session" },
+    ] });
+  } finally { await fixture.sql.close(); }
+});
+
 test("run deletion removes published outputs and execution references", async () => {
   const fixture = await prepare("oakridge_delete_outputs");
   try {
@@ -405,3 +420,45 @@ test("run deletion removes published outputs and execution references", async ()
     expect(await fixture.sql.query("SELECT id FROM oakridge.artifact", [])).toEqual([]);
   } finally { await fixture.sql.close(); }
 });
+
+for (const kind of ["invalid_repository", "unavailable"] as const) test(`preparation ${kind} retains its durable owner semantics`, async () => {
+  const fixture = await prepare(`oakridge_prepare_${kind}`);
+  try {
+    await fixture.ingress.advance(cohort_id, null);
+    const applier = new StageEventApplier({ sql: fixture.sql, writer: new PostgresRunRecordWriter(fixture.sql), now: fixture.io.now,
+      prepare_repository: async () => ({ ok: false, error: {
+        operation: "prepare_cohort_repository", cohort_id, kind, detail: "preparation evidence" } }) });
+    const result = await applier.advance_local(cohort_id);
+    expect(result.ok).toBe(kind === "invalid_repository");
+    const [owner] = await fixture.sql.query<{ readonly state: string; readonly outcome: JsonValue | null; readonly activation_slot: number | null }>(
+      "SELECT state,outcome,activation_slot FROM oakridge.cohort WHERE id=$1", [cohort_id]);
+    if (kind === "unavailable") {
+      expect(owner).toMatchObject({ state: "working", outcome: null });
+    } else {
+      expect(owner).toEqual({ state: "failed", activation_slot: null, outcome: { kind: "failed",
+        operation: "prepare_cohort_repository", cohort_id, failure: { kind, detail: "preparation evidence" } } });
+      expect(await fixture.sql.query(`SELECT worker.active_execution_id,intent.stop_requested_at IS NOT NULL AS stopped,
+        session.fenced_at IS NOT NULL AS fenced FROM oakridge.cohort_worker worker
+        JOIN oakridge.execution_intent intent ON intent.cohort_id=worker.cohort_id AND intent.worker=worker.worker
+        JOIN oakridge.session session ON session.id=intent.session_id WHERE worker.cohort_id=$1`, [cohort_id]))
+        .toEqual([{ active_execution_id: null, stopped: true, fenced: true }]);
+      expect(await applier.advance_local(cohort_id)).toEqual({ ok: true, value: { commits: 0, reason: "cohort terminal" } });
+    }
+  } finally { await fixture.sql.close(); }
+}, 60_000);
+
+test("a preparation failure cannot overwrite a concurrently advanced owner", async () => {
+  const fixture = await prepare("oakridge_prepare_version_race");
+  try {
+    const applier = new StageEventApplier({ sql: fixture.sql, writer: new PostgresRunRecordWriter(fixture.sql), now: fixture.io.now,
+      prepare_repository: async () => {
+        await fixture.ingress.advance_local(cohort_id);
+        return { ok: false, error: { operation: "prepare_cohort_repository", cohort_id,
+          kind: "invalid_repository", detail: "obsolete preparation" } };
+      } });
+    expect(await applier.advance_local(cohort_id)).toMatchObject({ ok: false,
+      error: { kind: "version_conflict", expected_version: 0, actual_version: 1 } });
+    expect((await fixture.sql.query("SELECT state,outcome FROM oakridge.cohort WHERE id=$1", [cohort_id]))[0])
+      .toEqual({ state: "working", outcome: null });
+  } finally { await fixture.sql.close(); }
+}, 60_000);

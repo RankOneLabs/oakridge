@@ -4,16 +4,9 @@ import { confirmCohortMerged } from "../client";
 
 interface ConfirmCohortMergedInput {
   cohortId: string;
-  operatorComment?: string;
 }
 
-/**
- * The operator telling Oakridge a cohort's pull request merged.
- *
- * The normal path is the backend's GitHub poller; this is what an operator
- * reaches for when the poller cannot see the repository. The idempotency key is
- * held per cohort so a double click confirms once.
- */
+/** Requests a fresh verified merge observation; final approval uses a cohort request. */
 export function useConfirmCohortMerged(runId: string) {
   const client = useQueryClient();
   return useMutation({

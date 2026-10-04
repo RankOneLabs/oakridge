@@ -58,7 +58,7 @@ export interface ListRunEventsInput {
 interface V2RunProjectionRow { readonly id: string; readonly title: string | null; readonly repository_keys: readonly string[]; readonly workflow_name: string; readonly status: CoreStatus; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null; readonly current_stage: string | null; readonly stage_total: string; readonly stage_complete: string; readonly attention_count: string; readonly parked_count: string; readonly updated_at: string; readonly archived: boolean }
 interface V2StageProjectionRow { readonly stage_instance_id: string; readonly name: string; readonly stage_type: string; readonly operator_role: string | null; readonly status: CoreStatus; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null }
 interface V2UnitProjectionRow { readonly cohort_id: string; readonly stage_instance_id: string; readonly unit_id: string; readonly brief: OperatorStageUnit["brief"]; readonly state: string; readonly status: CoreStatus; readonly blocked_reason: BlockedReason | null; readonly next_actor: NextActor | null; readonly session_id: string | null; readonly gate_step: string | null }
-interface StageArtifactRow { readonly stage_instance_id: string; readonly id: string; readonly type_id: string; readonly version: number; readonly label: string | null; readonly created_at: string }
+interface StageArtifactRow { readonly cohort_id: CohortId | null; readonly stage_instance_id: string; readonly id: string; readonly type_id: string; readonly version: number; readonly label: string | null; readonly created_at: string }
 interface DiagnosisSessionRow { readonly session_id: string; readonly stage_key: string; readonly cohort_id: string; readonly cohort_key: string; readonly worker: V15WorkerKey; readonly execution_id: ExecutionId; readonly action_point: string; readonly is_current: boolean; readonly status: CoreStatus; readonly created_at: string }
 interface V2CohortProjectionRow { readonly cohort_id: string; readonly run_id: string; readonly workflow_name: string;
   readonly stage_instance_id: string; readonly stage_name: string; readonly unit_id: string; readonly status: CoreStatus;
@@ -368,7 +368,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
          AND brief.revision=(cohort.frozen_inputs->'brief'->>'version')::integer
        WHERE cohort.run_id=$1 ORDER BY cohort.stage_instance_id,cohort.cohort_key`, [id]);
     const artifactRows = await this.sql.query<StageArtifactRow>(
-      `SELECT owner.stage_instance_id::text,artifact.id::text,artifact.artifact_type AS type_id,artifact.revision AS version,artifact.label,
+      `SELECT owner.cohort_id::text,owner.stage_instance_id::text,artifact.id::text,artifact.artifact_type AS type_id,artifact.revision AS version,artifact.label,
               artifact.created_at::text AS created_at
        FROM oakridge.artifact artifact JOIN oakridge.artifact_owner owner ON owner.artifact_id=artifact.id
        WHERE owner.run_id=$1 AND owner.stage_instance_id IS NOT NULL AND artifact.lifecycle IN ('current','released')
@@ -386,7 +386,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
           retryable: workers.some((worker) => selectWorkerAttention(worker).can_retry), gate: null };
       }));
       const artifacts = artifactRows.filter((artifact) => artifact.stage_instance_id === stage.stage_instance_id)
-        .map((artifact): OperatorStageArtifact => ({ id: artifact.id as ArtifactId, type_id: artifact.type_id, version: artifact.version, label: artifact.label, created_at: artifact.created_at }));
+        .map((artifact): OperatorStageArtifact => ({ cohort_id: artifact.cohort_id, id: artifact.id as ArtifactId, type_id: artifact.type_id, version: artifact.version, label: artifact.label, created_at: artifact.created_at }));
       return { stage_instance_id: stage.stage_instance_id as import("../domain/primitives").StageInstanceId,
         name: stage.name, type: stage.stage_type, operator_role: stage.operator_role,
         status: stage.status, blocked_reason: stage.blocked_reason, next_actor: stage.next_actor, artifacts,

@@ -284,3 +284,17 @@ test("clean cutover refuses an existing prompt ledger without deleting or conver
     expect(await sql.query("SELECT name FROM public.oakridge_schema_migration WHERE name='0018_v15_clean_cutover.sql'", [])).toEqual([]);
   } finally { await sql.close(); }
 });
+
+test("concurrent first boots serialize ledger inspection and apply each migration once", async () => {
+  const scratch = await createScratchDatabase("oakridge_concurrent_migration");
+  if (!scratch.ok) throw new Error(scratch.error.detail);
+  scratches.push(scratch.value);
+  const left = PgPostgresExecutor.connect(scratch.value.url);
+  const right = PgPostgresExecutor.connect(scratch.value.url);
+  try {
+    const applied = await Promise.all([applyMigrations(left), applyMigrations(right)]);
+    expect(applied.map((names) => names.length).sort((a, b) => a - b)).toEqual([0, MIGRATION_SET.length]);
+    expect(await left.query("SELECT name FROM public.oakridge_schema_migration ORDER BY name", []))
+      .toEqual(MIGRATION_SET.map((name) => ({ name })));
+  } finally { await left.close(); await right.close(); }
+}, 60_000);

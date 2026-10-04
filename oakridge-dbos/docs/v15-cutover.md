@@ -43,6 +43,7 @@ printf 'willie:%s\n' "$dump_path" > /srv/oakridge/backups/v15/baseline-dump-path
 # Complete the separate-database restore check before this destructive step.
 docker exec -i oakridge-postgres psql -U oakridge -d oakridge -v ON_ERROR_STOP=1 <<'SQL'
 DROP SCHEMA IF EXISTS oakridge CASCADE;
+DROP SCHEMA IF EXISTS dev_flow CASCADE;
 DROP SCHEMA IF EXISTS dbos CASCADE;
 DROP TABLE IF EXISTS public.oakridge_schema_migration;
 SQL

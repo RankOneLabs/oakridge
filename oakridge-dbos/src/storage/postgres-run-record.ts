@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import type { Command, Contradiction, Derivation, StatusChange } from "../decision/commands";
 import { selectStartableCohorts, type SchedulableCohort } from "../decision/schedule-cohorts";
 import { derive } from "../decision/derive";
@@ -176,10 +177,11 @@ const updateOwner = async (
     parameters,
   );
   if (rows[0]) {
-    if (input.owner.kind === "cohort" && input.change.status === "cancelled") {
-      // Cancellation's fixed storage meaning revokes publication before its
+    if (input.owner.kind === "cohort" && (input.change.status === "cancelled" || input.change.status === "failed")) {
+      // A terminal owner observation revokes publication before its
       // containing stage/run can publish a terminal outcome. Stop IO recovers.
-      await tx.query("UPDATE oakridge.cohort_worker SET state='cancelled',active_execution_id=NULL WHERE cohort_id=$1", [input.owner.id]);
+      await tx.query(`UPDATE oakridge.cohort_worker SET state=CASE WHEN $2='failed' AND state='accepted'
+        THEN state ELSE 'cancelled' END,active_execution_id=NULL WHERE cohort_id=$1`, [input.owner.id, input.change.status]);
       await tx.query("UPDATE oakridge.cohort SET activation_slot=NULL WHERE id=$1", [input.owner.id]);
       await tx.query(`UPDATE oakridge.execution_intent SET stop_requested_at=COALESCE(stop_requested_at,$2::timestamptz),
         status=CASE WHEN status='pending' THEN 'cancelled' ELSE status END WHERE cohort_id=$1`, [input.owner.id, input.changed_at]);
@@ -504,6 +506,23 @@ const applySelectedChange = async (tx: SqlExecutor, input: CommitSelectedCohortI
 const actionConfiguration = (definition: V15CompiledCohortDefinition, action: V15ResolvedAction) =>
   definition.workers[action.worker]?.action_points[action.action.action_point];
 
+/** Retry can carry only explicitly named publications from the interrupted work. */
+const buildRetryResponseIn = async (tx: SqlExecutor, cohort_id: CohortId,
+  action: V15ResolvedAction, execution_id: ExecutionId): Promise<BuildResponse | null> => {
+  if (action.worker !== "build" || action.action.action_point !== "retry") return null;
+  const input = action.action.input;
+  const rows = await tx.query<{ readonly work: import("../domain/dev-flow-v15").BuildWorkInput | null;
+    readonly response: BuildResponse | null }>(
+    "SELECT work,response FROM oakridge.cohort_worker WHERE cohort_id=$1 AND worker='build'", [cohort_id]);
+  const previous = rows[0]?.response;
+  if (!isDeepStrictEqual(rows[0]?.work, input.work))
+    throw new SelectedCohortAbort({ kind: "invalid_decision", detail: "retry work differs from the interrupted work" });
+  if (!previous || previous.execution_id !== input.interrupted.execution_id || !previous.head_sha) return null;
+  return { execution_id, head_sha: previous.head_sha,
+    build_result: input.build_result && isDeepStrictEqual(input.build_result, previous.build_result) ? input.build_result : null,
+    pr_summary: input.pr_summary && isDeepStrictEqual(input.pr_summary, previous.pr_summary) ? input.pr_summary : null };
+};
+
 /** Commits exactly the evaluator's selected writes; it never selects progression. */
 export const commitSelectedCohort = async (sql: TransactionalSqlExecutor,
   input: CommitSelectedCohortInput): Promise<Result<CommittedSelectedCohort, CommitSelectedCohortError>> => {
@@ -606,11 +625,12 @@ export const commitSelectedCohort = async (sql: TransactionalSqlExecutor,
           [execution_id, input.cohort_id, action.worker, attempt_id, transition_id,
             action.action.action_point, JSON.stringify(action.action.input), configured.prompt ?? null,
             settings ? JSON.stringify(settings) : null, input.at, configured.operation ?? null]);
+        const carried_response = await buildRetryResponseIn(tx, input.cohort_id, action, execution_id);
         await tx.query(`UPDATE oakridge.cohort_worker SET active_execution_id=$3,
-          work=$4::jsonb,response=NULL,interrupted=NULL WHERE cohort_id=$1 AND worker=$2`,
+          work=$4::jsonb,response=$5::jsonb,interrupted=NULL WHERE cohort_id=$1 AND worker=$2`,
           [input.cohort_id, action.worker, execution_id,
             JSON.stringify(action.action.action_point === "retry" && "work" in action.action.input
-              ? action.action.input.work : action.action)]);
+              ? action.action.input.work : action.action), carried_response ? JSON.stringify(carried_response) : null]);
         execution_ids.push(execution_id);
       }
       return ok({ transition_id, resulting_version, execution_ids });
