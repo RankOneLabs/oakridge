@@ -64,6 +64,7 @@ test("selected invocation survives cancellation and blocks deletion until stop i
     expect(await materializeSelectedIntents(db)).toBe(1);
     const starts = await db.query<{ payload: EffectPayload }>("SELECT payload FROM authority.effect_intent WHERE id='start'", []);
     expect(starts[0]?.payload.invocation.selection).toEqual(selection);
+    await db.query("UPDATE authority.effect_intent SET status='uncertain' WHERE id='start'", []);
     expect(await cancelRun(db, { kind: "cancel_run", run_id: "run", reason: "operator" })).toEqual({ kind: "cancelled", stop_intents: 1 });
     expect(await deleteRun(db, "run")).toEqual({ kind: "refused", obligations: 1 });
     await db.query("UPDATE authority.effect_intent SET status='cleanup_confirmed' WHERE effect_key='ingress:0:stop'", []);
@@ -99,6 +100,7 @@ test("run cancellation evaluates each scope's declared cancellation policy and r
       expect(await mutations.decide(input)).toMatchObject({ ok: true, value: { kind: "Committed" } });
       const scopes = await db.query<{ id: import("../src/storage/schema-records").ScopeId }>("SELECT id FROM authority.scope_instance WHERE parent_id=$1", [run.value.root_scope_id]);
       expect(await mutations.decide({ ...input, scope_id: scopes[0]!.id })).toMatchObject({ ok: true, value: { kind: "Committed" } });
+      await db.query("UPDATE authority.effect_intent SET status='uncertain' WHERE payload->>'action'='start'", []);
       expect(await cancelRun(db, { kind: "cancel_run", run_id: run.value.run_id, reason: "operator" }, core)).toMatchObject({ kind: "cancelled", stop_intents: 1 });
       const outcomes = await db.query<{ scope_key: string; outcome: import("../src/core-client/generated-contracts").CheckedValue }>("SELECT scope_key,outcome FROM authority.scope_instance ORDER BY scope_key", []);
       expect(outcomes.map((scope) => [scope.scope_key, scope.outcome.data.kind === "variant" ? scope.outcome.data.variant : null])).toEqual([["batch", "withdrawn"], ["document", "released"]]);

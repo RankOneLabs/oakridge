@@ -10,7 +10,16 @@ export interface StableInvocation {
   readonly selection: Invocation;
   /** Persisted request bytes. Recovery sends these bytes without re-rendering. */
   readonly bytes: string;
+  readonly request?: ProviderRequest;
 }
+
+/** Versioned transport metadata; bytes contains the exact selected request body. */
+export type ProviderRequest =
+  | { readonly version: 1; readonly kind: "kbbl_session"; readonly session_key: string }
+  | { readonly version: 1; readonly kind: "repository_preparation" }
+  | { readonly version: 1; readonly kind: "pull_request_observation" }
+  | { readonly version: 1; readonly kind: "unsupported" };
+export interface ProviderCallOptions { readonly signal?: AbortSignal }
 
 export type ProviderResult<Value> =
   | { readonly kind: "acknowledged"; readonly value: Value }
@@ -30,10 +39,10 @@ export type TerminalObservation =
 
 export interface EffectProvider {
   /** A repeated id must resolve to the same external action. */
-  start(invocation: StableInvocation): Promise<ProviderResult<ExternalHandle>>;
+  start(invocation: StableInvocation, options?: ProviderCallOptions): Promise<ProviderResult<ExternalHandle>>;
   /** Stop by invocation id, including a start whose response was lost. */
-  stop(invocation: StableInvocation, handle: ExternalHandle | null): Promise<ProviderResult<{ readonly stopped: true }>>;
-  observe(invocation: StableInvocation, handle: ExternalHandle | null): Promise<ProviderResult<TerminalObservation>>;
+  stop(invocation: StableInvocation, handle: ExternalHandle | null, options?: ProviderCallOptions): Promise<ProviderResult<{ readonly stopped: true }>>;
+  observe(invocation: StableInvocation, handle: ExternalHandle | null, options?: ProviderCallOptions): Promise<ProviderResult<TerminalObservation>>;
 }
 
 export function selectedInvocation(id: InvocationId, execution_id: string, selection: Invocation): StableInvocation {

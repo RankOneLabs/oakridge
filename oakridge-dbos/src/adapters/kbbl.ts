@@ -235,6 +235,38 @@ const sessionIdOf = (external_reference: ExternalExecutionReference, execution_i
   return external_reference.session_id;
 };
 
+export interface PinnedSessionStop { readonly request: PinnedSessionStart; readonly execution_id: ExecutionId; readonly reference: ExternalExecutionReference | null }
+export interface PinnedSessionStart { readonly session_key: string; readonly body: string }
+export interface SessionStartSelection { readonly request: ExecutionRequest; readonly operation_id: ExecutorOperationId; readonly executor_function_identity: string }
+
+/** Render once at selection. Recovery dispatches the returned body without parsing launch material. */
+export function renderSessionStart(input: SessionStartSelection): ProviderResult<PinnedSessionStart> {
+  const { request, operation_id, executor_function_identity } = input;
+  let config: KbblResolvedConfig;
+  try { config = parseResolvedConfig(request.resolved_config); }
+  catch (error) { return { kind: "permanently_rejected", code: "start_rejected", detail: error instanceof Error ? error.message : String(error) }; }
+  return { kind: "acknowledged", value: { session_key: sessionKeyFor(operation_id, executor_function_identity), body: JSON.stringify({
+        initial_prompt: config.rendered_prompt + publicationInstructions(config, request),
+        workdir: config.workdir,
+        name: config.session_name,
+        runtime: config.runtime,
+        ...(config.model ? { model: config.model } : {}),
+        ...(config.effort ? { effort: config.effort } : {}),
+        ...(config.artifact_id ? { artifact_id: config.artifact_id } : {}),
+        ...(config.worktree ? { worktree: { branch_name: config.worktree.branchName, worktree_subdir: config.worktree.worktreeSubdir,
+          ...(config.worktree.baseRef ? { base_ref: selectRemoteWorktreeBase(config.worktree.baseRef) } : {}) } } : {}),
+        workflow: {
+          workflow_run_id: config.session_identity.run_id,
+          stage_instance_id: config.session_identity.stage_instance_id,
+          unit_id: config.session_identity.unit_id,
+          ...(config.session_identity.cohort_id ? { cohort_id: config.session_identity.cohort_id } : {}),
+          ...(config.session_identity.operator_role ? { operator_role: config.session_identity.operator_role } : {}),
+          ...(config.session_identity.cohort_title ? { cohort_title: config.session_identity.cohort_title } : {}),
+          ...(config.session_identity.repository_key ? { repository_key: config.session_identity.repository_key } : {}),
+        },
+      }) } };
+}
+
 export class KbblExecutorAdapter implements ExecutorAdapter {
   readonly executor_type = "delegated_session";
   private readonly fetch: FetchLike;
@@ -255,6 +287,27 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
     }
   }
 
+  async start_pinned(request: PinnedSessionStart): Promise<ProviderResult<ExternalExecutionReference>> {
+    try {
+      const result = await this.start_request(request);
+      return result.kind === "executor_unavailable" ? { kind: "uncertain", detail: result.detail } : { kind: "acknowledged", value: result };
+    } catch (error) {
+      return error instanceof ExecutorStartRejectedError ? { kind: "permanently_rejected", code: "start_rejected", detail: error.message }
+        : { kind: "uncertain", detail: String(error) };
+    }
+  }
+
+  async stop_pinned(input: PinnedSessionStop): Promise<ProviderResult<{ readonly stopped: true }>> {
+    let reference = input.reference;
+    if (!reference) {
+      const reconciled = await this.start_pinned(input.request);
+      if (reconciled.kind !== "acknowledged") return { kind: "uncertain", detail: reconciled.detail };
+      reference = reconciled.value;
+    }
+    const stopped = await this.cancel_or_fence(input.execution_id, reference);
+    return stopped?.kind === "executor_unavailable" ? { kind: "transiently_unavailable", detail: stopped.detail } : { kind: "acknowledged", value: { stopped: true } };
+  }
+
   /** An uncertain start is reconciled by its original identity before stop. */
   async stop_selected(request: ExecutionRequest, invocation_id: InvocationId, reference: ExternalExecutionReference | null): Promise<ProviderResult<{ readonly stopped: true }>> {
     let known = reference;
@@ -270,37 +323,17 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
   }
 
   async start_or_attach(request: ExecutionRequest, operation_id: ExecutorOperationId): Promise<ExternalExecutionReference | ExecutorUnavailable> {
-    let config: KbblResolvedConfig;
-    try {
-      config = parseResolvedConfig(request.resolved_config);
-    } catch (error) {
-      throw new ExecutorStartRejectedError(error instanceof Error ? error.message : String(error));
-    }
-    const sessionKey = sessionKeyFor(operation_id, this.options.executor_function_identity);
+    const rendered = renderSessionStart({ request, operation_id, executor_function_identity: this.options.executor_function_identity });
+    if (rendered.kind !== "acknowledged") throw new ExecutorStartRejectedError(rendered.detail);
+    return this.start_request(rendered.value);
+  }
+
+  private async start_request(request: PinnedSessionStart): Promise<ExternalExecutionReference | ExecutorUnavailable> {
     let response: Response;
-    try { response = await this.fetch(`${this.options.base_url}/sessions/resumable/${encodeURIComponent(sessionKey)}`, {
+    try { response = await this.fetch(`${this.options.base_url}/sessions/resumable/${encodeURIComponent(request.session_key)}`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        initial_prompt: config.rendered_prompt + publicationInstructions(config, request),
-        workdir: config.workdir,
-        name: config.session_name,
-        runtime: config.runtime,
-        ...(config.model ? { model: config.model } : {}),
-        ...(config.effort ? { effort: config.effort } : {}),
-        ...(config.artifact_id ? { artifact_id: config.artifact_id } : {}),
-        ...(config.worktree ? { worktree: { branch_name: config.worktree.branchName, worktree_subdir: config.worktree.worktreeSubdir,
-          ...(config.worktree.baseRef ? { base_ref: selectRemoteWorktreeBase(config.worktree.baseRef) } : {}) } } : {}),
-        workflow: {
-          workflow_run_id: config.session_identity.run_id,
-          stage_instance_id: config.session_identity.stage_instance_id,
-          unit_id: config.session_identity.unit_id,
-          ...(config.session_identity.cohort_id ? { cohort_id: config.session_identity.cohort_id } : {}),
-          ...(config.session_identity.operator_role ? { operator_role: config.session_identity.operator_role } : {}),
-          ...(config.session_identity.cohort_title ? { cohort_title: config.session_identity.cohort_title } : {}),
-          ...(config.session_identity.repository_key ? { repository_key: config.session_identity.repository_key } : {}),
-        },
-      }),
+      body: request.body,
     }); } catch (error) { return { kind: "executor_unavailable", operation: "start_or_attach", detail: String(error) }; }
     if (!response.ok) {
       if (response.status >= 400 && response.status < 500) throw new ExecutorStartRejectedError(`kbbl ensure-session failed (${response.status}): ${await response.text()}`);

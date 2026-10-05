@@ -69,3 +69,12 @@ export async function pendingCleanupCount(db: SqlExecutor, run_id: string): Prom
           AND proof.payload->>'action' IN ('stop','observe') AND proof.status='cleanup_confirmed')))`, [run_id]);
   return Number(rows[0]?.count ?? 0);
 }
+
+/** A never-dispatched selection and a definite rejection own no external execution. */
+export function requiresCleanup(intent: Pick<EffectIntent, "status" | "payload">): boolean {
+  if (intent.status === "cleanup_confirmed" || intent.payload.handle?.kind === "completed") return false;
+  if (intent.status === "in_flight" || intent.status === "uncertain" || intent.payload.has_uncertain_start) return true;
+  if (intent.status === "acknowledged") return intent.payload.handle !== null;
+  // A revoked in-flight start keeps its original lease until cleanup is confirmed.
+  return intent.status === "revoked" && intent.payload.lease !== undefined;
+}

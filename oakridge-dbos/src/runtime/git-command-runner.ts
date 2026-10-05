@@ -1,4 +1,4 @@
-import type { GitCommandOutcome, GitCommandRunner } from "../domain/repository-provisioning";
+import type { GitCommandOutcome, GitCommandRunner, GitCommandOptions } from "../domain/repository-provisioning";
 
 /**
  * Bounded so a wedged or unreachable remote cannot hold a unit open forever.
@@ -17,7 +17,8 @@ export class BunGitCommandRunner implements GitCommandRunner {
     this.timeoutMs = options.timeout_ms ?? DEFAULT_GIT_TIMEOUT_MS;
   }
 
-  async run(repository_path: string, args: readonly string[]): Promise<GitCommandOutcome> {
+  async run(repository_path: string, args: readonly string[], options: GitCommandOptions = {}): Promise<GitCommandOutcome> {
+    if (options.signal?.aborted) return { exit_code: 130, stdout: "", stderr: "git operation aborted" };
     let child;
     try {
       child = Bun.spawn(["git", "-C", repository_path, ...args], { stdout: "pipe", stderr: "pipe" });
@@ -25,6 +26,9 @@ export class BunGitCommandRunner implements GitCommandRunner {
       // A directory that does not exist fails here rather than in git itself.
       return { exit_code: 128, stdout: "", stderr: error instanceof Error ? error.message : String(error) };
     }
+    const abort = (): void => { child.kill("SIGKILL"); };
+    options.signal?.addEventListener("abort", abort, { once: true });
+    if (options.signal?.aborted) abort();
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; child.kill(); }, this.timeoutMs);
     try {
@@ -33,12 +37,14 @@ export class BunGitCommandRunner implements GitCommandRunner {
         new Response(child.stderr).text(),
         child.exited,
       ]);
+      if (options.signal?.aborted) return { exit_code: 130, stdout, stderr: "git operation aborted" };
       if (timedOut) return { exit_code: exitCode === 0 ? 124 : exitCode, stdout, stderr: `timed out after ${this.timeoutMs}ms${stderr ? `: ${stderr}` : ""}` };
       return { exit_code: exitCode, stdout, stderr };
     } catch (error) {
       return { exit_code: 128, stdout: "", stderr: error instanceof Error ? error.message : String(error) };
     } finally {
       clearTimeout(timer);
+      options.signal?.removeEventListener("abort", abort);
     }
   }
 }

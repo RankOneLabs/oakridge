@@ -12,7 +12,7 @@ import { dispatchSweep, type DispatchOptions } from "../effects/dispatch";
 import type { EffectProvider } from "../effects/provider";
 import type { PullRequestReader } from "./github-pull-requests";
 import { createEffectProvider } from "../effects/operations/production-provider";
-import { cancelRun, deleteRun, deliverEffectFacts } from "../effects/reconcile";
+import { cancelRun, deleteRun, deliverEffectFacts, type ScopeCancellationPayload } from "../effects/reconcile";
 
 export interface ProductionOptions { readonly database_url: string; readonly core_binary: string; readonly host: string; readonly control_token?: string;
   readonly kbbl_base_url?: string; readonly pull_requests?: PullRequestReader; readonly effect_provider?: EffectProvider; readonly dispatch?: Omit<DispatchOptions, "owner"> & { readonly sweep_ms: number } }
@@ -35,6 +35,9 @@ function isOutputPublication(value: unknown): value is OutputPublication {
   if (!("expected_slot_version" in value) || !(value.expected_slot_version === null || (typeof value.expected_slot_version === "number" && Number.isSafeInteger(value.expected_slot_version) && value.expected_slot_version >= 0))) return false;
   if (!("body" in value)) return false;
   return decodeCoreResponse({ version: 1, request_id: "output-validation", truncated: false, result: { status: "ok", value: { kind: "validated", value: value.body } } }) !== null;
+}
+function isCancellationPayloads(value: unknown): value is readonly ScopeCancellationPayload[] {
+  return Array.isArray(value) && value.every((item: unknown) => !!item && typeof item === "object" && "scope_id" in item && typeof item.scope_id === "string" && "payload" in item);
 }
 export function createProductionComposition(options: ProductionOptions): ProductionComposition {
   const access = selectControlPlaneAccess({ host: options.host, token: options.control_token, allow_insecure_non_loopback: process.env.ALLOW_INSECURE_NON_LOOPBACK_CONTROL === "1" });
@@ -81,7 +84,10 @@ export function createProductionComposition(options: ProductionOptions): Product
     try { body = await context.req.json(); } catch { return context.json({ error: "invalid JSON" }, 400); }
     if (!body || typeof body !== "object" || !("kind" in body) || body.kind !== "cancel_run" || !("reason" in body) || typeof body.reason !== "string")
       return context.json({ error: "invalid cancellation command" }, 400);
-    const result = await cancelRun(db, { kind: "cancel_run", run_id: context.req.param("run_id"), reason: body.reason }, core);
+    if ("payloads" in body && !isCancellationPayloads(body.payloads)) return context.json({ error: "invalid per-scope cancellation payloads" }, 400);
+    const payloads = "payloads" in body && isCancellationPayloads(body.payloads) ? body.payloads : undefined;
+    const result = await cancelRun(db, { kind: "cancel_run", run_id: context.req.param("run_id"), reason: body.reason, payloads }, core);
+    if (result.kind === "rejected") return context.json(result, 422);
     if (result.kind === "missing") return context.json({ error: "run not found" }, 404);
     void sweep().catch((error) => console.error("effect sweep failed", error));
     return context.json(result);

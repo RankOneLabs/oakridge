@@ -6,8 +6,9 @@ import type { AuthoritySnapshot, ReadSet } from "./snapshot-reader";
 import { hasSameReadSet } from "./snapshot-reader";
 import type { CommitReceipt, ScopeId } from "./schema-records";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
+import { pinProviderRequest } from "../effects/operations/selected-request";
 import { selectedInvocation, type InvocationId } from "../effects/provider";
-import type { EffectPayload } from "../effects/leases";
+import { requiresCleanup, type EffectPayload, type EffectStatus } from "../effects/leases";
 import { validateDecision, validateStorageAuthority } from "./storage-validator";
 
 export interface DomainError { readonly operation: string; readonly entity_id: string; readonly detail: string }
@@ -43,10 +44,12 @@ async function writeOutputs(tx: SqlExecutor, request: CommitRequest): Promise<vo
 }
 
 async function revokeSelectedEffects(tx: SqlExecutor, scope_id: string, worker: string): Promise<void> {
-  const starts = await tx.query<{ id: string; execution_id: string; effect_key: string; payload: EffectPayload; status: string }>(`SELECT i.* FROM authority.effect_intent i
+  const starts = await tx.query<{ id: string; execution_id: string; effect_key: string; payload: EffectPayload; status: EffectStatus }>(`SELECT i.* FROM authority.effect_intent i
     JOIN authority.execution e ON e.id=i.execution_id WHERE i.scope_id=$1 AND e.worker_key=$2 AND i.payload->>'action'='start' FOR UPDATE OF i`, [scope_id, worker]);
   for (const start of starts) {
-    if (["pending", "in_flight", "uncertain"].includes(start.status)) await tx.query("UPDATE authority.effect_intent SET status='revoked',version=version+1 WHERE id=$1", [start.id]);
+    const needs_cleanup = requiresCleanup(start);
+    if (["pending", "in_flight", "uncertain"].includes(start.status)) await tx.query("UPDATE authority.effect_intent SET status='revoked',payload=CASE WHEN status IN ('in_flight','uncertain') THEN jsonb_set(payload,'{has_uncertain_start}','true') ELSE payload END,version=version+1 WHERE id=$1", [start.id]);
+    if (!needs_cleanup) continue;
     await tx.query(`INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload,status)
       VALUES ($1,$2,$3,$4,$5,'cleanup_pending') ON CONFLICT (scope_id,effect_key) DO NOTHING`,
       [crypto.randomUUID(), scope_id, start.execution_id, `${start.effect_key}:stop`, JSON.stringify({ invocation: start.payload.invocation, action: "stop", handle: start.payload.handle })]);
@@ -103,8 +106,12 @@ async function writeDecision(tx: SqlExecutor, request: CommitRequest, source: Au
     const id = crypto.randomUUID();
     const execution_id = effect.execution_id ?? execution_ids[index] ?? null;
     const selection = request.decision.kind === "apply" ? request.decision.invocations[index] : null;
-    const payload: EffectPayload | CheckedValue = selection && execution_id
-      ? { invocation: selectedInvocation(id as InvocationId, execution_id, selection), action: "start", handle: null } : effect.payload;
+    let payload: EffectPayload | CheckedValue = effect.payload;
+    if (selection && execution_id) {
+      const pinned = pinProviderRequest({ invocation: selectedInvocation(id as InvocationId, execution_id, selection), bundle: definition.source, scope_id });
+      if (!pinned.ok) fail({ kind: "Rejected", detail: pinned.error.detail });
+      payload = { invocation: pinned.value, action: "start", handle: null };
+    }
     await tx.query("INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload) VALUES ($1,$2,$3,$4,$5)", [id, scope_id, execution_id, effect.effect_key, JSON.stringify(payload)]);
   }
   await tx.query("INSERT INTO authority.fact (id,scope_id,fact_key,payload) VALUES ($1,$2,$3,$4)", [crypto.randomUUID(), scope_id, source.snapshot.trigger.key, JSON.stringify(source.snapshot.trigger.payload)]);

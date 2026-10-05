@@ -137,8 +137,13 @@ for (const stalled of ["headers", "body"] as const) {
           const selected = selectedInvocation(scope as InvocationId, scope, selection);
           await db.query("INSERT INTO authority.effect_intent (id,scope_id,effect_key,payload) VALUES ($1,$2,'start',$3)", [scope === "slow" ? "a-slow" : "b-fast", scope, JSON.stringify({ invocation: selected, action: "start", handle: null })]);
         }
+        let active_requests = 0;
         const provider: EffectProvider = {
-          start: async (request) => ({ kind: "acknowledged", value: await (await fetch(new URL(request.id === "fast" ? "/fast" : "/slow", server.url))).json() }),
+          start: async (request, options) => {
+            active_requests++;
+            try { return { kind: "acknowledged", value: await (await fetch(new URL(request.id === "fast" ? "/fast" : "/slow", server.url), { signal: options?.signal })).json() }; }
+            finally { active_requests--; }
+          },
           stop: async () => ({ kind: "transiently_unavailable", detail: "not part of this test" }),
           observe: async () => ({ kind: "acknowledged", value: { kind: "running" } }),
         };
@@ -148,6 +153,8 @@ for (const stalled of ["headers", "body"] as const) {
         expect(fast[0]?.status).toBe("acknowledged");
         expect((await db.query<{ status: string }>("SELECT status FROM authority.effect_intent WHERE id='a-slow'", []))[0]?.status).toBe("in_flight");
         expect((await slow_dispatch).status).toBe("uncertain");
+        for (let attempt = 0; attempt < 100 && active_requests > 0; attempt++) await Bun.sleep(5);
+        expect(active_requests).toBe(0);
       });
     } finally { server.stop(true); }
   });

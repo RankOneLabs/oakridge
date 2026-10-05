@@ -12,9 +12,9 @@ export interface DispatchOptions {
 }
 export interface DispatchOutcome { readonly intent_id: string; readonly persisted: boolean; readonly status: EffectStatus }
 
-function bounded(operation: Promise<ProviderResult<unknown>>, timeout_ms: number): Promise<ProviderResult<unknown>> {
+function bounded(operation: Promise<ProviderResult<unknown>>, timeout_ms: number, controller: AbortController): Promise<ProviderResult<unknown>> {
   return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve({ kind: "uncertain", detail: `provider did not respond within ${timeout_ms}ms` }), timeout_ms);
+    const timer = setTimeout(() => { controller.abort(new Error("provider deadline exceeded")); resolve({ kind: "uncertain", detail: `provider did not respond within ${timeout_ms}ms` }); }, timeout_ms);
     operation.then((result) => { clearTimeout(timer); resolve(result); }, (error) => {
       clearTimeout(timer);
       resolve({ kind: "uncertain", detail: String(error) });
@@ -46,15 +46,17 @@ function isTerminal(value: unknown): value is { readonly kind: "terminal"; reado
 
 export async function dispatchClaim(db: TransactionalSqlExecutor, provider: EffectProvider, claim: ClaimedIntent, timeout_ms: number): Promise<DispatchOutcome> {
   const { action, invocation, handle } = claim.payload;
+  const controller = new AbortController();
+  const options = { signal: controller.signal };
   let operation: Promise<ProviderResult<unknown>>;
   try {
-    operation = action === "start" ? provider.start(invocation)
-      : action === "stop" ? provider.stop(invocation, handle)
-      : provider.observe(invocation, handle);
+    operation = action === "start" ? provider.start(invocation, options)
+      : action === "stop" ? provider.stop(invocation, handle, options)
+      : provider.observe(invocation, handle, options);
   } catch (error) {
     operation = Promise.resolve({ kind: "uncertain", detail: String(error) });
   }
-  const result = await bounded(operation, timeout_ms);
+  const result = await bounded(operation, timeout_ms, controller);
   let status: EffectStatus;
   let payload: EffectPayload = claim.payload;
   switch (result.kind) {

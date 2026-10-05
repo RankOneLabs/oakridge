@@ -55,10 +55,10 @@ for (const cut of cuts) {
         const decision_cut = cut === "before_decision_commit" || cut === "after_decision_commit";
         if (!decision_cut && cut !== "before_dispatch") expect(await mutations.decide(begin)).toMatchObject({ ok: true, value: { kind: "Committed" } });
         const starts_before = await db.query<StartRow>("SELECT * FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='start'", [run.root_scope_id]);
-        if (cut === "after_stop_before_ack") {
+        if (cut === "after_stop_before_ack" || cut === "after_revocation_before_stop") {
           const claim = (await claimIntents(db, "initial", 1, 1000))[0]!;
           await dispatchClaim(db, provider, claim, 100);
-          await cancelRun(db, { kind: "cancel_run", run_id: run.run_id, reason: "operator" }, core);
+          if (cut === "after_stop_before_ack") await cancelRun(db, { kind: "cancel_run", run_id: run.run_id, reason: "operator" }, core);
         }
         let code: string;
         if (decision_cut) {

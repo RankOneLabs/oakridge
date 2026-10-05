@@ -16,9 +16,11 @@ test("repository preparation pins the selected head", async () => {
     .toMatchObject({ kind: "permanently_rejected", code: "head_changed" });
 });
 
-test("PR discovery 5xx remains retryable IO", async () => {
-  const http = (async () => new Response("unavailable", { status: 503 })) as unknown as typeof fetch;
+for (const status of [401, 403, 404, 422, 503]) {
+test(`PR discovery HTTP ${status} remains retryable IO`, async () => {
+  const http = (async () => new Response("unavailable", { status })) as unknown as typeof fetch;
   const reader = new GithubPullRequestReader({ token: "test" }, http);
   const result = await new PullRequestObservationOperation(reader).execute({ query: { owner: "owner", name: "repo", head_branch: "head", base_branch: "base" } });
   expect(result.kind).toBe("transiently_unavailable");
 });
+}
