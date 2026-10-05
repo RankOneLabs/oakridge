@@ -1,6 +1,7 @@
 import type { Hono } from "hono";
 import type { CoreClient } from "../core-client/client";
-import type { MutationService } from "../storage/mutation-service";
+import { selectMutationIdentity, type MutationInput, type MutationService } from "../storage/mutation-service";
+import { findReceipt } from "../storage/receipts";
 import type { RunId, ScopeId } from "../storage/schema-records";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
 import { readScopeView } from "../projections/scope-view";
@@ -9,7 +10,7 @@ import { readInbox } from "../projections/inbox";
 import { readPinnedDefinition } from "./definition-inspection";
 import { readScopeDiagnostics } from "./diagnostics";
 import { parsePublication } from "./publication";
-import { commandStatus, ConflictError, InternalFaultError, InvalidPayloadError, MalformedRequestError, MissingEntityError, parseScopeCommand, submitScopeCommand, type CommandError, type CommandResult } from "./scope-commands";
+import { commandStatus, ConflictError, InternalFaultError, InvalidPayloadError, MalformedRequestError, MissingEntityError, PendingWork, parseScopeCommand, submitScopeCommand, type CommandError, type CommandResult } from "./scope-commands";
 
 export interface DefinitionApiDependencies { readonly db: TransactionalSqlExecutor; readonly core: CoreClient; readonly mutations: MutationService; readonly sweep: () => Promise<void> }
 function errorResponse(error: CommandError): { readonly error: string; readonly detail: string; readonly trace_id?: string } {
@@ -60,8 +61,13 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
     const parsed = parsePublication(raw, c.req.param("scope_id") as ScopeId);
     if (parsed instanceof MalformedRequestError) return response({ ok: false, error: parsed });
     try {
-      const view = await readScopeView(deps.db, c.req.param("scope_id") as ScopeId);
-      if (!view || view.run_id !== c.req.param("run_id")) return response({ ok: false, error: new MissingEntityError("scope not found in run") });
+      const input: MutationInput = { run_id: c.req.param("run_id") as RunId, scope_id: c.req.param("scope_id") as ScopeId,
+        ingress_id: parsed.request_id, trigger: parsed.trigger, operator_version: parsed.expected_scope_version, outputs: [parsed.output] };
+      const prior = await findReceipt(deps.db, selectMutationIdentity(input));
+      if (prior.kind === "replay") return response({ ok: true, value: new PendingWork(parsed.request_id, prior.receipt.transition_id, prior.receipt.scope_version) });
+      if (prior.kind === "conflict") return response({ ok: false, error: new ConflictError("request ID reused with different publication content") });
+      const view = await readScopeView(deps.db, input.scope_id);
+      if (!view || view.run_id !== input.run_id) return response({ ok: false, error: new MissingEntityError("scope not found in run") });
       if (view.cursor.scope_version !== parsed.expected_scope_version) return response({ ok: false, error: new ConflictError("scope version changed") });
       const pinned = await readPinnedDefinition(deps.db, view.run_id);
       const output = pinned?.source.scopes.find((scope) => scope.key === view.scope_key)?.outputs.find((item) => item.key === parsed.output.output_key);
@@ -69,8 +75,7 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
         return response({ ok: false, error: new InvalidPayloadError("output does not match pinned definition") });
       if (!view.outputs.some((slot) => slot.output_key === parsed.output.output_key) && parsed.output.expected_slot_version !== null)
         return response({ ok: false, error: new ConflictError("output slot changed") });
-      const result = await deps.mutations.decide({ run_id: c.req.param("run_id") as RunId, scope_id: view.scope_id,
-        ingress_id: parsed.request_id, trigger: parsed.trigger, operator_version: parsed.expected_scope_version, outputs: [parsed.output] });
+      const result = await deps.mutations.decide(input);
       if (!result.ok) return response({ ok: false, error: new InternalFaultError(result.error.detail) });
       if (result.value.kind === "Conflict") return response({ ok: false, error: new ConflictError(result.value.detail) });
       if (result.value.kind === "Rejected") return response({ ok: false, error: new InvalidPayloadError(result.value.detail) });

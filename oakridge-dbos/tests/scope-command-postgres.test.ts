@@ -8,6 +8,9 @@ import { installDefinitionApi } from "../src/http/app";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { createMutationService, type MutationService, type StartedRun } from "../src/storage/mutation-service";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
+import type { PublicationRequest } from "../src/http/publication";
+import type { ScopeDiagnostics } from "../src/http/diagnostics";
+import type { ScopeView } from "../src/projections/scope-view";
 import type { ScopeCommandRequest } from "../src/http/scope-commands";
 
 interface TestAuthority { readonly db: PgPostgresExecutor; readonly core: CoreClient; readonly mutations: MutationService; readonly bundle: DefinitionBundle; readonly run: StartedRun; readonly database_url: string; readonly request: ScopeCommandRequest; closeReaders(): Promise<void> }
@@ -101,5 +104,59 @@ test("pinned definitions and scope projections survive a newer bundle and fresh 
       expect(await (await fresh.request(`/api/runs/${authority.run.run_id}/scopes/${authority.run.root_scope_id}`)).json()).toEqual(before);
       expect((await submit(fresh, authority)).status).toBe(202);
     } finally { started.value.close(); await db.close(); }
+  });
+});
+
+test("publication retry after terminal commit replays one revision and receipt", async () => {
+  await withAuthority(async (authority) => {
+    await authority.db.query("INSERT INTO authority.execution (id,scope_id,worker_key,generation,status) VALUES ('execution-1',$1,'potter',1,'terminal')", [authority.run.root_scope_id]);
+    await authority.db.query("INSERT INTO authority.execution_selection (id,scope_id,worker_key,execution_id,generation) VALUES ('selection-1',$1,'potter','execution-1',1)", [authority.run.root_scope_id]);
+    const unit: CheckedValue = { schema: "unit", data: { kind: "record", fields: [], dictionary: [] } };
+    const publication: PublicationRequest = { request_id: "publication-1", expected_scope_version: 0,
+      trigger: { id: "publication-1", key: "quench", payload: unit },
+      output: { scope_id: authority.run.root_scope_id, output_key: "specimen", collection_key: "", execution_id: "execution-1",
+        predecessor_id: "revision-1", expected_slot_version: 0,
+        body: { schema: "revision", data: { kind: "reference", brand: "artifact_revision", id: "revision-2" } } } };
+    const app = api(authority);
+    const path = `/api/runs/${authority.run.run_id}/scopes/${authority.run.root_scope_id}/publications`;
+    const publish = (body: PublicationRequest) => app.request(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const first = await publish(publication);
+    expect({ status: first.status, body: await first.clone().json() }).toMatchObject({ status: 202, body: { kind: "accepted_pending" } });
+    const replay = await publish(publication);
+    expect({ status: replay.status, body: await replay.json() }).toEqual({ status: 202, body: await first.json() });
+    expect((await publish({ ...publication, output: { ...publication.output, predecessor_id: null } })).status).toBe(409);
+    const rows = await authority.db.query<{ is_terminal: boolean; revisions: string; transitions: string }>("SELECT is_terminal,(SELECT count(*)::text FROM authority.artifact_revision) AS revisions,(SELECT count(*)::text FROM authority.transition) AS transitions FROM authority.scope_instance WHERE id=$1", [authority.run.root_scope_id]);
+    expect(rows).toEqual([{ is_terminal: true, revisions: "2", transitions: "1" }]);
+  });
+});
+
+test("scope and diagnostics APIs return numeric PostgreSQL versions and generations", async () => {
+  await withAuthority(async (authority) => {
+    await authority.db.query("INSERT INTO authority.execution (id,scope_id,worker_key,generation,status,version) VALUES ('execution-1',$1,'potter',7,'pending',9)", [authority.run.root_scope_id]);
+    await authority.db.query("INSERT INTO authority.resource_binding (id,scope_id,resource_key,version) VALUES ('resource-1',$1,'source',11)", [authority.run.root_scope_id]);
+    await authority.db.query("UPDATE authority.output_slot SET version=12 WHERE id='slot-1'", []);
+    await authority.db.query("INSERT INTO authority.effect_intent (id,scope_id,effect_key,payload,version) VALUES ('effect-1',$1,'start','{}',13)", [authority.run.root_scope_id]);
+    const app = api(authority);
+    const path = `/api/runs/${authority.run.run_id}/scopes/${authority.run.root_scope_id}`;
+    const scope: ScopeView = await (await app.request(path)).json();
+    const diagnostics: ScopeDiagnostics = await (await app.request(`${path}/diagnostics`)).json();
+    expect({ scope: { version: scope.cursor.scope_version, generation: scope.executions[0]?.generation, execution: scope.executions[0]?.version, output: scope.outputs[0]?.version, resource: scope.resources[0]?.version },
+      diagnostics: { version: diagnostics.scope_version, generation: diagnostics.executions[0]?.generation, execution: diagnostics.executions[0]?.version, resource: diagnostics.resources[0]?.version, effect: diagnostics.effects[0]?.version } })
+      .toEqual({ scope: { version: 0, generation: 7, execution: 9, output: 12, resource: 11 }, diagnostics: { version: 0, generation: 7, execution: 9, resource: 11, effect: 13 } });
+  });
+});
+
+test("diagnostics cursor changes on effect updates without a scope transition", async () => {
+  await withAuthority(async (authority) => {
+    await authority.db.query("INSERT INTO authority.effect_intent (id,scope_id,effect_key,payload) VALUES ('effect-1',$1,'start','{}')", [authority.run.root_scope_id]);
+    const app = api(authority);
+    const path = `/api/runs/${authority.run.run_id}/scopes/${authority.run.root_scope_id}/diagnostics`;
+    const before: ScopeDiagnostics = await (await app.request(path)).json();
+    await authority.db.query("UPDATE authority.effect_intent SET status='in_flight',version=version+1 WHERE id='effect-1'", []);
+    const after: ScopeDiagnostics = await (await app.request(path)).json();
+    expect({ before: before.cursor, after: after.cursor }).toEqual({
+      before: { scope_version: 0, executions: [], resources: [], effects: [{ id: "effect-1", version: 0 }] },
+      after: { scope_version: 0, executions: [], resources: [], effects: [{ id: "effect-1", version: 1 }] },
+    });
   });
 });

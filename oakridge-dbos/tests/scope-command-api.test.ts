@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { DefinitionBundle, DecisionOutcome } from "../src/core-client/generated-contracts";
+import type { DefinitionBundle, DecisionOutcome, ReferenceRoot, VersionedValue } from "../src/core-client/generated-contracts";
 import { availableCommand, currentTargetRevisions, MalformedRequestError, parseScopeCommand, targetsMatch } from "../src/http/scope-commands";
 import type { ScopeId } from "../src/storage/schema-records";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
@@ -34,4 +34,26 @@ test("output target resolves to its revision and snapshot slot version", async (
   const observations = [{ identity: "slot", version: 3, root: { kind: "output" as const, key: "specimen" }, value: { schema: "text", data: { kind: "string" as const, value: "text" } } }];
   expect(await currentTargetRevisions(db, scope_id, targeted, observations)).toEqual([{ identity: "revision-1", version: 3 }]);
   expect(await currentTargetRevisions(db, scope_id, targeted, [{ ...observations[0]!, version: 2 }])).toEqual([]);
+});
+
+test("resource targets match despite PostgreSQL jsonb property ordering", async () => {
+  const root: ReferenceRoot = { key: "source", kind: "resource" };
+  const targeted = { ...command, targets: [{ kind: "reference" as const, root, path: [] }] };
+  const observations: VersionedValue[] = [{ identity: "resource-1", version: 4, root: { kind: "resource", key: "source" }, value: state }];
+  const db = { query: async () => [] } as unknown as TransactionalSqlExecutor;
+  expect(await currentTargetRevisions(db, scope_id, targeted, observations)).toEqual([{ identity: "resource-1", version: 4 }]);
+});
+test("child targets match despite PostgreSQL jsonb property ordering", async () => {
+  const root: ReferenceRoot = { key: "item", kind: "child", export: "released" };
+  const targeted = { ...command, targets: [{ kind: "reference" as const, root, path: [] }] };
+  const observations: VersionedValue[] = [{ identity: "export-1", version: 5, root: { kind: "child", key: "item", export: "released" }, value: state }];
+  const db = { query: async () => [] } as unknown as TransactionalSqlExecutor;
+  expect(await currentTargetRevisions(db, scope_id, targeted, observations)).toEqual([{ identity: "export-1", version: 5 }]);
+});
+test("child target matching still distinguishes export identities", async () => {
+  const root: ReferenceRoot = { key: "item", kind: "child", export: "released" };
+  const targeted = { ...command, targets: [{ kind: "reference" as const, root, path: [] }] };
+  const observations: VersionedValue[] = [{ identity: "export-1", version: 5, root: { kind: "child", key: "item", export: "private" }, value: state }];
+  const db = { query: async () => [] } as unknown as TransactionalSqlExecutor;
+  expect(await currentTargetRevisions(db, scope_id, targeted, observations)).toEqual([]);
 });

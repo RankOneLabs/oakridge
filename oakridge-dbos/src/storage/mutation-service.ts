@@ -17,7 +17,7 @@ export interface MutationInput { readonly run_id: RunId; readonly scope_id: Scop
 export interface StartedRun { readonly run_id: RunId; readonly root_scope_id: ScopeId; readonly bundle_id: string }
 export interface MutationService { compile(request: CompileRequest): Promise<Result<CompileResult>>; startRun(request: StartRunRequest): Promise<Result<StartedRun>>; decide(input: MutationInput): Promise<Result<CommitResult>> }
 
-function selectMutationIdentity(input: MutationInput): IngressIdentity {
+export function selectMutationIdentity(input: MutationInput): IngressIdentity {
   return { run_id: input.run_id, scope_id: input.scope_id, ingress_id: input.ingress_id, request_digest: input.prepared?.request_digest ?? requestDigest({ trigger: input.trigger, outputs: input.outputs ?? [], operator_version: input.operator_version }) };
 }
 

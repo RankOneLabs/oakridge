@@ -2,6 +2,7 @@ import type { CheckedValue, CommandDefinition, DefinitionBundle, DecisionOutcome
 import type { ScopeId, ScopeInstanceRecord, ExecutionRecord, OutputSlotRecord, ResourceBindingRecord } from "../storage/schema-records";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
 import { availableCommand } from "../storage/command-selection";
+import { normalizeExecutionRecord, normalizeRecordVersion, type StoredExecutionRecord, type StoredVersionedRecord } from "./record-selectors";
 
 export interface ProjectionCursor { readonly scope_version: number; readonly transition_id: string | null }
 export interface ScopeView {
@@ -25,14 +26,15 @@ export async function readScopeView(db: TransactionalSqlExecutor, scope_id: Scop
     const definition = bundle.scopes.find((item) => item.key === scope.scope_key);
     if (!definition) throw new Error(`scope definition missing for ${scope.id}`);
     const [executions, outputs, resources, transitions] = await Promise.all([
-      tx.query<ExecutionRecord>("SELECT * FROM authority.execution WHERE scope_id=$1 ORDER BY id", [scope.id]),
-      tx.query<OutputSlotRecord>("SELECT * FROM authority.output_slot WHERE scope_id=$1 ORDER BY id", [scope.id]),
-      tx.query<ResourceBindingRecord>("SELECT * FROM authority.resource_binding WHERE scope_id=$1 ORDER BY id", [scope.id]),
+      tx.query<StoredExecutionRecord>("SELECT * FROM authority.execution WHERE scope_id=$1 ORDER BY id", [scope.id]),
+      tx.query<StoredVersionedRecord<OutputSlotRecord>>("SELECT * FROM authority.output_slot WHERE scope_id=$1 ORDER BY id", [scope.id]),
+      tx.query<StoredVersionedRecord<ResourceBindingRecord>>("SELECT * FROM authority.resource_binding WHERE scope_id=$1 ORDER BY id", [scope.id]),
       tx.query<TransitionRow>("SELECT id,decision FROM authority.transition WHERE scope_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1", [scope.id]),
     ]);
     return { scope_id, run_id: scope.run_id, scope_key: scope.scope_key, label: definition.presentation.label,
       state: scope.local_state, outcome: scope.outcome, is_terminal: scope.is_terminal,
-      commands: selectAvailableCommands(bundle, scope), executions, outputs, resources,
+      commands: selectAvailableCommands(bundle, scope), executions: executions.map(normalizeExecutionRecord),
+      outputs: outputs.map(normalizeRecordVersion), resources: resources.map(normalizeRecordVersion),
       decision: transitions[0]?.decision ?? null,
       cursor: { scope_version: Number(scope.version), transition_id: transitions[0]?.id ?? null } };
   }, "repeatable read");

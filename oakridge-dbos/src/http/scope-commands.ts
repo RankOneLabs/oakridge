@@ -53,7 +53,7 @@ export async function currentTargetRevisions(db: TransactionalSqlExecutor, scope
       targets.push({ identity: slot.current_revision_id, version: Number(slot.version) });
       continue;
     }
-    const observed = observations.find((item) => JSON.stringify(item.root) === JSON.stringify(expression.root));
+    const observed = observations.find((item) => requestDigest(item.root) === requestDigest(expression.root));
     if (!observed) return [];
     targets.push({ identity: observed.identity, version: observed.version });
   }
