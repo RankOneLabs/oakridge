@@ -1,0 +1,8 @@
+# Replacement cutover
+
+1. **Freeze writers and capture a backup.** Precondition: the operator has identified every v15 writer and its database. Verification: no writer is accepting new requests and a restorable backup is recorded.
+2. **Rehearse on a restored database.** Precondition: the backup is restored to an isolated database with its filename-keyed migration ledger. Verification: the cutover rehearsal test applies 0020, starts the replacement service, and confirms retained `oakridge` and `dev_flow` rows are unchanged.
+3. **Boot a fresh database.** Precondition: an empty isolated PostgreSQL database is available. Verification: the fresh-boot test applies only 0020 and starts the replacement service with all sixteen relations.
+4. **Migrate and compare live data.** Precondition: the rehearsal and fresh boot pass, and a v15 backup remains available. Verification: replacement records, relation counts, and critical projections agree with the frozen source; the old schemas remain available read-only.
+5. **Update generated agent standards.** Precondition: the replacement code and verified data mapping are ready. Edit `.catagents/standards` to describe the new ownership boundary, then run `catagents` regeneration. Verification: regenerated `AGENTS.md` reflects the new rules and its generated-file diff is reviewed.
+6. **Switch traffic and monitor.** Precondition: the preceding checks pass and an operator approves the switch. Verification: requests use the replacement mutation boundary, ingress replay and expected-version conflict checks pass, and no v15 writer resumes. Any eventual removal of retained schemas is a separate operator action after the retention window.
