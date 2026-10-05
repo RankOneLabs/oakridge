@@ -1,13 +1,13 @@
 import { deliverCohortRequest } from "../lib/cohort-request-delivery";
 import { isDefinitiveRequestRejection } from "../lib/client-errors";
-import { selectWorkerAttention } from "../../../../../oakridge-dbos/src/domain/worker-attention";
+import { selectWorkerAttention } from "../lib/worker-attention";
 import { useRef } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchRun, submitCohortRequest } from "../client";
 import { selectWorkerRetryRequest } from "../lib/worker-retry-request";
 import { randomUuid } from "../../lib/random-uuid";
-import type { V15WorkerKey } from "../../../../../oakridge-dbos/src/domain/dev-flow-v15";
-export interface RetryUnitTarget { readonly stageInstanceId: string; readonly unitId: string; readonly worker?: V15WorkerKey }
+import type { WorkerKey } from "../operator-worker-types";
+export interface RetryUnitTarget { readonly stageInstanceId: string; readonly unitId: string; readonly worker?: WorkerKey }
 export function useRetryStuck(runId: string) {
   const client = useQueryClient();
   const deliveries = useRef(new Map<string, Parameters<typeof submitCohortRequest>[0]>());

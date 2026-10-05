@@ -6,7 +6,13 @@ type OperatorWire<Value> = Value extends string & { readonly __brand: string } ?
 type OperatorFields<Source, Required extends keyof Source, Optional extends keyof Source = never> =
   OperatorWire<Pick<Source, Required>> & Partial<OperatorWire<Pick<Source, Optional>>>;
 
-import type * as Operator from "../../../../oakridge-dbos/src/domain/operator-projections";
+import type * as Operator from "./operator-contracts";
+import type { WorkflowDefinitionDescriptor } from "./workflow-definition-types";
+import type { AgentSettings, OperatorWorkerRecord } from "./operator-worker-types";
+export type { CoreStatus, BlockedReason, NextActor } from "./operator-worker-types";
+import type { CoreStatus } from "./operator-worker-types";
+export type { RunEvent, RunEventEffect } from "./run-event-types";
+import type { RunEvent } from "./run-event-types";
 // View-model types for the oakridge operator surface.
 // These are typed at the PWA boundary and cover what the operator UI needs.
 
@@ -51,7 +57,7 @@ export interface WorkflowDefSummary {
   archived?: boolean;
   // GET /workflow_defs returns the full def today; keep this optional for a
   // future trimmed summary response.
-  definition?: import("../../../../oakridge-dbos/src/domain/dev-flow-v15").WorkflowDefinition;
+  definition?: WorkflowDefinitionDescriptor;
 }
 
 // Each role ships runtime, model, and effort together. A model is only valid
@@ -63,21 +69,14 @@ export interface CreateRunContext {
   base_branch: string;
   repositories: RepositoryInput[];
   oakridge_url: string;
-  planner: import("../../../../oakridge-dbos/src/domain/dev-flow-v15").AgentSettings;
-  builder: import("../../../../oakridge-dbos/src/domain/dev-flow-v15").AgentSettings;
+  planner: AgentSettings;
+  builder: AgentSettings;
 }
 
 export type RepositoryKey = string & { readonly __brand: "RepositoryKey" };
 export type CohortId = string & { readonly __brand: "CohortId" };
 export type WorkflowRunId = string & { readonly __brand: "WorkflowRunId" };
 export type JsonValue = null | boolean | number | string | readonly JsonValue[] | { readonly [key: string]: JsonValue };
-
-export type RunEventEffect = OperatorWire<import("../../../../oakridge-dbos/src/domain/run-event").OperatorRunEffect>;
-export type RunEvent = OperatorFields<import("../../../../oakridge-dbos/src/domain/run-event").RunEvent,
-  "sequence" | "transition_id" | "run_id" | "owner" | "launch_reason" | "prior_owner_version" | "resulting_owner_version" | "actor" | "occurred_at", "operation"> & {
-  readonly effect: RunEventEffect;
-  readonly effect_workflow_id: string | null;
-};
 
 export type RunEventFrame = RunEvent & { readonly replayed: boolean };
 
@@ -131,9 +130,6 @@ export interface CreateRunRequest {
   epic_profile: EpicProfileConfig;
 }
 
-export type CoreStatus = import("../../../../oakridge-dbos/src/domain/records").CoreStatus;
-export type BlockedReason = import("../../../../oakridge-dbos/src/domain/records").BlockedReason;
-export type NextActor = import("../../../../oakridge-dbos/src/domain/records").NextActor;
 export type RunStatus = CoreStatus;
 export type RunDisplayStatus = RunStatus;
 
@@ -160,7 +156,7 @@ export type StageArtifact = OperatorFields<Operator.OperatorStageArtifact,
 export type StageUnit = OperatorFields<Operator.OperatorStageUnit,
   "version" | "cohort_id" | "unit_id" | "brief" | "sid" | "worktree" | "status" | "blocked_reason" | "next_actor" | "retryable" | "gate",
   "state" | "base_sha"> & {
-  workers: readonly import("../../../../oakridge-dbos/src/domain/operator-projections").OperatorWorkerRecord[];
+  workers: readonly OperatorWorkerRecord[];
   repository_key?: RepositoryKey | null;
 };
 
@@ -186,8 +182,7 @@ export type PullRequestMergeWait = OperatorFields<Operator.OperatorPullRequestMe
 export type RunDiagnosisArtifact = OperatorFields<Operator.OperatorRunDiagnosisArtifact,
   "artifact_id" | "type_id" | "revision" | "stage_name" | "label" | "created_at">;
 
-export type RunDiagnosis = OperatorFields<Operator.OperatorRunDiagnosis,
-  never> & {
+export type RunDiagnosis = {
   run: RunDetail;
   sessions: RunDiagnosisSession[];
   current_session: RunDiagnosisSession | null;
@@ -268,8 +263,7 @@ export type ReviewInboxItem = OperatorFields<Operator.OperatorReviewInboxItem,
 };
 
 /** The items list is the required-attention decision queue; completed and optional-attention history lives outside the inbox. */
-export type ReviewInbox = OperatorFields<Operator.OperatorReviewInbox,
-  never> & {
+export type ReviewInbox = {
   cohorts: CohortLifecycleSummary[];
   items: ReviewInboxItem[];
   attention_count: number;
@@ -347,8 +341,8 @@ export interface WorkflowDefFull {
   readonly id: string;
   readonly name: string;
   readonly version: number;
-  readonly definition: import("../../../../oakridge-dbos/src/domain/dev-flow-v15").WorkflowDefinition;
+  readonly definition: WorkflowDefinitionDescriptor;
   readonly archived: boolean;
   readonly created_at: string;
 }
-export type WorkflowDefInput = import("../../../../oakridge-dbos/src/domain/dev-flow-v15").WorkflowDefinition;
+export type WorkflowDefInput = WorkflowDefinitionDescriptor;

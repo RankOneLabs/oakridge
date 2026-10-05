@@ -1,0 +1,10 @@
+[package]
+name = "workflow-compiler"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+workflow-model = { path = "../model" }
+serde_json.workspace = true
+sha2.workspace = true
+serde.workspace = true

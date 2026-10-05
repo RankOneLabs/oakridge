@@ -9,7 +9,7 @@ export interface ArtifactRevision {
 }
 
 /** Mirrors the revision status returned by the artifact API. */
-export type ArtifactRevisionStatus = import("../../../../oakridge-dbos/src/domain/dev-flow-v15").ArtifactState;
+export type ArtifactRevisionStatus = "unreviewed" | "accepted" | "changes_requested";
 /** Mirrors `FindingSeverity` in oakridge-dbos/src/domain/dev-flow-artifacts.ts. */
 export type FindingSeverity = "blocking" | "warning" | "info";
 /** Mirrors `AssessmentVerdict` in oakridge-dbos/src/domain/dev-flow-artifacts.ts. */
@@ -42,7 +42,7 @@ export interface ArtifactTypeDescriptor {
 
 export interface ArtifactDetail {
   review_error?: { readonly detail: string } | null;
-  review_context?: import("../../../../oakridge-dbos/src/domain/v15-operator-review").OperatorArtifactReviewContext | null;
+  review_context?: import("./review-command-types").OperatorArtifactReviewContext | null;
   id: string;
   type_id: string;
   component_id: string | null;

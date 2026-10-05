@@ -1,0 +1,9 @@
+[package]
+name = "workflow-evaluator"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+workflow-model = { path = "../model" }
+workflow-compiler = { path = "../compiler" }
+serde_json.workspace = true

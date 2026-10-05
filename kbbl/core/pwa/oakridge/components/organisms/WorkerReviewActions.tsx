@@ -1,7 +1,7 @@
 import { useId, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { OperatorArtifactReviewContext } from "../../../../../../oakridge-dbos/src/domain/v15-operator-review";
-import type { V15OperatorRequest } from "../../../../../../oakridge-dbos/src/domain/dev-flow-v15";
+import type { OperatorArtifactReviewContext } from "../../review-command-types";
+import type { OperatorRequest } from "../../review-command-types";
 import { Button } from "../../../components/atoms/Button";
 import { randomUuid } from "../../../lib/random-uuid";
 import { submitCohortRequest } from "../../client";
@@ -15,7 +15,7 @@ export function WorkerReviewActions({ context, runId }: WorkerReviewActionsProps
   const [feedback, setFeedback] = useState("");
   const [completed, setCompleted] = useState(false);
   const identities = useRef(new Map<string, string>());
-  const mutation = useMutation({ mutationFn: (request: V15OperatorRequest) => {
+  const mutation = useMutation({ mutationFn: (request: OperatorRequest) => {
     const key = JSON.stringify({ context, request });
     let id = identities.current.get(key);
     if (!id) { id = randomUuid(); identities.current.set(key, id); }

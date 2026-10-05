@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { WorkerReviewActions } from "../components/organisms/WorkerReviewActions";
 import { submitCohortRequest } from "../client";
-import type { OperatorArtifactReviewContext } from "../../../../../oakridge-dbos/src/domain/v15-operator-review";
+import type { OperatorArtifactReviewContext } from "../review-command-types";
 
 vi.mock("../client", () => ({ submitCohortRequest: vi.fn().mockResolvedValue({ commits: 1 }) }));
 afterEach(() => vi.clearAllMocks());

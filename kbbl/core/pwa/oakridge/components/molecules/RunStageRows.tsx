@@ -1,5 +1,5 @@
 import { CohortWorkers } from "./CohortWorkers";
-import type { V15WorkerKey } from "../../../../../../oakridge-dbos/src/domain/dev-flow-v15";
+import type { WorkerKey } from "../../operator-worker-types";
 import type { StageDetail, StageUnit } from "../../types";
 import { StatusBadge } from "../atoms/StatusBadge";
 import { Button } from "../../../components/atoms/Button";
@@ -21,7 +21,7 @@ interface RunStageRowProps {
   stage: StageDetail;
   unitState?: string;
   workers: StageUnit["workers"];
-  onRetryWorker: (worker: V15WorkerKey) => void;
+  onRetryWorker: (worker: WorkerKey) => void;
   onSelectArtifact?: (artifactId: string) => void;
   abandon?: AbandonAction;
   retry?: {
@@ -68,7 +68,7 @@ interface RunUnitRowProps {
   unit: StageUnit;
   unitArtifacts: StageDetail["artifacts"];
   onSelectArtifact?: (artifactId: string) => void;
-  onRetry: (unitId: string, worker: V15WorkerKey) => void;
+  onRetry: (unitId: string, worker: WorkerKey) => void;
   retrying: boolean;
   retryError?: string;
   canRetry: boolean;

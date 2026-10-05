@@ -1,8 +1,8 @@
-import type { OperatorWorkerRecord } from "../../../../../../oakridge-dbos/src/domain/operator-projections";
-import type { V15WorkerKey } from "../../../../../../oakridge-dbos/src/domain/dev-flow-v15";
+import type { OperatorWorkerRecord } from "../../operator-worker-types";
+import type { WorkerKey } from "../../operator-worker-types";
 import { selectWorkerStatusViews } from "../../lib/worker-status";
 import { Button } from "../../../components/atoms/Button";
-interface CohortWorkersProps { readonly workers: readonly OperatorWorkerRecord[]; readonly onRetry: (worker: V15WorkerKey) => void; readonly retrying: boolean }
+interface CohortWorkersProps { readonly workers: readonly OperatorWorkerRecord[]; readonly onRetry: (worker: WorkerKey) => void; readonly retrying: boolean }
 export function CohortWorkers({ workers, onRetry, retrying }: CohortWorkersProps) {
   return <div className="flex flex-col gap-2">{selectWorkerStatusViews(workers).map((worker) => <div key={worker.worker} className="flex flex-col gap-1">
     <span className="text-xs">{worker.worker}: {worker.state}</span>

@@ -233,7 +233,7 @@ export function deleteRun(runId: string): Promise<void> {
 }
 
 export function submitCohortRequest(input: { readonly cohort_id: string; readonly expected_version: number;
-  readonly request: import("../../../../oakridge-dbos/src/domain/dev-flow-v15").V15OperatorRequest; readonly id: string }): Promise<unknown> {
+  readonly request: import("./review-command-types").OperatorRequest; readonly id: string }): Promise<unknown> {
   return oakridgePost(`/cohorts/${encodeURIComponent(input.cohort_id)}/requests`, {
     id: input.id, expected_version: input.expected_version, request: input.request,
   });

@@ -10,7 +10,7 @@ export const selectStageHasCohortRows = (stage: StageDetail, merge_waits: readon
 export const selectCohortArtifacts = (stage: StageDetail, cohort_id: string): StageDetail["artifacts"] =>
   stage.artifacts.filter((artifact) => artifact.cohort_id === cohort_id);
 
-const GATE_LABELS: Readonly<Record<import("../../../../../oakridge-dbos/src/domain/dev-flow-v15").V15WorkerKey, string>> = {
+const GATE_LABELS: Readonly<Record<import("../operator-worker-types").WorkerKey, string>> = {
   provision: "Repository preparation", spec: "Artifact review", plan: "Artifact review", brief: "Artifact review",
   build: "Artifact review", assessment: "Artifact review", final_integration: "Merge confirmation",
 };
