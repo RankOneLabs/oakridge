@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { decodeCoreResponse } from "../core-client/generated-contracts";
 import type { DefinitionBundle, Trigger } from "../core-client/generated-contracts";
 import { CoreClient } from "../core-client/client";
 import { controlTokenMiddleware, selectControlPlaneAccess } from "../http/control-auth";
@@ -18,8 +19,16 @@ function isBundle(value: unknown): value is DefinitionBundle {
 function isTrigger(value: unknown): value is Trigger {
   return !!value && typeof value === "object" && "id" in value && typeof value.id === "string" && "key" in value && typeof value.key === "string" && "payload" in value;
 }
+function isNullableString(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
+}
 function isOutputPublication(value: unknown): value is OutputPublication {
-  return !!value && typeof value === "object" && "scope_id" in value && typeof value.scope_id === "string" && "output_key" in value && typeof value.output_key === "string" && "collection_key" in value && typeof value.collection_key === "string" && "body" in value && "predecessor_id" in value && "expected_slot_version" in value && "execution_id" in value;
+  if (!value || typeof value !== "object") return false;
+  if (!("scope_id" in value) || typeof value.scope_id !== "string" || !("output_key" in value) || typeof value.output_key !== "string" || !("collection_key" in value) || typeof value.collection_key !== "string") return false;
+  if (!("predecessor_id" in value) || !isNullableString(value.predecessor_id) || !("execution_id" in value) || !isNullableString(value.execution_id)) return false;
+  if (!("expected_slot_version" in value) || !(value.expected_slot_version === null || (typeof value.expected_slot_version === "number" && Number.isSafeInteger(value.expected_slot_version) && value.expected_slot_version >= 0))) return false;
+  if (!("body" in value)) return false;
+  return decodeCoreResponse({ version: 1, request_id: "output-validation", truncated: false, result: { status: "ok", value: { kind: "validated", value: value.body } } }) !== null;
 }
 export function createProductionComposition(options: ProductionOptions): ProductionComposition {
   const access = selectControlPlaneAccess({ host: options.host, token: options.control_token, allow_insecure_non_loopback: process.env.ALLOW_INSECURE_NON_LOOPBACK_CONTROL === "1" });

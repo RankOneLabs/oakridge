@@ -8,6 +8,7 @@ export interface ReadWitness { readonly relation: ReadRelation; readonly id: str
 export interface MembershipWitness { readonly relation: ReadRelation; readonly run_id: string; readonly signature: string }
 export interface ReadSet { readonly rows: readonly ReadWitness[]; readonly membership: readonly MembershipWitness[] }
 export interface AuthoritySnapshot { readonly snapshot: Snapshot; readonly read_set: ReadSet; readonly owner: ScopeInstanceRecord; readonly pools: readonly CapacityPoolRecord[] }
+interface CurrentOutput extends OutputSlotRecord { readonly body: VersionedValue["value"] }
 interface ImportedExport extends ScopeExportRecord { readonly child_key: string }
 interface VersionRow { readonly id: string; readonly version: string | number }
 
@@ -27,7 +28,7 @@ export async function readWitnesses(tx: SqlExecutor, run_id: string): Promise<Re
   const membership: MembershipWitness[] = [];
   for (const relation of READ_RELATIONS) {
     const found = await tx.query<VersionRow>(membershipSql[relation], [run_id]);
-    const signature = found.map((row) => `${row.id}:${row.version}`).join("|");
+    const signature = JSON.stringify(found.map((row) => [row.id, String(row.version)]));
     membership.push({ relation, run_id, signature });
     for (const row of found) rows.push({ relation, id: row.id, version: Number(row.version) });
   }
@@ -44,17 +45,14 @@ export async function readSnapshot(db: TransactionalSqlExecutor, scope_id: Scope
     const scope = definitions[0]?.source.scopes.find((scope) => scope.key === owner.scope_key);
     if (!scope) return null;
     const exports = await tx.query<ImportedExport>("SELECT e.*, s.child_key FROM authority.scope_export e JOIN authority.scope_instance s ON s.id=e.scope_id WHERE s.parent_id=$1 ORDER BY e.id", [owner.id]);
-    const slots = await tx.query<OutputSlotRecord>("SELECT * FROM authority.output_slot WHERE scope_id=$1 ORDER BY id", [owner.id]);
+    const slots = await tx.query<CurrentOutput>("SELECT s.*, r.body FROM authority.output_slot s JOIN authority.artifact_revision r ON r.id=s.current_revision_id WHERE s.scope_id=$1 ORDER BY s.id", [owner.id]);
     const resources = await tx.query<ResourceBindingRecord>("SELECT * FROM authority.resource_binding WHERE scope_id=$1 ORDER BY id", [owner.id]);
     const pools = await tx.query<CapacityPoolRecord>("SELECT * FROM authority.capacity_pool WHERE run_id=$1", [owner.run_id]);
     const observations: VersionedValue[] = exports
       .filter((row) => scope.children.some((child) => child.key === row.child_key && child.imports.includes(row.export_key)))
       .map((row) => ({ identity: row.id, root: { kind: "child", key: row.child_key, export: row.export_key }, value: row.value, version: Number(row.version) }));
     for (const row of resources) if (row.observation && scope.resources.some((resource) => resource.key === row.resource_key)) observations.push({ identity: row.id, root: { kind: "resource", key: row.resource_key }, value: row.observation, version: Number(row.version) });
-    for (const row of slots) if (row.current_revision_id && scope.outputs.some((output) => output.key === row.output_key)) {
-      const revisions = await tx.query<{ body: VersionedValue["value"] }>("SELECT body FROM authority.artifact_revision WHERE id=$1", [row.current_revision_id]);
-      if (revisions[0]) observations.push({ identity: row.id, root: { kind: "output", key: row.output_key }, value: revisions[0].body, version: Number(row.version) });
-    }
+    for (const row of slots) if (scope.outputs.some((output) => output.key === row.output_key)) observations.push({ identity: row.id, root: { kind: "output", key: row.output_key }, value: row.body, version: Number(row.version) });
     const snapshot: Snapshot = { owner: owner.id, scope: owner.scope_key, input: owner.input, state: owner.local_state,
       version: Number(owner.version), trigger, observations, random_seed, timestamp_ms: Date.now() };
     return { snapshot, read_set, owner: { ...owner, version: Number(owner.version) }, pools: pools.map((pool) => ({ ...pool, version: Number(pool.version) })) };

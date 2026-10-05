@@ -46,6 +46,11 @@ test("snapshot records output, export, resource, collection and capacity members
     } finally { core.value.close(); }
     await db.query("UPDATE authority.child_collection SET version=version+1 WHERE id='members'", []);
     expect(await db.transaction((tx) => hasSameReadSet(tx, source!.read_set))).toBe(false);
+    await db.query("INSERT INTO authority.child_collection (id,scope_id,collection_key,version) VALUES ('a','scope','first',0), ('b','scope','second',1)", []);
+    const before_membership_change = (await readSnapshot(db, "scope" as ScopeId, trigger))!;
+    await db.query("DELETE FROM authority.child_collection WHERE id IN ('a','b')", []);
+    await db.query("INSERT INTO authority.child_collection (id,scope_id,collection_key,version) VALUES ('a:0|b','scope','replacement',1)", []);
+    expect(await db.transaction((tx) => hasSameReadSet(tx, before_membership_change.read_set))).toBe(false);
   } finally {
     await db.close();
     await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
