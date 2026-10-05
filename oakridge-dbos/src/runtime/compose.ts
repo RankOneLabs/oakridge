@@ -3,6 +3,7 @@ import { decodeCoreResponse } from "../core-client/generated-contracts";
 import type { DefinitionBundle, Trigger } from "../core-client/generated-contracts";
 import { CoreClient } from "../core-client/client";
 import { controlTokenMiddleware, selectControlPlaneAccess } from "../http/control-auth";
+import { installDefinitionApi } from "../http/app";
 import { authorityRepositories } from "../storage/repositories";
 import { createMutationService } from "../storage/mutation-service";
 import { PgPostgresExecutor } from "../storage/sql-executor";
@@ -61,6 +62,7 @@ export function createProductionComposition(options: ProductionOptions): Product
   const timer = setInterval(() => { void sweep().catch((error) => console.error("effect sweep failed", error)); }, options.dispatch?.sweep_ms ?? 5_000);
   const app = new Hono();
   if (access.kind === "token_required") app.use("*", controlTokenMiddleware(access.token));
+  installDefinitionApi(app, { db, core, mutations, sweep });
   app.get("/health", (context) => context.json({ status: "ok" }));
   app.post("/runs", async (context) => {
     let body: unknown;
