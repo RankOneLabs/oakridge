@@ -5,7 +5,7 @@ export interface SqlExecutor {
 }
 
 export interface TransactionalSqlExecutor extends SqlExecutor {
-  transaction<Value>(operation: (transaction: SqlExecutor) => Promise<Value>): Promise<Value>;
+  transaction<Value>(operation: (transaction: SqlExecutor) => Promise<Value>, isolation?: "read committed" | "repeatable read"): Promise<Value>;
 }
 
 interface BunSqlClient {
@@ -25,8 +25,11 @@ export class BunPostgresExecutor implements TransactionalSqlExecutor {
     return this.client.unsafe<Row>(statement, parameters);
   }
 
-  transaction<Value>(operation: (transaction: SqlExecutor) => Promise<Value>): Promise<Value> {
-    return this.client.begin((transaction) => operation(new BunPostgresExecutor(transaction, false)));
+  transaction<Value>(operation: (transaction: SqlExecutor) => Promise<Value>, isolation: "read committed" | "repeatable read" = "read committed"): Promise<Value> {
+    return this.client.begin(async (transaction) => {
+      if (isolation === "repeatable read") await transaction.unsafe("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+      return operation(new BunPostgresExecutor(transaction, false));
+    });
   }
 
   async close(): Promise<void> {
@@ -47,11 +50,11 @@ export class PgPostgresExecutor implements TransactionalSqlExecutor {
     return result.rows;
   }
 
-  async transaction<Value>(operation: (transaction: SqlExecutor) => Promise<Value>): Promise<Value> {
+  async transaction<Value>(operation: (transaction: SqlExecutor) => Promise<Value>, isolation: "read committed" | "repeatable read" = "read committed"): Promise<Value> {
     if (!this.pool) throw new Error("nested PostgreSQL transactions are not supported");
     const client = await this.pool.connect();
     try {
-      await client.query("BEGIN");
+      await client.query(isolation === "repeatable read" ? "BEGIN ISOLATION LEVEL REPEATABLE READ" : "BEGIN");
       const value = await operation(new PgPostgresExecutor(client, null));
       await client.query("COMMIT");
       return value;

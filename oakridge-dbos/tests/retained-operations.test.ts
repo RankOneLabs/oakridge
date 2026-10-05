@@ -19,9 +19,6 @@ const deletedPaths = [
   "oakridge-dbos/src/compiler/compile-v15.ts",
   "oakridge-dbos/src/decision",
   "oakridge-dbos/src/validation",
-  "oakridge-dbos/src/storage/migrate.ts",
-  "oakridge-dbos/src/storage/migrations",
-  "oakridge-dbos/src/runtime/compose.ts",
   "oakridge-dbos/src/runtime/run-launch-dispatch.ts",
   "oakridge-dbos/src/http/app.ts",
   "oakridge-dbos/src/workflows",
@@ -35,6 +32,10 @@ const deletedPaths = [
   "docs/replacement",
 ];
 const retainedPaths = [
+  "oakridge-dbos/src/storage/migrate.ts",
+  "oakridge-dbos/src/storage/migrations",
+  "oakridge-dbos/src/runtime/compose.ts",
+
   "oakridge-dbos/src/core-client/client.ts",
   "oakridge-dbos/src/core-client/generated-contracts.ts",
   "oakridge-dbos/src/core-client/transport-errors.ts",
