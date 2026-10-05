@@ -32,6 +32,9 @@ test("a fault after state, output and reservation writes rolls the entire decisi
       capacity: [{ kind: "acquire", pool_id: "pool" as PoolId, scope_id: "scope" as ScopeId }],
       effects: [{ effect_key: "same", payload: value, execution_id: null }, { effect_key: "same", payload: value, execution_id: null }],
     };
+    const hostile = { ...request, decision: { ...request.decision, mutations: [{ kind: "overwrite_everything" }] } } as unknown as CommitRequest;
+    const rejected = await commitDecision(db, hostile, source);
+    expect(rejected.ok).toBe(false);
     const result = await commitDecision(db, request, source);
     expect(result.ok).toBe(false);
     const rows = await db.query<{ state_version: string; receipt_count: string; output_count: string; reservation_count: string; effect_count: string }>("SELECT (SELECT version::text FROM authority.scope_instance WHERE id='scope') AS state_version, (SELECT count(*)::text FROM authority.ingress_receipt) AS receipt_count, (SELECT count(*)::text FROM authority.output_slot) AS output_count, (SELECT count(*)::text FROM authority.capacity_reservation) AS reservation_count, (SELECT count(*)::text FROM authority.effect_intent) AS effect_count", []);

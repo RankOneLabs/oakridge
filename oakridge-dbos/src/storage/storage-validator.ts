@@ -14,10 +14,18 @@ export function validateDecision(request: CommitRequest, source: AuthoritySnapsh
     if (!Array.isArray(request.decision.mutations) || !Array.isArray(request.decision.invocations)) return reject("validate_commit", source.owner.id, "malformed core mutations");
     for (const mutation of request.decision.mutations) {
       if (!mutation || typeof mutation !== "object" || typeof mutation.kind !== "string") return reject("validate_commit", source.owner.id, "malformed mutation");
-      if (mutation.kind === "activate_child" && (!mutation.key || !mutation.input)) return reject("validate_commit", source.owner.id, "malformed child activation");
-      if (mutation.kind === "export" && (!mutation.key || !mutation.value)) return reject("validate_commit", source.owner.id, "malformed export");
-      if ((mutation.kind === "acquire" || mutation.kind === "release") && !mutation.pool) return reject("validate_commit", source.owner.id, "malformed capacity mutation");
+      switch (mutation.kind) {
+        case "set_state": if (!mutation.value) return reject("validate_commit", source.owner.id, "state value missing"); break;
+        case "activate_child": if (!mutation.key || !mutation.input) return reject("validate_commit", source.owner.id, "malformed child activation"); break;
+        case "activate_collection": if (!mutation.key || !mutation.materialization || !Array.isArray(mutation.materialization.children)) return reject("validate_commit", source.owner.id, "malformed collection activation"); break;
+        case "export": if (!mutation.key || !mutation.value) return reject("validate_commit", source.owner.id, "malformed export"); break;
+        case "acquire": case "release": if (!mutation.pool) return reject("validate_commit", source.owner.id, "malformed capacity mutation"); break;
+        case "revoke": case "stop": if (!mutation.worker) return reject("validate_commit", source.owner.id, "worker missing"); break;
+        case "observe": if (!mutation.resource) return reject("validate_commit", source.owner.id, "resource missing"); break;
+        default: return reject("validate_commit", source.owner.id, "unknown mutation kind");
+      }
     }
+    for (const invocation of request.decision.invocations) if (!invocation?.selection?.worker || !invocation.input) return reject("validate_commit", source.owner.id, "malformed invocation");
   }
   if (request.outputs.some((output) => output.scope_id !== source.owner.id || output.output_key.length === 0)) return reject("validate_commit", source.owner.id, "output ownership mismatch");
   if (request.capacity.some((change) => change.scope_id !== source.owner.id)) return reject("validate_commit", source.owner.id, "capacity ownership mismatch");
