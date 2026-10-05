@@ -18,6 +18,351 @@ fn generic_fixture_compiles() {
     assert!(compile(&b, &b.operations).is_ok());
 }
 #[test]
+fn sec_4_5_source_contract_rows_have_named_fields_and_missing_field_diagnostics() {
+    let minimal = fixture();
+    let children: Value =
+        serde_json::from_str(include_str!("../../../fixtures/bundles/children-1.json")).unwrap();
+    let mut reject = minimal.clone();
+    reject["scopes"][0]["tree"]["otherwise"] = json!({
+        "kind": "reject", "id": "denied", "error": "invalid_command", "detail": {}
+    });
+    let rows: [(&str, &Value, &str, &[&str], &str); 10] = [
+        (
+            "Bundle",
+            &minimal,
+            "",
+            &[
+                "language_version",
+                "key",
+                "version",
+                "root",
+                "schemas",
+                "scopes",
+                "prompts",
+                "operations",
+                "limits",
+            ],
+            "root",
+        ),
+        (
+            "Scope",
+            &minimal,
+            "/scopes/0",
+            &[
+                "input_schema",
+                "state_schema",
+                "initial",
+                "commands",
+                "facts",
+                "errors",
+                "exports",
+                "resources",
+                "presentation",
+                "outcome_schema",
+                "outputs",
+                "workers",
+                "children",
+                "pools",
+                "cancellation",
+                "tree",
+            ],
+            "state_schema",
+        ),
+        (
+            "Command",
+            &minimal,
+            "/scopes/0/commands/0",
+            &[
+                "key",
+                "payload_schema",
+                "available_in",
+                "targets",
+                "label",
+                "consequence",
+                "field_presentation",
+            ],
+            "payload_schema",
+        ),
+        (
+            "Action",
+            &minimal,
+            "/scopes/0/workers/0/actions/0",
+            &[
+                "key",
+                "operation",
+                "provider",
+                "contract_version",
+                "input_schema",
+                "input",
+                "prompt",
+                "outputs",
+                "settings",
+                "tools",
+                "deadline_ms",
+                "max_attempts",
+            ],
+            "operation",
+        ),
+        (
+            "Output",
+            &minimal,
+            "/scopes/0/outputs/0",
+            &["key", "schema", "collection_key", "policy", "producers"],
+            "policy",
+        ),
+        (
+            "Child",
+            &children,
+            "/scopes/0/children/0",
+            &[
+                "key",
+                "scope",
+                "input",
+                "depends_on",
+                "imports",
+                "collection",
+            ],
+            "scope",
+        ),
+        (
+            "Match",
+            &minimal,
+            "/scopes/0/tree",
+            &["kind", "id", "value", "cases", "otherwise"],
+            "cases",
+        ),
+        (
+            "Apply",
+            &minimal,
+            "/scopes/0/tree/cases/0/node",
+            &["kind", "id", "mutations", "actions", "outcome"],
+            "mutations",
+        ),
+        (
+            "Wait",
+            &minimal,
+            "/scopes/0/tree/otherwise",
+            &["kind", "id", "continuations", "reason", "attention"],
+            "attention",
+        ),
+        (
+            "Reject",
+            &reject,
+            "/scopes/0/tree/otherwise",
+            &["kind", "id", "error", "detail"],
+            "error",
+        ),
+    ];
+    for (row, source, path, fields, required) in rows {
+        let value = source.pointer(path).unwrap();
+        for field in fields {
+            assert!(value.get(field).is_some(), "Sec 4.5 {row}.{field}");
+        }
+        for field in fields {
+            let mut missing = source.clone();
+            missing
+                .pointer_mut(path)
+                .unwrap()
+                .as_object_mut()
+                .unwrap()
+                .remove(*field);
+            let decoded = decode_bundle(&serde_json::to_vec(&missing).unwrap());
+            let is_optional = matches!(
+                (row, *field),
+                ("Action", "prompt")
+                    | ("Output", "collection_key")
+                    | ("Child", "collection")
+                    | ("Match", "otherwise")
+                    | ("Apply", "outcome")
+            );
+            if is_optional {
+                assert!(decoded.is_ok(), "Sec 4.5 {row}.{field} permits absence");
+                continue;
+            }
+            let diagnostic = decoded.unwrap_err();
+            assert_eq!(
+                diagnostic.kind,
+                DomainErrorKind::UnknownConstruct,
+                "Sec 4.5 {row}.{field}"
+            );
+            assert!(
+                diagnostic.detail.contains(field),
+                "Sec 4.5 {row}.{field}: {diagnostic:?}"
+            );
+        }
+        assert!(fields.contains(&required), "Sec 4.5 {row}.{required}");
+    }
+    let bundle = decode_bundle(&serde_json::to_vec(&minimal).unwrap()).unwrap();
+    assert!(compile(&bundle, &bundle.operations).is_ok());
+}
+
+fn command_presentation_fixture() -> Value {
+    let mut value = fixture();
+    value["schemas"].as_array_mut().unwrap().push(json!({
+        "key": "feedback", "shape": {"kind": "record", "fields": [
+            {"key": "reason", "schema": "text", "required": true},
+            {"key": "note", "schema": "text", "required": false}
+        ], "dictionary": null}
+    }));
+    value["scopes"][0]["commands"][0]["payload_schema"] = json!("feedback");
+    value["scopes"][0]["commands"][0]["field_presentation"] = json!([
+        {"key": "reason", "presentation": {"label": "Reason for revision", "viewer": "generic"}},
+        {"key": "note", "presentation": {"label": "Additional note", "viewer": null}}
+    ]);
+    value
+}
+
+#[test]
+fn sec_4_5_command_field_presentation_survives_compilation_and_serialization() {
+    let value = command_presentation_fixture();
+    let source = decode_bundle(&serde_json::to_vec(&value).unwrap()).unwrap();
+    let checked = compile(&source, &source.operations).unwrap();
+    let serialized = serde_json::to_value(&checked.source).unwrap();
+    assert_eq!(
+        serialized["scopes"][0]["commands"][0]["field_presentation"],
+        value["scopes"][0]["commands"][0]["field_presentation"]
+    );
+}
+
+#[test]
+fn sec_4_5_command_field_presentation_requires_declared_payload_fields() {
+    let mut value = command_presentation_fixture();
+    value["scopes"][0]["commands"][0]["field_presentation"][0]["key"] = json!("unknown");
+    let source = decode_bundle(&serde_json::to_vec(&value).unwrap()).unwrap();
+    let diagnostic = compile(&source, &source.operations).unwrap_err();
+    assert_eq!(diagnostic.kind, DomainErrorKind::MissingSymbol);
+    assert_eq!(diagnostic.entity_id.as_ref(), "begin.unknown");
+}
+
+#[test]
+fn sec_4_5_command_field_presentation_rejects_duplicate_fields() {
+    reject(
+        command_presentation_fixture(),
+        |value| {
+            value["scopes"][0]["commands"][0]["field_presentation"][1]["key"] = json!("reason");
+        },
+        DomainErrorKind::DuplicateSymbol,
+    );
+}
+
+#[test]
+fn sec_4_5_command_field_presentation_requires_nonblank_labels() {
+    for label in ["", "   "] {
+        reject(
+            command_presentation_fixture(),
+            |value| {
+                value["scopes"][0]["commands"][0]["field_presentation"][0]["presentation"]
+                    ["label"] = json!(label);
+            },
+            DomainErrorKind::UnsupportedPresentation,
+        );
+    }
+}
+
+#[test]
+fn sec_4_5_command_field_presentation_rejects_unsupported_viewers() {
+    reject(
+        command_presentation_fixture(),
+        |value| {
+            value["scopes"][0]["commands"][0]["field_presentation"][0]["presentation"]["viewer"] =
+                json!("custom");
+        },
+        DomainErrorKind::UnsupportedPresentation,
+    );
+}
+
+#[test]
+fn sec_4_5_command_field_presentation_requires_a_record_payload() {
+    reject(
+        command_presentation_fixture(),
+        |value| {
+            value["scopes"][0]["commands"][0]["payload_schema"] = json!("text");
+        },
+        DomainErrorKind::UnsupportedPresentation,
+    );
+}
+
+#[test]
+fn sec_4_5_command_field_presentation_rejects_unknown_fields() {
+    for path in [
+        "/scopes/0/commands/0/field_presentation/0",
+        "/scopes/0/commands/0/field_presentation/0/presentation",
+    ] {
+        let mut value = command_presentation_fixture();
+        value.pointer_mut(path).unwrap()["extra"] = json!(true);
+        assert_eq!(
+            decode_bundle(&serde_json::to_vec(&value).unwrap())
+                .unwrap_err()
+                .kind,
+            DomainErrorKind::UnknownConstruct
+        );
+    }
+}
+
+#[test]
+fn sec_4_5_wait_attention_requires_a_declared_continuation() {
+    reject(
+        fixture(),
+        |v| {
+            v["scopes"][0]["tree"]["otherwise"]["attention"]["trigger"] = json!("unknown");
+        },
+        DomainErrorKind::UndeclaredTrigger,
+    );
+}
+
+#[test]
+fn sec_4_5_bundle_presentation_is_owned_by_its_declared_scopes() {
+    let bundle = decode_bundle(&serde_json::to_vec(&fixture()).unwrap()).unwrap();
+    let checked = compile(&bundle, &bundle.operations).unwrap();
+    assert_eq!(
+        checked.source.scopes[0].presentation.label,
+        bundle.scopes[0].presentation.label
+    );
+    reject(
+        fixture(),
+        |value| {
+            value["scopes"][0]["presentation"]["viewer"] = json!("unsupported");
+        },
+        DomainErrorKind::UnsupportedPresentation,
+    );
+}
+
+#[test]
+fn sec_4_5_wait_attention_rejects_declared_symbols_outside_its_continuations() {
+    reject(
+        fixture(),
+        |value| {
+            value["scopes"][0]["tree"]["otherwise"]["attention"]["trigger"] = json!("begin");
+        },
+        DomainErrorKind::UndeclaredTrigger,
+    );
+}
+
+#[test]
+fn sec_4_5_wait_attention_rejects_blank_labels() {
+    for label in ["", "   "] {
+        reject(
+            fixture(),
+            |value| {
+                value["scopes"][0]["tree"]["otherwise"]["attention"]["label"] = json!(label);
+            },
+            DomainErrorKind::MissingBinding,
+        );
+    }
+}
+
+#[test]
+fn sec_4_5_wait_attention_rejects_unknown_fields() {
+    let mut value = fixture();
+    value["scopes"][0]["tree"]["otherwise"]["attention"]["extra"] = json!(true);
+    assert_eq!(
+        decode_bundle(&serde_json::to_vec(&value).unwrap())
+            .unwrap_err()
+            .kind,
+        DomainErrorKind::UnknownConstruct
+    );
+}
+#[test]
 fn terminal_state_write_cannot_make_later_actions_reachable() {
     reject(
         fixture(),
@@ -369,10 +714,7 @@ fn structurally_unreachable_outcome() {
 fn initial_wait_without_continuation_is_invalid() {
     reject(
         fixture(),
-        |v| {
-            v["scopes"][0]["tree"] =
-                json!({"kind":"wait","id":"dead","continuations":[],"reason":"nothing"})
-        },
+        |v| v["scopes"][0]["tree"] = json!({"kind":"wait","id":"dead","continuations":[],"reason":"nothing","attention":{"label":"Awaiting input","trigger":"cancel"}}),
         DomainErrorKind::DeadRegion,
     );
 }
@@ -461,7 +803,7 @@ fn expression_depth_is_bounded() {
             for _ in 0..10 {
                 e = json!({"kind":"not","value":e});
             }
-            v["scopes"][0]["tree"]["cases"][0]["node"] = json!({"kind":"if","id":"deep","condition":e,"then":v["scopes"][0]["tree"]["cases"][0]["node"].clone(),"otherwise":{"kind":"wait","id":"no","continuations":["cancel"],"reason":"wait"}});
+            v["scopes"][0]["tree"]["cases"][0]["node"] = json!({"kind":"if","id":"deep","condition":e,"then":v["scopes"][0]["tree"]["cases"][0]["node"].clone(),"otherwise":{"kind":"wait","id":"no","continuations":["cancel"],"reason":"wait","attention":{"label":"Awaiting input","trigger":"cancel"}}});
         },
         DomainErrorKind::ResourceLimit,
     );
@@ -537,7 +879,7 @@ fn reachable_closed_nonterminal_region_is_rejected() {
             original["cases"].as_array_mut().unwrap().push(json!({"variant":"tick","node":{
             "kind":"apply","id":"enter_blocked","mutations":[{"kind":"set_state","value":{"kind":"literal","schema":"position","value":{"kind":"blocked","value":{}}}}],"actions":[],"outcome":null
         }}));
-            v["scopes"][0]["tree"] = json!({"kind":"if","id":"blocked_check","condition":{"kind":"is_variant","value":{"kind":"reference","root":{"kind":"state"},"path":[]},"variant":"blocked"},"then":{"kind":"wait","id":"closed_region","continuations":["tick"],"reason":"no route"},"otherwise":original});
+            v["scopes"][0]["tree"] = json!({"kind":"if","id":"blocked_check","condition":{"kind":"is_variant","value":{"kind":"reference","root":{"kind":"state"},"path":[]},"variant":"blocked"},"then":{"kind":"wait","id":"closed_region","continuations":["tick"],"reason":"no route","attention":{"label":"Awaiting input","trigger":"tick"}},"otherwise":original});
         },
         DomainErrorKind::DeadRegion,
     );

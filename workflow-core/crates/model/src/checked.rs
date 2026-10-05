@@ -164,6 +164,7 @@ pub enum CheckedTree {
         id: NodeId,
         continuations: Vec<SymbolKey>,
         reason: String,
+        attention: AttentionMetadata,
     },
     Reject {
         id: NodeId,
@@ -315,6 +316,7 @@ pub enum DecisionOutcome {
         explanation: Explanation,
         continuations: Vec<SymbolKey>,
         reason: String,
+        attention: Option<AttentionMetadata>,
     },
     Reject {
         explanation: Explanation,

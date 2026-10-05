@@ -240,12 +240,14 @@ pub fn evaluate(program: &CheckedProgram, snapshot: &Snapshot) -> CoreResult<Dec
             CheckedTree::Wait {
                 continuations,
                 reason,
+                attention,
                 ..
             } => {
                 return Ok(DecisionOutcome::Wait {
                     explanation,
                     continuations: continuations.clone(),
                     reason: reason.clone(),
+                    attention: Some(attention.clone()),
                 })
             }
             CheckedTree::Reject { error, detail, .. } => {
@@ -353,6 +355,7 @@ pub fn evaluate(program: &CheckedProgram, snapshot: &Snapshot) -> CoreResult<Dec
                                 explanation,
                                 continuations: vec![snapshot.trigger.key.clone()],
                                 reason: "unchanged state; awaiting a new trigger".into(),
+                                attention: None,
                             });
                         }
                     }
@@ -362,6 +365,7 @@ pub fn evaluate(program: &CheckedProgram, snapshot: &Snapshot) -> CoreResult<Dec
                         explanation,
                         continuations: vec![snapshot.trigger.key.clone()],
                         reason: "mutation-free leaf; no commit required".into(),
+                        attention: None,
                     });
                 }
                 return Ok(DecisionOutcome::Apply {

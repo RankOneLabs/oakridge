@@ -149,6 +149,22 @@
         "action"
       ]
     },
+    "AttentionMetadata": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "trigger": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "trigger"
+      ]
+    },
     "CancellationDefinition": {
       "type": "object",
       "properties": {
@@ -275,6 +291,12 @@
         "consequence": {
           "type": "string"
         },
+        "field_presentation": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CommandFieldPresentation"
+          }
+        },
         "key": {
           "type": "string"
         },
@@ -302,7 +324,25 @@
         "required",
         "targets",
         "label",
-        "consequence"
+        "consequence",
+        "field_presentation"
+      ]
+    },
+    "CommandFieldPresentation": {
+      "description": "Presentation for a named, top-level command payload record field.",
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "presentation": {
+          "$ref": "#/$defs/Presentation"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "presentation"
       ]
     },
     "DecisionTree": {
@@ -418,6 +458,9 @@
         {
           "type": "object",
           "properties": {
+            "attention": {
+              "$ref": "#/$defs/AttentionMetadata"
+            },
             "continuations": {
               "type": "array",
               "items": {
@@ -440,7 +483,8 @@
             "kind",
             "id",
             "continuations",
-            "reason"
+            "reason",
+            "attention"
           ]
         },
         {

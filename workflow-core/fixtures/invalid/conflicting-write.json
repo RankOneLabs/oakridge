@@ -154,7 +154,8 @@
           "required": true,
           "targets": [],
           "label": "begin",
-          "consequence": "Interpret begin"
+          "consequence": "Interpret begin",
+          "field_presentation": []
         },
         {
           "key": "publish",
@@ -165,7 +166,8 @@
           "required": true,
           "targets": [],
           "label": "publish",
-          "consequence": "Interpret publish"
+          "consequence": "Interpret publish",
+          "field_presentation": []
         },
         {
           "key": "cancel",
@@ -177,7 +179,8 @@
           "required": true,
           "targets": [],
           "label": "cancel",
-          "consequence": "Interpret cancel"
+          "consequence": "Interpret cancel",
+          "field_presentation": []
         }
       ],
       "facts": [
@@ -381,7 +384,8 @@
             "publish",
             "cancel"
           ],
-          "reason": "waiting for declared input"
+          "reason": "waiting for declared input",
+          "attention": {"label": "Awaiting input", "trigger": "publish"}
         }
       }
     }

@@ -92,19 +92,7 @@ pub fn validate_bundle(
                 "cancellation trigger is undeclared",
             ));
         }
-        if owner.presentation.label.is_empty()
-            || owner
-                .presentation
-                .viewer
-                .as_deref()
-                .is_some_and(|v| v != "generic")
-        {
-            return Err(error(
-                DomainErrorKind::UnsupportedPresentation,
-                owner.key.to_string(),
-                "only the generic typed viewer has defined semantics",
-            ));
-        }
+        crate::presentation::validate_presentation(&owner.presentation, &owner.key.0)?;
         for pool in &owner.pools {
             if pool.limit == 0 {
                 return Err(error(
@@ -115,7 +103,7 @@ pub fn validate_bundle(
             }
         }
         for command in &owner.commands {
-            schema(bundle, &command.payload_schema)?;
+            crate::presentation::validate_command_fields(bundle, command)?;
             unique(
                 command.available_in.iter().map(String::as_str),
                 &command.key.0,
