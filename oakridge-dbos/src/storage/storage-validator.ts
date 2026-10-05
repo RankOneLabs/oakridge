@@ -42,6 +42,11 @@ export async function validateStorageAuthority(tx: SqlExecutor, request: CommitR
   const bundles = await tx.query<{ source: DefinitionBundle }>("SELECT b.source FROM authority.definition_bundle b JOIN authority.run r ON r.definition_bundle_id=b.id WHERE r.id=$1", [source.owner.run_id]);
   const scope = bundles[0]?.source.scopes.find((item) => item.key === source.owner.scope_key);
   if (!scope) return reject("validate_storage", source.owner.id, "scope definition missing");
+  if (request.decision.kind === "apply") for (const mutation of request.decision.mutations) {
+    if (mutation.kind === "activate_child" && !scope.children.some((child) => child.key === mutation.key)) return reject("validate_storage", source.owner.id, "child declaration missing");
+    if (mutation.kind === "activate_collection" && (!scope.children.some((child) => child.key === mutation.key && child.collection) || mutation.materialization.children.some((child) => !bundles[0]!.source.scopes.some((candidate) => candidate.key === child.scope)))) return reject("validate_storage", source.owner.id, "collection declaration missing");
+    if (mutation.kind === "export" && !scope.exports.some((item) => item.key === mutation.key)) return reject("validate_storage", source.owner.id, "export declaration missing");
+  }
   for (const output of request.outputs) {
     const definition: OutputDefinition | undefined = scope.outputs.find((item) => item.key === output.output_key);
     if (!definition) return reject("validate_storage", source.owner.id, "output is absent from scope definition");

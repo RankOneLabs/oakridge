@@ -36,8 +36,8 @@ export function createProductionComposition(options: ProductionOptions): Product
   app.post("/runs", async (context) => {
     let body: unknown;
     try { body = await context.req.json(); } catch { return context.json({ error: "invalid JSON" }, 400); }
-    if (!isBundle(body)) return context.json({ error: "invalid bundle" }, 400);
-    const result = await mutations.startRun({ bundle: body, available_operations: body.operations });
+    if (!body || typeof body !== "object" || !("bundle" in body) || !isBundle(body.bundle) || !("input" in body)) return context.json({ error: "invalid run request" }, 400);
+    const result = await mutations.startRun({ bundle: body.bundle, available_operations: body.bundle.operations, input: body.input });
     return result.ok ? context.json(result.value, 201) : context.json({ error: result.error }, 422);
   });
   app.get("/runs/:run_id", async (context) => {

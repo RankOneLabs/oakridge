@@ -8,12 +8,13 @@ import type { TransactionalSqlExecutor } from "./sql-executor";
 
 export interface CompileRequest { readonly bundle: DefinitionBundle; readonly available_operations: readonly OperationManifest[] }
 export interface CompileResult { readonly program: CheckedProgram }
+export interface StartRunRequest extends CompileRequest { readonly input: unknown }
 export interface EvaluationInput { readonly source: AuthoritySnapshot; readonly bundle: DefinitionBundle; readonly available_operations: readonly OperationManifest[] }
 export interface EvaluationResult { readonly decision: DecisionOutcome }
 export interface Decision { readonly source: AuthoritySnapshot; readonly outcome: DecisionOutcome }
 export interface MutationInput { readonly run_id: RunId; readonly scope_id: ScopeId; readonly ingress_id: string; readonly trigger: Trigger; readonly operator_version: number | null; readonly outputs?: readonly OutputPublication[] }
 export interface StartedRun { readonly run_id: RunId; readonly root_scope_id: ScopeId; readonly bundle_id: string }
-export interface MutationService { compile(request: CompileRequest): Promise<Result<CompileResult>>; startRun(request: CompileRequest): Promise<Result<StartedRun>>; decide(input: MutationInput): Promise<Result<CommitResult>> }
+export interface MutationService { compile(request: CompileRequest): Promise<Result<CompileResult>>; startRun(request: StartRunRequest): Promise<Result<StartedRun>>; decide(input: MutationInput): Promise<Result<CommitResult>> }
 
 function error(operation: string, entity_id: string, detail: string): Result<never> { return { ok: false, error: { operation, entity_id, detail } }; }
 export async function compileBundle(core: CoreClient, request: CompileRequest): Promise<Result<CompileResult>> {
@@ -46,6 +47,11 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
       if (!compiled.ok) return compiled;
       const root = compiled.value.program.scopes.find((scope) => scope.key === request.bundle.root);
       if (!root) return error("start_run", request.bundle.key, "compiled root scope missing");
+      const root_definition = request.bundle.scopes.find((scope) => scope.key === request.bundle.root);
+      if (!root_definition) return error("start_run", request.bundle.key, "root definition missing");
+      const validated = await core.request("validate_payload", { bundle: request.bundle, available_operations: [...request.available_operations], schema: root_definition.input_schema, payload: request.input });
+      if (!validated.ok) return error("start_run", request.bundle.key, JSON.stringify(validated.error));
+      if (validated.value.kind !== "validated") return error("start_run", request.bundle.key, "core returned a non-validated input");
       const run_id = crypto.randomUUID() as RunId;
       const root_scope_id = crypto.randomUUID() as ScopeId;
       const bundle_id = crypto.randomUUID();
@@ -56,7 +62,14 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
           const stored = await tx.query<{ id: string }>("SELECT id FROM authority.definition_bundle WHERE digest=$1", [compiled.value.program.digest]);
           actual_bundle_id = stored[0]!.id;
           await tx.query("INSERT INTO authority.run (id,definition_bundle_id) VALUES ($1,$2)", [run_id, actual_bundle_id]);
-          await tx.query("INSERT INTO authority.scope_instance (id,run_id,scope_key,input,local_state) VALUES ($1,$2,$3,$4,$5)", [root_scope_id, run_id, request.bundle.root, JSON.stringify(root.initial), JSON.stringify(root.initial)]);
+          await tx.query("INSERT INTO authority.scope_instance (id,run_id,scope_key,input,local_state) VALUES ($1,$2,$3,$4,$5)", [root_scope_id, run_id, request.bundle.root, JSON.stringify(validated.value.value), JSON.stringify(root.initial)]);
+          const pools = new Map<string, number>();
+          for (const scope of request.bundle.scopes) for (const pool of scope.pools) {
+            const previous = pools.get(pool.key);
+            if (previous !== undefined && previous !== pool.limit) throw new Error(`capacity pool ${pool.key} has conflicting limits`);
+            pools.set(pool.key, pool.limit);
+          }
+          for (const [pool_key, capacity] of pools) await tx.query("INSERT INTO authority.capacity_pool (id,run_id,pool_key,capacity) VALUES ($1,$2,$3,$4)", [crypto.randomUUID(), run_id, pool_key, capacity]);
         });
         return { ok: true, value: { run_id, root_scope_id, bundle_id: actual_bundle_id } };
       } catch (cause) { return error("start_run", run_id, String(cause)); }

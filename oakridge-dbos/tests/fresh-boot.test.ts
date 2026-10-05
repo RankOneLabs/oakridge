@@ -18,12 +18,14 @@ test("empty database cold boots, compiles through workflow-cli and serves a run 
     await migrateEmptyDatabase(db);
     composition = createProductionComposition({ database_url: url.href, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1" });
     const bundle = await Bun.file(resolve(import.meta.dir, "../../workflow-core/fixtures/bundles/minimal.json")).json();
-    const created = await composition.app.request("http://localhost/runs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(bundle) });
+    const created = await composition.app.request("http://localhost/runs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ bundle, input: {} }) });
     expect(created.status).toBe(201);
     const run: { run_id: string; root_scope_id: string } = await created.json();
     const projection = await composition.app.request(`http://localhost/runs/${run.run_id}`);
     expect(projection.status).toBe(200);
     expect(await projection.json()).toMatchObject({ run_id: run.run_id, root_scope_id: run.root_scope_id, scope_key: bundle.root, version: 0 });
+    const pools = await db.query<{ pool_key: string; capacity: number }>("SELECT pool_key,capacity FROM authority.capacity_pool WHERE run_id=$1", [run.run_id]);
+    expect(pools).toEqual([{ pool_key: "work", capacity: 1 }]);
   } finally {
     if (composition) await composition.close();
     await db.close();

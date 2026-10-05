@@ -1,4 +1,4 @@
-import type { CheckedValue, DecisionOutcome } from "../core-client/generated-contracts";
+import type { CheckedProgram, CheckedValue, DecisionOutcome, DefinitionBundle } from "../core-client/generated-contracts";
 import type { CapacityChange } from "./capacity";
 import { applyCapacityChanges } from "./capacity";
 import { findReceipt, type IngressIdentity } from "./receipts";
@@ -43,21 +43,29 @@ async function writeOutputs(tx: SqlExecutor, request: CommitRequest): Promise<vo
 async function writeDecision(tx: SqlExecutor, request: CommitRequest, source: AuthoritySnapshot): Promise<CommitReceipt> {
   const scope_id = source.owner.id;
   const execution_ids: string[] = [];
+  const definitions = await tx.query<{ source: DefinitionBundle; checked_program: CheckedProgram }>("SELECT b.source,b.checked_program FROM authority.definition_bundle b JOIN authority.run r ON r.definition_bundle_id=b.id WHERE r.id=$1", [source.owner.run_id]);
+  const definition = definitions[0];
+  if (!definition) fail({ kind: "Rejected", detail: "definition bundle missing" });
   if (request.decision.kind === "apply") {
     for (const mutation of request.decision.mutations) {
       if (mutation.kind === "set_state") await tx.query("UPDATE authority.scope_instance SET local_state=$1,version=version+1 WHERE id=$2", [JSON.stringify(mutation.value), scope_id]);
       if (mutation.kind === "export") await tx.query("INSERT INTO authority.scope_export (id,scope_id,export_key,value) VALUES ($1,$2,$3,$4) ON CONFLICT (scope_id,export_key) DO UPDATE SET value=excluded.value,version=authority.scope_export.version+1", [crypto.randomUUID(), scope_id, mutation.key, JSON.stringify(mutation.value)]);
       if (mutation.kind === "revoke" || mutation.kind === "stop") await tx.query("UPDATE authority.execution_selection SET generation=generation+1,execution_id=NULL,version=version+1 WHERE scope_id=$1 AND worker_key=$2", [scope_id, mutation.worker]);
       if (mutation.kind === "activate_child") {
+        const declared = definition.source.scopes.find((item) => item.key === source.owner.scope_key)?.children.find((item) => item.key === mutation.key);
+        const child_state = definition.checked_program.scopes.find((item) => item.key === declared?.scope)?.initial;
+        if (!declared || !child_state) fail({ kind: "Rejected", detail: "child definition missing" });
         const child_id = crypto.randomUUID();
-        await tx.query("INSERT INTO authority.scope_instance (id,run_id,parent_id,scope_key,child_key,input,local_state) VALUES ($1,$2,$3,$4,$5,$6,$7)", [child_id, source.owner.run_id, scope_id, mutation.key, mutation.key, JSON.stringify(mutation.input), JSON.stringify(mutation.input)]);
+        await tx.query("INSERT INTO authority.scope_instance (id,run_id,parent_id,scope_key,child_key,input,local_state) VALUES ($1,$2,$3,$4,$5,$6,$7)", [child_id, source.owner.run_id, scope_id, declared.scope, mutation.key, JSON.stringify(mutation.input), JSON.stringify(child_state)]);
       }
       if (mutation.kind === "activate_collection") {
         const members: string[] = [];
         for (const child of mutation.materialization.children) {
+          const child_state = definition.checked_program.scopes.find((item) => item.key === child.scope)?.initial;
+          if (!child_state) fail({ kind: "Rejected", detail: "collection child definition missing" });
           const child_id = crypto.randomUUID();
           members.push(child_id);
-          await tx.query("INSERT INTO authority.scope_instance (id,run_id,parent_id,scope_key,child_key,input,local_state) VALUES ($1,$2,$3,$4,$5,$6,$7)", [child_id, source.owner.run_id, scope_id, child.scope, child.key, JSON.stringify(child.input), JSON.stringify(child.input)]);
+          await tx.query("INSERT INTO authority.scope_instance (id,run_id,parent_id,scope_key,child_key,input,local_state) VALUES ($1,$2,$3,$4,$5,$6,$7)", [child_id, source.owner.run_id, scope_id, child.scope, child.key, JSON.stringify(child.input), JSON.stringify(child_state)]);
         }
         await tx.query("INSERT INTO authority.child_collection (id,scope_id,collection_key,members) VALUES ($1,$2,$3,$4) ON CONFLICT (scope_id,collection_key) DO UPDATE SET members=excluded.members,version=authority.child_collection.version+1", [crypto.randomUUID(), scope_id, mutation.key, JSON.stringify(members)]);
       }
