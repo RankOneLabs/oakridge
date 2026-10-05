@@ -7,6 +7,38 @@ on:
       - "epic/**"
 
 jobs:
+  workflow-core:
+    name: Rust core (fmt, clippy, test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workflow-core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.93.1
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: workflow-core
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+
+  core-contracts:
+    name: Generated Rust/TypeScript contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.93.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: workflow-core
+      - run: bash scripts/generate-core-contracts.sh --check
+
   kbbl-typecheck:
     name: kbbl typecheck (TypeScript)
     runs-on: ubuntu-latest
@@ -60,6 +92,13 @@ jobs:
       OAKRIDGE_TEST_DATABASE_URL: postgres://oakridge:oakridge@127.0.0.1:5432/oakridge
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.93.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: workflow-core
+      - run: cargo build --locked --manifest-path workflow-core/Cargo.toml -p workflow-cli
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run --filter oakridge-dbos validate:definitions

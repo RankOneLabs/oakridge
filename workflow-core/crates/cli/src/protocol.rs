@@ -19,8 +19,17 @@ fn transport(request_id: String, kind: TransportErrorKind, detail: &str) -> Resp
 
 pub fn handle_frame(frame: &[u8]) -> Response {
     if frame.len() > MAX_FRAME_BYTES {
+        let request_id = serde_json::from_slice::<serde_json::Value>(frame)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("request_id")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned)
+            })
+            .unwrap_or_default();
         return transport(
-            String::new(),
+            request_id,
             TransportErrorKind::OversizedPayload,
             "frame exceeds maximum bytes",
         );
@@ -41,6 +50,13 @@ pub fn handle_frame(frame: &[u8]) -> Response {
         .unwrap_or("")
         .to_owned();
     let version = raw.get("version").and_then(serde_json::Value::as_u64);
+    if version.is_none() {
+        return transport(
+            request_id,
+            TransportErrorKind::MalformedFrame,
+            "version must be an integer",
+        );
+    }
     if version != Some(u64::from(PROTOCOL_VERSION)) {
         return transport(
             request_id,
