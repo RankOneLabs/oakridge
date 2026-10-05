@@ -155,6 +155,14 @@ pub struct CommandDefinition {
     pub targets: Vec<Expression>,
     pub label: String,
     pub consequence: String,
+    pub field_presentation: Vec<CommandFieldPresentation>,
+}
+/// Presentation for a named, top-level command payload record field.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CommandFieldPresentation {
+    pub key: String,
+    pub presentation: Presentation,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]

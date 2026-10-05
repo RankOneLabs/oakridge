@@ -2,6 +2,7 @@
 mod analysis;
 mod declarations;
 mod expressions;
+mod presentation;
 mod references;
 mod schemas;
 mod scopes;

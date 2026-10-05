@@ -40,6 +40,7 @@ fn sec_4_5_source_contract_rows_have_named_fields_and_missing_field_diagnostics(
                 "scopes",
                 "prompts",
                 "operations",
+                "limits",
             ],
             "root",
         ),
@@ -53,7 +54,10 @@ fn sec_4_5_source_contract_rows_have_named_fields_and_missing_field_diagnostics(
                 "initial",
                 "commands",
                 "facts",
+                "errors",
                 "exports",
+                "resources",
+                "presentation",
                 "outcome_schema",
                 "outputs",
                 "workers",
@@ -75,6 +79,7 @@ fn sec_4_5_source_contract_rows_have_named_fields_and_missing_field_diagnostics(
                 "targets",
                 "label",
                 "consequence",
+                "field_presentation",
             ],
             "payload_schema",
         ),
@@ -92,6 +97,7 @@ fn sec_4_5_source_contract_rows_have_named_fields_and_missing_field_diagnostics(
                 "prompt",
                 "outputs",
                 "settings",
+                "tools",
                 "deadline_ms",
                 "max_attempts",
             ],
@@ -152,26 +158,145 @@ fn sec_4_5_source_contract_rows_have_named_fields_and_missing_field_diagnostics(
         for field in fields {
             assert!(value.get(field).is_some(), "Sec 4.5 {row}.{field}");
         }
-        let mut missing = source.clone();
-        missing
-            .pointer_mut(path)
-            .unwrap()
-            .as_object_mut()
-            .unwrap()
-            .remove(required);
-        let diagnostic = decode_bundle(&serde_json::to_vec(&missing).unwrap()).unwrap_err();
-        assert_eq!(
-            diagnostic.kind,
-            DomainErrorKind::UnknownConstruct,
-            "Sec 4.5 {row}.{required}"
-        );
-        assert!(
-            diagnostic.detail.contains(required),
-            "Sec 4.5 {row}.{required}: {diagnostic:?}"
-        );
+        for field in fields {
+            let mut missing = source.clone();
+            missing
+                .pointer_mut(path)
+                .unwrap()
+                .as_object_mut()
+                .unwrap()
+                .remove(*field);
+            let decoded = decode_bundle(&serde_json::to_vec(&missing).unwrap());
+            let is_optional = matches!(
+                (row, *field),
+                ("Action", "prompt")
+                    | ("Output", "collection_key")
+                    | ("Child", "collection")
+                    | ("Match", "otherwise")
+                    | ("Apply", "outcome")
+            );
+            if is_optional {
+                assert!(decoded.is_ok(), "Sec 4.5 {row}.{field} permits absence");
+                continue;
+            }
+            let diagnostic = decoded.unwrap_err();
+            assert_eq!(
+                diagnostic.kind,
+                DomainErrorKind::UnknownConstruct,
+                "Sec 4.5 {row}.{field}"
+            );
+            assert!(
+                diagnostic.detail.contains(field),
+                "Sec 4.5 {row}.{field}: {diagnostic:?}"
+            );
+        }
+        assert!(fields.contains(&required), "Sec 4.5 {row}.{required}");
     }
     let bundle = decode_bundle(&serde_json::to_vec(&minimal).unwrap()).unwrap();
     assert!(compile(&bundle, &bundle.operations).is_ok());
+}
+
+fn command_presentation_fixture() -> Value {
+    let mut value = fixture();
+    value["schemas"].as_array_mut().unwrap().push(json!({
+        "key": "feedback", "shape": {"kind": "record", "fields": [
+            {"key": "reason", "schema": "text", "required": true},
+            {"key": "note", "schema": "text", "required": false}
+        ], "dictionary": null}
+    }));
+    value["scopes"][0]["commands"][0]["payload_schema"] = json!("feedback");
+    value["scopes"][0]["commands"][0]["field_presentation"] = json!([
+        {"key": "reason", "presentation": {"label": "Reason for revision", "viewer": "generic"}},
+        {"key": "note", "presentation": {"label": "Additional note", "viewer": null}}
+    ]);
+    value
+}
+
+#[test]
+fn sec_4_5_command_field_presentation_survives_compilation_and_serialization() {
+    let value = command_presentation_fixture();
+    let source = decode_bundle(&serde_json::to_vec(&value).unwrap()).unwrap();
+    let checked = compile(&source, &source.operations).unwrap();
+    let serialized = serde_json::to_value(&checked.source).unwrap();
+    assert_eq!(
+        serialized["scopes"][0]["commands"][0]["field_presentation"],
+        value["scopes"][0]["commands"][0]["field_presentation"]
+    );
+}
+
+#[test]
+fn sec_4_5_command_field_presentation_requires_declared_payload_fields() {
+    let mut value = command_presentation_fixture();
+    value["scopes"][0]["commands"][0]["field_presentation"][0]["key"] = json!("unknown");
+    let source = decode_bundle(&serde_json::to_vec(&value).unwrap()).unwrap();
+    let diagnostic = compile(&source, &source.operations).unwrap_err();
+    assert_eq!(diagnostic.kind, DomainErrorKind::MissingSymbol);
+    assert_eq!(diagnostic.entity_id.as_ref(), "begin.unknown");
+}
+
+#[test]
+fn sec_4_5_command_field_presentation_rejects_duplicate_fields() {
+    reject(
+        command_presentation_fixture(),
+        |value| {
+            value["scopes"][0]["commands"][0]["field_presentation"][1]["key"] = json!("reason");
+        },
+        DomainErrorKind::DuplicateSymbol,
+    );
+}
+
+#[test]
+fn sec_4_5_command_field_presentation_requires_nonblank_labels() {
+    for label in ["", "   "] {
+        reject(
+            command_presentation_fixture(),
+            |value| {
+                value["scopes"][0]["commands"][0]["field_presentation"][0]["presentation"]
+                    ["label"] = json!(label);
+            },
+            DomainErrorKind::UnsupportedPresentation,
+        );
+    }
+}
+
+#[test]
+fn sec_4_5_command_field_presentation_rejects_unsupported_viewers() {
+    reject(
+        command_presentation_fixture(),
+        |value| {
+            value["scopes"][0]["commands"][0]["field_presentation"][0]["presentation"]["viewer"] =
+                json!("custom");
+        },
+        DomainErrorKind::UnsupportedPresentation,
+    );
+}
+
+#[test]
+fn sec_4_5_command_field_presentation_requires_a_record_payload() {
+    reject(
+        command_presentation_fixture(),
+        |value| {
+            value["scopes"][0]["commands"][0]["payload_schema"] = json!("text");
+        },
+        DomainErrorKind::UnsupportedPresentation,
+    );
+}
+
+#[test]
+fn sec_4_5_command_field_presentation_rejects_unknown_fields() {
+    for path in [
+        "/scopes/0/commands/0/field_presentation/0",
+        "/scopes/0/commands/0/field_presentation/0/presentation",
+    ] {
+        let mut value = command_presentation_fixture();
+        value.pointer_mut(path).unwrap()["extra"] = json!(true);
+        assert_eq!(
+            decode_bundle(&serde_json::to_vec(&value).unwrap())
+                .unwrap_err()
+                .kind,
+            DomainErrorKind::UnknownConstruct
+        );
+    }
 }
 
 #[test]
@@ -183,6 +308,47 @@ fn sec_4_5_wait_attention_requires_a_declared_continuation() {
         },
         DomainErrorKind::UndeclaredTrigger,
     );
+}
+
+#[test]
+fn sec_4_5_bundle_presentation_is_owned_by_its_declared_scopes() {
+    let bundle = decode_bundle(&serde_json::to_vec(&fixture()).unwrap()).unwrap();
+    let checked = compile(&bundle, &bundle.operations).unwrap();
+    assert_eq!(
+        checked.source.scopes[0].presentation.label,
+        bundle.scopes[0].presentation.label
+    );
+    reject(
+        fixture(),
+        |value| {
+            value["scopes"][0]["presentation"]["viewer"] = json!("unsupported");
+        },
+        DomainErrorKind::UnsupportedPresentation,
+    );
+}
+
+#[test]
+fn sec_4_5_wait_attention_rejects_declared_symbols_outside_its_continuations() {
+    reject(
+        fixture(),
+        |value| {
+            value["scopes"][0]["tree"]["otherwise"]["attention"]["trigger"] = json!("begin");
+        },
+        DomainErrorKind::UndeclaredTrigger,
+    );
+}
+
+#[test]
+fn sec_4_5_wait_attention_rejects_blank_labels() {
+    for label in ["", "   "] {
+        reject(
+            fixture(),
+            |value| {
+                value["scopes"][0]["tree"]["otherwise"]["attention"]["label"] = json!(label);
+            },
+            DomainErrorKind::MissingBinding,
+        );
+    }
 }
 
 #[test]
