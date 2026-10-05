@@ -197,10 +197,12 @@ fn unready_child_export_selects_configured_wait() {
         },
         value: check_value(&b, &SchemaId::from("flag"), &json!(false)).unwrap(),
     });
-    assert!(matches!(
-        evaluate(&p, &s).unwrap(),
-        DecisionOutcome::Wait { .. }
-    ));
+    let DecisionOutcome::Wait { attention, .. } = evaluate(&p, &s).unwrap() else {
+        panic!("expected configured wait")
+    };
+    let attention = attention.expect("Sec 4.5 Wait attention reaches the caller");
+    assert_eq!(attention.label, "Awaiting input");
+    assert_eq!(attention.trigger, SymbolKey::from("publish"));
 }
 #[test]
 fn independent_sibling_policy_is_configuration() {
@@ -372,6 +374,10 @@ fn optional_payload_is_bound_only_inside_presence_match() {
                     id: NodeId::from("missing_input"),
                     continuations: vec![SymbolKey::from("cancel")],
                     reason: "input absent".into(),
+                    attention: AttentionMetadata {
+                        label: "Awaiting input".into(),
+                        trigger: SymbolKey::from("cancel"),
+                    },
                 },
             },
         ],
@@ -463,6 +469,10 @@ fn optional_record_field_is_matched_before_required_binding() {
             id: NodeId::from("absent_field"),
             continuations: vec![SymbolKey::from("cancel")],
             reason: "missing entry".into(),
+            attention: AttentionMetadata {
+                label: "Awaiting input".into(),
+                trigger: SymbolKey::from("cancel"),
+            },
         })),
     };
     let p = compile(&b, &b.operations).unwrap();

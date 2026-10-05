@@ -149,6 +149,22 @@
         "action"
       ]
     },
+    "AttentionMetadata": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "trigger": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "trigger"
+      ]
+    },
     "CancellationDefinition": {
       "type": "object",
       "properties": {
@@ -418,6 +434,9 @@
         {
           "type": "object",
           "properties": {
+            "attention": {
+              "$ref": "#/$defs/AttentionMetadata"
+            },
             "continuations": {
               "type": "array",
               "items": {
@@ -440,7 +459,8 @@
             "kind",
             "id",
             "continuations",
-            "reason"
+            "reason",
+            "attention"
           ]
         },
         {

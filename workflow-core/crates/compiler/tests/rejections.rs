@@ -18,6 +18,185 @@ fn generic_fixture_compiles() {
     assert!(compile(&b, &b.operations).is_ok());
 }
 #[test]
+fn sec_4_5_source_contract_rows_have_named_fields_and_missing_field_diagnostics() {
+    let minimal = fixture();
+    let children: Value =
+        serde_json::from_str(include_str!("../../../fixtures/bundles/children-1.json")).unwrap();
+    let mut reject = minimal.clone();
+    reject["scopes"][0]["tree"]["otherwise"] = json!({
+        "kind": "reject", "id": "denied", "error": "invalid_command", "detail": {}
+    });
+    let rows: [(&str, &Value, &str, &[&str], &str); 10] = [
+        (
+            "Bundle",
+            &minimal,
+            "",
+            &[
+                "language_version",
+                "key",
+                "version",
+                "root",
+                "schemas",
+                "scopes",
+                "prompts",
+                "operations",
+            ],
+            "root",
+        ),
+        (
+            "Scope",
+            &minimal,
+            "/scopes/0",
+            &[
+                "input_schema",
+                "state_schema",
+                "initial",
+                "commands",
+                "facts",
+                "exports",
+                "outcome_schema",
+                "outputs",
+                "workers",
+                "children",
+                "pools",
+                "cancellation",
+                "tree",
+            ],
+            "state_schema",
+        ),
+        (
+            "Command",
+            &minimal,
+            "/scopes/0/commands/0",
+            &[
+                "key",
+                "payload_schema",
+                "available_in",
+                "targets",
+                "label",
+                "consequence",
+            ],
+            "payload_schema",
+        ),
+        (
+            "Action",
+            &minimal,
+            "/scopes/0/workers/0/actions/0",
+            &[
+                "key",
+                "operation",
+                "provider",
+                "contract_version",
+                "input_schema",
+                "input",
+                "prompt",
+                "outputs",
+                "settings",
+                "deadline_ms",
+                "max_attempts",
+            ],
+            "operation",
+        ),
+        (
+            "Output",
+            &minimal,
+            "/scopes/0/outputs/0",
+            &["key", "schema", "collection_key", "policy", "producers"],
+            "policy",
+        ),
+        (
+            "Child",
+            &children,
+            "/scopes/0/children/0",
+            &[
+                "key",
+                "scope",
+                "input",
+                "depends_on",
+                "imports",
+                "collection",
+            ],
+            "scope",
+        ),
+        (
+            "Match",
+            &minimal,
+            "/scopes/0/tree",
+            &["kind", "id", "value", "cases", "otherwise"],
+            "cases",
+        ),
+        (
+            "Apply",
+            &minimal,
+            "/scopes/0/tree/cases/0/node",
+            &["kind", "id", "mutations", "actions", "outcome"],
+            "mutations",
+        ),
+        (
+            "Wait",
+            &minimal,
+            "/scopes/0/tree/otherwise",
+            &["kind", "id", "continuations", "reason", "attention"],
+            "attention",
+        ),
+        (
+            "Reject",
+            &reject,
+            "/scopes/0/tree/otherwise",
+            &["kind", "id", "error", "detail"],
+            "error",
+        ),
+    ];
+    for (row, source, path, fields, required) in rows {
+        let value = source.pointer(path).unwrap();
+        for field in fields {
+            assert!(value.get(field).is_some(), "Sec 4.5 {row}.{field}");
+        }
+        let mut missing = source.clone();
+        missing
+            .pointer_mut(path)
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove(required);
+        let diagnostic = decode_bundle(&serde_json::to_vec(&missing).unwrap()).unwrap_err();
+        assert_eq!(
+            diagnostic.kind,
+            DomainErrorKind::UnknownConstruct,
+            "Sec 4.5 {row}.{required}"
+        );
+        assert!(
+            diagnostic.detail.contains(required),
+            "Sec 4.5 {row}.{required}: {diagnostic:?}"
+        );
+    }
+    let bundle = decode_bundle(&serde_json::to_vec(&minimal).unwrap()).unwrap();
+    assert!(compile(&bundle, &bundle.operations).is_ok());
+}
+
+#[test]
+fn sec_4_5_wait_attention_requires_a_declared_continuation() {
+    reject(
+        fixture(),
+        |v| {
+            v["scopes"][0]["tree"]["otherwise"]["attention"]["trigger"] = json!("unknown");
+        },
+        DomainErrorKind::UndeclaredTrigger,
+    );
+}
+
+#[test]
+fn sec_4_5_wait_attention_rejects_unknown_fields() {
+    let mut value = fixture();
+    value["scopes"][0]["tree"]["otherwise"]["attention"]["extra"] = json!(true);
+    assert_eq!(
+        decode_bundle(&serde_json::to_vec(&value).unwrap())
+            .unwrap_err()
+            .kind,
+        DomainErrorKind::UnknownConstruct
+    );
+}
+#[test]
 fn terminal_state_write_cannot_make_later_actions_reachable() {
     reject(
         fixture(),
@@ -369,10 +548,7 @@ fn structurally_unreachable_outcome() {
 fn initial_wait_without_continuation_is_invalid() {
     reject(
         fixture(),
-        |v| {
-            v["scopes"][0]["tree"] =
-                json!({"kind":"wait","id":"dead","continuations":[],"reason":"nothing"})
-        },
+        |v| v["scopes"][0]["tree"] = json!({"kind":"wait","id":"dead","continuations":[],"reason":"nothing","attention":{"label":"Awaiting input","trigger":"cancel"}}),
         DomainErrorKind::DeadRegion,
     );
 }
@@ -461,7 +637,7 @@ fn expression_depth_is_bounded() {
             for _ in 0..10 {
                 e = json!({"kind":"not","value":e});
             }
-            v["scopes"][0]["tree"]["cases"][0]["node"] = json!({"kind":"if","id":"deep","condition":e,"then":v["scopes"][0]["tree"]["cases"][0]["node"].clone(),"otherwise":{"kind":"wait","id":"no","continuations":["cancel"],"reason":"wait"}});
+            v["scopes"][0]["tree"]["cases"][0]["node"] = json!({"kind":"if","id":"deep","condition":e,"then":v["scopes"][0]["tree"]["cases"][0]["node"].clone(),"otherwise":{"kind":"wait","id":"no","continuations":["cancel"],"reason":"wait","attention":{"label":"Awaiting input","trigger":"cancel"}}});
         },
         DomainErrorKind::ResourceLimit,
     );
@@ -537,7 +713,7 @@ fn reachable_closed_nonterminal_region_is_rejected() {
             original["cases"].as_array_mut().unwrap().push(json!({"variant":"tick","node":{
             "kind":"apply","id":"enter_blocked","mutations":[{"kind":"set_state","value":{"kind":"literal","schema":"position","value":{"kind":"blocked","value":{}}}}],"actions":[],"outcome":null
         }}));
-            v["scopes"][0]["tree"] = json!({"kind":"if","id":"blocked_check","condition":{"kind":"is_variant","value":{"kind":"reference","root":{"kind":"state"},"path":[]},"variant":"blocked"},"then":{"kind":"wait","id":"closed_region","continuations":["tick"],"reason":"no route"},"otherwise":original});
+            v["scopes"][0]["tree"] = json!({"kind":"if","id":"blocked_check","condition":{"kind":"is_variant","value":{"kind":"reference","root":{"kind":"state"},"path":[]},"variant":"blocked"},"then":{"kind":"wait","id":"closed_region","continuations":["tick"],"reason":"no route","attention":{"label":"Awaiting input","trigger":"tick"}},"otherwise":original});
         },
         DomainErrorKind::DeadRegion,
     );

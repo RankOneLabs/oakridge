@@ -303,6 +303,7 @@ pub(crate) fn compile_tree(
             id,
             continuations,
             reason,
+            attention,
         } => {
             unique(continuations.iter().map(|c| c.0.as_str()), &id.0)?;
             if reason.is_empty() || continuations.is_empty() {
@@ -322,10 +323,25 @@ pub(crate) fn compile_tree(
                     "wait continuation undeclared",
                 ));
             }
+            if attention.label.trim().is_empty() {
+                return Err(error(
+                    DomainErrorKind::MissingBinding,
+                    id.to_string(),
+                    "wait attention label is required",
+                ));
+            }
+            if !continuations.contains(&attention.trigger) {
+                return Err(error(
+                    DomainErrorKind::UndeclaredTrigger,
+                    id.to_string(),
+                    "wait attention trigger must be a declared continuation",
+                ));
+            }
             CheckedTree::Wait {
                 id: id.clone(),
                 continuations: continuations.clone(),
                 reason: reason.clone(),
+                attention: attention.clone(),
             }
         }
         DecisionTree::Reject {

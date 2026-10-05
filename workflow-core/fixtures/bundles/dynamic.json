@@ -350,7 +350,8 @@
             "publish",
             "cancel"
           ],
-          "reason": "waiting for declared input"
+          "reason": "waiting for declared input",
+          "attention": {"label": "Awaiting input", "trigger": "publish"}
         }
       }
     },
@@ -595,7 +596,8 @@
             "publish",
             "cancel"
           ],
-          "reason": "waiting for declared input"
+          "reason": "waiting for declared input",
+          "attention": {"label": "Awaiting input", "trigger": "publish"}
         }
       }
     }
