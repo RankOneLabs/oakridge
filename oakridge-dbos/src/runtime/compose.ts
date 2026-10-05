@@ -6,6 +6,7 @@ import { authorityRepositories } from "../storage/repositories";
 import { createMutationService } from "../storage/mutation-service";
 import { PgPostgresExecutor } from "../storage/sql-executor";
 import type { RunId, ScopeId, ScopeInstanceRecord } from "../storage/schema-records";
+import type { OutputPublication } from "../storage/commit";
 
 export interface ProductionOptions { readonly database_url: string; readonly core_binary: string; readonly host: string; readonly control_token?: string }
 export interface RunProjection { readonly run_id: RunId; readonly root_scope_id: ScopeId; readonly scope_key: string; readonly version: number; readonly is_terminal: boolean }
@@ -16,6 +17,9 @@ function isBundle(value: unknown): value is DefinitionBundle {
 }
 function isTrigger(value: unknown): value is Trigger {
   return !!value && typeof value === "object" && "id" in value && typeof value.id === "string" && "key" in value && typeof value.key === "string" && "payload" in value;
+}
+function isOutputPublication(value: unknown): value is OutputPublication {
+  return !!value && typeof value === "object" && "scope_id" in value && typeof value.scope_id === "string" && "output_key" in value && typeof value.output_key === "string" && "collection_key" in value && typeof value.collection_key === "string" && "body" in value && "predecessor_id" in value && "expected_slot_version" in value && "execution_id" in value;
 }
 export function createProductionComposition(options: ProductionOptions): ProductionComposition {
   const access = selectControlPlaneAccess({ host: options.host, token: options.control_token, allow_insecure_non_loopback: process.env.ALLOW_INSECURE_NON_LOOPBACK_CONTROL === "1" });
@@ -51,7 +55,9 @@ export function createProductionComposition(options: ProductionOptions): Product
     try { body = await context.req.json(); } catch { return context.json({ error: "invalid JSON" }, 400); }
     if (!body || typeof body !== "object" || !("trigger" in body) || !isTrigger(body.trigger) || !("ingress_id" in body) || typeof body.ingress_id !== "string") return context.json({ error: "invalid ingress" }, 400);
     const operator_version = "operator_version" in body && typeof body.operator_version === "number" ? body.operator_version : null;
-    const result = await mutations.decide({ run_id: context.req.param("run_id") as RunId, scope_id: context.req.param("scope_id") as ScopeId, trigger: body.trigger, ingress_id: body.ingress_id, operator_version });
+    const outputs = "outputs" in body ? body.outputs : [];
+    if (!Array.isArray(outputs) || !outputs.every(isOutputPublication)) return context.json({ error: "invalid output publication" }, 400);
+    const result = await mutations.decide({ run_id: context.req.param("run_id") as RunId, scope_id: context.req.param("scope_id") as ScopeId, trigger: body.trigger, ingress_id: body.ingress_id, operator_version, outputs });
     return result.ok ? context.json(result.value) : context.json({ error: result.error }, 422);
   });
   return { app, async close() { core.close(); await db.close(); } };

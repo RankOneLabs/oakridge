@@ -1,6 +1,6 @@
 import type { CheckedProgram, DecisionOutcome, DefinitionBundle, OperationManifest, Trigger } from "../core-client/generated-contracts";
 import type { CoreClient } from "../core-client/client";
-import { commitDecision, type CommitRequest, type CommitResult, type Result } from "./commit";
+import { commitDecision, type CommitRequest, type CommitResult, type OutputPublication, type Result } from "./commit";
 import { requestDigest, findReceipt } from "./receipts";
 import { readSnapshot, type AuthoritySnapshot } from "./snapshot-reader";
 import type { RunId, ScopeId } from "./schema-records";
@@ -11,7 +11,7 @@ export interface CompileResult { readonly program: CheckedProgram }
 export interface EvaluationInput { readonly source: AuthoritySnapshot; readonly bundle: DefinitionBundle; readonly available_operations: readonly OperationManifest[] }
 export interface EvaluationResult { readonly decision: DecisionOutcome }
 export interface Decision { readonly source: AuthoritySnapshot; readonly outcome: DecisionOutcome }
-export interface MutationInput { readonly run_id: RunId; readonly scope_id: ScopeId; readonly ingress_id: string; readonly trigger: Trigger; readonly operator_version: number | null }
+export interface MutationInput { readonly run_id: RunId; readonly scope_id: ScopeId; readonly ingress_id: string; readonly trigger: Trigger; readonly operator_version: number | null; readonly outputs?: readonly OutputPublication[] }
 export interface StartedRun { readonly run_id: RunId; readonly root_scope_id: ScopeId; readonly bundle_id: string }
 export interface MutationService { compile(request: CompileRequest): Promise<Result<CompileResult>>; startRun(request: CompileRequest): Promise<Result<StartedRun>>; decide(input: MutationInput): Promise<Result<CommitResult>> }
 
@@ -35,8 +35,8 @@ export function prepareCommit(input: MutationInput, decision: Decision): CommitR
     return pool ? [{ kind: mutation.kind, pool_id: pool.id as import("./schema-records").PoolId, scope_id: input.scope_id }] : [];
   }) : [];
   const effects = decision.outcome.kind === "apply" ? decision.outcome.invocations.map((invocation, index) => ({ effect_key: `${input.ingress_id}:${index}`, payload: invocation.input, execution_id: null })) : [];
-  return { identity: { run_id: input.run_id, scope_id: input.scope_id, ingress_id: input.ingress_id, request_digest: requestDigest(input.trigger) },
-    read_set: decision.source.read_set, decision: decision.outcome, outputs: [], capacity, effects, operator_version: input.operator_version };
+  return { identity: { run_id: input.run_id, scope_id: input.scope_id, ingress_id: input.ingress_id, request_digest: requestDigest({ trigger: input.trigger, outputs: input.outputs ?? [], operator_version: input.operator_version }) },
+    read_set: decision.source.read_set, decision: decision.outcome, outputs: input.outputs ?? [], capacity, effects, operator_version: input.operator_version };
 }
 export function createMutationService(db: TransactionalSqlExecutor, core: CoreClient): MutationService {
   return {
@@ -62,7 +62,7 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
       } catch (cause) { return error("start_run", run_id, String(cause)); }
     },
     async decide(input) {
-      const identity = { run_id: input.run_id, scope_id: input.scope_id, ingress_id: input.ingress_id, request_digest: requestDigest(input.trigger) };
+      const identity = { run_id: input.run_id, scope_id: input.scope_id, ingress_id: input.ingress_id, request_digest: requestDigest({ trigger: input.trigger, outputs: input.outputs ?? [], operator_version: input.operator_version }) };
       try {
         const prior = await findReceipt(db, identity);
         if (prior.kind === "replay") return { ok: true, value: { kind: "Replayed", receipt: prior.receipt } };
