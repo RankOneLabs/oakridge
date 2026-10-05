@@ -96,6 +96,54 @@ test("mismatched request ID is rejected", () => withChild("IFS= read -r line\npr
 test("malformed success payload fails the generated decoder", () => withChild("IFS= read -r line\nprintf '%s\\n' '{\"version\":1,\"request_id\":\"1\",\"truncated\":false,\"result\":{\"status\":\"ok\",\"value\":{}}}'", async (client) => {
   expect(await client.request("compile", { bundle, available_operations: bundle.operations })).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "malformed_frame" } } });
 }));
+function stringResponseAtSize(bytes: number): string {
+  const response = (value: string) => JSON.stringify({ version: 1, request_id: "1", truncated: false,
+    result: { status: "ok", value: { kind: "validated", value: { schema: "text", data: { kind: "string", value } } } } });
+  return response("x".repeat(bytes - new TextEncoder().encode(response("")).length));
+}
+test("response at the 256 KiB boundary is accepted", () => withChild(
+  `IFS= read -r line\nprintf '%s\\n' '${stringResponseAtSize(262_144)}'`, async (client) => {
+    expect((await client.request("compile", { bundle, available_operations: bundle.operations })).ok).toBe(true);
+  }));
+test("response above 256 KiB quarantines the child and fails all pending callers", () => withChild(
+  `IFS= read -r line\nprintf '%s\\n' '${stringResponseAtSize(262_145)}'`, async (client) => {
+    const responses = await Promise.all([client.request("compile", { bundle, available_operations: bundle.operations }),
+      client.request("compile", { bundle, available_operations: bundle.operations })]);
+    for (const response of responses) expect(response).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "oversized_payload" } } });
+    expect(await client.request("compile", { bundle, available_operations: bundle.operations }))
+      .toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "terminated_child" } } });
+  }));
+test("safe integer endpoints round trip exactly through the real binary", async () => {
+  const client = startClient();
+  const source: DefinitionBundle = { ...bundle, schemas: [...bundle.schemas,
+    { key: "number", shape: { kind: "integer", min: Number.MIN_SAFE_INTEGER, max: Number.MAX_SAFE_INTEGER } }] };
+  try {
+    for (const value of [Number.MIN_SAFE_INTEGER, Number.MAX_SAFE_INTEGER]) {
+      expect(await client.request("validate_payload", { bundle: source, available_operations: source.operations, schema: "number", payload: value }))
+        .toMatchObject({ ok: true, value: { kind: "validated", value: { data: { kind: "integer", value } } } });
+    }
+  } finally { client.close(); }
+});
+test("unsafe request metadata is rejected before sending and leaves the child usable", async () => {
+  const client = startClient();
+  try {
+    expect(await client.request("evaluate", { bundle, available_operations: bundle.operations,
+      snapshot: { ...snapshot(), version: Number.MAX_SAFE_INTEGER + 1 } }))
+      .toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "malformed_frame" } } });
+    expect((await client.request("compile", { bundle, available_operations: bundle.operations })).ok).toBe(true);
+  } finally { client.close(); }
+});
+test("raw unsafe snapshot metadata cannot enter the Rust evaluator", () => {
+  expect(rawFrame(JSON.stringify({ version: 1, request_id: "wide", operation: "evaluate", input: {
+    bundle, available_operations: bundle.operations, snapshot: { ...snapshot(), random_seed: Number.MAX_SAFE_INTEGER + 1 } } })))
+    .toMatchObject({ request_id: "wide", result: { status: "transport_error", value: { kind: "malformed_frame" } } });
+});
+test("unsafe integer success payload quarantines the child", () => withChild(
+  `IFS= read -r line\nprintf '%s\\n' '${JSON.stringify({ version: 1, request_id: "1", truncated: false,
+    result: { status: "ok", value: { kind: "validated", value: { schema: "number", data: { kind: "integer", value: Number.MAX_SAFE_INTEGER + 1 } } } } })}'`, async (client) => {
+    expect(await client.request("compile", { bundle, available_operations: bundle.operations }))
+      .toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "malformed_frame" } } });
+  }));
 test("unresponsive child hits deadline and is quarantined", () => withChild("IFS= read -r line\nsleep 1", async (client) => {
   expect(await client.request("compile", { bundle, available_operations: bundle.operations })).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "unresponsive_child" } } });
   expect(await client.request("compile", { bundle, available_operations: bundle.operations })).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "terminated_child" } } });

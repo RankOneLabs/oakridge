@@ -8,7 +8,7 @@
     },
     "language_version": {
       "type": "integer",
-      "format": "uint32",
+      "maximum": 4294967295,
       "minimum": 0
     },
     "limits": {
@@ -43,7 +43,7 @@
     },
     "version": {
       "type": "integer",
-      "format": "uint32",
+      "maximum": 4294967295,
       "minimum": 0
     }
   },
@@ -65,12 +65,12 @@
       "properties": {
         "contract_version": {
           "type": "integer",
-          "format": "uint32",
+          "maximum": 4294967295,
           "minimum": 0
         },
         "deadline_ms": {
           "type": "integer",
-          "format": "uint64",
+          "maximum": 9007199254740991,
           "minimum": 0
         },
         "input": {
@@ -84,7 +84,7 @@
         },
         "max_attempts": {
           "type": "integer",
-          "format": "uint32",
+          "maximum": 4294967295,
           "minimum": 0
         },
         "operation": {
@@ -169,7 +169,7 @@
         },
         "limit": {
           "type": "integer",
-          "format": "uint32",
+          "maximum": 4294967295,
           "minimum": 0
         }
       },
@@ -240,12 +240,12 @@
         },
         "max_items": {
           "type": "integer",
-          "format": "uint",
+          "maximum": 9007199254740991,
           "minimum": 0
         },
         "min_items": {
           "type": "integer",
-          "format": "uint",
+          "maximum": 9007199254740991,
           "minimum": 0
         },
         "source": {
@@ -1020,7 +1020,7 @@
         },
         "version": {
           "type": "integer",
-          "format": "uint32",
+          "maximum": 4294967295,
           "minimum": 0
         }
       },
@@ -1281,17 +1281,17 @@
       "properties": {
         "evaluation_budget": {
           "type": "integer",
-          "format": "uint",
+          "maximum": 9007199254740991,
           "minimum": 0
         },
         "max_depth": {
           "type": "integer",
-          "format": "uint",
+          "maximum": 9007199254740991,
           "minimum": 0
         },
         "max_list_items": {
           "type": "integer",
-          "format": "uint",
+          "maximum": 9007199254740991,
           "minimum": 0
         }
       },
@@ -1362,11 +1362,13 @@
             },
             "max": {
               "type": "integer",
-              "format": "int64"
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991
             },
             "min": {
               "type": "integer",
-              "format": "int64"
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991
             }
           },
           "additionalProperties": false,
@@ -1385,12 +1387,12 @@
             },
             "max_length": {
               "type": "integer",
-              "format": "uint",
+              "maximum": 9007199254740991,
               "minimum": 0
             },
             "min_length": {
               "type": "integer",
-              "format": "uint",
+              "maximum": 9007199254740991,
               "minimum": 0
             }
           },
@@ -1459,7 +1461,7 @@
             },
             "max_items": {
               "type": "integer",
-              "format": "uint",
+              "maximum": 9007199254740991,
               "minimum": 0
             }
           },

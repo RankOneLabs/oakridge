@@ -44,6 +44,22 @@ pub(crate) fn owner<'a>(
     Ok((source, checked))
 }
 pub(crate) fn snapshot_valid(program: &CheckedProgram, snapshot: &Snapshot) -> CoreResult<()> {
+    let maximum = wire_numbers::MAX_SAFE_INTEGER as u64;
+    if snapshot.version > maximum
+        || snapshot.random_seed > maximum
+        || !(wire_numbers::MIN_SAFE_INTEGER..=wire_numbers::MAX_SAFE_INTEGER)
+            .contains(&snapshot.timestamp_ms)
+        || snapshot
+            .observations
+            .iter()
+            .any(|observation| observation.version > maximum)
+    {
+        return Err(failure(
+            DomainErrorKind::InvalidSnapshot,
+            snapshot.owner.to_string(),
+            "snapshot metadata exceeds JavaScript-safe wire range",
+        ));
+    }
     let (scope, _) = owner(program, snapshot)?;
     validate_checked_value(&program.source, &scope.input_schema, &snapshot.input)?;
     validate_checked_value(&program.source, &scope.state_schema, &snapshot.state)?;

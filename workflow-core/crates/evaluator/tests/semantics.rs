@@ -43,6 +43,37 @@ fn same_snapshot_replays_byte_identical_decision() {
     );
 }
 #[test]
+fn native_snapshot_metadata_is_checked_before_evaluation() {
+    let b = bundle("minimal");
+    let p = compile(&b, &b.operations).unwrap();
+    for field in [
+        "version",
+        "random_seed",
+        "timestamp_ms",
+        "observation_version",
+    ] {
+        let mut s = snapshot(&b, json!({}), "ready", "begin");
+        match field {
+            "version" => s.version = u64::MAX,
+            "random_seed" => s.random_seed = u64::MAX,
+            "timestamp_ms" => s.timestamp_ms = i64::MIN,
+            _ => s.observations.push(VersionedValue {
+                identity: "output".into(),
+                version: u64::MAX,
+                root: ReferenceRoot::Output {
+                    key: SymbolKey::from("document"),
+                },
+                value: s.input.clone(),
+            }),
+        }
+        assert_eq!(
+            evaluate(&p, &s).unwrap_err().kind,
+            DomainErrorKind::InvalidSnapshot,
+            "{field}"
+        );
+    }
+}
+#[test]
 fn action_inputs_use_predecision_snapshot_and_freeze_prompt() {
     let b = bundle("minimal");
     let p = compile(&b, &b.operations).unwrap();

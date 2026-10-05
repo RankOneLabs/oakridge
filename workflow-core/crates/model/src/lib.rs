@@ -4,6 +4,7 @@ mod checked;
 pub mod protocol;
 mod source;
 mod values;
+pub mod wire_numbers;
 pub use checked::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

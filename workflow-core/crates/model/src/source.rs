@@ -5,8 +5,12 @@ use serde_json::Value;
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DefinitionBundle {
+    #[serde(with = "crate::wire_numbers::word")]
+    #[schemars(schema_with = "crate::wire_numbers::word::schema")]
     pub language_version: u32,
     pub key: SymbolKey,
+    #[serde(with = "crate::wire_numbers::word")]
+    #[schemars(schema_with = "crate::wire_numbers::word::schema")]
     pub version: u32,
     pub root: ScopeKey,
     pub schemas: Vec<Schema>,
@@ -18,8 +22,14 @@ pub struct DefinitionBundle {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ResourceLimits {
+    #[serde(with = "crate::wire_numbers::index")]
+    #[schemars(schema_with = "crate::wire_numbers::index::schema")]
     pub max_list_items: usize,
+    #[serde(with = "crate::wire_numbers::index")]
+    #[schemars(schema_with = "crate::wire_numbers::index::schema")]
     pub max_depth: usize,
+    #[serde(with = "crate::wire_numbers::index")]
+    #[schemars(schema_with = "crate::wire_numbers::index::schema")]
     pub evaluation_budget: usize,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -33,11 +43,19 @@ pub struct Schema {
 pub enum SchemaShape {
     Boolean,
     Integer {
+        #[serde(with = "crate::wire_numbers::signed")]
+        #[schemars(schema_with = "crate::wire_numbers::signed::schema")]
         min: i64,
+        #[serde(with = "crate::wire_numbers::signed")]
+        #[schemars(schema_with = "crate::wire_numbers::signed::schema")]
         max: i64,
     },
     String {
+        #[serde(with = "crate::wire_numbers::index")]
+        #[schemars(schema_with = "crate::wire_numbers::index::schema")]
         min_length: usize,
+        #[serde(with = "crate::wire_numbers::index")]
+        #[schemars(schema_with = "crate::wire_numbers::index::schema")]
         max_length: usize,
     },
     Enum {
@@ -49,6 +67,8 @@ pub enum SchemaShape {
     },
     List {
         item: SchemaId,
+        #[serde(with = "crate::wire_numbers::index")]
+        #[schemars(schema_with = "crate::wire_numbers::index::schema")]
         max_items: usize,
     },
     Optional {
@@ -94,6 +114,8 @@ pub struct Prompt {
 #[serde(deny_unknown_fields)]
 pub struct OperationManifest {
     pub key: SymbolKey,
+    #[serde(with = "crate::wire_numbers::word")]
+    #[schemars(schema_with = "crate::wire_numbers::word::schema")]
     pub version: u32,
     pub input_schema: SchemaId,
     pub providers: Vec<String>,
@@ -106,6 +128,8 @@ pub struct ScopeDefinition {
     pub key: ScopeKey,
     pub input_schema: SchemaId,
     pub state_schema: SchemaId,
+    #[serde(with = "crate::wire_numbers::json")]
+    #[schemars(with = "Value")]
     pub initial: Value,
     pub outcome_schema: SchemaId,
     pub errors: Vec<FactDefinition>,
@@ -172,6 +196,8 @@ pub struct WorkerDefinition {
 pub struct ActionDefinition {
     pub key: ActionKey,
     pub operation: SymbolKey,
+    #[serde(with = "crate::wire_numbers::word")]
+    #[schemars(schema_with = "crate::wire_numbers::word::schema")]
     pub contract_version: u32,
     pub provider: String,
     pub input_schema: SchemaId,
@@ -180,7 +206,11 @@ pub struct ActionDefinition {
     pub settings: Vec<InvocationSetting>,
     pub tools: Vec<String>,
     pub outputs: Vec<SymbolKey>,
+    #[serde(with = "crate::wire_numbers::unsigned")]
+    #[schemars(schema_with = "crate::wire_numbers::unsigned::schema")]
     pub deadline_ms: u64,
+    #[serde(with = "crate::wire_numbers::word")]
+    #[schemars(schema_with = "crate::wire_numbers::word::schema")]
     pub max_attempts: u32,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -206,7 +236,11 @@ pub struct CollectionDefinition {
     pub key_field: String,
     pub input_field: String,
     pub dependencies_field: String,
+    #[serde(with = "crate::wire_numbers::index")]
+    #[schemars(schema_with = "crate::wire_numbers::index::schema")]
     pub min_items: usize,
+    #[serde(with = "crate::wire_numbers::index")]
+    #[schemars(schema_with = "crate::wire_numbers::index::schema")]
     pub max_items: usize,
     pub empty: EmptyPolicy,
 }
@@ -220,6 +254,8 @@ pub enum EmptyPolicy {
 #[serde(deny_unknown_fields)]
 pub struct CapacityPool {
     pub key: SymbolKey,
+    #[serde(with = "crate::wire_numbers::word")]
+    #[schemars(schema_with = "crate::wire_numbers::word::schema")]
     pub limit: u32,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -250,6 +286,8 @@ pub enum ReferenceRoot {
 pub enum Expression {
     Literal {
         schema: SchemaId,
+        #[serde(with = "crate::wire_numbers::json")]
+        #[schemars(with = "Value")]
         value: Value,
     },
     Reference {
@@ -331,6 +369,8 @@ pub enum DecisionTree {
     Reject {
         id: NodeId,
         error: SymbolKey,
+        #[serde(with = "crate::wire_numbers::json")]
+        #[schemars(with = "Value")]
         detail: Value,
     },
 }

@@ -183,7 +183,17 @@ pub fn handle_frame(frame: &[u8]) -> Response {
 }
 
 pub fn bounded_response(mut response: Response) -> Vec<u8> {
-    let mut serialized = serde_json::to_vec(&response).unwrap_or_default();
+    let mut serialized = match serde_json::to_vec(&response) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            response = transport(
+                response.request_id,
+                TransportErrorKind::MalformedFrame,
+                &error.to_string(),
+            );
+            serde_json::to_vec(&response).expect("transport response is serializable")
+        }
+    };
     if serialized.len() > MAX_RESPONSE_BYTES {
         response.truncated = true;
         response.result = ResponseResult::TransportError(TransportError {
@@ -199,6 +209,27 @@ pub fn bounded_response(mut response: Response) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_wide_integer_response_is_a_transport_error_not_an_empty_frame() {
+        let bytes = bounded_response(Response {
+            version: 1,
+            request_id: "wide".into(),
+            truncated: false,
+            result: ResponseResult::Ok(Output::Validated(workflow_model::CheckedValue {
+                schema: "number".into(),
+                data: workflow_model::CheckedData::Integer { value: i64::MAX },
+            })),
+        });
+        let response: Response = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(response.request_id, "wide");
+        assert!(matches!(
+            response.result,
+            ResponseResult::TransportError(TransportError {
+                kind: TransportErrorKind::MalformedFrame,
+                ..
+            })
+        ));
+    }
     #[test]
     fn transport_failures_are_distinct() {
         let malformed = handle_frame(b"{");

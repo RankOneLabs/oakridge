@@ -18,6 +18,71 @@ fn generic_fixture_compiles() {
     assert!(compile(&b, &b.operations).is_ok());
 }
 #[test]
+fn terminal_state_write_cannot_make_later_actions_reachable() {
+    reject(
+        fixture(),
+        |v| {
+            let outcome = v["scopes"][0]["tree"]["cases"][1]["node"]["outcome"].clone();
+            let actions = v["scopes"][0]["tree"]["cases"][0]["node"]["actions"].clone();
+            v["scopes"][0]["tree"]["cases"][0]["node"]["outcome"] = outcome;
+            v["scopes"][0]["tree"]["cases"][0]["node"]["actions"] = json!([]);
+            v["scopes"][0]["tree"]["cases"][1]["node"]["actions"] = actions;
+        },
+        DomainErrorKind::UnreachableDeclaration,
+    );
+}
+#[test]
+fn native_schema_bounds_cannot_exceed_wire_integer_range() {
+    let mut source: DefinitionBundle = serde_json::from_value(fixture()).unwrap();
+    source.schemas.push(Schema {
+        key: SchemaId::from("wide"),
+        shape: SchemaShape::Integer {
+            min: i64::MIN,
+            max: i64::MAX,
+        },
+    });
+    assert_eq!(
+        compile(&source, &source.operations).unwrap_err().kind,
+        DomainErrorKind::InvalidSchema
+    );
+}
+#[test]
+fn checked_integer_payloads_preserve_safe_endpoints_and_reject_wide_values() {
+    let mut source: DefinitionBundle = serde_json::from_value(fixture()).unwrap();
+    let key = SchemaId::from("number");
+    source.schemas.push(Schema {
+        key: key.clone(),
+        shape: SchemaShape::Integer {
+            min: wire_numbers::MIN_SAFE_INTEGER,
+            max: wire_numbers::MAX_SAFE_INTEGER,
+        },
+    });
+    for value in [
+        wire_numbers::MIN_SAFE_INTEGER,
+        wire_numbers::MAX_SAFE_INTEGER,
+    ] {
+        assert_eq!(
+            workflow_compiler::check_value(&source, &key, &json!(value))
+                .unwrap()
+                .data,
+            CheckedData::Integer { value }
+        );
+    }
+    for value in [
+        wire_numbers::MIN_SAFE_INTEGER - 1,
+        wire_numbers::MAX_SAFE_INTEGER + 1,
+        i64::MIN,
+        i64::MAX,
+    ] {
+        assert_eq!(
+            workflow_compiler::check_value(&source, &key, &json!(value))
+                .unwrap_err()
+                .kind,
+            DomainErrorKind::InvalidPayload
+        );
+    }
+}
+#[test]
 fn missing_root_symbol() {
     reject(
         fixture(),

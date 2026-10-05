@@ -164,7 +164,6 @@ pub fn analyze(
                             next = v;
                         }
                     }
-                    edges.entry(state.clone()).or_default().insert(next);
                     if let Some(value) = outcome {
                         let Some(v) = expression_variant(value, state, trigger) else {
                             return Err(error(
@@ -175,6 +174,8 @@ pub fn analyze(
                         };
                         terminal.insert(state.clone());
                         exported.entry(state.clone()).or_default().insert(v);
+                    } else {
+                        edges.entry(state.clone()).or_default().insert(next);
                     }
                 }
             }

@@ -8,6 +8,8 @@ pub const MAX_RESPONSE_BYTES: usize = 262_144;
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
+    #[serde(with = "crate::wire_numbers::word")]
+    #[schemars(schema_with = "crate::wire_numbers::word::schema")]
     pub version: u32,
     pub request_id: String,
     #[serde(flatten)]
@@ -29,6 +31,8 @@ pub enum Operation {
         bundle: DefinitionBundle,
         available_operations: Vec<OperationManifest>,
         schema: SchemaId,
+        #[serde(with = "crate::wire_numbers::json")]
+        #[schemars(with = "Value")]
         payload: Value,
     },
     Evaluate {
@@ -83,6 +87,8 @@ pub enum ResponseResult {
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Response {
+    #[serde(with = "crate::wire_numbers::word")]
+    #[schemars(schema_with = "crate::wire_numbers::word::schema")]
     pub version: u32,
     pub request_id: String,
     pub truncated: bool,

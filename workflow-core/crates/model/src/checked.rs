@@ -4,7 +4,11 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CheckedProgram {
+    #[serde(with = "crate::wire_numbers::word")]
+    #[schemars(schema_with = "crate::wire_numbers::word::schema")]
     pub language_version: u32,
+    #[serde(with = "crate::wire_numbers::word")]
+    #[schemars(schema_with = "crate::wire_numbers::word::schema")]
     pub evaluator_version: u32,
     pub digest: BundleDigest,
     pub source: DefinitionBundle,
@@ -45,8 +49,14 @@ pub struct CheckedChild {
 #[serde(deny_unknown_fields)]
 pub struct CheckedCollection {
     pub source: CheckedExpression,
+    #[serde(with = "crate::wire_numbers::index")]
+    #[schemars(schema_with = "crate::wire_numbers::index::schema")]
     pub key_field: usize,
+    #[serde(with = "crate::wire_numbers::index")]
+    #[schemars(schema_with = "crate::wire_numbers::index::schema")]
     pub input_field: usize,
+    #[serde(with = "crate::wire_numbers::index")]
+    #[schemars(schema_with = "crate::wire_numbers::index::schema")]
     pub dependencies_field: usize,
     pub empty_outcome: Option<CheckedExpression>,
 }
@@ -105,14 +115,27 @@ pub enum CheckedExpressionNode {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Selector {
-    Field { index: usize },
-    OptionalField { index: usize, schema: SchemaId },
+    Field {
+        #[serde(with = "crate::wire_numbers::index")]
+        #[schemars(schema_with = "crate::wire_numbers::index::schema")]
+        index: usize,
+    },
+    OptionalField {
+        #[serde(with = "crate::wire_numbers::index")]
+        #[schemars(schema_with = "crate::wire_numbers::index::schema")]
+        index: usize,
+        schema: SchemaId,
+    },
     Optional,
-    Variant { variant: String },
+    Variant {
+        variant: String,
+    },
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CheckedFieldExpression {
+    #[serde(with = "crate::wire_numbers::index")]
+    #[schemars(schema_with = "crate::wire_numbers::index::schema")]
     pub field_id: usize,
     pub value: CheckedExpression,
 }
@@ -167,13 +190,19 @@ pub struct CheckedAction {
 #[serde(deny_unknown_fields)]
 pub struct InvocationContract {
     pub operation: SymbolKey,
+    #[serde(with = "crate::wire_numbers::word")]
+    #[schemars(schema_with = "crate::wire_numbers::word::schema")]
     pub contract_version: u32,
     pub provider: String,
     pub input_schema: SchemaId,
     pub settings: Vec<InvocationSetting>,
     pub tools: Vec<String>,
     pub outputs: Vec<SymbolKey>,
+    #[serde(with = "crate::wire_numbers::unsigned")]
+    #[schemars(schema_with = "crate::wire_numbers::unsigned::schema")]
     pub deadline_ms: u64,
+    #[serde(with = "crate::wire_numbers::word")]
+    #[schemars(schema_with = "crate::wire_numbers::word::schema")]
     pub max_attempts: u32,
 }
 impl From<&ActionDefinition> for InvocationContract {

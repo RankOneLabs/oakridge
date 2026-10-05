@@ -40,11 +40,15 @@ pub fn validate_schemas(bundle: &DefinitionBundle) -> CoreResult<()> {
         }
         let shape = schema(bundle, key)?;
         match shape {
-            SchemaShape::Integer { min, max } if min > max => {
+            SchemaShape::Integer { min, max }
+                if min > max
+                    || *min < wire_numbers::MIN_SAFE_INTEGER
+                    || *max > wire_numbers::MAX_SAFE_INTEGER =>
+            {
                 return Err(error(
                     DomainErrorKind::InvalidSchema,
                     key.to_string(),
-                    "inverted integer bounds",
+                    "integer bounds must be ordered within the JavaScript-safe wire range",
                 ))
             }
             SchemaShape::String {
@@ -135,7 +139,11 @@ pub fn check_value(
             },
             SchemaShape::Integer { min, max } => {
                 let v = value.as_i64().ok_or_else(invalid)?;
-                if v < *min || v > *max {
+                if v < *min
+                    || v > *max
+                    || !(wire_numbers::MIN_SAFE_INTEGER..=wire_numbers::MAX_SAFE_INTEGER)
+                        .contains(&v)
+                {
                     return Err(invalid());
                 }
                 CheckedData::Integer { value: v }

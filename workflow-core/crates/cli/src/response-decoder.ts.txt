@@ -15,6 +15,13 @@ interface ProtocolSchemaObject {
   readonly minimum?: number;
   readonly maximum?: number;
 }
+export function hasSafeWireNumbers(value: unknown, depth = 0): boolean {
+  if (depth > 128) return false;
+  if (typeof value === "number") return Number.isFinite(value) && Math.abs(value) <= Number.MAX_SAFE_INTEGER;
+  if (Array.isArray(value)) return value.every((member) => hasSafeWireNumbers(member, depth + 1));
+  if (typeof value === "object" && value !== null) return Object.values(value).every((member) => hasSafeWireNumbers(member, depth + 1));
+  return true;
+}
 function matchesProtocolSchema(value: unknown, schema: ProtocolSchema, definitions: { readonly [key: string]: ProtocolSchema }, depth: number): boolean {
   if (depth > 128) return false;
   if (typeof schema === "boolean") return schema;
@@ -51,5 +58,5 @@ function matchesProtocolSchema(value: unknown, schema: ProtocolSchema, definitio
 }
 export function decodeCoreResponse(value: unknown): CoreResponse | null {
   const schema: ProtocolSchema = CORE_PROTOCOL_SCHEMA.response;
-  return matchesProtocolSchema(value, schema, CORE_PROTOCOL_SCHEMA.response.$defs, 0) ? value as CoreResponse : null;
+  return hasSafeWireNumbers(value) && matchesProtocolSchema(value, schema, CORE_PROTOCOL_SCHEMA.response.$defs, 0) ? value as CoreResponse : null;
 }

@@ -1,9 +1,10 @@
-import { decodeCoreResponse, type CoreRequest, type CoreResponseResult, type CoreTransportKind, type Output } from "./generated-contracts";
+import { decodeCoreResponse, hasSafeWireNumbers, type CoreRequest, type CoreResponseResult, type CoreTransportKind, type Output } from "./generated-contracts";
 import { transportFailure, type CoreResult } from "./transport-errors";
 interface Pending { readonly resolve: (result: CoreResult<Output>) => void; readonly timeout: ReturnType<typeof setTimeout> }
 type RequestInput<O extends CoreRequest["operation"]> = Extract<CoreRequest, { readonly operation: O }>["input"];
 export interface CoreClientOptions { readonly binary: string; readonly deadlineMs: number; readonly maxPendingRequests?: number }
 const MAX_FRAME_BYTES = 1_048_576;
+const MAX_RESPONSE_BYTES = 262_144;
 function resultFromResponse(result: CoreResponseResult): CoreResult<Output> {
   switch (result.status) {
     case "ok": return { ok: true, value: result.value };
@@ -71,7 +72,7 @@ export class CoreClient {
             this.acceptLine(line);
             if (this.terminated) return;
           } else {
-            if (frame.length === MAX_FRAME_BYTES) { this.poison("oversized_payload", "response frame exceeded maximum bytes"); return; }
+            if (frame.length === MAX_RESPONSE_BYTES) { this.poison("oversized_payload", "response frame exceeded maximum bytes"); return; }
             frame.push(byte);
           }
         }
@@ -85,7 +86,10 @@ export class CoreClient {
     if (this.pending.size >= this.maxPendingRequests) return transportFailure("queue_full", "core request queue is full");
     const request_id = String(++this.nextId);
     let frame: string;
-    try { frame = JSON.stringify({ version: 1, request_id, operation, input }) + "\n"; }
+    try {
+      if (!hasSafeWireNumbers(input)) return transportFailure("malformed_frame", "request numbers exceed JavaScript-safe wire range");
+      frame = JSON.stringify({ version: 1, request_id, operation, input }) + "\n";
+    }
     catch (cause) { return transportFailure("malformed_frame", String(cause)); }
     if (new TextEncoder().encode(frame).length > MAX_FRAME_BYTES) return transportFailure("oversized_payload", "request frame exceeds maximum bytes");
     return new Promise((resolve) => {
