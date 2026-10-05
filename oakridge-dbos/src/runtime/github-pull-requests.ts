@@ -13,9 +13,6 @@
  */
 import type { PullRequestObservation } from "../domain/pull-request";
 import { err, ok, type Result } from "../domain/primitives";
-import type { CohortId } from "../domain/primitives";
-import type { StageEventApplier } from "../storage/apply-stage-event";
-import type { TransactionalSqlExecutor } from "../storage/sql-executor";
 
 export interface PullRequestBranchQuery { readonly owner: string; readonly name: string; readonly head_branch: string; readonly base_branch: string }
 /** Reads one pull request's current state. Absent when it cannot be read. */
@@ -120,37 +117,3 @@ export class GithubPullRequestReader implements PullRequestReader {
     });
   }
 }
-
-export interface StagePullRequestPollOutcome {
-  readonly cohort_id: CohortId;
-  readonly state: string;
-  readonly kind: "unchanged" | "observed" | "unavailable";
-}
-export interface StagePullRequestPollDependencies {
-  readonly sql: TransactionalSqlExecutor;
-  readonly stage_events: Pick<StageEventApplier, "advance">;
-}
-/** Polling rechecks the same authoritative snapshot and tree as operator requests. */
-export const pollStagePullRequests = async (dependencies: StagePullRequestPollDependencies,
-  only_cohort_id: CohortId | null = null): Promise<readonly StagePullRequestPollOutcome[]> => {
-  const rows = await dependencies.sql.query<{ readonly cohort_id: CohortId; readonly state: string }>(
-    `SELECT cohort.id::text AS cohort_id,cohort.state FROM oakridge.cohort cohort
-     JOIN oakridge.stage_instance stage ON stage.id=cohort.stage_instance_id
-     JOIN oakridge.workflow_run run ON run.id=cohort.run_id
-     WHERE run.status='active' AND stage.status='active'
-       AND (stage.stage_key='implementation' AND cohort.current_verified_pull_request_id IS NOT NULL
-         OR stage.stage_key='final_integration' AND EXISTS (SELECT 1 FROM oakridge.worker_output output
-           WHERE output.cohort_id=cohort.id AND output.output_name='pr_summary'))
-       AND ($1::uuid IS NULL OR cohort.id=$1) ORDER BY cohort.id`, [only_cohort_id]);
-  const outcomes: StagePullRequestPollOutcome[] = [];
-  for (const row of rows) {
-    let advanced: Awaited<ReturnType<StageEventApplier["advance"]>>;
-    try { advanced = await dependencies.stage_events.advance(row.cohort_id, null); }
-    catch { outcomes.push({ ...row, kind: "unavailable" }); continue; }
-    if (!advanced.ok) { outcomes.push({ ...row, kind: "unavailable" }); continue; }
-    const latest = await dependencies.sql.query<{ readonly state: string }>("SELECT state FROM oakridge.cohort WHERE id=$1", [row.cohort_id]);
-    outcomes.push({ cohort_id: row.cohort_id, state: latest[0]?.state ?? row.state,
-      kind: advanced.value.commits > 0 ? "observed" : "unchanged" });
-  }
-  return outcomes;
-};

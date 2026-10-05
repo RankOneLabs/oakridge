@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { GithubPullRequestReader, pollStagePullRequests } from "../src/runtime/github-pull-requests";
-import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
+import { GithubPullRequestReader } from "../src/runtime/github-pull-requests";
 
 const githubPayload = (overrides: Record<string, unknown> = {}) => ({
   number: 440, html_url: "https://github.com/RankOneLabs/oakridge/pull/440",
@@ -18,15 +17,6 @@ const readerReturning = (status: number, payload: unknown) => {
   }) as unknown as typeof fetch;
   return { reader: new GithubPullRequestReader({ token: "test-token" }, http), calls };
 };
-
-test("the poller delegates merge verification to canonical cohort ingress", async () => {
-  let calls = 0;
-  const sql = { async query(statement: string) { return statement.includes("AS cohort_id")
-    ? [{ cohort_id: "cohort", state: "awaiting_merge" }] : [{ state: "complete" }]; } } as unknown as TransactionalSqlExecutor;
-  const stage_events = { async advance() { calls++; return { ok: true as const, value: { commits: 1, reason: "complete" } }; } };
-  expect(await pollStagePullRequests({ sql, stage_events })).toEqual([{ cohort_id: "cohort" as never, state: "complete", kind: "observed" }]);
-  expect(calls).toBe(1);
-});
 
 test("an open pull request reads as open", async () => {
   const { reader, calls } = readerReturning(200, githubPayload());
