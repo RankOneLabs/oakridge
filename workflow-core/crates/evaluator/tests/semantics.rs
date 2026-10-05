@@ -10,6 +10,13 @@ fn bundle(name: &str) -> DefinitionBundle {
         "6" => include_str!("../../../fixtures/bundles/children-6.json"),
         "7" => include_str!("../../../fixtures/bundles/children-7.json"),
         "dynamic" => include_str!("../../../fixtures/bundles/dynamic.json"),
+        "revision-loop" => include_str!("../../../fixtures/bundles/revision-loop.json"),
+        "exact-review-target" => include_str!("../../../fixtures/bundles/exact-review-target.json"),
+        "held-reservation" => include_str!("../../../fixtures/bundles/held-reservation.json"),
+        "terminal-replacement" => {
+            include_str!("../../../fixtures/bundles/terminal-replacement.json")
+        }
+        "publication-pair" => include_str!("../../../fixtures/bundles/publication-pair.json"),
         _ => panic!("unknown fixture"),
     };
     serde_json::from_str(text).unwrap()
@@ -486,4 +493,232 @@ fn optional_record_field_is_matched_before_required_binding() {
         panic!("expected present binding");
     };
     assert_eq!(invocations[0].input.schema, SchemaId::from("unit"));
+}
+
+#[test]
+fn revision_restarts_inside_the_same_scope_without_child_activation() {
+    let b = bundle("revision-loop");
+    let p = compile(&b, &b.operations).unwrap();
+    assert!(b.scopes[0].children.is_empty());
+    for (phase, command, next) in [
+        ("unlit", "light", "firing"),
+        ("firing", "inspect", "inspection"),
+        ("inspection", "rework", "firing"),
+    ] {
+        let DecisionOutcome::Apply { mutations, .. } =
+            evaluate(&p, &snapshot(&b, json!({}), phase, command)).unwrap()
+        else {
+            panic!("expected state transition")
+        };
+        assert!(mutations.iter().any(|mutation| matches!(mutation,
+            MutationValue::SetState { value } if value == &check_value(&b, &SchemaId::from("phase"), &json!({"kind":next,"value":{}})).unwrap()
+        )));
+        assert!(!mutations
+            .iter()
+            .any(|mutation| matches!(mutation, MutationValue::ActivateChild { .. })));
+    }
+}
+
+fn observed_revision(b: &DefinitionBundle, key: &str, id: &str, version: u64) -> VersionedValue {
+    VersionedValue {
+        identity: format!("artifact:{key}"),
+        version,
+        root: ReferenceRoot::Output {
+            key: SymbolKey::from(key),
+        },
+        value: check_value(
+            b,
+            &SchemaId::from("revision"),
+            &json!({"brand":"artifact_revision","id":id}),
+        )
+        .unwrap(),
+    }
+}
+
+#[test]
+fn approval_targets_only_the_observed_revision() {
+    let b = bundle("exact-review-target");
+    let p = compile(&b, &b.operations).unwrap();
+    let mut first = snapshot(&b, json!({}), "inspection", "certify");
+    first
+        .observations
+        .push(observed_revision(&b, "specimen", "r", 3));
+    let DecisionOutcome::Apply {
+        targets: old_targets,
+        explanation: old_pin,
+        ..
+    } = evaluate(&p, &first).unwrap()
+    else {
+        panic!()
+    };
+    let mut later = first.clone();
+    later.observations[0] = observed_revision(&b, "specimen", "r-plus-one", 4);
+    let DecisionOutcome::Apply {
+        targets: new_targets,
+        explanation: new_pin,
+        ..
+    } = evaluate(&p, &later).unwrap()
+    else {
+        panic!()
+    };
+    assert_ne!(old_targets, new_targets);
+    assert_eq!(old_targets, vec![first.observations[0].value.clone()]);
+    assert_eq!(
+        old_pin
+            .read_set
+            .iter()
+            .find(|pin| pin.identity == "artifact:specimen")
+            .unwrap()
+            .version,
+        3
+    );
+    assert_eq!(
+        new_pin
+            .read_set
+            .iter()
+            .find(|pin| pin.identity == "artifact:specimen")
+            .unwrap()
+            .version,
+        4
+    );
+}
+
+#[test]
+fn reservation_remains_held_during_pause_review_and_dispatch() {
+    let b = bundle("held-reservation");
+    let p = compile(&b, &b.operations).unwrap();
+    let decisions = [
+        ("unlit", "light"),
+        ("firing", "fault"),
+        ("paused", "resume"),
+        ("firing", "inspect"),
+        ("inspection", "send"),
+        ("dispatch", "unload"),
+    ];
+    let mut occupied = 0;
+    let DecisionOutcome::Apply {
+        mutations: next_activation,
+        ..
+    } = evaluate(&p, &snapshot(&b, json!({}), "unlit", "light")).unwrap()
+    else {
+        panic!()
+    };
+    let slots_needed = next_activation
+        .iter()
+        .filter(|mutation| matches!(mutation, MutationValue::Acquire { .. }))
+        .count();
+    assert_eq!(slots_needed, 1);
+    for (index, (phase, command)) in decisions.into_iter().enumerate() {
+        let DecisionOutcome::Apply { mutations, .. } =
+            evaluate(&p, &snapshot(&b, json!({}), phase, command)).unwrap()
+        else {
+            panic!()
+        };
+        for mutation in mutations {
+            match mutation {
+                MutationValue::Acquire { .. } => occupied += 1,
+                MutationValue::Release { .. } => occupied -= 1,
+                _ => {}
+            }
+        }
+        assert_eq!(occupied, if index == 5 { 0 } else { 1 });
+        assert_eq!(
+            occupied + slots_needed <= b.scopes[0].pools[0].limit as usize,
+            index == 5
+        );
+    }
+}
+
+#[test]
+fn replacement_requires_terminal_external_observation() {
+    let b = bundle("terminal-replacement");
+    let p = compile(&b, &b.operations).unwrap();
+    let mut s = snapshot(&b, json!({}), "dispatch", "recast");
+    assert_eq!(
+        evaluate(&p, &s).unwrap_err().kind,
+        DomainErrorKind::InvalidSnapshot
+    );
+    s.observations.push(VersionedValue {
+        identity: "shipment-status".into(),
+        version: 2,
+        root: ReferenceRoot::Resource {
+            key: SymbolKey::from("shipment"),
+        },
+        value: check_value(
+            &b,
+            &SchemaId::from("shipment_state"),
+            &json!({"kind":"in_transit","value":{}}),
+        )
+        .unwrap(),
+    });
+    assert!(matches!(
+        evaluate(&p, &s).unwrap(),
+        DecisionOutcome::Reject { .. }
+    ));
+    s.observations[0].value = check_value(
+        &b,
+        &SchemaId::from("shipment_state"),
+        &json!({"kind":"returned","value":{}}),
+    )
+    .unwrap();
+    assert!(
+        matches!(evaluate(&p, &s).unwrap(), DecisionOutcome::Apply { invocations, .. } if invocations.len() == 1)
+    );
+}
+
+#[test]
+fn publication_policies_and_predecessor_pins_are_distinct() {
+    let b = bundle("publication-pair");
+    let p = compile(&b, &b.operations).unwrap();
+    assert!(matches!(
+        b.scopes[0].outputs[0].policy,
+        PublicationPolicy::AppendRevision
+    ));
+    assert!(matches!(
+        b.scopes[0].outputs[1].policy,
+        PublicationPolicy::ReplaceArtifact
+    ));
+    let mut s = snapshot(&b, json!({}), "inspection", "amend");
+    s.observations
+        .push(observed_revision(&b, "assay_log", "log-2", 2));
+    s.observations
+        .push(observed_revision(&b, "current_label", "label-7", 7));
+    let DecisionOutcome::Apply {
+        targets,
+        explanation,
+        ..
+    } = evaluate(&p, &s).unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(
+        targets,
+        s.observations
+            .iter()
+            .map(|o| o.value.clone())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        explanation
+            .read_set
+            .iter()
+            .map(|pin| (pin.identity.as_str(), pin.version))
+            .collect::<Vec<_>>(),
+        vec![
+            ("artifact:assay_log", 2),
+            ("artifact:current_label", 7),
+            ("instance", 9)
+        ]
+    );
+    let mut republished = s.clone();
+    republished.observations[0] = observed_revision(&b, "assay_log", "log-3", 3);
+    republished.observations[1] = observed_revision(&b, "current_label", "label-8", 8);
+    let DecisionOutcome::Apply {
+        targets: successors,
+        ..
+    } = evaluate(&p, &republished).unwrap()
+    else {
+        panic!()
+    };
+    assert_ne!(targets, successors);
 }

@@ -38,5 +38,25 @@
   {
     "file": "unsupported-presentation.json",
     "expected": "unsupported_presentation"
+  },
+  {
+    "file": "revision-loop-invalid-state.json",
+    "expected": "invalid_payload"
+  },
+  {
+    "file": "exact-review-wrong-target.json",
+    "expected": "invalid_assignment"
+  },
+  {
+    "file": "held-reservation-zero-capacity.json",
+    "expected": "invalid_schema"
+  },
+  {
+    "file": "terminal-replacement-no-observation.json",
+    "expected": "missing_symbol"
+  },
+  {
+    "file": "publication-pair-foreign-producer.json",
+    "expected": "unsupported_publication"
   }
 ]
