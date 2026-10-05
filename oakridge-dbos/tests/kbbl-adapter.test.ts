@@ -3,8 +3,10 @@ import { expect, test } from "bun:test";
 import { KbblExecutorAdapter, selectPromptExpectedArtifacts, selectRemoteWorktreeBase, silentDurationMs } from "../src/adapters/kbbl";
 import type { ExecutionRequest } from "../src/domain/execution";
 import type { ExecutionId, ExecutorOperationId, StageInstanceId, UnitId } from "../src/domain/primitives";
+import type { InvocationId } from "../src/effects/provider";
 
 const attempt = (id: string) => id as ExecutorOperationId;
+const invocation = (id: string) => id as InvocationId;
 
 /** A representative resolved session_identity — the shape every v2 delegated session's resolved_config now carries. */
 const SESSION_IDENTITY = {
@@ -454,4 +456,19 @@ test("a session silent past the bound fails instead of being polled forever", as
 test("a kbbl that reports no activity at all is polled, not failed", async () => {
   const attempt = await observe(silenceAdapter(() => Response.json({ pending: true }, { status: 202 }), 5 * 60_000));
   expect(attempt.kind).toBe("pending");
+});
+
+test("uncertain selected start reconciles by the same identity before cancellation", async () => {
+  const urls: string[] = [];
+  let first = true;
+  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "v1", fetch: async (input, init) => {
+    urls.push(String(input));
+    if (init?.method === "DELETE") return new Response(null, { status: 204 });
+    if (first) { first = false; throw new Error("response lost"); }
+    return Response.json({ kind: "attached", session: { sid: "session-1", status: "live", endReason: null } });
+  } });
+  expect((await adapter.start_selected(buildRequest, invocation("selected-1"))).kind).toBe("uncertain");
+  expect(await adapter.stop_selected(buildRequest, invocation("selected-1"), null)).toEqual({ kind: "acknowledged", value: { stopped: true } });
+  expect(urls[0]).toBe(urls[1]);
+  expect(urls[2]).toContain("/sessions/session-1?");
 });

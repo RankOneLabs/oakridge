@@ -1,5 +1,6 @@
 import { ExecutorStartRejectedError, type ExecutionRequest, type ExpectedArtifactContract, type ExecutorAdapter, type ExecutorObservationAttempt, type ExecutorTerminalObservation, type ExecutorUnavailable, type ExternalExecutionReference } from "../domain/execution";
 import type { ExecutionId, ExecutorOperationId, JsonValue, UnitId } from "../domain/primitives";
+import type { InvocationId, ProviderResult } from "../effects/provider";
 
 /**
  * How long kbbl may hold one observation request open. Well under kbbl's own
@@ -240,6 +241,32 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
 
   constructor(private readonly options: KbblExecutorAdapterOptions) {
     this.fetch = options.fetch ?? globalThis.fetch;
+  }
+
+  /** Typed leaf operation over a pinned request and invocation identity. */
+  async start_selected(request: ExecutionRequest, invocation_id: InvocationId): Promise<ProviderResult<ExternalExecutionReference>> {
+    try {
+      const result = await this.start_or_attach(request, invocation_id as unknown as ExecutorOperationId);
+      return result.kind === "executor_unavailable" ? { kind: "uncertain", detail: result.detail }
+        : { kind: "acknowledged", value: result };
+    } catch (error) {
+      if (error instanceof ExecutorStartRejectedError) return { kind: "permanently_rejected", code: "start_rejected", detail: error.message };
+      return { kind: "uncertain", detail: String(error) };
+    }
+  }
+
+  /** An uncertain start is reconciled by its original identity before stop. */
+  async stop_selected(request: ExecutionRequest, invocation_id: InvocationId, reference: ExternalExecutionReference | null): Promise<ProviderResult<{ readonly stopped: true }>> {
+    let known = reference;
+    if (!known) {
+      const reconciled = await this.start_selected(request, invocation_id);
+      if (reconciled.kind === "permanently_rejected") return { kind: "acknowledged", value: { stopped: true } };
+      if (reconciled.kind !== "acknowledged") return { kind: "uncertain", detail: reconciled.detail };
+      known = reconciled.value;
+    }
+    const stopped = await this.cancel_or_fence(request.execution_id, known);
+    return stopped?.kind === "executor_unavailable" ? { kind: "transiently_unavailable", detail: stopped.detail }
+      : { kind: "acknowledged", value: { stopped: true } };
   }
 
   async start_or_attach(request: ExecutionRequest, operation_id: ExecutorOperationId): Promise<ExternalExecutionReference | ExecutorUnavailable> {
