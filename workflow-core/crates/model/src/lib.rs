@@ -1,203 +1,100 @@
+//! Source contracts from the core replacement specification, sections 3–5.
+//! JSON is accepted only as source literals and ingress payloads. Evaluators use CheckedValue.
+mod checked;
 pub mod protocol;
-
+mod source;
+mod values;
+pub use checked::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-
+pub use source::*;
+pub use values::*;
 pub type CoreResult<T> = Result<T, DomainError>;
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct DomainError {
-    pub operation: String,
-    pub entity_id: String,
-    pub kind: DomainErrorKind,
-    pub detail: String,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DomainErrorKind {
-    InvalidShape,
-    DuplicateScope,
-    UnknownScope,
-    DuplicateCollection,
-    UnknownCollection,
-    DuplicatePolicy,
-    UnknownPolicy,
-    DuplicateBinding,
-    DuplicateFact,
-    DuplicateState,
-    DuplicateAction,
-    DuplicateDependency,
-    UnknownBinding,
-    UnknownFact,
-    UnknownState,
-    UnknownAction,
-    InvalidExpression,
-    InvalidLiteral,
-    CyclicScope,
-    CyclicDecision,
-    MissingPayloadField,
-    PayloadTypeMismatch,
-    MissingObservation,
-    Rejected,
+    MissingSymbol,
+    DuplicateSymbol,
+    UnsupportedVersion,
+    UnresolvedContent,
+    InvalidSchema,
+    RecursiveSchema,
+    IncompatiblePort,
+    WrongBrand,
+    MissingBinding,
+    UnguardedOptional,
+    PrivateRead,
+    UndeclaredTrigger,
+    NonExhaustiveMatch,
+    ConflictingWrite,
+    InvalidAssignment,
+    DuplicateLaunch,
+    CyclicPrerequisite,
+    InvalidTemplate,
+    UnreachableDeclaration,
+    DeadRegion,
+    UnhandledCommand,
+    UnsupportedProvider,
+    UnavailableOperation,
+    UnsupportedAuthorization,
+    UnsupportedPublication,
+    UnsupportedPresentation,
+    InvalidPayload,
+    InvalidSnapshot,
+    ResourceLimit,
+    UnknownConstruct,
 }
-
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DomainError {
+    pub operation: Box<str>,
+    pub entity_id: Box<str>,
+    pub kind: DomainErrorKind,
+    pub detail: Box<str>,
+    pub path: Box<str>,
+    pub expected: Box<str>,
+    pub actual: Box<str>,
+}
 impl DomainError {
-    pub fn new(operation: &str, entity_id: &str, kind: DomainErrorKind, detail: &str) -> Self {
+    pub fn new(
+        kind: DomainErrorKind,
+        entity: impl Into<String>,
+        detail: impl Into<String>,
+    ) -> Self {
+        let entity_id = entity.into().into_boxed_str();
         Self {
-            operation: operation.into(),
-            entity_id: entity_id.into(),
+            operation: "compile".into(),
+            path: entity_id.clone(),
+            entity_id,
             kind,
-            detail: detail.into(),
+            detail: detail.into().into_boxed_str(),
+            expected: "".into(),
+            actual: "".into(),
         }
     }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DefinitionBundle {
-    pub id: String,
-    pub version: u32,
-    pub facts: Vec<String>,
-    pub scopes: Vec<Scope>,
-    pub collections: Vec<Collection>,
-    pub policies: Vec<Policy>,
-    pub bindings: Vec<Binding>,
-    pub decision: Decision,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Scope {
-    pub id: String,
-    pub depends_on: Vec<String>,
-    pub states: Vec<String>,
-    pub actions: Vec<String>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Collection {
-    pub id: String,
-    pub scope: String,
-    pub item_type: PayloadType,
-    pub required: bool,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Policy {
-    pub id: String,
-    pub collection: String,
-    pub release: Release,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Release {
-    Immediate,
-    Accepted,
-    Complete,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Binding {
-    pub id: String,
-    pub source: String,
-    pub target: String,
-    pub value_type: PayloadType,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum PayloadType {
-    String,
-    Number,
-    Boolean,
-    Object,
-    Array,
-    Null,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum Expression {
-    Fact { name: String },
-    Equals { binding: String, value: Value },
-    All { items: Vec<Expression> },
-    Any { items: Vec<Expression> },
-    Not { item: Box<Expression> },
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum Decision {
-    If {
-        expression: Expression,
-        then: Box<Decision>,
-        otherwise: Box<Decision>,
-    },
-    Apply {
-        scope: String,
-        state: String,
-        action: String,
-    },
-    Wait {
-        reason: String,
-    },
-    Reject {
-        reason: String,
-    },
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct Snapshot {
-    pub facts: Vec<String>,
-    pub values: Value,
-    pub observations: Vec<Observation>,
-    pub timestamp_ms: i64,
-    pub random_seed: u64,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct Observation {
-    pub collection: String,
-    pub item_id: String,
-    pub payload: Value,
-    pub accepted: bool,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum Effect {
-    Apply {
-        scope: String,
-        state: String,
-        action: String,
-    },
-    Wait {
-        reason: String,
-    },
-    Reject {
-        reason: String,
-    },
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct DecisionOutcome {
-    pub effect: Effect,
-    pub trace: Vec<String>,
-}
-
-pub fn payload_matches(value: &Value, expected: &PayloadType) -> bool {
-    match expected {
-        PayloadType::String => value.is_string(),
-        PayloadType::Number => value.is_number(),
-        PayloadType::Boolean => value.is_boolean(),
-        PayloadType::Object => value.is_object(),
-        PayloadType::Array => value.is_array(),
-        PayloadType::Null => value.is_null(),
+    pub fn contracts(mut self, expected: impl Into<String>, actual: impl Into<String>) -> Self {
+        self.expected = expected.into().into_boxed_str();
+        self.actual = actual.into().into_boxed_str();
+        self
     }
 }
+macro_rules! id {
+    ($($name:ident),*) => {$(
+        #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema)]
+        #[serde(transparent)]
+        pub struct $name(pub String);
+        impl From<&str> for $name { fn from(value: &str) -> Self { Self(value.into()) } }
+        impl std::fmt::Display for $name { fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { self.0.fmt(f) } }
+    )*};
+}
+id!(
+    SchemaId,
+    ScopeKey,
+    WorkerKey,
+    ActionKey,
+    SymbolKey,
+    NodeId,
+    InstanceId,
+    TriggerId,
+    BundleDigest
+);

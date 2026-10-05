@@ -39,6 +39,17 @@ fn schema_to_ts(schema: &Value) -> String {
             .collect::<Vec<_>>()
             .join(" & ");
     }
+    if let Some(types) = schema.get("type").and_then(Value::as_array) {
+        return types
+            .iter()
+            .map(|kind| {
+                let mut member = schema.clone();
+                member["type"] = kind.clone();
+                schema_to_ts(&member)
+            })
+            .collect::<Vec<_>>()
+            .join(" | ");
+    }
     match schema.get("type").and_then(Value::as_str) {
         Some("string") => "string".into(),
         Some("integer" | "number") => "number".into(),
@@ -139,5 +150,6 @@ pub fn generate() -> String {
         schema_to_ts(&schemas["response"])
     ));
     output.push_str("export type CoreDomainError = DomainError;\nexport type CoreTransportError = TransportError;\nexport type CoreTransportKind = TransportErrorKind;\nexport type CoreResponseResult = ResponseResult;\n");
+    output.push_str(include_str!("response-decoder.ts.txt"));
     output
 }

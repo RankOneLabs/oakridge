@@ -1,4 +1,4 @@
-use workflow_compiler::{compile, validate_payload};
+use workflow_compiler::{check_value, compile, decode_bundle, decode_unique_json};
 use workflow_evaluator::{evaluate, materialize};
 use workflow_model::protocol::{
     Operation, Output, Request, Response, ResponseResult, TransportError, TransportErrorKind,
@@ -34,13 +34,30 @@ pub fn handle_frame(frame: &[u8]) -> Response {
             "frame exceeds maximum bytes",
         );
     }
-    let raw: serde_json::Value = match serde_json::from_slice(frame) {
+    let raw: serde_json::Value = match decode_unique_json(frame) {
         Ok(value) => value,
+        Err(error) if error.kind == workflow_model::DomainErrorKind::DuplicateSymbol => {
+            return Response {
+                version: PROTOCOL_VERSION,
+                // Only recover correlation metadata; overwritten source is never compiled.
+                request_id: serde_json::from_slice::<serde_json::Value>(frame)
+                    .ok()
+                    .and_then(|raw| {
+                        raw.get("request_id")
+                            .and_then(serde_json::Value::as_str)
+                            .filter(|id| !id.is_empty() && id.len() <= 128)
+                            .map(str::to_owned)
+                    })
+                    .unwrap_or_default(),
+                truncated: false,
+                result: ResponseResult::DomainError(error),
+            };
+        }
         Err(error) => {
             return transport(
                 String::new(),
                 TransportErrorKind::MalformedFrame,
-                &error.to_string(),
+                &error.detail,
             )
         }
     };
@@ -50,6 +67,20 @@ pub fn handle_frame(frame: &[u8]) -> Response {
         .unwrap_or("")
         .to_owned();
     let version = raw.get("version").and_then(serde_json::Value::as_u64);
+    if request_id.len() > 128 {
+        return transport(
+            String::new(),
+            TransportErrorKind::MalformedFrame,
+            "request ID exceeds 128 bytes",
+        );
+    }
+    if request_id.is_empty() {
+        return transport(
+            request_id,
+            TransportErrorKind::MalformedFrame,
+            "request ID required",
+        );
+    }
     if version.is_none() {
         return transport(
             request_id,
@@ -83,6 +114,17 @@ pub fn handle_frame(frame: &[u8]) -> Response {
             "unknown operation",
         );
     }
+    if let Some(source) = raw.get("input").and_then(|input| input.get("bundle")) {
+        let source_bytes = serde_json::to_vec(source).unwrap_or_default();
+        if let Err(error) = decode_bundle(&source_bytes) {
+            return Response {
+                version: PROTOCOL_VERSION,
+                request_id,
+                truncated: false,
+                result: ResponseResult::DomainError(error),
+            };
+        }
+    }
     let request: Request = match serde_json::from_value(raw) {
         Ok(value) => value,
         Err(error) => {
@@ -94,35 +136,40 @@ pub fn handle_frame(frame: &[u8]) -> Response {
         }
     };
     let result = match request.operation {
-        Operation::Compile { bundle } => compile(&bundle).map(|program| Output::Compiled {
-            bundle_id: bundle.id.clone(),
-            scope_order: program.scope_order,
-        }),
+        Operation::Compile {
+            bundle,
+            available_operations,
+        } => compile(&bundle, &available_operations).map(Output::Compiled),
         Operation::ValidatePayload {
             bundle,
-            collection,
+            available_operations,
+            schema,
             payload,
-        } => compile(&bundle)
-            .and_then(|_| validate_payload(&bundle, &collection, &payload))
-            .map(|()| Output::Validated { collection }),
-        Operation::Evaluate { bundle, snapshot } => {
-            evaluate(&bundle, &snapshot).map(Output::Evaluated)
-        }
+        } => compile(&bundle, &available_operations)
+            .and_then(|program| check_value(&program.source, &schema, &payload))
+            .map(Output::Validated),
+        Operation::Evaluate {
+            bundle,
+            available_operations,
+            snapshot,
+        } => compile(&bundle, &available_operations)
+            .and_then(|program| evaluate(&program, &snapshot))
+            .map(Output::Evaluated),
         Operation::Materialize {
             bundle,
-            collection,
-            observations,
-        } => {
-            materialize(&bundle, &collection, &observations).map(|item_ids| Output::Materialized {
-                collection,
-                item_ids,
-            })
-        }
-        Operation::Explain { bundle, snapshot } => {
-            evaluate(&bundle, &snapshot).map(|outcome| Output::Explained {
-                trace: outcome.trace,
-            })
-        }
+            available_operations,
+            snapshot,
+            template,
+        } => compile(&bundle, &available_operations)
+            .and_then(|program| materialize(&program, &snapshot, &template))
+            .map(Output::Materialized),
+        Operation::Explain {
+            bundle,
+            available_operations,
+            snapshot,
+        } => compile(&bundle, &available_operations)
+            .and_then(|program| evaluate(&program, &snapshot))
+            .map(Output::Explained),
     };
     Response {
         version: PROTOCOL_VERSION,

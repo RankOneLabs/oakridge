@@ -1,4 +1,5 @@
 {
+  // Editor workspace references. Authoritative checks: bun run typecheck (three independent packages).
   "files": [],
   "references": [
     { "path": "./kbbl" },

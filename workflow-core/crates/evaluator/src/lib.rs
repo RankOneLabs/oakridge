@@ -1,218 +1,361 @@
+//! Pure checked-program evaluation. All dynamic inputs are revalidated at this boundary.
+mod collections;
+mod expressions;
+pub use collections::materialize;
 use std::collections::HashSet;
-use workflow_compiler::{binding_value, compile, validate_payload};
-use workflow_model::{
-    CoreResult, Decision, DecisionOutcome, DefinitionBundle, DomainError, DomainErrorKind, Effect,
-    Expression, Observation, Policy, Release, Snapshot,
-};
-
-fn expression_value(
-    expression: &Expression,
-    bundle: &DefinitionBundle,
+use workflow_compiler::validate_checked_value;
+use workflow_model::*;
+fn failure(
+    kind: DomainErrorKind,
+    entity: impl Into<String>,
+    detail: impl Into<String>,
+) -> DomainError {
+    let mut e = DomainError::new(kind, entity, detail);
+    e.operation = "evaluate".into();
+    e
+}
+pub(crate) fn owner<'a>(
+    program: &'a CheckedProgram,
     snapshot: &Snapshot,
-) -> CoreResult<bool> {
-    match expression {
-        Expression::Fact { name } => Ok(snapshot.facts.contains(name)),
-        Expression::Equals { binding, value } => {
-            let declaration = bundle
-                .bindings
-                .iter()
-                .find(|item| item.id == *binding)
-                .ok_or_else(|| {
-                    DomainError::new(
-                        "evaluate",
-                        binding,
-                        DomainErrorKind::UnknownBinding,
-                        "binding was not compiled",
-                    )
-                })?;
-            Ok(binding_value(&snapshot.values, declaration)? == value)
-        }
-        Expression::All { items } => {
-            for item in items {
-                if !expression_value(item, bundle, snapshot)? {
-                    return Ok(false);
-                }
-            }
-            Ok(true)
-        }
-        Expression::Any { items } => {
-            for item in items {
-                if expression_value(item, bundle, snapshot)? {
-                    return Ok(true);
-                }
-            }
-            Ok(false)
-        }
-        Expression::Not { item } => Ok(!expression_value(item, bundle, snapshot)?),
-    }
-}
-
-pub fn evaluate(bundle: &DefinitionBundle, snapshot: &Snapshot) -> CoreResult<DecisionOutcome> {
-    compile(bundle)?;
-    let mut trace = vec![format!("bundle:{}@{}", bundle.id, bundle.version)];
-    let mut node = &bundle.decision;
-    loop {
-        match node {
-            Decision::If {
-                expression,
-                then,
-                otherwise,
-            } => {
-                let answer = expression_value(expression, bundle, snapshot)?;
-                trace.push(format!("if:{answer}"));
-                node = if answer { then } else { otherwise };
-            }
-            Decision::Apply {
-                scope,
-                state,
-                action,
-            } => {
-                trace.push(format!("apply:{scope}:{state}:{action}"));
-                return Ok(DecisionOutcome {
-                    effect: Effect::Apply {
-                        scope: scope.clone(),
-                        state: state.clone(),
-                        action: action.clone(),
-                    },
-                    trace,
-                });
-            }
-            Decision::Wait { reason } => {
-                trace.push(format!("wait:{reason}"));
-                return Ok(DecisionOutcome {
-                    effect: Effect::Wait {
-                        reason: reason.clone(),
-                    },
-                    trace,
-                });
-            }
-            Decision::Reject { reason } => {
-                trace.push(format!("reject:{reason}"));
-                return Ok(DecisionOutcome {
-                    effect: Effect::Reject {
-                        reason: reason.clone(),
-                    },
-                    trace,
-                });
-            }
-        }
-    }
-}
-
-fn policy_for<'a>(bundle: &'a DefinitionBundle, collection: &str) -> Option<&'a Policy> {
-    bundle
-        .policies
+) -> CoreResult<(&'a ScopeDefinition, &'a CheckedScope)> {
+    let source = program
+        .source
+        .scopes
         .iter()
-        .find(|policy| policy.collection == collection)
-}
-
-pub fn materialize(
-    bundle: &DefinitionBundle,
-    collection_id: &str,
-    observations: &[Observation],
-) -> CoreResult<Vec<String>> {
-    compile(bundle)?;
-    let collection = bundle
-        .collections
-        .iter()
-        .find(|item| item.id == collection_id)
+        .find(|s| s.key == snapshot.scope)
         .ok_or_else(|| {
-            DomainError::new(
-                "materialize",
-                collection_id,
-                DomainErrorKind::UnknownCollection,
-                "collection not declared",
+            failure(
+                DomainErrorKind::MissingSymbol,
+                snapshot.scope.to_string(),
+                "scope not compiled",
             )
         })?;
-    let mut seen = HashSet::new();
-    let mut ids = Vec::new();
-    for observation in observations
+    let checked = program
+        .scopes
         .iter()
-        .filter(|item| item.collection == collection_id)
-    {
-        if observation.item_id.is_empty() || !seen.insert(&observation.item_id) {
-            return Err(DomainError::new(
-                "materialize",
-                collection_id,
-                DomainErrorKind::InvalidShape,
-                "empty or duplicate item id",
-            ));
-        }
-        validate_payload(bundle, collection_id, &observation.payload)?;
-        let is_released = match policy_for(bundle, collection_id).map(|policy| &policy.release) {
-            None | Some(Release::Immediate) => true,
-            Some(Release::Accepted | Release::Complete) => observation.accepted,
-        };
-        if is_released {
-            ids.push(observation.item_id.clone());
-        }
-    }
-    if collection.required && ids.is_empty() {
-        return Err(DomainError::new(
-            "materialize",
-            collection_id,
-            DomainErrorKind::MissingObservation,
-            "required collection has no released items",
+        .find(|s| s.key == snapshot.scope)
+        .ok_or_else(|| {
+            failure(
+                DomainErrorKind::MissingSymbol,
+                snapshot.scope.to_string(),
+                "checked scope unavailable",
+            )
+        })?;
+    Ok((source, checked))
+}
+pub(crate) fn snapshot_valid(program: &CheckedProgram, snapshot: &Snapshot) -> CoreResult<()> {
+    let (scope, _) = owner(program, snapshot)?;
+    validate_checked_value(&program.source, &scope.input_schema, &snapshot.input)?;
+    validate_checked_value(&program.source, &scope.state_schema, &snapshot.state)?;
+    if snapshot.owner.0.is_empty() || snapshot.trigger.id.0.is_empty() {
+        return Err(failure(
+            DomainErrorKind::InvalidSnapshot,
+            snapshot.scope.to_string(),
+            "owner and trigger identities required",
         ));
     }
-    Ok(ids)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    fn bundle() -> DefinitionBundle {
-        serde_json::from_str(include_str!("../../../fixtures/bundles/minimal.json")).unwrap()
+    let payload_schema = scope
+        .commands
+        .iter()
+        .find(|c| c.key == snapshot.trigger.key)
+        .map(|c| &c.payload_schema)
+        .or_else(|| {
+            scope
+                .facts
+                .iter()
+                .find(|f| f.key == snapshot.trigger.key)
+                .map(|f| &f.payload_schema)
+        })
+        .ok_or_else(|| {
+            failure(
+                DomainErrorKind::UndeclaredTrigger,
+                snapshot.trigger.key.to_string(),
+                "event belongs to another scope or is undeclared",
+            )
+        })?;
+    validate_checked_value(&program.source, payload_schema, &snapshot.trigger.payload)?;
+    let mut identities = HashSet::new();
+    let mut roots = Vec::new();
+    for observation in &snapshot.observations {
+        if observation.identity == snapshot.owner.0
+            || observation.identity.is_empty()
+            || !identities.insert(&observation.identity)
+            || roots.contains(&observation.root)
+        {
+            return Err(failure(
+                DomainErrorKind::InvalidSnapshot,
+                snapshot.owner.to_string(),
+                "duplicate observed identity or root",
+            ));
+        }
+        roots.push(observation.root.clone());
+        let expected = match &observation.root {
+            ReferenceRoot::Output { key } => scope
+                .outputs
+                .iter()
+                .find(|x| x.key == *key)
+                .map(|x| &x.schema),
+            ReferenceRoot::Resource { key } => scope
+                .resources
+                .iter()
+                .find(|x| x.key == *key)
+                .map(|x| &x.schema),
+            ReferenceRoot::Result { worker } => scope
+                .workers
+                .iter()
+                .find(|x| x.key == *worker)
+                .map(|x| &x.result_schema),
+            ReferenceRoot::Child { key, export } => scope
+                .children
+                .iter()
+                .find(|c| c.key == *key && c.imports.contains(export))
+                .and_then(|c| program.source.scopes.iter().find(|s| s.key == c.scope))
+                .and_then(|s| s.exports.iter().find(|e| e.key == *export))
+                .map(|e| &e.schema),
+            _ => None,
+        }
+        .ok_or_else(|| {
+            failure(
+                DomainErrorKind::PrivateRead,
+                snapshot.owner.to_string(),
+                "undeclared or private observed root",
+            )
+        })?;
+        validate_checked_value(&program.source, expected, &observation.value)?;
     }
-
-    fn snapshot(approved: bool) -> Snapshot {
-        Snapshot {
-            facts: vec![],
-            values: json!({ "approved": approved }),
-            observations: vec![],
-            timestamp_ms: 42,
-            random_seed: 7,
+    Ok(())
+}
+pub fn evaluate(program: &CheckedProgram, snapshot: &Snapshot) -> CoreResult<DecisionOutcome> {
+    snapshot_valid(program, snapshot)?;
+    let (scope, checked) = owner(program, snapshot)?;
+    let state = expressions::variant(&snapshot.state)?;
+    let mut read_set = vec![ReadVersion {
+        identity: snapshot.owner.0.clone(),
+        version: snapshot.version,
+    }];
+    read_set.extend(snapshot.observations.iter().map(|o| ReadVersion {
+        identity: o.identity.clone(),
+        version: o.version,
+    }));
+    read_set.sort_by(|a, b| a.identity.cmp(&b.identity));
+    let mut explanation = Explanation {
+        bundle_digest: program.digest.clone(),
+        owner: snapshot.owner.clone(),
+        node_id: NodeId("".into()),
+        trigger_id: snapshot.trigger.id.clone(),
+        read_set,
+        trace: Vec::new(),
+    };
+    if let Some(command) = scope
+        .commands
+        .iter()
+        .find(|c| c.key == snapshot.trigger.key)
+    {
+        if !command.available_in.contains(&state) {
+            return Err(failure(
+                DomainErrorKind::UndeclaredTrigger,
+                command.key.to_string(),
+                "command unavailable in committed state",
+            ));
         }
     }
-
-    #[test]
-    fn same_snapshot_replays_same_decision() {
-        let definition = bundle();
-        let first = evaluate(&definition, &snapshot(true)).unwrap();
-        let second = evaluate(&definition, &snapshot(true)).unwrap();
-        assert_eq!(
-            serde_json::to_value(first).unwrap(),
-            serde_json::to_value(second).unwrap()
-        );
-    }
-
-    #[test]
-    fn false_binding_waits() {
-        let outcome = evaluate(&bundle(), &snapshot(false)).unwrap();
-        assert!(matches!(outcome.effect, Effect::Wait { .. }));
-    }
-
-    #[test]
-    fn collection_policy_releases_only_accepted_items() {
-        let observations = vec![
-            Observation {
-                collection: "evidence".into(),
-                item_id: "first".into(),
-                payload: json!({}),
-                accepted: true,
-            },
-            Observation {
-                collection: "evidence".into(),
-                item_id: "second".into(),
-                payload: json!({}),
-                accepted: false,
-            },
-        ];
-        assert_eq!(
-            materialize(&bundle(), "evidence", &observations).unwrap(),
-            vec!["first"]
-        );
+    let mut budget = program.source.limits.evaluation_budget;
+    let mut node = &checked.tree;
+    loop {
+        if budget == 0 {
+            return Err(failure(
+                DomainErrorKind::ResourceLimit,
+                snapshot.owner.to_string(),
+                "evaluation budget exhausted; no workflow transition",
+            ));
+        }
+        budget -= 1;
+        let id = match node {
+            CheckedTree::Match { id, .. }
+            | CheckedTree::If { id, .. }
+            | CheckedTree::Apply { id, .. }
+            | CheckedTree::Wait { id, .. }
+            | CheckedTree::Reject { id, .. } => id,
+        };
+        explanation.node_id = id.clone();
+        explanation.trace.push(id.0.clone());
+        let mut context = expressions::EvaluationContext {
+            program,
+            snapshot,
+            item: None,
+            budget: &mut budget,
+        };
+        match node {
+            CheckedTree::Match {
+                value,
+                cases,
+                otherwise,
+                ..
+            } => {
+                let value = expressions::evaluate_expression(value, &mut context)?;
+                let choice = expressions::variant(&value)?;
+                node = if let Some(case) = cases.iter().find(|c| c.variant == choice) {
+                    &case.node
+                } else {
+                    otherwise.as_deref().ok_or_else(|| {
+                        failure(
+                            DomainErrorKind::InvalidSnapshot,
+                            id.to_string(),
+                            "checked match has no branch",
+                        )
+                    })?
+                };
+            }
+            CheckedTree::If {
+                condition,
+                then,
+                otherwise,
+                ..
+            } => {
+                node = if expressions::boolean(&expressions::evaluate_expression(
+                    condition,
+                    &mut context,
+                )?)? {
+                    then
+                } else {
+                    otherwise
+                };
+            }
+            CheckedTree::Wait {
+                continuations,
+                reason,
+                ..
+            } => {
+                return Ok(DecisionOutcome::Wait {
+                    explanation,
+                    continuations: continuations.clone(),
+                    reason: reason.clone(),
+                })
+            }
+            CheckedTree::Reject { error, detail, .. } => {
+                return Ok(DecisionOutcome::Reject {
+                    explanation,
+                    error: error.clone(),
+                    detail: detail.clone(),
+                })
+            }
+            CheckedTree::Apply {
+                mutations,
+                actions,
+                outcome,
+                ..
+            } => {
+                let mut selected = Vec::new();
+                for mutation in mutations {
+                    selected.push(match mutation {
+                        CheckedMutation::SetState { value } => MutationValue::SetState {
+                            value: expressions::evaluate_expression(value, &mut context)?,
+                        },
+                        CheckedMutation::Export { key, value } => MutationValue::Export {
+                            key: key.clone(),
+                            value: expressions::evaluate_expression(value, &mut context)?,
+                        },
+                        CheckedMutation::ActivateChild { key } => {
+                            let child =
+                                checked.children.iter().find(|c| c.key == *key).ok_or_else(
+                                    || {
+                                        failure(
+                                            DomainErrorKind::MissingSymbol,
+                                            key.to_string(),
+                                            "checked child missing",
+                                        )
+                                    },
+                                )?;
+                            if child.collection.is_some() {
+                                selected.push(MutationValue::ActivateCollection {
+                                    key: key.clone(),
+                                    materialization: collections::materialize_with_budget(
+                                        program,
+                                        snapshot,
+                                        key,
+                                        context.budget,
+                                    )?,
+                                });
+                                continue;
+                            }
+                            MutationValue::ActivateChild {
+                                key: key.clone(),
+                                input: expressions::evaluate_expression(
+                                    &child.input,
+                                    &mut context,
+                                )?,
+                            }
+                        }
+                        CheckedMutation::Acquire { pool } => {
+                            MutationValue::Acquire { pool: pool.clone() }
+                        }
+                        CheckedMutation::Release { pool } => {
+                            MutationValue::Release { pool: pool.clone() }
+                        }
+                        CheckedMutation::Revoke { worker } => MutationValue::Revoke {
+                            worker: worker.clone(),
+                        },
+                        CheckedMutation::Stop { worker } => MutationValue::Stop {
+                            worker: worker.clone(),
+                        },
+                        CheckedMutation::Observe { resource } => MutationValue::Observe {
+                            resource: resource.clone(),
+                        },
+                    });
+                }
+                let invocations = actions
+                    .iter()
+                    .map(|a| {
+                        Ok(Invocation {
+                            selection: a.selection.clone(),
+                            definition: a.definition.clone(),
+                            input: expressions::evaluate_expression(&a.input, &mut context)?,
+                            prompt_content: a.prompt_content.clone(),
+                        })
+                    })
+                    .collect::<CoreResult<_>>()?;
+                let outcome = outcome
+                    .as_ref()
+                    .map(|e| expressions::evaluate_expression(e, &mut context))
+                    .transpose()?;
+                let targets = checked
+                    .command_targets
+                    .iter()
+                    .find(|c| c.command == snapshot.trigger.key)
+                    .map(|c| {
+                        c.targets
+                            .iter()
+                            .map(|e| expressions::evaluate_expression(e, &mut context))
+                            .collect::<CoreResult<Vec<_>>>()
+                    })
+                    .transpose()?
+                    .unwrap_or_default();
+                if selected.len() == 1 && outcome.is_none() && actions.is_empty() {
+                    if let MutationValue::SetState { value } = &selected[0] {
+                        if *value == snapshot.state {
+                            return Ok(DecisionOutcome::Wait {
+                                explanation,
+                                continuations: vec![snapshot.trigger.key.clone()],
+                                reason: "unchanged state; awaiting a new trigger".into(),
+                            });
+                        }
+                    }
+                }
+                if selected.is_empty() && outcome.is_none() && actions.is_empty() {
+                    return Ok(DecisionOutcome::Wait {
+                        explanation,
+                        continuations: vec![snapshot.trigger.key.clone()],
+                        reason: "mutation-free leaf; no commit required".into(),
+                    });
+                }
+                return Ok(DecisionOutcome::Apply {
+                    explanation,
+                    mutations: selected,
+                    invocations,
+                    outcome,
+                    targets,
+                });
+            }
+        }
     }
 }

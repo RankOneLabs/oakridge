@@ -1,503 +1,271 @@
-use serde_json::Value;
-use std::collections::{HashMap, HashSet};
-use workflow_model::{
-    payload_matches, Binding, CoreResult, Decision, DefinitionBundle, DomainError, DomainErrorKind,
-    Expression, PayloadType,
-};
+//! Typed transforms: source validation → schema resolution → checked scopes → finite analysis.
+mod analysis;
+mod declarations;
+mod expressions;
+mod references;
+mod schemas;
+mod scopes;
+mod trees;
+pub use schemas::{check_value, validate_checked_value};
+use sha2::{Digest, Sha256};
+use std::collections::HashSet;
+use workflow_model::*;
 
-pub struct CompiledProgram<'a> {
-    pub bundle: &'a DefinitionBundle,
-    pub scope_order: Vec<String>,
+pub(crate) fn error(
+    kind: DomainErrorKind,
+    entity: impl Into<String>,
+    detail: impl Into<String>,
+) -> DomainError {
+    DomainError::new(kind, entity, detail)
 }
-
-fn reject(id: &str, kind: DomainErrorKind, detail: &str) -> DomainError {
-    DomainError::new("compile", id, kind, detail)
+pub(crate) fn unique<'a>(names: impl IntoIterator<Item = &'a str>, entity: &str) -> CoreResult<()> {
+    let mut seen = HashSet::new();
+    for name in names {
+        if name.is_empty() {
+            return Err(error(
+                DomainErrorKind::MissingSymbol,
+                entity,
+                "empty symbol",
+            ));
+        }
+        if !seen.insert(name) {
+            return Err(error(DomainErrorKind::DuplicateSymbol, entity, name));
+        }
+    }
+    Ok(())
 }
-
-pub fn compile(bundle: &DefinitionBundle) -> CoreResult<CompiledProgram<'_>> {
-    if bundle.id.is_empty() || bundle.version == 0 || bundle.scopes.is_empty() {
-        return Err(reject(
-            &bundle.id,
-            DomainErrorKind::InvalidShape,
-            "id, positive version and scopes are required",
+pub(crate) fn schema<'a>(
+    bundle: &'a DefinitionBundle,
+    key: &SchemaId,
+) -> CoreResult<&'a SchemaShape> {
+    bundle
+        .schemas
+        .iter()
+        .find(|s| s.key == *key)
+        .map(|s| &s.shape)
+        .ok_or_else(|| {
+            error(
+                DomainErrorKind::MissingSymbol,
+                key.to_string(),
+                "schema is not declared",
+            )
+        })
+}
+pub(crate) fn scope<'a>(
+    bundle: &'a DefinitionBundle,
+    key: &ScopeKey,
+) -> CoreResult<&'a ScopeDefinition> {
+    bundle.scopes.iter().find(|s| s.key == *key).ok_or_else(|| {
+        error(
+            DomainErrorKind::MissingSymbol,
+            key.to_string(),
+            "scope is not declared",
+        )
+    })
+}
+pub(crate) fn variants(bundle: &DefinitionBundle, key: &SchemaId) -> CoreResult<Vec<String>> {
+    match schema(bundle, key)? {
+        SchemaShape::Union { variants } => Ok(variants.iter().map(|v| v.key.clone()).collect()),
+        SchemaShape::Enum { variants } => Ok(variants.clone()),
+        SchemaShape::Optional { .. } => Ok(vec!["some".into(), "none".into()]),
+        SchemaShape::Boolean => Ok(vec!["true".into(), "false".into()]),
+        _ => Err(error(
+            DomainErrorKind::InvalidSchema,
+            key.to_string(),
+            "a finite variant schema is required",
+        )),
+    }
+}
+/// Canonical JSON uses sorted object keys (serde_json's default map), declaration order is semantic.
+pub fn canonical_digest(bundle: &DefinitionBundle) -> CoreResult<BundleDigest> {
+    let bytes = serde_json::to_vec(bundle).map_err(|e| {
+        error(
+            DomainErrorKind::InvalidSchema,
+            bundle.key.to_string(),
+            e.to_string(),
+        )
+    })?;
+    Ok(BundleDigest(format!("{:x}", Sha256::digest(bytes))))
+}
+pub fn compile(
+    source: &DefinitionBundle,
+    available: &[OperationManifest],
+) -> CoreResult<CheckedProgram> {
+    if source.language_version != 1 || source.version == 0 {
+        return Err(error(
+            DomainErrorKind::UnsupportedVersion,
+            source.key.to_string(),
+            "language version 1 and positive bundle version required",
         ));
     }
-    let mut facts = HashSet::new();
-    for fact in &bundle.facts {
-        if fact.is_empty() || !facts.insert(fact.as_str()) {
-            return Err(reject(
-                fact,
-                DomainErrorKind::DuplicateFact,
-                "fact id is empty or duplicate",
-            ));
-        }
+    if source.limits.max_depth == 0
+        || source.limits.max_depth > 128
+        || source.limits.max_list_items == 0
+        || source.limits.evaluation_budget == 0
+    {
+        return Err(error(
+            DomainErrorKind::ResourceLimit,
+            source.key.to_string(),
+            "invalid finite resource limits",
+        ));
     }
-    let mut scopes = HashMap::new();
-    for scope in &bundle.scopes {
-        if scope.id.is_empty() || scopes.insert(scope.id.as_str(), scope).is_some() {
-            return Err(reject(
-                &scope.id,
-                DomainErrorKind::DuplicateScope,
-                "scope id is empty or duplicate",
-            ));
-        }
-        if scope.states.is_empty() || scope.actions.is_empty() {
-            return Err(reject(
-                &scope.id,
-                DomainErrorKind::InvalidShape,
-                "scope requires states and actions",
-            ));
-        }
-        let mut states = HashSet::new();
-        for state in &scope.states {
-            if state.is_empty() || !states.insert(state.as_str()) {
-                return Err(reject(&scope.id, DomainErrorKind::DuplicateState, state));
-            }
-        }
-        let mut actions = HashSet::new();
-        for action in &scope.actions {
-            if action.is_empty() || !actions.insert(action.as_str()) {
-                return Err(reject(&scope.id, DomainErrorKind::DuplicateAction, action));
-            }
-        }
-        let mut dependencies = HashSet::new();
-        for dependency in &scope.depends_on {
-            if !dependencies.insert(dependency.as_str()) {
-                return Err(reject(
-                    &scope.id,
-                    DomainErrorKind::DuplicateDependency,
-                    dependency,
-                ));
-            }
-        }
-    }
-    let mut order = Vec::new();
-    let mut pending: HashSet<&str> = scopes.keys().copied().collect();
-    while !pending.is_empty() {
-        let ready: Vec<&str> = bundle
-            .scopes
-            .iter()
-            .map(|s| s.id.as_str())
-            .filter(|id| {
-                pending.contains(id)
-                    && scopes[id]
-                        .depends_on
-                        .iter()
-                        .all(|dep| !pending.contains(dep.as_str()))
-            })
-            .collect();
-        if ready.is_empty() {
-            return Err(reject(
-                &bundle.id,
-                DomainErrorKind::CyclicScope,
-                "scope dependency cycle",
-            ));
-        }
-        for id in ready {
-            for dep in &scopes[id].depends_on {
-                if !scopes.contains_key(dep.as_str()) {
-                    return Err(reject(id, DomainErrorKind::UnknownScope, dep));
+    unique([source.key.0.as_str()], "bundle")?;
+    unique(source.scopes.iter().map(|s| s.key.0.as_str()), "scopes")?;
+    unique(source.schemas.iter().map(|s| s.key.0.as_str()), "schemas")?;
+    unique(source.prompts.iter().map(|s| s.key.0.as_str()), "prompts")?;
+    unique(
+        source.operations.iter().map(|s| s.key.0.as_str()),
+        "operations",
+    )?;
+    scope(source, &source.root)?;
+    schemas::validate_schemas(source)?;
+    declarations::validate_bundle(source, available)?;
+    let digest = canonical_digest(source)?;
+    let mut bundle = source.clone();
+    for definition in &source.schemas {
+        if let SchemaShape::Record { fields, .. } = &definition.shape {
+            for (index, field) in fields
+                .iter()
+                .enumerate()
+                .filter(|(_, field)| !field.required)
+            {
+                let key = references::optional_field_schema(&definition.key, index);
+                if bundle.schemas.iter().any(|schema| schema.key == key) {
+                    return Err(error(
+                        DomainErrorKind::DuplicateSymbol,
+                        key.to_string(),
+                        "reserved optional field schema key",
+                    ));
                 }
+                bundle.schemas.push(Schema {
+                    key,
+                    shape: SchemaShape::Optional {
+                        item: field.schema.clone(),
+                    },
+                });
             }
-            pending.remove(id);
-            order.push(id.to_owned());
         }
     }
-    let mut collections = HashSet::new();
-    for collection in &bundle.collections {
-        if !collections.insert(collection.id.as_str()) {
-            return Err(reject(
-                &collection.id,
-                DomainErrorKind::DuplicateCollection,
-                "duplicate collection",
+    // A scope's trigger type is compiler-owned, derived solely from that scope's declared events.
+    for owner in &source.scopes {
+        let key = expressions::trigger_schema(owner);
+        if source.schemas.iter().any(|s| s.key == key) {
+            return Err(error(
+                DomainErrorKind::DuplicateSymbol,
+                key.to_string(),
+                "reserved compiler schema key",
             ));
         }
-        if !scopes.contains_key(collection.scope.as_str()) {
-            return Err(reject(
-                &collection.id,
-                DomainErrorKind::UnknownScope,
-                &collection.scope,
-            ));
-        }
+        bundle.schemas.push(Schema {
+            key,
+            shape: SchemaShape::Union {
+                variants: owner
+                    .commands
+                    .iter()
+                    .map(|c| SchemaVariant {
+                        key: c.key.0.clone(),
+                        schema: c.payload_schema.clone(),
+                    })
+                    .chain(owner.facts.iter().map(|f| SchemaVariant {
+                        key: f.key.0.clone(),
+                        schema: f.payload_schema.clone(),
+                    }))
+                    .collect(),
+            },
+        });
     }
-    let mut policies = HashSet::new();
-    for policy in &bundle.policies {
-        if !policies.insert(policy.id.as_str()) {
-            return Err(reject(
-                &policy.id,
-                DomainErrorKind::DuplicatePolicy,
-                "duplicate policy",
-            ));
-        }
-        if !collections.contains(policy.collection.as_str()) {
-            return Err(reject(
-                &policy.id,
-                DomainErrorKind::UnknownCollection,
-                &policy.collection,
-            ));
-        }
+    let mut scopes = Vec::new();
+    let mut analyses = Vec::new();
+    for owner in &bundle.scopes {
+        let checked = scopes::compile_scope(&bundle, owner)?;
+        analyses.push(analysis::analyze(&bundle, owner, &checked.tree)?);
+        scopes.push(checked);
     }
-    let mut bindings = HashSet::new();
-    for binding in &bundle.bindings {
-        if !bindings.insert(binding.id.as_str()) {
-            return Err(reject(
-                &binding.id,
-                DomainErrorKind::DuplicateBinding,
-                "duplicate binding",
-            ));
-        }
-        if binding.source.is_empty() || binding.target.is_empty() {
-            return Err(reject(
-                &binding.id,
-                DomainErrorKind::InvalidShape,
-                "binding source and target required",
-            ));
-        }
-    }
-    validate_decision(&bundle.decision, &scopes, &bindings, &facts, bundle, 0)?;
-    Ok(CompiledProgram {
-        bundle,
-        scope_order: order,
+    Ok(CheckedProgram {
+        language_version: 1,
+        evaluator_version: 1,
+        digest,
+        source: bundle,
+        scopes,
+        analysis: analyses,
     })
 }
 
-fn validate_decision(
-    decision: &Decision,
-    scopes: &HashMap<&str, &workflow_model::Scope>,
-    bindings: &HashSet<&str>,
-    facts: &HashSet<&str>,
-    bundle: &DefinitionBundle,
-    depth: usize,
-) -> CoreResult<()> {
-    if depth > 256 {
-        return Err(reject(
-            "decision",
-            DomainErrorKind::CyclicDecision,
-            "decision depth exceeded",
-        ));
-    }
-    match decision {
-        Decision::If {
-            expression,
-            then,
-            otherwise,
-        } => {
-            validate_expression(expression, bindings, facts, bundle, depth + 1)?;
-            validate_decision(then, scopes, bindings, facts, bundle, depth + 1)?;
-            validate_decision(otherwise, scopes, bindings, facts, bundle, depth + 1)
-        }
-        Decision::Apply {
-            scope,
-            state,
-            action,
-        } => {
-            let Some(def) = scopes.get(scope.as_str()) else {
-                return Err(reject(
-                    scope,
-                    DomainErrorKind::UnknownScope,
-                    "decision scope",
-                ));
-            };
-            if !def.states.contains(state) {
-                return Err(reject(scope, DomainErrorKind::UnknownState, state));
-            }
-            if !def.actions.contains(action) {
-                return Err(reject(scope, DomainErrorKind::UnknownAction, action));
-            }
-            Ok(())
-        }
-        Decision::Wait { reason } | Decision::Reject { reason } => {
-            if reason.is_empty() {
-                Err(reject(
-                    "decision",
-                    DomainErrorKind::InvalidShape,
-                    "reason required",
-                ))
-            } else {
-                Ok(())
-            }
-        }
-    }
+/// Domain JSON decoding detects duplicate keys before serde can discard them.
+pub fn decode_bundle(bytes: &[u8]) -> CoreResult<DefinitionBundle> {
+    let value = decode_unique_json(bytes)?;
+    serde_json::from_value(value)
+        .map_err(|e| error(DomainErrorKind::UnknownConstruct, "bundle", e.to_string()))
 }
-
-fn validate_expression(
-    expression: &Expression,
-    bindings: &HashSet<&str>,
-    facts: &HashSet<&str>,
-    bundle: &DefinitionBundle,
-    depth: usize,
-) -> CoreResult<()> {
-    if depth > 256 {
-        return Err(reject(
-            "expression",
-            DomainErrorKind::InvalidExpression,
-            "expression depth exceeded",
-        ));
-    }
-    match expression {
-        Expression::Fact { name } => {
-            if !facts.contains(name.as_str()) {
-                Err(reject("expression", DomainErrorKind::UnknownFact, name))
-            } else {
-                Ok(())
-            }
+pub fn decode_unique_json(bytes: &[u8]) -> CoreResult<serde_json::Value> {
+    use serde::de::{Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
+    struct Unique(serde_json::Value);
+    struct UniqueVisitor;
+    impl<'de> Deserialize<'de> for Unique {
+        fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+            d.deserialize_any(UniqueVisitor)
         }
-        Expression::Equals { binding, value } => {
-            if !bindings.contains(binding.as_str()) {
-                return Err(reject(
-                    binding,
-                    DomainErrorKind::UnknownBinding,
-                    "expression binding",
-                ));
+    }
+    impl<'de> Visitor<'de> for UniqueVisitor {
+        type Value = Unique;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("strict JSON without duplicate keys")
+        }
+        fn visit_bool<E: serde::de::Error>(self, v: bool) -> Result<Unique, E> {
+            Ok(Unique(v.into()))
+        }
+        fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<Unique, E> {
+            Ok(Unique(v.into()))
+        }
+        fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<Unique, E> {
+            Ok(Unique(v.into()))
+        }
+        fn visit_f64<E: serde::de::Error>(self, v: f64) -> Result<Unique, E> {
+            serde_json::Number::from_f64(v)
+                .map(|n| Unique(n.into()))
+                .ok_or_else(|| E::custom("nonfinite number"))
+        }
+        fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Unique, E> {
+            Ok(Unique(v.into()))
+        }
+        fn visit_none<E: serde::de::Error>(self) -> Result<Unique, E> {
+            Ok(Unique(serde_json::Value::Null))
+        }
+        fn visit_unit<E: serde::de::Error>(self) -> Result<Unique, E> {
+            self.visit_none()
+        }
+        fn visit_seq<A: SeqAccess<'de>>(self, mut a: A) -> Result<Unique, A::Error> {
+            let mut values = Vec::new();
+            while let Some(v) = a.next_element::<Unique>()? {
+                values.push(v.0);
             }
-            let declaration = bundle.bindings.iter().find(|item| item.id == *binding);
-            if let Some(declaration) = declaration {
-                if !payload_matches(value, &declaration.value_type) {
-                    return Err(reject(
-                        binding,
-                        DomainErrorKind::InvalidLiteral,
-                        "literal does not match binding type",
-                    ));
+            Ok(Unique(values.into()))
+        }
+        fn visit_map<A: MapAccess<'de>>(self, mut a: A) -> Result<Unique, A::Error> {
+            let mut map = serde_json::Map::new();
+            while let Some(key) = a.next_key::<String>()? {
+                if map.contains_key(&key) {
+                    return Err(serde::de::Error::custom(format!("duplicate key: {key}")));
                 }
+                map.insert(key, a.next_value::<Unique>()?.0);
             }
-            Ok(())
-        }
-        Expression::All { items } | Expression::Any { items } => {
-            if items.is_empty() {
-                return Err(reject(
-                    "expression",
-                    DomainErrorKind::InvalidExpression,
-                    "empty expression list",
-                ));
-            }
-            for item in items {
-                validate_expression(item, bindings, facts, bundle, depth + 1)?;
-            }
-            Ok(())
-        }
-        Expression::Not { item } => validate_expression(item, bindings, facts, bundle, depth + 1),
-    }
-}
-
-pub fn validate_payload(
-    bundle: &DefinitionBundle,
-    collection_id: &str,
-    payload: &Value,
-) -> CoreResult<()> {
-    let collection = bundle
-        .collections
-        .iter()
-        .find(|c| c.id == collection_id)
-        .ok_or_else(|| {
-            reject(
-                collection_id,
-                DomainErrorKind::UnknownCollection,
-                "payload collection",
-            )
-        })?;
-    if payload_matches(payload, &collection.item_type) {
-        Ok(())
-    } else {
-        Err(DomainError::new(
-            "validate_payload",
-            collection_id,
-            DomainErrorKind::PayloadTypeMismatch,
-            "payload does not match declared item_type",
-        ))
-    }
-}
-
-pub fn binding_value<'a>(values: &'a Value, binding: &Binding) -> CoreResult<&'a Value> {
-    let pointer = format!("/{}", binding.source.replace('~', "~0").replace('/', "~1"));
-    let value = values
-        .get(&binding.source)
-        .or_else(|| values.pointer(&pointer))
-        .ok_or_else(|| {
-            DomainError::new(
-                "evaluate",
-                &binding.id,
-                DomainErrorKind::MissingPayloadField,
-                &binding.source,
-            )
-        })?;
-    if payload_matches(value, &binding.value_type) {
-        Ok(value)
-    } else {
-        Err(DomainError::new(
-            "evaluate",
-            &binding.id,
-            DomainErrorKind::PayloadTypeMismatch,
-            &binding.source,
-        ))
-    }
-}
-
-pub fn payload_type_of(value: &Value) -> PayloadType {
-    match value {
-        Value::Null => PayloadType::Null,
-        Value::Bool(_) => PayloadType::Boolean,
-        Value::Number(_) => PayloadType::Number,
-        Value::String(_) => PayloadType::String,
-        Value::Array(_) => PayloadType::Array,
-        Value::Object(_) => PayloadType::Object,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::{json, Value};
-
-    fn fixture() -> Value {
-        serde_json::from_str(include_str!("../../../fixtures/bundles/minimal.json")).unwrap()
-    }
-
-    fn error(mut change: impl FnMut(&mut Value)) -> DomainErrorKind {
-        let mut value = fixture();
-        change(&mut value);
-        let bundle: DefinitionBundle = serde_json::from_value(value).unwrap();
-        match compile(&bundle) {
-            Ok(_) => panic!("expected compiler rejection"),
-            Err(error) => error.kind,
+            Ok(Unique(map.into()))
         }
     }
-
-    #[test]
-    fn rejects_missing_identity() {
-        assert_eq!(
-            error(|v| v["id"] = json!("")),
-            DomainErrorKind::InvalidShape
-        );
-    }
-    #[test]
-    fn rejects_duplicate_scope() {
-        assert_eq!(
-            error(|v| {
-                let item = v["scopes"][0].clone();
-                v["scopes"].as_array_mut().unwrap().push(item);
-            }),
-            DomainErrorKind::DuplicateScope
-        );
-    }
-    #[test]
-    fn rejects_unknown_scope_dependency() {
-        assert_eq!(
-            error(|v| v["scopes"][0]["depends_on"] = json!(["missing"])),
-            DomainErrorKind::UnknownScope
-        );
-    }
-    #[test]
-    fn rejects_cyclic_scope_dependencies() {
-        assert_eq!(
-            error(|v| v["scopes"][0]["depends_on"] = json!(["review"])),
-            DomainErrorKind::CyclicScope
-        );
-    }
-    #[test]
-    fn rejects_duplicate_fact() {
-        assert_eq!(
-            error(|v| v["facts"] = json!(["approved", "approved"])),
-            DomainErrorKind::DuplicateFact
-        );
-    }
-    #[test]
-    fn rejects_duplicate_state() {
-        assert_eq!(
-            error(|v| v["scopes"][0]["states"] = json!(["ready", "ready"])),
-            DomainErrorKind::DuplicateState
-        );
-    }
-    #[test]
-    fn rejects_duplicate_action() {
-        assert_eq!(
-            error(|v| v["scopes"][0]["actions"] = json!(["notify", "notify"])),
-            DomainErrorKind::DuplicateAction
-        );
-    }
-    #[test]
-    fn rejects_duplicate_dependency() {
-        assert_eq!(
-            error(|v| v["scopes"][0]["depends_on"] = json!(["review", "review"])),
-            DomainErrorKind::DuplicateDependency
-        );
-    }
-    #[test]
-    fn rejects_duplicate_collection() {
-        assert_eq!(
-            error(|v| {
-                let item = v["collections"][0].clone();
-                v["collections"].as_array_mut().unwrap().push(item);
-            }),
-            DomainErrorKind::DuplicateCollection
-        );
-    }
-    #[test]
-    fn rejects_unknown_collection_policy() {
-        assert_eq!(
-            error(|v| v["policies"][0]["collection"] = json!("missing")),
-            DomainErrorKind::UnknownCollection
-        );
-    }
-    #[test]
-    fn rejects_duplicate_policy() {
-        assert_eq!(
-            error(|v| {
-                let item = v["policies"][0].clone();
-                v["policies"].as_array_mut().unwrap().push(item);
-            }),
-            DomainErrorKind::DuplicatePolicy
-        );
-    }
-    #[test]
-    fn rejects_duplicate_binding() {
-        assert_eq!(
-            error(|v| {
-                let item = v["bindings"][0].clone();
-                v["bindings"].as_array_mut().unwrap().push(item);
-            }),
-            DomainErrorKind::DuplicateBinding
-        );
-    }
-    #[test]
-    fn rejects_unknown_binding() {
-        assert_eq!(
-            error(|v| v["decision"]["expression"]["binding"] = json!("missing")),
-            DomainErrorKind::UnknownBinding
-        );
-    }
-    #[test]
-    fn rejects_unknown_fact() {
-        assert_eq!(
-            error(|v| v["decision"]["expression"] = json!({"kind":"fact","name":"missing"})),
-            DomainErrorKind::UnknownFact
-        );
-    }
-    #[test]
-    fn rejects_literal_type_mismatch() {
-        assert_eq!(
-            error(|v| v["decision"]["expression"]["value"] = json!("yes")),
-            DomainErrorKind::InvalidLiteral
-        );
-    }
-    #[test]
-    fn rejects_unknown_state() {
-        assert_eq!(
-            error(|v| v["decision"]["then"]["state"] = json!("missing")),
-            DomainErrorKind::UnknownState
-        );
-    }
-    #[test]
-    fn rejects_unknown_action() {
-        assert_eq!(
-            error(|v| v["decision"]["then"]["action"] = json!("missing")),
-            DomainErrorKind::UnknownAction
-        );
-    }
-    #[test]
-    fn rejects_empty_expression_list() {
-        assert_eq!(
-            error(|v| v["decision"]["expression"] = json!({"kind":"all","items":[]})),
-            DomainErrorKind::InvalidExpression
-        );
-    }
+    let mut decoder = serde_json::Deserializer::from_slice(bytes);
+    let result = Unique::deserialize(&mut decoder).map_err(|e| {
+        error(
+            if e.to_string().contains("duplicate key:") {
+                DomainErrorKind::DuplicateSymbol
+            } else {
+                DomainErrorKind::UnknownConstruct
+            },
+            "json",
+            e.to_string(),
+        )
+    })?;
+    decoder
+        .end()
+        .map_err(|e| error(DomainErrorKind::UnknownConstruct, "json", e.to_string()))?;
+    Ok(result.0)
 }

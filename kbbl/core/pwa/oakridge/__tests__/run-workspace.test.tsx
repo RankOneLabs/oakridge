@@ -124,7 +124,7 @@ describe("run diagnosis workspace", () => {
 
   it("Retry shows only for retryable units", async () => {
     const retryable: RunDiagnosis = { ...diagnosis, run: { ...diagnosis.run, stages: [{
-      ...diagnosis.run.stages[0]!, units: [{ ...diagnosis.run.stages[0]!.units![0]!, retryable: true, workers: [{ worker: "provision", record: { state: "interrupted", active_execution_id: null, outputs: { repository_refs: null }, response: null, interrupted: null, executions: [] } }] }],
+      ...diagnosis.run.stages[0]!, units: [{ ...diagnosis.run.stages[0]!.units![0]!, retryable: true, workers: [{ worker: "provision", record: { state: "interrupted", interrupted: null } }] }],
     }] } };
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
       String(input).endsWith("/diagnosis") ? json(retryable) : json([]));

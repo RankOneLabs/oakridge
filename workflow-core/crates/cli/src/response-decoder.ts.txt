@@ -1,0 +1,55 @@
+// Decoder generated with the schema above; arbitrary JSON is confined to this boundary.
+type ProtocolSchema = boolean | ProtocolSchemaObject;
+interface ProtocolSchemaObject {
+  readonly $ref?: string;
+  readonly type?: string | readonly string[];
+  readonly const?: unknown;
+  readonly enum?: readonly unknown[];
+  readonly oneOf?: readonly ProtocolSchema[];
+  readonly anyOf?: readonly ProtocolSchema[];
+  readonly allOf?: readonly ProtocolSchema[];
+  readonly required?: readonly string[];
+  readonly properties?: { readonly [key: string]: ProtocolSchema };
+  readonly additionalProperties?: boolean | ProtocolSchema;
+  readonly items?: ProtocolSchema;
+  readonly minimum?: number;
+  readonly maximum?: number;
+}
+function matchesProtocolSchema(value: unknown, schema: ProtocolSchema, definitions: { readonly [key: string]: ProtocolSchema }, depth: number): boolean {
+  if (depth > 128) return false;
+  if (typeof schema === "boolean") return schema;
+  if (schema.$ref) {
+    const resolved = definitions[schema.$ref.replace("#/$defs/", "")];
+    return resolved !== undefined && matchesProtocolSchema(value, resolved, definitions, depth + 1);
+  }
+  if (Object.hasOwn(schema, "const") && value !== schema.const) return false;
+  if (schema.enum && !schema.enum.includes(value)) return false;
+  if (schema.oneOf && schema.oneOf.filter((member) => matchesProtocolSchema(value, member, definitions, depth + 1)).length !== 1) return false;
+  if (schema.anyOf && !schema.anyOf.some((member) => matchesProtocolSchema(value, member, definitions, depth + 1))) return false;
+  if (schema.allOf && !schema.allOf.every((member) => matchesProtocolSchema(value, member, definitions, depth + 1))) return false;
+  const types = typeof schema.type === "string" ? [schema.type] : schema.type;
+  if (types && !types.some((type) => type === "null" ? value === null
+    : type === "array" ? Array.isArray(value)
+    : type === "object" ? typeof value === "object" && value !== null && !Array.isArray(value)
+    : type === "integer" ? typeof value === "number" && Number.isSafeInteger(value)
+    : type === "number" ? typeof value === "number" && Number.isFinite(value)
+    : typeof value === type)) return false;
+  if (typeof value === "number" && ((schema.minimum !== undefined && value < schema.minimum) || (schema.maximum !== undefined && value > schema.maximum))) return false;
+  const itemSchema = schema.items;
+  if (Array.isArray(value) && itemSchema && !value.every((member) => matchesProtocolSchema(member, itemSchema, definitions, depth + 1))) return false;
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    const record = value as { readonly [key: string]: unknown };
+    if (schema.required?.some((key) => !Object.hasOwn(record, key))) return false;
+    for (const [key, member] of Object.entries(record)) {
+      const property = Object.hasOwn(schema.properties ?? {}, key) ? schema.properties?.[key] : undefined;
+      if (property !== undefined && !matchesProtocolSchema(member, property, definitions, depth + 1)) return false;
+      if (property === undefined && schema.additionalProperties === false) return false;
+      if (property === undefined && typeof schema.additionalProperties === "object" && !matchesProtocolSchema(member, schema.additionalProperties, definitions, depth + 1)) return false;
+    }
+  }
+  return true;
+}
+export function decodeCoreResponse(value: unknown): CoreResponse | null {
+  const schema: ProtocolSchema = CORE_PROTOCOL_SCHEMA.response;
+  return matchesProtocolSchema(value, schema, CORE_PROTOCOL_SCHEMA.response.$defs, 0) ? value as CoreResponse : null;
+}

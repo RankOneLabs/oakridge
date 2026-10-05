@@ -1,8 +1,8 @@
 import { expect, it } from "vitest";
 import { selectWorkerReviewActions } from "./worker-review-actions";
 import { selectWorkerRetryRequest } from "./worker-retry-request";
-import type { OperatorArtifactReviewContext } from "../../../../../oakridge-dbos/src/domain/v15-operator-review";
-import type { V15WorkerKey } from "../../../../../oakridge-dbos/src/domain/dev-flow-v15";
+import type { OperatorArtifactReviewContext } from "../review-command-types";
+import type { WorkerKey } from "../operator-worker-types";
 
 it("brief decisions address the whole accepted-plan collection", () => {
   const target = { members: [{ cohort_key: "api" as never, ref: { id: "one" as never, version: 2 } },
@@ -30,7 +30,7 @@ it("final confirmation carries the exact summary, URL and verified head", () => 
     .toEqual([{ kind: "confirm_merged", target }, { kind: "closed_without_merge", target }]);
 });
 it("each interrupted worker has its own typed retry", () => {
-  const workers: V15WorkerKey[] = ["provision", "spec", "plan", "brief", "build", "assessment", "final_integration"];
+  const workers: WorkerKey[] = ["provision", "spec", "plan", "brief", "build", "assessment", "final_integration"];
   expect(workers.map((worker) => selectWorkerRetryRequest(worker).kind))
     .toEqual(["retry_provision", "retry_analysis", "retry_plan", "retry_briefs", "retry_build", "retry_assessment", "retry_final_integration"]);
 });
