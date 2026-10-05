@@ -559,7 +559,10 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     // not queued here as work.
     const gates = allGates.filter((gate) => gate.actionable);
     const names = new Map(runs.map((run) => [run.id, run.workflow_name]));
-    const cohorts = projectedCohorts.map((cohort): OperatorCohortSummary => {
+    // Cancellation leaves cohort history intact, including cancelled units
+    // projected as failed. None of that history needs recovery or admission.
+    const cancelledRuns = new Set(runs.filter((run) => run.status === "cancelled").map((run) => run.id));
+    const cohorts = projectedCohorts.filter((cohort) => !cancelledRuns.has(cohort.run_id)).map((cohort): OperatorCohortSummary => {
       const gate = gates.find((candidate) => candidate.run_id === cohort.run_id && candidate.stage_instance_id === cohort.stage_instance_id && candidate.unit_id === cohort.unit_id);
       if (!gate) return cohort;
       const lifecycle: OperatorCohortLifecycle = gate.gate_step === "merge_confirmation" ? "merge_confirmation" : "artifact_review";
