@@ -1,11 +1,13 @@
-import type { CheckedValue, CommandDefinition, DefinitionBundle, DecisionOutcome, Trigger, VersionedValue } from "../core-client/generated-contracts";
+import type { CommandDefinition, DefinitionBundle, Trigger, VersionedValue } from "../core-client/generated-contracts";
 import type { CoreClient } from "../core-client/client";
 import type { MutationService } from "../storage/mutation-service";
 import { readSnapshot } from "../storage/snapshot-reader";
 import type { RunId, ScopeId } from "../storage/schema-records";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
+import { findReceipt, requestDigest } from "../storage/receipts";
+import { availableCommand, targetsMatch, type TargetRevision } from "../storage/command-selection";
+export { availableCommand, targetsMatch, type TargetRevision } from "../storage/command-selection";
 
-export interface TargetRevision { readonly identity: string; readonly version: number }
 export interface ScopeCommandRequest {
   readonly command_key: string;
   readonly payload: unknown;
@@ -36,17 +38,6 @@ export function parseScopeCommand(value: unknown, scope_id: ScopeId): ScopeComma
     expected_scope_version: value.expected_scope_version, targets: value.targets as TargetRevision[] };
 }
 
-export function availableCommand(definition: DefinitionBundle, scope_key: string, state: CheckedValue, command_key: string): CommandDefinition | null {
-  const command = definition.scopes.find((scope) => scope.key === scope_key)?.commands.find((item) => item.key === command_key);
-  if (!command) return null;
-  const state_key = state.data.kind === "variant" ? state.data.variant : state.data.kind === "enum" ? state.data.variant : null;
-  return command.available_in.length === 0 || (state_key !== null && command.available_in.includes(state_key)) ? command : null;
-}
-
-export function targetsMatch(command: CommandDefinition, outcome: DecisionOutcome, submitted: readonly TargetRevision[], current: readonly TargetRevision[]): boolean {
-  return outcome.kind === "apply" && outcome.targets.length === command.targets.length && submitted.length === current.length
-    && current.length === command.targets.length && current.every((target, index) => target.identity === submitted[index]?.identity && target.version === submitted[index]?.version);
-}
 export async function currentTargetRevisions(db: TransactionalSqlExecutor, scope_id: ScopeId, command: CommandDefinition, observations: readonly VersionedValue[]): Promise<readonly TargetRevision[]> {
   const targets: TargetRevision[] = [];
   for (const expression of command.targets) {
@@ -72,6 +63,10 @@ export async function currentTargetRevisions(db: TransactionalSqlExecutor, scope
 export interface CommandDependencies { readonly db: TransactionalSqlExecutor; readonly core: CoreClient; readonly mutations: MutationService }
 export async function submitScopeCommand(deps: CommandDependencies, run_id: RunId, request: ScopeCommandRequest): Promise<CommandResult> {
   try {
+    const request_digest = requestDigest(request);
+    const prior = await findReceipt(deps.db, { run_id, scope_id: request.scope_id, ingress_id: request.request_id, request_digest });
+    if (prior.kind === "replay") return { ok: true, value: new PendingWork(request.request_id, prior.receipt.transition_id, prior.receipt.scope_version) };
+    if (prior.kind === "conflict") return { ok: false, error: new ConflictError("request ID reused with different command content") };
     const source = await readSnapshot(deps.db, request.scope_id, { id: request.request_id, key: request.command_key,
       payload: { schema: "", data: { kind: "boolean", value: false } } });
     if (!source || source.owner.run_id !== run_id) return { ok: false, error: new MissingEntityError("scope not found in run") };
@@ -87,14 +82,16 @@ export async function submitScopeCommand(deps: CommandDependencies, run_id: RunI
     if (!checked.ok) return { ok: false, error: checked.error.kind === "transport" ? new TransientServiceError(checked.error.detail.detail) : new InvalidPayloadError(checked.error.detail.detail) };
     if (checked.value.kind !== "validated") return { ok: false, error: new InternalFaultError("core returned unexpected validation result") };
     const trigger: Trigger = { id: request.request_id, key: request.command_key, payload: checked.value.value };
-    const evaluated = await deps.core.request("evaluate", { bundle, available_operations: bundle.operations, snapshot: { ...source.snapshot, trigger } });
+    const decision_source = { ...source, snapshot: { ...source.snapshot, trigger } };
+    const evaluated = await deps.core.request("evaluate", { bundle, available_operations: bundle.operations, snapshot: decision_source.snapshot });
     if (!evaluated.ok) return { ok: false, error: evaluated.error.kind === "transport" ? new TransientServiceError(evaluated.error.detail.detail) : new InvalidPayloadError(evaluated.error.detail.detail) };
     if (evaluated.value.kind !== "evaluated") return { ok: false, error: new InternalFaultError("core returned unexpected evaluation result") };
     if (evaluated.value.value.kind === "reject") return { ok: false, error: new InvalidPayloadError(evaluated.value.value.error) };
     const current_targets = await currentTargetRevisions(deps.db, request.scope_id, command, source.snapshot.observations);
     if (command.targets.length && !targetsMatch(command, evaluated.value.value, request.targets, current_targets)) return { ok: false, error: new ConflictError("target revisions changed") };
     const decided = await deps.mutations.decide({ run_id, scope_id: request.scope_id, ingress_id: request.request_id, trigger,
-      operator_version: request.expected_scope_version });
+      operator_version: request.expected_scope_version,
+      prepared: { request_digest, decision: { source: decision_source, outcome: evaluated.value.value } } });
     if (!decided.ok) return { ok: false, error: new InternalFaultError(decided.error.detail) };
     if (decided.value.kind === "Conflict") return { ok: false, error: new ConflictError(decided.value.detail) };
     if (decided.value.kind === "Rejected") return { ok: false, error: new InvalidPayloadError(decided.value.detail) };

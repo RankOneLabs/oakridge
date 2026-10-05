@@ -1,7 +1,7 @@
 import type { CheckedValue, CommandDefinition, DefinitionBundle, DecisionOutcome } from "../core-client/generated-contracts";
 import type { ScopeId, ScopeInstanceRecord, ExecutionRecord, OutputSlotRecord, ResourceBindingRecord } from "../storage/schema-records";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
-import { availableCommand } from "../http/scope-commands";
+import { availableCommand } from "../storage/command-selection";
 
 export interface ProjectionCursor { readonly scope_version: number; readonly transition_id: string | null }
 export interface ScopeView {

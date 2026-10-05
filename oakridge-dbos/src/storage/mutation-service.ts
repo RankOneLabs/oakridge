@@ -1,7 +1,7 @@
 import type { CheckedProgram, DecisionOutcome, DefinitionBundle, OperationManifest, Trigger } from "../core-client/generated-contracts";
 import type { CoreClient } from "../core-client/client";
 import { commitDecision, type CommitRequest, type CommitResult, type OutputPublication, type Result } from "./commit";
-import { requestDigest, findReceipt } from "./receipts";
+import { requestDigest, findReceipt, type IngressIdentity } from "./receipts";
 import { readSnapshot, type AuthoritySnapshot } from "./snapshot-reader";
 import type { RunId, ScopeId } from "./schema-records";
 import type { TransactionalSqlExecutor } from "./sql-executor";
@@ -12,9 +12,14 @@ export interface StartRunRequest extends CompileRequest { readonly input: unknow
 export interface EvaluationInput { readonly source: AuthoritySnapshot; readonly bundle: DefinitionBundle; readonly available_operations: readonly OperationManifest[] }
 export interface EvaluationResult { readonly decision: DecisionOutcome }
 export interface Decision { readonly source: AuthoritySnapshot; readonly outcome: DecisionOutcome }
-export interface MutationInput { readonly run_id: RunId; readonly scope_id: ScopeId; readonly ingress_id: string; readonly trigger: Trigger; readonly operator_version: number | null; readonly outputs?: readonly OutputPublication[] }
+export interface PreparedDecision { readonly request_digest: string; readonly decision: Decision }
+export interface MutationInput { readonly run_id: RunId; readonly scope_id: ScopeId; readonly ingress_id: string; readonly trigger: Trigger; readonly operator_version: number | null; readonly outputs?: readonly OutputPublication[]; readonly prepared?: PreparedDecision }
 export interface StartedRun { readonly run_id: RunId; readonly root_scope_id: ScopeId; readonly bundle_id: string }
 export interface MutationService { compile(request: CompileRequest): Promise<Result<CompileResult>>; startRun(request: StartRunRequest): Promise<Result<StartedRun>>; decide(input: MutationInput): Promise<Result<CommitResult>> }
+
+function selectMutationIdentity(input: MutationInput): IngressIdentity {
+  return { run_id: input.run_id, scope_id: input.scope_id, ingress_id: input.ingress_id, request_digest: input.prepared?.request_digest ?? requestDigest({ trigger: input.trigger, outputs: input.outputs ?? [], operator_version: input.operator_version }) };
+}
 
 function error(operation: string, entity_id: string, detail: string): Result<never> { return { ok: false, error: { operation, entity_id, detail } }; }
 export async function compileBundle(core: CoreClient, request: CompileRequest): Promise<Result<CompileResult>> {
@@ -37,7 +42,7 @@ export function prepareCommit(input: MutationInput, decision: Decision): Result<
   }) : [];
   const effects = decision.outcome.kind === "apply" ? decision.outcome.invocations.map((invocation, index) => ({ effect_key: `${input.ingress_id}:${index}`, payload: invocation.input, execution_id: null })) : [];
   if (decision.outcome.kind === "apply" && capacity.length !== decision.outcome.mutations.filter((mutation) => mutation.kind === "acquire" || mutation.kind === "release").length) return error("prepare_commit", input.scope_id, "capacity pool missing");
-  return { ok: true, value: { identity: { run_id: input.run_id, scope_id: input.scope_id, ingress_id: input.ingress_id, request_digest: requestDigest({ trigger: input.trigger, outputs: input.outputs ?? [], operator_version: input.operator_version }) },
+  return { ok: true, value: { identity: selectMutationIdentity(input),
     read_set: decision.source.read_set, decision: decision.outcome, outputs: input.outputs ?? [], capacity, effects, operator_version: input.operator_version } };
 }
 export function createMutationService(db: TransactionalSqlExecutor, core: CoreClient): MutationService {
@@ -76,20 +81,22 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
       } catch (cause) { return error("start_run", run_id, String(cause)); }
     },
     async decide(input) {
-      const identity = { run_id: input.run_id, scope_id: input.scope_id, ingress_id: input.ingress_id, request_digest: requestDigest({ trigger: input.trigger, outputs: input.outputs ?? [], operator_version: input.operator_version }) };
+      const identity = selectMutationIdentity(input);
       try {
         const prior = await findReceipt(db, identity);
         if (prior.kind === "replay") return { ok: true, value: { kind: "Replayed", receipt: prior.receipt } };
         if (prior.kind === "conflict") return { ok: true, value: { kind: "Conflict", detail: "ingress identity reused with different request content" } };
         for (let attempt = 0; attempt < 3; attempt++) {
-          const source = await readSnapshot(db, input.scope_id, input.trigger);
+          const source = input.prepared?.decision.source ?? await readSnapshot(db, input.scope_id, input.trigger);
           if (!source || source.owner.run_id !== input.run_id) return error("decide", input.scope_id, "scope not found in run");
           if (input.operator_version !== null && input.operator_version !== source.owner.version) return { ok: true, value: { kind: "Conflict", detail: "operator target changed; refresh decision" } };
           if (source.owner.is_terminal) return { ok: true, value: { kind: "Rejected", detail: "owner is terminal" } };
           const bundles = await db.query<{ source: DefinitionBundle }>("SELECT b.source FROM authority.definition_bundle b JOIN authority.run r ON r.definition_bundle_id=b.id WHERE r.id=$1", [input.run_id]);
           const bundle = bundles[0]?.source;
           if (!bundle) return error("decide", input.run_id, "definition bundle missing");
-          const evaluated = await evaluateSnapshot(core, { source, bundle, available_operations: bundle.operations });
+          const evaluated: Result<EvaluationResult> = input.prepared
+            ? { ok: true, value: { decision: input.prepared.decision.outcome } }
+            : await evaluateSnapshot(core, { source, bundle, available_operations: bundle.operations });
           if (!evaluated.ok) return evaluated;
           const request = prepareCommit(input, { source, outcome: evaluated.value.decision });
           if (!request.ok) return request;
