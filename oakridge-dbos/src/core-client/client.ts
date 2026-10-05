@@ -1,10 +1,12 @@
-import type { CoreRequest, CoreResponse, CoreResponseResult, CoreTransportKind } from "./generated-contracts";
+import type { CoreRequest, CoreResponse, CoreResponseResult, CoreTransportKind, Output } from "./generated-contracts";
 import { transportFailure, type CoreResult } from "./transport-errors";
 
 interface Pending {
-  readonly resolve: (result: CoreResult<unknown>) => void;
+  readonly resolve: (result: CoreResult<Output>) => void;
   readonly timeout: ReturnType<typeof setTimeout>;
 }
+
+type RequestInput<O extends CoreRequest["operation"]> = Extract<CoreRequest, { readonly operation: O }>["input"];
 
 export interface CoreClientOptions {
   readonly binary: string;
@@ -35,7 +37,7 @@ function isResponse(value: unknown): value is CoreResponse {
   return false;
 }
 
-function resultFromResponse(result: CoreResponseResult): CoreResult<unknown> {
+function resultFromResponse(result: CoreResponseResult): CoreResult<Output> {
   switch (result.status) {
     case "ok": return { ok: true, value: result.value };
     case "domain_error": return { ok: false, error: { kind: "domain", detail: result.value } };
@@ -121,10 +123,10 @@ export class CoreClient {
     }
   }
 
-  async request(operation: CoreRequest["operation"], input: unknown): Promise<CoreResult<unknown>> {
+  async request<O extends CoreRequest["operation"]>(operation: O, input: RequestInput<O>): Promise<CoreResult<Output>> {
     if (this.terminated) return transportFailure("terminated_child", "core child exited");
     const request_id = String(++this.nextId);
-    const request: CoreRequest = { version: 1, request_id, operation, input };
+    const request = { version: 1, request_id, operation, input } as CoreRequest;
     const frame = JSON.stringify(request) + "\n";
     if (new TextEncoder().encode(frame).length > MAX_FRAME_BYTES) return transportFailure("oversized_payload", "request frame exceeds maximum bytes");
     return new Promise((resolve) => {
