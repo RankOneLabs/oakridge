@@ -42,6 +42,10 @@ export function invocationInput(value: CheckedValue, bundle: DefinitionBundle): 
 }
 
 export interface ProviderRequestSelection { readonly invocation: StableInvocation; readonly bundle: DefinitionBundle; readonly scope_id: string }
+/** Keep the selected action input in the pinned prompt so retries read identical context. */
+export function promptWithActionInput(prompt: string, input: JsonValue): string {
+  return `${prompt}\n\n## Pinned action input\n\n${JSON.stringify(input, null, 2)}\n`;
+}
 export function pinProviderRequest(input: ProviderRequestSelection): Result<StableInvocation> {
   const { invocation, bundle, scope_id } = input;
   const decoded = invocationInput(invocation.selection.input, bundle);
@@ -51,7 +55,8 @@ export function pinProviderRequest(input: ProviderRequestSelection): Result<Stab
     if (!decoded.value || typeof decoded.value !== "object" || Array.isArray(decoded.value)) return { ok: false, error: { operation: "pin_request", entity_id: invocation.id, detail: "kbbl launch input must be a record" } };
     const request: ExecutionRequest = { execution_id: invocation.execution_id as ExecutionId, stage_instance_id: scope_id as StageInstanceId,
       unit_id: invocation.selection.selection.worker as UnitId, executor_type: "delegated_session", resolved_config: { ...decoded.value,
-        ...(invocation.selection.prompt_content !== null && invocation.selection.prompt_content !== undefined ? { rendered_prompt: invocation.selection.prompt_content } : {}) },
+        ...(invocation.selection.prompt_content !== null && invocation.selection.prompt_content !== undefined
+          ? { rendered_prompt: promptWithActionInput(invocation.selection.prompt_content, decoded.value) } : {}) },
       inputs: [], declared_outputs: [], expected_artifacts: [] };
     const rendered = renderSessionStart({ request, operation_id: invocation.id as unknown as ExecutorOperationId, executor_function_identity: "selected-v1" });
     if (rendered.kind !== "acknowledged") return { ok: false, error: { operation: "pin_request", entity_id: invocation.id, detail: rendered.detail } };
