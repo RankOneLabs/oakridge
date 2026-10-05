@@ -5,8 +5,6 @@ They are retained as historical context, not active bugs or a backlog for v2.
 The referenced routes, files, and proposed fixes no longer apply. Removing the
 feature retired these issues; it did not implement the proposed fixes.
 
-For the current stack, see the [v2 operator runbook](oakridge-v2-runbook.md).
-
 ## TOCTOU race in `POST /briefs/:id/build`
 
 **File:** `kbbl/core/server/handlers/builds.ts`

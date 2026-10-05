@@ -102,10 +102,7 @@ jobs:
       - run: cargo build --locked --manifest-path workflow-core/Cargo.toml -p workflow-cli
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
-      - run: bun run --filter oakridge-dbos validate:definitions
       - run: bun run --filter oakridge-dbos test:unit
-      - run: bunx playwright install --with-deps chromium
-      - run: bun run --filter oakridge-dbos test:acceptance
 
   lbc-dashboard-tests:
     name: lbc-dashboard tests (bun)

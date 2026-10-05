@@ -19,18 +19,8 @@ available for read-only viewing; they are not the current execution backend.
 
 ## Quick start
 
-From the repository root, start the complete workflow stack:
-
-```bash
-bun install
-bun run oakridge
-```
-
-Open <http://127.0.0.1:8788/#oakridge>. See the
-[v2 operator runbook](../docs/oakridge-v2-runbook.md) for PostgreSQL, upgrades,
-recovery, and workflow lifecycle.
-
-For standalone sessions without DBOS:
+The workflow backend is intentionally unavailable until m3 authority.
+Start kbbl independently for direct agent sessions:
 
 ```bash
 ./kbbl/scripts/kbbl-start /absolute/path/to/repository
@@ -99,9 +89,6 @@ and initial prompt. Further workflow input uses delivery-keyed requests.
 Cleanup closes or fences the executor only after its work order is completed
 (required outputs released) or abandoned. Artifact emission or the end of the
 initial turn alone is not approval and does not trigger cleanup.
-
-See the [runbook's recovery section](../docs/oakridge-v2-runbook.md#restart-and-recovery)
-before changing application versions or attempting recovery.
 
 ## API overview
 

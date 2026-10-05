@@ -26,75 +26,15 @@ changing workflow or stage semantics.
 
 ## Quick start
 
-Prerequisites: Bun, Git, and either Docker or an existing PostgreSQL database.
+The workflow backend is intentionally unavailable between m0 demolition and
+m3 authority. Run kbbl independently for direct agent sessions:
 
 ```bash
 bun install
-bun run oakridge
+./kbbl/scripts/kbbl-start
 ```
 
-Open <http://127.0.0.1:8788/#oakridge>. The command:
-
-1. creates or starts a persistent `oakridge-postgres` container when
-   `DBOS_SYSTEM_DATABASE_URL` is unset;
-2. applies Oakridge domain migrations;
-3. starts the DBOS backend on `127.0.0.1:8790`;
-4. rebuilds and starts kbbl on `127.0.0.1:8788`; and
-5. stops DBOS and kbbl together on Ctrl-C.
-
-The PostgreSQL container and `oakridge-postgres-data` volume remain running and
-persistent across application restarts. The bundled `dev-flow v14` definition
-is seeded automatically.
-
-To use an existing PostgreSQL database instead of managed Docker:
-
-```bash
-export DBOS_SYSTEM_DATABASE_URL=postgres://user:password@127.0.0.1:5432/oakridge
-bun run oakridge
-```
-
-`DBOS_APPLICATION_VERSION` defaults to the current Git commit. Override it only
-when deliberately operating DBOS application-version routing. Do not reuse a
-version after changing durable workflow operation order.
-
-### Remote operator access
-
-The browser only needs kbbl. Keep DBOS on loopback and expose kbbl on a trusted
-LAN or tailnet:
-
-```bash
-export OAKRIDGE_CONTROL_TOKEN="$(openssl rand -hex 32)"
-bun run oakridge -- --host=0.0.0.0
-```
-
-Open `http://<machine-ip-or-tailnet-name>:8788/#oakridge`. For a temporary
-unauthenticated development bind on a trusted network only:
-
-```bash
-ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1 bun run oakridge -- --host=0.0.0.0
-```
-
-### Separate services
-
-For debugging, first start PostgreSQL and apply migrations, then run:
-
-```bash
-# Terminal 1 — DBOS backend
-cd oakridge-dbos
-export DBOS_SYSTEM_DATABASE_URL=postgres://oakridge:oakridge@127.0.0.1:54329/oakridge
-export DBOS_APPLICATION_VERSION="$(git rev-parse HEAD)"
-export KBBL_BASE_URL=http://127.0.0.1:8788
-export OAKRIDGE_DBOS_HOST=127.0.0.1
-export PORT=8790
-bun run migrate
-bun run start
-
-# Terminal 2 — kbbl and the PWA
-OAKRIDGE_CORE_BASE_URL=http://127.0.0.1:8790 ./kbbl/scripts/kbbl-start
-```
-
-`OAKRIDGE_CORE_BASE_URL` is a retained kbbl configuration name; its upstream is
-now the DBOS backend, not the retired Rust service.
+Open <http://127.0.0.1:8788/>.
 
 ## Development
 
@@ -105,8 +45,7 @@ cd oakridge-dbos && bun test
 cd ../kbbl && bun run test:all
 ```
 
-See [the v2 operator runbook](docs/oakridge-v2-runbook.md) for lifecycle,
-upgrade, recovery, and troubleshooting details. The DBOS replacement decisions
+The DBOS replacement decisions
 are recorded in [the backend replacement spec](comms/oakridge-dbos-backend-replacement-spec.md).
 
 ## Agent-context files
