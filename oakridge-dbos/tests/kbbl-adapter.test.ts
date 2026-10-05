@@ -3,8 +3,10 @@ import { expect, test } from "bun:test";
 import { KbblExecutorAdapter, selectPromptExpectedArtifacts, selectRemoteWorktreeBase, silentDurationMs } from "../src/adapters/kbbl";
 import type { ExecutionRequest } from "../src/domain/execution";
 import type { ExecutionId, ExecutorOperationId, StageInstanceId, UnitId } from "../src/domain/primitives";
+import type { InvocationId } from "../src/effects/provider";
 
 const attempt = (id: string) => id as ExecutorOperationId;
+const invocation = (id: string) => id as InvocationId;
 
 /** A representative resolved session_identity — the shape every v2 delegated session's resolved_config now carries. */
 const SESSION_IDENTITY = {
@@ -454,4 +456,32 @@ test("a session silent past the bound fails instead of being polled forever", as
 test("a kbbl that reports no activity at all is polled, not failed", async () => {
   const attempt = await observe(silenceAdapter(() => Response.json({ pending: true }, { status: 202 }), 5 * 60_000));
   expect(attempt.kind).toBe("pending");
+});
+
+test("uncertain selected start reconciles by the same identity before cancellation", async () => {
+  const urls: string[] = [];
+  let first = true;
+  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "v1", fetch: async (input, init) => {
+    urls.push(String(input));
+    if (init?.method === "DELETE") return new Response(null, { status: 204 });
+    if (first) { first = false; throw new Error("response lost"); }
+    return Response.json({ kind: "attached", session: { sid: "session-1", status: "live", endReason: null } });
+  } });
+  expect((await adapter.start_selected(buildRequest, invocation("selected-1"))).kind).toBe("uncertain");
+  expect(await adapter.stop_selected(buildRequest, invocation("selected-1"), null)).toEqual({ kind: "acknowledged", value: { stopped: true } });
+  expect(urls[0]).toBe(urls[1]);
+  expect(urls[2]).toContain("/sessions/session-1?");
+});
+
+test("a rejected reconciliation start cannot confirm cleanup of an uncertain execution", async () => {
+  const calls: string[] = [];
+  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl.test", executor_function_identity: "v2", fetch: async (_input, init) => {
+    calls.push(init?.method ?? "GET");
+    return new Response("start refused", { status: 403 });
+  } });
+  const request: ExecutionRequest = { execution_id: "execution-1" as ExecutionId, stage_instance_id: "stage-1" as StageInstanceId,
+    unit_id: "unit-1" as UnitId, executor_type: "delegated_session", resolved_config: { runtime: "claude-code", rendered_prompt: "Build", workdir: "/repo", session_name: "builder", model: null, effort: null, session_identity: SESSION_IDENTITY },
+    inputs: [], declared_outputs: [], expected_artifacts: [] };
+  expect(await adapter.stop_selected(request, invocation("uncertain-start"), null)).toMatchObject({ kind: "uncertain" });
+  expect(calls).toEqual(["PUT"]);
 });

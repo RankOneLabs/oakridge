@@ -14,11 +14,12 @@
 import type { PullRequestObservation } from "../domain/pull-request";
 import { err, ok, type Result } from "../domain/primitives";
 
+export interface PullRequestReadOptions { readonly signal?: AbortSignal }
 export interface PullRequestBranchQuery { readonly owner: string; readonly name: string; readonly head_branch: string; readonly base_branch: string }
 /** Reads one pull request's current state. Absent when it cannot be read. */
 export interface PullRequestReader {
-  find_for_branches?(query: PullRequestBranchQuery): Promise<Result<readonly PullRequestObservation[], PullRequestReadError>>;
-  read(owner: string, name: string, number: number): Promise<Result<PullRequestObservation | null, PullRequestReadError>>;
+  find_for_branches?(query: PullRequestBranchQuery, options?: PullRequestReadOptions): Promise<Result<readonly PullRequestObservation[], PullRequestReadError>>;
+  read(owner: string, name: string, number: number, options?: PullRequestReadOptions): Promise<Result<PullRequestObservation | null, PullRequestReadError>>;
 }
 
 export interface PullRequestReadError {
@@ -58,14 +59,14 @@ export class GithubPullRequestReader implements PullRequestReader {
     this.apiBaseUrl = (config.api_base_url ?? "https://api.github.com").replace(/\/+$/, "");
   }
 
-  async find_for_branches(query: PullRequestBranchQuery): Promise<Result<readonly PullRequestObservation[], PullRequestReadError>> {
+  async find_for_branches(query: PullRequestBranchQuery, options: PullRequestReadOptions = {}): Promise<Result<readonly PullRequestObservation[], PullRequestReadError>> {
     const url = new URL(`${this.apiBaseUrl}/repos/${encodeURIComponent(query.owner)}/${encodeURIComponent(query.name)}/pulls`);
     url.searchParams.set("state", "all");
     url.searchParams.set("head", `${query.owner}:${query.head_branch}`);
     url.searchParams.set("base", query.base_branch);
     url.searchParams.set("per_page", "100");
     let response: Response;
-    try { response = await this.http(url.toString(), { headers: { accept: "application/vnd.github+json",
+    try { response = await this.http(url.toString(), { signal: options.signal, headers: { accept: "application/vnd.github+json",
       authorization: `Bearer ${this.config.token}`, "x-github-api-version": "2022-11-28", "user-agent": this.config.user_agent ?? "oakridge" } }); }
     catch (cause) { return err({ kind: "unavailable", status: null, detail: String(cause) }); }
     if (!response.ok) return err({ kind: "unavailable", status: response.status, detail: "could not discover an existing final pull request" });
@@ -79,16 +80,17 @@ export class GithubPullRequestReader implements PullRequestReader {
     const observations: PullRequestObservation[] = [];
     for (const candidate of candidates) {
       if (typeof candidate.number !== "number") return err({ kind: "unavailable", status: response.status, detail: "pull request candidate has no number" });
-      const observed = await this.read(query.owner, query.name, candidate.number);
+      const observed = await this.read(query.owner, query.name, candidate.number, options);
       if (!observed.ok) return observed;
       if (observed.value?.head_branch === query.head_branch && observed.value.base_branch === query.base_branch) observations.push(observed.value);
     }
     return ok(observations);
   }
 
-  async read(owner: string, name: string, number: number): Promise<Result<PullRequestObservation | null, PullRequestReadError>> {
+  async read(owner: string, name: string, number: number, options: PullRequestReadOptions = {}): Promise<Result<PullRequestObservation | null, PullRequestReadError>> {
     let response: Response;
     try { response = await this.http(`${this.apiBaseUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls/${number}`, {
+      signal: options.signal,
       headers: {
         accept: "application/vnd.github+json",
         authorization: `Bearer ${this.config.token}`,

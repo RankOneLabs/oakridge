@@ -1,3 +1,4 @@
+import type { EffectPayload } from "../effects/leases";
 import type { CheckedProgram, CheckedValue, DecisionOutcome, DefinitionBundle, Materialization } from "../core-client/generated-contracts";
 
 export type Id<Kind extends string> = string & { readonly __id_kind: Kind };
@@ -20,7 +21,7 @@ export interface OutputSlotRecord extends VersionedRecord { readonly scope_id: S
 export interface FactRecord extends VersionedRecord { readonly scope_id: ScopeId; readonly fact_key: string; readonly payload: CheckedValue }
 export interface TransitionRecord extends VersionedRecord { readonly scope_id: ScopeId; readonly trigger_id: string; readonly decision: DecisionOutcome; readonly created_at: Date }
 export interface IngressReceiptRecord extends VersionedRecord { readonly run_id: RunId; readonly scope_id: ScopeId; readonly ingress_id: string; readonly request_digest: string; readonly result: CommitReceipt }
-export interface EffectIntentRecord extends VersionedRecord { readonly scope_id: ScopeId; readonly execution_id: ExecutionId | null; readonly effect_key: string; readonly payload: CheckedValue; readonly status: string }
+export interface EffectIntentRecord extends VersionedRecord { readonly scope_id: ScopeId; readonly execution_id: ExecutionId | null; readonly effect_key: string; readonly payload: CheckedValue | EffectPayload; readonly status: string }
 export interface CapacityPoolRecord extends VersionedRecord { readonly id: PoolId; readonly run_id: RunId; readonly pool_key: string; readonly capacity: number }
 export interface CapacityReservationRecord extends VersionedRecord { readonly pool_id: PoolId; readonly scope_id: ScopeId; readonly is_active: boolean }
 export interface ResourceBindingRecord extends VersionedRecord { readonly scope_id: ScopeId; readonly resource_key: string; readonly observation: CheckedValue | null }

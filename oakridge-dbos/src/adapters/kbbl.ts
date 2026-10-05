@@ -1,5 +1,6 @@
 import { ExecutorStartRejectedError, type ExecutionRequest, type ExpectedArtifactContract, type ExecutorAdapter, type ExecutorObservationAttempt, type ExecutorTerminalObservation, type ExecutorUnavailable, type ExternalExecutionReference } from "../domain/execution";
 import type { ExecutionId, ExecutorOperationId, JsonValue, UnitId } from "../domain/primitives";
+import type { InvocationId, ProviderResult } from "../effects/provider";
 
 /**
  * How long kbbl may hold one observation request open. Well under kbbl's own
@@ -234,27 +235,17 @@ const sessionIdOf = (external_reference: ExternalExecutionReference, execution_i
   return external_reference.session_id;
 };
 
-export class KbblExecutorAdapter implements ExecutorAdapter {
-  readonly executor_type = "delegated_session";
-  private readonly fetch: FetchLike;
+export interface PinnedSessionStop { readonly request: PinnedSessionStart; readonly execution_id: ExecutionId; readonly reference: ExternalExecutionReference | null }
+export interface PinnedSessionStart { readonly session_key: string; readonly body: string }
+export interface SessionStartSelection { readonly request: ExecutionRequest; readonly operation_id: ExecutorOperationId; readonly executor_function_identity: string }
 
-  constructor(private readonly options: KbblExecutorAdapterOptions) {
-    this.fetch = options.fetch ?? globalThis.fetch;
-  }
-
-  async start_or_attach(request: ExecutionRequest, operation_id: ExecutorOperationId): Promise<ExternalExecutionReference | ExecutorUnavailable> {
-    let config: KbblResolvedConfig;
-    try {
-      config = parseResolvedConfig(request.resolved_config);
-    } catch (error) {
-      throw new ExecutorStartRejectedError(error instanceof Error ? error.message : String(error));
-    }
-    const sessionKey = sessionKeyFor(operation_id, this.options.executor_function_identity);
-    let response: Response;
-    try { response = await this.fetch(`${this.options.base_url}/sessions/resumable/${encodeURIComponent(sessionKey)}`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+/** Render once at selection. Recovery dispatches the returned body without parsing launch material. */
+export function renderSessionStart(input: SessionStartSelection): ProviderResult<PinnedSessionStart> {
+  const { request, operation_id, executor_function_identity } = input;
+  let config: KbblResolvedConfig;
+  try { config = parseResolvedConfig(request.resolved_config); }
+  catch (error) { return { kind: "permanently_rejected", code: "start_rejected", detail: error instanceof Error ? error.message : String(error) }; }
+  return { kind: "acknowledged", value: { session_key: sessionKeyFor(operation_id, executor_function_identity), body: JSON.stringify({
         initial_prompt: config.rendered_prompt + publicationInstructions(config, request),
         workdir: config.workdir,
         name: config.session_name,
@@ -273,7 +264,76 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
           ...(config.session_identity.cohort_title ? { cohort_title: config.session_identity.cohort_title } : {}),
           ...(config.session_identity.repository_key ? { repository_key: config.session_identity.repository_key } : {}),
         },
-      }),
+      }) } };
+}
+
+export class KbblExecutorAdapter implements ExecutorAdapter {
+  readonly executor_type = "delegated_session";
+  private readonly fetch: FetchLike;
+
+  constructor(private readonly options: KbblExecutorAdapterOptions) {
+    this.fetch = options.fetch ?? globalThis.fetch;
+  }
+
+  /** Typed leaf operation over a pinned request and invocation identity. */
+  async start_selected(request: ExecutionRequest, invocation_id: InvocationId): Promise<ProviderResult<ExternalExecutionReference>> {
+    try {
+      const result = await this.start_or_attach(request, invocation_id as unknown as ExecutorOperationId);
+      return result.kind === "executor_unavailable" ? { kind: "uncertain", detail: result.detail }
+        : { kind: "acknowledged", value: result };
+    } catch (error) {
+      if (error instanceof ExecutorStartRejectedError) return { kind: "permanently_rejected", code: "start_rejected", detail: error.message };
+      return { kind: "uncertain", detail: String(error) };
+    }
+  }
+
+  async start_pinned(request: PinnedSessionStart): Promise<ProviderResult<ExternalExecutionReference>> {
+    try {
+      const result = await this.start_request(request);
+      return result.kind === "executor_unavailable" ? { kind: "uncertain", detail: result.detail } : { kind: "acknowledged", value: result };
+    } catch (error) {
+      return error instanceof ExecutorStartRejectedError ? { kind: "permanently_rejected", code: "start_rejected", detail: error.message }
+        : { kind: "uncertain", detail: String(error) };
+    }
+  }
+
+  async stop_pinned(input: PinnedSessionStop): Promise<ProviderResult<{ readonly stopped: true }>> {
+    let reference = input.reference;
+    if (!reference) {
+      const reconciled = await this.start_pinned(input.request);
+      if (reconciled.kind !== "acknowledged") return { kind: "uncertain", detail: reconciled.detail };
+      reference = reconciled.value;
+    }
+    const stopped = await this.cancel_or_fence(input.execution_id, reference);
+    return stopped?.kind === "executor_unavailable" ? { kind: "transiently_unavailable", detail: stopped.detail } : { kind: "acknowledged", value: { stopped: true } };
+  }
+
+  /** An uncertain start is reconciled by its original identity before stop. */
+  async stop_selected(request: ExecutionRequest, invocation_id: InvocationId, reference: ExternalExecutionReference | null): Promise<ProviderResult<{ readonly stopped: true }>> {
+    let known = reference;
+    if (!known) {
+      const reconciled = await this.start_selected(request, invocation_id);
+      if (reconciled.kind === "permanently_rejected") return { kind: "uncertain", detail: `cannot prove cleanup: ${reconciled.code}: ${reconciled.detail}` };
+      if (reconciled.kind !== "acknowledged") return { kind: "uncertain", detail: reconciled.detail };
+      known = reconciled.value;
+    }
+    const stopped = await this.cancel_or_fence(request.execution_id, known);
+    return stopped?.kind === "executor_unavailable" ? { kind: "transiently_unavailable", detail: stopped.detail }
+      : { kind: "acknowledged", value: { stopped: true } };
+  }
+
+  async start_or_attach(request: ExecutionRequest, operation_id: ExecutorOperationId): Promise<ExternalExecutionReference | ExecutorUnavailable> {
+    const rendered = renderSessionStart({ request, operation_id, executor_function_identity: this.options.executor_function_identity });
+    if (rendered.kind !== "acknowledged") throw new ExecutorStartRejectedError(rendered.detail);
+    return this.start_request(rendered.value);
+  }
+
+  private async start_request(request: PinnedSessionStart): Promise<ExternalExecutionReference | ExecutorUnavailable> {
+    let response: Response;
+    try { response = await this.fetch(`${this.options.base_url}/sessions/resumable/${encodeURIComponent(request.session_key)}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: request.body,
     }); } catch (error) { return { kind: "executor_unavailable", operation: "start_or_attach", detail: String(error) }; }
     if (!response.ok) {
       if (response.status >= 400 && response.status < 500) throw new ExecutorStartRejectedError(`kbbl ensure-session failed (${response.status}): ${await response.text()}`);

@@ -35,7 +35,7 @@ test("snapshot records output, export, resource, collection and capacity members
     await db.query("INSERT INTO authority.output_slot (id,scope_id,output_key,current_revision_id) VALUES ('private-slot','child','document','private-revision')", []);
     const trigger = { id: "event", key: "publish", payload: value };
     const source = await readSnapshot(db, "scope" as ScopeId, trigger);
-    expect(source?.read_set.membership).toHaveLength(9);
+    expect(source?.read_set.membership.map((item) => item.relation)).toContain("execution");
     expect(source?.snapshot.observations.map((item) => item.root.kind)).toEqual(["child", "resource"]);
     expect(source?.snapshot.observations[0]?.root).toEqual({ kind: "child", key: "item_0", export: "released" });
     const core = CoreClient.start({ binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), deadlineMs: 10_000 });

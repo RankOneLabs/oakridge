@@ -5,6 +5,7 @@ export interface GitCommandOutcome {
 }
 
 /** Runs one git command against a repository directory. Implemented at the IO edge. */
+export interface GitCommandOptions { readonly signal?: AbortSignal }
 export interface GitCommandRunner {
-  run(repository_path: string, args: readonly string[]): Promise<GitCommandOutcome>;
+  run(repository_path: string, args: readonly string[], options?: GitCommandOptions): Promise<GitCommandOutcome>;
 }
