@@ -126,6 +126,25 @@
         "item": "member",
         "max_items": 100
       }
+    },
+    {
+      "key": "amendment_request",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "assay_log",
+            "schema": "revision",
+            "required": true
+          },
+          {
+            "key": "current_label",
+            "schema": "revision",
+            "required": true
+          }
+        ],
+        "dictionary": null
+      }
     }
   ],
   "scopes": [
@@ -159,7 +178,7 @@
         },
         {
           "key": "amend",
-          "payload_schema": "unit",
+          "payload_schema": "amendment_request",
           "available_in": [
             "inspection"
           ],
@@ -221,7 +240,7 @@
             "kind": "append_revision"
           },
           "producers": [
-            "potter"
+            "unknown_potter"
           ],
           "collection_key": null
         },
@@ -232,7 +251,7 @@
             "kind": "replace_artifact"
           },
           "producers": [
-            "unknown_potter"
+            "potter"
           ],
           "collection_key": null
         }
@@ -326,28 +345,83 @@
           {
             "variant": "amend",
             "node": {
-              "kind": "apply",
-              "id": "revised_publication",
-              "mutations": [
-                {
-                  "kind": "set_state",
-                  "value": {
-                    "kind": "literal",
-                    "schema": "phase",
-                    "value": {
-                      "kind": "inspection",
-                      "value": {}
+              "kind": "if",
+              "id": "amend_guard",
+              "condition": {
+                "kind": "all",
+                "items": [
+                  {
+                    "kind": "equals",
+                    "left": {
+                      "kind": "reference",
+                      "root": {
+                        "kind": "trigger"
+                      },
+                      "path": [
+                        "assay_log"
+                      ]
+                    },
+                    "right": {
+                      "kind": "reference",
+                      "root": {
+                        "kind": "output",
+                        "key": "assay_log"
+                      },
+                      "path": []
+                    }
+                  },
+                  {
+                    "kind": "equals",
+                    "left": {
+                      "kind": "reference",
+                      "root": {
+                        "kind": "trigger"
+                      },
+                      "path": [
+                        "current_label"
+                      ]
+                    },
+                    "right": {
+                      "kind": "reference",
+                      "root": {
+                        "kind": "output",
+                        "key": "current_label"
+                      },
+                      "path": []
                     }
                   }
-                }
-              ],
-              "actions": [
-                {
-                  "worker": "potter",
-                  "action": "shape"
-                }
-              ],
-              "outcome": null
+                ]
+              },
+              "then": {
+                "kind": "apply",
+                "id": "revised_publication",
+                "mutations": [
+                  {
+                    "kind": "set_state",
+                    "value": {
+                      "kind": "literal",
+                      "schema": "phase",
+                      "value": {
+                        "kind": "inspection",
+                        "value": {}
+                      }
+                    }
+                  }
+                ],
+                "actions": [
+                  {
+                    "worker": "potter",
+                    "action": "shape"
+                  }
+                ],
+                "outcome": null
+              },
+              "otherwise": {
+                "kind": "reject",
+                "id": "amend_denied",
+                "error": "invalid_kiln_command",
+                "detail": "publication predecessor is stale"
+              }
             }
           },
           {

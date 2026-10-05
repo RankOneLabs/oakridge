@@ -536,13 +536,19 @@ fn observed_revision(b: &DefinitionBundle, key: &str, id: &str, version: u64) ->
 }
 
 #[test]
-fn approval_targets_only_the_observed_revision() {
+fn approval_rejects_a_revision_superseded_by_later_publication() {
     let b = bundle("exact-review-target");
     let p = compile(&b, &b.operations).unwrap();
     let mut first = snapshot(&b, json!({}), "inspection", "certify");
     first
         .observations
         .push(observed_revision(&b, "specimen", "r", 3));
+    first.trigger.payload = check_value(
+        &b,
+        &SchemaId::from("inspection_request"),
+        &json!({"specimen":{"brand":"artifact_revision","id":"r"}}),
+    )
+    .unwrap();
     let DecisionOutcome::Apply {
         targets: old_targets,
         explanation: old_pin,
@@ -553,6 +559,16 @@ fn approval_targets_only_the_observed_revision() {
     };
     let mut later = first.clone();
     later.observations[0] = observed_revision(&b, "specimen", "r-plus-one", 4);
+    assert!(matches!(
+        evaluate(&p, &later).unwrap(),
+        DecisionOutcome::Reject { .. }
+    ));
+    later.trigger.payload = check_value(
+        &b,
+        &SchemaId::from("inspection_request"),
+        &json!({"specimen":{"brand":"artifact_revision","id":"r-plus-one"}}),
+    )
+    .unwrap();
     let DecisionOutcome::Apply {
         targets: new_targets,
         explanation: new_pin,
@@ -583,6 +599,24 @@ fn approval_targets_only_the_observed_revision() {
     );
 }
 
+fn reservation_snapshot(
+    b: &DefinitionBundle,
+    phase: &str,
+    command: &str,
+    occupied: usize,
+) -> Snapshot {
+    let mut s = snapshot(b, json!({}), phase, command);
+    s.observations.push(VersionedValue {
+        identity: "pool:furnace_slot".into(),
+        version: occupied as u64 + 1,
+        root: ReferenceRoot::Resource {
+            key: SymbolKey::from("furnace_occupancy"),
+        },
+        value: check_value(b, &SchemaId::from("slot_occupancy"), &json!(occupied)).unwrap(),
+    });
+    s
+}
+
 #[test]
 fn reservation_remains_held_during_pause_review_and_dispatch() {
     let b = bundle("held-reservation");
@@ -599,7 +633,7 @@ fn reservation_remains_held_during_pause_review_and_dispatch() {
     let DecisionOutcome::Apply {
         mutations: next_activation,
         ..
-    } = evaluate(&p, &snapshot(&b, json!({}), "unlit", "light")).unwrap()
+    } = evaluate(&p, &reservation_snapshot(&b, "unlit", "light", 0)).unwrap()
     else {
         panic!()
     };
@@ -610,7 +644,7 @@ fn reservation_remains_held_during_pause_review_and_dispatch() {
     assert_eq!(slots_needed, 1);
     for (index, (phase, command)) in decisions.into_iter().enumerate() {
         let DecisionOutcome::Apply { mutations, .. } =
-            evaluate(&p, &snapshot(&b, json!({}), phase, command)).unwrap()
+            evaluate(&p, &reservation_snapshot(&b, phase, command, occupied)).unwrap()
         else {
             panic!()
         };
@@ -622,10 +656,28 @@ fn reservation_remains_held_during_pause_review_and_dispatch() {
             }
         }
         assert_eq!(occupied, if index == 5 { 0 } else { 1 });
+        let competing = reservation_snapshot(&b, "unlit", "light", occupied);
+        let decision = evaluate(&p, &competing).unwrap();
+        let explanation = match &decision {
+            DecisionOutcome::Apply { explanation, .. }
+            | DecisionOutcome::Reject { explanation, .. } => explanation,
+            _ => panic!("expected capacity decision"),
+        };
         assert_eq!(
-            occupied + slots_needed <= b.scopes[0].pools[0].limit as usize,
-            index == 5
+            explanation
+                .read_set
+                .iter()
+                .find(|pin| pin.identity == "pool:furnace_slot")
+                .unwrap()
+                .version,
+            occupied as u64 + 1
         );
+        if index == 5 {
+            assert!(matches!(decision,
+                DecisionOutcome::Apply { mutations, .. } if mutations.iter().any(|m| matches!(m, MutationValue::Acquire { .. }))));
+        } else {
+            assert!(matches!(decision, DecisionOutcome::Reject { .. }));
+        }
     }
 }
 
@@ -667,7 +719,7 @@ fn replacement_requires_terminal_external_observation() {
 }
 
 #[test]
-fn publication_policies_and_predecessor_pins_are_distinct() {
+fn publication_policies_reject_each_stale_predecessor() {
     let b = bundle("publication-pair");
     let p = compile(&b, &b.operations).unwrap();
     assert!(matches!(
@@ -683,6 +735,13 @@ fn publication_policies_and_predecessor_pins_are_distinct() {
         .push(observed_revision(&b, "assay_log", "log-2", 2));
     s.observations
         .push(observed_revision(&b, "current_label", "label-7", 7));
+    s.trigger.payload = check_value(
+        &b,
+        &SchemaId::from("amendment_request"),
+        &json!({"assay_log":{"brand":"artifact_revision","id":"log-2"},
+                "current_label":{"brand":"artifact_revision","id":"label-7"}}),
+    )
+    .unwrap();
     let DecisionOutcome::Apply {
         targets,
         explanation,
@@ -698,21 +757,54 @@ fn publication_policies_and_predecessor_pins_are_distinct() {
             .map(|o| o.value.clone())
             .collect::<Vec<_>>()
     );
-    assert_eq!(
-        explanation
-            .read_set
+    for (identity, version) in [
+        ("artifact:assay_log", 2),
+        ("artifact:current_label", 7),
+        ("instance", 9),
+    ] {
+        assert_eq!(
+            explanation
+                .read_set
+                .iter()
+                .find(|pin| pin.identity == identity)
+                .unwrap()
+                .version,
+            version
+        );
+    }
+    // Each policy rejects its stale predecessor even while the other is current.
+    for (key, successor, version) in [("assay_log", "log-3", 3), ("current_label", "label-8", 8)] {
+        let mut stale = s.clone();
+        let index = stale
+            .observations
             .iter()
-            .map(|pin| (pin.identity.as_str(), pin.version))
-            .collect::<Vec<_>>(),
-        vec![
-            ("artifact:assay_log", 2),
-            ("artifact:current_label", 7),
-            ("instance", 9)
-        ]
-    );
+            .position(|o| {
+                o.root
+                    == ReferenceRoot::Output {
+                        key: SymbolKey::from(key),
+                    }
+            })
+            .unwrap();
+        stale.observations[index] = observed_revision(&b, key, successor, version);
+        assert!(matches!(
+            evaluate(&p, &stale).unwrap(),
+            DecisionOutcome::Reject { .. }
+        ));
+    }
     let mut republished = s.clone();
     republished.observations[0] = observed_revision(&b, "assay_log", "log-3", 3);
     republished.observations[1] = observed_revision(&b, "current_label", "label-8", 8);
+    assert!(matches!(
+        evaluate(&p, &republished).unwrap(),
+        DecisionOutcome::Reject { .. }
+    ));
+    republished.trigger.payload = check_value(
+        &b,
+        &SchemaId::from("amendment_request"),
+        &json!({"assay_log":{"brand":"artifact_revision","id":"log-3"},
+                "current_label":{"brand":"artifact_revision","id":"label-8"}}),
+    )
+    .unwrap();
     let DecisionOutcome::Apply {
         targets: successors,
         ..

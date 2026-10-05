@@ -130,6 +130,20 @@
         "item": "member",
         "max_items": 100
       }
+    },
+    {
+      "key": "inspection_request",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "specimen",
+            "schema": "revision",
+            "required": true
+          }
+        ],
+        "dictionary": null
+      }
     }
   ],
   "scopes": [
@@ -187,7 +201,7 @@
         },
         {
           "key": "certify",
-          "payload_schema": "unit",
+          "payload_schema": "inspection_request",
           "available_in": [
             "inspection"
           ],
@@ -372,17 +386,47 @@
           {
             "variant": "certify",
             "node": {
-              "kind": "apply",
-              "id": "finish_inspection",
-              "mutations": [],
-              "actions": [],
-              "outcome": {
-                "kind": "literal",
-                "schema": "result",
-                "value": {
-                  "kind": "released",
-                  "value": {}
+              "kind": "if",
+              "id": "certify_guard",
+              "condition": {
+                "kind": "equals",
+                "left": {
+                  "kind": "reference",
+                  "root": {
+                    "kind": "trigger"
+                  },
+                  "path": [
+                    "specimen"
+                  ]
+                },
+                "right": {
+                  "kind": "reference",
+                  "root": {
+                    "kind": "output",
+                    "key": "specimen"
+                  },
+                  "path": []
                 }
+              },
+              "then": {
+                "kind": "apply",
+                "id": "finish_inspection",
+                "mutations": [],
+                "actions": [],
+                "outcome": {
+                  "kind": "literal",
+                  "schema": "result",
+                  "value": {
+                    "kind": "released",
+                    "value": {}
+                  }
+                }
+              },
+              "otherwise": {
+                "kind": "reject",
+                "id": "certify_denied",
+                "error": "invalid_kiln_command",
+                "detail": "specimen revision is stale"
               }
             }
           },

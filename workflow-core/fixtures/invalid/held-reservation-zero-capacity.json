@@ -138,6 +138,14 @@
         "item": "member",
         "max_items": 100
       }
+    },
+    {
+      "key": "slot_occupancy",
+      "shape": {
+        "kind": "integer",
+        "min": 0,
+        "max": 1
+      }
     }
   ],
   "scopes": [
@@ -294,7 +302,12 @@
       ],
       "children": [],
       "exports": [],
-      "resources": [],
+      "resources": [
+        {
+          "key": "furnace_occupancy",
+          "schema": "slot_occupancy"
+        }
+      ],
       "pools": [
         {
           "key": "furnace_slot",
@@ -322,32 +335,58 @@
           {
             "variant": "light",
             "node": {
-              "kind": "apply",
-              "id": "hold_slot",
-              "mutations": [
-                {
-                  "kind": "set_state",
-                  "value": {
-                    "kind": "literal",
-                    "schema": "phase",
-                    "value": {
-                      "kind": "firing",
-                      "value": {}
-                    }
-                  }
+              "kind": "if",
+              "id": "light_guard",
+              "condition": {
+                "kind": "equals",
+                "left": {
+                  "kind": "reference",
+                  "root": {
+                    "kind": "resource",
+                    "key": "furnace_occupancy"
+                  },
+                  "path": []
                 },
-                {
-                  "kind": "acquire",
-                  "pool": "furnace_slot"
+                "right": {
+                  "kind": "literal",
+                  "schema": "slot_occupancy",
+                  "value": 0
                 }
-              ],
-              "actions": [
-                {
-                  "worker": "potter",
-                  "action": "shape"
-                }
-              ],
-              "outcome": null
+              },
+              "then": {
+                "kind": "apply",
+                "id": "hold_slot",
+                "mutations": [
+                  {
+                    "kind": "set_state",
+                    "value": {
+                      "kind": "literal",
+                      "schema": "phase",
+                      "value": {
+                        "kind": "firing",
+                        "value": {}
+                      }
+                    }
+                  },
+                  {
+                    "kind": "acquire",
+                    "pool": "furnace_slot"
+                  }
+                ],
+                "actions": [
+                  {
+                    "worker": "potter",
+                    "action": "shape"
+                  }
+                ],
+                "outcome": null
+              },
+              "otherwise": {
+                "kind": "reject",
+                "id": "light_denied",
+                "error": "invalid_kiln_command",
+                "detail": "furnace slot is occupied"
+              }
             }
           },
           {
