@@ -1,0 +1,15 @@
+{
+  "id": "sample",
+  "version": 1,
+  "facts": ["approved"],
+  "scopes": [{"id":"review","depends_on":[],"states":["ready"],"actions":["notify"]}],
+  "collections": [{"id":"evidence","scope":"review","item_type":"object","required":true}],
+  "policies": [{"id":"approval","collection":"evidence","release":"accepted"}],
+  "bindings": [{"id":"approval","source":"approved","target":"review","value_type":"boolean"}],
+  "decision": {
+    "kind":"if",
+    "expression":{"kind":"equals","binding":"approval","value":true},
+    "then":{"kind":"apply","scope":"review","state":"ready","action":"notify"},
+    "otherwise":{"kind":"wait","reason":"awaiting approval"}
+  }
+}
