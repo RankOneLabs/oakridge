@@ -1,0 +1,103 @@
+import { expect, test } from "bun:test";
+import { resolve } from "node:path";
+import { createProductionComposition } from "../src/runtime/compose";
+import { GithubPullRequestReader } from "../src/runtime/github-pull-requests";
+import { readSnapshot } from "../src/storage/snapshot-reader";
+import type { CheckedValue } from "../src/core-client/generated-contracts";
+import type { EffectPayload } from "../src/effects/leases";
+import { unit, withDatabase, waitUntil, operationBundle, begin } from "./effect-fixture";
+
+test("production prepares the selected repository and routes durable results into configured scope decisions", async () => {
+  await withDatabase(async ({ url, db }) => {
+    const composition = createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1", dispatch: { sweep_ms: 20, concurrency: 2, lease_ms: 1000, provider_timeout_ms: 500 } });
+    try {
+      const bundle = await operationBundle("repository.prepare");
+      const run = await begin(composition, bundle, { repository_path: resolve(import.meta.dir, "../.."), expected_head: null });
+      await waitUntil(async () => (await db.query<{ is_terminal: boolean }>("SELECT is_terminal FROM authority.scope_instance WHERE id=$1", [run.root_scope_id]))[0]?.is_terminal === true);
+      const facts = await db.query<{ fact_key: string }>("SELECT fact_key FROM authority.fact WHERE scope_id=$1", [run.root_scope_id]);
+      expect(facts.some((fact) => fact.fact_key === "prepared")).toBe(true);
+      const source = await readSnapshot(db, run.root_scope_id, { id: "tick", key: "tick", payload: unit });
+      expect(source?.snapshot.observations).toMatchObject([{ root: { kind: "result", worker: "author" }, value: { schema: "leaf_result" } }]);
+      const effects = await db.query<{ payload: EffectPayload; status: string }>("SELECT payload,status FROM authority.effect_intent WHERE scope_id=$1", [run.root_scope_id]);
+      expect(effects[0]?.status).toBe("cleanup_confirmed");
+      expect(effects[0]?.payload.invocation.selection.definition.operation).toBe("repository.prepare");
+    } finally { await composition.close(); }
+  });
+});
+
+test("production routes lost-worktree evidence to the scope's configured recovery", async () => {
+  await withDatabase(async ({ url, db }) => {
+    const composition = createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1", dispatch: { sweep_ms: 20, concurrency: 2, lease_ms: 1000, provider_timeout_ms: 500 } });
+    try {
+      const run = await begin(composition, await operationBundle("repository.prepare"), { repository_path: `/tmp/missing-${crypto.randomUUID()}`, expected_head: null });
+      await waitUntil(async () => (await db.query<{ is_terminal: boolean }>("SELECT is_terminal FROM authority.scope_instance WHERE id=$1", [run.root_scope_id]))[0]?.is_terminal === true);
+      const scope = await db.query<{ outcome: CheckedValue }>("SELECT outcome FROM authority.scope_instance WHERE id=$1", [run.root_scope_id]);
+      expect(scope[0]?.outcome.data).toMatchObject({ kind: "variant", variant: "withdrawn" });
+      expect((await db.query<{ count: string }>("SELECT count(*)::text AS count FROM authority.fact WHERE fact_key='worktree_unrecoverable'", []))[0]?.count).toBe("1");
+    } finally { await composition.close(); }
+  });
+});
+
+test("production PR discovery retries a real HTTP 503 and persists its selected result fact", async () => {
+  let is_available = false;
+  let calls = 0;
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: (request) => {
+    calls++;
+    if (!is_available) return new Response("unavailable", { status: 503 });
+    return new URL(request.url).pathname.endsWith("/pulls") ? Response.json([{ number: 1 }])
+      : Response.json({ number: 1, html_url: "https://forge/pr/1", state: "open", head: { ref: "head", sha: "a".repeat(40) }, base: { ref: "base" }, merged: false, merged_at: null });
+  } });
+  try {
+    await withDatabase(async ({ url, db }) => {
+      const reader = new GithubPullRequestReader({ token: "test", api_base_url: server.url.href });
+      const composition = createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1", pull_requests: reader, dispatch: { sweep_ms: 20, concurrency: 2, lease_ms: 1000, provider_timeout_ms: 500 } });
+      try {
+        const run = await begin(composition, await operationBundle("pull_request.observe"), { query: { owner: "owner", name: "repo", head_branch: "head", base_branch: "base" } });
+        await waitUntil(async () => calls >= 1 && (await db.query<{ status: string }>("SELECT status FROM authority.effect_intent WHERE scope_id=$1", [run.root_scope_id]))[0]?.status === "pending");
+        const before = await db.query<{ payload: EffectPayload }>("SELECT payload FROM authority.effect_intent WHERE scope_id=$1", [run.root_scope_id]);
+        is_available = true;
+        await waitUntil(async () => (await db.query<{ is_terminal: boolean }>("SELECT is_terminal FROM authority.scope_instance WHERE id=$1", [run.root_scope_id]))[0]?.is_terminal === true);
+        const after = await db.query<{ payload: EffectPayload }>("SELECT payload FROM authority.effect_intent WHERE scope_id=$1", [run.root_scope_id]);
+        expect(after[0]?.payload.invocation.bytes).toBe(before[0]?.payload.invocation.bytes);
+        expect((await db.query<{ count: string }>("SELECT count(*)::text AS count FROM authority.fact WHERE fact_key='prepared'", []))[0]?.count).toBe("1");
+      } finally { await composition.close(); }
+    });
+  } finally { server.stop(true); }
+});
+
+test("changed repository head and PR observations cannot enrich a selected kbbl request on replay", async () => {
+  const { sessionBundle } = await import("./effect-fixture");
+  const requests: string[] = [];
+  let should_attach = false;
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: async (request) => {
+    if (request.method === "PUT") {
+      requests.push(await request.text());
+      return should_attach ? Response.json({ kind: "attached", session: { sid: "one-session", status: "live" } }) : new Response("accepted, response lost", { status: 503 });
+    }
+    if (request.method === "DELETE") return Response.json({ stopped: true });
+    return Response.json({ pending: true }, { status: 202 });
+  } });
+  try {
+    await withDatabase(async ({ url, db }) => {
+      const composition = createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1", kbbl_base_url: server.url.href,
+        dispatch: { sweep_ms: 200, concurrency: 2, lease_ms: 1000, provider_timeout_ms: 500 } });
+      try {
+        const selected_head = "a".repeat(40);
+        const run = await begin(composition, await sessionBundle(), { runtime: "claude-code", rendered_prompt: `Review PR 1 at ${selected_head}`, workdir: "/tmp", session_name: "replay",
+          session_identity: { run_id: "selected-run", stage_instance_id: "selected-scope", unit_id: "author" }, worktree: { branchName: "selected", worktreeSubdir: "selected", baseRef: selected_head } });
+        await waitUntil(async () => requests.length >= 1 && (await db.query<{ status: string }>("SELECT status FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='start'", [run.root_scope_id]))[0]?.status === "uncertain");
+        for (const key of ["repository", "pull_request"]) {
+          const changed: CheckedValue = { schema: "metadata", data: { kind: "record", fields: [], dictionary: [{ key: key === "repository" ? "head" : "url", value: { schema: "text", data: { kind: "string", value: key === "repository" ? "b".repeat(40) : "https://forge/pr/2" } } }] } };
+          await db.query("INSERT INTO authority.resource_binding (id,scope_id,resource_key,observation) VALUES ($1,$2,$3,$4)", [key, run.root_scope_id, key, JSON.stringify(changed)]);
+        }
+        should_attach = true;
+        await waitUntil(async () => (await db.query<{ status: string }>("SELECT status FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='start'", [run.root_scope_id]))[0]?.status === "acknowledged");
+        expect(requests.length).toBeGreaterThanOrEqual(2);
+        expect(new Set(requests).size).toBe(1);
+        const cancelled = await composition.app.request(`http://localhost/runs/${run.run_id}/cancel`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: "cancel_run", reason: "operator" }) });
+        expect(await cancelled.json()).toMatchObject({ kind: "cancelled" });
+        await waitUntil(async () => (await db.query<{ status: string }>("SELECT status FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='stop'", [run.root_scope_id]))[0]?.status === "cleanup_confirmed");
+      } finally { await composition.close(); }
+    });
+  } finally { server.stop(true); }
+});

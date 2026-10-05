@@ -472,3 +472,16 @@ test("uncertain selected start reconciles by the same identity before cancellati
   expect(urls[0]).toBe(urls[1]);
   expect(urls[2]).toContain("/sessions/session-1?");
 });
+
+test("a rejected reconciliation start cannot confirm cleanup of an uncertain execution", async () => {
+  const calls: string[] = [];
+  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl.test", executor_function_identity: "v2", fetch: async (_input, init) => {
+    calls.push(init?.method ?? "GET");
+    return new Response("start refused", { status: 403 });
+  } });
+  const request: ExecutionRequest = { execution_id: "execution-1" as ExecutionId, stage_instance_id: "stage-1" as StageInstanceId,
+    unit_id: "unit-1" as UnitId, executor_type: "delegated_session", resolved_config: { runtime: "claude-code", rendered_prompt: "Build", workdir: "/repo", session_name: "builder", model: null, effort: null, session_identity: SESSION_IDENTITY },
+    inputs: [], declared_outputs: [], expected_artifacts: [] };
+  expect(await adapter.stop_selected(request, invocation("uncertain-start"), null)).toMatchObject({ kind: "uncertain" });
+  expect(calls).toEqual(["PUT"]);
+});

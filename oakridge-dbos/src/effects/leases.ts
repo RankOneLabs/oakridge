@@ -1,3 +1,4 @@
+import type { Trigger } from "../core-client/generated-contracts";
 import type { SqlExecutor, TransactionalSqlExecutor } from "../storage/sql-executor";
 import type { ExternalHandle, StableInvocation } from "./provider";
 
@@ -8,6 +9,9 @@ export interface EffectPayload {
   readonly handle: ExternalHandle | null;
   readonly lease?: { readonly owner: string; readonly expires_at: string; readonly fence: number };
   readonly last_detail?: string;
+  readonly evidence?: Trigger;
+  readonly evidence_delivered?: boolean;
+  readonly has_uncertain_start?: boolean;
 }
 export interface EffectIntent {
   readonly id: string;
@@ -31,13 +35,14 @@ export async function claimIntents(db: TransactionalSqlExecutor, owner: string, 
       SELECT DISTINCT ON (scope_id) id FROM authority.effect_intent
       WHERE (status IN ('pending','uncertain','cleanup_pending') AND payload ? 'action')
          OR (status='in_flight' AND (payload->'lease'->>'expires_at')::timestamptz <= now())
-      ORDER BY scope_id,id)
-      ORDER BY e.id LIMIT $1 FOR UPDATE OF e SKIP LOCKED`, [limit]);
+      ORDER BY scope_id,CASE payload->>'action' WHEN 'stop' THEN 0 WHEN 'start' THEN 1 ELSE 2 END,id)
+      ORDER BY CASE e.payload->>'action' WHEN 'stop' THEN 0 WHEN 'start' THEN 1 ELSE 2 END,e.id LIMIT $1 FOR UPDATE OF e SKIP LOCKED`, [limit]);
     const claimed: ClaimedIntent[] = [];
     for (const row of rows) {
       const fence = Number(row.version) + 1;
       const lease = { owner, expires_at: new Date(now.getTime() + lease_ms).toISOString(), fence };
-      const payload: EffectPayload = { ...row.payload, lease };
+      const payload: EffectPayload = { ...row.payload, lease,
+        ...(row.payload.action === "start" && (row.status === "uncertain" || row.status === "in_flight") ? { has_uncertain_start: true } : {}) };
       await tx.query("UPDATE authority.effect_intent SET status='in_flight',payload=$1,version=version+1 WHERE id=$2", [JSON.stringify(payload), row.id]);
       claimed.push({ ...row, payload, status: "in_flight", version: fence, fence, owner });
     }

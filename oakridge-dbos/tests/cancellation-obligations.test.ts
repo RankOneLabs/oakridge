@@ -42,7 +42,7 @@ test("deletion is refused while an external cleanup obligation remains", async (
 
 test("selected invocation survives cancellation and blocks deletion until stop is acknowledged", async () => {
   const adminUrl = process.env.OAKRIDGE_TEST_DATABASE_URL;
-  if (!adminUrl) return;
+  if (!adminUrl) throw new Error("OAKRIDGE_TEST_DATABASE_URL is required for the PostgreSQL integration tests");
   const name = `cancel_${crypto.randomUUID().replaceAll("-", "")}`;
   const admin = new Pool({ connectionString: adminUrl });
   const url = new URL(adminUrl); url.pathname = `/${name}`;
@@ -73,4 +73,38 @@ test("selected invocation survives cancellation and blocks deletion until stop i
     await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
     await admin.end();
   }
+});
+
+test("run cancellation evaluates each scope's declared cancellation policy and retains one stop identity", async () => {
+  const { withDatabase, unit } = await import("./effect-fixture");
+  const { CoreClient } = await import("../src/core-client/client");
+  const { createMutationService } = await import("../src/storage/mutation-service");
+  const { resolve } = await import("node:path");
+  await withDatabase(async ({ db }) => {
+    const started = CoreClient.start({ binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), deadlineMs: 1000 });
+    if (!started.ok) throw new Error(JSON.stringify(started.error));
+    const core = started.value;
+    try {
+      const original: import("../src/core-client/generated-contracts").DefinitionBundle = await Bun.file(resolve(import.meta.dir, "../../workflow-core/fixtures/bundles/children-1.json")).json();
+      const child = original.scopes[1]!;
+      if (child.tree.kind !== "match") throw new Error("child fixture must dispatch triggers");
+      const bundle = { ...original, scopes: [original.scopes[0]!, { ...child, cancellation: { trigger: "halt_child" },
+        commands: child.commands.map((command) => command.key === "cancel" ? { ...command, key: "halt_child" } : command),
+        tree: { ...child.tree, cases: child.tree.cases.map((item) => item.variant === "cancel" ? { variant: "halt_child", node: { kind: "apply" as const, id: "child-policy", actions: [], mutations: [{ kind: "revoke" as const, worker: "author" }, { kind: "stop" as const, worker: "author" }], outcome: { kind: "literal" as const, schema: "result", value: { kind: "released", value: {} } } } } : item.variant === "publish" && item.node.kind === "apply" ? { ...item, node: { ...item.node, outcome: { kind: "literal" as const, schema: "result", value: { kind: "withdrawn", value: {} } } } } : item),
+          otherwise: { kind: "wait" as const, id: "child-wait", continuations: ["publish", "halt_child"], reason: "waiting", attention: { label: "Waiting", trigger: "publish" } } } }] };
+      const mutations = createMutationService(db, core);
+      const run = await mutations.startRun({ bundle, available_operations: bundle.operations, input: {} });
+      if (!run.ok) throw new Error(JSON.stringify(run.error));
+      const input = { run_id: run.value.run_id, scope_id: run.value.root_scope_id, ingress_id: "begin", trigger: { id: "begin", key: "begin", payload: unit }, operator_version: null };
+      expect(await mutations.decide(input)).toMatchObject({ ok: true, value: { kind: "Committed" } });
+      const scopes = await db.query<{ id: import("../src/storage/schema-records").ScopeId }>("SELECT id FROM authority.scope_instance WHERE parent_id=$1", [run.value.root_scope_id]);
+      expect(await mutations.decide({ ...input, scope_id: scopes[0]!.id })).toMatchObject({ ok: true, value: { kind: "Committed" } });
+      expect(await cancelRun(db, { kind: "cancel_run", run_id: run.value.run_id, reason: "operator" }, core)).toMatchObject({ kind: "cancelled", stop_intents: 1 });
+      const outcomes = await db.query<{ scope_key: string; outcome: import("../src/core-client/generated-contracts").CheckedValue }>("SELECT scope_key,outcome FROM authority.scope_instance ORDER BY scope_key", []);
+      expect(outcomes.map((scope) => [scope.scope_key, scope.outcome.data.kind === "variant" ? scope.outcome.data.variant : null])).toEqual([["batch", "withdrawn"], ["document", "released"]]);
+      await cancelRun(db, { kind: "cancel_run", run_id: run.value.run_id, reason: "operator" }, core);
+      expect((await db.query<{ count: string }>("SELECT count(*)::text AS count FROM authority.effect_intent WHERE payload->>'action'='stop'", []))[0]?.count).toBe("1");
+      expect(await deleteRun(db, run.value.run_id)).toMatchObject({ kind: "refused" });
+    } finally { core.close(); }
+  });
 });

@@ -1,6 +1,10 @@
 import type { SqlExecutor, TransactionalSqlExecutor } from "../storage/sql-executor";
 import { pendingCleanupCount, type EffectPayload } from "./leases";
 import { selectedInvocation, type InvocationId } from "./provider";
+import type { CoreClient } from "../core-client/client";
+import { createMutationService } from "../storage/mutation-service";
+import type { DefinitionBundle } from "../core-client/generated-contracts";
+import type { RunId, ScopeId } from "../storage/schema-records";
 import type { DecisionOutcome } from "../core-client/generated-contracts";
 
 export interface CancelRunCommand { readonly kind: "cancel_run"; readonly run_id: string; readonly reason: string }
@@ -44,11 +48,36 @@ export async function materializeSelectedIntents(db: TransactionalSqlExecutor): 
 }
 
 /** Revoke authority and retain a stop identity for every selected start in one transaction. */
-export async function cancelRun(db: TransactionalSqlExecutor, command: CancelRunCommand): Promise<CancelRunResult> {
+export async function cancelRun(db: TransactionalSqlExecutor, command: CancelRunCommand, core?: CoreClient): Promise<CancelRunResult> {
   return db.transaction(async (tx) => {
     await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [command.run_id]);
     const runs = await tx.query<{ id: string }>("SELECT id FROM authority.run WHERE id=$1 FOR UPDATE", [command.run_id]);
     if (!runs.length) return { kind: "missing" };
+    if (core) {
+      const transactional: TransactionalSqlExecutor = { query: tx.query.bind(tx), transaction: (operation) => operation(tx) };
+      const mutations = createMutationService(transactional, core);
+      const bundles = await tx.query<{ source: DefinitionBundle }>("SELECT b.source FROM authority.definition_bundle b JOIN authority.run r ON r.definition_bundle_id=b.id WHERE r.id=$1", [command.run_id]);
+      const bundle = bundles[0]?.source;
+      if (!bundle) throw new Error("cancellation definition bundle missing");
+      const scopes = await tx.query<{ id: ScopeId; scope_key: string; is_terminal: boolean }>(`WITH RECURSIVE descendants AS (
+        SELECT id,scope_key,is_terminal,0 AS depth FROM authority.scope_instance WHERE run_id=$1 AND parent_id IS NULL
+        UNION ALL SELECT s.id,s.scope_key,s.is_terminal,d.depth+1 FROM authority.scope_instance s JOIN descendants d ON s.parent_id=d.id
+      ) SELECT * FROM descendants ORDER BY depth DESC,id`, [command.run_id]);
+      for (const scope of scopes) {
+        if (scope.is_terminal) continue;
+        const definition = bundle.scopes.find((item) => item.key === scope.scope_key);
+        const key = definition?.cancellation.trigger;
+        const trigger = definition?.commands.find((item) => item.key === key) ?? definition?.facts.find((item) => item.key === key);
+        if (!definition || !key || !trigger) throw new Error(`cancellation trigger missing for ${scope.scope_key}`);
+        const schema = bundle.schemas.find((schema) => schema.key === trigger.payload_schema);
+        const payload = schema?.shape.kind === "string" ? command.reason : {};
+        const checked = await core.request("validate_payload", { bundle, available_operations: bundle.operations, schema: trigger.payload_schema, payload });
+        if (!checked.ok || checked.value.kind !== "validated") throw new Error(`invalid cancellation payload for ${scope.scope_key}`);
+        const outcome = await mutations.decide({ run_id: command.run_id as RunId, scope_id: scope.id, ingress_id: `cancel:${scope.id}`,
+          trigger: { id: `cancel:${scope.id}`, key, payload: checked.value.value }, operator_version: null });
+        if (!outcome.ok || (outcome.value.kind !== "Committed" && outcome.value.kind !== "Replayed")) throw new Error(`configured cancellation was not committed for ${scope.scope_key}`);
+      }
+    }
     await hydrate(tx, command.run_id);
     await tx.query(`UPDATE authority.execution_selection SET execution_id=NULL,generation=generation+1,version=version+1
       WHERE scope_id IN (SELECT id FROM authority.scope_instance WHERE run_id=$1) AND execution_id IS NOT NULL`, [command.run_id]);
@@ -94,4 +123,19 @@ export async function deleteRun(db: TransactionalSqlExecutor, run_id: string): P
     await tx.query("DELETE FROM authority.run WHERE id=$1", [run_id]);
     return { kind: "deleted" };
   });
+}
+
+interface EvidenceRow { readonly id: string; readonly scope_id: ScopeId; readonly run_id: RunId; readonly payload: EffectPayload }
+/** Delivery is receipt-backed: a crash after the decision safely repeats the same evidence. */
+export async function deliverEffectFacts(db: TransactionalSqlExecutor, mutations: import("../storage/mutation-service").MutationService): Promise<void> {
+  const rows = await db.query<EvidenceRow>(`SELECT e.id,e.scope_id,s.run_id,e.payload FROM authority.effect_intent e
+    JOIN authority.scope_instance s ON s.id=e.scope_id WHERE e.payload ? 'evidence'
+    AND NOT coalesce((e.payload->>'evidence_delivered')::boolean,false) ORDER BY e.id`, []);
+  for (const row of rows) {
+    const evidence = row.payload.evidence;
+    if (!evidence) continue;
+    const result = await mutations.decide({ run_id: row.run_id, scope_id: row.scope_id, ingress_id: evidence.id, trigger: evidence, operator_version: null });
+    if (!result.ok || (result.value.kind !== "Committed" && result.value.kind !== "Replayed" && !(result.value.kind === "Rejected" && result.value.detail === "owner is terminal"))) continue;
+    await db.query("UPDATE authority.effect_intent SET payload=jsonb_set(payload,'{evidence_delivered}','true'),version=version+1 WHERE id=$1 AND payload->'evidence'=$2::jsonb", [row.id, JSON.stringify(evidence)]);
+  }
 }

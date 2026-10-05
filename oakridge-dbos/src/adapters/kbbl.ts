@@ -260,7 +260,7 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
     let known = reference;
     if (!known) {
       const reconciled = await this.start_selected(request, invocation_id);
-      if (reconciled.kind === "permanently_rejected") return { kind: "acknowledged", value: { stopped: true } };
+      if (reconciled.kind === "permanently_rejected") return { kind: "uncertain", detail: `cannot prove cleanup: ${reconciled.code}: ${reconciled.detail}` };
       if (reconciled.kind !== "acknowledged") return { kind: "uncertain", detail: reconciled.detail };
       known = reconciled.value;
     }

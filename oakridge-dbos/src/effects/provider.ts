@@ -1,4 +1,4 @@
-import type { CheckedValue, Invocation } from "../core-client/generated-contracts";
+import type { CheckedValue, Invocation, Trigger } from "../core-client/generated-contracts";
 
 /** The selection in the decision ledger is the source of the provider request. */
 export type InvocationId = string & { readonly __invocation_id: unique symbol };
@@ -14,18 +14,19 @@ export interface StableInvocation {
 
 export type ProviderResult<Value> =
   | { readonly kind: "acknowledged"; readonly value: Value }
-  | { readonly kind: "permanently_rejected"; readonly code: string; readonly detail: string }
+  | { readonly kind: "permanently_rejected"; readonly code: string; readonly detail: string; readonly evidence?: Trigger }
   | { readonly kind: "transiently_unavailable"; readonly detail: string }
   | { readonly kind: "uncertain"; readonly detail: string };
 
 export type ExternalHandle =
+  | { readonly kind: "completed"; readonly result: CheckedValue; readonly evidence?: Trigger }
   | { readonly kind: "kbbl_session"; readonly session_id: string }
   | { readonly kind: "repository"; readonly path: string }
   | { readonly kind: "pull_request"; readonly owner: string; readonly name: string; readonly number: number };
 
 export type TerminalObservation =
   | { readonly kind: "running" }
-  | { readonly kind: "terminal"; readonly result: CheckedValue };
+  | { readonly kind: "terminal"; readonly result: CheckedValue; readonly evidence?: Trigger };
 
 export interface EffectProvider {
   /** A repeated id must resolve to the same external action. */
