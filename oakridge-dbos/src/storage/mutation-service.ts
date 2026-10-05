@@ -29,15 +29,16 @@ export async function evaluateSnapshot(core: CoreClient, input: EvaluationInput)
   if (response.value.kind !== "evaluated") return error("evaluate", input.source.owner.id, "core returned a non-evaluated response");
   return { ok: true, value: { decision: response.value.value } };
 }
-export function prepareCommit(input: MutationInput, decision: Decision): CommitRequest {
+export function prepareCommit(input: MutationInput, decision: Decision): Result<CommitRequest> {
   const capacity = decision.outcome.kind === "apply" ? decision.outcome.mutations.flatMap((mutation) => {
     if (mutation.kind !== "acquire" && mutation.kind !== "release") return [];
     const pool = decision.source.pools.find((item) => item.pool_key === mutation.pool);
-    return pool ? [{ kind: mutation.kind, pool_id: pool.id as import("./schema-records").PoolId, scope_id: input.scope_id }] : [];
+    return pool ? [{ kind: mutation.kind, pool_id: pool.id, scope_id: input.scope_id }] : [];
   }) : [];
   const effects = decision.outcome.kind === "apply" ? decision.outcome.invocations.map((invocation, index) => ({ effect_key: `${input.ingress_id}:${index}`, payload: invocation.input, execution_id: null })) : [];
-  return { identity: { run_id: input.run_id, scope_id: input.scope_id, ingress_id: input.ingress_id, request_digest: requestDigest({ trigger: input.trigger, outputs: input.outputs ?? [], operator_version: input.operator_version }) },
-    read_set: decision.source.read_set, decision: decision.outcome, outputs: input.outputs ?? [], capacity, effects, operator_version: input.operator_version };
+  if (decision.outcome.kind === "apply" && capacity.length !== decision.outcome.mutations.filter((mutation) => mutation.kind === "acquire" || mutation.kind === "release").length) return error("prepare_commit", input.scope_id, "capacity pool missing");
+  return { ok: true, value: { identity: { run_id: input.run_id, scope_id: input.scope_id, ingress_id: input.ingress_id, request_digest: requestDigest({ trigger: input.trigger, outputs: input.outputs ?? [], operator_version: input.operator_version }) },
+    read_set: decision.source.read_set, decision: decision.outcome, outputs: input.outputs ?? [], capacity, effects, operator_version: input.operator_version } };
 }
 export function createMutationService(db: TransactionalSqlExecutor, core: CoreClient): MutationService {
   return {
@@ -91,7 +92,8 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
           const evaluated = await evaluateSnapshot(core, { source, bundle, available_operations: bundle.operations });
           if (!evaluated.ok) return evaluated;
           const request = prepareCommit(input, { source, outcome: evaluated.value.decision });
-          const committed = await commitDecision(db, request, source);
+          if (!request.ok) return request;
+          const committed = await commitDecision(db, request.value, source);
           if (!committed.ok || committed.value.kind !== "Conflict" || input.operator_version !== null) return committed;
         }
         return { ok: true, value: { kind: "Conflict", detail: "read set changed repeatedly; refresh decision" } };

@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { Pool } from "pg";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
+import type { CheckedValue, DefinitionBundle } from "../src/core-client/generated-contracts";
 import { createProductionComposition } from "../src/runtime/compose";
 
 test("empty database cold boots, compiles through workflow-cli and serves a run projection", async () => {
@@ -17,7 +18,7 @@ test("empty database cold boots, compiles through workflow-cli and serves a run 
   try {
     await migrateEmptyDatabase(db);
     composition = createProductionComposition({ database_url: url.href, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1" });
-    const bundle = await Bun.file(resolve(import.meta.dir, "../../workflow-core/fixtures/bundles/minimal.json")).json();
+    const bundle: DefinitionBundle = await Bun.file(resolve(import.meta.dir, "../../workflow-core/fixtures/bundles/minimal.json")).json();
     const created = await composition.app.request("http://localhost/runs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ bundle, input: {} }) });
     expect(created.status).toBe(201);
     const run: { run_id: string; root_scope_id: string } = await created.json();
@@ -26,6 +27,12 @@ test("empty database cold boots, compiles through workflow-cli and serves a run 
     expect(await projection.json()).toMatchObject({ run_id: run.run_id, root_scope_id: run.root_scope_id, scope_key: bundle.root, version: 0 });
     const pools = await db.query<{ pool_key: string; capacity: number }>("SELECT pool_key,capacity FROM authority.capacity_pool WHERE run_id=$1", [run.run_id]);
     expect(pools).toEqual([{ pool_key: "work", capacity: 1 }]);
+    const payload: CheckedValue = { schema: "unit", data: { kind: "record", fields: [], dictionary: [] } };
+    const decision = await composition.app.request(`http://localhost/runs/${run.run_id}/scopes/${run.root_scope_id}/decide`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ingress_id: "begin", trigger: { id: "begin", key: "begin", payload } }) });
+    expect(decision.status).toBe(200);
+    expect(await decision.json()).toMatchObject({ kind: "Committed" });
+    const committed = await db.query<{ state: CheckedValue; executions: string; reservations: string; effects: string }>("SELECT local_state AS state, (SELECT count(*)::text FROM authority.execution) AS executions, (SELECT count(*)::text FROM authority.capacity_reservation WHERE is_active) AS reservations, (SELECT count(*)::text FROM authority.effect_intent) AS effects FROM authority.scope_instance WHERE id=$1", [run.root_scope_id]);
+    expect(committed[0]).toMatchObject({ state: { schema: "position", data: { kind: "variant", variant: "waiting" } }, executions: "1", reservations: "1", effects: "1" });
   } finally {
     if (composition) await composition.close();
     await db.close();

@@ -81,7 +81,8 @@ async function writeDecision(tx: SqlExecutor, request: CommitRequest, source: Au
     if (request.decision.outcome) await tx.query("UPDATE authority.scope_instance SET outcome=$1,is_terminal=true,version=version+1 WHERE id=$2", [JSON.stringify(request.decision.outcome), scope_id]);
   }
   await writeOutputs(tx, request);
-  if (!await applyCapacityChanges(tx, request.capacity)) fail({ kind: "Rejected", detail: "capacity limit or pool missing" });
+  const capacity = await applyCapacityChanges(tx, request.capacity);
+  if (!capacity.ok) fail({ kind: "Rejected", detail: `${capacity.error.operation}/${capacity.error.entity_id}: ${capacity.error.detail}` });
   for (const [index, effect] of request.effects.entries()) await tx.query("INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload) VALUES ($1,$2,$3,$4,$5)", [crypto.randomUUID(), scope_id, effect.execution_id ?? execution_ids[index] ?? null, effect.effect_key, JSON.stringify(effect.payload)]);
   await tx.query("INSERT INTO authority.fact (id,scope_id,fact_key,payload) VALUES ($1,$2,$3,$4)", [crypto.randomUUID(), scope_id, source.snapshot.trigger.key, JSON.stringify(source.snapshot.trigger.payload)]);
   const transition_id = crypto.randomUUID();

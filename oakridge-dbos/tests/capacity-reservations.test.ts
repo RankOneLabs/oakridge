@@ -18,7 +18,7 @@ test("concurrent acquisitions never overbook a one-slot pool", async () => {
   const value: CheckedValue = { schema: "unit", data: { kind: "record", fields: [], dictionary: [] } };
   try {
     await migrateEmptyDatabase(db);
-    await db.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ('bundle','digest',$1,'{}')", [JSON.stringify({ scopes: [{ key: "root", outputs: [] }] })]);
+    await db.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ('bundle','digest',$1,'{}')", [JSON.stringify({ limits: { max_depth: 64, max_list_items: 100 }, schemas: [{ key: "unit", shape: { kind: "record", fields: [], dictionary: null } }], scopes: [{ key: "root", state_schema: "unit", outcome_schema: "unit", children: [], exports: [], resources: [], workers: [], pools: [{ key: "workers", limit: 1 }], outputs: [] }] })]);
     await db.query("INSERT INTO authority.run (id,definition_bundle_id) VALUES ('run','bundle')", []);
     for (const id of ["one", "two"]) await db.query("INSERT INTO authority.scope_instance (id,run_id,scope_key,input,local_state) VALUES ($1,'run','root',$2,$2)", [id, JSON.stringify(value)]);
     await db.query("INSERT INTO authority.capacity_pool (id,run_id,pool_key,capacity) VALUES ('pool','run','workers',1)", []);

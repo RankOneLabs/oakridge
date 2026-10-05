@@ -21,7 +21,7 @@ export interface FactRecord extends VersionedRecord { readonly scope_id: ScopeId
 export interface TransitionRecord extends VersionedRecord { readonly scope_id: ScopeId; readonly trigger_id: string; readonly decision: DecisionOutcome; readonly created_at: Date }
 export interface IngressReceiptRecord extends VersionedRecord { readonly run_id: RunId; readonly scope_id: ScopeId; readonly ingress_id: string; readonly request_digest: string; readonly result: CommitReceipt }
 export interface EffectIntentRecord extends VersionedRecord { readonly scope_id: ScopeId; readonly execution_id: ExecutionId | null; readonly effect_key: string; readonly payload: CheckedValue; readonly status: string }
-export interface CapacityPoolRecord extends VersionedRecord { readonly run_id: RunId; readonly pool_key: string; readonly capacity: number }
+export interface CapacityPoolRecord extends VersionedRecord { readonly id: PoolId; readonly run_id: RunId; readonly pool_key: string; readonly capacity: number }
 export interface CapacityReservationRecord extends VersionedRecord { readonly pool_id: PoolId; readonly scope_id: ScopeId; readonly is_active: boolean }
 export interface ResourceBindingRecord extends VersionedRecord { readonly scope_id: ScopeId; readonly resource_key: string; readonly observation: CheckedValue | null }
 export interface CommitReceipt { readonly transition_id: string; readonly scope_version: number }
