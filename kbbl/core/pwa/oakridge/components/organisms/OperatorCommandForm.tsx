@@ -4,18 +4,12 @@ import { randomUuid } from "../../../lib/random-uuid";
 import { submitOperatorCommand } from "../../client";
 import { isDefinitiveRequestRejection } from "../../lib/client-errors";
 import { clearOperatorDraft, clearPendingCommand, findRetainedDrafts, readOperatorDraft, readPendingCommand, saveOperatorDraft, savePendingCommand } from "../../lib/operator-drafts";
+import { parseOperatorFieldValue } from "../../lib/operator-payload";
 import { selectDraftKey } from "../../lib/operator-selectors";
 import type { OperatorCommandDescriptor, OperatorSchema, OperatorScopeView } from "../../operator-contracts";
 
 interface Props { readonly scope: OperatorScopeView; readonly command: OperatorCommandDescriptor;
   readonly schemas: readonly OperatorSchema[]; readonly onRefresh: () => void }
-
-function fieldValue(raw: string, schema: OperatorSchema | undefined): unknown {
-  if (schema?.shape.kind === "boolean") return raw === "true";
-  if (schema?.shape.kind === "integer") return Number(raw);
-  if (schema?.shape.kind === "record" || schema?.shape.kind === "list" || schema?.shape.kind === "union") return JSON.parse(raw);
-  return raw;
-}
 
 export function OperatorCommandForm({ scope, command, schemas, onRefresh }: Props) {
   const key = selectDraftKey(scope, command);
@@ -63,9 +57,20 @@ export function OperatorCommandForm({ scope, command, schemas, onRefresh }: Prop
       let payload: unknown;
       if (fields) {
         const raw = JSON.parse(draft || "{}") as { readonly [field: string]: string };
-        payload = Object.fromEntries(fields.filter((field) => raw[field.key] !== undefined && raw[field.key] !== "")
-          .map((field) => [field.key, fieldValue(raw[field.key]!, schemas.find((schema) => schema.key === field.schema))]));
-      } else payload = fieldValue(draft, schemas.find((schema) => schema.key === command.payload_schema));
+        const entries: Array<readonly [string, unknown]> = [];
+        for (const field of fields) {
+          const value = raw[field.key];
+          if (value === undefined || value === "") continue;
+          const parsed = parseOperatorFieldValue({ raw: value, schema: schemas.find((schema) => schema.key === field.schema) });
+          if (!parsed.ok) { setError(`${field.key}: ${parsed.error.detail}`); return; }
+          entries.push([field.key, parsed.value]);
+        }
+        payload = Object.fromEntries(entries);
+      } else {
+        const parsed = parseOperatorFieldValue({ raw: draft, schema: schemas.find((schema) => schema.key === command.payload_schema) });
+        if (!parsed.ok) { setError(parsed.error.detail); return; }
+        payload = parsed.value;
+      }
       const pending = readPendingCommand(key) ?? { ...key, request_id: randomUuid(), payload };
       savePendingCommand(pending);
       void deliver(pending);
