@@ -1,15 +1,22 @@
 import type { CheckedValue, CommandDefinition, DefinitionBundle, DecisionOutcome } from "../core-client/generated-contracts";
-import type { ScopeId, ScopeInstanceRecord, ExecutionRecord, OutputSlotRecord, ResourceBindingRecord } from "../storage/schema-records";
+import type { ScopeId, ScopeInstanceRecord, ExecutionRecord, OutputSlotRecord, ArtifactRevisionRecord, ResourceBindingRecord } from "../storage/schema-records";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
-import { availableCommand } from "../storage/command-selection";
+import { availableCommand, currentTargetRevisions, type TargetRevision } from "../storage/command-selection";
+import { readScopeObservations } from "../storage/snapshot-reader";
 import { normalizeExecutionRecord, normalizeRecordVersion, type StoredExecutionRecord, type StoredVersionedRecord } from "./record-selectors";
 
 export interface ProjectionCursor { readonly scope_version: number; readonly transition_id: string | null }
+export interface OutputSlotView extends OutputSlotRecord { readonly current_revision: ArtifactRevisionRecord | null }
+interface StoredOutputSlotView extends OutputSlotRecord { readonly current_revision: StoredVersionedRecord<ArtifactRevisionRecord> | null }
+function normalizeOutputSlot(row: StoredVersionedRecord<StoredOutputSlotView>): OutputSlotView {
+  return { ...normalizeRecordVersion(row), current_revision: row.current_revision ? normalizeRecordVersion(row.current_revision) : null };
+}
 export interface ScopeView {
   readonly scope_id: ScopeId; readonly run_id: string; readonly scope_key: string; readonly label: string;
   readonly state: CheckedValue; readonly outcome: CheckedValue | null; readonly is_terminal: boolean;
   readonly commands: readonly CommandDefinition[]; readonly executions: readonly ExecutionRecord[];
-  readonly outputs: readonly OutputSlotRecord[]; readonly resources: readonly ResourceBindingRecord[];
+  readonly outputs: readonly OutputSlotView[]; readonly resources: readonly ResourceBindingRecord[];
+  readonly command_targets: Readonly<{ readonly [command_key: string]: readonly TargetRevision[] }>;
   readonly decision: DecisionOutcome | null; readonly cursor: ProjectionCursor;
 }
 interface TransitionRow { readonly id: string; readonly decision: DecisionOutcome }
@@ -27,14 +34,18 @@ export async function readScopeView(db: TransactionalSqlExecutor, scope_id: Scop
     if (!definition) throw new Error(`scope definition missing for ${scope.id}`);
     const [executions, outputs, resources, transitions] = await Promise.all([
       tx.query<StoredExecutionRecord>("SELECT * FROM authority.execution WHERE scope_id=$1 ORDER BY id", [scope.id]),
-      tx.query<StoredVersionedRecord<OutputSlotRecord>>("SELECT * FROM authority.output_slot WHERE scope_id=$1 ORDER BY id", [scope.id]),
+      tx.query<StoredVersionedRecord<StoredOutputSlotView>>("SELECT s.*, row_to_json(r) AS current_revision FROM authority.output_slot s LEFT JOIN authority.artifact_revision r ON r.id=s.current_revision_id AND r.scope_id=s.scope_id WHERE s.scope_id=$1 ORDER BY s.id", [scope.id]),
       tx.query<StoredVersionedRecord<ResourceBindingRecord>>("SELECT * FROM authority.resource_binding WHERE scope_id=$1 ORDER BY id", [scope.id]),
       tx.query<TransitionRow>("SELECT id,decision FROM authority.transition WHERE scope_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1", [scope.id]),
     ]);
+    const commands = selectAvailableCommands(bundle, scope);
+    const observations = await readScopeObservations(tx, { owner: scope, scope: definition });
+    const command_targets = Object.fromEntries(await Promise.all(commands.map(async (command) =>
+      [command.key, await currentTargetRevisions(tx, scope_id, command, observations)] as const)));
     return { scope_id, run_id: scope.run_id, scope_key: scope.scope_key, label: definition.presentation.label,
       state: scope.local_state, outcome: scope.outcome, is_terminal: scope.is_terminal,
-      commands: selectAvailableCommands(bundle, scope), executions: executions.map(normalizeExecutionRecord),
-      outputs: outputs.map(normalizeRecordVersion), resources: resources.map(normalizeRecordVersion),
+      commands, command_targets, executions: executions.map(normalizeExecutionRecord),
+      outputs: outputs.map(normalizeOutputSlot), resources: resources.map(normalizeRecordVersion),
       decision: transitions[0]?.decision ?? null,
       cursor: { scope_version: Number(scope.version), transition_id: transitions[0]?.id ?? null } };
   }, "repeatable read");

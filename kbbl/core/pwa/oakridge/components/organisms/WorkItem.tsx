@@ -4,6 +4,8 @@ import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 
 import { useConfirmCohortMerged } from "../../hooks/useConfirmCohortMerged";
 import { useRetryStuck } from "../../hooks/useRetryStuck";
+import { useQuery } from "@tanstack/react-query";
+import { fetchRun } from "../../client";
 import type { CohortLifecycleSummary, ParkedGate, ReviewInboxItem } from "../../types";
 
 function itemToGate(item: ReviewInboxItem): ParkedGate | null {
@@ -84,10 +86,14 @@ export function WorkItem({ item, cohort, isSettled = false, onSelectRun, onSelec
 
 function CohortRetryAction({ item }: { item: ReviewInboxItem }) {
   const retry = useRetryStuck(item.run_id);
+  const observed = useQuery({ queryKey: ["oakridge", "run", item.run_id], queryFn: () => fetchRun(item.run_id) });
+  const observedVersion = observed.data?.stages.find((stage) => stage.stage_instance_id === item.stage_instance_id)
+    ?.units?.find((unit) => unit.unit_id === item.unit_id)?.version;
   return <>
     <p>Session ended without finishing. Retry to relaunch it.</p>
-    <Button variant="secondary" onClick={() => retry.mutate({ stageInstanceId: item.stage_instance_id, unitId: item.unit_id })}
-      disabled={retry.isPending}>Retry</Button>
+    <Button variant="secondary" onClick={() => { if (observedVersion !== undefined) retry.mutate({ stageInstanceId: item.stage_instance_id, unitId: item.unit_id, observedVersion }); }}
+      disabled={retry.isPending || observedVersion === undefined}>Retry</Button>
+    {observed.isError && <FeedbackMessage tone="danger">Could not load the cohort version. Refresh the inbox before retrying.</FeedbackMessage>}
     {retry.isError && <FeedbackMessage tone="danger">{retry.error instanceof Error ? retry.error.message : "Retry failed"}</FeedbackMessage>}
   </>;
 }

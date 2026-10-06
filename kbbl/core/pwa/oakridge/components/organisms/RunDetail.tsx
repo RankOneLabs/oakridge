@@ -46,10 +46,10 @@ export function RunDetail({ runId, run, activeGates, mergeWaits, onRunDeleted, o
   const confirmMergeMutation = useConfirmCohortMerged(runId);
   const abandonMutation = useAbandonCohort(runId);
 
-  const requestAbandon = (cohortId: string, label: string): void => {
+  const requestAbandon = (cohortId: string, label: string, observedVersion: number): void => {
     const detail = window.prompt(`Why abandon ${label}?`)?.trim();
     if (!detail || !window.confirm(`Abandon ${label}? This ends its active session.`)) return;
-    abandonMutation.mutate({ cohortId, detail });
+    abandonMutation.mutate({ cohortId, detail, observedVersion });
   };
 
   const onRefresh = () => {
@@ -166,7 +166,7 @@ export function RunDetail({ runId, run, activeGates, mergeWaits, onRunDeleted, o
                         unit={unit}
                         unitArtifacts={unitArtifacts}
                         onSelectArtifact={onSelectArtifact}
-                        onRetry={(unitId, worker) => void retryMutation.mutate({ stageInstanceId: stage.stage_instance_id, unitId, worker })}
+                        onRetry={(unitId, worker) => void retryMutation.mutate({ stageInstanceId: stage.stage_instance_id, unitId, worker, observedVersion: unit.version })}
                         retrying={retryMutation.isPending
                           && retryMutation.variables?.stageInstanceId === stage.stage_instance_id
                           && retryMutation.variables.unitId === unit.unit_id}
@@ -177,7 +177,7 @@ export function RunDetail({ runId, run, activeGates, mergeWaits, onRunDeleted, o
                           : undefined}
                         canRetry={unit.retryable}
                         abandon={unit.status !== "complete" && unit.status !== "failed" && unit.status !== "cancelled" ? {
-                          onAbandon: () => requestAbandon(cohortId, unit.unit_id),
+                          onAbandon: () => requestAbandon(cohortId, unit.unit_id, unit.version),
                           isAbandoning: abandonMutation.isPending && abandonMutation.variables?.cohortId === cohortId,
                           error: abandonMutation.isError && abandonMutation.variables?.cohortId === cohortId
                             ? (abandonMutation.error instanceof Error ? abandonMutation.error.message : "Abandon failed") : undefined,
@@ -207,16 +207,16 @@ export function RunDetail({ runId, run, activeGates, mergeWaits, onRunDeleted, o
                     stage={stage}
                     unitState={unit?.state}
                     workers={unit?.workers ?? []}
-                    onRetryWorker={(worker) => { if (unit) retryMutation.mutate({ stageInstanceId: stage.stage_instance_id, unitId: unit.unit_id, worker }); }}
+                    onRetryWorker={(worker) => { if (unit) retryMutation.mutate({ stageInstanceId: stage.stage_instance_id, unitId: unit.unit_id, worker, observedVersion: unit.version }); }}
                     onSelectArtifact={onSelectArtifact}
                     abandon={unit && unit.status !== "complete" && unit.status !== "failed" && unit.status !== "cancelled" ? {
-                      onAbandon: () => requestAbandon(unit.cohort_id, unit.unit_id),
+                      onAbandon: () => requestAbandon(unit.cohort_id, unit.unit_id, unit.version),
                       isAbandoning: abandonMutation.isPending && abandonMutation.variables?.cohortId === unit.cohort_id,
                       error: abandonMutation.isError && abandonMutation.variables?.cohortId === unit.cohort_id
                         ? (abandonMutation.error instanceof Error ? abandonMutation.error.message : "Abandon failed") : undefined,
                     } : undefined}
                     retry={shouldOfferRetry ? {
-                      onRetry: () => void retryMutation.mutate({ stageInstanceId: stage.stage_instance_id, unitId: unit.unit_id }),
+                      onRetry: () => void retryMutation.mutate({ stageInstanceId: stage.stage_instance_id, unitId: unit.unit_id, observedVersion: unit.version }),
                       isRetrying: retryMutation.isPending
                         && retryMutation.variables?.stageInstanceId === stage.stage_instance_id
                         && retryMutation.variables.unitId === unit.unit_id,
