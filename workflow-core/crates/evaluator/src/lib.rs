@@ -19,7 +19,7 @@ pub(crate) fn owner<'a>(
     snapshot: &Snapshot,
 ) -> CoreResult<(&'a ScopeDefinition, &'a CheckedScope)> {
     let source = program
-        .source
+        .derived
         .scopes
         .iter()
         .find(|s| s.key == snapshot.scope)
@@ -61,8 +61,8 @@ pub(crate) fn snapshot_valid(program: &CheckedProgram, snapshot: &Snapshot) -> C
         ));
     }
     let (scope, _) = owner(program, snapshot)?;
-    validate_checked_value(&program.source, &scope.input_schema, &snapshot.input)?;
-    validate_checked_value(&program.source, &scope.state_schema, &snapshot.state)?;
+    validate_checked_value(&program.derived, &scope.input_schema, &snapshot.input)?;
+    validate_checked_value(&program.derived, &scope.state_schema, &snapshot.state)?;
     if snapshot.owner.0.is_empty() || snapshot.trigger.id.0.is_empty() {
         return Err(failure(
             DomainErrorKind::InvalidSnapshot,
@@ -89,7 +89,7 @@ pub(crate) fn snapshot_valid(program: &CheckedProgram, snapshot: &Snapshot) -> C
                 "event belongs to another scope or is undeclared",
             )
         })?;
-    validate_checked_value(&program.source, payload_schema, &snapshot.trigger.payload)?;
+    validate_checked_value(&program.derived, payload_schema, &snapshot.trigger.payload)?;
     let mut identities = BTreeSet::new();
     let mut roots = Vec::new();
     for observation in &snapshot.observations {
@@ -125,7 +125,7 @@ pub(crate) fn snapshot_valid(program: &CheckedProgram, snapshot: &Snapshot) -> C
                 .children
                 .iter()
                 .find(|c| c.key == *key && c.imports.contains(export))
-                .and_then(|c| program.source.scopes.iter().find(|s| s.key == c.scope))
+                .and_then(|c| program.derived.scopes.iter().find(|s| s.key == c.scope))
                 .and_then(|s| s.exports.iter().find(|e| e.key == *export))
                 .map(|e| &e.schema),
             ReferenceRoot::OutputCollection { schema, .. }
@@ -136,7 +136,7 @@ pub(crate) fn snapshot_valid(program: &CheckedProgram, snapshot: &Snapshot) -> C
             | ReferenceRoot::ChildrenOutcomes { schema, .. }
             | ReferenceRoot::ChildrenComplete { schema, .. } => {
                 workflow_compiler::validate_observation_root(
-                    &program.source,
+                    &program.derived,
                     scope,
                     &observation.root,
                 )?;
@@ -151,7 +151,7 @@ pub(crate) fn snapshot_valid(program: &CheckedProgram, snapshot: &Snapshot) -> C
                 "undeclared or private observed root",
             )
         })?;
-        validate_checked_value(&program.source, expected, &observation.value)?;
+        validate_checked_value(&program.derived, expected, &observation.value)?;
     }
     Ok(())
 }
@@ -189,7 +189,7 @@ pub fn evaluate(program: &CheckedProgram, snapshot: &Snapshot) -> CoreResult<Dec
             ));
         }
     }
-    let mut budget = program.source.limits.evaluation_budget;
+    let mut budget = program.derived.limits.evaluation_budget;
     let mut node = &checked.tree;
     loop {
         if budget == 0 {
@@ -357,7 +357,7 @@ pub fn evaluate(program: &CheckedProgram, snapshot: &Snapshot) -> CoreResult<Dec
                             selection: a.selection.clone(),
                             definition: a.definition.clone(),
                             input: expressions::evaluate_expression(&a.input, &mut context)?,
-                            prompt_content: a.prompt_content.clone(),
+                            prompt_key: a.prompt_key.clone(),
                         })
                     })
                     .collect::<CoreResult<_>>()?;

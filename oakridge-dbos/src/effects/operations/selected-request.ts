@@ -54,6 +54,9 @@ export function pinProviderRequest(input: ProviderRequestSelection): Result<Stab
   const decoded = invocationInput(invocation.selection.input, bundle);
   if (!decoded.ok) return decoded;
   const contract = invocation.selection.definition;
+  const prompt_key = invocation.selection.prompt_key;
+  const prompt = prompt_key == null ? null : bundle.prompts.find((item) => item.key === prompt_key);
+  if (prompt_key != null && !prompt) return { ok: false, error: { operation: "pin_request", entity_id: invocation.id, detail: "pinned prompt missing" } };
   const isRecord = (value: JsonValue): value is { readonly [key: string]: JsonValue } => !!value && typeof value === "object" && !Array.isArray(value);
   const decoded_config = isRecord(decoded.value) && decoded.value.config && isRecord(decoded.value.config) ? decoded.value.config : decoded.value;
   if (contract.provider === "kbbl") {
@@ -62,8 +65,7 @@ export function pinProviderRequest(input: ProviderRequestSelection): Result<Stab
       unit_id: unit_id as UnitId, executor_type: "delegated_session", resolved_config: { ...decoded_config,
         session_identity: { run_id: scope.run_id, stage_instance_id: scope.id, unit_id,
           cohort_id: scope.child_key, operator_role: invocation.selection.selection.worker },
-        ...(invocation.selection.prompt_content !== null && invocation.selection.prompt_content !== undefined
-          ? { rendered_prompt: promptWithActionInput(invocation.selection.prompt_content, decoded.value) + selectedPublicationInstructions({ invocation, bundle, scope }) } : {}) },
+        ...(prompt ? { rendered_prompt: promptWithActionInput(prompt.content, decoded.value) + selectedPublicationInstructions({ invocation, bundle, scope }) } : {}) },
       inputs: [], declared_outputs: [], expected_artifacts: [] };
     const rendered = renderSessionStart({ request, operation_id: invocation.id as unknown as ExecutorOperationId, executor_function_identity: "selected-v1" });
     if (rendered.kind !== "acknowledged") return { ok: false, error: { operation: "pin_request", entity_id: invocation.id, detail: rendered.detail } };

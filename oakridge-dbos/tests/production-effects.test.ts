@@ -47,7 +47,7 @@ test("production prepares the selected repository and routes durable results int
       const facts = await db.query<{ fact_key: string }>("SELECT fact_key FROM authority.fact WHERE scope_id=$1", [run.root_scope_id]);
       expect(facts.some((fact) => fact.fact_key === "prepared")).toBe(true);
       const source = await readSnapshot(db, run.root_scope_id, { id: "tick", key: "tick", payload: unit });
-      expect(source?.snapshot.observations).toMatchObject([{ root: { kind: "result", worker: "author" }, value: { schema: "leaf_result" } }]);
+      expect(source?.snapshot.observations).toEqual([]);
       const effects = await db.query<{ payload: EffectPayload; status: string }>("SELECT payload,status FROM authority.effect_intent WHERE scope_id=$1", [run.root_scope_id]);
       expect(effects[0]?.status).toBe("cleanup_confirmed");
       expect(effects[0]?.payload.invocation.selection.definition.operation).toBe("repository.prepare");

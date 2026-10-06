@@ -55,7 +55,7 @@ test("empty database cold boots, compiles through workflow-cli and serves a run 
     const published = await composition.app.request(`http://localhost/runs/${run.run_id}/scopes/${run.root_scope_id}/decide`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ingress_id: "output", trigger: { id: "output", key: "tick", payload }, outputs: [{ ...output, execution_id: executions[0]!.id }] }) });
     expect(await published.json()).toMatchObject({ kind: "Committed" });
     const snapshot = await readSnapshot(db, run.root_scope_id as ScopeId, { id: "snapshot", key: "tick", payload });
-    expect(snapshot?.snapshot.observations).toMatchObject([{ root: { kind: "output", key: "document" }, value: payload, version: 0 }]);
+    expect(snapshot?.snapshot.observations).toEqual([]);
   } finally {
     if (composition) await composition.close();
     await db.close();

@@ -1,4 +1,4 @@
-import type { CheckedProgram, CheckedValue, DecisionOutcome, DefinitionBundle } from "../core-client/generated-contracts";
+import type { CompiledBundle, CheckedValue, DecisionOutcome, DefinitionBundle } from "../core-client/generated-contracts";
 import type { CapacityChange } from "./capacity";
 import { applyCapacityChanges } from "./capacity";
 import { findReceipt, type IngressIdentity } from "./receipts";
@@ -52,7 +52,7 @@ async function revokeSelectedEffects(tx: SqlExecutor, scope_id: string, worker: 
 async function writeDecision(tx: SqlExecutor, request: CommitRequest, source: AuthoritySnapshot): Promise<CommitReceipt> {
   const scope_id = source.owner.id;
   const execution_ids: string[] = [];
-  const definitions = await tx.query<{ source: DefinitionBundle; checked_program: CheckedProgram }>("SELECT b.source,b.checked_program FROM authority.definition_bundle b JOIN authority.run r ON r.definition_bundle_id=b.id WHERE r.id=$1", [source.owner.run_id]);
+  const definitions = await tx.query<{ source: DefinitionBundle; checked_program: CompiledBundle }>("SELECT b.source,b.checked_program FROM authority.definition_bundle b JOIN authority.run r ON r.definition_bundle_id=b.id WHERE r.id=$1", [source.owner.run_id]);
   const definition = definitions[0];
   if (!definition) fail({ kind: "Rejected", detail: "definition bundle missing" });
   if (request.decision.kind === "apply") {

@@ -67,7 +67,7 @@ export async function validateStorageAuthority(tx: SqlExecutor, request: CommitR
         && JSON.stringify(contract.outputs) === JSON.stringify(action.outputs)
         && JSON.stringify(contract.settings) === JSON.stringify(action.settings)
         && JSON.stringify(contract.tools) === JSON.stringify(action.tools)
-        && (invocation.prompt_content ?? null) === (bundle.prompts.find((prompt) => prompt.key === action.prompt)?.content ?? null);
+        && (invocation.prompt_key ?? null) === (action.prompt ?? null);
       if (!has_matching_contract) return reject("validate_storage", source.owner.id, "invocation contract differs from stored action");
     }
   }

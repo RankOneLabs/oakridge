@@ -1,4 +1,4 @@
-use crate::{error, schema, unique};
+use crate::{error, schema, unique, SchemaLookup};
 use serde_json::Value;
 use std::collections::BTreeSet;
 use workflow_model::*;
@@ -20,7 +20,15 @@ pub fn validate_schemas(bundle: &DefinitionBundle) -> CoreResult<()> {
         key: &SchemaId,
         active: &mut BTreeSet<SchemaId>,
         done: &mut BTreeSet<SchemaId>,
+        depth: usize,
     ) -> CoreResult<()> {
+        if depth > bundle.limits().max_depth {
+            return Err(error(
+                DomainErrorKind::ResourceLimit,
+                key.to_string(),
+                "schema nesting exceeds limit",
+            ));
+        }
         if done.contains(key) {
             return Ok(());
         }
@@ -94,7 +102,7 @@ pub fn validate_schemas(bundle: &DefinitionBundle) -> CoreResult<()> {
             _ => {}
         }
         for dep in dependencies(shape) {
-            visit(bundle, dep, active, done)?;
+            visit(bundle, dep, active, done, depth + 1)?;
         }
         active.remove(key);
         done.insert(key.clone());
@@ -102,23 +110,23 @@ pub fn validate_schemas(bundle: &DefinitionBundle) -> CoreResult<()> {
     }
     let mut done = BTreeSet::new();
     for item in &bundle.schemas {
-        visit(bundle, &item.key, &mut BTreeSet::new(), &mut done)?;
+        visit(bundle, &item.key, &mut BTreeSet::new(), &mut done, 0)?;
     }
     Ok(())
 }
 /// Decode one source/ingress value, resolving record fields to schema-owned numeric IDs.
 pub fn check_value(
-    bundle: &DefinitionBundle,
+    bundle: &impl SchemaLookup,
     key: &SchemaId,
     value: &Value,
 ) -> CoreResult<CheckedValue> {
     fn decode(
-        bundle: &DefinitionBundle,
+        bundle: &impl SchemaLookup,
         key: &SchemaId,
         value: &Value,
         depth: usize,
     ) -> CoreResult<CheckedValue> {
-        if depth > bundle.limits.max_depth {
+        if depth > bundle.limits().max_depth {
             return Err(error(
                 DomainErrorKind::ResourceLimit,
                 key.to_string(),
@@ -281,7 +289,7 @@ pub fn check_value(
 }
 /// Recheck generated wire values at the evaluator boundary, including closed fields and schema IDs.
 pub fn validate_checked_value(
-    bundle: &DefinitionBundle,
+    bundle: &impl SchemaLookup,
     key: &SchemaId,
     value: &CheckedValue,
 ) -> CoreResult<()> {
@@ -307,7 +315,7 @@ pub fn validate_checked_value(
     }
     Ok(())
 }
-fn to_json(bundle: &DefinitionBundle, value: &CheckedValue) -> CoreResult<Value> {
+fn to_json(bundle: &impl SchemaLookup, value: &CheckedValue) -> CoreResult<Value> {
     Ok(match &value.data {
         CheckedData::Boolean { value } => Value::Bool(*value),
         CheckedData::Integer { value } => Value::from(*value),

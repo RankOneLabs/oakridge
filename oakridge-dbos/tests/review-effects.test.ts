@@ -60,7 +60,7 @@ test("production replay sends persisted HTTP bytes despite changed launch render
     await withSelection({ bundle: await sessionBundle(), input: { runtime: "claude-code", rendered_prompt: "original selected prompt", workdir: "/tmp", session_name: "replay",
       session_identity: { run_id: "selected-run", stage_instance_id: "selected-scope", unit_id: "author" }, worktree: { branchName: "selected", worktreeSubdir: "selected", baseRef: "a".repeat(40) } } }, async ({ db, core, invocation }) => {
       const provider = createEffectProvider({ db, core, kbbl_base_url: server.url.href });
-      const changed: StableInvocation = { ...invocation, selection: { ...invocation.selection, prompt_content: "new adapter rendering",
+      const changed: StableInvocation = { ...invocation, selection: { ...invocation.selection, prompt_key: "new_adapter_rendering",
         input: { schema: "launch", data: { kind: "record", fields: [], dictionary: [] } } } };
       expect(await provider.start(changed)).toMatchObject({ kind: "acknowledged" });
       expect(await provider.stop(changed, null)).toEqual({ kind: "acknowledged", value: { stopped: true } });

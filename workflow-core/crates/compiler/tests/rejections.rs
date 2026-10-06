@@ -182,7 +182,7 @@ fn sec_4_5_source_contract_rows_have_named_fields_and_missing_field_diagnostics(
             let diagnostic = decoded.unwrap_err();
             assert_eq!(
                 diagnostic.kind,
-                DomainErrorKind::UnknownConstruct,
+                DomainErrorKind::MalformedBundle,
                 "Sec 4.5 {row}.{field}"
             );
             assert!(
@@ -217,7 +217,7 @@ fn sec_4_5_command_field_presentation_survives_compilation_and_serialization() {
     let value = command_presentation_fixture();
     let source = decode_bundle(&serde_json::to_vec(&value).unwrap()).unwrap();
     let checked = compile(&source, &source.operations).unwrap();
-    let serialized = serde_json::to_value(&checked.source).unwrap();
+    let serialized = serde_json::to_value(&checked.derived).unwrap();
     assert_eq!(
         serialized["scopes"][0]["commands"][0]["field_presentation"],
         value["scopes"][0]["commands"][0]["field_presentation"]
@@ -294,7 +294,7 @@ fn sec_4_5_command_field_presentation_rejects_unknown_fields() {
             decode_bundle(&serde_json::to_vec(&value).unwrap())
                 .unwrap_err()
                 .kind,
-            DomainErrorKind::UnknownConstruct
+            DomainErrorKind::MalformedBundle
         );
     }
 }
@@ -315,7 +315,7 @@ fn sec_4_5_bundle_presentation_is_owned_by_its_declared_scopes() {
     let bundle = decode_bundle(&serde_json::to_vec(&fixture()).unwrap()).unwrap();
     let checked = compile(&bundle, &bundle.operations).unwrap();
     assert_eq!(
-        checked.source.scopes[0].presentation.label,
+        checked.derived.scopes[0].presentation.label,
         bundle.scopes[0].presentation.label
     );
     reject(
@@ -359,7 +359,7 @@ fn sec_4_5_wait_attention_rejects_unknown_fields() {
         decode_bundle(&serde_json::to_vec(&value).unwrap())
             .unwrap_err()
             .kind,
-        DomainErrorKind::UnknownConstruct
+        DomainErrorKind::MalformedBundle
     );
 }
 #[test]
@@ -463,7 +463,7 @@ fn unknown_fields_have_no_semantics() {
         decode_bundle(&serde_json::to_vec(&v).unwrap())
             .unwrap_err()
             .kind,
-        DomainErrorKind::UnknownConstruct
+        DomainErrorKind::MalformedBundle
     );
 }
 #[test]
@@ -766,7 +766,7 @@ fn unsupported_revision_policy_is_rejected_at_decode() {
         decode_bundle(&serde_json::to_vec(&v).unwrap())
             .unwrap_err()
             .kind,
-        DomainErrorKind::UnknownConstruct
+        DomainErrorKind::MalformedBundle
     );
 }
 #[test]
@@ -920,5 +920,196 @@ fn child_cancellation_cannot_address_a_private_child() {
                 .push(json!({"kind":"cancel_children","key":"private"}))
         },
         DomainErrorKind::MissingSymbol,
+    );
+}
+
+#[test]
+fn e2_canonical_boolean_schema_is_reserved() {
+    reject(
+        fixture(),
+        |source| {
+            source["schemas"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"key":"$bool","shape":{"kind":"boolean"}}))
+        },
+        DomainErrorKind::DuplicateSymbol,
+    );
+}
+
+#[test]
+fn e1_unguarded_action_read_is_rejected() {
+    let mut source = fixture();
+    source["schemas"].as_array_mut().unwrap().extend([
+        json!({"key":"guarded_record","shape":{"kind":"record","fields":[{"key":"value","schema":"unit","required":true}],"dictionary":null}}),
+        json!({"key":"guarded_optional","shape":{"kind":"optional","item":"guarded_record"}}),
+    ]);
+    source["scopes"][0]["resources"][0]["schema"] = json!("guarded_optional");
+    source["scopes"][0]["workers"][0]["actions"][0]["input"] =
+        json!({"kind":"reference","root":{"kind":"resource","key":"source"},"path":["value"]});
+    let bundle: DefinitionBundle = serde_json::from_value(source).unwrap();
+    assert_eq!(
+        compile(&bundle, &bundle.operations).unwrap_err().kind,
+        DomainErrorKind::UnguardedOptional
+    );
+}
+
+#[test]
+fn e4_zero_budget_is_rejected_before_evaluation() {
+    reject(
+        fixture(),
+        |source| source["limits"]["evaluation_budget"] = json!(0),
+        DomainErrorKind::ResourceLimit,
+    );
+}
+
+#[test]
+fn e3_shared_schema_still_counts_at_deeper_depth() {
+    let mut source = fixture();
+    source["limits"]["max_depth"] = json!(3);
+    let schemas = source["schemas"].as_array_mut().unwrap();
+    schemas.push(json!({"key":"depth_leaf","shape":{"kind":"optional","item":"unit"}}));
+    for (key, item) in [
+        ("depth_a", "depth_b"),
+        ("depth_b", "depth_c"),
+        ("depth_c", "depth_d"),
+        ("depth_d", "depth_leaf"),
+    ] {
+        schemas.push(json!({"key":key,"shape":{"kind":"optional","item":item}}));
+    }
+    let bundle: DefinitionBundle = serde_json::from_value(source).unwrap();
+    assert_eq!(
+        compile(&bundle, &bundle.operations).unwrap_err().kind,
+        DomainErrorKind::ResourceLimit
+    );
+}
+
+#[test]
+fn e5_requested_budget_above_host_is_named() {
+    let bundle: DefinitionBundle = serde_json::from_value(fixture()).unwrap();
+    let host = ResourceLimits {
+        max_list_items: 10_000,
+        max_depth: 128,
+        evaluation_budget: 100,
+    };
+    let error = workflow_compiler::compile_with_host(&bundle, &host).unwrap_err();
+    assert_eq!(error.kind, DomainErrorKind::LimitExceedsHost);
+    assert!(error.detail.contains("2000") && error.detail.contains("100"));
+}
+
+#[test]
+fn e6_malformed_bundle_reports_the_serde_path() {
+    let mut source = fixture();
+    source["scopes"][0]["workers"][0]["actions"][0]["invented"] = json!(true);
+    let bytes = serde_json::to_vec(&source).unwrap();
+    let error = decode_bundle(&bytes).unwrap_err();
+    assert_eq!(error.kind, DomainErrorKind::MalformedBundle);
+    assert!(error
+        .path
+        .contains("scopes[0].workers[0].actions[0].invented"));
+}
+
+#[test]
+fn e7_checked_program_has_derived_section_without_source_field() {
+    let bundle: DefinitionBundle = serde_json::from_value(fixture()).unwrap();
+    let checked = compile(&bundle, &bundle.operations).unwrap();
+    let encoded = serde_json::to_value(checked).unwrap();
+    assert!(encoded.get("source").is_none());
+    assert!(encoded.get("derived").is_some());
+    assert!(encoded["derived"].get("prompts").is_none());
+    assert!(encoded["derived"].get("operations").is_none());
+}
+
+#[test]
+fn e8_child_collection_read_rejects_shorter_list_schema() {
+    let mut source: Value =
+        serde_json::from_str(include_str!("../../../fixtures/bundles/dynamic.json")).unwrap();
+    source["schemas"].as_array_mut().unwrap().push(
+        json!({"key":"short_outcomes","shape":{"kind":"list","item":"result","max_items":1}}),
+    );
+    let original = source["scopes"][0]["tree"].clone();
+    source["scopes"][0]["tree"] = json!({"kind":"if","id":"check_short_collection",
+        "condition":{"kind":"every","source":{"kind":"reference","root":{"kind":"children_outcomes","key":"items","schema":"short_outcomes"},"path":[]},
+          "predicate":{"kind":"literal","schema":"flag","value":true}},
+        "then":original,
+        "otherwise":{"kind":"wait","id":"short_collection_wait","continuations":["begin"],"reason":"waiting","attention":{"label":"Waiting","trigger":"begin"}}
+    });
+    let bundle: DefinitionBundle = serde_json::from_value(source).unwrap();
+    let error = compile(&bundle, &bundle.operations).unwrap_err();
+    assert_eq!(error.kind, DomainErrorKind::IncompatiblePort);
+    assert!(error.detail.contains("1") && error.detail.contains("100"));
+}
+
+#[test]
+fn e8_output_collection_read_rejects_shorter_list_schema() {
+    let mut source = fixture();
+    source["scopes"][0]["outputs"][0]["collection_key"] = json!("key");
+    source["scopes"][0]["outputs"][0]["schema"] = json!("member");
+    source["schemas"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"key":"short_outputs","shape":{"kind":"list","item":"member","max_items":1}}));
+    let original = source["scopes"][0]["tree"].clone();
+    source["scopes"][0]["tree"] = json!({"kind":"if","id":"check_short_outputs",
+        "condition":{"kind":"every","source":{"kind":"reference","root":{"kind":"output_collection","key":"document","schema":"short_outputs"},"path":[]},
+          "predicate":{"kind":"literal","schema":"flag","value":true}},
+        "then":original,
+        "otherwise":{"kind":"wait","id":"short_outputs_wait","continuations":["begin"],"reason":"waiting","attention":{"label":"Waiting","trigger":"begin"}}
+    });
+    let bundle: DefinitionBundle = serde_json::from_value(source).unwrap();
+    let error = compile(&bundle, &bundle.operations).unwrap_err();
+    assert_eq!(error.kind, DomainErrorKind::IncompatiblePort);
+    assert!(error.detail.contains("1") && error.detail.contains("100"));
+}
+
+#[test]
+fn e8_output_revision_list_rejects_shorter_list_schema() {
+    let mut source = fixture();
+    source["scopes"][0]["outputs"][0]["collection_key"] = json!("key");
+    source["scopes"][0]["outputs"][0]["schema"] = json!("member");
+    source["schemas"].as_array_mut().unwrap().push(
+        json!({"key":"short_revisions","shape":{"kind":"list","item":"revision","max_items":1}}),
+    );
+    let original = source["scopes"][0]["tree"].clone();
+    source["scopes"][0]["tree"] = json!({"kind":"if","id":"check_short_revisions",
+        "condition":{"kind":"every","source":{"kind":"reference","root":{"kind":"output_revisions","key":"document","schema":"short_revisions"},"path":[]},
+          "predicate":{"kind":"literal","schema":"flag","value":true}},
+        "then":original,
+        "otherwise":{"kind":"wait","id":"short_revisions_wait","continuations":["begin"],"reason":"waiting","attention":{"label":"Waiting","trigger":"begin"}}
+    });
+    let bundle: DefinitionBundle = serde_json::from_value(source).unwrap();
+    let error = compile(&bundle, &bundle.operations).unwrap_err();
+    assert_eq!(error.kind, DomainErrorKind::IncompatiblePort);
+    assert!(error.detail.contains("1") && error.detail.contains("100"));
+}
+
+#[test]
+fn compiler_emits_the_complete_dynamic_scope_read_set() {
+    let bundle: DefinitionBundle =
+        serde_json::from_str(include_str!("../../../fixtures/bundles/dynamic.json")).unwrap();
+    let checked = compile(&bundle, &bundle.operations).unwrap();
+    let roots = &checked
+        .scopes
+        .iter()
+        .find(|scope| scope.key.0 == "batch")
+        .unwrap()
+        .reads;
+    assert_eq!(
+        roots,
+        &vec![
+            ReferenceRoot::Trigger,
+            ReferenceRoot::Item,
+            ReferenceRoot::Input
+        ]
+    );
+    let document = &checked
+        .scopes
+        .iter()
+        .find(|scope| scope.key.0 == "document")
+        .unwrap()
+        .reads;
+    assert_eq!(
+        document,
+        &vec![ReferenceRoot::Trigger, ReferenceRoot::Input]
     );
 }

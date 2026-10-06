@@ -9,18 +9,8 @@ pub fn trigger_schema(owner: &ScopeDefinition) -> SchemaId {
     SchemaId(format!("$trigger/{}", owner.key))
 }
 pub fn boolean_schema(bundle: &DefinitionBundle) -> CoreResult<SchemaId> {
-    bundle
-        .schemas
-        .iter()
-        .find(|s| matches!(s.shape, SchemaShape::Boolean))
-        .map(|s| s.key.clone())
-        .ok_or_else(|| {
-            error(
-                DomainErrorKind::MissingSymbol,
-                "boolean",
-                "boolean expression requires a named boolean schema",
-            )
-        })
+    let _ = bundle;
+    Ok(SchemaId("$bool".into()))
 }
 pub fn compatible(
     bundle: &DefinitionBundle,
@@ -29,6 +19,9 @@ pub fn compatible(
     entity: &str,
 ) -> CoreResult<()> {
     if expected == actual {
+        return Ok(());
+    }
+    if expected.0 == "$bool" && matches!(schema(bundle, actual)?, SchemaShape::Boolean) {
         return Ok(());
     }
     let kind = if matches!(schema(bundle, actual)?, SchemaShape::Optional { .. }) {
@@ -588,4 +581,34 @@ pub fn compile_expression(
         schema: result,
         node,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn equality_uses_canonical_boolean_schema() {
+        let source: DefinitionBundle =
+            serde_json::from_str(include_str!("../../../fixtures/bundles/minimal.json")).unwrap();
+        let expression = Expression::Equals {
+            left: Box::new(Expression::Literal {
+                schema: SchemaId::from("flag"),
+                value: serde_json::json!(true),
+            }),
+            right: Box::new(Expression::Literal {
+                schema: SchemaId::from("flag"),
+                value: serde_json::json!(false),
+            }),
+        };
+        let checked = compile_expression(
+            &source,
+            &source.scopes[0],
+            &expression,
+            &Context::default(),
+            0,
+        )
+        .unwrap();
+        assert_eq!(checked.schema, SchemaId::from("$bool"));
+    }
 }

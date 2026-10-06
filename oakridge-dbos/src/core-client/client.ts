@@ -1,10 +1,14 @@
-import { CORE_MAX_FRAME_BYTES, CORE_MAX_RESPONSE_BYTES, decodeCoreResponse, hasSafeWireNumbers, type CoreRequest, type CoreResponseResult, type CoreTransportKind, type Output } from "./generated-contracts";
+import { CORE_MAX_FRAME_BYTES, CORE_MAX_RESPONSE_BYTES, decodeCoreResponse, hasSafeWireNumbers, type CoreRequest, type CoreResponseResult, type CoreTransportKind, type DefinitionBundle, type Output } from "./generated-contracts";
 import { transportFailure, type CoreResult } from "./transport-errors";
 interface Pending { readonly resolve: (result: CoreResult<Output>) => void; readonly timeout: ReturnType<typeof setTimeout> }
 type RequestInput<O extends CoreRequest["operation"]> = Extract<CoreRequest, { readonly operation: O }>["input"];
-export interface CoreClientOptions { readonly binary: string; readonly deadlineMs: number; readonly maxPendingRequests?: number }
+type ClientInput<O extends CoreRequest["operation"]> = O extends "compile"
+  ? { readonly bundle: DefinitionBundle; readonly available_operations?: readonly DefinitionBundle["operations"][number][] }
+  : Omit<RequestInput<O>, "bundle_digest"> & { readonly bundle: DefinitionBundle; readonly available_operations?: readonly DefinitionBundle["operations"][number][] };
+export interface CoreClientOptions { readonly binary: string; readonly args?: readonly string[]; readonly deadlineMs: number; readonly maxPendingRequests?: number }
 const MAX_FRAME_BYTES = CORE_MAX_FRAME_BYTES;
 const MAX_RESPONSE_BYTES = CORE_MAX_RESPONSE_BYTES;
+const MAX_DIGEST_ENTRIES = 64;
 function resultFromResponse(result: CoreResponseResult): CoreResult<Output> {
   switch (result.status) {
     case "ok": return { ok: true, value: result.value };
@@ -16,10 +20,22 @@ function resultFromResponse(result: CoreResponseResult): CoreResult<Output> {
 export class CoreClient {
   private readonly process: ReturnType<typeof Bun.spawn>;
   private readonly pending = new Map<string, Pending>();
+  private readonly digests = new Map<string, string>();
+  private readonly compiling = new Map<string, Promise<CoreResult<Output>>>();
   private readonly deadlineMs: number;
   private readonly maxPendingRequests: number;
   private nextId = 0;
   private terminated = false;
+  private digestFor(key: string): string | undefined {
+    const digest = this.digests.get(key);
+    if (digest) { this.digests.delete(key); this.digests.set(key, digest); }
+    return digest;
+  }
+  private rememberDigest(key: string, digest: string): void {
+    this.digests.delete(key);
+    this.digests.set(key, digest);
+    if (this.digests.size > MAX_DIGEST_ENTRIES) this.digests.delete(this.digests.keys().next().value!);
+  }
   static start(options: CoreClientOptions): CoreResult<CoreClient> {
     if (!Number.isFinite(options.deadlineMs) || options.deadlineMs <= 0
       || (options.maxPendingRequests !== undefined && (!Number.isInteger(options.maxPendingRequests) || options.maxPendingRequests <= 0)))
@@ -30,7 +46,7 @@ export class CoreClient {
   private constructor(options: CoreClientOptions) {
     this.deadlineMs = options.deadlineMs;
     this.maxPendingRequests = options.maxPendingRequests ?? 64;
-    this.process = Bun.spawn({ cmd: [options.binary], stdin: "pipe", stdout: "pipe", stderr: "ignore" });
+    this.process = Bun.spawn({ cmd: [options.binary, ...(options.args ?? [])], stdin: "pipe", stdout: "pipe", stderr: "ignore" });
     void this.readResponses();
     void this.process.exited.then(() => { this.terminated = true; this.failAll("terminated_child", "core child exited"); });
   }
@@ -81,7 +97,39 @@ export class CoreClient {
       else if (this.pending.size) this.poison("terminated_child", "child stdout ended");
     } catch (error) { this.poison("terminated_child", String(error)); }
   }
-  async request<O extends CoreRequest["operation"]>(operation: O, input: RequestInput<O>): Promise<CoreResult<Output>> {
+  async request<O extends CoreRequest["operation"]>(operation: O, input: ClientInput<O>): Promise<CoreResult<Output>> {
+    const bundle = input.bundle;
+    const cacheKey = JSON.stringify(bundle);
+    if (operation === "compile") return this.compileBundle(bundle, cacheKey);
+    let digest = this.digestFor(cacheKey);
+    if (!digest) {
+      const compiled = await this.compileBundle(bundle, cacheKey);
+      if (!compiled.ok) return compiled;
+      digest = this.digestFor(cacheKey);
+    }
+    if (!digest) return transportFailure("malformed_frame", "compile did not return a digest");
+    const { bundle: _bundle, available_operations: _available, ...rest } = input;
+    let result = await this.send(operation, { ...rest, bundle_digest: digest } as unknown as RequestInput<O>);
+    if (!result.ok && result.error.kind === "domain" && result.error.detail.kind === "unknown_bundle") {
+      const compiled = await this.compileBundle(bundle, cacheKey);
+      if (!compiled.ok) return compiled;
+      const refreshed = this.digestFor(cacheKey);
+      if (!refreshed) return transportFailure("malformed_frame", "compile did not return a digest");
+      result = await this.send(operation, { ...rest, bundle_digest: refreshed } as unknown as RequestInput<O>);
+    }
+    return result;
+  }
+  private async compileBundle(bundle: DefinitionBundle, cacheKey: string): Promise<CoreResult<Output>> {
+    const existing = this.compiling.get(cacheKey);
+    if (existing) return existing;
+    const task = this.send("compile", { bundle }).then((result) => {
+      if (result.ok && result.value.kind === "compiled") this.rememberDigest(cacheKey, result.value.value.digest);
+      return result;
+    }).finally(() => { this.compiling.delete(cacheKey); });
+    this.compiling.set(cacheKey, task);
+    return task;
+  }
+  private async send<O extends CoreRequest["operation"]>(operation: O, input: RequestInput<O>): Promise<CoreResult<Output>> {
     if (this.terminated) return transportFailure("terminated_child", "core child exited");
     if (this.pending.size >= this.maxPendingRequests) return transportFailure("queue_full", "core request queue is full");
     const request_id = String(++this.nextId);

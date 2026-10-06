@@ -1,7 +1,7 @@
 import type { CoreResult } from "../core-client/transport-errors";
 import { stagePublications } from "./stage-publications";
 import { prepareChildCancellations } from "./child-cancellation";
-import type { CheckedProgram, DecisionOutcome, DefinitionBundle, OperationManifest, Trigger, Output } from "../core-client/generated-contracts";
+import type { CompiledBundle, DecisionOutcome, DefinitionBundle, OperationManifest, Trigger, Output } from "../core-client/generated-contracts";
 import type { CoreClient } from "../core-client/client";
 import { commitDecision, type CommitRequest, type CommitResult, type OutputPublication, type Result } from "./commit";
 import { requestDigest, findReceipt, type IngressIdentity } from "./receipts";
@@ -10,7 +10,7 @@ import type { RunId, ScopeId } from "./schema-records";
 import type { TransactionalSqlExecutor } from "./sql-executor";
 
 export interface CompileRequest { readonly bundle: DefinitionBundle; readonly available_operations: readonly OperationManifest[] }
-export interface CompileResult { readonly program: CheckedProgram }
+export interface CompileResult { readonly program: CompiledBundle }
 export interface StartRunRequest extends CompileRequest { readonly input: unknown }
 export interface EvaluationInput { readonly source: AuthoritySnapshot; readonly bundle: DefinitionBundle; readonly available_operations: readonly OperationManifest[] }
 export interface EvaluationResult { readonly decision: DecisionOutcome }
@@ -26,14 +26,14 @@ export function selectMutationIdentity(input: MutationInput): IngressIdentity {
 
 function error(operation: string, entity_id: string, detail: string): Result<never> { return { ok: false, error: { operation, entity_id, detail } }; }
 export async function compileBundle(core: CoreClient, request: CompileRequest): Promise<Result<CompileResult>> {
-  const response = await core.request("compile", { bundle: request.bundle, available_operations: [...request.available_operations] });
+  const response = await core.request("compile", { bundle: request.bundle, available_operations: request.bundle.operations });
   if (!response.ok) return error("compile", request.bundle.key, JSON.stringify(response.error));
   if (response.value.kind !== "compiled") return error("compile", request.bundle.key, "core returned a non-compiled response");
   return { ok: true, value: { program: response.value.value } };
 }
 /** The sole evaluator call; callers retain the core transport/domain error distinction. */
 export function requestEvaluation(core: CoreClient, input: EvaluationInput): Promise<CoreResult<Output>> {
-  return core.request("evaluate", { bundle: input.bundle, available_operations: [...input.available_operations], snapshot: input.source.snapshot });
+  return core.request("evaluate", { bundle: input.bundle, available_operations: input.bundle.operations, snapshot: input.source.snapshot });
 }
 export async function evaluateSnapshot(core: CoreClient, input: EvaluationInput): Promise<Result<EvaluationResult>> {
   const response = await requestEvaluation(core, input);
@@ -62,7 +62,7 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
       if (!root) return error("start_run", request.bundle.key, "compiled root scope missing");
       const root_definition = request.bundle.scopes.find((scope) => scope.key === request.bundle.root);
       if (!root_definition) return error("start_run", request.bundle.key, "root definition missing");
-      const validated = await core.request("validate_payload", { bundle: request.bundle, available_operations: [...request.available_operations], schema: root_definition.input_schema, payload: request.input });
+      const validated = await core.request("validate_payload", { bundle: request.bundle, available_operations: request.bundle.operations, schema: root_definition.input_schema, payload: request.input });
       if (!validated.ok) return error("start_run", request.bundle.key, JSON.stringify(validated.error));
       if (validated.value.kind !== "validated") return error("start_run", request.bundle.key, "core returned a non-validated input");
       const run_id = crypto.randomUUID() as RunId;

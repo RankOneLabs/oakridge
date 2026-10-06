@@ -72,6 +72,53 @@ function rawFrame(frame: string): RawResponse {
   const run = Bun.spawnSync({ cmd: [binary], stdin: Buffer.from(frame + "\n"), stdout: "pipe", stderr: "pipe" });
   return JSON.parse(new TextDecoder().decode(run.stdout).trim()) as RawResponse;
 }
+function rawFrames(frames: readonly object[], args: readonly string[] = []): RawResponse[] {
+  const run = Bun.spawnSync({ cmd: [binary, ...args], stdin: Buffer.from(frames.map((frame) => JSON.stringify(frame)).join("\n") + "\n"), stdout: "pipe", stderr: "pipe" });
+  return new TextDecoder().decode(run.stdout).trim().split("\n").map((line) => JSON.parse(line) as RawResponse);
+}
+test("digest request evaluates after compile and unknown digest is typed", () => {
+  const compiled = rawFrames([{ version: 1, request_id: "compile", operation: "compile", input: { bundle } }])[0]!;
+  const digest = (compiled.result.value as unknown as { value: { digest: string } }).value.digest;
+  const responses = rawFrames([
+    { version: 1, request_id: "compile", operation: "compile", input: { bundle } },
+    { version: 1, request_id: "evaluate", operation: "evaluate", input: { bundle_digest: digest, snapshot: snapshot() } },
+    { version: 1, request_id: "unknown", operation: "evaluate", input: { bundle_digest: "missing", snapshot: snapshot() } },
+  ]);
+  expect(responses.map((response) => [response.request_id, response.result.status, response.result.value.kind])).toEqual([
+    ["compile", "ok", "compiled"], ["evaluate", "ok", "evaluated"], ["unknown", "domain_error", "unknown_bundle"],
+  ]);
+});
+test("client recompiles a digest after LRU eviction", async () => {
+  const client = startClient();
+  try {
+    for (let index = 0; index < 33; index++) {
+      const source = { ...bundle, key: `cache-${index}` };
+      const compiled = await client.request("compile", { bundle: source });
+      expect(compiled.ok).toBe(true);
+    }
+    const source = { ...bundle, key: "cache-0" };
+    expect(await client.request("evaluate", { bundle: source, snapshot: snapshot(source) })).toMatchObject({ ok: true, value: { kind: "evaluated" } });
+  } finally { client.close(); }
+});
+test("concurrent callers share one source re-send", async () => {
+  const client = startClient(binary, 2_000, 1);
+  try {
+    const [first, second] = await Promise.all([
+      client.request("compile", { bundle }), client.request("compile", { bundle }),
+    ]);
+    expect(first).toMatchObject({ ok: true, value: { kind: "compiled" } });
+    expect(second).toEqual(first);
+  } finally { client.close(); }
+});
+test("CLI host ceilings reject a larger requested budget", () => {
+  const response = rawFrames([{ version: 1, request_id: "host", operation: "compile", input: { bundle } }],
+    ["--max-list-items", "10000", "--max-depth", "128", "--evaluation-budget", "100"])[0]!;
+  expect(response).toMatchObject({ request_id: "host", result: { status: "domain_error", value: { kind: "limit_exceeds_host" } } });
+});
+test("oversized frames echo the original request ID", () => {
+  const response = rawFrame(JSON.stringify({ version: 1, request_id: "oversized-origin", operation: "compile", input: { bundle }, padding: "x".repeat(1_048_576) }));
+  expect(response).toMatchObject({ request_id: "oversized-origin", result: { value: { kind: "oversized_payload" } } });
+});
 test("malformed frame has its own transport kind", () => expect(rawFrame("{").result.value.kind).toBe("malformed_frame"));
 test("unsupported version has its own transport kind", () => expect(rawFrame(JSON.stringify({ version: 2, request_id: "r", operation: "compile" })).result.value.kind).toBe("unsupported_version"));
 test("oversized payload has its own transport kind", () => expect(rawFrame("x".repeat(1_048_577)).result.value.kind).toBe("oversized_payload"));
@@ -80,10 +127,10 @@ test("duplicate JSON keys are rejected before overwrite", () => {
   const frame = JSON.stringify({ version: 1, request_id: "duplicate", operation: "compile", input: { bundle, available_operations: bundle.operations } }).replace('"language_version":1', '"language_version":1,"language_version":2');
   expect(rawFrame(frame).result.value.kind).toBe("duplicate_symbol");
 });
-test("responses echo the request ID and signal truncation", () => {
+test("compile response echoes the request ID and omits the checked source", () => {
   const source = { ...bundle, prompts: bundle.prompts.map((prompt) => ({ ...prompt, content: "x".repeat(Math.floor(CORE_MAX_RESPONSE_BYTES / 2) + 10_000) })) };
-  const response = rawFrame(JSON.stringify({ version: 1, request_id: "large", operation: "compile", input: { bundle: source, available_operations: source.operations } }));
-  expect(response).toMatchObject({ request_id: "large", truncated: true, result: { value: { kind: "oversized_payload" } } });
+  const response = rawFrame(JSON.stringify({ version: 1, request_id: "large", operation: "compile", input: { bundle: source } }));
+  expect(response).toMatchObject({ request_id: "large", truncated: false, result: { status: "ok", value: { kind: "compiled", value: { digest: expect.any(String), scopes: expect.any(Array) } } } });
 });
 async function withChild(scriptBody: string, run: (client: CoreClient) => Promise<void>, deadlineMs = 1000, queue = 64): Promise<void> {
   const directory = mkdtempSync(resolve(tmpdir(), "core-protocol-")); const script = resolve(directory, "child.sh");
@@ -151,7 +198,7 @@ test("unresponsive child hits deadline and is quarantined", () => withChild("IFS
 }, 20));
 test("bounded queue refuses excess callers without discarding pending request", () => withChild("IFS= read -r line\nsleep 1", async (client) => {
   const first = client.request("compile", { bundle, available_operations: bundle.operations });
-  expect(await client.request("compile", { bundle, available_operations: bundle.operations })).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "queue_full" } } });
+  expect(await client.request("compile", { bundle: { ...bundle, key: "second" }, available_operations: bundle.operations })).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "queue_full" } } });
   await first;
 }, 20, 1));
 
@@ -170,7 +217,7 @@ test("shared invalid compiler corpus retains typed diagnostics through the real 
 
 test("unknown source fields are domain diagnostics with request correlation", () => {
   const response = rawFrame(JSON.stringify({ version: 1, request_id: "unknown-source", operation: "compile", input: {
-    bundle: { ...bundle, invented: true }, available_operations: bundle.operations,
+    bundle: { ...bundle, invented: true },
   } }));
-  expect(response).toMatchObject({ request_id: "unknown-source", result: { status: "domain_error", value: { kind: "unknown_construct" } } });
+  expect(response).toMatchObject({ request_id: "unknown-source", result: { status: "domain_error", value: { kind: "malformed_bundle", path: "invented" } } });
 });

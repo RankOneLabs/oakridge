@@ -7,6 +7,30 @@ import { readSnapshot, hasSameReadSet } from "../src/storage/snapshot-reader";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
 import type { ScopeId } from "../src/storage/schema-records";
 import type { CheckedValue, DefinitionBundle } from "../src/core-client/generated-contracts";
+import { runtimeFixture } from "./development-runtime-fixture";
+import { withDatabase, unit } from "./effect-fixture";
+
+test("action input reads a pinned resource observation without invalid_snapshot", async () => withDatabase(async ({ db }) => {
+  const minimal: DefinitionBundle = await Bun.file(resolve(import.meta.dir, "../../workflow-core/fixtures/bundles/minimal.json")).json();
+  const bundle: DefinitionBundle = { ...minimal,
+    operations: minimal.operations.map((operation) => ({ ...operation, input_schema: "resource" })),
+    prompts: minimal.prompts.map((prompt) => ({ ...prompt, input_schema: "resource" })),
+    scopes: minimal.scopes.map((scope) => ({ ...scope,
+      workers: scope.workers.map((worker) => ({ ...worker,
+        actions: worker.actions.map((action) => ({ ...action, input_schema: "resource",
+          input: { kind: "reference" as const, root: { kind: "resource" as const, key: "source" }, path: [] } })) })) })) };
+  const fixture = await runtimeFixture(db, bundle, {});
+  try {
+    const observed = { schema: "resource", data: { kind: "reference", brand: "resource", id: "repository" } };
+    await db.query("INSERT INTO authority.resource_binding (id,scope_id,resource_key,observation) VALUES ('binding',$1,'source',$2)",
+      [fixture.root_scope_id, JSON.stringify(observed)]);
+    const source = await readSnapshot(db, fixture.root_scope_id, { id: "begin", key: "begin", payload: unit });
+    expect(source?.snapshot.observations.map((observation) => observation.root)).toEqual([{ kind: "resource", key: "source" }]);
+    const result = await fixture.core.request("evaluate", { bundle, snapshot: source!.snapshot });
+    expect(result).toMatchObject({ ok: true, value: { kind: "evaluated", value: { kind: "apply",
+      invocations: [{ input: observed }] } } });
+  } finally { fixture.core.close(); }
+}));
 
 test("snapshot records output, export, resource, collection and capacity membership versions", async () => {
   const admin_url = process.env.OAKRIDGE_TEST_DATABASE_URL;
@@ -20,7 +44,10 @@ test("snapshot records output, export, resource, collection and capacity members
   try {
     await migrateEmptyDatabase(db);
     const bundle: DefinitionBundle = await Bun.file(resolve(import.meta.dir, "../../workflow-core/fixtures/bundles/children-1.json")).json();
-    await db.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ('bundle','digest',$1,'{}')", [JSON.stringify(bundle)]);
+    const checked_program = { digest: "digest", scopes: [{ key: "batch", reads: [
+      { kind: "child", key: "item_0", export: "released" }, { kind: "resource", key: "source" },
+    ] }] };
+    await db.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ('bundle','digest',$1,$2)", [JSON.stringify(bundle), JSON.stringify(checked_program)]);
     await db.query("INSERT INTO authority.run (id,definition_bundle_id) VALUES ('run','bundle')", []);
     const state: CheckedValue = { schema: "position", data: { kind: "variant", variant: "waiting", value } };
     await db.query("INSERT INTO authority.scope_instance (id,run_id,scope_key,input,local_state) VALUES ('scope','run','batch',$1,$2)", [JSON.stringify(value), JSON.stringify(state)]);

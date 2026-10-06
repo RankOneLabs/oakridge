@@ -55,7 +55,8 @@ function isCancellationPayloads(value: unknown): value is readonly ScopeCancella
 export async function createProductionComposition(options: ProductionOptions): Promise<ProductionComposition> {
   const access = selectControlPlaneAccess({ host: options.host, token: options.control_token, allow_insecure_non_loopback: process.env.ALLOW_INSECURE_NON_LOOPBACK_CONTROL === "1" });
   if (access.kind === "refused") throw new Error(access.detail);
-  const started = CoreClient.start({ binary: options.core_binary, deadlineMs: 10_000 });
+  const started = CoreClient.start({ binary: options.core_binary,
+    args: ["--max-list-items", "10000", "--max-depth", "128", "--evaluation-budget", "1000000"], deadlineMs: 10_000 });
   if (!started.ok) throw new Error(`workflow-cli could not start: ${started.error.detail.detail}`);
   const core = started.value;
   const db = PgPostgresExecutor.connect(options.database_url);

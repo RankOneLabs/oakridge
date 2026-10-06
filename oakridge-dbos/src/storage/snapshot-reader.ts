@@ -1,5 +1,5 @@
 import { observationRootKey, selectObservationRoots } from "../core-client/observation-roots";
-import type { CheckedValue, DefinitionBundle, Snapshot, Trigger, VersionedValue } from "../core-client/generated-contracts";
+import type { CheckedValue, CompiledBundle, DefinitionBundle, ReferenceRoot, Snapshot, Trigger, VersionedValue } from "../core-client/generated-contracts";
 import type { CapacityPoolRecord, OutputSlotRecord, RevisionId, ResourceBindingRecord, ScopeExportRecord, ScopeId, ScopeInstanceRecord } from "./schema-records";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 
@@ -8,7 +8,7 @@ export type ReadRelation = typeof READ_RELATIONS[number];
 export interface ReadWitness { readonly relation: ReadRelation; readonly id: string; readonly version: number }
 export interface MembershipWitness { readonly relation: ReadRelation; readonly run_id: string; readonly signature: string }
 export interface ReadSet { readonly rows: readonly ReadWitness[]; readonly membership: readonly MembershipWitness[] }
-export interface AuthoritySnapshot { readonly snapshot: Snapshot; readonly read_set: ReadSet; readonly owner: ScopeInstanceRecord; readonly pools: readonly CapacityPoolRecord[]; readonly current_outputs: readonly CurrentOutput[] }
+export interface AuthoritySnapshot { readonly snapshot: Snapshot; readonly reads: readonly ReferenceRoot[]; readonly read_set: ReadSet; readonly owner: ScopeInstanceRecord; readonly pools: readonly CapacityPoolRecord[]; readonly current_outputs: readonly CurrentOutput[] }
 export interface CurrentOutput extends OutputSlotRecord { readonly current_revision_id: RevisionId; readonly body: VersionedValue["value"] }
 interface ImportedExport extends ScopeExportRecord { readonly child_key: string; readonly child_id: string; readonly collection_key: string | null }
 interface VersionRow { readonly id: string; readonly version: string | number }
@@ -38,10 +38,10 @@ export async function readWitnesses(tx: SqlExecutor, run_id: string): Promise<Re
 }
 
 interface ScopeObservations { readonly observations: VersionedValue[]; readonly current_outputs: readonly CurrentOutput[] }
-interface ScopeObservationInput { readonly owner: ScopeInstanceRecord; readonly scope: DefinitionBundle["scopes"][number]; readonly bundle: DefinitionBundle }
+interface ScopeObservationInput { readonly owner: ScopeInstanceRecord; readonly scope: DefinitionBundle["scopes"][number]; readonly bundle: DefinitionBundle; readonly reads: readonly ReferenceRoot[] }
 
 /** Use the same observation identities for decisions and operator projections. */
-export async function readScopeObservations(tx: SqlExecutor, { owner, scope, bundle }: ScopeObservationInput): Promise<ScopeObservations> {
+export async function readScopeObservations(tx: SqlExecutor, { owner, scope, bundle, reads }: ScopeObservationInput): Promise<ScopeObservations> {
   const exports = await tx.query<ImportedExport>("SELECT e.*, s.child_key,s.id AS child_id,s.collection_key FROM authority.scope_export e JOIN authority.scope_instance s ON s.id=e.scope_id WHERE s.parent_id=$1 ORDER BY e.id", [owner.id]);
   const slots = await tx.query<CurrentOutput>("SELECT s.*, r.body FROM authority.output_slot s JOIN authority.artifact_revision r ON r.id=s.current_revision_id WHERE s.scope_id=$1 ORDER BY s.id", [owner.id]);
   const resources = await tx.query<ResourceBindingRecord>("SELECT * FROM authority.resource_binding WHERE scope_id=$1 ORDER BY id", [owner.id]);
@@ -55,7 +55,7 @@ export async function readScopeObservations(tx: SqlExecutor, { owner, scope, bun
   for (const row of results) if (scope.workers.some((worker) => worker.key === row.worker_key)) observations.push({ identity: row.id, root: { kind: "result", worker: row.worker_key }, value: row.result, version: Number(row.version) });
   const collections = await tx.query<import("./schema-records").ChildCollectionRecord>("SELECT * FROM authority.child_collection WHERE scope_id=$1 ORDER BY id", [owner.id]);
   const children = await tx.query<ScopeInstanceRecord>("SELECT * FROM authority.scope_instance WHERE parent_id=$1 ORDER BY child_key,id", [owner.id]);
-  for (const root of selectObservationRoots(scope)) {
+  for (const root of selectObservationRoots({ reads: [...reads] })) {
     let value: CheckedValue | null = null;
     let identity = JSON.stringify(root);
     let version = Number(owner.version);
@@ -95,7 +95,8 @@ export async function readScopeObservations(tx: SqlExecutor, { owner, scope, bun
     }
     if (value) observations.push({ identity, root, value, version });
   }
-  return { observations, current_outputs: slots };
+  const allowed = new Set(reads.map(observationRootKey));
+  return { observations: observations.filter((observation) => allowed.has(observationRootKey(observation.root))), current_outputs: slots };
 }
 
 export async function readSnapshot(db: TransactionalSqlExecutor, scope_id: ScopeId, trigger: Trigger, random_seed = 0): Promise<AuthoritySnapshot | null> {
@@ -104,15 +105,16 @@ export async function readSnapshot(db: TransactionalSqlExecutor, scope_id: Scope
     const owner = owners[0];
     if (!owner) return null;
     const read_set = await readWitnesses(tx, owner.run_id);
-    const definitions = await tx.query<{ source: DefinitionBundle }>("SELECT b.source FROM authority.definition_bundle b JOIN authority.run r ON r.definition_bundle_id=b.id WHERE r.id=$1", [owner.run_id]);
+    const definitions = await tx.query<{ source: DefinitionBundle; checked_program: CompiledBundle }>("SELECT b.source,b.checked_program FROM authority.definition_bundle b JOIN authority.run r ON r.definition_bundle_id=b.id WHERE r.id=$1", [owner.run_id]);
     const bundle = definitions[0]?.source;
     const scope = bundle?.scopes.find((scope) => scope.key === owner.scope_key);
-    if (!scope || !bundle) return null;
-    const { observations, current_outputs } = await readScopeObservations(tx, { owner, scope, bundle });
+    const reads = definitions[0]?.checked_program?.scopes?.find((scope) => scope.key === owner.scope_key)?.reads;
+    if (!scope || !bundle || !reads) return null;
+    const { observations, current_outputs } = await readScopeObservations(tx, { owner, scope, bundle, reads });
     const pools = await tx.query<CapacityPoolRecord>("SELECT * FROM authority.capacity_pool WHERE run_id=$1", [owner.run_id]);
     const snapshot: Snapshot = { owner: owner.id, scope: owner.scope_key, input: owner.input, state: owner.local_state,
       version: Number(owner.version), trigger, observations, random_seed, timestamp_ms: Date.now() };
-    return { snapshot, read_set, current_outputs, owner: { ...owner, version: Number(owner.version) }, pools: pools.map((pool) => ({ ...pool, version: Number(pool.version) })) };
+    return { snapshot, reads, read_set, current_outputs, owner: { ...owner, version: Number(owner.version) }, pools: pools.map((pool) => ({ ...pool, version: Number(pool.version) })) };
   }, "repeatable read");
 }
 

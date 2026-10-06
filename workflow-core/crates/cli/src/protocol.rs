@@ -1,9 +1,63 @@
-use workflow_compiler::{check_value, compile, decode_bundle, decode_unique_json};
+use std::collections::VecDeque;
+use workflow_compiler::{check_value, compile_with_host, decode_bundle, decode_unique_json};
 use workflow_evaluator::{evaluate, materialize};
 use workflow_model::protocol::{
     Operation, Output, Request, Response, ResponseResult, TransportError, TransportErrorKind,
     MAX_FRAME_BYTES, MAX_RESPONSE_BYTES, PROTOCOL_VERSION,
 };
+use workflow_model::{BundleDigest, CheckedProgram, DomainError, DomainErrorKind, ResourceLimits};
+
+pub const MAX_CACHED_PROGRAMS: usize = 32;
+pub fn request_id_prefix(frame: &[u8]) -> String {
+    let text = String::from_utf8_lossy(frame);
+    let Some(position) = text.find("\"request_id\"") else {
+        return String::new();
+    };
+    let remainder = text[position + "\"request_id\"".len()..].trim_start();
+    let Some(remainder) = remainder.strip_prefix(':') else {
+        return String::new();
+    };
+    let remainder = remainder.trim_start();
+    let Some(remainder) = remainder.strip_prefix('"') else {
+        return String::new();
+    };
+    let Some(end) = remainder.find('"') else {
+        return String::new();
+    };
+    let id = &remainder[..end];
+    if id.len() <= 128 && !id.contains('\\') {
+        id.to_owned()
+    } else {
+        String::new()
+    }
+}
+pub struct CliState {
+    host: ResourceLimits,
+    programs: VecDeque<CheckedProgram>,
+}
+impl CliState {
+    pub fn new(host: ResourceLimits) -> Self {
+        Self {
+            host,
+            programs: VecDeque::new(),
+        }
+    }
+    fn find(&mut self, digest: &BundleDigest) -> Option<&CheckedProgram> {
+        let position = self
+            .programs
+            .iter()
+            .position(|program| &program.digest == digest)?;
+        let program = self.programs.remove(position)?;
+        self.programs.push_front(program);
+        self.programs.front()
+    }
+    fn insert(&mut self, program: CheckedProgram) {
+        self.programs
+            .retain(|cached| cached.digest != program.digest);
+        self.programs.push_front(program);
+        self.programs.truncate(MAX_CACHED_PROGRAMS);
+    }
+}
 
 fn transport(request_id: String, kind: TransportErrorKind, detail: &str) -> Response {
     Response {
@@ -17,7 +71,7 @@ fn transport(request_id: String, kind: TransportErrorKind, detail: &str) -> Resp
     }
 }
 
-pub fn handle_frame(frame: &[u8]) -> Response {
+pub fn handle_frame(state: &mut CliState, frame: &[u8]) -> Response {
     if frame.len() > MAX_FRAME_BYTES {
         let request_id = serde_json::from_slice::<serde_json::Value>(frame)
             .ok()
@@ -135,40 +189,55 @@ pub fn handle_frame(frame: &[u8]) -> Response {
             )
         }
     };
+    let unknown = |digest: &BundleDigest| {
+        DomainError::new(
+            DomainErrorKind::UnknownBundle,
+            digest.to_string(),
+            "bundle digest is not cached",
+        )
+    };
     let result = match request.operation {
-        Operation::Compile {
-            bundle,
-            available_operations,
-        } => compile(&bundle, &available_operations).map(Output::Compiled),
+        Operation::Compile { bundle } => compile_with_host(&bundle, &state.host).map(|program| {
+            let output = workflow_model::protocol::CompiledBundle {
+                digest: program.digest.clone(),
+                scopes: program.scopes.clone(),
+            };
+            state.insert(program);
+            Output::Compiled(output)
+        }),
         Operation::ValidatePayload {
-            bundle,
-            available_operations,
+            bundle_digest,
             schema,
             payload,
-        } => compile(&bundle, &available_operations)
-            .and_then(|program| check_value(&program.source, &schema, &payload))
+        } => state
+            .find(&bundle_digest)
+            .ok_or_else(|| unknown(&bundle_digest))
+            .and_then(|program| check_value(&program.derived, &schema, &payload))
             .map(Output::Validated),
         Operation::Evaluate {
-            bundle,
-            available_operations,
+            bundle_digest,
             snapshot,
-        } => compile(&bundle, &available_operations)
-            .and_then(|program| evaluate(&program, &snapshot))
+        } => state
+            .find(&bundle_digest)
+            .ok_or_else(|| unknown(&bundle_digest))
+            .and_then(|program| evaluate(program, &snapshot))
             .map(Output::Evaluated),
         Operation::Materialize {
-            bundle,
-            available_operations,
+            bundle_digest,
             snapshot,
             template,
-        } => compile(&bundle, &available_operations)
-            .and_then(|program| materialize(&program, &snapshot, &template))
+        } => state
+            .find(&bundle_digest)
+            .ok_or_else(|| unknown(&bundle_digest))
+            .and_then(|program| materialize(program, &snapshot, &template))
             .map(Output::Materialized),
         Operation::Explain {
-            bundle,
-            available_operations,
+            bundle_digest,
             snapshot,
-        } => compile(&bundle, &available_operations)
-            .and_then(|program| evaluate(&program, &snapshot))
+        } => state
+            .find(&bundle_digest)
+            .ok_or_else(|| unknown(&bundle_digest))
+            .and_then(|program| evaluate(program, &snapshot))
             .map(Output::Explained),
     };
     Response {
@@ -232,9 +301,20 @@ mod tests {
     }
     #[test]
     fn transport_failures_are_distinct() {
-        let malformed = handle_frame(b"{");
-        let version = handle_frame(br#"{"version":2,"request_id":"r","operation":"compile"}"#);
-        let unknown = handle_frame(br#"{"version":1,"request_id":"r","operation":"other"}"#);
+        let mut state = CliState::new(ResourceLimits {
+            max_list_items: 10_000,
+            max_depth: 128,
+            evaluation_budget: 1_000_000,
+        });
+        let malformed = handle_frame(&mut state, b"{");
+        let version = handle_frame(
+            &mut state,
+            br#"{"version":2,"request_id":"r","operation":"compile"}"#,
+        );
+        let unknown = handle_frame(
+            &mut state,
+            br#"{"version":1,"request_id":"r","operation":"other"}"#,
+        );
         assert!(matches!(
             malformed.result,
             ResponseResult::TransportError(TransportError {

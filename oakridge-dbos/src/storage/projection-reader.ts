@@ -1,4 +1,4 @@
-import type { DefinitionBundle } from "../core-client/generated-contracts";
+import type { CompiledBundle, DefinitionBundle } from "../core-client/generated-contracts";
 import type { TransactionalSqlExecutor } from "./sql-executor";
 import type { RunId, RunRecord, ScopeId, ScopeInstanceRecord, ResourceBindingRecord } from "./schema-records";
 import { readScopeObservations } from "./snapshot-reader";
@@ -12,7 +12,8 @@ export async function readScopeView(db: TransactionalSqlExecutor, scope_id: Scop
   return db.transaction(async (tx) => {
     const scope = (await tx.query<ScopeInstanceRecord>("SELECT * FROM authority.scope_instance WHERE id=$1", [scope_id]))[0];
     if (!scope) return null;
-    const bundle = (await tx.query<{ source: DefinitionBundle }>("SELECT b.source FROM authority.definition_bundle b JOIN authority.run r ON r.definition_bundle_id=b.id WHERE r.id=$1", [scope.run_id]))[0]?.source;
+    const pinned = (await tx.query<{ source: DefinitionBundle; checked_program: CompiledBundle }>("SELECT b.source,b.checked_program FROM authority.definition_bundle b JOIN authority.run r ON r.definition_bundle_id=b.id WHERE r.id=$1", [scope.run_id]))[0];
+    const bundle = pinned?.source;
     if (!bundle) throw new Error(`pinned definition missing for ${scope.run_id}`);
     const definition = bundle.scopes.find((item) => item.key === scope.scope_key);
     if (!definition) throw new Error(`scope definition missing for ${scope.id}`);
@@ -23,7 +24,9 @@ export async function readScopeView(db: TransactionalSqlExecutor, scope_id: Scop
       tx.query<TransitionRow>("SELECT id,decision FROM authority.transition WHERE scope_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1", [scope.id]),
     ]);
     const commands = selectAvailableCommands(bundle, scope);
-    const { observations } = await readScopeObservations(tx, { owner: scope, scope: definition, bundle });
+    const reads = pinned?.checked_program.scopes.find((item) => item.key === scope.scope_key)?.reads;
+    if (!reads) throw new Error(`checked scope missing for ${scope.id}`);
+    const { observations } = await readScopeObservations(tx, { owner: scope, scope: definition, bundle, reads });
     const command_targets = Object.fromEntries(await Promise.all(commands.map(async (command) =>
       [command.key, await currentTargetRevisions(tx, scope_id, command, observations)] as const)));
     return { scope_id, run_id: scope.run_id, scope_key: scope.scope_key, label: definition.presentation.label,

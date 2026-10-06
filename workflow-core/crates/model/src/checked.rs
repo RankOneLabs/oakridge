@@ -11,9 +11,18 @@ pub struct CheckedProgram {
     #[schemars(schema_with = "crate::wire_numbers::word::schema")]
     pub evaluator_version: u32,
     pub digest: BundleDigest,
-    pub source: DefinitionBundle,
+    pub derived: CheckedDefinition,
     pub scopes: Vec<CheckedScope>,
     pub analysis: Vec<ScopeAnalysis>,
+}
+/// Only the resolved data required by the evaluator; authored prompts and operation
+/// manifests stay in the pinned source bundle outside the checked program.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CheckedDefinition {
+    pub schemas: Vec<Schema>,
+    pub scopes: Vec<ScopeDefinition>,
+    pub limits: ResourceLimits,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -27,6 +36,7 @@ pub struct ScopeAnalysis {
 #[serde(deny_unknown_fields)]
 pub struct CheckedScope {
     pub key: ScopeKey,
+    pub reads: Vec<ReferenceRoot>,
     pub initial: CheckedValue,
     pub tree: CheckedTree,
     pub children: Vec<CheckedChild>,
@@ -230,7 +240,7 @@ pub struct CheckedAction {
     pub selection: ActionSelection,
     pub definition: InvocationContract,
     pub input: CheckedExpression,
-    pub prompt_content: Option<String>,
+    pub prompt_key: Option<SymbolKey>,
 }
 /// Frozen provider boundary: no source expression or mutable prompt reference.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -362,7 +372,7 @@ pub struct Invocation {
     pub selection: ActionSelection,
     pub definition: InvocationContract,
     pub input: CheckedValue,
-    pub prompt_content: Option<String>,
+    pub prompt_key: Option<SymbolKey>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]

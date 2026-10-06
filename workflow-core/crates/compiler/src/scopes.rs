@@ -188,9 +188,126 @@ pub fn compile_scope(
     }
     Ok(CheckedScope {
         key: owner.key.clone(),
+        reads: observation_reads(owner),
         initial,
         tree,
         children,
         command_targets,
     })
+}
+
+fn observation_reads(owner: &ScopeDefinition) -> Vec<ReferenceRoot> {
+    fn expression(value: &Expression, roots: &mut Vec<ReferenceRoot>) {
+        match value {
+            Expression::Reference { root, .. } => {
+                if !roots.contains(root) {
+                    roots.push(root.clone());
+                }
+            }
+            Expression::Record { fields, .. } => fields
+                .iter()
+                .for_each(|field| expression(&field.value, roots)),
+            Expression::List { items, .. }
+            | Expression::All { items }
+            | Expression::Any { items } => items.iter().for_each(|item| expression(item, roots)),
+            Expression::Variant { value, .. }
+            | Expression::IsVariant { value, .. }
+            | Expression::Not { value }
+            | Expression::Field { value, .. } => expression(value, roots),
+            Expression::Optional { value, .. } => {
+                if let Some(value) = value {
+                    expression(value, roots);
+                }
+            }
+            Expression::Equals { left, right } => {
+                expression(left, roots);
+                expression(right, roots);
+            }
+            Expression::Map { source, value, .. }
+            | Expression::Contains { source, value }
+            | Expression::Filter {
+                source,
+                predicate: value,
+            }
+            | Expression::Every {
+                source,
+                predicate: value,
+            } => {
+                expression(source, roots);
+                expression(value, roots);
+            }
+            Expression::FilterBy { source, key, .. } | Expression::Lookup { source, key, .. } => {
+                expression(source, roots);
+                expression(key, roots);
+            }
+            Expression::UniqueBy { source, .. } | Expression::CheckCollection { source, .. } => {
+                expression(source, roots)
+            }
+            Expression::Literal { .. } => {}
+        }
+    }
+    fn tree(value: &DecisionTree, roots: &mut Vec<ReferenceRoot>) {
+        match value {
+            DecisionTree::Match {
+                value,
+                cases,
+                otherwise,
+                ..
+            } => {
+                expression(value, roots);
+                cases.iter().for_each(|case| tree(&case.node, roots));
+                if let Some(otherwise) = otherwise {
+                    tree(otherwise, roots);
+                }
+            }
+            DecisionTree::If {
+                condition,
+                then,
+                otherwise,
+                ..
+            } => {
+                expression(condition, roots);
+                tree(then, roots);
+                tree(otherwise, roots);
+            }
+            DecisionTree::Apply {
+                mutations, outcome, ..
+            } => {
+                for mutation in mutations {
+                    match mutation {
+                        Mutation::SetState { value }
+                        | Mutation::Export { value, .. }
+                        | Mutation::BindResource { value, .. } => expression(value, roots),
+                        _ => {}
+                    }
+                }
+                if let Some(outcome) = outcome {
+                    expression(outcome, roots);
+                }
+            }
+            DecisionTree::Wait { .. } | DecisionTree::Reject { .. } => {}
+        }
+    }
+    let mut roots = Vec::new();
+    tree(&owner.tree, &mut roots);
+    for worker in &owner.workers {
+        for action in &worker.actions {
+            expression(&action.input, &mut roots);
+        }
+    }
+    for command in &owner.commands {
+        for target in &command.targets {
+            expression(target, &mut roots);
+        }
+    }
+    for child in &owner.children {
+        expression(&child.input, &mut roots);
+        if let Some(collection) = &child.collection {
+            expression(&collection.source, &mut roots);
+            if let EmptyPolicy::Complete { outcome } = &collection.empty {
+                expression(outcome, &mut roots);
+            }
+        }
+    }
+    roots
 }

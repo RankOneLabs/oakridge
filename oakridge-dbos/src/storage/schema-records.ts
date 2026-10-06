@@ -1,5 +1,5 @@
 import type { EffectPayload } from "../effects/intents";
-import type { CheckedProgram, CheckedValue, DecisionOutcome, DefinitionBundle, Materialization } from "../core-client/generated-contracts";
+import type { CheckedValue, DecisionOutcome, DefinitionBundle, Materialization } from "../core-client/generated-contracts";
 
 export type Id<Kind extends string> = string & { readonly __id_kind: Kind };
 export type RunId = Id<"run">;
@@ -9,7 +9,7 @@ export type RevisionId = Id<"revision">;
 export type PoolId = Id<"pool">;
 export type Version = number;
 export interface VersionedRecord { readonly id: string; readonly version: Version }
-export interface DefinitionBundleRecord extends VersionedRecord { readonly digest: string; readonly source: DefinitionBundle; readonly checked_program: CheckedProgram }
+export interface DefinitionBundleRecord extends VersionedRecord { readonly digest: string; readonly source: DefinitionBundle; readonly checked_program: import("../core-client/generated-contracts").CompiledBundle }
 export interface RunRecord extends VersionedRecord { readonly definition_bundle_id: string; readonly created_at: Date }
 export interface ScopeInstanceRecord extends VersionedRecord { readonly run_id: RunId; readonly parent_id: ScopeId | null; readonly scope_key: string; readonly child_key: string | null; readonly collection_key?: string | null; readonly input: CheckedValue; readonly local_state: CheckedValue; readonly outcome: CheckedValue | null; readonly is_terminal: boolean }
 export interface ScopeExportRecord extends VersionedRecord { readonly scope_id: ScopeId; readonly export_key: string; readonly value: CheckedValue }
@@ -29,5 +29,5 @@ export interface ResourceBindingRecord extends VersionedRecord { readonly scope_
 export interface CommitReceipt { readonly transition_id: string; readonly scope_version: number }
 
 // Wire payloads remain the generated Rust contracts; persistence adds identity and version.
-export type CompiledBundle = CheckedProgram;
+export type CompiledBundle = import("../core-client/generated-contracts").CompiledBundle;
 export type MaterializedCollection = Materialization;

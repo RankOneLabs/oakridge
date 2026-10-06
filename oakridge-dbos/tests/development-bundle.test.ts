@@ -43,6 +43,17 @@ test("selected prompt carries its pinned action input", () => {
     .toContain('"revision": "build-2"');
 });
 
+test("development prompt lookup preserves the rendered prompt bytes", () => {
+  const action = bundle.scopes.flatMap((scope) => scope.workers.flatMap((worker) => worker.actions))
+    .find((candidate) => candidate.prompt !== null && candidate.prompt !== undefined);
+  const authored = bundle.prompts.find((prompt) => prompt.key === action?.prompt);
+  if (!action?.prompt || !authored) throw new Error("development prompt fixture missing");
+  const action_input = { repository: "oakridge", instruction: "Build the pinned scope" };
+  const previous = promptWithActionInput(authored.content, action_input);
+  const resolved = bundle.prompts.find((prompt) => prompt.key === action.prompt);
+  expect(promptWithActionInput(resolved!.content, action_input)).toBe(previous);
+});
+
 test("root selects repository preparation from the repository configuration collection", async () => {
   const core = client();
   try {
