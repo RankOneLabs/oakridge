@@ -1,5 +1,6 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { decodeCoreResponse } from "../core-client/generated-contracts";
 import type { DefinitionBundle, Trigger } from "../core-client/generated-contracts";
 import { CoreClient } from "../core-client/client";
@@ -70,6 +71,7 @@ export async function createProductionComposition(options: ProductionOptions): P
   await resumeActiveRuns(db);
   const wake = (run_id: RunId): Promise<void> => wakeRun(run_id);
   const app = new Hono();
+  app.use("*", bodyLimit({ maxSize: 1_048_576, onError: (context) => context.json({ kind: "oversized_payload", limit: 1_048_576 }, 413) }));
   if (access.kind === "token_required") app.use("*", controlTokenMiddleware(access.token));
   installDefinitionApi(app, { db, core, mutations, wake });
   app.get("/health", (context) => context.json({ status: "ok", application_version, core: core.health }));
@@ -111,7 +113,7 @@ export async function createProductionComposition(options: ProductionOptions): P
     if (result.kind === "refused") return context.json(result, 409);
     return context.json(result);
   });
-  app.post("/runs/:run_id/scopes/:scope_id/decide", async (context) => {
+  if (process.env.OAKRIDGE_ENABLE_RAW_INGRESS === "1") app.post("/runs/:run_id/scopes/:scope_id/decide", async (context) => {
     let body: unknown;
     try { body = await context.req.json(); } catch { return context.json({ error: "invalid JSON" }, 400); }
     if (!body || typeof body !== "object" || !("trigger" in body) || !isTrigger(body.trigger) || !("ingress_id" in body) || typeof body.ingress_id !== "string") return context.json({ error: "invalid ingress" }, 400);

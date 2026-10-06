@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 
 import { mountOakridgeProxyRoutes } from "./oakridge-proxy";
+import { HTTP_ROUTES } from "../../../../oakridge-dbos/src/http/routes";
 
 const originalFetch = globalThis.fetch;
 
@@ -52,7 +53,7 @@ describe("oakridge proxy", () => {
     expect(signal).toBeInstanceOf(AbortSignal);
   });
 
-  test("injects core control token as Bearer on write requests", async () => {
+  test("injects core control token as Bearer on operator requests", async () => {
     const captured = { authHeader: null as string | null };
     globalThis.fetch = (async (_input, init) => {
       const headers = init?.headers as Headers | undefined;
@@ -69,8 +70,30 @@ describe("oakridge proxy", () => {
       coreControlToken: "core-secret",
     });
 
-    await app.request("/oakridge/api/workflow_runs", { method: "POST", body: "{}" });
+    await app.request("/oakridge/api/runs", { method: "POST", body: "{}" });
     expect(captured.authHeader).toBe("Bearer core-secret");
+  });
+
+  test("only table operator routes receive the control token", async () => {
+    const received: (string | null)[] = [];
+    globalThis.fetch = (async (_input, init) => {
+      received.push((init?.headers as Headers).get("authorization"));
+      return Response.json({ ok: true });
+    }) as typeof fetch;
+    const app = new Hono();
+    mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test", coreControlToken: "core-secret" });
+    for (const route of HTTP_ROUTES) {
+      const path = route.path.replace(/:[^/]+/g, "id");
+      await app.request(`/oakridge/api${path}`, { method: route.method, body: route.method === "GET" ? undefined : "{}" });
+    }
+    expect(received).toEqual(HTTP_ROUTES.map((route) => route.authority === "operator" ? "Bearer core-secret" : null));
+  });
+
+  test("a two MiB request returns a typed 413 before proxy buffering", async () => {
+    const app = new Hono();
+    mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test" });
+    const response = await app.request("/oakridge/api/runs", { method: "POST", body: "x".repeat(2 * 1024 * 1024) });
+    expect({ status: response.status, body: await response.json() }).toEqual({ status: 413, body: { kind: "oversized_payload", limit: 1_048_576 } });
   });
 
   test("does not inject core token on GET requests", async () => {

@@ -1,10 +1,12 @@
 import type { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
+import { matchRoute } from "../../../../oakridge-dbos/src/http/routes";
 
 export interface OakridgeProxyDeps {
   baseUrl: string | undefined;
   /**
-   * Token injected as Authorization: Bearer <token> into proxied write
-   * requests to the Oakridge backend. Falls back to OAKRIDGE_CONTROL_TOKEN when
+   * Token injected as Authorization: Bearer <token> into operator routes
+   * on the Oakridge backend. Falls back to OAKRIDGE_CONTROL_TOKEN when
    * OAKRIDGE_CORE_CONTROL_TOKEN is not set. Undefined when no token is
    * configured (core runs without auth, typically on a loopback bind).
    */
@@ -29,6 +31,8 @@ export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): vo
     const available = typeof deps.baseUrl === "string" && deps.baseUrl.length > 0;
     return c.json({ available, core_url: available ? deps.baseUrl : null });
   });
+
+  app.use("/oakridge/api/*", bodyLimit({ maxSize: 1_048_576, onError: (c) => c.json({ kind: "oversized_payload", limit: 1_048_576 }, 413) }));
 
   // Proxy: forwards /oakridge/api/* to OAKRIDGE_CORE_BASE_URL/*
   // stripping the /oakridge/api prefix before forwarding.
@@ -59,12 +63,11 @@ export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): vo
       }
     }
 
-    // Inject core control token for write requests. The browser Authorization
+    // Inject core control token for operator routes. The browser Authorization
     // header was stripped above; this is the server-side injection point.
     if (
       deps.coreControlToken &&
-      method !== "GET" &&
-      method !== "HEAD"
+      matchRoute(method, subPath)?.authority === "operator"
     ) {
       forwardHeaders.set("authorization", `Bearer ${deps.coreControlToken}`);
     }
