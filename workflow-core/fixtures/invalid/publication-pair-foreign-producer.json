@@ -231,7 +231,12 @@
           "field_presentation": []
         }
       ],
-      "facts": [],
+      "facts": [
+        {
+          "key": "submitted",
+          "payload_schema": "unit"
+        }
+      ],
       "outputs": [
         {
           "key": "assay_log",
@@ -242,7 +247,8 @@
           "producers": [
             "unknown_potter"
           ],
-          "collection_key": null
+          "collection_key": null,
+          "publication_trigger": "submitted"
         },
         {
           "key": "current_label",
@@ -253,7 +259,8 @@
           "producers": [
             "potter"
           ],
-          "collection_key": null
+          "collection_key": null,
+          "publication_trigger": "submitted"
         }
       ],
       "workers": [
@@ -456,6 +463,16 @@
                   "value": {}
                 }
               }
+            }
+          },
+          {
+            "variant": "submitted",
+            "node": {
+              "kind": "apply",
+              "id": "record_publication",
+              "mutations": [],
+              "actions": [],
+              "outcome": null
             }
           }
         ],

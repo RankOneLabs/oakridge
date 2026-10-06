@@ -232,7 +232,12 @@
           "field_presentation": []
         }
       ],
-      "facts": [],
+      "facts": [
+        {
+          "key": "submitted",
+          "payload_schema": "unit"
+        }
+      ],
       "outputs": [
         {
           "key": "specimen",
@@ -243,7 +248,8 @@
           "producers": [
             "potter"
           ],
-          "collection_key": null
+          "collection_key": null,
+          "publication_trigger": "submitted"
         }
       ],
       "workers": [
@@ -442,6 +448,16 @@
                   "value": {}
                 }
               }
+            }
+          },
+          {
+            "variant": "submitted",
+            "node": {
+              "kind": "apply",
+              "id": "record_publication",
+              "mutations": [],
+              "actions": [],
+              "outcome": null
             }
           }
         ],

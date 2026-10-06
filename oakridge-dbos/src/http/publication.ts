@@ -11,7 +11,14 @@ export function publicationRevisionId(run_id: string, scope_id: string, request_
   const hash = requestDigest({ run_id, scope_id, request_id });
   return `${hash.slice(0,8)}-${hash.slice(8,12)}-${hash.slice(12,16)}-${hash.slice(16,20)}-${hash.slice(20,32)}`;
 }
-export function publicationReceipt(request_id: string, receipt: CommitReceipt, revision_id: string | null): { readonly kind: "accepted_pending"; readonly request_id: string; readonly transition_id: string; readonly scope_version: number; readonly revision_id: string | null } {
+export interface PublicationReceipt {
+  readonly kind: "accepted_pending";
+  readonly request_id: string;
+  readonly transition_id: CommitReceipt["transition_id"];
+  readonly scope_version: number;
+  readonly revision_id: string | null;
+}
+export function publicationReceipt(request_id: string, receipt: CommitReceipt, revision_id: string | null): PublicationReceipt {
   return { kind: "accepted_pending", request_id, transition_id: receipt.transition_id, scope_version: receipt.scope_version, revision_id };
 }
 /** A published value must fit the evaluate frame that will later carry it; the commit measures the whole snapshot. */

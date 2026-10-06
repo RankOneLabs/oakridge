@@ -98,7 +98,7 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
       const pinned = await readPinnedDefinition(deps.db, view.run_id);
       const declaration = pinned?.source.scopes.find((scope) => scope.key === view.scope_key);
       const output = declaration?.outputs.find((item) => item.key === parsed.output.output_key);
-      if (!output || parsed.output.body.schema !== output.schema || (output.publication_trigger && output.publication_trigger !== parsed.trigger.key)
+      if (!output || parsed.output.body.schema !== output.schema || output.publication_trigger !== parsed.trigger.key
         || (output.collection_key === null && parsed.output.collection_key !== ""))
         return response({ ok: false, error: new InvalidPayloadError("output does not match pinned definition") });
       if (!pinned) return response({ ok: false, error: new MissingEntityError("pinned definition not found") });

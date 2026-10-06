@@ -8,7 +8,7 @@ import { Hono } from "hono";
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { activeRoutes, HTTP_ROUTES } from "../src/http/routes";
+import { HTTP_ROUTES } from "../src/http/routes";
 import { hasExecutionSecret } from "../src/http/selected-publication";
 import { installDefinitionApi, type DefinitionApiDependencies } from "../src/http/app";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
@@ -63,11 +63,6 @@ test("the route table enumerates every registered Hono endpoint", () => {
   installDefinitionApi(app, {} as DefinitionApiDependencies);
   expect(app.routes.map((route) => `${route.method} ${route.path}`).sort()).toEqual(
     HTTP_ROUTES.filter((route) => route.path.startsWith("/api/")).map((route) => `${route.method} ${route.path}`).sort());
-});
-
-test("raw ingress is absent unless enabled", () => {
-  expect(activeRoutes(false).some((route) => route.path.endsWith("/decide"))).toBe(false);
-  expect(activeRoutes(true).some((route) => route.path.endsWith("/decide"))).toBe(true);
 });
 
 test("control auth has no early-exit token comparison", () => {

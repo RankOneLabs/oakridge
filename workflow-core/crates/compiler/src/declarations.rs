@@ -153,26 +153,31 @@ pub fn validate_bundle(
             schema(bundle, &export.schema)?;
         }
         for output in &owner.outputs {
-            if let Some(key) = &output.publication_trigger {
-                let fact = owner
-                    .facts
-                    .iter()
-                    .find(|fact| fact.key == *key)
-                    .ok_or_else(|| {
-                        error(
-                            DomainErrorKind::UndeclaredTrigger,
-                            key.to_string(),
-                            "publication fact missing",
-                        )
-                    })?;
-                if !matches!(schema(bundle, &fact.payload_schema)?, SchemaShape::Record { fields, dictionary: None } if fields.is_empty())
-                {
-                    return Err(error(
-                        DomainErrorKind::IncompatiblePort,
+            let key = output.publication_trigger.as_ref().ok_or_else(|| {
+                error(
+                    DomainErrorKind::UnsupportedPublication,
+                    output.key.to_string(),
+                    "publishable output requires a publication_trigger",
+                )
+            })?;
+            let fact = owner
+                .facts
+                .iter()
+                .find(|fact| fact.key == *key)
+                .ok_or_else(|| {
+                    error(
+                        DomainErrorKind::UndeclaredTrigger,
                         key.to_string(),
-                        "publication fact requires an empty record payload",
-                    ));
-                }
+                        "publication fact missing",
+                    )
+                })?;
+            if !matches!(schema(bundle, &fact.payload_schema)?, SchemaShape::Record { fields, dictionary: None } if fields.is_empty())
+            {
+                return Err(error(
+                    DomainErrorKind::IncompatiblePort,
+                    key.to_string(),
+                    "publication fact requires an empty record payload",
+                ));
             }
             schema(bundle, &output.schema)?;
             unique(output.producers.iter().map(|w| w.0.as_str()), &output.key.0)?;

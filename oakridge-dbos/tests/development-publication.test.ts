@@ -5,6 +5,89 @@ import { installDefinitionApi } from "../src/http/app";
 import { createHash } from "node:crypto";
 import { withDatabase } from "./effect-fixture";
 import { developmentBundle, runtimeFixture, repository, brief, revision, build_body, pr_body } from "./development-runtime-fixture";
+import { HTTP_ROUTES } from "../src/http/routes";
+import type { PublicationRequest, PublicationReceipt } from "../src/http/publication";
+import type { DefinitionBundle } from "../src/core-client/generated-contracts";
+import type { CommitRequest } from "../src/storage/commit";
+import { validateStorageAuthority } from "../src/storage/storage-validator";
+import { readSnapshot } from "../src/storage/snapshot-reader";
+
+test("publication trigger mismatches are typed HTTP rejections and storage rejects missing declarations", async () => withDatabase(async ({ db }) => {
+  const bundle = await developmentBundle();
+  const f = await runtimeFixture(db, bundle, { brief, repository });
+  try {
+    await f.fact("begin");
+    const execution_id = await f.selected("build");
+    const owner = await f.scope();
+    const publication: PublicationRequest = { request_id: "wrong-trigger", expected_scope_version: Number(owner.version),
+      trigger: { id: "wrong-trigger", key: "assessment_submitted", payload: await f.checked("unit", {}) },
+      output: { scope_id: f.root_scope_id, output_key: "build_result", collection_key: "", execution_id,
+        predecessor_id: null, expected_slot_version: null, body: await f.checked("build_body", build_body) } };
+    const response = await f.app.request(`/api/runs/${f.run_id}/scopes/${f.root_scope_id}/publications`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(publication) });
+    expect({ status: response.status, body: await response.json() }).toMatchObject({ status: 422,
+      body: { error: "invalid_payload", detail: "output does not match pinned definition" } });
+    const missing_scope = await f.app.request(`/api/runs/another-run/scopes/${f.root_scope_id}/publications`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(publication) });
+    expect({ status: missing_scope.status, body: await missing_scope.json() }).toMatchObject({ status: 404,
+      body: { error: "missing_entity", detail: "scope not found in run" } });
+    const source = await readSnapshot(db, f.root_scope_id, publication.trigger);
+    if (!source) throw new Error("snapshot missing");
+    const request: CommitRequest = { identity: { run_id: f.run_id, scope_id: f.root_scope_id, ingress_id: publication.request_id, request_digest: "mismatch" },
+      read_set: source.read_set, operator_version: null,
+      decision: { kind: "wait" as const, reason: "test", continuations: [], explanation: { bundle_digest: "test", node_id: "test",
+        owner: f.root_scope_id, read_set: [], trace: [], trigger_id: publication.request_id } },
+      outputs: [publication.output], capacity: [], effects: [] };
+    expect(await validateStorageAuthority(db, request, source, bundle)).toMatchObject({ ok: false,
+      error: { operation: "validate_storage", detail: "publication trigger does not match output declaration" } });
+    const missing: DefinitionBundle = { ...bundle, scopes: bundle.scopes.map((scope) => ({ ...scope,
+      outputs: scope.outputs.map((output) => ({ ...output, publication_trigger: null })) })) };
+    expect(await validateStorageAuthority(db, request, source, missing)).toMatchObject({ ok: false,
+      error: { operation: "validate_storage", detail: "publication trigger does not match output declaration" } });
+    expect(await db.query("SELECT id FROM authority.artifact_revision WHERE scope_id=$1", [f.root_scope_id])).toEqual([]);
+  } finally { f.core.close(); }
+}));
+
+const publication_routes = HTTP_ROUTES.filter((route) => route.path.endsWith("/publications")
+  || route.path.endsWith("/outputs/:output_key") || route.path.endsWith("/facts/:fact_key"));
+for (const route of publication_routes) {
+  test(`${route.method} ${route.path} returns the shared receipt on acceptance and replay`, async () => withDatabase(async ({ db }) => {
+    const original = await developmentBundle();
+    const bundle: DefinitionBundle = { ...original, scopes: original.scopes.map((scope) => ({ ...scope,
+      workers: scope.workers.map((worker) => ({ ...worker, actions: worker.actions.map((action) => ({ ...action,
+        settings: worker.key === "build" ? [...action.settings.filter((setting) => setting.key !== "evidence_fact"), { key: "evidence_fact", value: "build_submitted" }] : action.settings })) })) })) };
+    const f = await runtimeFixture(db, bundle, { brief, repository });
+    try {
+      await f.fact("begin");
+      const execution_id = await f.selected("build");
+      const is_operator = route.authority === "operator";
+      const is_evidence = route.path.endsWith("/facts/:fact_key");
+      const app = new Hono();
+      app.use("*", controlTokenMiddleware("operator-only"));
+      installDefinitionApi(app, { db, core: f.core, mutations: f.mutations, wake: async () => {} });
+      const path = route.path.replace(":run_id", f.run_id).replace(":scope_id", f.root_scope_id)
+        .replace(":execution_id", execution_id).replace(":output_key", "build_result").replace(":fact_key", "build_submitted");
+      const body = is_operator ? { request_id: "receipt", expected_scope_version: Number((await f.scope()).version),
+        trigger: { id: "receipt", key: "build_submitted", payload: await f.checked("unit", {}) },
+        output: { scope_id: f.root_scope_id, output_key: "build_result", collection_key: "", execution_id,
+          predecessor_id: null, expected_slot_version: null, body: await f.checked("build_body", build_body) } }
+        : is_evidence ? { request_id: "receipt", payload: {} }
+        : { request_id: "receipt", predecessor_id: null, collection_key: "", body: build_body };
+      const token = is_operator ? "operator-only" : await f.publicationSecret(execution_id);
+      const publish = () => app.request(path, { method: route.method,
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
+      const accepted = await publish();
+      expect(accepted.status).toBe(is_operator || is_evidence ? 202 : 201);
+      const receipt: PublicationReceipt = await accepted.json();
+      expect(Object.keys(receipt).sort()).toEqual(["kind", "request_id", "revision_id", "scope_version", "transition_id"]);
+      expect(receipt).toMatchObject({ kind: "accepted_pending", request_id: "receipt", scope_version: expect.any(Number), transition_id: expect.any(String),
+        revision_id: is_evidence ? null : expect.any(String) });
+      const replay = await publish();
+      expect(replay.status).toBe(is_operator || is_evidence ? 202 : 200);
+      expect(await replay.json()).toEqual(receipt);
+    } finally { f.core.close(); }
+  }));
+}
 
 async function acceptedBuild(f: Awaited<ReturnType<typeof runtimeFixture>>) {
   await f.fact("begin");
@@ -124,7 +207,10 @@ test("agent secret publishes while the same scope read requires operator authori
     expect((await app.request(scope_path)).status).toBe(401);
     expect((await app.request(scope_path, { headers: { authorization: "Bearer operator-only" } })).status).toBe(200);
     const diagnostics = await app.request(`${scope_path}/diagnostics`, { headers: { authorization: "Bearer operator-only" } });
-    expect(await diagnostics.text()).not.toContain(stored!.publication_secret_hash);
+    const diagnostics_text = await diagnostics.text();
+    expect(diagnostics_text).not.toContain("publication_secret_hash");
+    expect(diagnostics_text).not.toContain(stored!.publication_secret_hash);
+    expect(diagnostics_text).not.toContain(secret);
     const contract = await app.request(`${scope_path}/executions/${execution}/contract`, { headers: { authorization: `Bearer ${secret}` } });
     expect(contract.status).toBe(200);
     expect((await contract.json()).remaining_frame_bytes).toBeGreaterThan(0);

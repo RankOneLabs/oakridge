@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { decodeCoreResponse } from "../core-client/generated-contracts";
 import type { DefinitionBundle, Trigger } from "../core-client/generated-contracts";
 import { CoreClient } from "../core-client/client";
+import { activeRoutes } from "../http/routes";
 import { controlTokenMiddleware, selectControlPlaneAccess } from "../http/control-auth";
 import { httpBodyLimit, installDefinitionApi } from "../http/app";
 import { authorityRepositories } from "../storage/repositories";
@@ -112,7 +113,7 @@ export async function createProductionComposition(options: ProductionOptions): P
     if (result.kind === "refused") return context.json(result, 409);
     return context.json(result);
   });
-  if (process.env.OAKRIDGE_ENABLE_RAW_INGRESS === "1") app.post("/runs/:run_id/scopes/:scope_id/decide", async (context) => {
+  if (activeRoutes(process.env.OAKRIDGE_ENABLE_RAW_INGRESS === "1").some((route) => route.raw_ingress)) app.post("/runs/:run_id/scopes/:scope_id/decide", async (context) => {
     let body: unknown;
     try { body = await context.req.json(); } catch { return context.json({ error: "invalid JSON" }, 400); }
     if (!body || typeof body !== "object" || !("trigger" in body) || !isTrigger(body.trigger) || !("ingress_id" in body) || typeof body.ingress_id !== "string") return context.json({ error: "invalid ingress" }, 400);
