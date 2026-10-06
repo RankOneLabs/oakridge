@@ -50,5 +50,6 @@ operator decision, while merge confirmation remains tied to the accepted head.
 The authority baseline namespaces collection members by their collection key, so
 preparation and final integration may reuse repository keys under one parent.
 This repository's migration command requires a fresh database; no live database
-is migrated by this change. The response transport remains bounded at 1 MiB,
-with both limits exported into the generated adapter contract.
+is migrated by this change. The frame and response transports are bounded at
+64 MiB — a line-reader guard far above any legitimate scope state, not a domain
+limit — with both limits exported into the generated adapter contract.

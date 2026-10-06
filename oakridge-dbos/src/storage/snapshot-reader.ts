@@ -5,36 +5,44 @@ import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 
 export const READ_RELATIONS = ["scope_instance", "scope_export", "child_collection", "execution_selection", "execution", "output_slot", "artifact_revision", "resource_binding", "capacity_pool", "capacity_reservation"] as const;
 export type ReadRelation = typeof READ_RELATIONS[number];
+/** Pool capacity and reservations span sibling scopes, so both remain run-scoped. */
+export const RUN_SCOPED_READ_RELATIONS: readonly ReadRelation[] = ["capacity_pool", "capacity_reservation"];
+export const SUBTREE_READ_RELATIONS = READ_RELATIONS.filter((relation) => !RUN_SCOPED_READ_RELATIONS.includes(relation));
 export interface ReadWitness { readonly relation: ReadRelation; readonly id: string; readonly version: number }
 export interface MembershipWitness { readonly relation: ReadRelation; readonly run_id: string; readonly signature: string }
-export interface ReadSet { readonly rows: readonly ReadWitness[]; readonly membership: readonly MembershipWitness[] }
+export interface ReadSet { readonly scope_id: ScopeId; readonly rows: readonly ReadWitness[]; readonly membership: readonly MembershipWitness[] }
 export interface AuthoritySnapshot { readonly snapshot: Snapshot; readonly reads: readonly ReferenceRoot[]; readonly read_set: ReadSet; readonly owner: ScopeInstanceRecord; readonly pools: readonly CapacityPoolRecord[]; readonly current_outputs: readonly CurrentOutput[] }
 export interface CurrentOutput extends OutputSlotRecord { readonly current_revision_id: RevisionId; readonly body: VersionedValue["value"] }
 interface ImportedExport extends ScopeExportRecord { readonly child_key: string; readonly child_id: string; readonly collection_key: string | null }
 interface VersionRow { readonly id: string; readonly version: string | number }
 
 const membershipSql: { readonly [Relation in ReadRelation]: string } = {
-  scope_instance: "SELECT id, version FROM authority.scope_instance WHERE run_id = $1 ORDER BY id",
-  scope_export: "SELECT e.id, e.version FROM authority.scope_export e JOIN authority.scope_instance s ON s.id=e.scope_id WHERE s.run_id=$1 ORDER BY e.id",
-  child_collection: "SELECT e.id, e.version FROM authority.child_collection e JOIN authority.scope_instance s ON s.id=e.scope_id WHERE s.run_id=$1 ORDER BY e.id",
-  execution_selection: "SELECT e.id, e.version FROM authority.execution_selection e JOIN authority.scope_instance s ON s.id=e.scope_id WHERE s.run_id=$1 ORDER BY e.id",
-  execution: "SELECT e.id, e.version FROM authority.execution e JOIN authority.scope_instance s ON s.id=e.scope_id WHERE s.run_id=$1 ORDER BY e.id",
-  output_slot: "SELECT e.id, e.version FROM authority.output_slot e JOIN authority.scope_instance s ON s.id=e.scope_id WHERE s.run_id=$1 ORDER BY e.id",
-  artifact_revision: "SELECT e.id, e.version FROM authority.artifact_revision e JOIN authority.scope_instance s ON s.id=e.scope_id WHERE s.run_id=$1 ORDER BY e.id",
-  resource_binding: "SELECT e.id, e.version FROM authority.resource_binding e JOIN authority.scope_instance s ON s.id=e.scope_id WHERE s.run_id=$1 ORDER BY e.id",
-  capacity_pool: "SELECT id, version FROM authority.capacity_pool WHERE run_id=$1 ORDER BY id",
-  capacity_reservation: "SELECT e.id, e.version FROM authority.capacity_reservation e JOIN authority.scope_instance s ON s.id=e.scope_id WHERE s.run_id=$1 ORDER BY e.id",
+  scope_instance: "SELECT id,version FROM authority.scope_instance WHERE id=ANY($1::text[]) ORDER BY id",
+  scope_export: "SELECT id,version FROM authority.scope_export WHERE scope_id=ANY($1::text[]) ORDER BY id",
+  child_collection: "SELECT id,version FROM authority.child_collection WHERE scope_id=ANY($1::text[]) ORDER BY id",
+  execution_selection: "SELECT id,version FROM authority.execution_selection WHERE scope_id=ANY($1::text[]) ORDER BY id",
+  execution: "SELECT id,version FROM authority.execution WHERE scope_id=ANY($1::text[]) ORDER BY id",
+  output_slot: "SELECT id,version FROM authority.output_slot WHERE scope_id=ANY($1::text[]) ORDER BY id",
+  artifact_revision: "SELECT id,version FROM authority.artifact_revision WHERE scope_id=ANY($1::text[]) ORDER BY id",
+  resource_binding: "SELECT id,version FROM authority.resource_binding WHERE scope_id=ANY($1::text[]) ORDER BY id",
+  capacity_pool: "SELECT id,version FROM authority.capacity_pool WHERE run_id=$1 ORDER BY id",
+  capacity_reservation: "SELECT e.id,e.version FROM authority.capacity_reservation e JOIN authority.scope_instance s ON s.id=e.scope_id WHERE s.run_id=$1 ORDER BY e.id",
 };
-export async function readWitnesses(tx: SqlExecutor, run_id: string): Promise<ReadSet> {
+export async function readWitnesses(tx: SqlExecutor, run_id: string, scope_id: ScopeId): Promise<ReadSet> {
+  const descendants = await tx.query<{ id: string }>(`WITH RECURSIVE subtree AS (
+    SELECT id FROM authority.scope_instance WHERE id=$1 AND run_id=$2
+    UNION ALL SELECT child.id FROM authority.scope_instance child JOIN subtree parent ON child.parent_id=parent.id
+  ) SELECT id FROM subtree ORDER BY id`, [scope_id, run_id]);
+  const scope_ids = descendants.map((row) => row.id);
   const rows: ReadWitness[] = [];
   const membership: MembershipWitness[] = [];
   for (const relation of READ_RELATIONS) {
-    const found = await tx.query<VersionRow>(membershipSql[relation], [run_id]);
+    const found = await tx.query<VersionRow>(membershipSql[relation], RUN_SCOPED_READ_RELATIONS.includes(relation) ? [run_id] : [scope_ids]);
     const signature = JSON.stringify(found.map((row) => [row.id, String(row.version)]));
     membership.push({ relation, run_id, signature });
     for (const row of found) rows.push({ relation, id: row.id, version: Number(row.version) });
   }
-  return { rows, membership };
+  return { scope_id, rows, membership };
 }
 
 interface ScopeObservations { readonly observations: VersionedValue[]; readonly current_outputs: readonly CurrentOutput[] }
@@ -99,16 +107,17 @@ export async function readScopeObservations(tx: SqlExecutor, { owner, scope, bun
   return { observations: observations.filter((observation) => allowed.has(observationRootKey(observation.root))), current_outputs: slots };
 }
 
-export async function readSnapshot(db: TransactionalSqlExecutor, scope_id: ScopeId, trigger: Trigger, random_seed = 0): Promise<AuthoritySnapshot | null> {
+export async function readSnapshot(db: TransactionalSqlExecutor, scope_id: ScopeId, trigger: Trigger, random_seed = 0,
+  pinned_definition?: { readonly source: DefinitionBundle; readonly checked_program: CompiledBundle }): Promise<AuthoritySnapshot | null> {
   return db.transaction(async (tx) => {
     const owners = await tx.query<ScopeInstanceRecord>("SELECT * FROM authority.scope_instance WHERE id=$1", [scope_id]);
     const owner = owners[0];
     if (!owner) return null;
-    const read_set = await readWitnesses(tx, owner.run_id);
-    const definitions = await tx.query<{ source: DefinitionBundle; checked_program: CompiledBundle }>("SELECT b.source,b.checked_program FROM authority.definition_bundle b JOIN authority.run r ON r.definition_bundle_id=b.id WHERE r.id=$1", [owner.run_id]);
-    const bundle = definitions[0]?.source;
+    const read_set = await readWitnesses(tx, owner.run_id, scope_id);
+    const definition = pinned_definition ?? (await tx.query<{ source: DefinitionBundle; checked_program: CompiledBundle }>("SELECT b.source,b.checked_program FROM authority.definition_bundle b JOIN authority.run r ON r.definition_bundle_id=b.id WHERE r.id=$1", [owner.run_id]))[0];
+    const bundle = definition?.source;
     const scope = bundle?.scopes.find((scope) => scope.key === owner.scope_key);
-    const reads = definitions[0]?.checked_program?.scopes?.find((scope) => scope.key === owner.scope_key)?.reads;
+    const reads = definition?.checked_program?.scopes?.find((scope) => scope.key === owner.scope_key)?.reads;
     if (!scope || !bundle || !reads) return null;
     const { observations, current_outputs } = await readScopeObservations(tx, { owner, scope, bundle, reads });
     const pools = await tx.query<CapacityPoolRecord>("SELECT * FROM authority.capacity_pool WHERE run_id=$1", [owner.run_id]);
@@ -120,7 +129,9 @@ export async function readSnapshot(db: TransactionalSqlExecutor, scope_id: Scope
 
 export async function hasSameReadSet(tx: SqlExecutor, read_set: ReadSet): Promise<boolean> {
   const run_id = read_set.membership[0]?.run_id;
-  if (!run_id || read_set.membership.length !== READ_RELATIONS.length) return false;
-  const current = await readWitnesses(tx, run_id);
+  const expected_relations = [...SUBTREE_READ_RELATIONS, ...RUN_SCOPED_READ_RELATIONS];
+  if (!run_id || read_set.membership.length !== expected_relations.length
+    || expected_relations.some((relation) => !read_set.membership.some((item) => item.relation === relation))) return false;
+  const current = await readWitnesses(tx, run_id, read_set.scope_id);
   return current.membership.every((item, index) => item.relation === read_set.membership[index]?.relation && item.signature === read_set.membership[index]?.signature);
 }

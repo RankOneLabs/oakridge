@@ -24,9 +24,8 @@ export function validateDecision(request: CommitRequest, source: AuthoritySnapsh
   return { ok: true, value: request };
 }
 
-export async function validateStorageAuthority(tx: SqlExecutor, request: CommitRequest, source: AuthoritySnapshot): Promise<Result<CommitRequest>> {
-  const bundles = await tx.query<{ source: DefinitionBundle }>("SELECT b.source FROM authority.definition_bundle b JOIN authority.run r ON r.definition_bundle_id=b.id WHERE r.id=$1", [source.owner.run_id]);
-  const bundle = bundles[0]?.source;
+export async function validateStorageAuthority(tx: SqlExecutor, request: CommitRequest, source: AuthoritySnapshot, pinned_bundle?: DefinitionBundle): Promise<Result<CommitRequest>> {
+  const bundle = pinned_bundle ?? (await tx.query<{ source: DefinitionBundle }>("SELECT b.source FROM authority.definition_bundle b JOIN authority.run r ON r.definition_bundle_id=b.id WHERE r.id=$1", [source.owner.run_id]))[0]?.source;
   const scope = bundle?.scopes.find((item) => item.key === source.owner.scope_key);
   if (!bundle || !scope) return reject("validate_storage", source.owner.id, "scope definition missing");
   const valid = (schema: string, value: CheckedValue): boolean => matchesStoredSchema(bundle, schema, value);

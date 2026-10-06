@@ -1,7 +1,8 @@
 import type { CoreResult } from "../core-client/transport-errors";
 import { stagePublications } from "./stage-publications";
+import { currentTargetRevisions, targetsMatch, type TargetRevision } from "./command-selection";
 import { prepareChildCancellations } from "./child-cancellation";
-import type { CompiledBundle, DecisionOutcome, DefinitionBundle, Trigger, Output } from "../core-client/generated-contracts";
+import { CORE_MAX_FRAME_BYTES, type CompiledBundle, type DecisionOutcome, type DefinitionBundle, type Trigger, type Output } from "../core-client/generated-contracts";
 import type { CoreClient } from "../core-client/client";
 import { commitDecision, type CommitRequest, type CommitResult, type OutputPublication, type Result } from "./commit";
 import { requestDigest, findReceipt, type IngressIdentity } from "./receipts";
@@ -15,7 +16,7 @@ export interface StartRunRequest extends CompileRequest { readonly input: unknow
 export interface EvaluationInput { readonly source: AuthoritySnapshot; readonly bundle: DefinitionBundle }
 export interface EvaluationResult { readonly decision: DecisionOutcome }
 export interface Decision { readonly source: AuthoritySnapshot; readonly outcome: DecisionOutcome }
-export interface PreparedDecision { readonly request_digest: string; readonly decision: Decision }
+export interface PreparedDecision { readonly request_digest: string; readonly decision: Decision; readonly target_revisions?: readonly TargetRevision[] }
 export interface MutationInput { readonly request_digest?: string; readonly execution_authority?: string; readonly run_id: RunId; readonly scope_id: ScopeId; readonly ingress_id: string; readonly trigger: Trigger; readonly operator_version: number | null; readonly outputs?: readonly OutputPublication[]; readonly prepared?: PreparedDecision }
 export interface StartedRun { readonly run_id: RunId; readonly root_scope_id: ScopeId; readonly bundle_id: string }
 export interface MutationService { compile(request: CompileRequest): Promise<Result<CompileResult>>; startRun(request: StartRunRequest): Promise<Result<StartedRun>>; decide(input: MutationInput): Promise<Result<CommitResult>> }
@@ -26,6 +27,7 @@ export function selectMutationIdentity(input: MutationInput): IngressIdentity {
 
 function error(operation: string, entity_id: string, detail: string): Result<never> { return { ok: false, error: { operation, entity_id, detail } }; }
 export async function compileBundle(core: CoreClient, request: CompileRequest): Promise<Result<CompileResult>> {
+  if (Buffer.byteLength(JSON.stringify(request.bundle)) > CORE_MAX_FRAME_BYTES) return error("compile", request.bundle.key, `oversized_payload: definition bundle exceeds ${CORE_MAX_FRAME_BYTES} bytes`);
   const response = await core.request("compile", { bundle: request.bundle });
   if (!response.ok) return error("compile", request.bundle.key, JSON.stringify(response.error));
   if (response.value.kind !== "compiled") return error("compile", request.bundle.key, "core returned a non-compiled response");
@@ -94,7 +96,9 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
         if (prior.kind === "replay") return { ok: true, value: { kind: "Replayed", receipt: prior.receipt } };
         if (prior.kind === "conflict") return { ok: true, value: { kind: "Conflict", detail: "ingress identity reused with different request content" } };
         for (let attempt = 0; attempt < 3; attempt++) {
-          const source = input.prepared?.decision.source ?? await readSnapshot(db, input.scope_id, input.trigger);
+          // Prepared sources are valid only for the first attempt. A conflict must
+          // rebuild both the snapshot and its decision against fresh witnesses.
+          const source = attempt === 0 && input.prepared?.decision.source || await readSnapshot(db, input.scope_id, input.trigger);
           if (!source || source.owner.run_id !== input.run_id) return error("decide", input.scope_id, "scope not found in run");
           if (input.operator_version !== null && input.operator_version !== source.owner.version) return { ok: true, value: { kind: "Conflict", detail: "operator target changed; refresh decision" } };
           if (source.owner.is_terminal) return { ok: true, value: { kind: "Rejected", detail: "owner is terminal" } };
@@ -103,16 +107,26 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
           if (!bundle) return error("decide", input.run_id, "definition bundle missing");
           const staged = input.outputs?.some((output) => output.revision_id) ? stagePublications(bundle, source, input.outputs) : { ok: true as const, value: source };
           if (!staged.ok) return staged;
-          const evaluated: Result<EvaluationResult> = input.prepared
+          const evaluated: Result<EvaluationResult> = attempt === 0 && input.prepared
             ? { ok: true, value: { decision: input.prepared.decision.outcome } }
             : await evaluateSnapshot(core, { source: staged.value, bundle });
           if (!evaluated.ok) return evaluated;
+          if (attempt > 0 && input.prepared?.target_revisions) {
+            const command = bundle.scopes.find((item) => item.key === source.owner.scope_key)?.commands.find((item) => item.key === input.trigger.key);
+            if (!command) return { ok: true, value: { kind: "Conflict", detail: "command changed during retry" } };
+            // A command without targets has nothing to re-pin (and its outcome need not be an apply), as on the HTTP path.
+            if (command.targets.length) {
+              const revisions = await currentTargetRevisions(db, input.scope_id, command, source.snapshot.observations);
+              if (!targetsMatch(command, evaluated.value.decision, input.prepared.target_revisions, revisions))
+                return { ok: true, value: { kind: "Conflict", detail: "target revisions changed during retry" } };
+            }
+          }
           const request = prepareCommit(input, { source, outcome: evaluated.value.decision });
           if (!request.ok) return request;
           const children = await prepareChildCancellations(db, core, bundle, input, { source, outcome: evaluated.value.decision });
           if (!children.ok) return children;
           const committed = await commitDecision(db, { ...request.value, child_cancellations: children.value }, source);
-          if (!committed.ok || committed.value.kind !== "Conflict" || input.operator_version !== null) return committed;
+          if (!committed.ok || committed.value.kind !== "Conflict") return committed;
         }
         return { ok: true, value: { kind: "Conflict", detail: "read set changed repeatedly; refresh decision" } };
       } catch (cause) { return error("decide", input.scope_id, String(cause)); }

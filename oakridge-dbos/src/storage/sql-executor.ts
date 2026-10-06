@@ -8,6 +8,11 @@ export interface TransactionalSqlExecutor extends SqlExecutor {
   transaction<Value>(operation: (transaction: SqlExecutor) => Promise<Value>, isolation?: "read committed" | "repeatable read"): Promise<Value>;
 }
 
+/** Reuse an existing transaction where an API expects a transactional executor. */
+export function inTransaction(tx: SqlExecutor): TransactionalSqlExecutor {
+  return { query: tx.query.bind(tx), transaction: (operation) => operation(tx) };
+}
+
 interface BunSqlClient {
   unsafe<Row extends object>(statement: string, parameters?: readonly unknown[]): Promise<readonly Row[]>;
   begin<Value>(operation: (transaction: BunSqlClient) => Promise<Value>): Promise<Value>;

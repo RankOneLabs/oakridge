@@ -18,8 +18,13 @@ interface WrittenRow { readonly status: EffectStatus; readonly scope_id: string;
  * row wins, and owes no stop because the provider is then never called.
  */
 export async function claimDispatch(db: TransactionalSqlExecutor, intent_id: string): Promise<boolean> {
-  const rows = await db.query<{ id: string }>("UPDATE authority.effect_intent SET payload=jsonb_set(payload,'{has_dispatched}','true'),version=version+1 WHERE id=$1 AND payload->>'action'='start' AND status='pending' RETURNING id", [intent_id]);
-  return rows.length === 1;
+  const owner = await db.query<{ run_id: string }>("SELECT s.run_id FROM authority.effect_intent e JOIN authority.scope_instance s ON s.id=e.scope_id WHERE e.id=$1", [intent_id]);
+  if (!owner[0]) return false;
+  return db.transaction(async (tx) => {
+    await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [owner[0]!.run_id]);
+    const rows = await tx.query<{ id: string }>("UPDATE authority.effect_intent SET payload=jsonb_set(payload,'{has_dispatched}','true'),version=version+1 WHERE id=$1 AND payload->>'action'='start' AND status='pending' RETURNING id", [intent_id]);
+    return rows.length === 1;
+  });
 }
 
 /**
@@ -30,7 +35,10 @@ export async function claimDispatch(db: TransactionalSqlExecutor, intent_id: str
  */
 export async function persistEffectResult(db: TransactionalSqlExecutor, input: EffectResultInput): Promise<EffectStatus | null> {
   const { intent_id, status, payload, terminal_result } = input;
+  const owner = await db.query<{ run_id: string }>("SELECT s.run_id FROM authority.effect_intent e JOIN authority.scope_instance s ON s.id=e.scope_id WHERE e.id=$1", [intent_id]);
+  if (!owner[0]) return null;
   return db.transaction(async (tx) => {
+    await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [owner[0]!.run_id]);
     const rows = await tx.query<WrittenRow>(`UPDATE authority.effect_intent SET payload=$2,
       status=CASE WHEN status='revoked' AND $3<>'cleanup_confirmed' THEN status ELSE $3 END, version=version+1
       WHERE id=$1 RETURNING status,scope_id,execution_id,effect_key`, [intent_id, JSON.stringify(payload), status]);

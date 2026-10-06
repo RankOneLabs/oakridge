@@ -1,4 +1,4 @@
-import type { TransactionalSqlExecutor } from "./sql-executor";
+import { inTransaction, type TransactionalSqlExecutor } from "./sql-executor";
 import type { CoreClient } from "../core-client/client";
 import { createMutationService } from "./mutation-service";
 import type { DefinitionBundle } from "../core-client/generated-contracts";
@@ -19,8 +19,7 @@ export async function cancelRun(db: TransactionalSqlExecutor, command: CancelRun
     const runs = await tx.query<{ id: string }>("SELECT id FROM authority.run WHERE id=$1 FOR UPDATE", [command.run_id]);
     if (!runs.length) return { kind: "missing" };
     if (core) {
-      const transactional: TransactionalSqlExecutor = { query: tx.query.bind(tx), transaction: (operation) => operation(tx) };
-      const mutations = createMutationService(transactional, core);
+      const mutations = createMutationService(inTransaction(tx), core);
       const bundles = await tx.query<{ source: DefinitionBundle }>("SELECT b.source FROM authority.definition_bundle b JOIN authority.run r ON r.definition_bundle_id=b.id WHERE r.id=$1", [command.run_id]);
       const bundle = bundles[0]?.source;
       if (!bundle) throw new InvalidCancellation("cancellation definition bundle missing");

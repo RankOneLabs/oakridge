@@ -1,10 +1,13 @@
 import type { CheckedValue, Trigger } from "../core-client/generated-contracts";
-import { CORE_PROTOCOL_VERSION, decodeCoreResponse } from "../core-client/generated-contracts";
+import { CORE_MAX_FRAME_BYTES, CORE_PROTOCOL_VERSION, decodeCoreResponse } from "../core-client/generated-contracts";
 import type { OutputPublication } from "../storage/commit";
 import type { ScopeId } from "../storage/schema-records";
 import { MalformedRequestError } from "./scope-commands";
 
 export interface PublicationRequest { readonly request_id: string; readonly expected_scope_version: number; readonly trigger: Trigger; readonly output: OutputPublication }
+/** A published value must fit the evaluate frame that will later carry it; the commit measures the whole snapshot. */
+export const MAX_PUBLICATION_VALUE_BYTES = CORE_MAX_FRAME_BYTES;
+export function publicationValueBytes(value: unknown): number { return Buffer.byteLength(JSON.stringify(value)); }
 const object = (value: unknown): value is { readonly [key: string]: unknown } => !!value && typeof value === "object" && !Array.isArray(value);
 const version = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 export function parsePublication(value: unknown, scope_id: ScopeId): PublicationRequest | MalformedRequestError {

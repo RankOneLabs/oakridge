@@ -13,7 +13,7 @@ const run_id = "run-1" as RunId;
 const scope_id = "scope-1" as ScopeId;
 export const unit: CheckedValue = { schema: "unit", data: { kind: "record", fields: [], dictionary: [] } };
 const revision: CheckedValue = { schema: "revision", data: { kind: "reference", brand: "artifact_revision", id: "revision-1" } };
-interface HarnessOptions { readonly transport_failure?: boolean; readonly malformed_core?: boolean; readonly missing_scope?: boolean; readonly database_failure?: boolean; readonly change_target_before_commit?: boolean; readonly operator_workspace?: boolean }
+interface HarnessOptions { readonly transport_failure?: boolean; readonly malformed_core?: boolean; readonly missing_scope?: boolean; readonly database_failure?: boolean; readonly change_target_before_commit?: boolean; readonly change_witness_before_commit?: boolean; readonly wait_decision?: boolean; readonly operator_workspace?: boolean }
 
 export async function harness(options: HarnessOptions = {}) {
   const bundle: DefinitionBundle = await Bun.file(resolve(import.meta.dir, "../../workflow-core/fixtures/bundles/exact-review-target.json")).json();
@@ -27,6 +27,8 @@ export async function harness(options: HarnessOptions = {}) {
   let owner: ScopeInstanceRecord = { id: scope_id, version: 4, run_id, parent_id: null, scope_key: bundle.root, child_key: null,
     input: unit, local_state: { schema: "phase", data: { kind: "variant", variant: "inspection", value: unit } }, outcome: null, is_terminal: false };
   let slot_version = 3;
+  let execution_version = 6;
+  let witness_changed = false;
   let receipt: IngressReceiptRecord | null = null;
   let evaluate_count = 0;
   let committed_payload: CheckedValue | null = null;
@@ -42,11 +44,14 @@ export async function harness(options: HarnessOptions = {}) {
       else if (sql === "SELECT * FROM authority.scope_instance WHERE run_id=$1 ORDER BY id") rows = [owner];
       else if (sql.startsWith("SELECT source,digest") || sql.startsWith("SELECT b.id AS bundle_id")) rows = [{ source: bundle, digest: "pinned", bundle_id: "bundle-1" }];
       else if (sql.startsWith("SELECT b.source")) rows = [{ source: bundle, checked_program: { scopes: [{ key: bundle.root, reads: [{ kind: "result", worker: "potter" }, { kind: "output", key: "specimen" }] }] } }];
-      else if (sql.startsWith("SELECT id, version FROM authority.scope_instance")) rows = [{ id: scope_id, version: owner.version }];
-      else if (sql.startsWith("SELECT e.id, e.version FROM authority.output_slot")) rows = [{ id: "slot-1", version: slot_version }];
+      // Membership witnesses: the subtree is the owner alone, so each witnessed relation reports its one row.
+      else if (sql.startsWith("WITH RECURSIVE subtree")) rows = [{ id: scope_id }];
+      else if (sql.startsWith("SELECT id,version FROM authority.scope_instance WHERE id=ANY")) rows = [{ id: scope_id, version: owner.version }];
+      else if (sql.startsWith("SELECT id,version FROM authority.output_slot WHERE scope_id=ANY")) rows = [{ id: "slot-1", version: slot_version }];
+      else if (sql.startsWith("SELECT id,version FROM authority.execution WHERE scope_id=ANY")) rows = [{ id: "exec-1", version: execution_version }];
       else if (sql.startsWith("SELECT s.*, r.body")) rows = [{ id: "slot-1", output_key: "specimen", body: revision, version: slot_version }];
       else if (sql.startsWith("SELECT s.*, row_to_json")) rows = [{ id: "slot-1", scope_id, output_key: "specimen", collection_key: "", current_revision_id: "revision-1", version: String(slot_version), current_revision: artifact }];
-      else if (sql.startsWith("SELECT e.* FROM authority.execution")) rows = [{ id: "exec-1", worker_key: "potter", result: revision, version: 6 }];
+      else if (sql.startsWith("SELECT e.* FROM authority.execution")) rows = [{ id: "exec-1", worker_key: "potter", result: revision, version: execution_version }];
       else if (sql.startsWith("SELECT id,current_revision_id,version")) rows = [{ id: "slot-1", current_revision_id: "revision-1", version: slot_version }];
       else if (sql.startsWith("UPDATE authority.scope_instance SET version")) owner = { ...owner, version: owner.version + 1 };
       else if (sql === "SELECT version FROM authority.scope_instance WHERE id=$1") rows = [{ version: owner.version }];
@@ -56,13 +61,18 @@ export async function harness(options: HarnessOptions = {}) {
       return rows as readonly Row[];
     },
     async transaction<Value>(operation: (tx: SqlExecutor) => Promise<Value>): Promise<Value> {
-      // Change a dependency after HTTP target validation but before commit read-set validation.
-      if (options.change_target_before_commit && evaluate_count > 0) slot_version++;
+      // Change one witness after HTTP target validation but before the first commit's
+      // read-set validation, once: the retry must then see a stable read set.
+      if (!witness_changed && evaluate_count > 0) {
+        if (options.change_target_before_commit) { slot_version++; witness_changed = true; }
+        if (options.change_witness_before_commit) { execution_version++; witness_changed = true; }
+      }
       return operation(this);
     },
   };
-  const decision: DecisionOutcome = { kind: "apply", targets: [revision], mutations: [], invocations: [], outcome: null,
-    explanation: { bundle_digest: "pinned", node_id: "finish_inspection", owner: scope_id, read_set: [], trace: [], trigger_id: "request-1" } };
+  const explanation = { bundle_digest: "pinned", node_id: "finish_inspection", owner: scope_id, read_set: [], trace: [], trigger_id: "request-1" };
+  const decision: DecisionOutcome = options.wait_decision ? { kind: "wait", reason: "awaiting rework", continuations: ["certify"], attention: null, explanation }
+    : { kind: "apply", targets: [revision], mutations: [], invocations: [], outcome: null, explanation };
   const core = {
     async request(operation: string): Promise<CoreResult<Output>> {
       if (options.transport_failure) return transportFailure("unresponsive_child", "deadline exceeded");
@@ -73,11 +83,13 @@ export async function harness(options: HarnessOptions = {}) {
     },
   } as unknown as CoreClient;
   const app = new Hono();
-  installDefinitionApi(app, { db, core, mutations: createMutationService(db, core), wake: async () => {} });
+  const deps = { db, core, mutations: createMutationService(db, core) };
+  installDefinitionApi(app, { ...deps, wake: async () => {} });
   const request: ScopeCommandRequest = { command_key: "certify", payload: { specimen: "revision-1" }, request_id: "request-1", scope_id,
     expected_scope_version: 4, targets: [{ identity: "revision-1", version: 3 }] };
   return {
     app,
+    deps,
     request,
     submit: (body: unknown = request) => app.request(`/api/runs/${run_id}/scopes/${scope_id}/commands`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
     terminate: () => { owner = { ...owner, is_terminal: true, version: owner.version + 1 }; },
