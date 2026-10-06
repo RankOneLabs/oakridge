@@ -42,12 +42,16 @@ const transition = projection("oakridge-dbos/src/projections/record-selectors.ts
   .replaceAll("SqlVersion", "number | string")
   .replace(/(interface Operator(?:Stored)?TransitionHistory)<Timestamp>/g, "$1<Timestamp = string>");
 
+const launch = projection("oakridge-dbos/src/storage/mutation-service.ts", ["StartPinnedRunRequest", "StartedRun"])
+  .replaceAll("StartPinnedRunRequest", "OperatorLaunchRequest").replaceAll("StartedRun", "OperatorLaunchedRun")
+  .replaceAll("RunId", "string").replaceAll("ScopeId", "string");
+
 const generated = `// Generated from oakridge-dbos projections. Run kbbl/scripts/generate-operator-contracts.ts.\n`
   + `// The PWA intentionally imports no backend source at runtime or typecheck time.\n`
   + `import type { OperatorCheckedValue, OperatorCommandDescriptor, OperatorScopeView, OperatorOutputSlot, OperatorTargetRevision } from "./operator-contracts.base";\n`
   + `export type * from "./operator-contracts.base";\n\n`
   + `export interface OperatorResourceBinding { readonly id: string; readonly version: number; readonly scope_id: string; readonly resource_key: string; readonly observation: OperatorCheckedValue | null }\n\n`
-  + `${run}\n\n${scope}\n\n${transition}\n\n${history}\n`
+  + `${launch}\n\n${run}\n\n${scope}\n\n${transition}\n\n${history}\n`
   + `export interface OperatorDefinitionSummary { readonly bundle_id: string; readonly digest: string; readonly source: import("./workflow-definition-types").WorkflowDefinitionDescriptor }\n`;
 
 if (process.argv.includes("--check")) {

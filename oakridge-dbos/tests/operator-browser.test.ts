@@ -142,8 +142,8 @@ test("a digest launch resolves the pinned bundle before run creation", async () 
     if (operation === "compile") return { ok: true, value: { kind: "compiled", value: { digest: "sha-1", scopes: [{ key: "root", initial: checked }] } } };
     return { ok: true, value: { kind: "validated", value: checked } };
   } } as unknown as CoreClient;
-  const created = await createMutationService(db, core).startRunByDigest({ digest: "sha-1", input: {} });
-  expect({ ok: created.ok, pinned_lookup: statements[0], inserted_run: statements.some((sql) => sql.startsWith("INSERT INTO authority.run")) })
+  const created = await createMutationService(db, core).startRunByDigest({ digest: "sha-1", input: {}, request_id: "launch-1" });
+  expect({ ok: created.ok, pinned_lookup: statements.find((sql) => sql === "SELECT source FROM authority.definition_bundle WHERE digest=$1"), inserted_run: statements.some((sql) => sql.startsWith("INSERT INTO authority.run")) })
     .toEqual({ ok: true, pinned_lookup: "SELECT source FROM authority.definition_bundle WHERE digest=$1", inserted_run: true });
 });
 
@@ -160,9 +160,21 @@ test("an empty database lists, pins, launches and projects a run by digest", asy
       const pinned = await app.request("/api/definitions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(bundle) });
       expect(pinned.status).toBe(201);
       const definition: { readonly digest: string } = await pinned.json();
-      const launched = await app.request("/runs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ digest: definition.digest, input: {} }) });
+      const launched = await app.request("/runs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ digest: definition.digest, input: {}, request_id: "launch-1" }) });
       expect(launched.status).toBe(201);
       const run: { readonly run_id: string; readonly root_scope_id: string } = await launched.json();
+      // Lose the first response, then replay through the real HTTP/runtime boundary.
+      const replay = await app.request("/runs", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ digest: definition.digest, input: {}, request_id: "launch-1" }) });
+      expect({ status: replay.status, run: await replay.json() }).toEqual({ status: 201, run });
+      const conflict = await app.request("/runs", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ digest: definition.digest, input: { changed: true }, request_id: "launch-1" }) });
+      expect(conflict.status).toBe(409);
+      for (const request_id of [undefined, "", 42, "x".repeat(201)]) {
+        const invalid = await app.request("/runs", { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ digest: definition.digest, input: {}, request_id }) });
+        expect(invalid.status).toBe(400);
+      }
       const runs = await app.request("/api/runs");
       const history = await app.request(`/api/runs/${run.run_id}/scopes/${run.root_scope_id}/history`);
       expect({ runs: await runs.json(), history: await history.json() }).toMatchObject({ runs: [{ run_id: run.run_id, definition_digest: definition.digest }],

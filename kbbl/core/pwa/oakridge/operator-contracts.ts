@@ -5,6 +5,10 @@ export type * from "./operator-contracts.base";
 
 export interface OperatorResourceBinding { readonly id: string; readonly version: number; readonly scope_id: string; readonly resource_key: string; readonly observation: OperatorCheckedValue | null }
 
+export interface OperatorLaunchRequest { readonly digest: string; readonly input: unknown; readonly request_id: string }
+
+export interface OperatorLaunchedRun { readonly run_id: string; readonly root_scope_id: string; readonly bundle_id: string }
+
 export interface OperatorRunScopeSummary { readonly scope_id: string; readonly scope_key: string; readonly label: string; readonly version: number; readonly is_terminal: boolean; readonly available_commands: readonly string[] }
 
 export interface OperatorRunView { readonly run_id: string; readonly definition_bundle_id: string; readonly definition_digest: string; readonly version: number; readonly cursor: readonly { readonly scope_id: string; readonly version: number }[]; readonly scopes: readonly OperatorRunScopeSummary[] }

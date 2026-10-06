@@ -9,7 +9,7 @@ import { OperatorDefinitionEditorView } from "../views/OperatorDefinitionEditorV
 function renderWithQuery(ui: React.ReactElement) {
   return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{ui}</QueryClientProvider>);
 }
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); });
 
 test("pins the edited JSON definition for a fresh operator database", async () => {
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
@@ -38,7 +38,7 @@ test("launches a run using the pinned digest and entered root input", async () =
   fireEvent.change(screen.getByLabelText("Root input JSON"), { target: { value: '{"request":"hello"}' } });
   fireEvent.click(screen.getByRole("button", { name: "Launch" }));
   await waitFor(() => expect(onCreated).toHaveBeenCalledWith("run-1"));
-  expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body))).toEqual({ digest: "sha-1", input: { request: "hello" } });
+  expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body))).toEqual({ digest: "sha-1", input: { request: "hello" }, request_id: expect.any(String) });
 });
 
 test("history shows transitions and facts without exposing execution secrets", async () => {
@@ -85,5 +85,46 @@ test.each([
   expect(await screen.findByRole("alert")).toHaveProperty("textContent", expect.stringMatching(message));
   expect({ editable: !screen.getByLabelText<HTMLTextAreaElement>("Source bundle").disabled,
     canPin: !screen.getByRole<HTMLButtonElement>("button", { name: "Pin definition" }).disabled }).toEqual({ editable: false, canPin: false });
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+
+test.each([503, 408, 429])("a %s launch response retains the original request for retry", async (status) => {
+  const requests: unknown[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/definitions")) return Response.json([{ bundle_id: "bundle-1", digest: "sha-1", source: { key: "demo", version: 1 } }]);
+    requests.push(JSON.parse(String(init?.body)));
+    return requests.length === 1 ? Response.json({ error: "uncertain" }, { status }) : Response.json({ run_id: "run-1" }, { status: 201 });
+  }));
+  const onCreated = vi.fn();
+  renderWithQuery(<OperatorLaunchView onBack={() => undefined} onCreated={onCreated} onEdit={() => undefined} />);
+  await screen.findByText(/demo v1/);
+  fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+  await screen.findByText(/Launch delivery is uncertain/);
+  fireEvent.click(screen.getByRole("button", { name: "Retry launch" }));
+  await waitFor(() => expect(onCreated).toHaveBeenCalledWith("run-1"));
+  expect(requests[1]).toEqual(requests[0]);
+});
+
+test("a rejected launch unlocks the form for a corrected input", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => url.endsWith("/definitions")
+    ? Response.json([{ bundle_id: "bundle-1", digest: "sha-1", source: { key: "demo", version: 1 } }])
+    : Response.json({ error: "invalid root input" }, { status: 422 })));
+  renderWithQuery(<OperatorLaunchView onBack={() => undefined} onCreated={() => undefined} onEdit={() => undefined} />);
+  await screen.findByText(/demo v1/);
+  fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+  await screen.findByText(/invalid root input/);
+  expect(screen.getByLabelText<HTMLTextAreaElement>("Root input JSON").disabled).toBe(false);
+  expect(localStorage.getItem("oakridge:operator:pending-launch")).toBeNull();
+});
+
+test("launch is not sent when its request identity cannot be persisted", async () => {
+  const fetch = vi.fn(async () => Response.json([{ bundle_id: "bundle-1", digest: "sha-1", source: { key: "demo", version: 1 } }]));
+  vi.stubGlobal("fetch", fetch);
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("storage unavailable"); });
+  renderWithQuery(<OperatorLaunchView onBack={() => undefined} onCreated={() => undefined} onEdit={() => undefined} />);
+  await screen.findByText(/demo v1/);
+  fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+  await screen.findByText(/storage unavailable/);
   expect(fetch).toHaveBeenCalledTimes(1);
 });

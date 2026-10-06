@@ -80,14 +80,20 @@ export async function createProductionComposition(options: ProductionOptions): P
     try { body = await context.req.json(); } catch { return context.json({ error: "invalid JSON" }, 400); }
     if (body && typeof body === "object" && "digest" in body) {
       if (typeof body.digest !== "string" || !("input" in body)) return context.json({ error: "digest and input are required" }, 400);
-      const result = await mutations.startRunByDigest({ digest: body.digest, input: body.input });
-      if (!result.ok) return context.json({ error: result.error }, 422);
+      if (!("request_id" in body) || typeof body.request_id !== "string" || body.request_id.length < 1 || body.request_id.length > 200)
+        return context.json({ error: "request_id must contain 1 to 200 characters" }, 400);
+      const result = await mutations.startRunByDigest({ digest: body.digest, input: body.input, request_id: body.request_id });
+      if (!result.ok) {
+        const status = result.error.operation === "launch_conflict" ? 409 : result.error.operation === "launch_gone" ? 410
+          : result.error.operation === "start_run_storage" ? 500 : 422;
+        return context.json({ error: status === 500 ? "launch storage failed; retry with the same request_id" : result.error }, status);
+      }
       await ensureRunWorkflow(result.value.run_id);
       return context.json(result.value, 201);
     }
     if (!body || typeof body !== "object" || !("bundle" in body) || !isBundle(body.bundle) || !("input" in body)) return context.json({ error: "invalid run request" }, 400);
     const result = await mutations.startRun({ bundle: body.bundle, input: body.input });
-    if (!result.ok) return context.json({ error: result.error }, 422);
+    if (!result.ok) return context.json({ error: result.error }, result.error.operation === "start_run_storage" ? 500 : 422);
     await ensureRunWorkflow(result.value.run_id);
     return context.json(result.value, 201);
   });
