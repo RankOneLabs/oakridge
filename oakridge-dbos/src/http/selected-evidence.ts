@@ -7,7 +7,7 @@ import { findReceipt, requestDigest } from "../storage/receipts";
 import type { RunId, ScopeId } from "../storage/schema-records";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
 
-interface EvidenceDependencies { readonly db: TransactionalSqlExecutor; readonly core: CoreClient; readonly mutations: MutationService; readonly sweep: () => Promise<void> }
+interface EvidenceDependencies { readonly db: TransactionalSqlExecutor; readonly core: CoreClient; readonly mutations: MutationService; readonly sweep: (run_id?: RunId) => Promise<void> }
 interface SelectedEvidence { readonly source: DefinitionBundle; readonly scope_key: string; readonly payload: EffectPayload }
 
 /** Only facts named by the selected action's evidence contract may be supplied by a worker. */
@@ -41,7 +41,7 @@ export function installSelectedEvidenceApi(app: Hono, deps: EvidenceDependencies
     if (!result.ok) return c.json({ error: result.error }, 422);
     if (result.value.kind === "Conflict") return c.json(result.value, 409);
     if (result.value.kind === "Rejected") return c.json(result.value, 422);
-    void deps.sweep().catch(() => undefined);
+    void deps.sweep(c.req.param("run_id") as RunId).catch(() => undefined);
     return c.json(result.value, 202);
   });
 }

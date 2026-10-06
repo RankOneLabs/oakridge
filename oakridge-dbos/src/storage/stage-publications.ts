@@ -3,29 +3,25 @@ import { observationRootKey, selectObservationRoots } from "../core-client/obser
 import type { OutputPublication, Result } from "./commit";
 import type { AuthoritySnapshot } from "./snapshot-reader";
 
+interface PublicationMember { readonly key: string; readonly body: CheckedValue; readonly revision_id: string }
+
 /** Evaluate the pending publication in the same decision that commits its pointer. */
 export function stagePublications(bundle: DefinitionBundle, source: AuthoritySnapshot, outputs: readonly OutputPublication[]): Result<AuthoritySnapshot> {
   const scope = bundle.scopes.find((scope) => scope.key === source.owner.scope_key);
   if (!scope) return { ok: false, error: { operation: "stage_publications", entity_id: source.owner.id, detail: "scope declaration missing" } };
   let observations = [...source.snapshot.observations];
+  const staged_members = new Map<string, readonly PublicationMember[]>();
+  const roots = selectObservationRoots(scope);
   for (const output of outputs) {
     if (!output.revision_id) return { ok: false, error: { operation: "stage_publications", entity_id: source.owner.id, detail: "publication revision identity missing" } };
     const revision_id = output.revision_id;
-    const roots = selectObservationRoots(scope);
-    const definition = scope.outputs.find((item) => item.key === output.output_key);
-    const member_shape = bundle.schemas.find((schema) => schema.key === definition?.schema)?.shape;
-    const key_index = member_shape?.kind === "record" ? member_shape.fields.findIndex((field) => field.key === definition?.collection_key) : -1;
-    const member_key = (value: CheckedValue): string | null => {
-      const key = value.data.kind === "record" ? value.data.fields.find((field) => field.field_id === key_index)?.value : null;
-      return key?.data.kind === "string" ? key.data.value : null;
-    };
-    const bodies_root = roots.find((root) => root.kind === "output_collection" && root.key === output.output_key);
-    const revisions_root = roots.find((root) => root.kind === "output_revisions" && root.key === output.output_key);
-    const bodies = observations.find((item) => bodies_root && observationRootKey(item.root) === observationRootKey(bodies_root))?.value.data;
-    const revisions = observations.find((item) => revisions_root && observationRootKey(item.root) === observationRootKey(revisions_root))?.value.data;
-    const members = bodies?.kind === "list" ? bodies.items.map((body,index) => ({ key: member_key(body), body, revision: revisions?.kind === "list" ? revisions.items[index] ?? null : null })) : [];
-    const collection_members = [...members.filter((item) => item.key !== output.collection_key), { key: output.collection_key, body: output.body, revision: null }]
-      .sort((left,right) => (left.key ?? "").localeCompare(right.key ?? ""));
+    const members = staged_members.get(output.output_key) ?? source.current_outputs
+      .filter((slot) => slot.output_key === output.output_key)
+      .map((slot) => ({ key: slot.collection_key, body: slot.body, revision_id: slot.current_revision_id }));
+    const collection_members = [...members.filter((item) => item.key !== output.collection_key),
+      { key: output.collection_key, body: output.body, revision_id }]
+      .sort((left,right) => left.key.localeCompare(right.key));
+    staged_members.set(output.output_key, collection_members);
     const replace = (root: VersionedValue["root"], value: CheckedValue): void => {
       const existing = observations.find((observation) => observationRootKey(observation.root) === observationRootKey(root));
       observations = observations.filter((observation) => observationRootKey(observation.root) !== observationRootKey(root));
@@ -43,9 +39,7 @@ export function stagePublications(bundle: DefinitionBundle, source: AuthoritySna
         const shape = bundle.schemas.find((schema) => schema.key === root.schema)?.shape;
         if (shape?.kind !== "list") continue;
         const items = root.kind === "output_collection" ? collection_members.map((item) => item.body)
-          : collection_members.flatMap((item) => item.key === output.collection_key
-            ? [{ schema: shape.item, data: { kind: "reference" as const, brand: "artifact_revision" as const, id: revision_id } }]
-            : item.revision ? [item.revision] : []);
+          : collection_members.map((item) => ({ schema: shape.item, data: { kind: "reference" as const, brand: "artifact_revision" as const, id: item.revision_id } }));
         replace(root, { schema: root.schema, data: { kind: "list", items } });
       }
     }

@@ -1,23 +1,52 @@
 import type { CoreClient } from "../core-client/client";
 import type { DefinitionBundle } from "../core-client/generated-contracts";
 import type { MutationService } from "../storage/mutation-service";
-import type { ChildCollectionRecord, ScopeId, ScopeInstanceRecord, ScopeExportRecord } from "../storage/schema-records";
+import type { ChildCollectionRecord, RunId, ScopeId, ScopeInstanceRecord, ScopeExportRecord } from "../storage/schema-records";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
 
-interface RunnableScope extends ScopeInstanceRecord { readonly source: DefinitionBundle }
+interface RunBundle { readonly run_id: RunId; readonly source: DefinitionBundle }
+export interface ChildAdvancementInput {
+  readonly db: TransactionalSqlExecutor;
+  readonly core: CoreClient;
+  readonly mutations: MutationService;
+  /** Omitted for periodic recovery of all active runs. */
+  readonly run_ids?: readonly RunId[];
+}
+function groupChildCollections(collections: readonly ChildCollectionRecord[]): ReadonlyMap<ScopeId, readonly ChildCollectionRecord[]> {
+  const grouped = new Map<ScopeId, ChildCollectionRecord[]>();
+  for (const collection of collections) {
+    const siblings = grouped.get(collection.scope_id) ?? [];
+    siblings.push(collection);
+    grouped.set(collection.scope_id, siblings);
+  }
+  return grouped;
+}
 
 /** Entry and completion triggers are declared in the bundle and delivered through receipts. */
-export async function advanceChildren(db: TransactionalSqlExecutor, core: CoreClient, mutations: MutationService): Promise<void> {
-  const scopes = await db.query<RunnableScope>(`SELECT s.*,b.source FROM authority.scope_instance s
-    JOIN authority.run r ON r.id=s.run_id JOIN authority.definition_bundle b ON b.id=r.definition_bundle_id
-    ORDER BY s.id`, []);
+export async function advanceChildren({ db, core, mutations, run_ids }: ChildAdvancementInput): Promise<void> {
+  const runs = await db.query<RunBundle>(`SELECT r.id AS run_id,b.source FROM authority.run r
+    JOIN authority.definition_bundle b ON b.id=r.definition_bundle_id
+    WHERE ($1::text[] IS NULL OR r.id=ANY($1)) AND EXISTS (
+      SELECT 1 FROM authority.scope_instance root WHERE root.run_id=r.id AND root.parent_id IS NULL AND NOT root.is_terminal
+    ) ORDER BY r.id`, [run_ids ?? null]);
+  if (!runs.length) return;
+  const active_run_ids = runs.map((run) => run.run_id);
+  const bundles = new Map(runs.map((run) => [run.run_id, run.source]));
+  const scopes = await db.query<ScopeInstanceRecord>("SELECT * FROM authority.scope_instance WHERE run_id=ANY($1::text[]) ORDER BY id", [active_run_ids]);
+  const scopes_by_id = new Map(scopes.map((scope) => [scope.id, scope]));
+  const all_collections = await db.query<ChildCollectionRecord>(`SELECT c.* FROM authority.child_collection c
+    JOIN authority.scope_instance s ON s.id=c.scope_id WHERE s.run_id=ANY($1::text[]) ORDER BY c.id`, [active_run_ids]);
+  const collections_by_parent = groupChildCollections(all_collections);
+  const exports = await db.query<ScopeExportRecord>(`SELECT e.* FROM authority.scope_export e
+    JOIN authority.scope_instance s ON s.id=e.scope_id WHERE s.run_id=ANY($1::text[]) ORDER BY e.id`, [active_run_ids]);
   for (const scope of scopes) {
-    const definition = scope.source.scopes.find((item) => item.key === scope.scope_key);
-    const parent = scopes.find((item) => item.id === scope.parent_id);
-    const parent_definition = scope.source.scopes.find((item) => item.key === parent?.scope_key);
+    const bundle = bundles.get(scope.run_id);
+    const definition = bundle?.scopes.find((item) => item.key === scope.scope_key);
+    const parent = scope.parent_id ? scopes_by_id.get(scope.parent_id) : undefined;
+    const parent_definition = bundle?.scopes.find((item) => item.key === parent?.scope_key);
     let child = parent_definition?.children.find((item) => item.key === scope.collection_key || (!scope.collection_key && item.key === scope.child_key));
     let dependencies: readonly string[] = child?.depends_on ?? [];
-    const collections = parent ? await db.query<ChildCollectionRecord>("SELECT * FROM authority.child_collection WHERE scope_id=$1 ORDER BY id", [parent.id]) : [];
+    const collections = parent ? collections_by_parent.get(parent.id as ScopeId) ?? [] : [];
     if (parent && (!child || scope.collection_key)) {
       for (const collection of collections) {
         const member = collection.members.find((member) => typeof member === "string" ? member === scope.id : member.id === scope.id);
@@ -31,12 +60,11 @@ export async function advanceChildren(db: TransactionalSqlExecutor, core: CoreCl
       const required = dependencies.flatMap((key) => {
         const collection = collections.find((item) => item.collection_key === key);
         if (!collection) return [scopes.find((item) => item.parent_id === parent?.id && item.child_key === key && (item.collection_key ?? null) === (scope.collection_key ?? null))];
-        return collection.members.map((member) => scopes.find((item) => item.id === (typeof member === "string" ? member : member.id)));
+        return collection.members.map((member) => scopes_by_id.get(typeof member === "string" ? member : member.id));
       });
       if (required.some((item) => !item?.is_terminal)) continue;
       if (child?.prerequisite_export && required.length) {
-        const exports = await db.query<ScopeExportRecord>("SELECT * FROM authority.scope_export WHERE scope_id=ANY($1::text[]) AND export_key=$2", [required.map((item) => item?.id), child.prerequisite_export]);
-        const succeeded = required.every((dependency) => exports.some((item) => item.scope_id === dependency?.id && item.value.data.kind === "boolean" && item.value.data.value));
+        const succeeded = required.every((dependency) => exports.some((item) => item.scope_id === dependency?.id && item.export_key === child?.prerequisite_export && item.value.data.kind === "boolean" && item.value.data.value));
         if (!succeeded) {
           const cancellation = definition.cancellation.trigger;
           const event = definition.commands.find((item) => item.key === cancellation) ?? definition.facts.find((item) => item.key === cancellation);
@@ -56,17 +84,19 @@ export async function advanceChildren(db: TransactionalSqlExecutor, core: CoreCl
       if (fact) await deliver(parent, fact.key, `child-terminal:${scope.id}`, fact.payload_schema);
     }
   }
-  const empty_collections = await db.query<ChildCollectionRecord>("SELECT * FROM authority.child_collection WHERE members='[]'::jsonb ORDER BY id", []);
+  const empty_collections = all_collections.filter((collection) => collection.members.length === 0);
   for (const collection of empty_collections) {
-    const parent = scopes.find((item) => item.id === collection.scope_id);
+    const parent = scopes_by_id.get(collection.scope_id);
     if (!parent || parent.is_terminal) continue;
-    const definition = parent.source.scopes.find((item) => item.key === parent.scope_key);
+    const definition = bundles.get(parent.run_id)?.scopes.find((item) => item.key === parent.scope_key);
     const child = definition?.children.find((item) => item.key === collection.collection_key);
     const fact = definition?.facts.find((item) => item.key === child?.on_terminal);
     if (fact) await deliver(parent, fact.key, `empty-collection:${collection.id}`, fact.payload_schema);
   }
-  async function deliver(scope: RunnableScope, key: string, id: string, schema: string): Promise<void> {
-    const checked = await core.request("validate_payload", { bundle: scope.source, available_operations: scope.source.operations, schema, payload: {} });
+  async function deliver(scope: ScopeInstanceRecord, key: string, id: string, schema: string): Promise<void> {
+    const bundle = bundles.get(scope.run_id);
+    if (!bundle) throw new Error(`lifecycle bundle missing: ${scope.run_id}`);
+    const checked = await core.request("validate_payload", { bundle, available_operations: bundle.operations, schema, payload: {} });
     if (!checked.ok || checked.value.kind !== "validated") throw new Error(`invalid configured lifecycle payload: ${scope.id}/${key}`);
     const result = await mutations.decide({ run_id: scope.run_id, scope_id: scope.id as ScopeId, ingress_id: id,
       trigger: { id, key, payload: checked.value.value }, operator_version: null });

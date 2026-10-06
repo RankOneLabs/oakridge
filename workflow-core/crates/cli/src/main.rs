@@ -9,6 +9,10 @@ fn main() -> io::Result<()> {
         print!("{}", codegen::generate());
         return Ok(());
     }
+    if std::env::args().any(|arg| arg == "--generate-source-contracts") {
+        print!("{}", codegen::generate_source());
+        return Ok(());
+    }
     if std::env::args().any(|arg| arg == "--source-schema") {
         println!(
             "{}",

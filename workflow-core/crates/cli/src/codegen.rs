@@ -151,6 +151,31 @@ pub fn generate() -> String {
         schema_to_ts(&schemas["response"])
     ));
     output.push_str("export type CoreDomainError = DomainError;\nexport type CoreTransportError = TransportError;\nexport type CoreTransportKind = TransportErrorKind;\nexport type CoreResponseResult = ResponseResult;\n");
+    output.push_str(include_str!("schema-decoder.ts.txt"));
     output.push_str(include_str!("response-decoder.ts.txt"));
+    output
+}
+
+/// Source-only descriptors for the authoring UI, generated from the compiler's model.
+pub fn generate_source() -> String {
+    let schema = serde_json::to_value(schema_for!(workflow_model::DefinitionBundle))
+        .expect("source schema is JSON");
+    let mut output = format!(
+        "// Generated from workflow-model::DefinitionBundle. Run scripts/generate-core-contracts.sh.\nexport const SOURCE_SCHEMA = {schema} as const;\n"
+    );
+    if let Some(definitions) = schema["$defs"].as_object() {
+        for (name, definition) in definitions {
+            output.push_str(&format!(
+                "export type {name} = {};\n",
+                schema_to_ts(definition)
+            ));
+        }
+    }
+    output.push_str(&format!(
+        "export type WorkflowDefinitionDescriptor = {};\n",
+        schema_to_ts(&schema)
+    ));
+    output.push_str(include_str!("schema-decoder.ts.txt"));
+    output.push_str("export function decodeDefinitionBundle(value: unknown): WorkflowDefinitionDescriptor | null {\n  return hasSafeWireNumbers(value) && matchesProtocolSchema(value, SOURCE_SCHEMA, SOURCE_SCHEMA.$defs, 0)\n    ? value as WorkflowDefinitionDescriptor : null;\n}\n");
     output
 }

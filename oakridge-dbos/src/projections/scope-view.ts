@@ -39,7 +39,7 @@ export async function readScopeView(db: TransactionalSqlExecutor, scope_id: Scop
       tx.query<TransitionRow>("SELECT id,decision FROM authority.transition WHERE scope_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1", [scope.id]),
     ]);
     const commands = selectAvailableCommands(bundle, scope);
-    const observations = await readScopeObservations(tx, { owner: scope, scope: definition, bundle });
+    const { observations } = await readScopeObservations(tx, { owner: scope, scope: definition, bundle });
     const command_targets = Object.fromEntries(await Promise.all(commands.map(async (command) =>
       [command.key, await currentTargetRevisions(tx, scope_id, command, observations)] as const)));
     return { scope_id, run_id: scope.run_id, scope_key: scope.scope_key, label: definition.presentation.label,

@@ -69,7 +69,7 @@ export async function runtimeFixture(db: TransactionalSqlExecutor, bundle: Defin
       body: JSON.stringify({ request_id: crypto.randomUUID(), predecessor_id: rows[0]?.current_revision_id ?? null, collection_key: member, body }) });
   };
   const observe = (state = "open", head_sha = "head1", id = root_scope_id) => fact("pr_observed", { observations: [{ ...forge, state, head_sha }] }, id);
-  const advance = () => advanceChildren(db, core, mutations);
+  const advance = () => advanceChildren({ db, core, mutations, run_ids: [run_id] });
   return { app, core, mutations, run_id, root_scope_id, checked, scope, fact, command, selected, publish, observe, advance };
 }
 export async function throughBriefs(f: Awaited<ReturnType<typeof runtimeFixture>>, briefs: readonly (typeof brief)[], db: TransactionalSqlExecutor): Promise<readonly DevelopmentScope[]> {
