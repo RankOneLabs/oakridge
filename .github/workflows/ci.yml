@@ -26,6 +26,11 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
       - run: cargo build --locked -p workflow-cli
+      - uses: actions/upload-artifact@v4
+        with:
+          name: workflow-cli
+          path: workflow-core/target/debug/workflow-cli
+          if-no-files-found: error
 
   core-contracts:
     name: Generated Rust/TypeScript contracts
@@ -81,8 +86,13 @@ jobs:
       - run: bun run --filter kbbl test:browser
 
   oakridge-dbos-tests:
-    name: oakridge-dbos tests (bun)
+    name: oakridge-dbos tests (bun, shard ${{ matrix.shard }})
+    needs: workflow-core
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
     # The end-to-end tests drive a real DBOS runtime, which needs a real
     # PostgreSQL. Missing prerequisites fail rather than silently skip.
     services:
@@ -103,16 +113,28 @@ jobs:
       OAKRIDGE_TEST_DATABASE_URL: postgres://oakridge:oakridge@127.0.0.1:5432/oakridge
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/download-artifact@v4
         with:
-          toolchain: 1.93.1
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: workflow-core
-      - run: cargo build --locked --manifest-path workflow-core/Cargo.toml -p workflow-cli
+          name: workflow-cli
+          path: workflow-core/target/debug
+      - run: chmod +x workflow-core/target/debug/workflow-cli
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
-      - run: bun run --filter oakridge-dbos test:unit
+      - name: Run DBOS test shard
+        working-directory: oakridge-dbos
+        env:
+          TEST_SHARD: ${{ matrix.shard }}
+        shell: bash
+        run: |
+          # Separate processes preserve DBOS global runtime isolation.
+          # Sorted, alternating files cover the suite exactly once.
+          mapfile -d '' test_files < <(find src tests -name '*.test.ts' -print0 | sort -z)
+          test "${#test_files[@]}" -gt 0
+          failed=0
+          for ((index = TEST_SHARD; index < ${#test_files[@]}; index += 2)); do
+            bun test "${test_files[index]}" || failed=1
+          done
+          exit "$failed"
 
   lbc-dashboard-tests:
     name: lbc-dashboard tests (bun)
