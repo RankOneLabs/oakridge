@@ -1,12 +1,12 @@
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { subscribeOakridgeStream } from "./useOakridgeRunEventStream";
 
+/** Refresh active projections while the backend has no event stream. */
 export function useOakridgeInvalidationStream(isEnabled: boolean): void {
   const client = useQueryClient();
   useEffect(() => {
     if (!isEnabled) return;
-    const invalidate = () => { void client.invalidateQueries({ queryKey: ["oakridge"] }); };
-    return subscribeOakridgeStream("invalidate", invalidate);
+    const timer = window.setInterval(() => { void client.invalidateQueries({ queryKey: ["operator"] }); }, 10_000);
+    return () => window.clearInterval(timer);
   }, [client, isEnabled]);
 }

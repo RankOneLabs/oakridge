@@ -7,6 +7,7 @@ import { clearOperatorDraft, clearPendingCommand, listPendingCommands, operatorD
 import { selectDraftKey } from "../lib/operator-selectors";
 import { Button } from "../../components/atoms/Button";
 import { isDefinitiveRequestRejection } from "../lib/client-errors";
+import { OperatorHistoryPane } from "./OperatorHistoryPane";
 
 interface Props { readonly runId: string; readonly onBack: () => void }
 export function GenericOperatorRunView({ runId, onBack }: Props) {
@@ -57,6 +58,7 @@ export function GenericOperatorRunView({ runId, onBack }: Props) {
       {scope.data.executions.map((execution) => <section key={execution.id}><h4>{execution.worker_key} · {execution.status}</h4>
         {execution.result && <OperatorTypedValue value={execution.result} schemas={schemas} />}</section>)}
     </section>
+    <OperatorHistoryPane runId={runId} scopeId={scopeId ?? ""} schemas={schemas} />
     {scope.data.commands.length > 0 && <section><h3>Commands</h3>
       <label>Action <select aria-label="Action" value={selected?.key ?? ""} onChange={(event) => setSelectedCommand(event.target.value)}>
         {scope.data.commands.map((command) => <option key={command.key} value={command.key}>{command.label}</option>)}
