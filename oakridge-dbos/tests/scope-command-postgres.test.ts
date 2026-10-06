@@ -111,6 +111,7 @@ test("publication retry after terminal commit replays one revision and receipt",
   await withAuthority(async (authority) => {
     await authority.db.query("INSERT INTO authority.execution (id,scope_id,worker_key,generation,status) VALUES ('execution-1',$1,'potter',1,'terminal')", [authority.run.root_scope_id]);
     await authority.db.query("INSERT INTO authority.execution_selection (id,scope_id,worker_key,execution_id,generation) VALUES ('selection-1',$1,'potter','execution-1',1)", [authority.run.root_scope_id]);
+    await authority.db.query("INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload) VALUES ('start-1',$1,'execution-1','start',$2)", [authority.run.root_scope_id, JSON.stringify({ action: "start", invocation: { selection: { definition: { outputs: ["specimen"] } } } })]);
     const unit: CheckedValue = { schema: "unit", data: { kind: "record", fields: [], dictionary: [] } };
     const publication: PublicationRequest = { request_id: "publication-1", expected_scope_version: 0,
       trigger: { id: "publication-1", key: "quench", payload: unit },

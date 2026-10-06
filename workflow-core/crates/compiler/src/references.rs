@@ -82,6 +82,144 @@ fn reference_schema(
                     )
                 })?
         }
+        ReferenceRoot::OutputCollection {
+            key,
+            schema: target,
+        }
+        | ReferenceRoot::OutputRevisions {
+            key,
+            schema: target,
+        }
+        | ReferenceRoot::OutputRevision {
+            key,
+            schema: target,
+        }
+        | ReferenceRoot::OptionalOutputRevision {
+            key,
+            schema: target,
+        } => {
+            let output = owner
+                .outputs
+                .iter()
+                .find(|o| o.key == *key)
+                .ok_or_else(|| {
+                    error(
+                        DomainErrorKind::MissingSymbol,
+                        key.to_string(),
+                        "output undeclared",
+                    )
+                })?;
+            let valid = match root {
+                ReferenceRoot::OutputCollection { .. } => {
+                    output.collection_key.is_some()
+                        && matches!(schema(bundle, target)?, SchemaShape::List { item, .. } if *item == output.schema)
+                }
+                ReferenceRoot::OutputRevisions { .. } => {
+                    output.collection_key.is_some()
+                        && match schema(bundle, target)? {
+                            SchemaShape::List { item, .. } => matches!(
+                                schema(bundle, item)?,
+                                SchemaShape::Reference {
+                                    brand: ReferenceBrand::ArtifactRevision
+                                }
+                            ),
+                            _ => false,
+                        }
+                }
+                ReferenceRoot::OutputRevision { .. } => {
+                    output.collection_key.is_none()
+                        && matches!(
+                            schema(bundle, target)?,
+                            SchemaShape::Reference {
+                                brand: ReferenceBrand::ArtifactRevision
+                            }
+                        )
+                }
+                _ => {
+                    output.collection_key.is_none()
+                        && match schema(bundle, target)? {
+                            SchemaShape::Optional { item } => matches!(
+                                schema(bundle, item)?,
+                                SchemaShape::Reference {
+                                    brand: ReferenceBrand::ArtifactRevision
+                                }
+                            ),
+                            _ => false,
+                        }
+                }
+            };
+            if !valid {
+                return Err(error(
+                    DomainErrorKind::IncompatiblePort,
+                    key.to_string(),
+                    "output observation schema mismatch",
+                ));
+            }
+            target.clone()
+        }
+        ReferenceRoot::Children {
+            key,
+            schema: target,
+            ..
+        }
+        | ReferenceRoot::ChildrenOutcomes {
+            key,
+            schema: target,
+        }
+        | ReferenceRoot::ChildrenComplete {
+            key,
+            schema: target,
+        } => {
+            let child = owner
+                .children
+                .iter()
+                .find(|c| c.key == *key)
+                .ok_or_else(|| {
+                    error(
+                        DomainErrorKind::MissingSymbol,
+                        key.to_string(),
+                        "child undeclared",
+                    )
+                })?;
+            let child_scope = scope(bundle, &child.scope)?;
+            let expected = match root {
+                ReferenceRoot::Children { export, .. } => {
+                    if !child.imports.contains(export) {
+                        return Err(error(
+                            DomainErrorKind::PrivateRead,
+                            key.to_string(),
+                            "unimported child export",
+                        ));
+                    }
+                    &child_scope
+                        .exports
+                        .iter()
+                        .find(|e| e.key == *export)
+                        .ok_or_else(|| {
+                            error(
+                                DomainErrorKind::PrivateRead,
+                                key.to_string(),
+                                "child export missing",
+                            )
+                        })?
+                        .schema
+                }
+                _ => &child_scope.outcome_schema,
+            };
+            let valid = if matches!(root, ReferenceRoot::ChildrenComplete { .. }) {
+                matches!(schema(bundle, target)?, SchemaShape::Boolean)
+            } else {
+                matches!(schema(bundle, target)?, SchemaShape::List { item, .. } if item == expected)
+            };
+            if !valid {
+                return Err(error(
+                    DomainErrorKind::IncompatiblePort,
+                    key.to_string(),
+                    "child observation schema mismatch",
+                ));
+            }
+            target.clone()
+        }
         ReferenceRoot::Item => context.item.clone().ok_or_else(|| {
             error(
                 DomainErrorKind::MissingBinding,

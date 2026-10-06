@@ -238,6 +238,144 @@ pub fn evaluate_expression(
             }
             CheckedData::List { items: result }
         }
+        CheckedExpressionNode::Optional { value } => CheckedData::Optional {
+            value: value
+                .as_ref()
+                .map(|value| evaluate_expression(value, context))
+                .transpose()?
+                .map(Box::new),
+        },
+        CheckedExpressionNode::Field { value, index } => {
+            let value = evaluate_expression(value, context)?;
+            return Ok(crate::collections::field(&value, *index)?.clone());
+        }
+        CheckedExpressionNode::FilterBy {
+            source,
+            key_field,
+            key,
+        } => {
+            let collection = evaluate_expression(source, context)?;
+            let key = evaluate_expression(key, context)?;
+            let CheckedData::List { items } = collection.data else {
+                return Err(failure(
+                    DomainErrorKind::InvalidSnapshot,
+                    source.schema.to_string(),
+                    "filter_by source not list",
+                ));
+            };
+            let mut filtered = Vec::new();
+            for item in items {
+                if *crate::collections::field(&item, *key_field)? == key {
+                    filtered.push(item);
+                }
+            }
+            CheckedData::List { items: filtered }
+        }
+        CheckedExpressionNode::Contains { source, value } => {
+            let collection = evaluate_expression(source, context)?;
+            let CheckedData::List { items } = collection.data else {
+                return Err(failure(
+                    DomainErrorKind::InvalidSnapshot,
+                    source.schema.to_string(),
+                    "contains source not list",
+                ));
+            };
+            CheckedData::Boolean {
+                value: items.contains(&evaluate_expression(value, context)?),
+            }
+        }
+        CheckedExpressionNode::Lookup {
+            source,
+            key_field,
+            key,
+        } => {
+            let collection = evaluate_expression(source, context)?;
+            let CheckedData::List { items } = collection.data else {
+                return Err(failure(
+                    DomainErrorKind::InvalidSnapshot,
+                    source.schema.to_string(),
+                    "lookup source not list",
+                ));
+            };
+            let key = evaluate_expression(key, context)?;
+            let matches = items
+                .iter()
+                .filter(|item| {
+                    crate::collections::field(item, *key_field).is_ok_and(|value| *value == key)
+                })
+                .collect::<Vec<_>>();
+            if matches.len() != 1 {
+                return Err(failure(
+                    DomainErrorKind::InvalidTemplate,
+                    source.schema.to_string(),
+                    "lookup requires exactly one matching key",
+                ));
+            }
+            return Ok(matches[0].clone());
+        }
+        CheckedExpressionNode::Filter { source, predicate } => {
+            let collection = evaluate_expression(source, context)?;
+            let CheckedData::List { items } = collection.data else {
+                return Err(failure(
+                    DomainErrorKind::InvalidSnapshot,
+                    source.schema.to_string(),
+                    "filter source not list",
+                ));
+            };
+            let mut filtered = Vec::new();
+            for item in items {
+                let mut child = EvaluationContext {
+                    program: context.program,
+                    snapshot: context.snapshot,
+                    item: Some(&item),
+                    budget: context.budget,
+                };
+                if boolean(&evaluate_expression(predicate, &mut child)?)? {
+                    filtered.push(item);
+                }
+            }
+            CheckedData::List { items: filtered }
+        }
+        CheckedExpressionNode::UniqueBy { source, key_field }
+        | CheckedExpressionNode::CheckCollection {
+            source, key_field, ..
+        } => {
+            let collection = evaluate_expression(source, context)?;
+            let CheckedData::List { items } = collection.data else {
+                return Err(failure(
+                    DomainErrorKind::InvalidSnapshot,
+                    source.schema.to_string(),
+                    "constraint source not list",
+                ));
+            };
+            if let CheckedExpressionNode::CheckCollection {
+                dependencies_field, ..
+            } = &expression.node
+            {
+                crate::collections::validate_collection(&items, *key_field, *dependencies_field)?;
+                CheckedData::List { items }
+            } else {
+                let mut unique: Vec<CheckedValue> = Vec::new();
+                for item in items {
+                    let key = crate::collections::field(&item, *key_field)?;
+                    if let Some(previous) = unique.iter().find(|previous| {
+                        crate::collections::field(previous, *key_field)
+                            .is_ok_and(|value| value == key)
+                    }) {
+                        if previous != &item {
+                            return Err(failure(
+                                DomainErrorKind::InvalidTemplate,
+                                source.schema.to_string(),
+                                "same key carries inconsistent values",
+                            ));
+                        }
+                    } else {
+                        unique.push(item);
+                    }
+                }
+                CheckedData::List { items: unique }
+            }
+        }
         CheckedExpressionNode::Every { source, predicate } => {
             let collection = evaluate_expression(source, context)?;
             let CheckedData::List { items } = collection.data else {

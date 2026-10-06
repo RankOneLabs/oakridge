@@ -11,9 +11,10 @@ export type Version = number;
 export interface VersionedRecord { readonly id: string; readonly version: Version }
 export interface DefinitionBundleRecord extends VersionedRecord { readonly digest: string; readonly source: DefinitionBundle; readonly checked_program: CheckedProgram }
 export interface RunRecord extends VersionedRecord { readonly definition_bundle_id: string; readonly created_at: Date }
-export interface ScopeInstanceRecord extends VersionedRecord { readonly run_id: RunId; readonly parent_id: ScopeId | null; readonly scope_key: string; readonly child_key: string | null; readonly input: CheckedValue; readonly local_state: CheckedValue; readonly outcome: CheckedValue | null; readonly is_terminal: boolean }
+export interface ScopeInstanceRecord extends VersionedRecord { readonly run_id: RunId; readonly parent_id: ScopeId | null; readonly scope_key: string; readonly child_key: string | null; readonly collection_key?: string | null; readonly input: CheckedValue; readonly local_state: CheckedValue; readonly outcome: CheckedValue | null; readonly is_terminal: boolean }
 export interface ScopeExportRecord extends VersionedRecord { readonly scope_id: ScopeId; readonly export_key: string; readonly value: CheckedValue }
-export interface ChildCollectionRecord extends VersionedRecord { readonly scope_id: ScopeId; readonly collection_key: string; readonly members: readonly string[] }
+export interface ChildCollectionMember { readonly id: ScopeId; readonly key: string; readonly depends_on: readonly string[] }
+export interface ChildCollectionRecord extends VersionedRecord { readonly scope_id: ScopeId; readonly collection_key: string; readonly members: readonly (string | ChildCollectionMember)[] }
 export interface ExecutionSelectionRecord extends VersionedRecord { readonly scope_id: ScopeId; readonly worker_key: string; readonly execution_id: ExecutionId | null; readonly generation: number }
 export interface ExecutionRecord extends VersionedRecord { readonly scope_id: ScopeId; readonly worker_key: string; readonly generation: number; readonly status: string; readonly result: CheckedValue | null }
 export interface ArtifactRevisionRecord extends VersionedRecord { readonly scope_id: ScopeId; readonly execution_id: ExecutionId | null; readonly output_key: string; readonly collection_key: string | null; readonly body: CheckedValue; readonly predecessor_id: RevisionId | null }

@@ -1,3 +1,5 @@
+import { installSelectedEvidenceApi } from "./selected-evidence";
+import { installSelectedPublicationApi } from "./selected-publication";
 import type { Hono } from "hono";
 import type { CoreClient } from "../core-client/client";
 import { selectMutationIdentity, type MutationInput, type MutationService } from "../storage/mutation-service";
@@ -12,7 +14,7 @@ import { readScopeDiagnostics } from "./diagnostics";
 import { parsePublication } from "./publication";
 import { commandStatus, ConflictError, InternalFaultError, InvalidPayloadError, MalformedRequestError, MissingEntityError, PendingWork, parseScopeCommand, submitScopeCommand, type CommandError, type CommandResult } from "./scope-commands";
 
-export interface DefinitionApiDependencies { readonly db: TransactionalSqlExecutor; readonly core: CoreClient; readonly mutations: MutationService; readonly sweep: () => Promise<void> }
+export interface DefinitionApiDependencies { readonly db: TransactionalSqlExecutor; readonly core: CoreClient; readonly mutations: MutationService; readonly sweep: (run_id?: RunId) => Promise<void> }
 function errorResponse(error: CommandError): { readonly error: string; readonly detail: string; readonly trace_id?: string } {
   return error instanceof InternalFaultError ? { error: error.kind, detail: "internal fault", trace_id: error.trace_id } : { error: error.kind, detail: error.detail };
 }
@@ -24,6 +26,8 @@ async function body(request: Request): Promise<unknown | MalformedRequestError> 
   try { return await request.json(); } catch { return new MalformedRequestError("invalid JSON"); }
 }
 export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies): void {
+  installSelectedPublicationApi(app, deps);
+  installSelectedEvidenceApi(app, deps);
   app.get("/api/inbox", async () => { try { return Response.json(await readInbox(deps.db)); } catch (cause) { return fault(cause); } });
   app.get("/api/runs/:run_id", async (c) => { try {
     const view = await readRunView(deps.db, c.req.param("run_id") as RunId);
@@ -52,7 +56,7 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
     const parsed = parseScopeCommand(raw, c.req.param("scope_id") as ScopeId);
     if (parsed instanceof MalformedRequestError) return response({ ok: false, error: parsed });
     const result = await submitScopeCommand(deps, c.req.param("run_id") as RunId, parsed);
-    if (result.ok) void deps.sweep().catch(() => undefined);
+    if (result.ok) void deps.sweep(c.req.param("run_id") as RunId).catch(() => undefined);
     return response(result);
   });
   app.post("/api/runs/:run_id/scopes/:scope_id/publications", async (c) => {
@@ -79,7 +83,7 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
       if (!result.ok) return response({ ok: false, error: new InternalFaultError(result.error.detail) });
       if (result.value.kind === "Conflict") return response({ ok: false, error: new ConflictError(result.value.detail) });
       if (result.value.kind === "Rejected") return response({ ok: false, error: new InvalidPayloadError(result.value.detail) });
-      void deps.sweep().catch(() => undefined);
+      void deps.sweep(c.req.param("run_id") as RunId).catch(() => undefined);
       return Response.json({ kind: "accepted_pending", request_id: parsed.request_id, ...result.value.receipt }, { status: 202 });
     } catch (cause) { return fault(cause); }
   });

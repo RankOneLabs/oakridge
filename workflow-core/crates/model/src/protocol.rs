@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 pub const PROTOCOL_VERSION: u32 = 1;
 pub const MAX_FRAME_BYTES: usize = 1_048_576;
-pub const MAX_RESPONSE_BYTES: usize = 262_144;
+// Compilation carries checked source and selected trees; keep both directions bounded at 1 MiB.
+pub const MAX_RESPONSE_BYTES: usize = MAX_FRAME_BYTES;
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Request {

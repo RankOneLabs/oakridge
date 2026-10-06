@@ -144,6 +144,8 @@ pub struct ScopeDefinition {
     pub cancellation: CancellationDefinition,
     pub presentation: Presentation,
     pub tree: DecisionTree,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_command: Option<SymbolKey>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -184,6 +186,8 @@ pub struct OutputDefinition {
     pub policy: PublicationPolicy,
     pub producers: Vec<WorkerKey>,
     pub collection_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publication_trigger: Option<SymbolKey>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -236,6 +240,10 @@ pub struct ChildDefinition {
     pub depends_on: Vec<SymbolKey>,
     pub imports: Vec<SymbolKey>,
     pub collection: Option<CollectionDefinition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_terminal: Option<SymbolKey>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prerequisite_export: Option<SymbolKey>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -283,10 +291,48 @@ pub enum ReferenceRoot {
     Input,
     State,
     Trigger,
-    Output { key: SymbolKey },
-    Result { worker: WorkerKey },
-    Resource { key: SymbolKey },
-    Child { key: SymbolKey, export: SymbolKey },
+    Output {
+        key: SymbolKey,
+    },
+    Result {
+        worker: WorkerKey,
+    },
+    Resource {
+        key: SymbolKey,
+    },
+    Child {
+        key: SymbolKey,
+        export: SymbolKey,
+    },
+    OutputCollection {
+        key: SymbolKey,
+        schema: SchemaId,
+    },
+    OutputRevision {
+        key: SymbolKey,
+        schema: SchemaId,
+    },
+    OutputRevisions {
+        key: SymbolKey,
+        schema: SchemaId,
+    },
+    OptionalOutputRevision {
+        key: SymbolKey,
+        schema: SchemaId,
+    },
+    Children {
+        key: SymbolKey,
+        export: SymbolKey,
+        schema: SchemaId,
+    },
+    ChildrenOutcomes {
+        key: SymbolKey,
+        schema: SchemaId,
+    },
+    ChildrenComplete {
+        key: SymbolKey,
+        schema: SchemaId,
+    },
     Item, // lexically bound by finite list transforms
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -336,6 +382,41 @@ pub enum Expression {
         source: Box<Expression>,
         schema: SchemaId,
         value: Box<Expression>,
+    },
+    Optional {
+        schema: SchemaId,
+        value: Option<Box<Expression>>,
+    },
+    Field {
+        value: Box<Expression>,
+        key: String,
+    },
+    FilterBy {
+        source: Box<Expression>,
+        key_field: String,
+        key: Box<Expression>,
+    },
+    Contains {
+        source: Box<Expression>,
+        value: Box<Expression>,
+    },
+    Lookup {
+        source: Box<Expression>,
+        key_field: String,
+        key: Box<Expression>,
+    },
+    Filter {
+        source: Box<Expression>,
+        predicate: Box<Expression>,
+    },
+    UniqueBy {
+        source: Box<Expression>,
+        key_field: String,
+    },
+    CheckCollection {
+        source: Box<Expression>,
+        key_field: String,
+        dependencies_field: String,
     },
     Every {
         source: Box<Expression>,
@@ -401,10 +482,14 @@ pub enum Mutation {
     SetState { value: Expression },
     Export { key: SymbolKey, value: Expression },
     ActivateChild { key: SymbolKey },
+    CancelChildren { key: SymbolKey },
+    ClearOutput { key: SymbolKey },
     Acquire { pool: SymbolKey },
     Release { pool: SymbolKey },
     Revoke { worker: WorkerKey },
     Stop { worker: WorkerKey },
+    BindResource { key: SymbolKey, value: Expression },
+    ClearResource { key: SymbolKey },
     Observe { resource: SymbolKey },
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]

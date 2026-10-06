@@ -1,10 +1,10 @@
-import { decodeCoreResponse, hasSafeWireNumbers, type CoreRequest, type CoreResponseResult, type CoreTransportKind, type Output } from "./generated-contracts";
+import { CORE_MAX_FRAME_BYTES, CORE_MAX_RESPONSE_BYTES, decodeCoreResponse, hasSafeWireNumbers, type CoreRequest, type CoreResponseResult, type CoreTransportKind, type Output } from "./generated-contracts";
 import { transportFailure, type CoreResult } from "./transport-errors";
 interface Pending { readonly resolve: (result: CoreResult<Output>) => void; readonly timeout: ReturnType<typeof setTimeout> }
 type RequestInput<O extends CoreRequest["operation"]> = Extract<CoreRequest, { readonly operation: O }>["input"];
 export interface CoreClientOptions { readonly binary: string; readonly deadlineMs: number; readonly maxPendingRequests?: number }
-const MAX_FRAME_BYTES = 1_048_576;
-const MAX_RESPONSE_BYTES = 262_144;
+const MAX_FRAME_BYTES = CORE_MAX_FRAME_BYTES;
+const MAX_RESPONSE_BYTES = CORE_MAX_RESPONSE_BYTES;
 function resultFromResponse(result: CoreResponseResult): CoreResult<Output> {
   switch (result.status) {
     case "ok": return { ok: true, value: result.value };

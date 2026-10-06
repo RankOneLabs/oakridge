@@ -1,3 +1,4 @@
+import { CORE_MAX_RESPONSE_BYTES } from "../src/core-client/generated-contracts";
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -80,7 +81,7 @@ test("duplicate JSON keys are rejected before overwrite", () => {
   expect(rawFrame(frame).result.value.kind).toBe("duplicate_symbol");
 });
 test("responses echo the request ID and signal truncation", () => {
-  const source = { ...bundle, prompts: bundle.prompts.map((prompt) => ({ ...prompt, content: "x".repeat(300_000) })) };
+  const source = { ...bundle, prompts: bundle.prompts.map((prompt) => ({ ...prompt, content: "x".repeat(Math.floor(CORE_MAX_RESPONSE_BYTES / 2) + 10_000) })) };
   const response = rawFrame(JSON.stringify({ version: 1, request_id: "large", operation: "compile", input: { bundle: source, available_operations: source.operations } }));
   expect(response).toMatchObject({ request_id: "large", truncated: true, result: { value: { kind: "oversized_payload" } } });
 });
@@ -101,12 +102,12 @@ function stringResponseAtSize(bytes: number): string {
     result: { status: "ok", value: { kind: "validated", value: { schema: "text", data: { kind: "string", value } } } } });
   return response("x".repeat(bytes - new TextEncoder().encode(response("")).length));
 }
-test("response at the 256 KiB boundary is accepted", () => withChild(
-  `IFS= read -r line\nprintf '%s\\n' '${stringResponseAtSize(262_144)}'`, async (client) => {
+test("response at the configured response boundary is accepted", () => withChild(
+  `IFS= read -r line\nprintf '%s\\n' '${stringResponseAtSize(CORE_MAX_RESPONSE_BYTES)}'`, async (client) => {
     expect((await client.request("compile", { bundle, available_operations: bundle.operations })).ok).toBe(true);
   }));
-test("response above 256 KiB quarantines the child and fails all pending callers", () => withChild(
-  `IFS= read -r line\nprintf '%s\\n' '${stringResponseAtSize(262_145)}'`, async (client) => {
+test("response above configured response quarantines the child and fails all pending callers", () => withChild(
+  `IFS= read -r line\nprintf '%s\\n' '${stringResponseAtSize(CORE_MAX_RESPONSE_BYTES + 1)}'`, async (client) => {
     const responses = await Promise.all([client.request("compile", { bundle, available_operations: bundle.operations }),
       client.request("compile", { bundle, available_operations: bundle.operations })]);
     for (const response of responses) expect(response).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "oversized_payload" } } });

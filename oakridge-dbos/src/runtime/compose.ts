@@ -1,3 +1,4 @@
+import { advanceChildren } from "./advance-children";
 import { Hono } from "hono";
 import { decodeCoreResponse } from "../core-client/generated-contracts";
 import type { DefinitionBundle, Trigger } from "../core-client/generated-contracts";
@@ -53,10 +54,24 @@ export function createProductionComposition(options: ProductionOptions): Product
     lease_ms: options.dispatch?.lease_ms ?? 60_000, provider_timeout_ms: options.dispatch?.provider_timeout_ms ?? 30_000 };
   const effect_provider = options.effect_provider ?? createEffectProvider({ db, core, kbbl_base_url: options.kbbl_base_url ?? process.env.KBBL_BASE_URL ?? "http://127.0.0.1:8788", pull_requests: options.pull_requests });
   let sweep_task: Promise<void> | null = null;
-  const sweep = (): Promise<void> => {
+  const pending_runs = new Set<RunId>();
+  let should_sweep_all = false;
+  const sweep = (run_id?: RunId): Promise<void> => {
+    if (run_id) pending_runs.add(run_id);
+    else should_sweep_all = true;
     if (sweep_task) return sweep_task;
-    sweep_task = (async () => { await deliverEffectFacts(db, mutations); await dispatchSweep(db, effect_provider, dispatchOptions); await deliverEffectFacts(db, mutations); })()
-      .finally(() => { sweep_task = null; });
+    sweep_task = (async () => {
+      do {
+        const run_ids = should_sweep_all ? undefined : [...pending_runs];
+        should_sweep_all = false;
+        pending_runs.clear();
+        await deliverEffectFacts(db, mutations);
+        await advanceChildren({ db, core, mutations, run_ids });
+        await dispatchSweep(db, effect_provider, dispatchOptions);
+        await deliverEffectFacts(db, mutations);
+        await advanceChildren({ db, core, mutations, run_ids });
+      } while (should_sweep_all || pending_runs.size > 0);
+    })().finally(() => { sweep_task = null; });
     return sweep_task;
   };
   const timer = setInterval(() => { void sweep().catch((error) => console.error("effect sweep failed", error)); }, options.dispatch?.sweep_ms ?? 5_000);
@@ -91,7 +106,7 @@ export function createProductionComposition(options: ProductionOptions): Product
     const result = await cancelRun(db, { kind: "cancel_run", run_id: context.req.param("run_id"), reason: body.reason, payloads }, core);
     if (result.kind === "rejected") return context.json(result, 422);
     if (result.kind === "missing") return context.json({ error: "run not found" }, 404);
-    void sweep().catch((error) => console.error("effect sweep failed", error));
+    void sweep(context.req.param("run_id") as RunId).catch((error) => console.error("effect sweep failed", error));
     return context.json(result);
   });
   app.delete("/runs/:run_id", async (context) => {
@@ -109,7 +124,7 @@ export function createProductionComposition(options: ProductionOptions): Product
     if (!Array.isArray(outputs) || !outputs.every(isOutputPublication)) return context.json({ error: "invalid output publication" }, 400);
     const result = await mutations.decide({ run_id: context.req.param("run_id") as RunId, scope_id: context.req.param("scope_id") as ScopeId, trigger: body.trigger, ingress_id: body.ingress_id, operator_version, outputs });
     if (result.ok && (result.value.kind === "Committed" || result.value.kind === "Replayed"))
-      void sweep().catch((error) => console.error("effect sweep failed", error));
+      void sweep(context.req.param("run_id") as RunId).catch((error) => console.error("effect sweep failed", error));
     return result.ok ? context.json(result.value) : context.json({ error: result.error }, 422);
   });
   return { app, async close() { clearInterval(timer); try { await sweep_task; } finally { core.close(); await db.close(); } } };

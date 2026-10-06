@@ -2,7 +2,7 @@ use crate::expressions::{evaluate_expression, EvaluationContext};
 use crate::{failure, owner, snapshot_valid};
 use std::collections::HashSet;
 use workflow_model::*;
-fn field(value: &CheckedValue, index: usize) -> CoreResult<&CheckedValue> {
+pub(crate) fn field(value: &CheckedValue, index: usize) -> CoreResult<&CheckedValue> {
     let CheckedData::Record { fields, .. } = &value.data else {
         return Err(failure(
             DomainErrorKind::InvalidTemplate,
@@ -22,7 +22,7 @@ fn field(value: &CheckedValue, index: usize) -> CoreResult<&CheckedValue> {
             )
         })
 }
-fn text(value: &CheckedValue) -> CoreResult<String> {
+pub(crate) fn text(value: &CheckedValue) -> CoreResult<String> {
     if let CheckedData::String { value } = &value.data {
         Ok(value.clone())
     } else {
@@ -220,4 +220,73 @@ pub(crate) fn materialize_with_budget(
         children,
         empty_outcome: None,
     })
+}
+
+/// Checked collection constraints apply before acceptance as well as materialization.
+pub(crate) fn validate_collection(
+    items: &[CheckedValue],
+    key_field: usize,
+    dependencies_field: usize,
+) -> CoreResult<()> {
+    let mut keys = HashSet::new();
+    let mut members = Vec::new();
+    for item in items {
+        let key = text(field(item, key_field)?)?;
+        if key.is_empty()
+            || key.len() > 256
+            || key.chars().any(|c| c.is_control() || c == '/' || c == '\\')
+            || !keys.insert(key.clone())
+        {
+            return Err(failure(
+                DomainErrorKind::InvalidTemplate,
+                key,
+                "illegal or duplicate member key",
+            ));
+        }
+        let CheckedData::List { items: deps } = &field(item, dependencies_field)?.data else {
+            return Err(failure(
+                DomainErrorKind::InvalidTemplate,
+                key,
+                "dependencies not list",
+            ));
+        };
+        let deps = deps.iter().map(text).collect::<CoreResult<Vec<_>>>()?;
+        if deps.iter().collect::<HashSet<_>>().len() != deps.len() {
+            return Err(failure(
+                DomainErrorKind::InvalidTemplate,
+                key,
+                "duplicate prerequisites",
+            ));
+        }
+        members.push((key, deps));
+    }
+    if members
+        .iter()
+        .any(|(_, deps)| deps.iter().any(|key| !keys.contains(key)))
+    {
+        return Err(failure(
+            DomainErrorKind::InvalidTemplate,
+            "collection",
+            "prerequisite references missing member",
+        ));
+    }
+    let mut complete = HashSet::new();
+    while complete.len() < members.len() {
+        let ready: Vec<_> = members
+            .iter()
+            .filter(|(key, deps)| {
+                !complete.contains(key) && deps.iter().all(|d| complete.contains(d))
+            })
+            .map(|(key, _)| key.clone())
+            .collect();
+        if ready.is_empty() {
+            return Err(failure(
+                DomainErrorKind::CyclicPrerequisite,
+                "collection",
+                "collection prerequisite cycle",
+            ));
+        }
+        complete.extend(ready);
+    }
+    Ok(())
 }

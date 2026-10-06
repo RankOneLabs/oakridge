@@ -7,7 +7,7 @@ import { WorkflowDefListView } from "../views/WorkflowDefListView";
 import { WorkflowDefEditorView } from "../views/WorkflowDefEditorView";
 import { WorkflowDefDetailView } from "../views/WorkflowDefDetailView";
 import type { WorkflowDefFull } from "../types";
-import canonicalDefinition from "../../../../../workflow-config/definitions/dev_flow_v15.json";
+import canonicalDefinition from "../../../../../workflow-config/definitions/development.json";
 import { validateWorkflowDefinition } from "../lib/workflow-definition-form";
 const parsed = validateWorkflowDefinition(JSON.stringify(canonicalDefinition));
 if (!parsed.ok) throw new Error("invalid canonical fixture");
@@ -105,9 +105,9 @@ describe("WorkflowDefDetailView", () => {
     wrap(<WorkflowDefDetailView definitionId="def-2" onBack={() => {}} onClone={() => {}} />);
 
     expect(await screen.findByTestId("or-def-detail")).toBeTruthy();
-    expect(screen.getAllByTestId("or-def-stage")).toHaveLength(6);
+    expect(screen.getAllByTestId("or-def-stage")).toHaveLength(7);
     expect(screen.getByText("planning")).toBeTruthy();
-    expect(screen.getByText("Workers: build, assessment")).toBeTruthy();
+    expect(screen.getByText("Workers: build, assessment, pr_observer")).toBeTruthy();
   });
 });
 

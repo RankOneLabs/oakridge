@@ -884,3 +884,41 @@ fn reachable_closed_nonterminal_region_is_rejected() {
         DomainErrorKind::DeadRegion,
     );
 }
+
+#[test]
+fn lifecycle_entry_requires_declared_unit_command() {
+    reject(
+        fixture(),
+        |source| source["scopes"][0]["entry_command"] = json!("undeclared"),
+        DomainErrorKind::UndeclaredTrigger,
+    );
+}
+#[test]
+fn publication_trigger_requires_declared_fact() {
+    reject(
+        fixture(),
+        |source| source["scopes"][0]["outputs"][0]["publication_trigger"] = json!("undeclared"),
+        DomainErrorKind::UndeclaredTrigger,
+    );
+}
+#[test]
+fn collection_projection_cannot_read_an_undeclared_output() {
+    reject(
+        fixture(),
+        |source| source["scopes"][0]["tree"]["cases"][0]["node"]["mutations"][0]["value"] = json!({"kind":"reference","root":{"kind":"output_collection","key":"private","schema":"unit"},"path":[]}),
+        DomainErrorKind::MissingSymbol,
+    );
+}
+#[test]
+fn child_cancellation_cannot_address_a_private_child() {
+    reject(
+        fixture(),
+        |source| {
+            source["scopes"][0]["tree"]["cases"][0]["node"]["mutations"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"kind":"cancel_children","key":"private"}))
+        },
+        DomainErrorKind::MissingSymbol,
+    );
+}

@@ -11,6 +11,21 @@ pub fn compile_scope(
         e.kind = DomainErrorKind::InvalidAssignment;
         e
     })?;
+    if let Some(key) = &owner.entry_command {
+        let state = match &initial.data {
+            CheckedData::Variant { variant, .. } | CheckedData::Enum { variant } => Some(variant),
+            _ => None,
+        };
+        if !owner.commands.iter().any(|command| {
+            command.key == *key && state.is_some_and(|state| command.available_in.contains(state))
+        }) {
+            return Err(error(
+                DomainErrorKind::InvalidAssignment,
+                key.to_string(),
+                "entry command must be available in the initial state",
+            ));
+        }
+    }
     let tree = compile_tree(
         bundle,
         owner,
@@ -146,8 +161,13 @@ pub fn compile_scope(
             .map(|e| compile_expression(bundle, owner, e, &context, 0))
             .collect::<CoreResult<Vec<_>>>()?;
         if targets.iter().any(|e| {
+            let shape = schema(bundle, &e.schema);
+            let target_shape = match shape {
+                Ok(SchemaShape::List { item, .. }) => schema(bundle, item),
+                other => other,
+            };
             !matches!(
-                schema(bundle, &e.schema),
+                target_shape,
                 Ok(SchemaShape::Reference {
                     brand: ReferenceBrand::ArtifactRevision
                         | ReferenceBrand::Execution

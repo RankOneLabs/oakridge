@@ -128,6 +128,20 @@ pub(crate) fn snapshot_valid(program: &CheckedProgram, snapshot: &Snapshot) -> C
                 .and_then(|c| program.source.scopes.iter().find(|s| s.key == c.scope))
                 .and_then(|s| s.exports.iter().find(|e| e.key == *export))
                 .map(|e| &e.schema),
+            ReferenceRoot::OutputCollection { schema, .. }
+            | ReferenceRoot::OutputRevisions { schema, .. }
+            | ReferenceRoot::OutputRevision { schema, .. }
+            | ReferenceRoot::OptionalOutputRevision { schema, .. }
+            | ReferenceRoot::Children { schema, .. }
+            | ReferenceRoot::ChildrenOutcomes { schema, .. }
+            | ReferenceRoot::ChildrenComplete { schema, .. } => {
+                workflow_compiler::validate_observation_root(
+                    &program.source,
+                    scope,
+                    &observation.root,
+                )?;
+                Some(schema)
+            }
             _ => None,
         }
         .ok_or_else(|| {
@@ -304,6 +318,12 @@ pub fn evaluate(program: &CheckedProgram, snapshot: &Snapshot) -> CoreResult<Dec
                                 )?,
                             }
                         }
+                        CheckedMutation::ClearOutput { key } => {
+                            MutationValue::ClearOutput { key: key.clone() }
+                        }
+                        CheckedMutation::CancelChildren { key } => {
+                            MutationValue::CancelChildren { key: key.clone() }
+                        }
                         CheckedMutation::Acquire { pool } => {
                             MutationValue::Acquire { pool: pool.clone() }
                         }
@@ -316,6 +336,15 @@ pub fn evaluate(program: &CheckedProgram, snapshot: &Snapshot) -> CoreResult<Dec
                         CheckedMutation::Stop { worker } => MutationValue::Stop {
                             worker: worker.clone(),
                         },
+                        CheckedMutation::BindResource { key, value } => {
+                            MutationValue::BindResource {
+                                key: key.clone(),
+                                value: expressions::evaluate_expression(value, &mut context)?,
+                            }
+                        }
+                        CheckedMutation::ClearResource { key } => {
+                            MutationValue::ClearResource { key: key.clone() }
+                        }
                         CheckedMutation::Observe { resource } => MutationValue::Observe {
                             resource: resource.clone(),
                         },

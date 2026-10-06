@@ -33,6 +33,12 @@ export async function validateStorageAuthority(tx: SqlExecutor, request: CommitR
   if (request.decision.kind === "apply") {
     if (request.decision.outcome && !valid(scope.outcome_schema, request.decision.outcome)) return reject("validate_storage", source.owner.id, "outcome schema mismatch");
     for (const mutation of request.decision.mutations) {
+      if (mutation.kind === "bind_resource" || mutation.kind === "clear_resource") {
+        const declaration = scope.resources.find((resource) => resource.key === mutation.key);
+        if (!declaration || (mutation.kind === "bind_resource" && !valid(declaration.schema, mutation.value))) return reject("validate_storage", source.owner.id, "resource declaration or schema mismatch");
+      }
+      if (mutation.kind === "clear_output" && !scope.outputs.some((output) => output.key === mutation.key)) return reject("validate_storage", source.owner.id, "output clearing undeclared");
+      if (mutation.kind === "cancel_children" && !scope.children.some((child) => child.key === mutation.key)) return reject("validate_storage", source.owner.id, "child cancellation undeclared");
       if (mutation.kind === "set_state" && !valid(scope.state_schema, mutation.value)) return reject("validate_storage", source.owner.id, "state schema mismatch");
       if (mutation.kind === "activate_child" || mutation.kind === "activate_collection") {
         const declared = scope.children.find((child) => child.key === mutation.key);
@@ -65,10 +71,20 @@ export async function validateStorageAuthority(tx: SqlExecutor, request: CommitR
       if (!has_matching_contract) return reject("validate_storage", source.owner.id, "invocation contract differs from stored action");
     }
   }
+  if (request.execution_authority) {
+    const selected = await tx.query<{ execution_id: string }>("SELECT execution_id FROM authority.execution_selection WHERE scope_id=$1 AND execution_id=$2", [source.owner.id, request.execution_authority]);
+    if (!selected.length) return reject("validate_storage", source.owner.id, "execution generation was revoked");
+  }
   for (const output of request.outputs) {
     const definition: OutputDefinition | undefined = scope.outputs.find((item) => item.key === output.output_key);
     if (!definition) return reject("validate_storage", source.owner.id, "output is absent from scope definition");
     if (!valid(definition.schema, output.body)) return reject("validate_storage", source.owner.id, "output schema mismatch");
+    if (definition.collection_key) {
+      const shape = bundle.schemas.find((schema) => schema.key === definition.schema)?.shape;
+      const index = shape?.kind === "record" ? shape.fields.findIndex((field) => field.key === definition.collection_key) : -1;
+      const key = output.body.data.kind === "record" ? output.body.data.fields.find((field) => field.field_id === index)?.value : null;
+      if (key?.data.kind !== "string" || key.data.value !== output.collection_key) return reject("validate_storage", source.owner.id, "collection body key mismatch");
+    }
     if (!!definition.collection_key !== !!output.collection_key) return reject("validate_storage", source.owner.id, "collection identity mismatch");
     if (output.execution_id) {
       const executions = await tx.query<{ scope_id: string; worker_key: string; generation: string | number }>("SELECT scope_id,worker_key,generation FROM authority.execution WHERE id=$1", [output.execution_id]);
@@ -76,6 +92,8 @@ export async function validateStorageAuthority(tx: SqlExecutor, request: CommitR
       if (!execution || execution.scope_id !== source.owner.id || !definition.producers.includes(execution.worker_key)) return reject("validate_storage", source.owner.id, "execution cannot publish this output");
       const selections = await tx.query<{ execution_id: string; generation: string | number }>("SELECT execution_id,generation FROM authority.execution_selection WHERE scope_id=$1 AND worker_key=$2", [source.owner.id, execution.worker_key]);
       if (selections[0]?.execution_id !== output.execution_id || Number(selections[0]?.generation) !== Number(execution.generation)) return reject("validate_storage", source.owner.id, "execution generation was revoked");
+      const contracts = await tx.query<{ payload: import("../effects/leases").EffectPayload }>("SELECT payload FROM authority.effect_intent WHERE scope_id=$1 AND execution_id=$2 AND payload->>'action'='start'", [source.owner.id, output.execution_id]);
+      if (!contracts.some((item) => item.payload.invocation.selection.definition.outputs.includes(output.output_key))) return reject("validate_storage", source.owner.id, "selected action does not declare this output");
     } else if (definition.producers.length) return reject("validate_storage", source.owner.id, "producer execution required");
   }
   for (const change of request.capacity) {
