@@ -72,7 +72,7 @@ export async function createProductionComposition(options: ProductionOptions): P
   const app = new Hono();
   if (access.kind === "token_required") app.use("*", controlTokenMiddleware(access.token));
   installDefinitionApi(app, { db, core, mutations, wake });
-  app.get("/health", (context) => context.json({ status: "ok", application_version }));
+  app.get("/health", (context) => context.json({ status: "ok", application_version, core: core.health }));
   app.post("/runs", async (context) => {
     let body: unknown;
     try { body = await context.req.json(); } catch { return context.json({ error: "invalid JSON" }, 400); }
