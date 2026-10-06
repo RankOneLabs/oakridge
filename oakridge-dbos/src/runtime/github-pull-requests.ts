@@ -45,6 +45,9 @@ interface GithubPullRequestPayload {
 }
 
 const asString = (value: unknown): string | null => (typeof value === "string" && value !== "" ? value : null);
+/** The owner half of a `owner/name` repository slug; a fork may be renamed, so only the owner is compared. */
+const repositoryOwner = (full_name: unknown): string | null => asString(full_name)?.split("/")[0] ?? null;
+const sameOwner = (left: string | null, right: string): boolean => left !== null && left.toLocaleLowerCase("en-US") === right.toLocaleLowerCase("en-US");
 const statusError = (status: number, detail: string): PullRequestReadError => ({
   kind: status === 401 || status === 403 ? "auth" : status === 408 || status === 409 || status === 429 || status >= 500 ? "unavailable" : "rejected",
   status, detail,
@@ -84,7 +87,7 @@ export class GithubPullRequestReader implements PullRequestReader {
       } catch (cause) { return err({ kind: "unavailable", status: response.status, detail: String(cause) }); }
       for (const candidate of candidates) {
         if (typeof candidate.number !== "number") return err({ kind: "unavailable", status: response.status, detail: "pull request candidate has no number" });
-        if (asString(candidate.head?.repo?.full_name)?.toLocaleLowerCase("en-US") !== `${query.head_owner}/${query.name}`.toLocaleLowerCase("en-US")
+        if (!sameOwner(repositoryOwner(candidate.head?.repo?.full_name), query.head_owner)
           || candidate.head?.ref !== query.head_branch || candidate.base?.ref !== query.base_branch) continue;
         const observed = await this.read(query.owner, query.name, candidate.number, options);
         if (!observed.ok) return observed;

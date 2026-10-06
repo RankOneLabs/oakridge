@@ -70,10 +70,10 @@ test("a GitHub 503 is distinguishable from a missing pull request", async () => 
   } });
 });
 
-for (const head_owner of ["RankOneLabs", "fork-owner"]) {
-  test(`discovery pages through the list and filters the ${head_owner} head repository`, async () => {
+for (const [head_owner, head_repository] of [["RankOneLabs", "RankOneLabs/oakridge"], ["fork-owner", "fork-owner/oakridge"], ["fork-owner", "Fork-Owner/oakridge-renamed"]] as const) {
+  test(`discovery pages through the list and filters the ${head_repository} head repository`, async () => {
     const calls: string[] = [];
-    const candidate = { number: 440, head: { ref: "cohort/foundation", repo: { full_name: `${head_owner}/oakridge` } }, base: { ref: "epic/tiers" } };
+    const candidate = { number: 440, head: { ref: "cohort/foundation", repo: { full_name: head_repository } }, base: { ref: "epic/tiers" } };
     const http = (async (input: string | URL | Request) => {
       const url = new URL(String(input));
       calls.push(url.toString());
