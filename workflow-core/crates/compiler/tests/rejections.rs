@@ -894,6 +894,27 @@ fn lifecycle_entry_requires_declared_unit_command() {
     );
 }
 #[test]
+fn publishable_output_requires_a_publication_trigger() {
+    reject(
+        fixture(),
+        |source| {
+            source["scopes"][0]["outputs"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove("publication_trigger");
+        },
+        DomainErrorKind::UnsupportedPublication,
+    );
+}
+#[test]
+fn publishable_output_rejects_a_null_publication_trigger() {
+    reject(
+        fixture(),
+        |source| source["scopes"][0]["outputs"][0]["publication_trigger"] = Value::Null,
+        DomainErrorKind::UnsupportedPublication,
+    );
+}
+#[test]
 fn publication_trigger_requires_declared_fact() {
     reject(
         fixture(),

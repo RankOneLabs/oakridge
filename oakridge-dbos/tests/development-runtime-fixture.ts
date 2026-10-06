@@ -63,14 +63,22 @@ export async function runtimeFixture(db: TransactionalSqlExecutor, bundle: Defin
     if (!rows[0]?.execution_id) throw new Error(`worker not selected: ${worker}`);
     return rows[0].execution_id;
   };
+  const publicationSecret = async (execution_id: string): Promise<string> => {
+    const rows = await db.query<{ payload: { invocation: { bytes: string } } }>(
+      "SELECT payload FROM authority.effect_intent WHERE execution_id=$1 AND payload->>'action'='start'", [execution_id]);
+    const secret = rows[0]?.payload.invocation.bytes.match(/Authorization: Bearer ([A-Za-z0-9_-]+)/)?.[1];
+    if (!secret) throw new Error("pinned publication secret missing");
+    return secret;
+  };
   const publish = async (output: string, body: unknown, worker = "build", id = root_scope_id, member = "", execution?: string) => {
     const rows = await db.query<{ current_revision_id: string | null }>("SELECT current_revision_id FROM authority.output_slot WHERE scope_id=$1 AND output_key=$2 AND collection_key=$3", [id, output, member]);
-    return app.request(`http://localhost/api/runs/${run_id}/scopes/${id}/executions/${execution ?? await selected(worker, id)}/outputs/${output}`, { method: "PUT", headers: { "content-type": "application/json" },
+    const chosen = execution ?? await selected(worker, id);
+    return app.request(`http://localhost/api/runs/${run_id}/scopes/${id}/executions/${chosen}/outputs/${output}`, { method: "PUT", headers: { "content-type": "application/json", authorization: `Bearer ${await publicationSecret(chosen)}` },
       body: JSON.stringify({ request_id: crypto.randomUUID(), predecessor_id: rows[0]?.current_revision_id ?? null, collection_key: member, body }) });
   };
   const observe = (state = "open", head_sha = "head1", id = root_scope_id) => fact("pr_observed", { observations: [{ ...forge, state, head_sha }] }, id);
   const advance = () => advanceChildren({ db, core, mutations, run_ids: [run_id] });
-  return { app, core, mutations, run_id, root_scope_id, checked, scope, fact, command, selected, publish, observe, advance };
+  return { app, core, mutations, run_id, root_scope_id, checked, scope, fact, command, selected, publicationSecret, publish, observe, advance };
 }
 export async function throughBriefs(f: Awaited<ReturnType<typeof runtimeFixture>>, briefs: readonly (typeof brief)[], db: TransactionalSqlExecutor): Promise<readonly DevelopmentScope[]> {
   const child = async (key: string) => {

@@ -77,6 +77,7 @@ export async function validateStorageAuthority(tx: SqlExecutor, request: CommitR
   for (const output of request.outputs) {
     const definition: OutputDefinition | undefined = scope.outputs.find((item) => item.key === output.output_key);
     if (!definition) return reject("validate_storage", source.owner.id, "output is absent from scope definition");
+    if (definition.publication_trigger !== source.snapshot.trigger.key) return reject("validate_storage", source.owner.id, "publication trigger does not match output declaration");
     if (!valid(definition.schema, output.body)) return reject("validate_storage", source.owner.id, "output schema mismatch");
     if (definition.collection_key) {
       const shape = bundle.schemas.find((schema) => schema.key === definition.schema)?.shape;

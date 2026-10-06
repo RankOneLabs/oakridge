@@ -6,6 +6,13 @@
  */
 import { Hono } from "hono";
 import { expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { HTTP_ROUTES } from "../src/http/routes";
+import { hasExecutionSecret } from "../src/http/selected-publication";
+import { installDefinitionApi, type DefinitionApiDependencies } from "../src/http/app";
+import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
+import type { RunId, ScopeId } from "../src/storage/schema-records";
 
 import { controlTokenMiddleware, isLoopbackHost, requiresControlToken, selectControlPlaneAccess } from "../src/http/control-auth";
 
@@ -39,11 +46,40 @@ test("an operator can accept the risk explicitly, but never by accident", () => 
   expect(isLoopbackHost("192.168.50.10")).toBe(false);
 });
 
-test("reads stay open so the dashboard and its event stream keep working", () => {
-  expect(requiresControlToken("GET")).toBe(false);
-  expect(requiresControlToken("HEAD")).toBe(false);
-  expect(requiresControlToken("POST")).toBe(true);
-  expect(requiresControlToken("DELETE")).toBe(true);
+test("operator reads and writes require the token", () => {
+  expect(requiresControlToken("GET", "/api/inbox")).toBe(true);
+  expect(requiresControlToken("HEAD", "/api/inbox")).toBe(true);
+  expect(requiresControlToken("GET", "/health")).toBe(false);
+  expect(requiresControlToken("POST", "/runs")).toBe(true);
+  expect(requiresControlToken("DELETE", "/runs/r1")).toBe(true);
+});
+
+test("the route table enumerates every registered Hono endpoint", () => {
+  const files = ["../src/http/app.ts", "../src/http/selected-publication.ts", "../src/http/selected-evidence.ts", "../src/runtime/compose.ts"];
+  const actual = files.flatMap((file) => [...readFileSync(new URL(file, import.meta.url), "utf8").matchAll(/app\.(get|post|put|delete)\("([^"]+)"/g)]
+    .map((match) => `${match[1]?.toUpperCase()} ${match[2]}`)).sort();
+  expect(actual).toEqual(HTTP_ROUTES.map((route) => `${route.method} ${route.path}`).sort());
+  const app = new Hono();
+  installDefinitionApi(app, {} as DefinitionApiDependencies);
+  expect(app.routes.map((route) => `${route.method} ${route.path}`).sort()).toEqual(
+    HTTP_ROUTES.filter((route) => route.path.startsWith("/api/")).map((route) => `${route.method} ${route.path}`).sort());
+});
+
+test("control auth has no early-exit token comparison", () => {
+  const source = readFileSync(new URL("../src/http/control-auth.ts", import.meta.url), "utf8");
+  expect(source).toContain("timingSafeEqual");
+  expect(source).not.toMatch(/header\s*!==\s*`Bearer/);
+});
+
+test("an active execution accepts only its minted secret and revocation refuses it", async () => {
+  const secret = "worker-only-secret";
+  let is_selected = true;
+  const db = { async query() { return is_selected ? [{ publication_secret_hash: createHash("sha256").update(secret).digest("hex") }] : []; } } as unknown as TransactionalSqlExecutor;
+  const check = (header: string) => hasExecutionSecret(db, "run" as RunId, "scope" as ScopeId, "execution", header);
+  expect(await check(`Bearer ${secret}`)).toBe(true);
+  expect(await check("Bearer operator-token")).toBe(false);
+  is_selected = false;
+  expect(await check(`Bearer ${secret}`)).toBe(false);
 });
 
 test("a write without the token is rejected before it reaches a handler", async () => {

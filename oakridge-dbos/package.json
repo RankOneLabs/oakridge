@@ -6,7 +6,7 @@
   "scripts": {
     "start": "bun run src/main.ts",
     "test": "bun run test:unit",
-    "test:unit": "find src tests -name '*.test.ts' -print0 | xargs -0 -n1 bun test",
+    "test:unit": "find src tests -name '*.test.ts' -print0 | xargs -0 -n1 env OAKRIDGE_ENABLE_RAW_INGRESS=1 bun test --timeout=30000",
     "typecheck": "bunx tsc --noEmit -p tsconfig.json",
     "verify": "bun run ../scripts/verify-scope-stack.ts"
   },

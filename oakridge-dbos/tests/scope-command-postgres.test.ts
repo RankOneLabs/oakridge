@@ -33,7 +33,15 @@ async function withAuthority(operation: (authority: TestAuthority) => Promise<vo
   }
   try {
     await migrateEmptyDatabase(db);
-    const bundle: DefinitionBundle = await Bun.file(resolve(import.meta.dir, "../../workflow-core/fixtures/bundles/exact-review-target.json")).json();
+    const original: DefinitionBundle = await Bun.file(resolve(import.meta.dir, "../../workflow-core/fixtures/bundles/exact-review-target.json")).json();
+    // This fixture publishes into a terminal decision to exercise receipt replay after termination.
+    const bundle: DefinitionBundle = { ...original, scopes: original.scopes.map((scope) => {
+      if (scope.tree.kind !== "match") return scope;
+      const quench = scope.tree.cases.find((item) => item.variant === "quench");
+      if (!quench || quench.node.kind !== "apply") throw new Error("terminal fixture branch missing");
+      return { ...scope, tree: { ...scope.tree, cases: scope.tree.cases.map((item) => item.variant === "submitted"
+        ? { ...item, node: { ...quench.node, id: "terminal_publication" } } : item) } };
+    }) };
     const mutations = createMutationService(db, core);
     const created = await mutations.startRun({ bundle, input: {} });
     if (!created.ok) throw new Error(created.error.detail);
@@ -132,7 +140,7 @@ test("publication retry after terminal commit replays one revision and receipt",
     await authority.db.query("INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload) VALUES ('start-1',$1,'execution-1','start',$2)", [authority.run.root_scope_id, JSON.stringify({ action: "start", invocation: { selection: { definition: { outputs: ["specimen"] } } } })]);
     const unit: CheckedValue = { schema: "unit", data: { kind: "record", fields: [], dictionary: [] } };
     const publication: PublicationRequest = { request_id: "publication-1", expected_scope_version: 0,
-      trigger: { id: "publication-1", key: "quench", payload: unit },
+      trigger: { id: "publication-1", key: "submitted", payload: unit },
       output: { scope_id: authority.run.root_scope_id, output_key: "specimen", collection_key: "", execution_id: "execution-1",
         predecessor_id: "revision-1", expected_slot_version: 0,
         body: { schema: "revision", data: { kind: "reference", brand: "artifact_revision", id: "revision-2" } } } };

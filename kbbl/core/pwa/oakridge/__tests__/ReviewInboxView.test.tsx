@@ -23,3 +23,25 @@ it("reads definition inbox descriptors and opens their run without issuing a coh
   expect(fetch).toHaveBeenCalledWith("/oakridge/api/api/inbox");
   expect(fetch.mock.calls.every(([, options]) => !options?.method || options.method === "GET")).toBe(true);
 });
+
+
+it("renders attention from later pages even when an earlier page has no attention", async () => {
+  const pages = [
+    { cursor: [{ scope_id: "quiet", version: 0 }], items: [], next_cursor: "second/page?" },
+    { cursor: [{ scope_id: "also-quiet", version: 0 }], items: [], next_cursor: "third" },
+    { cursor: [{ scope_id: "late", version: 1 }], items: [
+      { kind: "command", run_id: "late-run", scope_id: "late", scope_version: 1, key: "accept", label: "Accept later work", consequence: "Accept." },
+    ], next_cursor: null },
+  ];
+  const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify(pages.shift()), { headers: { "content-type": "application/json" } }));
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const onSelectRun = vi.fn();
+  render(<QueryClientProvider client={queryClient}><ReviewInboxView onSelectRun={onSelectRun} onSelectArtifact={() => {}} /></QueryClientProvider>);
+  expect(await screen.findByText("Accept later work")).toBeTruthy();
+  expect(fetch.mock.calls.map(([path]) => path)).toEqual([
+    "/oakridge/api/api/inbox", "/oakridge/api/api/inbox?cursor=second%2Fpage%3F", "/oakridge/api/api/inbox?cursor=third",
+  ]);
+  fireEvent.click(screen.getByRole("button", { name: "Open run" }));
+  expect(onSelectRun).toHaveBeenCalledWith("late-run");
+  queryClient.clear();
+});

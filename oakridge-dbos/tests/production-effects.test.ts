@@ -7,6 +7,83 @@ import type { CheckedValue } from "../src/core-client/generated-contracts";
 import type { EffectPayload } from "../src/effects/intents";
 import type { StableInvocation } from "../src/effects/provider";
 import { unit, withDatabase, waitUntil, operationBundle, begin } from "./effect-fixture";
+import type { StartedRun } from "../src/storage/mutation-service";
+import { activeRoutes } from "../src/http/routes";
+import { developmentBundle, brief, repository, build_body } from "./development-runtime-fixture";
+
+test("recovery replays the pinned prompt verbatim and its secret publishes without operator authority", async () => {
+  const requests: string[] = [];
+  const adapter = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: async (request) => {
+    if (request.method === "PUT") {
+      requests.push(await request.text());
+      if (requests.length === 1) return new Response("response lost", { status: 503 });
+      return Response.json({ kind: "attached", session: { sid: "recovered-session", status: "live" } });
+    }
+    if (request.method === "DELETE") return Response.json({ stopped: true });
+    return Response.json({ pending: true }, { status: 202 });
+  } });
+  try {
+    await withDatabase(async ({ url, db }) => {
+      const composition = await createProductionComposition({ database_url: url,
+        core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1",
+        control_token: "operator-only", kbbl_base_url: adapter.url.href,
+        timing: { provider_timeout_ms: 500, retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, wake_timeout_seconds: 1 } });
+      try {
+        const headers = { "content-type": "application/json", authorization: "Bearer operator-only" };
+        const created = await composition.app.request("/runs", { method: "POST", headers,
+          body: JSON.stringify({ bundle: await developmentBundle(), input: { brief, repository } }) });
+        expect(created.status).toBe(201);
+        const run: StartedRun = await created.json();
+        const scope_path = `/api/runs/${run.run_id}/scopes/${run.root_scope_id}`;
+        const begin = await composition.app.request(`${scope_path}/commands`, { method: "POST", headers,
+          body: JSON.stringify({ command_key: "begin", payload: {}, request_id: "begin", scope_id: run.root_scope_id,
+            expected_scope_version: 0, targets: [] }) });
+        expect(begin.status).toBe(202);
+        await waitUntil(async () => requests.length >= 2);
+        const pinned = (await db.query<{ payload: EffectPayload }>(
+          "SELECT payload FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='start'", [run.root_scope_id]))[0]?.payload.invocation;
+        if (!pinned) throw new Error("persisted invocation missing");
+        expect(requests).toEqual(requests.map(() => pinned.bytes));
+        const secret = requests[1]?.match(/Authorization: Bearer ([A-Za-z0-9_-]+)/)?.[1];
+        if (!secret) throw new Error("replayed prompt lacks publication credential");
+        const execution_path = `${scope_path}/executions/${pinned.execution_id}`;
+        expect((await composition.app.request(`${execution_path}/contract`, {
+          headers: { authorization: `Bearer ${secret}` } })).status).toBe(200);
+        const publication = await composition.app.request(`${execution_path}/outputs/build_result`, { method: "PUT",
+          headers: { "content-type": "application/json", authorization: `Bearer ${secret}` },
+          body: JSON.stringify({ request_id: "replayed-agent", predecessor_id: null, collection_key: "", body: build_body }) });
+        expect({ status: publication.status, body: await publication.json() }).toMatchObject({ status: 201, body: { kind: "accepted_pending" } });
+        expect((await composition.app.request(scope_path, { headers: { authorization: "Bearer operator-only" } })).status).toBe(200);
+        expect((await composition.app.request(scope_path, { headers: { authorization: `Bearer ${secret}` } })).status).toBe(401);
+      } finally { await composition.close(); }
+    });
+  } finally { adapter.stop(true); }
+});
+
+test("the composed app registers exactly the active route table and gates raw ingress", async () => {
+  const previous = process.env.OAKRIDGE_ENABLE_RAW_INGRESS;
+  try {
+    for (const enabled of [false, true]) {
+      if (enabled) process.env.OAKRIDGE_ENABLE_RAW_INGRESS = "1";
+      else delete process.env.OAKRIDGE_ENABLE_RAW_INGRESS;
+      await withDatabase(async ({ url }) => {
+        const composition = await createProductionComposition({ database_url: url,
+          core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1" });
+        try {
+          const registered = composition.app.routes.filter((route) => route.method !== "ALL")
+            .map((route) => `${route.method} ${route.path}`).sort();
+          expect(registered).toEqual(activeRoutes(enabled).map((route) => `${route.method} ${route.path}`).sort());
+          const response = await composition.app.request("/runs/missing/scopes/missing/decide", {
+            method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+          expect(response.status).toBe(enabled ? 400 : 404);
+        } finally { await composition.close(); }
+      });
+    }
+  } finally {
+    if (previous === undefined) delete process.env.OAKRIDGE_ENABLE_RAW_INGRESS;
+    else process.env.OAKRIDGE_ENABLE_RAW_INGRESS = previous;
+  }
+});
 
 test("rejection after uncertainty cleans up even when its evidence makes the run terminal", async () => withDatabase(async ({ url, db }) => {
   let starts = 0;

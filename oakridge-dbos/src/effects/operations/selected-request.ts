@@ -14,7 +14,7 @@ export function invocationInput(value: CheckedValue, bundle: DefinitionBundle): 
   switch (data.kind) {
     case "boolean": case "integer": case "string": return { ok: true, value: data.value };
     case "enum": return { ok: true, value: data.variant };
-    case "reference": return { ok: true, value: data.id };
+    case "reference": return { ok: true, value: { brand: data.brand, id: data.id } };
     case "optional": return data.value ? invocationInput(data.value, bundle) : { ok: true, value: null };
     case "variant": {
       const result = invocationInput(data.value, bundle);
@@ -43,13 +43,13 @@ export function invocationInput(value: CheckedValue, bundle: DefinitionBundle): 
   }
 }
 
-export interface ProviderRequestSelection { readonly invocation: StableInvocation; readonly bundle: DefinitionBundle; readonly scope: Pick<ScopeInstanceRecord, "id" | "run_id" | "child_key" | "scope_key"> }
+export interface ProviderRequestSelection { readonly invocation: StableInvocation; readonly bundle: DefinitionBundle; readonly scope: Pick<ScopeInstanceRecord, "id" | "run_id" | "child_key" | "scope_key">; readonly publication_secret?: string }
 /** Keep the selected action input in the pinned prompt so retries read identical context. */
 export function promptWithActionInput(prompt: string, input: JsonValue): string {
   return `${prompt}\n\n## Pinned action input\n\n${JSON.stringify(input, null, 2)}\n`;
 }
 export function pinProviderRequest(input: ProviderRequestSelection): Result<StableInvocation> {
-  const { invocation, bundle, scope } = input;
+  const { invocation, bundle, scope, publication_secret } = input;
   const unit_id = scope.child_key ?? scope.id;
   const decoded = invocationInput(invocation.selection.input, bundle);
   if (!decoded.ok) return decoded;
@@ -65,7 +65,8 @@ export function pinProviderRequest(input: ProviderRequestSelection): Result<Stab
       unit_id: unit_id as UnitId, executor_type: "delegated_session", resolved_config: { ...decoded_config,
         session_identity: { run_id: scope.run_id, stage_instance_id: scope.id, unit_id,
           cohort_id: scope.child_key, operator_role: invocation.selection.selection.worker },
-        ...(prompt ? { rendered_prompt: promptWithActionInput(prompt.content, decoded.value) + selectedPublicationInstructions({ invocation, bundle, scope }) } : {}) },
+        rendered_prompt: (prompt ? promptWithActionInput(prompt.content, decoded.value) : "")
+          + selectedPublicationInstructions({ invocation, bundle, scope, publication_secret }) },
       inputs: [], declared_outputs: [], expected_artifacts: [] };
     const rendered = renderSessionStart({ request, operation_id: invocation.id as unknown as ExecutorOperationId, executor_function_identity: "selected-v1" });
     if (rendered.kind !== "acknowledged") return { ok: false, error: { operation: "pin_request", entity_id: invocation.id, detail: rendered.detail } };

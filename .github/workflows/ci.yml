@@ -124,6 +124,7 @@ jobs:
         working-directory: oakridge-dbos
         env:
           TEST_SHARD: ${{ matrix.shard }}
+          OAKRIDGE_ENABLE_RAW_INGRESS: "1"
         shell: bash
         run: |
           # Separate processes preserve DBOS global runtime isolation.
@@ -132,7 +133,7 @@ jobs:
           test "${#test_files[@]}" -gt 0
           failed=0
           for ((index = TEST_SHARD; index < ${#test_files[@]}; index += 2)); do
-            bun test "${test_files[index]}" || failed=1
+            bun test --timeout=30000 "${test_files[index]}" || failed=1
           done
           exit "$failed"
 

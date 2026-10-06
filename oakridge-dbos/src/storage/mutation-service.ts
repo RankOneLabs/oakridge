@@ -91,6 +91,8 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
     },
     async decide(input) {
       const identity = selectMutationIdentity(input);
+      const staged_input: MutationInput = { ...input, request_digest: identity.request_digest,
+        outputs: (input.outputs ?? []).map((output) => ({ ...output, revision_id: output.revision_id ?? crypto.randomUUID() })) };
       try {
         const prior = await findReceipt(db, identity);
         if (prior.kind === "replay") return { ok: true, value: { kind: "Replayed", receipt: prior.receipt } };
@@ -105,7 +107,7 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
           const bundles = await db.query<{ source: DefinitionBundle }>("SELECT b.source FROM authority.definition_bundle b JOIN authority.run r ON r.definition_bundle_id=b.id WHERE r.id=$1", [input.run_id]);
           const bundle = bundles[0]?.source;
           if (!bundle) return error("decide", input.run_id, "definition bundle missing");
-          const staged = input.outputs?.some((output) => output.revision_id) ? stagePublications(bundle, source, input.outputs) : { ok: true as const, value: source };
+          const staged = stagePublications(bundle, source, staged_input.outputs ?? []);
           if (!staged.ok) return staged;
           const evaluated: Result<EvaluationResult> = attempt === 0 && input.prepared
             ? { ok: true, value: { decision: input.prepared.decision.outcome } }
@@ -121,7 +123,7 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
                 return { ok: true, value: { kind: "Conflict", detail: "target revisions changed during retry" } };
             }
           }
-          const request = prepareCommit(input, { source, outcome: evaluated.value.decision });
+          const request = prepareCommit(staged_input, { source, outcome: evaluated.value.decision });
           if (!request.ok) return request;
           const children = await prepareChildCancellations(db, core, bundle, input, { source, outcome: evaluated.value.decision });
           if (!children.ok) return children;

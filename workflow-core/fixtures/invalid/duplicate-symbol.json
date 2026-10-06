@@ -207,7 +207,8 @@
           "producers": [
             "author"
           ],
-          "collection_key": null
+          "collection_key": null,
+          "publication_trigger": "tick"
         }
       ],
       "workers": [

@@ -1,4 +1,6 @@
 import type { MiddlewareHandler } from "hono";
+import { createHash, timingSafeEqual } from "node:crypto";
+import { matchRoute } from "./routes";
 
 /**
  * The control plane's bind policy, decided once at startup.
@@ -39,16 +41,18 @@ export const selectControlPlaneAccess = (input: ControlPlaneAccessInput): Contro
   };
 };
 
-/**
- * Reads are left open: they carry no authority, the dashboard polls them
- * constantly, and the event stream cannot send an Authorization header from
- * `EventSource`. Everything that changes state requires the Bearer token.
- */
-export const requiresControlToken = (method: string): boolean => method !== "GET" && method !== "HEAD" && method !== "OPTIONS";
+export const requiresControlToken = (method: string, path = "/runs"): boolean =>
+  matchRoute(method, path)?.authority === "operator";
+
+function equalToken(header: string | undefined, token: string): boolean {
+  const supplied = createHash("sha256").update(header ?? "").digest();
+  const expected = createHash("sha256").update(`Bearer ${token}`).digest();
+  return timingSafeEqual(supplied, expected);
+}
 
 export const controlTokenMiddleware = (token: string): MiddlewareHandler => async (context, next) => {
-  if (!requiresControlToken(context.req.method)) return next();
+  if (!requiresControlToken(context.req.method, context.req.path)) return next();
   const header = context.req.header("authorization");
-  if (header !== `Bearer ${token}`) return context.json({ error: "unauthorized" }, 401);
+  if (!equalToken(header, token)) return context.json({ error: "unauthorized" }, 401);
   return next();
 };
