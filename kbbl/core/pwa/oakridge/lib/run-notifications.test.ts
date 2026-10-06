@@ -7,7 +7,7 @@ const frame = (replayed: boolean): RunEventFrame => ({
   sequence: "42", transition_id: "transition-42", run_id: "run/one" as WorkflowRunId,
   owner: { kind: "cohort", id: "cohort-1" }, launch_reason: "retry",
   prior_owner_version: 1, resulting_owner_version: 2,
-  effect: { kind: "worker_decision", cohort_id: "cohort-1", from_state: "working", to_state: "working", changes: [], actions: [{ worker: "build", action_point: "retry" }] },
+  effect: { kind: "worker_decision", cohort_id: "cohort-1", from_state: "working", to_state: "working", actions: [{ worker: "build", action_point: "retry" }] },
   effect_workflow_id: null, actor: "core", occurred_at: "2026-09-27T10:00:00Z", replayed,
 });
 

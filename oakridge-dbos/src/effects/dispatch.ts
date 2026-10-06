@@ -1,7 +1,8 @@
 import { decodeCoreResponse, type CheckedValue, type Trigger } from "../core-client/generated-contracts";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
-import { claimIntents, finishClaim, type ClaimedIntent, type EffectPayload, type EffectStatus } from "./leases";
+import { claimIntents, type ClaimedIntent, type EffectPayload, type EffectStatus } from "./leases";
 import type { EffectProvider, ExternalHandle, ProviderResult } from "./provider";
+import { persistEffectResult } from "../storage/mutation-service";
 import { materializeSelectedIntents } from "./reconcile";
 
 export interface DispatchOptions {
@@ -81,25 +82,11 @@ export async function dispatchClaim(db: TransactionalSqlExecutor, provider: Effe
       payload = { ...payload, last_detail: result.detail };
   }
   if (action === "start" && status === "uncertain") payload = { ...payload, has_uncertain_start: true };
-  const persisted = await db.transaction(async (tx) => {
-    if (action === "observe" && result.kind === "acknowledged" && isTerminal(result.value) && result.value.evidence) payload = { ...payload, evidence: result.value.evidence };
-    if (payload.handle?.kind === "completed" && payload.handle.evidence) payload = { ...payload, evidence: payload.handle.evidence };
-    const finished = await finishClaim(tx, claim, status, payload);
-    if (!finished) return false;
-    const terminal_result = action === "start" && payload.handle?.kind === "completed" ? payload.handle.result
-      : action === "observe" && result.kind === "acknowledged" && isTerminal(result.value) ? result.value.result : null;
-    if (terminal_result && claim.execution_id) {
-      await tx.query("UPDATE authority.execution SET result=$1,status='terminal',version=version+1 WHERE id=$2", [JSON.stringify(terminal_result), claim.execution_id]);
-      await tx.query("INSERT INTO authority.fact (id,scope_id,fact_key,payload) VALUES ($1,$2,$3,$4)", [crypto.randomUUID(), claim.scope_id, invocation.id, JSON.stringify(terminal_result)]);
-      await tx.query("UPDATE authority.scope_instance SET version=version+1 WHERE id=$1", [claim.scope_id]);
-    }
-    if (action === "start" && status === "acknowledged") {
-      await tx.query(`INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload,status)
-        VALUES ($1,$2,$3,$4,$5,'pending') ON CONFLICT (scope_id,effect_key) DO NOTHING`,
-        [crypto.randomUUID(), claim.scope_id, claim.execution_id, `${claim.effect_key}:observe`, JSON.stringify({ invocation, action: "observe", handle: payload.handle })]);
-    }
-    return true;
-  });
+  if (action === "observe" && result.kind === "acknowledged" && isTerminal(result.value) && result.value.evidence) payload = { ...payload, evidence: result.value.evidence };
+  if (payload.handle?.kind === "completed" && payload.handle.evidence) payload = { ...payload, evidence: payload.handle.evidence };
+  const terminal_result = action === "start" && payload.handle?.kind === "completed" ? payload.handle.result
+    : action === "observe" && result.kind === "acknowledged" && isTerminal(result.value) ? result.value.result : null;
+  const persisted = await persistEffectResult(db, { claim, status, payload, terminal_result });
   return { intent_id: claim.id, persisted, status };
 }
 

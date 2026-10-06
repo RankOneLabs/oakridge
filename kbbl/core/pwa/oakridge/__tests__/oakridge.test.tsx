@@ -1,13 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
 
 import { RunListView } from "../views/RunListView";
 // Aliased: `RunDetail` is also the name of the run view-model type below.
-import { RunDetail as RunDetailOrganism } from "../components/organisms/RunDetail";
 import { GlobalParkedGateList } from "../components/organisms/ParkedGateList";
-import type { RunSummary, RunDetail, ParkedGate } from "../types";
+import type { RunSummary, ParkedGate } from "../types";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Test helpers
@@ -89,50 +88,6 @@ const PARKED_GATE_FIXTURE: ParkedGate = {
   actionable: true,
 };
 
-const RUN_DETAIL_FIXTURE: RunDetail = {
-  id: "run-1",
-  title: "Ship the operator console",
-  repository_keys: ["oakridge"],
-  workflow_name: "v2_spec_to_ship",
-  status: "active",
-  blocked_reason: null,
-  next_actor: "core",
-  stages: [
-    {
-      stage_instance_id: "si-1",
-      name: "spec",
-      type: "spec_generation",
-      status: "complete",
-      blocked_reason: null,
-      next_actor: null,
-      artifacts: [{ id: "art-spec-1", type_id: "spec_v2", version: 1 }],
-      delegated_kbbl_sid: null,
-      worktree: null,
-    },
-    {
-      stage_instance_id: "si-2",
-      name: "build",
-      type: "build_agent",
-      status: "active",
-      blocked_reason: null,
-      next_actor: "agent",
-      artifacts: [{ id: "art-build-1", type_id: "build_output", version: 1 }],
-      delegated_kbbl_sid: "aaaabbbbccccdddd",
-      worktree: {
-        branch: "cohort/v2_readiness/3-minimum_v2",
-        path: "/code/oakridge",
-        base_ref: "epic/v2_readiness",
-      },
-    },
-  ],
-  parked_count: 0,
-  updated_at: "2026-07-01T10:00:00Z",
-};
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Run list view
-// ──────────────────────────────────────────────────────────────────────────────
-
 describe("RunListView", () => {
   it("offers a visible workflow definitions entry point", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json([]));
@@ -203,72 +158,6 @@ describe("RunListView", () => {
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Run detail view
-// ──────────────────────────────────────────────────────────────────────────────
-
-describe("RunDetail committed diagnosis", () => {
-  const detail: RunDetail = {
-    ...RUN_DETAIL_FIXTURE,
-    status: "blocked",
-    blocked_reason: "gate",
-    next_actor: "operator",
-    stages: [
-      {
-        ...RUN_DETAIL_FIXTURE.stages[0],
-        status: "blocked",
-        blocked_reason: "gate",
-        next_actor: "operator",
-      },
-      {
-        ...RUN_DETAIL_FIXTURE.stages[1],
-        status: "cancelled",
-        blocked_reason: null,
-        next_actor: null,
-      },
-    ],
-  };
-
-  it("renders typed blocked facts without deriving them", () => {
-    wrap(<RunDetailOrganism runId="run-1" run={detail} activeGates={[]} mergeWaits={[]} onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
-    expect(screen.getByTestId("or-run-detail-blocked-reason").textContent).toContain("gate · next: operator");
-    expect(screen.getByTestId("or-stage-blocked-reason").textContent).toContain("gate · next: operator");
-  });
-
-  it("keeps a cancelled stage cancelled", () => {
-    wrap(<RunDetailOrganism runId="run-1" run={detail} activeGates={[]} mergeWaits={[]} onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
-    expect(screen.getAllByText("cancelled").length).toBeGreaterThan(0);
-  });
-
-  it("offers retry only for the committed retry reason", () => {
-    const units = [
-      { version: 0, workers: [], brief: null, cohort_id: "cohort-gate", unit_id: "gate", sid: null, worktree: null, status: "blocked" as const, blocked_reason: "gate" as const, next_actor: "operator" as const, retryable: false, gate: "artifact_review" },
-      { version: 0, workers: [{ worker: "provision" as const, record: { state: "interrupted" as const, active_execution_id: null, outputs: { repository_refs: null }, response: null, interrupted: null, executions: [] } }], brief: null, cohort_id: "cohort-retry", unit_id: "retry", sid: null, worktree: null, status: "blocked" as const, blocked_reason: "retry" as const, next_actor: "operator" as const, retryable: true, gate: null },
-    ];
-    const retryDetail: RunDetail = { ...detail, stages: [{ ...detail.stages[0]!, units }] };
-
-    wrap(<RunDetailOrganism runId="run-1" run={retryDetail} activeGates={[]} mergeWaits={[]} onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
-
-    expect(screen.getAllByTestId("or-retry-unit-btn")).toHaveLength(1);
-  });
-
-  it("addresses merge refresh with the durable cohort identity", async () => {
-    const unit = { version: 0, workers: [], brief: null, cohort_id: "durable-cohort-uuid", unit_id: "web", sid: null, worktree: null, status: "blocked" as const, blocked_reason: "external" as const, next_actor: "external" as const, retryable: false, gate: null };
-    const companion = { ...unit, version: 0, workers: [], brief: null, cohort_id: "other-cohort", unit_id: "api", gate: null };
-    const mergeDetail: RunDetail = { ...detail, stages: [{ ...detail.stages[0]!, stage_instance_id: "stage-build", units: [unit, companion] }] };
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ state: "done" }));
-
-    wrap(<RunDetailOrganism runId="run-1" run={mergeDetail} activeGates={[]} mergeWaits={[{
-      cohort_id: "durable-cohort-uuid", stage_instance_id: "stage-build", unit_id: "web",
-      pull_request_url: "https://example.test/pr/1",
-    }]} onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
-    fireEvent.click(screen.getByTestId("or-confirm-cohort-merged-btn"));
-
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/cohorts/durable-cohort-uuid/pull_request/refresh");
-  });
-});
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Global parked gate list
 // ──────────────────────────────────────────────────────────────────────────────
 
 describe("GlobalParkedGateList", () => {

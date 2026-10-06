@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { readInbox, selectInboxItems } from "../src/projections/inbox";
+import { selectInboxItems } from "../src/projections/inbox";
+import { readInbox } from "../src/storage/projection-reader";
 import type { RunId, ScopeInstanceRecord } from "../src/storage/schema-records";
 import type { DefinitionBundle } from "../src/core-client/generated-contracts";
 import type { SqlExecutor, TransactionalSqlExecutor } from "../src/storage/sql-executor";

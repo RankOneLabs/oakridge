@@ -1,13 +1,12 @@
 import type { DefinitionBundle, DecisionOutcome } from "../core-client/generated-contracts";
 import type { ScopeInstanceRecord } from "../storage/schema-records";
-import type { TransactionalSqlExecutor } from "../storage/sql-executor";
 import { selectAvailableCommands } from "./scope-view";
 
 export type InboxItem =
   | { readonly kind: "command"; readonly run_id: string; readonly scope_id: string; readonly scope_version: number; readonly key: string; readonly label: string; readonly consequence: string }
   | { readonly kind: "wait"; readonly run_id: string; readonly scope_id: string; readonly scope_version: number; readonly reason: string; readonly label: string }
   | { readonly kind: "diagnostic"; readonly run_id: string; readonly scope_id: string; readonly scope_version: number; readonly detail: string };
-interface InboxRow extends ScopeInstanceRecord { readonly source: DefinitionBundle | null; readonly decision: DecisionOutcome | null;
+export interface InboxRow extends ScopeInstanceRecord { readonly source: DefinitionBundle | null; readonly decision: DecisionOutcome | null;
   readonly diagnostics?: readonly { readonly fact_key: string }[] | null }
 export function selectInboxItems(row: InboxRow): readonly InboxItem[] {
   const base = { run_id: row.run_id, scope_id: row.id, scope_version: Number(row.version) };
@@ -27,14 +26,4 @@ export function selectInboxItems(row: InboxRow): readonly InboxItem[] {
   } catch {
     return [{ ...base, kind: "diagnostic", detail: "scope projection is damaged" }];
   }
-}
-export async function readInbox(db: TransactionalSqlExecutor): Promise<{ readonly cursor: readonly { readonly scope_id: string; readonly version: number }[]; readonly items: readonly InboxItem[] }> {
-  return db.transaction(async (tx) => {
-    const rows = await tx.query<InboxRow>(`SELECT s.*, b.source,
-      (SELECT t.decision FROM authority.transition t WHERE t.scope_id=s.id ORDER BY t.created_at DESC,t.id DESC LIMIT 1) AS decision,
-      (SELECT jsonb_agg(jsonb_build_object('fact_key', f.fact_key) ORDER BY f.id) FROM authority.fact f WHERE f.scope_id=s.id) AS diagnostics
-      FROM authority.scope_instance s JOIN authority.run r ON r.id=s.run_id
-      LEFT JOIN authority.definition_bundle b ON b.id=r.definition_bundle_id ORDER BY s.run_id,s.id`, []);
-    return { cursor: rows.map((row) => ({ scope_id: row.id, version: Number(row.version) })), items: rows.flatMap(selectInboxItems) };
-  }, "repeatable read");
 }

@@ -1,10 +1,13 @@
 # Workflow configuration
 
-`definitions/development.json` is the canonical generic development bundle.
-`definitions/development-independent-siblings.json` continues independent work
-after a child failure and changes the shared implementation capacity to two.
+`definitions/development.json` is an example pinned scope bundle.
+`definitions/development-independent-siblings.json` illustrates independent
+sibling work after a child failure and a shared implementation capacity of two.
+The bundle declares workflow names, commands, stages, review paths and output
+contracts. The Rust interpreter evaluates those declarations without branching
+on a workflow name.
 
-The behavior contract is in `definitions/development-contract.md`. Prompts under
-`prompts/dev-flow/` receive pinned action inputs and selected publication authority
-from the runtime. The old v15 prompts remain historical source references; no
-runtime or editor loads the retired v15 definition.
+`definitions/development-contract.md` documents the example bundle. Prompts
+under `prompts/dev-flow/` receive pinned action inputs and selected publication
+authority from the runtime. Earlier v15 prompts are historical source material;
+they do not govern the current implementation.

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { cancelRun, deleteRun, deletionEligibility, materializeSelectedIntents } from "../src/effects/reconcile";
+import { cancelRun, deleteRun } from "../src/storage/mutation-service";
+import { deletionEligibility, materializeSelectedIntents } from "../src/effects/reconcile";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
 import { migrateEmptyDatabase } from "../src/storage/migrate";

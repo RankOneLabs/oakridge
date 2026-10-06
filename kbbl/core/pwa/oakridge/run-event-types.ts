@@ -1,10 +1,9 @@
 /** Mirrors GET /run_events. Business identifiers are values from the event stream. */
-import type { WorkflowChange } from "./review-command-types";
 export type RunEventEffect =
   | { readonly kind: "none" | "deliver_message" | "resume_wait" }
   | { readonly kind: "start_stage"; readonly stage_instance_id: string }
   | { readonly kind: "worker_decision"; readonly cohort_id: string; readonly from_state: string; readonly to_state: string;
-      readonly changes: readonly WorkflowChange[]; readonly actions: readonly { readonly worker: string; readonly action_point: string }[] }
+      readonly actions: readonly { readonly worker: string; readonly action_point: string }[] }
   | { readonly kind: "cohort_transition"; readonly cohort_id: string; readonly unit_label: string; readonly event_kind: string;
       readonly from_state: string; readonly to_state: string; readonly next_actor: string | null; readonly refusal: null }
   | { readonly kind: "pull_request_observed" | "pull_request_merge_confirmed"; readonly repository_key: string;

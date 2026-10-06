@@ -2,7 +2,7 @@ import type { CoreClient } from "../core-client/client";
 import type { DefinitionBundle } from "../core-client/generated-contracts";
 import type { Result, CommitRequest } from "./commit";
 import type { MutationInput, Decision } from "./mutation-service";
-import { prepareCommit } from "./mutation-service";
+import { prepareCommit, requestEvaluation } from "./mutation-service";
 import { readSnapshot, type AuthoritySnapshot } from "./snapshot-reader";
 import type { ScopeInstanceRecord } from "./schema-records";
 import type { TransactionalSqlExecutor } from "./sql-executor";
@@ -37,7 +37,7 @@ export async function prepareChildCancellations(db: TransactionalSqlExecutor, co
     const source = await readSnapshot(db, scope.id as import("./schema-records").ScopeId, trigger);
     if (!source) return failure(scope.id, "cancellation owner missing");
     if (JSON.stringify(source.read_set) !== JSON.stringify(decision.source.read_set)) return failure(scope.id, "cancellation snapshot changed; retry parent decision");
-    const evaluated = await core.request("evaluate", { bundle, available_operations: bundle.operations, snapshot: source.snapshot });
+    const evaluated = await requestEvaluation(core, { bundle, available_operations: bundle.operations, source });
     if (!evaluated.ok || evaluated.value.kind !== "evaluated" || evaluated.value.value.kind !== "apply" || !evaluated.value.value.outcome)
       return failure(scope.id, "configured cancellation must select a terminal decision");
     const request = prepareCommit({ run_id: input.run_id, scope_id: scope.id as import("./schema-records").ScopeId, ingress_id: id, trigger, operator_version: null }, { source, outcome: evaluated.value.value });

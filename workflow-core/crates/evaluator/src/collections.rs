@@ -1,6 +1,6 @@
 use crate::expressions::{evaluate_expression, EvaluationContext};
 use crate::{failure, owner, snapshot_valid};
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 use workflow_model::*;
 pub(crate) fn field(value: &CheckedValue, index: usize) -> CoreResult<&CheckedValue> {
     let CheckedData::Record { fields, .. } = &value.data else {
@@ -124,7 +124,7 @@ pub(crate) fn materialize_with_budget(
             )),
         };
     }
-    let mut keys = HashSet::new();
+    let mut keys = BTreeSet::new();
     let mut children = Vec::new();
     for item in &items {
         let key = text(field(item, collection.key_field)?)?;
@@ -153,7 +153,7 @@ pub(crate) fn materialize_with_budget(
             .iter()
             .map(text)
             .collect::<CoreResult<Vec<_>>>()?;
-        if depends_on.iter().collect::<HashSet<_>>().len() != depends_on.len() {
+        if depends_on.iter().collect::<BTreeSet<_>>().len() != depends_on.len() {
             return Err(failure(
                 DomainErrorKind::InvalidTemplate,
                 key,
@@ -197,7 +197,7 @@ pub(crate) fn materialize_with_budget(
             "prerequisite references missing member",
         ));
     }
-    let mut complete = HashSet::new();
+    let mut complete = BTreeSet::new();
     while complete.len() < children.len() {
         let ready: Vec<_> = children
             .iter()
@@ -228,7 +228,7 @@ pub(crate) fn validate_collection(
     key_field: usize,
     dependencies_field: usize,
 ) -> CoreResult<()> {
-    let mut keys = HashSet::new();
+    let mut keys = BTreeSet::new();
     let mut members = Vec::new();
     for item in items {
         let key = text(field(item, key_field)?)?;
@@ -251,7 +251,7 @@ pub(crate) fn validate_collection(
             ));
         };
         let deps = deps.iter().map(text).collect::<CoreResult<Vec<_>>>()?;
-        if deps.iter().collect::<HashSet<_>>().len() != deps.len() {
+        if deps.iter().collect::<BTreeSet<_>>().len() != deps.len() {
             return Err(failure(
                 DomainErrorKind::InvalidTemplate,
                 key,
@@ -270,7 +270,7 @@ pub(crate) fn validate_collection(
             "prerequisite references missing member",
         ));
     }
-    let mut complete = HashSet::new();
+    let mut complete = BTreeSet::new();
     while complete.len() < members.len() {
         let ready: Vec<_> = members
             .iter()

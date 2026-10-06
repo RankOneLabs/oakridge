@@ -4,7 +4,7 @@ import { CoreClient } from "../src/core-client/client";
 import type { CheckedValue, DefinitionBundle, Schema } from "../src/core-client/generated-contracts";
 import { createMutationService, type MutationService, type StartedRun } from "../src/storage/mutation-service";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
-import { cancelRun, deleteRun } from "../src/effects/reconcile";
+import { cancelRun, deleteRun } from "../src/storage/mutation-service";
 import type { StableInvocation } from "../src/effects/provider";
 import { createEffectProvider } from "../src/effects/operations/production-provider";
 import { createProductionComposition } from "../src/runtime/compose";

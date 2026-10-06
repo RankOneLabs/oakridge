@@ -1,6 +1,6 @@
 //! Conservative finite state/event analysis. Payload conditions produce both possible edges.
 use crate::{error, variants};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use workflow_model::*;
 pub(crate) fn variant(value: &CheckedValue) -> Option<String> {
     match &value.data {
@@ -104,10 +104,10 @@ pub fn analyze(
             "initial value must be a finite variant",
         )
     })?;
-    let mut edges: HashMap<String, HashSet<String>> = HashMap::new();
-    let mut terminal = HashSet::new();
-    let mut selected: HashMap<String, Vec<ActionSelection>> = HashMap::new();
-    let mut exported: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut edges: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut terminal = BTreeSet::new();
+    let mut selected: BTreeMap<String, Vec<ActionSelection>> = BTreeMap::new();
+    let mut exported: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for state in &states {
         let triggers: Vec<_> = owner
             .facts
@@ -181,7 +181,7 @@ pub fn analyze(
             }
         }
     }
-    let mut reached = HashSet::from([initial]);
+    let mut reached = BTreeSet::from([initial]);
     loop {
         let expanded: Vec<_> = reached
             .iter()
@@ -220,7 +220,7 @@ pub fn analyze(
             "declared action is structurally unreachable",
         ));
     }
-    let seen_outcomes: HashSet<_> = reached
+    let seen_outcomes: BTreeSet<_> = reached
         .iter()
         .flat_map(|s| exported.get(s).into_iter().flatten().cloned())
         .collect();

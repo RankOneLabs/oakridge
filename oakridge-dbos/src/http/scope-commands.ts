@@ -1,6 +1,6 @@
 import type { DefinitionBundle, Trigger } from "../core-client/generated-contracts";
 import type { CoreClient } from "../core-client/client";
-import type { MutationService } from "../storage/mutation-service";
+import { requestEvaluation, type MutationService } from "../storage/mutation-service";
 import { readSnapshot } from "../storage/snapshot-reader";
 import type { RunId, ScopeId } from "../storage/schema-records";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
@@ -61,7 +61,7 @@ export async function submitScopeCommand(deps: CommandDependencies, run_id: RunI
     if (checked.value.kind !== "validated") return { ok: false, error: new InternalFaultError("core returned unexpected validation result") };
     const trigger: Trigger = { id: request.request_id, key: request.command_key, payload: checked.value.value };
     const decision_source = { ...source, snapshot: { ...source.snapshot, trigger } };
-    const evaluated = await deps.core.request("evaluate", { bundle, available_operations: bundle.operations, snapshot: decision_source.snapshot });
+    const evaluated = await requestEvaluation(deps.core, { bundle, available_operations: bundle.operations, source: decision_source });
     if (!evaluated.ok) return { ok: false, error: evaluated.error.kind === "transport" ? new TransientServiceError(evaluated.error.detail.detail) : new InvalidPayloadError(evaluated.error.detail.detail) };
     if (evaluated.value.kind !== "evaluated") return { ok: false, error: new InternalFaultError("core returned unexpected evaluation result") };
     if (evaluated.value.value.kind === "reject") return { ok: false, error: new InvalidPayloadError(evaluated.value.value.error) };

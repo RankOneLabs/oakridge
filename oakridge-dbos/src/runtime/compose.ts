@@ -6,7 +6,7 @@ import { CoreClient } from "../core-client/client";
 import { controlTokenMiddleware, selectControlPlaneAccess } from "../http/control-auth";
 import { installDefinitionApi } from "../http/app";
 import { authorityRepositories } from "../storage/repositories";
-import { createMutationService } from "../storage/mutation-service";
+import { createMutationService, cancelRun, deleteRun, type ScopeCancellationPayload } from "../storage/mutation-service";
 import { PgPostgresExecutor } from "../storage/sql-executor";
 import type { RunId, ScopeId, ScopeInstanceRecord } from "../storage/schema-records";
 import type { OutputPublication } from "../storage/commit";
@@ -14,7 +14,7 @@ import { dispatchSweep, type DispatchOptions } from "../effects/dispatch";
 import type { EffectProvider } from "../effects/provider";
 import type { PullRequestReader } from "./github-pull-requests";
 import { createEffectProvider } from "../effects/operations/production-provider";
-import { cancelRun, deleteRun, deliverEffectFacts, type ScopeCancellationPayload } from "../effects/reconcile";
+import { deliverEffectFacts } from "../effects/reconcile";
 
 export interface ProductionOptions { readonly database_url: string; readonly core_binary: string; readonly host: string; readonly control_token?: string;
   readonly kbbl_base_url?: string; readonly pull_requests?: PullRequestReader; readonly effect_provider?: EffectProvider; readonly dispatch?: Omit<DispatchOptions, "owner"> & { readonly sweep_ms: number } }

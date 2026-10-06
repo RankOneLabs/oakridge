@@ -21,15 +21,9 @@ function isValidPayload(value: unknown): boolean {
 /**
  * Registers `POST /inbox/workspace-events` on the given Hono app.
  *
- * The workspace layer (legit-biz-club) posts project lifecycle and
- * coordination events here. Before the ACP cutover this handler
- * re-broadcast the event to the legacy SessionManager's inbox subscribers; the ACP-era
- * `/inbox` stream (`acpInboxHandler`) has no equivalent taxonomy of
- * per-field deltas to fan a workspace event into, and nothing subscribes
- * to the legacy broadcast path any more (§14.1). The route stays mounted
- * and keeps validating its body — legit-biz-club still gets a definite
- * accept/reject — but the event itself is now acknowledged and discarded
- * rather than silently dropped without a route at all.
+ * This legacy project-event shape has no run and scope identity required by
+ * Oakridge's durable ingress. Reject it explicitly until the sender adopts a
+ * supported ingress contract. A successful response must mean durable receipt.
  *
  * Trust: same Tailscale-network model as the rest of kbbl. The route does
  * no auth beyond requiring a non-empty kind + projectId on the body.
@@ -71,6 +65,6 @@ export function mountWorkspaceEventsRoutes(app: Hono): void {
         400,
       );
     }
-    return c.json({ ok: true });
+    return c.json({ error: "unsupported_workspace_event_ingress", kind, projectId }, 501);
   });
 }
