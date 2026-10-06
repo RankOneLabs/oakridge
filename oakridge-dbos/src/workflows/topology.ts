@@ -1,4 +1,4 @@
-import { DBOS } from "@dbos-inc/dbos-sdk";
+import { DBOS, Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 import type { CoreClient } from "../core-client/client";
 import type { CheckedValue } from "../core-client/generated-contracts";
 import { deliverEvidence, undeliveredEvidence } from "../effects/evidence";
@@ -6,7 +6,7 @@ import { readIntent, type EffectIntent, type EffectPayload, type EffectStatus } 
 import { bounded, resolveObserve, resolveStart, resolveStop } from "../effects/outcomes";
 import type { EffectProvider, ProviderResult } from "../effects/provider";
 import { advanceChildren, type LifecycleFailure } from "../runtime/advance-children";
-import { persistEffectResult } from "../storage/effect-results";
+import { claimDispatch, persistEffectResult } from "../storage/effect-results";
 import type { MutationService } from "../storage/mutation-service";
 import type { RunId } from "../storage/schema-records";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
@@ -59,10 +59,8 @@ const backoff = (attempt: number, timing: WorkflowTiming): number => Math.min(ti
 const loadIntentStep = DBOS.registerStep(async (intent_id: string): Promise<EffectIntent | null> => readIntent(current().db, intent_id),
   { name: "oakridgeLoadIntent", retriesAllowed: true, maxAttempts: 5 });
 
-/** Marks the start as dispatched before the provider call, so a crash inside the call leaves a cleanup obligation. */
-const markDispatchedStep = DBOS.registerStep(async (intent_id: string): Promise<void> => {
-  await current().db.query("UPDATE authority.effect_intent SET payload=jsonb_set(payload,'{has_dispatched}','true'),version=version+1 WHERE id=$1 AND payload->>'action'='start'", [intent_id]);
-}, { name: "oakridgeMarkDispatched", retriesAllowed: true, maxAttempts: 5 });
+const markDispatchedStep = DBOS.registerStep(async (intent_id: string): Promise<boolean> => claimDispatch(current().db, intent_id),
+  { name: "oakridgeMarkDispatched", retriesAllowed: true, maxAttempts: 5 });
 
 async function callProvider<Value>(operation: (signal: AbortSignal) => Promise<ProviderResult<Value>>): Promise<ProviderResult<Value>> {
   const controller = new AbortController();
@@ -117,8 +115,26 @@ const advanceRunStep = DBOS.registerStep(async (run_id: RunId): Promise<RunAdvan
 
 // ------------------------------------------------------------ workflows -----
 
+/**
+ * An intent workflow must never end in ERROR: a database outage that outlasts a
+ * step's own retries is slept through, durably, and the body runs again from
+ * the authority row. Parking (DBOS cancel) is the one way out, and it rethrows.
+ */
+async function untilSettled<Value>(label: string, body: () => Promise<Value>): Promise<Value> {
+  for (;;) {
+    try { return await body(); }
+    catch (error) {
+      if (error instanceof DBOSErrors.DBOSWorkflowCancelledError || error instanceof DBOSErrors.DBOSAwaitedWorkflowCancelledError) throw error;
+      const timing = current().timing;
+      DBOS.logger.error(`${label}: failed, retrying in ${timing.retry_cap_seconds}s: ${String(error)}`);
+      await DBOS.sleepSeconds(timing.retry_cap_seconds);
+    }
+  }
+}
+
 /** Carries one committed start intent to its provider and its terminal result back. Workflow id = intent id. */
-export const effectWorkflow = DBOS.registerWorkflow(async (intent_id: string): Promise<EffectStatus | null> => {
+export const effectWorkflow = DBOS.registerWorkflow((intent_id: string) => untilSettled(`effect ${intent_id}`, () => carryStart(intent_id)), { name: "oakridgeEffectWorkflow" });
+async function carryStart(intent_id: string): Promise<EffectStatus | null> {
   const timing = current().timing;
   let intent = await loadIntentStep(intent_id);
   if (!intent || intent.payload.action !== "start") return intent?.status ?? null;
@@ -126,7 +142,10 @@ export const effectWorkflow = DBOS.registerWorkflow(async (intent_id: string): P
   let status = intent.status;
   let terminal: CheckedValue | null = null;
   for (let attempt = 0; status === "pending"; attempt++) {
-    if (!payload.has_dispatched) await markDispatchedStep(intent_id);
+    if (!payload.has_dispatched && !await markDispatchedStep(intent_id)) {
+      intent = await loadIntentStep(intent_id); // revoked (or gone) before any provider call; nothing is owed
+      return intent?.status ?? null;
+    }
     const outcome = resolveStart({ ...payload, has_dispatched: true }, await startStep(payload));
     payload = outcome.payload;
     if (outcome.kind === "retry") {
@@ -169,10 +188,11 @@ export const effectWorkflow = DBOS.registerWorkflow(async (intent_id: string): P
   }
   await wakeRunOf(intent.scope_id);
   return status;
-}, { name: "oakridgeEffectWorkflow" });
+}
 
 /** Carries one committed stop intent to its provider until the provider positively acknowledges it. Workflow id = intent id. */
-export const cleanupWorkflow = DBOS.registerWorkflow(async (intent_id: string): Promise<EffectStatus | null> => {
+export const cleanupWorkflow = DBOS.registerWorkflow((intent_id: string) => untilSettled(`cleanup ${intent_id}`, () => carryStop(intent_id)), { name: "oakridgeCleanupWorkflow" });
+async function carryStop(intent_id: string): Promise<EffectStatus | null> {
   const timing = current().timing;
   const intent = await loadIntentStep(intent_id);
   if (!intent || intent.payload.action !== "stop") return intent?.status ?? null;
@@ -193,7 +213,7 @@ export const cleanupWorkflow = DBOS.registerWorkflow(async (intent_id: string): 
     if (!refreshed) return null;
     payload = { ...payload, handle: payload.handle ?? refreshed.payload.handle };
   }
-}, { name: "oakridgeCleanupWorkflow" });
+}
 
 /**
  * Keeps one run moving: every wake (or timeout) rechecks the authority, starts

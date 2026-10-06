@@ -5,6 +5,7 @@ import type { CheckedValue, DefinitionBundle, Invocation } from "../src/core-cli
 import { deletionEligibility, pendingCleanupCount, requiresCleanup, type EffectPayload } from "../src/effects/intents";
 import { selectedInvocation, type InvocationId } from "../src/effects/provider";
 import { cancelRun, createMutationService, deleteRun } from "../src/storage/mutation-service";
+import { claimDispatch } from "../src/storage/effect-results";
 import type { ScopeId } from "../src/storage/schema-records";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
 import { unit, withDatabase } from "./effect-fixture";
@@ -47,6 +48,36 @@ test("deletion is refused while an external cleanup obligation remains", async (
   const db = { query: async (sql: string) => sql.includes("count(*)") ? [{ count: "1" }] : [] } as unknown as TransactionalSqlExecutor;
   expect(await deletionEligibility(db, "run")).toEqual({ kind: "refused", obligations: 1 });
 });
+
+test("a cancellation that lands before dispatch wins: the provider is never called and no stop is owed", async () => withDatabase(async ({ db }) => {
+  await db.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ('bundle','digest','{}','{}')", []);
+  await db.query("INSERT INTO authority.run (id,definition_bundle_id) VALUES ('run','bundle')", []);
+  await db.query("INSERT INTO authority.scope_instance (id,run_id,scope_key,input,local_state) VALUES ('scope','run','scope','{}','{}')", []);
+  await db.query("INSERT INTO authority.execution (id,scope_id,worker_key,generation,status) VALUES ('execution-1','scope','agent',1,'pending')", []);
+  await db.query("INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload) VALUES ('start','scope','execution-1','ingress:0',$1)", [JSON.stringify(start)]);
+  // The effect workflow has loaded the pending row; cancellation commits before it claims dispatch.
+  expect(await cancelRun(db, { kind: "cancel_run", run_id: "run", reason: "operator" })).toEqual({ kind: "cancelled", stop_intents: 0 });
+  expect(await claimDispatch(db, "start")).toBe(false);
+  const rows = await db.query<{ status: string; payload: EffectPayload }>("SELECT status,payload FROM authority.effect_intent", []);
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({ status: "revoked" });
+  expect(rows[0]?.payload.has_dispatched).toBeUndefined();
+  expect(await deleteRun(db, "run")).toEqual({ kind: "deleted" });
+}));
+
+test("a start rejected after an uncertain attempt stays rejected and still receives its stop on cancellation", async () => withDatabase(async ({ db }) => {
+  await db.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ('bundle','digest','{}','{}')", []);
+  await db.query("INSERT INTO authority.run (id,definition_bundle_id) VALUES ('run','bundle')", []);
+  await db.query("INSERT INTO authority.scope_instance (id,run_id,scope_key,input,local_state) VALUES ('scope','run','scope','{}','{}')", []);
+  await db.query("INSERT INTO authority.execution (id,scope_id,worker_key,generation,status) VALUES ('execution-1','scope','agent',1,'pending')", []);
+  await db.query("INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload,status) VALUES ('start','scope','execution-1','ingress:0',$1,'rejected')", [JSON.stringify({ ...start, has_dispatched: true, has_uncertain_start: true })]);
+  expect(await pendingCleanupCount(db, "run")).toBe(1);
+  expect(await cancelRun(db, { kind: "cancel_run", run_id: "run", reason: "operator" })).toEqual({ kind: "cancelled", stop_intents: 1 });
+  const rows = await db.query<{ effect_key: string; status: string }>("SELECT effect_key,status FROM authority.effect_intent ORDER BY effect_key", []);
+  expect(rows).toEqual([{ effect_key: "ingress:0", status: "rejected" }, { effect_key: "ingress:0:stop", status: "cleanup_pending" }]);
+  await db.query("UPDATE authority.effect_intent SET status='cleanup_confirmed' WHERE effect_key='ingress:0:stop'", []);
+  expect(await deleteRun(db, "run")).toEqual({ kind: "deleted" });
+}));
 
 test("selected invocation survives cancellation and blocks deletion until stop is acknowledged", async () => withDatabase(async ({ db }) => {
   await db.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ('bundle','digest','{}','{}')", []);

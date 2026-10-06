@@ -11,6 +11,17 @@ export interface EffectResultInput {
 interface WrittenRow { readonly status: EffectStatus; readonly scope_id: string; readonly execution_id: string | null }
 
 /**
+ * Claims the right to call the provider for a start: records `has_dispatched`
+ * so a crash inside the call leaves a cleanup obligation. Only a still-pending
+ * start can be claimed — a revocation that landed since the workflow loaded the
+ * row wins, and owes no stop because the provider is then never called.
+ */
+export async function claimDispatch(db: TransactionalSqlExecutor, intent_id: string): Promise<boolean> {
+  const rows = await db.query<{ id: string }>("UPDATE authority.effect_intent SET payload=jsonb_set(payload,'{has_dispatched}','true'),version=version+1 WHERE id=$1 AND payload->>'action'='start' AND status='pending' RETURNING id", [intent_id]);
+  return rows.length === 1;
+}
+
+/**
  * Record what a provider call taught us, with the domain result in the same
  * transaction. A revocation that landed while the call was in flight wins over
  * every status except cleanup proof: the stop intent it created still needs the
