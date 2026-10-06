@@ -8,7 +8,8 @@ import type { ChildCollectionMember, CommitReceipt, ScopeId } from "./schema-rec
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 import { pinProviderRequest } from "../effects/operations/selected-request";
 import { selectedInvocation, type InvocationId } from "../effects/provider";
-import { requiresCleanup, type EffectPayload, type EffectStatus } from "../effects/leases";
+import type { EffectPayload } from "../effects/intents";
+import { revokeStarts } from "./revocation";
 import { validateDecision, validateStorageAuthority } from "./storage-validator";
 
 export interface DomainError { readonly operation: string; readonly entity_id: string; readonly detail: string }
@@ -43,17 +44,9 @@ async function writeOutputs(tx: SqlExecutor, request: CommitRequest): Promise<vo
   }
 }
 
+/** Withdraws the worker's current starts and records the stops they owe, in this transaction. */
 async function revokeSelectedEffects(tx: SqlExecutor, scope_id: string, worker: string): Promise<void> {
-  const starts = await tx.query<{ id: string; execution_id: string; effect_key: string; payload: EffectPayload; status: EffectStatus }>(`SELECT i.* FROM authority.effect_intent i
-    JOIN authority.execution e ON e.id=i.execution_id WHERE i.scope_id=$1 AND e.worker_key=$2 AND i.payload->>'action'='start' FOR UPDATE OF i`, [scope_id, worker]);
-  for (const start of starts) {
-    const needs_cleanup = requiresCleanup(start);
-    if (["pending", "in_flight", "uncertain"].includes(start.status)) await tx.query("UPDATE authority.effect_intent SET status='revoked',payload=CASE WHEN status IN ('in_flight','uncertain') THEN jsonb_set(payload,'{has_uncertain_start}','true') ELSE payload END,version=version+1 WHERE id=$1", [start.id]);
-    if (!needs_cleanup) continue;
-    await tx.query(`INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload,status)
-      VALUES ($1,$2,$3,$4,$5,'cleanup_pending') ON CONFLICT (scope_id,effect_key) DO NOTHING`,
-      [crypto.randomUUID(), scope_id, start.execution_id, `${start.effect_key}:stop`, JSON.stringify({ invocation: start.payload.invocation, action: "stop", handle: start.payload.handle })]);
-  }
+  await revokeStarts(tx, [scope_id], worker);
 }
 
 async function writeDecision(tx: SqlExecutor, request: CommitRequest, source: AuthoritySnapshot): Promise<CommitReceipt> {
@@ -106,16 +99,17 @@ async function writeDecision(tx: SqlExecutor, request: CommitRequest, source: Au
   await writeOutputs(tx, request);
   const capacity = await applyCapacityChanges(tx, request.capacity);
   if (!capacity.ok) fail({ kind: "Rejected", detail: `${capacity.error.operation}/${capacity.error.entity_id}: ${capacity.error.detail}` });
+  // Every effect intent is one selected invocation, pinned here so recovery never re-renders a request.
+  const invocations = request.decision.kind === "apply" ? request.decision.invocations : [];
+  if (request.effects.length !== invocations.length) fail({ kind: "Rejected", detail: "effects do not pair with selected invocations" });
   for (const [index, effect] of request.effects.entries()) {
     const id = crypto.randomUUID();
     const execution_id = effect.execution_id ?? execution_ids[index] ?? null;
-    const selection = request.decision.kind === "apply" ? request.decision.invocations[index] : null;
-    let payload: EffectPayload | CheckedValue = effect.payload;
-    if (selection && execution_id) {
-      const pinned = pinProviderRequest({ invocation: selectedInvocation(id as InvocationId, execution_id, selection), bundle: definition.source, scope: source.owner });
-      if (!pinned.ok) fail({ kind: "Rejected", detail: pinned.error.detail });
-      payload = { invocation: pinned.value, action: "start", handle: null };
-    }
+    const selection = invocations[index];
+    if (!selection || !execution_id) fail({ kind: "Rejected", detail: "effect without a selected execution" });
+    const pinned = pinProviderRequest({ invocation: selectedInvocation(id as InvocationId, execution_id, selection), bundle: definition.source, scope: source.owner });
+    if (!pinned.ok) fail({ kind: "Rejected", detail: pinned.error.detail });
+    const payload: EffectPayload = { invocation: pinned.value, action: "start", handle: null };
     await tx.query("INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload) VALUES ($1,$2,$3,$4,$5)", [id, scope_id, execution_id, effect.effect_key, JSON.stringify(payload)]);
   }
   await tx.query("INSERT INTO authority.fact (id,scope_id,fact_key,payload) VALUES ($1,$2,$3,$4)", [crypto.randomUUID(), scope_id, source.snapshot.trigger.key, JSON.stringify(source.snapshot.trigger.payload)]);

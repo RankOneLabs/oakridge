@@ -54,7 +54,7 @@ async function withAuthority(operation: (authority: TestAuthority) => Promise<vo
 }
 function api(authority: TestAuthority, mutations = authority.mutations): Hono {
   const app = new Hono();
-  installDefinitionApi(app, { db: authority.db, core: authority.core, mutations, sweep: async () => {} });
+  installDefinitionApi(app, { db: authority.db, core: authority.core, mutations, wake: async () => {} });
   return app;
 }
 async function submit(app: Hono, authority: TestAuthority, request = authority.request): Promise<Response> {

@@ -43,7 +43,9 @@ kbbl test command when no real agent is configured.
 For local startup, build the Rust CLI and set `DBOS_SYSTEM_DATABASE_URL` and
 `OAKRIDGE_CORE_BINARY` for `bun run --filter oakridge-dbos start`. Set
 `OAKRIDGE_CORE_BASE_URL` on kbbl to expose the backend through the same-origin
-operator proxy.
+operator proxy. `OAKRIDGE_GITHUB_TOKEN` (or `GITHUB_TOKEN`) authenticates pull
+request observation. The DBOS application version defaults to the engine digest
+(see `oakridge-dbos/README.md`); set `DBOS_APPLICATION_VERSION` only to pin it.
 
 ## Database cutover
 

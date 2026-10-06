@@ -3,8 +3,8 @@ import type { CoreClient } from "../core-client/client";
 import { createMutationService } from "./mutation-service";
 import type { DefinitionBundle } from "../core-client/generated-contracts";
 import type { RunId, ScopeId } from "./schema-records";
-import { hydrate, type DeleteEligibility } from "../effects/reconcile";
-import { pendingCleanupCount, requiresCleanup, type EffectPayload, type EffectStatus } from "../effects/leases";
+import { pendingCleanupCount, type DeleteEligibility } from "../effects/intents";
+import { revokeStarts } from "./revocation";
 
 export interface ScopeCancellationPayload { readonly scope_id: ScopeId; readonly payload: unknown }
 export interface CancelRunCommand { readonly kind: "cancel_run"; readonly run_id: string; readonly reason: string; readonly payloads?: readonly ScopeCancellationPayload[] }
@@ -46,27 +46,12 @@ export async function cancelRun(db: TransactionalSqlExecutor, command: CancelRun
         if (!outcome.ok || (outcome.value.kind !== "Committed" && outcome.value.kind !== "Replayed")) throw new InvalidCancellation(`configured cancellation was not committed for ${scope.scope_key}`);
       }
     }
-    await hydrate(tx, command.run_id);
     await tx.query(`UPDATE authority.execution_selection SET execution_id=NULL,generation=generation+1,version=version+1
       WHERE scope_id IN (SELECT id FROM authority.scope_instance WHERE run_id=$1) AND execution_id IS NOT NULL`, [command.run_id]);
-    const starts = await tx.query<{ id: string; scope_id: string; execution_id: string | null; effect_key: string; payload: EffectPayload; status: EffectStatus }>(`SELECT e.* FROM authority.effect_intent e
-      JOIN authority.scope_instance s ON s.id=e.scope_id WHERE s.run_id=$1 AND e.payload->>'action'='start'
-      FOR UPDATE OF e`, [command.run_id]);
-    let stop_intents = 0;
-    for (const start of starts) {
-      const needs_cleanup = requiresCleanup(start);
-      // A claim already in flight can still create an external process. Its
-      // completion is fenced by the row version, while this stop survives it.
-      if (start.status === "pending" || start.status === "in_flight" || start.status === "uncertain")
-        await tx.query("UPDATE authority.effect_intent SET status='revoked',payload=CASE WHEN status IN ('in_flight','uncertain') THEN jsonb_set(payload,'{has_uncertain_start}','true') ELSE payload END,version=version+1 WHERE id=$1", [start.id]);
-      if (!needs_cleanup) continue;
-      stop_intents++;
-      const payload: EffectPayload = { invocation: start.payload.invocation, action: "stop", handle: start.payload.handle ?? null };
-      await tx.query(`INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload,status)
-        VALUES ($1,$2,$3,$4,$5,'cleanup_pending') ON CONFLICT (scope_id,effect_key) DO NOTHING`,
-      [crypto.randomUUID(), start.scope_id, start.execution_id, `${start.effect_key}:stop`, JSON.stringify(payload)]);
-    }
-    return { kind: "cancelled", stop_intents };
+    // A start already in flight can still create an external process; its stop intent survives it.
+    const owned = await tx.query<{ id: string }>("SELECT id FROM authority.scope_instance WHERE run_id=$1", [command.run_id]);
+    const stops = await revokeStarts(tx, owned.map((scope) => scope.id), null);
+    return { kind: "cancelled", stop_intents: stops.length };
   }); } catch (error) {
     if (error instanceof InvalidCancellation) return { kind: "rejected", detail: error.message };
     throw error;
@@ -81,7 +66,6 @@ export async function deleteRun(db: TransactionalSqlExecutor, run_id: string): P
     await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [run_id]);
     const runs = await tx.query<{ id: string }>("SELECT id FROM authority.run WHERE id=$1 FOR UPDATE", [run_id]);
     if (!runs.length) return { kind: "missing" };
-    await hydrate(tx, run_id);
     const obligations = await pendingCleanupCount(tx, run_id);
     if (obligations) return { kind: "refused", obligations };
     const scopeIds = "SELECT id FROM authority.scope_instance WHERE run_id=$1";

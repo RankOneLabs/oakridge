@@ -4,12 +4,12 @@ import { createProductionComposition } from "../src/runtime/compose";
 import { GithubPullRequestReader } from "../src/runtime/github-pull-requests";
 import { readSnapshot } from "../src/storage/snapshot-reader";
 import type { CheckedValue } from "../src/core-client/generated-contracts";
-import type { EffectPayload } from "../src/effects/leases";
+import type { EffectPayload } from "../src/effects/intents";
 import { unit, withDatabase, waitUntil, operationBundle, begin } from "./effect-fixture";
 
 test("production prepares the selected repository and routes durable results into configured scope decisions", async () => {
   await withDatabase(async ({ url, db }) => {
-    const composition = createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1", dispatch: { sweep_ms: 20, concurrency: 2, lease_ms: 1000, provider_timeout_ms: 500 } });
+    const composition = await createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1", timing: { provider_timeout_ms: 500, retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, wake_timeout_seconds: 1 } });
     try {
       const bundle = await operationBundle("repository.prepare");
       const run = await begin(composition, bundle, { repository_path: resolve(import.meta.dir, "../.."), expected_head: null });
@@ -27,7 +27,7 @@ test("production prepares the selected repository and routes durable results int
 
 test("production routes lost-worktree evidence to the scope's configured recovery", async () => {
   await withDatabase(async ({ url, db }) => {
-    const composition = createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1", dispatch: { sweep_ms: 20, concurrency: 2, lease_ms: 1000, provider_timeout_ms: 500 } });
+    const composition = await createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1", timing: { provider_timeout_ms: 500, retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, wake_timeout_seconds: 1 } });
     try {
       const run = await begin(composition, await operationBundle("repository.prepare"), { repository_path: `/tmp/missing-${crypto.randomUUID()}`, expected_head: null });
       await waitUntil(async () => (await db.query<{ is_terminal: boolean }>("SELECT is_terminal FROM authority.scope_instance WHERE id=$1", [run.root_scope_id]))[0]?.is_terminal === true);
@@ -50,7 +50,7 @@ test("production PR discovery retries a real HTTP 503 and persists its selected 
   try {
     await withDatabase(async ({ url, db }) => {
       const reader = new GithubPullRequestReader({ token: "test", api_base_url: server.url.href });
-      const composition = createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1", pull_requests: reader, dispatch: { sweep_ms: 20, concurrency: 2, lease_ms: 1000, provider_timeout_ms: 500 } });
+      const composition = await createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1", pull_requests: reader, timing: { provider_timeout_ms: 500, retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, wake_timeout_seconds: 1 } });
       try {
         const run = await begin(composition, await operationBundle("pull_request.observe"), { query: { owner: "owner", name: "repo", head_branch: "head", base_branch: "base" } });
         await waitUntil(async () => calls >= 1 && (await db.query<{ status: string }>("SELECT status FROM authority.effect_intent WHERE scope_id=$1", [run.root_scope_id]))[0]?.status === "pending");
@@ -79,13 +79,13 @@ test("changed repository head and PR observations cannot enrich a selected kbbl 
   } });
   try {
     await withDatabase(async ({ url, db }) => {
-      const composition = createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1", kbbl_base_url: server.url.href,
-        dispatch: { sweep_ms: 200, concurrency: 2, lease_ms: 1000, provider_timeout_ms: 500 } });
+      const composition = await createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1", kbbl_base_url: server.url.href,
+        timing: { provider_timeout_ms: 500, retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, wake_timeout_seconds: 1 } });
       try {
         const selected_head = "a".repeat(40);
         const run = await begin(composition, await sessionBundle(), { runtime: "claude-code", rendered_prompt: `Review PR 1 at ${selected_head}`, workdir: "/tmp", session_name: "replay",
           session_identity: { run_id: "selected-run", stage_instance_id: "selected-scope", unit_id: "author" }, worktree: { branchName: "selected", worktreeSubdir: "selected", baseRef: selected_head } });
-        await waitUntil(async () => requests.length >= 1 && (await db.query<{ status: string }>("SELECT status FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='start'", [run.root_scope_id]))[0]?.status === "uncertain");
+        await waitUntil(async () => requests.length >= 1 && (await db.query<{ payload: EffectPayload }>("SELECT payload FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='start'", [run.root_scope_id]))[0]?.payload.has_uncertain_start === true);
         for (const key of ["repository", "pull_request"]) {
           const changed: CheckedValue = { schema: "metadata", data: { kind: "record", fields: [], dictionary: [{ key: key === "repository" ? "head" : "url", value: { schema: "text", data: { kind: "string", value: key === "repository" ? "b".repeat(40) : "https://forge/pr/2" } } }] } };
           await db.query("INSERT INTO authority.resource_binding (id,scope_id,resource_key,observation) VALUES ($1,$2,$3,$4)", [key, run.root_scope_id, key, JSON.stringify(changed)]);

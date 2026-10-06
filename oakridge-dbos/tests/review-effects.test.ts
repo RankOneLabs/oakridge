@@ -104,7 +104,7 @@ for (const cancellation of cancellation_cases) {
     await withDatabase(async ({ db, url }) => {
       const original: DefinitionBundle = await Bun.file(resolve(import.meta.dir, "../../workflow-core/fixtures/bundles/minimal.json")).json();
       const bundle: DefinitionBundle = { ...original, schemas: [...original.schemas, ...cancellation.schemas], scopes: original.scopes.map((scope) => ({ ...scope, commands: scope.commands.map((command) => command.key === scope.cancellation.trigger ? { ...command, payload_schema: "cancel_payload" } : command) })) };
-      const composition = createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1" });
+      const composition = await createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1" });
       try {
         const created = await composition.app.request("http://localhost/runs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ bundle, input: {} }) });
         if (created.status !== 201) throw new Error(await created.text());

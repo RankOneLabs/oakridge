@@ -11,7 +11,7 @@ const files = nodes.map((node) => relative(root, node.path));
 const deleted = [
   "kbbl/core/pwa/oakridge/review-command-types.ts", "kbbl/core/pwa/oakridge/lib/worker-review-actions.ts",
   "kbbl/core/pwa/oakridge/components/organisms/RunWorkspace.tsx", "kbbl/core/acp/legacy-wire.ts", "oakridge-dbos/src/compiler/compile-v15.ts", "oakridge-dbos/src/decision",
-  "oakridge-dbos/src/validation", "oakridge-dbos/src/workflows", "oakridge-dbos/src/adapters/dev-flow.ts",
+  "oakridge-dbos/src/validation", "oakridge-dbos/src/adapters/dev-flow.ts",
 ];
 test("production entry reaches one evaluator bridge and one mutation authority", () => {
   expect(files).toContain("oakridge-dbos/src/core-client/client.ts");
@@ -21,7 +21,7 @@ test("production entry reaches one evaluator bridge and one mutation authority",
   expect(declarations(nodes, "createMutationService")).toEqual([mutationEntry]);
   const mutationNodes = new Set(reachable(graph, mutationEntry).map((node) => node.path));
   expect(labels(root, evaluatorViolations(nodes, mutationNodes))).toEqual([]);
-  expect(files.filter((path) => /(?:legacy-wire|compile-v15|\/decision\/|\/validation\/|\/workflows\/|dev-flow\.ts)/.test(path))).toEqual([]);
+  expect(files.filter((path) => /(?:legacy-wire|compile-v15|\/decision\/|\/validation\/|dev-flow\.ts)/.test(path))).toEqual([]);
 });
 test("deleted modules and legacy schema authority are absent from the active graph", () => {
   expect(deleted.filter((path) => existsSync(resolve(root, path)))).toEqual([]);

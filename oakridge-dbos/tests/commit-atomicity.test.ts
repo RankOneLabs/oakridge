@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { Pool } from "pg";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
-import { PgPostgresExecutor } from "../src/storage/sql-executor";
+import { PgPostgresExecutor, type TransactionalSqlExecutor } from "../src/storage/sql-executor";
 import { readSnapshot } from "../src/storage/snapshot-reader";
 import { matchesStoredSchema } from "../src/storage/storage-validator";
 import { commitDecision, type CommitRequest } from "../src/storage/commit";
@@ -31,8 +31,13 @@ test("a fault after state, output and reservation writes rolls the entire decisi
       decision: { kind: "apply", explanation: { bundle_digest: "digest", node_id: "n", owner: "scope", read_set: [], trace: [], trigger_id: "t" }, mutations: [{ kind: "set_state", value }, { kind: "acquire", pool: "workers" }], invocations: [], targets: [] },
       outputs: [{ scope_id: "scope" as ScopeId, output_key: "report", collection_key: "", body: value, predecessor_id: null, expected_slot_version: null, execution_id: null }],
       capacity: [{ kind: "acquire", pool_id: "pool" as PoolId, scope_id: "scope" as ScopeId }],
-      effects: [{ effect_key: "same", payload: value, execution_id: null }, { effect_key: "same", payload: value, execution_id: null }],
+      effects: [],
     };
+    // The receipt is the last write of a decision; a fault there must undo every earlier one.
+    const faulting: TransactionalSqlExecutor = { query: db.query.bind(db), transaction: (operation, isolation) => db.transaction((tx) => operation({ query: async (sql, params) => {
+      if (sql.startsWith("INSERT INTO authority.ingress_receipt")) throw new Error("injected fault after domain writes");
+      return tx.query(sql, params);
+    } }), isolation) };
     const hostile = { ...request, decision: { ...request.decision, mutations: [{ kind: "overwrite_everything" }] } } as unknown as CommitRequest;
     const rejected = await commitDecision(db, hostile, source);
     expect(rejected.ok).toBe(false);
@@ -44,7 +49,7 @@ test("a fault after state, output and reservation writes rolls the entire decisi
     expect(observation).toMatchObject({ ok: false, error: { operation: "validate_commit", detail: "observe requires a resource observation provider; unsupported by this composition" } });
     const invalid_output = await commitDecision(db, { ...request, outputs: request.outputs.map((output) => ({ ...output, body: { schema: "unit", data: { kind: "integer", value: 1 } } })) }, source);
     expect(invalid_output).toMatchObject({ ok: true, value: { kind: "Rejected", detail: "output schema mismatch" } });
-    const result = await commitDecision(db, request, source);
+    const result = await commitDecision(faulting, request, source);
     expect(result.ok).toBe(false);
     const rows = await db.query<{ state_version: string; receipt_count: string; output_count: string; reservation_count: string; effect_count: string }>("SELECT (SELECT version::text FROM authority.scope_instance WHERE id='scope') AS state_version, (SELECT count(*)::text FROM authority.ingress_receipt) AS receipt_count, (SELECT count(*)::text FROM authority.output_slot) AS output_count, (SELECT count(*)::text FROM authority.capacity_reservation) AS reservation_count, (SELECT count(*)::text FROM authority.effect_intent) AS effect_count", []);
     expect(rows[0]).toEqual({ state_version: "0", receipt_count: "0", output_count: "0", reservation_count: "0", effect_count: "0" });

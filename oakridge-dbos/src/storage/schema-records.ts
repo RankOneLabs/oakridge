@@ -1,4 +1,4 @@
-import type { EffectPayload } from "../effects/leases";
+import type { EffectPayload } from "../effects/intents";
 import type { CheckedProgram, CheckedValue, DecisionOutcome, DefinitionBundle, Materialization } from "../core-client/generated-contracts";
 
 export type Id<Kind extends string> = string & { readonly __id_kind: Kind };
