@@ -114,6 +114,15 @@ export async function advanceChildren({ db, core, mutations, run_ids }: ChildAdv
     const result = await mutations.decide({ run_id: scope.run_id, scope_id: scope.id as ScopeId, ingress_id: id,
       trigger: { id, key, payload: checked.value.value }, operator_version: null });
     if (!result.ok) throw new Error(`${result.error.operation}/${result.error.entity_id}: ${result.error.detail}`);
-    if (result.value.kind === "Rejected" && result.value.detail !== "owner is terminal" && !result.value.detail.startsWith("apply_capacity/") ) throw new Error(result.value.detail);
+    const outcome = result.value;
+    switch (outcome.kind) {
+      case "Committed": case "Replayed": case "Conflict": return;
+      case "Rejected":
+        if (outcome.detail === "owner is terminal" || outcome.detail.startsWith("apply_capacity/")) return;
+        throw new Error(outcome.detail);
+      case "snapshot_too_large":
+        throw new Error(`snapshot_too_large: ${outcome.scope} ${outcome.bytes}/${outcome.limit}`);
+      default: { const unhandled: never = outcome; throw new Error(`unhandled commit outcome: ${JSON.stringify(unhandled)}`); }
+    }
   }
 }

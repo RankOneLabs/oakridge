@@ -9,7 +9,7 @@ import type { TransactionalSqlExecutor } from "../storage/sql-executor";
 import { readScopeView, readRunView, readInbox } from "../storage/projection-reader";
 import { readPinnedDefinition } from "./definition-inspection";
 import { readScopeDiagnostics, readScopeHistory } from "./diagnostics";
-import { parsePublication } from "./publication";
+import { MAX_PUBLICATION_VALUE_BYTES, parsePublication, publicationValueBytes } from "./publication";
 import { commandStatus, ConflictError, InternalFaultError, InvalidPayloadError, MalformedRequestError, MissingEntityError, PendingWork, parseScopeCommand, submitScopeCommand, type CommandError, type CommandResult } from "./scope-commands";
 
 export interface DefinitionApiDependencies { readonly db: TransactionalSqlExecutor; readonly core: CoreClient; readonly mutations: MutationService; readonly wake: (run_id: RunId) => Promise<void> }
@@ -66,6 +66,8 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
     if (raw instanceof MalformedRequestError) return response({ ok: false, error: raw });
     const parsed = parsePublication(raw, c.req.param("scope_id") as ScopeId);
     if (parsed instanceof MalformedRequestError) return response({ ok: false, error: parsed });
+    const value_bytes = publicationValueBytes(parsed.output.body);
+    if (value_bytes > MAX_PUBLICATION_VALUE_BYTES) return Response.json({ kind: "oversized_payload", bytes: value_bytes, limit: MAX_PUBLICATION_VALUE_BYTES }, { status: 413 });
     try {
       const input: MutationInput = { run_id: c.req.param("run_id") as RunId, scope_id: c.req.param("scope_id") as ScopeId,
         ingress_id: parsed.request_id, trigger: parsed.trigger, operator_version: parsed.expected_scope_version, outputs: [parsed.output] };
@@ -85,6 +87,7 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
       if (!result.ok) return response({ ok: false, error: new InternalFaultError(result.error.detail) });
       if (result.value.kind === "Conflict") return response({ ok: false, error: new ConflictError(result.value.detail) });
       if (result.value.kind === "Rejected") return response({ ok: false, error: new InvalidPayloadError(result.value.detail) });
+      if (result.value.kind === "snapshot_too_large") return Response.json(result.value, { status: 413 });
       void deps.wake(c.req.param("run_id") as RunId).catch(() => undefined);
       return Response.json({ kind: "accepted_pending", request_id: parsed.request_id, ...result.value.receipt }, { status: 202 });
     } catch (cause) { return fault(cause); }

@@ -36,13 +36,14 @@ export async function prepareChildCancellations(db: TransactionalSqlExecutor, co
     const trigger = { id, key, payload: checked.value.value };
     const source = await readSnapshot(db, scope.id as import("./schema-records").ScopeId, trigger);
     if (!source) return failure(scope.id, "cancellation owner missing");
-    if (JSON.stringify(source.read_set) !== JSON.stringify(decision.source.read_set)) return failure(scope.id, "cancellation snapshot changed; retry parent decision");
+    // The parent's subtree witness covers this child, while a direct child
+    // snapshot now has a narrower witness set of its own.
     const evaluated = await requestEvaluation(core, { bundle, source });
     if (!evaluated.ok || evaluated.value.kind !== "evaluated" || evaluated.value.value.kind !== "apply" || !evaluated.value.value.outcome)
       return failure(scope.id, "configured cancellation must select a terminal decision");
     const request = prepareCommit({ run_id: input.run_id, scope_id: scope.id as import("./schema-records").ScopeId, ingress_id: id, trigger, operator_version: null }, { source, outcome: evaluated.value.value });
     if (!request.ok) return request;
-    cancellations.push({ source, request: request.value });
+    cancellations.push({ source, request: { ...request.value, read_set: decision.source.read_set } });
   }
   return { ok: true, value: cancellations };
 }

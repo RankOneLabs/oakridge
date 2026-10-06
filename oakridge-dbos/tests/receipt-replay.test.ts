@@ -4,8 +4,14 @@ import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
 import { readSnapshot } from "../src/storage/snapshot-reader";
 import { commitDecision, type CommitRequest } from "../src/storage/commit";
+import { requestDigest } from "../src/storage/receipts";
 import type { CheckedValue } from "../src/core-client/generated-contracts";
 import type { RunId, ScopeId } from "../src/storage/schema-records";
+
+test("receipt digest is stable when nested map keys arrive in another order", () => {
+  expect(requestDigest({ z: { ä: 1, a: 2 }, a: [1, { y: true, x: false }] }))
+    .toBe(requestDigest({ a: [1, { x: false, y: true }], z: { a: 2, ä: 1 } }));
+});
 
 test("exact ingress replay returns its receipt after terminal state; changed digest conflicts", async () => {
   const admin_url = process.env.OAKRIDGE_TEST_DATABASE_URL;

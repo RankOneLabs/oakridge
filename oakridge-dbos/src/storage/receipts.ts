@@ -6,7 +6,7 @@ export interface IngressIdentity { readonly run_id: RunId; readonly scope_id: Sc
 export type ReceiptLookup = { readonly kind: "new" } | { readonly kind: "replay"; readonly receipt: CommitReceipt } | { readonly kind: "conflict" };
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical);
-  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, canonical(item)]));
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).sort(([a], [b]) => Buffer.compare(Buffer.from(a), Buffer.from(b))).map(([key, item]) => [key, canonical(item)]));
   return value;
 }
 export function requestDigest(value: unknown): string {
