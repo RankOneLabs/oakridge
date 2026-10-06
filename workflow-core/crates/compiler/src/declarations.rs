@@ -23,7 +23,10 @@ pub fn validate_bundle(
     }
     for requirement in &bundle.operations {
         let supported_routing = matches!(
-            (requirement.provider_kind.as_str(), requirement.input_contract.as_str()),
+            (
+                requirement.provider_kind.as_str(),
+                requirement.input_contract.as_str()
+            ),
             ("git", "repository_preparation")
                 | ("kbbl", "kbbl_session")
                 | ("github", "pull_request_observation")
@@ -260,9 +263,9 @@ pub fn validate_bundle(
                     ));
                 }
                 if action
-                        .settings
-                        .iter()
-                        .any(|s| !manifest.settings.contains(&s.key))
+                    .settings
+                    .iter()
+                    .any(|s| !manifest.settings.contains(&s.key))
                     || action.deadline_ms == 0
                     || action.max_attempts == 0
                 {
