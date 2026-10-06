@@ -8,7 +8,7 @@ import type { RunId, ScopeId } from "../storage/schema-records";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
 import { readScopeView, readRunView, readInbox } from "../storage/projection-reader";
 import { readPinnedDefinition } from "./definition-inspection";
-import { readScopeDiagnostics } from "./diagnostics";
+import { readScopeDiagnostics, readScopeHistory } from "./diagnostics";
 import { parsePublication } from "./publication";
 import { commandStatus, ConflictError, InternalFaultError, InvalidPayloadError, MalformedRequestError, MissingEntityError, PendingWork, parseScopeCommand, submitScopeCommand, type CommandError, type CommandResult } from "./scope-commands";
 
@@ -42,6 +42,10 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
   app.get("/api/runs/:run_id/scopes/:scope_id/decision", async (c) => { try {
     const view = await readScopeView(deps.db, c.req.param("scope_id") as ScopeId);
     return view && view.run_id === c.req.param("run_id") ? c.json({ decision: view.decision, cursor: view.cursor }) : response({ ok: false, error: new MissingEntityError("scope not found in run") });
+  } catch (cause) { return fault(cause); } });
+  app.get("/api/runs/:run_id/scopes/:scope_id/history", async (c) => { try {
+    const history = await readScopeHistory(deps.db, c.req.param("run_id"), c.req.param("scope_id"));
+    return history ? c.json(history) : response({ ok: false, error: new MissingEntityError("scope not found in run") });
   } catch (cause) { return fault(cause); } });
   app.get("/api/runs/:run_id/scopes/:scope_id/diagnostics", async (c) => { try {
     const view = await readScopeView(deps.db, c.req.param("scope_id") as ScopeId);

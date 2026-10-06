@@ -175,7 +175,7 @@ test("diagnostics cursor changes on effect updates without a scope transition", 
     const app = api(authority);
     const path = `/api/runs/${authority.run.run_id}/scopes/${authority.run.root_scope_id}/diagnostics`;
     const before: ScopeDiagnostics = await (await app.request(path)).json();
-    await authority.db.query("UPDATE authority.effect_intent SET status='in_flight',version=version+1 WHERE id='effect-1'", []);
+    await authority.db.query("UPDATE authority.effect_intent SET status='acknowledged',version=version+1 WHERE id='effect-1'", []);
     const after: ScopeDiagnostics = await (await app.request(path)).json();
     expect({ before: before.cursor, after: after.cursor }).toEqual({
       before: { scope_version: 0, executions: [], resources: [], effects: [{ id: "effect-1", version: 0 }] },

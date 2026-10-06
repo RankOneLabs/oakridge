@@ -29,10 +29,11 @@ running workflows (DBOS cancel) and the next boot resumes them.
 ### Application version
 
 DBOS resumes only workflows recorded under the running `applicationVersion`.
-The version is the digest of `src/workflows/` (`engine-version.ts`), so it
-moves exactly when the workflow functions change — not for a bundle, route,
-projection or UI change. `DBOS_APPLICATION_VERSION` overrides it for forks and
-rollbacks; bumping it parks in-flight workflows until they are forked by hand.
+The version is the digest of `ENGINE_SOURCE_MANIFEST` in
+`src/workflows/engine-version.ts`, covering workflow functions and their
+runtime dependencies. Bundle, route, projection, prompt and UI changes leave
+it unchanged. `DBOS_APPLICATION_VERSION` overrides it for forks and rollbacks;
+bumping it parks in-flight workflows until they are forked by hand.
 
 ## Verify
 
@@ -47,6 +48,8 @@ database permission. `tests/fresh-boot.test.ts` creates an empty database and
 checks the production stack through an HTTP decision and read projection.
 
 ## Database cutover
+
+The authority baseline requires PostgreSQL 15 or newer.
 
 Stop the service; run `pg_dump` to a file nothing in this repository reads;
 drop and recreate the Oakridge database empty; deploy the Rust CLI, DBOS

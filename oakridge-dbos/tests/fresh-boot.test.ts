@@ -49,11 +49,26 @@ test("empty database cold boots, compiles through workflow-cli and serves a run 
     const decision = await composition.app.request(`http://localhost/runs/${run.run_id}/scopes/${run.root_scope_id}/decide`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ingress_id: "begin", trigger: { id: "begin", key: "begin", payload } }) });
     expect(decision.status).toBe(200);
     expect(await decision.json()).toMatchObject({ kind: "Committed" });
+    const history = await composition.app.request(`http://localhost/api/runs/${run.run_id}/scopes/${run.root_scope_id}/history`);
+    expect(history.status).toBe(200);
+    expect(await history.json()).toMatchObject({ scope_id: run.root_scope_id, transitions: [{ trigger_id: "begin" }], facts: [{ fact_key: "begin" }] });
+    const wrong_run_history = await composition.app.request(`http://localhost/api/runs/another-run/scopes/${run.root_scope_id}/history`);
+    expect(wrong_run_history.status).toBe(404);
     const committed = await db.query<{ state: CheckedValue; executions: string; reservations: string; effects: string }>("SELECT local_state AS state, (SELECT count(*)::text FROM authority.execution) AS executions, (SELECT count(*)::text FROM authority.capacity_reservation WHERE is_active) AS reservations, (SELECT count(*)::text FROM authority.effect_intent) AS effects FROM authority.scope_instance WHERE id=$1", [run.root_scope_id]);
     expect(committed[0]).toMatchObject({ state: { schema: "position", data: { kind: "variant", variant: "waiting" } }, executions: "1", reservations: "1", effects: "1" });
     const executions = await db.query<{ id: string }>("SELECT id FROM authority.execution WHERE scope_id=$1", [run.root_scope_id]);
     const published = await composition.app.request(`http://localhost/runs/${run.run_id}/scopes/${run.root_scope_id}/decide`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ingress_id: "output", trigger: { id: "output", key: "tick", payload }, outputs: [{ ...output, execution_id: executions[0]!.id }] }) });
     expect(await published.json()).toMatchObject({ kind: "Committed" });
+    const history_after_publication = await composition.app.request(`http://localhost/api/runs/${run.run_id}/scopes/${run.root_scope_id}/history`);
+    const recorded: { transitions: { trigger_id: string }[]; facts: { fact_key: string }[] } = await history_after_publication.json();
+    expect(recorded.transitions.map((item) => item.trigger_id)).toEqual(["output", "begin"]);
+    expect(recorded.facts.map((item) => item.fact_key).sort()).toEqual(["begin", "tick"]);
+    await db.query("UPDATE authority.execution SET publication_secret_hash=$1 WHERE id=$2", ["a".repeat(64), executions[0]!.id]);
+    const diagnostics = await composition.app.request(`http://localhost/api/runs/${run.run_id}/scopes/${run.root_scope_id}/diagnostics`);
+    expect(JSON.stringify(await diagnostics.json())).not.toContain("publication_secret_hash");
+    const scope_view = await composition.app.request(`http://localhost/api/runs/${run.run_id}/scopes/${run.root_scope_id}`);
+    expect(JSON.stringify(await scope_view.json())).not.toContain("publication_secret_hash");
+    expect(JSON.stringify(recorded)).not.toContain("publication_secret_hash");
     const snapshot = await readSnapshot(db, run.root_scope_id as ScopeId, { id: "snapshot", key: "tick", payload });
     expect(snapshot?.snapshot.observations).toMatchObject([{ root: { kind: "output", key: "document" }, value: payload, version: 0 }]);
   } finally {
@@ -62,4 +77,4 @@ test("empty database cold boots, compiles through workflow-cli and serves a run 
     await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
     await admin.end();
   }
-});
+}, 15_000);
