@@ -34,6 +34,14 @@ CREATE TABLE authority.scope_instance (
   UNIQUE (run_id, id),
   FOREIGN KEY (run_id, parent_id) REFERENCES authority.scope_instance(run_id, id)
 );
+-- Launch identities survive run deletion, preventing a late retry from recreating work.
+CREATE TABLE authority.launch_receipt (
+  request_id text PRIMARY KEY CHECK (length(request_id) BETWEEN 1 AND 200),
+  request_digest text NOT NULL CHECK (request_digest ~ '^[0-9a-f]{64}$'),
+  run_id text REFERENCES authority.run(id) ON DELETE SET NULL,
+  root_scope_id text NOT NULL, bundle_id text NOT NULL REFERENCES authority.definition_bundle(id),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE UNIQUE INDEX scope_instance_child_identity_idx ON authority.scope_instance
   (parent_id, collection_key, child_key) NULLS NOT DISTINCT WHERE parent_id IS NOT NULL;
 CREATE TABLE authority.scope_export (
