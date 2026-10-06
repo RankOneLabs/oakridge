@@ -70,6 +70,16 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run --filter kbbl test:pwa
 
+  kbbl-browser-tests:
+    name: kbbl browser tests (Chromium)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: cd kbbl && bunx playwright install --with-deps chromium
+      - run: bun run --filter kbbl test:browser
+
   oakridge-dbos-tests:
     name: oakridge-dbos tests (bun)
     runs-on: ubuntu-latest
@@ -102,7 +112,6 @@ jobs:
       - run: cargo build --locked --manifest-path workflow-core/Cargo.toml -p workflow-cli
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
-      - run: cd oakridge-dbos && bunx playwright install --with-deps chromium
       - run: bun run --filter oakridge-dbos test:unit
 
   lbc-dashboard-tests:
