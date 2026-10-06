@@ -18,7 +18,6 @@
   },
   "devDependencies": {
     "@agentclientprotocol/sdk": "1.4.0",
-    "@playwright/test": "^1.63.0",
     "@types/bun": "^1.3.13",
     "@types/pg": "^8.15.5",
     "typescript": "^5.7.2"

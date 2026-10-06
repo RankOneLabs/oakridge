@@ -35,7 +35,7 @@ async function withAuthority(operation: (authority: TestAuthority) => Promise<vo
     await migrateEmptyDatabase(db);
     const bundle: DefinitionBundle = await Bun.file(resolve(import.meta.dir, "../../workflow-core/fixtures/bundles/exact-review-target.json")).json();
     const mutations = createMutationService(db, core);
-    const created = await mutations.startRun({ bundle, available_operations: bundle.operations, input: {} });
+    const created = await mutations.startRun({ bundle, input: {} });
     if (!created.ok) throw new Error(created.error.detail);
     const run = created.value;
     const unit: CheckedValue = { schema: "unit", data: { kind: "record", fields: [], dictionary: [] } };
@@ -108,7 +108,7 @@ test("pinned definitions and scope projections survive a newer bundle and fresh 
   await withAuthority(async (authority) => {
     const newer: DefinitionBundle = { ...authority.bundle, version: 2, scopes: authority.bundle.scopes.map((scope) => ({ ...scope,
       presentation: { ...scope.presentation, label: "New deployment" }, commands: scope.commands.map((command) => ({ ...command, label: "New command label" })) })) };
-    const created = await authority.mutations.startRun({ bundle: newer, available_operations: newer.operations, input: {} });
+    const created = await authority.mutations.startRun({ bundle: newer, input: {} });
     if (!created.ok) throw new Error(created.error.detail);
     const before = await (await api(authority).request(`/api/runs/${authority.run.run_id}/scopes/${authority.run.root_scope_id}`)).json();
     await authority.closeReaders();

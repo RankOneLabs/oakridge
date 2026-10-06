@@ -55,7 +55,7 @@ export function createEffectProvider(options: ProductionProviderOptions): Effect
     return row && scope ? { bundle: row.source, scope, scope_id: row.scope_id, run_id: row.run_id } : null;
   }
   async function validate(context: InvocationContext, schema: string, payload: unknown): Promise<ProviderResult<CheckedValue>> {
-    const result = await options.core.request("validate_payload", { bundle: context.bundle, available_operations: context.bundle.operations, schema, payload });
+    const result = await options.core.request("validate_payload", { bundle: context.bundle, schema, payload });
     if (!result.ok) return result.error.kind === "domain" ? rejected(JSON.stringify(result.error)) : { kind: "transiently_unavailable", detail: JSON.stringify(result.error) };
     return result.value.kind === "validated" ? { kind: "acknowledged", value: result.value.value } : rejected("core returned a non-validated operation result");
   }

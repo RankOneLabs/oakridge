@@ -81,7 +81,7 @@ fn native_snapshot_metadata_is_checked_before_evaluation() {
     }
 }
 #[test]
-fn action_inputs_use_predecision_snapshot_and_freeze_prompt() {
+fn action_inputs_use_predecision_snapshot_and_pinned_prompt_key() {
     let b = bundle("minimal");
     let p = compile(&b, &b.operations).unwrap();
     let s = snapshot(&b, json!({}), "ready", "begin");
@@ -89,6 +89,10 @@ fn action_inputs_use_predecision_snapshot_and_freeze_prompt() {
         panic!("expected apply")
     };
     assert_eq!(invocations[0].input, s.input);
+    assert_eq!(
+        invocations[0].prompt_key,
+        Some(SymbolKey::from("shared_content"))
+    );
 }
 #[test]
 fn explanation_includes_exact_observation_versions() {

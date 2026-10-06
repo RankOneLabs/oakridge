@@ -6,6 +6,17 @@ pub struct EvaluationContext<'a> {
     pub item: Option<&'a CheckedValue>,
     pub budget: &'a mut usize,
 }
+fn charge(budget: &mut usize, amount: usize, entity: &str) -> CoreResult<()> {
+    if *budget < amount {
+        return Err(failure(
+            DomainErrorKind::ResourceLimit,
+            entity,
+            "expression budget exhausted",
+        ));
+    }
+    *budget -= amount;
+    Ok(())
+}
 pub fn boolean(value: &CheckedValue) -> CoreResult<bool> {
     if let CheckedData::Boolean { value } = &value.data {
         Ok(*value)
@@ -139,7 +150,7 @@ pub fn evaluate_expression(
         CheckedExpressionNode::Record { fields } => {
             let schema = context
                 .program
-                .source
+                .derived
                 .schemas
                 .iter()
                 .find(|s| s.key == expression.schema)
@@ -228,6 +239,7 @@ pub fn evaluate_expression(
             };
             let mut result = Vec::new();
             for item in &items {
+                charge(context.budget, 1, &expression.schema.0)?;
                 let mut child = EvaluationContext {
                     program: context.program,
                     snapshot: context.snapshot,
@@ -265,6 +277,7 @@ pub fn evaluate_expression(
             };
             let mut filtered = Vec::new();
             for item in items {
+                charge(context.budget, 1, &expression.schema.0)?;
                 if *crate::collections::field(&item, *key_field)? == key {
                     filtered.push(item);
                 }
@@ -281,7 +294,11 @@ pub fn evaluate_expression(
                 ));
             };
             CheckedData::Boolean {
-                value: items.contains(&evaluate_expression(value, context)?),
+                value: {
+                    let needle = evaluate_expression(value, context)?;
+                    charge(context.budget, items.len(), &expression.schema.0)?;
+                    items.contains(&needle)
+                },
             }
         }
         CheckedExpressionNode::Lookup {
@@ -298,6 +315,7 @@ pub fn evaluate_expression(
                 ));
             };
             let key = evaluate_expression(key, context)?;
+            charge(context.budget, items.len(), &expression.schema.0)?;
             let matches = items
                 .iter()
                 .filter(|item| {
@@ -324,6 +342,7 @@ pub fn evaluate_expression(
             };
             let mut filtered = Vec::new();
             for item in items {
+                charge(context.budget, 1, &expression.schema.0)?;
                 let mut child = EvaluationContext {
                     program: context.program,
                     snapshot: context.snapshot,
@@ -352,11 +371,17 @@ pub fn evaluate_expression(
                 dependencies_field, ..
             } = &expression.node
             {
+                charge(
+                    context.budget,
+                    items.len().saturating_mul(items.len()),
+                    &expression.schema.0,
+                )?;
                 crate::collections::validate_collection(&items, *key_field, *dependencies_field)?;
                 CheckedData::List { items }
             } else {
                 let mut unique: Vec<CheckedValue> = Vec::new();
                 for item in items {
+                    charge(context.budget, unique.len() + 1, &expression.schema.0)?;
                     let key = crate::collections::field(&item, *key_field)?;
                     if let Some(previous) = unique.iter().find(|previous| {
                         crate::collections::field(previous, *key_field)
@@ -387,6 +412,7 @@ pub fn evaluate_expression(
             };
             let mut value = true;
             for item in &items {
+                charge(context.budget, 1, &expression.schema.0)?;
                 let mut child = EvaluationContext {
                     program: context.program,
                     snapshot: context.snapshot,
@@ -405,4 +431,79 @@ pub fn evaluate_expression(
         schema: expression.schema.clone(),
         data,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use workflow_compiler::{check_value, compile};
+
+    #[test]
+    fn contains_charges_for_each_comparison() {
+        let bundle: DefinitionBundle =
+            serde_json::from_str(include_str!("../../../fixtures/bundles/minimal.json")).unwrap();
+        let program = compile(&bundle, &bundle.operations).unwrap();
+        let unit = check_value(&bundle, &SchemaId::from("unit"), &serde_json::json!({})).unwrap();
+        let snapshot = Snapshot {
+            owner: InstanceId::from("scope"),
+            scope: ScopeKey::from("document"),
+            version: 1,
+            input: unit.clone(),
+            state: check_value(
+                &bundle,
+                &SchemaId::from("position"),
+                &serde_json::json!({"kind":"ready","value":{}}),
+            )
+            .unwrap(),
+            trigger: Trigger {
+                id: TriggerId::from("start"),
+                key: SymbolKey::from("begin"),
+                payload: unit,
+            },
+            observations: vec![],
+            timestamp_ms: 1,
+            random_seed: 1,
+        };
+        let item = check_value(
+            &bundle,
+            &SchemaId::from("ident"),
+            &serde_json::json!("different"),
+        )
+        .unwrap();
+        let source = CheckedExpression {
+            schema: SchemaId::from("deps"),
+            node: CheckedExpressionNode::Literal {
+                value: CheckedValue {
+                    schema: SchemaId::from("deps"),
+                    data: CheckedData::List {
+                        items: vec![item.clone(); 20],
+                    },
+                },
+            },
+        };
+        let needle = CheckedExpression {
+            schema: SchemaId::from("ident"),
+            node: CheckedExpressionNode::Literal { value: item },
+        };
+        let expression = CheckedExpression {
+            schema: SchemaId::from("flag"),
+            node: CheckedExpressionNode::Contains {
+                source: Box::new(source),
+                value: Box::new(needle),
+            },
+        };
+        let mut budget = 3;
+        let mut context = EvaluationContext {
+            program: &program,
+            snapshot: &snapshot,
+            item: None,
+            budget: &mut budget,
+        };
+        assert_eq!(
+            evaluate_expression(&expression, &mut context)
+                .unwrap_err()
+                .kind,
+            DomainErrorKind::ResourceLimit
+        );
+    }
 }

@@ -1,5 +1,5 @@
 import type { CheckedValue, Trigger } from "../core-client/generated-contracts";
-import { decodeCoreResponse } from "../core-client/generated-contracts";
+import { CORE_PROTOCOL_VERSION, decodeCoreResponse } from "../core-client/generated-contracts";
 import type { OutputPublication } from "../storage/commit";
 import type { ScopeId } from "../storage/schema-records";
 import { MalformedRequestError } from "./scope-commands";
@@ -17,7 +17,7 @@ export function parsePublication(value: unknown, scope_id: ScopeId): Publication
     return new MalformedRequestError("invalid publication request");
   const payload = value.trigger.payload;
   const body = value.output.body;
-  const checked = (item: unknown): item is CheckedValue => decodeCoreResponse({ version: 1, request_id: "validate", truncated: false,
+  const checked = (item: unknown): item is CheckedValue => decodeCoreResponse({ version: CORE_PROTOCOL_VERSION, request_id: "validate", truncated: false,
     result: { status: "ok", value: { kind: "validated", value: item } } }) !== null;
   if (!checked(payload) || !checked(body)) return new MalformedRequestError("publication requires checked values");
   return { request_id: value.request_id, expected_scope_version: value.expected_scope_version,

@@ -56,12 +56,12 @@ export async function submitScopeCommand(deps: CommandDependencies, run_id: RunI
     const command = availableCommand(bundle, source.owner.scope_key, source.owner.local_state, request.command_key);
     if (!command) return { ok: false, error: new InvalidPayloadError("command is undeclared or unavailable in current state") };
     if (request.targets.length !== command.targets.length) return { ok: false, error: new InvalidPayloadError("target count differs from pinned definition") };
-    const checked = await deps.core.request("validate_payload", { bundle, available_operations: bundle.operations, schema: command.payload_schema, payload: request.payload });
+    const checked = await deps.core.request("validate_payload", { bundle, schema: command.payload_schema, payload: request.payload });
     if (!checked.ok) return { ok: false, error: checked.error.kind === "transport" ? new TransientServiceError(checked.error.detail.detail) : new InvalidPayloadError(checked.error.detail.detail) };
     if (checked.value.kind !== "validated") return { ok: false, error: new InternalFaultError("core returned unexpected validation result") };
     const trigger: Trigger = { id: request.request_id, key: request.command_key, payload: checked.value.value };
     const decision_source = { ...source, snapshot: { ...source.snapshot, trigger } };
-    const evaluated = await requestEvaluation(deps.core, { bundle, available_operations: bundle.operations, source: decision_source });
+    const evaluated = await requestEvaluation(deps.core, { bundle, source: decision_source });
     if (!evaluated.ok) return { ok: false, error: evaluated.error.kind === "transport" ? new TransientServiceError(evaluated.error.detail.detail) : new InvalidPayloadError(evaluated.error.detail.detail) };
     if (evaluated.value.kind !== "evaluated") return { ok: false, error: new InternalFaultError("core returned unexpected evaluation result") };
     if (evaluated.value.value.kind === "reject") return { ok: false, error: new InvalidPayloadError(evaluated.value.value.error) };

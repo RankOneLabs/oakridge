@@ -1,6 +1,6 @@
-use crate::{error, schema, unique};
+use crate::{error, schema, unique, SchemaLookup};
 use serde_json::Value;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use workflow_model::*;
 fn dependencies(shape: &SchemaShape) -> Vec<&SchemaId> {
     match shape {
@@ -14,15 +14,34 @@ fn dependencies(shape: &SchemaShape) -> Vec<&SchemaId> {
         _ => vec![],
     }
 }
+/// Validate every schema shape and bound nesting: no path through the schema
+/// graph may pass through more than `max_depth` schemas.
+///
+/// `visit` returns a schema's height (schemas on its longest downward path,
+/// itself included) and memoizes it, so a shared schema reached again at a
+/// deeper point is still checked at that depth. The result does not depend on
+/// declaration order.
 pub fn validate_schemas(bundle: &DefinitionBundle) -> CoreResult<()> {
     fn visit(
         bundle: &DefinitionBundle,
         key: &SchemaId,
         active: &mut BTreeSet<SchemaId>,
-        done: &mut BTreeSet<SchemaId>,
-    ) -> CoreResult<()> {
-        if done.contains(key) {
-            return Ok(());
+        heights: &mut BTreeMap<SchemaId, usize>,
+        depth: usize,
+    ) -> CoreResult<usize> {
+        let exceeds = || {
+            error(
+                DomainErrorKind::ResourceLimit,
+                key.to_string(),
+                "schema nesting exceeds limit",
+            )
+        };
+        if let Some(height) = heights.get(key) {
+            return if depth + height > bundle.limits.max_depth {
+                Err(exceeds())
+            } else {
+                Ok(*height)
+            };
         }
         if !active.insert(key.clone()) {
             return Err(error(
@@ -31,12 +50,8 @@ pub fn validate_schemas(bundle: &DefinitionBundle) -> CoreResult<()> {
                 "recursive schemas are unsupported",
             ));
         }
-        if active.len() > bundle.limits.max_depth {
-            return Err(error(
-                DomainErrorKind::ResourceLimit,
-                key.to_string(),
-                "schema nesting exceeds limit",
-            ));
+        if depth + 1 > bundle.limits.max_depth {
+            return Err(exceeds());
         }
         let shape = schema(bundle, key)?;
         match shape {
@@ -93,32 +108,33 @@ pub fn validate_schemas(bundle: &DefinitionBundle) -> CoreResult<()> {
             }
             _ => {}
         }
+        let mut height = 1;
         for dep in dependencies(shape) {
-            visit(bundle, dep, active, done)?;
+            height = height.max(1 + visit(bundle, dep, active, heights, depth + 1)?);
         }
         active.remove(key);
-        done.insert(key.clone());
-        Ok(())
+        heights.insert(key.clone(), height);
+        Ok(height)
     }
-    let mut done = BTreeSet::new();
+    let mut heights = BTreeMap::new();
     for item in &bundle.schemas {
-        visit(bundle, &item.key, &mut BTreeSet::new(), &mut done)?;
+        visit(bundle, &item.key, &mut BTreeSet::new(), &mut heights, 0)?;
     }
     Ok(())
 }
 /// Decode one source/ingress value, resolving record fields to schema-owned numeric IDs.
 pub fn check_value(
-    bundle: &DefinitionBundle,
+    bundle: &impl SchemaLookup,
     key: &SchemaId,
     value: &Value,
 ) -> CoreResult<CheckedValue> {
     fn decode(
-        bundle: &DefinitionBundle,
+        bundle: &impl SchemaLookup,
         key: &SchemaId,
         value: &Value,
         depth: usize,
     ) -> CoreResult<CheckedValue> {
-        if depth > bundle.limits.max_depth {
+        if depth > bundle.limits().max_depth {
             return Err(error(
                 DomainErrorKind::ResourceLimit,
                 key.to_string(),
@@ -281,7 +297,7 @@ pub fn check_value(
 }
 /// Recheck generated wire values at the evaluator boundary, including closed fields and schema IDs.
 pub fn validate_checked_value(
-    bundle: &DefinitionBundle,
+    bundle: &impl SchemaLookup,
     key: &SchemaId,
     value: &CheckedValue,
 ) -> CoreResult<()> {
@@ -307,7 +323,7 @@ pub fn validate_checked_value(
     }
     Ok(())
 }
-fn to_json(bundle: &DefinitionBundle, value: &CheckedValue) -> CoreResult<Value> {
+fn to_json(bundle: &impl SchemaLookup, value: &CheckedValue) -> CoreResult<Value> {
     Ok(match &value.data {
         CheckedData::Boolean { value } => Value::Bool(*value),
         CheckedData::Integer { value } => Value::from(*value),

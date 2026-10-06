@@ -2,9 +2,13 @@ use crate::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-pub const PROTOCOL_VERSION: u32 = 1;
+/// Bumped whenever the request or response shape changes. v2: non-compile
+/// operations address a cached bundle by `bundle_digest` instead of carrying
+/// the source, `available_operations` is gone, and `compiled` returns the
+/// digest and scope summaries rather than the checked program.
+pub const PROTOCOL_VERSION: u32 = 2;
 pub const MAX_FRAME_BYTES: usize = 1_048_576;
-// Compilation carries checked source and selected trees; keep both directions bounded at 1 MiB.
+// The 1 MiB cap changes only with a protocol version bump and regenerated TypeScript contracts.
 pub const MAX_RESPONSE_BYTES: usize = MAX_FRAME_BYTES;
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -26,41 +30,42 @@ pub struct Request {
 pub enum Operation {
     Compile {
         bundle: DefinitionBundle,
-        available_operations: Vec<OperationManifest>,
     },
     ValidatePayload {
-        bundle: DefinitionBundle,
-        available_operations: Vec<OperationManifest>,
+        bundle_digest: BundleDigest,
         schema: SchemaId,
         #[serde(with = "crate::wire_numbers::json")]
         #[schemars(with = "Value")]
         payload: Value,
     },
     Evaluate {
-        bundle: DefinitionBundle,
-        available_operations: Vec<OperationManifest>,
+        bundle_digest: BundleDigest,
         snapshot: Snapshot,
     },
     Materialize {
-        bundle: DefinitionBundle,
-        available_operations: Vec<OperationManifest>,
+        bundle_digest: BundleDigest,
         snapshot: Snapshot,
         template: SymbolKey,
     },
     Explain {
-        bundle: DefinitionBundle,
-        available_operations: Vec<OperationManifest>,
+        bundle_digest: BundleDigest,
         snapshot: Snapshot,
     },
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum Output {
-    Compiled(CheckedProgram),
+    Compiled(CompiledBundle),
     Validated(CheckedValue),
     Evaluated(DecisionOutcome),
     Materialized(Materialization),
     Explained(DecisionOutcome),
+}
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CompiledBundle {
+    pub digest: BundleDigest,
+    pub scopes: Vec<CheckedScope>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]

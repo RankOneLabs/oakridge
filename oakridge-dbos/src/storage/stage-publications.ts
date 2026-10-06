@@ -11,7 +11,7 @@ export function stagePublications(bundle: DefinitionBundle, source: AuthoritySna
   if (!scope) return { ok: false, error: { operation: "stage_publications", entity_id: source.owner.id, detail: "scope declaration missing" } };
   let observations = [...source.snapshot.observations];
   const staged_members = new Map<string, readonly PublicationMember[]>();
-  const roots = selectObservationRoots(scope);
+  const roots = selectObservationRoots({ reads: [...source.reads] });
   for (const output of outputs) {
     if (!output.revision_id) return { ok: false, error: { operation: "stage_publications", entity_id: source.owner.id, detail: "publication revision identity missing" } };
     const revision_id = output.revision_id;
@@ -27,7 +27,8 @@ export function stagePublications(bundle: DefinitionBundle, source: AuthoritySna
       observations = observations.filter((observation) => observationRootKey(observation.root) !== observationRootKey(root));
       observations.push({ root, value, identity: existing?.identity ?? `publication:${output.revision_id}:${JSON.stringify(root)}`, version: (existing?.version ?? 0) + 1 });
     };
-    if (!output.collection_key) replace({ kind: "output", key: output.output_key }, output.body);
+    if (!output.collection_key && roots.some((root) => root.kind === "output" && root.key === output.output_key))
+      replace({ kind: "output", key: output.output_key }, output.body);
     for (const root of roots) {
       if (!("key" in root) || root.key !== output.output_key) continue;
       if (root.kind === "output_revision") replace(root, { schema: root.schema, data: { kind: "reference", brand: "artifact_revision", id: output.revision_id } });

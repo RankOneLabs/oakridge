@@ -70,7 +70,7 @@ test("empty database cold boots, compiles through workflow-cli and serves a run 
     expect(JSON.stringify(await scope_view.json())).not.toContain("publication_secret_hash");
     expect(JSON.stringify(recorded)).not.toContain("publication_secret_hash");
     const snapshot = await readSnapshot(db, run.root_scope_id as ScopeId, { id: "snapshot", key: "tick", payload });
-    expect(snapshot?.snapshot.observations).toMatchObject([{ root: { kind: "output", key: "document" }, value: payload, version: 0 }]);
+    expect(snapshot?.snapshot.observations).toEqual([]);
   } finally {
     if (composition) await composition.close();
     await db.close();

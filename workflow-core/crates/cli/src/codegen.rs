@@ -1,7 +1,9 @@
 use schemars::schema_for;
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
-use workflow_model::protocol::{Request, Response, MAX_FRAME_BYTES, MAX_RESPONSE_BYTES};
+use workflow_model::protocol::{
+    Request, Response, MAX_FRAME_BYTES, MAX_RESPONSE_BYTES, PROTOCOL_VERSION,
+};
 
 fn schema_to_ts(schema: &Value) -> String {
     if schema == &Value::Bool(true) {
@@ -138,7 +140,7 @@ pub fn generate() -> String {
         }
     }
     let mut output = format!("// Generated from workflow-model::protocol. Run scripts/generate-core-contracts.sh.\nexport const CORE_PROTOCOL_SCHEMA = {} as const;\n", schemas);
-    output.push_str(&format!("export const CORE_MAX_FRAME_BYTES = {MAX_FRAME_BYTES};\nexport const CORE_MAX_RESPONSE_BYTES = {MAX_RESPONSE_BYTES};\n"));
+    output.push_str(&format!("export const CORE_PROTOCOL_VERSION = {PROTOCOL_VERSION};\nexport const CORE_MAX_FRAME_BYTES = {MAX_FRAME_BYTES};\nexport const CORE_MAX_RESPONSE_BYTES = {MAX_RESPONSE_BYTES};\n"));
     for (name, schema) in definitions {
         output.push_str(&format!("export type {name} = {};\n", schema_to_ts(schema)));
     }

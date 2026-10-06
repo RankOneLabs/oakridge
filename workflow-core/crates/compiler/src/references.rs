@@ -1,11 +1,11 @@
 use crate::expressions::{trigger_schema, Context};
-use crate::{error, schema, scope};
+use crate::{error, schema, scope, DefinitionView};
 use workflow_model::*;
 pub(crate) fn optional_field_schema(record: &SchemaId, index: usize) -> SchemaId {
     SchemaId(format!("$optional/{record}/{index}"))
 }
 fn reference_schema(
-    bundle: &DefinitionBundle,
+    bundle: &impl DefinitionView,
     owner: &ScopeDefinition,
     root: &ReferenceRoot,
     context: &Context,
@@ -155,6 +155,27 @@ fn reference_schema(
                     "output observation schema mismatch",
                 ));
             }
+            if matches!(
+                root,
+                ReferenceRoot::OutputCollection { .. } | ReferenceRoot::OutputRevisions { .. }
+            ) {
+                if let SchemaShape::List {
+                    max_items: target_max,
+                    ..
+                } = schema(bundle, target)?
+                {
+                    if *target_max < bundle.limits().max_list_items {
+                        return Err(error(
+                            DomainErrorKind::IncompatiblePort,
+                            key.to_string(),
+                            format!(
+                                "list bound {target_max} is below output collection max_items {}",
+                                bundle.limits().max_list_items
+                            ),
+                        ));
+                    }
+                }
+            }
             target.clone()
         }
         ReferenceRoot::Children {
@@ -218,6 +239,25 @@ fn reference_schema(
                     "child observation schema mismatch",
                 ));
             }
+            if let SchemaShape::List {
+                max_items: target_max,
+                ..
+            } = schema(bundle, target)?
+            {
+                let source_max = child
+                    .collection
+                    .as_ref()
+                    .map_or(1, |collection| collection.max_items);
+                if *target_max < source_max {
+                    return Err(error(
+                        DomainErrorKind::IncompatiblePort,
+                        key.to_string(),
+                        format!(
+                            "list bound {target_max} is below collection max_items {source_max}"
+                        ),
+                    ));
+                }
+            }
             target.clone()
         }
         ReferenceRoot::Item => context.item.clone().ok_or_else(|| {
@@ -230,7 +270,7 @@ fn reference_schema(
     })
 }
 pub(crate) fn compile_reference(
-    bundle: &DefinitionBundle,
+    bundle: &impl DefinitionView,
     owner: &ScopeDefinition,
     root: &ReferenceRoot,
     path: &[String],
@@ -244,10 +284,12 @@ pub(crate) fn compile_reference(
         loop {
             match schema(bundle, &key)? {
                 SchemaShape::Optional { item } => {
-                    if !context
+                    if context
                         .guards
                         .iter()
-                        .any(|(r, p, v)| r == root && p == &consumed && v == "some")
+                        .rev()
+                        .find(|(r, p, _)| r == root && p == &consumed)
+                        .is_none_or(|(_, _, variant)| variant != "some")
                     {
                         return Err(error(
                             DomainErrorKind::UnguardedOptional,
@@ -338,4 +380,39 @@ pub(crate) fn compile_reference(
             selectors,
         },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn latest_guard_controls_optional_narrowing() {
+        let mut value: serde_json::Value =
+            serde_json::from_str(include_str!("../../../fixtures/bundles/minimal.json")).unwrap();
+        value["schemas"].as_array_mut().unwrap().extend([
+            json!({"key":"guarded_record","shape":{"kind":"record","fields":[{"key":"value","schema":"unit","required":true}],"dictionary":null}}),
+            json!({"key":"guarded_optional","shape":{"kind":"optional","item":"guarded_record"}}),
+        ]);
+        value["scopes"][0]["resources"][0]["schema"] = json!("guarded_optional");
+        let bundle: DefinitionBundle = serde_json::from_value(value).unwrap();
+        let owner = &bundle.scopes[0];
+        let root = ReferenceRoot::Resource {
+            key: SymbolKey("source".into()),
+        };
+        let context = Context {
+            guards: vec![
+                (root.clone(), vec![], "some".into()),
+                (root.clone(), vec![], "none".into()),
+            ],
+            item: None,
+        };
+        assert_eq!(
+            compile_reference(&bundle, owner, &root, &["value".into()], &context)
+                .unwrap_err()
+                .kind,
+            DomainErrorKind::UnguardedOptional
+        );
+    }
 }

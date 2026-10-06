@@ -43,6 +43,9 @@ pub enum DomainErrorKind {
     InvalidPayload,
     InvalidSnapshot,
     ResourceLimit,
+    LimitExceedsHost,
+    UnknownBundle,
+    MalformedBundle,
     UnknownConstruct,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]

@@ -47,9 +47,9 @@ export function installSelectedPublicationApi(app: Hono, deps: PublicationDepend
     const key = output.publication_trigger;
     const event = scope?.facts.find((fact) => fact.key === key);
     if (!key || !event) return c.json({ error: "publication trigger is not configured" }, 422);
-    const checked = await deps.core.request("validate_payload", { bundle: selected.source, available_operations: selected.source.operations, schema: output.schema, payload: body.body });
+    const checked = await deps.core.request("validate_payload", { bundle: selected.source, schema: output.schema, payload: body.body });
     if (!checked.ok || checked.value.kind !== "validated") return c.json({ error: "output body does not match its checked schema", detail: checked.ok ? "unexpected core response" : checked.error }, 422);
-    const trigger = await deps.core.request("validate_payload", { bundle: selected.source, available_operations: selected.source.operations, schema: event.payload_schema, payload: {} });
+    const trigger = await deps.core.request("validate_payload", { bundle: selected.source, schema: event.payload_schema, payload: {} });
     if (!trigger.ok || trigger.value.kind !== "validated") return c.json({ error: "publication trigger payload is invalid" }, 422);
     const slots = await deps.db.query<OutputSlotRecord>("SELECT * FROM authority.output_slot WHERE scope_id=$1 AND output_key=$2 AND collection_key=$3", [scope_id, output_key, body.collection_key]);
     const slot = slots[0];

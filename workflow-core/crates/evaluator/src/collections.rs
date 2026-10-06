@@ -40,7 +40,7 @@ pub fn materialize(
     template: &SymbolKey,
 ) -> CoreResult<Materialization> {
     snapshot_valid(program, snapshot)?;
-    let mut budget = program.source.limits.evaluation_budget;
+    let mut budget = program.derived.limits.evaluation_budget;
     materialize_with_budget(program, snapshot, template, &mut budget)
 }
 pub(crate) fn materialize_with_budget(
@@ -168,7 +168,7 @@ pub(crate) fn materialize_with_budget(
         };
         let input = evaluate_expression(&child.input, &mut member_context)?;
         let expected = program
-            .source
+            .derived
             .scopes
             .iter()
             .find(|s| s.key == source.scope)
@@ -179,7 +179,11 @@ pub(crate) fn materialize_with_budget(
                     "target scope missing",
                 )
             })?;
-        workflow_compiler::validate_checked_value(&program.source, &expected.input_schema, &input)?;
+        workflow_compiler::validate_checked_value(
+            &program.derived,
+            &expected.input_schema,
+            &input,
+        )?;
         children.push(MaterializedChild {
             key,
             scope: source.scope.clone(),

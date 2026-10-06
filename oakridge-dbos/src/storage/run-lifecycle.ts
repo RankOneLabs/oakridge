@@ -39,7 +39,7 @@ export async function cancelRun(db: TransactionalSqlExecutor, command: CancelRun
         const schema = bundle.schemas.find((schema) => schema.key === trigger.payload_schema);
         const provided = command.payloads?.find((item) => item.scope_id === scope.id);
         const payload = provided ? provided.payload : schema?.shape.kind === "string" ? command.reason : {};
-        const checked = await core.request("validate_payload", { bundle, available_operations: bundle.operations, schema: trigger.payload_schema, payload });
+        const checked = await core.request("validate_payload", { bundle, schema: trigger.payload_schema, payload });
         if (!checked.ok || checked.value.kind !== "validated") throw new InvalidCancellation(`invalid cancellation payload for ${scope.scope_key}`);
         const outcome = await mutations.decide({ run_id: command.run_id as RunId, scope_id: scope.id, ingress_id: `cancel:${scope.id}`,
           trigger: { id: `cancel:${scope.id}`, key, payload: checked.value.value }, operator_version: null });

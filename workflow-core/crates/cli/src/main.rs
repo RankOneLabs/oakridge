@@ -20,6 +20,31 @@ fn main() -> io::Result<()> {
         );
         return Ok(());
     }
+    let mut host = workflow_model::ResourceLimits {
+        max_list_items: 10_000,
+        max_depth: 128,
+        evaluation_budget: 1_000_000,
+    };
+    let mut arguments = std::env::args().skip(1);
+    while let Some(flag) = arguments.next() {
+        let slot = match flag.as_str() {
+            "--max-list-items" => &mut host.max_list_items,
+            "--max-depth" => &mut host.max_depth,
+            "--evaluation-budget" => &mut host.evaluation_budget,
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("unknown argument {flag}"),
+                ))
+            }
+        };
+        *slot = arguments
+            .next()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, format!("missing {flag}")))?
+            .parse()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, format!("invalid {flag}")))?;
+    }
+    let mut state = protocol::CliState::new(host);
     let stdin = io::stdin();
     let mut input = stdin.lock();
     let mut stdout = io::stdout().lock();
@@ -31,11 +56,20 @@ fn main() -> io::Result<()> {
             if !frame.is_empty() || oversized {
                 let response = Response {
                     version: PROTOCOL_VERSION,
-                    request_id: String::new(),
+                    request_id: protocol::request_id_prefix(&frame),
                     truncated: false,
                     result: ResponseResult::TransportError(TransportError {
-                        kind: TransportErrorKind::MalformedFrame,
-                        detail: "unterminated request frame".into(),
+                        kind: if oversized {
+                            TransportErrorKind::OversizedPayload
+                        } else {
+                            TransportErrorKind::MalformedFrame
+                        },
+                        detail: if oversized {
+                            "request exceeds maximum bytes"
+                        } else {
+                            "unterminated request frame"
+                        }
+                        .into(),
                     }),
                 };
                 stdout.write_all(&protocol::bounded_response(response))?;
@@ -48,7 +82,7 @@ fn main() -> io::Result<()> {
                 let response = if oversized {
                     Response {
                         version: PROTOCOL_VERSION,
-                        request_id: String::new(),
+                        request_id: protocol::request_id_prefix(&frame),
                         truncated: false,
                         result: ResponseResult::TransportError(TransportError {
                             kind: TransportErrorKind::OversizedPayload,
@@ -56,7 +90,7 @@ fn main() -> io::Result<()> {
                         }),
                     }
                 } else {
-                    protocol::handle_frame(&frame)
+                    protocol::handle_frame(&mut state, &frame)
                 };
                 stdout.write_all(&protocol::bounded_response(response))?;
                 stdout.flush()?;
@@ -64,7 +98,6 @@ fn main() -> io::Result<()> {
                 oversized = false;
             } else if !oversized {
                 if frame.len() == MAX_FRAME_BYTES {
-                    frame.clear();
                     oversized = true;
                 } else {
                     frame.push(*byte);

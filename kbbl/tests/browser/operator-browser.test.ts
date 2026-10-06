@@ -2,8 +2,8 @@ import { expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { chromium, type Browser } from "@playwright/test";
-import type { ScopeCommandRequest } from "../src/http/scope-commands";
-import { harness } from "./scope-command-fixture";
+import type { ScopeCommandRequest } from "../../../oakridge-dbos/src/http/scope-commands";
+import { harness } from "../../../oakridge-dbos/tests/scope-command-fixture";
 
 // Real Chromium, the production React surface, and the installed Hono API.
 // The shared fixture supplies a deterministic database/core boundary.
@@ -12,7 +12,7 @@ test("browser isolates drafts, submits observed result targets, and recovers a l
   const built = await Bun.build({ entrypoints: [resolve(import.meta.dir, "operator-browser-entry.tsx")], target: "browser",
     plugins: [{ name: "single-react", setup(build) {
       build.onResolve({ filter: /^(react|react-dom|@tanstack\/react-query)(\/|$)/ }, (args) =>
-        ({ path: Bun.resolveSync(args.path, resolve(import.meta.dir, "../../kbbl")) }));
+        ({ path: Bun.resolveSync(args.path, resolve(import.meta.dir, "../..")) }));
     } }],
   });
   if (!built.success) throw new AggregateError(built.logs, "Browser fixture build failed");

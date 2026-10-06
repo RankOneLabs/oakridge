@@ -14,7 +14,8 @@
     "test:acp:codex:real": "KBBL_ACP_REAL_AGENT=codex bun test core/acp/real-agent.smoke.test.ts",
     "test:acp:claude:real": "KBBL_ACP_REAL_AGENT=claude-code bun test core/acp/real-agent.smoke.test.ts",
     "test:pwa": "cd core/pwa && vitest run",
-    "test:all": "bun run test && bun run test:pwa"
+    "test:browser": "bun test ./tests/browser",
+    "test:all": "bun run test && bun run test:pwa && bun run test:browser"
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "0.76.0",
@@ -34,6 +35,7 @@
     "zustand": "^5.0.13"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "claude-code-cli-acp": "0.1.1",
     "@tailwindcss/vite": "^4.0.0",
     "@testing-library/react": "^16.0.0",

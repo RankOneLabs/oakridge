@@ -12,6 +12,40 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use workflow_model::*;
 
+pub trait SchemaLookup {
+    fn schemas(&self) -> &[Schema];
+    fn limits(&self) -> &ResourceLimits;
+}
+pub trait DefinitionView: SchemaLookup {
+    fn scopes(&self) -> &[ScopeDefinition];
+}
+impl SchemaLookup for DefinitionBundle {
+    fn schemas(&self) -> &[Schema] {
+        &self.schemas
+    }
+    fn limits(&self) -> &ResourceLimits {
+        &self.limits
+    }
+}
+impl DefinitionView for DefinitionBundle {
+    fn scopes(&self) -> &[ScopeDefinition] {
+        &self.scopes
+    }
+}
+impl SchemaLookup for CheckedDefinition {
+    fn schemas(&self) -> &[Schema] {
+        &self.schemas
+    }
+    fn limits(&self) -> &ResourceLimits {
+        &self.limits
+    }
+}
+impl DefinitionView for CheckedDefinition {
+    fn scopes(&self) -> &[ScopeDefinition] {
+        &self.scopes
+    }
+}
+
 pub(crate) fn error(
     kind: DomainErrorKind,
     entity: impl Into<String>,
@@ -36,11 +70,11 @@ pub(crate) fn unique<'a>(names: impl IntoIterator<Item = &'a str>, entity: &str)
     Ok(())
 }
 pub(crate) fn schema<'a>(
-    bundle: &'a DefinitionBundle,
+    bundle: &'a impl SchemaLookup,
     key: &SchemaId,
 ) -> CoreResult<&'a SchemaShape> {
     bundle
-        .schemas
+        .schemas()
         .iter()
         .find(|s| s.key == *key)
         .map(|s| &s.shape)
@@ -53,16 +87,20 @@ pub(crate) fn schema<'a>(
         })
 }
 pub(crate) fn scope<'a>(
-    bundle: &'a DefinitionBundle,
+    bundle: &'a impl DefinitionView,
     key: &ScopeKey,
 ) -> CoreResult<&'a ScopeDefinition> {
-    bundle.scopes.iter().find(|s| s.key == *key).ok_or_else(|| {
-        error(
-            DomainErrorKind::MissingSymbol,
-            key.to_string(),
-            "scope is not declared",
-        )
-    })
+    bundle
+        .scopes()
+        .iter()
+        .find(|s| s.key == *key)
+        .ok_or_else(|| {
+            error(
+                DomainErrorKind::MissingSymbol,
+                key.to_string(),
+                "scope is not declared",
+            )
+        })
 }
 pub(crate) fn variants(bundle: &DefinitionBundle, key: &SchemaId) -> CoreResult<Vec<String>> {
     match schema(bundle, key)? {
@@ -186,17 +224,54 @@ pub fn compile(
         language_version: 1,
         evaluator_version: 1,
         digest,
-        source: bundle,
+        derived: CheckedDefinition {
+            schemas: bundle.schemas,
+            scopes: bundle.scopes,
+            limits: bundle.limits,
+        },
         scopes,
         analysis: analyses,
     })
+}
+pub fn compile_with_host(
+    source: &DefinitionBundle,
+    host: &ResourceLimits,
+) -> CoreResult<CheckedProgram> {
+    for (name, requested, allowed) in [
+        (
+            "max_list_items",
+            source.limits.max_list_items,
+            host.max_list_items,
+        ),
+        ("max_depth", source.limits.max_depth, host.max_depth),
+        (
+            "evaluation_budget",
+            source.limits.evaluation_budget,
+            host.evaluation_budget,
+        ),
+    ] {
+        if requested > allowed {
+            return Err(error(
+                DomainErrorKind::LimitExceedsHost,
+                source.key.to_string(),
+                format!("{name}: requested {requested}, allowed {allowed}"),
+            ));
+        }
+    }
+    compile(source, &source.operations)
 }
 
 /// Domain JSON decoding detects duplicate keys before serde can discard them.
 pub fn decode_bundle(bytes: &[u8]) -> CoreResult<DefinitionBundle> {
     let value = decode_unique_json(bytes)?;
-    serde_json::from_value(value)
-        .map_err(|e| error(DomainErrorKind::UnknownConstruct, "bundle", e.to_string()))
+    let encoded = serde_json::to_vec(&value)
+        .map_err(|e| error(DomainErrorKind::MalformedBundle, "bundle", e.to_string()))?;
+    let mut deserializer = serde_json::Deserializer::from_slice(&encoded);
+    serde_path_to_error::deserialize(&mut deserializer).map_err(|e| {
+        let mut error = error(DomainErrorKind::MalformedBundle, "bundle", e.to_string());
+        error.path = e.path().to_string().into_boxed_str();
+        error
+    })
 }
 pub fn decode_unique_json(bytes: &[u8]) -> CoreResult<serde_json::Value> {
     use serde::de::{Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
@@ -273,7 +348,7 @@ pub fn decode_unique_json(bytes: &[u8]) -> CoreResult<serde_json::Value> {
 
 /// Validate aggregate and revision roots against the owner's declared ports.
 pub fn validate_observation_root(
-    bundle: &DefinitionBundle,
+    bundle: &impl DefinitionView,
     owner: &ScopeDefinition,
     root: &ReferenceRoot,
 ) -> CoreResult<()> {

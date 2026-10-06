@@ -19,7 +19,7 @@ async function withSelection(input: SelectionInput, operation: (fixture: Selecte
     const core = started_core.value;
     try {
       const mutations = createMutationService(db, core);
-      const run = await mutations.startRun({ ...input, available_operations: input.bundle.operations });
+      const run = await mutations.startRun({ ...input });
       if (!run.ok) throw new Error(JSON.stringify(run.error));
       const result = await mutations.decide({ run_id: run.value.run_id, scope_id: run.value.root_scope_id, ingress_id: "begin", trigger: { id: "begin", key: "begin", payload: unit }, operator_version: null });
       if (!result.ok || result.value.kind !== "Committed") throw new Error(JSON.stringify(result));
@@ -60,7 +60,7 @@ test("production replay sends persisted HTTP bytes despite changed launch render
     await withSelection({ bundle: await sessionBundle(), input: { runtime: "claude-code", rendered_prompt: "original selected prompt", workdir: "/tmp", session_name: "replay",
       session_identity: { run_id: "selected-run", stage_instance_id: "selected-scope", unit_id: "author" }, worktree: { branchName: "selected", worktreeSubdir: "selected", baseRef: "a".repeat(40) } } }, async ({ db, core, invocation }) => {
       const provider = createEffectProvider({ db, core, kbbl_base_url: server.url.href });
-      const changed: StableInvocation = { ...invocation, selection: { ...invocation.selection, prompt_content: "new adapter rendering",
+      const changed: StableInvocation = { ...invocation, selection: { ...invocation.selection, prompt_key: "new_adapter_rendering",
         input: { schema: "launch", data: { kind: "record", fields: [], dictionary: [] } } } };
       expect(await provider.start(changed)).toMatchObject({ kind: "acknowledged" });
       expect(await provider.stop(changed, null)).toEqual({ kind: "acknowledged", value: { stopped: true } });

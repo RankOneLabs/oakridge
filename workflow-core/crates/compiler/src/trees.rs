@@ -328,16 +328,11 @@ pub(crate) fn compile_tree(
                     })?;
                 let input = expr(&action.input)?;
                 compatible(bundle, &action.input_schema, &input.schema, &id.0)?;
-                let prompt_content = action
-                    .prompt
-                    .as_ref()
-                    .and_then(|k| bundle.prompts.iter().find(|p| p.key == *k))
-                    .map(|p| p.content.clone());
                 checked_actions.push(CheckedAction {
                     selection: selection.clone(),
                     definition: action.into(),
                     input,
-                    prompt_content,
+                    prompt_key: action.prompt.clone(),
                 });
             }
             let outcome = outcome

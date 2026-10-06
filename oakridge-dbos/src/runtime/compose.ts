@@ -55,7 +55,8 @@ function isCancellationPayloads(value: unknown): value is readonly ScopeCancella
 export async function createProductionComposition(options: ProductionOptions): Promise<ProductionComposition> {
   const access = selectControlPlaneAccess({ host: options.host, token: options.control_token, allow_insecure_non_loopback: process.env.ALLOW_INSECURE_NON_LOOPBACK_CONTROL === "1" });
   if (access.kind === "refused") throw new Error(access.detail);
-  const started = CoreClient.start({ binary: options.core_binary, deadlineMs: 10_000 });
+  const started = CoreClient.start({ binary: options.core_binary,
+    args: ["--max-list-items", "10000", "--max-depth", "128", "--evaluation-budget", "1000000"], deadlineMs: 10_000 });
   if (!started.ok) throw new Error(`workflow-cli could not start: ${started.error.detail.detail}`);
   const core = started.value;
   const db = PgPostgresExecutor.connect(options.database_url);
@@ -76,7 +77,7 @@ export async function createProductionComposition(options: ProductionOptions): P
     let body: unknown;
     try { body = await context.req.json(); } catch { return context.json({ error: "invalid JSON" }, 400); }
     if (!body || typeof body !== "object" || !("bundle" in body) || !isBundle(body.bundle) || !("input" in body)) return context.json({ error: "invalid run request" }, 400);
-    const result = await mutations.startRun({ bundle: body.bundle, available_operations: body.bundle.operations, input: body.input });
+    const result = await mutations.startRun({ bundle: body.bundle, input: body.input });
     if (!result.ok) return context.json({ error: result.error }, 422);
     await ensureRunWorkflow(result.value.run_id);
     return context.json(result.value, 201);
