@@ -7,7 +7,7 @@ import { matchesStoredSchema } from "../src/storage/storage-validator";
 import { commitDecision, type CommitRequest } from "../src/storage/commit";
 import { createMutationService } from "../src/storage/mutation-service";
 import type { CoreClient } from "../src/core-client/client";
-import type { CheckedValue, DefinitionBundle } from "../src/core-client/generated-contracts";
+import { CORE_MAX_FRAME_BYTES, type CheckedValue, type DefinitionBundle } from "../src/core-client/generated-contracts";
 import type { PoolId, RunId, ScopeId } from "../src/storage/schema-records";
 
 test("a fault after state, output and reservation writes rolls the entire decision back", async () => {
@@ -52,9 +52,12 @@ test("a fault after state, output and reservation writes rolls the entire decisi
     const invalid_output = await commitDecision(db, { ...request, outputs: request.outputs.map((output) => ({ ...output, body: { schema: "unit", data: { kind: "integer", value: 1 } } })) }, source);
     expect(invalid_output).toMatchObject({ ok: true, value: { kind: "Rejected", detail: "output schema mismatch" } });
     if (request.decision.kind !== "apply") throw new Error("fixture requires an apply decision");
-    const huge: CheckedValue = { schema: "unit", data: { kind: "record", fields: [], dictionary: [{ key: "payload", value: { schema: "text", data: { kind: "string", value: "x".repeat(1_048_576) } } }] } };
+    // Schema-valid (each entry within the fixture's 2,000,000-char text bound) yet larger than one evaluate frame.
+    const entry_chars = 1_000_000;
+    const huge: CheckedValue = { schema: "unit", data: { kind: "record", fields: [], dictionary: Array.from({ length: Math.ceil(CORE_MAX_FRAME_BYTES / entry_chars) + 1 },
+      (_, index) => ({ key: `payload-${String(index).padStart(3, "0")}`, value: { schema: "text", data: { kind: "string", value: "x".repeat(entry_chars) } } })) } };
     const oversized = await commitDecision(db, { ...request, decision: { ...request.decision, mutations: [{ kind: "set_state", value: huge }], invocations: [], targets: [] } }, source);
-    expect(oversized).toMatchObject({ ok: true, value: { kind: "snapshot_too_large", scope: "scope", limit: 1_048_576, bytes: expect.any(Number), largest_roots: expect.any(Array) } });
+    expect(oversized).toMatchObject({ ok: true, value: { kind: "snapshot_too_large", scope: "scope", limit: CORE_MAX_FRAME_BYTES, bytes: expect.any(Number), largest_roots: expect.any(Array) } });
     const aborted = await db.query<{ count: string }>("SELECT count(*)::text AS count FROM authority.ingress_receipt", []);
     expect(aborted[0]?.count).toBe("0");
     const forced = (code: string, constraint?: string): TransactionalSqlExecutor => ({ query: db.query.bind(db), transaction: async () => { throw { code, constraint }; } });

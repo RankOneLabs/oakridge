@@ -1,4 +1,4 @@
-import { CORE_MAX_RESPONSE_BYTES, CORE_PROTOCOL_VERSION } from "../src/core-client/generated-contracts";
+import { CORE_MAX_FRAME_BYTES, CORE_MAX_RESPONSE_BYTES, CORE_PROTOCOL_VERSION } from "../src/core-client/generated-contracts";
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -116,12 +116,12 @@ test("CLI host ceilings reject a larger requested budget", () => {
   expect(response).toMatchObject({ request_id: "host", result: { status: "domain_error", value: { kind: "limit_exceeds_host" } } });
 });
 test("oversized frames echo the original request ID", () => {
-  const response = rawFrame(JSON.stringify({ version: CORE_PROTOCOL_VERSION, request_id: "oversized-origin", operation: "compile", input: { bundle }, padding: "x".repeat(1_048_576) }));
+  const response = rawFrame(JSON.stringify({ version: CORE_PROTOCOL_VERSION, request_id: "oversized-origin", operation: "compile", input: { bundle }, padding: "x".repeat(CORE_MAX_FRAME_BYTES) }));
   expect(response).toMatchObject({ request_id: "oversized-origin", result: { value: { kind: "oversized_payload" } } });
 });
 test("malformed frame has its own transport kind", () => expect(rawFrame("{").result.value.kind).toBe("malformed_frame"));
 test("unsupported version has its own transport kind", () => expect(rawFrame(JSON.stringify({ version: CORE_PROTOCOL_VERSION + 1, request_id: "r", operation: "compile" })).result.value.kind).toBe("unsupported_version"));
-test("oversized payload has its own transport kind", () => expect(rawFrame("x".repeat(1_048_577)).result.value.kind).toBe("oversized_payload"));
+test("oversized payload has its own transport kind", () => expect(rawFrame("x".repeat(CORE_MAX_FRAME_BYTES + 1)).result.value.kind).toBe("oversized_payload"));
 test("unknown operation has its own transport kind", () => expect(rawFrame(JSON.stringify({ version: CORE_PROTOCOL_VERSION, request_id: "r", operation: "missing", input: {} })).result.value.kind).toBe("unknown_operation"));
 test("duplicate JSON keys are rejected before overwrite", () => {
   const frame = JSON.stringify({ version: CORE_PROTOCOL_VERSION, request_id: "duplicate", operation: "compile", input: { bundle } }).replace('"language_version":1', '"language_version":1,"language_version":2');
@@ -132,9 +132,10 @@ test("compile response echoes the request ID and omits the checked source", () =
   const response = rawFrame(JSON.stringify({ version: CORE_PROTOCOL_VERSION, request_id: "large", operation: "compile", input: { bundle: source } }));
   expect(response).toMatchObject({ request_id: "large", truncated: false, result: { status: "ok", value: { kind: "compiled", value: { digest: expect.any(String), scopes: expect.any(Array) } } } });
 });
-async function withChild(scriptBody: string, run: (client: CoreClient) => Promise<void>, deadlineMs = 1000, queue = 64): Promise<void> {
+async function withChild(scriptBody: string, run: (client: CoreClient) => Promise<void>, deadlineMs = 1000, queue = 64, files: Readonly<Record<string, string>> = {}): Promise<void> {
   const directory = mkdtempSync(resolve(tmpdir(), "core-protocol-")); const script = resolve(directory, "child.sh");
-  writeFileSync(script, `#!/bin/sh\n${scriptBody}\n`); chmodSync(script, 0o700);
+  for (const [name, content] of Object.entries(files)) writeFileSync(resolve(directory, name), content);
+  writeFileSync(script, `#!/bin/sh\ncd "$(dirname "$0")"\n${scriptBody}\n`); chmodSync(script, 0o700);
   const client = startClient(script, deadlineMs, queue);
   try { await run(client); } finally { client.close(); rmSync(directory, { recursive: true, force: true }); }
 }
@@ -149,18 +150,19 @@ function stringResponseAtSize(bytes: number): string {
     result: { status: "ok", value: { kind: "validated", value: { schema: "text", data: { kind: "string", value } } } } });
   return response("x".repeat(bytes - new TextEncoder().encode(response("")).length));
 }
+// A boundary-sized response is streamed from a file: the shell would spend seconds parsing it as a literal.
 test("response at the configured response boundary is accepted", () => withChild(
-  `IFS= read -r line\nprintf '%s\\n' '${stringResponseAtSize(CORE_MAX_RESPONSE_BYTES)}'`, async (client) => {
+  "IFS= read -r line\ncat response.json", async (client) => {
     expect((await client.request("compile", { bundle })).ok).toBe(true);
-  }));
+  }, 10_000, 64, { "response.json": `${stringResponseAtSize(CORE_MAX_RESPONSE_BYTES)}\n` }));
 test("response above configured response quarantines the child and fails all pending callers", () => withChild(
-  `IFS= read -r line\nprintf '%s\\n' '${stringResponseAtSize(CORE_MAX_RESPONSE_BYTES + 1)}'`, async (client) => {
+  "IFS= read -r line\ncat response.json", async (client) => {
     const responses = await Promise.all([client.request("compile", { bundle }),
       client.request("compile", { bundle })]);
     for (const response of responses) expect(response).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "oversized_payload" } } });
     expect(await client.request("compile", { bundle }))
       .toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "terminated_child" } } });
-  }));
+  }, 10_000, 64, { "response.json": `${stringResponseAtSize(CORE_MAX_RESPONSE_BYTES + 1)}\n` }));
 test("safe integer endpoints round trip exactly through the real binary", async () => {
   const client = startClient();
   const source: DefinitionBundle = { ...bundle, schemas: [...bundle.schemas,

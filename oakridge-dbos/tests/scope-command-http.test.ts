@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { MAX_PUBLICATION_VALUE_BYTES } from "../src/http/publication";
 import { harness, unit } from "./scope-command-fixture";
 
 test("HTTP rejects malformed commands with 400", async () => {
@@ -24,7 +25,7 @@ test("publication refuses an oversized value before staging", async () => {
   const response = await api.app.request("/api/runs/run-1/scopes/scope-1/publications", { method: "POST",
     headers: { "content-type": "application/json" }, body: JSON.stringify({ request_id: "oversized", expected_scope_version: 4,
       trigger: { id: "oversized", key: "publish", payload: unit }, output: { scope_id: "scope-1", output_key: "report",
-        collection_key: "", body: { schema: "text", data: { kind: "string", value: "x".repeat(1_048_576) } },
+        collection_key: "", body: { schema: "text", data: { kind: "string", value: "x".repeat(MAX_PUBLICATION_VALUE_BYTES) } },
         predecessor_id: null, expected_slot_version: null, execution_id: null } }) });
   expect({ status: response.status, kind: (await response.json()).kind }).toEqual({ status: 413, kind: "oversized_payload" });
 });
