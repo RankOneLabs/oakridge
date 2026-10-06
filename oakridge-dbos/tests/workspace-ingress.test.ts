@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
+// PostgreSQL durability across fresh clients is covered by scope-command-postgres.test.ts.
 import { harness } from "./scope-command-fixture";
 
-test("supported workspace command is durably accepted and replays its receipt", async () => {
+test("supported workspace command returns an accepted receipt and replays without reevaluation", async () => {
   const api = await harness();
   const first = await api.submit();
   const receipt = await first.json();

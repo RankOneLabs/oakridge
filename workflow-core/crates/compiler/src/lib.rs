@@ -9,7 +9,7 @@ mod scopes;
 mod trees;
 pub use schemas::{check_value, validate_checked_value};
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 use workflow_model::*;
 
 pub(crate) fn error(
@@ -20,7 +20,7 @@ pub(crate) fn error(
     DomainError::new(kind, entity, detail)
 }
 pub(crate) fn unique<'a>(names: impl IntoIterator<Item = &'a str>, entity: &str) -> CoreResult<()> {
-    let mut seen = HashSet::new();
+    let mut seen = BTreeSet::new();
     for name in names {
         if name.is_empty() {
             return Err(error(

@@ -1,13 +1,13 @@
 use crate::expressions::{boolean_schema, compatible, compile_expression, Context};
 use crate::{check_value, error, unique, variants};
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 use workflow_model::*;
 pub(crate) fn compile_tree(
     bundle: &DefinitionBundle,
     owner: &ScopeDefinition,
     tree: &DecisionTree,
     context: &Context,
-    ids: &mut HashSet<NodeId>,
+    ids: &mut BTreeSet<NodeId>,
     depth: usize,
 ) -> CoreResult<CheckedTree> {
     if depth > bundle.limits.max_depth {
@@ -112,7 +112,7 @@ pub(crate) fn compile_tree(
             actions,
             outcome,
         } => {
-            let mut writes = HashSet::new();
+            let mut writes = BTreeSet::new();
             let mut checked = Vec::new();
             for mutation in mutations {
                 let (field, value) = match mutation {
@@ -293,7 +293,7 @@ pub(crate) fn compile_tree(
                 }
                 checked.push(value);
             }
-            let mut launches = HashSet::new();
+            let mut launches = BTreeSet::new();
             let mut checked_actions = Vec::new();
             for selection in actions {
                 let worker = owner

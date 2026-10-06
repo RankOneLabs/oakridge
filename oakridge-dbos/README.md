@@ -11,9 +11,7 @@ run and scope identities; accepted writes return durable receipts.
 From the repository root:
 
 ```bash
-cargo build --locked --manifest-path workflow-core/Cargo.toml -p workflow-cli
-bun run --filter oakridge-dbos test:unit
-bun run typecheck
+bun run --filter oakridge-dbos verify
 ```
 
 The integration tests require `OAKRIDGE_TEST_DATABASE_URL` with create/drop

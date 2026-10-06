@@ -1,5 +1,5 @@
 use crate::{error, schema, scope, unique, variants};
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 use workflow_model::*;
 pub fn validate_bundle(
     bundle: &DefinitionBundle,
@@ -386,7 +386,7 @@ pub fn validate_bundle(
                 }
             }
         }
-        let mut completed = HashSet::new();
+        let mut completed = BTreeSet::new();
         while completed.len() < owner.children.len() {
             let ready: Vec<_> = owner
                 .children
@@ -412,8 +412,8 @@ pub fn validate_bundle(
     fn visit(
         bundle: &DefinitionBundle,
         key: &ScopeKey,
-        active: &mut HashSet<ScopeKey>,
-        done: &mut HashSet<ScopeKey>,
+        active: &mut BTreeSet<ScopeKey>,
+        done: &mut BTreeSet<ScopeKey>,
     ) -> CoreResult<()> {
         if done.contains(key) {
             return Ok(());
@@ -439,8 +439,8 @@ pub fn validate_bundle(
         done.insert(key.clone());
         Ok(())
     }
-    let mut done = HashSet::new();
-    visit(bundle, &bundle.root, &mut HashSet::new(), &mut done)?;
+    let mut done = BTreeSet::new();
+    visit(bundle, &bundle.root, &mut BTreeSet::new(), &mut done)?;
     if done.len() != bundle.scopes.len() {
         return Err(error(
             DomainErrorKind::UnreachableDeclaration,

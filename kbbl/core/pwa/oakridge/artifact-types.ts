@@ -42,7 +42,6 @@ export interface ArtifactTypeDescriptor {
 
 export interface ArtifactDetail {
   review_error?: { readonly detail: string } | null;
-  review_context?: import("./review-command-types").OperatorArtifactReviewContext | null;
   id: string;
   type_id: string;
   component_id: string | null;

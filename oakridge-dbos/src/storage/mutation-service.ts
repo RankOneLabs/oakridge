@@ -1,6 +1,7 @@
+import type { CoreResult } from "../core-client/transport-errors";
 import { stagePublications } from "./stage-publications";
 import { prepareChildCancellations } from "./child-cancellation";
-import type { CheckedProgram, DecisionOutcome, DefinitionBundle, OperationManifest, Trigger } from "../core-client/generated-contracts";
+import type { CheckedProgram, DecisionOutcome, DefinitionBundle, OperationManifest, Trigger, Output } from "../core-client/generated-contracts";
 import type { CoreClient } from "../core-client/client";
 import { commitDecision, type CommitRequest, type CommitResult, type OutputPublication, type Result } from "./commit";
 import { requestDigest, findReceipt, type IngressIdentity } from "./receipts";
@@ -30,8 +31,12 @@ export async function compileBundle(core: CoreClient, request: CompileRequest): 
   if (response.value.kind !== "compiled") return error("compile", request.bundle.key, "core returned a non-compiled response");
   return { ok: true, value: { program: response.value.value } };
 }
+/** The sole evaluator call; callers retain the core transport/domain error distinction. */
+export function requestEvaluation(core: CoreClient, input: EvaluationInput): Promise<CoreResult<Output>> {
+  return core.request("evaluate", { bundle: input.bundle, available_operations: [...input.available_operations], snapshot: input.source.snapshot });
+}
 export async function evaluateSnapshot(core: CoreClient, input: EvaluationInput): Promise<Result<EvaluationResult>> {
-  const response = await core.request("evaluate", { bundle: input.bundle, available_operations: [...input.available_operations], snapshot: input.source.snapshot });
+  const response = await requestEvaluation(core, input);
   if (!response.ok) return error("evaluate", input.source.owner.id, JSON.stringify(response.error));
   if (response.value.kind !== "evaluated") return error("evaluate", input.source.owner.id, "core returned a non-evaluated response");
   return { ok: true, value: { decision: response.value.value } };
@@ -114,3 +119,7 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
     },
   };
 }
+
+// Run cancellation/deletion and observed results share the mutation entry.
+export { cancelRun, deleteRun, type ScopeCancellationPayload } from "./run-lifecycle";
+export { persistEffectResult } from "./effect-results";

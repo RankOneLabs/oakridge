@@ -216,19 +216,6 @@ export type ParkedGate = OperatorFields<Operator.OperatorParkedGate,
   repository_key?: RepositoryKey | null;
 };
 
-/**
- * The operator confirming a cohort's pull request merged, when Oakridge cannot
- * see the repository for itself. Mirrors the `operator_confirmation` half of
- * `POST /cohorts/:cohortId/pull_request` in oakridge-dbos.
- */
-export type CohortPullRequestOutcomeKind =
-  | "completed"
-  | "already_completed"
-  | "waiting"
-  | "ignored_stale";
-
-export interface CohortPullRequestResponse { state: string }
-
 export type CohortLifecycle = CoreStatus;
 
 export interface CohortCompletion {

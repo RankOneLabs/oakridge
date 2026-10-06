@@ -6,9 +6,7 @@ import { selectMutationIdentity, type MutationInput, type MutationService } from
 import { findReceipt } from "../storage/receipts";
 import type { RunId, ScopeId } from "../storage/schema-records";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
-import { readScopeView } from "../projections/scope-view";
-import { readRunView } from "../projections/run-view";
-import { readInbox } from "../projections/inbox";
+import { readScopeView, readRunView, readInbox } from "../storage/projection-reader";
 import { readPinnedDefinition } from "./definition-inspection";
 import { readScopeDiagnostics } from "./diagnostics";
 import { parsePublication } from "./publication";

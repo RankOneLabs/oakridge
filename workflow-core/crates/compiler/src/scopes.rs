@@ -1,7 +1,7 @@
 use crate::expressions::{compatible, compile_expression, Context};
 use crate::trees::compile_tree;
 use crate::{check_value, error, schema, scope};
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 use workflow_model::*;
 pub fn compile_scope(
     bundle: &DefinitionBundle,
@@ -31,7 +31,7 @@ pub fn compile_scope(
         owner,
         &owner.tree,
         &Context::default(),
-        &mut HashSet::new(),
+        &mut BTreeSet::new(),
         0,
     )?;
     let mut children = Vec::new();

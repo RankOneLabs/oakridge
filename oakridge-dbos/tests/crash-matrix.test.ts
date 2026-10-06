@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import type { DefinitionBundle } from "../src/core-client/generated-contracts";
 import { CoreClient } from "../src/core-client/client";
 import { createMutationService } from "../src/storage/mutation-service";
-import { cancelRun, deleteRun } from "../src/effects/reconcile";
+import { cancelRun, deleteRun } from "../src/storage/mutation-service";
 import { claimIntents, pendingCleanupCount, type EffectPayload } from "../src/effects/leases";
 import { dispatchClaim } from "../src/effects/dispatch";
 import type { EffectProvider } from "../src/effects/provider";
@@ -34,7 +34,7 @@ for (const cut of cuts) {
         import { PgPostgresExecutor } from ${JSON.stringify(sql_url)};
         import { CoreClient } from ${JSON.stringify(new URL("../src/core-client/client.ts", import.meta.url).href)};
         import { createMutationService } from ${JSON.stringify(new URL("../src/storage/mutation-service.ts", import.meta.url).href)};
-        import { cancelRun } from ${JSON.stringify(new URL("../src/effects/reconcile.ts", import.meta.url).href)};
+        import { cancelRun } from ${JSON.stringify(new URL("../src/storage/mutation-service.ts", import.meta.url).href)};
         import { claimIntents } from ${JSON.stringify(new URL("../src/effects/leases.ts", import.meta.url).href)};
         import { dispatchClaim } from ${JSON.stringify(new URL("../src/effects/dispatch.ts", import.meta.url).href)};
         const real=PgPostgresExecutor.connect(process.env.OAKRIDGE_CRASH_URL);

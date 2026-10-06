@@ -1,6 +1,6 @@
 use crate::{error, schema, unique};
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 use workflow_model::*;
 fn dependencies(shape: &SchemaShape) -> Vec<&SchemaId> {
     match shape {
@@ -18,8 +18,8 @@ pub fn validate_schemas(bundle: &DefinitionBundle) -> CoreResult<()> {
     fn visit(
         bundle: &DefinitionBundle,
         key: &SchemaId,
-        active: &mut HashSet<SchemaId>,
-        done: &mut HashSet<SchemaId>,
+        active: &mut BTreeSet<SchemaId>,
+        done: &mut BTreeSet<SchemaId>,
     ) -> CoreResult<()> {
         if done.contains(key) {
             return Ok(());
@@ -100,9 +100,9 @@ pub fn validate_schemas(bundle: &DefinitionBundle) -> CoreResult<()> {
         done.insert(key.clone());
         Ok(())
     }
-    let mut done = HashSet::new();
+    let mut done = BTreeSet::new();
     for item in &bundle.schemas {
-        visit(bundle, &item.key, &mut HashSet::new(), &mut done)?;
+        visit(bundle, &item.key, &mut BTreeSet::new(), &mut done)?;
     }
     Ok(())
 }

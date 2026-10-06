@@ -7,7 +7,8 @@
     "start": "bun run src/main.ts",
     "test": "bun run test:unit",
     "test:unit": "find src tests -name '*.test.ts' -print0 | xargs -0 -n1 bun test",
-    "typecheck": "bunx tsc --noEmit -p tsconfig.json"
+    "typecheck": "bunx tsc --noEmit -p tsconfig.json",
+    "verify": "bun run ../scripts/verify-scope-stack.ts"
   },
   "dependencies": {
     "@dbos-inc/dbos-sdk": "4.25.14",

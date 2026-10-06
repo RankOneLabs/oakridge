@@ -74,6 +74,24 @@ test("real command commit and terminal retry share one receipt and transition", 
   });
 });
 
+test("accepted workspace receipt survives closed database and CLI clients", async () => {
+  await withAuthority(async (authority) => {
+    const first = await submit(api(authority), authority);
+    const receipt = await first.json();
+    expect(first.status).toBe(202);
+    await authority.closeReaders();
+    const db = PgPostgresExecutor.connect(authority.database_url);
+    const started = CoreClient.start({ binary, deadlineMs: 10_000 });
+    if (!started.ok) throw new Error(started.error.detail.detail);
+    try {
+      const fresh = api({ ...authority, db, core: started.value, mutations: createMutationService(db, started.value) });
+      const replay = await submit(fresh, authority);
+      const counts = await db.query<{ receipts: string; transitions: string }>("SELECT (SELECT count(*)::text FROM authority.ingress_receipt) AS receipts, (SELECT count(*)::text FROM authority.transition) AS transitions", []);
+      expect({ status: replay.status, receipt: await replay.json(), counts }).toEqual({ status: 202, receipt, counts: [{ receipts: "1", transitions: "1" }] });
+    } finally { started.value.close(); await db.close(); }
+  });
+});
+
 test("real commit rejects a target changed after API validation without changing owner version", async () => {
   await withAuthority(async (authority) => {
     const mutations: MutationService = { ...authority.mutations, async decide(input) {

@@ -1,135 +1,25 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
-
+import { afterEach, expect, it, vi } from "vitest";
 import { ReviewInboxView } from "../views/ReviewInboxView";
-import type { ReviewInbox } from "../types";
-import type { CohortLifecycle } from "../types";
-
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
-}
-
-type InboxFixture = Omit<ReviewInbox, "attention_count"> & Partial<Pick<ReviewInbox, "attention_count">>;
-
-function renderInbox(data: InboxFixture, onSelectRun = vi.fn(), onSelectArtifact = vi.fn()) {
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ attention_count: data.items.length, ...data }));
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={onSelectRun} onSelectArtifact={onSelectArtifact} /></QueryClientProvider>);
-  return { onSelectRun, onSelectArtifact };
-}
-
-const inbox: ReviewInbox = {
-  cohorts: [{ id: "run-1:api", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "api", title: "Build API", lifecycle: "blocked", blocked_reason: "retry", next_actor: "operator", completion: { build_complete: false, assessment_complete: false }, blocked_by: [], artifact_revision_id: null, updated_at: "2026-08-07T00:00:00Z" },
-    { id: "run-1:web", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "web", title: "Build UI", lifecycle: "blocked", blocked_reason: "gate", next_actor: "operator", completion: { build_complete: true, assessment_complete: false }, blocked_by: [], artifact_revision_id: "revision-web", updated_at: "2026-08-07T01:00:00Z" }],
-  items: [{ id: "retry-api", kind: "cohort_retry", state: "actionable", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "api", lifecycle: "blocked", blocked_reason: "retry", next_actor: "operator", title: "Build API", resume_actions: ["retry"], blocked_by: [] },
-    { id: "review-web", kind: "artifact_gate", state: "actionable", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "web", lifecycle: "blocked", blocked_reason: "gate", next_actor: "operator", title: "Build UI", artifact_revision_id: "revision-web", gate_id: "stage-build:web", resume_actions: ["approve", "request_revision"], blocked_by: [] }],
-  attention_count: 2,
-};
+import type { OperatorInbox } from "../operator-contracts";
 
 afterEach(() => vi.restoreAllMocks());
-
-describe("ReviewInboxView", () => {
-  it("puts actionable work first without duplicating it in progress", async () => {
-    renderInbox(inbox);
-    expect(await screen.findAllByTestId("or-review-inbox-item")).toHaveLength(2);
-    expect(screen.queryAllByTestId("or-cohort-lifecycle-card")).toHaveLength(0);
-    expect(screen.getByText("Artifact ready for review")).toBeTruthy();
-    expect(screen.getByText("Session ended without finishing")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
-  });
-
-  it("navigates directly to the reviewed artifact and its run", async () => {
-    const handlers = renderInbox(inbox);
-    fireEvent.click(await screen.findByTestId("or-inbox-artifact-link"));
-    expect(handlers.onSelectArtifact).toHaveBeenCalledWith("revision-web");
-    fireEvent.click(screen.getAllByTestId("or-inbox-run-link")[0]);
-    expect(handlers.onSelectRun).toHaveBeenCalledWith("run-1");
-  });
-
-
-
-  it("shows blockers", async () => {
-    renderInbox({ cohorts: [], items: [{ ...inbox.items[0], kind: "cohort_blocked", state: "blocked", blocked_by: ["database"] }] });
-    expect((await screen.findByTestId("or-review-inbox-blocked")).textContent).toContain("database");
-  });
-
-  it("keeps queued workflows action-free", async () => {
-    const automatic = {
-      ...inbox.cohorts[0],
-      lifecycle: "pending" as const,
-      blocked_reason: null,
-      next_actor: "core" as const,
-    };
-    renderInbox({ cohorts: [automatic], items: [] });
-    expect(await screen.findByText("Queued")).toBeTruthy();
-  });
-
-  it("names every committed lifecycle state in operator language", async () => {
-    const states: CohortLifecycle[] = ["pending", "active", "blocked", "complete", "failed", "cancelled"];
-    const labels = ["Queued", "Active", "Blocked: gate · next: operator", "Needs recovery", "Cancelled"];
-    renderInbox({
-      items: [],
-      cohorts: states.map((lifecycle, index) => ({
-        ...inbox.cohorts[0],
-        id: `run-1:${index}`,
-        unit_id: `cohort-${index}`,
-        title: `Cohort ${index}`,
-        lifecycle,
-        blocked_reason: lifecycle === "blocked" ? "gate" : null,
-        next_actor: lifecycle === "blocked" ? "operator" : null,
-      })),
-    });
-    await screen.findByTestId("or-review-inbox");
-    for (const label of labels) expect(screen.getByText(label)).toBeTruthy();
-    fireEvent.click(screen.getByText("Finished recently (3)"));
-    expect(screen.getByText("Complete")).toBeTruthy();
-  });
-
-  it("labels merge-confirmation work distinctly from artifact review", async () => {
-    renderInbox({
-      cohorts: [],
-      items: [{
-        ...inbox.items[1],
-        id: "merge-web",
-        kind: "merge_confirmation",
-        lifecycle: "blocked",
-        blocked_reason: "gate",
-        next_actor: "operator",
-        resume_actions: ["confirm_merged"],
-      }],
-    });
-
-    expect(await screen.findByText("Confirm the merged pull request")).toBeTruthy();
-    expect(screen.getByText("Confirm the merged pull request")).toBeTruthy();
-  });
-
-  it("surfaces pull request mismatches as actionable with reconciliation detail", async () => {
-    const mismatchCohort = {
-      ...inbox.cohorts[1],
-      lifecycle: "blocked" as const,
-      blocked_reason: "external" as const,
-      next_actor: "operator" as const,
-      links: [{ key: "pull_request", label: "Open pull request", url: "https://github.com/wrong/web/pull/42" }],
-      facts: [{ key: "mismatch", label: "Mismatch", value: "observed pull request belongs to another repository" }],
-    };
-    renderInbox({ cohorts: [mismatchCohort], items: [{ ...inbox.items[1], id: "mismatch-web", kind: "pull_request_mismatch", state: "blocked", lifecycle: "blocked", blocked_reason: "external", next_actor: "operator", pr_url: null }] });
-    expect(await screen.findByText("Pull request needs attention")).toBeTruthy();
-    expect(screen.getByText("observed pull request belongs to another repository")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Open pull request" })).toBeTruthy();
-  });
-
-
-  it("shows automatic merged completion from durable reconciliation", async () => {
-    renderInbox({
-      items: [],
-      cohorts: [{
-        ...inbox.cohorts[1],
-        lifecycle: "complete",
-        facts: [{ key: "merged_at", label: "Merged at", value: "2026-08-08T00:00:00Z" }],
-      }],
-    });
-    fireEvent.click(await screen.findByText("Finished recently (1)"));
-    expect(screen.getByText("Merged · complete")).toBeTruthy();
-  });
+it("reads definition inbox descriptors and opens their run without issuing a cohort command", async () => {
+  const inbox: OperatorInbox = { cursor: [{ scope_id: "scope-1", version: 8 }], items: [
+    { kind: "command", run_id: "run-1", scope_id: "scope-1", scope_version: 8, key: "certify_sample", label: "Certify sample", consequence: "Accept this specimen." },
+    { kind: "wait", run_id: "run-2", scope_id: "scope-2", scope_version: 2, reason: "dependency", label: "Waiting for sample" },
+    { kind: "diagnostic", run_id: "run-3", scope_id: "scope-3", scope_version: 0, detail: "Missing pinned definition" },
+  ] };
+  const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(inbox), { headers: { "content-type": "application/json" } }));
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const onSelectRun = vi.fn();
+  render(<QueryClientProvider client={queryClient}><ReviewInboxView onSelectRun={onSelectRun} onSelectArtifact={() => {}} /></QueryClientProvider>);
+  expect(await screen.findByText("Certify sample")).toBeTruthy();
+  expect(screen.getByText("Waiting for sample")).toBeTruthy();
+  expect(screen.getByText("Missing pinned definition")).toBeTruthy();
+  fireEvent.click(screen.getAllByRole("button", { name: "Open run" })[0]!);
+  expect(onSelectRun).toHaveBeenCalledWith("run-1");
+  expect(fetch).toHaveBeenCalledWith("/oakridge/api/api/inbox");
+  expect(fetch.mock.calls.every(([, options]) => !options?.method || options.method === "GET")).toBe(true);
 });

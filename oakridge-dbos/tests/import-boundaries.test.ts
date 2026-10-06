@@ -1,130 +1,100 @@
 import { expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, relative, resolve } from "node:path";
-import ts from "typescript";
+import { resolve, relative } from "node:path";
+import { readFileSync } from "node:fs";
+import { buildGraph, reachable, projectionViolations, mutationViolations, closedCommandViolations, evaluatorViolations, labels, type ModuleNode, type ModuleGraph } from "./dependency-graph";
 
 const root = resolve(import.meta.dir, "../..");
-interface ModuleNode { readonly path: string; readonly source: string; readonly imports: readonly string[]; readonly packages: readonly string[] }
-type ModuleGraph = ReadonlyMap<string, ModuleNode>;
-
-function importNames(file: string, source: string): string[] {
-  const parsed = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
-  const names: string[] = [];
-  function visit(node: ts.Node): void {
-    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) names.push(node.moduleSpecifier.text);
-    if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument) && ts.isStringLiteral(node.argument.literal)) names.push(node.argument.literal.text);
-    if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword || node.expression.getText(parsed) === "require")
-      && node.arguments[0] && ts.isStringLiteral(node.arguments[0])) names.push(node.arguments[0].text);
-    ts.forEachChild(node, visit);
-  }
-  visit(parsed);
-  return names;
-}
-function resolveImport(file: string, name: string): string {
-  const base = resolve(dirname(file), name);
-  const found = [base, `${base}.ts`, `${base}.tsx`, resolve(base, "index.ts"), resolve(base, "index.tsx")].find(existsSync);
-  if (!found) throw new Error(`unresolved active import: ${relative(root, file)} -> ${name}`);
-  return found;
-}
-function buildGraph(entries: readonly string[]): ModuleGraph {
-  const graph = new Map<string, ModuleNode>();
-  const queue = [...entries];
-  while (queue.length) {
-    const file = queue.pop()!;
-    if (graph.has(file)) continue;
-    const source = readFileSync(file, "utf8");
-    const names = importNames(file, source);
-    const imports = names.filter((name) => name.startsWith(".")).map((name) => resolveImport(file, name));
-    const packages = names.filter((name) => !name.startsWith("."));
-    graph.set(file, { path: file, source, imports, packages });
-    queue.push(...imports);
-  }
-  return graph;
-}
-function reachable(graph: ModuleGraph, from: string): ModuleNode[] {
-  const visited = new Set<string>();
-  const queue = [from];
-  const result: ModuleNode[] = [];
-  while (queue.length) {
-    const path = queue.pop()!;
-    if (visited.has(path)) continue;
-    visited.add(path);
-    const node = graph.get(path);
-    if (!node) throw new Error(`missing dependency graph node: ${path}`);
-    result.push(node);
-    queue.push(...node.imports);
-  }
-  return result;
-}
 const dbosMain = resolve(root, "oakridge-dbos/src/main.ts");
 const pwaMain = resolve(root, "kbbl/core/pwa/main.tsx");
+const mutationEntry = resolve(root, "oakridge-dbos/src/storage/mutation-service.ts");
 const graph = buildGraph([dbosMain, pwaMain]);
 const label = (path: string) => relative(root, path);
-
-function projectionViolations(nodes: readonly ModuleNode[]): string[] {
-  return nodes.flatMap((node) => {
-    const forbiddenPackage = node.packages.filter((name) => /^(node:(fs|net|http|https|child_process|crypto)|pg$|@dbos-inc\/)/.test(name));
-    const forbiddenCall = /\b(fetch|Bun\.spawn|Date\.now|crypto\.randomUUID)\s*\(/.test(node.source);
-    return [...forbiddenPackage.map((name) => `${label(node.path)} -> ${name}`), ...(forbiddenCall ? [`${label(node.path)} calls external IO`] : [])];
+function injectDependency(graph: ModuleGraph, entry: string, node: ModuleNode): ModuleGraph {
+  const owner = graph.get(entry);
+  if (!owner) throw new Error(`missing injection entry ${entry}`);
+  const injected = new Map(graph);
+  injected.set(node.path, node);
+  injected.set(entry, { ...owner, imports: [...owner.imports, node.path] });
+  return injected;
+}
+function injected(path: string, source: string): ModuleNode {
+  return { path: resolve(root, path), source, imports: [], packages: [] };
+}
+function mutationEntries(graph: ModuleGraph): readonly string[] {
+  return [...graph.keys()].filter((path) => /^oakridge-dbos\/src\/(http|adapters|effects)\//.test(label(path)));
+}
+const projectionEntries = [...graph.keys()].filter((path) => label(path).startsWith("oakridge-dbos/src/projections/"));
+test("pure projection graph reaches no external IO, including storage dependencies", () => {
+  expect(projectionEntries.length).toBeGreaterThan(0);
+  for (const entry of projectionEntries) expect(labels(root, projectionViolations(reachable(graph, entry)))).toEqual([]);
+});
+for (const path of ["oakridge-dbos/src/projections/injected.ts", "oakridge-dbos/src/storage/injected.ts"]) {
+  test(`reachable IO at ${path} fails the production projection check`, () => {
+    const start = resolve(root, "oakridge-dbos/src/projections/inbox.ts");
+    const node = injected(path, "fetch('https://example.test')");
+    expect(projectionViolations(reachable(injectDependency(graph, start, node), start))).toContainEqual({ path: node.path, detail: "projection calls IO capability fetch" });
   });
 }
-test("active projection graph has no network, filesystem, process, clock or random IO", () => {
-  const projections = [...graph.values()].filter((node) => label(node.path).startsWith("oakridge-dbos/src/projections/"));
-  expect(projections.length).toBeGreaterThan(0);
-  for (const projection of projections) {
-    const closure = reachable(graph, projection.path).filter((node) => !label(node.path).startsWith("oakridge-dbos/src/storage/"));
-    expect(projectionViolations(closure)).toEqual([]);
-  }
+test("handlers, adapters and observers cannot reach domain writes without crossing the mutation service", () => {
+  const entries = mutationEntries(graph);
+  expect(entries.length).toBeGreaterThan(0);
+  expect(labels(root, mutationViolations(graph, entries, mutationEntry))).toEqual([]);
 });
-test("a reachable injected projection IO dependency fails the boundary assertion", () => {
-  const injected: ModuleNode = { path: resolve(root, "oakridge-dbos/src/projections/injected.ts"), source: "fetch('https://example.test')", imports: [], packages: [] };
-  const synthetic = new Map(graph);
-  synthetic.set(injected.path, injected);
-  const start = resolve(root, "oakridge-dbos/src/projections/inbox.ts");
-  synthetic.set(start, { ...synthetic.get(start)!, imports: [...synthetic.get(start)!.imports, injected.path] });
-  expect(projectionViolations(reachable(synthetic, start))).toContain(`${label(injected.path)} calls external IO`);
+test("an indirect storage write fails the mutation boundary, but one behind the service passes", () => {
+  const http = resolve(root, "oakridge-dbos/src/http/app.ts");
+  const node = injected("oakridge-dbos/src/storage/injected.ts", 'tx.query("UPDATE authority.scope_instance SET version=version+1")');
+  const bad = injectDependency(graph, http, node);
+  expect(mutationViolations(bad, [http], mutationEntry)).toContainEqual({ path: node.path, detail: "domain write to authority.scope_instance bypasses mutation service" });
+  const good = injectDependency(graph, mutationEntry, node);
+  expect(mutationViolations(good, [http], mutationEntry)).toEqual([]);
 });
-test("active HTTP handlers, adapters and observers do not write authority SQL directly", () => {
-  const subjects = [...graph.values()].filter((node) => /^oakridge-dbos\/src\/(http|adapters|effects\/operations)\//.test(label(node.path)));
-  expect(subjects.length).toBeGreaterThan(0);
-  const violations = subjects.filter((node) => /(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM|TRUNCATE)\s+authority\./i.test(node.source)).map((node) => label(node.path));
-  expect(violations).toEqual([]);
+test("the active PWA cannot import backend workflow authority or the removed command protocol", () => {
+  const nodes = reachable(graph, pwaMain);
+  expect(nodes.map((node) => label(node.path)).filter((path) => path.startsWith("oakridge-dbos/src/") || path.startsWith("kbbl/core/server/"))).toEqual([]);
+  expect(labels(root, closedCommandViolations(nodes))).toEqual([]);
 });
-test("active PWA graph cannot import backend workflow authority", () => {
-  const paths = reachable(graph, pwaMain).map((node) => label(node.path));
-  expect(paths.filter((path) => path.startsWith("oakridge-dbos/src/") || path.startsWith("kbbl/core/server/"))).toEqual([]);
+test("an injected closed command vocabulary fails the PWA boundary", () => {
+  const node = injected("kbbl/core/pwa/oakridge/injected.ts", 'type OperatorRequest = { kind: "accept_plan"; target: string } | { kind: "retry_build" };');
+  expect(closedCommandViolations(reachable(injectDependency(graph, pwaMain, node), pwaMain))).toContainEqual({ path: node.path, detail: "closed workflow command type OperatorRequest" });
+});
+test("an injected second evaluator path outside mutations fails the boundary", () => {
+  const node = injected("oakridge-dbos/src/http/injected.ts", 'core.request("evaluate", snapshot)');
+  const bad = injectDependency(graph, dbosMain, node);
+  const approved = new Set(reachable(bad, mutationEntry).map((item) => item.path));
+  expect(evaluatorViolations(reachable(bad, dbosMain), approved)).toContainEqual({ path: node.path, detail: "evaluator call bypasses mutation service" });
 });
 
-function rustLibraryGraph(): string[] {
-  const queue = ["model", "compiler", "evaluator"].map((name) => resolve(root, `workflow-core/crates/${name}/src/lib.rs`));
-  const seen = new Set<string>();
-  while (queue.length) {
-    const file = queue.pop()!;
-    if (seen.has(file)) continue;
-    seen.add(file);
-    const source = readFileSync(file, "utf8");
-    for (const match of source.matchAll(/^\s*(?:pub\s+)?mod\s+(\w+)\s*;/gm)) {
-      if (match[1] === "tests") continue;
-      const module = resolve(dirname(file), `${match[1]}.rs`);
-      if (!existsSync(module)) throw new Error(`unresolved Rust library module: ${label(file)} -> ${match[1]}`);
-      queue.push(module);
-    }
-  }
-  return [...seen];
-}
-test("reachable Rust library modules and Cargo dependencies have no external IO capability", () => {
-  const files = rustLibraryGraph();
+import { rustLibraryGraph, rustCapabilityViolations, workflowLiteralViolations } from "./rust-boundary";
+test("reachable Rust library modules and Cargo dependencies have no declared IO capability", () => {
+  const files = rustLibraryGraph(root);
   expect(files.length).toBeGreaterThan(10);
-  const forbiddenApi = /\b(?:std::(?:fs|net|process|env|time|thread)|tokio::|reqwest::|ureq::|rand::|getrandom::|chrono::|SystemTime|Instant::now|std::io::(?:stdin|stdout|stderr))\b/;
-  expect(files.filter((file) => forbiddenApi.test(readFileSync(file, "utf8"))).map(label)).toEqual([]);
-  const packages = ["model", "compiler", "evaluator"];
+  expect(files.flatMap((file) => rustCapabilityViolations(readFileSync(file, "utf8")).map((detail) => `${label(file)}: ${detail}`))).toEqual([]);
   const forbiddenCrate = /^\s*(?:tokio|reqwest|ureq|rand|getrandom|chrono|postgres|sqlx|rusqlite|diesel)\s*=/m;
-  expect(packages.filter((name) => forbiddenCrate.test(readFileSync(resolve(root, `workflow-core/crates/${name}/Cargo.toml`), "utf8")))).toEqual([]);
+  expect(["model", "compiler", "evaluator"].filter((name) => forbiddenCrate.test(readFileSync(resolve(root, `workflow-core/crates/${name}/Cargo.toml`), "utf8")))).toEqual([]);
 });
-test("Rust interpreter branches contain no workflow-specific identifiers", () => {
-  const names = /\b(?:dev_flow|development|spec|plan|brief|build|assessment|final_integration)\b/;
-  const violations = rustLibraryGraph().flatMap((file) => readFileSync(file, "utf8").split("\n")
-    .filter((line) => /\b(?:if|match)\b|=>/.test(line) && names.test(line) && /["']/.test(line))
-    .map((line) => `${label(file)}: ${line.trim()}`));
-  expect(violations).toEqual([]);
+test("Rust capability checks catch grouped and aliased multiline imports", () => {
+  expect(rustCapabilityViolations('use std::{\n fs as disk\n}; disk::read("x");')).not.toEqual([]);
+  expect(rustCapabilityViolations('use std as platform; platform::net::connect();')).not.toEqual([]);
+  expect(rustCapabilityViolations('use std::time::SystemTime as Clock; Clock::now();')).not.toEqual([]);
+  expect(rustCapabilityViolations('use std::collections::HashSet; let set = HashSet::new();')).toContain("randomly seeded collection");
+});
+test("Rust library contains no workflow identifiers, including indirect multiline branches", () => {
+  expect(rustLibraryGraph(root).flatMap((file) => workflowLiteralViolations(readFileSync(file, "utf8")).map((name) => `${label(file)}: ${name}`))).toEqual([]);
+  expect(workflowLiteralViolations('const NAME: &str = "assessment"; if\n name == NAME\n { work(); }')).toEqual(["assessment"]);
+  expect(workflowLiteralViolations('match name {\n r#"build"#\n => work(), _ => () }')).toEqual(["build"]);
+});
+
+test("a renamed untyped retired request constructor fails the PWA boundary", () => {
+  const node = injected("kbbl/core/pwa/oakridge/injected.ts", 'const renamed = { kind: "retry_build" };');
+  expect(closedCommandViolations(reachable(injectDependency(graph, pwaMain, node), pwaMain))).toContainEqual({ path: node.path, detail: "retired workflow request constructor retry_build" });
+});
+test("aliasing an IO function cannot conceal it from a projection boundary", () => {
+  const node = injected("oakridge-dbos/src/projections/injected.ts", 'const load = fetch; load(url);');
+  expect(projectionViolations([node])).toContainEqual({ path: node.path, detail: "projection references IO capability fetch" });
+});
+
+test("opaque SQL assembled by an indirect helper fails closed", () => {
+  const entry = resolve(root, "oakridge-dbos/src/http/app.ts");
+  const node = injected("oakridge-dbos/src/storage/injected.ts", 'const verb = "UPDATE"; tx.query(verb + " authority.run SET version=1");');
+  expect(mutationViolations(injectDependency(graph, entry, node), [entry], mutationEntry)).toContainEqual({ path: node.path, detail: "unresolved SQL statement bypasses mutation service" });
 });

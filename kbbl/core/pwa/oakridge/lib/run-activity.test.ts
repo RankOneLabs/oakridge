@@ -14,7 +14,7 @@ const event = (overrides: Partial<RunEvent> = {}): RunEvent => ({
   sequence: "1", transition_id: "transition-1", run_id: "run-1" as WorkflowRunId,
   owner: { kind: "cohort", id: "cohort-1" }, launch_reason: "initial",
   prior_owner_version: 0, resulting_owner_version: 1,
-  effect: { kind: "worker_decision", cohort_id: "cohort-1", from_state: "working", to_state: "working", changes: [], actions: [{ worker: "build", action_point: "retry" }] },
+  effect: { kind: "worker_decision", cohort_id: "cohort-1", from_state: "working", to_state: "working", actions: [{ worker: "build", action_point: "retry" }] },
   effect_workflow_id: null, actor: "core", occurred_at: "2026-09-27T10:00:00Z",
   ...overrides,
 });

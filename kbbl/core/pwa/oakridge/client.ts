@@ -4,7 +4,6 @@ export { selectFailureDetail } from "./lib/client-errors";
 // All paths are same-origin relative so the PWA needs no CORS config.
 
 import type {
-  CohortPullRequestResponse,
   OakridgeConfig,
   Project,
   ProjectUpdateCommand,
@@ -32,6 +31,10 @@ import type {
 } from "./types";
 import type { Result } from "../lib/result";
 import type { OperatorGenericRun, OperatorPinnedDefinition, OperatorScopeView, OperatorCommandSubmission, OperatorCommandReceipt } from "./operator-contracts";
+
+export function fetchOperatorInbox(): Promise<import("./operator-contracts").OperatorInbox> {
+  return oakridgeGet("/api/inbox");
+}
 
 const API = "/oakridge/api";
 
@@ -169,12 +172,6 @@ export function fetchArtifact(id: string): Promise<ArtifactDetail> {
 
 
 
-/**
- * Requests a fresh forge observation through the same path as the poller.
- */
-export function confirmCohortMerged(cohortId: string): Promise<CohortPullRequestResponse> {
-  return oakridgePost<CohortPullRequestResponse>(`/cohorts/${encodeURIComponent(cohortId)}/pull_request/refresh`, {});
-}
 
 export function fetchProjects(): Promise<Project[]> {
   return oakridgeGet<unknown>("/projects").then((body) => {
@@ -249,12 +246,6 @@ export function deleteRun(runId: string): Promise<void> {
   return oakridgeDelete(`/workflow_runs/${encodeURIComponent(runId)}`);
 }
 
-export function submitCohortRequest(input: { readonly cohort_id: string; readonly expected_version: number;
-  readonly request: import("./review-command-types").OperatorRequest; readonly id: string }): Promise<unknown> {
-  return oakridgePost(`/cohorts/${encodeURIComponent(input.cohort_id)}/requests`, {
-    id: input.id, expected_version: input.expected_version, request: input.request,
-  });
-}
 
 export function fetchArtifactTypes(): Promise<ArtifactTypeDescriptor[]> {
   return oakridgeGet<ArtifactTypeDescriptor[]>("/artifact_types");

@@ -2,7 +2,7 @@
 mod collections;
 mod expressions;
 pub use collections::materialize;
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 use workflow_compiler::validate_checked_value;
 use workflow_model::*;
 fn failure(
@@ -90,7 +90,7 @@ pub(crate) fn snapshot_valid(program: &CheckedProgram, snapshot: &Snapshot) -> C
             )
         })?;
     validate_checked_value(&program.source, payload_schema, &snapshot.trigger.payload)?;
-    let mut identities = HashSet::new();
+    let mut identities = BTreeSet::new();
     let mut roots = Vec::new();
     for observation in &snapshot.observations {
         if observation.identity == snapshot.owner.0
