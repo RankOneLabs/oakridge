@@ -77,7 +77,7 @@ function OakridgeShellInner({ route, onNavigate }: OakridgeShellInnerProps) {
       break;
     case "run":
       content = (
-        <RunDetailView runId={route.id} routePane={route.pane} onBack={navigateToRuns} />
+        <RunDetailView key={route.id} runId={route.id} routePane={route.pane} onBack={navigateToRuns} />
       );
       break;
     case "session":

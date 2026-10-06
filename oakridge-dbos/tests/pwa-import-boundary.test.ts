@@ -49,3 +49,9 @@ test("the entire PWA import graph stays outside backend workflow modules", () =>
   }
   expect(violations).toEqual([]);
 });
+
+test("the operator surface has no imports of deleted modules", () => {
+  const operatorFiles = sourceFiles(resolve(root, "kbbl/core/pwa/oakridge"));
+  for (const file of operatorFiles) dependencies(file);
+  expect(operatorFiles.length).toBeGreaterThan(0);
+});

@@ -1,12 +1,12 @@
-import type { CommandDefinition, DefinitionBundle, Trigger, VersionedValue } from "../core-client/generated-contracts";
+import type { DefinitionBundle, Trigger } from "../core-client/generated-contracts";
 import type { CoreClient } from "../core-client/client";
 import type { MutationService } from "../storage/mutation-service";
 import { readSnapshot } from "../storage/snapshot-reader";
 import type { RunId, ScopeId } from "../storage/schema-records";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
 import { findReceipt, requestDigest } from "../storage/receipts";
-import { availableCommand, targetsMatch, type TargetRevision } from "../storage/command-selection";
-export { availableCommand, targetsMatch, type TargetRevision } from "../storage/command-selection";
+import { availableCommand, currentTargetRevisions, targetsMatch, type TargetRevision } from "../storage/command-selection";
+export { availableCommand, currentTargetRevisions, targetsMatch, type TargetRevision } from "../storage/command-selection";
 
 export interface ScopeCommandRequest {
   readonly command_key: string;
@@ -36,28 +36,6 @@ export function parseScopeCommand(value: unknown, scope_id: ScopeId): ScopeComma
     return new MalformedRequestError("command_key, payload, request_id, scope_id, expected_scope_version and target revisions are required");
   return { command_key: value.command_key, payload: value.payload, request_id: value.request_id, scope_id,
     expected_scope_version: value.expected_scope_version, targets: value.targets as TargetRevision[] };
-}
-
-export async function currentTargetRevisions(db: TransactionalSqlExecutor, scope_id: ScopeId, command: CommandDefinition, observations: readonly VersionedValue[]): Promise<readonly TargetRevision[]> {
-  const targets: TargetRevision[] = [];
-  for (const expression of command.targets) {
-    if (expression.kind !== "reference") return [];
-    if (expression.root.kind === "output") {
-      const output_key = expression.root.key;
-      const slots = await db.query<{ id: string; current_revision_id: string | null; version: string | number }>(
-        "SELECT id,current_revision_id,version FROM authority.output_slot WHERE scope_id=$1 AND output_key=$2 AND collection_key=''", [scope_id, output_key]);
-      const slot = slots[0];
-      if (!slot?.current_revision_id) return [];
-      const observed = observations.find((item) => item.identity === slot.id && item.root.kind === "output" && item.root.key === output_key);
-      if (!observed || observed.version !== Number(slot.version)) return [];
-      targets.push({ identity: slot.current_revision_id, version: Number(slot.version) });
-      continue;
-    }
-    const observed = observations.find((item) => requestDigest(item.root) === requestDigest(expression.root));
-    if (!observed) return [];
-    targets.push({ identity: observed.identity, version: observed.version });
-  }
-  return targets;
 }
 
 export interface CommandDependencies { readonly db: TransactionalSqlExecutor; readonly core: CoreClient; readonly mutations: MutationService }

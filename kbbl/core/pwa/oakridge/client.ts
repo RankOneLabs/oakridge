@@ -31,8 +31,25 @@ import type {
   RunDiagnosis,
 } from "./types";
 import type { Result } from "../lib/result";
+import type { OperatorGenericRun, OperatorPinnedDefinition, OperatorScopeView, OperatorCommandSubmission, OperatorCommandReceipt } from "./operator-contracts";
 
 const API = "/oakridge/api";
+
+export function fetchOperatorRun(runId: string): Promise<OperatorGenericRun> {
+  return oakridgeGet(`/api/runs/${encodeURIComponent(runId)}`);
+}
+export function fetchOperatorDefinition(runId: string): Promise<OperatorPinnedDefinition> {
+  return oakridgeGet(`/api/runs/${encodeURIComponent(runId)}/definition`);
+}
+export function fetchOperatorScope(runId: string, scopeId: string): Promise<OperatorScopeView> {
+  return oakridgeGet(`/api/runs/${encodeURIComponent(runId)}/scopes/${encodeURIComponent(scopeId)}`);
+}
+export function submitOperatorCommand(input: OperatorCommandSubmission): Promise<OperatorCommandReceipt> {
+  return oakridgePost(`/api/runs/${encodeURIComponent(input.run_id)}/scopes/${encodeURIComponent(input.scope_id)}/commands`, {
+    scope_id: input.scope_id, command_key: input.command_key, expected_scope_version: input.owner_version,
+    targets: input.targets, payload: input.payload, request_id: input.request_id,
+  });
+}
 
 import { parseProject, parseRunDetail, parseRunDiagnosis, parseParkedGates, parseReviewInbox, parseSessionRunLocation, parseSessionMessageRecord, parseSessionMessageAccepted, type ResponseParseError, type RawRunDetail, type RawParkedGate, type RawReviewInbox } from "./wire";
 

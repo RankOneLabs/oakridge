@@ -3,9 +3,8 @@ import { resolve } from "node:path";
 import { CoreClient } from "../src/core-client/client";
 import type { CheckedValue, DefinitionBundle } from "../src/core-client/generated-contracts";
 import { installDefinitionApi } from "../src/http/app";
-import { currentTargetRevisions } from "../src/http/scope-commands";
+import type { ScopeView } from "../src/projections/scope-view";
 import { createMutationService } from "../src/storage/mutation-service";
-import { readSnapshot } from "../src/storage/snapshot-reader";
 import type { ScopeId, ScopeInstanceRecord } from "../src/storage/schema-records";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
 import { advanceChildren } from "../src/runtime/advance-children";
@@ -52,14 +51,12 @@ export async function runtimeFixture(db: TransactionalSqlExecutor, bundle: Defin
     if (!result.ok || result.value.kind !== "Committed") throw new Error(JSON.stringify(result));
   };
   const command = async (key: string, payload: unknown = {}, id = root_scope_id) => {
-    const owner = await scope(id);
-    const declaration = bundle.scopes.find((s) => s.key === owner.scope_key)?.commands.find((c) => c.key === key);
-    if (!declaration) throw new Error("command missing");
-    const source = await readSnapshot(db, id, { id: "view", key, payload: await checked(declaration.payload_schema, payload) });
-    if (!source) throw new Error("snapshot missing");
-    const targets = await currentTargetRevisions(db, id, declaration, source.snapshot.observations);
+    const projected = await app.request(`http://localhost/api/runs/${run_id}/scopes/${id}`);
+    if (!projected.ok) throw new Error(await projected.text());
+    const view: ScopeView = await projected.json();
+    const targets = view.command_targets[key] ?? [];
     return app.request(`http://localhost/api/runs/${run_id}/scopes/${id}/commands`, { method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ command_key: key, payload, request_id: crypto.randomUUID(), scope_id: id, expected_scope_version: Number(owner.version), targets }) });
+      body: JSON.stringify({ command_key: key, payload, request_id: crypto.randomUUID(), scope_id: id, expected_scope_version: view.cursor.scope_version, targets }) });
   };
   const selected = async (worker: string, id = root_scope_id): Promise<string> => {
     const rows = await db.query<{ execution_id: string | null }>("SELECT execution_id FROM authority.execution_selection WHERE scope_id=$1 AND worker_key=$2", [id, worker]);
