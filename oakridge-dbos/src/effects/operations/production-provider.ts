@@ -7,6 +7,7 @@ import { BunGitCommandRunner } from "../../runtime/git-command-runner";
 import { GithubPullRequestReader, type PullRequestReader } from "../../runtime/github-pull-requests";
 import { RepositoryPreparationOperation } from "./repository-preparation";
 import { PullRequestObservationOperation } from "./pull-request-observation";
+import { settingForRole } from "./selected-publication-contract";
 import type { EffectProvider, ExternalHandle, ProviderResult, StableInvocation, TerminalObservation, ProviderCallOptions } from "../provider";
 import type { Result } from "../../storage/commit";
 
@@ -73,7 +74,7 @@ export function createEffectProvider(options: ProductionProviderOptions): Effect
     if (!worker) return rejected("selected worker is not declared");
     const checked = await validate(context, worker.result_schema, result);
     if (checked.kind !== "acknowledged") return checked;
-    const fact_key = invocation.selection.definition.settings.find((setting) => setting.key === "result_fact")?.value;
+    const fact_key = settingForRole(invocation.selection.definition.settings, "result_fact");
     const fact = fact_key ? context.scope.facts.find((fact) => fact.key === fact_key && fact.payload_schema === worker.result_schema) : null;
     if (fact_key && !fact) return rejected("result_fact must name a declared fact with the worker result schema");
     return { kind: "acknowledged", value: { kind: "completed", result: checked.value,
@@ -102,9 +103,10 @@ export function createEffectProvider(options: ProductionProviderOptions): Effect
       }
       if (invocation.request.kind === "pull_request_observation") {
         const query = isRecord(input.value) ? input.value.query : null;
-        if (!query || !isRecord(query) || typeof query.owner !== "string" || typeof query.name !== "string" || typeof query.head_branch !== "string" || typeof query.base_branch !== "string") return rejected("invalid PullRequestObservationInput");
-        const result = await discovery.execute({ query: { owner: query.owner, name: query.name, head_branch: query.head_branch, base_branch: query.base_branch } }, call);
-        return result.kind === "acknowledged" ? completed(found, invocation, result.value) : result;
+        if (!query || !isRecord(query) || typeof query.owner !== "string" || typeof query.name !== "string" || typeof query.head_owner !== "string" || typeof query.head_branch !== "string" || typeof query.base_branch !== "string") return rejected("invalid PullRequestObservationInput");
+        const result = await discovery.execute({ query: { owner: query.owner, name: query.name, head_owner: query.head_owner, head_branch: query.head_branch, base_branch: query.base_branch } }, call);
+        return result.kind === "acknowledged" ? completed(found, invocation, result.value)
+          : result.kind === "permanently_rejected" ? recovery(found, result, invocation) : result;
       }
       return rejected(`unsupported operation ${contract.operation}`);
   }

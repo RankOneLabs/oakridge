@@ -22,6 +22,20 @@ pub fn validate_bundle(
         schema(bundle, &prompt.input_schema)?;
     }
     for requirement in &bundle.operations {
+        let supported_routing = matches!(
+            (requirement.provider_kind.as_str(), requirement.input_contract.as_str()),
+            ("git", "repository_preparation")
+                | ("kbbl", "kbbl_session")
+                | ("github", "pull_request_observation")
+                | ("stub", "unsupported")
+        );
+        if !supported_routing {
+            return Err(error(
+                DomainErrorKind::UnsupportedProvider,
+                requirement.key.to_string(),
+                "provider kind and input contract are incompatible",
+            ));
+        }
         schema(bundle, &requirement.input_schema)?;
         let actual = available
             .iter()

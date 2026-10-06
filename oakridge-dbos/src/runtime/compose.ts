@@ -7,7 +7,7 @@ import { activeRoutes } from "../http/routes";
 import { controlTokenMiddleware, selectControlPlaneAccess } from "../http/control-auth";
 import { httpBodyLimit, installDefinitionApi } from "../http/app";
 import { authorityRepositories } from "../storage/repositories";
-import { createMutationService, cancelRun, deleteRun, type ScopeCancellationPayload } from "../storage/mutation-service";
+import { createMutationService, cancelRun, deleteRun, type ScopeCancellationPayload, type ProviderCapabilities } from "../storage/mutation-service";
 import { PgPostgresExecutor } from "../storage/sql-executor";
 import type { RunId, ScopeId, ScopeInstanceRecord } from "../storage/schema-records";
 import type { OutputPublication } from "../storage/commit";
@@ -20,13 +20,41 @@ import { DEFAULT_WORKFLOW_TIMING, ensureRunWorkflow, parkRunningWorkflows, regis
 export interface ProductionOptions {
   readonly database_url: string; readonly core_binary: string; readonly host: string; readonly control_token?: string;
   readonly kbbl_base_url?: string; readonly pull_requests?: PullRequestReader; readonly effect_provider?: EffectProvider;
+  readonly provider_capabilities?: ProviderCapabilities;
   /** Overrides for tests; production uses the defaults. */
   readonly timing?: Partial<WorkflowTiming>;
   /** Defaults to the engine digest, or `DBOS_APPLICATION_VERSION` when set. */
   readonly application_version?: string;
 }
 export interface RunProjection { readonly run_id: RunId; readonly root_scope_id: ScopeId; readonly scope_key: string; readonly version: number; readonly is_terminal: boolean }
-export interface ProductionComposition { readonly app: Hono; readonly application_version: string; close(): Promise<void> }
+export interface ProductionComposition { readonly app: Hono; readonly application_version: string; readonly provider_capabilities: ProviderCapabilities; close(): Promise<void> }
+interface ForgeRepository { readonly owner: string; readonly name: string }
+function forgeRepositories(input: unknown): readonly ForgeRepository[] {
+  const found: ForgeRepository[] = [];
+  function visit(value: unknown): void {
+    if (!value || typeof value !== "object") return;
+    if (Array.isArray(value)) { value.forEach(visit); return; }
+    if ("forge" in value && value.forge && typeof value.forge === "object" && "owner" in value.forge && "name" in value.forge
+      && typeof value.forge.owner === "string" && typeof value.forge.name === "string") found.push({ owner: value.forge.owner, name: value.forge.name });
+    Object.values(value).forEach(visit);
+  }
+  visit(input);
+  return found;
+}
+export function githubProviderCapabilities(token: string, http: typeof fetch = fetch): ProviderCapabilities {
+  return { async check_github(input) {
+    if (!token) return { ok: false, error: { operation: "check_github", entity_id: "github", detail: "token is absent" } };
+    const targets = forgeRepositories(input);
+    const urls = targets.length ? targets.map((target) => `https://api.github.com/repos/${encodeURIComponent(target.owner)}/${encodeURIComponent(target.name)}/pulls?per_page=1`) : ["https://api.github.com/user"];
+    for (const url of urls) {
+      try {
+        const response = await http(url, { headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json", "user-agent": "oakridge" }, signal: AbortSignal.timeout(10_000) });
+        if (!response.ok) return { ok: false, error: { operation: "check_github", entity_id: url, detail: `repository pull-request read denied (${response.status})` } };
+      } catch (cause) { return { ok: false, error: { operation: "check_github", entity_id: url, detail: String(cause) } }; }
+    }
+    return { ok: true, value: true };
+  } };
+}
 
 function isBundle(value: unknown): value is DefinitionBundle {
   return !!value && typeof value === "object" && "root" in value && typeof value.root === "string" && "scopes" in value && Array.isArray(value.scopes) && "operations" in value && Array.isArray(value.operations);
@@ -61,7 +89,8 @@ export async function createProductionComposition(options: ProductionOptions): P
   if (!started.ok) throw new Error(`workflow-cli could not start: ${started.error.detail.detail}`);
   const core = started.value;
   const db = PgPostgresExecutor.connect(options.database_url);
-  const mutations = createMutationService(db, core);
+  const provider_capabilities = options.provider_capabilities ?? githubProviderCapabilities(process.env.OAKRIDGE_GITHUB_TOKEN ?? process.env.GITHUB_TOKEN ?? "");
+  const mutations = createMutationService(db, core, provider_capabilities);
   const repositories = authorityRepositories(db);
   const provider = options.effect_provider ?? createEffectProvider({ db, core, kbbl_base_url: options.kbbl_base_url ?? process.env.KBBL_BASE_URL ?? "http://127.0.0.1:8788", pull_requests: options.pull_requests });
   const application_version = options.application_version ?? selectApplicationVersion();
@@ -125,5 +154,5 @@ export async function createProductionComposition(options: ProductionOptions): P
       void wake(context.req.param("run_id") as RunId);
     return result.ok ? context.json(result.value) : context.json({ error: result.error }, 422);
   });
-  return { app, application_version, async close() { try { await parkRunningWorkflows(); await DBOS.shutdown(); } finally { core.close(); await db.close(); } } };
+  return { app, application_version, provider_capabilities, async close() { try { await parkRunningWorkflows(); await DBOS.shutdown(); } finally { core.close(); await db.close(); } } };
 }

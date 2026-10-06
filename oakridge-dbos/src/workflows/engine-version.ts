@@ -29,6 +29,7 @@ export const ENGINE_SOURCE_MANIFEST: readonly string[] = [
   "runtime/advance-children.ts",
   "runtime/git-command-runner.ts",
   "runtime/github-pull-requests.ts",
+  "runtime/project-identity.ts",
   "storage/capacity.ts",
   "storage/child-cancellation.ts",
   "storage/command-selection.ts",

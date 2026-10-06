@@ -206,6 +206,11 @@
             "required": true
           },
           {
+            "key": "push_remote_owner",
+            "schema": "ident",
+            "required": true
+          },
+          {
             "key": "head",
             "schema": "ident",
             "required": true
@@ -1306,6 +1311,11 @@
             "key": "repository",
             "schema": "repository_config",
             "required": true
+          },
+          {
+            "key": "push_remote_owner",
+            "schema": "ident",
+            "required": true
           }
         ],
         "dictionary": null
@@ -1379,6 +1389,11 @@
             "key": "forge",
             "schema": "forge_config",
             "required": true
+          },
+          {
+            "key": "push_remote_owner",
+            "schema": "ident",
+            "required": true
           }
         ],
         "dictionary": null
@@ -1409,6 +1424,11 @@
           {
             "key": "forge",
             "schema": "forge_config",
+            "required": true
+          },
+          {
+            "key": "push_remote_owner",
+            "schema": "ident",
             "required": true
           }
         ],
@@ -1982,6 +2002,11 @@
           },
           {
             "key": "name",
+            "schema": "ident",
+            "required": true
+          },
+          {
+            "key": "head_owner",
             "schema": "ident",
             "required": true
           },
@@ -2588,6 +2613,57 @@
                               ]
                             }
                           }
+                        },
+                        {
+                          "key": "push_remote_owner",
+                          "value": {
+                            "kind": "field",
+                            "value": {
+                              "kind": "lookup",
+                              "source": {
+                                "kind": "reference",
+                                "root": {
+                                  "kind": "children",
+                                  "key": "prepare",
+                                  "export": "references",
+                                  "schema": "repository_refs"
+                                },
+                                "path": []
+                              },
+                              "key_field": "repository_path",
+                              "key": {
+                                "kind": "field",
+                                "value": {
+                                  "kind": "field",
+                                  "value": {
+                                    "kind": "lookup",
+                                    "source": {
+                                      "kind": "reference",
+                                      "root": {
+                                        "kind": "input"
+                                      },
+                                      "path": [
+                                        "repositories"
+                                      ]
+                                    },
+                                    "key_field": "key",
+                                    "key": {
+                                      "kind": "reference",
+                                      "root": {
+                                        "kind": "item"
+                                      },
+                                      "path": [
+                                        "repository_key"
+                                      ]
+                                    }
+                                  },
+                                  "key": "preparation"
+                                },
+                                "key": "repository_path"
+                              }
+                            },
+                            "key": "push_remote_owner"
+                          }
                         }
                       ]
                     }
@@ -2747,6 +2823,18 @@
                             },
                             "path": [
                               "forge"
+                            ]
+                          }
+                        },
+                        {
+                          "key": "push_remote_owner",
+                          "value": {
+                            "kind": "reference",
+                            "root": {
+                              "kind": "item"
+                            },
+                            "path": [
+                              "push_remote_owner"
                             ]
                           }
                         }
@@ -7082,6 +7170,10 @@
         {
           "key": "pr_observed",
           "payload_schema": "pr_observe_result"
+        },
+        {
+          "key": "auth",
+          "payload_schema": "text"
         }
       ],
       "outputs": [
@@ -8100,6 +8192,18 @@
                           }
                         },
                         {
+                          "key": "head_owner",
+                          "value": {
+                            "kind": "reference",
+                            "root": {
+                              "kind": "input"
+                            },
+                            "path": [
+                              "push_remote_owner"
+                            ]
+                          }
+                        },
+                        {
                           "key": "head_branch",
                           "value": {
                             "kind": "reference",
@@ -8191,6 +8295,16 @@
           "path": []
         },
         "cases": [
+          {
+            "variant": "auth",
+            "node": {
+              "kind": "apply",
+              "id": "github_auth_failure",
+              "mutations": [],
+              "actions": [],
+              "outcome": null
+            }
+          },
           {
             "variant": "begin",
             "node": {
@@ -10611,6 +10725,18 @@
                                                 "forge"
                                               ]
                                             }
+                                          },
+                                          {
+                                            "key": "push_remote_owner",
+                                            "value": {
+                                              "kind": "reference",
+                                              "root": {
+                                                "kind": "input"
+                                              },
+                                              "path": [
+                                                "push_remote_owner"
+                                              ]
+                                            }
                                           }
                                         ]
                                       }
@@ -11101,6 +11227,10 @@
         {
           "key": "pr_observed",
           "payload_schema": "pr_observe_result"
+        },
+        {
+          "key": "auth",
+          "payload_schema": "text"
         }
       ],
       "outputs": [
@@ -11282,6 +11412,18 @@
                           }
                         },
                         {
+                          "key": "head_owner",
+                          "value": {
+                            "kind": "reference",
+                            "root": {
+                              "kind": "input"
+                            },
+                            "path": [
+                              "push_remote_owner"
+                            ]
+                          }
+                        },
+                        {
                           "key": "head_branch",
                           "value": {
                             "kind": "reference",
@@ -11359,6 +11501,16 @@
           "path": []
         },
         "cases": [
+          {
+            "variant": "auth",
+            "node": {
+              "kind": "apply",
+              "id": "github_auth_failure",
+              "mutations": [],
+              "actions": [],
+              "outcome": null
+            }
+          },
           {
             "variant": "begin",
             "node": {
@@ -12005,127 +12157,127 @@
     {
       "key": "spec_analysis_author_initial",
       "path": "workflow-config/prompts/dev-flow/spec_analysis_author_initial.md",
-      "content": "Analyze the pinned specification against the prepared repositories. Publish the analysis body with source references, requirements, findings, and risks. Do not begin implementation.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action\u2019s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
+      "content": "Analyze the pinned specification against the prepared repositories. Publish the analysis body with source references, requirements, findings, and risks. Do not begin implementation.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action’s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
       "input_schema": "session_action"
     },
     {
       "key": "spec_analysis_author_revise",
       "path": "workflow-config/prompts/dev-flow/spec_analysis_author_revise.md",
-      "content": "Analyze the pinned specification against the prepared repositories. Publish the analysis body with source references, requirements, findings, and risks. Do not begin implementation.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action\u2019s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
+      "content": "Analyze the pinned specification against the prepared repositories. Publish the analysis body with source references, requirements, findings, and risks. Do not begin implementation.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action’s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
       "input_schema": "session_action"
     },
     {
       "key": "spec_analysis_author_retry",
       "path": "workflow-config/prompts/dev-flow/spec_analysis_author_retry.md",
-      "content": "Analyze the pinned specification against the prepared repositories. Publish the analysis body with source references, requirements, findings, and risks. Do not begin implementation.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action\u2019s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
+      "content": "Analyze the pinned specification against the prepared repositories. Publish the analysis body with source references, requirements, findings, and risks. Do not begin implementation.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action’s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
       "input_schema": "session_action"
     },
     {
       "key": "planning_author_initial",
       "path": "workflow-config/prompts/dev-flow/planning_author_initial.md",
-      "content": "Plan from the accepted analysis, specification, and prepared repositories. Publish the plan body with stable cohort IDs, valid repository keys, an acyclic dependency graph, dependency_order, explicit scope, and acceptance criteria.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action\u2019s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
+      "content": "Plan from the accepted analysis, specification, and prepared repositories. Publish the plan body with stable cohort IDs, valid repository keys, an acyclic dependency graph, dependency_order, explicit scope, and acceptance criteria.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action’s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
       "input_schema": "session_action"
     },
     {
       "key": "planning_author_revise",
       "path": "workflow-config/prompts/dev-flow/planning_author_revise.md",
-      "content": "Plan from the accepted analysis, specification, and prepared repositories. Publish the plan body with stable cohort IDs, valid repository keys, an acyclic dependency graph, dependency_order, explicit scope, and acceptance criteria.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action\u2019s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
+      "content": "Plan from the accepted analysis, specification, and prepared repositories. Publish the plan body with stable cohort IDs, valid repository keys, an acyclic dependency graph, dependency_order, explicit scope, and acceptance criteria.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action’s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
       "input_schema": "session_action"
     },
     {
       "key": "planning_author_retry",
       "path": "workflow-config/prompts/dev-flow/planning_author_retry.md",
-      "content": "Plan from the accepted analysis, specification, and prepared repositories. Publish the plan body with stable cohort IDs, valid repository keys, an acyclic dependency graph, dependency_order, explicit scope, and acceptance criteria.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action\u2019s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
+      "content": "Plan from the accepted analysis, specification, and prepared repositories. Publish the plan body with stable cohort IDs, valid repository keys, an acyclic dependency graph, dependency_order, explicit scope, and acceptance criteria.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action’s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
       "input_schema": "session_action"
     },
     {
       "key": "brief_writing_author_initial",
       "path": "workflow-config/prompts/dev-flow/brief_writing_author_initial.md",
-      "content": "Write one complete build brief for every accepted plan cohort. Preserve the accepted cohort IDs, repository keys, and dependencies exactly. Carry forward decisions, rejected approaches, files in scope, and acceptance criteria. Publish each brief under its cohort_id collection key.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action\u2019s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
+      "content": "Write one complete build brief for every accepted plan cohort. Preserve the accepted cohort IDs, repository keys, and dependencies exactly. Carry forward decisions, rejected approaches, files in scope, and acceptance criteria. Publish each brief under its cohort_id collection key.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action’s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
       "input_schema": "session_action"
     },
     {
       "key": "brief_writing_author_revise",
       "path": "workflow-config/prompts/dev-flow/brief_writing_author_revise.md",
-      "content": "Write one complete build brief for every accepted plan cohort. Preserve the accepted cohort IDs, repository keys, and dependencies exactly. Carry forward decisions, rejected approaches, files in scope, and acceptance criteria. Publish each brief under its cohort_id collection key.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action\u2019s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
+      "content": "Write one complete build brief for every accepted plan cohort. Preserve the accepted cohort IDs, repository keys, and dependencies exactly. Carry forward decisions, rejected approaches, files in scope, and acceptance criteria. Publish each brief under its cohort_id collection key.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action’s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
       "input_schema": "session_action"
     },
     {
       "key": "brief_writing_author_retry",
       "path": "workflow-config/prompts/dev-flow/brief_writing_author_retry.md",
-      "content": "Write one complete build brief for every accepted plan cohort. Preserve the accepted cohort IDs, repository keys, and dependencies exactly. Carry forward decisions, rejected approaches, files in scope, and acceptance criteria. Publish each brief under its cohort_id collection key.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action\u2019s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
+      "content": "Write one complete build brief for every accepted plan cohort. Preserve the accepted cohort IDs, repository keys, and dependencies exactly. Carry forward decisions, rejected approaches, files in scope, and acceptance criteria. Publish each brief under its cohort_id collection key.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action’s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
       "input_schema": "session_action"
     },
     {
       "key": "implementation_build_initial",
       "path": "workflow-config/prompts/dev-flow/implementation_build_initial.md",
-      "content": "Implement the pinned accepted brief in its prepared repository. Follow the accepted decisions and review feedback. Run the relevant tests, commit the implementation, and prepare the build PR. Publish the build_result and pr_summary bodies selected by this action. Never merge a PR; merge decisions belong to the operator.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action\u2019s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
+      "content": "Implement the pinned accepted brief in its prepared repository. Follow the accepted decisions and review feedback. Run the relevant tests, commit the implementation, and prepare the build PR. Publish the build_result and pr_summary bodies selected by this action. Never merge a PR; merge decisions belong to the operator.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action’s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
       "input_schema": "session_action"
     },
     {
       "key": "implementation_build_revise",
       "path": "workflow-config/prompts/dev-flow/implementation_build_revise.md",
-      "content": "Implement the pinned accepted brief in its prepared repository. Follow the accepted decisions and review feedback. Run the relevant tests, commit the implementation, and prepare the build PR. Publish the build_result and pr_summary bodies selected by this action. Never merge a PR; merge decisions belong to the operator.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action\u2019s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
+      "content": "Implement the pinned accepted brief in its prepared repository. Follow the accepted decisions and review feedback. Run the relevant tests, commit the implementation, and prepare the build PR. Publish the build_result and pr_summary bodies selected by this action. Never merge a PR; merge decisions belong to the operator.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action’s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
       "input_schema": "session_action"
     },
     {
       "key": "implementation_build_replace_pr",
       "path": "workflow-config/prompts/dev-flow/implementation_build_replace_pr.md",
-      "content": "Implement the pinned accepted brief in its prepared repository. Follow the accepted decisions and review feedback. Run the relevant tests, commit the implementation, and prepare the build PR. Publish the build_result and pr_summary bodies selected by this action. Never merge a PR; merge decisions belong to the operator.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action\u2019s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
+      "content": "Implement the pinned accepted brief in its prepared repository. Follow the accepted decisions and review feedback. Run the relevant tests, commit the implementation, and prepare the build PR. Publish the build_result and pr_summary bodies selected by this action. Never merge a PR; merge decisions belong to the operator.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action’s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
       "input_schema": "session_action"
     },
     {
       "key": "implementation_build_retry",
       "path": "workflow-config/prompts/dev-flow/implementation_build_retry.md",
-      "content": "Implement the pinned accepted brief in its prepared repository. Follow the accepted decisions and review feedback. Run the relevant tests, commit the implementation, and prepare the build PR. Publish the build_result and pr_summary bodies selected by this action. Never merge a PR; merge decisions belong to the operator.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action\u2019s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
+      "content": "Implement the pinned accepted brief in its prepared repository. Follow the accepted decisions and review feedback. Run the relevant tests, commit the implementation, and prepare the build PR. Publish the build_result and pr_summary bodies selected by this action. Never merge a PR; merge decisions belong to the operator.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action’s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
       "input_schema": "session_action"
     },
     {
       "key": "implementation_build_retry_missing_build",
       "path": "workflow-config/prompts/dev-flow/implementation_build_retry_missing_build.md",
-      "content": "Implement the pinned accepted brief in its prepared repository. Follow the accepted decisions and review feedback. Run the relevant tests, commit the implementation, and prepare the build PR. Publish the build_result and pr_summary bodies selected by this action. Never merge a PR; merge decisions belong to the operator.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action\u2019s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
+      "content": "Implement the pinned accepted brief in its prepared repository. Follow the accepted decisions and review feedback. Run the relevant tests, commit the implementation, and prepare the build PR. Publish the build_result and pr_summary bodies selected by this action. Never merge a PR; merge decisions belong to the operator.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action’s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
       "input_schema": "session_action"
     },
     {
       "key": "implementation_build_retry_missing_pr",
       "path": "workflow-config/prompts/dev-flow/implementation_build_retry_missing_pr.md",
-      "content": "Implement the pinned accepted brief in its prepared repository. Follow the accepted decisions and review feedback. Run the relevant tests, commit the implementation, and prepare the build PR. Publish the build_result and pr_summary bodies selected by this action. Never merge a PR; merge decisions belong to the operator.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action\u2019s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
+      "content": "Implement the pinned accepted brief in its prepared repository. Follow the accepted decisions and review feedback. Run the relevant tests, commit the implementation, and prepare the build PR. Publish the build_result and pr_summary bodies selected by this action. Never merge a PR; merge decisions belong to the operator.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action’s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
       "input_schema": "session_action"
     },
     {
       "key": "implementation_assessment_initial",
       "path": "workflow-config/prompts/dev-flow/implementation_assessment_initial.md",
-      "content": "Assess the exact accepted build_result and pr_summary revisions and the pinned PR head against the accepted brief. Publish an assessment body containing verdict, findings, test evidence, and recommended next actions. A fail verdict is valid evidence. Do not alter the implementation. Discussion retains the accepted build and must publish a new assessment revision or explicit unchanged evidence identifying the same accepted revisions and head.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action\u2019s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
+      "content": "Assess the exact accepted build_result and pr_summary revisions and the pinned PR head against the accepted brief. Publish an assessment body containing verdict, findings, test evidence, and recommended next actions. A fail verdict is valid evidence. Do not alter the implementation. Discussion retains the accepted build and must publish a new assessment revision or explicit unchanged evidence identifying the same accepted revisions and head.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action’s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
       "input_schema": "session_action"
     },
     {
       "key": "implementation_assessment_retry",
       "path": "workflow-config/prompts/dev-flow/implementation_assessment_retry.md",
-      "content": "Assess the exact accepted build_result and pr_summary revisions and the pinned PR head against the accepted brief. Publish an assessment body containing verdict, findings, test evidence, and recommended next actions. A fail verdict is valid evidence. Do not alter the implementation. Discussion retains the accepted build and must publish a new assessment revision or explicit unchanged evidence identifying the same accepted revisions and head.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action\u2019s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
+      "content": "Assess the exact accepted build_result and pr_summary revisions and the pinned PR head against the accepted brief. Publish an assessment body containing verdict, findings, test evidence, and recommended next actions. A fail verdict is valid evidence. Do not alter the implementation. Discussion retains the accepted build and must publish a new assessment revision or explicit unchanged evidence identifying the same accepted revisions and head.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action’s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
       "input_schema": "session_action"
     },
     {
       "key": "implementation_assessment_discuss",
       "path": "workflow-config/prompts/dev-flow/implementation_assessment_discuss.md",
-      "content": "Assess the exact accepted build_result and pr_summary revisions and the pinned PR head against the accepted brief. Publish an assessment body containing verdict, findings, test evidence, and recommended next actions. A fail verdict is valid evidence. Do not alter the implementation. Discussion retains the accepted build and must publish a new assessment revision or explicit unchanged evidence identifying the same accepted revisions and head.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action\u2019s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
+      "content": "Assess the exact accepted build_result and pr_summary revisions and the pinned PR head against the accepted brief. Publish an assessment body containing verdict, findings, test evidence, and recommended next actions. A fail verdict is valid evidence. Do not alter the implementation. Discussion retains the accepted build and must publish a new assessment revision or explicit unchanged evidence identifying the same accepted revisions and head.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action’s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
       "input_schema": "session_action"
     },
     {
       "key": "implementation_build_revise_after_assessment",
       "path": "workflow-config/prompts/dev-flow/implementation_build_revise_after_assessment.md",
-      "content": "Implement the pinned accepted brief in its prepared repository. Follow the accepted decisions and review feedback. Run the relevant tests, commit the implementation, and prepare the build PR. Publish the build_result and pr_summary bodies selected by this action. Never merge a PR; merge decisions belong to the operator.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action\u2019s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
+      "content": "Implement the pinned accepted brief in its prepared repository. Follow the accepted decisions and review feedback. Run the relevant tests, commit the implementation, and prepare the build PR. Publish the build_result and pr_summary bodies selected by this action. Never merge a PR; merge decisions belong to the operator.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action’s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
       "input_schema": "session_action"
     },
     {
       "key": "final_integration_integrator_initial",
       "path": "workflow-config/prompts/dev-flow/final_integration_integrator_initial.md",
-      "content": "Integrate the completed work for the pinned repository only. Inspect the completed PR heads and reconcile their changes into the final integration branch based on final_base. Run relevant tests, commit, and publish the final pr_summary body. Never merge a PR; the operator reviews and confirms the final accepted head.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action\u2019s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
+      "content": "Integrate the completed work for the pinned repository only. Inspect the completed PR heads and reconcile their changes into the final integration branch based on final_base. Run relevant tests, commit, and publish the final pr_summary body. Never merge a PR; the operator reviews and confirms the final accepted head.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action’s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
       "input_schema": "session_action"
     },
     {
       "key": "final_integration_integrator_retry",
       "path": "workflow-config/prompts/dev-flow/final_integration_integrator_retry.md",
-      "content": "Integrate the completed work for the pinned repository only. Inspect the completed PR heads and reconcile their changes into the final integration branch based on final_base. Run relevant tests, commit, and publish the final pr_summary body. Never merge a PR; the operator reviews and confirms the final accepted head.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action\u2019s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
+      "content": "Integrate the completed work for the pinned repository only. Inspect the completed PR heads and reconcile their changes into the final integration branch based on final_base. Run relevant tests, commit, and publish the final pr_summary body. Never merge a PR; the operator reviews and confirms the final accepted head.\n\nRead the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action’s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.\n",
       "input_schema": "session_action"
     }
   ],

@@ -20,6 +20,11 @@ export interface PreparedDecision { readonly request_digest: string; readonly de
 export interface MutationInput { readonly request_digest?: string; readonly execution_authority?: string; readonly run_id: RunId; readonly scope_id: ScopeId; readonly ingress_id: string; readonly trigger: Trigger; readonly operator_version: number | null; readonly outputs?: readonly OutputPublication[]; readonly prepared?: PreparedDecision }
 export interface StartedRun { readonly run_id: RunId; readonly root_scope_id: ScopeId; readonly bundle_id: string }
 export interface MutationService { compile(request: CompileRequest): Promise<Result<CompileResult>>; startRun(request: StartRunRequest): Promise<Result<StartedRun>>; decide(input: MutationInput): Promise<Result<CommitResult>> }
+export interface ProviderCapabilities { readonly check_github: (input: unknown) => Promise<Result<true>> }
+export function requiredProviderKinds(bundle: DefinitionBundle): readonly string[] {
+  const selected = new Set(bundle.scopes.flatMap((scope) => scope.workers.flatMap((worker) => worker.actions.map((action) => `${action.operation}:${action.contract_version}`))));
+  return [...new Set(bundle.operations.filter((manifest) => selected.has(`${manifest.key}:${manifest.version}`)).map((manifest) => manifest.provider_kind))];
+}
 
 export function selectMutationIdentity(input: MutationInput): IngressIdentity {
   return { run_id: input.run_id, scope_id: input.scope_id, ingress_id: input.ingress_id, request_digest: input.prepared?.request_digest ?? input.request_digest ?? requestDigest({ trigger: input.trigger, outputs: input.outputs ?? [], operator_version: input.operator_version }) };
@@ -54,12 +59,17 @@ export function prepareCommit(input: MutationInput, decision: Decision): Result<
   return { ok: true, value: { identity: selectMutationIdentity(input),
     execution_authority: input.execution_authority, read_set: decision.source.read_set, decision: decision.outcome, outputs: input.outputs ?? [], capacity, effects, operator_version: input.operator_version } };
 }
-export function createMutationService(db: TransactionalSqlExecutor, core: CoreClient): MutationService {
+export function createMutationService(db: TransactionalSqlExecutor, core: CoreClient, provider_capabilities?: ProviderCapabilities): MutationService {
   return {
     compile: (request) => compileBundle(core, request),
     async startRun(request) {
       const compiled = await compileBundle(core, request);
       if (!compiled.ok) return compiled;
+      if (requiredProviderKinds(request.bundle).includes("github")) {
+        if (!provider_capabilities) return error("start_run", request.bundle.key, "missing provider capability: github token");
+        const capability = await provider_capabilities.check_github(request.input);
+        if (!capability.ok) return error("start_run", request.bundle.key, `missing provider capability: github ${capability.error.detail}`);
+      }
       const root = compiled.value.program.scopes.find((scope) => scope.key === request.bundle.root);
       if (!root) return error("start_run", request.bundle.key, "compiled root scope missing");
       const root_definition = request.bundle.scopes.find((scope) => scope.key === request.bundle.root);

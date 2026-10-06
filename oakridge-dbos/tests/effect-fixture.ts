@@ -34,10 +34,10 @@ export async function operationBundle(operation: "repository.prepare" | "pull_re
   const repository_schemas: Schema[] = [
     { key: "nullable_head", shape: { kind: "optional", item: "text" } },
     { key: "leaf_input", shape: { kind: "record", fields: [{ key: "repository_path", schema: "text", required: true }, { key: "expected_head", schema: "nullable_head", required: true }], dictionary: null } },
-    { key: "leaf_result", shape: { kind: "record", fields: [{ key: "repository_path", schema: "text", required: true }, { key: "head", schema: "text", required: true }], dictionary: null } },
+    { key: "leaf_result", shape: { kind: "record", fields: [{ key: "repository_path", schema: "text", required: true }, { key: "head", schema: "text", required: true }, { key: "push_remote_owner", schema: "text", required: true }], dictionary: null } },
   ];
   const pr_schemas: Schema[] = [
-    { key: "query", shape: { kind: "record", fields: ["owner", "name", "head_branch", "base_branch"].map((key) => ({ key, schema: "text", required: true })), dictionary: null } },
+    { key: "query", shape: { kind: "record", fields: ["owner", "name", "head_owner", "head_branch", "base_branch"].map((key) => ({ key, schema: "text", required: true })), dictionary: null } },
     { key: "leaf_input", shape: { kind: "record", fields: [{ key: "query", schema: "query", required: true }], dictionary: null } },
     { key: "pr_number", shape: { kind: "integer", min: 1, max: Number.MAX_SAFE_INTEGER } },
     { key: "optional_text", shape: { kind: "optional", item: "text" } },
@@ -51,13 +51,13 @@ export async function operationBundle(operation: "repository.prepare" | "pull_re
   if (root.tree.kind !== "match") throw new Error("fixture must dispatch triggers");
   const scope: ScopeDefinition = { ...root, input_schema: "leaf_input",
     errors: [...root.errors, { key: "worktree_unrecoverable", payload_schema: "text" }, { key: "head_changed", payload_schema: "text" }],
-    facts: [...root.facts, { key: "prepared", payload_schema: "leaf_result" }, { key: "worktree_unrecoverable", payload_schema: "text" }, { key: "head_changed", payload_schema: "text" }],
+    facts: [...root.facts, { key: "prepared", payload_schema: "leaf_result" }, { key: "worktree_unrecoverable", payload_schema: "text" }, { key: "head_changed", payload_schema: "text" }, { key: "auth", payload_schema: "text" }],
     workers: root.workers.map((worker) => ({ ...worker, result_schema: "leaf_result", actions: worker.actions.map((action) => ({ ...action,
       operation, input_schema: "leaf_input", tools: [], outputs: [], prompt: null,
       settings: [{ key: "result_fact", value: "prepared" }], input: { kind: "reference", root: { kind: "input" }, path: [] } })) })),
     outputs: [],
     tree: { ...root.tree, cases: [...root.tree.cases, { variant: "prepared", node: { kind: "apply", id: "prepared", actions: [], mutations: [], outcome: { kind: "literal", schema: "result", value: { kind: "released", value: {} } } } },
-      ...["worktree_unrecoverable", "head_changed"].map((variant) => ({ variant, node: { kind: "apply" as const, id: variant, actions: [], mutations: [], outcome: { kind: "literal" as const, schema: "result", value: { kind: "withdrawn", value: {} } } } }))] },
+      ...["worktree_unrecoverable", "head_changed", "auth"].map((variant) => ({ variant, node: { kind: "apply" as const, id: variant, actions: [], mutations: [], outcome: { kind: "literal" as const, schema: "result", value: { kind: "withdrawn", value: {} } } } }))] },
   };
   return { ...original, scopes: [scope], schemas: [...original.schemas, ...(operation === "repository.prepare" ? repository_schemas : pr_schemas)],
     operations: [{ key: operation, version: 1, input_schema: "leaf_input", provider_kind: operation === "repository.prepare" ? "git" : "github", input_contract: operation === "repository.prepare" ? "repository_preparation" : "pull_request_observation", settings: ["result_fact"], tools: [] }], prompts: [] };

@@ -69,3 +69,21 @@ test("a GitHub 503 is distinguishable from a missing pull request", async () => 
     kind: "unavailable", status: 503, detail: "GitHub pull request read failed (503)",
   } });
 });
+
+for (const head_owner of ["RankOneLabs", "fork-owner"]) {
+  test(`discovery pages through the list and filters the ${head_owner} head repository`, async () => {
+    const calls: string[] = [];
+    const candidate = { number: 440, head: { ref: "cohort/foundation", repo: { full_name: `${head_owner}/oakridge` } }, base: { ref: "epic/tiers" } };
+    const http = (async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      calls.push(url.toString());
+      if (url.pathname.endsWith("/pulls/440")) return Response.json(githubPayload({ head: candidate.head }));
+      if (url.searchParams.get("page") === "1") return Response.json(Array.from({ length: 100 }, (_, number) => ({ ...candidate, number: number + 1, head: { ...candidate.head, repo: { full_name: "other/oakridge" } } })));
+      return Response.json([candidate]);
+    }) as unknown as typeof fetch;
+    const reader = new GithubPullRequestReader({ token: "test-token" }, http);
+    const result = await reader.find_for_branches({ owner: "RankOneLabs", name: "oakridge", head_owner, head_branch: "cohort/foundation", base_branch: "epic/tiers" });
+    expect(result.ok && result.value.map((item) => item.number)).toEqual([440]);
+    expect(calls.some((url) => url.includes(`head=${encodeURIComponent(`${head_owner}:cohort/foundation`)}`) && url.includes("page=2"))).toBe(true);
+  });
+}

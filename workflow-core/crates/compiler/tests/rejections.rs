@@ -734,6 +734,14 @@ fn unsupported_provider_settings() {
     );
 }
 #[test]
+fn incompatible_manifest_provider_and_input_contract() {
+    reject(
+        fixture(),
+        |v| v["operations"][0]["provider_kind"] = json!("github"),
+        DomainErrorKind::UnsupportedProvider,
+    );
+}
+#[test]
 fn unavailable_pinned_operation_version() {
     let b: DefinitionBundle = serde_json::from_value(fixture()).unwrap();
     assert_eq!(
