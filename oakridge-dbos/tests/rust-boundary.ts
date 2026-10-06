@@ -44,21 +44,41 @@ export function rustTokens(source: string): readonly RustToken[] {
   }
   return tokens;
 }
+type RustDelimiter = "(" | "[" | "{";
+/** Find one annotated item's end; unsupported/unbalanced syntax stays visible. */
+function rustItemEnd(tokens: readonly RustToken[], start: number): number | null {
+  const groups: RustDelimiter[] = [];
+  let requiresSemicolon = false;
+  let isItemBody = false;
+  let genericDepth = 0;
+  for (let index = start; index < tokens.length; index++) {
+    const token = tokens[index];
+    if (!token || token.kind === "string") continue;
+    const text = token.text;
+    if (groups.length === 0) {
+      if (["static", "type", "use"].includes(text)) requiresSemicolon = true;
+      if (text === "const" && !["fn", "unsafe", "async"].includes(tokens[index + 1]?.text ?? "")) requiresSemicolon = true;
+      if (!requiresSemicolon && text === "<") genericDepth++;
+      if (!requiresSemicolon && text === ">" && genericDepth > 0) genericDepth--;
+      if (text === ";" && genericDepth === 0) return index + 1;
+      if (text === "{" && genericDepth === 0) isItemBody = !requiresSemicolon;
+    }
+    if (text === "(" || text === "[" || text === "{") groups.push(text);
+    if (text === ")" || text === "]" || text === "}") {
+      const opening = groups.pop();
+      if (!opening || (opening === "(" && text !== ")") || (opening === "[" && text !== "]") || (opening === "{" && text !== "}")) return null;
+      if (groups.length === 0 && isItemBody) return index + 1;
+    }
+  }
+  return null;
+}
 export function productionTokens(source: string): readonly RustToken[] {
   const tokens = rustTokens(source);
   const result: RustToken[] = [];
   for (let index = 0; index < tokens.length; index++) {
-    // Inline #[cfg(test)] blocks are not production interpreter code.
     if (tokens.slice(index, index + 7).map((token) => token.text).join("") === "#[cfg(test)]") {
-      index += 7;
-      while (index < tokens.length && tokens[index]?.text !== "{") index++;
-      let depth = 1;
-      while (++index < tokens.length && depth) {
-        if (tokens[index]?.text === "{") depth++;
-        if (tokens[index]?.text === "}") depth--;
-      }
-      index--;
-      continue;
+      const end = rustItemEnd(tokens, index + 7);
+      if (end !== null) { index = end - 1; continue; }
     }
     const token = tokens[index];
     if (token) result.push(token);

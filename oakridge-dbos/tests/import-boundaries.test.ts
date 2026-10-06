@@ -98,3 +98,35 @@ test("opaque SQL assembled by an indirect helper fails closed", () => {
   const node = injected("oakridge-dbos/src/storage/injected.ts", 'const verb = "UPDATE"; tx.query(verb + " authority.run SET version=1");');
   expect(mutationViolations(injectDependency(graph, entry, node), [entry], mutationEntry)).toContainEqual({ path: node.path, detail: "unresolved SQL statement bypasses mutation service" });
 });
+
+test("an interpolated SQL verb cannot bypass the indirect mutation boundary", () => {
+  const entry = resolve(root, "oakridge-dbos/src/http/app.ts");
+  const node = injected("oakridge-dbos/src/storage/injected.ts", 'const verb = "UPDATE"; tx.query(`${verb} authority.run SET version=1`);');
+  expect(mutationViolations(injectDependency(graph, entry, node), [entry], mutationEntry)).toContainEqual({ path: node.path, detail: "unresolved SQL statement bypasses mutation service" });
+});
+test("plain backtick SQL remains inspectable without interpolation", () => {
+  const node = injected("oakridge-dbos/src/storage/injected.ts", 'tx.query(`UPDATE authority.run SET version=1`);');
+  expect(mutationViolations(new Map([[node.path, node]]), [node.path], mutationEntry)).toContainEqual({ path: node.path, detail: "domain write to authority.run bypasses mutation service" });
+});
+
+for (const item of [
+  "mod tests;",
+  "const VALUE: usize = 1;",
+  "const VALUE: usize = { let nested = { 1 }; nested };",
+  "static VALUE: usize = 1;",
+  "type Value = [u8; 4];",
+  "use std::{fs, net};",
+  "struct Value(u8);",
+  "#[test] fn test_only() { std::net::TcpStream::connect(\"test\"); }",
+  "const fn test_only() -> usize { 1 }",
+]) {
+  test(`cfg-gated ${item} cannot hide the next production item`, () => {
+    const source = `#[cfg(test)] ${item} fn production() { std::fs::read(\"plan\"); }`;
+    expect(rustCapabilityViolations(source)).toEqual(["external std capability"]);
+    expect(workflowLiteralViolations(source)).toEqual(["plan"]);
+  });
+}
+test("skipping an inline test module preserves the following production workflow literal", () => {
+  const source = '#[cfg(test)] mod tests { fn test_only() { std::net::TcpStream::connect("build"); } } const NAME: &str = "assessment";';
+  expect(workflowLiteralViolations(source)).toEqual(["assessment"]);
+});

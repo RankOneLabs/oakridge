@@ -103,7 +103,7 @@ function opaqueSqlCalls(node: ModuleNode): readonly BoundaryViolation[] {
     if (ts.isCallExpression(child) && ts.isPropertyAccessExpression(child.expression) && child.expression.name.text === "query") {
       const sql = child.arguments[0];
       const isLiteralMap = sql && ts.isElementAccessExpression(sql) && ts.isIdentifier(sql.expression) && literalMaps.has(sql.expression.text);
-      if (!sql || !(ts.isStringLiteralLike(sql) || ts.isTemplateExpression(sql) || isLiteralMap))
+      if (!sql || !(ts.isStringLiteralLike(sql) || isLiteralMap))
         violations.push({ path: node.path, detail: "unresolved SQL statement bypasses mutation service" });
     }
     ts.forEachChild(child, visit);

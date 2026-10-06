@@ -17,10 +17,17 @@ interface ReceiptLink { readonly scope_id: string; readonly ingress_id: string; 
  * This also repairs a crash between the decision commit and the first sweep.
  */
 export async function hydrate(tx: SqlExecutor, run_id: string | null): Promise<number> {
-    const intents = await tx.query<LegacyIntent>(`SELECT e.id,e.scope_id,e.execution_id,e.effect_key FROM authority.effect_intent e
-      JOIN authority.scope_instance s ON s.id=e.scope_id
-      WHERE e.status='pending' AND e.payload ? 'schema' AND ($1::text IS NULL OR s.run_id=$1)
-      FOR UPDATE OF e ${run_id === null ? "SKIP LOCKED" : ""}`, [run_id]);
+    const statements = {
+      all_runs: `SELECT e.id,e.scope_id,e.execution_id,e.effect_key FROM authority.effect_intent e
+        JOIN authority.scope_instance s ON s.id=e.scope_id
+        WHERE e.status='pending' AND e.payload ? 'schema' AND ($1::text IS NULL OR s.run_id=$1)
+        FOR UPDATE OF e SKIP LOCKED`,
+      one_run: `SELECT e.id,e.scope_id,e.execution_id,e.effect_key FROM authority.effect_intent e
+        JOIN authority.scope_instance s ON s.id=e.scope_id
+        WHERE e.status='pending' AND e.payload ? 'schema' AND ($1::text IS NULL OR s.run_id=$1)
+        FOR UPDATE OF e`,
+    };
+    const intents = await tx.query<LegacyIntent>(statements[run_id === null ? "all_runs" : "one_run"], [run_id]);
     if (!intents.length) return 0;
     const receipts = await tx.query<ReceiptLink>(`SELECT r.scope_id,r.ingress_id,r.result,t.decision
       FROM authority.ingress_receipt r JOIN authority.transition t ON t.id=r.result->>'transition_id'
