@@ -237,15 +237,123 @@ test("unknown source fields are domain diagnostics with request correlation", ()
   expect(response).toMatchObject({ request_id: "unknown-source", result: { status: "domain_error", value: { kind: "malformed_bundle", path: "invented" } } });
 });
 
+interface ClientWriteAccess { writeFrame(id: string, frame: string, generation: number): Promise<void> }
+interface ClientProcessAccess { process: ReturnType<typeof Bun.spawn> | null }
+interface ClientPipeOverrides { readonly write?: Bun.FileSink["write"]; readonly flush?: Bun.FileSink["flush"] }
+interface HeldPipeFlush { readonly started: Promise<void>; readonly release: () => void }
+function overrideClientPipe(client: CoreClient, overrides: ClientPipeOverrides): void {
+  const access = client as unknown as ClientProcessAccess;
+  const child = access.process;
+  const stdin = child?.stdin;
+  if (!child || !stdin || typeof stdin === "number") throw new Error("child pipe missing");
+  // Bun's native sink methods are read-only; wrap the IO boundary instead.
+  const pipe = new Proxy(stdin, {
+    get(target, key) {
+      if (key === "write" && overrides.write) return overrides.write;
+      if (key === "flush" && overrides.flush) return overrides.flush;
+      const value: unknown = Reflect.get(target, key, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  access.process = new Proxy(child, {
+    get(target, key) {
+      if (key === "stdin") return pipe;
+      const value: unknown = Reflect.get(target, key, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+function holdPipeFlush(client: CoreClient): HeldPipeFlush {
+  const child = (client as unknown as ClientProcessAccess).process;
+  const stdin = child?.stdin;
+  if (!stdin || typeof stdin === "number") throw new Error("child pipe missing");
+  const write = stdin.write.bind(stdin);
+  const flush = stdin.flush.bind(stdin);
+  const frames: string[] = [];
+  let release = () => {};
+  let notify_started = () => {};
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const started = new Promise<void>((resolve) => { notify_started = resolve; });
+  overrideClientPipe(client, {
+    write: (data) => {
+      if (typeof data !== "string") throw new Error("expected a JSON frame");
+      frames.push(data);
+      return new TextEncoder().encode(data).length;
+    },
+    flush: async () => {
+      notify_started();
+      await held;
+      for (const frame of frames.splice(0)) write(frame);
+      return await flush();
+    },
+  });
+  return { started, release };
+}
 test("a slow pipe flush does not spend the request deadline", async () => {
   const client = startClient(binary, 30);
+  const held = holdPipeFlush(client);
   try {
-    const writable = client as unknown as { writeFrame(id: string, frame: string, generation: number): Promise<void> };
-    const write = writable.writeFrame.bind(client);
-    writable.writeFrame = async (id, frame, generation) => { await Bun.sleep(80); await write(id, frame, generation); };
-    expect(await client.request("compile", { bundle })).toMatchObject({ ok: true, value: { kind: "compiled" } });
-  } finally { client.close(); }
+    const pending = client.request("compile", { bundle });
+    await held.started;
+    await Bun.sleep(80);
+    held.release();
+    expect(await pending).toMatchObject({ ok: true, value: { kind: "compiled" } });
+  } finally { held.release(); client.close(); }
 });
+
+test("a newer request deadline fails that request and replays the older caller", () => withChild(
+  `if [ -f "$0.started" ]; then exec "${binary}"; fi
+touch "$0.started"
+IFS= read -r line
+sleep 2`, async (client) => {
+    const writable = client as unknown as ClientWriteAccess;
+    const write = writable.writeFrame.bind(client);
+    let should_delay = true;
+    writable.writeFrame = async (id, frame, generation) => {
+      if (should_delay) { should_delay = false; await Bun.sleep(150); }
+      await write(id, frame, generation);
+    };
+    const older = client.request("compile", { bundle });
+    const newer = client.request("compile", { bundle: { ...bundle, key: "newer" } });
+    expect(await newer).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "unresponsive_child" } } });
+    expect(await older).toMatchObject({ ok: true, value: { kind: "compiled" } });
+  }, 50));
+
+test("a failed newer pipe write preserves the older caller", () => withChild(
+  `if [ -f "$0.started" ]; then exec "${binary}"; fi
+touch "$0.started"
+IFS= read -r line
+sleep 2`, async (client) => {
+    const child = (client as unknown as ClientProcessAccess).process;
+    const stdin = child?.stdin;
+    if (!stdin || typeof stdin === "number") throw new Error("child pipe missing");
+    const write = stdin.write.bind(stdin);
+    let write_count = 0;
+    overrideClientPipe(client, {
+      write: (data) => {
+        if (++write_count === 2) throw new Error("fixture pipe write failed");
+        return write(data);
+      },
+    });
+    const older = client.request("compile", { bundle });
+    await Bun.sleep(20);
+    const newer = client.request("compile", { bundle: { ...bundle, key: "newer" } });
+    expect(await newer).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "terminated_child", detail: expect.stringContaining("fixture pipe write failed") } } });
+    expect(await older).toMatchObject({ ok: true, value: { kind: "compiled" } });
+  }));
+
+test("a malformed response with a newer request id preserves the older caller", () => withChild(
+  `if [ -f "$0.started" ]; then exec "${binary}"; fi
+touch "$0.started"
+IFS= read -r first
+IFS= read -r second
+printf '%s\\n' '{"version":${CORE_PROTOCOL_VERSION},"request_id":"2","truncated":false,"result":{"status":"ok","value":{}}}'
+sleep 2`, async (client) => {
+    const older = client.request("compile", { bundle });
+    const newer = client.request("compile", { bundle: { ...bundle, key: "newer" } });
+    expect(await newer).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "malformed_frame" } } });
+    expect(await older).toMatchObject({ ok: true, value: { kind: "compiled" } });
+  }));
 
 test("child deaths are rate-limited and stderr remains bounded in health and fault detail", () => withChild(
   "printf '%020000d\\n' 0 >&2\nsleep 0.05\nexit 1", async (client) => {

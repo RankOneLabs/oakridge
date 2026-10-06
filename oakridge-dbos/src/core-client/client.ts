@@ -1,6 +1,7 @@
 import { CORE_MAX_FRAME_BYTES, CORE_MAX_RESPONSE_BYTES, CORE_PROTOCOL_VERSION, decodeCoreResponse, hasSafeWireNumbers, type CoreRequest, type CoreResponseResult, type CoreTransportKind, type DefinitionBundle, type Output } from "./generated-contracts";
 import { transportFailure, type CoreResult } from "./transport-errors";
 interface Pending { readonly resolve: (result: CoreResult<Output>) => void; readonly frame: string; timeout: ReturnType<typeof setTimeout> | null }
+interface ChildFault { readonly kind: CoreTransportKind; readonly detail: string; readonly generation: number; readonly request_id?: string }
 export interface CoreChildHealth { readonly pid: number | null; readonly uptime_ms: number | null; readonly restart_count: number; readonly last_stderr_lines: readonly string[] }
 type RequestInput<O extends CoreRequest["operation"]> = Extract<CoreRequest, { readonly operation: O }>["input"];
 /** Callers hand over the source bundle; the client compiles once, caches the digest and addresses by it. */
@@ -72,7 +73,7 @@ export class CoreClient {
     void this.readStderr(child, generation);
     void this.readResponses(child, generation);
     void child.exited.then(() => {
-      if (generation === this.generation && !this.closed) this.fault("terminated_child", "core child exited", generation);
+      if (generation === this.generation && !this.closed) this.fault({ kind: "terminated_child", detail: "core child exited", generation });
     });
   }
   private async readStderr(child: ReturnType<typeof Bun.spawn>, generation: number): Promise<void> {
@@ -101,10 +102,12 @@ export class CoreClient {
     const stderr = new TextDecoder().decode(this.stderrBytes).trim();
     return stderr ? `${detail}; child stderr: ${stderr}` : detail;
   }
-  private fault(kind: CoreTransportKind, detail: string, generation: number): void {
+  private fault({ kind, detail, generation, request_id }: ChildFault): void {
     if (generation !== this.generation || this.closed) return;
-    const first = this.pending.keys().next().value;
-    if (first) this.settle(first, transportFailure(kind, this.failureDetail(detail)));
+    if (request_id !== undefined && !this.pending.has(request_id)) return;
+    // Request-local faults retain their correlation; child-wide faults have no attributed request.
+    const faulting_id = request_id ?? this.pending.keys().next().value;
+    if (faulting_id) this.settle(faulting_id, transportFailure(kind, this.failureDetail(detail)));
     for (const pending of this.pending.values()) {
       if (pending.timeout) clearTimeout(pending.timeout);
       pending.timeout = null;
@@ -129,15 +132,17 @@ export class CoreClient {
   private acceptLine(line: string, generation: number): void {
     let raw: unknown;
     try { raw = JSON.parse(line); }
-    catch { this.fault("malformed_frame", "invalid JSON response", generation); return; }
+    catch { this.fault({ kind: "malformed_frame", detail: "invalid JSON response", generation }); return; }
+    const request_id = typeof raw === "object" && raw !== null && "request_id" in raw
+      && typeof raw.request_id === "string" && this.pending.has(raw.request_id) ? raw.request_id : undefined;
     const response = decodeCoreResponse(raw);
-    if (!response || response.version !== CORE_PROTOCOL_VERSION) { this.fault("malformed_frame", "response failed generated wire schema", generation); return; }
-    if (!this.pending.has(response.request_id)) { this.fault("mismatched_request_id", response.request_id, generation); return; }
+    if (!response || response.version !== CORE_PROTOCOL_VERSION) { this.fault({ kind: "malformed_frame", detail: "response failed generated wire schema", generation, request_id }); return; }
+    if (!this.pending.has(response.request_id)) { this.fault({ kind: "mismatched_request_id", detail: response.request_id, generation }); return; }
     this.settle(response.request_id, resultFromResponse(response.result));
   }
   private async readResponses(child: ReturnType<typeof Bun.spawn>, generation: number): Promise<void> {
     const stdout = child.stdout;
-    if (!stdout || typeof stdout === "number") { this.fault("terminated_child", "child stdout unavailable", generation); return; }
+    if (!stdout || typeof stdout === "number") { this.fault({ kind: "terminated_child", detail: "child stdout unavailable", generation }); return; }
     const reader = stdout.getReader();
     let frame: number[] = [];
     try {
@@ -148,19 +153,19 @@ export class CoreClient {
           if (byte === 10) {
             let line: string;
             try { line = new TextDecoder("utf-8", { fatal: true }).decode(new Uint8Array(frame)); }
-            catch { this.fault("malformed_frame", "response is not UTF-8", generation); return; }
+            catch { this.fault({ kind: "malformed_frame", detail: "response is not UTF-8", generation }); return; }
             frame = [];
             this.acceptLine(line, generation);
             if (generation !== this.generation) return;
           } else {
-            if (frame.length === MAX_RESPONSE_BYTES) { this.fault("oversized_payload", "response frame exceeded maximum bytes", generation); return; }
+            if (frame.length === MAX_RESPONSE_BYTES) { this.fault({ kind: "oversized_payload", detail: "response frame exceeded maximum bytes", generation }); return; }
             frame.push(byte);
           }
         }
       }
       if (generation !== this.generation || this.closed) return;
-      this.fault(frame.length ? "malformed_frame" : "terminated_child", frame.length ? "unterminated response frame" : "child stdout ended", generation);
-    } catch (error) { this.fault("terminated_child", String(error), generation); }
+      this.fault({ kind: frame.length ? "malformed_frame" : "terminated_child", detail: frame.length ? "unterminated response frame" : "child stdout ended", generation });
+    } catch (error) { this.fault({ kind: "terminated_child", detail: String(error), generation }); }
   }
   async request<O extends CoreRequest["operation"]>(operation: O, input: ClientInput<O>): Promise<CoreResult<Output>> {
     const bundle = input.bundle;
@@ -216,14 +221,14 @@ export class CoreClient {
     try {
       if (generation !== this.generation || !this.pending.has(id)) return;
       const stdin = this.process?.stdin;
-      if (!stdin || typeof stdin === "number") { this.fault("terminated_child", "child stdin unavailable", generation); return; }
+      if (!stdin || typeof stdin === "number") { this.fault({ kind: "terminated_child", detail: "child stdin unavailable", generation, request_id: id }); return; }
       stdin.write(frame);
       await stdin.flush();
       // The deadline starts only once the frame has been flushed to the child pipe.
       const pending = this.pending.get(id);
       if (generation === this.generation && pending && !pending.timeout)
-        pending.timeout = setTimeout(() => this.fault("unresponsive_child", "core deadline exceeded", generation), this.deadlineMs);
-    } catch (cause) { this.fault("terminated_child", String(cause), generation); }
+        pending.timeout = setTimeout(() => this.fault({ kind: "unresponsive_child", detail: "core deadline exceeded", generation, request_id: id }), this.deadlineMs);
+    } catch (cause) { this.fault({ kind: "terminated_child", detail: String(cause), generation, request_id: id }); }
   }
   close(): void {
     if (this.closed) return;
