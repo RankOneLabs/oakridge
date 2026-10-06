@@ -1,10 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
-import { fetchRun } from "../client";
+import { fetchOperatorRun } from "../client";
 
 export function useRun(id: string, enabled = true) {
   return useQuery({
-    queryKey: ["oakridge", "run", id],
-    queryFn: () => fetchRun(id),
+    queryKey: ["operator", "run", id],
+    queryFn: () => fetchOperatorRun(id),
     refetchInterval: 10_000,
     enabled,
   });

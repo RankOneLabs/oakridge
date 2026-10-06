@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import ts from "typescript";
 import { Hono } from "hono";
@@ -14,28 +14,87 @@ import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
 import type { MutationService } from "../src/storage/mutation-service";
 
 const root = resolve(import.meta.dir, "../..");
-const clientPath = resolve(root, "kbbl/core/pwa/oakridge/client.ts");
+const pwaPath = resolve(root, "kbbl/core/pwa/oakridge");
 
-interface ClientRoute { readonly method: "GET" | "POST"; readonly path: string }
-function clientRoutes(): readonly ClientRoute[] {
-  const source = ts.createSourceFile(clientPath, readFileSync(clientPath, "utf8"), ts.ScriptTarget.Latest, true);
-  const routes: ClientRoute[] = [];
+interface ClientRoute { readonly method: string; readonly path: string }
+interface SourceRoute extends ClientRoute { readonly source: string }
+function sourceFiles(directory: string): readonly string[] {
+  return readdirSync(directory).flatMap((name) => {
+    const path = resolve(directory, name);
+    if (statSync(path).isDirectory()) return sourceFiles(path);
+    return /\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name) ? [path] : [];
+  });
+}
+function routeLiteral(node: ts.Node): string | null {
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+  if (ts.isTemplateExpression(node)) {
+    if (node.head.text.startsWith("/"))
+      return node.head.text + node.templateSpans.map((span) => `:value${span.literal.text}`).join("");
+    const [prefix, ...spans] = node.templateSpans;
+    if (prefix && ts.isIdentifier(prefix.expression) && prefix.expression.text === "API"
+      && prefix.literal.text.startsWith("/"))
+      return "/oakridge/api" + prefix.literal.text + spans.map((span) => `:value${span.literal.text}`).join("");
+    return null;
+  }
+  return null;
+}
+function sourceRoutes(path: string, content: string): readonly SourceRoute[] {
+  const source = ts.createSourceFile(path, content, ts.ScriptTarget.Latest, true);
+  const routes: SourceRoute[] = [];
   function visit(node: ts.Node): void {
-    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && (node.expression.text === "get" || node.expression.text === "post")) {
-      const argument = node.arguments[0];
-      if (argument && ts.isStringLiteral(argument)) routes.push({ method: node.expression.text === "get" ? "GET" : "POST", path: argument.text });
-      if (argument && ts.isTemplateExpression(argument)) routes.push({ method: node.expression.text === "get" ? "GET" : "POST",
-        path: argument.head.text + argument.templateSpans.map((span) => `:value${span.literal.text}`).join("") });
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+      const name = node.expression.text;
+      if (["get", "post", "put", "patch", "delete", "fetch_page", "fetch", "request"].includes(name)) {
+        const isRequest = name === "request";
+        const options = node.arguments[1];
+        const methodProperty = options && ts.isObjectLiteralExpression(options)
+          ? options.properties.find((property) => ts.isPropertyAssignment(property)
+            && (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) && property.name.text === "method") : undefined;
+        const method = isRequest && node.arguments[0] && ts.isStringLiteral(node.arguments[0])
+          ? node.arguments[0].text
+          : methodProperty && ts.isPropertyAssignment(methodProperty) && ts.isStringLiteral(methodProperty.initializer)
+            ? methodProperty.initializer.text : ["get", "post", "put", "patch", "delete"].includes(name) ? name.toUpperCase() : "GET";
+        function paths(argument: ts.Node): void {
+          const literal = routeLiteral(argument);
+          if (literal !== null) {
+            // kbbl owns the configuration endpoint; workflow routes go to DBOS.
+            if (literal === "/oakridge/config") return;
+            const normalized = literal.replace(/^\/oakridge\/api(?=\/)/, "").split("?")[0];
+            if (normalized?.startsWith("/")) routes.push({ method, path: normalized, source: path });
+            return;
+          }
+          ts.forEachChild(argument, paths);
+        }
+        const argument = node.arguments[isRequest ? 1 : 0];
+        if (argument) paths(argument);
+      }
     }
     ts.forEachChild(node, visit);
   }
   visit(source);
   return routes;
 }
+function clientRoutes(): readonly SourceRoute[] {
+  return sourceFiles(pwaPath).flatMap((path) => sourceRoutes(path, readFileSync(path, "utf8")));
+}
 
-test("every operator client route resolves to an authority table row", () => {
-  const missing = clientRoutes().filter(({ method, path }) => !matchRoute(method, path));
-  expect(missing).toEqual([]);
+test("every Oakridge PWA module route resolves to an authority table row", () => {
+  const routes = clientRoutes();
+  expect(routes.some((route) => route.path === "/api/inbox")).toBe(true);
+  expect(routes.filter(({ method, path }) => !matchRoute(method, path))).toEqual([]);
+});
+
+test("route guard detects dead routes in helpers, pagination and direct fetches", () => {
+  const routes = sourceRoutes("helper.ts", `
+    get("/missing-get");
+    post(\`/missing-post/\${id}\`, {});
+    fetch_page(cursor === null ? "/api/inbox" : \`/api/inbox?cursor=\${cursor}\`);
+    fetch("/oakridge/api/missing-fetch");
+    fetch("/oakridge/api/runs", { method: "POST" });
+    request("DELETE", "/missing-delete");
+  `);
+  expect(routes.filter(({ method, path }) => !matchRoute(method, path)).map((route) => route.path))
+    .toEqual(["/missing-get", "/missing-post/:value", "/missing-fetch", "/missing-delete"]);
 });
 
 test("operator listing, pinning and digest launch have explicit authority", () => {

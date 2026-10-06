@@ -1,6 +1,6 @@
 import { readAllInboxPages } from "./lib/operator-inbox";
 import { OakridgeHttpError, selectFailureDetail } from "./lib/client-errors";
-import type { OakridgeConfig, RunDetail, RunSummary, ReviewInbox } from "./types";
+import type { OakridgeConfig, ReviewInbox } from "./types";
 import type { OperatorRunView, OperatorDefinitionSummary, OperatorScopeHistory, OperatorPinnedDefinition, OperatorScopeProjection, OperatorCommandSubmission, OperatorCommandReceipt } from "./operator-contracts";
 import type { WorkflowDefinitionDescriptor } from "./workflow-definition-types";
 
@@ -38,21 +38,6 @@ export function submitOperatorCommand(input: OperatorCommandSubmission): Promise
   });
 }
 
-// Session list compatibility until its independent ACP grouping is migrated.
-export async function fetchRuns(_filter?: string): Promise<RunSummary[]> {
-  const runs = await fetchOperatorRuns();
-  return runs.map((run) => ({ id: run.run_id, title: null, repository_keys: [], workflow_name: run.definition_digest,
-    status: run.scopes.every((scope) => scope.is_terminal) ? "complete" : "active",
-    blocked_reason: null, next_actor: null, current_stage: null, stage_total: run.scopes.length,
-    stage_complete: run.scopes.filter((scope) => scope.is_terminal).length, attention_count: 0, parked_count: 0,
-    updated_at: "" }));
-}
-export async function fetchRun(id: string): Promise<RunDetail> {
-  const run = await fetchOperatorRun(id);
-  return { id: run.run_id, title: null, repository_keys: [], workflow_name: run.definition_digest,
-    status: run.scopes.every((scope) => scope.is_terminal) ? "complete" : "active",
-    blocked_reason: null, next_actor: null, parked_count: 0, updated_at: "", stages: [] };
-}
 export async function fetchReviewInbox(): Promise<ReviewInbox> {
   const inbox = await fetchOperatorInbox();
   return { cohorts: [], items: [], attention_count: inbox.items.filter((item) => item.kind === "command").length };
