@@ -71,12 +71,8 @@ jobs:
       - run: bun run --filter kbbl test:pwa
 
   oakridge-dbos-tests:
-    name: oakridge-dbos tests (bun, shard ${{ matrix.shard }})
+    name: oakridge-dbos tests (bun)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [0, 1]
     # The end-to-end tests drive a real DBOS runtime, which needs a real
     # PostgreSQL. Missing prerequisites fail rather than silently skip.
     services:
@@ -107,21 +103,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: cd oakridge-dbos && bunx playwright install --with-deps chromium
-      - name: Run DBOS test shard
-        working-directory: oakridge-dbos
-        env:
-          TEST_SHARD: ${{ matrix.shard }}
-        shell: bash
-        run: |
-          # Each file keeps its own process because DBOS has global runtime state.
-          # Alternating sorted files assigns every test to exactly one runner.
-          mapfile -d '' test_files < <(find src tests -name '*.test.ts' -print0 | sort -z)
-          test "${#test_files[@]}" -gt 0
-          failed=0
-          for ((index = TEST_SHARD; index < ${#test_files[@]}; index += 2)); do
-            bun test "${test_files[index]}" || failed=1
-          done
-          exit "$failed"
+      - run: bun run --filter oakridge-dbos test:unit
 
   lbc-dashboard-tests:
     name: lbc-dashboard tests (bun)
