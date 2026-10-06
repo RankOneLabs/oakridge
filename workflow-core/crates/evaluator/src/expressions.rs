@@ -486,7 +486,7 @@ mod tests {
             node: CheckedExpressionNode::Literal { value: item },
         };
         let expression = CheckedExpression {
-            schema: SchemaId::from("$bool"),
+            schema: SchemaId::from("flag"),
             node: CheckedExpressionNode::Contains {
                 source: Box::new(source),
                 value: Box::new(needle),

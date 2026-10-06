@@ -8,9 +8,31 @@ pub struct Context {
 pub fn trigger_schema(owner: &ScopeDefinition) -> SchemaId {
     SchemaId(format!("$trigger/{}", owner.key))
 }
+/// The bundle's single declared boolean schema. Computed booleans (`equals`,
+/// `not`, `contains`, …) take this schema, so a bundle must declare exactly one
+/// — zero leaves them untyped and two makes the choice arbitrary.
 pub fn boolean_schema(bundle: &DefinitionBundle) -> CoreResult<SchemaId> {
-    let _ = bundle;
-    Ok(SchemaId("$bool".into()))
+    let mut booleans = bundle
+        .schemas
+        .iter()
+        .filter(|s| matches!(s.shape, SchemaShape::Boolean))
+        .map(|s| s.key.clone());
+    let Some(first) = booleans.next() else {
+        return Err(error(
+            DomainErrorKind::MissingSymbol,
+            "boolean",
+            "boolean expression requires a named boolean schema",
+        ));
+    };
+    if let Some(second) = booleans.next() {
+        return Err(error(
+            DomainErrorKind::DuplicateSymbol,
+            "boolean",
+            "boolean expressions require exactly one declared boolean schema",
+        )
+        .contracts(first.to_string(), second.to_string()));
+    }
+    Ok(first)
 }
 pub fn compatible(
     bundle: &DefinitionBundle,
@@ -19,9 +41,6 @@ pub fn compatible(
     entity: &str,
 ) -> CoreResult<()> {
     if expected == actual {
-        return Ok(());
-    }
-    if expected.0 == "$bool" && matches!(schema(bundle, actual)?, SchemaShape::Boolean) {
         return Ok(());
     }
     let kind = if matches!(schema(bundle, actual)?, SchemaShape::Optional { .. }) {
@@ -587,28 +606,93 @@ pub fn compile_expression(
 mod tests {
     use super::*;
 
-    #[test]
-    fn equality_uses_canonical_boolean_schema() {
-        let source: DefinitionBundle =
-            serde_json::from_str(include_str!("../../../fixtures/bundles/minimal.json")).unwrap();
-        let expression = Expression::Equals {
-            left: Box::new(Expression::Literal {
-                schema: SchemaId::from("flag"),
-                value: serde_json::json!(true),
-            }),
-            right: Box::new(Expression::Literal {
-                schema: SchemaId::from("flag"),
-                value: serde_json::json!(false),
-            }),
-        };
-        let checked = compile_expression(
-            &source,
-            &source.scopes[0],
-            &expression,
+    fn minimal() -> DefinitionBundle {
+        serde_json::from_str(include_str!("../../../fixtures/bundles/minimal.json")).unwrap()
+    }
+
+    fn flag(value: bool) -> Expression {
+        Expression::Literal {
+            schema: SchemaId::from("flag"),
+            value: serde_json::json!(value),
+        }
+    }
+
+    fn compile(
+        bundle: &DefinitionBundle,
+        expression: &Expression,
+    ) -> CoreResult<CheckedExpression> {
+        compile_expression(
+            bundle,
+            &bundle.scopes[0],
+            expression,
             &Context::default(),
             0,
         )
-        .unwrap();
-        assert_eq!(checked.schema, SchemaId::from("$bool"));
+    }
+
+    #[test]
+    fn equality_takes_the_declared_boolean_schema() {
+        let bundle = minimal();
+        let expression = Expression::Equals {
+            left: Box::new(flag(true)),
+            right: Box::new(flag(false)),
+        };
+        let checked = compile(&bundle, &expression).unwrap();
+        assert_eq!(checked.schema, SchemaId::from("flag"));
+    }
+
+    #[test]
+    fn computed_boolean_compares_with_declared_boolean_in_either_order() {
+        let bundle = minimal();
+        let computed = Expression::Not {
+            value: Box::new(flag(false)),
+        };
+        for (left, right) in [
+            (computed.clone(), flag(true)),
+            (flag(true), computed.clone()),
+        ] {
+            let expression = Expression::Equals {
+                left: Box::new(left),
+                right: Box::new(right),
+            };
+            let checked = compile(&bundle, &expression).unwrap();
+            assert_eq!(checked.schema, SchemaId::from("flag"));
+        }
+    }
+
+    #[test]
+    fn missing_boolean_schema_is_rejected() {
+        let mut bundle = minimal();
+        bundle
+            .schemas
+            .retain(|s| !matches!(s.shape, SchemaShape::Boolean));
+        let text = |value: &str| Expression::Literal {
+            schema: SchemaId::from("text"),
+            value: serde_json::json!(value),
+        };
+        let expression = Expression::Equals {
+            left: Box::new(text("a")),
+            right: Box::new(text("b")),
+        };
+        let error = compile(&bundle, &expression).unwrap_err();
+        assert_eq!(error.kind, DomainErrorKind::MissingSymbol);
+        assert_eq!(&*error.entity_id, "boolean");
+    }
+
+    #[test]
+    fn multiple_boolean_schemas_are_rejected() {
+        let mut bundle = minimal();
+        bundle.schemas.push(Schema {
+            key: SchemaId::from("other_flag"),
+            shape: SchemaShape::Boolean,
+        });
+        let error = compile(
+            &bundle,
+            &Expression::Not {
+                value: Box::new(flag(false)),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.kind, DomainErrorKind::DuplicateSymbol);
     }
 }

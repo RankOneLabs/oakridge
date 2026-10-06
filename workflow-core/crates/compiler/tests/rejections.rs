@@ -924,20 +924,6 @@ fn child_cancellation_cannot_address_a_private_child() {
 }
 
 #[test]
-fn e2_canonical_boolean_schema_is_reserved() {
-    reject(
-        fixture(),
-        |source| {
-            source["schemas"]
-                .as_array_mut()
-                .unwrap()
-                .push(json!({"key":"$bool","shape":{"kind":"boolean"}}))
-        },
-        DomainErrorKind::DuplicateSymbol,
-    );
-}
-
-#[test]
 fn e1_unguarded_action_read_is_rejected() {
     let mut source = fixture();
     source["schemas"].as_array_mut().unwrap().extend([

@@ -161,17 +161,6 @@ pub fn compile(
     declarations::validate_bundle(source, available)?;
     let digest = canonical_digest(source)?;
     let mut bundle = source.clone();
-    if source.schemas.iter().any(|schema| schema.key.0 == "$bool") {
-        return Err(error(
-            DomainErrorKind::DuplicateSymbol,
-            "$bool",
-            "reserved canonical boolean schema",
-        ));
-    }
-    bundle.schemas.push(Schema {
-        key: SchemaId("$bool".into()),
-        shape: SchemaShape::Boolean,
-    });
     for definition in &source.schemas {
         if let SchemaShape::Record { fields, .. } = &definition.shape {
             for (index, field) in fields
