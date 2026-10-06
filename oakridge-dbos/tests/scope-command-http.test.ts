@@ -28,9 +28,13 @@ test("publication refuses an oversized value before staging", async () => {
         predecessor_id: null, expected_slot_version: null, execution_id: null } }) });
   expect({ status: response.status, kind: (await response.json()).kind }).toEqual({ status: 413, kind: "oversized_payload" });
 });
-test("a changed witness between validation and commit retries with a fresh evaluation", async () => {
+test("a changed non-target witness between validation and commit retries with a fresh evaluation", async () => {
+  const api = await harness({ change_witness_before_commit: true });
+  expect({ status: (await api.submit()).status, evaluations: api.evaluationCount() }).toEqual({ status: 202, evaluations: 2 });
+});
+test("a changed target between validation and commit re-evaluates and then conflicts with 409", async () => {
   const api = await harness({ change_target_before_commit: true });
-  expect({ status: (await api.submit()).status, evaluations: api.evaluationCount() }).toEqual({ status: 202, evaluations: 1 });
+  expect({ status: (await api.submit()).status, evaluations: api.evaluationCount() }).toEqual({ status: 409, evaluations: 2 });
 });
 test("HTTP core transport failures return 503", async () => {
   expect((await (await harness({ transport_failure: true })).submit()).status).toBe(503);

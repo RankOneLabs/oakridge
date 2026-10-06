@@ -1,4 +1,4 @@
-import type { CompiledBundle, CheckedValue, DecisionOutcome, DefinitionBundle } from "../core-client/generated-contracts";
+import { CORE_MAX_FRAME_BYTES, CORE_PROTOCOL_VERSION, type CompiledBundle, type CheckedValue, type DecisionOutcome, type DefinitionBundle } from "../core-client/generated-contracts";
 import type { CapacityChange } from "./capacity";
 import { applyCapacityChanges } from "./capacity";
 import { findReceipt, type IngressIdentity } from "./receipts";
@@ -19,11 +19,16 @@ export interface EffectPublication { readonly effect_key: string; readonly paylo
 export interface CommitRequest { readonly execution_authority?: string; readonly child_cancellations?: readonly import("./child-cancellation").ChildCancellation[]; readonly identity: IngressIdentity; readonly read_set: ReadSet; readonly decision: DecisionOutcome; readonly outputs: readonly OutputPublication[]; readonly capacity: readonly CapacityChange[]; readonly effects: readonly EffectPublication[]; readonly operator_version: number | null }
 export type CommitResult = { readonly kind: "Committed"; readonly receipt: CommitReceipt } | { readonly kind: "Replayed"; readonly receipt: CommitReceipt } | { readonly kind: "Conflict"; readonly detail: string } | { readonly kind: "Rejected"; readonly detail: string; readonly constraint?: string } | { readonly kind: "snapshot_too_large"; readonly scope: ScopeId; readonly bytes: number; readonly limit: number; readonly largest_roots: readonly { readonly root: string; readonly bytes: number }[] };
 
-export const MAX_SNAPSHOT_BYTES = 1_048_576;
+/** A committed snapshot must fit the evaluate frame the core client sends for it, envelope included. */
+export const MAX_SNAPSHOT_BYTES = CORE_MAX_FRAME_BYTES;
 export interface SnapshotMeasurement { readonly roots: AuthoritySnapshot["reads"]; readonly bytes: number; readonly largest_roots: readonly { readonly root: string; readonly bytes: number }[] }
-/** Measures exactly the snapshot assembled from the pinned checked scope's reads. */
+/** The widest envelope `CoreClient.send` wraps an evaluate input in: a 64-hex SHA-256 digest and a counter request ID. */
+const WIDEST_EVALUATE_ENVELOPE = { version: CORE_PROTOCOL_VERSION, request_id: String(Number.MAX_SAFE_INTEGER), operation: "evaluate", bundle_digest: "f".repeat(64) } as const;
+/** Measures the evaluate frame built from the snapshot assembled from the pinned checked scope's reads. */
 export function measureAuthoritySnapshot(source: AuthoritySnapshot): SnapshotMeasurement {
-  return { roots: source.reads, bytes: Buffer.byteLength(JSON.stringify(source.snapshot)),
+  const { bundle_digest, ...envelope } = WIDEST_EVALUATE_ENVELOPE;
+  const frame = JSON.stringify({ ...envelope, input: { bundle_digest, snapshot: source.snapshot } }) + "\n";
+  return { roots: source.reads, bytes: Buffer.byteLength(frame),
     largest_roots: source.snapshot.observations.map((observation) => ({ root: JSON.stringify(observation.root),
       bytes: Buffer.byteLength(JSON.stringify(observation)) })).sort((a, b) => b.bytes - a.bytes).slice(0, 5) };
 }

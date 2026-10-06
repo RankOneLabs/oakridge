@@ -52,6 +52,9 @@ export function installSelectedPublicationApi(app: Hono, deps: PublicationDepend
     if (value_bytes > MAX_PUBLICATION_VALUE_BYTES) return c.json({ kind: "oversized_payload", bytes: value_bytes, limit: MAX_PUBLICATION_VALUE_BYTES }, 413);
     const checked = await deps.core.request("validate_payload", { bundle: selected.source, schema: output.schema, payload: body.body });
     if (!checked.ok || checked.value.kind !== "validated") return c.json({ error: "output body does not match its checked schema", detail: checked.ok ? "unexpected core response" : checked.error }, 422);
+    // The raw guard above bounds transport; the staged value is the checked expansion, which the operator path measures too.
+    const checked_bytes = publicationValueBytes(checked.value.value);
+    if (checked_bytes > MAX_PUBLICATION_VALUE_BYTES) return c.json({ kind: "oversized_payload", bytes: checked_bytes, limit: MAX_PUBLICATION_VALUE_BYTES }, 413);
     const trigger = await deps.core.request("validate_payload", { bundle: selected.source, schema: event.payload_schema, payload: {} });
     if (!trigger.ok || trigger.value.kind !== "validated") return c.json({ error: "publication trigger payload is invalid" }, 422);
     const slots = await deps.db.query<OutputSlotRecord>("SELECT * FROM authority.output_slot WHERE scope_id=$1 AND output_key=$2 AND collection_key=$3", [scope_id, output_key, body.collection_key]);
