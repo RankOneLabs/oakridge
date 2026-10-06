@@ -38,12 +38,14 @@ test("browser isolates drafts, submits observed result targets, and recovers a l
     await page.route("**/scopes/scope-1/commands", async (route) => {
       requests.push(route.request().postDataJSON() as ScopeCommandRequest);
       const response = await route.fetch();
+      expect(response.status()).toBe(202);
       receipts.push(await response.json());
       if (requests.length === 1) await route.abort("failed");
       else await route.fulfill({ response });
     });
     await page.goto(server.url.href);
     await page.getByText("Output artifact body", { exact: true }).waitFor();
+    await page.getByTestId("operator-history-pane").getByText("No transitions yet.", { exact: true }).waitFor();
     await page.getByLabel("Feedback").fill("Discussion draft");
     await page.getByLabel("Action", { exact: true }).selectOption("change");
     expect(await page.getByLabel("Feedback").inputValue()).toBe("");
@@ -52,7 +54,8 @@ test("browser isolates drafts, submits observed result targets, and recovers a l
     await page.getByLabel("Action", { exact: true }).selectOption("change");
     await page.getByLabel("Feedback").fill("Change draft");
     await page.getByRole("button", { name: "Submit change", exact: true }).click();
-    await page.getByRole("alert").waitFor();
+    await page.getByTestId("operator-command-form").getByRole("alert")
+      .filter({ hasText: "Delivery is uncertain." }).waitFor();
     expect(requests[0]).toMatchObject({ command_key: "change", expected_scope_version: 4,
       targets: [{ identity: "exec-1", version: 6 }], payload: { text: "Change draft" } });
     expect(api.evaluationCount()).toBe(1);
