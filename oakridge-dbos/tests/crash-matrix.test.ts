@@ -18,7 +18,7 @@ import { unit, waitUntil, withDatabase } from "./effect-fixture";
 const cuts = ["before_decision_commit", "after_decision_commit", "after_accept_before_response", "after_revocation_before_stop", "after_stop_before_ack"] as const;
 interface StartRow { readonly id: string; readonly execution_id: string; readonly status: string; readonly payload: EffectPayload }
 const binary = resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli");
-const fast = { provider_timeout_ms: 5_000, retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, wake_timeout_seconds: 0.2 };
+const fast = { retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, wake_timeout_seconds: 0.2 };
 
 for (const cut of cuts) {
   test(`real process kill ${cut} retains one selected execution and its cleanup obligation`, async () => {
@@ -71,7 +71,7 @@ for (const cut of cuts) {
               return { kind: "acknowledged", value: { stopped: true } };
             },
           };
-          await createProductionComposition({ database_url: process.env.OAKRIDGE_CRASH_URL, core_binary: process.env.OAKRIDGE_CRASH_CORE, host: "127.0.0.1", effect_provider: provider, timing: ${JSON.stringify({ ...fast, provider_timeout_ms: 100_000 })} });
+          await createProductionComposition({ database_url: process.env.OAKRIDGE_CRASH_URL, core_binary: process.env.OAKRIDGE_CRASH_CORE, host: "127.0.0.1", effect_provider: provider, timing: ${JSON.stringify(fast)} });
           await new Promise(() => {});
         }`;
       const provider: EffectProvider = {

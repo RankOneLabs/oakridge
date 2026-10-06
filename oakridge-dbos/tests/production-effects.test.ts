@@ -27,11 +27,12 @@ test("recovery replays the pinned prompt verbatim and its secret publishes witho
       const composition = await createProductionComposition({ database_url: url,
         core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1",
         control_token: "operator-only", kbbl_base_url: adapter.url.href,
-        timing: { provider_timeout_ms: 500, retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, wake_timeout_seconds: 1 } });
+        provider_capabilities: { check_github: async () => ({ ok: true, value: true }) },
+        timing: { retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, wake_timeout_seconds: 1 } });
       try {
         const headers = { "content-type": "application/json", authorization: "Bearer operator-only" };
         const created = await composition.app.request("/runs", { method: "POST", headers,
-          body: JSON.stringify({ bundle: await developmentBundle(), input: { brief, repository } }) });
+          body: JSON.stringify({ bundle: await developmentBundle(), input: { brief, repository, push_remote_owner: repository.forge.owner } }) });
         expect(created.status).toBe(201);
         const run: StartedRun = await created.json();
         const scope_path = `/api/runs/${run.run_id}/scopes/${run.root_scope_id}`;
@@ -90,7 +91,7 @@ test("rejection after uncertainty cleans up even when its evidence makes the run
   const stopped: StableInvocation[] = [];
   let can_confirm_stop = false;
   const composition = await createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1",
-    timing: { provider_timeout_ms: 500, retry_initial_seconds: 0.01, retry_cap_seconds: 0.05, wake_timeout_seconds: 0.05 },
+    timing: { retry_initial_seconds: 0.01, retry_cap_seconds: 0.05, wake_timeout_seconds: 0.05 },
     effect_provider: {
       start: async () => ++starts === 1 ? { kind: "uncertain", detail: "start response lost" }
         : { kind: "permanently_rejected", code: "worktree_unrecoverable", detail: "reconciliation rejected",
@@ -116,7 +117,7 @@ test("rejection after uncertainty cleans up even when its evidence makes the run
 
 test("production prepares the selected repository and routes durable results into configured scope decisions", async () => {
   await withDatabase(async ({ url, db }) => {
-    const composition = await createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1", timing: { provider_timeout_ms: 500, retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, wake_timeout_seconds: 1 } });
+    const composition = await createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1", timing: { retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, wake_timeout_seconds: 1 } });
     try {
       const bundle = await operationBundle("repository.prepare");
       const run = await begin(composition, bundle, { repository_path: resolve(import.meta.dir, "../.."), expected_head: null });
@@ -134,7 +135,7 @@ test("production prepares the selected repository and routes durable results int
 
 test("production routes lost-worktree evidence to the scope's configured recovery", async () => {
   await withDatabase(async ({ url, db }) => {
-    const composition = await createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1", timing: { provider_timeout_ms: 500, retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, wake_timeout_seconds: 1 } });
+    const composition = await createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1", timing: { retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, wake_timeout_seconds: 1 } });
     try {
       const run = await begin(composition, await operationBundle("repository.prepare"), { repository_path: `/tmp/missing-${crypto.randomUUID()}`, expected_head: null });
       await waitUntil(async () => (await db.query<{ is_terminal: boolean }>("SELECT is_terminal FROM authority.scope_instance WHERE id=$1", [run.root_scope_id]))[0]?.is_terminal === true);
@@ -151,15 +152,15 @@ test("production PR discovery retries a real HTTP 503 and persists its selected 
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: (request) => {
     calls++;
     if (!is_available) return new Response("unavailable", { status: 503 });
-    return new URL(request.url).pathname.endsWith("/pulls") ? Response.json([{ number: 1 }])
+    return new URL(request.url).pathname.endsWith("/pulls") ? Response.json([{ number: 1, head: { ref: "head", repo: { full_name: "owner/repo" } }, base: { ref: "base" } }])
       : Response.json({ number: 1, html_url: "https://forge/pr/1", state: "open", head: { ref: "head", sha: "a".repeat(40) }, base: { ref: "base" }, merged: false, merged_at: null });
   } });
   try {
     await withDatabase(async ({ url, db }) => {
       const reader = new GithubPullRequestReader({ token: "test", api_base_url: server.url.href });
-      const composition = await createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1", pull_requests: reader, timing: { provider_timeout_ms: 500, retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, wake_timeout_seconds: 1 } });
+      const composition = await createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1", pull_requests: reader, provider_capabilities: { check_github: async () => ({ ok: true, value: true }) }, timing: { retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, wake_timeout_seconds: 1 } });
       try {
-        const run = await begin(composition, await operationBundle("pull_request.observe"), { query: { owner: "owner", name: "repo", head_branch: "head", base_branch: "base" } });
+        const run = await begin(composition, await operationBundle("pull_request.observe"), { query: { owner: "owner", name: "repo", head_owner: "owner", head_branch: "head", base_branch: "base" } });
         await waitUntil(async () => calls >= 1 && (await db.query<{ status: string }>("SELECT status FROM authority.effect_intent WHERE scope_id=$1", [run.root_scope_id]))[0]?.status === "pending");
         const before = await db.query<{ payload: EffectPayload }>("SELECT payload FROM authority.effect_intent WHERE scope_id=$1", [run.root_scope_id]);
         is_available = true;
@@ -170,6 +171,24 @@ test("production PR discovery retries a real HTTP 503 and persists its selected 
       } finally { await composition.close(); }
     });
   } finally { server.stop(true); }
+});
+
+test("GitHub 403 publishes a typed auth fact and does not retry", async () => {
+  let calls = 0;
+  const reader = new GithubPullRequestReader({ token: "restricted", api_base_url: "http://unused" }, (async () => {
+    calls++;
+    return new Response("forbidden", { status: 403 });
+  }) as unknown as typeof fetch);
+  await withDatabase(async ({ url, db }) => {
+    const composition = await createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"),
+      host: "127.0.0.1", pull_requests: reader, provider_capabilities: { check_github: async () => ({ ok: true, value: true }) }, timing: { retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, wake_timeout_seconds: 1 } });
+    try {
+      const run = await begin(composition, await operationBundle("pull_request.observe"), { query: { owner: "owner", name: "repo", head_owner: "owner", head_branch: "head", base_branch: "base" } });
+      await waitUntil(async () => (await db.query<{ is_terminal: boolean }>("SELECT is_terminal FROM authority.scope_instance WHERE id=$1", [run.root_scope_id]))[0]?.is_terminal === true);
+      const facts = await db.query<{ fact_key: string }>("SELECT fact_key FROM authority.fact WHERE scope_id=$1", [run.root_scope_id]);
+      expect({ calls, has_auth_fact: facts.some((fact) => fact.fact_key === "auth") }).toEqual({ calls: 1, has_auth_fact: true });
+    } finally { await composition.close(); }
+  });
 });
 
 test("changed repository head and PR observations cannot enrich a selected kbbl request on replay", async () => {
@@ -187,7 +206,7 @@ test("changed repository head and PR observations cannot enrich a selected kbbl 
   try {
     await withDatabase(async ({ url, db }) => {
       const composition = await createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1", kbbl_base_url: server.url.href,
-        timing: { provider_timeout_ms: 500, retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, wake_timeout_seconds: 1 } });
+        timing: { retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, wake_timeout_seconds: 1 } });
       try {
         const selected_head = "a".repeat(40);
         const run = await begin(composition, await sessionBundle(), { runtime: "claude-code", rendered_prompt: `Review PR 1 at ${selected_head}`, workdir: "/tmp", session_name: "replay",

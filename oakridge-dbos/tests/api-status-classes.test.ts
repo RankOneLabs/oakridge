@@ -2,6 +2,12 @@ import { expect, test } from "bun:test";
 import { Hono } from "hono";
 import { httpBodyLimit } from "../src/http/app";
 import { commandStatus, ConflictError, InternalFaultError, InvalidPayloadError, MalformedRequestError, MissingEntityError, PendingWork, TransientServiceError } from "../src/http/scope-commands";
+import { resolve } from "node:path";
+import type { CoreClient } from "../src/core-client/client";
+import type { DefinitionBundle } from "../src/core-client/generated-contracts";
+import { githubProviderCapabilities } from "../src/runtime/compose";
+import { createMutationService } from "../src/storage/mutation-service";
+import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
 
 test("every command outcome has a distinct status class", () => {
   const failures = [
@@ -24,4 +30,34 @@ test("the backend rejects a two MiB body with a typed 413", async () => {
   const response = await app.request("/runs", { method: "POST", body: "x".repeat(2 * 1024 * 1024) });
   expect({ status: response.status, body: await response.json() }).toEqual({ status: 413,
     body: { kind: "oversized_payload", limit: 1_048_576 } });
+});
+
+test("GitHub capability is checked before the mutation-service definition insert", async () => {
+  const bundle: DefinitionBundle = await Bun.file(resolve(import.meta.dir, "../../workflow-config/definitions/development.json")).json();
+  const core = { request: async () => ({ ok: true, value: { kind: "compiled", value: { scopes: [], digest: "test" } } }) } as unknown as CoreClient;
+  let inserted = false;
+  const db = { transaction: async () => { inserted = true; throw new Error("unexpected insert"); } } as unknown as TransactionalSqlExecutor;
+  const mutations = createMutationService(db, core, githubProviderCapabilities(""));
+  const result = await mutations.startRun({ bundle, input: {} });
+  expect({ inserted, detail: result.ok ? "" : result.error.detail }).toEqual({ inserted: false, detail: "missing provider capability: github token is absent" });
+});
+
+test("a token denied pull-request read is rejected at pin time", async () => {
+  const capabilities = githubProviderCapabilities("restricted-token", (async () => new Response("denied", { status: 403 })) as unknown as typeof fetch);
+  const result = await capabilities.check_github({ forge: { owner: "owner", name: "repo" } });
+  expect(result.ok ? null : result.error.detail).toBe("repository pull-request read denied (403)");
+});
+
+test("the capability check reads the repository named by a pull-request query, never /user", async () => {
+  const urls: string[] = [];
+  const capabilities = githubProviderCapabilities("token", (async (input: string | URL | Request) => { urls.push(String(input)); return new Response("[]", { status: 200 }); }) as unknown as typeof fetch);
+  const result = await capabilities.check_github({ query: { owner: "RankOneLabs", name: "oakridge", head_owner: "fork", head_branch: "head", base_branch: "base" } });
+  expect({ ok: result.ok, urls }).toEqual({ ok: true, urls: ["https://api.github.com/repos/RankOneLabs/oakridge/pulls?per_page=1"] });
+});
+
+test("an input naming no GitHub repository fails the capability check closed", async () => {
+  let called = false;
+  const capabilities = githubProviderCapabilities("token", (async () => { called = true; return new Response("{}", { status: 200 }); }) as unknown as typeof fetch);
+  const result = await capabilities.check_github({ repositories: [{ key: "oakridge", preparation: { repository_path: "/repo" } }] });
+  expect({ called, detail: result.ok ? null : result.error.detail }).toEqual({ called: false, detail: "run input names no GitHub repository to check" });
 });

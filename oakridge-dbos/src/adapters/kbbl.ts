@@ -1,5 +1,5 @@
 import { ExecutorStartRejectedError, type ExecutionRequest, type ExpectedArtifactContract, type ExecutorAdapter, type ExecutorObservationAttempt, type ExecutorTerminalObservation, type ExecutorUnavailable, type ExternalExecutionReference } from "../domain/execution";
-import type { ExecutionId, ExecutorOperationId, JsonValue, UnitId } from "../domain/primitives";
+import type { ExecutionId, ExecutorOperationId, JsonValue, } from "../domain/primitives";
 import type { InvocationId, ProviderResult } from "../effects/provider";
 
 /**
@@ -141,35 +141,9 @@ const parseSessionIdentity = (value: JsonValue): KbblResolvedSessionIdentity => 
   };
 };
 
-/**
- * The outputs this work order owes, named the way the emit route addresses
- * them. `expected_artifacts.unit_id` carries a collection member's key (the
- * request's own `unit_id` marks a scalar), so a retry that owes one member of
- * a collection tells the agent to emit that member and nothing else.
- */
 /** The selected worker owns this typed output list; prompt text cannot widen or narrow it. */
 export const selectPromptExpectedArtifacts = (_config: Pick<KbblResolvedConfig, "rendered_prompt">,
   request: Pick<ExecutionRequest, "unit_id" | "inputs" | "declared_outputs" | "expected_artifacts">): readonly ExpectedArtifactContract[] => request.expected_artifacts;
-
-const expectedOutputLines = (unitId: UnitId, expectedArtifacts: readonly ExpectedArtifactContract[]): string =>
-  expectedArtifacts.map((expected) => expected.unit_id === unitId
-    ? `- ${expected.output_name}`
-    : `- ${expected.output_name} (Output-Collection-Key: ${expected.unit_id})`).join("\n");
-
-const publicationInstructions = (config: KbblResolvedConfig, request: Pick<ExecutionRequest, "unit_id" | "inputs" | "declared_outputs" | "expected_artifacts">): string => {
-  if (!config.publication) return "";
-  const expected = selectPromptExpectedArtifacts(config, request);
-  const repositoryRefs = config.worktree
-    ? `\n\n## Repository refs\nCanonical cohort ref: ${config.worktree.branchName}\nPull request base: ${config.worktree.baseRef ?? ""}`
-    : "";
-  const owed = expected.length > 0
-    ? `\n\nPublish exactly these outputs and no others:\n${expectedOutputLines(request.unit_id, expected)}\n`
-    : "";
-  const unchanged = config.assessment_unchanged
-    ? `\nFor an unchanged discussion response, publish assessment_unchanged instead of assessment to the same endpoint. Send this JSON with your own explanation:\n${JSON.stringify({ ...config.assessment_unchanged, explanation: "Explain why the assessment remains unchanged" }, null, 2)}\n`
-    : "";
-  return `${repositoryRefs}\n\n## Oakridge v2 artifact publication\n\nUse this run-owned endpoint instead of any stage/execution emit URL shown earlier:\n\nPUT ${config.publication.base_url.replace(/\/$/, "")}/work-orders/${config.publication.work_order_id}/emit/<output-name>\nWork-Order-Capability: ${config.publication.capability}\nIdempotency-Key: <stable key for this output payload>\nContent-Type: application/json\n\nFor a collection member, also send Output-Collection-Key. A successful executor exit does not satisfy the unit; publish every required output.\n${owed}${unchanged}`;
-};
 
 const parseEnsureResponse = (value: unknown): EnsureSessionResponse => {
   if (typeof value !== "object" || value === null || !("kind" in value) || !("session" in value)) throw new Error("invalid kbbl ensure-session response");
@@ -246,7 +220,7 @@ export function renderSessionStart(input: SessionStartSelection): ProviderResult
   try { config = parseResolvedConfig(request.resolved_config); }
   catch (error) { return { kind: "permanently_rejected", code: "start_rejected", detail: error instanceof Error ? error.message : String(error) }; }
   return { kind: "acknowledged", value: { session_key: sessionKeyFor(operation_id, executor_function_identity), body: JSON.stringify({
-        initial_prompt: config.rendered_prompt + publicationInstructions(config, request),
+        initial_prompt: config.rendered_prompt,
         workdir: config.workdir,
         name: config.session_name,
         runtime: config.runtime,

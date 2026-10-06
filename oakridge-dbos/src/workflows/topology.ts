@@ -28,9 +28,8 @@ export interface WorkflowServices {
   readonly provider: EffectProvider;
   readonly timing: WorkflowTiming;
 }
+/** Provider calls carry no timing here: each is bounded by its pinned action's `deadline_ms`. */
 export interface WorkflowTiming {
-  /** Bound on one provider call. */
-  readonly provider_timeout_ms: number;
   /** First sleep after a start or stop attempt that must be repeated; doubles up to the cap. */
   readonly retry_initial_seconds: number;
   readonly retry_cap_seconds: number;
@@ -39,7 +38,7 @@ export interface WorkflowTiming {
   /** Bound on how long a lost wake can delay a run's recheck. */
   readonly wake_timeout_seconds: number;
 }
-export const DEFAULT_WORKFLOW_TIMING: WorkflowTiming = { provider_timeout_ms: 30_000, retry_initial_seconds: 1, retry_cap_seconds: 30, observe_interval_seconds: 5, wake_timeout_seconds: 30 };
+export const DEFAULT_WORKFLOW_TIMING: WorkflowTiming = { retry_initial_seconds: 1, retry_cap_seconds: 30, observe_interval_seconds: 5, wake_timeout_seconds: 30 };
 
 let services: WorkflowServices | null = null;
 export function registerWorkflowServices(value: WorkflowServices): void { services = value; }
@@ -62,18 +61,18 @@ const loadIntentStep = DBOS.registerStep(async (intent_id: string): Promise<Effe
 const markDispatchedStep = DBOS.registerStep(async (intent_id: string): Promise<boolean> => claimDispatch(current().db, intent_id),
   { name: "oakridgeMarkDispatched", retriesAllowed: true, maxAttempts: 5 });
 
-async function callProvider<Value>(operation: (signal: AbortSignal) => Promise<ProviderResult<Value>>): Promise<ProviderResult<Value>> {
+async function callProvider<Value>(deadline_ms: number, operation: (signal: AbortSignal) => Promise<ProviderResult<Value>>): Promise<ProviderResult<Value>> {
   const controller = new AbortController();
   let call: Promise<ProviderResult<Value>>;
   try { call = operation(controller.signal); } catch (error) { call = Promise.resolve({ kind: "uncertain", detail: String(error) }); }
-  return bounded(call, current().timing.provider_timeout_ms, controller);
+  return bounded(call, deadline_ms, controller);
 }
 const startStep = DBOS.registerStep(async (payload: EffectPayload): Promise<ProviderResult<unknown>> =>
-  callProvider((signal) => current().provider.start(payload.invocation, { signal })), { name: "oakridgeStart" });
+  callProvider(payload.invocation.selection.definition.deadline_ms, (signal) => current().provider.start(payload.invocation, { signal })), { name: "oakridgeStart" });
 const observeStep = DBOS.registerStep(async (payload: EffectPayload): Promise<ProviderResult<unknown>> =>
-  callProvider((signal) => current().provider.observe(payload.invocation, payload.handle, { signal })), { name: "oakridgeObserve" });
+  callProvider(payload.invocation.selection.definition.deadline_ms, (signal) => current().provider.observe(payload.invocation, payload.handle, { signal })), { name: "oakridgeObserve" });
 const stopStep = DBOS.registerStep(async (payload: EffectPayload): Promise<ProviderResult<unknown>> =>
-  callProvider((signal) => current().provider.stop(payload.invocation, payload.handle, { signal })), { name: "oakridgeStop" });
+  callProvider(payload.invocation.selection.definition.deadline_ms, (signal) => current().provider.stop(payload.invocation, payload.handle, { signal })), { name: "oakridgeStop" });
 
 interface PersistInput { readonly intent_id: string; readonly status: EffectStatus; readonly payload: EffectPayload; readonly terminal_result: CheckedValue | null }
 const persistStep = DBOS.registerStep(async (input: PersistInput): Promise<EffectStatus | null> => persistEffectResult(current().db, input),

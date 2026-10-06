@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { CoreClient } from "../src/core-client/client";
@@ -11,6 +11,7 @@ import { GithubPullRequestReader } from "../src/runtime/github-pull-requests";
 import { githubIdentityFromRemote } from "../src/runtime/project-identity";
 import { selectControlPlaneAccess } from "../src/http/control-auth";
 import { silentDurationMs } from "../src/adapters/kbbl";
+import { settingForRole } from "../src/effects/operations/selected-publication-contract";
 
 const root = resolve(import.meta.dir, "../..");
 const deletedPaths = [
@@ -74,3 +75,26 @@ test("retained operations import and execute", async () => {
   expect(selectControlPlaneAccess({ host: "127.0.0.1", token: undefined, allow_insecure_non_loopback: false }).kind).toBe("loopback_open");
   expect(silentDurationMs({}, Date.now())).toBeNull();
 });
+
+test("pinned OperationManifest.provider_kind is the only provider routing declaration", async () => {
+  const bundle = await Bun.file(resolve(root, "workflow-config/definitions/development.json")).json();
+  expect(bundle.operations.every((manifest: { provider_kind?: string; input_contract?: string; providers?: string[] }) =>
+    typeof manifest.provider_kind === "string" && typeof manifest.input_contract === "string" && manifest.providers === undefined)).toBe(true);
+  expect(bundle.scopes.every((scope: { workers: { actions: { provider?: string }[] }[] }) =>
+    scope.workers.every((worker) => worker.actions.every((action) => action.provider === undefined)))).toBe(true);
+  expect(readFileSync(resolve(root, "workflow-core/crates/model/src/checked.rs"), "utf8")).not.toMatch(/pub provider:/);
+});
+
+test("effect code contains no literal provider or operation routing names", () => {
+  const directory = resolve(root, "oakridge-dbos/src/effects");
+  const files = (path: string): string[] => readdirSync(path, { withFileTypes: true }).flatMap((item) => {
+    const child = resolve(path, item.name);
+    return item.isDirectory() ? files(child) : item.name.endsWith(".ts") ? [child] : [];
+  });
+  expect(files(directory).filter((path) => /["'](?:git|github|kbbl|repository\.prepare|pull_request\.observe|session\.run)["']/.test(readFileSync(path, "utf8")))).toEqual([]);
+});
+
+if (false) {
+  // @ts-expect-error an unrecognized setting role must fail at typecheck time
+  settingForRole([], "unknown_role");
+}

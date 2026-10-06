@@ -90,7 +90,6 @@ fn sec_4_5_source_contract_rows_have_named_fields_and_missing_field_diagnostics(
             &[
                 "key",
                 "operation",
-                "provider",
                 "contract_version",
                 "input_schema",
                 "input",
@@ -730,7 +729,15 @@ fn required_command_needs_handling_path() {
 fn unsupported_provider_settings() {
     reject(
         fixture(),
-        |v| v["scopes"][0]["workers"][0]["actions"][0]["provider"] = json!("unavailable"),
+        |v| v["scopes"][0]["workers"][0]["actions"][0]["settings"][0]["key"] = json!("unavailable"),
+        DomainErrorKind::UnsupportedProvider,
+    );
+}
+#[test]
+fn incompatible_manifest_provider_and_input_contract() {
+    reject(
+        fixture(),
+        |v| v["operations"][0]["provider_kind"] = json!("github"),
         DomainErrorKind::UnsupportedProvider,
     );
 }

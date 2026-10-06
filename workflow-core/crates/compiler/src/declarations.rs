@@ -22,6 +22,23 @@ pub fn validate_bundle(
         schema(bundle, &prompt.input_schema)?;
     }
     for requirement in &bundle.operations {
+        let supported_routing = matches!(
+            (
+                requirement.provider_kind.as_str(),
+                requirement.input_contract.as_str()
+            ),
+            ("git", "repository_preparation")
+                | ("kbbl", "kbbl_session")
+                | ("github", "pull_request_observation")
+                | ("stub", "unsupported")
+        );
+        if !supported_routing {
+            return Err(error(
+                DomainErrorKind::UnsupportedProvider,
+                requirement.key.to_string(),
+                "provider kind and input contract are incompatible",
+            ));
+        }
         schema(bundle, &requirement.input_schema)?;
         let actual = available
             .iter()
@@ -34,10 +51,8 @@ pub fn validate_bundle(
                 )
             })?;
         if actual.input_schema != requirement.input_schema
-            || requirement
-                .providers
-                .iter()
-                .any(|v| !actual.providers.contains(v))
+            || actual.provider_kind != requirement.provider_kind
+            || actual.input_contract != requirement.input_contract
             || requirement
                 .settings
                 .iter()
@@ -247,11 +262,10 @@ pub fn validate_bundle(
                         "action and operation input schemas differ",
                     ));
                 }
-                if !manifest.providers.contains(&action.provider)
-                    || action
-                        .settings
-                        .iter()
-                        .any(|s| !manifest.settings.contains(&s.key))
+                if action
+                    .settings
+                    .iter()
+                    .any(|s| !manifest.settings.contains(&s.key))
                     || action.deadline_ms == 0
                     || action.max_attempts == 0
                 {

@@ -51,7 +51,7 @@ test("shared capacity limits admission and a released slot admits waiting indepe
 
 test("completed implementations create one final integration child per repository", async () => withDatabase(async ({ db }) => {
   const { repository, build_body, pr_body, revision } = await import("./development-runtime-fixture");
-  const f = await runtimeFixture(db, await developmentBundle("development"), { ...launch, repositories: [repository, { ...repository, key: "other" }] });
+  const f = await runtimeFixture(db, await developmentBundle("development"), { ...launch, repositories: [repository, { ...repository, key: "other", preparation: { ...repository.preparation, repository_path: "/tmp/other" } }] });
   try {
     const briefs = [brief, { ...brief, cohort_id: "second" }, { ...brief, cohort_id: "third", repository_key: "other" }];
     const children = await throughBriefs(f, briefs, db);

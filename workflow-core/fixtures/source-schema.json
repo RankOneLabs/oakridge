@@ -102,9 +102,6 @@
             "null"
           ]
         },
-        "provider": {
-          "type": "string"
-        },
         "settings": {
           "type": "array",
           "items": {
@@ -123,7 +120,6 @@
         "key",
         "operation",
         "contract_version",
-        "provider",
         "input_schema",
         "input",
         "settings",
@@ -1308,17 +1304,17 @@
     "OperationManifest": {
       "type": "object",
       "properties": {
+        "input_contract": {
+          "type": "string"
+        },
         "input_schema": {
           "type": "string"
         },
         "key": {
           "type": "string"
         },
-        "providers": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
+        "provider_kind": {
+          "type": "string"
         },
         "settings": {
           "type": "array",
@@ -1343,7 +1339,8 @@
         "key",
         "version",
         "input_schema",
-        "providers",
+        "provider_kind",
+        "input_contract",
         "settings",
         "tools"
       ]

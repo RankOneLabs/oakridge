@@ -111,51 +111,6 @@ test("worktree branch bases select the remote-tracking ref while immutable SHAs 
   expect(selectRemoteWorktreeBase("a".repeat(40))).toBe("a".repeat(40));
 });
 
-interface KbblSessionStartPayload { readonly initial_prompt?: string }
-
-test("v2 work-order publication authority is delivered only in executor launch material", async () => {
-  let body: KbblSessionStartPayload = {};
-  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl.test", executor_function_identity: "v2", fetch: async (_input, init) => {
-    body = JSON.parse(String(init?.body));
-    return Response.json({ kind: "started", session: { sid: "v2-session", status: "live", endReason: null } }, { status: 201 });
-  } });
-  await adapter.start_or_attach({
-    execution_id: "work-order-1" as ExecutionId, stage_instance_id: "stage-1" as StageInstanceId, unit_id: "unit-1" as UnitId,
-    executor_type: "delegated_session", resolved_config: { runtime: "claude-code", rendered_prompt: "Do the work", workdir: "/repo",
-      session_name: "worker", model: null, effort: null, publication: { base_url: "http://oakridge.test/", work_order_id: "work-order-1", capability: "secret-capability" },
-      session_identity: SESSION_IDENTITY },
-    inputs: [], declared_outputs: [{ name: "result", artifact_type: "dev.result", required: true }], expected_artifacts: [],
-  }, attempt("work-order-1"));
-  expect(body.initial_prompt).toContain("PUT http://oakridge.test/work-orders/work-order-1/emit/<output-name>");
-  expect(body.initial_prompt).toContain("Work-Order-Capability: secret-capability");
-  expect(body.initial_prompt).toContain("successful executor exit does not satisfy the unit");
-  expect(body.initial_prompt).not.toContain("Publish exactly these outputs");
-});
-
-/**
- * A retry of one rejected collection member owes exactly that member. The
- * rendered prompt template still describes the whole unit's work, so the
- * publication block is where the agent learns which outputs this work order
- * actually owes — and that the siblings are not among them.
- */
-test("the publication block names exactly the outputs the work order owes, collection members by their key", async () => {
-  let body: KbblSessionStartPayload = {};
-  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl.test", executor_function_identity: "v2", fetch: async (_input, init) => {
-    body = JSON.parse(String(init?.body));
-    return Response.json({ kind: "started", session: { sid: "v2-session", status: "live", endReason: null } }, { status: 201 });
-  } });
-  await adapter.start_or_attach({
-    execution_id: "retry-1" as ExecutionId, stage_instance_id: "stage-1" as StageInstanceId, unit_id: "0" as UnitId,
-    executor_type: "delegated_session", resolved_config: { runtime: "claude-code", rendered_prompt: "Write all seven briefs", workdir: "/repo",
-      session_name: "brief-writer", model: null, effort: null, publication: { base_url: "http://oakridge.test", work_order_id: "retry-1", capability: "retry-capability" },
-      session_identity: { ...SESSION_IDENTITY, unit_id: "0" } },
-    inputs: [], declared_outputs: [{ name: "brief", artifact_type: "dev.brief", required: true }],
-    expected_artifacts: [{ unit_id: "rollout" as UnitId, output_name: "brief", artifact_type: "dev.brief" as never }],
-  }, attempt("retry-1"));
-  expect(body.initial_prompt).toContain("Publish exactly these outputs and no others:\n- brief (Output-Collection-Key: rollout)\n");
-  expect(body.initial_prompt).not.toContain("versioning");
-});
-
 test("the generated contract wins over an Authorized outputs line in user content", () => {
   const expected = [
     { unit_id: "web" as UnitId, output_name: "pr_summary", artifact_type: "dev.pr_summary" as never },

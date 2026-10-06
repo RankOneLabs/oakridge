@@ -442,7 +442,6 @@
               "key": "write",
               "operation": "produce",
               "contract_version": 1,
-              "provider": "stub",
               "input_schema": "unit",
               "input": {
                 "kind": "reference",
@@ -622,9 +621,8 @@
       "key": "produce",
       "version": 1,
       "input_schema": "unit",
-      "providers": [
-        "stub"
-      ],
+      "provider_kind": "stub",
+      "input_contract": "unsupported",
       "settings": [
         "model"
       ],

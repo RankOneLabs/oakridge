@@ -10,7 +10,7 @@ import type { ScopeId } from "../src/storage/schema-records";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
 import { unit, withDatabase } from "./effect-fixture";
 
-const selection = { definition: { operation: "run", provider: "kbbl", contract_version: 1, deadline_ms: 1000, input_schema: "input",
+const selection = { definition: { operation: "run", contract_version: 1, deadline_ms: 1000, input_schema: "input",
   max_attempts: 1, outputs: [], settings: [], tools: [] }, input: { schema: "input", data: { kind: "string", value: "pinned" } },
   selection: { worker: "agent", action: "build" } } satisfies Invocation;
 const start: EffectPayload = { action: "start", handle: null, invocation: selectedInvocation("invocation-1" as InvocationId, "execution-1", selection) };

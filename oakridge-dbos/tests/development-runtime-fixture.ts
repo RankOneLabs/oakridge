@@ -26,8 +26,10 @@ export async function runtimeFixture(db: TransactionalSqlExecutor, bundle: Defin
   const started = CoreClient.start({ binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), deadlineMs: 10_000 });
   if (!started.ok) throw new Error(started.error.detail.detail);
   const core = started.value;
-  const mutations = createMutationService(db, core);
-  const run = await mutations.startRun({ bundle, input });
+  const mutations = createMutationService(db, core, { check_github: async () => ({ ok: true, value: true }) });
+  const scoped_input = bundle.root === "implementation" && input && typeof input === "object" && !Array.isArray(input)
+    ? { ...input, push_remote_owner: repository.forge.owner } : input;
+  const run = await mutations.startRun({ bundle, input: scoped_input });
   if (!run.ok) { core.close(); throw new Error(JSON.stringify(run.error)); }
   const app = new Hono();
   installDefinitionApi(app, { db, core, mutations, wake: async () => {} });
@@ -88,7 +90,7 @@ export async function throughBriefs(f: Awaited<ReturnType<typeof runtimeFixture>
   };
   await f.fact("begin"); await f.advance();
   const preparations = await db.query<DevelopmentScope>("SELECT * FROM authority.scope_instance WHERE parent_id=$1 AND scope_key='repository_preparation'", [f.root_scope_id]);
-  for (const preparation of preparations) await f.fact("prepared", { repository_path: "/tmp", head: "head1" }, preparation.id);
+  for (const preparation of preparations) await f.fact("prepared", { repository_path: preparation.child_key === "other" ? "/tmp/other" : "/tmp", head: "head1", push_remote_owner: repository.forge.owner }, preparation.id);
   await f.advance(); await f.advance();
   const analysis = await child("analysis");
   const publication = await f.publish("analysis", { summary: "Spec", source_spec_refs: [], findings: [], requirements: [], risks: [] }, "author", analysis);
