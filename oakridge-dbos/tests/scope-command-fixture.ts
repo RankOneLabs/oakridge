@@ -73,7 +73,7 @@ export async function harness(options: HarnessOptions = {}) {
     },
   } as unknown as CoreClient;
   const app = new Hono();
-  installDefinitionApi(app, { db, core, mutations: createMutationService(db, core), sweep: async () => {} });
+  installDefinitionApi(app, { db, core, mutations: createMutationService(db, core), wake: async () => {} });
   const request: ScopeCommandRequest = { command_key: "certify", payload: { specimen: "revision-1" }, request_id: "request-1", scope_id,
     expected_scope_version: 4, targets: [{ identity: "revision-1", version: 3 }] };
   return {

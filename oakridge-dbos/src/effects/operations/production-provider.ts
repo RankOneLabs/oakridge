@@ -31,7 +31,7 @@ const rejected = (detail: string): ProviderResult<never> => ({ kind: "permanentl
 export function createEffectProvider(options: ProductionProviderOptions): EffectProvider {
   const active_finite_calls = new Map<string, Set<ActiveFiniteCall>>();
   const repository = new RepositoryPreparationOperation(options.git ?? new BunGitCommandRunner());
-  const discovery = new PullRequestObservationOperation(options.pull_requests ?? new GithubPullRequestReader({ token: process.env.GITHUB_TOKEN ?? "" }));
+  const discovery = new PullRequestObservationOperation(options.pull_requests ?? new GithubPullRequestReader({ token: process.env.OAKRIDGE_GITHUB_TOKEN ?? process.env.GITHUB_TOKEN ?? "" }));
   function kbbl(call: ProviderCallOptions): KbblExecutorAdapter {
     return new KbblExecutorAdapter({ base_url: options.kbbl_base_url, executor_function_identity: "selected-v1",
       fetch: (input, init) => fetch(input, { ...init, signal: call.signal }) });

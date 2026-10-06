@@ -113,7 +113,9 @@ if [ -z "${DBOS_SYSTEM_DATABASE_URL:-}" ]; then
   start_managed_postgres
   DBOS_SYSTEM_DATABASE_URL="postgres://oakridge:oakridge@127.0.0.1:${POSTGRES_PORT}/oakridge"
 fi
-DBOS_APPLICATION_VERSION="${DBOS_APPLICATION_VERSION:-$(git -C "$OAKRIDGE_ROOT" rev-parse HEAD)}"
+# DBOS_APPLICATION_VERSION is the engine digest unless the operator pins it; a git SHA
+# here would park every in-flight run on each deploy, whatever changed.
+if [ -n "${DBOS_APPLICATION_VERSION:-}" ]; then export DBOS_APPLICATION_VERSION; fi
 if [ -n "${OAKRIDGE_GITHUB_TOKEN:-}" ]; then export OAKRIDGE_GITHUB_TOKEN; fi
 
 dbos_pid=""
@@ -135,11 +137,10 @@ trap stop_services EXIT
 echo "oakridge: applying domain migrations"
 DBOS_SYSTEM_DATABASE_URL="$DBOS_SYSTEM_DATABASE_URL" bun run "$DBOS_ROOT/src/storage/migrate.ts"
 
-echo "oakridge: starting DBOS backend at $DBOS_URL (application $DBOS_APPLICATION_VERSION)"
+echo "oakridge: starting DBOS backend at $DBOS_URL"
 (
   cd "$DBOS_ROOT"
   DBOS_SYSTEM_DATABASE_URL="$DBOS_SYSTEM_DATABASE_URL" \
-    DBOS_APPLICATION_VERSION="$DBOS_APPLICATION_VERSION" \
     KBBL_BASE_URL="${KBBL_BASE_URL:-$KBBL_URL}" \
     OAKRIDGE_DBOS_HOST="$DBOS_HOST" \
     OAKRIDGE_CORE_BINARY="$CORE_BINARY" \

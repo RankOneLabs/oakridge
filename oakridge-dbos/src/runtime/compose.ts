@@ -1,4 +1,4 @@
-import { advanceChildren } from "./advance-children";
+import { DBOS } from "@dbos-inc/dbos-sdk";
 import { Hono } from "hono";
 import { decodeCoreResponse } from "../core-client/generated-contracts";
 import type { DefinitionBundle, Trigger } from "../core-client/generated-contracts";
@@ -10,16 +10,22 @@ import { createMutationService, cancelRun, deleteRun, type ScopeCancellationPayl
 import { PgPostgresExecutor } from "../storage/sql-executor";
 import type { RunId, ScopeId, ScopeInstanceRecord } from "../storage/schema-records";
 import type { OutputPublication } from "../storage/commit";
-import { dispatchSweep, type DispatchOptions } from "../effects/dispatch";
 import type { EffectProvider } from "../effects/provider";
 import type { PullRequestReader } from "./github-pull-requests";
 import { createEffectProvider } from "../effects/operations/production-provider";
-import { deliverEffectFacts } from "../effects/reconcile";
+import { selectApplicationVersion } from "../workflows/engine-version";
+import { DEFAULT_WORKFLOW_TIMING, ensureRunWorkflow, parkRunningWorkflows, registerWorkflowServices, resumeActiveRuns, wakeRun, type WorkflowTiming } from "../workflows/topology";
 
-export interface ProductionOptions { readonly database_url: string; readonly core_binary: string; readonly host: string; readonly control_token?: string;
-  readonly kbbl_base_url?: string; readonly pull_requests?: PullRequestReader; readonly effect_provider?: EffectProvider; readonly dispatch?: Omit<DispatchOptions, "owner"> & { readonly sweep_ms: number } }
+export interface ProductionOptions {
+  readonly database_url: string; readonly core_binary: string; readonly host: string; readonly control_token?: string;
+  readonly kbbl_base_url?: string; readonly pull_requests?: PullRequestReader; readonly effect_provider?: EffectProvider;
+  /** Overrides for tests; production uses the defaults. */
+  readonly timing?: Partial<WorkflowTiming>;
+  /** Defaults to the engine digest, or `DBOS_APPLICATION_VERSION` when set. */
+  readonly application_version?: string;
+}
 export interface RunProjection { readonly run_id: RunId; readonly root_scope_id: ScopeId; readonly scope_key: string; readonly version: number; readonly is_terminal: boolean }
-export interface ProductionComposition { readonly app: Hono; close(): Promise<void> }
+export interface ProductionComposition { readonly app: Hono; readonly application_version: string; close(): Promise<void> }
 
 function isBundle(value: unknown): value is DefinitionBundle {
   return !!value && typeof value === "object" && "root" in value && typeof value.root === "string" && "scopes" in value && Array.isArray(value.scopes) && "operations" in value && Array.isArray(value.operations);
@@ -41,7 +47,12 @@ function isOutputPublication(value: unknown): value is OutputPublication {
 function isCancellationPayloads(value: unknown): value is readonly ScopeCancellationPayload[] {
   return Array.isArray(value) && value.every((item: unknown) => !!item && typeof item === "object" && "scope_id" in item && typeof item.scope_id === "string" && "payload" in item);
 }
-export function createProductionComposition(options: ProductionOptions): ProductionComposition {
+/**
+ * The production composition. DBOS is the runtime: it is configured and
+ * launched here, every run gets a durable workflow, and effect intents are
+ * carried by workflows that resume after a crash. Nothing here polls.
+ */
+export async function createProductionComposition(options: ProductionOptions): Promise<ProductionComposition> {
   const access = selectControlPlaneAccess({ host: options.host, token: options.control_token, allow_insecure_non_loopback: process.env.ALLOW_INSECURE_NON_LOOPBACK_CONTROL === "1" });
   if (access.kind === "refused") throw new Error(access.detail);
   const started = CoreClient.start({ binary: options.core_binary, deadlineMs: 10_000 });
@@ -50,41 +61,25 @@ export function createProductionComposition(options: ProductionOptions): Product
   const db = PgPostgresExecutor.connect(options.database_url);
   const mutations = createMutationService(db, core);
   const repositories = authorityRepositories(db);
-  const dispatchOptions: DispatchOptions = { owner: crypto.randomUUID(), concurrency: options.dispatch?.concurrency ?? 4,
-    lease_ms: options.dispatch?.lease_ms ?? 60_000, provider_timeout_ms: options.dispatch?.provider_timeout_ms ?? 30_000 };
-  const effect_provider = options.effect_provider ?? createEffectProvider({ db, core, kbbl_base_url: options.kbbl_base_url ?? process.env.KBBL_BASE_URL ?? "http://127.0.0.1:8788", pull_requests: options.pull_requests });
-  let sweep_task: Promise<void> | null = null;
-  const pending_runs = new Set<RunId>();
-  let should_sweep_all = false;
-  const sweep = (run_id?: RunId): Promise<void> => {
-    if (run_id) pending_runs.add(run_id);
-    else should_sweep_all = true;
-    if (sweep_task) return sweep_task;
-    sweep_task = (async () => {
-      do {
-        const run_ids = should_sweep_all ? undefined : [...pending_runs];
-        should_sweep_all = false;
-        pending_runs.clear();
-        await deliverEffectFacts(db, mutations);
-        await advanceChildren({ db, core, mutations, run_ids });
-        await dispatchSweep(db, effect_provider, dispatchOptions);
-        await deliverEffectFacts(db, mutations);
-        await advanceChildren({ db, core, mutations, run_ids });
-      } while (should_sweep_all || pending_runs.size > 0);
-    })().finally(() => { sweep_task = null; });
-    return sweep_task;
-  };
-  const timer = setInterval(() => { void sweep().catch((error) => console.error("effect sweep failed", error)); }, options.dispatch?.sweep_ms ?? 5_000);
+  const provider = options.effect_provider ?? createEffectProvider({ db, core, kbbl_base_url: options.kbbl_base_url ?? process.env.KBBL_BASE_URL ?? "http://127.0.0.1:8788", pull_requests: options.pull_requests });
+  const application_version = options.application_version ?? selectApplicationVersion();
+  registerWorkflowServices({ db, core, mutations, provider, timing: { ...DEFAULT_WORKFLOW_TIMING, ...options.timing } });
+  DBOS.setConfig({ name: "oakridge", systemDatabaseUrl: options.database_url, applicationVersion: application_version });
+  try { await DBOS.launch(); } catch (error) { core.close(); await db.close(); throw error; }
+  await resumeActiveRuns(db);
+  const wake = (run_id: RunId): Promise<void> => wakeRun(run_id);
   const app = new Hono();
   if (access.kind === "token_required") app.use("*", controlTokenMiddleware(access.token));
-  installDefinitionApi(app, { db, core, mutations, sweep });
-  app.get("/health", (context) => context.json({ status: "ok" }));
+  installDefinitionApi(app, { db, core, mutations, wake });
+  app.get("/health", (context) => context.json({ status: "ok", application_version }));
   app.post("/runs", async (context) => {
     let body: unknown;
     try { body = await context.req.json(); } catch { return context.json({ error: "invalid JSON" }, 400); }
     if (!body || typeof body !== "object" || !("bundle" in body) || !isBundle(body.bundle) || !("input" in body)) return context.json({ error: "invalid run request" }, 400);
     const result = await mutations.startRun({ bundle: body.bundle, available_operations: body.bundle.operations, input: body.input });
-    return result.ok ? context.json(result.value, 201) : context.json({ error: result.error }, 422);
+    if (!result.ok) return context.json({ error: result.error }, 422);
+    await ensureRunWorkflow(result.value.run_id);
+    return context.json(result.value, 201);
   });
   app.get("/runs/:run_id", async (context) => {
     const run_id = context.req.param("run_id") as RunId;
@@ -106,7 +101,7 @@ export function createProductionComposition(options: ProductionOptions): Product
     const result = await cancelRun(db, { kind: "cancel_run", run_id: context.req.param("run_id"), reason: body.reason, payloads }, core);
     if (result.kind === "rejected") return context.json(result, 422);
     if (result.kind === "missing") return context.json({ error: "run not found" }, 404);
-    void sweep(context.req.param("run_id") as RunId).catch((error) => console.error("effect sweep failed", error));
+    void wake(context.req.param("run_id") as RunId);
     return context.json(result);
   });
   app.delete("/runs/:run_id", async (context) => {
@@ -124,8 +119,8 @@ export function createProductionComposition(options: ProductionOptions): Product
     if (!Array.isArray(outputs) || !outputs.every(isOutputPublication)) return context.json({ error: "invalid output publication" }, 400);
     const result = await mutations.decide({ run_id: context.req.param("run_id") as RunId, scope_id: context.req.param("scope_id") as ScopeId, trigger: body.trigger, ingress_id: body.ingress_id, operator_version, outputs });
     if (result.ok && (result.value.kind === "Committed" || result.value.kind === "Replayed"))
-      void sweep(context.req.param("run_id") as RunId).catch((error) => console.error("effect sweep failed", error));
+      void wake(context.req.param("run_id") as RunId);
     return result.ok ? context.json(result.value) : context.json({ error: result.error }, 422);
   });
-  return { app, async close() { clearInterval(timer); try { await sweep_task; } finally { core.close(); await db.close(); } } };
+  return { app, application_version, async close() { try { await parkRunningWorkflows(); await DBOS.shutdown(); } finally { core.close(); await db.close(); } } };
 }

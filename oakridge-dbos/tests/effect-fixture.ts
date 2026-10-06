@@ -62,7 +62,7 @@ export async function operationBundle(operation: "repository.prepare" | "pull_re
   return { ...original, scopes: [scope], schemas: [...original.schemas, ...(operation === "repository.prepare" ? repository_schemas : pr_schemas)],
     operations: [{ key: operation, version: 1, input_schema: "leaf_input", providers: [operation === "repository.prepare" ? "git" : "github"], settings: ["result_fact"], tools: [] }], prompts: [] };
 }
-export async function begin(composition: ReturnType<typeof createProductionComposition>, bundle: DefinitionBundle, input: unknown): Promise<Started> {
+export async function begin(composition: Awaited<ReturnType<typeof createProductionComposition>>, bundle: DefinitionBundle, input: unknown): Promise<Started> {
   const created = await composition.app.request("http://localhost/runs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ bundle, input }) });
   if (created.status !== 201) throw new Error(await created.text());
   const run: Started = await created.json();

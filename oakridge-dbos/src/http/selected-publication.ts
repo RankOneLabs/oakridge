@@ -1,14 +1,14 @@
 import type { Hono } from "hono";
 import type { CoreClient } from "../core-client/client";
 import type { DefinitionBundle } from "../core-client/generated-contracts";
-import type { EffectPayload } from "../effects/leases";
+import type { EffectPayload } from "../effects/intents";
 import type { MutationService } from "../storage/mutation-service";
 import { requestDigest, findReceipt } from "../storage/receipts";
 import type { OutputSlotRecord, RunId, ScopeId, ScopeInstanceRecord } from "../storage/schema-records";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
 
 interface SelectedOutputRequest { readonly request_id: string; readonly predecessor_id: string | null; readonly collection_key: string; readonly body: unknown }
-interface PublicationDependencies { readonly db: TransactionalSqlExecutor; readonly core: CoreClient; readonly mutations: MutationService; readonly sweep: (run_id?: RunId) => Promise<void> }
+interface PublicationDependencies { readonly db: TransactionalSqlExecutor; readonly core: CoreClient; readonly mutations: MutationService; readonly wake: (run_id: RunId) => Promise<void> }
 interface SelectedExecution { readonly source: DefinitionBundle; readonly scope_key: string; readonly payload: EffectPayload }
 function decodeOutput(value: unknown): SelectedOutputRequest | null {
   if (!value || typeof value !== "object" || !("request_id" in value) || typeof value.request_id !== "string" || !value.request_id
@@ -63,7 +63,7 @@ export function installSelectedPublicationApi(app: Hono, deps: PublicationDepend
     if (!result.ok) return c.json({ error: result.error }, 422);
     if (result.value.kind === "Conflict") return c.json(result.value, 409);
     if (result.value.kind === "Rejected") return c.json(result.value, 422);
-    void deps.sweep(c.req.param("run_id") as RunId).catch(() => undefined);
+    void deps.wake(c.req.param("run_id") as RunId).catch(() => undefined);
     return c.json({ ...result.value, revision_id }, result.value.kind === "Committed" ? 201 : 200);
   });
 }

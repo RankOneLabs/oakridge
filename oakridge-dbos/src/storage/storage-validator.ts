@@ -92,7 +92,7 @@ export async function validateStorageAuthority(tx: SqlExecutor, request: CommitR
       if (!execution || execution.scope_id !== source.owner.id || !definition.producers.includes(execution.worker_key)) return reject("validate_storage", source.owner.id, "execution cannot publish this output");
       const selections = await tx.query<{ execution_id: string; generation: string | number }>("SELECT execution_id,generation FROM authority.execution_selection WHERE scope_id=$1 AND worker_key=$2", [source.owner.id, execution.worker_key]);
       if (selections[0]?.execution_id !== output.execution_id || Number(selections[0]?.generation) !== Number(execution.generation)) return reject("validate_storage", source.owner.id, "execution generation was revoked");
-      const contracts = await tx.query<{ payload: import("../effects/leases").EffectPayload }>("SELECT payload FROM authority.effect_intent WHERE scope_id=$1 AND execution_id=$2 AND payload->>'action'='start'", [source.owner.id, output.execution_id]);
+      const contracts = await tx.query<{ payload: import("../effects/intents").EffectPayload }>("SELECT payload FROM authority.effect_intent WHERE scope_id=$1 AND execution_id=$2 AND payload->>'action'='start'", [source.owner.id, output.execution_id]);
       if (!contracts.some((item) => item.payload.invocation.selection.definition.outputs.includes(output.output_key))) return reject("validate_storage", source.owner.id, "selected action does not declare this output");
     } else if (definition.producers.length) return reject("validate_storage", source.owner.id, "producer execution required");
   }
