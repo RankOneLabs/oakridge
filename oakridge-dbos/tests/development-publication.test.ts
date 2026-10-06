@@ -225,3 +225,31 @@ test("agent secret publishes while the same scope read requires operator authori
     expect((await app.request(`${scope_path}/executions/${execution}/contract`, { headers: { authorization: `Bearer ${secret}` } })).status).toBe(403);
   } finally { f.core.close(); }
 }));
+
+
+test("selected contract budgets ignore historical fact payloads and hide unrelated output slots", async () => withDatabase(async ({ db }) => {
+  const f = await runtimeFixture(db, await developmentBundle(), { brief, repository });
+  try {
+    await f.fact("begin");
+    const execution = await f.selected("build");
+    const path = `/api/runs/${f.run_id}/scopes/${f.root_scope_id}/executions/${execution}/contract`;
+    const headers = { authorization: `Bearer ${await f.publicationSecret(execution)}` };
+    const before = await f.app.request(path, { headers });
+    const budget = (await before.json()).remaining_frame_bytes;
+    expect(budget).toBeGreaterThan(0);
+    await db.query("INSERT INTO authority.fact (id,run_id,scope_id,fact_key,payload) VALUES ($1,$2,$3,$4,$5)",
+      ["zzzz-large-historical-fact", f.run_id, f.root_scope_id, "historical", { schema: "text", data: { kind: "string", value: "x".repeat(2_000_000) } }]);
+    for (const output_key of ["build_result", "assessment"]) {
+      await db.query("INSERT INTO authority.output_slot (id,run_id,scope_id,output_key,collection_key) VALUES ($1,$2,$3,$4,$5)",
+        [crypto.randomUUID(), f.run_id, f.root_scope_id, output_key, output_key === "assessment" ? "private-member" : ""]);
+    }
+    const response = await f.app.request(path, { headers });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ remaining_frame_bytes: budget,
+      outputs: [{ output_key: "build_result", collection_key: "", predecessor_id: null, slot_version: 0 }] });
+    const publication = await f.app.request(path.replace(/contract$/, "outputs/build_result"), { method: "PUT",
+      headers: { ...headers, "content-type": "application/json" },
+      body: JSON.stringify({ request_id: "after-historical-fact", predecessor_id: null, collection_key: "", body: build_body }) });
+    expect(publication.status).toBe(201);
+  } finally { f.core.close(); }
+}));

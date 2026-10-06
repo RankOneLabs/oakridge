@@ -1,3 +1,4 @@
+import { readAllInboxPages } from "./lib/operator-inbox";
 import { OakridgeHttpError, selectFailureDetail } from "./lib/client-errors";
 export { selectFailureDetail } from "./lib/client-errors";
 // API client for the Oakridge backend proxy at /oakridge/api/*.
@@ -32,9 +33,7 @@ import type {
 import type { Result } from "../lib/result";
 import type { OperatorGenericRun, OperatorPinnedDefinition, OperatorScopeView, OperatorCommandSubmission, OperatorCommandReceipt } from "./operator-contracts";
 
-export function fetchOperatorInbox(): Promise<import("./operator-contracts").OperatorInbox> {
-  return oakridgeGet("/api/inbox");
-}
+export const fetchOperatorInbox = () => readAllInboxPages(oakridgeGet);
 
 const API = "/oakridge/api";
 
