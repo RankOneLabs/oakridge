@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { PgPostgresExecutor, type TransactionalSqlExecutor } from "../src/storage/sql-executor";
 
-test("baseline creates constrained authority relations and refuses a second application", async () => {
+test("baseline creates constrained authority relations and accepts a matching second application", async () => {
   const admin_url = process.env.OAKRIDGE_TEST_DATABASE_URL;
   if (!admin_url) throw new Error("OAKRIDGE_TEST_DATABASE_URL is required for the PostgreSQL authority integration test");
   const name = `authority_${crypto.randomUUID().replaceAll("-", "")}`;
@@ -41,7 +41,9 @@ test("baseline creates constrained authority relations and refuses a second appl
     await expect(db.query("INSERT INTO authority.fact (id,run_id,scope_id,fact_key,payload) VALUES ('cross-run','other-run','scope','event','{}')", [])).rejects.toMatchObject({ code: "23503" });
     await expect(db.query("INSERT INTO authority.execution (id,scope_id,worker_key,generation,status) VALUES ('bad-status','scope','worker',1,'unknown')", [])).rejects.toMatchObject({ code: "23514" });
     await expect(db.query("INSERT INTO authority.effect_intent (id,scope_id,effect_key,payload,status) VALUES ('bad-effect','scope','key','{}','unknown')", [])).rejects.toMatchObject({ code: "23514" });
-    await expect(migrateEmptyDatabase(db)).rejects.toThrow("requires an empty database");
+    await expect(migrateEmptyDatabase(db)).resolves.toBeUndefined();
+    await db.query("UPDATE authority.schema_baseline SET digest=$1", ["0".repeat(64)]);
+    await expect(migrateEmptyDatabase(db)).rejects.toThrow(`recorded ${"0".repeat(64)}, current ${digest}`);
   } finally {
     await db.close();
     await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);

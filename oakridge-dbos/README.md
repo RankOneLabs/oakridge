@@ -40,7 +40,9 @@ bumping it parks in-flight workflows until they are forked by hand.
 From the repository root:
 
 ```bash
-bun run --filter oakridge-dbos verify
+cargo build --locked --manifest-path workflow-core/Cargo.toml -p workflow-cli
+bun run typecheck
+bun run --filter oakridge-dbos test:unit
 ```
 
 The integration tests require `OAKRIDGE_TEST_DATABASE_URL` with create/drop
