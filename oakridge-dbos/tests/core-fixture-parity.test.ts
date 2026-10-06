@@ -181,6 +181,20 @@ test("unsafe request metadata is rejected before sending and leaves the child us
     expect((await client.request("compile", { bundle, available_operations: bundle.operations })).ok).toBe(true);
   } finally { client.close(); }
 });
+test("unserializable bundle is a typed transport failure, not a rejected promise", async () => {
+  const client = startClient();
+  try {
+    const cyclic: Record<string, unknown> = { ...bundle };
+    cyclic.self = cyclic;
+    for (const operation of ["compile", "evaluate"] as const) {
+      expect(await client.request(operation, { bundle: cyclic as unknown as DefinitionBundle, snapshot: snapshot() }))
+        .toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "malformed_frame" } } });
+    }
+    expect(await client.request("evaluate", { bundle: { ...bundle, limits: { ...bundle.limits, max_depth: 1n as unknown as number } }, snapshot: snapshot() }))
+      .toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "malformed_frame" } } });
+    expect((await client.request("compile", { bundle })).ok).toBe(true);
+  } finally { client.close(); }
+});
 test("raw unsafe snapshot metadata cannot enter the Rust evaluator", () => {
   expect(rawFrame(JSON.stringify({ version: CORE_PROTOCOL_VERSION, request_id: "wide", operation: "evaluate", input: {
     bundle, available_operations: bundle.operations, snapshot: { ...snapshot(), random_seed: Number.MAX_SAFE_INTEGER + 1 } } })))

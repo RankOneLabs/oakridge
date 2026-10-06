@@ -99,7 +99,10 @@ export class CoreClient {
   }
   async request<O extends CoreRequest["operation"]>(operation: O, input: ClientInput<O>): Promise<CoreResult<Output>> {
     const bundle = input.bundle;
-    const cacheKey = JSON.stringify(bundle);
+    // Same boundary as `send`: a BigInt or cycle in the bundle is a typed transport failure, not a rejection.
+    let cacheKey: string;
+    try { cacheKey = JSON.stringify(bundle); }
+    catch (cause) { return transportFailure("malformed_frame", String(cause)); }
     if (operation === "compile") return this.compileBundle(bundle, cacheKey);
     let digest = this.digestFor(cacheKey);
     if (!digest) {
