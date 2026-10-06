@@ -61,7 +61,7 @@ export async function validateStorageAuthority(tx: SqlExecutor, request: CommitR
       if (!action || !valid(action.input_schema, invocation.input)) return reject("validate_storage", source.owner.id, "invocation declaration or input mismatch");
       const contract = invocation.definition;
       const has_matching_contract = contract.operation === action.operation && contract.contract_version === action.contract_version
-        && contract.provider === action.provider && contract.input_schema === action.input_schema
+        && contract.input_schema === action.input_schema
         && contract.deadline_ms === action.deadline_ms && contract.max_attempts === action.max_attempts
         && JSON.stringify(contract.outputs) === JSON.stringify(action.outputs)
         && JSON.stringify(contract.settings) === JSON.stringify(action.settings)

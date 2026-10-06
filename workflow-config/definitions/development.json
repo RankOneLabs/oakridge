@@ -4276,7 +4276,6 @@
               "key": "prepare",
               "operation": "repository.prepare",
               "contract_version": 1,
-              "provider": "git",
               "input_schema": "repo_input",
               "input": {
                 "kind": "reference",
@@ -4617,7 +4616,6 @@
               "key": "initial",
               "operation": "session.run",
               "contract_version": 1,
-              "provider": "kbbl",
               "input_schema": "session_action",
               "input": {
                 "kind": "record",
@@ -4673,7 +4671,6 @@
               "key": "revise",
               "operation": "session.run",
               "contract_version": 1,
-              "provider": "kbbl",
               "input_schema": "session_action",
               "input": {
                 "kind": "record",
@@ -4745,7 +4742,6 @@
               "key": "retry",
               "operation": "session.run",
               "contract_version": 1,
-              "provider": "kbbl",
               "input_schema": "session_action",
               "input": {
                 "kind": "record",
@@ -5250,7 +5246,6 @@
               "key": "initial",
               "operation": "session.run",
               "contract_version": 1,
-              "provider": "kbbl",
               "input_schema": "session_action",
               "input": {
                 "kind": "record",
@@ -5306,7 +5301,6 @@
               "key": "revise",
               "operation": "session.run",
               "contract_version": 1,
-              "provider": "kbbl",
               "input_schema": "session_action",
               "input": {
                 "kind": "record",
@@ -5378,7 +5372,6 @@
               "key": "retry",
               "operation": "session.run",
               "contract_version": 1,
-              "provider": "kbbl",
               "input_schema": "session_action",
               "input": {
                 "kind": "record",
@@ -6020,7 +6013,6 @@
               "key": "initial",
               "operation": "session.run",
               "contract_version": 1,
-              "provider": "kbbl",
               "input_schema": "session_action",
               "input": {
                 "kind": "record",
@@ -6076,7 +6068,6 @@
               "key": "revise",
               "operation": "session.run",
               "contract_version": 1,
-              "provider": "kbbl",
               "input_schema": "session_action",
               "input": {
                 "kind": "record",
@@ -6148,7 +6139,6 @@
               "key": "retry",
               "operation": "session.run",
               "contract_version": 1,
-              "provider": "kbbl",
               "input_schema": "session_action",
               "input": {
                 "kind": "record",
@@ -7142,7 +7132,6 @@
               "key": "initial",
               "operation": "session.run",
               "contract_version": 1,
-              "provider": "kbbl",
               "input_schema": "session_action",
               "input": {
                 "kind": "record",
@@ -7200,7 +7189,6 @@
               "key": "revise",
               "operation": "session.run",
               "contract_version": 1,
-              "provider": "kbbl",
               "input_schema": "session_action",
               "input": {
                 "kind": "record",
@@ -7304,7 +7292,6 @@
               "key": "replace_pr",
               "operation": "session.run",
               "contract_version": 1,
-              "provider": "kbbl",
               "input_schema": "session_action",
               "input": {
                 "kind": "record",
@@ -7362,7 +7349,6 @@
               "key": "retry",
               "operation": "session.run",
               "contract_version": 1,
-              "provider": "kbbl",
               "input_schema": "session_action",
               "input": {
                 "kind": "record",
@@ -7444,7 +7430,6 @@
               "key": "retry_missing_build",
               "operation": "session.run",
               "contract_version": 1,
-              "provider": "kbbl",
               "input_schema": "session_action",
               "input": {
                 "kind": "record",
@@ -7525,7 +7510,6 @@
               "key": "retry_missing_pr",
               "operation": "session.run",
               "contract_version": 1,
-              "provider": "kbbl",
               "input_schema": "session_action",
               "input": {
                 "kind": "record",
@@ -7606,7 +7590,6 @@
               "key": "revise_after_assessment",
               "operation": "session.run",
               "contract_version": 1,
-              "provider": "kbbl",
               "input_schema": "session_action",
               "input": {
                 "kind": "record",
@@ -7717,7 +7700,6 @@
               "key": "initial",
               "operation": "session.run",
               "contract_version": 1,
-              "provider": "kbbl",
               "input_schema": "session_action",
               "input": {
                 "kind": "record",
@@ -7818,7 +7800,6 @@
               "key": "retry",
               "operation": "session.run",
               "contract_version": 1,
-              "provider": "kbbl",
               "input_schema": "session_action",
               "input": {
                 "kind": "record",
@@ -7919,7 +7900,6 @@
               "key": "discuss",
               "operation": "session.run",
               "contract_version": 1,
-              "provider": "kbbl",
               "input_schema": "session_action",
               "input": {
                 "kind": "record",
@@ -8080,7 +8060,6 @@
               "key": "observe",
               "operation": "pull_request.observe",
               "contract_version": 1,
-              "provider": "github",
               "input_schema": "pr_observe_input",
               "input": {
                 "kind": "record",
@@ -11148,7 +11127,6 @@
               "key": "initial",
               "operation": "session.run",
               "contract_version": 1,
-              "provider": "kbbl",
               "input_schema": "session_action",
               "input": {
                 "kind": "record",
@@ -11204,7 +11182,6 @@
               "key": "retry",
               "operation": "session.run",
               "contract_version": 1,
-              "provider": "kbbl",
               "input_schema": "session_action",
               "input": {
                 "kind": "record",
@@ -11267,7 +11244,6 @@
               "key": "observe",
               "operation": "pull_request.observe",
               "contract_version": 1,
-              "provider": "github",
               "input_schema": "pr_observe_input",
               "input": {
                 "kind": "record",
@@ -12158,9 +12134,8 @@
       "key": "repository.prepare",
       "version": 1,
       "input_schema": "repo_input",
-      "providers": [
-        "git"
-      ],
+      "provider_kind": "git",
+      "input_contract": "repository_preparation",
       "settings": [
         "result_fact"
       ],
@@ -12170,9 +12145,8 @@
       "key": "session.run",
       "version": 1,
       "input_schema": "session_action",
-      "providers": [
-        "kbbl"
-      ],
+      "provider_kind": "kbbl",
+      "input_contract": "kbbl_session",
       "settings": [
         "evidence_fact"
       ],
@@ -12182,9 +12156,8 @@
       "key": "pull_request.observe",
       "version": 1,
       "input_schema": "pr_observe_input",
-      "providers": [
-        "github"
-      ],
+      "provider_kind": "github",
+      "input_contract": "pull_request_observation",
       "settings": [
         "result_fact"
       ],

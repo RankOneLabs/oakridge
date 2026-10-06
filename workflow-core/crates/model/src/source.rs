@@ -118,7 +118,8 @@ pub struct OperationManifest {
     #[schemars(schema_with = "crate::wire_numbers::word::schema")]
     pub version: u32,
     pub input_schema: SchemaId,
-    pub providers: Vec<String>,
+    pub provider_kind: String,
+    pub input_contract: String,
     pub settings: Vec<String>,
     pub tools: Vec<String>,
 }
@@ -211,7 +212,6 @@ pub struct ActionDefinition {
     #[serde(with = "crate::wire_numbers::word")]
     #[schemars(schema_with = "crate::wire_numbers::word::schema")]
     pub contract_version: u32,
-    pub provider: String,
     pub input_schema: SchemaId,
     pub input: Expression,
     pub prompt: Option<SymbolKey>,

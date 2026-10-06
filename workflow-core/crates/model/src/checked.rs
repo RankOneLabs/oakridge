@@ -250,7 +250,6 @@ pub struct InvocationContract {
     #[serde(with = "crate::wire_numbers::word")]
     #[schemars(schema_with = "crate::wire_numbers::word::schema")]
     pub contract_version: u32,
-    pub provider: String,
     pub input_schema: SchemaId,
     pub settings: Vec<InvocationSetting>,
     pub tools: Vec<String>,
@@ -267,7 +266,6 @@ impl From<&ActionDefinition> for InvocationContract {
         Self {
             operation: action.operation.clone(),
             contract_version: action.contract_version,
-            provider: action.provider.clone(),
             input_schema: action.input_schema.clone(),
             settings: action.settings.clone(),
             tools: action.tools.clone(),

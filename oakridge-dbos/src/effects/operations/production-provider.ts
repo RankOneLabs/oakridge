@@ -94,19 +94,19 @@ export function createEffectProvider(options: ProductionProviderOptions): Effect
       }
       const input = pinnedInput(invocation);
       if (!input.ok) return rejected(input.error.detail);
-      if (contract.provider === "git" && contract.operation === "repository.prepare") {
+      if (invocation.request.kind === "repository_preparation") {
         if (!isRecord(input.value) || typeof input.value.repository_path !== "string" || !(input.value.expected_head === null || typeof input.value.expected_head === "string")) return rejected("invalid RepositoryPreparationInput");
         const result = await repository.execute({ repository_path: input.value.repository_path, expected_head: input.value.expected_head }, call);
         return result.kind === "acknowledged" ? completed(found, invocation, result.value)
           : result.kind === "permanently_rejected" ? recovery(found, result, invocation) : result;
       }
-      if (contract.provider === "github" && contract.operation === "pull_request.observe") {
+      if (invocation.request.kind === "pull_request_observation") {
         const query = isRecord(input.value) ? input.value.query : null;
         if (!query || !isRecord(query) || typeof query.owner !== "string" || typeof query.name !== "string" || typeof query.head_branch !== "string" || typeof query.base_branch !== "string") return rejected("invalid PullRequestObservationInput");
         const result = await discovery.execute({ query: { owner: query.owner, name: query.name, head_branch: query.head_branch, base_branch: query.base_branch } }, call);
         return result.kind === "acknowledged" ? completed(found, invocation, result.value) : result;
       }
-      return rejected(`unsupported operation ${contract.provider}/${contract.operation}`);
+      return rejected(`unsupported operation ${contract.operation}`);
   }
   return {
     start: (invocation, call = {}) => invocation.request?.kind === "repository_preparation" || invocation.request?.kind === "pull_request_observation"

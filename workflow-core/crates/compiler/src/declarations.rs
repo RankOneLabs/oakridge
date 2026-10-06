@@ -34,10 +34,8 @@ pub fn validate_bundle(
                 )
             })?;
         if actual.input_schema != requirement.input_schema
-            || requirement
-                .providers
-                .iter()
-                .any(|v| !actual.providers.contains(v))
+            || actual.provider_kind != requirement.provider_kind
+            || actual.input_contract != requirement.input_contract
             || requirement
                 .settings
                 .iter()
@@ -247,8 +245,7 @@ pub fn validate_bundle(
                         "action and operation input schemas differ",
                     ));
                 }
-                if !manifest.providers.contains(&action.provider)
-                    || action
+                if action
                         .settings
                         .iter()
                         .any(|s| !manifest.settings.contains(&s.key))

@@ -53,14 +53,14 @@ export async function operationBundle(operation: "repository.prepare" | "pull_re
     errors: [...root.errors, { key: "worktree_unrecoverable", payload_schema: "text" }, { key: "head_changed", payload_schema: "text" }],
     facts: [...root.facts, { key: "prepared", payload_schema: "leaf_result" }, { key: "worktree_unrecoverable", payload_schema: "text" }, { key: "head_changed", payload_schema: "text" }],
     workers: root.workers.map((worker) => ({ ...worker, result_schema: "leaf_result", actions: worker.actions.map((action) => ({ ...action,
-      operation, input_schema: "leaf_input", provider: operation === "repository.prepare" ? "git" : "github", tools: [], outputs: [], prompt: null,
+      operation, input_schema: "leaf_input", tools: [], outputs: [], prompt: null,
       settings: [{ key: "result_fact", value: "prepared" }], input: { kind: "reference", root: { kind: "input" }, path: [] } })) })),
     outputs: [],
     tree: { ...root.tree, cases: [...root.tree.cases, { variant: "prepared", node: { kind: "apply", id: "prepared", actions: [], mutations: [], outcome: { kind: "literal", schema: "result", value: { kind: "released", value: {} } } } },
       ...["worktree_unrecoverable", "head_changed"].map((variant) => ({ variant, node: { kind: "apply" as const, id: variant, actions: [], mutations: [], outcome: { kind: "literal" as const, schema: "result", value: { kind: "withdrawn", value: {} } } } }))] },
   };
   return { ...original, scopes: [scope], schemas: [...original.schemas, ...(operation === "repository.prepare" ? repository_schemas : pr_schemas)],
-    operations: [{ key: operation, version: 1, input_schema: "leaf_input", providers: [operation === "repository.prepare" ? "git" : "github"], settings: ["result_fact"], tools: [] }], prompts: [] };
+    operations: [{ key: operation, version: 1, input_schema: "leaf_input", provider_kind: operation === "repository.prepare" ? "git" : "github", input_contract: operation === "repository.prepare" ? "repository_preparation" : "pull_request_observation", settings: ["result_fact"], tools: [] }], prompts: [] };
 }
 export async function begin(composition: Awaited<ReturnType<typeof createProductionComposition>>, bundle: DefinitionBundle, input: unknown): Promise<Started> {
   const created = await composition.app.request("http://localhost/runs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ bundle, input }) });
@@ -83,7 +83,7 @@ export async function sessionBundle(): Promise<DefinitionBundle> {
   ];
   return { ...original, schemas: [...original.schemas, ...schemas], prompts: [],
     scopes: original.scopes.map((scope) => ({ ...scope, input_schema: "launch", resources: [{ key: "repository", schema: "metadata" }, { key: "pull_request", schema: "metadata" }],
-      workers: scope.workers.map((worker) => ({ ...worker, actions: worker.actions.map((action) => ({ ...action, operation: "session.execute", provider: "kbbl", input_schema: "launch", settings: [], tools: [], outputs: [], prompt: null })) })), outputs: [] })),
-    operations: [{ key: "session.execute", version: 1, input_schema: "launch", providers: ["kbbl"], settings: [], tools: [] }],
+      workers: scope.workers.map((worker) => ({ ...worker, actions: worker.actions.map((action) => ({ ...action, operation: "session.execute", input_schema: "launch", settings: [], tools: [], outputs: [], prompt: null })) })), outputs: [] })),
+    operations: [{ key: "session.execute", version: 1, input_schema: "launch", provider_kind: "kbbl", input_contract: "kbbl_session", settings: [], tools: [] }],
   };
 }

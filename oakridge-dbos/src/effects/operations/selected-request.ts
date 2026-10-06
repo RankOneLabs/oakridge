@@ -59,7 +59,9 @@ export function pinProviderRequest(input: ProviderRequestSelection): Result<Stab
   if (prompt_key != null && !prompt) return { ok: false, error: { operation: "pin_request", entity_id: invocation.id, detail: "pinned prompt missing" } };
   const isRecord = (value: JsonValue): value is { readonly [key: string]: JsonValue } => !!value && typeof value === "object" && !Array.isArray(value);
   const decoded_config = isRecord(decoded.value) && decoded.value.config && isRecord(decoded.value.config) ? decoded.value.config : decoded.value;
-  if (contract.provider === "kbbl") {
+  const manifest = bundle.operations.find((item) => item.key === contract.operation && item.version === contract.contract_version);
+  if (!manifest) return { ok: false, error: { operation: "pin_request", entity_id: invocation.id, detail: "pinned operation manifest missing" } };
+  if (manifest.input_contract === "kbbl_session") {
     if (!isRecord(decoded_config)) return { ok: false, error: { operation: "pin_request", entity_id: invocation.id, detail: "kbbl launch input must be a record" } };
     const request: ExecutionRequest = { execution_id: invocation.execution_id as ExecutionId, stage_instance_id: scope.id as StageInstanceId,
       unit_id: unit_id as UnitId, executor_type: "delegated_session", resolved_config: { ...decoded_config,
@@ -72,7 +74,7 @@ export function pinProviderRequest(input: ProviderRequestSelection): Result<Stab
     if (rendered.kind !== "acknowledged") return { ok: false, error: { operation: "pin_request", entity_id: invocation.id, detail: rendered.detail } };
     return { ok: true, value: { ...invocation, bytes: rendered.value.body, request: { version: 1, kind: "kbbl_session", session_key: rendered.value.session_key } } };
   }
-  const kind = contract.provider === "git" && contract.operation === "repository.prepare" ? "repository_preparation"
-    : contract.provider === "github" && contract.operation === "pull_request.observe" ? "pull_request_observation" : "unsupported";
+  const kind = manifest.input_contract === "repository_preparation" || manifest.input_contract === "pull_request_observation"
+    ? manifest.input_contract : "unsupported";
   return { ok: true, value: { ...invocation, bytes: JSON.stringify(decoded.value), request: { version: 1, kind } } };
 }
