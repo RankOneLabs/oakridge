@@ -1,6 +1,6 @@
 import type { SessionSnapshot } from "../types";
 import { compareSessionsByActivity } from "../../acp/pwa-session-order";
-import type { RunDetail, RunSummary } from "../oakridge/types";
+import type { OperatorRunView } from "../oakridge/operator-contracts";
 
 const SLUG_ADJ = [
   "amber","azure","brave","bright","calm","clever","cobalt","cozy","crimson",
@@ -74,18 +74,18 @@ export function sortSessions(sessions: Map<string, SessionSnapshot>): SessionSna
   return [...sessions.values()].sort(compareSessionsByActivity);
 }
 
-export function selectSessionRunTitle(
+export function selectSessionRunLabel(
   runId: string,
-  runs: readonly RunSummary[],
+  runs: readonly OperatorRunView[],
 ): string | null {
-  return runs.find((run) => run.id === runId)?.title ?? null;
+  return runs.find((run) => run.run_id === runId)?.run_id ?? null;
 }
 
-export function selectSessionStageName(
-  stageInstanceId: string,
-  run: RunDetail | undefined,
+export function selectSessionScopeLabel(
+  scopeId: string,
+  run: OperatorRunView | undefined,
 ): string | null {
-  return run?.stages.find((stage) => stage.stage_instance_id === stageInstanceId)?.name
+  return run?.scopes.find((scope) => scope.scope_id === scopeId)?.label
     ?? null;
 }
 

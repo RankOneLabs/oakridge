@@ -1,3 +1,4 @@
+import { findLaunchReceipt, type LaunchReceiptLookup } from "./launch-receipts";
 import type { CoreResult } from "../core-client/transport-errors";
 import { stagePublications } from "./stage-publications";
 import { currentTargetRevisions, targetsMatch, type TargetRevision } from "./command-selection";
@@ -12,20 +13,28 @@ import type { TransactionalSqlExecutor } from "./sql-executor";
 
 export interface CompileRequest { readonly bundle: DefinitionBundle }
 export interface CompileResult { readonly program: CompiledBundle }
-export interface StartRunRequest extends CompileRequest { readonly input: unknown }
+export interface StartRunRequest extends CompileRequest { readonly input: unknown; readonly request_id?: string }
+export interface StartPinnedRunRequest { readonly digest: string; readonly input: unknown; readonly request_id: string }
+export interface PinnedDefinition { readonly bundle_id: string; readonly digest: string; readonly source: DefinitionBundle }
 export interface EvaluationInput { readonly source: AuthoritySnapshot; readonly bundle: DefinitionBundle }
 export interface EvaluationResult { readonly decision: DecisionOutcome }
 export interface Decision { readonly source: AuthoritySnapshot; readonly outcome: DecisionOutcome }
 export interface PreparedDecision { readonly request_digest: string; readonly decision: Decision; readonly target_revisions?: readonly TargetRevision[] }
 export interface MutationInput { readonly request_digest?: string; readonly execution_authority?: string; readonly run_id: RunId; readonly scope_id: ScopeId; readonly ingress_id: string; readonly trigger: Trigger; readonly operator_version: number | null; readonly outputs?: readonly OutputPublication[]; readonly prepared?: PreparedDecision }
 export interface StartedRun { readonly run_id: RunId; readonly root_scope_id: ScopeId; readonly bundle_id: string }
-export interface MutationService { compile(request: CompileRequest): Promise<Result<CompileResult>>; startRun(request: StartRunRequest): Promise<Result<StartedRun>>; decide(input: MutationInput): Promise<Result<CommitResult>> }
+export interface MutationService { compile(request: CompileRequest): Promise<Result<CompileResult>>; pinDefinition(request: CompileRequest): Promise<Result<PinnedDefinition>>; startRun(request: StartRunRequest): Promise<Result<StartedRun>>; startRunByDigest(request: StartPinnedRunRequest): Promise<Result<StartedRun>>; decide(input: MutationInput): Promise<Result<CommitResult>> }
 
 export function selectMutationIdentity(input: MutationInput): IngressIdentity {
   return { run_id: input.run_id, scope_id: input.scope_id, ingress_id: input.ingress_id, request_digest: input.prepared?.request_digest ?? input.request_digest ?? requestDigest({ trigger: input.trigger, outputs: input.outputs ?? [], operator_version: input.operator_version }) };
 }
 
 function error(operation: string, entity_id: string, detail: string): Result<never> { return { ok: false, error: { operation, entity_id, detail } }; }
+function launchReplay(prior: LaunchReceiptLookup, request_id: string): Result<StartedRun> | null {
+  if (prior.kind === "new") return null;
+  if (prior.kind === "replay") return { ok: true, value: prior.run };
+  return error(prior.kind === "gone" ? "launch_gone" : "launch_conflict", request_id,
+    prior.kind === "gone" ? "the launched run was deleted" : "request ID reused with different launch content");
+}
 export async function compileBundle(core: CoreClient, request: CompileRequest): Promise<Result<CompileResult>> {
   if (Buffer.byteLength(JSON.stringify(request.bundle)) > CORE_MAX_FRAME_BYTES) return error("compile", request.bundle.key, `oversized_payload: definition bundle exceeds ${CORE_MAX_FRAME_BYTES} bytes`);
   const response = await core.request("compile", { bundle: request.bundle });
@@ -57,6 +66,27 @@ export function prepareCommit(input: MutationInput, decision: Decision): Result<
 export function createMutationService(db: TransactionalSqlExecutor, core: CoreClient): MutationService {
   return {
     compile: (request) => compileBundle(core, request),
+    async pinDefinition(request) {
+      const compiled = await compileBundle(core, request);
+      if (!compiled.ok) return compiled;
+      try {
+        const bundle_id = crypto.randomUUID();
+        await db.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ($1,$2,$3,$4) ON CONFLICT (digest) DO NOTHING",
+          [bundle_id, compiled.value.program.digest, JSON.stringify(request.bundle), JSON.stringify(compiled.value.program)]);
+        const rows = await db.query<PinnedDefinition>("SELECT id AS bundle_id,digest,source FROM authority.definition_bundle WHERE digest=$1", [compiled.value.program.digest]);
+        if (!rows[0]) return error("pin_definition", compiled.value.program.digest, "stored definition missing");
+        return { ok: true, value: rows[0] };
+      } catch (cause) { return error("pin_definition", request.bundle.key, String(cause)); }
+    },
+    async startRunByDigest(request) {
+      try {
+        const prior = launchReplay(await findLaunchReceipt(db, request.request_id, requestDigest({ digest: request.digest, input: request.input })), request.request_id);
+        if (prior) return prior;
+        const rows = await db.query<{ source: DefinitionBundle }>("SELECT source FROM authority.definition_bundle WHERE digest=$1", [request.digest]);
+        if (!rows[0]) return error("start_run_by_digest", request.digest, "definition digest not found");
+        return this.startRun({ bundle: rows[0].source, input: request.input, request_id: request.request_id });
+      } catch (cause) { return error("start_run_storage", request.request_id, String(cause)); }
+    },
     async startRun(request) {
       const compiled = await compileBundle(core, request);
       if (!compiled.ok) return compiled;
@@ -70,12 +100,19 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
       const run_id = crypto.randomUUID() as RunId;
       const root_scope_id = crypto.randomUUID() as ScopeId;
       const bundle_id = crypto.randomUUID();
-      let actual_bundle_id: string = bundle_id;
+      const request_digest = requestDigest({ digest: compiled.value.program.digest, input: request.input });
       try {
-        await db.transaction(async (tx) => {
+        return await db.transaction(async (tx): Promise<Result<StartedRun>> => {
+          if (request.request_id !== undefined) {
+            // Serialize competing launches before reading their receipt. Read committed
+            // lets a waiter see the preceding transaction's committed result.
+            await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`launch:${request.request_id}`]);
+            const prior = launchReplay(await findLaunchReceipt(tx, request.request_id, request_digest), request.request_id);
+            if (prior) return prior;
+          }
           await tx.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ($1,$2,$3,$4) ON CONFLICT (digest) DO NOTHING", [bundle_id, compiled.value.program.digest, JSON.stringify(request.bundle), JSON.stringify(compiled.value.program)]);
           const stored = await tx.query<{ id: string }>("SELECT id FROM authority.definition_bundle WHERE digest=$1", [compiled.value.program.digest]);
-          actual_bundle_id = stored[0]!.id;
+          const actual_bundle_id = stored[0]!.id;
           await tx.query("INSERT INTO authority.run (id,definition_bundle_id) VALUES ($1,$2)", [run_id, actual_bundle_id]);
           await tx.query("INSERT INTO authority.scope_instance (id,run_id,scope_key,input,local_state) VALUES ($1,$2,$3,$4,$5)", [root_scope_id, run_id, request.bundle.root, JSON.stringify(validated.value.value), JSON.stringify(root.initial)]);
           const pools = new Map<string, number>();
@@ -85,9 +122,13 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
             pools.set(pool.key, pool.limit);
           }
           for (const [pool_key, capacity] of pools) await tx.query("INSERT INTO authority.capacity_pool (id,run_id,pool_key,capacity) VALUES ($1,$2,$3,$4)", [crypto.randomUUID(), run_id, pool_key, capacity]);
+          const run: StartedRun = { run_id, root_scope_id, bundle_id: actual_bundle_id };
+          if (request.request_id !== undefined) await tx.query(
+            "INSERT INTO authority.launch_receipt (request_id,request_digest,run_id,root_scope_id,bundle_id) VALUES ($1,$2,$3,$4,$5)",
+            [request.request_id, request_digest, run_id, root_scope_id, actual_bundle_id]);
+          return { ok: true, value: run };
         });
-        return { ok: true, value: { run_id, root_scope_id, bundle_id: actual_bundle_id } };
-      } catch (cause) { return error("start_run", run_id, String(cause)); }
+      } catch (cause) { return error("start_run_storage", run_id, String(cause)); }
     },
     async decide(input) {
       const identity = selectMutationIdentity(input);

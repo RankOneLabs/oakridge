@@ -1,171 +1,30 @@
 import { useOakridgeConfig } from "./hooks/useOakridgeConfig";
-import { RunListView } from "./views/RunListView";
-import { RunDetailView } from "./views/RunDetailView";
-import { ArtifactWorkspaceRedirectView } from "./views/ArtifactWorkspaceRedirectView";
-import { NewRunView } from "./views/NewRunView";
-import { CreateProjectView } from "./views/CreateProjectView";
-import { WorkflowDefListView } from "./views/WorkflowDefListView";
-import { WorkflowDefEditorView } from "./views/WorkflowDefEditorView";
-import { WorkflowDefDetailView } from "./views/WorkflowDefDetailView";
+import { OperatorRunListView } from "./views/OperatorRunListView";
+import { OperatorLaunchView } from "./views/OperatorLaunchView";
+import { OperatorDefinitionsView } from "./views/OperatorDefinitionsView";
+import { OperatorDefinitionEditorView } from "./views/OperatorDefinitionEditorView";
+import { GenericOperatorRunView } from "./views/GenericOperatorRunView";
 import { ReviewInboxView } from "./views/ReviewInboxView";
-import { SessionWorkspaceRedirectView } from "./views/SessionWorkspaceRedirectView";
-import { formatRunWorkspaceHash, type OakridgeSubRoute } from "../lib/hash";
-import type { ArtifactId } from "../lib/ids";
-import type { WorkflowDefSummary } from "./types";
-interface OakridgeShellInnerProps {
-  route: OakridgeSubRoute;
-  onNavigate: (hash: string) => void;
-}
+import type { OakridgeSubRoute } from "../lib/hash";
 
-function OakridgeShellInner({ route, onNavigate }: OakridgeShellInnerProps) {
-  const configQuery = useOakridgeConfig();
-
-  // Show loading while the availability check is in flight
-  if (configQuery.isPending) {
-    return (
-      <div className="or-shell" data-testid="or-shell">
-        <div className="or-loading">Connecting to oakridge…</div>
-      </div>
-    );
-  }
-
-  // Show unavailable state when the retained OAKRIDGE_CORE_BASE_URL setting is unset.
-  if (!configQuery.data?.available) {
-    return (
-      <div className="or-shell" data-testid="or-shell">
-        <div className="or-unavailable" data-testid="or-unavailable">
-          <h2>Oakridge backend not configured</h2>
-          <p>
-            Set <code>OAKRIDGE_CORE_BASE_URL</code> on the kbbl server to enable
-            workflow run inspection.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  const navigateToRun = (id: string) => onNavigate(formatRunWorkspaceHash(id, null));
-  const navigateToArtifact = (id: string) => onNavigate(`oakridge/artifact/${encodeURIComponent(id)}`);
-  const navigateToRuns = () => onNavigate("oakridge");
-  const navigateToNewRun = () => onNavigate("oakridge/new-run");
-  const navigateToCreateProject = () => onNavigate("oakridge/create-project");
-  const navigateToDefs = () => onNavigate("oakridge/defs");
-  const navigateToDef = (id: string) => onNavigate(`oakridge/def/${encodeURIComponent(id)}`);
-  const navigateToDefNew = () => onNavigate("oakridge/def-new");
-  const navigateToDefEdit = (id: string) => onNavigate(`oakridge/def-edit/${encodeURIComponent(id)}`);
-
+interface Props { readonly route: OakridgeSubRoute }
+export function OakridgeShell({ route }: Props) {
+  const config = useOakridgeConfig();
+  const navigate = (path: string) => { window.location.hash = path; };
+  const runs = () => navigate("oakridge");
+  const run = (id: string) => navigate(`oakridge/run/${encodeURIComponent(id)}`);
+  const defs = () => navigate("oakridge/defs");
   let content: React.ReactNode;
-  switch (route.sub) {
-    case "runs":
-      content = (
-        <RunListView
-          onSelectRun={navigateToRun}
-          onNewRun={navigateToNewRun}
-          onNewProject={navigateToCreateProject}
-          onWorkflows={navigateToDefs}
-          onSelectArtifact={navigateToArtifact}
-        />
-      );
-      break;
-    case "review-inbox":
-      content = (
-        <ReviewInboxView
-          onSelectRun={navigateToRun}
-          onSelectArtifact={navigateToArtifact}
-        />
-      );
-      break;
-    case "run":
-      content = (
-        <RunDetailView key={route.id} runId={route.id} routePane={route.pane} onBack={navigateToRuns} />
-      );
-      break;
-    case "session":
-      content = (
-        <SessionWorkspaceRedirectView sessionId={route.session_id} onBack={navigateToRuns} />
-      );
-      break;
-    case "artifact":
-      content = (
-        <ArtifactWorkspaceRedirectView
-          artifactId={route.id as ArtifactId}
-          onBack={navigateToRuns}
-        />
-      );
-      break;
-    case "new-run":
-      content = (
-        <NewRunView
-          onBack={navigateToRuns}
-          onCreated={(id) => navigateToRun(id)}
-        />
-      );
-      break;
-    case "create-project":
-      content = (
-        <CreateProjectView
-          onBack={navigateToRuns}
-          onCreated={navigateToRuns}
-        />
-      );
-      break;
-    case "defs":
-      content = (
-        <WorkflowDefListView
-          onNew={navigateToDefNew}
-          onSelect={(def: WorkflowDefSummary) => navigateToDef(def.id)}
-          onClone={(def: WorkflowDefSummary) => navigateToDefEdit(def.id)}
-        />
-      );
-      break;
-    case "def":
-      content = (
-        <WorkflowDefDetailView
-          definitionId={route.id}
-          onBack={navigateToDefs}
-          onClone={() => navigateToDefEdit(route.id)}
-        />
-      );
-      break;
-    case "def-new":
-      content = (
-        <WorkflowDefEditorView
-          key="new"
-          cloneFromId={null}
-          onBack={navigateToDefs}
-          onCreated={navigateToDefs}
-        />
-      );
-      break;
-    case "def-edit":
-      content = (
-        <WorkflowDefEditorView
-          key={route.id}
-          cloneFromId={route.id}
-          onBack={navigateToDefs}
-          onCreated={navigateToDefs}
-        />
-      );
-      break;
+  if (config.isPending) content = <p role="status">Connecting to Oakridge…</p>;
+  else if (!config.data?.available) content = <p role="alert">Oakridge backend is unavailable.</p>;
+  else switch (route.sub) {
+    case "run": content = <GenericOperatorRunView runId={route.id} onBack={runs} />; break;
+    case "review-inbox": content = <ReviewInboxView onSelectRun={run} onSelectArtifact={() => undefined} />; break;
+    case "new-run": content = <OperatorLaunchView onBack={runs} onCreated={run} onEdit={() => navigate("oakridge/def-new")} />; break;
+    case "defs": content = <OperatorDefinitionsView onBack={runs} onNew={() => navigate("oakridge/def-new")} onClone={(id) => navigate(`oakridge/def-edit/${encodeURIComponent(id)}`)} />; break;
+    case "def-new": content = <OperatorDefinitionEditorView cloneFromId={null} onBack={defs} onPinned={defs} />; break;
+    case "def-edit": content = <OperatorDefinitionEditorView cloneFromId={route.id} onBack={defs} onPinned={defs} />; break;
+    default: content = <OperatorRunListView onSelectRun={run} onNewRun={() => navigate("oakridge/new-run")} onDefinitions={defs} />;
   }
-
-  return (
-    <div className="or-shell" data-testid="or-shell">
-      <main className="or-shell__content">
-        {content}
-      </main>
-    </div>
-  );
-}
-
-interface OakridgeShellProps {
-  route: OakridgeSubRoute;
-}
-
-export function OakridgeShell({ route }: OakridgeShellProps) {
-  const onNavigate = (hash: string) => {
-    window.location.hash = hash;
-  };
-
-  return <OakridgeShellInner route={route} onNavigate={onNavigate} />;
+  return <div className="or-shell" data-testid="or-shell"><div className="or-shell__content">{content}</div></div>;
 }

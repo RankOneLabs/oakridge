@@ -8,7 +8,8 @@ import { findReceipt } from "../storage/receipts";
 import type { RunId, ScopeId } from "../storage/schema-records";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
 import { readScopeView, readRunView, readInbox } from "../storage/projection-reader";
-import { readPinnedDefinition } from "./definition-inspection";
+import { listDefinitions, readPinnedDefinition } from "./definition-inspection";
+import type { DefinitionBundle } from "../core-client/generated-contracts";
 import { readScopeDiagnostics, readScopeHistory } from "./diagnostics";
 import { invocationInput } from "../effects/operations/selected-request";
 import { MAX_PUBLICATION_VALUE_BYTES, parsePublication, publicationReceipt, publicationRevisionId, publicationValueBytes } from "./publication";
@@ -30,6 +31,22 @@ async function body(request: Request): Promise<unknown | MalformedRequestError> 
 export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies): void {
   installSelectedPublicationApi(app, deps);
   installSelectedEvidenceApi(app, deps);
+  app.get("/api/runs", async () => { try {
+    const rows = await deps.db.query<{ run_id: RunId }>("SELECT id AS run_id FROM authority.run ORDER BY created_at DESC,id DESC", []);
+    const runs = await Promise.all(rows.map((row) => readRunView(deps.db, row.run_id)));
+    return Response.json(runs.filter((run) => run !== null));
+  } catch (cause) { return fault(cause); } });
+  app.get("/api/definitions", async () => { try { return Response.json(await listDefinitions(deps.db)); }
+    catch (cause) { return fault(cause); } });
+  app.post("/api/definitions", async (c) => {
+    const source = await body(c.req.raw);
+    if (source instanceof MalformedRequestError) return response({ ok: false, error: source });
+    if (!source || typeof source !== "object" || !("key" in source) || typeof source.key !== "string")
+      return response({ ok: false, error: new InvalidPayloadError("invalid definition bundle") });
+    const pinned = await deps.mutations.pinDefinition({ bundle: source as DefinitionBundle });
+    return pinned.ok ? Response.json(pinned.value, { status: 201 })
+      : response({ ok: false, error: new InvalidPayloadError(pinned.error.detail) });
+  });
   app.get("/api/inbox", async (c) => {
     const limit_raw = c.req.query("limit");
     const limit = limit_raw === undefined ? undefined : Number(limit_raw);

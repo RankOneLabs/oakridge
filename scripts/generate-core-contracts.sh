@@ -15,8 +15,10 @@ if [[ "${1:-}" == "--check" ]]; then
   diff -u "$output" "$generated"
   diff -u "$source_output" "$generated_source"
   diff -u "$root/workflow-core/fixtures/source-schema.json" "$source_schema"
+  bun "$root/kbbl/scripts/generate-operator-contracts.ts" --check
 else
   cp "$generated" "$output"
   cp "$generated_source" "$source_output"
   cp "$source_schema" "$root/workflow-core/fixtures/source-schema.json"
+  bun "$root/kbbl/scripts/generate-operator-contracts.ts"
 fi
