@@ -13,7 +13,7 @@ const run_id = "run-1" as RunId;
 const scope_id = "scope-1" as ScopeId;
 export const unit: CheckedValue = { schema: "unit", data: { kind: "record", fields: [], dictionary: [] } };
 const revision: CheckedValue = { schema: "revision", data: { kind: "reference", brand: "artifact_revision", id: "revision-1" } };
-interface HarnessOptions { readonly transport_failure?: boolean; readonly malformed_core?: boolean; readonly missing_scope?: boolean; readonly database_failure?: boolean; readonly change_target_before_commit?: boolean; readonly change_witness_before_commit?: boolean; readonly operator_workspace?: boolean }
+interface HarnessOptions { readonly transport_failure?: boolean; readonly malformed_core?: boolean; readonly missing_scope?: boolean; readonly database_failure?: boolean; readonly change_target_before_commit?: boolean; readonly change_witness_before_commit?: boolean; readonly wait_decision?: boolean; readonly operator_workspace?: boolean }
 
 export async function harness(options: HarnessOptions = {}) {
   const bundle: DefinitionBundle = await Bun.file(resolve(import.meta.dir, "../../workflow-core/fixtures/bundles/exact-review-target.json")).json();
@@ -70,8 +70,9 @@ export async function harness(options: HarnessOptions = {}) {
       return operation(this);
     },
   };
-  const decision: DecisionOutcome = { kind: "apply", targets: [revision], mutations: [], invocations: [], outcome: null,
-    explanation: { bundle_digest: "pinned", node_id: "finish_inspection", owner: scope_id, read_set: [], trace: [], trigger_id: "request-1" } };
+  const explanation = { bundle_digest: "pinned", node_id: "finish_inspection", owner: scope_id, read_set: [], trace: [], trigger_id: "request-1" };
+  const decision: DecisionOutcome = options.wait_decision ? { kind: "wait", reason: "awaiting rework", continuations: ["certify"], attention: null, explanation }
+    : { kind: "apply", targets: [revision], mutations: [], invocations: [], outcome: null, explanation };
   const core = {
     async request(operation: string): Promise<CoreResult<Output>> {
       if (options.transport_failure) return transportFailure("unresponsive_child", "deadline exceeded");
@@ -82,11 +83,13 @@ export async function harness(options: HarnessOptions = {}) {
     },
   } as unknown as CoreClient;
   const app = new Hono();
-  installDefinitionApi(app, { db, core, mutations: createMutationService(db, core), wake: async () => {} });
+  const deps = { db, core, mutations: createMutationService(db, core) };
+  installDefinitionApi(app, { ...deps, wake: async () => {} });
   const request: ScopeCommandRequest = { command_key: "certify", payload: { specimen: "revision-1" }, request_id: "request-1", scope_id,
     expected_scope_version: 4, targets: [{ identity: "revision-1", version: 3 }] };
   return {
     app,
+    deps,
     request,
     submit: (body: unknown = request) => app.request(`/api/runs/${run_id}/scopes/${scope_id}/commands`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
     terminate: () => { owner = { ...owner, is_terminal: true, version: owner.version + 1 }; },

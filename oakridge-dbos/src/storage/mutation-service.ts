@@ -114,9 +114,12 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
           if (attempt > 0 && input.prepared?.target_revisions) {
             const command = bundle.scopes.find((item) => item.key === source.owner.scope_key)?.commands.find((item) => item.key === input.trigger.key);
             if (!command) return { ok: true, value: { kind: "Conflict", detail: "command changed during retry" } };
-            const revisions = await currentTargetRevisions(db, input.scope_id, command, source.snapshot.observations);
-            if (!targetsMatch(command, evaluated.value.decision, input.prepared.target_revisions, revisions))
-              return { ok: true, value: { kind: "Conflict", detail: "target revisions changed during retry" } };
+            // A command without targets has nothing to re-pin (and its outcome need not be an apply), as on the HTTP path.
+            if (command.targets.length) {
+              const revisions = await currentTargetRevisions(db, input.scope_id, command, source.snapshot.observations);
+              if (!targetsMatch(command, evaluated.value.decision, input.prepared.target_revisions, revisions))
+                return { ok: true, value: { kind: "Conflict", detail: "target revisions changed during retry" } };
+            }
           }
           const request = prepareCommit(input, { source, outcome: evaluated.value.decision });
           if (!request.ok) return request;
