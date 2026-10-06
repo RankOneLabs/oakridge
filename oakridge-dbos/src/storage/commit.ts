@@ -38,7 +38,7 @@ async function writeOutputs(tx: SqlExecutor, request: CommitRequest): Promise<vo
     const slot = slots[0];
     if ((slot?.current_revision_id ?? null) !== output.predecessor_id || (slot ? Number(slot.version) : null) !== output.expected_slot_version) fail({ kind: "Conflict", detail: "output predecessor or version changed" });
     const revision_id = output.revision_id ?? crypto.randomUUID();
-    await tx.query("INSERT INTO authority.artifact_revision (id,scope_id,execution_id,output_key,collection_key,body,predecessor_id) VALUES ($1,$2,$3,$4,$5,$6,$7)", [revision_id, output.scope_id, output.execution_id, output.output_key, output.collection_key || null, JSON.stringify(output.body), output.predecessor_id]);
+    await tx.query("INSERT INTO authority.artifact_revision (id,scope_id,execution_id,output_key,collection_key,body,predecessor_id) VALUES ($1,$2,$3,$4,$5,$6,$7)", [revision_id, output.scope_id, output.execution_id, output.output_key, output.collection_key, JSON.stringify(output.body), output.predecessor_id]);
     if (slot) await tx.query("UPDATE authority.output_slot SET current_revision_id=$1,version=version+1 WHERE id=$2", [revision_id, slot.id]);
     else await tx.query("INSERT INTO authority.output_slot (id,scope_id,output_key,collection_key,current_revision_id) VALUES ($1,$2,$3,$4,$5)", [crypto.randomUUID(), output.scope_id, output.output_key, output.collection_key, revision_id]);
   }
