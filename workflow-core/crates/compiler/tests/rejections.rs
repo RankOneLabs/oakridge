@@ -970,6 +970,47 @@ fn e3_shared_schema_still_counts_at_deeper_depth() {
     );
 }
 
+#[derive(Clone, Copy)]
+enum Declaration {
+    RootFirst,
+    DependencyFirst,
+}
+
+/// Compile the fixture plus the chain depth_a -> depth_b -> depth_c -> unit
+/// (four schemas on one path) under `max_depth`, with the links declared in
+/// the given order. Returns the error kind, or None when the bundle compiles.
+fn chain_outcome(order: Declaration, max_depth: usize) -> Option<DomainErrorKind> {
+    let mut links = vec![
+        json!({"key":"depth_a","shape":{"kind":"optional","item":"depth_b"}}),
+        json!({"key":"depth_b","shape":{"kind":"optional","item":"depth_c"}}),
+        json!({"key":"depth_c","shape":{"kind":"optional","item":"unit"}}),
+    ];
+    if matches!(order, Declaration::DependencyFirst) {
+        links.reverse();
+    }
+    let mut source = fixture();
+    source["limits"]["max_depth"] = json!(max_depth);
+    source["schemas"].as_array_mut().unwrap().extend(links);
+    let bundle: DefinitionBundle = serde_json::from_value(source).unwrap();
+    compile(&bundle, &bundle.operations).err().map(|e| e.kind)
+}
+
+#[test]
+fn e3_schema_depth_does_not_depend_on_declaration_order() {
+    // Declared dependency-first, each link is cached before its parent visits it,
+    // so the parent must still be checked against the cached subtree height.
+    assert_eq!(
+        chain_outcome(Declaration::DependencyFirst, 3),
+        Some(DomainErrorKind::ResourceLimit)
+    );
+    assert_eq!(
+        chain_outcome(Declaration::RootFirst, 3),
+        Some(DomainErrorKind::ResourceLimit)
+    );
+    assert_eq!(chain_outcome(Declaration::DependencyFirst, 4), None);
+    assert_eq!(chain_outcome(Declaration::RootFirst, 4), None);
+}
+
 #[test]
 fn e5_requested_budget_above_host_is_named() {
     let bundle: DefinitionBundle = serde_json::from_value(fixture()).unwrap();
