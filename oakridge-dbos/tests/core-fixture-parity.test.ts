@@ -153,13 +153,13 @@ test("response at the configured response boundary is accepted", () => withChild
   `IFS= read -r line\nprintf '%s\\n' '${stringResponseAtSize(CORE_MAX_RESPONSE_BYTES)}'`, async (client) => {
     expect((await client.request("compile", { bundle })).ok).toBe(true);
   }));
-test("response above configured response quarantines the child and fails all pending callers", () => withChild(
+test("response above configured response respawns the child", () => withChild(
   `IFS= read -r line\nprintf '%s\\n' '${stringResponseAtSize(CORE_MAX_RESPONSE_BYTES + 1)}'`, async (client) => {
     const responses = await Promise.all([client.request("compile", { bundle }),
       client.request("compile", { bundle })]);
     for (const response of responses) expect(response).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "oversized_payload" } } });
     expect(await client.request("compile", { bundle }))
-      .toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "terminated_child" } } });
+      .toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "oversized_payload" } } });
   }));
 test("safe integer endpoints round trip exactly through the real binary", async () => {
   const client = startClient();
@@ -206,11 +206,12 @@ test("unsafe integer success payload quarantines the child", () => withChild(
     expect(await client.request("compile", { bundle }))
       .toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "malformed_frame" } } });
   }));
-test("unresponsive child hits deadline and is quarantined", () => withChild("IFS= read -r line\nsleep 1", async (client) => {
+test("unresponsive child hits deadline and respawns", () => withChild("IFS= read -r line\nsleep 1", async (client) => {
   expect(await client.request("compile", { bundle })).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "unresponsive_child" } } });
-  expect(await client.request("compile", { bundle })).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "terminated_child" } } });
+  expect(await client.request("compile", { bundle })).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "unresponsive_child" } } });
+  expect(client.health.restart_count).toBeGreaterThanOrEqual(1);
 }, 20));
-test("bounded queue refuses excess callers without discarding pending request", () => withChild("IFS= read -r line\nsleep 1", async (client) => {
+test("in-flight bound refuses excess callers without discarding pending request", () => withChild("IFS= read -r line\nsleep 1", async (client) => {
   const first = client.request("compile", { bundle });
   expect(await client.request("compile", { bundle: { ...bundle, key: "second" } })).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "queue_full" } } });
   await first;
@@ -234,4 +235,63 @@ test("unknown source fields are domain diagnostics with request correlation", ()
     bundle: { ...bundle, invented: true },
   } }));
   expect(response).toMatchObject({ request_id: "unknown-source", result: { status: "domain_error", value: { kind: "malformed_bundle", path: "invented" } } });
+});
+
+test("a slow pipe flush does not spend the request deadline", async () => {
+  const client = startClient(binary, 30);
+  try {
+    const writable = client as unknown as { writeFrame(id: string, frame: string, generation: number): Promise<void> };
+    const write = writable.writeFrame.bind(client);
+    writable.writeFrame = async (id, frame, generation) => { await Bun.sleep(80); await write(id, frame, generation); };
+    expect(await client.request("compile", { bundle })).toMatchObject({ ok: true, value: { kind: "compiled" } });
+  } finally { client.close(); }
+});
+
+test("child deaths are rate-limited and stderr remains bounded in health and fault detail", () => withChild(
+  "printf '%020000d\\n' 0 >&2\nsleep 0.05\nexit 1", async (client) => {
+    const first = await client.request("compile", { bundle });
+    expect(first).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "terminated_child" } } });
+    if (first.ok || first.error.kind !== "transport") throw new Error("expected transport failure");
+    expect(first.error.detail.detail).toContain("child stderr:");
+    const began = Date.now();
+    const second = await client.request("compile", { bundle });
+    expect(second).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "terminated_child" } } });
+    expect(Date.now() - began).toBeGreaterThanOrEqual(150);
+    expect(client.health.restart_count).toBeGreaterThanOrEqual(1);
+    expect(new TextEncoder().encode(client.health.last_stderr_lines.join("\\n")).length).toBeLessThanOrEqual(16_384);
+  }, 1000));
+
+test("a killed in-flight request fails once; respawn silently re-sends the source on unknown_bundle", async () => {
+  const directory = mkdtempSync(resolve(tmpdir(), "core-respawn-"));
+  const script = resolve(directory, "child.py");
+  const log = resolve(directory, "operations.log");
+  writeFileSync(script, `#!/usr/bin/env python3
+import json, subprocess, sys
+child = subprocess.Popen([${JSON.stringify(binary)}], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+for line in sys.stdin:
+    operation = json.loads(line)['operation']
+    with open(${JSON.stringify(log)}, 'a') as output: output.write(operation + '\\n')
+    child.stdin.write(line)
+    child.stdin.flush()
+    sys.stdout.write(child.stdout.readline())
+    sys.stdout.flush()
+`);
+  chmodSync(script, 0o700);
+  const client = startClient(script);
+  try {
+    expect(await client.request("compile", { bundle })).toMatchObject({ ok: true, value: { kind: "compiled" } });
+    const pid = client.health.pid;
+    if (pid === null) throw new Error("child missing");
+    process.kill(pid, "SIGSTOP");
+    const pending = client.request("evaluate", { bundle, snapshot: snapshot() });
+    const survivor = client.request("validate_payload", { bundle, schema: "unit", payload: {} });
+    await Bun.sleep(20);
+    process.kill(pid, "SIGKILL");
+    expect(await pending).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "terminated_child" } } });
+    expect(await survivor).toMatchObject({ ok: true, value: { kind: "validated" } });
+    expect(await client.request("evaluate", { bundle, snapshot: snapshot() })).toMatchObject({ ok: true, value: { kind: "evaluated" } });
+    const operations = (await Bun.file(log).text()).trim().split("\n");
+    expect(operations.filter((operation) => operation === "compile")).toHaveLength(2);
+    expect(client.health.restart_count).toBe(1);
+  } finally { client.close(); rmSync(directory, { recursive: true, force: true }); }
 });

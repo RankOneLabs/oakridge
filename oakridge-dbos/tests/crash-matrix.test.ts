@@ -116,6 +116,8 @@ for (const cut of cuts) {
 
         // A new process of the same engine version resumes the parked workflows.
         engine = await createProductionComposition({ database_url: url, core_binary: binary, host: "127.0.0.1", effect_provider: provider, timing: fast });
+        const health = await (await engine.app.request("http://localhost/health")).json();
+        expect(health).toMatchObject({ status: "ok", core: { pid: expect.any(Number), uptime_ms: expect.any(Number), restart_count: 0, last_stderr_lines: [] } });
         if (!is_revoked) {
           await waitUntil(acknowledged);
           expect((await db.query<{ count: string }>("SELECT count(*)::text AS count FROM authority.resource_binding", []))[0]?.count).toBe("1");
