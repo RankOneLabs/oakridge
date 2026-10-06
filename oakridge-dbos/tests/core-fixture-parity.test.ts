@@ -355,6 +355,32 @@ sleep 2`, async (client) => {
     expect(await older).toMatchObject({ ok: true, value: { kind: "compiled" } });
   }));
 
+test("failed replacement spawn settles survivors and rejects future requests", () => withChild(
+  'rm -- "$0"\nIFS= read -r line\nexit 1', async (client) => {
+    const first = client.request("compile", { bundle });
+    const survivor = client.request("compile", { bundle: { ...bundle, key: "survivor" } });
+    expect(await first).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "terminated_child" } } });
+    expect(await survivor).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "terminated_child" } } });
+    expect(await client.request("compile", { bundle: { ...bundle, key: "later" } }))
+      .toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "terminated_child" } } });
+  }), 1000);
+
+test("invalid UTF-8 stderr stays bounded after decoding in health and fault detail", () => withChild(
+  `python3 -c 'import sys; sys.stderr.buffer.write(bytes([255]) * 20000 + "😀tail".encode()); sys.stderr.buffer.flush()'
+sleep 0.05
+IFS= read -r line
+exit 1`, async (client) => {
+    const failure = await client.request("compile", { bundle });
+    if (failure.ok || failure.error.kind !== "transport") throw new Error("expected transport failure");
+    const stderr = failure.error.detail.detail.split("; child stderr: ")[1];
+    if (stderr === undefined) throw new Error("expected child stderr");
+    const health_stderr = client.health.last_stderr_lines.join("\n");
+    expect(new TextEncoder().encode(stderr).length).toBeLessThanOrEqual(16_384);
+    expect(health_stderr).toBe(stderr);
+    expect(stderr).toEndWith("😀tail");
+    expect(stderr).toContain("�");
+  }));
+
 test("child deaths are rate-limited and stderr remains bounded in health and fault detail", () => withChild(
   "printf '%020000d\\n' 0 >&2\nsleep 0.05\nexit 1", async (client) => {
     const first = await client.request("compile", { bundle });

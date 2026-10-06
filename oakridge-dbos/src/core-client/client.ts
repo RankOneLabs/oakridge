@@ -14,6 +14,15 @@ const MAX_RESPONSE_BYTES = CORE_MAX_RESPONSE_BYTES;
 const MAX_DIGEST_ENTRIES = 64;
 const STDERR_RING_BYTES = 16_384;
 const MIN_RESTART_INTERVAL_MS = 250;
+function decodeStderr(bytes: Uint8Array): string {
+  const decoded = new TextDecoder().decode(bytes);
+  const encoded = new TextEncoder().encode(decoded);
+  if (encoded.length <= STDERR_RING_BYTES) return decoded;
+  let start = encoded.length - STDERR_RING_BYTES;
+  // Keep the newest diagnostics without splitting a UTF-8 code point.
+  while ((encoded[start]! & 0xc0) === 0x80) start++;
+  return new TextDecoder("utf-8", { fatal: true }).decode(encoded.subarray(start));
+}
 function resultFromResponse(result: CoreResponseResult): CoreResult<Output> {
   switch (result.status) {
     case "ok": return { ok: true, value: result.value };
@@ -39,7 +48,7 @@ export class CoreClient {
   private stderrBytes = new Uint8Array(0);
   get health(): CoreChildHealth {
     return { pid: this.process?.pid ?? null, uptime_ms: this.spawnedAt === null ? null : Date.now() - this.spawnedAt,
-      restart_count: this.restartCount, last_stderr_lines: new TextDecoder().decode(this.stderrBytes).trimEnd().split("\n").filter(Boolean).slice(-20) };
+      restart_count: this.restartCount, last_stderr_lines: decodeStderr(this.stderrBytes).trimEnd().split("\n").filter(Boolean).slice(-20) };
   }
   private digestFor(key: string): string | undefined {
     const digest = this.digests.get(key);
@@ -99,7 +108,7 @@ export class CoreClient {
     pending.resolve(result);
   }
   private failureDetail(detail: string): string {
-    const stderr = new TextDecoder().decode(this.stderrBytes).trim();
+    const stderr = decodeStderr(this.stderrBytes).trim();
     return stderr ? `${detail}; child stderr: ${stderr}` : detail;
   }
   private fault({ kind, detail, generation, request_id }: ChildFault): void {
@@ -125,6 +134,7 @@ export class CoreClient {
         this.restartCount++;
         for (const [id, pending] of this.pending) void this.writeFrame(id, pending.frame, this.generation);
       } catch (cause) {
+        this.closed = true;
         for (const id of this.pending.keys()) this.settle(id, transportFailure("terminated_child", this.failureDetail(String(cause))));
       }
     });
