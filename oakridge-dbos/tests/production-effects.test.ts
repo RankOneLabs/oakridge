@@ -5,7 +5,37 @@ import { GithubPullRequestReader } from "../src/runtime/github-pull-requests";
 import { readSnapshot } from "../src/storage/snapshot-reader";
 import type { CheckedValue } from "../src/core-client/generated-contracts";
 import type { EffectPayload } from "../src/effects/intents";
+import type { StableInvocation } from "../src/effects/provider";
 import { unit, withDatabase, waitUntil, operationBundle, begin } from "./effect-fixture";
+
+test("rejection after uncertainty cleans up even when its evidence makes the run terminal", async () => withDatabase(async ({ url, db }) => {
+  let starts = 0;
+  const stopped: StableInvocation[] = [];
+  let can_confirm_stop = false;
+  const composition = await createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1",
+    timing: { provider_timeout_ms: 500, retry_initial_seconds: 0.01, retry_cap_seconds: 0.05, wake_timeout_seconds: 0.05 },
+    effect_provider: {
+      start: async () => ++starts === 1 ? { kind: "uncertain", detail: "start response lost" }
+        : { kind: "permanently_rejected", code: "worktree_unrecoverable", detail: "reconciliation rejected",
+          evidence: { id: "rejection", key: "worktree_unrecoverable", payload: { schema: "text", data: { kind: "string", value: "reconciliation rejected" } } } },
+      observe: async () => { throw new Error("rejected starts must not be observed"); },
+      stop: async (invocation) => {
+        stopped.push(invocation);
+        return can_confirm_stop ? { kind: "acknowledged", value: { stopped: true } } : { kind: "uncertain", detail: "stop response lost" };
+      },
+    } });
+  try {
+    const run = await begin(composition, await operationBundle("repository.prepare"), { repository_path: "/tmp", expected_head: null });
+    await waitUntil(async () => stopped.length > 0 && (await db.query<{ is_terminal: boolean }>("SELECT is_terminal FROM authority.scope_instance WHERE id=$1", [run.root_scope_id]))[0]?.is_terminal === true);
+    const deletion = await composition.app.request(`http://localhost/runs/${run.run_id}`, { method: "DELETE" });
+    expect(deletion.status).toBe(409);
+    can_confirm_stop = true;
+    await waitUntil(async () => (await db.query<{ status: string }>("SELECT status FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='stop'", [run.root_scope_id]))[0]?.status === "cleanup_confirmed");
+    const start = await db.query<{ payload: EffectPayload }>("SELECT payload FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='start'", [run.root_scope_id]);
+    expect(stopped.every((invocation) => invocation.bytes === start[0]?.payload.invocation.bytes)).toBe(true);
+    expect((await composition.app.request(`http://localhost/runs/${run.run_id}`, { method: "DELETE" })).status).toBe(200);
+  } finally { await composition.close(); }
+}));
 
 test("production prepares the selected repository and routes durable results into configured scope decisions", async () => {
   await withDatabase(async ({ url, db }) => {

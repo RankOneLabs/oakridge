@@ -1,6 +1,7 @@
 import type { CheckedValue } from "../core-client/generated-contracts";
 import type { TransactionalSqlExecutor } from "./sql-executor";
-import type { EffectPayload, EffectStatus } from "../effects/intents";
+import { requiresCleanup, type EffectPayload, type EffectStatus } from "../effects/intents";
+import { ensureStopIntent } from "./revocation";
 
 export interface EffectResultInput {
   readonly intent_id: string;
@@ -8,7 +9,7 @@ export interface EffectResultInput {
   readonly payload: EffectPayload;
   readonly terminal_result: CheckedValue | null;
 }
-interface WrittenRow { readonly status: EffectStatus; readonly scope_id: string; readonly execution_id: string | null }
+interface WrittenRow { readonly status: EffectStatus; readonly scope_id: string; readonly execution_id: string | null; readonly effect_key: string }
 
 /**
  * Claims the right to call the provider for a start: records `has_dispatched`
@@ -32,9 +33,14 @@ export async function persistEffectResult(db: TransactionalSqlExecutor, input: E
   return db.transaction(async (tx) => {
     const rows = await tx.query<WrittenRow>(`UPDATE authority.effect_intent SET payload=$2,
       status=CASE WHEN status='revoked' AND $3<>'cleanup_confirmed' THEN status ELSE $3 END, version=version+1
-      WHERE id=$1 RETURNING status,scope_id,execution_id`, [intent_id, JSON.stringify(payload), status]);
+      WHERE id=$1 RETURNING status,scope_id,execution_id,effect_key`, [intent_id, JSON.stringify(payload), status]);
     const written = rows[0];
     if (!written) return null;
+    // A later rejection cannot prove an earlier uncertain attempt never started.
+    // Commit its stop before evidence can make the run terminal.
+    if (written.status === "rejected" && requiresCleanup({ status: written.status, payload })) {
+      await ensureStopIntent(tx, { ...written, payload });
+    }
     if (terminal_result && written.execution_id) {
       // A step that crashed after this transaction committed re-runs; the result is recorded once.
       const facts = await tx.query<{ id: string }>(`INSERT INTO authority.fact (id,scope_id,fact_key,payload) SELECT $1,$2,$3,$4

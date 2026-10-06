@@ -3,6 +3,15 @@ import type { SqlExecutor } from "./sql-executor";
 
 interface EffectRow extends Omit<EffectIntent, "version"> { readonly version: string | number }
 
+/** Record the one stop owed by a start, inside the caller's transaction. */
+export async function ensureStopIntent(tx: SqlExecutor, start: Pick<EffectIntent, "scope_id" | "execution_id" | "effect_key" | "payload">): Promise<string | null> {
+  const payload: EffectPayload = { invocation: start.payload.invocation, action: "stop", handle: start.payload.handle };
+  const stops = await tx.query<{ id: string }>(`INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload,status)
+    VALUES ($1,$2,$3,$4,$5,'cleanup_pending') ON CONFLICT (scope_id,effect_key) DO UPDATE SET version=authority.effect_intent.version RETURNING id`,
+    [crypto.randomUUID(), start.scope_id, start.execution_id, `${start.effect_key}:stop`, JSON.stringify(payload)]);
+  return stops[0]?.id ?? null;
+}
+
 /**
  * Revoke every start in the given scopes (for one worker, or every worker when
  * `worker` is null) and record a stop intent for each one that may own an
@@ -20,11 +29,8 @@ export async function revokeStarts(tx: SqlExecutor, scope_ids: readonly string[]
     const status = start.status === "rejected" ? "rejected" : "revoked";
     if (start.status !== status) await tx.query("UPDATE authority.effect_intent SET status='revoked',version=version+1 WHERE id=$1", [start.id]);
     if (!requiresCleanup({ status, payload: start.payload })) continue;
-    const payload: EffectPayload = { invocation: start.payload.invocation, action: "stop", handle: start.payload.handle };
-    const stops = await tx.query<{ id: string }>(`INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload,status)
-      VALUES ($1,$2,$3,$4,$5,'cleanup_pending') ON CONFLICT (scope_id,effect_key) DO UPDATE SET version=authority.effect_intent.version RETURNING id`,
-      [crypto.randomUUID(), start.scope_id, start.execution_id, `${start.effect_key}:stop`, JSON.stringify(payload)]);
-    if (stops[0]) stop_ids.push(stops[0].id);
+    const stop_id = await ensureStopIntent(tx, start);
+    if (stop_id) stop_ids.push(stop_id);
   }
   return stop_ids;
 }

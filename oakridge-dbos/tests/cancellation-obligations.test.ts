@@ -5,7 +5,7 @@ import type { CheckedValue, DefinitionBundle, Invocation } from "../src/core-cli
 import { deletionEligibility, pendingCleanupCount, requiresCleanup, type EffectPayload } from "../src/effects/intents";
 import { selectedInvocation, type InvocationId } from "../src/effects/provider";
 import { cancelRun, createMutationService, deleteRun } from "../src/storage/mutation-service";
-import { claimDispatch } from "../src/storage/effect-results";
+import { claimDispatch, persistEffectResult } from "../src/storage/effect-results";
 import type { ScopeId } from "../src/storage/schema-records";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
 import { unit, withDatabase } from "./effect-fixture";
@@ -77,6 +77,19 @@ test("a start rejected after an uncertain attempt stays rejected and still recei
   expect(rows).toEqual([{ effect_key: "ingress:0", status: "rejected" }, { effect_key: "ingress:0:stop", status: "cleanup_pending" }]);
   await db.query("UPDATE authority.effect_intent SET status='cleanup_confirmed' WHERE effect_key='ingress:0:stop'", []);
   expect(await deleteRun(db, "run")).toEqual({ kind: "deleted" });
+}));
+
+test.each([false, true])("recording rejection creates cleanup only after an uncertain attempt (%s)", async (has_uncertain_start) => withDatabase(async ({ db }) => {
+  await db.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ('bundle','digest','{}','{}')", []);
+  await db.query("INSERT INTO authority.run (id,definition_bundle_id) VALUES ('run','bundle')", []);
+  await db.query("INSERT INTO authority.scope_instance (id,run_id,scope_key,input,local_state) VALUES ('scope','run','scope','{}','{}')", []);
+  await db.query("INSERT INTO authority.execution (id,scope_id,worker_key,generation,status) VALUES ('execution-1','scope','agent',1,'pending')", []);
+  await db.query("INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload) VALUES ('start','scope','execution-1','ingress:0',$1)", [JSON.stringify(start)]);
+  const input = { intent_id: "start", status: "rejected" as const, payload: { ...start, has_dispatched: true, has_uncertain_start }, terminal_result: null };
+  await persistEffectResult(db, input);
+  await persistEffectResult(db, input); // replay must preserve the one stop identity
+  const stops = await db.query<{ payload: EffectPayload; status: string }>("SELECT payload,status FROM authority.effect_intent WHERE payload->>'action'='stop'", []);
+  expect(stops).toEqual(has_uncertain_start ? [{ status: "cleanup_pending", payload: { action: "stop", handle: null, invocation: start.invocation } }] : []);
 }));
 
 test("selected invocation survives cancellation and blocks deletion until stop is acknowledged", async () => withDatabase(async ({ db }) => {
