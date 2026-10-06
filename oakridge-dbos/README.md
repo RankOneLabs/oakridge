@@ -51,7 +51,9 @@ checks the production stack through an HTTP decision and read projection.
 
 ## Database cutover
 
-The authority baseline requires PostgreSQL 15 or newer.
+The authority baseline requires PostgreSQL 15 or newer. Repeating start against
+the same baseline succeeds; a changed baseline file is rejected with both
+digests. DBOS system tables may exist before the authority baseline is applied.
 
 Stop the service; run `pg_dump` to a file nothing in this repository reads;
 drop and recreate the Oakridge database empty; deploy the Rust CLI, DBOS

@@ -14,6 +14,7 @@ test("baseline creates constrained authority relations and accepts a matching se
   await admin.query(`CREATE DATABASE ${name}`);
   const db = PgPostgresExecutor.connect(test_url.href);
   try {
+    await db.query("CREATE SCHEMA dbos; CREATE TABLE dbos.system_state (id integer)", []);
     await migrateEmptyDatabase(db);
     const tables = await db.query<{ table_name: string }>("SELECT table_name FROM information_schema.tables WHERE table_schema='authority' ORDER BY table_name", []);
     expect(tables.map((row) => row.table_name)).toEqual(["artifact_revision", "capacity_pool", "capacity_reservation", "child_collection", "definition_bundle", "effect_intent", "execution", "execution_selection", "fact", "ingress_receipt", "launch_receipt", "output_slot", "resource_binding", "run", "schema_baseline", "scope_export", "scope_instance", "transition"]);
