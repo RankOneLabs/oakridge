@@ -5,6 +5,8 @@ import type { ScopeId } from "../storage/schema-records";
 import { MalformedRequestError } from "./scope-commands";
 
 export interface PublicationRequest { readonly request_id: string; readonly expected_scope_version: number; readonly trigger: Trigger; readonly output: OutputPublication }
+export const MAX_PUBLICATION_VALUE_BYTES = 1_048_576;
+export function publicationValueBytes(value: unknown): number { return Buffer.byteLength(JSON.stringify(value)); }
 const object = (value: unknown): value is { readonly [key: string]: unknown } => !!value && typeof value === "object" && !Array.isArray(value);
 const version = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 export function parsePublication(value: unknown, scope_id: ScopeId): PublicationRequest | MalformedRequestError {

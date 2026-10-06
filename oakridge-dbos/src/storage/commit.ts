@@ -3,9 +3,9 @@ import type { CapacityChange } from "./capacity";
 import { applyCapacityChanges } from "./capacity";
 import { findReceipt, type IngressIdentity } from "./receipts";
 import type { AuthoritySnapshot, ReadSet } from "./snapshot-reader";
-import { hasSameReadSet } from "./snapshot-reader";
+import { hasSameReadSet, readSnapshot, READ_RELATIONS, RUN_SCOPED_READ_RELATIONS } from "./snapshot-reader";
 import type { ChildCollectionMember, CommitReceipt, ScopeId } from "./schema-records";
-import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
+import { inTransaction, type SqlExecutor, type TransactionalSqlExecutor } from "./sql-executor";
 import { pinProviderRequest } from "../effects/operations/selected-request";
 import { selectedInvocation, type InvocationId } from "../effects/provider";
 import type { EffectPayload } from "../effects/intents";
@@ -17,18 +17,65 @@ export type Result<Value> = { readonly ok: true; readonly value: Value } | { rea
 export interface OutputPublication { readonly revision_id?: string; readonly scope_id: ScopeId; readonly output_key: string; readonly collection_key: string; readonly body: CheckedValue; readonly predecessor_id: string | null; readonly expected_slot_version: number | null; readonly execution_id: string | null }
 export interface EffectPublication { readonly effect_key: string; readonly payload: CheckedValue; readonly execution_id: string | null }
 export interface CommitRequest { readonly execution_authority?: string; readonly child_cancellations?: readonly import("./child-cancellation").ChildCancellation[]; readonly identity: IngressIdentity; readonly read_set: ReadSet; readonly decision: DecisionOutcome; readonly outputs: readonly OutputPublication[]; readonly capacity: readonly CapacityChange[]; readonly effects: readonly EffectPublication[]; readonly operator_version: number | null }
-export type CommitResult = { readonly kind: "Committed"; readonly receipt: CommitReceipt } | { readonly kind: "Replayed"; readonly receipt: CommitReceipt } | { readonly kind: "Conflict"; readonly detail: string } | { readonly kind: "Rejected"; readonly detail: string };
+export type CommitResult = { readonly kind: "Committed"; readonly receipt: CommitReceipt } | { readonly kind: "Replayed"; readonly receipt: CommitReceipt } | { readonly kind: "Conflict"; readonly detail: string } | { readonly kind: "Rejected"; readonly detail: string; readonly constraint?: string } | { readonly kind: "snapshot_too_large"; readonly scope: ScopeId; readonly bytes: number; readonly limit: number; readonly largest_roots: readonly { readonly root: string; readonly bytes: number }[] };
+
+export const MAX_SNAPSHOT_BYTES = 1_048_576;
+export interface SnapshotMeasurement { readonly roots: AuthoritySnapshot["reads"]; readonly bytes: number; readonly largest_roots: readonly { readonly root: string; readonly bytes: number }[] }
+/** Measures exactly the snapshot assembled from the pinned checked scope's reads. */
+export function measureAuthoritySnapshot(source: AuthoritySnapshot): SnapshotMeasurement {
+  return { roots: source.reads, bytes: Buffer.byteLength(JSON.stringify(source.snapshot)),
+    largest_roots: source.snapshot.observations.map((observation) => ({ root: JSON.stringify(observation.root),
+      bytes: Buffer.byteLength(JSON.stringify(observation)) })).sort((a, b) => b.bytes - a.bytes).slice(0, 5) };
+}
 
 class AbortCommit extends Error { constructor(readonly outcome: CommitResult) { super("detail" in outcome ? outcome.detail : outcome.kind); } }
 function fail(outcome: CommitResult): never { throw new AbortCommit(outcome); }
 
+function databaseFailure(error: unknown): CommitResult | null {
+  if (!error || typeof error !== "object" || !("code" in error)) return null;
+  if (error.code === "40P01" || error.code === "40001") return { kind: "Conflict", detail: `database concurrency conflict (${error.code}); refresh decision` };
+  if (error.code === "23505") {
+    const constraint = "constraint" in error && typeof error.constraint === "string" ? error.constraint : "unknown constraint";
+    return { kind: "Rejected", detail: `unique constraint violated: ${constraint}`, constraint };
+  }
+  return null;
+}
+
+async function measureWrittenSnapshots(tx: SqlExecutor, source: AuthoritySnapshot, child_cancellations: CommitRequest["child_cancellations"], definition: { source: DefinitionBundle; checked_program: CompiledBundle }): Promise<void> {
+  const scope_ids = new Set<ScopeId>([source.owner.id as ScopeId, ...(child_cancellations ?? []).map((child) => child.source.owner.id as ScopeId)]);
+  if (source.owner.parent_id) scope_ids.add(source.owner.parent_id as ScopeId);
+  for (const child of child_cancellations ?? []) if (child.source.owner.parent_id) scope_ids.add(child.source.owner.parent_id as ScopeId);
+  for (const scope_id of scope_ids) {
+    // A parent has no trigger at a child export/outcome boundary. The current
+    // checked trigger is a synthetic measurement trigger for that parent.
+    const measured = await readSnapshot(inTransaction(tx), scope_id, source.snapshot.trigger, source.snapshot.random_seed, definition);
+    if (!measured) continue;
+    const measurement = measureAuthoritySnapshot(measured);
+    if (scope_id === source.owner.id && JSON.stringify(measurement.roots) !== JSON.stringify(source.reads))
+      fail({ kind: "Rejected", detail: "measured observation roots differ from the decision roots" });
+    if (measurement.bytes <= MAX_SNAPSHOT_BYTES) continue;
+    fail({ kind: "snapshot_too_large", scope: scope_id, bytes: measurement.bytes, limit: MAX_SNAPSHOT_BYTES, largest_roots: measurement.largest_roots });
+  }
+}
+
 async function lockOwners(tx: SqlExecutor, request: CommitRequest): Promise<void> {
-  // A run advisory lock serializes membership changes and protects missing rows.
-  await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [request.identity.run_id]);
-  const owners = new Set<string>([request.identity.scope_id, ...request.capacity.map((c) => c.pool_id), ...request.outputs.map((o) => o.scope_id), ...request.read_set.rows.map((r) => r.id)]);
-  for (const id of [...owners].sort()) {
-    const witnesses = request.read_set.rows.filter((r) => r.id === id).sort((a, b) => a.relation.localeCompare(b.relation));
-    for (const witness of witnesses) await tx.query(`SELECT id FROM authority.${witness.relation} WHERE id=$1 FOR UPDATE`, [id]);
+  for (const witness of request.read_set.rows) {
+    if (!(READ_RELATIONS as readonly string[]).includes(witness.relation)) fail({ kind: "Rejected", detail: `unknown read relation: ${witness.relation}` });
+  }
+  // Global lock order: run advisory lock first, then relation.localeCompare order,
+  // then IDs within each relation. Capacity changes take the exclusive run lock;
+  // unrelated sibling decisions share it and only lock their own subtree rows.
+  await tx.query(request.capacity.length
+    ? "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))"
+    : "SELECT pg_advisory_xact_lock_shared(hashtextextended($1, 0))", [request.identity.run_id]);
+  const by_relation = new Map<string, string[]>();
+  for (const witness of request.read_set.rows) {
+    if (!request.capacity.length && RUN_SCOPED_READ_RELATIONS.includes(witness.relation)) continue;
+    by_relation.set(witness.relation, [...(by_relation.get(witness.relation) ?? []), witness.id]);
+  }
+  for (const relation of [...by_relation.keys()].sort((a, b) => a.localeCompare(b))) {
+    const ids = [...new Set(by_relation.get(relation)!)].sort();
+    await tx.query(`SELECT id FROM authority.${relation} WHERE id=ANY($1::text[]) ORDER BY id FOR UPDATE`, [ids]);
   }
 }
 
@@ -49,12 +96,9 @@ async function revokeSelectedEffects(tx: SqlExecutor, scope_id: string, worker: 
   await revokeStarts(tx, [scope_id], worker);
 }
 
-async function writeDecision(tx: SqlExecutor, request: CommitRequest, source: AuthoritySnapshot): Promise<CommitReceipt> {
+async function writeDecision(tx: SqlExecutor, request: CommitRequest, source: AuthoritySnapshot, definition: { source: DefinitionBundle; checked_program: CompiledBundle }): Promise<CommitReceipt> {
   const scope_id = source.owner.id;
   const execution_ids: string[] = [];
-  const definitions = await tx.query<{ source: DefinitionBundle; checked_program: CompiledBundle }>("SELECT b.source,b.checked_program FROM authority.definition_bundle b JOIN authority.run r ON r.definition_bundle_id=b.id WHERE r.id=$1", [source.owner.run_id]);
-  const definition = definitions[0];
-  if (!definition) fail({ kind: "Rejected", detail: "definition bundle missing" });
   if (request.decision.kind === "apply") {
     for (const mutation of request.decision.mutations) {
       if (mutation.kind === "bind_resource") await tx.query("INSERT INTO authority.resource_binding (id,scope_id,resource_key,observation) VALUES ($1,$2,$3,$4) ON CONFLICT (scope_id,resource_key) DO UPDATE SET observation=excluded.observation,version=authority.resource_binding.version+1", [crypto.randomUUID(), scope_id, mutation.key, JSON.stringify(mutation.value)]);
@@ -125,6 +169,7 @@ async function writeDecision(tx: SqlExecutor, request: CommitRequest, source: Au
 export async function commitDecision(db: TransactionalSqlExecutor, request: CommitRequest, source: AuthoritySnapshot): Promise<Result<CommitResult>> {
   const checked = validateDecision(request, source);
   if (!checked.ok) return checked;
+  if (request.read_set.scope_id !== source.owner.id) return { ok: true, value: { kind: "Rejected", detail: "read set owner differs from decision owner" } };
   try {
     const result = await db.transaction(async (tx): Promise<CommitResult> => {
       await lockOwners(tx, request);
@@ -132,7 +177,10 @@ export async function commitDecision(db: TransactionalSqlExecutor, request: Comm
       if (receipt.kind === "replay") return { kind: "Replayed", receipt: receipt.receipt };
       if (receipt.kind === "conflict") return { kind: "Conflict", detail: "ingress identity reused with different request content" };
       if (!await hasSameReadSet(tx, request.read_set)) return { kind: "Conflict", detail: "read set changed; refresh decision" };
-      const storage_check = await validateStorageAuthority(tx, request, source);
+      const definitions = await tx.query<{ source: DefinitionBundle; checked_program: CompiledBundle }>("SELECT b.source,b.checked_program FROM authority.definition_bundle b JOIN authority.run r ON r.definition_bundle_id=b.id WHERE r.id=$1", [source.owner.run_id]);
+      const definition = definitions[0];
+      if (!definition) fail({ kind: "Rejected", detail: "definition bundle missing" });
+      const storage_check = await validateStorageAuthority(tx, request, source, definition.source);
       if (!storage_check.ok) return { kind: "Rejected", detail: storage_check.error.detail };
       if (request.operator_version !== null && request.operator_version !== Number(source.owner.version)) return { kind: "Conflict", detail: "operator target version changed; refresh decision" };
       if (source.owner.is_terminal) return { kind: "Rejected", detail: "owner is terminal" };
@@ -152,7 +200,7 @@ export async function commitDecision(db: TransactionalSqlExecutor, request: Comm
         if (!child.request.decision || child.request.decision.kind !== "apply" || !child.request.decision.outcome || JSON.stringify(child.request.read_set) !== JSON.stringify(request.read_set))
           fail({ kind: "Rejected", detail: "child cancellation must terminate against the parent read set" });
         const valid = validateDecision(child.request, child.source);
-        const authority = valid.ok ? await validateStorageAuthority(tx, child.request, child.source) : valid;
+        const authority = valid.ok ? await validateStorageAuthority(tx, child.request, child.source, definition.source) : valid;
         if (!authority.ok) fail({ kind: "Rejected", detail: authority.error.detail });
         const descendants = await tx.query<{ id: string }>(`WITH RECURSIVE descendants AS (
           SELECT id,parent_id FROM authority.scope_instance WHERE parent_id=$1
@@ -160,13 +208,17 @@ export async function commitDecision(db: TransactionalSqlExecutor, request: Comm
         ) SELECT id FROM descendants WHERE id=$2`, [request.identity.scope_id, child.source.owner.id]);
         if (!descendants.length || child.source.owner.run_id !== source.owner.run_id || child.source.owner.is_terminal)
           fail({ kind: "Rejected", detail: "cancellation target is not an active owned descendant" });
-        await writeDecision(tx, child.request, child.source);
+        await writeDecision(tx, child.request, child.source, definition);
       }
-      return { kind: "Committed", receipt: await writeDecision(tx, request, source) };
+      const committed = await writeDecision(tx, request, source, definition);
+      await measureWrittenSnapshots(tx, source, request.child_cancellations, definition);
+      return { kind: "Committed", receipt: committed };
     });
     return { ok: true, value: result };
   } catch (error) {
     if (error instanceof AbortCommit) return { ok: true, value: error.outcome };
+    const mapped = databaseFailure(error);
+    if (mapped) return { ok: true, value: mapped };
     return { ok: false, error: { operation: "commit_decision", entity_id: request.identity.scope_id, detail: String(error) } };
   }
 }

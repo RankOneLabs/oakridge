@@ -32,6 +32,26 @@ test("concurrent publications cannot overwrite a slot without a predecessor", as
     expect(outcomes.filter((result) => result.ok && result.value.kind === "Committed")).toHaveLength(1);
     const rows = await db.query<{ count: string }>("SELECT count(*)::text AS count FROM authority.artifact_revision", []);
     expect(rows[0]?.count).toBe("1");
+    for (const id of ["sibling-a", "sibling-b"]) await db.query("INSERT INTO authority.scope_instance (id,run_id,parent_id,scope_key,child_key,input,local_state) VALUES ($1,'run','scope','root',$1,$2,$2)", [id, JSON.stringify(value)]);
+    const sibling = (await readSnapshot(db, "sibling-b" as ScopeId, { id: "sibling-trigger", key: "start", payload: value }))!;
+    let release_lock: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => { release_lock = resolve; });
+    let signal_locked: () => void = () => undefined;
+    const locked = new Promise<void>((resolve) => { signal_locked = resolve; });
+    const holder = db.transaction(async (tx) => {
+      await tx.query("SELECT id FROM authority.scope_instance WHERE id='sibling-a' FOR UPDATE", []);
+      signal_locked();
+      await held;
+    });
+    await locked;
+    const other = commitDecision(db, { identity: { run_id: "run" as RunId, scope_id: "sibling-b" as ScopeId, ingress_id: "sibling", request_digest: "sibling" },
+      read_set: sibling.read_set, operator_version: null, decision: { kind: "wait", reason: "pause", continuations: [],
+        explanation: { bundle_digest: "digest", node_id: "n", owner: "sibling-b", read_set: [], trace: [], trigger_id: "sibling-trigger" } },
+      outputs: [], capacity: [], effects: [] }, sibling);
+    try {
+      expect(await Promise.race([other.then((result) => result.ok && result.value.kind === "Committed"),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 1_000))])).toBe(true);
+    } finally { release_lock(); await holder; await other; }
   } finally {
     await db.close();
     await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);

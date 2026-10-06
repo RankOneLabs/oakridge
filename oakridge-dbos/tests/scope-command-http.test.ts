@@ -19,8 +19,18 @@ test("HTTP rejects stale target revisions with 409", async () => {
   const api = await harness();
   expect((await api.submit({ ...api.request, targets: [{ identity: "revision-1", version: 2 }] })).status).toBe(409);
 });
-test("a changed dependency between validation and commit returns 409", async () => {
-  expect((await (await harness({ change_target_before_commit: true })).submit()).status).toBe(409);
+test("publication refuses an oversized value before staging", async () => {
+  const api = await harness();
+  const response = await api.app.request("/api/runs/run-1/scopes/scope-1/publications", { method: "POST",
+    headers: { "content-type": "application/json" }, body: JSON.stringify({ request_id: "oversized", expected_scope_version: 4,
+      trigger: { id: "oversized", key: "publish", payload: unit }, output: { scope_id: "scope-1", output_key: "report",
+        collection_key: "", body: { schema: "text", data: { kind: "string", value: "x".repeat(1_048_576) } },
+        predecessor_id: null, expected_slot_version: null, execution_id: null } }) });
+  expect({ status: response.status, kind: (await response.json()).kind }).toEqual({ status: 413, kind: "oversized_payload" });
+});
+test("a changed witness between validation and commit retries with a fresh evaluation", async () => {
+  const api = await harness({ change_target_before_commit: true });
+  expect({ status: (await api.submit()).status, evaluations: api.evaluationCount() }).toEqual({ status: 202, evaluations: 1 });
 });
 test("HTTP core transport failures return 503", async () => {
   expect((await (await harness({ transport_failure: true })).submit()).status).toBe(503);

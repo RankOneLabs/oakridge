@@ -6,6 +6,7 @@ import type { MutationService } from "../storage/mutation-service";
 import { requestDigest, findReceipt } from "../storage/receipts";
 import type { OutputSlotRecord, RunId, ScopeId, ScopeInstanceRecord } from "../storage/schema-records";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
+import { MAX_PUBLICATION_VALUE_BYTES, publicationValueBytes } from "./publication";
 
 interface SelectedOutputRequest { readonly request_id: string; readonly predecessor_id: string | null; readonly collection_key: string; readonly body: unknown }
 interface PublicationDependencies { readonly db: TransactionalSqlExecutor; readonly core: CoreClient; readonly mutations: MutationService; readonly wake: (run_id: RunId) => Promise<void> }
@@ -47,6 +48,8 @@ export function installSelectedPublicationApi(app: Hono, deps: PublicationDepend
     const key = output.publication_trigger;
     const event = scope?.facts.find((fact) => fact.key === key);
     if (!key || !event) return c.json({ error: "publication trigger is not configured" }, 422);
+    const value_bytes = publicationValueBytes(body.body);
+    if (value_bytes > MAX_PUBLICATION_VALUE_BYTES) return c.json({ kind: "oversized_payload", bytes: value_bytes, limit: MAX_PUBLICATION_VALUE_BYTES }, 413);
     const checked = await deps.core.request("validate_payload", { bundle: selected.source, schema: output.schema, payload: body.body });
     if (!checked.ok || checked.value.kind !== "validated") return c.json({ error: "output body does not match its checked schema", detail: checked.ok ? "unexpected core response" : checked.error }, 422);
     const trigger = await deps.core.request("validate_payload", { bundle: selected.source, schema: event.payload_schema, payload: {} });
@@ -63,6 +66,7 @@ export function installSelectedPublicationApi(app: Hono, deps: PublicationDepend
     if (!result.ok) return c.json({ error: result.error }, 422);
     if (result.value.kind === "Conflict") return c.json(result.value, 409);
     if (result.value.kind === "Rejected") return c.json(result.value, 422);
+    if (result.value.kind === "snapshot_too_large") return c.json(result.value, 413);
     void deps.wake(c.req.param("run_id") as RunId).catch(() => undefined);
     return c.json({ ...result.value, revision_id }, result.value.kind === "Committed" ? 201 : 200);
   });
