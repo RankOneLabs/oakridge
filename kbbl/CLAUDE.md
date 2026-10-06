@@ -16,6 +16,21 @@ Session-shaped UX (live transcripts, inbox, per-sid streams). LBC's
 project-shaped dashboard lives separately in `../lbc-dashboard` — do not
 conflate.
 
+## Scope authority and cutover
+
+The Rust library evaluates pinned scope definitions without external IO.
+`oakridge-dbos/` accepts commands and publications durably and owns all
+workflow decisions. kbbl proxies its API and runs ACP sessions; its SQLite
+ledger remains authoritative only for local sessions, turns and process
+observations. The legacy `/inbox/workspace-events` event shape lacks run and
+scope identity and returns 501 instead of acknowledging a discarded event.
+
+For the Oakridge database cutover: (1) stop the service; (2) `pg_dump` to a
+file nothing in this repository reads; (3) drop and recreate the Oakridge
+database empty; (4) deploy the Rust CLI, DBOS backend and kbbl PWA; and
+(5) admit traffic after the new stack is healthy. Do not reset kbbl's separate
+SQLite ACP ledger.
+
 ## Tech stack
 
 - **Backend**: Bun + Hono, SQLite via `bun:sqlite`

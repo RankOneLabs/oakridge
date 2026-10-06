@@ -40,8 +40,8 @@ jobs:
           workspaces: workflow-core
       - run: bash scripts/generate-core-contracts.sh --check
 
-  kbbl-typecheck:
-    name: kbbl typecheck (TypeScript)
+  workspace-typecheck:
+    name: workspace typecheck (TypeScript)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
