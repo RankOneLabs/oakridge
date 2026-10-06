@@ -29,14 +29,19 @@ export interface ProductionOptions {
 export interface RunProjection { readonly run_id: RunId; readonly root_scope_id: ScopeId; readonly scope_key: string; readonly version: number; readonly is_terminal: boolean }
 export interface ProductionComposition { readonly app: Hono; readonly application_version: string; readonly provider_capabilities: ProviderCapabilities; close(): Promise<void> }
 interface ForgeRepository { readonly owner: string; readonly name: string }
+/** The run-input shapes that name a GitHub repository: `forge: { owner, name }` and a PR `query: { owner, name }`. */
+const REPOSITORY_INPUT_KEYS = ["forge", "query"] as const;
+const asForgeRepository = (value: unknown): ForgeRepository | null =>
+  value && typeof value === "object" && "owner" in value && "name" in value && typeof value.owner === "string" && typeof value.name === "string"
+    ? { owner: value.owner, name: value.name } : null;
 function forgeRepositories(input: unknown): readonly ForgeRepository[] {
   const found: ForgeRepository[] = [];
   function visit(value: unknown): void {
     if (!value || typeof value !== "object") return;
     if (Array.isArray(value)) { value.forEach(visit); return; }
-    if ("forge" in value && value.forge && typeof value.forge === "object" && "owner" in value.forge && "name" in value.forge
-      && typeof value.forge.owner === "string" && typeof value.forge.name === "string") found.push({ owner: value.forge.owner, name: value.forge.name });
-    Object.values(value).forEach(visit);
+    const record = value as Record<string, unknown>;
+    for (const key of REPOSITORY_INPUT_KEYS) { const target = asForgeRepository(record[key]); if (target) found.push(target); }
+    Object.values(record).forEach(visit);
   }
   visit(input);
   return found;
@@ -45,7 +50,9 @@ export function githubProviderCapabilities(token: string, http: typeof fetch = f
   return { async check_github(input) {
     if (!token) return { ok: false, error: { operation: "check_github", entity_id: "github", detail: "token is absent" } };
     const targets = forgeRepositories(input);
-    const urls = targets.length ? targets.map((target) => `https://api.github.com/repos/${encodeURIComponent(target.owner)}/${encodeURIComponent(target.name)}/pulls?per_page=1`) : ["https://api.github.com/user"];
+    // A reachable `/user` says nothing about pull-request access, so an input naming no repository fails closed.
+    if (targets.length === 0) return { ok: false, error: { operation: "check_github", entity_id: "github", detail: "run input names no GitHub repository to check" } };
+    const urls = targets.map((target) => `https://api.github.com/repos/${encodeURIComponent(target.owner)}/${encodeURIComponent(target.name)}/pulls?per_page=1`);
     for (const url of urls) {
       try {
         const response = await http(url, { headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json", "user-agent": "oakridge" }, signal: AbortSignal.timeout(10_000) });

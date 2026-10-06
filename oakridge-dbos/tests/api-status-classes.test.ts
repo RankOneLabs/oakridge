@@ -47,3 +47,17 @@ test("a token denied pull-request read is rejected at pin time", async () => {
   const result = await capabilities.check_github({ forge: { owner: "owner", name: "repo" } });
   expect(result.ok ? null : result.error.detail).toBe("repository pull-request read denied (403)");
 });
+
+test("the capability check reads the repository named by a pull-request query, never /user", async () => {
+  const urls: string[] = [];
+  const capabilities = githubProviderCapabilities("token", (async (input: string | URL | Request) => { urls.push(String(input)); return new Response("[]", { status: 200 }); }) as unknown as typeof fetch);
+  const result = await capabilities.check_github({ query: { owner: "RankOneLabs", name: "oakridge", head_owner: "fork", head_branch: "head", base_branch: "base" } });
+  expect({ ok: result.ok, urls }).toEqual({ ok: true, urls: ["https://api.github.com/repos/RankOneLabs/oakridge/pulls?per_page=1"] });
+});
+
+test("an input naming no GitHub repository fails the capability check closed", async () => {
+  let called = false;
+  const capabilities = githubProviderCapabilities("token", (async () => { called = true; return new Response("{}", { status: 200 }); }) as unknown as typeof fetch);
+  const result = await capabilities.check_github({ repositories: [{ key: "oakridge", preparation: { repository_path: "/repo" } }] });
+  expect({ called, detail: result.ok ? null : result.error.detail }).toEqual({ called: false, detail: "run input names no GitHub repository to check" });
+});
