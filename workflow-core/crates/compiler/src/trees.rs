@@ -162,6 +162,32 @@ pub(crate) fn compile_tree(
                             CheckedMutation::ActivateChild { key: key.clone() },
                         )
                     }
+                    Mutation::ClearOutput { key } => {
+                        if !owner.outputs.iter().any(|output| output.key == *key) {
+                            return Err(error(
+                                DomainErrorKind::MissingSymbol,
+                                key.to_string(),
+                                "output clearing undeclared",
+                            ));
+                        }
+                        (
+                            format!("clear_output/{key}"),
+                            CheckedMutation::ClearOutput { key: key.clone() },
+                        )
+                    }
+                    Mutation::CancelChildren { key } => {
+                        if !owner.children.iter().any(|child| child.key == *key) {
+                            return Err(error(
+                                DomainErrorKind::MissingSymbol,
+                                key.to_string(),
+                                "child cancellation undeclared",
+                            ));
+                        }
+                        (
+                            format!("cancel_child/{key}"),
+                            CheckedMutation::CancelChildren { key: key.clone() },
+                        )
+                    }
                     Mutation::Acquire { pool } | Mutation::Release { pool } => {
                         if !owner.pools.iter().any(|p| p.key == *pool) {
                             return Err(error(
@@ -205,6 +231,41 @@ pub(crate) fn compile_tree(
                                     worker: worker.clone(),
                                 },
                             },
+                        )
+                    }
+                    Mutation::BindResource { key, value } => {
+                        let target = owner
+                            .resources
+                            .iter()
+                            .find(|resource| resource.key == *key)
+                            .ok_or_else(|| {
+                                error(
+                                    DomainErrorKind::MissingSymbol,
+                                    key.to_string(),
+                                    "resource binding undeclared",
+                                )
+                            })?;
+                        let value = expr(value)?;
+                        compatible(bundle, &target.schema, &value.schema, &id.0)?;
+                        (
+                            format!("resource/{key}"),
+                            CheckedMutation::BindResource {
+                                key: key.clone(),
+                                value,
+                            },
+                        )
+                    }
+                    Mutation::ClearResource { key } => {
+                        if !owner.resources.iter().any(|resource| resource.key == *key) {
+                            return Err(error(
+                                DomainErrorKind::MissingSymbol,
+                                key.to_string(),
+                                "resource clearing undeclared",
+                            ));
+                        }
+                        (
+                            format!("resource/{key}"),
+                            CheckedMutation::ClearResource { key: key.clone() },
                         )
                     }
                     Mutation::Observe { resource } => {

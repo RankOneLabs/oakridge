@@ -22,16 +22,18 @@ test("both policy and capacity variants compile through the same binary", async 
     const outcomes = [];
     for (const bundle of bundles) {
       const validated = await core.request("validate_payload", { bundle, available_operations: bundle.operations, schema: "run_input",
-        payload: { repository: { repository_path: "/tmp", expected_head: null }, analysis: config, planning: config,
-          briefs: config, implementation: [], integration: config } });
+        payload: { spec: "Implement feature", repositories: [], analysis: config, planning: config, briefs: config } });
       if (!validated.ok || validated.value.kind !== "validated") throw new Error(JSON.stringify(validated));
       const snapshot: Snapshot = { owner: "root", scope: "development", version: 1, input: validated.value.value,
-        state: { schema: "phase_simple", data: { kind: "variant", variant: "working", value: unit } },
-        trigger: { id: "failed", key: "implementation_failed", payload: unit }, observations: [], timestamp_ms: 1, random_seed: 1 };
+        state: { schema: "phase_root", data: { kind: "variant", variant: "implementing", value: unit } },
+        trigger: { id: "failed", key: "implementation_finished", payload: unit }, observations: [
+          { identity: "outcomes", version: 1, root: { kind: "children_outcomes", key: "implementation", schema: "results" }, value: { schema: "results", data: { kind: "list", items: [{ schema: "result", data: { kind: "variant", variant: "failed", value: unit } }] } } },
+          { identity: "complete", version: 1, root: { kind: "children_complete", key: "implementation", schema: "flag" }, value: { schema: "flag", data: { kind: "boolean", value: false } } },
+        ], timestamp_ms: 1, random_seed: 1 };
       const result = await core.request("evaluate", { bundle, available_operations: bundle.operations, snapshot });
       expect(result.ok).toBe(true);
       outcomes.push(result.ok && result.value.kind === "evaluated" && result.value.value.kind === "apply"
-        ? result.value.value.outcome?.data.kind === "variant" ? result.value.value.outcome.data.variant : "continuing" : "error");
+        ? result.value.value.outcome?.data.kind === "variant" ? result.value.value.outcome.data.variant : "continuing" : result.ok && result.value.kind === "evaluated" && result.value.value.kind === "wait" ? "continuing" : "error");
     }
     expect(outcomes).toEqual(["failed", "continuing"]);
   } finally { core.close(); }

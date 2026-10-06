@@ -1,8 +1,8 @@
 # Development flow behavior contract
 
-Source: `dev_flow_v15.json` as supplied for this cohort, its 18 checked-in
-`prompts/dev-flow/v15/` files, and the existing operator review request types.
-The brief calls these twenty prompt files; the source tree contains eighteen.
+Source: the artifact body contracts, selected operation contracts, and the generic
+`development.json` bundle. `development-independent-siblings.json` changes failure
+policy and shared capacity from four to two.
 
 1. Repository preparation runs first as a selected `repository.prepare` operation.
    Its successful repository references feed later work; interruption allows an
@@ -38,11 +38,17 @@ The brief calls these twenty prompt files; the source tree contains eighteen.
    revisions and publish only missing outputs. Fenced or unrelated output is
    never inherited.
 
-The current bundle declares the stage graph, selected repository operation,
-review commands, two distinct feedback actions, prompt references, and a
-configurable shared capacity pool. Its remaining gaps are material: brief
-fan-out currently reads launch input rather than the accepted collection;
-the parent failure branch does not cancel active siblings; session identity
-and publication details are not assembled by the adapter; and the old v15
-definition still has UI imports. The bundle must not replace v15 as the
-canonical runtime definition until those paths work and are tested end to end.
+The canonical bundle uses selected execution authority for body publication and
+unchanged assessment evidence. Every operator target combines current revision
+identity with persisted PR observations where applicable. Child entry, terminal
+notifications, dependency prerequisites, and descendant cancellation are generic
+source declarations executed by the runtime, rather than development-specific
+adapter branches. Collection membership comes from accepted briefs; final
+integration groups completed work by repository. Failed verdict acceptance is an
+operator decision, while merge confirmation remains tied to the accepted head.
+
+The authority baseline namespaces collection members by their collection key, so
+preparation and final integration may reuse repository keys under one parent.
+This repository's migration command requires a fresh database; no live database
+is migrated by this change. The response transport remains bounded at 1 MiB,
+with both limits exported into the generated adapter contract.

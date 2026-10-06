@@ -3,6 +3,8 @@ import type { ExecutionRequest } from "../../domain/execution";
 import type { ExecutionId, ExecutorOperationId, JsonValue, StageInstanceId, UnitId } from "../../domain/primitives";
 import { renderSessionStart } from "../../adapters/kbbl";
 import type { Result } from "../../storage/commit";
+import { selectedPublicationInstructions } from "./selected-publication-contract";
+import type { ScopeInstanceRecord } from "../../storage/schema-records";
 import type { StableInvocation } from "../provider";
 
 /** Reverse the checked wire representation using the same field indexes as the compiler. */
@@ -41,22 +43,27 @@ export function invocationInput(value: CheckedValue, bundle: DefinitionBundle): 
   }
 }
 
-export interface ProviderRequestSelection { readonly invocation: StableInvocation; readonly bundle: DefinitionBundle; readonly scope_id: string }
+export interface ProviderRequestSelection { readonly invocation: StableInvocation; readonly bundle: DefinitionBundle; readonly scope: Pick<ScopeInstanceRecord, "id" | "run_id" | "child_key" | "scope_key"> }
 /** Keep the selected action input in the pinned prompt so retries read identical context. */
 export function promptWithActionInput(prompt: string, input: JsonValue): string {
   return `${prompt}\n\n## Pinned action input\n\n${JSON.stringify(input, null, 2)}\n`;
 }
 export function pinProviderRequest(input: ProviderRequestSelection): Result<StableInvocation> {
-  const { invocation, bundle, scope_id } = input;
+  const { invocation, bundle, scope } = input;
+  const unit_id = scope.child_key ?? scope.id;
   const decoded = invocationInput(invocation.selection.input, bundle);
   if (!decoded.ok) return decoded;
   const contract = invocation.selection.definition;
+  const isRecord = (value: JsonValue): value is { readonly [key: string]: JsonValue } => !!value && typeof value === "object" && !Array.isArray(value);
+  const decoded_config = isRecord(decoded.value) && decoded.value.config && isRecord(decoded.value.config) ? decoded.value.config : decoded.value;
   if (contract.provider === "kbbl") {
-    if (!decoded.value || typeof decoded.value !== "object" || Array.isArray(decoded.value)) return { ok: false, error: { operation: "pin_request", entity_id: invocation.id, detail: "kbbl launch input must be a record" } };
-    const request: ExecutionRequest = { execution_id: invocation.execution_id as ExecutionId, stage_instance_id: scope_id as StageInstanceId,
-      unit_id: invocation.selection.selection.worker as UnitId, executor_type: "delegated_session", resolved_config: { ...decoded.value,
+    if (!isRecord(decoded_config)) return { ok: false, error: { operation: "pin_request", entity_id: invocation.id, detail: "kbbl launch input must be a record" } };
+    const request: ExecutionRequest = { execution_id: invocation.execution_id as ExecutionId, stage_instance_id: scope.id as StageInstanceId,
+      unit_id: unit_id as UnitId, executor_type: "delegated_session", resolved_config: { ...decoded_config,
+        session_identity: { run_id: scope.run_id, stage_instance_id: scope.id, unit_id,
+          cohort_id: scope.child_key, operator_role: invocation.selection.selection.worker },
         ...(invocation.selection.prompt_content !== null && invocation.selection.prompt_content !== undefined
-          ? { rendered_prompt: promptWithActionInput(invocation.selection.prompt_content, decoded.value) } : {}) },
+          ? { rendered_prompt: promptWithActionInput(invocation.selection.prompt_content, decoded.value) + selectedPublicationInstructions({ invocation, bundle, scope }) } : {}) },
       inputs: [], declared_outputs: [], expected_artifacts: [] };
     const rendered = renderSessionStart({ request, operation_id: invocation.id as unknown as ExecutorOperationId, executor_function_identity: "selected-v1" });
     if (rendered.kind !== "acknowledged") return { ok: false, error: { operation: "pin_request", entity_id: invocation.id, detail: rendered.detail } };

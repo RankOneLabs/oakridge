@@ -226,6 +226,18 @@
         "key": {
           "type": "string"
         },
+        "on_terminal": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "prerequisite_export": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "scope": {
           "type": "string"
         }
@@ -809,6 +821,192 @@
           "properties": {
             "kind": {
               "type": "string",
+              "const": "optional"
+            },
+            "schema": {
+              "type": "string"
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Expression"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "schema"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "field"
+            },
+            "value": {
+              "$ref": "#/$defs/Expression"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "value",
+            "key"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "key": {
+              "$ref": "#/$defs/Expression"
+            },
+            "key_field": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "filter_by"
+            },
+            "source": {
+              "$ref": "#/$defs/Expression"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "source",
+            "key_field",
+            "key"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "contains"
+            },
+            "source": {
+              "$ref": "#/$defs/Expression"
+            },
+            "value": {
+              "$ref": "#/$defs/Expression"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "source",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "key": {
+              "$ref": "#/$defs/Expression"
+            },
+            "key_field": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "lookup"
+            },
+            "source": {
+              "$ref": "#/$defs/Expression"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "source",
+            "key_field",
+            "key"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "filter"
+            },
+            "predicate": {
+              "$ref": "#/$defs/Expression"
+            },
+            "source": {
+              "$ref": "#/$defs/Expression"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "source",
+            "predicate"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "key_field": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "unique_by"
+            },
+            "source": {
+              "$ref": "#/$defs/Expression"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "source",
+            "key_field"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "dependencies_field": {
+              "type": "string"
+            },
+            "key_field": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "check_collection"
+            },
+            "source": {
+              "$ref": "#/$defs/Expression"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "source",
+            "key_field",
+            "dependencies_field"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
               "const": "every"
             },
             "predicate": {
@@ -951,6 +1149,40 @@
         {
           "type": "object",
           "properties": {
+            "key": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "cancel_children"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "key"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "clear_output"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "key"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
             "kind": {
               "type": "string",
               "const": "acquire"
@@ -1014,6 +1246,44 @@
           "required": [
             "kind",
             "worker"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "bind_resource"
+            },
+            "value": {
+              "$ref": "#/$defs/Expression"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "key",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "clear_resource"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "key"
           ]
         },
         {
@@ -1098,6 +1368,12 @@
           "items": {
             "type": "string"
           }
+        },
+        "publication_trigger": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "schema": {
           "type": "string"
@@ -1303,6 +1579,157 @@
             "kind",
             "key",
             "export"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "output_collection"
+            },
+            "schema": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "key",
+            "schema"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "output_revision"
+            },
+            "schema": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "key",
+            "schema"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "output_revisions"
+            },
+            "schema": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "key",
+            "schema"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "optional_output_revision"
+            },
+            "schema": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "key",
+            "schema"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "export": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "children"
+            },
+            "schema": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "key",
+            "export",
+            "schema"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "children_outcomes"
+            },
+            "schema": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "key",
+            "schema"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "children_complete"
+            },
+            "schema": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "key",
+            "schema"
           ]
         },
         {
@@ -1605,6 +2032,12 @@
           "items": {
             "$ref": "#/$defs/CommandDefinition"
           }
+        },
+        "entry_command": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "errors": {
           "type": "array",

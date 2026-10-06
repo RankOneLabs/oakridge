@@ -102,6 +102,27 @@ pub fn validate_bundle(
                 ));
             }
         }
+        if let Some(key) = &owner.entry_command {
+            let command = owner
+                .commands
+                .iter()
+                .find(|c| c.key == *key)
+                .ok_or_else(|| {
+                    error(
+                        DomainErrorKind::UndeclaredTrigger,
+                        key.to_string(),
+                        "entry command missing",
+                    )
+                })?;
+            if !matches!(schema(bundle, &command.payload_schema)?, SchemaShape::Record { fields, dictionary: None } if fields.is_empty())
+            {
+                return Err(error(
+                    DomainErrorKind::IncompatiblePort,
+                    key.to_string(),
+                    "entry command requires an empty record payload",
+                ));
+            }
+        }
         for command in &owner.commands {
             crate::presentation::validate_command_fields(bundle, command)?;
             unique(
@@ -132,6 +153,27 @@ pub fn validate_bundle(
             schema(bundle, &export.schema)?;
         }
         for output in &owner.outputs {
+            if let Some(key) = &output.publication_trigger {
+                let fact = owner
+                    .facts
+                    .iter()
+                    .find(|fact| fact.key == *key)
+                    .ok_or_else(|| {
+                        error(
+                            DomainErrorKind::UndeclaredTrigger,
+                            key.to_string(),
+                            "publication fact missing",
+                        )
+                    })?;
+                if !matches!(schema(bundle, &fact.payload_schema)?, SchemaShape::Record { fields, dictionary: None } if fields.is_empty())
+                {
+                    return Err(error(
+                        DomainErrorKind::IncompatiblePort,
+                        key.to_string(),
+                        "publication fact requires an empty record payload",
+                    ));
+                }
+            }
             schema(bundle, &output.schema)?;
             unique(output.producers.iter().map(|w| w.0.as_str()), &output.key.0)?;
             if output.producers.is_empty()
@@ -264,6 +306,50 @@ pub fn validate_bundle(
         }
         for child in &owner.children {
             let target = scope(bundle, &child.scope)?;
+            if let Some(key) = &child.prerequisite_export {
+                if child.collection.is_none() || !child.imports.contains(key) {
+                    return Err(error(
+                        DomainErrorKind::PrivateRead,
+                        key.to_string(),
+                        "prerequisite export requires a collection and declared import",
+                    ));
+                }
+                let export = target
+                    .exports
+                    .iter()
+                    .find(|export| export.key == *key)
+                    .ok_or_else(|| {
+                        error(
+                            DomainErrorKind::PrivateRead,
+                            key.to_string(),
+                            "prerequisite export missing",
+                        )
+                    })?;
+                if !matches!(schema(bundle, &export.schema)?, SchemaShape::Boolean) {
+                    return Err(error(
+                        DomainErrorKind::IncompatiblePort,
+                        key.to_string(),
+                        "prerequisite export must be boolean",
+                    ));
+                }
+            }
+            if let Some(key) = &child.on_terminal {
+                let fact = owner.facts.iter().find(|f| f.key == *key).ok_or_else(|| {
+                    error(
+                        DomainErrorKind::UndeclaredTrigger,
+                        key.to_string(),
+                        "child terminal fact missing",
+                    )
+                })?;
+                if !matches!(schema(bundle, &fact.payload_schema)?, SchemaShape::Record { fields, dictionary: None } if fields.is_empty())
+                {
+                    return Err(error(
+                        DomainErrorKind::IncompatiblePort,
+                        key.to_string(),
+                        "child terminal fact requires an empty record payload",
+                    ));
+                }
+            }
             unique(child.imports.iter().map(|x| x.0.as_str()), &child.key.0)?;
             if child
                 .imports

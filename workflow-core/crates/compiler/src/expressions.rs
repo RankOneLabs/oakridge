@@ -301,6 +301,260 @@ pub fn compile_expression(
                 },
             )
         }
+        Expression::Optional {
+            schema: target,
+            value,
+        } => {
+            let SchemaShape::Optional { item } = schema(bundle, target)? else {
+                return Err(error(
+                    DomainErrorKind::InvalidAssignment,
+                    target.to_string(),
+                    "optional constructor schema",
+                ));
+            };
+            let value = value.as_ref().map(|value| recurse(value)).transpose()?;
+            if let Some(value) = &value {
+                compatible(bundle, item, &value.schema, &owner.key.0)?;
+            }
+            (
+                target.clone(),
+                CheckedExpressionNode::Optional {
+                    value: value.map(Box::new),
+                },
+            )
+        }
+        Expression::Field { value, key } => {
+            let value = recurse(value)?;
+            let SchemaShape::Record { fields, .. } = schema(bundle, &value.schema)? else {
+                return Err(error(
+                    DomainErrorKind::InvalidAssignment,
+                    owner.key.to_string(),
+                    "field source must be record",
+                ));
+            };
+            let (index, field) = fields
+                .iter()
+                .enumerate()
+                .find(|(_, field)| field.key == *key && field.required)
+                .ok_or_else(|| {
+                    error(
+                        DomainErrorKind::MissingSymbol,
+                        key,
+                        "required field missing",
+                    )
+                })?;
+            (
+                field.schema.clone(),
+                CheckedExpressionNode::Field {
+                    value: Box::new(value),
+                    index,
+                },
+            )
+        }
+        Expression::FilterBy {
+            source,
+            key_field,
+            key,
+        } => {
+            let source = recurse(source)?;
+            let SchemaShape::List { item, .. } = schema(bundle, &source.schema)? else {
+                return Err(error(
+                    DomainErrorKind::InvalidTemplate,
+                    owner.key.to_string(),
+                    "filter_by source must be list",
+                ));
+            };
+            let SchemaShape::Record { fields, .. } = schema(bundle, item)? else {
+                return Err(error(
+                    DomainErrorKind::InvalidTemplate,
+                    owner.key.to_string(),
+                    "filter_by member must be record",
+                ));
+            };
+            let (index, field) = fields
+                .iter()
+                .enumerate()
+                .find(|(_, field)| field.key == *key_field && field.required)
+                .ok_or_else(|| {
+                    error(
+                        DomainErrorKind::MissingSymbol,
+                        key_field,
+                        "filter_by key missing",
+                    )
+                })?;
+            let key = recurse(key)?;
+            compatible(bundle, &field.schema, &key.schema, &owner.key.0)?;
+            (
+                source.schema.clone(),
+                CheckedExpressionNode::FilterBy {
+                    source: Box::new(source),
+                    key_field: index,
+                    key: Box::new(key),
+                },
+            )
+        }
+        Expression::Contains { source, value } => {
+            let source = recurse(source)?;
+            let SchemaShape::List { item, .. } = schema(bundle, &source.schema)? else {
+                return Err(error(
+                    DomainErrorKind::InvalidTemplate,
+                    owner.key.to_string(),
+                    "contains source must be list",
+                ));
+            };
+            let value = recurse(value)?;
+            compatible(bundle, item, &value.schema, &owner.key.0)?;
+            (
+                boolean_schema(bundle)?,
+                CheckedExpressionNode::Contains {
+                    source: Box::new(source),
+                    value: Box::new(value),
+                },
+            )
+        }
+        Expression::Lookup {
+            source,
+            key_field,
+            key,
+        } => {
+            let source = recurse(source)?;
+            let SchemaShape::List { item, .. } = schema(bundle, &source.schema)? else {
+                return Err(error(
+                    DomainErrorKind::InvalidTemplate,
+                    owner.key.to_string(),
+                    "lookup source must be list",
+                ));
+            };
+            let result = item.clone();
+            let SchemaShape::Record { fields, .. } = schema(bundle, item)? else {
+                return Err(error(
+                    DomainErrorKind::InvalidTemplate,
+                    owner.key.to_string(),
+                    "lookup member must be record",
+                ));
+            };
+            let (index, field) = fields
+                .iter()
+                .enumerate()
+                .find(|(_, field)| field.key == *key_field && field.required)
+                .ok_or_else(|| {
+                    error(
+                        DomainErrorKind::MissingSymbol,
+                        key_field,
+                        "lookup key missing",
+                    )
+                })?;
+            let key = recurse(key)?;
+            compatible(bundle, &field.schema, &key.schema, &owner.key.0)?;
+            (
+                result,
+                CheckedExpressionNode::Lookup {
+                    source: Box::new(source),
+                    key_field: index,
+                    key: Box::new(key),
+                },
+            )
+        }
+        Expression::UniqueBy { source, key_field }
+        | Expression::CheckCollection {
+            source, key_field, ..
+        } => {
+            let source = recurse(source)?;
+            let SchemaShape::List { item, .. } = schema(bundle, &source.schema)? else {
+                return Err(error(
+                    DomainErrorKind::InvalidTemplate,
+                    owner.key.to_string(),
+                    "constraint source must be list",
+                ));
+            };
+            let SchemaShape::Record { fields, .. } = schema(bundle, item)? else {
+                return Err(error(
+                    DomainErrorKind::InvalidTemplate,
+                    owner.key.to_string(),
+                    "constraint member must be record",
+                ));
+            };
+            let field = |name: &str| {
+                fields
+                    .iter()
+                    .enumerate()
+                    .find(|(_, field)| field.key == name && field.required)
+                    .ok_or_else(|| {
+                        error(
+                            DomainErrorKind::MissingSymbol,
+                            name,
+                            "constraint field missing",
+                        )
+                    })
+            };
+            let (key_index, key) = field(key_field)?;
+            if !matches!(schema(bundle, &key.schema)?, SchemaShape::String { .. }) {
+                return Err(error(
+                    DomainErrorKind::InvalidTemplate,
+                    key_field,
+                    "constraint key must be string",
+                ));
+            }
+            let node = if let Expression::CheckCollection {
+                dependencies_field, ..
+            } = expression
+            {
+                let (index, dependencies) = field(dependencies_field)?;
+                let SchemaShape::List { item, .. } = schema(bundle, &dependencies.schema)? else {
+                    return Err(error(
+                        DomainErrorKind::InvalidTemplate,
+                        dependencies_field,
+                        "dependencies must be list",
+                    ));
+                };
+                if !matches!(schema(bundle, item)?, SchemaShape::String { .. }) {
+                    return Err(error(
+                        DomainErrorKind::InvalidTemplate,
+                        dependencies_field,
+                        "dependency keys must be string",
+                    ));
+                }
+                CheckedExpressionNode::CheckCollection {
+                    source: Box::new(source.clone()),
+                    key_field: key_index,
+                    dependencies_field: index,
+                }
+            } else {
+                CheckedExpressionNode::UniqueBy {
+                    source: Box::new(source.clone()),
+                    key_field: key_index,
+                }
+            };
+            (source.schema.clone(), node)
+        }
+        Expression::Filter { source, predicate } => {
+            let source = recurse(source)?;
+            let SchemaShape::List { item, .. } = schema(bundle, &source.schema)? else {
+                return Err(error(
+                    DomainErrorKind::InvalidTemplate,
+                    owner.key.to_string(),
+                    "filter source must be list",
+                ));
+            };
+            let narrowed = Context {
+                item: Some(item.clone()),
+                ..context.clone()
+            };
+            let predicate = compile_expression(bundle, owner, predicate, &narrowed, depth + 1)?;
+            compatible(
+                bundle,
+                &boolean_schema(bundle)?,
+                &predicate.schema,
+                &owner.key.0,
+            )?;
+            (
+                source.schema.clone(),
+                CheckedExpressionNode::Filter {
+                    source: Box::new(source),
+                    predicate: Box::new(predicate),
+                },
+            )
+        }
         Expression::Every { source, predicate } => {
             let source = recurse(source)?;
             let SchemaShape::List { item, .. } = schema(bundle, &source.schema)? else {

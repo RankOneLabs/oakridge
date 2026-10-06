@@ -107,6 +107,52 @@ pub enum CheckedExpressionNode {
         source: Box<CheckedExpression>,
         value: Box<CheckedExpression>,
     },
+    Optional {
+        value: Option<Box<CheckedExpression>>,
+    },
+    Field {
+        value: Box<CheckedExpression>,
+        #[serde(with = "crate::wire_numbers::index")]
+        #[schemars(schema_with = "crate::wire_numbers::index::schema")]
+        index: usize,
+    },
+    FilterBy {
+        source: Box<CheckedExpression>,
+        #[serde(with = "crate::wire_numbers::index")]
+        #[schemars(schema_with = "crate::wire_numbers::index::schema")]
+        key_field: usize,
+        key: Box<CheckedExpression>,
+    },
+    Contains {
+        source: Box<CheckedExpression>,
+        value: Box<CheckedExpression>,
+    },
+    Lookup {
+        source: Box<CheckedExpression>,
+        #[serde(with = "crate::wire_numbers::index")]
+        #[schemars(schema_with = "crate::wire_numbers::index::schema")]
+        key_field: usize,
+        key: Box<CheckedExpression>,
+    },
+    Filter {
+        source: Box<CheckedExpression>,
+        predicate: Box<CheckedExpression>,
+    },
+    UniqueBy {
+        source: Box<CheckedExpression>,
+        #[serde(with = "crate::wire_numbers::index")]
+        #[schemars(schema_with = "crate::wire_numbers::index::schema")]
+        key_field: usize,
+    },
+    CheckCollection {
+        source: Box<CheckedExpression>,
+        #[serde(with = "crate::wire_numbers::index")]
+        #[schemars(schema_with = "crate::wire_numbers::index::schema")]
+        key_field: usize,
+        #[serde(with = "crate::wire_numbers::index")]
+        #[schemars(schema_with = "crate::wire_numbers::index::schema")]
+        dependencies_field: usize,
+    },
     Every {
         source: Box<CheckedExpression>,
         predicate: Box<CheckedExpression>,
@@ -234,6 +280,12 @@ pub enum CheckedMutation {
     ActivateChild {
         key: SymbolKey,
     },
+    CancelChildren {
+        key: SymbolKey,
+    },
+    ClearOutput {
+        key: SymbolKey,
+    },
     Acquire {
         pool: SymbolKey,
     },
@@ -245,6 +297,13 @@ pub enum CheckedMutation {
     },
     Stop {
         worker: WorkerKey,
+    },
+    BindResource {
+        key: SymbolKey,
+        value: CheckedExpression,
+    },
+    ClearResource {
+        key: SymbolKey,
     },
     Observe {
         resource: SymbolKey,
@@ -268,6 +327,12 @@ pub enum MutationValue {
         key: SymbolKey,
         materialization: Materialization,
     },
+    CancelChildren {
+        key: SymbolKey,
+    },
+    ClearOutput {
+        key: SymbolKey,
+    },
     Acquire {
         pool: SymbolKey,
     },
@@ -279,6 +344,13 @@ pub enum MutationValue {
     },
     Stop {
         worker: WorkerKey,
+    },
+    BindResource {
+        key: SymbolKey,
+        value: CheckedValue,
+    },
+    ClearResource {
+        key: SymbolKey,
     },
     Observe {
         resource: SymbolKey,

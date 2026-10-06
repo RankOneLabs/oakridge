@@ -39,9 +39,9 @@ export function WorkflowDefDetail({
         </Button>
       </header>
 
-      <ul className="flex flex-col gap-3">{Object.entries(definition.definition.stages).map(([key, stage]) => <li key={key} data-testid="or-def-stage">
-        <h3>{key}</h3><p>After: {stage.prerequisites.join(", ") || "run launch"}</p>
-        <p>Workers: {Object.keys(stage.cohort.workers).join(", ")}</p>
+      <ul className="flex flex-col gap-3">{definition.definition.scopes.map((scope) => <li key={scope.key} data-testid="or-def-stage">
+        <h3>{scope.key}</h3><p>Children: {scope.children.map((child) => child.key).join(", ") || "none"}</p>
+        <p>Workers: {scope.workers.map((worker) => worker.key).join(", ")}</p>
       </li>)}</ul>
 
       <details className="or-def-detail__raw">

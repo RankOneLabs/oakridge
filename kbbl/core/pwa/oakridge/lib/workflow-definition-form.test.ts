@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { validateWorkflowDefinition, workflowDefinitionToFormState } from "./workflow-definition-form";
-import canonicalDefinition from "../../../../../workflow-config/definitions/dev_flow_v15.json";
+import canonicalDefinition from "../../../../../workflow-config/definitions/development.json";
 import type { WorkflowDefFull } from "../types";
 
 describe("canonical workflow authoring", () => {

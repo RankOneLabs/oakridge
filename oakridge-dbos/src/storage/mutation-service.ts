@@ -1,3 +1,5 @@
+import { stagePublications } from "./stage-publications";
+import { prepareChildCancellations } from "./child-cancellation";
 import type { CheckedProgram, DecisionOutcome, DefinitionBundle, OperationManifest, Trigger } from "../core-client/generated-contracts";
 import type { CoreClient } from "../core-client/client";
 import { commitDecision, type CommitRequest, type CommitResult, type OutputPublication, type Result } from "./commit";
@@ -13,12 +15,12 @@ export interface EvaluationInput { readonly source: AuthoritySnapshot; readonly 
 export interface EvaluationResult { readonly decision: DecisionOutcome }
 export interface Decision { readonly source: AuthoritySnapshot; readonly outcome: DecisionOutcome }
 export interface PreparedDecision { readonly request_digest: string; readonly decision: Decision }
-export interface MutationInput { readonly run_id: RunId; readonly scope_id: ScopeId; readonly ingress_id: string; readonly trigger: Trigger; readonly operator_version: number | null; readonly outputs?: readonly OutputPublication[]; readonly prepared?: PreparedDecision }
+export interface MutationInput { readonly request_digest?: string; readonly execution_authority?: string; readonly run_id: RunId; readonly scope_id: ScopeId; readonly ingress_id: string; readonly trigger: Trigger; readonly operator_version: number | null; readonly outputs?: readonly OutputPublication[]; readonly prepared?: PreparedDecision }
 export interface StartedRun { readonly run_id: RunId; readonly root_scope_id: ScopeId; readonly bundle_id: string }
 export interface MutationService { compile(request: CompileRequest): Promise<Result<CompileResult>>; startRun(request: StartRunRequest): Promise<Result<StartedRun>>; decide(input: MutationInput): Promise<Result<CommitResult>> }
 
 export function selectMutationIdentity(input: MutationInput): IngressIdentity {
-  return { run_id: input.run_id, scope_id: input.scope_id, ingress_id: input.ingress_id, request_digest: input.prepared?.request_digest ?? requestDigest({ trigger: input.trigger, outputs: input.outputs ?? [], operator_version: input.operator_version }) };
+  return { run_id: input.run_id, scope_id: input.scope_id, ingress_id: input.ingress_id, request_digest: input.prepared?.request_digest ?? input.request_digest ?? requestDigest({ trigger: input.trigger, outputs: input.outputs ?? [], operator_version: input.operator_version }) };
 }
 
 function error(operation: string, entity_id: string, detail: string): Result<never> { return { ok: false, error: { operation, entity_id, detail } }; }
@@ -43,7 +45,7 @@ export function prepareCommit(input: MutationInput, decision: Decision): Result<
   const effects = decision.outcome.kind === "apply" ? decision.outcome.invocations.map((invocation, index) => ({ effect_key: `${input.ingress_id}:${index}`, payload: invocation.input, execution_id: null })) : [];
   if (decision.outcome.kind === "apply" && capacity.length !== decision.outcome.mutations.filter((mutation) => mutation.kind === "acquire" || mutation.kind === "release").length) return error("prepare_commit", input.scope_id, "capacity pool missing");
   return { ok: true, value: { identity: selectMutationIdentity(input),
-    read_set: decision.source.read_set, decision: decision.outcome, outputs: input.outputs ?? [], capacity, effects, operator_version: input.operator_version } };
+    execution_authority: input.execution_authority, read_set: decision.source.read_set, decision: decision.outcome, outputs: input.outputs ?? [], capacity, effects, operator_version: input.operator_version } };
 }
 export function createMutationService(db: TransactionalSqlExecutor, core: CoreClient): MutationService {
   return {
@@ -94,13 +96,17 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
           const bundles = await db.query<{ source: DefinitionBundle }>("SELECT b.source FROM authority.definition_bundle b JOIN authority.run r ON r.definition_bundle_id=b.id WHERE r.id=$1", [input.run_id]);
           const bundle = bundles[0]?.source;
           if (!bundle) return error("decide", input.run_id, "definition bundle missing");
+          const staged = input.outputs?.some((output) => output.revision_id) ? stagePublications(bundle, source, input.outputs) : { ok: true as const, value: source };
+          if (!staged.ok) return staged;
           const evaluated: Result<EvaluationResult> = input.prepared
             ? { ok: true, value: { decision: input.prepared.decision.outcome } }
-            : await evaluateSnapshot(core, { source, bundle, available_operations: bundle.operations });
+            : await evaluateSnapshot(core, { source: staged.value, bundle, available_operations: bundle.operations });
           if (!evaluated.ok) return evaluated;
           const request = prepareCommit(input, { source, outcome: evaluated.value.decision });
           if (!request.ok) return request;
-          const committed = await commitDecision(db, request.value, source);
+          const children = await prepareChildCancellations(db, core, bundle, input, { source, outcome: evaluated.value.decision });
+          if (!children.ok) return children;
+          const committed = await commitDecision(db, { ...request.value, child_cancellations: children.value }, source);
           if (!committed.ok || committed.value.kind !== "Conflict" || input.operator_version !== null) return committed;
         }
         return { ok: true, value: { kind: "Conflict", detail: "read set changed repeatedly; refresh decision" } };

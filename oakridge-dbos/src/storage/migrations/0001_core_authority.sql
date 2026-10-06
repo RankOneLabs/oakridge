@@ -12,11 +12,13 @@ CREATE TABLE authority.run (
 CREATE TABLE authority.scope_instance (
   id text PRIMARY KEY, run_id text NOT NULL REFERENCES authority.run(id),
   parent_id text REFERENCES authority.scope_instance(id), scope_key text NOT NULL,
-  child_key text, input jsonb NOT NULL, local_state jsonb NOT NULL,
+  child_key text, collection_key text, input jsonb NOT NULL, local_state jsonb NOT NULL,
   outcome jsonb, is_terminal boolean NOT NULL DEFAULT false,
   version bigint NOT NULL DEFAULT 0 CHECK (version >= 0),
-  UNIQUE (run_id, id), UNIQUE (parent_id, child_key)
+  UNIQUE (run_id, id)
 );
+CREATE UNIQUE INDEX scope_instance_child_identity_idx ON authority.scope_instance
+  (parent_id, collection_key, child_key) NULLS NOT DISTINCT WHERE parent_id IS NOT NULL;
 CREATE TABLE authority.scope_export (
   id text PRIMARY KEY, scope_id text NOT NULL REFERENCES authority.scope_instance(id),
   export_key text NOT NULL, value jsonb NOT NULL, version bigint NOT NULL DEFAULT 0 CHECK (version >= 0),

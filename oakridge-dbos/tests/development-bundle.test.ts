@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
+import { repository } from "./development-runtime-fixture";
 import { CoreClient } from "../src/core-client/client";
 import { promptWithActionInput } from "../src/effects/operations/selected-request";
 import type { CheckedValue, DefinitionBundle, Snapshot } from "../src/core-client/generated-contracts";
@@ -42,29 +43,13 @@ test("selected prompt carries its pinned action input", () => {
     .toContain('"revision": "build-2"');
 });
 
-test("root selects repository preparation and build feedback selects a new build action", async () => {
+test("root selects repository preparation from the repository configuration collection", async () => {
   const core = client();
   try {
     const config = { runtime: "codex", workdir: "/tmp", session_name: "development" };
-    const root_input = await checked(core, "run_input", { repository: { repository_path: "/tmp", expected_head: null },
-      analysis: config, planning: config, briefs: config, implementation: [], integration: config });
-    const root_result = await core.request("evaluate", { bundle, available_operations: bundle.operations,
-      snapshot: snapshot("development", root_input, "phase_simple", "ready", "begin") });
-    expect(root_result.ok && root_result.value.kind === "evaluated" && root_result.value.value.kind === "apply"
-      ? root_result.value.value.mutations.some((mutation) => mutation.kind === "activate_child" && mutation.key === "prepare") : false).toBe(true);
-
-    const revision = (id: string): CheckedValue => ({ schema: "revision", data: { kind: "reference", brand: "artifact_revision", id } });
-    const build_result = revision("build-2");
-    const pr_summary = revision("pr-2");
-    const target: CheckedValue = { schema: "build_target", data: { kind: "record", fields: [
-      { field_id: 0, value: build_result }, { field_id: 1, value: pr_summary }], dictionary: [] } };
-    const observations: Snapshot["observations"] = [
-      { identity: "build-result", version: 2, root: { kind: "output", key: "build_result" }, value: build_result },
-      { identity: "pr-summary", version: 2, root: { kind: "output", key: "pr_summary" }, value: pr_summary },
-    ];
-    const revised = await core.request("evaluate", { bundle, available_operations: bundle.operations,
-      snapshot: snapshot("implementation", await checked(core, "session_config", config), "phase_impl", "review", "request_build_changes", target, observations) });
-    expect(revised.ok && revised.value.kind === "evaluated" && revised.value.value.kind === "apply"
-      ? revised.value.value.invocations.some((invocation) => invocation.selection.action === "revise") : false).toBe(true);
+    const root_input = await checked(core, "run_input", { spec: "Implement feature", repositories: [repository], analysis: config, planning: config, briefs: config });
+    const result = await core.request("evaluate", { bundle, available_operations: bundle.operations,
+      snapshot: snapshot("development", root_input, "phase_root", "ready", "begin") });
+    expect(result).toMatchObject({ ok: true, value: { kind: "evaluated", value: { kind: "apply", mutations: expect.arrayContaining([expect.objectContaining({ kind: "activate_collection", key: "prepare" })]) } } });
   } finally { core.close(); }
 });

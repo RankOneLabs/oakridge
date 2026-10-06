@@ -1,3 +1,4 @@
+import { advanceChildren } from "./advance-children";
 import { Hono } from "hono";
 import { decodeCoreResponse } from "../core-client/generated-contracts";
 import type { DefinitionBundle, Trigger } from "../core-client/generated-contracts";
@@ -55,7 +56,7 @@ export function createProductionComposition(options: ProductionOptions): Product
   let sweep_task: Promise<void> | null = null;
   const sweep = (): Promise<void> => {
     if (sweep_task) return sweep_task;
-    sweep_task = (async () => { await deliverEffectFacts(db, mutations); await dispatchSweep(db, effect_provider, dispatchOptions); await deliverEffectFacts(db, mutations); })()
+    sweep_task = (async () => { await deliverEffectFacts(db, mutations); await advanceChildren(db, core, mutations); await dispatchSweep(db, effect_provider, dispatchOptions); await deliverEffectFacts(db, mutations); await advanceChildren(db, core, mutations); })()
       .finally(() => { sweep_task = null; });
     return sweep_task;
   };

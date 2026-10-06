@@ -4,7 +4,7 @@ import { useWorkflowDef } from "../../hooks/useWorkflowDef";
 import { useCreateWorkflowDef } from "../../hooks/useCreateWorkflowDef";
 import { validateWorkflowDefinition, workflowDefinitionToFormState } from "../../lib/workflow-definition-form";
 import { WorkflowJsonPreview } from "../molecules/WorkflowJsonPreview";
-import canonicalDefinition from "../../../../../../workflow-config/definitions/dev_flow_v15.json";
+import canonicalDefinition from "../../../../../../workflow-config/definitions/development.json";
 
 interface WorkflowDefEditorProps { readonly cloneFromId: string | null; readonly onBack: () => void; readonly onCreated: () => void }
 
@@ -31,7 +31,7 @@ export function WorkflowDefEditor({ cloneFromId, onBack, onCreated }: WorkflowDe
     <header className="or-page-header or-page-header--back">
       <Button variant="secondary" onClick={onBack}>Back</Button>
       <div><span className="or-page-kicker">Workflow authoring</span><h2 className="or-page-title">{cloneFromId ? "Clone Workflow Definition" : "New Workflow Definition"}</h2>
-        <p className="or-page-summary">Configure stage prerequisites, workers, action points and decision trees.</p></div>
+        <p className="or-page-summary">Configure scopes, child dependencies, workers, commands and decision trees.</p></div>
     </header>
     <form onSubmit={(event) => void submit(event)} className="grid gap-6 lg:grid-cols-2">
       <section className="flex flex-col gap-3">

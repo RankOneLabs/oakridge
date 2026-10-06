@@ -14,31 +14,21 @@ export function validateWorkflowDefinition(source: string): Result<WorkflowDefIn
     details: [cause instanceof Error ? cause.message : String(cause)] } }; }
   if (!isWorkflowDefinitionDescriptor(decoded)) return { ok: false, error: {
     operation: "validate_workflow_definition", entityId: "new_workflow_definition",
-    details: ["A definition requires a key, positive integer version, and stages object. Semantic checks run on submission."] } };
+    details: ["A definition requires language version, key, positive integer version, schemas, and scopes. Semantic checks run on submission."] } };
   return { ok: true, value: decoded };
 }
 export function workflowDefinitionToFormState(record: WorkflowDefFull): string {
   return JSON.stringify({ ...record.definition, version: record.version + 1 }, null, 2);
 }
 
-/** JSON is a decoding boundary; stage contents remain named JSON values until backend compilation. */
+/** The source envelope is checked here; nested schemas and trees are compiled on submission. */
 function isWorkflowDefinitionDescriptor(value: unknown): value is WorkflowDefInput {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const definition = value as Partial<WorkflowDefInput>;
-  return typeof definition.key === "string" && definition.key.length > 0
+  return definition.language_version === 1 && typeof definition.key === "string" && definition.key.length > 0
     && typeof definition.version === "number" && Number.isInteger(definition.version) && definition.version > 0
-    && typeof definition.stages === "object" && definition.stages !== null && !Array.isArray(definition.stages)
-    && Object.keys(definition.stages).length > 0
-    && Object.values(definition.stages).every(isStageDescriptor)
-    && Object.keys(definition).every((key) => ["key", "version", "stages"].includes(key));
-}
-
-function isStageDescriptor(value: unknown): value is import("../workflow-definition-types").WorkflowStageDescriptor {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const stage = value as Partial<import("../workflow-definition-types").WorkflowStageDescriptor>;
-  return Array.isArray(stage.prerequisites) && stage.prerequisites.every((key) => typeof key === "string")
-    && typeof stage.max_active_cohorts === "number" && Number.isInteger(stage.max_active_cohorts) && stage.max_active_cohorts > 0
-    && typeof stage.cohort === "object" && stage.cohort !== null
-    && typeof stage.cohort.workers === "object" && stage.cohort.workers !== null && !Array.isArray(stage.cohort.workers)
-    && Object.hasOwn(stage.cohort, "decision_tree");
+    && typeof definition.root === "string" && Array.isArray(definition.schemas) && Array.isArray(definition.scopes)
+    && definition.scopes.length > 0 && Array.isArray(definition.prompts) && Array.isArray(definition.operations)
+    && typeof definition.limits === "object" && definition.limits !== null
+    && !Object.hasOwn(definition, "stages");
 }

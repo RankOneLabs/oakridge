@@ -1,3 +1,5 @@
+import { installSelectedEvidenceApi } from "./selected-evidence";
+import { installSelectedPublicationApi } from "./selected-publication";
 import type { Hono } from "hono";
 import type { CoreClient } from "../core-client/client";
 import { selectMutationIdentity, type MutationInput, type MutationService } from "../storage/mutation-service";
@@ -24,6 +26,8 @@ async function body(request: Request): Promise<unknown | MalformedRequestError> 
   try { return await request.json(); } catch { return new MalformedRequestError("invalid JSON"); }
 }
 export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies): void {
+  installSelectedPublicationApi(app, deps);
+  installSelectedEvidenceApi(app, deps);
   app.get("/api/inbox", async () => { try { return Response.json(await readInbox(deps.db)); } catch (cause) { return fault(cause); } });
   app.get("/api/runs/:run_id", async (c) => { try {
     const view = await readRunView(deps.db, c.req.param("run_id") as RunId);

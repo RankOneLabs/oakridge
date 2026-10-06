@@ -270,3 +270,13 @@ pub fn decode_unique_json(bytes: &[u8]) -> CoreResult<serde_json::Value> {
         .map_err(|e| error(DomainErrorKind::UnknownConstruct, "json", e.to_string()))?;
     Ok(result.0)
 }
+
+/// Validate aggregate and revision roots against the owner's declared ports.
+pub fn validate_observation_root(
+    bundle: &DefinitionBundle,
+    owner: &ScopeDefinition,
+    root: &ReferenceRoot,
+) -> CoreResult<()> {
+    references::compile_reference(bundle, owner, root, &[], &expressions::Context::default())
+        .map(|_| ())
+}

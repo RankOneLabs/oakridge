@@ -814,3 +814,34 @@ fn publication_policies_reject_each_stale_predecessor() {
     };
     assert_ne!(targets, successors);
 }
+
+#[test]
+fn collection_constraints_are_generic_transforms_before_materialization() {
+    let mut b = bundle("dynamic");
+    let child = &mut b.scopes[0].children[0];
+    let collection = child.collection.as_mut().unwrap();
+    collection.source = serde_json::from_value(json!({"kind":"check_collection","source":{"kind":"reference","root":{"kind":"input"},"path":[]},"key_field":"key","dependencies_field":"dependencies"})).unwrap();
+    let p = compile(&b, &b.operations).unwrap();
+    for (input, expected) in [
+        (
+            json!([{"key":"first","input":{},"dependencies":[]},{"key":"first","input":{},"dependencies":[]}]),
+            DomainErrorKind::InvalidTemplate,
+        ),
+        (
+            json!([{"key":"first","input":{},"dependencies":["missing"]}]),
+            DomainErrorKind::InvalidTemplate,
+        ),
+        (
+            json!([{"key":"first","input":{},"dependencies":["second"]},{"key":"second","input":{},"dependencies":["first"]}]),
+            DomainErrorKind::CyclicPrerequisite,
+        ),
+    ] {
+        let s = snapshot(&b, input, "ready", "begin");
+        assert_eq!(
+            materialize(&p, &s, &SymbolKey::from("items"))
+                .unwrap_err()
+                .kind,
+            expected
+        );
+    }
+}

@@ -4,7 +4,7 @@ import { applyCapacityChanges } from "./capacity";
 import { findReceipt, type IngressIdentity } from "./receipts";
 import type { AuthoritySnapshot, ReadSet } from "./snapshot-reader";
 import { hasSameReadSet } from "./snapshot-reader";
-import type { CommitReceipt, ScopeId } from "./schema-records";
+import type { ChildCollectionMember, CommitReceipt, ScopeId } from "./schema-records";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 import { pinProviderRequest } from "../effects/operations/selected-request";
 import { selectedInvocation, type InvocationId } from "../effects/provider";
@@ -13,9 +13,9 @@ import { validateDecision, validateStorageAuthority } from "./storage-validator"
 
 export interface DomainError { readonly operation: string; readonly entity_id: string; readonly detail: string }
 export type Result<Value> = { readonly ok: true; readonly value: Value } | { readonly ok: false; readonly error: DomainError };
-export interface OutputPublication { readonly scope_id: ScopeId; readonly output_key: string; readonly collection_key: string; readonly body: CheckedValue; readonly predecessor_id: string | null; readonly expected_slot_version: number | null; readonly execution_id: string | null }
+export interface OutputPublication { readonly revision_id?: string; readonly scope_id: ScopeId; readonly output_key: string; readonly collection_key: string; readonly body: CheckedValue; readonly predecessor_id: string | null; readonly expected_slot_version: number | null; readonly execution_id: string | null }
 export interface EffectPublication { readonly effect_key: string; readonly payload: CheckedValue; readonly execution_id: string | null }
-export interface CommitRequest { readonly identity: IngressIdentity; readonly read_set: ReadSet; readonly decision: DecisionOutcome; readonly outputs: readonly OutputPublication[]; readonly capacity: readonly CapacityChange[]; readonly effects: readonly EffectPublication[]; readonly operator_version: number | null }
+export interface CommitRequest { readonly execution_authority?: string; readonly child_cancellations?: readonly import("./child-cancellation").ChildCancellation[]; readonly identity: IngressIdentity; readonly read_set: ReadSet; readonly decision: DecisionOutcome; readonly outputs: readonly OutputPublication[]; readonly capacity: readonly CapacityChange[]; readonly effects: readonly EffectPublication[]; readonly operator_version: number | null }
 export type CommitResult = { readonly kind: "Committed"; readonly receipt: CommitReceipt } | { readonly kind: "Replayed"; readonly receipt: CommitReceipt } | { readonly kind: "Conflict"; readonly detail: string } | { readonly kind: "Rejected"; readonly detail: string };
 
 class AbortCommit extends Error { constructor(readonly outcome: CommitResult) { super("detail" in outcome ? outcome.detail : outcome.kind); } }
@@ -36,7 +36,7 @@ async function writeOutputs(tx: SqlExecutor, request: CommitRequest): Promise<vo
     const slots = await tx.query<{ id: string; current_revision_id: string | null; version: string | number }>("SELECT id,current_revision_id,version FROM authority.output_slot WHERE scope_id=$1 AND output_key=$2 AND collection_key=$3 FOR UPDATE", [output.scope_id, output.output_key, output.collection_key]);
     const slot = slots[0];
     if ((slot?.current_revision_id ?? null) !== output.predecessor_id || (slot ? Number(slot.version) : null) !== output.expected_slot_version) fail({ kind: "Conflict", detail: "output predecessor or version changed" });
-    const revision_id = crypto.randomUUID();
+    const revision_id = output.revision_id ?? crypto.randomUUID();
     await tx.query("INSERT INTO authority.artifact_revision (id,scope_id,execution_id,output_key,collection_key,body,predecessor_id) VALUES ($1,$2,$3,$4,$5,$6,$7)", [revision_id, output.scope_id, output.execution_id, output.output_key, output.collection_key || null, JSON.stringify(output.body), output.predecessor_id]);
     if (slot) await tx.query("UPDATE authority.output_slot SET current_revision_id=$1,version=version+1 WHERE id=$2", [revision_id, slot.id]);
     else await tx.query("INSERT INTO authority.output_slot (id,scope_id,output_key,collection_key,current_revision_id) VALUES ($1,$2,$3,$4,$5)", [crypto.randomUUID(), output.scope_id, output.output_key, output.collection_key, revision_id]);
@@ -64,6 +64,9 @@ async function writeDecision(tx: SqlExecutor, request: CommitRequest, source: Au
   if (!definition) fail({ kind: "Rejected", detail: "definition bundle missing" });
   if (request.decision.kind === "apply") {
     for (const mutation of request.decision.mutations) {
+      if (mutation.kind === "bind_resource") await tx.query("INSERT INTO authority.resource_binding (id,scope_id,resource_key,observation) VALUES ($1,$2,$3,$4) ON CONFLICT (scope_id,resource_key) DO UPDATE SET observation=excluded.observation,version=authority.resource_binding.version+1", [crypto.randomUUID(), scope_id, mutation.key, JSON.stringify(mutation.value)]);
+      if (mutation.kind === "clear_resource") await tx.query("UPDATE authority.resource_binding SET observation=NULL,version=version+1 WHERE scope_id=$1 AND resource_key=$2", [scope_id, mutation.key]);
+      if (mutation.kind === "clear_output") await tx.query("UPDATE authority.output_slot SET current_revision_id=NULL,version=version+1 WHERE scope_id=$1 AND output_key=$2", [scope_id, mutation.key]);
       if (mutation.kind === "set_state") await tx.query("UPDATE authority.scope_instance SET local_state=$1,version=version+1 WHERE id=$2", [JSON.stringify(mutation.value), scope_id]);
       if (mutation.kind === "export") await tx.query("INSERT INTO authority.scope_export (id,scope_id,export_key,value) VALUES ($1,$2,$3,$4) ON CONFLICT (scope_id,export_key) DO UPDATE SET value=excluded.value,version=authority.scope_export.version+1", [crypto.randomUUID(), scope_id, mutation.key, JSON.stringify(mutation.value)]);
       if (mutation.kind === "revoke" || mutation.kind === "stop") {
@@ -78,13 +81,13 @@ async function writeDecision(tx: SqlExecutor, request: CommitRequest, source: Au
         await tx.query("INSERT INTO authority.scope_instance (id,run_id,parent_id,scope_key,child_key,input,local_state) VALUES ($1,$2,$3,$4,$5,$6,$7)", [child_id, source.owner.run_id, scope_id, declared.scope, mutation.key, JSON.stringify(mutation.input), JSON.stringify(child_state)]);
       }
       if (mutation.kind === "activate_collection") {
-        const members: string[] = [];
+        const members: ChildCollectionMember[] = [];
         for (const child of mutation.materialization.children) {
           const child_state = definition.checked_program.scopes.find((item) => item.key === child.scope)?.initial;
           if (!child_state) fail({ kind: "Rejected", detail: "collection child definition missing" });
           const child_id = crypto.randomUUID();
-          members.push(child_id);
-          await tx.query("INSERT INTO authority.scope_instance (id,run_id,parent_id,scope_key,child_key,input,local_state) VALUES ($1,$2,$3,$4,$5,$6,$7)", [child_id, source.owner.run_id, scope_id, child.scope, child.key, JSON.stringify(child.input), JSON.stringify(child_state)]);
+          members.push({ id: child_id as ScopeId, key: child.key, depends_on: child.depends_on });
+          await tx.query("INSERT INTO authority.scope_instance (id,run_id,parent_id,scope_key,child_key,input,local_state,collection_key) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)", [child_id, source.owner.run_id, scope_id, child.scope, child.key, JSON.stringify(child.input), JSON.stringify(child_state), mutation.key]);
         }
         await tx.query("INSERT INTO authority.child_collection (id,scope_id,collection_key,members) VALUES ($1,$2,$3,$4) ON CONFLICT (scope_id,collection_key) DO UPDATE SET members=excluded.members,version=authority.child_collection.version+1", [crypto.randomUUID(), scope_id, mutation.key, JSON.stringify(members)]);
       }
@@ -93,6 +96,7 @@ async function writeDecision(tx: SqlExecutor, request: CommitRequest, source: Au
       const execution_id = crypto.randomUUID();
       execution_ids.push(execution_id);
       const selection = await tx.query<{ generation: string | number }>("SELECT generation FROM authority.execution_selection WHERE scope_id=$1 AND worker_key=$2 FOR UPDATE", [scope_id, invocation.selection.worker]);
+      if (selection.length) await revokeSelectedEffects(tx, scope_id, invocation.selection.worker);
       const generation = Number(selection[0]?.generation ?? 0) + 1;
       await tx.query("INSERT INTO authority.execution (id,scope_id,worker_key,generation,status) VALUES ($1,$2,$3,$4,'pending')", [execution_id, scope_id, invocation.selection.worker, generation]);
       await tx.query("INSERT INTO authority.execution_selection (id,scope_id,worker_key,execution_id,generation) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (scope_id,worker_key) DO UPDATE SET execution_id=excluded.execution_id,generation=excluded.generation,version=authority.execution_selection.version+1", [crypto.randomUUID(), scope_id, invocation.selection.worker, execution_id, generation]);
@@ -108,7 +112,7 @@ async function writeDecision(tx: SqlExecutor, request: CommitRequest, source: Au
     const selection = request.decision.kind === "apply" ? request.decision.invocations[index] : null;
     let payload: EffectPayload | CheckedValue = effect.payload;
     if (selection && execution_id) {
-      const pinned = pinProviderRequest({ invocation: selectedInvocation(id as InvocationId, execution_id, selection), bundle: definition.source, scope_id });
+      const pinned = pinProviderRequest({ invocation: selectedInvocation(id as InvocationId, execution_id, selection), bundle: definition.source, scope: source.owner });
       if (!pinned.ok) fail({ kind: "Rejected", detail: pinned.error.detail });
       payload = { invocation: pinned.value, action: "start", handle: null };
     }
@@ -138,6 +142,32 @@ export async function commitDecision(db: TransactionalSqlExecutor, request: Comm
       if (!storage_check.ok) return { kind: "Rejected", detail: storage_check.error.detail };
       if (request.operator_version !== null && request.operator_version !== Number(source.owner.version)) return { kind: "Conflict", detail: "operator target version changed; refresh decision" };
       if (source.owner.is_terminal) return { kind: "Rejected", detail: "owner is terminal" };
+      const cancellation_keys = request.decision.kind === "apply" ? request.decision.mutations.flatMap((mutation) => mutation.kind === "cancel_children" ? [mutation.key] : []) : [];
+      if (cancellation_keys.length || request.child_cancellations?.length) {
+        const expected = await tx.query<{ id: string }>(`WITH RECURSIVE descendants AS (
+          SELECT s.* FROM authority.scope_instance s WHERE s.parent_id=$1 AND
+          ((s.collection_key IS NULL AND s.child_key=ANY($2::text[])) OR s.id IN (SELECT COALESCE(member->>'id', member#>>'{}')
+            FROM authority.child_collection c, jsonb_array_elements(c.members) member
+            WHERE c.scope_id=$1 AND c.collection_key=ANY($2::text[])))
+          UNION ALL SELECT s.* FROM authority.scope_instance s JOIN descendants d ON s.parent_id=d.id
+        ) SELECT id FROM descendants WHERE NOT is_terminal ORDER BY id`, [source.owner.id, cancellation_keys]);
+        const provided = (request.child_cancellations ?? []).map((item) => item.source.owner.id).sort();
+        if (JSON.stringify(expected.map((item) => item.id)) !== JSON.stringify(provided)) fail({ kind: "Rejected", detail: "declared child cancellation set differs from active descendants" });
+      }
+      for (const child of request.child_cancellations ?? []) {
+        if (!child.request.decision || child.request.decision.kind !== "apply" || !child.request.decision.outcome || JSON.stringify(child.request.read_set) !== JSON.stringify(request.read_set))
+          fail({ kind: "Rejected", detail: "child cancellation must terminate against the parent read set" });
+        const valid = validateDecision(child.request, child.source);
+        const authority = valid.ok ? await validateStorageAuthority(tx, child.request, child.source) : valid;
+        if (!authority.ok) fail({ kind: "Rejected", detail: authority.error.detail });
+        const descendants = await tx.query<{ id: string }>(`WITH RECURSIVE descendants AS (
+          SELECT id,parent_id FROM authority.scope_instance WHERE parent_id=$1
+          UNION ALL SELECT s.id,s.parent_id FROM authority.scope_instance s JOIN descendants d ON s.parent_id=d.id
+        ) SELECT id FROM descendants WHERE id=$2`, [request.identity.scope_id, child.source.owner.id]);
+        if (!descendants.length || child.source.owner.run_id !== source.owner.run_id || child.source.owner.is_terminal)
+          fail({ kind: "Rejected", detail: "cancellation target is not an active owned descendant" });
+        await writeDecision(tx, child.request, child.source);
+      }
       return { kind: "Committed", receipt: await writeDecision(tx, request, source) };
     });
     return { ok: true, value: result };

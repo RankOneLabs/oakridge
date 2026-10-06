@@ -1,5 +1,10 @@
 # Workflow configuration
 
-`definitions/dev_flow_v15.json` and `prompts/dev-flow/v15/` are retained as
-reference inputs for m6-development-bundle. The v15 loader, compiler and
-runtime have been removed.
+`definitions/development.json` is the canonical generic development bundle.
+`definitions/development-independent-siblings.json` continues independent work
+after a child failure and changes the shared implementation capacity to two.
+
+The behavior contract is in `definitions/development-contract.md`. Prompts under
+`prompts/dev-flow/` receive pinned action inputs and selected publication authority
+from the runtime. The old v15 prompts remain historical source references; no
+runtime or editor loads the retired v15 definition.
