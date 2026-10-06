@@ -284,12 +284,12 @@ pub(crate) fn compile_reference(
         loop {
             match schema(bundle, &key)? {
                 SchemaShape::Optional { item } => {
-                    if !context
+                    if context
                         .guards
                         .iter()
                         .rev()
                         .find(|(r, p, _)| r == root && p == &consumed)
-                        .is_some_and(|(_, _, variant)| variant == "some")
+                        .is_none_or(|(_, _, variant)| variant != "some")
                     {
                         return Err(error(
                             DomainErrorKind::UnguardedOptional,
