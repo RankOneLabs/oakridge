@@ -8,7 +8,7 @@ import { commitDecision, measureAuthoritySnapshot } from "../src/storage/commit"
 import type { OutputPublication } from "../src/storage/commit";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
 import type { RunId, ScopeId } from "../src/storage/schema-records";
-import { runtimeFixture } from "./development-runtime-fixture";
+import { build_body, developmentBundle, brief, repository, runtimeFixture } from "./development-runtime-fixture";
 import { withDatabase, unit } from "./effect-fixture";
 
 interface CollectionFixture { readonly bundle: DefinitionBundle; readonly source: AuthoritySnapshot; readonly publications: readonly OutputPublication[] }
@@ -43,6 +43,23 @@ async function collectionFixture(db: TransactionalSqlExecutor, roots: readonly R
 }
 const revisions_root: ReferenceRoot = { kind: "output_revisions", key: "document", schema: "collection_revisions" };
 const bodies_root: ReferenceRoot = { kind: "output_collection", key: "document", schema: "collection_bodies" };
+
+test("a publication without revision_id is staged and committed", async () => withDatabase(async ({ db }) => {
+  const f = await runtimeFixture(db, await developmentBundle(), { brief, repository });
+  try {
+    await f.fact("begin");
+    const execution_id = await f.selected("build");
+    const decided = await f.mutations.decide({ run_id: f.run_id, scope_id: f.root_scope_id,
+      ingress_id: "no-revision", execution_authority: execution_id, operator_version: null,
+      trigger: { id: "no-revision", key: "build_submitted", payload: await f.checked("unit", {}) },
+      outputs: [{ scope_id: f.root_scope_id, output_key: "build_result", collection_key: "",
+        body: await f.checked("build_body", build_body), predecessor_id: null, expected_slot_version: null, execution_id }] });
+    expect(decided.ok && decided.value.kind).toBe("Committed");
+    const slots = await db.query<{ current_revision_id: string | null }>(
+      "SELECT current_revision_id FROM authority.output_slot WHERE scope_id=$1 AND output_key='build_result'", [f.root_scope_id]);
+    expect(slots[0]?.current_revision_id).toBeTruthy();
+  } finally { f.core.close(); }
+}));
 
 test("write-boundary measurement uses the roots sent for a scope with workers, commands, children and a collection", async () => withDatabase(async ({ db }) => {
   const reads: ReferenceRoot[] = [{ kind: "trigger" }, { kind: "result", worker: "builder" },

@@ -6,6 +6,8 @@ import type { MutationService } from "../storage/mutation-service";
 import { findReceipt, requestDigest } from "../storage/receipts";
 import type { RunId, ScopeId } from "../storage/schema-records";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
+import { hasExecutionSecret } from "./selected-publication";
+import { publicationReceipt } from "./publication";
 
 interface EvidenceDependencies { readonly db: TransactionalSqlExecutor; readonly core: CoreClient; readonly mutations: MutationService; readonly wake: (run_id: RunId) => Promise<void> }
 interface SelectedEvidence { readonly source: DefinitionBundle; readonly scope_key: string; readonly payload: EffectPayload }
@@ -20,10 +22,11 @@ export function installSelectedEvidenceApi(app: Hono, deps: EvidenceDependencies
     const run_id = c.req.param("run_id") as RunId;
     const scope_id = c.req.param("scope_id") as ScopeId;
     const execution_id = c.req.param("execution_id");
+    if (!await hasExecutionSecret(deps.db, run_id, scope_id, execution_id, c.req.header("authorization"))) return c.json({ error: "execution_authority_refused" }, 403);
     const key = c.req.param("fact_key");
     const digest = requestDigest({ execution_id, key, payload: raw.payload });
     const prior = await findReceipt(deps.db, { run_id, scope_id, ingress_id: raw.request_id, request_digest: digest });
-    if (prior.kind === "replay") return c.json({ kind: "Replayed", receipt: prior.receipt });
+    if (prior.kind === "replay") return c.json(publicationReceipt(raw.request_id, prior.receipt, null), 202);
     if (prior.kind === "conflict") return c.json({ error: "request ID reused with different evidence" }, 409);
     const rows = await deps.db.query<SelectedEvidence>(`SELECT b.source,s.scope_key,i.payload FROM authority.execution_selection x
       JOIN authority.scope_instance s ON s.id=x.scope_id JOIN authority.run r ON r.id=s.run_id
@@ -43,6 +46,6 @@ export function installSelectedEvidenceApi(app: Hono, deps: EvidenceDependencies
     if (result.value.kind === "Rejected") return c.json(result.value, 422);
     if (result.value.kind === "snapshot_too_large") return c.json(result.value, 413);
     void deps.wake(c.req.param("run_id") as RunId).catch(() => undefined);
-    return c.json(result.value, 202);
+    return c.json(publicationReceipt(raw.request_id, result.value.receipt, null), 202);
   });
 }

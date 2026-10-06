@@ -1,11 +1,10 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { Hono } from "hono";
-import { bodyLimit } from "hono/body-limit";
 import { decodeCoreResponse } from "../core-client/generated-contracts";
 import type { DefinitionBundle, Trigger } from "../core-client/generated-contracts";
 import { CoreClient } from "../core-client/client";
 import { controlTokenMiddleware, selectControlPlaneAccess } from "../http/control-auth";
-import { installDefinitionApi } from "../http/app";
+import { httpBodyLimit, installDefinitionApi } from "../http/app";
 import { authorityRepositories } from "../storage/repositories";
 import { createMutationService, cancelRun, deleteRun, type ScopeCancellationPayload } from "../storage/mutation-service";
 import { PgPostgresExecutor } from "../storage/sql-executor";
@@ -71,7 +70,7 @@ export async function createProductionComposition(options: ProductionOptions): P
   await resumeActiveRuns(db);
   const wake = (run_id: RunId): Promise<void> => wakeRun(run_id);
   const app = new Hono();
-  app.use("*", bodyLimit({ maxSize: 1_048_576, onError: (context) => context.json({ kind: "oversized_payload", limit: 1_048_576 }, 413) }));
+  app.use("*", httpBodyLimit());
   if (access.kind === "token_required") app.use("*", controlTokenMiddleware(access.token));
   installDefinitionApi(app, { db, core, mutations, wake });
   app.get("/health", (context) => context.json({ status: "ok", application_version, core: core.health }));

@@ -2,9 +2,18 @@ import type { CheckedValue, Trigger } from "../core-client/generated-contracts";
 import { CORE_MAX_FRAME_BYTES, CORE_PROTOCOL_VERSION, decodeCoreResponse } from "../core-client/generated-contracts";
 import type { OutputPublication } from "../storage/commit";
 import type { ScopeId } from "../storage/schema-records";
+import type { CommitReceipt } from "../storage/schema-records";
+import { requestDigest } from "../storage/receipts";
 import { MalformedRequestError } from "./scope-commands";
 
 export interface PublicationRequest { readonly request_id: string; readonly expected_scope_version: number; readonly trigger: Trigger; readonly output: OutputPublication }
+export function publicationRevisionId(run_id: string, scope_id: string, request_id: string): string {
+  const hash = requestDigest({ run_id, scope_id, request_id });
+  return `${hash.slice(0,8)}-${hash.slice(8,12)}-${hash.slice(12,16)}-${hash.slice(16,20)}-${hash.slice(20,32)}`;
+}
+export function publicationReceipt(request_id: string, receipt: CommitReceipt, revision_id: string | null): { readonly kind: "accepted_pending"; readonly request_id: string; readonly transition_id: string; readonly scope_version: number; readonly revision_id: string | null } {
+  return { kind: "accepted_pending", request_id, transition_id: receipt.transition_id, scope_version: receipt.scope_version, revision_id };
+}
 /** A published value must fit the evaluate frame that will later carry it; the commit measures the whole snapshot. */
 export const MAX_PUBLICATION_VALUE_BYTES = CORE_MAX_FRAME_BYTES;
 export function publicationValueBytes(value: unknown): number { return Buffer.byteLength(JSON.stringify(value)); }

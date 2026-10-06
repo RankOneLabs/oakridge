@@ -1,4 +1,5 @@
-import { CORE_MAX_FRAME_BYTES, CORE_PROTOCOL_VERSION, type CompiledBundle, type CheckedValue, type DecisionOutcome, type DefinitionBundle } from "../core-client/generated-contracts";
+import { type CompiledBundle, type CheckedValue, type DecisionOutcome, type DefinitionBundle } from "../core-client/generated-contracts";
+import { createHash, randomBytes } from "node:crypto";
 import type { CapacityChange } from "./capacity";
 import { applyCapacityChanges } from "./capacity";
 import { findReceipt, type IngressIdentity } from "./receipts";
@@ -7,6 +8,8 @@ import { hasSameReadSet, readSnapshot, READ_RELATIONS, RUN_SCOPED_READ_RELATIONS
 import type { ChildCollectionMember, CommitReceipt, ScopeId } from "./schema-records";
 import { inTransaction, type SqlExecutor, type TransactionalSqlExecutor } from "./sql-executor";
 import { pinProviderRequest } from "../effects/operations/selected-request";
+import { MAX_SNAPSHOT_BYTES, measureAuthoritySnapshot } from "../effects/operations/selected-publication-contract";
+export { MAX_SNAPSHOT_BYTES, measureAuthoritySnapshot } from "../effects/operations/selected-publication-contract";
 import { selectedInvocation, type InvocationId } from "../effects/provider";
 import type { EffectPayload } from "../effects/intents";
 import { revokeStarts } from "./revocation";
@@ -18,20 +21,6 @@ export interface OutputPublication { readonly revision_id?: string; readonly sco
 export interface EffectPublication { readonly effect_key: string; readonly payload: CheckedValue; readonly execution_id: string | null }
 export interface CommitRequest { readonly execution_authority?: string; readonly child_cancellations?: readonly import("./child-cancellation").ChildCancellation[]; readonly identity: IngressIdentity; readonly read_set: ReadSet; readonly decision: DecisionOutcome; readonly outputs: readonly OutputPublication[]; readonly capacity: readonly CapacityChange[]; readonly effects: readonly EffectPublication[]; readonly operator_version: number | null }
 export type CommitResult = { readonly kind: "Committed"; readonly receipt: CommitReceipt } | { readonly kind: "Replayed"; readonly receipt: CommitReceipt } | { readonly kind: "Conflict"; readonly detail: string } | { readonly kind: "Rejected"; readonly detail: string; readonly constraint?: string } | { readonly kind: "snapshot_too_large"; readonly scope: ScopeId; readonly bytes: number; readonly limit: number; readonly largest_roots: readonly { readonly root: string; readonly bytes: number }[] };
-
-/** A committed snapshot must fit the evaluate frame the core client sends for it, envelope included. */
-export const MAX_SNAPSHOT_BYTES = CORE_MAX_FRAME_BYTES;
-export interface SnapshotMeasurement { readonly roots: AuthoritySnapshot["reads"]; readonly bytes: number; readonly largest_roots: readonly { readonly root: string; readonly bytes: number }[] }
-/** The widest envelope `CoreClient.send` wraps an evaluate input in: a 64-hex SHA-256 digest and a counter request ID. */
-const WIDEST_EVALUATE_ENVELOPE = { version: CORE_PROTOCOL_VERSION, request_id: String(Number.MAX_SAFE_INTEGER), operation: "evaluate", bundle_digest: "f".repeat(64) } as const;
-/** Measures the evaluate frame built from the snapshot assembled from the pinned checked scope's reads. */
-export function measureAuthoritySnapshot(source: AuthoritySnapshot): SnapshotMeasurement {
-  const { bundle_digest, ...envelope } = WIDEST_EVALUATE_ENVELOPE;
-  const frame = JSON.stringify({ ...envelope, input: { bundle_digest, snapshot: source.snapshot } }) + "\n";
-  return { roots: source.reads, bytes: Buffer.byteLength(frame),
-    largest_roots: source.snapshot.observations.map((observation) => ({ root: JSON.stringify(observation.root),
-      bytes: Buffer.byteLength(JSON.stringify(observation)) })).sort((a, b) => b.bytes - a.bytes).slice(0, 5) };
-}
 
 class AbortCommit extends Error { constructor(readonly outcome: CommitResult) { super("detail" in outcome ? outcome.detail : outcome.kind); } }
 function fail(outcome: CommitResult): never { throw new AbortCommit(outcome); }
@@ -156,8 +145,10 @@ async function writeDecision(tx: SqlExecutor, request: CommitRequest, source: Au
     const execution_id = effect.execution_id ?? execution_ids[index] ?? null;
     const selection = invocations[index];
     if (!selection || !execution_id) fail({ kind: "Rejected", detail: "effect without a selected execution" });
-    const pinned = pinProviderRequest({ invocation: selectedInvocation(id as InvocationId, execution_id, selection), bundle: definition.source, scope: source.owner });
+    const publication_secret = randomBytes(32).toString("base64url");
+    const pinned = pinProviderRequest({ invocation: selectedInvocation(id as InvocationId, execution_id, selection), bundle: definition.source, scope: source.owner, publication_secret });
     if (!pinned.ok) fail({ kind: "Rejected", detail: pinned.error.detail });
+    await tx.query("UPDATE authority.execution SET publication_secret_hash=$1 WHERE id=$2", [createHash("sha256").update(publication_secret).digest("hex"), execution_id]);
     const payload: EffectPayload = { invocation: pinned.value, action: "start", handle: null };
     await tx.query("INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload) VALUES ($1,$2,$3,$4,$5)", [id, scope_id, execution_id, effect.effect_key, JSON.stringify(payload)]);
   }
