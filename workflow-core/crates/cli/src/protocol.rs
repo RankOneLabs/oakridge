@@ -8,28 +8,81 @@ use workflow_model::protocol::{
 use workflow_model::{BundleDigest, CheckedProgram, DomainError, DomainErrorKind, ResourceLimits};
 
 pub const MAX_CACHED_PROGRAMS: usize = 32;
+pub const MAX_REQUEST_ID_BYTES: usize = 128;
+
+/// Recover the root object's `request_id` from a frame that cannot be parsed
+/// whole — oversized, or cut off before its newline — so the transport error
+/// can still be correlated.
+///
+/// One bounded pass over the bytes. Object and array nesting is tracked so a
+/// `request_id` member inside `input` is never mistaken for the root one, and
+/// string tokens are skipped escape-aware so braces inside strings do not
+/// disturb the depth. The matched value is decoded as a JSON string, so an
+/// escaped ID such as `"r\u002d1"` comes back as `r-1`. Returns an empty
+/// string when the root ID is absent, malformed, or beyond the retained bytes.
 pub fn request_id_prefix(frame: &[u8]) -> String {
-    let text = String::from_utf8_lossy(frame);
-    let Some(position) = text.find("\"request_id\"") else {
-        return String::new();
-    };
-    let remainder = text[position + "\"request_id\"".len()..].trim_start();
-    let Some(remainder) = remainder.strip_prefix(':') else {
-        return String::new();
-    };
-    let remainder = remainder.trim_start();
-    let Some(remainder) = remainder.strip_prefix('"') else {
-        return String::new();
-    };
-    let Some(end) = remainder.find('"') else {
-        return String::new();
-    };
-    let id = &remainder[..end];
-    if id.len() <= 128 && !id.contains('\\') {
-        id.to_owned()
-    } else {
-        String::new()
+    let mut depth = 0usize;
+    // At depth 1, the next string token is a member key (we just passed `{` or `,`).
+    let mut key_next = false;
+    let mut index = 0;
+    while index < frame.len() {
+        match frame[index] {
+            b'"' => {
+                let Some(end) = string_end(frame, index) else {
+                    break;
+                };
+                if depth == 1 && key_next && &frame[index + 1..end] == b"request_id" {
+                    return member_string_value(&frame[end + 1..]).unwrap_or_default();
+                }
+                key_next = false;
+                index = end + 1;
+            }
+            byte @ (b'{' | b'[') => {
+                depth += 1;
+                key_next = depth == 1 && byte == b'{';
+                index += 1;
+            }
+            b'}' | b']' => {
+                depth = depth.saturating_sub(1);
+                key_next = false;
+                index += 1;
+            }
+            b',' => {
+                key_next = depth == 1;
+                index += 1;
+            }
+            _ => index += 1,
+        }
     }
+    String::new()
+}
+
+/// Index of the closing quote of the string token opening at `start`, or None
+/// when the frame ends inside it.
+fn string_end(frame: &[u8], start: usize) -> Option<usize> {
+    let mut index = start + 1;
+    while index < frame.len() {
+        match frame[index] {
+            b'\\' => index += 2,
+            b'"' => return Some(index),
+            _ => index += 1,
+        }
+    }
+    None
+}
+
+/// Decode `: "<string>"` at the head of `rest` as a request ID.
+fn member_string_value(rest: &[u8]) -> Option<String> {
+    let is_space = |byte: &u8| byte.is_ascii_whitespace();
+    let rest = &rest[rest.iter().position(|b| !is_space(b))?..];
+    let rest = rest.strip_prefix(b":")?;
+    let rest = &rest[rest.iter().position(|b| !is_space(b))?..];
+    if rest.first() != Some(&b'"') {
+        return None;
+    }
+    let end = string_end(rest, 0)?;
+    let id: String = serde_json::from_slice(&rest[..=end]).ok()?;
+    (!id.is_empty() && id.len() <= MAX_REQUEST_ID_BYTES).then_some(id)
 }
 pub struct CliState {
     host: ResourceLimits,
@@ -99,7 +152,7 @@ pub fn handle_frame(state: &mut CliState, frame: &[u8]) -> Response {
                     .and_then(|raw| {
                         raw.get("request_id")
                             .and_then(serde_json::Value::as_str)
-                            .filter(|id| !id.is_empty() && id.len() <= 128)
+                            .filter(|id| !id.is_empty() && id.len() <= MAX_REQUEST_ID_BYTES)
                             .map(str::to_owned)
                     })
                     .unwrap_or_default(),
@@ -121,7 +174,7 @@ pub fn handle_frame(state: &mut CliState, frame: &[u8]) -> Response {
         .unwrap_or("")
         .to_owned();
     let version = raw.get("version").and_then(serde_json::Value::as_u64);
-    if request_id.len() > 128 {
+    if request_id.len() > MAX_REQUEST_ID_BYTES {
         return transport(
             String::new(),
             TransportErrorKind::MalformedFrame,
@@ -278,6 +331,58 @@ pub fn bounded_response(mut response: Response) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn request_id_prefix_takes_the_root_member_not_a_nested_one() {
+        let frame = br#"{"version":1,"input":{"bundle":{"request_id":"nested","key":"x"}},"request_id":"root","operation":"compile"}"#;
+        assert_eq!(request_id_prefix(frame), "root");
+    }
+
+    #[test]
+    fn request_id_prefix_decodes_escapes() {
+        assert_eq!(
+            request_id_prefix(br#"{"request_id":"r-1","version":1}"#),
+            "r-1"
+        );
+        assert_eq!(
+            request_id_prefix(br#"{"request_id":"a\"b\\c","version":1}"#),
+            "a\"b\\c"
+        );
+    }
+
+    #[test]
+    fn request_id_prefix_ignores_strings_that_merely_contain_the_key() {
+        // A value equal to the key name, and braces inside a string, must not confuse the scan.
+        let frame = br#"{"note":"request_id","text":"}{[","request_id":"root"}"#;
+        assert_eq!(request_id_prefix(frame), "root");
+        let frame = br#"["request_id","root"]"#;
+        assert_eq!(request_id_prefix(frame), "");
+    }
+
+    #[test]
+    fn request_id_prefix_survives_truncation_after_the_root_member() {
+        let frame = br#"{"request_id":"root","version":1,"input":{"bundle":{"schemas":[{"key":"a","shape":{"ki"#;
+        assert_eq!(request_id_prefix(frame), "root");
+        // Cut off inside the root ID itself: nothing trustworthy to echo.
+        assert_eq!(request_id_prefix(br#"{"request_id":"ro"#), "");
+        // Root ID beyond the retained bytes: nested one is not used in its place.
+        assert_eq!(
+            request_id_prefix(br#"{"input":{"request_id":"nested"},"req"#),
+            ""
+        );
+    }
+
+    #[test]
+    fn request_id_prefix_rejects_empty_and_oversized_ids() {
+        assert_eq!(request_id_prefix(br#"{"request_id":""}"#), "");
+        let long = format!(
+            r#"{{"request_id":"{}"}}"#,
+            "x".repeat(MAX_REQUEST_ID_BYTES + 1)
+        );
+        assert_eq!(request_id_prefix(long.as_bytes()), "");
+        assert_eq!(request_id_prefix(br#"{"request_id":42}"#), "");
+    }
+
     #[test]
     fn native_wide_integer_response_is_a_transport_error_not_an_empty_frame() {
         let bytes = bounded_response(Response {
