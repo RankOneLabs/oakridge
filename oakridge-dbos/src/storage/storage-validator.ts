@@ -1,4 +1,4 @@
-import { decodeCoreResponse } from "../core-client/generated-contracts";
+import { CORE_PROTOCOL_VERSION, decodeCoreResponse } from "../core-client/generated-contracts";
 import type { CheckedValue, DecisionOutcome } from "../core-client/generated-contracts";
 import type { AuthoritySnapshot } from "./snapshot-reader";
 import type { CommitRequest, Result } from "./commit";
@@ -104,12 +104,12 @@ export async function validateStorageAuthority(tx: SqlExecutor, request: CommitR
 }
 
 export function isDecisionOutcome(value: unknown): value is DecisionOutcome {
-  return decodeCoreResponse({ version: 1, request_id: "storage-validation", truncated: false, result: { status: "ok", value: { kind: "evaluated", value } } }) !== null;
+  return decodeCoreResponse({ version: CORE_PROTOCOL_VERSION, request_id: "storage-validation", truncated: false, result: { status: "ok", value: { kind: "evaluated", value } } }) !== null;
 }
 
 /** Independent storage validation of the generated CheckedValue against stored source schemas. */
 export function matchesStoredSchema(bundle: DefinitionBundle, schema: string, value: CheckedValue, depth = 0): boolean {
-  if (depth === 0 && decodeCoreResponse({ version: 1, request_id: "storage-value", truncated: false, result: { status: "ok", value: { kind: "validated", value } } }) === null) return false;
+  if (depth === 0 && decodeCoreResponse({ version: CORE_PROTOCOL_VERSION, request_id: "storage-value", truncated: false, result: { status: "ok", value: { kind: "validated", value } } }) === null) return false;
   if (depth > bundle.limits.max_depth || value.schema !== schema) return false;
   const shape = bundle.schemas.find((item) => item.key === schema)?.shape;
   if (!shape) return false;

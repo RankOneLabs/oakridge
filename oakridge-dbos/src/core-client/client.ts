@@ -1,4 +1,4 @@
-import { CORE_MAX_FRAME_BYTES, CORE_MAX_RESPONSE_BYTES, decodeCoreResponse, hasSafeWireNumbers, type CoreRequest, type CoreResponseResult, type CoreTransportKind, type DefinitionBundle, type Output } from "./generated-contracts";
+import { CORE_MAX_FRAME_BYTES, CORE_MAX_RESPONSE_BYTES, CORE_PROTOCOL_VERSION, decodeCoreResponse, hasSafeWireNumbers, type CoreRequest, type CoreResponseResult, type CoreTransportKind, type DefinitionBundle, type Output } from "./generated-contracts";
 import { transportFailure, type CoreResult } from "./transport-errors";
 interface Pending { readonly resolve: (result: CoreResult<Output>) => void; readonly timeout: ReturnType<typeof setTimeout> }
 type RequestInput<O extends CoreRequest["operation"]> = Extract<CoreRequest, { readonly operation: O }>["input"];
@@ -63,7 +63,7 @@ export class CoreClient {
     try { raw = JSON.parse(line); }
     catch { this.poison("malformed_frame", "invalid JSON response"); return; }
     const response = decodeCoreResponse(raw);
-    if (!response || response.version !== 1) { this.poison("malformed_frame", "response failed generated wire schema"); return; }
+    if (!response || response.version !== CORE_PROTOCOL_VERSION) { this.poison("malformed_frame", "response failed generated wire schema"); return; }
     const pending = this.pending.get(response.request_id);
     if (!pending) { this.poison("mismatched_request_id", response.request_id); return; }
     this.pending.delete(response.request_id);
@@ -136,7 +136,7 @@ export class CoreClient {
     let frame: string;
     try {
       if (!hasSafeWireNumbers(input)) return transportFailure("malformed_frame", "request numbers exceed JavaScript-safe wire range");
-      frame = JSON.stringify({ version: 1, request_id, operation, input }) + "\n";
+      frame = JSON.stringify({ version: CORE_PROTOCOL_VERSION, request_id, operation, input }) + "\n";
     }
     catch (cause) { return transportFailure("malformed_frame", String(cause)); }
     if (new TextEncoder().encode(frame).length > MAX_FRAME_BYTES) return transportFailure("oversized_payload", "request frame exceeds maximum bytes");

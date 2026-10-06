@@ -1,4 +1,4 @@
-import { CORE_MAX_RESPONSE_BYTES } from "../src/core-client/generated-contracts";
+import { CORE_MAX_RESPONSE_BYTES, CORE_PROTOCOL_VERSION } from "../src/core-client/generated-contracts";
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -77,12 +77,12 @@ function rawFrames(frames: readonly object[], args: readonly string[] = []): Raw
   return new TextDecoder().decode(run.stdout).trim().split("\n").map((line) => JSON.parse(line) as RawResponse);
 }
 test("digest request evaluates after compile and unknown digest is typed", () => {
-  const compiled = rawFrames([{ version: 1, request_id: "compile", operation: "compile", input: { bundle } }])[0]!;
+  const compiled = rawFrames([{ version: CORE_PROTOCOL_VERSION, request_id: "compile", operation: "compile", input: { bundle } }])[0]!;
   const digest = (compiled.result.value as unknown as { value: { digest: string } }).value.digest;
   const responses = rawFrames([
-    { version: 1, request_id: "compile", operation: "compile", input: { bundle } },
-    { version: 1, request_id: "evaluate", operation: "evaluate", input: { bundle_digest: digest, snapshot: snapshot() } },
-    { version: 1, request_id: "unknown", operation: "evaluate", input: { bundle_digest: "missing", snapshot: snapshot() } },
+    { version: CORE_PROTOCOL_VERSION, request_id: "compile", operation: "compile", input: { bundle } },
+    { version: CORE_PROTOCOL_VERSION, request_id: "evaluate", operation: "evaluate", input: { bundle_digest: digest, snapshot: snapshot() } },
+    { version: CORE_PROTOCOL_VERSION, request_id: "unknown", operation: "evaluate", input: { bundle_digest: "missing", snapshot: snapshot() } },
   ]);
   expect(responses.map((response) => [response.request_id, response.result.status, response.result.value.kind])).toEqual([
     ["compile", "ok", "compiled"], ["evaluate", "ok", "evaluated"], ["unknown", "domain_error", "unknown_bundle"],
@@ -111,25 +111,25 @@ test("concurrent callers share one source re-send", async () => {
   } finally { client.close(); }
 });
 test("CLI host ceilings reject a larger requested budget", () => {
-  const response = rawFrames([{ version: 1, request_id: "host", operation: "compile", input: { bundle } }],
+  const response = rawFrames([{ version: CORE_PROTOCOL_VERSION, request_id: "host", operation: "compile", input: { bundle } }],
     ["--max-list-items", "10000", "--max-depth", "128", "--evaluation-budget", "100"])[0]!;
   expect(response).toMatchObject({ request_id: "host", result: { status: "domain_error", value: { kind: "limit_exceeds_host" } } });
 });
 test("oversized frames echo the original request ID", () => {
-  const response = rawFrame(JSON.stringify({ version: 1, request_id: "oversized-origin", operation: "compile", input: { bundle }, padding: "x".repeat(1_048_576) }));
+  const response = rawFrame(JSON.stringify({ version: CORE_PROTOCOL_VERSION, request_id: "oversized-origin", operation: "compile", input: { bundle }, padding: "x".repeat(1_048_576) }));
   expect(response).toMatchObject({ request_id: "oversized-origin", result: { value: { kind: "oversized_payload" } } });
 });
 test("malformed frame has its own transport kind", () => expect(rawFrame("{").result.value.kind).toBe("malformed_frame"));
-test("unsupported version has its own transport kind", () => expect(rawFrame(JSON.stringify({ version: 2, request_id: "r", operation: "compile" })).result.value.kind).toBe("unsupported_version"));
+test("unsupported version has its own transport kind", () => expect(rawFrame(JSON.stringify({ version: CORE_PROTOCOL_VERSION + 1, request_id: "r", operation: "compile" })).result.value.kind).toBe("unsupported_version"));
 test("oversized payload has its own transport kind", () => expect(rawFrame("x".repeat(1_048_577)).result.value.kind).toBe("oversized_payload"));
-test("unknown operation has its own transport kind", () => expect(rawFrame(JSON.stringify({ version: 1, request_id: "r", operation: "missing", input: {} })).result.value.kind).toBe("unknown_operation"));
+test("unknown operation has its own transport kind", () => expect(rawFrame(JSON.stringify({ version: CORE_PROTOCOL_VERSION, request_id: "r", operation: "missing", input: {} })).result.value.kind).toBe("unknown_operation"));
 test("duplicate JSON keys are rejected before overwrite", () => {
-  const frame = JSON.stringify({ version: 1, request_id: "duplicate", operation: "compile", input: { bundle, available_operations: bundle.operations } }).replace('"language_version":1', '"language_version":1,"language_version":2');
+  const frame = JSON.stringify({ version: CORE_PROTOCOL_VERSION, request_id: "duplicate", operation: "compile", input: { bundle, available_operations: bundle.operations } }).replace('"language_version":1', '"language_version":1,"language_version":2');
   expect(rawFrame(frame).result.value.kind).toBe("duplicate_symbol");
 });
 test("compile response echoes the request ID and omits the checked source", () => {
   const source = { ...bundle, prompts: bundle.prompts.map((prompt) => ({ ...prompt, content: "x".repeat(Math.floor(CORE_MAX_RESPONSE_BYTES / 2) + 10_000) })) };
-  const response = rawFrame(JSON.stringify({ version: 1, request_id: "large", operation: "compile", input: { bundle: source } }));
+  const response = rawFrame(JSON.stringify({ version: CORE_PROTOCOL_VERSION, request_id: "large", operation: "compile", input: { bundle: source } }));
   expect(response).toMatchObject({ request_id: "large", truncated: false, result: { status: "ok", value: { kind: "compiled", value: { digest: expect.any(String), scopes: expect.any(Array) } } } });
 });
 async function withChild(scriptBody: string, run: (client: CoreClient) => Promise<void>, deadlineMs = 1000, queue = 64): Promise<void> {
@@ -138,14 +138,14 @@ async function withChild(scriptBody: string, run: (client: CoreClient) => Promis
   const client = startClient(script, deadlineMs, queue);
   try { await run(client); } finally { client.close(); rmSync(directory, { recursive: true, force: true }); }
 }
-test("mismatched request ID is rejected", () => withChild("IFS= read -r line\nprintf '%s\\n' '{\"version\":1,\"request_id\":\"wrong\",\"truncated\":false,\"result\":{\"status\":\"ok\",\"value\":{\"kind\":\"validated\",\"value\":{\"schema\":\"flag\",\"data\":{\"kind\":\"boolean\",\"value\":true}}}}}'", async (client) => {
+test("mismatched request ID is rejected", () => withChild(`IFS= read -r line\nprintf '%s\\n' '{\"version\":${CORE_PROTOCOL_VERSION},\"request_id\":\"wrong\",\"truncated\":false,\"result\":{\"status\":\"ok\",\"value\":{\"kind\":\"validated\",\"value\":{\"schema\":\"flag\",\"data\":{\"kind\":\"boolean\",\"value\":true}}}}}'`, async (client) => {
   expect(await client.request("compile", { bundle, available_operations: bundle.operations })).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "mismatched_request_id" } } });
 }));
-test("malformed success payload fails the generated decoder", () => withChild("IFS= read -r line\nprintf '%s\\n' '{\"version\":1,\"request_id\":\"1\",\"truncated\":false,\"result\":{\"status\":\"ok\",\"value\":{}}}'", async (client) => {
+test("malformed success payload fails the generated decoder", () => withChild(`IFS= read -r line\nprintf '%s\\n' '{\"version\":${CORE_PROTOCOL_VERSION},\"request_id\":\"1\",\"truncated\":false,\"result\":{\"status\":\"ok\",\"value\":{}}}'`, async (client) => {
   expect(await client.request("compile", { bundle, available_operations: bundle.operations })).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "malformed_frame" } } });
 }));
 function stringResponseAtSize(bytes: number): string {
-  const response = (value: string) => JSON.stringify({ version: 1, request_id: "1", truncated: false,
+  const response = (value: string) => JSON.stringify({ version: CORE_PROTOCOL_VERSION, request_id: "1", truncated: false,
     result: { status: "ok", value: { kind: "validated", value: { schema: "text", data: { kind: "string", value } } } } });
   return response("x".repeat(bytes - new TextEncoder().encode(response("")).length));
 }
@@ -182,12 +182,12 @@ test("unsafe request metadata is rejected before sending and leaves the child us
   } finally { client.close(); }
 });
 test("raw unsafe snapshot metadata cannot enter the Rust evaluator", () => {
-  expect(rawFrame(JSON.stringify({ version: 1, request_id: "wide", operation: "evaluate", input: {
+  expect(rawFrame(JSON.stringify({ version: CORE_PROTOCOL_VERSION, request_id: "wide", operation: "evaluate", input: {
     bundle, available_operations: bundle.operations, snapshot: { ...snapshot(), random_seed: Number.MAX_SAFE_INTEGER + 1 } } })))
     .toMatchObject({ request_id: "wide", result: { status: "transport_error", value: { kind: "malformed_frame" } } });
 });
 test("unsafe integer success payload quarantines the child", () => withChild(
-  `IFS= read -r line\nprintf '%s\\n' '${JSON.stringify({ version: 1, request_id: "1", truncated: false,
+  `IFS= read -r line\nprintf '%s\\n' '${JSON.stringify({ version: CORE_PROTOCOL_VERSION, request_id: "1", truncated: false,
     result: { status: "ok", value: { kind: "validated", value: { schema: "number", data: { kind: "integer", value: Number.MAX_SAFE_INTEGER + 1 } } } } })}'`, async (client) => {
     expect(await client.request("compile", { bundle, available_operations: bundle.operations }))
       .toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "malformed_frame" } } });
@@ -216,7 +216,7 @@ test("shared invalid compiler corpus retains typed diagnostics through the real 
 });
 
 test("unknown source fields are domain diagnostics with request correlation", () => {
-  const response = rawFrame(JSON.stringify({ version: 1, request_id: "unknown-source", operation: "compile", input: {
+  const response = rawFrame(JSON.stringify({ version: CORE_PROTOCOL_VERSION, request_id: "unknown-source", operation: "compile", input: {
     bundle: { ...bundle, invented: true },
   } }));
   expect(response).toMatchObject({ request_id: "unknown-source", result: { status: "domain_error", value: { kind: "malformed_bundle", path: "invented" } } });

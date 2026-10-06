@@ -2,7 +2,11 @@ use crate::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-pub const PROTOCOL_VERSION: u32 = 1;
+/// Bumped whenever the request or response shape changes. v2: non-compile
+/// operations address a cached bundle by `bundle_digest` instead of carrying
+/// the source, `available_operations` is gone, and `compiled` returns the
+/// digest and scope summaries rather than the checked program.
+pub const PROTOCOL_VERSION: u32 = 2;
 pub const MAX_FRAME_BYTES: usize = 1_048_576;
 // The 1 MiB cap changes only with a protocol version bump and regenerated TypeScript contracts.
 pub const MAX_RESPONSE_BYTES: usize = MAX_FRAME_BYTES;

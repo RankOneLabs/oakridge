@@ -341,7 +341,7 @@ mod tests {
     #[test]
     fn request_id_prefix_decodes_escapes() {
         assert_eq!(
-            request_id_prefix(br#"{"request_id":"r-1","version":1}"#),
+            request_id_prefix(br#"{"request_id":"r\u002d1","version":1}"#),
             "r-1"
         );
         assert_eq!(
@@ -386,7 +386,7 @@ mod tests {
     #[test]
     fn native_wide_integer_response_is_a_transport_error_not_an_empty_frame() {
         let bytes = bounded_response(Response {
-            version: 1,
+            version: PROTOCOL_VERSION,
             request_id: "wide".into(),
             truncated: false,
             result: ResponseResult::Ok(Output::Validated(workflow_model::CheckedValue {
@@ -414,11 +414,16 @@ mod tests {
         let malformed = handle_frame(&mut state, b"{");
         let version = handle_frame(
             &mut state,
-            br#"{"version":2,"request_id":"r","operation":"compile"}"#,
+            format!(
+                r#"{{"version":{},"request_id":"r","operation":"compile"}}"#,
+                PROTOCOL_VERSION + 1
+            )
+            .as_bytes(),
         );
         let unknown = handle_frame(
             &mut state,
-            br#"{"version":1,"request_id":"r","operation":"other"}"#,
+            format!(r#"{{"version":{PROTOCOL_VERSION},"request_id":"r","operation":"other"}}"#)
+                .as_bytes(),
         );
         assert!(matches!(
             malformed.result,
