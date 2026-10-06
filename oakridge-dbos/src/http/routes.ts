@@ -10,6 +10,9 @@ export interface HttpRoute {
 export const HTTP_ROUTES: readonly HttpRoute[] = [
   { method: "GET", path: "/health", authority: "open" },
   { method: "POST", path: "/runs", authority: "operator" },
+  { method: "GET", path: "/api/runs", authority: "operator" },
+  { method: "GET", path: "/api/definitions", authority: "operator" },
+  { method: "POST", path: "/api/definitions", authority: "operator" },
   { method: "GET", path: "/runs/:run_id", authority: "operator" },
   { method: "POST", path: "/runs/:run_id/cancel", authority: "operator" },
   { method: "DELETE", path: "/runs/:run_id", authority: "operator" },

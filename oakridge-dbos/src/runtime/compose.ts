@@ -78,6 +78,13 @@ export async function createProductionComposition(options: ProductionOptions): P
   app.post("/runs", async (context) => {
     let body: unknown;
     try { body = await context.req.json(); } catch { return context.json({ error: "invalid JSON" }, 400); }
+    if (body && typeof body === "object" && "digest" in body) {
+      if (typeof body.digest !== "string" || !("input" in body)) return context.json({ error: "digest and input are required" }, 400);
+      const result = await mutations.startRunByDigest({ digest: body.digest, input: body.input });
+      if (!result.ok) return context.json({ error: result.error }, 422);
+      await ensureRunWorkflow(result.value.run_id);
+      return context.json(result.value, 201);
+    }
     if (!body || typeof body !== "object" || !("bundle" in body) || !isBundle(body.bundle) || !("input" in body)) return context.json({ error: "invalid run request" }, 400);
     const result = await mutations.startRun({ bundle: body.bundle, input: body.input });
     if (!result.ok) return context.json({ error: result.error }, 422);

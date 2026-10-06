@@ -13,13 +13,15 @@ import type { TransactionalSqlExecutor } from "./sql-executor";
 export interface CompileRequest { readonly bundle: DefinitionBundle }
 export interface CompileResult { readonly program: CompiledBundle }
 export interface StartRunRequest extends CompileRequest { readonly input: unknown }
+export interface StartPinnedRunRequest { readonly digest: string; readonly input: unknown }
+export interface PinnedDefinition { readonly bundle_id: string; readonly digest: string; readonly source: DefinitionBundle }
 export interface EvaluationInput { readonly source: AuthoritySnapshot; readonly bundle: DefinitionBundle }
 export interface EvaluationResult { readonly decision: DecisionOutcome }
 export interface Decision { readonly source: AuthoritySnapshot; readonly outcome: DecisionOutcome }
 export interface PreparedDecision { readonly request_digest: string; readonly decision: Decision; readonly target_revisions?: readonly TargetRevision[] }
 export interface MutationInput { readonly request_digest?: string; readonly execution_authority?: string; readonly run_id: RunId; readonly scope_id: ScopeId; readonly ingress_id: string; readonly trigger: Trigger; readonly operator_version: number | null; readonly outputs?: readonly OutputPublication[]; readonly prepared?: PreparedDecision }
 export interface StartedRun { readonly run_id: RunId; readonly root_scope_id: ScopeId; readonly bundle_id: string }
-export interface MutationService { compile(request: CompileRequest): Promise<Result<CompileResult>>; startRun(request: StartRunRequest): Promise<Result<StartedRun>>; decide(input: MutationInput): Promise<Result<CommitResult>> }
+export interface MutationService { compile(request: CompileRequest): Promise<Result<CompileResult>>; pinDefinition(request: CompileRequest): Promise<Result<PinnedDefinition>>; startRun(request: StartRunRequest): Promise<Result<StartedRun>>; startRunByDigest(request: StartPinnedRunRequest): Promise<Result<StartedRun>>; decide(input: MutationInput): Promise<Result<CommitResult>> }
 
 export function selectMutationIdentity(input: MutationInput): IngressIdentity {
   return { run_id: input.run_id, scope_id: input.scope_id, ingress_id: input.ingress_id, request_digest: input.prepared?.request_digest ?? input.request_digest ?? requestDigest({ trigger: input.trigger, outputs: input.outputs ?? [], operator_version: input.operator_version }) };
@@ -57,6 +59,23 @@ export function prepareCommit(input: MutationInput, decision: Decision): Result<
 export function createMutationService(db: TransactionalSqlExecutor, core: CoreClient): MutationService {
   return {
     compile: (request) => compileBundle(core, request),
+    async pinDefinition(request) {
+      const compiled = await compileBundle(core, request);
+      if (!compiled.ok) return compiled;
+      try {
+        const bundle_id = crypto.randomUUID();
+        await db.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ($1,$2,$3,$4) ON CONFLICT (digest) DO NOTHING",
+          [bundle_id, compiled.value.program.digest, JSON.stringify(request.bundle), JSON.stringify(compiled.value.program)]);
+        const rows = await db.query<PinnedDefinition>("SELECT id AS bundle_id,digest,source FROM authority.definition_bundle WHERE digest=$1", [compiled.value.program.digest]);
+        if (!rows[0]) return error("pin_definition", compiled.value.program.digest, "stored definition missing");
+        return { ok: true, value: rows[0] };
+      } catch (cause) { return error("pin_definition", request.bundle.key, String(cause)); }
+    },
+    async startRunByDigest(request) {
+      const rows = await db.query<{ source: DefinitionBundle }>("SELECT source FROM authority.definition_bundle WHERE digest=$1", [request.digest]);
+      if (!rows[0]) return error("start_run_by_digest", request.digest, "definition digest not found");
+      return this.startRun({ bundle: rows[0].source, input: request.input });
+    },
     async startRun(request) {
       const compiled = await compileBundle(core, request);
       if (!compiled.ok) return compiled;
