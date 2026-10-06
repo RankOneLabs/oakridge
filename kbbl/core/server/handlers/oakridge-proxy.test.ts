@@ -10,6 +10,30 @@ afterEach(() => {
 });
 
 describe("oakridge proxy", () => {
+  test("preserves a durable ingress receipt and the upstream acceptance status", async () => {
+    let target = "";
+    globalThis.fetch = (async (input, init) => {
+      target = String(input);
+      expect(init?.method).toBe("POST");
+      return Response.json({ kind: "accepted_pending", request_id: "request-1", transition_id: "transition-1", scope_version: 5 }, { status: 202 });
+    }) as typeof fetch;
+    const app = new Hono();
+    mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test" });
+    const response = await app.request("/oakridge/api/runs/run-1/scopes/scope-1/commands", { method: "POST", body: "{}" });
+    expect({ target, status: response.status, body: await response.json() }).toEqual({
+      target: "http://oakridge.test/runs/run-1/scopes/scope-1/commands", status: 202,
+      body: { kind: "accepted_pending", request_id: "request-1", transition_id: "transition-1", scope_version: 5 },
+    });
+  });
+
+  test("preserves an unsupported upstream ingress failure", async () => {
+    globalThis.fetch = (async () => Response.json({ error: "unsupported_ingress" }, { status: 501 })) as unknown as typeof fetch;
+    const app = new Hono();
+    mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test" });
+    const response = await app.request("/oakridge/api/unsupported", { method: "POST", body: "{}" });
+    expect({ status: response.status, body: await response.json() }).toEqual({ status: 501, body: { error: "unsupported_ingress" } });
+  });
+
   test("bounds upstream fetches with an abort signal", async () => {
     let signal: AbortSignal | undefined;
     globalThis.fetch = (async (_input, init) => {

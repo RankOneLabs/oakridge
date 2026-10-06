@@ -10,7 +10,7 @@ function makeApp(): Hono {
 }
 
 describe("POST /inbox/workspace-events", () => {
-  test("accepts a well-formed workspace event", async () => {
+  test("reports the legacy workspace event as unsupported", async () => {
     const app = makeApp();
 
     const res = await app.request("/inbox/workspace-events", {
@@ -24,8 +24,8 @@ describe("POST /inbox/workspace-events", () => {
       }),
     });
 
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true });
+    expect(res.status).toBe(501);
+    expect(await res.json()).toEqual({ error: "unsupported_workspace_event_ingress", kind: "proposal_applied", projectId: "p-1" });
   });
 
   test("rejects blank project ids", async () => {

@@ -222,10 +222,8 @@ export function createApp(deps: CreateAppDeps): Hono {
 
   // ---- workspace-layer event ingest ----
   //
-  // POST /inbox/workspace-events accepts (validates + acknowledges)
-  // project lifecycle and coordination events from legit-biz-club. See
-  // handlers/workspace-events.ts for why the event itself is discarded
-  // rather than forwarded.
+  // Legacy project events have no durable ingress identity and are rejected
+  // explicitly by the handler.
   mountWorkspaceEventsRoutes(app);
 
   // ---- projects CRUD ----
