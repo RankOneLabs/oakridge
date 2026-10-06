@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
+import canonicalDefinition from "../../../../../workflow-config/definitions/development.json";
 import { OperatorLaunchView } from "../views/OperatorLaunchView";
 import { OperatorHistoryPane } from "../views/OperatorHistoryPane";
 import { OperatorDefinitionEditorView } from "../views/OperatorDefinitionEditorView";
@@ -49,4 +50,40 @@ test("history shows transitions and facts without exposing execution secrets", a
   expect(screen.getByText("reviewed")).toBeTruthy();
   expect(screen.getByText("approved")).toBeTruthy();
   expect(screen.queryByText("hidden")).toBeNull();
+});
+
+
+test("clone editing and pinning wait for the requested bundle, then preserve edits on refresh", async () => {
+  let resolveCatalog: (response: Response) => void = () => { throw new Error("catalog not requested"); };
+  const catalog = new Promise<Response>((resolve) => { resolveCatalog = resolve; });
+  const fetch = vi.fn(() => catalog);
+  vi.stubGlobal("fetch", fetch);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}><OperatorDefinitionEditorView cloneFromId="bundle-1"
+    onBack={() => undefined} onPinned={() => undefined} /></QueryClientProvider>);
+  const editor = screen.getByLabelText<HTMLTextAreaElement>("Source bundle");
+  const submit = screen.getByRole<HTMLButtonElement>("button", { name: "Pin definition" });
+  expect({ editable: !editor.disabled, canPin: !submit.disabled, source: editor.value }).toEqual({ editable: false, canPin: false, source: "" });
+  fireEvent.submit(submit.closest("form") as HTMLFormElement);
+  expect(fetch).toHaveBeenCalledTimes(1);
+  resolveCatalog(Response.json([{ bundle_id: "bundle-1", digest: "sha-1", source: { ...canonicalDefinition, version: 7 } }]));
+  await waitFor(() => expect({ editable: !editor.disabled, canPin: !submit.disabled, version: JSON.parse(editor.value).version })
+    .toEqual({ editable: true, canPin: true, version: 8 }));
+  fireEvent.change(editor, { target: { value: "my edits" } });
+  fetch.mockResolvedValue(Response.json([{ bundle_id: "bundle-1", digest: "sha-1", source: canonicalDefinition }]));
+  await client.invalidateQueries({ queryKey: ["operator", "definitions"] });
+  expect(editor.value).toBe("my edits");
+});
+
+test.each([
+  { name: "failed", response: () => Response.json({ error: "catalog unavailable" }, { status: 503 }), message: /Could not load definition/ },
+  { name: "missing", response: () => Response.json([]), message: /Definition not found: missing-bundle/ },
+])("a $name clone lookup reports the error and keeps editing and pinning blocked", async ({ response, message }) => {
+  const fetch = vi.fn(async () => response());
+  vi.stubGlobal("fetch", fetch);
+  renderWithQuery(<OperatorDefinitionEditorView cloneFromId="missing-bundle" onBack={() => undefined} onPinned={() => undefined} />);
+  expect(await screen.findByRole("alert")).toHaveProperty("textContent", expect.stringMatching(message));
+  expect({ editable: !screen.getByLabelText<HTMLTextAreaElement>("Source bundle").disabled,
+    canPin: !screen.getByRole<HTMLButtonElement>("button", { name: "Pin definition" }).disabled }).toEqual({ editable: false, canPin: false });
+  expect(fetch).toHaveBeenCalledTimes(1);
 });
