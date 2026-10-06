@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchOperatorDefinition, fetchOperatorRun, fetchOperatorScope, submitOperatorCommand } from "../client";
 import { OperatorCommandForm } from "../components/organisms/OperatorCommandForm";
 import { OperatorTypedValue } from "../components/molecules/OperatorTypedValue";
-import { clearPendingCommand, listPendingCommands, operatorDraftIdentity } from "../lib/operator-drafts";
+import { clearOperatorDraft, clearPendingCommand, listPendingCommands, operatorDraftIdentity } from "../lib/operator-drafts";
 import { selectDraftKey } from "../lib/operator-selectors";
 import { Button } from "../../components/atoms/Button";
 import { isDefinitiveRequestRejection } from "../lib/client-errors";
@@ -29,7 +29,7 @@ export function GenericOperatorRunView({ runId, onBack }: Props) {
     if (pending.length === 0) return;
     let cancelled = false;
     void Promise.all(pending.map(async (item) => {
-      try { await submitOperatorCommand(item); clearPendingCommand(item); return `Receipt recovered for ${item.command_key}.`; }
+      try { await submitOperatorCommand(item); clearPendingCommand(item); clearOperatorDraft(item); return `Receipt recovered for ${item.command_key}.`; }
       catch (cause) {
         if (isDefinitiveRequestRejection(cause)) clearPendingCommand(item);
         return `${item.command_key}: ${cause instanceof Error ? cause.message : "Receipt still pending"}`;
@@ -44,16 +44,21 @@ export function GenericOperatorRunView({ runId, onBack }: Props) {
   return <main className="or-page or-page--wide" data-testid="operator-run-view">
     {recovery && <p role="status">{recovery}</p>}
     <header className="or-page-header"><Button type="button" variant="secondary" onClick={onBack}>← Runs</Button><h2 className="or-page-title">Operator workspace</h2><Button type="button" variant="secondary" onClick={refresh}>Refresh</Button></header>
-    <label>Scope <select value={scopeId ?? ""} onChange={(event) => { setSelectedScope(event.target.value); setSelectedCommand(null); }}>
+    <label>Scope <select aria-label="Scope" value={scopeId ?? ""} onChange={(event) => { setSelectedScope(event.target.value); setSelectedCommand(null); }}>
       {run.data.scopes.map((item) => <option key={item.scope_id} value={item.scope_id}>{item.label}</option>)}
     </select></label>
     <section><h3>{scope.data.label}</h3><OperatorTypedValue value={scope.data.state} schemas={schemas} />
       {scope.data.outcome && <><h4>Outcome</h4><OperatorTypedValue value={scope.data.outcome} schemas={schemas} /></>}
+      {scope.data.outputs.map((output) => <section key={output.id}>
+        <h4>{output.output_key}{output.collection_key && ` · ${output.collection_key}`}</h4>
+        {output.current_revision ? <OperatorTypedValue value={output.current_revision.body} schemas={schemas} />
+          : <p>No artifact published.</p>}
+      </section>)}
       {scope.data.executions.map((execution) => <section key={execution.id}><h4>{execution.worker_key} · {execution.status}</h4>
         {execution.result && <OperatorTypedValue value={execution.result} schemas={schemas} />}</section>)}
     </section>
     {scope.data.commands.length > 0 && <section><h3>Commands</h3>
-      <label>Action <select value={selected?.key ?? ""} onChange={(event) => setSelectedCommand(event.target.value)}>
+      <label>Action <select aria-label="Action" value={selected?.key ?? ""} onChange={(event) => setSelectedCommand(event.target.value)}>
         {scope.data.commands.map((command) => <option key={command.key} value={command.key}>{command.label}</option>)}
       </select></label>
       {selected && selectDraftKey(scope.data, selected) && <OperatorCommandForm key={operatorDraftIdentity(selectDraftKey(scope.data, selected)!)}

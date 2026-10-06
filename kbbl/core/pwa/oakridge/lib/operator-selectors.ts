@@ -3,7 +3,7 @@ import type { OperatorCommandDescriptor, OperatorDraftKey, OperatorScopeView, Op
 /** Target identities must come from the observed projection, never a later fetch. */
 export function selectCommandTargets(scope: OperatorScopeView, command: OperatorCommandDescriptor): readonly OperatorTargetRevision[] | null {
   const supplied = scope.command_targets?.[command.key];
-  if (supplied) return supplied;
+  if (supplied) return supplied.length === command.targets.length ? supplied : null;
   if (command.targets.length === 0) return [];
   const selected: OperatorTargetRevision[] = [];
   for (const expression of command.targets) {

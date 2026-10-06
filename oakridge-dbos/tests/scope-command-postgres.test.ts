@@ -140,6 +140,10 @@ test("scope and diagnostics APIs return numeric PostgreSQL versions and generati
     const path = `/api/runs/${authority.run.run_id}/scopes/${authority.run.root_scope_id}`;
     const scope: ScopeView = await (await app.request(path)).json();
     const diagnostics: ScopeDiagnostics = await (await app.request(`${path}/diagnostics`)).json();
+    expect({ revision: scope.outputs[0]?.current_revision, targets: scope.command_targets.certify }).toMatchObject({
+      revision: { id: "revision-1", version: 0, body: { schema: "revision", data: { kind: "reference", id: "revision-1" } } },
+      targets: [{ identity: "revision-1", version: 12 }],
+    });
     expect({ scope: { version: scope.cursor.scope_version, generation: scope.executions[0]?.generation, execution: scope.executions[0]?.version, output: scope.outputs[0]?.version, resource: scope.resources[0]?.version },
       diagnostics: { version: diagnostics.scope_version, generation: diagnostics.executions[0]?.generation, execution: diagnostics.executions[0]?.version, resource: diagnostics.resources[0]?.version, effect: diagnostics.effects[0]?.version } })
       .toEqual({ scope: { version: 0, generation: 7, execution: 9, output: 12, resource: 11 }, diagnostics: { version: 0, generation: 7, execution: 9, resource: 11, effect: 13 } });

@@ -93,11 +93,21 @@ export type OperatorCheckedData =
   | { readonly kind: "variant"; readonly variant: string; readonly value: OperatorCheckedValue }
   | { readonly kind: "reference"; readonly brand: string; readonly id: string };
 export interface OperatorTargetRevision { readonly identity: string; readonly version: number }
+/** Mirrors authority.artifact_revision in the scope projection. */
+export interface OperatorArtifactRevision {
+  readonly id: string; readonly version: number; readonly scope_id: string; readonly execution_id: string | null;
+  readonly output_key: string; readonly collection_key: string | null; readonly body: OperatorCheckedValue;
+  readonly predecessor_id: string | null;
+}
+export interface OperatorOutputSlot {
+  readonly id: string; readonly version: number; readonly output_key: string; readonly collection_key: string;
+  readonly current_revision_id: string | null; readonly current_revision: OperatorArtifactRevision | null;
+}
 export interface OperatorScopeView {
   readonly scope_id: string; readonly run_id: string; readonly scope_key: string; readonly label: string;
   readonly state: OperatorCheckedValue; readonly outcome: OperatorCheckedValue | null; readonly is_terminal: boolean;
   readonly commands: readonly OperatorCommandDescriptor[];
-  readonly outputs: readonly { readonly id: string; readonly version: number; readonly output_key: string; readonly collection_key: string; readonly current_revision_id: string | null }[];
+  readonly outputs: readonly OperatorOutputSlot[];
   readonly executions: readonly { readonly id: string; readonly version: number; readonly worker_key: string; readonly status: string; readonly result: OperatorCheckedValue | null }[];
   readonly cursor: { readonly scope_version: number; readonly transition_id: string | null };
   /** m5-generic-api supplies observed revision identities for each available command. */
