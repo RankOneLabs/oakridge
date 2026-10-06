@@ -13,6 +13,13 @@ test("a lost worktree yields explicit recovery evidence", async () => {
     .toEqual({ kind: "permanently_rejected", code: "worktree_unrecoverable", detail: "repository at /lost cannot be inspected: not a git repository" });
 });
 
+test("repository preparation keys its result by the selected path, not the canonical toplevel", async () => {
+  const git: GitCommandRunner = { run: async (_path, args) => ({ exit_code: 0,
+    stdout: args[0] === "remote" ? "git@github.com:RankOneLabs/oakridge.git\n" : args[1] === "HEAD" ? "sha\n" : "/repo\n", stderr: "" }) };
+  expect(await new RepositoryPreparationOperation(git).execute({ repository_path: "/repo/", expected_head: null }))
+    .toEqual({ kind: "acknowledged", value: { repository_path: "/repo/", head: "sha", push_remote_owner: "RankOneLabs" } });
+});
+
 test("repository preparation pins the selected head", async () => {
   const git: GitCommandRunner = { run: async (_path, args) => ({ exit_code: 0, stdout: args[1] === "HEAD" ? "new-sha\n" : "/repo\n", stderr: "" }) };
   expect(await new RepositoryPreparationOperation(git).execute({ repository_path: "/repo", expected_head: "selected-sha" }))

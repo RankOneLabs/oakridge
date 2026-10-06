@@ -3,6 +3,11 @@ import { githubIdentityFromRemote } from "../../runtime/project-identity";
 import type { ProviderResult, ProviderCallOptions } from "../provider";
 
 export interface RepositoryPreparationInput { readonly repository_path: string; readonly expected_head: string | null }
+/**
+ * `repository_path` echoes the selected input path verbatim: the parent scope joins the
+ * prepared references back to its repositories by that key, so it must not be the
+ * canonical toplevel git reports (which differs for a trailing slash, subdirectory or symlink).
+ */
 export interface RepositoryPreparationResult { readonly repository_path: string; readonly head: string; readonly push_remote_owner: string }
 
 /** A selected leaf operation. Its result is a durable input fact for a later action. */
@@ -24,6 +29,6 @@ export class RepositoryPreparationOperation {
     if (remote.exit_code !== 0) return { kind: "permanently_rejected", code: "worktree_unrecoverable", detail: `push remote unavailable: ${remote.stderr}` };
     const identity = githubIdentityFromRemote(remote.stdout);
     if (!identity) return { kind: "permanently_rejected", code: "worktree_unrecoverable", detail: "push remote is not a GitHub repository" };
-    return { kind: "acknowledged", value: { repository_path: root.stdout.trim(), head: sha, push_remote_owner: identity.owner } };
+    return { kind: "acknowledged", value: { repository_path: input.repository_path, head: sha, push_remote_owner: identity.owner } };
   }
 }
