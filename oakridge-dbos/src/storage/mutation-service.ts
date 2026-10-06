@@ -10,6 +10,7 @@ import { requestDigest, findReceipt, type IngressIdentity } from "./receipts";
 import { readSnapshot, type AuthoritySnapshot } from "./snapshot-reader";
 import type { RunId, ScopeId } from "./schema-records";
 import type { TransactionalSqlExecutor } from "./sql-executor";
+import { readPinnedPrompt } from "./storage-validator";
 
 export interface CompileRequest { readonly bundle: DefinitionBundle }
 export interface CompileResult { readonly program: CompiledBundle }
@@ -72,6 +73,13 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
   return {
     compile: (request) => compileBundle(core, request),
     async pinDefinition(request) {
+      if (!Array.isArray(request.bundle.prompts) || request.bundle.prompts.some((prompt) =>
+        !prompt || typeof prompt.key !== "string" || typeof prompt.path !== "string" || typeof prompt.content_digest !== "string"))
+        return error("pin_definition", request.bundle.key, "malformed prompt declaration");
+      for (const prompt of request.bundle.prompts) {
+        const resolved = readPinnedPrompt(prompt);
+        if (!resolved.ok) return { ok: false, error: { ...resolved.error, operation: "pin_definition" } };
+      }
       const compiled = await compileBundle(core, request);
       if (!compiled.ok) return compiled;
       try {

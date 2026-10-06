@@ -1,4 +1,8 @@
-{
+import type { DecisionTree, WorkflowDefinitionDescriptor as DefinitionBundle, SchemaField } from "./source-contracts";
+import { defineBundle } from "./builder";
+
+/** The checked-in JSON bundles are generated from this typed Rust source model. */
+const common: DefinitionBundle = defineBundle({
   "language_version": 1,
   "key": "development",
   "version": 2,
@@ -12321,4 +12325,129 @@
     "max_depth": 64,
     "evaluation_budget": 20000
   }
+});
+
+const independentImplementationNode: DecisionTree = {
+  "kind": "match",
+  "id": "independent_parent_phase",
+  "value": {
+    "kind": "reference",
+    "root": {
+      "kind": "state"
+    },
+    "path": []
+  },
+  "cases": [
+    {
+      "variant": "implementing",
+      "node": {
+        "kind": "if",
+        "id": "independent_all_terminal",
+        "condition": {
+          "kind": "reference",
+          "root": {
+            "kind": "children_complete",
+            "key": "implementation",
+            "schema": "flag"
+          },
+          "path": []
+        },
+        "then": {
+          "kind": "apply",
+          "id": "independent_advance",
+          "mutations": [
+            {
+              "kind": "set_state",
+              "value": {
+                "kind": "variant",
+                "schema": "phase_root",
+                "variant": "integrating",
+                "value": {
+                  "kind": "literal",
+                  "schema": "unit",
+                  "value": {}
+                }
+              }
+            },
+            {
+              "kind": "activate_child",
+              "key": "integration"
+            }
+          ],
+          "actions": [],
+          "outcome": null
+        },
+        "otherwise": {
+          "kind": "wait",
+          "id": "independent_pending",
+          "continuations": [
+            "implementation_finished"
+          ],
+          "reason": "awaiting declared work or operator review",
+          "attention": {
+            "label": "Awaiting work or review",
+            "trigger": "implementation_finished"
+          }
+        }
+      }
+    }
+  ],
+  "otherwise": {
+    "kind": "wait",
+    "id": "independent_stale",
+    "continuations": [
+      "implementation_finished"
+    ],
+    "reason": "awaiting declared work or operator review",
+    "attention": {
+      "label": "Awaiting work or review",
+      "trigger": "implementation_finished"
+    }
+  }
+};
+
+export interface DevelopmentOptions { readonly independentSiblings: boolean }
+
+function rotateOwnerFields(fields: SchemaField[]): SchemaField[] {
+  return [...fields.slice(0, 2), ...fields.slice(3, 5), fields[2]!];
+}
+
+function implementationNode(tree: DecisionTree): DecisionTree {
+  if (tree.kind !== "match") throw new Error("development root tree is not a match");
+  return { ...tree, cases: tree.cases.map((entry, index) => index === 5 ? { ...entry, node: independentImplementationNode } : entry) };
+}
+
+function rotatePullRequestInput(scope: DefinitionBundle["scopes"][number]): DefinitionBundle["scopes"][number] {
+  if (scope.key !== "implementation" && scope.key !== "final_integration") return scope;
+  const workerIndex = scope.key === "implementation" ? 2 : 1;
+  return { ...scope, workers: scope.workers.map((worker, index) => {
+    if (index !== workerIndex) return worker;
+    return { ...worker, actions: worker.actions.map((action, actionIndex) => {
+      if (actionIndex !== 0 || action.input.kind !== "record") return action;
+      return { ...action, input: { ...action.input, fields: action.input.fields.map((field, fieldIndex) => {
+        if (fieldIndex !== 0 || field.value.kind !== "record") return field;
+        return { ...field, value: { ...field.value, fields: [...field.value.fields.slice(0, 2), ...field.value.fields.slice(3, 5), field.value.fields[2]!] } };
+      }) } };
+    }) };
+  }) };
+}
+
+export function buildDevelopment(options: DevelopmentOptions): DefinitionBundle {
+  if (!options.independentSiblings) return structuredClone(common);
+  return {
+    ...common,
+    key: "development-independent-siblings",
+    schemas: common.schemas.map((schema, index) => {
+      if (schema.shape.kind !== "record") return schema;
+      if (index === 20) return { ...schema, shape: { ...schema.shape, fields: [schema.shape.fields[0]!, schema.shape.fields[2]!, schema.shape.fields[1]!, ...schema.shape.fields.slice(3)] } };
+      if (index === 107) return { ...schema, shape: { ...schema.shape, fields: rotateOwnerFields(schema.shape.fields) } };
+      return schema;
+    }),
+    scopes: common.scopes.map((scope, index) => {
+      if (index === 0) return { ...scope, tree: implementationNode(scope.tree) };
+      const rotated = rotatePullRequestInput(scope);
+      if (index === 5) return { ...rotated, pools: rotated.pools.map((pool, poolIndex) => poolIndex === 0 ? { ...pool, limit: 2 } : pool) };
+      return rotated;
+    }),
+  };
 }

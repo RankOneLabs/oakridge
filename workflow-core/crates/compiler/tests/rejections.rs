@@ -474,10 +474,10 @@ fn unsupported_language_version() {
     );
 }
 #[test]
-fn missing_prompt_content() {
+fn missing_prompt_content_digest() {
     reject(
         fixture(),
-        |v| v["prompts"][0]["content"] = json!(""),
+        |v| v["prompts"][0]["content_digest"] = json!(""),
         DomainErrorKind::UnresolvedContent,
     );
 }
@@ -830,10 +830,15 @@ fn semantically_identical_json_object_order_has_same_digest() {
     );
 }
 #[test]
-fn prompt_content_is_part_of_bundle_pin() {
+fn prompt_content_digest_is_part_of_bundle_pin() {
     let a: DefinitionBundle = serde_json::from_value(fixture()).unwrap();
     let mut b = a.clone();
-    b.prompts[0].content.push('!');
+    let replacement = if b.prompts[0].content_digest.starts_with('a') {
+        "b"
+    } else {
+        "a"
+    };
+    b.prompts[0].content_digest.replace_range(0..1, replacement);
     assert_ne!(
         compile(&a, &a.operations).unwrap().digest,
         compile(&b, &b.operations).unwrap().digest
