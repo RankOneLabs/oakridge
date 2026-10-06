@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 import type { DefinitionBundle, ReferenceRoot } from "../src/core-client/generated-contracts";
+import { observationRootKey } from "../src/core-client/observation-roots";
 import { readSnapshot, type AuthoritySnapshot } from "../src/storage/snapshot-reader";
 import { stagePublications } from "../src/storage/stage-publications";
 import { commitDecision, measureAuthoritySnapshot } from "../src/storage/commit";
@@ -67,8 +68,11 @@ test("write-boundary measurement uses the roots sent for a scope with workers, c
   await db.query("INSERT INTO authority.output_slot (id,scope_id,output_key,collection_key,current_revision_id) VALUES ('slot','owner','document','a','revision')", []);
   const trigger = { id: "trigger", key: "begin", payload: unit };
   const sent = (await readSnapshot(db, "owner" as ScopeId, trigger))!;
-  const measurement = measureAuthoritySnapshot(sent);
-  expect(measurement.roots).toEqual(sent.reads);
+  // Every non-trigger root the reader was sent must materialise as an observation, so
+  // the Committed outcome below proves the write-boundary re-read measured the same set.
+  const observed = sent.snapshot.observations.map((item) => observationRootKey(item.root)).sort();
+  expect(observed).toEqual(sent.reads.filter((root) => root.kind !== "trigger").map(observationRootKey).sort());
+  expect(measureAuthoritySnapshot(sent).largest_roots.map((item) => item.root).sort()).toEqual(sent.snapshot.observations.map((item) => JSON.stringify(item.root)).sort());
   const result = await commitDecision(db, { identity: { run_id: "run" as RunId, scope_id: "owner" as ScopeId,
     ingress_id: "trigger", request_digest: "digest" }, read_set: sent.read_set, operator_version: null,
     decision: { kind: "wait", reason: "pause", continuations: [], explanation: { bundle_digest: "digest", node_id: "n",
