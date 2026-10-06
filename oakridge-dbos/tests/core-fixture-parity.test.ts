@@ -21,13 +21,13 @@ function startClient(path = binary, deadlineMs = 2_000, maxPendingRequests = 64)
 test("shared fixture round trips through all five real binary operations", async () => {
   const client = startClient();
   try {
-    const common = { bundle, available_operations: bundle.operations };
+    const common = { bundle };
     const operations = [
       ["compile", common, "compiled"],
       ["validate_payload", { ...common, schema: "unit", payload: {} }, "validated"],
       ["evaluate", { ...common, snapshot: snapshot() }, "evaluated"],
       ["materialize", { bundle: await Bun.file(resolve(root, "workflow-core/fixtures/bundles/children-1.json")).json() as DefinitionBundle,
-        available_operations: bundle.operations, snapshot: snapshot({ ...bundle, root: "batch" }), template: "item_0" }, "materialized"],
+        snapshot: snapshot({ ...bundle, root: "batch" }), template: "item_0" }, "materialized"],
       ["explain", { ...common, snapshot: snapshot() }, "explained"],
     ] as const;
     for (const [operation, input, kind] of operations) {
@@ -41,28 +41,28 @@ test("one, five, six and seven children execute through the same real binary", a
   const client = startClient();
   try { for (const count of [1, 5, 6, 7]) {
     const source: DefinitionBundle = await Bun.file(resolve(root, `workflow-core/fixtures/bundles/children-${count}.json`)).json();
-    const result = await client.request("evaluate", { bundle: source, available_operations: source.operations, snapshot: snapshot(source) });
+    const result = await client.request("evaluate", { bundle: source, snapshot: snapshot(source) });
     if (!result.ok || result.value.kind !== "evaluated" || result.value.value.kind !== "apply") throw new Error(JSON.stringify(result));
     expect(result.value.value.mutations.filter((mutation) => mutation.kind === "activate_child")).toHaveLength(count);
   } } finally { client.close(); }
 });
 test("domain rejection remains distinct from transport failure", async () => {
   const client = startClient();
-  try { expect(await client.request("validate_payload", { bundle, available_operations: bundle.operations, schema: "unit", payload: "wrong" }))
+  try { expect(await client.request("validate_payload", { bundle, schema: "unit", payload: "wrong" }))
     .toMatchObject({ ok: false, error: { kind: "domain", detail: { kind: "invalid_payload" } } }); }
   finally { client.close(); }
 });
 test("concurrent callers retain explicit request correlation", async () => {
   const client = startClient();
   try { const results = await Promise.all(Array.from({ length: 8 }, (_, index) => client.request("validate_payload", {
-    bundle, available_operations: bundle.operations, schema: "text", payload: String(index) })));
+    bundle, schema: "text", payload: String(index) })));
     expect(results.map((result) => result.ok && result.value.kind === "validated" && result.value.value.data.kind === "string" ? result.value.value.data.value : null))
       .toEqual(Array.from({ length: 8 }, (_, index) => String(index)));
   } finally { client.close(); }
 });
 test("killed child reports typed termination", async () => {
   const client = startClient(); client.close();
-  expect(await client.request("compile", { bundle, available_operations: bundle.operations })).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "terminated_child" } } });
+  expect(await client.request("compile", { bundle })).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "terminated_child" } } });
 });
 test("failed child start returns a transport result", () => {
   expect(CoreClient.start({ binary: resolve(tmpdir(), "missing-workflow-core-binary"), deadlineMs: 100 })).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "terminated_child" } } });
@@ -124,7 +124,7 @@ test("unsupported version has its own transport kind", () => expect(rawFrame(JSO
 test("oversized payload has its own transport kind", () => expect(rawFrame("x".repeat(1_048_577)).result.value.kind).toBe("oversized_payload"));
 test("unknown operation has its own transport kind", () => expect(rawFrame(JSON.stringify({ version: CORE_PROTOCOL_VERSION, request_id: "r", operation: "missing", input: {} })).result.value.kind).toBe("unknown_operation"));
 test("duplicate JSON keys are rejected before overwrite", () => {
-  const frame = JSON.stringify({ version: CORE_PROTOCOL_VERSION, request_id: "duplicate", operation: "compile", input: { bundle, available_operations: bundle.operations } }).replace('"language_version":1', '"language_version":1,"language_version":2');
+  const frame = JSON.stringify({ version: CORE_PROTOCOL_VERSION, request_id: "duplicate", operation: "compile", input: { bundle } }).replace('"language_version":1', '"language_version":1,"language_version":2');
   expect(rawFrame(frame).result.value.kind).toBe("duplicate_symbol");
 });
 test("compile response echoes the request ID and omits the checked source", () => {
@@ -139,10 +139,10 @@ async function withChild(scriptBody: string, run: (client: CoreClient) => Promis
   try { await run(client); } finally { client.close(); rmSync(directory, { recursive: true, force: true }); }
 }
 test("mismatched request ID is rejected", () => withChild(`IFS= read -r line\nprintf '%s\\n' '{\"version\":${CORE_PROTOCOL_VERSION},\"request_id\":\"wrong\",\"truncated\":false,\"result\":{\"status\":\"ok\",\"value\":{\"kind\":\"validated\",\"value\":{\"schema\":\"flag\",\"data\":{\"kind\":\"boolean\",\"value\":true}}}}}'`, async (client) => {
-  expect(await client.request("compile", { bundle, available_operations: bundle.operations })).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "mismatched_request_id" } } });
+  expect(await client.request("compile", { bundle })).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "mismatched_request_id" } } });
 }));
 test("malformed success payload fails the generated decoder", () => withChild(`IFS= read -r line\nprintf '%s\\n' '{\"version\":${CORE_PROTOCOL_VERSION},\"request_id\":\"1\",\"truncated\":false,\"result\":{\"status\":\"ok\",\"value\":{}}}'`, async (client) => {
-  expect(await client.request("compile", { bundle, available_operations: bundle.operations })).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "malformed_frame" } } });
+  expect(await client.request("compile", { bundle })).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "malformed_frame" } } });
 }));
 function stringResponseAtSize(bytes: number): string {
   const response = (value: string) => JSON.stringify({ version: CORE_PROTOCOL_VERSION, request_id: "1", truncated: false,
@@ -151,14 +151,14 @@ function stringResponseAtSize(bytes: number): string {
 }
 test("response at the configured response boundary is accepted", () => withChild(
   `IFS= read -r line\nprintf '%s\\n' '${stringResponseAtSize(CORE_MAX_RESPONSE_BYTES)}'`, async (client) => {
-    expect((await client.request("compile", { bundle, available_operations: bundle.operations })).ok).toBe(true);
+    expect((await client.request("compile", { bundle })).ok).toBe(true);
   }));
 test("response above configured response quarantines the child and fails all pending callers", () => withChild(
   `IFS= read -r line\nprintf '%s\\n' '${stringResponseAtSize(CORE_MAX_RESPONSE_BYTES + 1)}'`, async (client) => {
-    const responses = await Promise.all([client.request("compile", { bundle, available_operations: bundle.operations }),
-      client.request("compile", { bundle, available_operations: bundle.operations })]);
+    const responses = await Promise.all([client.request("compile", { bundle }),
+      client.request("compile", { bundle })]);
     for (const response of responses) expect(response).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "oversized_payload" } } });
-    expect(await client.request("compile", { bundle, available_operations: bundle.operations }))
+    expect(await client.request("compile", { bundle }))
       .toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "terminated_child" } } });
   }));
 test("safe integer endpoints round trip exactly through the real binary", async () => {
@@ -167,7 +167,7 @@ test("safe integer endpoints round trip exactly through the real binary", async 
     { key: "number", shape: { kind: "integer", min: Number.MIN_SAFE_INTEGER, max: Number.MAX_SAFE_INTEGER } }] };
   try {
     for (const value of [Number.MIN_SAFE_INTEGER, Number.MAX_SAFE_INTEGER]) {
-      expect(await client.request("validate_payload", { bundle: source, available_operations: source.operations, schema: "number", payload: value }))
+      expect(await client.request("validate_payload", { bundle: source, schema: "number", payload: value }))
         .toMatchObject({ ok: true, value: { kind: "validated", value: { data: { kind: "integer", value } } } });
     }
   } finally { client.close(); }
@@ -175,10 +175,10 @@ test("safe integer endpoints round trip exactly through the real binary", async 
 test("unsafe request metadata is rejected before sending and leaves the child usable", async () => {
   const client = startClient();
   try {
-    expect(await client.request("evaluate", { bundle, available_operations: bundle.operations,
+    expect(await client.request("evaluate", { bundle,
       snapshot: { ...snapshot(), version: Number.MAX_SAFE_INTEGER + 1 } }))
       .toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "malformed_frame" } } });
-    expect((await client.request("compile", { bundle, available_operations: bundle.operations })).ok).toBe(true);
+    expect((await client.request("compile", { bundle })).ok).toBe(true);
   } finally { client.close(); }
 });
 test("unserializable bundle is a typed transport failure, not a rejected promise", async () => {
@@ -197,22 +197,22 @@ test("unserializable bundle is a typed transport failure, not a rejected promise
 });
 test("raw unsafe snapshot metadata cannot enter the Rust evaluator", () => {
   expect(rawFrame(JSON.stringify({ version: CORE_PROTOCOL_VERSION, request_id: "wide", operation: "evaluate", input: {
-    bundle, available_operations: bundle.operations, snapshot: { ...snapshot(), random_seed: Number.MAX_SAFE_INTEGER + 1 } } })))
+    bundle, snapshot: { ...snapshot(), random_seed: Number.MAX_SAFE_INTEGER + 1 } } })))
     .toMatchObject({ request_id: "wide", result: { status: "transport_error", value: { kind: "malformed_frame" } } });
 });
 test("unsafe integer success payload quarantines the child", () => withChild(
   `IFS= read -r line\nprintf '%s\\n' '${JSON.stringify({ version: CORE_PROTOCOL_VERSION, request_id: "1", truncated: false,
     result: { status: "ok", value: { kind: "validated", value: { schema: "number", data: { kind: "integer", value: Number.MAX_SAFE_INTEGER + 1 } } } } })}'`, async (client) => {
-    expect(await client.request("compile", { bundle, available_operations: bundle.operations }))
+    expect(await client.request("compile", { bundle }))
       .toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "malformed_frame" } } });
   }));
 test("unresponsive child hits deadline and is quarantined", () => withChild("IFS= read -r line\nsleep 1", async (client) => {
-  expect(await client.request("compile", { bundle, available_operations: bundle.operations })).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "unresponsive_child" } } });
-  expect(await client.request("compile", { bundle, available_operations: bundle.operations })).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "terminated_child" } } });
+  expect(await client.request("compile", { bundle })).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "unresponsive_child" } } });
+  expect(await client.request("compile", { bundle })).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "terminated_child" } } });
 }, 20));
 test("bounded queue refuses excess callers without discarding pending request", () => withChild("IFS= read -r line\nsleep 1", async (client) => {
-  const first = client.request("compile", { bundle, available_operations: bundle.operations });
-  expect(await client.request("compile", { bundle: { ...bundle, key: "second" }, available_operations: bundle.operations })).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "queue_full" } } });
+  const first = client.request("compile", { bundle });
+  expect(await client.request("compile", { bundle: { ...bundle, key: "second" } })).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "queue_full" } } });
   await first;
 }, 20, 1));
 
@@ -223,7 +223,7 @@ test("shared invalid compiler corpus retains typed diagnostics through the real 
   try {
     for (const entry of cases) {
       const source: DefinitionBundle = await Bun.file(resolve(directory, entry.file)).json();
-      expect(await client.request("compile", { bundle: source, available_operations: source.operations }))
+      expect(await client.request("compile", { bundle: source }))
         .toMatchObject({ ok: false, error: { kind: "domain", detail: { kind: entry.expected } } });
     }
   } finally { client.close(); }

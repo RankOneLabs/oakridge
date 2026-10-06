@@ -2,9 +2,10 @@ import { CORE_MAX_FRAME_BYTES, CORE_MAX_RESPONSE_BYTES, CORE_PROTOCOL_VERSION, d
 import { transportFailure, type CoreResult } from "./transport-errors";
 interface Pending { readonly resolve: (result: CoreResult<Output>) => void; readonly timeout: ReturnType<typeof setTimeout> }
 type RequestInput<O extends CoreRequest["operation"]> = Extract<CoreRequest, { readonly operation: O }>["input"];
+/** Callers hand over the source bundle; the client compiles once, caches the digest and addresses by it. */
 type ClientInput<O extends CoreRequest["operation"]> = O extends "compile"
-  ? { readonly bundle: DefinitionBundle; readonly available_operations?: readonly DefinitionBundle["operations"][number][] }
-  : Omit<RequestInput<O>, "bundle_digest"> & { readonly bundle: DefinitionBundle; readonly available_operations?: readonly DefinitionBundle["operations"][number][] };
+  ? { readonly bundle: DefinitionBundle }
+  : Omit<RequestInput<O>, "bundle_digest"> & { readonly bundle: DefinitionBundle };
 export interface CoreClientOptions { readonly binary: string; readonly args?: readonly string[]; readonly deadlineMs: number; readonly maxPendingRequests?: number }
 const MAX_FRAME_BYTES = CORE_MAX_FRAME_BYTES;
 const MAX_RESPONSE_BYTES = CORE_MAX_RESPONSE_BYTES;
@@ -111,7 +112,7 @@ export class CoreClient {
       digest = this.digestFor(cacheKey);
     }
     if (!digest) return transportFailure("malformed_frame", "compile did not return a digest");
-    const { bundle: _bundle, available_operations: _available, ...rest } = input;
+    const { bundle: _bundle, ...rest } = input;
     let result = await this.send(operation, { ...rest, bundle_digest: digest } as unknown as RequestInput<O>);
     if (!result.ok && result.error.kind === "domain" && result.error.detail.kind === "unknown_bundle") {
       const compiled = await this.compileBundle(bundle, cacheKey);

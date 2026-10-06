@@ -17,7 +17,7 @@ function client(): CoreClient {
 }
 
 async function checked(core: CoreClient, schema: string, payload: unknown): Promise<CheckedValue> {
-  const result = await core.request("validate_payload", { bundle, available_operations: bundle.operations, schema, payload });
+  const result = await core.request("validate_payload", { bundle, schema, payload });
   if (!result.ok || result.value.kind !== "validated") throw new Error(JSON.stringify(result));
   return result.value.value;
 }
@@ -32,7 +32,7 @@ function snapshot(scope: string, input: CheckedValue, state_schema: string, stat
 test("development declaration compiles against the generic core", async () => {
   const core = client();
   try {
-    const result = await core.request("compile", { bundle, available_operations: bundle.operations });
+    const result = await core.request("compile", { bundle });
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value.kind).toBe("compiled");
   } finally { core.close(); }
@@ -59,7 +59,7 @@ test("root selects repository preparation from the repository configuration coll
   try {
     const config = { runtime: "codex", workdir: "/tmp", session_name: "development" };
     const root_input = await checked(core, "run_input", { spec: "Implement feature", repositories: [repository], analysis: config, planning: config, briefs: config });
-    const result = await core.request("evaluate", { bundle, available_operations: bundle.operations,
+    const result = await core.request("evaluate", { bundle,
       snapshot: snapshot("development", root_input, "phase_root", "ready", "begin") });
     expect(result).toMatchObject({ ok: true, value: { kind: "evaluated", value: { kind: "apply", mutations: expect.arrayContaining([expect.objectContaining({ kind: "activate_collection", key: "prepare" })]) } } });
   } finally { core.close(); }

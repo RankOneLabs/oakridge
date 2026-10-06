@@ -123,7 +123,7 @@ test("run cancellation evaluates each scope's declared cancellation policy and r
       tree: { ...child.tree, cases: child.tree.cases.map((item) => item.variant === "cancel" ? { variant: "halt_child", node: { kind: "apply" as const, id: "child-policy", actions: [], mutations: [{ kind: "revoke" as const, worker: "author" }, { kind: "stop" as const, worker: "author" }], outcome: { kind: "literal" as const, schema: "result", value: { kind: "released", value: {} } } } } : item.variant === "publish" && item.node.kind === "apply" ? { ...item, node: { ...item.node, outcome: { kind: "literal" as const, schema: "result", value: { kind: "withdrawn", value: {} } } } } : item),
         otherwise: { kind: "wait" as const, id: "child-wait", continuations: ["publish", "halt_child"], reason: "waiting", attention: { label: "Waiting", trigger: "publish" } } } }] };
     const mutations = createMutationService(db, core);
-    const run = await mutations.startRun({ bundle, available_operations: bundle.operations, input: {} });
+    const run = await mutations.startRun({ bundle, input: {} });
     if (!run.ok) throw new Error(JSON.stringify(run.error));
     const input = { run_id: run.value.run_id, scope_id: run.value.root_scope_id, ingress_id: "begin", trigger: { id: "begin", key: "begin", payload: unit }, operator_version: null };
     expect(await mutations.decide(input)).toMatchObject({ ok: true, value: { kind: "Committed" } });

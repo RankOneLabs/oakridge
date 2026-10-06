@@ -68,7 +68,7 @@ test("snapshot records output, export, resource, collection and capacity members
     const core = CoreClient.start({ binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), deadlineMs: 10_000 });
     if (!core.ok) throw new Error("workflow-cli did not start");
     try {
-      const evaluated = await core.value.request("evaluate", { bundle, available_operations: bundle.operations, snapshot: source!.snapshot });
+      const evaluated = await core.value.request("evaluate", { bundle, snapshot: source!.snapshot });
       expect(evaluated).toMatchObject({ ok: true, value: { kind: "evaluated", value: { kind: "apply", outcome: { schema: "result", data: { kind: "variant", variant: "released" } } } } });
     } finally { core.value.close(); }
     await db.query("UPDATE authority.child_collection SET version=version+1 WHERE id='members'", []);

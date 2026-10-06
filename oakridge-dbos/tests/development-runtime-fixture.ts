@@ -27,13 +27,13 @@ export async function runtimeFixture(db: TransactionalSqlExecutor, bundle: Defin
   if (!started.ok) throw new Error(started.error.detail.detail);
   const core = started.value;
   const mutations = createMutationService(db, core);
-  const run = await mutations.startRun({ bundle, available_operations: bundle.operations, input });
+  const run = await mutations.startRun({ bundle, input });
   if (!run.ok) { core.close(); throw new Error(JSON.stringify(run.error)); }
   const app = new Hono();
   installDefinitionApi(app, { db, core, mutations, wake: async () => {} });
   const { run_id, root_scope_id } = run.value;
   const checked = async (schema: string, payload: unknown): Promise<CheckedValue> => {
-    const response = await core.request("validate_payload", { bundle, available_operations: bundle.operations, schema, payload });
+    const response = await core.request("validate_payload", { bundle, schema, payload });
     if (!response.ok || response.value.kind !== "validated") throw new Error(JSON.stringify(response));
     return response.value.value;
   };

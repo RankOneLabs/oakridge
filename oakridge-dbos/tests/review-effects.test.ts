@@ -19,7 +19,7 @@ async function withSelection(input: SelectionInput, operation: (fixture: Selecte
     const core = started_core.value;
     try {
       const mutations = createMutationService(db, core);
-      const run = await mutations.startRun({ ...input, available_operations: input.bundle.operations });
+      const run = await mutations.startRun({ ...input });
       if (!run.ok) throw new Error(JSON.stringify(run.error));
       const result = await mutations.decide({ run_id: run.value.run_id, scope_id: run.value.root_scope_id, ingress_id: "begin", trigger: { id: "begin", key: "begin", payload: unit }, operator_version: null });
       if (!result.ok || result.value.kind !== "Committed") throw new Error(JSON.stringify(result));

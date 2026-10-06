@@ -28,7 +28,7 @@ for (const cut of cuts) {
       const core = started_core.value;
       const mutations = createMutationService(db, core);
       const bundle: DefinitionBundle = await Bun.file(resolve(import.meta.dir, "../../workflow-core/fixtures/bundles/minimal.json")).json();
-      const started = await mutations.startRun({ bundle, available_operations: bundle.operations, input: {} });
+      const started = await mutations.startRun({ bundle, input: {} });
       if (!started.ok) throw new Error(JSON.stringify(started.error));
       const run = started.value;
       const begin = { run_id: run.run_id, scope_id: run.root_scope_id, ingress_id: "begin", trigger: { id: "begin", key: "begin", payload: unit }, operator_version: null };

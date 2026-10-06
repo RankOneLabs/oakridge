@@ -34,7 +34,7 @@ export function installSelectedEvidenceApi(app: Hono, deps: EvidenceDependencies
     const fact = selected?.source.scopes.find((scope) => scope.key === selected.scope_key)?.facts.find((fact) => fact.key === key);
     if (!selected || !fact || !selected.payload.invocation.selection.definition.settings.some((setting) => setting.key === "evidence_fact" && setting.value === key))
       return c.json({ error: "selected execution cannot supply this fact" }, 422);
-    const checked = await deps.core.request("validate_payload", { bundle: selected.source, available_operations: selected.source.operations, schema: fact.payload_schema, payload: raw.payload });
+    const checked = await deps.core.request("validate_payload", { bundle: selected.source, schema: fact.payload_schema, payload: raw.payload });
     if (!checked.ok || checked.value.kind !== "validated") return c.json({ error: "evidence does not match its checked schema" }, 422);
     const result = await deps.mutations.decide({ run_id, scope_id, execution_authority: execution_id, request_digest: digest,
       ingress_id: raw.request_id, trigger: { id: raw.request_id, key, payload: checked.value.value }, operator_version: null });

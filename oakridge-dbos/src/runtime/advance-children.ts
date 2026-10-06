@@ -109,7 +109,7 @@ export async function advanceChildren({ db, core, mutations, run_ids }: ChildAdv
   async function deliver(scope: ScopeInstanceRecord, key: string, id: string, schema: string): Promise<void> {
     const bundle = bundles.get(scope.run_id);
     if (!bundle) throw new Error(`lifecycle bundle missing: ${scope.run_id}`);
-    const checked = await core.request("validate_payload", { bundle, available_operations: bundle.operations, schema, payload: {} });
+    const checked = await core.request("validate_payload", { bundle, schema, payload: {} });
     if (!checked.ok || checked.value.kind !== "validated") throw new Error(`invalid configured lifecycle payload: ${scope.id}/${key}`);
     const result = await mutations.decide({ run_id: scope.run_id, scope_id: scope.id as ScopeId, ingress_id: id,
       trigger: { id, key, payload: checked.value.value }, operator_version: null });
