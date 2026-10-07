@@ -40,6 +40,21 @@ test("handlers, adapters and observers cannot reach domain writes without crossi
   expect(entries.length).toBeGreaterThan(0);
   expect(labels(root, mutationViolations(graph, entries, mutationEntry))).toEqual([]);
 });
+test("state ownership inventory names each commit function and cites its write line", () => {
+  const inventory = readFileSync(resolve(root, "comms/oakridge-state-ownership-inventory.md"), "utf8");
+  const rows = inventory.split("\n").filter((line) => line.startsWith("| ") && !line.startsWith("| State") && !line.startsWith("| ---"));
+  expect(rows.length).toBeGreaterThanOrEqual(18);
+  for (const row of rows) {
+    const writer = row.split("|")[2] ?? "";
+    expect(writer).toMatch(/`(?:createMutationService\.[A-Za-z]+|[A-Za-z]+)(?:`|` → `| → )/);
+    const citations = [...writer.matchAll(/(oakridge-dbos\/src\/storage\/[\w-]+\.ts):(\d+)/g)];
+    expect(citations.length).toBeGreaterThan(0);
+    for (const [, path, line] of citations) {
+      const source_line = readFileSync(resolve(root, path!), "utf8").split("\n")[Number(line) - 1];
+      expect(source_line).toMatch(/INSERT|UPDATE|DELETE|SET /);
+    }
+  }
+});
 test("an indirect storage write fails the mutation boundary, but one behind the service passes", () => {
   const http = resolve(root, "oakridge-dbos/src/http/app.ts");
   const node = injected("oakridge-dbos/src/storage/injected.ts", 'tx.query("UPDATE authority.scope_instance SET version=version+1")');
