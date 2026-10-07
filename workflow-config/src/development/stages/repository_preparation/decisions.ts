@@ -51,6 +51,7 @@ export const prepare_dispatch: DecisionTree = {
     { variant: "begin", node: prepare_begin },
     { variant: "retry_preparation", node: prepare_retry },
     { variant: "prepared", node: prepared },
+    { variant: "provider_start_failed", node: { ...prepare_abandon, id: "prepare_provider_start_failed" } },
     { variant: "cancel", node: prepare_cancel },
     { variant: "abandon", node: prepare_abandon }
   ],

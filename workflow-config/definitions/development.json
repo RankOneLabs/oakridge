@@ -4375,6 +4375,10 @@
         {
           "key": "prepared",
           "payload_schema": "repo_result"
+        },
+        {
+          "key": "provider_start_failed",
+          "payload_schema": "text"
         }
       ],
       "outputs": [],
@@ -4508,6 +4512,34 @@
                 "kind": "variant",
                 "schema": "result",
                 "variant": "complete",
+                "value": {
+                  "kind": "literal",
+                  "schema": "unit",
+                  "value": {}
+                }
+              }
+            }
+          },
+          {
+            "variant": "provider_start_failed",
+            "node": {
+              "kind": "apply",
+              "id": "prepare_provider_start_failed",
+              "mutations": [
+                {
+                  "kind": "revoke",
+                  "worker": "preparation"
+                },
+                {
+                  "kind": "stop",
+                  "worker": "preparation"
+                }
+              ],
+              "actions": [],
+              "outcome": {
+                "kind": "variant",
+                "schema": "result",
+                "variant": "failed",
                 "value": {
                   "kind": "literal",
                   "schema": "unit",
@@ -7346,6 +7378,10 @@
       "facts": [
         {
           "key": "session_failed",
+          "payload_schema": "text"
+        },
+        {
+          "key": "provider_start_failed",
           "payload_schema": "text"
         },
         {
@@ -11262,6 +11298,63 @@
             }
           },
           {
+            "variant": "provider_start_failed",
+            "node": {
+              "kind": "apply",
+              "id": "implementation_provider_start_failed",
+              "mutations": [
+                {
+                  "kind": "revoke",
+                  "worker": "build"
+                },
+                {
+                  "kind": "stop",
+                  "worker": "build"
+                },
+                {
+                  "kind": "revoke",
+                  "worker": "assessment"
+                },
+                {
+                  "kind": "stop",
+                  "worker": "assessment"
+                },
+                {
+                  "kind": "release",
+                  "pool": "implementation_slots"
+                },
+                {
+                  "kind": "export",
+                  "key": "accepted",
+                  "value": {
+                    "kind": "literal",
+                    "schema": "flag",
+                    "value": false
+                  }
+                },
+                {
+                  "kind": "revoke",
+                  "worker": "pr_observer"
+                },
+                {
+                  "kind": "stop",
+                  "worker": "pr_observer"
+                }
+              ],
+              "actions": [],
+              "outcome": {
+                "kind": "variant",
+                "schema": "result",
+                "variant": "failed",
+                "value": {
+                  "kind": "literal",
+                  "schema": "unit",
+                  "value": {}
+                }
+              }
+            }
+          },
+          {
             "variant": "refresh_pr",
             "node": {
               "kind": "apply",
@@ -11523,6 +11616,10 @@
       "facts": [
         {
           "key": "session_failed",
+          "payload_schema": "text"
+        },
+        {
+          "key": "provider_start_failed",
           "payload_schema": "text"
         },
         {
@@ -12377,6 +12474,42 @@
             }
           },
           {
+            "variant": "provider_start_failed",
+            "node": {
+              "kind": "apply",
+              "id": "final_integration_provider_start_failed",
+              "mutations": [
+                {
+                  "kind": "revoke",
+                  "worker": "integrator"
+                },
+                {
+                  "kind": "stop",
+                  "worker": "integrator"
+                },
+                {
+                  "kind": "revoke",
+                  "worker": "pr_observer"
+                },
+                {
+                  "kind": "stop",
+                  "worker": "pr_observer"
+                }
+              ],
+              "actions": [],
+              "outcome": {
+                "kind": "variant",
+                "schema": "result",
+                "variant": "failed",
+                "value": {
+                  "kind": "literal",
+                  "schema": "unit",
+                  "value": {}
+                }
+              }
+            }
+          },
+          {
             "variant": "refresh_pr",
             "node": {
               "kind": "apply",
@@ -12649,7 +12782,16 @@
         "result_fact"
       ],
       "tools": [],
-      "recovery": []
+      "recovery": [
+        {
+          "code": "start_rejected",
+          "fact": "provider_start_failed"
+        },
+        {
+          "code": "start_attempts_exhausted",
+          "fact": "provider_start_failed"
+        }
+      ]
     },
     {
       "key": "session.run",
@@ -12664,6 +12806,14 @@
       "recovery": [
         {
           "code": "session_failed",
+          "fact": "session_failed"
+        },
+        {
+          "code": "start_rejected",
+          "fact": "session_failed"
+        },
+        {
+          "code": "start_attempts_exhausted",
           "fact": "session_failed"
         }
       ]
@@ -12682,6 +12832,14 @@
         {
           "code": "auth",
           "fact": "auth"
+        },
+        {
+          "code": "start_rejected",
+          "fact": "provider_start_failed"
+        },
+        {
+          "code": "start_attempts_exhausted",
+          "fact": "provider_start_failed"
         }
       ]
     }

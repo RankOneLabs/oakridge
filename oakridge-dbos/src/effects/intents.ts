@@ -15,6 +15,10 @@ import type { ExternalHandle, StableInvocation } from "./provider";
  * - `cleanup_confirmed`: a terminal observation (start) or acknowledged stop (stop).
  */
 export type EffectStatus = "pending" | "acknowledged" | "rejected" | "revoked" | "cleanup_pending" | "cleanup_confirmed";
+export type EffectFailure =
+  | { readonly kind: "provider_rejection"; readonly code: string; readonly detail: string }
+  | { readonly kind: "start_attempts_exhausted"; readonly detail: string }
+  | { readonly kind: "observation_rejection"; readonly detail: string };
 export interface EffectPayload {
   readonly invocation: StableInvocation;
   readonly action: "start" | "stop";
@@ -26,6 +30,7 @@ export interface EffectPayload {
   /** Consecutive unavailable observations, persisted across workflow recovery. */
   readonly observe_unavailable_attempts?: number;
   readonly last_detail?: string;
+  readonly failure?: EffectFailure;
   readonly evidence?: Trigger;
   readonly evidence_delivered?: boolean;
   /** A provider start call was issued at least once; an external execution may exist. */

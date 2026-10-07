@@ -798,6 +798,19 @@ fn cancellation_projection_must_satisfy_the_declared_trigger_schema() {
     source.scopes[0].cancellation.payload = LifecyclePayloadProjection::Reason;
     assert!(compile(&source, &source.operations).is_ok());
 }
+
+#[test]
+fn provider_required_start_recovery_must_be_mapped_by_the_bundle() {
+    let mut source: DefinitionBundle = serde_json::from_value(fixture()).unwrap();
+    let mut catalog = ProviderCatalog { operations: source.operations.clone(), providers: vec![
+        ProviderRoute { kind: "stub".into(), input_contract: "unsupported".into() },
+    ] };
+    catalog.operations[0].required_recovery_codes.push("start_exhausted".into());
+    catalog.operations[0].emitted_codes.push("start_exhausted".into());
+    assert_eq!(compile_with_catalog(&source, &catalog).unwrap_err().kind, DomainErrorKind::UndeclaredTrigger);
+    source.operations[0].recovery.push(RecoveryMapping { code: "start_exhausted".into(), fact: SymbolKey("tick".into()) });
+    assert_eq!(compile_with_catalog(&source, &catalog).unwrap_err().kind, DomainErrorKind::IncompatiblePort);
+}
 #[test]
 fn unavailable_pinned_operation_version() {
     let b: DefinitionBundle = serde_json::from_value(fixture()).unwrap();

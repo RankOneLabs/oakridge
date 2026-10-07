@@ -10,11 +10,26 @@
         "result_fact"
       ],
       "tools": [],
-      "recovery": [],
+      "recovery": [
+        {
+          "code": "start_rejected",
+          "fact": "provider_start_failed"
+        },
+        {
+          "code": "start_attempts_exhausted",
+          "fact": "provider_start_failed"
+        }
+      ],
+      "required_recovery_codes": [
+        "start_rejected",
+        "start_attempts_exhausted"
+      ],
       "emitted_codes": [
         "worktree_unrecoverable",
         "head_changed",
-        "invalid_invocation"
+        "invalid_invocation",
+        "start_rejected",
+        "start_attempts_exhausted"
       ]
     },
     {
@@ -31,11 +46,25 @@
         {
           "code": "session_failed",
           "fact": "session_failed"
+        },
+        {
+          "code": "start_rejected",
+          "fact": "session_failed"
+        },
+        {
+          "code": "start_attempts_exhausted",
+          "fact": "session_failed"
         }
+      ],
+      "required_recovery_codes": [
+        "start_rejected",
+        "start_attempts_exhausted"
       ],
       "emitted_codes": [
         "session_failed",
-        "invalid_invocation"
+        "invalid_invocation",
+        "start_rejected",
+        "start_attempts_exhausted"
       ]
     },
     {
@@ -52,13 +81,27 @@
         {
           "code": "auth",
           "fact": "auth"
+        },
+        {
+          "code": "start_rejected",
+          "fact": "provider_start_failed"
+        },
+        {
+          "code": "start_attempts_exhausted",
+          "fact": "provider_start_failed"
         }
+      ],
+      "required_recovery_codes": [
+        "start_rejected",
+        "start_attempts_exhausted"
       ],
       "emitted_codes": [
         "discovery_unsupported",
         "auth",
         "provider_rejected",
-        "invalid_invocation"
+        "invalid_invocation",
+        "start_rejected",
+        "start_attempts_exhausted"
       ]
     }
   ],

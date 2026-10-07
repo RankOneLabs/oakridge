@@ -39,9 +39,10 @@ export type StartOutcome =
 export function startAttemptsExhausted(payload: EffectPayload): boolean {
   return (payload.start_attempts ?? 0) >= payload.invocation.selection.definition.max_attempts;
 }
-function retryStart(payload: EffectPayload): StartOutcome {
+function retryStart(payload: EffectPayload, detail: string): StartOutcome {
   return startAttemptsExhausted(payload)
-    ? { kind: "rejected", payload: { ...payload, last_detail: `start attempts exhausted (${payload.start_attempts}): ${payload.last_detail ?? "provider unavailable"}` } }
+    ? { kind: "rejected", payload: { ...payload, failure: { kind: "start_attempts_exhausted", detail },
+      last_detail: `start attempts exhausted (${payload.start_attempts}): ${detail}` } }
     : { kind: "retry", payload };
 }
 
@@ -50,6 +51,7 @@ export function exhaustStart(payload: EffectPayload): StartOutcome {
   return { kind: "rejected", payload: { ...payload, start_in_flight: false,
     has_uncertain_start: payload.has_uncertain_start === true || payload.start_in_flight === true
       || (payload.start_in_flight === undefined && payload.has_dispatched === true),
+    failure: { kind: "start_attempts_exhausted", detail: `start attempts exhausted (${payload.start_attempts ?? 0}) during recovery` },
     last_detail: `start attempts exhausted (${payload.start_attempts ?? 0}) during recovery` } };
 }
 
@@ -57,7 +59,7 @@ export function resolveStart(payload: EffectPayload, result: ProviderResult<unkn
   const dispatched: EffectPayload = { ...payload, has_dispatched: true, start_attempts: payload.start_attempts ?? 1, start_in_flight: false };
   switch (result.kind) {
     case "acknowledged": {
-      if (!isExternalHandle(result.value)) return retryStart({ ...dispatched, has_uncertain_start: true, last_detail: "provider acknowledged start without a valid handle" });
+      if (!isExternalHandle(result.value)) return retryStart({ ...dispatched, has_uncertain_start: true, last_detail: "provider acknowledged start without a valid handle" }, "provider acknowledged start without a valid handle");
       const handle = result.value;
       if (handle.kind === "completed") {
         const evidence = handle.evidence ? { evidence: handle.evidence } : {};
@@ -66,11 +68,12 @@ export function resolveStart(payload: EffectPayload, result: ProviderResult<unkn
       return { kind: "acknowledged", payload: { ...dispatched, handle } };
     }
     case "permanently_rejected":
-      return { kind: "rejected", payload: { ...dispatched, last_detail: `${result.code}: ${result.detail}`, ...(result.evidence ? { evidence: result.evidence } : {}) } };
+      return { kind: "rejected", payload: { ...dispatched, failure: { kind: "provider_rejection", code: result.code, detail: result.detail },
+        last_detail: `${result.code}: ${result.detail}`, ...(result.evidence ? { evidence: result.evidence } : {}) } };
     case "transiently_unavailable":
-      return retryStart({ ...dispatched, last_detail: result.detail });
+      return retryStart({ ...dispatched, last_detail: result.detail }, result.detail);
     case "uncertain":
-      return retryStart({ ...dispatched, has_uncertain_start: true, last_detail: result.detail });
+      return retryStart({ ...dispatched, has_uncertain_start: true, last_detail: result.detail }, result.detail);
   }
 }
 
@@ -78,18 +81,20 @@ export type ObserveOutcome =
   | { readonly kind: "running" }
   | { readonly kind: "terminal"; readonly payload: EffectPayload; readonly result: CheckedValue }
   | { readonly kind: "rejected"; readonly payload: EffectPayload }
-  | { readonly kind: "retry"; readonly payload: EffectPayload; readonly is_unavailable: boolean };
+  | { readonly kind: "retry"; readonly payload: EffectPayload; readonly is_unavailable: boolean; readonly detail: string };
 
 export function resolveObserve(payload: EffectPayload, result: ProviderResult<TerminalObservation | unknown>): ObserveOutcome {
   if (result.kind === "acknowledged") {
     if (isTerminal(result.value)) return { kind: "terminal", payload: { ...payload, ...(result.value.evidence ? { evidence: result.value.evidence } : {}) }, result: result.value.result };
     if (!!result.value && typeof result.value === "object" && "kind" in result.value && result.value.kind === "running") return { kind: "running" };
     // A malformed terminal observation cannot confirm cleanup.
-    return { kind: "rejected", payload: { ...payload, last_detail: "provider returned a malformed terminal observation" } };
+    return { kind: "rejected", payload: { ...payload, failure: { kind: "observation_rejection", detail: "provider returned a malformed terminal observation" },
+      last_detail: "provider returned a malformed terminal observation" } };
   }
   const detail = result.kind === "permanently_rejected" ? `${result.code}: ${result.detail}` : result.detail;
-  if (result.kind === "permanently_rejected") return { kind: "rejected", payload: { ...payload, last_detail: detail, ...(result.evidence ? { evidence: result.evidence } : {}) } };
-  return { kind: "retry", payload: { ...payload, last_detail: detail }, is_unavailable: result.kind === "transiently_unavailable" };
+  if (result.kind === "permanently_rejected") return { kind: "rejected", payload: { ...payload, failure: { kind: "observation_rejection", detail },
+    last_detail: detail, ...(result.evidence ? { evidence: result.evidence } : {}) } };
+  return { kind: "retry", payload: { ...payload, last_detail: detail }, is_unavailable: result.kind === "transiently_unavailable", detail };
 }
 
 export function settleObserveRetry(payload: EffectPayload, outcome: Extract<ObserveOutcome, { readonly kind: "retry" }>, limit: number):
@@ -98,7 +103,8 @@ export function settleObserveRetry(payload: EffectPayload, outcome: Extract<Obse
   const exhausted = outcome.is_unavailable && attempts >= Math.max(1, limit);
   return { status: exhausted ? "rejected" : "acknowledged",
     payload: { ...outcome.payload, observe_unavailable_attempts: attempts,
-      ...(exhausted ? { last_detail: `observation unavailable after ${attempts} consecutive attempts: ${outcome.payload.last_detail}` } : {}) } };
+      ...(exhausted ? { failure: { kind: "observation_rejection" as const, detail: outcome.detail },
+        last_detail: `observation unavailable after ${attempts} consecutive attempts: ${outcome.detail}` } : {}) } };
 }
 
 export type StopOutcome = { readonly kind: "confirmed" } | { readonly kind: "retry"; readonly detail: string };

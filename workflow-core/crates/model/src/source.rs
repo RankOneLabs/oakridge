@@ -126,6 +126,8 @@ pub struct OperationManifest {
     pub recovery: Vec<RecoveryMapping>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub emitted_codes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_recovery_codes: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]

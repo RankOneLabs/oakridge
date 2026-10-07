@@ -208,7 +208,7 @@ export class CoreClient {
     if (existing) return existing;
     const catalog = { operations: PROVIDER_CATALOG.operations.map((operation) => ({ ...operation,
       settings: [...operation.settings], tools: [...operation.tools], emitted_codes: [...operation.emitted_codes],
-      recovery: operation.recovery.map((mapping) => ({ ...mapping })) })),
+      required_recovery_codes: [...operation.required_recovery_codes], recovery: operation.recovery.map((mapping) => ({ ...mapping })) })),
       providers: PROVIDER_CATALOG.providers.map((provider) => ({ ...provider })) };
     const task = this.send("compile", { bundle, catalog }).then((result) => {
       if (result.ok && result.value.kind === "compiled") this.rememberDigest(cacheKey, result.value.value.digest);

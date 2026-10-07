@@ -68,6 +68,7 @@ export const implementation_dispatch: DecisionTree = {
     { variant: "cancel", node: implementation_cancel },
     { variant: "abandon", node: implementation_abandon },
     { variant: "session_failed", node: { ...implementation_abandon, id: "implementation_session_failed" } },
+    { variant: "provider_start_failed", node: { ...implementation_abandon, id: "implementation_provider_start_failed" } },
     { variant: "refresh_pr", node: refresh_pr },
     { variant: "pr_observed", node: matching_pr_observation }
   ],

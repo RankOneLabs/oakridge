@@ -244,10 +244,15 @@ pub fn compile_with_catalog(source: &DefinitionBundle, catalog: &ProviderCatalog
         }
         let available = catalog.operations.iter().find(|operation| operation.key == requested.key)
             .ok_or_else(|| error(DomainErrorKind::UnavailableOperation, requested.key.to_string(), "operation is absent from the catalog"))?;
-        if !requested.emitted_codes.is_empty() {
-            return Err(error(DomainErrorKind::UnsupportedProvider, requested.key.to_string(), "bundle cannot declare provider-emitted codes"));
+        if !requested.emitted_codes.is_empty() || !requested.required_recovery_codes.is_empty() {
+            return Err(error(DomainErrorKind::UnsupportedProvider, requested.key.to_string(), "bundle cannot declare provider-owned recovery requirements"));
         }
         unique(requested.recovery.iter().map(|mapping| mapping.code.as_str()), &requested.key.0)?;
+        for code in &available.required_recovery_codes {
+            if !requested.recovery.iter().any(|mapping| &mapping.code == code) {
+                return Err(error(DomainErrorKind::UndeclaredTrigger, requested.key.to_string(), format!("required provider recovery code {code} has no trigger mapping")));
+            }
+        }
         for mapping in &requested.recovery {
             if !available.emitted_codes.contains(&mapping.code) {
                 return Err(error(DomainErrorKind::UnsupportedProvider, requested.key.to_string(), format!("provider cannot emit recovery code {}", mapping.code)));

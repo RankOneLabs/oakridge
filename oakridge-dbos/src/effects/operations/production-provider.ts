@@ -56,14 +56,13 @@ interface SessionFailureInput {
   readonly invocation: StableInvocation;
   readonly detail: string;
 }
-/** Host-side observation failures use the same declared recovery fact as failed sessions. */
-export async function recoverSessionFailure({ db, core, invocation, detail }: SessionFailureInput): Promise<ProviderResult<never>> {
-  const failure = { kind: "permanently_rejected" as const, code: PROVIDER_ERROR_CODES.session_failed, detail };
-  if (invocation.request?.kind !== INPUT_CONTRACTS.session) return failure;
+interface ConfiguredFailureInput extends SessionFailureInput { readonly code: string }
+/** Runtime-synthesized failures traverse the same compile-verified mapping as provider failures. */
+export async function recoverConfiguredFailure({ db, core, invocation, code, detail }: ConfiguredFailureInput): Promise<ProviderResult<never>> {
+  const failure = visibleProviderCode(invocation.selection.definition.operation, invocation.selection.definition.contract_version, code, detail);
   const context = await readInvocationContext(db, invocation);
-  const visible = visibleProviderCode(invocation.selection.definition.operation, invocation.selection.definition.contract_version, failure.code, detail);
-  if (!context || visible.code !== failure.code) return visible;
-  const mapping = declaredRecovery(context, invocation, failure.code);
+  if (!context || failure.code !== code) return failure;
+  const mapping = declaredRecovery(context, invocation, code);
   const fact = context.scope.facts.find((item) => item.key === mapping?.fact);
   if (!fact) return failure;
   const checked = await core.request("validate_payload", { bundle: context.bundle, schema: fact.payload_schema, payload: detail });
@@ -71,6 +70,16 @@ export async function recoverSessionFailure({ db, core, invocation, detail }: Se
     : { kind: "transiently_unavailable", detail: JSON.stringify(checked.error) };
   if (checked.value.kind !== "validated") return rejected("core returned a non-validated recovery payload");
   return { ...failure, evidence: { id: `${invocation.id}:error`, key: fact.key, payload: checked.value.value } };
+}
+export async function recoverStartFailure(input: ConfiguredFailureInput): Promise<ProviderResult<never>> {
+  const primary = await recoverConfiguredFailure(input);
+  if (primary.kind !== "permanently_rejected" || primary.evidence) return primary;
+  return recoverConfiguredFailure({ ...input, code: PROVIDER_ERROR_CODES.start_rejected,
+    detail: `${input.code}: ${input.detail}` });
+}
+/** Host-side observation failures use the same declared recovery fact as failed sessions. */
+export function recoverSessionFailure(input: SessionFailureInput): Promise<ProviderResult<never>> {
+  return recoverConfiguredFailure({ ...input, code: PROVIDER_ERROR_CODES.session_failed });
 }
 
 export function createEffectProvider(options: ProductionProviderOptions): EffectProvider {
