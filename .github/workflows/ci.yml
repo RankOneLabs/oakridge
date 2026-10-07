@@ -90,8 +90,23 @@ jobs:
       - run: cd kbbl && bunx playwright install --with-deps chromium
       - run: bun run --filter kbbl test:browser
 
+  oakridge-dbos-unit-tests:
+    name: oakridge-dbos unit tests (bun)
+    needs: workflow-core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: workflow-cli
+          path: workflow-core/target/debug
+      - run: chmod +x workflow-core/target/debug/workflow-cli
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run --filter oakridge-dbos test:unit
+
   oakridge-dbos-tests:
-    name: oakridge-dbos tests (bun, shard ${{ matrix.shard }})
+    name: oakridge-dbos integration tests (bun, shard ${{ matrix.shard }})
     needs: workflow-core
     runs-on: ubuntu-latest
     strategy:
@@ -125,22 +140,12 @@ jobs:
       - run: chmod +x workflow-core/target/debug/workflow-cli
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
-      - name: Run DBOS test shard
-        working-directory: oakridge-dbos
+      - name: Run DBOS integration shard
         env:
           TEST_SHARD: ${{ matrix.shard }}
+          TEST_SHARD_COUNT: "2"
           OAKRIDGE_ENABLE_RAW_INGRESS: "1"
-        shell: bash
-        run: |
-          # Separate processes preserve DBOS global runtime isolation.
-          # Sorted, alternating files cover the suite exactly once.
-          mapfile -d '' test_files < <(find src tests -name '*.test.ts' -print0 | sort -z)
-          test "${#test_files[@]}" -gt 0
-          failed=0
-          for ((index = TEST_SHARD; index < ${#test_files[@]}; index += 2)); do
-            bun test --timeout=30000 "${test_files[index]}" || failed=1
-          done
-          exit "$failed"
+        run: bun run --filter oakridge-dbos test:integration
 
   lbc-dashboard-tests:
     name: lbc-dashboard tests (bun)
