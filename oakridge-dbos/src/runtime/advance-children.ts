@@ -14,6 +14,16 @@ export interface ChildAdvancementInput {
   /** Omitted for periodic recovery of all active runs. */
   readonly run_ids?: readonly RunId[];
 }
+export interface ChildAdvancementPageInput extends ChildAdvancementInput {
+  readonly after_scope_id: string | null;
+  readonly max_scopes: number;
+  readonly per_scope_deadline_ms: number;
+  readonly max_request_deadline_ms: number;
+}
+export interface ChildAdvancementPage { readonly failures: readonly LifecycleFailure[]; readonly next_cursor: string | null }
+export function serialChildrenRequestDeadlineMs(children: number, per_call_ms: number, cap_ms: number): number {
+  return Math.min(children * per_call_ms, cap_ms);
+}
 function groupChildCollections(collections: readonly ChildCollectionRecord[]): ReadonlyMap<ScopeId, readonly ChildCollectionRecord[]> {
   const grouped = new Map<ScopeId, ChildCollectionRecord[]>();
   for (const collection of collections) {
@@ -29,7 +39,13 @@ function groupChildCollections(collections: readonly ChildCollectionRecord[]): R
  * receipts. A scope whose trigger is rejected is reported, not thrown: one bad
  * scope never stops the others in the same pass.
  */
-export async function advanceChildren({ db, core, mutations, run_ids }: ChildAdvancementInput): Promise<readonly LifecycleFailure[]> {
+export async function advanceChildren(input: ChildAdvancementInput): Promise<readonly LifecycleFailure[]> {
+  return (await advanceChildrenInternal(input)).failures;
+}
+export async function advanceChildrenPage(input: ChildAdvancementPageInput): Promise<ChildAdvancementPage> {
+  return advanceChildrenInternal(input);
+}
+async function advanceChildrenInternal({ db, core, mutations, run_ids, ...page }: ChildAdvancementInput & Partial<ChildAdvancementPageInput>): Promise<ChildAdvancementPage> {
   const failures: LifecycleFailure[] = [];
   const report = (scope_id: string, error: unknown): void => { failures.push({ scope_id, detail: error instanceof Error ? error.message : String(error) }); };
   const runs = await db.query<RunBundle>(`SELECT r.id AS run_id,b.source FROM authority.run r
@@ -37,7 +53,7 @@ export async function advanceChildren({ db, core, mutations, run_ids }: ChildAdv
     WHERE ($1::text[] IS NULL OR r.id=ANY($1)) AND EXISTS (
       SELECT 1 FROM authority.scope_instance root WHERE root.run_id=r.id AND root.parent_id IS NULL AND NOT root.is_terminal
     ) ORDER BY r.id`, [run_ids ?? null]);
-  if (!runs.length) return failures;
+  if (!runs.length) return { failures, next_cursor: null };
   const active_run_ids = runs.map((run) => run.run_id);
   const bundles = new Map(runs.map((run) => [run.run_id, run.source]));
   const scopes = await db.query<ScopeInstanceRecord>("SELECT * FROM authority.scope_instance WHERE run_id=ANY($1::text[]) ORDER BY id", [active_run_ids]);
@@ -47,10 +63,22 @@ export async function advanceChildren({ db, core, mutations, run_ids }: ChildAdv
   const collections_by_parent = groupChildCollections(all_collections);
   const exports = await db.query<ScopeExportRecord>(`SELECT e.* FROM authority.scope_export e
     JOIN authority.scope_instance s ON s.id=e.scope_id WHERE s.run_id=ANY($1::text[]) ORDER BY e.id`, [active_run_ids]);
-  for (const scope of scopes) {
+  const remaining = page.after_scope_id === undefined || page.after_scope_id === null
+    ? scopes : scopes.filter((scope) => scope.id > page.after_scope_id!);
+  const selected = page.max_scopes === undefined ? remaining : remaining.slice(0, page.max_scopes);
+  const deadline_at = page.per_scope_deadline_ms === undefined || page.max_request_deadline_ms === undefined ? Infinity
+    : Date.now() + serialChildrenRequestDeadlineMs(selected.length, page.per_scope_deadline_ms, page.max_request_deadline_ms);
+  let processed = 0;
+  for (const scope of selected) {
+    if (processed > 0 && Date.now() >= deadline_at) break;
     try { await advanceScope(scope); } catch (error) { report(scope.id, error); }
+    processed++;
   }
-  const empty_collections = all_collections.filter((collection) => collection.members.length === 0);
+  const last_scope_id = processed ? selected[processed - 1]!.id : page.after_scope_id ?? null;
+  const next_cursor = processed < remaining.length ? last_scope_id : null;
+  const processed_scope_ids = new Set(selected.slice(0, processed).map((scope) => scope.id));
+  const empty_collections = all_collections.filter((collection) => collection.members.length === 0
+    && processed_scope_ids.has(collection.scope_id));
   for (const collection of empty_collections) {
     const parent = scopes_by_id.get(collection.scope_id);
     if (!parent || parent.is_terminal) continue;
@@ -60,7 +88,7 @@ export async function advanceChildren({ db, core, mutations, run_ids }: ChildAdv
     if (!fact) continue;
     try { await deliver(parent, fact.key, `empty-collection:${collection.id}`, fact.payload_schema, child?.on_terminal_payload); } catch (error) { report(parent.id, error); }
   }
-  return failures;
+  return { failures, next_cursor };
 
   async function advanceScope(scope: ScopeInstanceRecord): Promise<void> {
     const bundle = bundles.get(scope.run_id);

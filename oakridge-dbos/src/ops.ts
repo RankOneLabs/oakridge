@@ -1,8 +1,9 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { migrateEmptyDatabase } from "./storage/migrate";
+import { claimRunGeneration, currentRunGeneration } from "./storage/run-lifecycle";
 import { PgPostgresExecutor } from "./storage/sql-executor";
 import { selectApplicationVersion } from "./workflows/engine-version";
-import "./workflows/topology";
+import { forkStartStep, runWorkflowId } from "./workflows/topology";
 
 type OpsCommand = readonly ["workflows", "list" | "inspect" | "recover", ...string[]] | readonly ["migrate"];
 
@@ -18,7 +19,8 @@ export async function runOps(args: readonly string[], database_url: string | und
     throw new Error("usage: ops -- workflows list|inspect <id>|recover <id> OR ops -- migrate");
   const workflow_id = command[2];
   if (command[1] !== "list" && !workflow_id) throw new Error(`${command[1]} requires a workflow id`);
-  DBOS.setConfig({ name: "oakridge-ops", systemDatabaseUrl: database_url, applicationVersion: selectApplicationVersion() });
+  // The operator process must not recover production workflows without their services.
+  DBOS.setConfig({ name: "oakridge-ops", systemDatabaseUrl: database_url, applicationVersion: "oakridge-ops" });
   await DBOS.launch();
   try {
     if (command[1] === "list") return DBOS.listWorkflows({ workflowName: ["oakridgeRunWorkflow", "oakridgeEffectWorkflow", "oakridgeCleanupWorkflow"], limit: 200 });
@@ -31,9 +33,30 @@ export async function runOps(args: readonly string[], database_url: string | und
     }
     if (status.status !== "ERROR") throw new Error(`workflow ${workflow_id} is ${status.status}; recover requires ERROR or CANCELLED`);
     const steps = await DBOS.listWorkflowSteps(workflow_id!) ?? [];
-    const last_good_step = steps.filter((step) => step.error === null).reduce((id, step) => Math.max(id, step.functionID), -1);
-    const forked = await DBOS.forkWorkflow(workflow_id!, last_good_step + 1);
-    return { workflowID: forked.workflowID, action: "forked", startStep: last_good_step + 1 };
+    const startStep = forkStartStep(steps);
+    let newWorkflowID: string | undefined;
+    let runGeneration: { readonly run_id: string; readonly generation: number } | null = null;
+    if (status.workflowName === "oakridgeRunWorkflow" && typeof status.input?.[0] === "string") {
+      const run_id = status.input[0];
+      const db = PgPostgresExecutor.connect(database_url);
+      try {
+        const generation = await currentRunGeneration(db, run_id);
+        if (generation !== null && runWorkflowId(run_id, generation) === workflow_id) {
+          newWorkflowID = runWorkflowId(run_id, generation + 1);
+          runGeneration = { run_id, generation };
+        }
+      } finally { await db.close(); }
+    }
+    const forked = await DBOS.forkWorkflow(workflow_id!, startStep,
+      { applicationVersion: selectApplicationVersion(), ...(newWorkflowID ? { newWorkflowID } : {}) });
+    if (runGeneration) {
+      const db = PgPostgresExecutor.connect(database_url);
+      try {
+        if (await claimRunGeneration(db, runGeneration.run_id, runGeneration.generation) === null)
+          throw new Error(`run ${runGeneration.run_id} generation changed during recovery`);
+      } finally { await db.close(); }
+    }
+    return { workflowID: forked.workflowID, action: "forked", startStep };
   } finally { await DBOS.shutdown(); }
 }
 

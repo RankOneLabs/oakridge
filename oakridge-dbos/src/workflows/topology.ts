@@ -7,8 +7,9 @@ import { deliverEvidence, undeliveredEvidence } from "../effects/evidence";
 import { readIntent, type EffectIntent, type EffectPayload, type EffectStatus } from "../effects/intents";
 import { bounded, exhaustStart, resolveObserve, resolveStart, resolveStop, settleObserveRetry, startAttemptsExhausted, type StartOutcome } from "../effects/outcomes";
 import type { EffectProvider, ProviderResult } from "../effects/provider";
-import { advanceChildren, type LifecycleFailure } from "../runtime/advance-children";
+import { advanceChildrenPage, type LifecycleFailure } from "../runtime/advance-children";
 import { claimStartAttempt, persistEffectResult } from "../storage/effect-results";
+import { claimRunGeneration, currentRunAddress, currentRunGeneration } from "../storage/run-lifecycle";
 import type { MutationService } from "../storage/mutation-service";
 import type { RunId } from "../storage/schema-records";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
@@ -41,8 +42,10 @@ export interface WorkflowTiming {
   readonly max_observe_unavailable_attempts: number;
   /** Bound on how long a lost wake can delay a run's recheck. */
   readonly wake_timeout_seconds: number;
+  /** DBOS timeout for an effect, including observation and retry sleeps. */
+  readonly execution_deadline_ms: number;
 }
-export const DEFAULT_WORKFLOW_TIMING: WorkflowTiming = { retry_initial_seconds: 1, retry_cap_seconds: 30, observe_interval_seconds: 5, max_observe_unavailable_attempts: 10, wake_timeout_seconds: 30 };
+export const DEFAULT_WORKFLOW_TIMING: WorkflowTiming = { retry_initial_seconds: 1, retry_cap_seconds: 30, observe_interval_seconds: 5, max_observe_unavailable_attempts: 10, wake_timeout_seconds: 30, execution_deadline_ms: 3_600_000 };
 
 let services: WorkflowServices | null = null;
 export function registerWorkflowServices(value: WorkflowServices): void { services = value; }
@@ -52,7 +55,15 @@ function current(): WorkflowServices {
 }
 
 export const RUN_WAKE_TOPIC = "oakridge-run-wake";
-export const runWorkflowId = (run_id: string): string => `run:${run_id}`;
+export const runWorkflowId = (run_id: string, generation = 0): string => generation === 0 ? `run:${run_id}` : `run:${run_id}:${generation}`;
+export class RunInfrastructureError extends Error {
+  override readonly name = "RunInfrastructureError";
+  constructor(readonly run_id: string, readonly operation: string, readonly detail: string) {
+    super(`run ${run_id}: ${operation}: ${detail}`);
+  }
+}
+const RUN_BOUNDARY_RETRIES = 5;
+export const RUN_MAX_ITERATIONS = 128;
 const backoff = (attempt: number, timing: WorkflowTiming): number => Math.min(timing.retry_cap_seconds, timing.retry_initial_seconds * 2 ** Math.min(attempt, 16));
 
 // ---------------------------------------------------------------- steps -----
@@ -122,6 +133,7 @@ const deliverEvidenceStep = DBOS.registerStep(async (intent_id: string): Promise
 
 export interface RunAdvance {
   readonly is_terminal: boolean;
+  readonly next_cursor: string | null;
   readonly pending_starts: readonly string[];
   readonly pending_stops: readonly string[];
   readonly failures: readonly LifecycleFailure[];
@@ -131,9 +143,11 @@ export interface RunAdvance {
  * deferred evidence, and list the intents that still need a workflow. A scope
  * whose trigger is rejected is reported, not thrown — it never blocks the rest.
  */
-const advanceRunStep = DBOS.registerStep(async (run_id: RunId): Promise<RunAdvance> => {
+const advanceRunStep = DBOS.registerStep(async (run_id: RunId, cursor: string | null): Promise<RunAdvance> => {
   const { db, core, mutations } = current();
-  const failures: LifecycleFailure[] = [...await advanceChildren({ db, core, mutations, run_ids: [run_id] })];
+  const page = await advanceChildrenPage({ db, core, mutations, run_ids: [run_id], after_scope_id: cursor,
+    max_scopes: 2, per_scope_deadline_ms: 60_000, max_request_deadline_ms: 120_000 });
+  const failures: LifecycleFailure[] = [...page.failures];
   for (const row of await undeliveredEvidence(db, run_id)) {
     const delivery = await deliverEvidence(db, mutations, row);
     if (delivery.kind === "deferred") failures.push({ scope_id: row.scope_id, detail: `evidence ${row.payload.evidence?.id ?? row.id}: ${delivery.detail}` });
@@ -141,10 +155,10 @@ const advanceRunStep = DBOS.registerStep(async (run_id: RunId): Promise<RunAdvan
   const intents = await db.query<{ id: string; status: EffectStatus }>(`SELECT e.id,e.status FROM authority.effect_intent e JOIN authority.scope_instance s ON s.id=e.scope_id
     WHERE s.run_id=$1 AND ((e.payload->>'action'='start' AND e.status IN ('pending','acknowledged')) OR e.status='cleanup_pending') ORDER BY e.id`, [run_id]);
   const roots = await db.query<{ is_terminal: boolean }>("SELECT is_terminal FROM authority.scope_instance WHERE run_id=$1 AND parent_id IS NULL", [run_id]);
-  return { is_terminal: roots[0]?.is_terminal ?? true,
+  return { is_terminal: roots[0]?.is_terminal ?? true, next_cursor: page.next_cursor,
     pending_starts: intents.filter((intent) => intent.status !== "cleanup_pending").map((intent) => intent.id),
     pending_stops: intents.filter((intent) => intent.status === "cleanup_pending").map((intent) => intent.id), failures };
-}, { name: "oakridgeAdvanceRun", retriesAllowed: true, maxAttempts: 5 });
+}, { name: "oakridgeAdvanceRun", retriesAllowed: true, maxAttempts: 5, timeoutMS: 180_000 });
 
 // ------------------------------------------------------------ workflows -----
 
@@ -263,44 +277,144 @@ async function carryStop(intent_id: string): Promise<EffectStatus | null> {
  * the workflows for intents that need one, and goes back to waiting. Ends when
  * the root scope is terminal and nothing is owed. Workflow id = `run:<run_id>`.
  */
-export const runWorkflow = DBOS.registerWorkflow(async (run_id: string): Promise<void> => {
+const rolloverRunStep = DBOS.registerStep(async (run_id: string, workflow_id: string, cursor: string | null): Promise<number> => {
+  const db = current().db;
+  const generation = await currentRunGeneration(db, run_id);
+  if (generation === null) throw new RunInfrastructureError(run_id, "rollover", "authority run missing");
+  if (runWorkflowId(run_id, generation) !== workflow_id) return generation;
+  const successor = await claimRunGeneration(db, run_id, generation, cursor);
+  if (successor === null) throw new RunInfrastructureError(run_id, "rollover", "generation changed concurrently");
+  return successor;
+}, { name: "oakridgeRolloverRun", retriesAllowed: true, maxAttempts: 5 });
+const claimRunGenerationStep = DBOS.registerStep(async (run_id: string, generation: number): Promise<number | null> =>
+  claimRunGeneration(current().db, run_id, generation), { name: "oakridgeClaimRunGeneration", retriesAllowed: true, maxAttempts: 5 });
+
+export function forkStartStep(steps: readonly { readonly functionID: number; readonly error: Error | null }[]): number {
+  const failed = steps.filter((step) => step.error !== null).map((step) => step.functionID);
+  if (failed.length) return Math.min(...failed);
+  return steps.reduce((last, step) => Math.max(last, step.functionID), 0);
+}
+
+async function recoverErroredRun(run_id: string, generation: number): Promise<number> {
+  const id = runWorkflowId(run_id, generation);
+  const steps = await DBOS.listWorkflowSteps(id) ?? [];
+  const successor_id = runWorkflowId(run_id, generation + 1);
+  await DBOS.forkWorkflow(id, forkStartStep(steps), { newWorkflowID: successor_id, applicationVersion: DBOS.applicationVersion });
+  if (await claimRunGenerationStep(run_id, generation) === null)
+    throw new RunInfrastructureError(run_id, "recover", "generation changed during fork");
+  return generation + 1;
+}
+
+async function dispatchChild(run_id: string, intent_id: string, kind: "start" | "stop"): Promise<void> {
+  const status = await DBOS.getWorkflowStatus(intent_id);
+  if (!status) {
+    if (kind === "start") await DBOS.startWorkflow(effectWorkflow,
+      { workflowID: intent_id, timeoutMS: current().timing.execution_deadline_ms })(intent_id);
+    else await DBOS.startWorkflow(cleanupWorkflow, { workflowID: intent_id })(intent_id);
+    return;
+  }
+  if (status.status === "PENDING" || status.status === "ENQUEUED") return;
+  if (status.status === "CANCELLED") {
+    if (kind === "start" && status.deadlineEpochMS !== undefined && status.deadlineEpochMS <= Date.now()) {
+      const intent = await loadIntentStep(intent_id);
+      if (!intent || (intent.status !== "pending" && intent.status !== "acknowledged")) return;
+      const payload = await startRejectionStep({ ...intent.payload,
+        failure: { kind: "attempt_budget_exhausted", detail: `execution deadline exceeded for ${intent_id}` } });
+      await persistStep({ intent_id, status: "rejected", payload, terminal_result: null });
+      await deliverEvidenceStep(intent_id);
+      DBOS.logger.error(`effect ${intent_id}: execution deadline exceeded`);
+      return;
+    }
+    await DBOS.resumeWorkflow(intent_id);
+    return;
+  }
+  if (status.status === "ERROR" || status.status === "SUCCESS")
+    throw new RunInfrastructureError(run_id, `dispatch ${kind} ${intent_id}`, `workflow ${status.status} while intent remains pending`);
+}
+
+export const runWorkflow = DBOS.registerWorkflow(async (run_id: string, initial_cursor: string | null = null): Promise<void> => {
   const timing = current().timing;
-  const started = new Set<string>();
-  for (;;) {
+  let boundary_failures = 0;
+  let cursor = initial_cursor;
+  for (let iteration = 0; iteration < RUN_MAX_ITERATIONS; iteration++) {
     let advance: RunAdvance;
-    try { advance = await advanceRunStep(run_id as RunId); }
+    try { advance = await advanceRunStep(run_id as RunId, cursor); boundary_failures = 0; }
     catch (error) {
-      // An outage that outlasts the step's own retries: stay alive, visible, and ask again.
-      DBOS.logger.error(`run ${run_id}: recheck failed, retrying in ${timing.retry_cap_seconds}s: ${String(error)}`);
+      const failure = new RunInfrastructureError(run_id, "advance", String(error));
+      DBOS.logger.error(failure.message);
+      if (++boundary_failures >= RUN_BOUNDARY_RETRIES) throw failure;
       await DBOS.sleepSeconds(timing.retry_cap_seconds);
       continue;
     }
     for (const failure of advance.failures) DBOS.logger.warn(`run ${run_id}: scope ${failure.scope_id}: ${failure.detail}`);
-    for (const id of advance.pending_starts) if (!started.has(id)) { started.add(id); await DBOS.startWorkflow(effectWorkflow, { workflowID: id })(id); }
-    for (const id of advance.pending_stops) if (!started.has(id)) { started.add(id); await DBOS.startWorkflow(cleanupWorkflow, { workflowID: id })(id); }
+    // DBOS statuses and authority intents are durable; no local dispatch set survives a restart.
+    try {
+      for (const id of advance.pending_starts) await dispatchChild(run_id, id, "start");
+      for (const id of advance.pending_stops) await dispatchChild(run_id, id, "stop");
+    } catch (error) {
+      const failure = error instanceof RunInfrastructureError ? error
+        : new RunInfrastructureError(run_id, "dispatch", String(error));
+      DBOS.logger.error(failure.message);
+      throw failure;
+    }
     if (advance.is_terminal && advance.pending_starts.length === 0 && advance.pending_stops.length === 0) return;
-    await DBOS.recv(RUN_WAKE_TOPIC, { timeoutSeconds: timing.wake_timeout_seconds });
+    cursor = advance.next_cursor;
+    if (cursor === null) {
+      try { await DBOS.recv(RUN_WAKE_TOPIC, { timeoutSeconds: timing.wake_timeout_seconds }); }
+      catch (error) { throw new RunInfrastructureError(run_id, "wait for wake", String(error)); }
+    }
   }
+  const successor = await rolloverRunStep(run_id, DBOS.workflowID ?? "", cursor);
+  await DBOS.startWorkflow(runWorkflow, { workflowID: runWorkflowId(run_id, successor) })(run_id, cursor);
 }, { name: "oakridgeRunWorkflow" });
 
 // ------------------------------------------------------------- entry -------
 
 /** Starts the run workflow unless one is already live (or recovering) for this run. */
 export async function ensureRunWorkflow(run_id: string): Promise<void> {
-  const existing = await DBOS.getWorkflowStatus(runWorkflowId(run_id));
-  if (existing && (existing.status === "PENDING" || existing.status === "ENQUEUED")) return;
-  await DBOS.startWorkflow(runWorkflow, { workflowID: runWorkflowId(run_id) })(run_id);
+  const db = current().db;
+  const address = await currentRunAddress(db, run_id);
+  if (address === null) return;
+  const { generation } = address;
+  const id = runWorkflowId(run_id, generation);
+  const existing = await DBOS.getWorkflowStatus(id);
+  if (existing?.status === "PENDING" || existing?.status === "ENQUEUED") return;
+  if (existing?.status === "CANCELLED") { await DBOS.resumeWorkflow(id); return; }
+  if (existing?.status === "ERROR") {
+    await recoverErroredRun(run_id, generation);
+    return;
+  }
+  if (existing?.status === "SUCCESS") {
+    const successor = await claimRunGeneration(db, run_id, generation);
+    if (successor === null) throw new RunInfrastructureError(run_id, "restart", "generation changed concurrently");
+    await DBOS.startWorkflow(runWorkflow, { workflowID: runWorkflowId(run_id, successor) })(run_id, address.cursor);
+    return;
+  }
+  await DBOS.startWorkflow(runWorkflow, { workflowID: id })(run_id, address.cursor);
 }
 
 /** A wake is a hint, never a fact: the run re-reads the authority on receipt. */
 export async function wakeRun(run_id: string): Promise<void> {
-  try { await DBOS.send(runWorkflowId(run_id), null, RUN_WAKE_TOPIC); }
+  try {
+    await ensureRunWorkflow(run_id);
+    const generation = await currentRunGeneration(current().db, run_id);
+    if (generation !== null) await DBOS.send(runWorkflowId(run_id, generation), null, RUN_WAKE_TOPIC);
+  }
   catch (error) { DBOS.logger.warn(`run ${run_id}: wake not delivered: ${String(error)}`); }
 }
 async function wakeRunOf(scope_id: string): Promise<void> {
-  const rows = await current().db.query<{ run_id: string }>("SELECT run_id FROM authority.scope_instance WHERE id=$1", [scope_id]);
-  if (rows[0]) await wakeRun(rows[0].run_id);
+  const address = await runOfScopeStep(scope_id);
+  if (!address) return;
+  let generation = Number(address.current_generation);
+  const status = await DBOS.getWorkflowStatus(runWorkflowId(address.run_id, generation));
+  if (status?.status === "ERROR") generation = await recoverErroredRun(address.run_id, generation);
+  await DBOS.send(runWorkflowId(address.run_id, generation), null, RUN_WAKE_TOPIC);
 }
+interface RunAddress { readonly run_id: string; readonly current_generation: string | number }
+const runOfScopeStep = DBOS.registerStep(async (scope_id: string): Promise<RunAddress | null> => {
+  const rows = await current().db.query<RunAddress>("SELECT s.run_id,r.current_generation FROM authority.scope_instance s JOIN authority.run r ON r.id=s.run_id WHERE s.id=$1", [scope_id]);
+  return rows[0] ?? null;
+}, { name: "oakridgeRunOfScope", retriesAllowed: true, maxAttempts: 5 });
 
 const WORKFLOW_NAMES = ["oakridgeRunWorkflow", "oakridgeEffectWorkflow", "oakridgeCleanupWorkflow"];
 
@@ -309,7 +423,7 @@ const WORKFLOW_NAMES = ["oakridgeRunWorkflow", "oakridgeEffectWorkflow", "oakrid
  * last step, and every run whose root is still active gets its workflow back.
  */
 export async function resumeActiveRuns(db: TransactionalSqlExecutor): Promise<number> {
-  const parked = await DBOS.listWorkflows({ status: "CANCELLED", workflowName: WORKFLOW_NAMES });
+  const parked = await DBOS.listWorkflows({ status: "CANCELLED", workflowName: WORKFLOW_NAMES.slice(1) });
   if (parked.length) await DBOS.resumeWorkflows(parked.map((status) => status.workflowID));
   const runs = await db.query<{ id: string }>("SELECT r.id FROM authority.run r WHERE EXISTS (SELECT 1 FROM authority.scope_instance s WHERE s.run_id=r.id AND s.parent_id IS NULL AND NOT s.is_terminal) ORDER BY r.id", []);
   for (const run of runs) await ensureRunWorkflow(run.id);

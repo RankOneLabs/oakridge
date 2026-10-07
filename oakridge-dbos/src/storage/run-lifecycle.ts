@@ -77,3 +77,21 @@ export async function deleteRun(db: TransactionalSqlExecutor, run_id: string): P
     return { kind: "deleted" };
   });
 }
+
+interface RunGenerationRow { readonly current_generation: string | number; readonly current_cursor: string | null }
+export interface RunAddress { readonly generation: number; readonly cursor: string | null }
+export async function currentRunAddress(db: TransactionalSqlExecutor, run_id: string): Promise<RunAddress | null> {
+  const rows = await db.query<RunGenerationRow>("SELECT current_generation,current_cursor FROM authority.run WHERE id=$1", [run_id]);
+  return rows[0] ? { generation: Number(rows[0].current_generation), cursor: rows[0].current_cursor ?? null } : null;
+}
+/** The authority row is the address book for rollover and recovery. */
+export async function currentRunGeneration(db: TransactionalSqlExecutor, run_id: string): Promise<number | null> {
+  return (await currentRunAddress(db, run_id))?.generation ?? null;
+}
+/** Claim a successor only while the caller still owns the current generation. */
+export async function claimRunGeneration(db: TransactionalSqlExecutor, run_id: string, expected: number, cursor?: string | null): Promise<number | null> {
+  const rows = await db.query<RunGenerationRow>(`UPDATE authority.run SET current_generation=current_generation+1,
+    current_cursor=CASE WHEN $3::boolean THEN $4 ELSE current_cursor END
+    WHERE id=$1 AND current_generation=$2 RETURNING current_generation,current_cursor`, [run_id, expected, cursor !== undefined, cursor ?? null]);
+  return rows[0] ? Number(rows[0].current_generation) : null;
+}

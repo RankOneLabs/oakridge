@@ -23,7 +23,9 @@ CREATE TABLE authority.definition_bundle (
 );
 CREATE TABLE authority.run (
   id text PRIMARY KEY, definition_bundle_id text NOT NULL REFERENCES authority.definition_bundle(id),
-  created_at timestamptz NOT NULL DEFAULT now(), version bigint NOT NULL DEFAULT 0 CHECK (version >= 0)
+  created_at timestamptz NOT NULL DEFAULT now(), version bigint NOT NULL DEFAULT 0 CHECK (version >= 0),
+  current_generation bigint NOT NULL DEFAULT 0 CHECK (current_generation >= 0),
+  current_cursor text
 );
 CREATE TABLE authority.scope_instance (
   id text PRIMARY KEY, run_id text NOT NULL REFERENCES authority.run(id),
