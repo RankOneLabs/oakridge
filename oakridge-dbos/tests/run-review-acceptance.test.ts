@@ -39,7 +39,8 @@ test("ensureRunWorkflow and wakeRunOf fork ERROR generations from the failed ste
       throw new Error(`unexpected authority query: ${sql}`);
     } } as unknown as TransactionalSqlExecutor;
     registerWorkflowServices({ db, timing: DEFAULT_WORKFLOW_TIMING } as Parameters<typeof registerWorkflowServices>[0]);
-    const status = spyOn(DBOS, "getWorkflowStatus").mockImplementation(async () => ({ status: "ERROR" }) as never);
+    const status = spyOn(DBOS, "getWorkflowStatus").mockImplementation(async (id) =>
+      id === runWorkflowId("run-1", generation) ? ({ status: "ERROR" }) as never : null as never);
     const steps = spyOn(DBOS, "listWorkflowSteps").mockImplementation(async () => [
       { functionID: 2, error: null }, { functionID: 3, error: new Error("failed advance") },
     ] as never);

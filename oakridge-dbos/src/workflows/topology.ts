@@ -303,8 +303,13 @@ const rolloverRunStep = DBOS.registerStep(async (run_id: string, workflow_id: st
   if (successor === null) throw new RunInfrastructureError(run_id, "rollover", "generation changed concurrently");
   return successor;
 }, { name: "oakridgeRolloverRun", retriesAllowed: true, maxAttempts: 5 });
-const claimRunGenerationStep = DBOS.registerStep(async (run_id: string, generation: number): Promise<number | null> =>
-  claimRunGeneration(current().db, run_id, generation), { name: "oakridgeClaimRunGeneration", retriesAllowed: true, maxAttempts: 5 });
+const claimRunGenerationStep = DBOS.registerStep(async (run_id: string, generation: number): Promise<number | null> => {
+  const db = current().db;
+  const claimed = await claimRunGeneration(db, run_id, generation);
+  if (claimed !== null) return claimed;
+  const current_generation = await currentRunGeneration(db, run_id);
+  return current_generation !== null && current_generation > generation ? current_generation : null;
+}, { name: "oakridgeClaimRunGeneration", retriesAllowed: true, maxAttempts: 5 });
 
 export function forkStartStep(steps: readonly { readonly functionID: number; readonly error: Error | null }[]): number {
   const failed = steps.filter((step) => step.error !== null).map((step) => step.functionID);
@@ -312,15 +317,41 @@ export function forkStartStep(steps: readonly { readonly functionID: number; rea
   return steps.reduce((last, step) => Math.max(last, step.functionID), 0);
 }
 
+export interface RunRecoveryFork {
+  readonly workflow_id: string;
+  readonly successor_id: string;
+  readonly start_step: number;
+  readonly application_version: string;
+}
+/** Reconcile the DBOS side of a handover that may have committed before a crash. */
+export async function ensureRunRecoveryFork(input: RunRecoveryFork): Promise<void> {
+  const existing = await DBOS.getWorkflowStatus(input.successor_id);
+  if (existing) {
+    if (existing.forkedFrom !== input.workflow_id)
+      throw new Error(`recovery successor ${input.successor_id} is not a fork of ${input.workflow_id}`);
+    if (existing.status === "CANCELLED") await DBOS.resumeWorkflow(input.successor_id);
+    return;
+  }
+  try {
+    await DBOS.forkWorkflow(input.workflow_id, input.start_step,
+      { newWorkflowID: input.successor_id, applicationVersion: input.application_version });
+  } catch (error) {
+    // Another recovery caller may have inserted the same successor after our read.
+    const concurrent = await DBOS.getWorkflowStatus(input.successor_id);
+    if (concurrent?.forkedFrom !== input.workflow_id) throw error;
+    if (concurrent.status === "CANCELLED") await DBOS.resumeWorkflow(input.successor_id);
+  }
+}
+
 async function recoverErroredRun(run_id: string, generation: number): Promise<number> {
   const id = runWorkflowId(run_id, generation);
-  // DBOS checkpoints both calls as internal steps when this runs in wakeRunOf's workflow body.
   const steps = await DBOS.listWorkflowSteps(id) ?? [];
-  const successor_id = runWorkflowId(run_id, generation + 1);
-  await DBOS.forkWorkflow(id, forkStartStep(steps), { newWorkflowID: successor_id, applicationVersion: DBOS.applicationVersion });
-  if (await claimRunGenerationStep(run_id, generation) === null)
+  await ensureRunRecoveryFork({ workflow_id: id, successor_id: runWorkflowId(run_id, generation + 1),
+    start_step: forkStartStep(steps), application_version: DBOS.applicationVersion });
+  const successor = await claimRunGenerationStep(run_id, generation);
+  if (successor === null)
     throw new RunInfrastructureError(run_id, "recover", "generation changed during fork");
-  return generation + 1;
+  return successor;
 }
 
 async function settleExpiredEffect(intent_id: string): Promise<void> {

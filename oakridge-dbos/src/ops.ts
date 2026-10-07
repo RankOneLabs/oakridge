@@ -3,7 +3,7 @@ import { migrateEmptyDatabase } from "./storage/migrate";
 import { claimRunGeneration, currentRunGeneration } from "./storage/run-lifecycle";
 import { PgPostgresExecutor } from "./storage/sql-executor";
 import { selectApplicationVersion } from "./workflows/engine-version";
-import { forkStartStep, runWorkflowId } from "./workflows/topology";
+import { DEFAULT_WORKFLOW_TIMING, ensureRunRecoveryFork, forkStartStep, runWorkflowId } from "./workflows/topology";
 
 type OpsCommand = readonly ["workflows", "list" | "inspect" | "recover", ...string[]] | readonly ["migrate"];
 
@@ -47,16 +47,30 @@ export async function runOps(args: readonly string[], database_url: string | und
         }
       } finally { await db.close(); }
     }
-    const forked = await DBOS.forkWorkflow(workflow_id!, startStep,
-      { applicationVersion: selectApplicationVersion(), ...(newWorkflowID ? { newWorkflowID } : {}) });
+    const application_version = selectApplicationVersion();
+    let recovered_workflow_id: string;
+    if (newWorkflowID) {
+      await ensureRunRecoveryFork({ workflow_id: workflow_id!, successor_id: newWorkflowID,
+        start_step: startStep, application_version });
+      recovered_workflow_id = newWorkflowID;
+    } else {
+      const forked = await DBOS.forkWorkflow(workflow_id!, startStep,
+        { applicationVersion: application_version,
+          ...(status.workflowName === "oakridgeEffectWorkflow"
+            ? { timeoutMS: status.timeoutMS ?? DEFAULT_WORKFLOW_TIMING.execution_deadline_ms } : {}) });
+      recovered_workflow_id = forked.workflowID;
+    }
     if (runGeneration) {
       const db = PgPostgresExecutor.connect(database_url);
       try {
-        if (await claimRunGeneration(db, runGeneration.run_id, runGeneration.generation) === null)
-          throw new Error(`run ${runGeneration.run_id} generation changed during recovery`);
+        if (await claimRunGeneration(db, runGeneration.run_id, runGeneration.generation) === null) {
+          const generation = await currentRunGeneration(db, runGeneration.run_id);
+          if (generation === null || generation <= runGeneration.generation)
+            throw new Error(`run ${runGeneration.run_id} generation changed during recovery`);
+        }
       } finally { await db.close(); }
     }
-    return { workflowID: forked.workflowID, action: "forked", startStep };
+    return { workflowID: recovered_workflow_id, action: "forked", startStep };
   } finally { await DBOS.shutdown(); }
 }
 

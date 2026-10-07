@@ -1,7 +1,7 @@
 import { expect, spyOn, test } from "bun:test";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { serialChildrenRequestDeadlineMs } from "../src/runtime/advance-children";
-import { DEFAULT_WORKFLOW_TIMING, RunInfrastructureError, dispatchChild, ensureRunWorkflow, forkStartStep, registerWorkflowServices, resumeActiveRuns, runWorkflowId, wakeRun } from "../src/workflows/topology";
+import { DEFAULT_WORKFLOW_TIMING, ensureRunRecoveryFork, RunInfrastructureError, dispatchChild, ensureRunWorkflow, forkStartStep, registerWorkflowServices, resumeActiveRuns, runWorkflowId, wakeRun } from "../src/workflows/topology";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
 
 test("a run boundary failure retains its run and operation in the diagnostic", () => {
@@ -84,4 +84,45 @@ test("a successor started after handover retains the pending scope cursor", asyn
     await ensureRunWorkflow("run-1");
     expect(calls).toEqual([[{ workflowID: "run:run-1:4" }], ["run-1", "scope-256"]]);
   } finally { status.mockRestore(); start.mockRestore(); }
+});
+
+for (const scenario of ["fork committed before crash", "concurrent fork"] as const) {
+  test(`ERROR recovery reconciles ${scenario}`, async () => {
+    let successor_exists = scenario === "fork committed before crash";
+    const status = spyOn(DBOS, "getWorkflowStatus").mockImplementation(async () =>
+      (successor_exists ? { status: "ENQUEUED", forkedFrom: "run:run-1" } : null) as never);
+    const fork = spyOn(DBOS, "forkWorkflow").mockImplementation(async () => {
+      successor_exists = true;
+      throw new Error("duplicate key");
+    });
+    try {
+      await ensureRunRecoveryFork({ workflow_id: "run:run-1", successor_id: "run:run-1:1",
+        start_step: 0, application_version: "test" });
+      expect(fork).toHaveBeenCalledTimes(scenario === "fork committed before crash" ? 0 : 1);
+    } finally { status.mockRestore(); fork.mockRestore(); }
+  });
+}
+
+test("ERROR recovery refuses a successor belonging to a different predecessor", async () => {
+  const db = { query: async () => [{ current_generation: 0 }] } as unknown as TransactionalSqlExecutor;
+  registerWorkflowServices({ db } as Parameters<typeof registerWorkflowServices>[0]);
+  const status = spyOn(DBOS, "getWorkflowStatus").mockImplementation(async (id) =>
+    (id === "run:run-1" ? { status: "ERROR" } : { forkedFrom: "another-run" }) as never);
+  const steps = spyOn(DBOS, "listWorkflowSteps").mockImplementation(async () => [] as never);
+  const fork = spyOn(DBOS, "forkWorkflow").mockImplementation(async () => ({} as never));
+  try {
+    await expect(ensureRunWorkflow("run-1")).rejects.toThrow("is not a fork");
+    expect(fork).not.toHaveBeenCalled();
+  } finally { status.mockRestore(); steps.mockRestore(); fork.mockRestore(); }
+});
+
+test("reconciling a parked successor resumes its workflow", async () => {
+  const status = spyOn(DBOS, "getWorkflowStatus").mockImplementation(async () =>
+    ({ status: "CANCELLED", forkedFrom: "run:run-1" }) as never);
+  const resume = spyOn(DBOS, "resumeWorkflow").mockImplementation(async () => ({} as never));
+  try {
+    await ensureRunRecoveryFork({ workflow_id: "run:run-1", successor_id: "run:run-1:1",
+      start_step: 0, application_version: "test" });
+    expect(resume).toHaveBeenCalledWith("run:run-1:1");
+  } finally { status.mockRestore(); resume.mockRestore(); }
 });
