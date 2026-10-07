@@ -12,20 +12,21 @@ export interface CohortArtifactQuery<T> {
 
 /**
  * Loads another artifact the same run published for the same cohort, such as
- * a build result's brief. The run query is the one the workspace already polls.
+ * a build result's brief, as it stood at the viewed revision. The run query is
+ * the one the workspace already polls.
  */
 export function useCohortArtifact<T>({ source, cohort_label, type_id, read }: CohortArtifactQuery<T>): CohortArtifactLookup<T> {
   const runId = source?.run_id ?? "";
   const runQuery = useRun(runId, runId !== "" && cohort_label !== null);
   const artifactId = runQuery.data && cohort_label ? selectCohortArtifactId(runQuery.data, type_id, cohort_label) : null;
   const artifactQuery = useArtifact(artifactId ?? "", artifactId !== null);
+  if (!source) return { kind: "missing", cohort_label };
   // isLoading, not isPending: a disabled query stays pending forever.
   return selectCohortArtifactLookup({
     cohort_label,
-    run: runQuery.data,
-    is_run_loading: runQuery.isLoading,
+    as_of: source.as_of,
+    run: { data: runQuery.data, is_loading: runQuery.isLoading, is_error: runQuery.isError },
     artifact_id: artifactId,
-    detail: artifactQuery.data,
-    is_detail_loading: artifactQuery.isLoading,
+    detail: { data: artifactQuery.data, is_loading: artifactQuery.isLoading, is_error: artifactQuery.isError },
   }, read);
 }

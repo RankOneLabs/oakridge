@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { ArtifactDetail, RunDetail } from "../types";
-import { readBuildBrief } from "./build-brief";
-import { selectCohortArtifactId, selectCohortArtifactLookup, type CohortArtifactSources } from "./cohort-artifact";
+import { readBuildBrief, type BuildBrief } from "./build-brief";
+import { selectCohortArtifactId, selectCohortArtifactLookup, type CohortArtifactLookup, type CohortArtifactSources } from "./cohort-artifact";
 
 const brief = {
   cohort_id: "cm-api",
@@ -42,22 +42,51 @@ describe("selectCohortArtifactId", () => {
 });
 
 describe("selectCohortArtifactLookup", () => {
+  const revisions = [
+    { created_at: "2026-10-01T10:00:00Z", body: { ...brief, title: "First draft" } },
+    { created_at: "2026-10-02T10:00:00Z", body: brief },
+    { created_at: "2026-10-03T10:00:00Z", body: { ...brief, title: "Revised after the build" } },
+  ];
+  const settled = <T>(data: T) => ({ data, is_loading: false, is_error: false });
   const sources: CohortArtifactSources = {
     cohort_label: "cm-api",
-    run: {} as RunDetail,
-    is_run_loading: false,
+    as_of: "2026-10-02T12:00:00Z",
+    run: settled({} as RunDetail),
     artifact_id: "brief-new",
-    detail: { revisions: [{ body: { goal: "stale" } }, { body: brief }] } as unknown as ArtifactDetail,
-    is_detail_loading: false,
+    detail: settled({ revisions } as unknown as ArtifactDetail),
   };
+  const title = (lookup: CohortArtifactLookup<BuildBrief>) => (lookup.kind === "found" ? lookup.value.title : lookup.kind);
 
-  test("reads the latest revision", () => {
-    const lookup = selectCohortArtifactLookup(sources, readBuildBrief);
-    expect(lookup.kind === "found" && lookup.value.title).toBe("Assemble the API");
+  test("reads the revision that stood when the viewed revision was written", () => {
+    expect(title(selectCohortArtifactLookup(sources, readBuildBrief))).toBe("Assemble the API");
+  });
+
+  test("reads the latest revision when viewing the newest", () => {
+    expect(title(selectCohortArtifactLookup({ ...sources, as_of: "2026-10-04T00:00:00Z" }, readBuildBrief))).toBe("Revised after the build");
+  });
+
+  test("reports it missing when it had no revision yet", () => {
+    expect(selectCohortArtifactLookup({ ...sources, as_of: "2026-09-30T00:00:00Z" }, readBuildBrief).kind).toBe("missing");
   });
 
   test("waits while the artifact loads", () => {
-    expect(selectCohortArtifactLookup({ ...sources, detail: undefined, is_detail_loading: true }, readBuildBrief).kind).toBe("loading");
+    const loading = { data: undefined, is_loading: true, is_error: false };
+    expect(selectCohortArtifactLookup({ ...sources, detail: loading }, readBuildBrief).kind).toBe("loading");
+  });
+
+  test("reports a failed artifact request as an error, not as missing", () => {
+    const failed = { data: undefined, is_loading: false, is_error: true };
+    expect(selectCohortArtifactLookup({ ...sources, detail: failed }, readBuildBrief).kind).toBe("error");
+  });
+
+  test("reports a failed run request as an error", () => {
+    const failed = { data: undefined, is_loading: false, is_error: true };
+    expect(selectCohortArtifactLookup({ ...sources, run: failed }, readBuildBrief).kind).toBe("error");
+  });
+
+  test("keeps data it already has when a refetch fails", () => {
+    const stale = { ...sources.detail, is_error: true };
+    expect(selectCohortArtifactLookup({ ...sources, detail: stale }, readBuildBrief).kind).toBe("found");
   });
 
   test("reports it missing when the run has none", () => {
@@ -65,7 +94,7 @@ describe("selectCohortArtifactLookup", () => {
   });
 
   test("reports it missing when its body breaks the contract", () => {
-    const broken = { revisions: [{ body: { goal: "x" } }] } as unknown as ArtifactDetail;
+    const broken = settled({ revisions: [{ created_at: "2026-10-01T00:00:00Z", body: { goal: "x" } }] } as unknown as ArtifactDetail);
     expect(selectCohortArtifactLookup({ ...sources, detail: broken }, readBuildBrief).kind).toBe("missing");
   });
 
