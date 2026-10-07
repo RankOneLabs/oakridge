@@ -62,6 +62,10 @@ export class RunInfrastructureError extends Error {
     super(`run ${run_id}: ${operation}: ${detail}`);
   }
 }
+function isWorkflowCancellation(error: unknown): boolean {
+  return error instanceof DBOSErrors.DBOSWorkflowCancelledError
+    || error instanceof DBOSErrors.DBOSAwaitedWorkflowCancelledError;
+}
 const RUN_BOUNDARY_RETRIES = 5;
 export const RUN_MAX_ITERATIONS = 128;
 const backoff = (attempt: number, timing: WorkflowTiming): number => Math.min(timing.retry_cap_seconds, timing.retry_initial_seconds * 2 ** Math.min(attempt, 16));
@@ -340,6 +344,7 @@ export const runWorkflow = DBOS.registerWorkflow(async (run_id: string, initial_
     let advance: RunAdvance;
     try { advance = await advanceRunStep(run_id as RunId, cursor); boundary_failures = 0; }
     catch (error) {
+      if (isWorkflowCancellation(error)) throw error;
       const failure = new RunInfrastructureError(run_id, "advance", String(error));
       DBOS.logger.error(failure.message);
       if (++boundary_failures >= RUN_BOUNDARY_RETRIES) throw failure;
@@ -352,6 +357,7 @@ export const runWorkflow = DBOS.registerWorkflow(async (run_id: string, initial_
       for (const id of advance.pending_starts) await dispatchChild(run_id, id, "start");
       for (const id of advance.pending_stops) await dispatchChild(run_id, id, "stop");
     } catch (error) {
+      if (isWorkflowCancellation(error)) throw error;
       const failure = error instanceof RunInfrastructureError ? error
         : new RunInfrastructureError(run_id, "dispatch", String(error));
       DBOS.logger.error(failure.message);
@@ -361,7 +367,10 @@ export const runWorkflow = DBOS.registerWorkflow(async (run_id: string, initial_
     cursor = advance.next_cursor;
     if (cursor === null) {
       try { await DBOS.recv(RUN_WAKE_TOPIC, { timeoutSeconds: timing.wake_timeout_seconds }); }
-      catch (error) { throw new RunInfrastructureError(run_id, "wait for wake", String(error)); }
+      catch (error) {
+        if (isWorkflowCancellation(error)) throw error;
+        throw new RunInfrastructureError(run_id, "wait for wake", String(error));
+      }
     }
   }
   const successor = await rolloverRunStep(run_id, DBOS.workflowID ?? "", cursor);
