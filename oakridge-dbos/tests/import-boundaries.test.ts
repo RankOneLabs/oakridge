@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { resolve, relative } from "node:path";
 import { readFileSync } from "node:fs";
-import { buildGraph, reachable, projectionViolations, mutationViolations, closedCommandViolations, evaluatorViolations, labels, type ModuleNode, type ModuleGraph } from "./dependency-graph";
+import { buildGraph, reachable, projectionViolations, mutationViolations, closedCommandViolations, evaluatorViolations, labels, authorityWriteSites, type ModuleNode, type ModuleGraph } from "./dependency-graph";
 
 const root = resolve(import.meta.dir, "../..");
 const dbosMain = resolve(root, "oakridge-dbos/src/main.ts");
@@ -40,21 +40,25 @@ test("handlers, adapters and observers cannot reach domain writes without crossi
   expect(entries.length).toBeGreaterThan(0);
   expect(labels(root, mutationViolations(graph, entries, mutationEntry))).toEqual([]);
 });
-test("state ownership inventory names each commit function and cites its write line", () => {
+test("state ownership inventory covers every production authority write with its named writer", () => {
   const inventory = readFileSync(resolve(root, "comms/oakridge-state-ownership-inventory.md"), "utf8");
-  const rows = inventory.split("\n").filter((line) => line.startsWith("| ") && !line.startsWith("| State") && !line.startsWith("| ---"));
-  expect(rows.length).toBeGreaterThanOrEqual(18);
-  for (const row of rows) {
-    const writer = row.split("|")[2] ?? "";
-    expect(writer).toMatch(/`(?:createMutationService\.[A-Za-z]+|[A-Za-z]+)(?:`|` → `| → )/);
-    const citations = [...writer.matchAll(/(oakridge-dbos\/src\/storage\/[\w-]+\.ts):(\d+)/g)];
-    expect(citations.length).toBeGreaterThan(0);
-    for (const [, path, line] of citations) {
-      const source_line = readFileSync(resolve(root, path!), "utf8").split("\n")[Number(line) - 1];
-      expect(source_line).toMatch(/INSERT|UPDATE|DELETE|SET /);
-    }
+  const sites = reachable(graph, dbosMain).flatMap(authorityWriteSites);
+  expect(sites.length).toBeGreaterThan(0);
+  for (const site of sites) {
+    const row = inventory.split("\n").find((line) => line.includes(`${label(site.path)}:${site.line}`));
+    expect(row, `missing ownership citation for ${site.writer} at ${label(site.path)}:${site.line}`).toBeDefined();
+    expect(row).toContain(`\`${site.writer}\``);
   }
 });
+test("an additional production writer cannot hide behind existing inventory citations", () => {
+  const node = injected("oakridge-dbos/src/effects/injected.ts", `
+    export async function unlistedWriter(db: Executor) {
+      await db.query("UPDATE authority.effect_intent SET version=version+1");
+    }
+  `);
+  expect(authorityWriteSites(node)).toEqual([{ path: node.path, line: 3, writer: "unlistedWriter" }]);
+});
+
 test("an indirect storage write fails the mutation boundary, but one behind the service passes", () => {
   const http = resolve(root, "oakridge-dbos/src/http/app.ts");
   const node = injected("oakridge-dbos/src/storage/injected.ts", 'tx.query("UPDATE authority.scope_instance SET version=version+1")');

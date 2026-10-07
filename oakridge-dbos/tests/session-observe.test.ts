@@ -80,3 +80,10 @@ test("failed and cancelled session observations deliver declared recovery eviden
     expect(await observe("spec_analysis", "author")).toMatchObject({ kind: "rejected", payload: { evidence: { key: "session_failed", payload: { schema: "text" } } } });
   });
 });
+
+for (const definition of definitions) test(`${definition}: build revision after assessment authorizes build evidence`, async () => {
+  const bundle: DefinitionBundle = await Bun.file(resolve(import.meta.dir, `../../workflow-config/definitions/${definition}.json`)).json();
+  const action = bundle.scopes.find((scope) => scope.key === "implementation")?.workers
+    .find((worker) => worker.key === "build")?.actions.find((action) => action.key === "revise_after_assessment");
+  expect(action?.settings).toContainEqual({ key: "evidence_fact", value: "build_submitted" });
+});
