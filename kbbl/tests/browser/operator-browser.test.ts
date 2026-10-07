@@ -88,7 +88,7 @@ test("browser recovers a committed launch after losing its response and reloadin
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     const url = new URL(request.url);
     if (url.pathname === "/entry.js") return new Response(script, { headers: { "content-type": "application/javascript" } });
-    if (url.pathname === "/oakridge/api/api/definitions") return Response.json([{ bundle_id: "bundle-1", digest: "sha-1", source: { key: "demo", version: 1 } }]);
+    if (url.pathname === "/oakridge/api/api/definitions") return Response.json({ items: [{ bundle_id: "bundle-1", digest: "sha-1", source: { key: "demo", version: 1 } }], next_cursor: null });
     if (url.pathname === "/oakridge/api/runs") {
       const input = await request.json() as typeof requests[number];
       if (!requests.some((previous) => previous.request_id === input.request_id)) launches++;
