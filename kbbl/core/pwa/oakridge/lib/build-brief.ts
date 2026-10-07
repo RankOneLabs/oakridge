@@ -52,3 +52,8 @@ export function isBuildBrief(value: unknown): value is BuildBrief {
     && isStringArray(brief.acceptance_criteria)
     && typeof brief.next_action === "string";
 }
+
+/** A build brief body, or null when it breaks the contract. */
+export function readBuildBrief(body: unknown): BuildBrief | null {
+  return isBuildBrief(body) ? body : null;
+}

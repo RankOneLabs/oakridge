@@ -137,7 +137,17 @@ describe("ArtifactReview", () => {
       component_id: "dev-plan-viewer",
       revisions: [{
         ...ARTIFACT_FIXTURE.revisions[0]!,
-        body: { scope: { include: ["core"] }, risks: ["migration"] },
+        body: {
+          summary: "One cohort.",
+          cohorts: [{
+            id: "core", repository_key: "oakridge", title: "Core", scope: "", depends_on: [],
+            description: null, files_in_scope: [], decisions: [], acceptance_criteria: [],
+          }],
+          dependency_order: ["core"],
+          scope: { in_scope: ["core"], out_of_scope: [] },
+          acceptance_criteria: [],
+          risks: ["migration"],
+        },
       }],
       review: {
         viewer: "dev-plan-viewer",
@@ -151,8 +161,8 @@ describe("ArtifactReview", () => {
     wrap(<ArtifactReview artifactId="art-1" />);
 
     expect(await screen.findByText("Scope")).toBeTruthy();
-    expect(screen.getByText("Risks")).toBeTruthy();
     expect(screen.getByText("migration")).toBeTruthy();
+    expect(screen.queryByTestId("or-plan-cohorts")).toBeNull();
   });
 
   it("shows error state when artifact fetch fails", async () => {

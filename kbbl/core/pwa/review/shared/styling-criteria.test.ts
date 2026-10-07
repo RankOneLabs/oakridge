@@ -39,16 +39,10 @@ describe("styling criteria", () => {
 
   it("no file has inline style={{ … var(--…) … }} (the spec grep)", () => {
     // Matches a style prop containing a CSS variable reference.
-    // Documented exception: ReactFlow <Handle style={…} /> in CohortNode.tsx.
-    // Handle spreads its style prop onto an inner SVG element that does not
-    // accept className — the two Handle lines are the only allowed residual.
-    // We strip <Handle … /> blocks (multi-line) before checking.
     const INLINE_VAR = /style=\{\{[^}]*var\(/;
-    const HANDLE_BLOCK = /<Handle[\s\S]*?\/>/g;
     const violations: string[] = [];
     for (const file of sourceFiles) {
-      const raw = fs.readFileSync(file, "utf8");
-      const content = raw.replace(HANDLE_BLOCK, "");
+      const content = fs.readFileSync(file, "utf8");
       if (INLINE_VAR.test(content)) {
         violations.push(path.relative(REVIEW_DIR, file));
       }

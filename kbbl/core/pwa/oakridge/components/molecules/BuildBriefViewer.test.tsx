@@ -19,9 +19,20 @@ const body = {
 afterEach(cleanup);
 
 describe("BuildBriefViewer", () => {
+  test("reads as text until the operator turns on editing", () => {
+    render(<BuildBriefViewer body={body} edit={{ enabled: true, isPending: false, onEdit: vi.fn() }} />);
+    expect(screen.queryByRole("button", { name: "Edit goal" })).toBeNull();
+  });
+
+  test("offers no edit toggle on a revision that cannot be edited", () => {
+    render(<BuildBriefViewer body={body} edit={{ enabled: false, isPending: false, onEdit: vi.fn() }} />);
+    expect(screen.queryByRole("button", { name: "Edit brief" })).toBeNull();
+  });
+
   test("offers registered atom editing and submits an RFC-6901 anchor", () => {
     const onEdit = vi.fn();
     render(<BuildBriefViewer body={body} edit={{ enabled: true, isPending: false, onEdit }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit brief" }));
 
     fireEvent.click(screen.getByText("Make the brief reviewable."));
     const input = screen.getByDisplayValue("Make the brief reviewable.");
@@ -38,6 +49,7 @@ describe("BuildBriefViewer", () => {
   test("edits nested array and object atoms", () => {
     const onEdit = vi.fn();
     render(<BuildBriefViewer body={body} edit={{ enabled: true, isPending: false, onEdit }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit brief" }));
 
     fireEvent.click(screen.getByRole("button", { name: "Edit files in scope/0" }));
     const fileInput = screen.getByDisplayValue("kbbl/core/pwa/oakridge");

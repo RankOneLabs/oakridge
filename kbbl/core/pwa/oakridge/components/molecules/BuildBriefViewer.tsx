@@ -1,108 +1,144 @@
-import { Button } from "../../../components/atoms/Button";
 import { useState } from "react";
+import { Button } from "../../../components/atoms/Button";
+import { Chip } from "../../../components/atoms/Chip";
 import type { ViewerProps } from "../../artifactRegistry";
 import { isBuildBrief } from "../../lib/build-brief";
+import { ArtifactSection, artifactLabelClass } from "./ArtifactSection";
+import { EditableBriefText } from "./EditableBriefText";
+import { ExpandableText } from "./ExpandableText";
 
-const labelClass = "text-[0.6875rem] font-semibold uppercase tracking-[0.05em] text-[var(--text-muted)]";
+type Editor = NonNullable<ViewerProps["edit"]> | null;
 
-function TextList({ values, emptyLabel, anchor, edit }: { values: string[]; emptyLabel: string; anchor: string; edit: ViewerProps["edit"] }) {
-  return values.length > 0 ? (
-    <ul className="brief-atom-list">
-      {values.map((value, index) => (
-        <li className="brief-atom-list__item" key={`${index}-${value}`}>
-          <EditableBriefText anchor={`${anchor}/${index}`} value={value} edit={edit} />
-        </li>
-      ))}
-    </ul>
-  ) : <div className="brief-empty">{emptyLabel}</div>;
-}
-
-function EditableBriefText({
-  anchor,
-  value,
-  multiline = false,
-  edit,
-}: {
+interface BriefTextProps {
   anchor: string;
   value: string;
-  multiline?: boolean;
-  edit: ViewerProps["edit"];
-}) {
-  const [isEditing, setIsEditing] = useState(false);
-  const [draft, setDraft] = useState(value);
+  editor: Editor;
+  className: string;
+  isProse?: boolean;
+  lineCount?: 3 | 6;
+}
 
-  if (!edit?.enabled) return <>{value}</>;
-  if (!isEditing) {
-    return (
-      <Button variant="secondary" type="button" aria-label={`Edit ${anchor.slice(1).replaceAll("_", " ")}`} className="review-shell__tap-target structured-doc__edit-trigger" onClick={() => { setDraft(value); setIsEditing(true); }}>
-        {value}
-      </Button>
-    );
-  }
+/** An atom read as text, or as an edit trigger while the brief is in edit mode. */
+function BriefText({ anchor, value, editor, className, isProse = false, lineCount = 3 }: BriefTextProps) {
+  if (editor) return <EditableBriefText anchor={anchor} value={value} edit={editor} isMultiline={isProse} />;
+  return isProse ? <ExpandableText text={value} className={className} lineCount={lineCount} /> : <span className={className}>{value}</span>;
+}
 
-  const commit = () => {
-    if (draft !== value) edit.onEdit(anchor, value, draft);
-    setIsEditing(false);
-  };
-  return multiline ? (
-    <textarea className="structured-doc__textarea" value={draft} disabled={edit.isPending} onChange={(event) => setDraft(event.target.value)} onBlur={commit} autoFocus />
-  ) : (
-    <input className="structured-doc__input" value={draft} disabled={edit.isPending} onChange={(event) => setDraft(event.target.value)} onBlur={commit} autoFocus />
+function EmptyNote({ children }: { children: string }) {
+  return <p className="text-sm text-[var(--text-muted)]">{children}</p>;
+}
+
+interface ReasonedItemProps {
+  anchor: string;
+  headline: { key: string; value: string };
+  reason: { key: string; label: string; value: string };
+  editor: Editor;
+}
+
+/** A decision with its rationale, or a rejected approach with why it lost. */
+function ReasonedItem({ anchor, headline, reason, editor }: ReasonedItemProps) {
+  return (
+    <li className="flex flex-col gap-1 py-2.5">
+      <BriefText anchor={`${anchor}/${headline.key}`} value={headline.value} editor={editor} className="text-sm font-medium text-[var(--text-primary)]" />
+      <div className={artifactLabelClass}>{reason.label}</div>
+      <BriefText anchor={`${anchor}/${reason.key}`} value={reason.value} editor={editor} isProse className="text-sm text-[var(--text-secondary)]" />
+    </li>
   );
 }
 
 export function BuildBriefViewer({ body, edit }: ViewerProps) {
+  const [isEditing, setIsEditing] = useState(false);
+
   if (!isBuildBrief(body)) {
     return <div className="or-error" role="alert">This build brief does not match the registered contract.</div>;
   }
+  const editor: Editor = isEditing && edit?.enabled ? edit : null;
 
   return (
-    <article className="or-viewer or-viewer--build-brief" data-testid="or-build-brief-viewer">
-      <header className="or-viewer__section">
-        <div className="or-artifact-detail__meta">
-          <span className={labelClass}>Cohort</span><code className="or-code">{body.cohort_id}</code>
-          <span className={labelClass}>Repository</span><code className="or-code">{body.repository_key}</code>
+    <article className="flex flex-col gap-5" data-testid="or-build-brief-viewer">
+      <header className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <code className="or-code">{body.cohort_id}</code>
+          <Chip tone="neutral">{body.repository_key}</Chip>
+          {body.depends_on.length > 0 && <span className={artifactLabelClass}>After</span>}
+          {body.depends_on.map((id) => <Chip key={id} tone="muted" className="font-mono">{id}</Chip>)}
+          {edit?.enabled && (
+            <div className="ml-auto flex items-center gap-2">
+              {editor?.isPending && <span className="text-xs text-[var(--text-muted)]">Saving…</span>}
+              <Button variant={isEditing ? "primary" : "secondary"} size="xsmall" className="text-xs!" aria-pressed={isEditing} onClick={() => setIsEditing(!isEditing)}>
+                {isEditing ? "Done editing" : "Edit brief"}
+              </Button>
+            </div>
+          )}
         </div>
-        <h2 className="or-viewer__brief-title">{body.title}</h2>
-        <p className="or-viewer__summary"><EditableBriefText anchor="/goal" value={body.goal} multiline edit={edit} /></p>
+        <h2 className="m-0 text-lg font-semibold leading-snug text-[var(--text-primary)]">{body.title}</h2>
       </header>
 
-      <section className="or-viewer__section">
-        <h3 className="or-viewer__section-title">Files in scope</h3>
-        <TextList values={body.files_in_scope} emptyLabel="No files listed." anchor="/files_in_scope" edit={edit} />
-      </section>
+      <ArtifactSection title="Goal" testId="or-brief-goal">
+        <BriefText anchor="/goal" value={body.goal} editor={editor} isProse lineCount={6} className="text-sm leading-relaxed text-[var(--text-primary)]" />
+      </ArtifactSection>
 
-      <section className="or-viewer__section">
-        <h3 className="or-viewer__section-title">Decisions made</h3>
-        {body.decisions_made.length > 0 ? body.decisions_made.map((item, index) => (
-          <div className="brief-decision-card" key={`${index}-${item.decision}`}>
-            <div className="brief-decision-card__header"><EditableBriefText anchor={`/decisions_made/${index}/decision`} value={item.decision} edit={edit} /></div>
-            <div className="brief-decision-card__rationale-label">Rationale</div>
-            <div className="brief-decision-card__rationale-body"><EditableBriefText anchor={`/decisions_made/${index}/rationale`} value={item.rationale} multiline edit={edit} /></div>
-          </div>
-        )) : <div className="brief-empty">No decisions listed.</div>}
-      </section>
+      <ArtifactSection title="Next action" testId="or-brief-next-action">
+        <div className="rounded-md border-l-4 border-[var(--accent-blue)] bg-[var(--accent-muted)] px-3 py-2">
+          <BriefText anchor="/next_action" value={body.next_action} editor={editor} isProse className="text-sm text-[var(--text-primary)]" />
+        </div>
+      </ArtifactSection>
 
-      <section className="or-viewer__section">
-        <h3 className="or-viewer__section-title">Approaches rejected</h3>
-        {body.approaches_rejected.length > 0 ? body.approaches_rejected.map((item, index) => (
-          <div className="brief-approach-rejected" key={`${index}-${item.approach}`}>
-            <div className="brief-approach-rejected__header"><EditableBriefText anchor={`/approaches_rejected/${index}/approach`} value={item.approach} edit={edit} /></div>
-            <div className="brief-approach-rejected__reason-label">Reason</div>
-            <div className="brief-approach-rejected__reason-body"><EditableBriefText anchor={`/approaches_rejected/${index}/reason`} value={item.reason} multiline edit={edit} /></div>
-          </div>
-        )) : <div className="brief-empty">No rejected approaches.</div>}
-      </section>
+      <ArtifactSection title={`Files in scope (${body.files_in_scope.length})`} testId="or-brief-files">
+        {body.files_in_scope.length > 0 ? (
+          <ul className="m-0 flex list-none flex-col gap-1 p-0">
+            {body.files_in_scope.map((file, index) => (
+              <li key={`${index}-${file}`}>
+                <BriefText anchor={`/files_in_scope/${index}`} value={file} editor={editor} className="font-mono text-xs text-[var(--text-secondary)]" />
+              </li>
+            ))}
+          </ul>
+        ) : <EmptyNote>No files listed.</EmptyNote>}
+      </ArtifactSection>
 
-      <section className="or-viewer__section">
-        <h3 className="or-viewer__section-title">Acceptance criteria</h3>
-        <TextList values={body.acceptance_criteria} emptyLabel="No acceptance criteria listed." anchor="/acceptance_criteria" edit={edit} />
-      </section>
+      <ArtifactSection title={`Decisions made (${body.decisions_made.length})`} testId="or-brief-decisions">
+        {body.decisions_made.length > 0 ? (
+          <ul className="m-0 list-none divide-y divide-[var(--border-subtle)] p-0">
+            {body.decisions_made.map((item, index) => (
+              <ReasonedItem
+                key={`${index}-${item.decision}`}
+                anchor={`/decisions_made/${index}`}
+                headline={{ key: "decision", value: item.decision }}
+                reason={{ key: "rationale", label: "Rationale", value: item.rationale }}
+                editor={editor}
+              />
+            ))}
+          </ul>
+        ) : <EmptyNote>No decisions listed.</EmptyNote>}
+      </ArtifactSection>
 
-      <section className="or-viewer__section">
-        <h3 className="or-viewer__section-title">Next action</h3>
-        <div className="brief-next-action"><EditableBriefText anchor="/next_action" value={body.next_action} multiline edit={edit} /></div>
-      </section>
+      <ArtifactSection title={`Approaches rejected (${body.approaches_rejected.length})`} testId="or-brief-rejected">
+        {body.approaches_rejected.length > 0 ? (
+          <ul className="m-0 list-none divide-y divide-[var(--border-subtle)] p-0">
+            {body.approaches_rejected.map((item, index) => (
+              <ReasonedItem
+                key={`${index}-${item.approach}`}
+                anchor={`/approaches_rejected/${index}`}
+                headline={{ key: "approach", value: item.approach }}
+                reason={{ key: "reason", label: "Why not", value: item.reason }}
+                editor={editor}
+              />
+            ))}
+          </ul>
+        ) : <EmptyNote>No rejected approaches.</EmptyNote>}
+      </ArtifactSection>
+
+      <ArtifactSection title={`Acceptance criteria (${body.acceptance_criteria.length})`} testId="or-brief-acceptance">
+        {body.acceptance_criteria.length > 0 ? (
+          <ol className="m-0 flex list-decimal flex-col gap-1 pl-5 text-sm text-[var(--text-secondary)]">
+            {body.acceptance_criteria.map((criterion, index) => (
+              <li key={`${index}-${criterion}`}>
+                <BriefText anchor={`/acceptance_criteria/${index}`} value={criterion} editor={editor} className="text-sm text-[var(--text-secondary)]" />
+              </li>
+            ))}
+          </ol>
+        ) : <EmptyNote>No acceptance criteria listed.</EmptyNote>}
+      </ArtifactSection>
     </article>
   );
 }
