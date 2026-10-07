@@ -4,7 +4,7 @@ import type { CapacityChange } from "./capacity";
 import { applyCapacityChanges } from "./capacity";
 import { findReceipt, type IngressIdentity } from "./receipts";
 import type { AuthoritySnapshot, ReadSet } from "./snapshot-reader";
-import { hasSameReadSet, readSnapshot, READ_RELATIONS, RUN_SCOPED_READ_RELATIONS } from "./snapshot-reader";
+import { hasSameReadSet, readSnapshot, READ_RELATIONS, CAPACITY_READ_RELATIONS } from "./snapshot-reader";
 import type { ChildCollectionMember, CommitReceipt, ScopeId } from "./schema-records";
 import { inTransaction, type SqlExecutor, type TransactionalSqlExecutor } from "./sql-executor";
 import { pinProviderRequest } from "../effects/operations/selected-request";
@@ -64,7 +64,7 @@ async function lockOwners(tx: SqlExecutor, request: CommitRequest): Promise<void
     : "SELECT pg_advisory_xact_lock_shared(hashtextextended($1, 0))", [request.identity.run_id]);
   const by_relation = new Map<string, string[]>();
   for (const witness of request.read_set.rows) {
-    if (!request.capacity.length && RUN_SCOPED_READ_RELATIONS.includes(witness.relation)) continue;
+    if (!request.capacity.length && CAPACITY_READ_RELATIONS.includes(witness.relation)) continue;
     by_relation.set(witness.relation, [...(by_relation.get(witness.relation) ?? []), witness.id]);
   }
   for (const relation of [...by_relation.keys()].sort((a, b) => a.localeCompare(b))) {
