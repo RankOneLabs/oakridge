@@ -15,6 +15,7 @@ export default defineConfig({
       // Top-level API routes used by the session list + inbox + CRUD.
       "/sessions": { target: backendTarget, changeOrigin: true },
       "/inbox": { target: backendTarget, changeOrigin: true },
+      "/live": { target: backendTarget, changeOrigin: true },
       "/config": { target: backendTarget, changeOrigin: true },
       // Artifact SSE stream.
       "/artifact-stream": { target: backendTarget, changeOrigin: true },

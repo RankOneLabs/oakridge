@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { LiveSubscription } from "../../lib/live-stream";
 
 import { parseOakridgeRunEventFrame } from "../client";
 import type { RunEventFrame } from "../types";
@@ -10,19 +11,19 @@ const listeners: Record<StreamEventName, Set<StreamListener>> = {
   invalidate: new Set(),
   run_event: new Set(),
 };
-let source: EventSource | null = null;
+let source: LiveSubscription | null = null;
 
-const dispatch = (name: StreamEventName) => (event: Event): void => {
+const dispatch = (name: StreamEventName) => (event: MessageEvent<string>): void => {
   for (const listener of listeners[name]) listener(event as MessageEvent<string>);
 };
 
 const dispatchers = { invalidate: dispatch("invalidate"), run_event: dispatch("run_event") };
 
-/** Both Oakridge hooks subscribe through this one browser connection. */
+/** Both Oakridge hooks subscribe through one topic on the shared page feed. */
 export const subscribeOakridgeStream = (name: StreamEventName, listener: StreamListener): (() => void) => {
   listeners[name].add(listener);
   if (!source) {
-    source = new EventSource("/oakridge/api/events");
+    source = new LiveSubscription("/oakridge/api/events");
     source.addEventListener("invalidate", dispatchers.invalidate);
     source.addEventListener("run_event", dispatchers.run_event);
   }

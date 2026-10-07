@@ -6,7 +6,6 @@ import { usePendingSends } from "../hooks/usePendingSends";
 import { useElapsedSeconds } from "../hooks/useElapsedSeconds";
 import { useAutoScrollAndLayout } from "../hooks/useAutoScrollAndLayout";
 import { projectTimeline } from "../lib/acp-timeline";
-import { useInvokeAgentCommand } from "../hooks/useSkills";
 import {
   operatorStateLabel,
   selectOperatorExecutionState,
@@ -21,7 +20,6 @@ import { AgentMessage } from "../components/molecules/AgentMessage";
 import { EndedBanner } from "../components/organisms/EndedBanner";
 import { ThinkingIndicator } from "../components/atoms/ThinkingIndicator";
 import { SkillRail } from "../components/organisms/SkillRail";
-import { CompactControl } from "../components/molecules/CompactControl";
 import { permissionCardAnchorId } from "../components/organisms/PermissionCard";
 import { readHashPermissionTarget, readHashSessionTarget } from "../lib/hash";
 import {
@@ -92,7 +90,6 @@ export function SessionView({
     card.scrollIntoView({ behavior: "smooth", block: "center" });
     card.focus({ preventScroll: true });
   }, [projection.openPermissions, hashFocusVersion]);
-  const compactMutation = useInvokeAgentCommand(sid);
 
   const sessionStatus = snapshot?.status ?? null;
   const sessionClosed =
@@ -226,17 +223,6 @@ export function SessionView({
         </>
       )}
       <div className="bottom-stack" ref={bottomBarRef}>
-        {canInput && (
-          <CompactControl
-            isPending={compactMutation.isPending}
-            error={
-              compactMutation.error instanceof Error
-                ? compactMutation.error.message
-                : null
-            }
-            onCompact={() => compactMutation.mutate("compact")}
-          />
-        )}
         {canInput && (
           <SkillRail sid={sid} snapshot={snapshot} commands={projection.commands} />
         )}

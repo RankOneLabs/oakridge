@@ -112,6 +112,33 @@ test("a handoff output retains the established cohort projection byte for byte",
   }));
 });
 
+test("cancelled runs leave cohort history but no recovery or admission work in the inbox", async () => {
+  if (!sql) { console.warn("operator projection cancellation test SKIPPED: no PostgreSQL reachable"); return; }
+  const recovery = await seedCohort(sql, { release: { kind: "immediate" }, attention: "optional", manual_admission: false });
+  const admission = await seedCohort(sql, { release: { kind: "immediate" }, attention: "optional", manual_admission: true });
+  const runIds = [recovery.run_id, admission.run_id];
+  await sql.query("UPDATE oakridge.workflow_run SET state='cancelled', outcome='{\"kind\":\"cancelled\",\"reason\":null}'::jsonb, ended_at=now() WHERE id=ANY($1::uuid[])", [runIds]);
+  await sql.query("UPDATE oakridge.run_unit SET state='cancelled', outcome='{\"kind\":\"cancelled\",\"reason\":null}'::jsonb, ended_at=now() WHERE run_id=$1", [recovery.run_id]);
+  const repository = new PostgresOperatorProjectionRepository(sql, "test-app-version");
+
+  expect((await repository.list_cohorts()).filter((cohort) => runIds.includes(cohort.run_id))).toHaveLength(2);
+  const inbox = await repository.get_review_inbox();
+  expect({
+    cohorts: inbox.cohorts.filter((cohort) => runIds.includes(cohort.run_id)),
+    items: inbox.items.filter((item) => runIds.includes(item.run_id)),
+  }).toEqual({ cohorts: [], items: [] });
+});
+
+test("failed runs still surface cohorts needing recovery", async () => {
+  if (!sql) { console.warn("operator projection recovery test SKIPPED: no PostgreSQL reachable"); return; }
+  const seeded = await seedCohort(sql, { release: { kind: "immediate" }, attention: "optional", manual_admission: false });
+  await sql.query("UPDATE oakridge.workflow_run SET state='failed', outcome='{\"kind\":\"failed\",\"code\":\"test\",\"detail\":\"fixture failure\"}'::jsonb, ended_at=now() WHERE id=$1", [seeded.run_id]);
+  await sql.query("UPDATE oakridge.run_unit SET state='failed', outcome='{\"kind\":\"failed\",\"code\":\"test\",\"detail\":\"fixture failure\"}'::jsonb, ended_at=now() WHERE run_id=$1", [seeded.run_id]);
+  const repository = new PostgresOperatorProjectionRepository(sql, "test-app-version");
+
+  expect((await repository.get_review_inbox()).items).toContainEqual(expect.objectContaining({ kind: "cohort_failed", run_id: seeded.run_id }));
+});
+
 test("run summary stage totals match run detail without compiling the list", async () => {
   if (!sql) { console.warn("operator projection stage progress test SKIPPED: no PostgreSQL reachable"); return; }
   const definitionId = randomUUID() as WorkflowDefinitionId;

@@ -12,9 +12,8 @@ import type { ArtifactDetail, ParkedGate, ReviewItem, RunDetail, RunSessionAttem
 type FetchHandler = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 /**
- * jsdom has no EventSource, and the session view opens one per sid. The stub
- * records its instances so a test can assert that two panes really did open
- * two streams.
+ * jsdom has no EventSource. The stub records the combined feed's subscriptions
+ * so tests can assert that each pane subscribes to its own session.
  */
 export class EventSourceStub {
   static instances: EventSourceStub[] = [];
@@ -176,4 +175,3 @@ export const makeFetch = (): FetchHandler =>
     if (url.includes("/runs/")) return json(RUN);
     return json([]);
   });
-

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { LiveSubscription } from "../lib/live-stream";
 
 import type {
   AcpUiEvent,
@@ -21,7 +22,8 @@ export interface AcpSessionStream {
   historyLoaded: boolean;
 }
 
-// One SSE subscription to /sessions/:sid/stream. The server opens every
+// One logical subscription to /sessions/:sid/stream on the page's shared SSE
+// connection. The server opens every
 // connection with an `epoch` frame and a full replay of the projection
 // buffer, then live events — so the client holds no cross-connection
 // offset state at all: each epoch frame resets the local timeline and the
@@ -54,7 +56,7 @@ export function useAcpSession(sid: string, enabled = true): AcpSessionStream {
       return;
     }
 
-    let current: EventSource | null = null;
+    let current: LiveSubscription | null = null;
     let stopped = false;
     let pending: AcpUiEvent[] = [];
     let pendingFrame: number | null = null;
@@ -74,7 +76,7 @@ export function useAcpSession(sid: string, enabled = true): AcpSessionStream {
       if (stopped) return;
       current?.close();
       setStreamStatus("connecting");
-      const es = new EventSource(`/sessions/${encodeURIComponent(sid)}/stream`);
+      const es = new LiveSubscription(`/sessions/${encodeURIComponent(sid)}/stream`);
       current = es;
       es.onopen = () => setStreamStatus("connected");
       es.onerror = () => setStreamStatus("disconnected");
@@ -158,41 +160,6 @@ export function useAcpSession(sid: string, enabled = true): AcpSessionStream {
       });
     };
 
-    // The stream 404s/503s for unknown or unstreamable sessions — the
-    // EventSource surfaces that only as a generic error, so probe once
-    // with fetch when the source lands in CLOSED without ever opening.
-    const probeFailure = async () => {
-      try {
-        const res = await fetch(`/sessions/${encodeURIComponent(sid)}/stream`, {
-          method: "GET",
-          headers: { accept: "text/event-stream" },
-        });
-        // The cleanup clears failTimer, so a probe never STARTS after
-        // unmount — but one already in flight can resolve after it.
-        if (stopped) {
-          await res.body?.cancel().catch(() => {});
-          return;
-        }
-        if (!res.ok) {
-          const body = (await res.json().catch(() => null)) as {
-            error?: unknown;
-          } | null;
-          if (stopped) return;
-          setStreamError(
-            typeof body?.error === "string"
-              ? body.error
-              : `stream unavailable (${res.status})`,
-          );
-        } else {
-          // The probe itself opened a stream; discard it.
-          await res.body?.cancel().catch(() => {});
-        }
-      } catch {
-        // Network-level failure: leave streamStatus to tell the story.
-      }
-    };
-
-    let probed = false;
     const reviveIfStale = () => {
       if (document.visibilityState !== "visible") return;
       // Only rebuild when the browser has actually given up (CLOSED) or
@@ -202,21 +169,11 @@ export function useAcpSession(sid: string, enabled = true): AcpSessionStream {
     };
 
     connect();
-    const failTimer = setTimeout(() => {
-      if (
-        !probed &&
-        current?.readyState === EventSource.CLOSED
-      ) {
-        probed = true;
-        void probeFailure();
-      }
-    }, 2000);
     document.addEventListener("visibilitychange", reviveIfStale);
     window.addEventListener("focus", reviveIfStale);
 
     return () => {
       stopped = true;
-      clearTimeout(failTimer);
       document.removeEventListener("visibilitychange", reviveIfStale);
       window.removeEventListener("focus", reviveIfStale);
       if (pendingFrame !== null) cancelAnimationFrame(pendingFrame);

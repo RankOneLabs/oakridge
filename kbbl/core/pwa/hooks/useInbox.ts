@@ -4,14 +4,15 @@ import { useQuery } from "@tanstack/react-query";
 import { useStore } from "../state/store";
 import type { SessionSnapshot } from "../types";
 import { selectPendingPermissionToasts, useToastStore } from "./useToast";
+import { LiveSubscription } from "../lib/live-stream";
 
 interface SessionsListResponse {
   sessions: SessionSnapshot[];
 }
 
 // Mounts the inbox subscription: a one-shot seed query for the full list
-// (archived pre-ACP sessions included) and a long-lived /inbox
-// EventSource whose `snapshot` frames replace the ACP session list in the
+// (archived pre-ACP sessions included) and a logical /inbox subscription
+// on the page's shared feed whose `snapshot` frames replace the ACP list in the
 // Zustand store wholesale. The server pushes a fresh snapshot on every
 // session change — there are no deltas to fold, and a reconnect needs no
 // replay reasoning because the next frame is always authoritative.
@@ -55,7 +56,7 @@ export function useInbox(opts: { onSessionRemoved?: (sid: string) => void } = {}
   }, [seed.data, seedSessions]);
 
   useEffect(() => {
-    let current: EventSource | null = null;
+    let current: LiveSubscription | null = null;
     let stopped = false;
     let hasSnapshotBaseline = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -68,7 +69,7 @@ export function useInbox(opts: { onSessionRemoved?: (sid: string) => void } = {}
       }
       current?.close();
       setInboxStatus("connecting");
-      const es = new EventSource("/inbox");
+      const es = new LiveSubscription("/inbox");
       current = es;
 
       es.onopen = () => setInboxStatus("connected");
