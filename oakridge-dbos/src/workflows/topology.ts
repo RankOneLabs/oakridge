@@ -1,4 +1,4 @@
-import { DBOS, Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
+import { DBOS, Error as DBOSErrors, type WorkflowStatus } from "@dbos-inc/dbos-sdk";
 import type { CoreClient } from "../core-client/client";
 import type { CheckedValue } from "../core-client/generated-contracts";
 import { recoverConfiguredFailure, recoverSessionFailure, recoverStartFailure } from "../effects/operations/production-provider";
@@ -44,8 +44,19 @@ export interface WorkflowTiming {
   readonly wake_timeout_seconds: number;
   /** DBOS timeout for an effect, including observation and retry sleeps. */
   readonly execution_deadline_ms: number;
+  /** Number of scopes admitted to one run advance step. */
+  readonly child_scan_max_scopes: number;
+  /** Per-scope share of the serial child request budget. */
+  readonly child_scan_per_scope_deadline_ms: number;
+  /** Cap on the serial child request budget within the run advance step. */
+  readonly child_scan_max_request_deadline_ms: number;
 }
-export const DEFAULT_WORKFLOW_TIMING: WorkflowTiming = { retry_initial_seconds: 1, retry_cap_seconds: 30, observe_interval_seconds: 5, max_observe_unavailable_attempts: 10, wake_timeout_seconds: 30, execution_deadline_ms: 3_600_000 };
+export const DEFAULT_WORKFLOW_TIMING: WorkflowTiming = {
+  retry_initial_seconds: 1, retry_cap_seconds: 30, observe_interval_seconds: 5,
+  max_observe_unavailable_attempts: 10, wake_timeout_seconds: 30, execution_deadline_ms: 3_600_000,
+  child_scan_max_scopes: 2, child_scan_per_scope_deadline_ms: 60_000,
+  child_scan_max_request_deadline_ms: 120_000,
+};
 
 let services: WorkflowServices | null = null;
 export function registerWorkflowServices(value: WorkflowServices): void { services = value; }
@@ -149,8 +160,10 @@ export interface RunAdvance {
  */
 const advanceRunStep = DBOS.registerStep(async (run_id: RunId, cursor: string | null): Promise<RunAdvance> => {
   const { db, core, mutations } = current();
+  const timing = current().timing;
   const page = await advanceChildrenPage({ db, core, mutations, run_ids: [run_id], after_scope_id: cursor,
-    max_scopes: 2, per_scope_deadline_ms: 60_000, max_request_deadline_ms: 120_000 });
+    max_scopes: timing.child_scan_max_scopes, per_scope_deadline_ms: timing.child_scan_per_scope_deadline_ms,
+    max_request_deadline_ms: timing.child_scan_max_request_deadline_ms });
   const failures: LifecycleFailure[] = [...page.failures];
   for (const row of await undeliveredEvidence(db, run_id)) {
     const delivery = await deliverEvidence(db, mutations, row);
@@ -301,6 +314,7 @@ export function forkStartStep(steps: readonly { readonly functionID: number; rea
 
 async function recoverErroredRun(run_id: string, generation: number): Promise<number> {
   const id = runWorkflowId(run_id, generation);
+  // DBOS checkpoints both calls as internal steps when this runs in wakeRunOf's workflow body.
   const steps = await DBOS.listWorkflowSteps(id) ?? [];
   const successor_id = runWorkflowId(run_id, generation + 1);
   await DBOS.forkWorkflow(id, forkStartStep(steps), { newWorkflowID: successor_id, applicationVersion: DBOS.applicationVersion });
@@ -309,7 +323,17 @@ async function recoverErroredRun(run_id: string, generation: number): Promise<nu
   return generation + 1;
 }
 
-async function dispatchChild(run_id: string, intent_id: string, kind: "start" | "stop"): Promise<void> {
+async function settleExpiredEffect(intent_id: string): Promise<void> {
+  const intent = await loadIntentStep(intent_id);
+  if (!intent || (intent.status !== "pending" && intent.status !== "acknowledged")) return;
+  const payload = await startRejectionStep({ ...intent.payload,
+    failure: { kind: "attempt_budget_exhausted", detail: `execution deadline exceeded for ${intent_id}` } });
+  await persistStep({ intent_id, status: "rejected", payload, terminal_result: null });
+  await deliverEvidenceStep(intent_id);
+  DBOS.logger.error(`effect ${intent_id}: execution deadline exceeded`);
+}
+
+export async function dispatchChild(run_id: string, intent_id: string, kind: "start" | "stop"): Promise<void> {
   const status = await DBOS.getWorkflowStatus(intent_id);
   if (!status) {
     if (kind === "start") await DBOS.startWorkflow(effectWorkflow,
@@ -320,13 +344,7 @@ async function dispatchChild(run_id: string, intent_id: string, kind: "start" | 
   if (status.status === "PENDING" || status.status === "ENQUEUED") return;
   if (status.status === "CANCELLED") {
     if (kind === "start" && status.deadlineEpochMS !== undefined && status.deadlineEpochMS <= Date.now()) {
-      const intent = await loadIntentStep(intent_id);
-      if (!intent || (intent.status !== "pending" && intent.status !== "acknowledged")) return;
-      const payload = await startRejectionStep({ ...intent.payload,
-        failure: { kind: "attempt_budget_exhausted", detail: `execution deadline exceeded for ${intent_id}` } });
-      await persistStep({ intent_id, status: "rejected", payload, terminal_result: null });
-      await deliverEvidenceStep(intent_id);
-      DBOS.logger.error(`effect ${intent_id}: execution deadline exceeded`);
+      await settleExpiredEffect(intent_id);
       return;
     }
     await DBOS.resumeWorkflow(intent_id);
@@ -411,7 +429,7 @@ export async function wakeRun(run_id: string): Promise<void> {
   }
   catch (error) { DBOS.logger.warn(`run ${run_id}: wake not delivered: ${String(error)}`); }
 }
-async function wakeRunOf(scope_id: string): Promise<void> {
+export async function wakeRunOf(scope_id: string): Promise<void> {
   const address = await runOfScopeStep(scope_id);
   if (!address) return;
   let generation = Number(address.current_generation);
@@ -426,6 +444,10 @@ const runOfScopeStep = DBOS.registerStep(async (scope_id: string): Promise<RunAd
 }, { name: "oakridgeRunOfScope", retriesAllowed: true, maxAttempts: 5 });
 
 const WORKFLOW_NAMES = ["oakridgeRunWorkflow", "oakridgeEffectWorkflow", "oakridgeCleanupWorkflow"];
+function isExpiredEffectWorkflow(status: WorkflowStatus, now_ms: number): boolean {
+  return status.workflowName === "oakridgeEffectWorkflow"
+    && status.deadlineEpochMS !== undefined && status.deadlineEpochMS <= now_ms;
+}
 
 /**
  * Boot: workflows this engine parked at its last shutdown resume from their
@@ -433,7 +455,12 @@ const WORKFLOW_NAMES = ["oakridgeRunWorkflow", "oakridgeEffectWorkflow", "oakrid
  */
 export async function resumeActiveRuns(db: TransactionalSqlExecutor): Promise<number> {
   const parked = await DBOS.listWorkflows({ status: "CANCELLED", workflowName: WORKFLOW_NAMES.slice(1) });
-  if (parked.length) await DBOS.resumeWorkflows(parked.map((status) => status.workflowID));
+  const now_ms = Date.now();
+  const expired = parked.filter((status) => isExpiredEffectWorkflow(status, now_ms));
+  const expired_ids = new Set(expired.map((status) => status.workflowID));
+  const resumable = parked.filter((status) => !expired_ids.has(status.workflowID));
+  if (resumable.length) await DBOS.resumeWorkflows(resumable.map((status) => status.workflowID));
+  for (const status of expired) await settleExpiredEffect(status.workflowID);
   const runs = await db.query<{ id: string }>("SELECT r.id FROM authority.run r WHERE EXISTS (SELECT 1 FROM authority.scope_instance s WHERE s.run_id=r.id AND s.parent_id IS NULL AND NOT s.is_terminal) ORDER BY r.id", []);
   for (const run of runs) await ensureRunWorkflow(run.id);
   return runs.length;

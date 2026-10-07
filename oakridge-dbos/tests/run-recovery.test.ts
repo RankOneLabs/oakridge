@@ -1,7 +1,7 @@
 import { expect, spyOn, test } from "bun:test";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { serialChildrenRequestDeadlineMs } from "../src/runtime/advance-children";
-import { RunInfrastructureError, ensureRunWorkflow, forkStartStep, registerWorkflowServices, resumeActiveRuns, runWorkflowId, wakeRun } from "../src/workflows/topology";
+import { DEFAULT_WORKFLOW_TIMING, RunInfrastructureError, dispatchChild, ensureRunWorkflow, forkStartStep, registerWorkflowServices, resumeActiveRuns, runWorkflowId, wakeRun } from "../src/workflows/topology";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
 
 test("a run boundary failure retains its run and operation in the diagnostic", () => {
@@ -28,6 +28,23 @@ test("a failed step replays after its last successful predecessor", () => {
 test("serial child request time is bounded as scope count grows", () => {
   expect(serialChildrenRequestDeadlineMs(1, 60_000, 120_000)).toBe(60_000);
   expect(serialChildrenRequestDeadlineMs(100, 60_000, 120_000)).toBe(120_000);
+});
+
+test("a PENDING child is not dispatched again, while a missing child is started", async () => {
+  registerWorkflowServices({ timing: DEFAULT_WORKFLOW_TIMING } as Parameters<typeof registerWorkflowServices>[0]);
+  const status = spyOn(DBOS, "getWorkflowStatus").mockImplementation(async () => ({ status: "PENDING" }) as never);
+  const calls: unknown[][] = [];
+  const start = spyOn(DBOS, "startWorkflow").mockImplementation(((_workflow: unknown, options: unknown) => {
+    calls.push([options]);
+    return async (...args: unknown[]) => { calls.push(args); return {} as never; };
+  }) as never);
+  try {
+    await dispatchChild("run-1", "intent-1", "start");
+    expect(calls).toEqual([]);
+    status.mockImplementation(async () => null as never);
+    await dispatchChild("run-1", "intent-1", "start");
+    expect(calls).toEqual([[{ workflowID: "intent-1", timeoutMS: DEFAULT_WORKFLOW_TIMING.execution_deadline_ms }], ["intent-1"]]);
+  } finally { status.mockRestore(); start.mockRestore(); }
 });
 
 test("wake addresses the durable successor generation", async () => {
