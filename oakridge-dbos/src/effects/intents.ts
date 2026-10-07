@@ -23,6 +23,8 @@ export interface EffectPayload {
   readonly start_attempts?: number;
   /** The reserved attempt has no durably recorded provider outcome yet. */
   readonly start_in_flight?: boolean;
+  /** Consecutive unavailable observations, persisted across workflow recovery. */
+  readonly observe_unavailable_attempts?: number;
   readonly last_detail?: string;
   readonly evidence?: Trigger;
   readonly evidence_delivered?: boolean;
@@ -78,4 +80,3 @@ export async function deletionEligibility(db: SqlExecutor, run_id: string): Prom
   const obligations = await pendingCleanupCount(db, run_id);
   return obligations === 0 ? { kind: "allowed" } : { kind: "refused", obligations };
 }
-

@@ -3,7 +3,7 @@ import type { CoreClient } from "../core-client/client";
 import type { CheckedValue } from "../core-client/generated-contracts";
 import { deliverEvidence, undeliveredEvidence } from "../effects/evidence";
 import { readIntent, type EffectIntent, type EffectPayload, type EffectStatus } from "../effects/intents";
-import { bounded, exhaustStart, resolveObserve, resolveStart, resolveStop, startAttemptsExhausted, type StartOutcome } from "../effects/outcomes";
+import { bounded, exhaustStart, resolveObserve, resolveStart, resolveStop, settleObserveRetry, startAttemptsExhausted, type StartOutcome } from "../effects/outcomes";
 import type { EffectProvider, ProviderResult } from "../effects/provider";
 import { advanceChildren, type LifecycleFailure } from "../runtime/advance-children";
 import { claimStartAttempt, persistEffectResult } from "../storage/effect-results";
@@ -35,10 +35,12 @@ export interface WorkflowTiming {
   readonly retry_cap_seconds: number;
   /** Sleep between terminal observations that report a still-running execution. */
   readonly observe_interval_seconds: number;
+  /** Maximum consecutive transiently_unavailable observations before rejection. */
+  readonly max_observe_unavailable_attempts: number;
   /** Bound on how long a lost wake can delay a run's recheck. */
   readonly wake_timeout_seconds: number;
 }
-export const DEFAULT_WORKFLOW_TIMING: WorkflowTiming = { retry_initial_seconds: 1, retry_cap_seconds: 30, observe_interval_seconds: 5, wake_timeout_seconds: 30 };
+export const DEFAULT_WORKFLOW_TIMING: WorkflowTiming = { retry_initial_seconds: 1, retry_cap_seconds: 30, observe_interval_seconds: 5, max_observe_unavailable_attempts: 10, wake_timeout_seconds: 30 };
 
 let services: WorkflowServices | null = null;
 export function registerWorkflowServices(value: WorkflowServices): void { services = value; }
@@ -182,8 +184,16 @@ async function carryStart(intent_id: string): Promise<EffectStatus | null> {
       status = written ?? "cleanup_confirmed";
       break;
     }
-    if (outcome.kind === "retry") {
-      payload = outcome.payload;
+    if (outcome.kind === "rejected" || outcome.kind === "retry") {
+      const settled = outcome.kind === "rejected" ? { status: "rejected" as const, payload: outcome.payload }
+        : settleObserveRetry(payload, outcome, timing.max_observe_unavailable_attempts);
+      payload = settled.payload;
+      const next = settled.status;
+      const written = await persistStep({ intent_id, status: next, payload, terminal_result: null });
+      status = written ?? next;
+      if (status !== "acknowledged") break;
+    } else {
+      payload = { ...payload, observe_unavailable_attempts: 0 };
       await persistStep({ intent_id, status: "acknowledged", payload, terminal_result: null });
     }
     await DBOS.sleepSeconds(timing.observe_interval_seconds);
