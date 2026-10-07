@@ -61,6 +61,7 @@ jobs:
       # committed lock.
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
+      - run: bun kbbl/scripts/generate-operator-contracts.ts --check
 
   kbbl-tests:
     name: kbbl backend tests (bun)

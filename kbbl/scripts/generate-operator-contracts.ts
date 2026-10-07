@@ -9,7 +9,8 @@ function projection(path: string, names: readonly string[]): string {
   const source = readFileSync(resolve(root, path), "utf8");
   const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
   return names.map((name) => {
-    const declaration = file.statements.find((statement) => ts.isInterfaceDeclaration(statement) && statement.name.text === name);
+    const declaration = file.statements.find((statement) =>
+      (ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement)) && statement.name.text === name);
     if (!declaration) throw new Error(`${path}: ${name} projection missing`);
     return declaration.getText(file);
   }).join("\n\n");
@@ -19,6 +20,16 @@ const run = projection("oakridge-dbos/src/projections/run-view.ts", ["RunScopeSu
   .replaceAll("RunScopeSummary", "OperatorRunScopeSummary")
   .replaceAll("RunView", "OperatorRunView")
   .replaceAll("RunId", "string");
+const catalog = projection("oakridge-dbos/src/projections/run-view.ts", ["OperatorDefinitionSummary"])
+  .replaceAll('import("../core-client/generated-contracts").DefinitionBundle', 'import("./workflow-definition-types").WorkflowDefinitionDescriptor');
+const operatorScope = projection("oakridge-dbos/src/projections/scope-view.ts", [
+  "OperatorResourceBinding", "OperatorSchemaShape", "OperatorSchemaField", "OperatorSchema",
+  "OperatorPresentation", "OperatorCommandDescriptor", "OperatorScopeDefinition", "OperatorPinnedDefinition",
+  "OperatorGenericRun", "OperatorCheckedValue", "OperatorCheckedData", "OperatorTargetRevision",
+  "OperatorArtifactRevision", "OperatorOutputSlot", "OperatorScopeView", "OperatorDraftKey",
+  "OperatorCommandSubmission", "OperatorCommandReceipt",
+]);
+const operatorInbox = projection("oakridge-dbos/src/projections/inbox.ts", ["OperatorInboxItem", "OperatorInbox", "OperatorInboxPage"]);
 const scope = projection("oakridge-dbos/src/projections/scope-view.ts", ["ProjectionCursor", "ScopeView"])
   .replaceAll("ProjectionCursor", "OperatorProjectionCursor")
   .replaceAll("ScopeView", "OperatorScopeProjection")
@@ -48,11 +59,7 @@ const launch = projection("oakridge-dbos/src/storage/mutation-service.ts", ["Sta
 
 const generated = `// Generated from oakridge-dbos projections. Run kbbl/scripts/generate-operator-contracts.ts.\n`
   + `// The PWA intentionally imports no backend source at runtime or typecheck time.\n`
-  + `import type { OperatorCheckedValue, OperatorCommandDescriptor, OperatorScopeView, OperatorOutputSlot, OperatorTargetRevision } from "./operator-contracts.base";\n`
-  + `export type * from "./operator-contracts.base";\n\n`
-  + `export interface OperatorResourceBinding { readonly id: string; readonly version: number; readonly scope_id: string; readonly resource_key: string; readonly observation: OperatorCheckedValue | null }\n\n`
-  + `${launch}\n\n${run}\n\n${scope}\n\n${transition}\n\n${history}\n`
-  + `export interface OperatorDefinitionSummary { readonly bundle_id: string; readonly digest: string; readonly source: import("./workflow-definition-types").WorkflowDefinitionDescriptor }\n`;
+  + `${launch}\n\n${run}\n\n${catalog}\n\n${operatorScope}\n\n${operatorInbox}\n\n${scope}\n\n${transition}\n\n${history}\n`;
 
 if (process.argv.includes("--check")) {
   if (readFileSync(output, "utf8") !== generated) throw new Error("operator-contracts.ts has drifted; run bun kbbl/scripts/generate-operator-contracts.ts");

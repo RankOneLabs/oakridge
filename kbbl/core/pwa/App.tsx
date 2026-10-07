@@ -31,7 +31,7 @@ export function App() {
   const isOakridgeAvailable = oakridgeConfig.data?.available === true;
   const reviewInbox = useReviewInbox(isOakridgeAvailable);
   const pushToast = useToastStore((state) => state.pushToast);
-  const attentionCount = reviewInbox.data?.attention_count ?? 0;
+  const attentionCount = reviewInbox.data?.items.filter((item) => item.kind === "command").length ?? 0;
 
   // Both Oakridge subscriptions live above the route branch so changing
   // surfaces keeps the shared query cache current and the single EventSource

@@ -1,6 +1,6 @@
 import { readAllInboxPages } from "./lib/operator-inbox";
 import { OakridgeHttpError, selectFailureDetail } from "./lib/client-errors";
-import type { OakridgeConfig, ReviewInbox } from "./types";
+import type { OakridgeConfig } from "./types";
 import type { OperatorLaunchRequest, OperatorLaunchedRun, OperatorRunView, OperatorDefinitionSummary, OperatorScopeHistory, OperatorPinnedDefinition, OperatorScopeProjection, OperatorCommandSubmission, OperatorCommandReceipt } from "./operator-contracts";
 import type { WorkflowDefinitionDescriptor } from "./workflow-definition-types";
 
@@ -38,7 +38,3 @@ export function submitOperatorCommand(input: OperatorCommandSubmission): Promise
   });
 }
 
-export async function fetchReviewInbox(): Promise<ReviewInbox> {
-  const inbox = await fetchOperatorInbox();
-  return { cohorts: [], items: [], attention_count: inbox.items.filter((item) => item.kind === "command").length };
-}
