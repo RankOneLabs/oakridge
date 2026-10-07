@@ -1,6 +1,5 @@
 import type { Result } from "../../lib/result";
-import type { ArtifactDetail, FindingSeverity, RepositoryKey, RunDetail } from "../types";
-import { isBuildBrief, type BuildBrief } from "./build-brief";
+import type { FindingSeverity, RepositoryKey } from "../types";
 
 /**
  * Mirrors `TestEvidence` in oakridge-dbos/src/domain/dev-flow-artifacts.ts.
@@ -57,17 +56,27 @@ function nullableString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
-function parseTests(value: unknown): Parsed<TestEvidence> {
-  if (!isRecord(value)) return fail("tests", "expected an object");
-  if (typeof value.passed !== "number") return fail("tests.passed", "expected a number");
-  if (typeof value.failed !== "number") return fail("tests.failed", "expected a number");
-  return ok({
-    passed: value.passed,
-    failed: value.failed,
-    output: nullableString(value.output),
-    summary: nullableString(value.summary),
-    cargo_test_output: nullableString(value.cargo_test_output),
-  });
+/** Where in a body a shared shape broke; each artifact parser wraps it in its own error. */
+export interface FieldError {
+  field: string;
+  detail: string;
+}
+
+/** Shared by build results (`tests`) and assessments (`test_evidence`). */
+export function parseTestEvidence(value: unknown, field: string): Result<TestEvidence, FieldError> {
+  if (!isRecord(value)) return { ok: false, error: { field, detail: "expected an object" } };
+  if (typeof value.passed !== "number") return { ok: false, error: { field: `${field}.passed`, detail: "expected a number" } };
+  if (typeof value.failed !== "number") return { ok: false, error: { field: `${field}.failed`, detail: "expected a number" } };
+  return {
+    ok: true,
+    value: {
+      passed: value.passed,
+      failed: value.failed,
+      output: nullableString(value.output),
+      summary: nullableString(value.summary),
+      cargo_test_output: nullableString(value.cargo_test_output),
+    },
+  };
 }
 
 function parseIssues(value: unknown): Parsed<BuildIssue[]> {
@@ -89,8 +98,8 @@ export function parseBuildResult(body: unknown): Parsed<BuildResult> {
   if (!Array.isArray(body.changed_files) || !body.changed_files.every((file) => typeof file === "string")) {
     return fail("changed_files", "expected an array of strings");
   }
-  const tests = parseTests(body.tests);
-  if (!tests.ok) return tests;
+  const tests = parseTestEvidence(body.tests, "tests");
+  if (!tests.ok) return fail(tests.error.field, tests.error.detail);
   const issues = parseIssues(body.known_issues);
   if (!issues.ok) return issues;
   const metadata = body.delegated_session_metadata;
@@ -127,15 +136,6 @@ export function selectFileScopeComparison(planned: string[], changed: string[]):
   };
 }
 
-/** The latest build brief the run published for a cohort, or null when it has none. */
-export function selectCohortBriefArtifactId(run: RunDetail, cohortLabel: string): string | null {
-  const briefs = run.stages
-    .flatMap((stage) => stage.artifacts)
-    .filter((artifact) => artifact.type_id === "dev.build_brief" && artifact.label === cohortLabel);
-  const latest = briefs.reduce<(typeof briefs)[number] | null>((best, artifact) => (best && best.version >= artifact.version ? best : artifact), null);
-  return latest?.id ?? null;
-}
-
 /** Issues most urgent first, keeping the builder's order within a severity. */
 export function selectOrderedIssues(issues: BuildIssue[]): BuildIssue[] {
   return [...issues].sort((a, b) => SEVERITIES.indexOf(a.severity) - SEVERITIES.indexOf(b.severity));
@@ -150,27 +150,8 @@ export function selectTestEvidenceText(tests: TestEvidence): string[] {
   return [tests.summary, tests.output, tests.cargo_test_output].filter((text): text is string => text !== null && text.trim() !== "");
 }
 
-/** Whether the result can be set against its cohort's brief, and why not when it cannot. */
-export type CohortBriefLookup =
-  | { kind: "loading" }
-  | { kind: "missing"; cohort_label: string | null }
-  | { kind: "found"; brief: BuildBrief };
-
-export interface CohortBriefSources {
-  cohort_label: string | null;
-  run: RunDetail | undefined;
-  is_run_pending: boolean;
-  brief_artifact_id: string | null;
-  brief_detail: ArtifactDetail | undefined;
-  is_brief_pending: boolean;
-}
-
-export function selectCohortBriefLookup(sources: CohortBriefSources): CohortBriefLookup {
-  const missing = { kind: "missing", cohort_label: sources.cohort_label } as const;
-  if (!sources.cohort_label) return missing;
-  if (!sources.run) return sources.is_run_pending ? { kind: "loading" } : missing;
-  if (!sources.brief_artifact_id) return missing;
-  if (!sources.brief_detail) return sources.is_brief_pending ? { kind: "loading" } : missing;
-  const latest = sources.brief_detail.revisions.at(-1);
-  return latest && isBuildBrief(latest.body) ? { kind: "found", brief: latest.body } : missing;
+/** A build result body, or null when it breaks the contract. */
+export function readBuildResult(body: unknown): BuildResult | null {
+  const parsed = parseBuildResult(body);
+  return parsed.ok ? parsed.value : null;
 }

@@ -1,21 +1,18 @@
 import { Chip } from "../../../components/atoms/Chip";
-import { selectFileScopeComparison, selectHasBlockingIssue, selectOrderedIssues, selectTestEvidenceText, type BuildIssue, type BuildResult, type CohortBriefLookup, type TestEvidence } from "../../lib/build-result";
+import { selectFileScopeComparison, selectHasBlockingIssue, selectOrderedIssues, type BuildIssue, type BuildResult } from "../../lib/build-result";
+import type { BuildBrief } from "../../lib/build-brief";
+import type { CohortArtifactLookup } from "../../lib/cohort-artifact";
 import { selectStatusTone } from "../../lib/status-tone";
 import { ArtifactSection, artifactLabelClass } from "./ArtifactSection";
 import { BuildFileScope } from "./BuildFileScope";
+import { CohortArtifactNote } from "./CohortArtifactNote";
 import { ExpandableText } from "./ExpandableText";
+import { TestEvidenceBlock } from "./TestEvidenceBlock";
 
 interface Props {
   result: BuildResult;
-  brief: CohortBriefLookup;
+  brief: CohortArtifactLookup<BuildBrief>;
   cohortLabel: string | null;
-}
-
-function BriefNote({ brief }: { brief: Exclude<CohortBriefLookup, { kind: "found" }> }) {
-  const text = brief.kind === "loading"
-    ? "Loading the cohort's brief…"
-    : `No build brief for ${brief.cohort_label ? `cohort ${brief.cohort_label}` : "this cohort"} in this run, so there is nothing to compare against.`;
-  return <p className="text-xs text-[var(--text-muted)]" data-testid="or-build-brief-note">{text}</p>;
 }
 
 function IssueList({ issues }: { issues: BuildIssue[] }) {
@@ -39,23 +36,6 @@ function IssueList({ issues }: { issues: BuildIssue[] }) {
   );
 }
 
-function TestEvidenceBlock({ tests }: { tests: TestEvidence }) {
-  const evidence = selectTestEvidenceText(tests);
-  return (
-    <div className="flex flex-col gap-2" data-testid="or-build-tests">
-      <div className="flex flex-wrap gap-1.5">
-        <Chip tone={tests.passed > 0 ? "success" : "muted"}>{tests.passed} passed</Chip>
-        <Chip tone={tests.failed > 0 ? "danger" : "muted"}>{tests.failed} failed</Chip>
-      </div>
-      {evidence.map((text, index) => (
-        <div key={index} className="rounded-md bg-[var(--bg-code)] px-3 py-2">
-          <ExpandableText text={text} className="whitespace-pre-wrap font-mono text-xs text-[var(--text-secondary)]" />
-        </div>
-      ))}
-    </div>
-  );
-}
-
 export function BuildResultViewer({ result, brief, cohortLabel }: Props) {
   const branch = result.delegated_session_metadata?.branch ?? null;
   const issues = selectOrderedIssues(result.known_issues);
@@ -69,7 +49,7 @@ export function BuildResultViewer({ result, brief, cohortLabel }: Props) {
           {result.repository_key && <Chip tone="neutral">{result.repository_key}</Chip>}
           {branch && <Chip tone="muted" className="font-mono">{branch}</Chip>}
         </div>
-        {brief.kind === "found" && <h2 className="m-0 text-lg font-semibold leading-snug text-[var(--text-primary)]">{brief.brief.title}</h2>}
+        {brief.kind === "found" && <h2 className="m-0 text-lg font-semibold leading-snug text-[var(--text-primary)]">{brief.value.title}</h2>}
       </header>
 
       <ArtifactSection title="What was built" testId="or-build-summary">
@@ -79,7 +59,7 @@ export function BuildResultViewer({ result, brief, cohortLabel }: Props) {
       {brief.kind === "found" && (
         <ArtifactSection title="What the brief asked for" testId="or-build-brief-goal">
           <div className="rounded-md border-l-4 border-[var(--border-muted)] px-3 py-1">
-            <ExpandableText text={brief.brief.goal} className="text-sm text-[var(--text-secondary)]" />
+            <ExpandableText text={brief.value.goal} className="text-sm text-[var(--text-secondary)]" />
           </div>
         </ArtifactSection>
       )}
@@ -89,15 +69,15 @@ export function BuildResultViewer({ result, brief, cohortLabel }: Props) {
       </ArtifactSection>
 
       <ArtifactSection title="Tests" testId="or-build-tests-section">
-        <TestEvidenceBlock tests={result.tests} />
+        <TestEvidenceBlock tests={result.tests} testId="or-build-tests" />
       </ArtifactSection>
 
       <ArtifactSection title={`Changed files (${result.changed_files.length})`} testId="or-build-files">
         {brief.kind === "found" ? (
-          <BuildFileScope comparison={selectFileScopeComparison(brief.brief.files_in_scope, result.changed_files)} />
+          <BuildFileScope comparison={selectFileScopeComparison(brief.value.files_in_scope, result.changed_files)} />
         ) : (
           <>
-            <BriefNote brief={brief} />
+            <CohortArtifactNote lookup={brief} artifactName="build brief" testId="or-build-brief-note" />
             <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
               {result.changed_files.map((file) => <li key={file} className="font-mono text-xs text-[var(--text-secondary)]">{file}</li>)}
             </ul>
@@ -106,9 +86,9 @@ export function BuildResultViewer({ result, brief, cohortLabel }: Props) {
       </ArtifactSection>
 
       {brief.kind === "found" && (
-        <ArtifactSection title={`The brief's acceptance criteria (${brief.brief.acceptance_criteria.length})`} testId="or-build-acceptance">
+        <ArtifactSection title={`The brief's acceptance criteria (${brief.value.acceptance_criteria.length})`} testId="or-build-acceptance">
           <ol className="m-0 flex list-decimal flex-col gap-1 pl-5 text-sm text-[var(--text-secondary)]">
-            {brief.brief.acceptance_criteria.map((criterion, index) => <li key={`${index}-${criterion}`}>{criterion}</li>)}
+            {brief.value.acceptance_criteria.map((criterion, index) => <li key={`${index}-${criterion}`}>{criterion}</li>)}
           </ol>
         </ArtifactSection>
       )}

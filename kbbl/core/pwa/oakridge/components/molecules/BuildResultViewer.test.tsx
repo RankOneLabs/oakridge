@@ -32,22 +32,22 @@ afterEach(cleanup);
 
 describe("BuildResultViewer", () => {
   test("titles the result with its brief", () => {
-    render(<BuildResultViewer result={result} brief={{ kind: "found", brief }} cohortLabel="cm-api" />);
+    render(<BuildResultViewer result={result} brief={{ kind: "found", value: brief }} cohortLabel="cm-api" />);
     expect(screen.getByRole("heading", { name: "Assemble the API" })).toBeTruthy();
   });
 
   test("flags a change the brief did not plan", () => {
-    render(<BuildResultViewer result={result} brief={{ kind: "found", brief }} cohortLabel="cm-api" />);
+    render(<BuildResultViewer result={result} brief={{ kind: "found", value: brief }} cohortLabel="cm-api" />);
     expect(within(screen.getByTestId("or-build-files-out-of-scope")).getByText("ci.yml")).toBeTruthy();
   });
 
   test("lists the brief's acceptance criteria", () => {
-    render(<BuildResultViewer result={result} brief={{ kind: "found", brief }} cohortLabel="cm-api" />);
+    render(<BuildResultViewer result={result} brief={{ kind: "found", value: brief }} cohortLabel="cm-api" />);
     expect(within(screen.getByTestId("or-build-acceptance")).getByText("The golden fixture matches.")).toBeTruthy();
   });
 
   test("raises a blocking issue as an alert", () => {
-    render(<BuildResultViewer result={result} brief={{ kind: "found", brief }} cohortLabel="cm-api" />);
+    render(<BuildResultViewer result={result} brief={{ kind: "found", value: brief }} cohortLabel="cm-api" />);
     expect(screen.getByRole("alert").textContent).toContain("Fixture table incomplete.");
   });
 
