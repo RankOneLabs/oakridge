@@ -7,7 +7,7 @@ import { activeRoutes } from "../http/routes";
 import { controlTokenMiddleware, selectControlPlaneAccess } from "../http/control-auth";
 import { httpBodyLimit, installDefinitionApi } from "../http/app";
 import { authorityRepositories } from "../storage/repositories";
-import { createMutationService, cancelRun, deleteRun, type ScopeCancellationPayload, type ProviderCapabilities } from "../storage/mutation-service";
+import { createMutationService, cancelRun, deleteRun, type ScopeCancellationPayload, type ProviderCapabilities, type ProviderCapabilityInput } from "../storage/mutation-service";
 import { PgPostgresExecutor } from "../storage/sql-executor";
 import type { RunId, ScopeId, ScopeInstanceRecord } from "../storage/schema-records";
 import type { OutputPublication } from "../storage/commit";
@@ -29,22 +29,40 @@ export interface ProductionOptions {
 export interface RunProjection { readonly run_id: RunId; readonly root_scope_id: ScopeId; readonly scope_key: string; readonly version: number; readonly is_terminal: boolean }
 export interface ProductionComposition { readonly app: Hono; readonly application_version: string; readonly provider_capabilities: ProviderCapabilities; close(): Promise<void> }
 interface ForgeRepository { readonly owner: string; readonly name: string }
-/** The run-input shapes that name a GitHub repository: `forge: { owner, name }` and a PR `query: { owner, name }`. */
-const REPOSITORY_INPUT_KEYS = ["forge", "query"] as const;
-const asForgeRepository = (value: unknown): ForgeRepository | null =>
-  value && typeof value === "object" && "owner" in value && "name" in value && typeof value.owner === "string" && typeof value.name === "string"
-    ? { owner: value.owner, name: value.name } : null;
-function forgeRepositories(input: unknown): readonly ForgeRepository[] {
-  const found: ForgeRepository[] = [];
-  function visit(value: unknown): void {
-    if (!value || typeof value !== "object") return;
-    if (Array.isArray(value)) { value.forEach(visit); return; }
-    const record = value as Record<string, unknown>;
-    for (const key of REPOSITORY_INPUT_KEYS) { const target = asForgeRepository(record[key]); if (target) found.push(target); }
-    Object.values(record).forEach(visit);
+/** Repository identity belongs to the GitHub contract; its enclosing fields belong to the bundle. */
+function forgeRepositories({ bundle, input }: ProviderCapabilityInput): readonly ForgeRepository[] {
+  const schemas = new Map(bundle.schemas.map((schema) => [schema.key, schema.shape]));
+  const found = new Map<string, ForgeRepository>();
+  function visit(schema_key: string, value: unknown, depth: number): void {
+    if (depth > bundle.limits.max_depth || value === null || value === undefined) return;
+    const shape = schemas.get(schema_key);
+    if (!shape) return;
+    if (shape.kind === "optional") { visit(shape.item, value, depth + 1); return; }
+    if (shape.kind === "list") {
+      if (Array.isArray(value)) value.forEach((item) => visit(shape.item, item, depth + 1));
+      return;
+    }
+    if (typeof value !== "object" || Array.isArray(value)) return;
+    const record = value as { readonly [key: string]: unknown };
+    if (shape.kind === "union") {
+      const variant = shape.variants.find((variant) => variant.key === record.kind);
+      if (variant) visit(variant.schema, record.value, depth + 1);
+      return;
+    }
+    if (shape.kind !== "record") return;
+    if (shape.fields.some((field) => field.key === "owner") && shape.fields.some((field) => field.key === "name")
+      && typeof record.owner === "string" && typeof record.name === "string") {
+      const repository = { owner: record.owner, name: record.name };
+      found.set(JSON.stringify(repository), repository);
+    }
+    shape.fields.forEach((field) => visit(field.schema, record[field.key], depth + 1));
+    const dictionary = shape.dictionary;
+    if (dictionary) Object.entries(record).filter(([key]) => !shape.fields.some((field) => field.key === key))
+      .forEach(([, value]) => visit(dictionary, value, depth + 1));
   }
-  visit(input);
-  return found;
+  const root = bundle.scopes.find((scope) => scope.key === bundle.root);
+  if (root) visit(root.input_schema, input, 0);
+  return [...found.values()];
 }
 export function githubProviderCapabilities(token: string, http: typeof fetch = fetch): ProviderCapabilities {
   return { async check_github(input) {

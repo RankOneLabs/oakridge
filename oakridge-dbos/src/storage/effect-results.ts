@@ -11,19 +11,19 @@ export interface EffectResultInput {
 }
 interface WrittenRow { readonly status: EffectStatus; readonly scope_id: string; readonly execution_id: string | null; readonly effect_key: string }
 
-/**
- * Claims the right to call the provider for a start: records `has_dispatched`
- * so a crash inside the call leaves a cleanup obligation. Only a still-pending
- * start can be claimed — a revocation that landed since the workflow loaded the
- * row wins, and owes no stop because the provider is then never called.
- */
-export async function claimDispatch(db: TransactionalSqlExecutor, intent_id: string): Promise<boolean> {
+/** Reserve one bounded attempt before provider IO; recovery cannot reset the budget. */
+export async function claimStartAttempt(db: TransactionalSqlExecutor, intent_id: string): Promise<EffectPayload | null> {
   const owner = await db.query<{ run_id: string }>("SELECT s.run_id FROM authority.effect_intent e JOIN authority.scope_instance s ON s.id=e.scope_id WHERE e.id=$1", [intent_id]);
-  if (!owner[0]) return false;
+  if (!owner[0]) return null;
   return db.transaction(async (tx) => {
     await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [owner[0]!.run_id]);
-    const rows = await tx.query<{ id: string }>("UPDATE authority.effect_intent SET payload=jsonb_set(payload,'{has_dispatched}','true'),version=version+1 WHERE id=$1 AND payload->>'action'='start' AND status='pending' RETURNING id", [intent_id]);
-    return rows.length === 1;
+    const rows = await tx.query<{ payload: EffectPayload }>(`UPDATE authority.effect_intent
+      SET payload=jsonb_set(jsonb_set(payload,'{has_dispatched}','true'),'{start_attempts}',
+        to_jsonb(coalesce((payload->>'start_attempts')::integer,0)+1)),version=version+1
+      WHERE id=$1 AND payload->>'action'='start' AND status='pending'
+        AND coalesce((payload->>'start_attempts')::integer,0) < (payload->'invocation'->'selection'->'definition'->>'max_attempts')::integer
+      RETURNING payload`, [intent_id]);
+    return rows[0]?.payload ?? null;
   });
 }
 

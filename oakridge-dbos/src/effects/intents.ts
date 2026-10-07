@@ -19,6 +19,8 @@ export interface EffectPayload {
   readonly invocation: StableInvocation;
   readonly action: "start" | "stop";
   readonly handle: ExternalHandle | null;
+  /** Reserved provider start attempts, retained across workflow recovery. */
+  readonly start_attempts?: number;
   readonly last_detail?: string;
   readonly evidence?: Trigger;
   readonly evidence_delivered?: boolean;

@@ -9,6 +9,14 @@ import { githubProviderCapabilities } from "../src/runtime/compose";
 import { createMutationService } from "../src/storage/mutation-service";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
 
+const definition: DefinitionBundle = await Bun.file(resolve(import.meta.dir, "../../workflow-config/definitions/development.json")).json();
+function capabilityInput(input: unknown, field = "repository") {
+  const bundle = structuredClone(definition);
+  bundle.schemas.push({ key: "capability_input", shape: { kind: "record", dictionary: null,
+    fields: [{ key: field, schema: "forge_config", required: true }] } });
+  return { bundle: { ...bundle, scopes: bundle.scopes.map((scope) => scope.key === bundle.root ? { ...scope, input_schema: "capability_input" } : scope) }, input };
+}
+
 test("every command outcome has a distinct status class", () => {
   const failures = [
     [new MalformedRequestError("bad JSON"), 400],
@@ -44,20 +52,32 @@ test("GitHub capability is checked before the mutation-service definition insert
 
 test("a token denied pull-request read is rejected at pin time", async () => {
   const capabilities = githubProviderCapabilities("restricted-token", (async () => new Response("denied", { status: 403 })) as unknown as typeof fetch);
-  const result = await capabilities.check_github({ forge: { owner: "owner", name: "repo" } });
+  const result = await capabilities.check_github(capabilityInput({ repository: { owner: "owner", name: "repo" } }));
   expect(result.ok ? null : result.error.detail).toBe("repository pull-request read denied (403)");
 });
 
-test("the capability check reads the repository named by a pull-request query, never /user", async () => {
+test("the capability check follows renamed schema fields, never /user", async () => {
   const urls: string[] = [];
   const capabilities = githubProviderCapabilities("token", (async (input: string | URL | Request) => { urls.push(String(input)); return new Response("[]", { status: 200 }); }) as unknown as typeof fetch);
-  const result = await capabilities.check_github({ query: { owner: "RankOneLabs", name: "oakridge", head_owner: "fork", head_branch: "head", base_branch: "base" } });
+  const result = await capabilities.check_github(capabilityInput({ renamed_repository: { owner: "RankOneLabs", name: "oakridge" } }, "renamed_repository"));
   expect({ ok: result.ok, urls }).toEqual({ ok: true, urls: ["https://api.github.com/repos/RankOneLabs/oakridge/pulls?per_page=1"] });
 });
 
 test("an input naming no GitHub repository fails the capability check closed", async () => {
   let called = false;
   const capabilities = githubProviderCapabilities("token", (async () => { called = true; return new Response("{}", { status: 200 }); }) as unknown as typeof fetch);
-  const result = await capabilities.check_github({ repositories: [{ key: "oakridge", preparation: { repository_path: "/repo" } }] });
+  const result = await capabilities.check_github({ bundle: definition, input: { repositories: [{ key: "oakridge", preparation: { repository_path: "/repo" } }] } });
   expect({ called, detail: result.ok ? null : result.error.detail }).toEqual({ called: false, detail: "run input names no GitHub repository to check" });
+});
+
+test("schema traversal checks nested list repositories once and ignores undeclared fields", async () => {
+  const urls: string[] = [];
+  const capabilities = githubProviderCapabilities("token", (async (input: string | URL | Request) => {
+    urls.push(String(input)); return new Response("[]", { status: 200 });
+  }) as typeof fetch);
+  const repository = { forge: { owner: "RankOneLabs", name: "oakridge" } };
+  const result = await capabilities.check_github({ bundle: definition, input: {
+    repositories: [repository, repository], undeclared: { owner: "ignored", name: "ignored" },
+  } });
+  expect({ ok: result.ok, urls }).toEqual({ ok: true, urls: ["https://api.github.com/repos/RankOneLabs/oakridge/pulls?per_page=1"] });
 });
