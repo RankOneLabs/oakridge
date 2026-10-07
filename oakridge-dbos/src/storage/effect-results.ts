@@ -2,6 +2,7 @@ import type { CheckedValue } from "../core-client/generated-contracts";
 import type { TransactionalSqlExecutor } from "./sql-executor";
 import { requiresCleanup, type EffectPayload, type EffectStatus } from "../effects/intents";
 import { ensureStopIntent } from "./revocation";
+import { sealEffectPayload, unsealEffectPayload } from "./effect-secret";
 
 export interface EffectResultInput {
   readonly intent_id: string;
@@ -32,7 +33,7 @@ export async function claimStartAttempt(db: TransactionalSqlExecutor, intent_id:
       WHERE id=$1 AND payload->>'action'='start' AND status='pending'
         AND coalesce((payload->>'start_attempts')::bigint,0) < (payload->'invocation'->'selection'->'definition'->>'max_attempts')::bigint
       RETURNING payload`, [intent_id]);
-    return rows[0]?.payload ?? null;
+    return rows[0] ? unsealEffectPayload(rows[0].payload) : null;
   });
 }
 
@@ -50,7 +51,7 @@ export async function persistEffectResult(db: TransactionalSqlExecutor, input: E
     await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [owner[0]!.run_id]);
     const rows = await tx.query<WrittenRow>(`UPDATE authority.effect_intent SET payload=$2,
       status=CASE WHEN status='revoked' AND $3<>'cleanup_confirmed' THEN status ELSE $3 END, version=version+1
-      WHERE id=$1 RETURNING status,scope_id,execution_id,effect_key`, [intent_id, JSON.stringify(payload), status]);
+      WHERE id=$1 RETURNING status,scope_id,execution_id,effect_key`, [intent_id, JSON.stringify(sealEffectPayload(payload)), status]);
     const written = rows[0];
     if (!written) return null;
     // A later rejection cannot prove an earlier uncertain attempt never started.

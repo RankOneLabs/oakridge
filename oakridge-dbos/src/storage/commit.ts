@@ -12,6 +12,7 @@ import { MAX_SNAPSHOT_BYTES, measureAuthoritySnapshot } from "../effects/operati
 export { MAX_SNAPSHOT_BYTES, measureAuthoritySnapshot } from "../effects/operations/selected-publication-contract";
 import { selectedInvocation, type InvocationId } from "../effects/provider";
 import type { EffectPayload } from "../effects/intents";
+import { sealEffectPayload } from "./effect-secret";
 import { revokeStarts } from "./revocation";
 import { validateDecision, validateStorageAuthority } from "./storage-validator";
 
@@ -151,7 +152,7 @@ async function writeDecision(tx: SqlExecutor, request: CommitRequest, source: Au
     if (!pinned.ok) fail({ kind: "Rejected", reason: "invalid", detail: pinned.error.detail });
     await tx.query("UPDATE authority.execution SET publication_secret_hash=$1 WHERE id=$2", [createHash("sha256").update(publication_secret).digest("hex"), execution_id]);
     const payload: EffectPayload = { invocation: pinned.value, action: "start", handle: null };
-    await tx.query("INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload) VALUES ($1,$2,$3,$4,$5)", [id, scope_id, execution_id, effect.effect_key, JSON.stringify(payload)]);
+    await tx.query("INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload) VALUES ($1,$2,$3,$4,$5)", [id, scope_id, execution_id, effect.effect_key, JSON.stringify(sealEffectPayload(payload))]);
   }
   await tx.query("INSERT INTO authority.fact (id,scope_id,fact_key,payload) VALUES ($1,$2,$3,$4)", [crypto.randomUUID(), scope_id, source.snapshot.trigger.key, JSON.stringify(source.snapshot.trigger.payload)]);
   const transition_id = crypto.randomUUID();

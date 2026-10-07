@@ -14,7 +14,38 @@ import { Hono } from "hono";
 import { mountOakridgeProxyRoutes } from "../../kbbl/core/server/handlers/oakridge-proxy";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
+import { readIntent } from "../src/effects/intents";
+import { redactingView } from "../src/projections/serialization-view";
+import { sealEffectPayload, unsealEffectPayload, verifyEffectEncryption } from "../src/storage/effect-secret";
 import { developmentBundle, brief, repository, build_body } from "./development-runtime-fixture";
+
+process.env.OAKRIDGE_EFFECT_ENCRYPTION_KEY ??= Buffer.alloc(32, 17).toString("base64url");
+
+test("the outward serialization view removes publication credentials without changing replay bytes", () => {
+  const prompt = "Authorization: Bearer very-secret-token";
+  const source = { invocation: { bytes: prompt }, publication_secret_hash: "secret-hash" };
+  expect(JSON.stringify(redactingView(source))).not.toContain("very-secret-token");
+  expect(JSON.stringify(redactingView(source))).not.toContain("secret-hash");
+  expect(source.invocation.bytes).toBe(prompt);
+});
+
+test("effect bytes are encrypted at rest and a missing or wrong key fails verification", async () => {
+  const payload = { action: "start", handle: null, invocation: { id: "id", execution_id: "execution", selection: {},
+    bytes: "Authorization: Bearer secret" } } as unknown as EffectPayload;
+  const sealed = sealEffectPayload(payload);
+  expect(JSON.stringify(sealed)).not.toContain("Bearer secret");
+  expect(unsealEffectPayload(sealed).invocation.bytes).toBe(payload.invocation.bytes);
+  const original = process.env.OAKRIDGE_EFFECT_ENCRYPTION_KEY;
+  const db = { query: async () => [{ payload: sealed }] } as unknown as TransactionalSqlExecutor;
+  try {
+    delete process.env.OAKRIDGE_EFFECT_ENCRYPTION_KEY;
+    await expect(verifyEffectEncryption(db)).rejects.toThrow("OAKRIDGE_EFFECT_ENCRYPTION_KEY");
+    process.env.OAKRIDGE_EFFECT_ENCRYPTION_KEY = Buffer.alloc(32, 19).toString("base64url");
+    await expect(verifyEffectEncryption(db)).rejects.toThrow("encryption key is wrong");
+  } finally {
+    if (original) process.env.OAKRIDGE_EFFECT_ENCRYPTION_KEY = original;
+  }
+});
 
 test("baseline inspection and application share an advisory-locked transaction", async () => {
   const statements: string[] = [];
@@ -90,12 +121,15 @@ test("recovery replays the pinned prompt verbatim and its secret publishes witho
             expected_scope_version: 0, targets: [] }) });
         expect(begin.status).toBe(202);
         await waitUntil(async () => requests.length >= 2);
-        const pinned = (await db.query<{ payload: EffectPayload }>(
-          "SELECT payload FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='start'", [run.root_scope_id]))[0]?.payload.invocation;
+        const stored = (await db.query<{ id: string; payload: EffectPayload }>(
+          "SELECT id,payload FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='start'", [run.root_scope_id]))[0];
+        const pinned = stored ? (await readIntent(db, stored.id))?.payload.invocation : null;
         if (!pinned) throw new Error("persisted invocation missing");
         expect(requests).toEqual(requests.map(() => pinned.bytes));
         const secret = requests[1]?.match(/Authorization: Bearer ([A-Za-z0-9_-]+)/)?.[1];
         if (!secret) throw new Error("replayed prompt lacks publication credential");
+        expect(JSON.stringify(stored?.payload)).not.toContain(secret);
+        expect(stored?.payload.invocation.bytes.startsWith("enc:v1:")).toBe(true);
         const execution_path = `${scope_path}/executions/${pinned.execution_id}`;
         expect((await composition.app.request(`${execution_path}/contract`, {
           headers: { authorization: `Bearer ${secret}` } })).status).toBe(200);

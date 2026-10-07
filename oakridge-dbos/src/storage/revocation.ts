@@ -1,5 +1,6 @@
 import { requiresCleanup, type EffectIntent, type EffectPayload } from "../effects/intents";
 import type { SqlExecutor } from "./sql-executor";
+import { sealEffectPayload, unsealEffectPayload } from "./effect-secret";
 
 interface EffectRow extends Omit<EffectIntent, "version"> { readonly version: string | number }
 
@@ -8,7 +9,7 @@ export async function ensureStopIntent(tx: SqlExecutor, start: Pick<EffectIntent
   const payload: EffectPayload = { invocation: start.payload.invocation, action: "stop", handle: start.payload.handle };
   const stops = await tx.query<{ id: string }>(`INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload,status)
     VALUES ($1,$2,$3,$4,$5,'cleanup_pending') ON CONFLICT (scope_id,effect_key) DO UPDATE SET version=authority.effect_intent.version RETURNING id`,
-    [crypto.randomUUID(), start.scope_id, start.execution_id, `${start.effect_key}:stop`, JSON.stringify(payload)]);
+    [crypto.randomUUID(), start.scope_id, start.execution_id, `${start.effect_key}:stop`, JSON.stringify(sealEffectPayload(payload))]);
   return stops[0]?.id ?? null;
 }
 
@@ -25,11 +26,12 @@ export async function revokeStarts(tx: SqlExecutor, scope_ids: readonly string[]
       AND i.payload->>'action'='start' AND i.status IN ('pending','acknowledged','revoked','rejected') FOR UPDATE OF i`, [scope_ids, worker]);
   const stop_ids: string[] = [];
   for (const start of starts) {
+    const decoded = { ...start, payload: unsealEffectPayload(start.payload) };
     // A definite rejection stays rejected; it still owes a stop if an earlier attempt was uncertain.
     const status = start.status === "rejected" ? "rejected" : "revoked";
     if (start.status !== status) await tx.query("UPDATE authority.effect_intent SET status='revoked',version=version+1 WHERE id=$1", [start.id]);
-    if (!requiresCleanup({ status, payload: start.payload })) continue;
-    const stop_id = await ensureStopIntent(tx, start);
+    if (!requiresCleanup({ status, payload: decoded.payload })) continue;
+    const stop_id = await ensureStopIntent(tx, decoded);
     if (stop_id) stop_ids.push(stop_id);
   }
   return stop_ids;

@@ -11,6 +11,8 @@ import { authorityRepositories } from "../storage/repositories";
 import { createMutationService, cancelRun, deleteRun, type ScopeCancellationPayload, type ProviderCapabilities, type ProviderCapabilityInput } from "../storage/mutation-service";
 import { PROVIDER_KINDS } from "../effects/provider-catalog";
 import { PgPostgresExecutor } from "../storage/sql-executor";
+import { verifyEffectEncryption } from "../storage/effect-secret";
+import { redactingReadResponses } from "../projections/serialization-view";
 import type { RunId, ScopeId, ScopeInstanceRecord } from "../storage/schema-records";
 import type { OutputPublication } from "../storage/commit";
 import type { EffectProvider } from "../effects/provider";
@@ -140,6 +142,7 @@ export async function createProductionComposition(options: ProductionOptions): P
   const db = PgPostgresExecutor.connect(options.database_url);
   let launch_attempted = false;
   try {
+  await verifyEffectEncryption(db);
   const provider_capabilities = options.provider_capabilities ?? githubProviderCapabilities(process.env.OAKRIDGE_GITHUB_TOKEN ?? process.env.GITHUB_TOKEN ?? "", fetch,
     options.kbbl_base_url ?? process.env.KBBL_BASE_URL ?? "http://127.0.0.1:8788");
   const mutations = createMutationService(db, core, provider_capabilities);
@@ -154,6 +157,7 @@ export async function createProductionComposition(options: ProductionOptions): P
   const wake = (run_id: RunId): Promise<void> => wakeRun(run_id);
   const app = new Hono();
   app.use("*", httpBodyLimit());
+  app.use("*", redactingReadResponses());
   app.use("*", browserWriteMiddleware(configuredBrowserWritePolicy()));
   if (access.kind === "token_required") app.use("*", controlTokenMiddleware(access.token));
   installDefinitionApi(app, { db, core, mutations, wake });

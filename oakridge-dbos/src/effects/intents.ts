@@ -1,6 +1,7 @@
 import type { Trigger } from "../core-client/generated-contracts";
 import type { SqlExecutor } from "../storage/sql-executor";
 import type { ExternalHandle, StableInvocation } from "./provider";
+import { unsealEffectPayload } from "../storage/effect-secret";
 
 /**
  * Durable effect intent states. The row is the authority on what the runtime
@@ -52,7 +53,7 @@ interface EffectRow extends Omit<EffectIntent, "version"> { readonly version: st
 export async function readIntent(db: SqlExecutor, intent_id: string): Promise<EffectIntent | null> {
   const rows = await db.query<EffectRow>("SELECT * FROM authority.effect_intent WHERE id=$1", [intent_id]);
   const row = rows[0];
-  return row ? { ...row, version: Number(row.version) } : null;
+  return row ? { ...row, payload: unsealEffectPayload(row.payload), version: Number(row.version) } : null;
 }
 
 /** A never-dispatched selection and a definite rejection own no external execution. */
