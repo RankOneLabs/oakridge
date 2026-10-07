@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { makeAcpTestService } from "../../acp/test-harness";
 import { mountAcpPerSidRoutes } from "./acp-per-sid";
 
-import { createSseDecoderState, decodeSseChunk, type LiveStreamFrame, type LiveStreamTopic } from "../../live-stream";
+import { createSseDecoderState, decodeSseChunk, type LiveStreamFrame, type LiveStreamTopic, type ServerSentEvent } from "../../live-stream";
 import { mountLiveStreamRoutes } from "./live-stream";
 
 const SID = "aaaaaaaa-bbbb-4ccc-8ddd-000000000001";
@@ -15,6 +15,7 @@ const liveUrl = `/live?${new URLSearchParams(topics.map((topic) => ["topic", top
 interface StreamRead {
   reader: ReadableStreamDefaultReader<Uint8Array>;
   frames: LiveStreamFrame[];
+  outerFrames: ServerSentEvent[];
 }
 
 async function readFrames(response: Response, count: number): Promise<StreamRead> {
@@ -23,17 +24,55 @@ async function readFrames(response: Response, count: number): Promise<StreamRead
   const decoder = new TextDecoder();
   let state = createSseDecoderState();
   const frames: LiveStreamFrame[] = [];
+  const outerFrames: ServerSentEvent[] = [];
   while (frames.length < count) {
     const chunk = await reader.read();
     if (chunk.done) throw new Error("stream ended before expected frames");
     const decoded = decodeSseChunk(state, decoder.decode(chunk.value, { stream: true }));
     state = decoded.state;
+    outerFrames.push(...decoded.frames);
     frames.push(...decoded.frames.map((frame) => JSON.parse(frame.data) as LiveStreamFrame));
   }
-  return { reader, frames };
+  return { reader, frames, outerFrames };
 }
 
 describe("combined live stream", () => {
+  test("resumes an interrupted Oakridge source at its latest delivered id", async () => {
+    const app = new Hono();
+    const cursors: (string | undefined)[] = [];
+    app.get("/oakridge/api/events", (c) => {
+      cursors.push(c.req.header("last-event-id"));
+      return streamSSE(c, async (stream) => {
+        await stream.writeSSE({ event: "run_event", data: JSON.stringify({ replayed: cursors.length > 1 }), id: cursors.length === 1 ? "42" : "43" });
+        if (cursors.length > 1) await new Promise<void>((resolve) => stream.onAbort(resolve));
+      });
+    });
+    mountLiveStreamRoutes(app);
+    const controller = new AbortController();
+    const { reader, frames, outerFrames } = await readFrames(await app.request("/live?topic=/oakridge/api/events&oakridge_cursor=old", { headers: { "last-event-id": "41" }, signal: controller.signal }), 2);
+    controller.abort();
+    await reader.cancel();
+    expect({ cursors, ids: outerFrames.map((frame) => frame.id), replayed: frames.map(({ frame }) => JSON.parse(frame.data).replayed) }).toEqual({ cursors: ["41", "42"], ids: ["42", "43"], replayed: [false, true] });
+  });
+
+  test("forwards a replacement feed cursor only to Oakridge and excludes session ids from outer events", async () => {
+    const app = new Hono();
+    const cursors = new Map<string, string | undefined>();
+    for (const topic of topics) {
+      app.get(topic, (c) => streamSSE(c, async (stream) => {
+        cursors.set(topic, c.req.header("last-event-id"));
+        await stream.writeSSE({ event: "message", data: "{}", id: topic === "/oakridge/api/events" ? "42" : "session-99" });
+        await new Promise<void>((resolve) => stream.onAbort(resolve));
+      }));
+    }
+    mountLiveStreamRoutes(app);
+    const controller = new AbortController();
+    const { reader, outerFrames } = await readFrames(await app.request(`${liveUrl}&oakridge_cursor=41`, { signal: controller.signal }), 3);
+    controller.abort();
+    await reader.cancel();
+    expect({ cursors: Object.fromEntries(cursors), hasSessionId: outerFrames.some((frame) => frame.id === "session-99") }).toEqual({ cursors: { "/inbox": undefined, "/oakridge/api/events": "41", [`/sessions/${SID}/stream`]: undefined }, hasSessionId: false });
+  });
+
   test("rejects arbitrary routes and invalid session ids before opening any source", async () => {
     const app = new Hono();
     mountLiveStreamRoutes(app);

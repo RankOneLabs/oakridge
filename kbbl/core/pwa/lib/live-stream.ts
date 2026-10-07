@@ -8,6 +8,7 @@ type LifecycleListener = (event: Event) => void;
 const subscriptions = new Set<LiveSubscription>();
 let source: EventSource | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let oakridgeCursor: string | null = null;
 
 function reviveIfStale(): void {
   if (document.visibilityState === "visible" && source?.readyState === EventSource.CLOSED) connect();
@@ -19,6 +20,7 @@ function connect(): void {
   if (subscriptions.size === 0) return;
   const topics = [...new Set([...subscriptions].map((subscription) => subscription.topic))].sort();
   const query = new URLSearchParams(topics.map((topic) => ["topic", topic]));
+  if (topics.includes("/oakridge/api/events") && oakridgeCursor !== null) query.set("oakridge_cursor", oakridgeCursor);
   const current = new EventSource(`/live?${query}`);
   source = current;
   current.onopen = (event) => {
@@ -36,6 +38,7 @@ function connect(): void {
       envelope = JSON.parse((event as MessageEvent<string>).data) as LiveStreamFrame;
       if (typeof envelope.topic !== "string" || typeof envelope.frame?.event !== "string" || typeof envelope.frame.data !== "string") return;
     } catch { return; }
+    if (envelope.topic === "/oakridge/api/events" && envelope.frame.id !== undefined) oakridgeCursor = envelope.frame.id;
     for (const subscription of subscriptions) {
       if (subscription.topic === envelope.topic) subscription.dispatch(envelope);
     }
@@ -91,6 +94,7 @@ export class LiveSubscription {
     if (this.closed) return;
     this.closed = true;
     subscriptions.delete(this);
+    if (![...subscriptions].some((subscription) => subscription.topic === "/oakridge/api/events")) oakridgeCursor = null;
     if (subscriptions.size === 0) {
       document.removeEventListener("visibilitychange", reviveIfStale);
       window.removeEventListener("focus", reviveIfStale);

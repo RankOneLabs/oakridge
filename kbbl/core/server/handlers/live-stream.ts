@@ -35,19 +35,22 @@ interface RelayInput {
   request: Request;
   topic: LiveStreamTopic;
   signal: AbortSignal;
+  oakridgeCursor: string | null;
   emit: (frame: LiveStreamFrame) => Promise<void>;
 }
 
 /** Reuse the existing handlers in-process: no extra browser or local TCP
  * connections, and ACP retains ownership of replay and history leases. */
-async function relayTopic({ app, request, topic, signal, emit }: RelayInput): Promise<void> {
+async function relayTopic({ app, request, topic, signal, emit, oakridgeCursor }: RelayInput): Promise<void> {
+  let cursor = topic === "/oakridge/api/events" ? oakridgeCursor : null;
   while (!signal.aborted) {
     let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
     const cancelReader = () => { void reader?.cancel().catch(() => {}); };
     try {
       const headers = new Headers(request.headers);
-      // A cursor belongs to one upstream stream, never to the combined feed.
+      // Only Oakridge accepts a resume cursor; ACP owns its history replay.
       headers.delete("last-event-id");
+      if (cursor !== null) headers.set("last-event-id", cursor);
       const response = await app.fetch(new Request(new URL(topic, request.url), { headers, signal }));
       if (signal.aborted) {
         await response.body?.cancel();
@@ -69,7 +72,10 @@ async function relayTopic({ app, request, topic, signal, emit }: RelayInput): Pr
           if (chunk.done) break;
           const decoded = decodeSseChunk(state, decoder.decode(chunk.value, { stream: true }));
           state = decoded.state;
-          for (const frame of decoded.frames) await emit({ topic, frame });
+          for (const frame of decoded.frames) {
+            await emit({ topic, frame });
+            if (topic === "/oakridge/api/events" && frame.id !== undefined) cursor = frame.id;
+          }
         }
       }
     } catch (error) {
@@ -97,6 +103,10 @@ export function mountLiveStreamRoutes(app: Hono): void {
   app.get("/live", (c) => {
     const parsed = parseLiveStreamTopics(c.req.queries("topic") ?? []);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    // Native reconnects send the outer id as a header. A replacement
+    // EventSource (topic changes) supplies its saved cursor in the URL.
+    const oakridgeCursor = c.req.header("last-event-id") ?? c.req.query("oakridge_cursor") ?? null;
+    if (oakridgeCursor !== null && /[\r\n\0]/.test(oakridgeCursor)) return c.json({ error: "invalid Oakridge cursor" }, 400);
     return streamSSE(c, async (stream) => {
       const controller = new AbortController();
       const stop = () => controller.abort();
@@ -107,10 +117,14 @@ export function mountLiveStreamRoutes(app: Hono): void {
       const heartbeat = setInterval(() => { void stream.write(": ping\n\n").catch(stop); }, 15_000);
       try {
         await Promise.all(parsed.topics.map((topic) => relayTopic({
-          app, request: c.req.raw, topic, signal: controller.signal,
+          app, request: c.req.raw, topic, signal: controller.signal, oakridgeCursor,
           emit: async (frame) => {
             try {
-              await stream.writeSSE({ event: "live", data: JSON.stringify(frame) });
+              await stream.writeSSE({
+                event: "live", data: JSON.stringify(frame),
+                // Other streams must never overwrite the browser's Oakridge cursor.
+                id: frame.topic === "/oakridge/api/events" ? frame.frame.id : undefined,
+              });
             } catch (error) {
               stop();
               throw error;

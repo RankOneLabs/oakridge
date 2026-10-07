@@ -39,6 +39,31 @@ afterEach(() => {
 });
 
 describe("one live connection per page", () => {
+  it("retains the Oakridge cursor across pane changes without adopting session ids or late events", () => {
+    subscribe("/oakridge/api/events");
+    const original = activeSources()[0];
+    original.emit({ topic: "/oakridge/api/events", frame: { event: "run_event", data: "{}", id: "42" } });
+    const session = subscribe("/sessions/first/stream");
+    original.emit({ topic: "/oakridge/api/events", frame: { event: "run_event", data: "{}", id: "stale" } });
+    vi.runOnlyPendingTimers();
+    const withPane = activeSources()[0];
+    withPane.emit({ topic: session.topic, frame: { event: "acp", data: "{}", id: "99" } });
+    session.close();
+    vi.runOnlyPendingTimers();
+    expect([withPane, activeSources()[0]].map((source) => new URL(source.url, "http://localhost").searchParams.get("oakridge_cursor"))).toEqual(["42", "42"]);
+  });
+
+  it("discards the cursor when the last Oakridge subscription leaves", () => {
+    subscribe("/inbox");
+    const oakridge = subscribe("/oakridge/api/events");
+    vi.runOnlyPendingTimers();
+    activeSources()[0].emit({ topic: oakridge.topic, frame: { event: "invalidate", data: "{}", id: "42" } });
+    oakridge.close();
+    subscribe("/oakridge/api/events");
+    vi.runOnlyPendingTimers();
+    expect(new URL(activeSources()[0].url, "http://localhost").searchParams.has("oakridge_cursor")).toBe(false);
+  });
+
   it("combines inbox, Oakridge and two session panes into one browser connection", () => {
     subscribe("/inbox");
     subscribe("/oakridge/api/events");

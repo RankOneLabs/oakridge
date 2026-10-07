@@ -129,6 +129,11 @@ and [acp-per-sid.ts](core/server/handlers/acp-per-sid.ts).
   the feed and replay current state. Closing a page releases every underlying
   subscription. Multiple pages can stream while leaving browser connections
   available for message requests.
+  Oakridge event ids also become outer SSE ids for native reconnects. When
+  replacing the connection after a topic change, the browser passes its latest
+  `oakridge_cursor`; only the Oakridge source receives it as `Last-Event-ID`.
+  Upstream retries retain that cursor, while session sources replay their own
+  history without receiving another stream's id.
 - `GET /config` — defaults and available runtime descriptors.
 - `GET /directories?path=<absolute-path>` — directory picker.
 - `GET /:sid/handoff` — historical compaction handoff.
