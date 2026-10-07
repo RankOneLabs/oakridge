@@ -15,12 +15,13 @@ import type { EffectPayload } from "../effects/intents";
 import { revokeStarts } from "./revocation";
 import { validateDecision, validateStorageAuthority } from "./storage-validator";
 
-export interface DomainError { readonly operation: string; readonly entity_id: string; readonly detail: string }
+export interface DomainError { readonly operation: string; readonly entity_id: string; readonly detail: string; readonly reason?: CommitRejectionReason }
 export type Result<Value> = { readonly ok: true; readonly value: Value } | { readonly ok: false; readonly error: DomainError };
 export interface OutputPublication { readonly revision_id?: string; readonly scope_id: ScopeId; readonly output_key: string; readonly collection_key: string; readonly body: CheckedValue; readonly predecessor_id: string | null; readonly expected_slot_version: number | null; readonly execution_id: string | null }
 export interface EffectPublication { readonly effect_key: string; readonly payload: CheckedValue; readonly execution_id: string | null }
 export interface CommitRequest { readonly execution_authority?: string; readonly child_cancellations?: readonly import("./child-cancellation").ChildCancellation[]; readonly identity: IngressIdentity; readonly read_set: ReadSet; readonly decision: DecisionOutcome; readonly outputs: readonly OutputPublication[]; readonly capacity: readonly CapacityChange[]; readonly effects: readonly EffectPublication[]; readonly operator_version: number | null }
-export type CommitResult = { readonly kind: "Committed"; readonly receipt: CommitReceipt } | { readonly kind: "Replayed"; readonly receipt: CommitReceipt } | { readonly kind: "Conflict"; readonly detail: string } | { readonly kind: "Rejected"; readonly detail: string; readonly constraint?: string } | { readonly kind: "snapshot_too_large"; readonly scope: ScopeId; readonly bytes: number; readonly limit: number; readonly largest_roots: readonly { readonly root: string; readonly bytes: number }[] };
+export type CommitRejectionReason = "owner_terminal" | "generation_revoked" | "capacity_unavailable" | "database_constraint" | "invalid";
+export type CommitResult = { readonly kind: "Committed"; readonly receipt: CommitReceipt } | { readonly kind: "Replayed"; readonly receipt: CommitReceipt } | { readonly kind: "Conflict"; readonly detail: string } | { readonly kind: "Rejected"; readonly reason: CommitRejectionReason; readonly detail: string; readonly constraint?: string } | { readonly kind: "snapshot_too_large"; readonly scope: ScopeId; readonly bytes: number; readonly limit: number; readonly largest_roots: readonly { readonly root: string; readonly bytes: number }[] };
 
 class AbortCommit extends Error { constructor(readonly outcome: CommitResult) { super("detail" in outcome ? outcome.detail : outcome.kind); } }
 function fail(outcome: CommitResult): never { throw new AbortCommit(outcome); }
@@ -30,7 +31,7 @@ function databaseFailure(error: unknown): CommitResult | null {
   if (error.code === "40P01" || error.code === "40001") return { kind: "Conflict", detail: `database concurrency conflict (${error.code}); refresh decision` };
   if (error.code === "23505") {
     const constraint = "constraint" in error && typeof error.constraint === "string" ? error.constraint : "unknown constraint";
-    return { kind: "Rejected", detail: `unique constraint violated: ${constraint}`, constraint };
+    return { kind: "Rejected", reason: "database_constraint", detail: `unique constraint violated: ${constraint}`, constraint };
   }
   return null;
 }
@@ -46,7 +47,7 @@ async function measureWrittenSnapshots(tx: SqlExecutor, source: AuthoritySnapsho
     if (!measured) continue;
     const measurement = measureAuthoritySnapshot(measured);
     if (scope_id === source.owner.id && JSON.stringify(measurement.roots) !== JSON.stringify(source.reads))
-      fail({ kind: "Rejected", detail: "measured observation roots differ from the decision roots" });
+      fail({ kind: "Rejected", reason: "invalid", detail: "measured observation roots differ from the decision roots" });
     if (measurement.bytes <= MAX_SNAPSHOT_BYTES) continue;
     fail({ kind: "snapshot_too_large", scope: scope_id, bytes: measurement.bytes, limit: MAX_SNAPSHOT_BYTES, largest_roots: measurement.largest_roots });
   }
@@ -54,7 +55,7 @@ async function measureWrittenSnapshots(tx: SqlExecutor, source: AuthoritySnapsho
 
 async function lockOwners(tx: SqlExecutor, request: CommitRequest): Promise<void> {
   for (const witness of request.read_set.rows) {
-    if (!(READ_RELATIONS as readonly string[]).includes(witness.relation)) fail({ kind: "Rejected", detail: `unknown read relation: ${witness.relation}` });
+    if (!(READ_RELATIONS as readonly string[]).includes(witness.relation)) fail({ kind: "Rejected", reason: "invalid", detail: `unknown read relation: ${witness.relation}` });
   }
   // Global lock order: run advisory lock first, then relation.localeCompare order,
   // then IDs within each relation. Capacity changes take the exclusive run lock;
@@ -107,7 +108,7 @@ async function writeDecision(tx: SqlExecutor, request: CommitRequest, source: Au
       if (mutation.kind === "activate_child") {
         const declared = definition.source.scopes.find((item) => item.key === source.owner.scope_key)?.children.find((item) => item.key === mutation.key);
         const child_state = definition.checked_program.scopes.find((item) => item.key === declared?.scope)?.initial;
-        if (!declared || !child_state) fail({ kind: "Rejected", detail: "child definition missing" });
+        if (!declared || !child_state) fail({ kind: "Rejected", reason: "invalid", detail: "child definition missing" });
         const child_id = crypto.randomUUID();
         await tx.query("INSERT INTO authority.scope_instance (id,run_id,parent_id,scope_key,child_key,input,local_state) VALUES ($1,$2,$3,$4,$5,$6,$7)", [child_id, source.owner.run_id, scope_id, declared.scope, mutation.key, JSON.stringify(mutation.input), JSON.stringify(child_state)]);
       }
@@ -115,7 +116,7 @@ async function writeDecision(tx: SqlExecutor, request: CommitRequest, source: Au
         const members: ChildCollectionMember[] = [];
         for (const child of mutation.materialization.children) {
           const child_state = definition.checked_program.scopes.find((item) => item.key === child.scope)?.initial;
-          if (!child_state) fail({ kind: "Rejected", detail: "collection child definition missing" });
+          if (!child_state) fail({ kind: "Rejected", reason: "invalid", detail: "collection child definition missing" });
           const child_id = crypto.randomUUID();
           members.push({ id: child_id as ScopeId, key: child.key, depends_on: child.depends_on });
           await tx.query("INSERT INTO authority.scope_instance (id,run_id,parent_id,scope_key,child_key,input,local_state,collection_key) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)", [child_id, source.owner.run_id, scope_id, child.scope, child.key, JSON.stringify(child.input), JSON.stringify(child_state), mutation.key]);
@@ -136,18 +137,18 @@ async function writeDecision(tx: SqlExecutor, request: CommitRequest, source: Au
   }
   await writeOutputs(tx, request);
   const capacity = await applyCapacityChanges(tx, request.capacity);
-  if (!capacity.ok) fail({ kind: "Rejected", detail: `${capacity.error.operation}/${capacity.error.entity_id}: ${capacity.error.detail}` });
+  if (!capacity.ok) fail({ kind: "Rejected", reason: "capacity_unavailable", detail: `${capacity.error.operation}/${capacity.error.entity_id}: ${capacity.error.detail}` });
   // Every effect intent is one selected invocation, pinned here so recovery never re-renders a request.
   const invocations = request.decision.kind === "apply" ? request.decision.invocations : [];
-  if (request.effects.length !== invocations.length) fail({ kind: "Rejected", detail: "effects do not pair with selected invocations" });
+  if (request.effects.length !== invocations.length) fail({ kind: "Rejected", reason: "invalid", detail: "effects do not pair with selected invocations" });
   for (const [index, effect] of request.effects.entries()) {
     const id = crypto.randomUUID();
     const execution_id = effect.execution_id ?? execution_ids[index] ?? null;
     const selection = invocations[index];
-    if (!selection || !execution_id) fail({ kind: "Rejected", detail: "effect without a selected execution" });
+    if (!selection || !execution_id) fail({ kind: "Rejected", reason: "invalid", detail: "effect without a selected execution" });
     const publication_secret = randomBytes(32).toString("base64url");
     const pinned = pinProviderRequest({ invocation: selectedInvocation(id as InvocationId, execution_id, selection), bundle: definition.source, scope: source.owner, publication_secret });
-    if (!pinned.ok) fail({ kind: "Rejected", detail: pinned.error.detail });
+    if (!pinned.ok) fail({ kind: "Rejected", reason: "invalid", detail: pinned.error.detail });
     await tx.query("UPDATE authority.execution SET publication_secret_hash=$1 WHERE id=$2", [createHash("sha256").update(publication_secret).digest("hex"), execution_id]);
     const payload: EffectPayload = { invocation: pinned.value, action: "start", handle: null };
     await tx.query("INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload) VALUES ($1,$2,$3,$4,$5)", [id, scope_id, execution_id, effect.effect_key, JSON.stringify(payload)]);
@@ -165,7 +166,7 @@ async function writeDecision(tx: SqlExecutor, request: CommitRequest, source: Au
 export async function commitDecision(db: TransactionalSqlExecutor, request: CommitRequest, source: AuthoritySnapshot): Promise<Result<CommitResult>> {
   const checked = validateDecision(request, source);
   if (!checked.ok) return checked;
-  if (request.read_set.scope_id !== source.owner.id) return { ok: true, value: { kind: "Rejected", detail: "read set owner differs from decision owner" } };
+  if (request.read_set.scope_id !== source.owner.id) return { ok: true, value: { kind: "Rejected", reason: "invalid", detail: "read set owner differs from decision owner" } };
   try {
     const result = await db.transaction(async (tx): Promise<CommitResult> => {
       await lockOwners(tx, request);
@@ -175,11 +176,11 @@ export async function commitDecision(db: TransactionalSqlExecutor, request: Comm
       if (!await hasSameReadSet(tx, request.read_set)) return { kind: "Conflict", detail: "read set changed; refresh decision" };
       const definitions = await tx.query<{ source: DefinitionBundle; checked_program: CompiledBundle }>("SELECT b.source,b.checked_program FROM authority.definition_bundle b JOIN authority.run r ON r.definition_bundle_id=b.id WHERE r.id=$1", [source.owner.run_id]);
       const definition = definitions[0];
-      if (!definition) fail({ kind: "Rejected", detail: "definition bundle missing" });
+      if (!definition) fail({ kind: "Rejected", reason: "invalid", detail: "definition bundle missing" });
       const storage_check = await validateStorageAuthority(tx, request, source, definition.source);
-      if (!storage_check.ok) return { kind: "Rejected", detail: storage_check.error.detail };
+      if (!storage_check.ok) return { kind: "Rejected", reason: storage_check.error.reason === "generation_revoked" ? "generation_revoked" : "invalid", detail: storage_check.error.detail };
       if (request.operator_version !== null && request.operator_version !== Number(source.owner.version)) return { kind: "Conflict", detail: "operator target version changed; refresh decision" };
-      if (source.owner.is_terminal) return { kind: "Rejected", detail: "owner is terminal" };
+      if (source.owner.is_terminal) return { kind: "Rejected", reason: "owner_terminal", detail: "owner is terminal" };
       const cancellation_keys = request.decision.kind === "apply" ? request.decision.mutations.flatMap((mutation) => mutation.kind === "cancel_children" ? [mutation.key] : []) : [];
       if (cancellation_keys.length || request.child_cancellations?.length) {
         const expected = await tx.query<{ id: string }>(`WITH RECURSIVE descendants AS (
@@ -190,20 +191,20 @@ export async function commitDecision(db: TransactionalSqlExecutor, request: Comm
           UNION ALL SELECT s.* FROM authority.scope_instance s JOIN descendants d ON s.parent_id=d.id
         ) SELECT id FROM descendants WHERE NOT is_terminal ORDER BY id`, [source.owner.id, cancellation_keys]);
         const provided = (request.child_cancellations ?? []).map((item) => item.source.owner.id).sort();
-        if (JSON.stringify(expected.map((item) => item.id)) !== JSON.stringify(provided)) fail({ kind: "Rejected", detail: "declared child cancellation set differs from active descendants" });
+        if (JSON.stringify(expected.map((item) => item.id)) !== JSON.stringify(provided)) fail({ kind: "Rejected", reason: "invalid", detail: "declared child cancellation set differs from active descendants" });
       }
       for (const child of request.child_cancellations ?? []) {
         if (!child.request.decision || child.request.decision.kind !== "apply" || !child.request.decision.outcome || JSON.stringify(child.request.read_set) !== JSON.stringify(request.read_set))
-          fail({ kind: "Rejected", detail: "child cancellation must terminate against the parent read set" });
+          fail({ kind: "Rejected", reason: "invalid", detail: "child cancellation must terminate against the parent read set" });
         const valid = validateDecision(child.request, child.source);
         const authority = valid.ok ? await validateStorageAuthority(tx, child.request, child.source, definition.source) : valid;
-        if (!authority.ok) fail({ kind: "Rejected", detail: authority.error.detail });
+        if (!authority.ok) fail({ kind: "Rejected", reason: "invalid", detail: authority.error.detail });
         const descendants = await tx.query<{ id: string }>(`WITH RECURSIVE descendants AS (
           SELECT id,parent_id FROM authority.scope_instance WHERE parent_id=$1
           UNION ALL SELECT s.id,s.parent_id FROM authority.scope_instance s JOIN descendants d ON s.parent_id=d.id
         ) SELECT id FROM descendants WHERE id=$2`, [request.identity.scope_id, child.source.owner.id]);
         if (!descendants.length || child.source.owner.run_id !== source.owner.run_id || child.source.owner.is_terminal)
-          fail({ kind: "Rejected", detail: "cancellation target is not an active owned descendant" });
+          fail({ kind: "Rejected", reason: "invalid", detail: "cancellation target is not an active owned descendant" });
         await writeDecision(tx, child.request, child.source, definition);
       }
       const committed = await writeDecision(tx, request, source, definition);

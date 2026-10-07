@@ -1,7 +1,7 @@
 import { CORE_PROTOCOL_VERSION, decodeCoreResponse } from "../core-client/generated-contracts";
 import type { CheckedValue, DecisionOutcome } from "../core-client/generated-contracts";
 import type { AuthoritySnapshot } from "./snapshot-reader";
-import type { CommitRequest, Result } from "./commit";
+import type { CommitRequest, CommitRejectionReason, Result } from "./commit";
 import type { DefinitionBundle, OutputDefinition } from "../core-client/generated-contracts";
 import type { SqlExecutor } from "./sql-executor";
 import { createHash } from "node:crypto";
@@ -31,8 +31,8 @@ export function readPinnedPrompt(prompt: DefinitionBundle["prompts"][number]): R
   return { ok: true, value: content.toString("utf8") };
 }
 
-function reject(operation: string, entity_id: string, detail: string): Result<never> {
-  return { ok: false, error: { operation, entity_id, detail } };
+function reject(operation: string, entity_id: string, detail: string, reason?: CommitRejectionReason): Result<never> {
+  return { ok: false, error: { operation, entity_id, detail, reason } };
 }
 export function validateDecision(request: CommitRequest, source: AuthoritySnapshot): Result<CommitRequest> {
   if (request.identity.scope_id !== source.owner.id || request.identity.run_id !== source.owner.run_id) return reject("validate_commit", source.owner.id, "owner mismatch");
@@ -98,7 +98,7 @@ export async function validateStorageAuthority(tx: SqlExecutor, request: CommitR
   }
   if (request.execution_authority) {
     const selected = await tx.query<{ execution_id: string }>("SELECT execution_id FROM authority.execution_selection WHERE scope_id=$1 AND execution_id=$2", [source.owner.id, request.execution_authority]);
-    if (!selected.length) return reject("validate_storage", source.owner.id, "execution generation was revoked");
+    if (!selected.length) return reject("validate_storage", source.owner.id, "execution generation was revoked", "generation_revoked");
   }
   for (const output of request.outputs) {
     const definition: OutputDefinition | undefined = scope.outputs.find((item) => item.key === output.output_key);
@@ -117,7 +117,7 @@ export async function validateStorageAuthority(tx: SqlExecutor, request: CommitR
       const execution = executions[0];
       if (!execution || execution.scope_id !== source.owner.id || !definition.producers.includes(execution.worker_key)) return reject("validate_storage", source.owner.id, "execution cannot publish this output");
       const selections = await tx.query<{ execution_id: string; generation: string | number }>("SELECT execution_id,generation FROM authority.execution_selection WHERE scope_id=$1 AND worker_key=$2", [source.owner.id, execution.worker_key]);
-      if (selections[0]?.execution_id !== output.execution_id || Number(selections[0]?.generation) !== Number(execution.generation)) return reject("validate_storage", source.owner.id, "execution generation was revoked");
+      if (selections[0]?.execution_id !== output.execution_id || Number(selections[0]?.generation) !== Number(execution.generation)) return reject("validate_storage", source.owner.id, "execution generation was revoked", "generation_revoked");
       const contracts = await tx.query<{ payload: import("../effects/intents").EffectPayload }>("SELECT payload FROM authority.effect_intent WHERE scope_id=$1 AND execution_id=$2 AND payload->>'action'='start'", [source.owner.id, output.execution_id]);
       if (!contracts.some((item) => item.payload.invocation.selection.definition.outputs.includes(output.output_key))) return reject("validate_storage", source.owner.id, "selected action does not declare this output");
     } else if (definition.producers.length) return reject("validate_storage", source.owner.id, "producer execution required");

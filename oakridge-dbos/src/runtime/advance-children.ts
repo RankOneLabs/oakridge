@@ -128,7 +128,7 @@ export async function advanceChildren({ db, core, mutations, run_ids }: ChildAdv
           await Bun.sleep(10 * attempt + Math.random() * 20);
           break;
         case "Rejected":
-          if (outcome.detail === "owner is terminal" || outcome.detail.startsWith("apply_capacity/")) return;
+          if (outcome.reason === "owner_terminal" || outcome.reason === "capacity_unavailable") return;
           throw new Error(outcome.detail);
         case "snapshot_too_large":
           throw new Error(`snapshot_too_large: ${outcome.scope} ${outcome.bytes}/${outcome.limit}`);

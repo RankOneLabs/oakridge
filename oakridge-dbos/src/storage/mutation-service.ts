@@ -179,7 +179,7 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
           const source = attempt === 0 && input.prepared?.decision.source || await readSnapshot(db, input.scope_id, input.trigger);
           if (!source || source.owner.run_id !== input.run_id) return error("decide", input.scope_id, "scope not found in run");
           if (input.operator_version !== null && input.operator_version !== source.owner.version) return { ok: true, value: { kind: "Conflict", detail: "operator target changed; refresh decision" } };
-          if (source.owner.is_terminal) return { ok: true, value: { kind: "Rejected", detail: "owner is terminal" } };
+          if (source.owner.is_terminal) return { ok: true, value: { kind: "Rejected", reason: "owner_terminal", detail: "owner is terminal" } };
           const bundles = await db.query<{ source: DefinitionBundle }>("SELECT b.source FROM authority.definition_bundle b JOIN authority.run r ON r.definition_bundle_id=b.id WHERE r.id=$1", [input.run_id]);
           const bundle = bundles[0]?.source;
           if (!bundle) return error("decide", input.run_id, "definition bundle missing");
