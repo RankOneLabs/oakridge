@@ -1,5 +1,4 @@
-import type { DecisionTree, FieldExpression, Schema, ScopeDefinition } from "../source-contracts";
-import { independent_parent_phase } from "./independent-siblings";
+import type { FieldExpression, Schema, ScopeDefinition } from "../source-contracts";
 
 export interface RunPolicy {
   readonly key: string;
@@ -49,13 +48,8 @@ function configureObserver(scope: ScopeDefinition, policy: RunPolicy): ScopeDefi
     }) };
   }) };
 }
-function configureParent(tree: DecisionTree, policy: RunPolicy): DecisionTree {
-  if (policy.sibling_failure === "cancel" || tree.kind !== "match") return tree;
-  return { ...tree, cases: tree.cases.map((entry) => entry.variant === "implementation_finished"
-    ? { ...entry, node: independent_parent_phase } : entry) };
-}
 export function configureScope(scope: ScopeDefinition, policy: RunPolicy): ScopeDefinition {
-  if (scope.key === "development") return { ...scope, tree: configureParent(scope.tree, policy) };
+  if (scope.key === "development") return scope;
   const configured = configureObserver(scope, policy);
   if (scope.key !== "implementation") return configured;
   return { ...configured, pools: configured.pools.map((pool) => pool.key === "implementation_slots"

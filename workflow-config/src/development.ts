@@ -4,7 +4,7 @@ import { developmentSchemas } from "./development/schemas";
 import { prompts } from "./development/prompts";
 import { operations } from "./development/operations";
 import { configureSchemas, configureScope, DEVELOPMENT_POLICY, INDEPENDENT_SIBLINGS_POLICY, type RunPolicy } from "./development/policies";
-import { development } from "./development/run/scope";
+import { buildDevelopmentScope } from "./development/run/scope";
 import { repository_preparation } from "./development/stages/repository_preparation/scope";
 import { spec_analysis } from "./development/stages/spec_analysis/scope";
 import { planning } from "./development/stages/planning/scope";
@@ -23,7 +23,7 @@ export function buildDevelopmentRun(policy: RunPolicy): DefinitionBundle {
     root: "development",
     schemas: configureSchemas(developmentSchemas, policy),
     scopes: [
-      development,
+      buildDevelopmentScope(policy),
       repository_preparation,
       spec_analysis,
       planning,
