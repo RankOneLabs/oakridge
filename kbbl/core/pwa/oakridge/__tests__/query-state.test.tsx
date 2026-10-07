@@ -6,16 +6,15 @@ import { useRun } from "../hooks/useRun";
 import { GenericOperatorRunView } from "../views/GenericOperatorRunView";
 import { ReviewInboxView } from "../views/ReviewInboxView";
 import { OperatorCommandForm } from "../components/organisms/OperatorCommandForm";
-import { invalidateOperatorFrame } from "../hooks/useOakridgeInvalidationStream";
-import { queryKeys } from "../queryKeys";
+import { useReviewInbox } from "../hooks/useReviewInbox";
 import { savePendingCommand } from "../lib/operator-drafts";
-import type { RunEventFrame } from "../types";
 import type { OperatorCommandDescriptor, OperatorScopeView } from "../operator-contracts";
 
 const client = () => new QueryClient({ defaultOptions: { queries: { retry: false } } });
 afterEach(() => { vi.unstubAllGlobals(); localStorage.clear(); });
 
 function RunConsumer() { useRun("run-one"); return null; }
+function InboxConsumer() { useReviewInbox(); return null; }
 function runResponse(url: string): Response {
   if (url.endsWith("/runs/run-one")) return Response.json({ run_id: "run-one", scopes: [{ scope_id: "scope-one", label: "Current scope" }] });
   if (url.endsWith("/definition")) return Response.json({ source: { schemas: [] } });
@@ -32,7 +31,7 @@ test("one run fetcher uses one key and run invalidation reaches definition and s
   render(<QueryClientProvider client={cache}><RunConsumer /><GenericOperatorRunView runId="run-one" onBack={() => undefined} /></QueryClientProvider>);
   await screen.findByRole("heading", { name: "Current scope" });
   expect(fetch.mock.calls.filter(([url]) => url.endsWith("/runs/run-one"))).toHaveLength(1);
-  await cache.invalidateQueries({ queryKey: queryKeys.run("run-one") });
+  await cache.invalidateQueries({ queryKey: ["operator", "run-one"] });
   expect(fetch.mock.calls.filter(([url]) => url.endsWith("/definition"))).toHaveLength(2);
   expect(fetch.mock.calls.filter(([url]) => url.endsWith("/scopes/scope-one"))).toHaveLength(2);
 });
@@ -45,18 +44,20 @@ test("failed refresh retains the last run snapshot behind an error banner", asyn
   render(<QueryClientProvider client={cache}><GenericOperatorRunView runId="run-one" onBack={() => undefined} /></QueryClientProvider>);
   await screen.findByRole("heading", { name: "Current scope" });
   shouldFail = true;
-  await cache.invalidateQueries({ queryKey: queryKeys.run("run-one") });
+  await cache.invalidateQueries({ queryKey: ["operator", "run-one"] });
   expect(await screen.findByRole("alert")).toHaveProperty("textContent", expect.stringMatching(/Refresh failed/));
   expect(screen.getByRole("heading", { name: "Current scope" })).toBeTruthy();
 });
 
-test("a run frame invalidates the visible inbox", async () => {
+test("the app badge and visible inbox share one fetch and one invalidation key", async () => {
   const fetch = vi.fn(async () => Response.json({ cursor: [], items: [], next_cursor: null }));
   vi.stubGlobal("fetch", fetch);
   const cache = client();
-  render(<QueryClientProvider client={cache}><ReviewInboxView onSelectRun={() => undefined} onSelectArtifact={() => undefined} /></QueryClientProvider>);
+  render(<QueryClientProvider client={cache}><InboxConsumer />
+    <ReviewInboxView onSelectRun={() => undefined} onSelectArtifact={() => undefined} /></QueryClientProvider>);
   await screen.findByText("Nothing needs attention.");
-  invalidateOperatorFrame(cache, { run_id: "run-one" } as RunEventFrame);
+  expect(fetch).toHaveBeenCalledTimes(1);
+  await cache.invalidateQueries({ queryKey: ["operator", "inbox"] });
   await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
 });
 
