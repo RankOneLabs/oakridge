@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { WorkflowDefSummary } from "../oakridge/types";
+import type { WorkflowDefDescriptor } from "./workflow-defs";
 import {
   defaultWorkflowDefinitionId,
   sortWorkflowDefinitions,
@@ -8,7 +8,7 @@ import {
 
 describe("workflow definition selectors", () => {
   it("selects the newest definition by immutable version", () => {
-    const definitions: WorkflowDefSummary[] = [
+    const definitions: WorkflowDefDescriptor[] = [
       { id: "v1", name: "dev-flow", version: 1 },
       { id: "v2", name: "dev-flow", version: 2 },
     ];

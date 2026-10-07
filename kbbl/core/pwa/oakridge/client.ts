@@ -1,6 +1,7 @@
 import { readAllInboxPages } from "./lib/operator-inbox";
 import { OakridgeHttpError, selectFailureDetail } from "./lib/client-errors";
-import type { OakridgeConfig, ReviewInbox } from "./types";
+import { selectFallbackRefreshMs } from "./lib/oakridge-config";
+import type { OakridgeConfig } from "./types";
 import type { OperatorLaunchRequest, OperatorLaunchedRun, OperatorRunView, OperatorDefinitionSummary, OperatorScopeHistory, OperatorPinnedDefinition, OperatorScopeProjection, OperatorCommandSubmission, OperatorCommandReceipt } from "./operator-contracts";
 import type { WorkflowDefinitionDescriptor } from "./workflow-definition-types";
 
@@ -20,7 +21,9 @@ const post = <T,>(path: string, body: unknown): Promise<T> => request<T>("POST",
 
 export async function fetchOakridgeConfig(): Promise<OakridgeConfig> {
   const response = await fetch("/oakridge/config");
-  return response.ok ? response.json() as Promise<OakridgeConfig> : { available: false };
+  const served: OakridgeConfig = response.ok ? await response.json() as OakridgeConfig : { available: false };
+  return { ...served, fallback_refresh_ms: selectFallbackRefreshMs({
+    served: served.fallback_refresh_ms, configured: import.meta.env.VITE_OAKRIDGE_FALLBACK_REFRESH_MS }) };
 }
 export const fetchOperatorInbox = () => readAllInboxPages(get);
 export const fetchOperatorRuns = (): Promise<OperatorRunView[]> => get("/api/runs");
@@ -31,14 +34,23 @@ export const fetchOperatorScopeHistory = (runId: string, scopeId: string): Promi
 export const fetchOperatorDefinitions = (): Promise<OperatorDefinitionSummary[]> => get("/api/definitions");
 export const pinOperatorDefinition = (source: WorkflowDefinitionDescriptor): Promise<OperatorDefinitionSummary> => post("/api/definitions", source);
 export const launchOperatorRun = (request: OperatorLaunchRequest): Promise<OperatorLaunchedRun> => post("/runs", request);
+const inFlightCommands = new Map<string, Promise<OperatorCommandReceipt>>();
+/**
+ * The authority scopes command idempotency by (run_id, scope_id, request_id).
+ * This dedup shares that identity rather than a prefix of it, so an id reused
+ * across scopes cannot hand one scope's receipt to another scope's caller.
+ */
+const commandIdentity = (input: OperatorCommandSubmission): string =>
+  JSON.stringify([input.run_id, input.scope_id, input.request_id]);
 export function submitOperatorCommand(input: OperatorCommandSubmission): Promise<OperatorCommandReceipt> {
-  return post(`/api/runs/${encodeURIComponent(input.run_id)}/scopes/${encodeURIComponent(input.scope_id)}/commands`, {
+  const identity = commandIdentity(input);
+  const active = inFlightCommands.get(identity);
+  if (active) return active;
+  const delivery = post<OperatorCommandReceipt>(`/api/runs/${encodeURIComponent(input.run_id)}/scopes/${encodeURIComponent(input.scope_id)}/commands`, {
     scope_id: input.scope_id, command_key: input.command_key, expected_scope_version: input.owner_version,
     targets: input.targets, payload: input.payload, request_id: input.request_id,
   });
-}
-
-export async function fetchReviewInbox(): Promise<ReviewInbox> {
-  const inbox = await fetchOperatorInbox();
-  return { cohorts: [], items: [], attention_count: inbox.items.filter((item) => item.kind === "command").length };
+  inFlightCommands.set(identity, delivery);
+  void delivery.finally(() => { if (inFlightCommands.get(identity) === delivery) inFlightCommands.delete(identity); }).catch(() => undefined);
+  return delivery;
 }

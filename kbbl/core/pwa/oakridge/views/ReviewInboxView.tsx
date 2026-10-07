@@ -1,3 +1,4 @@
+import { queryKeys } from "../queryKeys";
 import { useQuery } from "@tanstack/react-query";
 import { fetchOperatorInbox } from "../client";
 import { Button } from "../../components/atoms/Button";
@@ -9,10 +10,12 @@ interface ReviewInboxViewProps {
 }
 
 export function ReviewInboxView({ onSelectRun }: ReviewInboxViewProps) {
-  const query = useQuery({ queryKey: ["operator", "inbox"], queryFn: fetchOperatorInbox, refetchInterval: 5000 });
-  if (query.isError) return <FeedbackMessage tone="danger" testId="or-review-inbox-error">{String(query.error)}</FeedbackMessage>;
-  if (!query.data) return <FeedbackMessage testId="or-review-inbox-loading">Loading review work…</FeedbackMessage>;
+  const query = useQuery({ queryKey: queryKeys.inbox, queryFn: fetchOperatorInbox });
+  if (!query.data) return query.error
+    ? <FeedbackMessage tone="danger" testId="or-review-inbox-error">{String(query.error)}</FeedbackMessage>
+    : <FeedbackMessage testId="or-review-inbox-loading">Loading review work…</FeedbackMessage>;
   return <main className="or-page" data-testid="or-review-inbox">
+    {query.error && <FeedbackMessage tone="danger" testId="or-review-inbox-error">Refresh failed: {String(query.error)}</FeedbackMessage>}
     <h1>Work requiring your attention</h1>
     <Button variant="secondary" onClick={() => { void query.refetch(); }}>Refresh</Button>
     {query.data.items.length === 0 && <FeedbackMessage tone="empty" testId="or-review-inbox-empty">Nothing needs attention.</FeedbackMessage>}

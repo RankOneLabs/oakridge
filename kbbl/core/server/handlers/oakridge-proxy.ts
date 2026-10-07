@@ -11,6 +11,23 @@ export interface OakridgeProxyDeps {
    * configured (core runs without auth, typically on a loopback bind).
    */
   coreControlToken?: string;
+  /**
+   * Fallback refresh interval served to the PWA, in milliseconds. Undefined
+   * leaves the PWA on its build-time default. The PWA enforces its own minimum
+   * interval, so a value below it is ignored there rather than rejected here.
+   */
+  fallbackRefreshMs?: number;
+}
+
+/**
+ * Parses OAKRIDGE_FALLBACK_REFRESH_MS at startup so a typo surfaces as a boot
+ * failure rather than as an operator interval that silently never took effect.
+ */
+export function parseFallbackRefreshMs(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw.trim() === "") return undefined;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) throw new Error(`OAKRIDGE_FALLBACK_REFRESH_MS must be a positive number of milliseconds, got: ${raw}`);
+  return value;
 }
 
 const OAKRIDGE_PROXY_TIMEOUT_MS = 30_000;
@@ -29,7 +46,8 @@ export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): vo
   // attempting a proxy request that would block the page.
   app.get("/oakridge/config", (c) => {
     const available = typeof deps.baseUrl === "string" && deps.baseUrl.length > 0;
-    return c.json({ available, core_url: available ? deps.baseUrl : null });
+    return c.json({ available, core_url: available ? deps.baseUrl : null,
+      ...(deps.fallbackRefreshMs === undefined ? {} : { fallback_refresh_ms: deps.fallbackRefreshMs }) });
   });
 
   app.use("/oakridge/api/*", bodyLimit({ maxSize: 1_048_576, onError: (c) => c.json({ kind: "oversized_payload", limit: 1_048_576 }, 413) }));

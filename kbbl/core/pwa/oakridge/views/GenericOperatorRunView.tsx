@@ -1,3 +1,4 @@
+import { queryKeys } from "../queryKeys";
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchOperatorDefinition, fetchOperatorRun, fetchOperatorScope, submitOperatorCommand } from "../client";
@@ -12,15 +13,15 @@ import { OperatorHistoryPane } from "./OperatorHistoryPane";
 interface Props { readonly runId: string; readonly onBack: () => void }
 export function GenericOperatorRunView({ runId, onBack }: Props) {
   const client = useQueryClient();
-  const run = useQuery({ queryKey: ["operator", runId], queryFn: () => fetchOperatorRun(runId) });
-  const definition = useQuery({ queryKey: ["operator", runId, "definition"], queryFn: () => fetchOperatorDefinition(runId) });
+  const run = useQuery({ queryKey: queryKeys.run(runId), queryFn: () => fetchOperatorRun(runId) });
+  const definition = useQuery({ queryKey: queryKeys.definition(runId), queryFn: () => fetchOperatorDefinition(runId) });
   const [selectedScope, setSelectedScope] = useState<string | null>(null);
   const scopeId = selectedScope ?? run.data?.scopes?.[0]?.scope_id ?? null;
-  const scope = useQuery({ queryKey: ["operator", runId, scopeId], queryFn: () => fetchOperatorScope(runId, scopeId ?? ""), enabled: scopeId !== null });
+  const scope = useQuery({ queryKey: queryKeys.scope(runId, scopeId), queryFn: () => fetchOperatorScope(runId, scopeId ?? ""), enabled: scopeId !== null });
   const [selectedCommand, setSelectedCommand] = useState<string | null>(null);
   const selected = scope.data?.commands.find((command) => command.key === selectedCommand) ?? scope.data?.commands[0];
   const schemas = definition.data?.source.schemas ?? [];
-  const refresh = () => { void client.invalidateQueries({ queryKey: ["operator", runId] }); };
+  const refresh = () => { void client.invalidateQueries({ queryKey: queryKeys.run(runId) }); };
   const [recovery, setRecovery] = useState("");
   useEffect(() => {
     if (!scope.data) return;
@@ -40,9 +41,11 @@ export function GenericOperatorRunView({ runId, onBack }: Props) {
     // Recovery is tied to the observed scope version; pending requests keep their original payload.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runId, scope.data?.cursor.scope_version]);
-  if (run.isError || definition.isError || scope.isError) return <div role="alert">{String(run.error ?? definition.error ?? scope.error)}</div>;
-  if (!run.data || !definition.data || !scope.data) return <p role="status">Loading operator context…</p>;
+  const refreshError = run.error ?? definition.error ?? scope.error;
+  if (!run.data || !definition.data || !scope.data) return refreshError
+    ? <div role="alert">{String(refreshError)}</div> : <p role="status">Loading operator context…</p>;
   return <main className="or-page or-page--wide" data-testid="operator-run-view">
+    {refreshError && <p role="alert">Refresh failed: {String(refreshError)}. Showing the last snapshot.</p>}
     {recovery && <p role="status">{recovery}</p>}
     <header className="or-page-header"><Button type="button" variant="secondary" onClick={onBack}>← Runs</Button><h2 className="or-page-title">Operator workspace</h2><Button type="button" variant="secondary" onClick={refresh}>Refresh</Button></header>
     <label>Scope <select aria-label="Scope" value={scopeId ?? ""} onChange={(event) => { setSelectedScope(event.target.value); setSelectedCommand(null); }}>

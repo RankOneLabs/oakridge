@@ -1,4 +1,5 @@
-import type { RunEvent, RunEventFrame } from "../types";
+import type { RunEvent } from "../run-event-types";
+import type { RunEventFrame } from "../types";
 
 export interface RunNotification {
   readonly kind: "success" | "error" | "info";

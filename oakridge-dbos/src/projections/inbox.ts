@@ -27,3 +27,12 @@ export function selectInboxItems(row: InboxRow): readonly InboxItem[] {
     return [{ ...base, kind: "diagnostic", detail: "scope projection is damaged" }];
   }
 }
+
+/** Mirrors oakridge-dbos/src/projections/inbox.ts. */
+export type OperatorInboxItem =
+  | { readonly kind: "command"; readonly run_id: string; readonly scope_id: string; readonly scope_version: number; readonly key: string; readonly label: string; readonly consequence: string }
+  | { readonly kind: "wait"; readonly run_id: string; readonly scope_id: string; readonly scope_version: number; readonly reason: string; readonly label: string }
+  | { readonly kind: "diagnostic"; readonly run_id: string; readonly scope_id: string; readonly scope_version: number; readonly detail: string };
+export interface OperatorInbox { readonly cursor: readonly { readonly scope_id: string; readonly version: number }[]; readonly items: readonly OperatorInboxItem[] }
+
+export interface OperatorInboxPage extends OperatorInbox { readonly next_cursor: string | null }
