@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { createProductionComposition } from "../src/runtime/compose";
-import type { ProviderResult } from "../src/effects/provider";
+import type { ProviderResult, TerminalObservation } from "../src/effects/provider";
 import type { EffectPayload } from "../src/effects/intents";
 import { begin, sessionBundle, waitUntil, withDatabase } from "./effect-fixture";
 
@@ -34,7 +34,8 @@ for (const rejection of cases) test(`${rejection.name}, fail the scope, and disc
       max_observe_unavailable_attempts: 2, wake_timeout_seconds: 0.02 },
     effect_provider: {
       start: async () => ({ kind: "acknowledged", value: { kind: "kbbl_session", session_id: "session" } }),
-      observe: async () => rejection.observations[Math.min(observations++, rejection.observations.length - 1)]!,
+      // A malformed provider response deliberately crosses the typed IO boundary.
+      observe: async () => rejection.observations[Math.min(observations++, rejection.observations.length - 1)] as ProviderResult<TerminalObservation>,
       stop: async () => can_confirm_stop ? { kind: "acknowledged", value: { stopped: true } }
         : { kind: "uncertain", detail: "cleanup unavailable" },
     } });
@@ -43,6 +44,8 @@ for (const rejection of cases) test(`${rejection.name}, fail the scope, and disc
       session_identity: {}, worktree: { branchName: "selected", worktreeSubdir: "selected" } });
     await waitUntil(async () => (await db.query<{ is_terminal: boolean }>(
       "SELECT is_terminal FROM authority.scope_instance WHERE id=$1", [run.root_scope_id]))[0]?.is_terminal === true);
+    await waitUntil(async () => (await db.query<{ payload: EffectPayload }>(
+      "SELECT payload FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='start'", [run.root_scope_id]))[0]?.payload.evidence_delivered === true);
     expect(observations).toBe(rejection.observations.length);
     const start = (await db.query<{ status: string; payload: EffectPayload }>(
       "SELECT status,payload FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='start'", [run.root_scope_id]))[0];
@@ -54,5 +57,5 @@ for (const rejection of cases) test(`${rejection.name}, fail the scope, and disc
     await waitUntil(async () => (await db.query<{ status: string }>(
       "SELECT status FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='stop'", [run.root_scope_id]))[0]?.status === "cleanup_confirmed");
     expect((await composition.app.request(`/runs/${run.run_id}`, { method: "DELETE" })).status).toBe(200);
-  } finally { await composition.close(); }
+  } finally { can_confirm_stop = true; await composition.close(); }
 }));

@@ -165,6 +165,14 @@ test("discussion can retain an assessment with explicit unchanged evidence or pu
     const assessor = await f.selected("assessment");
     expect((await f.command("request_implementation_changes", { ...assessment_target, assessment: revision(revised_id), text: "Implement the requested coverage changes" })).status).toBe(202);
     expect((await f.scope()).local_state.data).toMatchObject({ variant: "working" });
+    const builder = await f.selected("build");
+    const evidence = (key: string) => f.app.request(`http://localhost/api/runs/${f.run_id}/scopes/${f.root_scope_id}/executions/${builder}/facts/${key}`, {
+      method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${builder_secret}` },
+      body: JSON.stringify({ request_id: `revision-${key}`, payload: {} }) });
+    const builder_secret = await f.publicationSecret(builder);
+    expect((await evidence("assessment_submitted")).status).toBe(422);
+    expect((await evidence("build_submitted")).status).toBe(202);
+
     const pointers = await db.query<{ current_revision_id: string | null }>("SELECT current_revision_id FROM authority.output_slot WHERE scope_id=$1", [f.root_scope_id]);
     expect(pointers.every((pointer) => pointer.current_revision_id === null)).toBe(true);
     expect((await f.publish("assessment", { verdict: "pass", findings: [], test_evidence: null, recommended_next_actions: [] }, "assessment", f.root_scope_id, "", assessor)).status).toBe(403);

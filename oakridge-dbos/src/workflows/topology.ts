@@ -1,6 +1,7 @@
 import { DBOS, Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 import type { CoreClient } from "../core-client/client";
 import type { CheckedValue } from "../core-client/generated-contracts";
+import { recoverSessionFailure } from "../effects/operations/production-provider";
 import { deliverEvidence, undeliveredEvidence } from "../effects/evidence";
 import { readIntent, type EffectIntent, type EffectPayload, type EffectStatus } from "../effects/intents";
 import { bounded, exhaustStart, resolveObserve, resolveStart, resolveStop, settleObserveRetry, startAttemptsExhausted, type StartOutcome } from "../effects/outcomes";
@@ -82,6 +83,15 @@ export async function performStartAttempt(intent_id: string): Promise<StartOutco
 const startStep = DBOS.registerStep(performStartAttempt, { name: "oakridgeStart" });
 const observeStep = DBOS.registerStep(async (payload: EffectPayload): Promise<ProviderResult<unknown>> =>
   callProvider(payload.invocation.selection.definition.deadline_ms, (signal) => current().provider.observe(payload.invocation, payload.handle, { signal })), { name: "oakridgeObserve" });
+const observationRejectionStep = DBOS.registerStep(async (payload: EffectPayload): Promise<EffectPayload> => {
+  if (payload.evidence || payload.invocation.request?.kind !== "kbbl_session") return payload;
+  const { db, core } = current();
+  const recovery = await recoverSessionFailure({ db, core, invocation: payload.invocation,
+    detail: payload.last_detail ?? "observation rejected" });
+  if (recovery.kind !== "permanently_rejected") throw new Error(`observation recovery unavailable: ${JSON.stringify(recovery)}`);
+  return { ...payload, ...(recovery.evidence ? { evidence: recovery.evidence } : {}) };
+}, { name: "oakridgeObservationRejection", retriesAllowed: true, maxAttempts: 5 });
+
 const stopStep = DBOS.registerStep(async (payload: EffectPayload): Promise<ProviderResult<unknown>> =>
   callProvider(payload.invocation.selection.definition.deadline_ms, (signal) => current().provider.stop(payload.invocation, payload.handle, { signal })), { name: "oakridgeStop" });
 
@@ -187,7 +197,7 @@ async function carryStart(intent_id: string): Promise<EffectStatus | null> {
     if (outcome.kind === "rejected" || outcome.kind === "retry") {
       const settled = outcome.kind === "rejected" ? { status: "rejected" as const, payload: outcome.payload }
         : settleObserveRetry(payload, outcome, timing.max_observe_unavailable_attempts);
-      payload = settled.payload;
+      payload = settled.status === "rejected" ? await observationRejectionStep(settled.payload) : settled.payload;
       const next = settled.status;
       const written = await persistStep({ intent_id, status: next, payload, terminal_result: null });
       status = written ?? next;

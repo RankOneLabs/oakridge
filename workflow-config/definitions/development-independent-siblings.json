@@ -7844,7 +7844,7 @@
               "settings": [
                 {
                   "key": "evidence_fact",
-                  "value": "assessment_submitted"
+                  "value": "build_submitted"
                 }
               ],
               "tools": [],

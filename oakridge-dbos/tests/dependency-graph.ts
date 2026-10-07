@@ -215,15 +215,15 @@ export function evaluationCallSites(nodes: readonly ModuleNode[]): readonly stri
   });
 }
 
-export interface AuthorityWriteSite { readonly path: string; readonly line: number; readonly writer: string }
+export interface AuthorityWriteSite { readonly path: string; readonly line: number; readonly writer: string | null }
 /** Enumerate SQL write sites and their enclosing named function, including nested IO callbacks. */
 export function authorityWriteSites(node: ModuleNode): readonly AuthorityWriteSite[] {
   const parsed = parseModule(node.path, node.source);
   const sites: AuthorityWriteSite[] = [];
-  function enclosingWriter(child: ts.Node): string {
+  function enclosingWriter(child: ts.Node): string | null {
     for (let parent = child.parent; parent; parent = parent.parent) {
       if (ts.isMethodDeclaration(parent)) {
-        for (let owner = parent.parent; owner; owner = owner.parent) {
+        for (let owner: ts.Node | undefined = parent.parent; owner; owner = owner.parent) {
           if (ts.isFunctionDeclaration(owner) && owner.name) return `${owner.name.text}.${parent.name.getText(parsed)}`;
         }
         return parent.name.getText(parsed);
@@ -232,7 +232,7 @@ export function authorityWriteSites(node: ModuleNode): readonly AuthorityWriteSi
       if (ts.isVariableDeclaration(parent) && parent.initializer && (ts.isArrowFunction(parent.initializer) || ts.isFunctionExpression(parent.initializer)))
         return parent.name.getText(parsed);
     }
-    return "<unnamed>";
+    return null;
   }
   function visit(child: ts.Node): void {
     if (ts.isStringLiteralLike(child) || ts.isTemplateExpression(child)) {
@@ -244,4 +244,11 @@ export function authorityWriteSites(node: ModuleNode): readonly AuthorityWriteSi
   }
   visit(parsed);
   return sites;
+}
+
+interface AuthorityOwnershipInput { readonly root: string; readonly nodes: readonly ModuleNode[]; readonly inventory: string }
+export function undocumentedAuthorityWrites({ root, nodes, inventory }: AuthorityOwnershipInput): readonly AuthorityWriteSite[] {
+  const rows = inventory.split("\n");
+  return nodes.flatMap(authorityWriteSites).filter((site) => !rows.some((row) =>
+    site.writer !== null && row.includes(`\`${relative(root, site.path)}:${site.line}\``) && row.includes(`\`${site.writer}\``)));
 }

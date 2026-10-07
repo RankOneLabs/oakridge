@@ -156,7 +156,7 @@ export const workers: WorkerDefinition[] = [
           }
         ]),
         prompt: "implementation_build_revise_after_assessment",
-        settings: [{ key: "evidence_fact", value: "assessment_submitted" }],
+        settings: [{ key: "evidence_fact", value: "build_submitted" }],
         tools: [],
         outputs: ["build_result", "pr_summary"],
         deadline_ms: 3600000,

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { resolve, relative } from "node:path";
 import { readFileSync } from "node:fs";
-import { buildGraph, reachable, projectionViolations, mutationViolations, closedCommandViolations, evaluatorViolations, labels, authorityWriteSites, type ModuleNode, type ModuleGraph } from "./dependency-graph";
+import { buildGraph, reachable, projectionViolations, mutationViolations, closedCommandViolations, evaluatorViolations, labels, authorityWriteSites, undocumentedAuthorityWrites, type ModuleNode, type ModuleGraph } from "./dependency-graph";
 
 const root = resolve(import.meta.dir, "../..");
 const dbosMain = resolve(root, "oakridge-dbos/src/main.ts");
@@ -44,11 +44,7 @@ test("state ownership inventory covers every production authority write with its
   const inventory = readFileSync(resolve(root, "comms/oakridge-state-ownership-inventory.md"), "utf8");
   const sites = reachable(graph, dbosMain).flatMap(authorityWriteSites);
   expect(sites.length).toBeGreaterThan(0);
-  for (const site of sites) {
-    const row = inventory.split("\n").find((line) => line.includes(`${label(site.path)}:${site.line}`));
-    expect(row, `missing ownership citation for ${site.writer} at ${label(site.path)}:${site.line}`).toBeDefined();
-    expect(row).toContain(`\`${site.writer}\``);
-  }
+  expect(undocumentedAuthorityWrites({ root, nodes: reachable(graph, dbosMain), inventory })).toEqual([]);
 });
 test("an additional production writer cannot hide behind existing inventory citations", () => {
   const node = injected("oakridge-dbos/src/effects/injected.ts", `
@@ -57,6 +53,8 @@ test("an additional production writer cannot hide behind existing inventory cita
     }
   `);
   expect(authorityWriteSites(node)).toEqual([{ path: node.path, line: 3, writer: "unlistedWriter" }]);
+  const inventory = readFileSync(resolve(root, "comms/oakridge-state-ownership-inventory.md"), "utf8");
+  expect(undocumentedAuthorityWrites({ root, nodes: [node], inventory })).toEqual(authorityWriteSites(node));
 });
 
 test("an indirect storage write fails the mutation boundary, but one behind the service passes", () => {
