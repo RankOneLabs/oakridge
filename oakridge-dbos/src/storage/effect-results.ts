@@ -12,18 +12,27 @@ export interface EffectResultInput {
 interface WrittenRow { readonly status: EffectStatus; readonly scope_id: string; readonly execution_id: string | null; readonly effect_key: string }
 
 /**
- * Claims the right to call the provider for a start: records `has_dispatched`
- * so a crash inside the call leaves a cleanup obligation. Only a still-pending
- * start can be claimed — a revocation that landed since the workflow loaded the
- * row wins, and owes no stop because the provider is then never called.
+ * Reserve before provider IO. An unfinished predecessor (including a legacy
+ * dispatched row without settlement metadata) remains an uncertain start.
  */
-export async function claimDispatch(db: TransactionalSqlExecutor, intent_id: string): Promise<boolean> {
+export async function claimStartAttempt(db: TransactionalSqlExecutor, intent_id: string): Promise<EffectPayload | null> {
   const owner = await db.query<{ run_id: string }>("SELECT s.run_id FROM authority.effect_intent e JOIN authority.scope_instance s ON s.id=e.scope_id WHERE e.id=$1", [intent_id]);
-  if (!owner[0]) return false;
+  if (!owner[0]) return null;
   return db.transaction(async (tx) => {
     await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [owner[0]!.run_id]);
-    const rows = await tx.query<{ id: string }>("UPDATE authority.effect_intent SET payload=jsonb_set(payload,'{has_dispatched}','true'),version=version+1 WHERE id=$1 AND payload->>'action'='start' AND status='pending' RETURNING id", [intent_id]);
-    return rows.length === 1;
+    const rows = await tx.query<{ payload: EffectPayload }>(`UPDATE authority.effect_intent
+      SET payload=payload || jsonb_build_object(
+        'has_dispatched',true,
+        'start_attempts',coalesce((payload->>'start_attempts')::bigint,0)+1,
+        'start_in_flight',true,
+        'has_uncertain_start',coalesce((payload->>'has_uncertain_start')::boolean,false)
+          OR coalesce((payload->>'start_in_flight')::boolean,false)
+          OR (NOT (payload ? 'start_in_flight') AND coalesce((payload->>'has_dispatched')::boolean,false))),
+        version=version+1
+      WHERE id=$1 AND payload->>'action'='start' AND status='pending'
+        AND coalesce((payload->>'start_attempts')::bigint,0) < (payload->'invocation'->'selection'->'definition'->>'max_attempts')::bigint
+      RETURNING payload`, [intent_id]);
+    return rows[0]?.payload ?? null;
   });
 }
 

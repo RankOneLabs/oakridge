@@ -24,7 +24,8 @@ export interface PreparedDecision { readonly request_digest: string; readonly de
 export interface MutationInput { readonly request_digest?: string; readonly execution_authority?: string; readonly run_id: RunId; readonly scope_id: ScopeId; readonly ingress_id: string; readonly trigger: Trigger; readonly operator_version: number | null; readonly outputs?: readonly OutputPublication[]; readonly prepared?: PreparedDecision }
 export interface StartedRun { readonly run_id: RunId; readonly root_scope_id: ScopeId; readonly bundle_id: string }
 export interface MutationService { compile(request: CompileRequest): Promise<Result<CompileResult>>; pinDefinition(request: CompileRequest): Promise<Result<PinnedDefinition>>; startRun(request: StartRunRequest): Promise<Result<StartedRun>>; startRunByDigest(request: StartPinnedRunRequest): Promise<Result<StartedRun>>; decide(input: MutationInput): Promise<Result<CommitResult>> }
-export interface ProviderCapabilities { readonly check_github: (input: unknown) => Promise<Result<true>> }
+export interface ProviderCapabilityInput { readonly bundle: DefinitionBundle; readonly input: unknown }
+export interface ProviderCapabilities { readonly check_github: (input: ProviderCapabilityInput) => Promise<Result<true>> }
 export function requiredProviderKinds(bundle: DefinitionBundle): readonly string[] {
   const selected = new Set(bundle.scopes.flatMap((scope) => scope.workers.flatMap((worker) => worker.actions.map((action) => `${action.operation}:${action.contract_version}`))));
   return [...new Set(bundle.operations.filter((manifest) => selected.has(`${manifest.key}:${manifest.version}`)).map((manifest) => manifest.provider_kind))];
@@ -112,7 +113,7 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
       if (!compiled.ok) return compiled;
       if (requiredProviderKinds(request.bundle).includes("github")) {
         if (!provider_capabilities) return error("start_run", request.bundle.key, "missing provider capability: github token");
-        const capability = await provider_capabilities.check_github(request.input);
+        const capability = await provider_capabilities.check_github(request);
         if (!capability.ok) return error("start_run", request.bundle.key, `missing provider capability: github ${capability.error.detail}`);
       }
       const root = compiled.value.program.scopes.find((scope) => scope.key === request.bundle.root);

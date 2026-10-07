@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
 import canonicalDefinition from "../../../../../workflow-config/definitions/development.json";
+import { OakridgeShell } from "../OakridgeShell";
 import { OperatorLaunchView } from "../views/OperatorLaunchView";
 import { OperatorHistoryPane } from "../views/OperatorHistoryPane";
 import { OperatorDefinitionEditorView } from "../views/OperatorDefinitionEditorView";
@@ -127,4 +128,33 @@ test("launch is not sent when its request identity cannot be persisted", async (
   fireEvent.click(screen.getByRole("button", { name: "Launch" }));
   await screen.findByText(/storage unavailable/);
   expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+test("switching run routes resets the selected scope before fetching the new run", async () => {
+  const requests: string[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    requests.push(url);
+    if (url === "/oakridge/config") return Response.json({ available: true });
+    const match = url.match(/\/runs\/(run-[12])(?:\/(.*))?$/);
+    if (!match) throw new Error(`Unexpected request: ${url}`);
+    const [, runId, suffix] = match;
+    const root = `${runId}-root`;
+    const child = `${runId}-child`;
+    if (!suffix) return Response.json({ run_id: runId, scopes: [root, child].map((scope_id) => ({ scope_id, label: scope_id })) });
+    if (suffix === "definition") return Response.json({ source: { schemas: [] } });
+    if (suffix.endsWith("/history")) return Response.json({ transitions: [], facts: [] });
+    const scope_id = suffix.slice("scopes/".length);
+    return Response.json({ scope_id, run_id: runId, label: scope_id,
+      state: { schema: "text", data: { kind: "string", value: "ready" } },
+      outcome: null, outputs: [], executions: [], commands: [], cursor: { scope_version: 1 } });
+  }));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const view = (id: string) => <QueryClientProvider client={client}><OakridgeShell route={{ sub: "run", id, pane: null }} /></QueryClientProvider>;
+  const { rerender } = render(view("run-1"));
+  await screen.findByRole("heading", { name: "run-1-root" });
+  fireEvent.change(screen.getByLabelText("Scope"), { target: { value: "run-1-child" } });
+  await screen.findByRole("heading", { name: "run-1-child" });
+  rerender(view("run-2"));
+  await screen.findByRole("heading", { name: "run-2-root" });
+  expect(requests.some((url) => url.includes("/runs/run-2/scopes/run-1-"))).toBe(false);
 });

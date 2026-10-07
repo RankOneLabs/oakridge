@@ -5,7 +5,7 @@ import type { CheckedValue, DefinitionBundle, Invocation } from "../src/core-cli
 import { deletionEligibility, pendingCleanupCount, requiresCleanup, type EffectPayload } from "../src/effects/intents";
 import { selectedInvocation, type InvocationId } from "../src/effects/provider";
 import { cancelRun, createMutationService, deleteRun } from "../src/storage/mutation-service";
-import { claimDispatch, persistEffectResult } from "../src/storage/effect-results";
+import { claimStartAttempt, persistEffectResult } from "../src/storage/effect-results";
 import type { ScopeId } from "../src/storage/schema-records";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
 import { unit, withDatabase } from "./effect-fixture";
@@ -57,7 +57,7 @@ test("a cancellation that lands before dispatch wins: the provider is never call
   await db.query("INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload) VALUES ('start','scope','execution-1','ingress:0',$1)", [JSON.stringify(start)]);
   // The effect workflow has loaded the pending row; cancellation commits before it claims dispatch.
   expect(await cancelRun(db, { kind: "cancel_run", run_id: "run", reason: "operator" })).toEqual({ kind: "cancelled", stop_intents: 0 });
-  expect(await claimDispatch(db, "start")).toBe(false);
+  expect(await claimStartAttempt(db, "start")).toBeNull();
   const rows = await db.query<{ status: string; payload: EffectPayload }>("SELECT status,payload FROM authority.effect_intent", []);
   expect(rows).toHaveLength(1);
   expect(rows[0]).toMatchObject({ status: "revoked" });
@@ -137,4 +137,16 @@ test("run cancellation evaluates each scope's declared cancellation policy and r
     expect((await db.query<{ count: string }>("SELECT count(*)::text AS count FROM authority.effect_intent WHERE payload->>'action'='stop'", []))[0]?.count).toBe("1");
     expect(await deleteRun(db, run.value.run_id)).toMatchObject({ kind: "refused" });
   } finally { core.close(); }
+}));
+
+test("start attempt reservations stop at the pinned limit across payload reloads", async () => withDatabase(async ({ db }) => {
+  await db.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ('bundle','digest','{}','{}')", []);
+  await db.query("INSERT INTO authority.run (id,definition_bundle_id) VALUES ('run','bundle')", []);
+  await db.query("INSERT INTO authority.scope_instance (id,run_id,scope_key,input,local_state) VALUES ('scope','run','scope','{}','{}')", []);
+  await db.query("INSERT INTO authority.effect_intent (id,scope_id,effect_key,payload) VALUES ('start','scope','ingress:0',$1)", [JSON.stringify(start)]);
+  const first = await claimStartAttempt(db, "start");
+  const second = await claimStartAttempt(db, "start");
+  const rows = await db.query<{ payload: EffectPayload }>("SELECT payload FROM authority.effect_intent WHERE id='start'", []);
+  expect({ first: first?.start_attempts, second, stored: rows[0]?.payload.start_attempts })
+    .toEqual({ first: 1, second: null, stored: 1 });
 }));

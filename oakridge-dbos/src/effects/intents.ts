@@ -19,6 +19,10 @@ export interface EffectPayload {
   readonly invocation: StableInvocation;
   readonly action: "start" | "stop";
   readonly handle: ExternalHandle | null;
+  /** Reserved provider start attempts, retained across workflow recovery. */
+  readonly start_attempts?: number;
+  /** The reserved attempt has no durably recorded provider outcome yet. */
+  readonly start_in_flight?: boolean;
   readonly last_detail?: string;
   readonly evidence?: Trigger;
   readonly evidence_delivered?: boolean;
@@ -48,7 +52,7 @@ export async function readIntent(db: SqlExecutor, intent_id: string): Promise<Ef
 export function requiresCleanup(intent: Pick<EffectIntent, "status" | "payload">): boolean {
   if (intent.payload.action !== "start") return false;
   if (intent.status === "cleanup_confirmed" || intent.payload.handle?.kind === "completed") return false;
-  if (intent.payload.has_uncertain_start) return true;
+  if (intent.payload.has_uncertain_start || intent.payload.start_in_flight) return true;
   if (intent.status === "rejected") return false;
   if (intent.status === "acknowledged") return true;
   return intent.payload.handle !== null || intent.payload.has_dispatched === true;
@@ -60,6 +64,7 @@ export async function pendingCleanupCount(db: SqlExecutor, run_id: string): Prom
     JOIN authority.scope_instance s ON s.id=e.scope_id WHERE s.run_id=$1
     AND e.payload->>'action'='start' AND e.status<>'cleanup_confirmed' AND coalesce(e.payload->'handle'->>'kind','')<>'completed'
     AND (coalesce((e.payload->>'has_uncertain_start')::boolean,false)
+      OR coalesce((e.payload->>'start_in_flight')::boolean,false)
       OR (e.status<>'rejected' AND (e.status='acknowledged' OR coalesce((e.payload->>'has_dispatched')::boolean,false) OR jsonb_typeof(e.payload->'handle')<>'null')))
     AND NOT EXISTS (SELECT 1 FROM authority.effect_intent proof WHERE proof.scope_id=e.scope_id
       AND proof.payload->'invocation'->>'id'=e.payload->'invocation'->>'id'

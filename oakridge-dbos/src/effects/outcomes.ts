@@ -36,11 +36,28 @@ export type StartOutcome =
   | { readonly kind: "rejected"; readonly payload: EffectPayload }
   | { readonly kind: "retry"; readonly payload: EffectPayload };
 
+export function startAttemptsExhausted(payload: EffectPayload): boolean {
+  return (payload.start_attempts ?? 0) >= payload.invocation.selection.definition.max_attempts;
+}
+function retryStart(payload: EffectPayload): StartOutcome {
+  return startAttemptsExhausted(payload)
+    ? { kind: "rejected", payload: { ...payload, last_detail: `start attempts exhausted (${payload.start_attempts}): ${payload.last_detail ?? "provider unavailable"}` } }
+    : { kind: "retry", payload };
+}
+
+/** An exhausted unfinished reservation may have reached the provider before a crash. */
+export function exhaustStart(payload: EffectPayload): StartOutcome {
+  return { kind: "rejected", payload: { ...payload, start_in_flight: false,
+    has_uncertain_start: payload.has_uncertain_start === true || payload.start_in_flight === true
+      || (payload.start_in_flight === undefined && payload.has_dispatched === true),
+    last_detail: `start attempts exhausted (${payload.start_attempts ?? 0}) during recovery` } };
+}
+
 export function resolveStart(payload: EffectPayload, result: ProviderResult<unknown>): StartOutcome {
-  const dispatched: EffectPayload = { ...payload, has_dispatched: true };
+  const dispatched: EffectPayload = { ...payload, has_dispatched: true, start_attempts: payload.start_attempts ?? 1, start_in_flight: false };
   switch (result.kind) {
     case "acknowledged": {
-      if (!isExternalHandle(result.value)) return { kind: "retry", payload: { ...dispatched, has_uncertain_start: true, last_detail: "provider acknowledged start without a valid handle" } };
+      if (!isExternalHandle(result.value)) return retryStart({ ...dispatched, has_uncertain_start: true, last_detail: "provider acknowledged start without a valid handle" });
       const handle = result.value;
       if (handle.kind === "completed") {
         const evidence = handle.evidence ? { evidence: handle.evidence } : {};
@@ -51,9 +68,9 @@ export function resolveStart(payload: EffectPayload, result: ProviderResult<unkn
     case "permanently_rejected":
       return { kind: "rejected", payload: { ...dispatched, last_detail: `${result.code}: ${result.detail}`, ...(result.evidence ? { evidence: result.evidence } : {}) } };
     case "transiently_unavailable":
-      return { kind: "retry", payload: { ...dispatched, last_detail: result.detail } };
+      return retryStart({ ...dispatched, last_detail: result.detail });
     case "uncertain":
-      return { kind: "retry", payload: { ...dispatched, has_uncertain_start: true, last_detail: result.detail } };
+      return retryStart({ ...dispatched, has_uncertain_start: true, last_detail: result.detail });
   }
 }
 
