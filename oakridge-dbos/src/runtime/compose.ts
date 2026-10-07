@@ -138,6 +138,8 @@ export async function createProductionComposition(options: ProductionOptions): P
   if (!started.ok) throw new Error(`workflow-cli could not start: ${started.error.detail.detail}`);
   const core = started.value;
   const db = PgPostgresExecutor.connect(options.database_url);
+  let launch_attempted = false;
+  try {
   const provider_capabilities = options.provider_capabilities ?? githubProviderCapabilities(process.env.OAKRIDGE_GITHUB_TOKEN ?? process.env.GITHUB_TOKEN ?? "", fetch,
     options.kbbl_base_url ?? process.env.KBBL_BASE_URL ?? "http://127.0.0.1:8788");
   const mutations = createMutationService(db, core, provider_capabilities);
@@ -146,7 +148,8 @@ export async function createProductionComposition(options: ProductionOptions): P
   const application_version = options.application_version ?? selectApplicationVersion();
   registerWorkflowServices({ db, core, mutations, provider, timing: { ...DEFAULT_WORKFLOW_TIMING, ...options.timing } });
   DBOS.setConfig({ name: "oakridge", systemDatabaseUrl: options.database_url, applicationVersion: application_version });
-  try { await DBOS.launch(); } catch (error) { core.close(); await db.close(); throw error; }
+  launch_attempted = true;
+  await DBOS.launch();
   await resumeActiveRuns(db);
   const wake = (run_id: RunId): Promise<void> => wakeRun(run_id);
   const app = new Hono();
@@ -218,5 +221,13 @@ export async function createProductionComposition(options: ProductionOptions): P
       void wake(context.req.param("run_id") as RunId);
     return result.ok ? context.json(result.value) : context.json({ error: result.error }, 422);
   });
-  return { app, application_version, provider_capabilities, async close() { try { await parkRunningWorkflows(); await DBOS.shutdown(); } finally { core.close(); await db.close(); } } };
+  return { app, application_version, provider_capabilities, async close() {
+    try { await parkRunningWorkflows(); }
+    finally { try { await DBOS.shutdown(); } finally { core.close(); await db.close(); } }
+  } };
+  } catch (cause) {
+    try { if (launch_attempted) await DBOS.shutdown(); }
+    finally { core.close(); await db.close(); }
+    throw cause;
+  }
 }

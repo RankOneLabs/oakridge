@@ -12,7 +12,24 @@ import type { StartedRun } from "../src/storage/mutation-service";
 import { activeRoutes } from "../src/http/routes";
 import { Hono } from "hono";
 import { mountOakridgeProxyRoutes } from "../../kbbl/core/server/handlers/oakridge-proxy";
+import { migrateEmptyDatabase } from "../src/storage/migrate";
+import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
 import { developmentBundle, brief, repository, build_body } from "./development-runtime-fixture";
+
+test("baseline inspection and application share an advisory-locked transaction", async () => {
+  const statements: string[] = [];
+  const tx = { query: async <Row extends object>(sql: string): Promise<readonly Row[]> => {
+    statements.push(sql);
+    if (sql.includes("server_version_num")) return [{ server_version_num: "150000" }] as unknown as readonly Row[];
+    if (sql.includes("schema_baseline")) return [{ digest: "mismatch" }] as unknown as readonly Row[];
+    return [];
+  } };
+  const db: TransactionalSqlExecutor = { query: tx.query,
+    transaction: async (operation) => operation(tx) };
+  await expect(migrateEmptyDatabase(db)).rejects.toThrow("digest mismatch");
+  expect(statements.findIndex((sql) => sql.includes("pg_advisory_xact_lock"))).toBeGreaterThanOrEqual(0);
+  expect(statements.findIndex((sql) => sql.includes("pg_advisory_xact_lock"))).toBeLessThan(statements.findIndex((sql) => sql.includes("SELECT digest FROM authority.schema_baseline")));
+});
 
 test("every table write rejects non-JSON bodies and unlisted browser origins on both paths", async () => {
   const previous = process.env.OAKRIDGE_ALLOWED_ORIGINS;
