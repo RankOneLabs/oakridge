@@ -24,6 +24,7 @@ export const ENGINE_SOURCE_MANIFEST: readonly string[] = [
   "effects/operations/selected-request.ts",
   "effects/outcomes.ts",
   "effects/provider.ts",
+  "effects/provider-catalog.ts",
   "projections/record-selectors.ts",
   "projections/scope-view.ts",
   "runtime/advance-children.ts",

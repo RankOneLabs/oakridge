@@ -1,3 +1,4 @@
+import { PROVIDER_ERROR_CODES, INPUT_CONTRACTS } from "../provider-catalog";
 import type { CheckedValue, DefinitionBundle, ScopeDefinition, Trigger } from "../../core-client/generated-contracts";
 import type { CoreClient } from "../../core-client/client";
 import type { ExecutionId, JsonValue } from "../../domain/primitives";
@@ -34,7 +35,7 @@ function pinnedInput(invocation: StableInvocation): Result<JsonValue> {
   catch (error) { return { ok: false, error: { operation: "decode_provider_request", entity_id: invocation.id, detail: String(error) } }; }
 }
 const isRecord = (value: JsonValue): value is { [key: string]: JsonValue } => !!value && typeof value === "object" && !Array.isArray(value);
-const rejected = (detail: string): ProviderResult<never> => ({ kind: "permanently_rejected", code: "invalid_invocation", detail });
+const rejected = (detail: string): ProviderResult<never> => ({ kind: "permanently_rejected", code: PROVIDER_ERROR_CODES.invalid_invocation, detail });
 
 interface SessionFailureInput {
   readonly db: SqlExecutor;
@@ -44,8 +45,8 @@ interface SessionFailureInput {
 }
 /** Host-side observation failures use the same declared recovery fact as failed sessions. */
 export async function recoverSessionFailure({ db, core, invocation, detail }: SessionFailureInput): Promise<ProviderResult<never>> {
-  const failure = { kind: "permanently_rejected" as const, code: "session_failed", detail };
-  if (invocation.request?.kind !== "kbbl_session") return failure;
+  const failure = { kind: "permanently_rejected" as const, code: PROVIDER_ERROR_CODES.session_failed, detail };
+  if (invocation.request?.kind !== INPUT_CONTRACTS.session) return failure;
   const context = await readInvocationContext(db, invocation);
   const fact = context?.scope.facts.find((fact) => fact.key === failure.code);
   if (!context || !fact) return failure;
@@ -112,20 +113,20 @@ export function createEffectProvider(options: ProductionProviderOptions): Effect
       if (!invocation.request || invocation.request.version !== 1) return rejected("selected provider request is missing or unsupported");
       const contract = invocation.selection.definition;
       if (contract.contract_version !== 1) return rejected("unsupported operation contract version");
-      if (invocation.request.kind === "kbbl_session") {
+      if (invocation.request.kind === INPUT_CONTRACTS.session) {
         const result = await kbbl(call).start_pinned({ session_key: invocation.request.session_key, body: invocation.bytes });
-        return result.kind === "acknowledged" && result.value.kind === "kbbl_session" ? { kind: "acknowledged", value: result.value }
+        return result.kind === "acknowledged" && result.value.kind === INPUT_CONTRACTS.session ? { kind: "acknowledged", value: result.value }
           : result.kind === "acknowledged" ? rejected("kbbl returned no session") : result;
       }
       const input = pinnedInput(invocation);
       if (!input.ok) return rejected(input.error.detail);
-      if (invocation.request.kind === "repository_preparation") {
+      if (invocation.request.kind === INPUT_CONTRACTS.repository) {
         if (!isRecord(input.value) || typeof input.value.repository_path !== "string" || !(input.value.expected_head === null || typeof input.value.expected_head === "string")) return rejected("invalid RepositoryPreparationInput");
         const result = await repository.execute({ repository_path: input.value.repository_path, expected_head: input.value.expected_head }, call);
         return result.kind === "acknowledged" ? completed(found, invocation, result.value)
           : result.kind === "permanently_rejected" ? recovery(found, result, invocation) : result;
       }
-      if (invocation.request.kind === "pull_request_observation") {
+      if (invocation.request.kind === INPUT_CONTRACTS.pull_request) {
         const query = isRecord(input.value) ? input.value.query : null;
         if (!query || !isRecord(query) || typeof query.owner !== "string" || typeof query.name !== "string" || typeof query.head_owner !== "string" || typeof query.head_branch !== "string" || typeof query.base_branch !== "string") return rejected("invalid PullRequestObservationInput");
         const result = await discovery.execute({ query: { owner: query.owner, name: query.name, head_owner: query.head_owner, head_branch: query.head_branch, base_branch: query.base_branch } }, call);
@@ -135,11 +136,11 @@ export function createEffectProvider(options: ProductionProviderOptions): Effect
       return rejected(`unsupported operation ${contract.operation}`);
   }
   return {
-    start: (invocation, call = {}) => invocation.request?.kind === "repository_preparation" || invocation.request?.kind === "pull_request_observation"
+    start: (invocation, call = {}) => invocation.request?.kind === INPUT_CONTRACTS.repository || invocation.request?.kind === INPUT_CONTRACTS.pull_request
       ? trackFinite(invocation, call) : startInvocation(invocation, call),
     async stop(invocation, handle, call = {}) {
       if (handle?.kind === "completed") return { kind: "acknowledged", value: { stopped: true } };
-      if (invocation.request?.kind === "repository_preparation" || invocation.request?.kind === "pull_request_observation") {
+      if (invocation.request?.kind === INPUT_CONTRACTS.repository || invocation.request?.kind === INPUT_CONTRACTS.pull_request) {
         // Finite reads create no durable remote execution. Abort owned transports and
         // wait for IO completion before acknowledging that this provider owns none.
         const active = [...(active_finite_calls.get(invocation.id) ?? [])];
@@ -148,13 +149,13 @@ export function createEffectProvider(options: ProductionProviderOptions): Effect
         if (call.signal?.aborted) return { kind: "uncertain", detail: "cleanup deadline exceeded before finite IO completed" };
         return { kind: "acknowledged", value: { stopped: true } };
       }
-      if (invocation.request?.kind !== "kbbl_session") return { kind: "uncertain", detail: "unsupported long-lived provider cleanup" };
+      if (invocation.request?.kind !== INPUT_CONTRACTS.session) return { kind: "uncertain", detail: "unsupported long-lived provider cleanup" };
       return kbbl(call).stop_pinned({ request: { session_key: invocation.request.session_key, body: invocation.bytes },
-        execution_id: invocation.execution_id as ExecutionId, reference: handle?.kind === "kbbl_session" ? handle : null });
+        execution_id: invocation.execution_id as ExecutionId, reference: handle?.kind === INPUT_CONTRACTS.session ? handle : null });
     },
     async observe(invocation, handle, call = {}): Promise<ProviderResult<TerminalObservation>> {
       if (handle?.kind === "completed") return { kind: "acknowledged", value: { kind: "terminal", result: handle.result } };
-      if (handle?.kind !== "kbbl_session") return { kind: "uncertain", detail: "no external handle for terminal observation" };
+      if (handle?.kind !== INPUT_CONTRACTS.session) return { kind: "uncertain", detail: "no external handle for terminal observation" };
       const result = await kbbl(call).observe_terminal(invocation.execution_id as ExecutionId, handle);
       if (result.kind === "executor_unavailable") return { kind: "transiently_unavailable", detail: result.detail };
       if (result.kind === "pending") return { kind: "acknowledged", value: { kind: "running" } };

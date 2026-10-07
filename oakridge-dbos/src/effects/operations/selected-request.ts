@@ -1,3 +1,4 @@
+import { INPUT_CONTRACTS } from "../provider-catalog";
 import type { CheckedValue, DefinitionBundle } from "../../core-client/generated-contracts";
 import type { ExecutionRequest } from "../../domain/execution";
 import type { ExecutionId, ExecutorOperationId, JsonValue, StageInstanceId, UnitId } from "../../domain/primitives";
@@ -64,7 +65,7 @@ export function pinProviderRequest(input: ProviderRequestSelection): Result<Stab
   const decoded_config = isRecord(decoded.value) && decoded.value.config && isRecord(decoded.value.config) ? decoded.value.config : decoded.value;
   const manifest = bundle.operations.find((item) => item.key === contract.operation && item.version === contract.contract_version);
   if (!manifest) return { ok: false, error: { operation: "pin_request", entity_id: invocation.id, detail: "pinned operation manifest missing" } };
-  if (manifest.input_contract === "kbbl_session") {
+  if (manifest.input_contract === INPUT_CONTRACTS.session) {
     if (!isRecord(decoded_config)) return { ok: false, error: { operation: "pin_request", entity_id: invocation.id, detail: "kbbl launch input must be a record" } };
     const request: ExecutionRequest = { execution_id: invocation.execution_id as ExecutionId, stage_instance_id: scope.id as StageInstanceId,
       unit_id: unit_id as UnitId, executor_type: "delegated_session", resolved_config: { ...decoded_config,
@@ -75,9 +76,9 @@ export function pinProviderRequest(input: ProviderRequestSelection): Result<Stab
       inputs: [], declared_outputs: [], expected_artifacts: [] };
     const rendered = renderSessionStart({ request, operation_id: invocation.id as unknown as ExecutorOperationId, executor_function_identity: "selected-v1" });
     if (rendered.kind !== "acknowledged") return { ok: false, error: { operation: "pin_request", entity_id: invocation.id, detail: rendered.detail } };
-    return { ok: true, value: { ...invocation, bytes: rendered.value.body, request: { version: 1, kind: "kbbl_session", session_key: rendered.value.session_key } } };
+    return { ok: true, value: { ...invocation, bytes: rendered.value.body, request: { version: 1, kind: INPUT_CONTRACTS.session, session_key: rendered.value.session_key } } };
   }
-  const kind = manifest.input_contract === "repository_preparation" || manifest.input_contract === "pull_request_observation"
-    ? manifest.input_contract : "unsupported";
+  const kind = manifest.input_contract === INPUT_CONTRACTS.repository || manifest.input_contract === INPUT_CONTRACTS.pull_request
+    ? manifest.input_contract : INPUT_CONTRACTS.stub;
   return { ok: true, value: { ...invocation, bytes: JSON.stringify(decoded.value), request: { version: 1, kind } } };
 }

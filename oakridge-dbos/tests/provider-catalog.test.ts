@@ -1,0 +1,18 @@
+import { describe, expect, test } from "bun:test";
+import { INPUT_CONTRACTS, PROVIDER_CATALOG, PROVIDER_ERROR_CODES, PROVIDER_KINDS } from "../src/effects/provider-catalog";
+
+describe("provider declarations", () => {
+  test("the provider catalog owns every shipped routing pair", () => {
+    expect(PROVIDER_CATALOG.providers).toEqual([
+      { kind: PROVIDER_KINDS.repository, input_contract: INPUT_CONTRACTS.repository },
+      { kind: PROVIDER_KINDS.session, input_contract: INPUT_CONTRACTS.session },
+      { kind: PROVIDER_KINDS.pull_request, input_contract: INPUT_CONTRACTS.pull_request },
+      { kind: PROVIDER_KINDS.stub, input_contract: INPUT_CONTRACTS.stub },
+    ]);
+  });
+
+  test("the catalog declares emitted codes independently of bundle facts", () => {
+    expect(PROVIDER_CATALOG.operations.find((operation) => operation.provider_kind === PROVIDER_KINDS.repository)?.emitted_codes)
+      .toContain(PROVIDER_ERROR_CODES.head_changed);
+  });
+});

@@ -1,4 +1,5 @@
 import type { CheckedValue, Invocation, Trigger } from "../core-client/generated-contracts";
+import { INPUT_CONTRACTS } from "./provider-catalog";
 
 /** The selection in the decision ledger is the source of the provider request. */
 export type InvocationId = string & { readonly __invocation_id: unique symbol };
@@ -15,10 +16,10 @@ export interface StableInvocation {
 
 /** Versioned transport metadata; bytes contains the exact selected request body. */
 export type ProviderRequest =
-  | { readonly version: 1; readonly kind: "kbbl_session"; readonly session_key: string }
-  | { readonly version: 1; readonly kind: "repository_preparation" }
-  | { readonly version: 1; readonly kind: "pull_request_observation" }
-  | { readonly version: 1; readonly kind: "unsupported" };
+  | { readonly version: 1; readonly kind: typeof INPUT_CONTRACTS.session; readonly session_key: string }
+  | { readonly version: 1; readonly kind: typeof INPUT_CONTRACTS.repository }
+  | { readonly version: 1; readonly kind: typeof INPUT_CONTRACTS.pull_request }
+  | { readonly version: 1; readonly kind: typeof INPUT_CONTRACTS.stub };
 export interface ProviderCallOptions { readonly signal?: AbortSignal }
 
 export type ProviderResult<Value> =
