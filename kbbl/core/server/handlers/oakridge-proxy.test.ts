@@ -19,7 +19,8 @@ describe("oakridge proxy", () => {
     direct.use("*", controlTokenMiddleware("shared-token"));
     direct.all("*", (c) => c.json({ accepted: true }));
     const proxy = new Hono();
-    mountOakridgeProxyRoutes(proxy, { baseUrl: "http://oakridge.test", allowedOrigins: ["https://operator.example"], coreControlToken: "shared-token" });
+    mountOakridgeProxyRoutes(proxy, { baseUrl: "http://oakridge.test", allowedOrigins: ["https://operator.example"],
+      browserControlToken: "shared-token", coreControlToken: "shared-token" });
     for (const route of HTTP_ROUTES.filter((item) => item.method !== "GET")) {
       const path = route.path.replace(/:[^/]+/g, "id");
       for (const [headers, status] of [
@@ -50,8 +51,8 @@ describe("oakridge proxy", () => {
       return Response.json({ accepted: true });
     }) as typeof fetch;
     const proxy = new Hono();
-    mountOakridgeProxyRoutes(proxy, { baseUrl: "http://oakridge.test", coreControlToken: "shared-token",
-      allowedOrigins: ["https://operator.example"] });
+    mountOakridgeProxyRoutes(proxy, { baseUrl: "http://oakridge.test", browserControlToken: "shared-token",
+      coreControlToken: "shared-token", allowedOrigins: ["https://operator.example"] });
     const request = { method: "POST", headers: { "content-type": "application/json", origin: "https://operator.example",
       cookie: "kbbl_ctrl=shared-token" }, body: "{}" };
     expect((await direct.request("/runs", request)).status).toBe(200);
@@ -134,7 +135,7 @@ describe("oakridge proxy", () => {
     expect(signal).toBeInstanceOf(AbortSignal);
   });
 
-  test("requires the client's core control token on operator requests", async () => {
+  test("requires kbbl's own control token on operator requests, then presents the core token upstream", async () => {
     const captured = { authHeader: null as string | null };
     globalThis.fetch = (async (_input, init) => {
       const headers = init?.headers as Headers | undefined;
@@ -148,12 +149,39 @@ describe("oakridge proxy", () => {
     const app = new Hono();
     mountOakridgeProxyRoutes(app, {
       baseUrl: "http://oakridge.test",
+      browserControlToken: "kbbl-token",
       coreControlToken: "core-secret",
     });
 
     expect((await app.request("/oakridge/api/runs", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
-    await app.request("/oakridge/api/runs", { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer core-secret" }, body: "{}" });
+    await app.request("/oakridge/api/runs", { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer kbbl-token" }, body: "{}" });
     expect(captured.authHeader).toBe("Bearer core-secret");
+  });
+
+  // The documented OAKRIDGE_CORE_CONTROL_TOKEN override makes kbbl's browser
+  // credential and the upstream's credential two different strings. Checking
+  // the browser against the upstream token rejected every proxied operator
+  // request; a single shared token in every other case hides that entirely.
+  test("a differing core token override leaves the PWA's own credential working on operator reads and writes", async () => {
+    const forwarded: (string | null)[] = [];
+    globalThis.fetch = (async (_input, init) => {
+      const headers = init?.headers as Headers;
+      expect(headers.get("cookie")).toBeNull();
+      forwarded.push(headers.get("authorization"));
+      return Response.json({ ok: true });
+    }) as typeof fetch;
+    const app = new Hono();
+    mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test", allowedOrigins: ["https://operator.example"],
+      browserControlToken: "kbbl-token", coreControlToken: "core-secret" });
+    const cookie = { cookie: "kbbl_ctrl=kbbl-token" };
+    expect((await app.request("/oakridge/api/api/runs", { headers: cookie })).status).toBe(200);
+    expect((await app.request("/oakridge/api/runs", { method: "POST", body: "{}",
+      headers: { ...cookie, "content-type": "application/json", origin: "https://operator.example" } })).status).toBe(200);
+    // Every upstream hop carries the core token, never kbbl's.
+    expect(forwarded).toEqual(["Bearer core-secret", "Bearer core-secret"]);
+    // The upstream credential is not a browser credential: presenting it fails.
+    expect((await app.request("/oakridge/api/runs", { method: "POST", body: "{}",
+      headers: { "content-type": "application/json", origin: "https://operator.example", authorization: "Bearer core-secret" } })).status).toBe(401);
   });
 
   test("table operator routes forward the supplied control token", async () => {
@@ -163,14 +191,17 @@ describe("oakridge proxy", () => {
       return Response.json({ ok: true });
     }) as typeof fetch;
     const app = new Hono();
-    mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test", coreControlToken: "core-secret" });
+    mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test", browserControlToken: "kbbl-token", coreControlToken: "core-secret" });
     for (const route of HTTP_ROUTES) {
       const path = route.path.replace(/:[^/]+/g, "id");
       await app.request(`/oakridge/api${path}`, { method: route.method,
-        headers: { authorization: route.authority === "operator" ? "Bearer core-secret" : "", "content-type": "application/json" },
+        headers: { authorization: route.authority === "operator" ? "Bearer kbbl-token" : "", "content-type": "application/json" },
         body: route.method === "GET" ? undefined : "{}" });
     }
-    expect(received).toEqual(HTTP_ROUTES.map((route) => route.authority === "operator" ? "Bearer core-secret" : ""));
+    // Operator routes carry the injected core token; everything else reaches the
+    // upstream with no Authorization at all, the browser's header having been
+    // stripped rather than passed through.
+    expect(received).toEqual(HTTP_ROUTES.map((route) => route.authority === "operator" ? "Bearer core-secret" : null));
   });
 
   test("a two MiB request returns a typed 413 before proxy buffering", async () => {
@@ -216,11 +247,15 @@ describe("oakridge proxy", () => {
     // No coreControlToken — we just verify the browser header is stripped.
     mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test" });
 
-    await app.request("/oakridge/api/runs", {
+    // A JSON content type is required, or the write policy rejects this with a
+    // 415 before any fetch and the assertion below passes without the proxy
+    // having forwarded anything at all.
+    const response = await app.request("/oakridge/api/runs", {
       method: "POST",
-      headers: { authorization: "Bearer browser-token" },
+      headers: { authorization: "Bearer browser-token", "content-type": "application/json" },
       body: "{}",
     });
+    expect(response.status).toBe(200);
     expect(captured.authHeader).toBeNull();
   });
 

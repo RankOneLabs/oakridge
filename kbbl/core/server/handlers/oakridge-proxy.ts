@@ -13,6 +13,16 @@ export interface OakridgeProxyDeps {
    * configured (core runs without auth, typically on a loopback bind).
    */
   coreControlToken?: string;
+  /**
+   * kbbl's own control token — the value its `kbbl_ctrl` cookie carries and its
+   * global middleware validates. The browser is authenticated against THIS, not
+   * against `coreControlToken`: the two differ whenever the documented
+   * `OAKRIDGE_CORE_CONTROL_TOKEN` override is set, and checking the browser's
+   * credential against the upstream's would reject every proxied operator
+   * request. Undefined when kbbl runs without auth, which leaves the inbound
+   * check to kbbl's policy exactly as the direct path does.
+   */
+  browserControlToken?: string;
   /** Explicit browser origins; an absent list trusts none, including loopback. */
   allowedOrigins?: readonly string[];
   /**
@@ -68,7 +78,7 @@ export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): vo
     const rejection = browserWriteRejection(write_policy, c.req.raw, subPath);
     if (rejection) return rejection;
     const route = matchRoute(c.req.method, subPath);
-    if (route?.authority === "operator" && deps.coreControlToken && !isValidControlRequest(c.req.raw, deps.coreControlToken, write_policy))
+    if (route?.authority === "operator" && deps.browserControlToken && !isValidControlRequest(c.req.raw, deps.browserControlToken, write_policy))
       return c.json({ error: "unauthorized" }, 401);
     const search = new URL(c.req.url, "http://localhost").search;
     const targetUrl = deps.baseUrl.replace(/\/$/, "") + subPath + search;
@@ -80,7 +90,7 @@ export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): vo
     // to the Oakridge upstream. The retained core control token is then
     // injected server-side without the browser ever seeing the secret.
     const BLOCKED_HEADERS = new Set([
-      "host", "content-length", "cookie",
+      "host", "content-length", "cookie", "authorization",
       "connection", "transfer-encoding", "upgrade", "keep-alive",
       "proxy-authorization", "proxy-authenticate", "te", "trailer",
     ]);
@@ -91,11 +101,13 @@ export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): vo
       }
     }
 
-    // Inject core control token for operator routes. The browser Authorization
-    // header was stripped above; this is the server-side injection point.
-    // The PWA cookie stays local to kbbl. A verified cookie is translated to
-    // the same control token the backend would have accepted directly.
-    if (route?.authority === "operator" && deps.coreControlToken && !forwardHeaders.has("authorization"))
+    // Inject the core control token for operator routes. The browser's own
+    // Authorization header is stripped above rather than forwarded, so kbbl's
+    // credential never reaches the upstream and cannot suppress this injection
+    // by occupying the header. The PWA cookie likewise stays local to kbbl; a
+    // verified browser credential is replaced here by the control token the
+    // backend would have accepted directly.
+    if (route?.authority === "operator" && deps.coreControlToken)
       forwardHeaders.set("authorization", `Bearer ${deps.coreControlToken}`);
 
     let body: ArrayBuffer | undefined;
