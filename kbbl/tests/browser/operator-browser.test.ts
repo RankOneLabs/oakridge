@@ -1,5 +1,4 @@
-import { expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { chromium, type Browser } from "@playwright/test";
 import type { ScopeCommandRequest } from "../../../oakridge-dbos/src/http/scope-commands";
@@ -16,11 +15,20 @@ async function browserScript(): Promise<string> {
   return built.outputs[0]!.text();
 }
 
+let browser: Browser;
+let script: string;
+beforeAll(async () => {
+  script = await browserScript();
+  // CI installs the Chromium version paired with Playwright; use that browser.
+  // Cold startup has its own budget so each scenario keeps its 30-second limit.
+  browser = await chromium.launch({ args: ["--no-sandbox"] });
+}, 60_000);
+afterAll(async () => { await browser?.close(); });
+
 // Real Chromium, the production React surface, and the installed Hono API.
 // The shared fixture supplies a deterministic database/core boundary.
 test("browser isolates drafts, submits observed result targets, and recovers a lost receipt after reload", async () => {
   const api = await harness({ operator_workspace: true });
-  const script = await browserScript();
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
     const url = new URL(request.url);
     if (url.pathname === "/entry.js") return new Response(script, { headers: { "content-type": "application/javascript" } });
@@ -30,10 +38,9 @@ test("browser isolates drafts, submits observed result targets, and recovers a l
     }
     return new Response('<!doctype html><div id="app"></div><script type="module" src="/entry.js"></script>', { headers: { "content-type": "text/html" } });
   } });
-  let browser: Browser | null = null;
+  const context = await browser.newContext();
   try {
-    browser = await chromium.launch({ ...(existsSync("/usr/bin/google-chrome") ? { executablePath: "/usr/bin/google-chrome" } : {}), args: ["--no-sandbox"] });
-    const page = await browser.newPage();
+    const page = await context.newPage();
     page.setDefaultTimeout(10_000);
     const pageErrors: Error[] = [];
     page.on("pageerror", (error) => pageErrors.push(error));
@@ -71,12 +78,11 @@ test("browser isolates drafts, submits observed result targets, and recovers a l
     expect(api.evaluationCount()).toBe(1);
     expect(await page.evaluate(() => Object.keys(localStorage).filter((key) => key.startsWith("oakridge:operator:pending:")))).toEqual([]);
     expect(pageErrors).toEqual([]);
-  } finally { await browser?.close(); server.stop(true); }
+  } finally { await context.close(); server.stop(true); }
 }, 30_000);
 
 
 test("browser recovers a committed launch after losing its response and reloading", async () => {
-  const script = await browserScript();
   const requests: Array<{ readonly request_id: string; readonly digest: string; readonly input: unknown }> = [];
   let launches = 0;
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
@@ -91,10 +97,9 @@ test("browser recovers a committed launch after losing its response and reloadin
     }
     return new Response('<!doctype html><div id="app"></div><script type="module" src="/entry.js"></script>', { headers: { "content-type": "text/html" } });
   } });
-  let browser: Browser | null = null;
+  const context = await browser.newContext();
   try {
-    browser = await chromium.launch({ ...(existsSync("/usr/bin/google-chrome") ? { executablePath: "/usr/bin/google-chrome" } : {}), args: ["--no-sandbox"] });
-    const page = await browser.newPage();
+    const page = await context.newPage();
     page.setDefaultTimeout(10_000);
     const pageErrors: Error[] = [];
     page.on("pageerror", (error) => pageErrors.push(error));
@@ -123,5 +128,5 @@ test("browser recovers a committed launch after losing its response and reloadin
     expect(launches).toBe(1);
     expect(await page.evaluate(() => localStorage.getItem("oakridge:operator:pending-launch"))).toBeNull();
     expect(pageErrors).toEqual([]);
-  } finally { await browser?.close(); server.stop(true); }
+  } finally { await context.close(); server.stop(true); }
 }, 30_000);
