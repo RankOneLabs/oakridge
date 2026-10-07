@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { UiToolLocation } from "../../types";
 
 function contentPreview(content: unknown): string {
@@ -9,7 +10,7 @@ function contentPreview(content: unknown): string {
   return raw.length > 80 ? raw.slice(0, 80) + "…" : raw;
 }
 
-export function ToolCallCard({
+export const ToolCallCard = memo(function ToolCallCard({
   title,
   status,
   content,
@@ -46,4 +47,4 @@ export function ToolCallCard({
       {body !== null && <pre className="card-body">{body}</pre>}
     </details>
   );
-}
+});

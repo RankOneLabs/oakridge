@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { TimelineItem } from "../../lib/acp-timeline";
 import { AgentMessage } from "../molecules/AgentMessage";
 import { UserMessage } from "../molecules/UserMessage";
@@ -7,7 +8,8 @@ import { PlanCard } from "../molecules/PlanCard";
 import { TurnStateNotice } from "../molecules/TurnStateNotice";
 import { PermissionCard } from "./PermissionCard";
 
-export function SessionTimeline({
+// Timer and inbox updates do not change the memoized timeline projection.
+export const SessionTimeline = memo(function SessionTimeline({
   sid,
   items,
   sessionClosed,
@@ -63,4 +65,4 @@ export function SessionTimeline({
       })}
     </div>
   );
-}
+});
