@@ -2243,7 +2243,10 @@
               }
             }
           },
-          "on_terminal": "prepare_finished"
+          "on_terminal": "prepare_finished",
+          "on_terminal_payload": {
+            "kind": "empty_record"
+          }
         },
         {
           "key": "analysis",
@@ -2327,7 +2330,10 @@
             "body"
           ],
           "collection": null,
-          "on_terminal": "analysis_finished"
+          "on_terminal": "analysis_finished",
+          "on_terminal_payload": {
+            "kind": "empty_record"
+          }
         },
         {
           "key": "plan",
@@ -2420,7 +2426,10 @@
             "body"
           ],
           "collection": null,
-          "on_terminal": "plan_finished"
+          "on_terminal": "plan_finished",
+          "on_terminal_payload": {
+            "kind": "empty_record"
+          }
         },
         {
           "key": "briefs",
@@ -2521,7 +2530,10 @@
             "briefs"
           ],
           "collection": null,
-          "on_terminal": "briefs_finished"
+          "on_terminal": "briefs_finished",
+          "on_terminal_payload": {
+            "kind": "empty_record"
+          }
         },
         {
           "key": "implementation",
@@ -2703,7 +2715,10 @@
             }
           },
           "on_terminal": "implementation_finished",
-          "prerequisite_export": "accepted"
+          "prerequisite_export": "accepted",
+          "on_terminal_payload": {
+            "kind": "empty_record"
+          }
         },
         {
           "key": "integration",
@@ -2871,14 +2886,20 @@
               }
             }
           },
-          "on_terminal": "integration_finished"
+          "on_terminal": "integration_finished",
+          "on_terminal_payload": {
+            "kind": "empty_record"
+          }
         }
       ],
       "exports": [],
       "resources": [],
       "pools": [],
       "cancellation": {
-        "trigger": "cancel"
+        "trigger": "cancel",
+        "payload": {
+          "kind": "empty_record"
+        }
       },
       "presentation": {
         "label": "Development",
@@ -4278,7 +4299,10 @@
           }
         }
       },
-      "entry_command": "begin"
+      "entry_command": "begin",
+      "entry_payload": {
+        "kind": "empty_record"
+      }
     },
     {
       "key": "repository_preparation",
@@ -4351,6 +4375,10 @@
         {
           "key": "prepared",
           "payload_schema": "repo_result"
+        },
+        {
+          "key": "provider_start_failed",
+          "payload_schema": "text"
         }
       ],
       "outputs": [],
@@ -4397,7 +4425,10 @@
       "resources": [],
       "pools": [],
       "cancellation": {
-        "trigger": "cancel"
+        "trigger": "cancel",
+        "payload": {
+          "kind": "empty_record"
+        }
       },
       "presentation": {
         "label": "Repository Preparation",
@@ -4490,6 +4521,34 @@
             }
           },
           {
+            "variant": "provider_start_failed",
+            "node": {
+              "kind": "apply",
+              "id": "prepare_provider_start_failed",
+              "mutations": [
+                {
+                  "kind": "revoke",
+                  "worker": "preparation"
+                },
+                {
+                  "kind": "stop",
+                  "worker": "preparation"
+                }
+              ],
+              "actions": [],
+              "outcome": {
+                "kind": "variant",
+                "schema": "result",
+                "variant": "failed",
+                "value": {
+                  "kind": "literal",
+                  "schema": "unit",
+                  "value": {}
+                }
+              }
+            }
+          },
+          {
             "variant": "cancel",
             "node": {
               "kind": "apply",
@@ -4559,7 +4618,10 @@
           }
         }
       },
-      "entry_command": "begin"
+      "entry_command": "begin",
+      "entry_payload": {
+        "kind": "empty_record"
+      }
     },
     {
       "key": "spec_analysis",
@@ -4917,7 +4979,10 @@
       "resources": [],
       "pools": [],
       "cancellation": {
-        "trigger": "cancel"
+        "trigger": "cancel",
+        "payload": {
+          "kind": "empty_record"
+        }
       },
       "presentation": {
         "label": "Spec Analysis",
@@ -5236,7 +5301,10 @@
           }
         }
       },
-      "entry_command": "begin"
+      "entry_command": "begin",
+      "entry_payload": {
+        "kind": "empty_record"
+      }
     },
     {
       "key": "planning",
@@ -5594,7 +5662,10 @@
       "resources": [],
       "pools": [],
       "cancellation": {
-        "trigger": "cancel"
+        "trigger": "cancel",
+        "payload": {
+          "kind": "empty_record"
+        }
       },
       "presentation": {
         "label": "Planning",
@@ -6050,7 +6121,10 @@
           }
         }
       },
-      "entry_command": "begin"
+      "entry_command": "begin",
+      "entry_payload": {
+        "kind": "empty_record"
+      }
     },
     {
       "key": "brief_writing",
@@ -6408,7 +6482,10 @@
       "resources": [],
       "pools": [],
       "cancellation": {
-        "trigger": "cancel"
+        "trigger": "cancel",
+        "payload": {
+          "kind": "empty_record"
+        }
       },
       "presentation": {
         "label": "Brief Writing",
@@ -6981,7 +7058,10 @@
           }
         }
       },
-      "entry_command": "begin"
+      "entry_command": "begin",
+      "entry_payload": {
+        "kind": "empty_record"
+      }
     },
     {
       "key": "implementation",
@@ -7298,6 +7378,10 @@
       "facts": [
         {
           "key": "session_failed",
+          "payload_schema": "text"
+        },
+        {
+          "key": "provider_start_failed",
           "payload_schema": "text"
         },
         {
@@ -8468,7 +8552,10 @@
         }
       ],
       "cancellation": {
-        "trigger": "cancel"
+        "trigger": "cancel",
+        "payload": {
+          "kind": "empty_record"
+        }
       },
       "presentation": {
         "label": "Implementation",
@@ -11211,6 +11298,63 @@
             }
           },
           {
+            "variant": "provider_start_failed",
+            "node": {
+              "kind": "apply",
+              "id": "implementation_provider_start_failed",
+              "mutations": [
+                {
+                  "kind": "revoke",
+                  "worker": "build"
+                },
+                {
+                  "kind": "stop",
+                  "worker": "build"
+                },
+                {
+                  "kind": "revoke",
+                  "worker": "assessment"
+                },
+                {
+                  "kind": "stop",
+                  "worker": "assessment"
+                },
+                {
+                  "kind": "release",
+                  "pool": "implementation_slots"
+                },
+                {
+                  "kind": "export",
+                  "key": "accepted",
+                  "value": {
+                    "kind": "literal",
+                    "schema": "flag",
+                    "value": false
+                  }
+                },
+                {
+                  "kind": "revoke",
+                  "worker": "pr_observer"
+                },
+                {
+                  "kind": "stop",
+                  "worker": "pr_observer"
+                }
+              ],
+              "actions": [],
+              "outcome": {
+                "kind": "variant",
+                "schema": "result",
+                "variant": "failed",
+                "value": {
+                  "kind": "literal",
+                  "schema": "unit",
+                  "value": {}
+                }
+              }
+            }
+          },
+          {
             "variant": "refresh_pr",
             "node": {
               "kind": "apply",
@@ -11338,7 +11482,10 @@
           }
         }
       },
-      "entry_command": "begin"
+      "entry_command": "begin",
+      "entry_payload": {
+        "kind": "empty_record"
+      }
     },
     {
       "key": "final_integration",
@@ -11469,6 +11616,10 @@
       "facts": [
         {
           "key": "session_failed",
+          "payload_schema": "text"
+        },
+        {
+          "key": "provider_start_failed",
           "payload_schema": "text"
         },
         {
@@ -11745,7 +11896,10 @@
       ],
       "pools": [],
       "cancellation": {
-        "trigger": "cancel"
+        "trigger": "cancel",
+        "payload": {
+          "kind": "empty_record"
+        }
       },
       "presentation": {
         "label": "Final Integration",
@@ -12320,6 +12474,42 @@
             }
           },
           {
+            "variant": "provider_start_failed",
+            "node": {
+              "kind": "apply",
+              "id": "final_integration_provider_start_failed",
+              "mutations": [
+                {
+                  "kind": "revoke",
+                  "worker": "integrator"
+                },
+                {
+                  "kind": "stop",
+                  "worker": "integrator"
+                },
+                {
+                  "kind": "revoke",
+                  "worker": "pr_observer"
+                },
+                {
+                  "kind": "stop",
+                  "worker": "pr_observer"
+                }
+              ],
+              "actions": [],
+              "outcome": {
+                "kind": "variant",
+                "schema": "result",
+                "variant": "failed",
+                "value": {
+                  "kind": "literal",
+                  "schema": "unit",
+                  "value": {}
+                }
+              }
+            }
+          },
+          {
             "variant": "refresh_pr",
             "node": {
               "kind": "apply",
@@ -12447,7 +12637,10 @@
           }
         }
       },
-      "entry_command": "begin"
+      "entry_command": "begin",
+      "entry_payload": {
+        "kind": "empty_record"
+      }
     }
   ],
   "prompts": [
@@ -12588,7 +12781,17 @@
       "settings": [
         "result_fact"
       ],
-      "tools": []
+      "tools": [],
+      "recovery": [
+        {
+          "code": "start_rejected",
+          "fact": "provider_start_failed"
+        },
+        {
+          "code": "start_attempts_exhausted",
+          "fact": "provider_start_failed"
+        }
+      ]
     },
     {
       "key": "session.run",
@@ -12599,7 +12802,21 @@
       "settings": [
         "evidence_fact"
       ],
-      "tools": []
+      "tools": [],
+      "recovery": [
+        {
+          "code": "session_failed",
+          "fact": "session_failed"
+        },
+        {
+          "code": "start_rejected",
+          "fact": "session_failed"
+        },
+        {
+          "code": "start_attempts_exhausted",
+          "fact": "session_failed"
+        }
+      ]
     },
     {
       "key": "pull_request.observe",
@@ -12610,7 +12827,21 @@
       "settings": [
         "result_fact"
       ],
-      "tools": []
+      "tools": [],
+      "recovery": [
+        {
+          "code": "auth",
+          "fact": "auth"
+        },
+        {
+          "code": "start_rejected",
+          "fact": "provider_start_failed"
+        },
+        {
+          "code": "start_attempts_exhausted",
+          "fact": "provider_start_failed"
+        }
+      ]
     }
   ],
   "limits": {

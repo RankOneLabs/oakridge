@@ -25,10 +25,12 @@ export interface MutationInput { readonly request_digest?: string; readonly exec
 export interface StartedRun { readonly run_id: RunId; readonly root_scope_id: ScopeId; readonly bundle_id: string }
 export interface MutationService { compile(request: CompileRequest): Promise<Result<CompileResult>>; pinDefinition(request: CompileRequest): Promise<Result<PinnedDefinition>>; startRun(request: StartRunRequest): Promise<Result<StartedRun>>; startRunByDigest(request: StartPinnedRunRequest): Promise<Result<StartedRun>>; decide(input: MutationInput): Promise<Result<CommitResult>> }
 export interface ProviderCapabilityInput { readonly bundle: DefinitionBundle; readonly input: unknown }
-export interface ProviderCapabilities { readonly check_github: (input: ProviderCapabilityInput) => Promise<Result<true>> }
+export interface ProviderCapabilities {
+  readonly probe?: (kind: string) => Promise<Result<true>>;
+  readonly check_github: (input: ProviderCapabilityInput) => Promise<Result<true>>;
+}
 export function requiredProviderKinds(bundle: DefinitionBundle): readonly string[] {
-  const selected = new Set(bundle.scopes.flatMap((scope) => scope.workers.flatMap((worker) => worker.actions.map((action) => `${action.operation}:${action.contract_version}`))));
-  return [...new Set(bundle.operations.filter((manifest) => selected.has(`${manifest.key}:${manifest.version}`)).map((manifest) => manifest.provider_kind))];
+  return [...new Set(bundle.operations.map((manifest) => manifest.provider_kind))];
 }
 
 export function selectMutationIdentity(input: MutationInput): IngressIdentity {
@@ -88,6 +90,13 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
       if (!prompts.ok) return prompts;
       const compiled = await compileBundle(core, request);
       if (!compiled.ok) return compiled;
+      // Pin-time liveness probes cover every declared kind. The run-time GitHub
+      // check below is deliberately duplicated to verify access to selected repositories.
+      for (const kind of requiredProviderKinds(request.bundle)) {
+        if (!provider_capabilities?.probe) return error("pin_definition", request.bundle.key, `missing provider capability: ${kind} probe unavailable`);
+        const capability = await provider_capabilities.probe(kind);
+        if (!capability.ok) return error("pin_definition", request.bundle.key, `missing provider capability: ${kind} ${capability.error.detail}`);
+      }
       try {
         const bundle_id = crypto.randomUUID();
         await db.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ($1,$2,$3,$4) ON CONFLICT (digest) DO NOTHING",
@@ -170,7 +179,7 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
           const source = attempt === 0 && input.prepared?.decision.source || await readSnapshot(db, input.scope_id, input.trigger);
           if (!source || source.owner.run_id !== input.run_id) return error("decide", input.scope_id, "scope not found in run");
           if (input.operator_version !== null && input.operator_version !== source.owner.version) return { ok: true, value: { kind: "Conflict", detail: "operator target changed; refresh decision" } };
-          if (source.owner.is_terminal) return { ok: true, value: { kind: "Rejected", detail: "owner is terminal" } };
+          if (source.owner.is_terminal) return { ok: true, value: { kind: "Rejected", reason: "owner_terminal", detail: "owner is terminal" } };
           const bundles = await db.query<{ source: DefinitionBundle }>("SELECT b.source FROM authority.definition_bundle b JOIN authority.run r ON r.definition_bundle_id=b.id WHERE r.id=$1", [input.run_id]);
           const bundle = bundles[0]?.source;
           if (!bundle) return error("decide", input.run_id, "definition bundle missing");

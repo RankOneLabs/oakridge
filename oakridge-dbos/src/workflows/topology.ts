@@ -1,7 +1,8 @@
 import { DBOS, Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 import type { CoreClient } from "../core-client/client";
 import type { CheckedValue } from "../core-client/generated-contracts";
-import { recoverSessionFailure } from "../effects/operations/production-provider";
+import { recoverConfiguredFailure, recoverSessionFailure, recoverStartFailure } from "../effects/operations/production-provider";
+import { PROVIDER_ERROR_CODES } from "../effects/provider-catalog";
 import { deliverEvidence, undeliveredEvidence } from "../effects/evidence";
 import { readIntent, type EffectIntent, type EffectPayload, type EffectStatus } from "../effects/intents";
 import { bounded, exhaustStart, resolveObserve, resolveStart, resolveStop, settleObserveRetry, startAttemptsExhausted, type StartOutcome } from "../effects/outcomes";
@@ -83,11 +84,23 @@ export async function performStartAttempt(intent_id: string): Promise<StartOutco
 const startStep = DBOS.registerStep(performStartAttempt, { name: "oakridgeStart" });
 const observeStep = DBOS.registerStep(async (payload: EffectPayload): Promise<ProviderResult<unknown>> =>
   callProvider(payload.invocation.selection.definition.deadline_ms, (signal) => current().provider.observe(payload.invocation, payload.handle, { signal })), { name: "oakridgeObserve" });
+const startRejectionStep = DBOS.registerStep(async (payload: EffectPayload): Promise<EffectPayload> => {
+  if (payload.evidence) return payload;
+  const failure = payload.failure;
+  if (!failure || failure.kind === "observation_rejection") throw new Error("start rejection has no structured failure");
+  const { db, core } = current();
+  const recover = (code: string, detail: string) => recoverConfiguredFailure({ db, core, invocation: payload.invocation, code, detail });
+  const recovered = failure.kind === "provider_rejection"
+    ? await recoverStartFailure({ db, core, invocation: payload.invocation, code: failure.code, detail: failure.detail })
+    : await recover(PROVIDER_ERROR_CODES.start_attempts_exhausted, failure.detail);
+  if (recovered.kind !== "permanently_rejected") throw new Error(`start recovery unavailable: ${JSON.stringify(recovered)}`);
+  return { ...payload, ...(recovered.evidence ? { evidence: recovered.evidence } : {}) };
+}, { name: "oakridgeStartRejection", retriesAllowed: true, maxAttempts: 5 });
 const observationRejectionStep = DBOS.registerStep(async (payload: EffectPayload): Promise<EffectPayload> => {
   if (payload.evidence || payload.invocation.request?.kind !== "kbbl_session") return payload;
   const { db, core } = current();
   const recovery = await recoverSessionFailure({ db, core, invocation: payload.invocation,
-    detail: payload.last_detail ?? "observation rejected" });
+    detail: payload.failure?.kind === "observation_rejection" ? payload.failure.detail : "observation rejected" });
   if (recovery.kind !== "permanently_rejected") throw new Error(`observation recovery unavailable: ${JSON.stringify(recovery)}`);
   return { ...payload, ...(recovery.evidence ? { evidence: recovery.evidence } : {}) };
 }, { name: "oakridgeObservationRejection", retriesAllowed: true, maxAttempts: 5 });
@@ -169,6 +182,7 @@ async function carryStart(intent_id: string): Promise<EffectStatus | null> {
       continue;
     }
     payload = outcome.payload;
+    if (outcome.kind === "rejected") payload = await startRejectionStep(payload);
     if (outcome.kind === "retry") {
       const written = await persistStep({ intent_id, status: "pending", payload, terminal_result: null });
       if (written !== "pending") return written;

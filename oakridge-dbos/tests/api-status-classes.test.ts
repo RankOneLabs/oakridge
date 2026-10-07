@@ -50,6 +50,22 @@ test("GitHub capability is checked before the mutation-service definition insert
   expect({ inserted, detail: result.ok ? "" : result.error.detail }).toEqual({ inserted: false, detail: "missing provider capability: github token is absent" });
 });
 
+test("pinning checks every declared provider and names an unreachable kbbl kind", async () => {
+  const core = { request: async () => ({ ok: true, value: { kind: "compiled", value: { scopes: [], digest: "test" } } }) } as unknown as CoreClient;
+  let inserted = false;
+  const db = { query: async () => { inserted = true; return []; } } as unknown as TransactionalSqlExecutor;
+  const checked: string[] = [];
+  const mutations = createMutationService(db, core, {
+    probe: async (kind) => { checked.push(kind); return kind === "kbbl"
+      ? { ok: false, error: { operation: "probe", entity_id: kind, detail: "unreachable" } }
+      : { ok: true, value: true }; },
+    check_github: async () => ({ ok: true, value: true }),
+  });
+  const result = await mutations.pinDefinition({ bundle: definition });
+  expect({ checked, inserted, detail: result.ok ? "" : result.error.detail })
+    .toEqual({ checked: ["git", "kbbl"], inserted: false, detail: "missing provider capability: kbbl unreachable" });
+});
+
 test("a token denied pull-request read is rejected at pin time", async () => {
   const capabilities = githubProviderCapabilities("restricted-token", (async () => new Response("denied", { status: 403 })) as unknown as typeof fetch);
   const result = await capabilities.check_github(capabilityInput({ repository: { owner: "owner", name: "repo" } }));

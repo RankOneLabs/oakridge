@@ -85,14 +85,8 @@ test("pinned OperationManifest.provider_kind is the only provider routing declar
   expect(readFileSync(resolve(root, "workflow-core/crates/model/src/checked.rs"), "utf8")).not.toMatch(/pub provider:/);
 });
 
-test("effect code contains no literal provider or operation routing names", () => {
-  const directory = resolve(root, "oakridge-dbos/src/effects");
-  const files = (path: string): string[] => readdirSync(path, { withFileTypes: true }).flatMap((item) => {
-    const child = resolve(path, item.name);
-    return item.isDirectory() ? files(child) : item.name.endsWith(".ts") ? [child] : [];
-  });
-  expect(files(directory).filter((path) => /["'](?:git|github|kbbl|repository\.prepare|pull_request\.observe|session\.run)["']/.test(readFileSync(path, "utf8")))).toEqual([]);
-});
+// Provider literal ownership is enforced by provider-literal-lint.test.ts,
+// including its sole named catalog exemption and positive controls.
 
 if (false) {
   // @ts-expect-error an unrecognized setting role must fail at typecheck time

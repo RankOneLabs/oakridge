@@ -57,7 +57,8 @@ test("authored bundle bytes and pinned digest reproduce the generated source", a
       if (sql.startsWith("INSERT")) { saved = { bundle_id: params[0] as string, digest: params[1] as string, source: bundle }; return []; }
       return saved ? [saved] : [];
     } } as unknown as TransactionalSqlExecutor;
-    const pinned = await createMutationService(db, core).pinDefinition({ bundle });
+    const pinned = await createMutationService(db, core, { probe: async () => ({ ok: true, value: true }),
+      check_github: async () => ({ ok: true, value: true }) }).pinDefinition({ bundle });
     const compiled = await core.request("compile", { bundle });
     expect(pinned.ok && compiled.ok && compiled.value.kind === "compiled" ? pinned.value.digest : null)
       .toBe(compiled.ok && compiled.value.kind === "compiled" ? compiled.value.value.digest : null);

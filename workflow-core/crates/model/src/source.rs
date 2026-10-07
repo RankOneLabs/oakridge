@@ -122,6 +122,33 @@ pub struct OperationManifest {
     pub input_contract: String,
     pub settings: Vec<String>,
     pub tools: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recovery: Vec<RecoveryMapping>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub emitted_codes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_recovery_codes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryMapping {
+    pub code: String,
+    pub fact: SymbolKey,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderRoute {
+    pub kind: String,
+    pub input_contract: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderCatalog {
+    pub operations: Vec<OperationManifest>,
+    pub providers: Vec<ProviderRoute>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -147,6 +174,11 @@ pub struct ScopeDefinition {
     pub tree: DecisionTree,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entry_command: Option<SymbolKey>,
+    #[serde(
+        default,
+        skip_serializing_if = "LifecyclePayloadProjection::is_empty_record"
+    )]
+    pub entry_payload: LifecyclePayloadProjection,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -242,6 +274,11 @@ pub struct ChildDefinition {
     pub collection: Option<CollectionDefinition>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on_terminal: Option<SymbolKey>,
+    #[serde(
+        default,
+        skip_serializing_if = "LifecyclePayloadProjection::is_empty_record"
+    )]
+    pub on_terminal_payload: LifecyclePayloadProjection,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prerequisite_export: Option<SymbolKey>,
 }
@@ -278,6 +315,30 @@ pub struct CapacityPool {
 #[serde(deny_unknown_fields)]
 pub struct CancellationDefinition {
     pub trigger: SymbolKey,
+    #[serde(
+        default,
+        skip_serializing_if = "LifecyclePayloadProjection::is_empty_record"
+    )]
+    pub payload: LifecyclePayloadProjection,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum LifecyclePayloadProjection {
+    #[default]
+    EmptyRecord,
+    Reason,
+    Literal {
+        #[serde(with = "crate::wire_numbers::json")]
+        #[schemars(with = "Value")]
+        value: Value,
+    },
+}
+
+impl LifecyclePayloadProjection {
+    pub fn is_empty_record(&self) -> bool {
+        matches!(self, Self::EmptyRecord)
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]

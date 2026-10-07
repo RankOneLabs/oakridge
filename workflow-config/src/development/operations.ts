@@ -1,31 +1,11 @@
 import type { OperationManifest } from "../source-contracts";
 
-export const operations: OperationManifest[] = [
-  {
-    key: "repository.prepare",
-    version: 1,
-    input_schema: "repo_input",
-    provider_kind: "git",
-    input_contract: "repository_preparation",
-    settings: ["result_fact"],
-    tools: []
-  },
-  {
-    key: "session.run",
-    version: 1,
-    input_schema: "session_action",
-    provider_kind: "kbbl",
-    input_contract: "kbbl_session",
-    settings: ["evidence_fact"],
-    tools: []
-  },
-  {
-    key: "pull_request.observe",
-    version: 1,
-    input_schema: "pr_observe_input",
-    provider_kind: "github",
-    input_contract: "pull_request_observation",
-    settings: ["result_fact"],
-    tools: []
-  }
-];
+interface ProviderCatalogData {
+  readonly operations: (OperationManifest & { readonly emitted_codes: string[]; readonly required_recovery_codes: string[] })[];
+  readonly providers: readonly { readonly kind: string; readonly input_contract: string }[];
+}
+
+/** Checked-in data generated from oakridge-dbos/src/effects/provider-catalog.ts. */
+const catalog = await Bun.file(new URL("../../provider-catalog.json", import.meta.url)).json() as ProviderCatalogData;
+export const operations: OperationManifest[] = catalog.operations.map(({ emitted_codes: _provider_owned_codes,
+  required_recovery_codes: _required_recovery_codes, ...operation }) => operation);

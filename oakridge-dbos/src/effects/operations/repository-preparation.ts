@@ -1,3 +1,4 @@
+import { PROVIDER_ERROR_CODES } from "../provider-catalog";
 import type { GitCommandRunner } from "../../domain/repository-provisioning";
 import { githubIdentityFromRemote } from "../../runtime/project-identity";
 import type { ProviderResult, ProviderCallOptions } from "../provider";
@@ -17,18 +18,18 @@ export class RepositoryPreparationOperation {
   async execute(input: RepositoryPreparationInput, options: ProviderCallOptions = {}): Promise<ProviderResult<RepositoryPreparationResult>> {
     const root = await this.git.run(input.repository_path, ["rev-parse", "--show-toplevel"], options);
     if (options.signal?.aborted) return { kind: "transiently_unavailable", detail: "repository preparation aborted" };
-    if (root.exit_code !== 0) return { kind: "permanently_rejected", code: "worktree_unrecoverable",
+    if (root.exit_code !== 0) return { kind: "permanently_rejected", code: PROVIDER_ERROR_CODES.worktree_unrecoverable,
       detail: `repository at ${input.repository_path} cannot be inspected: ${root.stderr}` };
     const head = await this.git.run(input.repository_path, ["rev-parse", "HEAD"], options);
     if (head.exit_code !== 0) return { kind: "transiently_unavailable", detail: `repository head unavailable: ${head.stderr}` };
     const sha = head.stdout.trim();
-    if (input.expected_head !== null && sha !== input.expected_head) return { kind: "permanently_rejected", code: "head_changed",
+    if (input.expected_head !== null && sha !== input.expected_head) return { kind: "permanently_rejected", code: PROVIDER_ERROR_CODES.head_changed,
       detail: `selected ${input.expected_head}, found ${sha}` };
     const remote = await this.git.run(input.repository_path, ["remote", "get-url", "--push", "origin"], options);
     if (options.signal?.aborted) return { kind: "transiently_unavailable", detail: "repository preparation aborted" };
-    if (remote.exit_code !== 0) return { kind: "permanently_rejected", code: "worktree_unrecoverable", detail: `push remote unavailable: ${remote.stderr}` };
+    if (remote.exit_code !== 0) return { kind: "permanently_rejected", code: PROVIDER_ERROR_CODES.worktree_unrecoverable, detail: `push remote unavailable: ${remote.stderr}` };
     const identity = githubIdentityFromRemote(remote.stdout);
-    if (!identity) return { kind: "permanently_rejected", code: "worktree_unrecoverable", detail: "push remote is not a GitHub repository" };
+    if (!identity) return { kind: "permanently_rejected", code: PROVIDER_ERROR_CODES.worktree_unrecoverable, detail: "push remote is not a GitHub repository" };
     return { kind: "acknowledged", value: { repository_path: input.repository_path, head: sha, push_remote_owner: identity.owner } };
   }
 }

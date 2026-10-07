@@ -1,6 +1,34 @@
 use crate::{error, schema, scope, unique, variants};
 use std::collections::BTreeSet;
 use workflow_model::*;
+fn validate_lifecycle_payload(
+    bundle: &DefinitionBundle,
+    key: &SymbolKey,
+    payload_schema: &SchemaId,
+    projection: &LifecyclePayloadProjection,
+) -> CoreResult<()> {
+    let shape = schema(bundle, payload_schema)?;
+    let compatible = match projection {
+        LifecyclePayloadProjection::EmptyRecord => {
+            matches!(shape, SchemaShape::Record { fields, dictionary: None } if fields.is_empty())
+        }
+        LifecyclePayloadProjection::Literal { value } => {
+            crate::check_value(bundle, payload_schema, value).is_ok()
+        }
+        LifecyclePayloadProjection::Reason => {
+            matches!(shape, SchemaShape::String { min_length: 0, .. })
+        }
+    };
+    if compatible {
+        Ok(())
+    } else {
+        Err(error(
+            DomainErrorKind::IncompatiblePort,
+            key.to_string(),
+            "configured lifecycle projection cannot satisfy trigger payload schema",
+        ))
+    }
+}
 pub fn validate_bundle(
     bundle: &DefinitionBundle,
     available: &[OperationManifest],
@@ -26,23 +54,6 @@ pub fn validate_bundle(
         schema(bundle, &prompt.input_schema)?;
     }
     for requirement in &bundle.operations {
-        let supported_routing = matches!(
-            (
-                requirement.provider_kind.as_str(),
-                requirement.input_contract.as_str()
-            ),
-            ("git", "repository_preparation")
-                | ("kbbl", "kbbl_session")
-                | ("github", "pull_request_observation")
-                | ("stub", "unsupported")
-        );
-        if !supported_routing {
-            return Err(error(
-                DomainErrorKind::UnsupportedProvider,
-                requirement.key.to_string(),
-                "provider kind and input contract are incompatible",
-            ));
-        }
         schema(bundle, &requirement.input_schema)?;
         let actual = available
             .iter()
@@ -54,8 +65,7 @@ pub fn validate_bundle(
                     "pinned operation version unavailable",
                 )
             })?;
-        if actual.input_schema != requirement.input_schema
-            || actual.provider_kind != requirement.provider_kind
+        if actual.provider_kind != requirement.provider_kind
             || actual.input_contract != requirement.input_contract
             || requirement
                 .settings
@@ -96,21 +106,30 @@ pub fn validate_bundle(
             &owner.key.0,
         )?;
         unique(owner.pools.iter().map(|x| x.key.0.as_str()), &owner.key.0)?;
-        if !owner
+        let cancellation = owner
             .commands
             .iter()
-            .any(|x| x.key == owner.cancellation.trigger)
-            && !owner
-                .facts
-                .iter()
-                .any(|x| x.key == owner.cancellation.trigger)
-        {
-            return Err(error(
-                DomainErrorKind::UndeclaredTrigger,
-                owner.key.to_string(),
-                "cancellation trigger is undeclared",
-            ));
-        }
+            .map(|item| (&item.key, &item.payload_schema))
+            .chain(
+                owner
+                    .facts
+                    .iter()
+                    .map(|item| (&item.key, &item.payload_schema)),
+            )
+            .find(|(key, _)| **key == owner.cancellation.trigger)
+            .ok_or_else(|| {
+                error(
+                    DomainErrorKind::UndeclaredTrigger,
+                    owner.key.to_string(),
+                    "cancellation trigger is undeclared",
+                )
+            })?;
+        validate_lifecycle_payload(
+            bundle,
+            cancellation.0,
+            cancellation.1,
+            &owner.cancellation.payload,
+        )?;
         crate::presentation::validate_presentation(&owner.presentation, &owner.key.0)?;
         for pool in &owner.pools {
             if pool.limit == 0 {
@@ -133,14 +152,7 @@ pub fn validate_bundle(
                         "entry command missing",
                     )
                 })?;
-            if !matches!(schema(bundle, &command.payload_schema)?, SchemaShape::Record { fields, dictionary: None } if fields.is_empty())
-            {
-                return Err(error(
-                    DomainErrorKind::IncompatiblePort,
-                    key.to_string(),
-                    "entry command requires an empty record payload",
-                ));
-            }
+            validate_lifecycle_payload(bundle, key, &command.payload_schema, &owner.entry_payload)?;
         }
         for command in &owner.commands {
             crate::presentation::validate_command_fields(bundle, command)?;
@@ -364,14 +376,12 @@ pub fn validate_bundle(
                         "child terminal fact missing",
                     )
                 })?;
-                if !matches!(schema(bundle, &fact.payload_schema)?, SchemaShape::Record { fields, dictionary: None } if fields.is_empty())
-                {
-                    return Err(error(
-                        DomainErrorKind::IncompatiblePort,
-                        key.to_string(),
-                        "child terminal fact requires an empty record payload",
-                    ));
-                }
+                validate_lifecycle_payload(
+                    bundle,
+                    key,
+                    &fact.payload_schema,
+                    &child.on_terminal_payload,
+                )?;
             }
             unique(child.imports.iter().map(|x| x.0.as_str()), &child.key.0)?;
             if child

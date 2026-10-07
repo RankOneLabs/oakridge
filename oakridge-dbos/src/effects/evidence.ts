@@ -6,8 +6,6 @@ import type { EffectIntent, EffectPayload } from "./intents";
 export type EvidenceDelivery = { readonly kind: "none" } | { readonly kind: "delivered" } | { readonly kind: "deferred"; readonly detail: string };
 interface EvidenceRow { readonly id: string; readonly execution_id: string | null; readonly scope_id: ScopeId; readonly run_id: RunId; readonly payload: EffectPayload }
 
-const BENIGN_REJECTIONS = ["owner is terminal", "execution generation was revoked"];
-
 /** Delivery is receipt-backed: repeating the same evidence after a crash is a replay, not a second fact. */
 export async function deliverEvidence(db: TransactionalSqlExecutor, mutations: MutationService, intent: Pick<EffectIntent, "id" | "scope_id" | "execution_id" | "payload">): Promise<EvidenceDelivery> {
   const evidence = intent.payload.evidence;
@@ -18,7 +16,8 @@ export async function deliverEvidence(db: TransactionalSqlExecutor, mutations: M
   const result = await mutations.decide({ run_id, scope_id: intent.scope_id as ScopeId, ingress_id: evidence.id, trigger: evidence, operator_version: null, execution_authority: intent.execution_id ?? undefined });
   if (!result.ok) return { kind: "deferred", detail: result.error.detail };
   if (result.value.kind === "snapshot_too_large") return { kind: "deferred", detail: `snapshot_too_large: ${result.value.scope} ${result.value.bytes}/${result.value.limit}` };
-  const accepted = result.value.kind === "Committed" || result.value.kind === "Replayed" || (result.value.kind === "Rejected" && BENIGN_REJECTIONS.includes(result.value.detail));
+  const accepted = result.value.kind === "Committed" || result.value.kind === "Replayed" || (result.value.kind === "Rejected"
+    && (result.value.reason === "owner_terminal" || result.value.reason === "generation_revoked"));
   if (!accepted) return { kind: "deferred", detail: result.value.detail };
   await db.transaction(async (tx) => {
     await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [run_id]);

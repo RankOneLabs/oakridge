@@ -103,7 +103,7 @@ for (const cancellation of cancellation_cases) {
   test(`HTTP cancellation validates an explicit ${cancellation.name} payload using the declared trigger schema`, async () => {
     await withDatabase(async ({ db, url }) => {
       const original: DefinitionBundle = await Bun.file(resolve(import.meta.dir, "../../workflow-core/fixtures/bundles/minimal.json")).json();
-      const bundle: DefinitionBundle = { ...original, schemas: [...original.schemas, ...cancellation.schemas], scopes: original.scopes.map((scope) => ({ ...scope, commands: scope.commands.map((command) => command.key === scope.cancellation.trigger ? { ...command, payload_schema: "cancel_payload" } : command) })) };
+      const bundle: DefinitionBundle = { ...original, schemas: [...original.schemas, ...cancellation.schemas], scopes: original.scopes.map((scope) => ({ ...scope, cancellation: { ...scope.cancellation, payload: { kind: "literal", value: cancellation.payload } }, commands: scope.commands.map((command) => command.key === scope.cancellation.trigger ? { ...command, payload_schema: "cancel_payload" } : command) })) };
       const composition = await createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1" });
       try {
         const created = await composition.app.request("http://localhost/runs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ bundle, input: {} }) });
@@ -116,6 +116,14 @@ for (const cancellation of cancellation_cases) {
         const cancelled = await cancel(cancellation.payload);
         expect(cancelled.status).toBe(200);
         expect((await db.query<{ payload: CheckedValue }>("SELECT payload FROM authority.fact WHERE fact_key='cancel'", []))[0]?.payload.schema).toBe("cancel_payload");
+        const next = await composition.app.request("http://localhost/runs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ bundle, input: {} }) });
+        expect(next.status).toBe(201);
+        const automatic_run: StartedRun = await next.json();
+        const automatic_cancel = await composition.app.request(`http://localhost/runs/${automatic_run.run_id}/cancel`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: "cancel_run", reason: "automatic" }) });
+        expect(automatic_cancel.status).toBe(200);
+        const facts = await db.query<{ payload: CheckedValue }>("SELECT payload FROM authority.fact WHERE fact_key='cancel' ORDER BY scope_id", []);
+        expect(facts).toHaveLength(2);
+        expect(facts[0]?.payload).toEqual(facts[1]?.payload);
       } finally { await composition.close(); }
     });
   });

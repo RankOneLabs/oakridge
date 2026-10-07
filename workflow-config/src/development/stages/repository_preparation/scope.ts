@@ -51,7 +51,7 @@ export const repository_preparation = defineScope({
       field_presentation: []
     }
   ],
-  facts: [{ key: "prepared", payload_schema: "repo_result" }],
+  facts: [{ key: "prepared", payload_schema: "repo_result" }, { key: "provider_start_failed", payload_schema: "text" }],
   outputs: [],
   workers: workers,
   children: [],
