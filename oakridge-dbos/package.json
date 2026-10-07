@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "bun run src/main.ts",
+    "ops": "bun run src/ops.ts",
     "test": "bun run test:unit",
     "test:unit": "bash tests/run-suite.sh unit",
     "test:integration": "bash tests/run-suite.sh integration",

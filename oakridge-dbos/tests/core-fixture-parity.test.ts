@@ -138,12 +138,12 @@ test("compile response echoes the request ID and omits the checked source", () =
   expect(response).toMatchObject({ request_id: "large", truncated: false, result: { status: "ok", value: { kind: "compiled", value: { digest: expect.any(String), scopes: expect.any(Array) } } } });
   expect(JSON.stringify(response)).not.toContain('"content_digest"');
 });
-async function withChild(scriptBody: string, run: (client: CoreClient) => Promise<void>, deadlineMs = 1000, queue = 64, files: Readonly<Record<string, string>> = {}): Promise<void> {
+async function withChild(scriptBody: string, run: (client: CoreClient, script: string) => Promise<void>, deadlineMs = 1000, queue = 64, files: Readonly<Record<string, string>> = {}): Promise<void> {
   const directory = mkdtempSync(resolve(tmpdir(), "core-protocol-")); const script = resolve(directory, "child.sh");
   for (const [name, content] of Object.entries(files)) writeFileSync(resolve(directory, name), content);
   writeFileSync(script, `#!/bin/sh\ncd "$(dirname "$0")"\n${scriptBody}\n`); chmodSync(script, 0o700);
   const client = startClient(script, deadlineMs, queue);
-  try { await run(client); } finally { client.close(); rmSync(directory, { recursive: true, force: true }); }
+  try { await run(client, script); } finally { client.close(); rmSync(directory, { recursive: true, force: true }); }
 }
 test("mismatched request ID is rejected", () => withChild(`IFS= read -r line\nprintf '%s\\n' '{\"version\":${CORE_PROTOCOL_VERSION},\"request_id\":\"wrong\",\"truncated\":false,\"result\":{\"status\":\"ok\",\"value\":{\"kind\":\"validated\",\"value\":{\"schema\":\"flag\",\"data\":{\"kind\":\"boolean\",\"value\":true}}}}}'`, async (client) => {
   expect(await client.request("compile", { bundle })).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "mismatched_request_id" } } });
@@ -363,15 +363,18 @@ sleep 2`, async (client) => {
     expect(await older).toMatchObject({ ok: true, value: { kind: "compiled" } });
   }));
 
-test("failed replacement spawn settles survivors and rejects future requests", () => withChild(
-  'rm -- "$0"\nIFS= read -r line\nexit 1', async (client) => {
+test("failed replacement spawn settles survivors and a later request reopens the client", () => withChild(
+  'rm -- "$0"\nIFS= read -r line\necho unavailable >&2\nexit 1', async (client, script) => {
     const first = client.request("compile", { bundle });
     const survivor = client.request("compile", { bundle: { ...bundle, key: "survivor" } });
     expect(await first).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "terminated_child" } } });
     expect(await survivor).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "terminated_child" } } });
+    expect(client.health.last_stderr_lines).toContain("unavailable");
+    writeFileSync(script, `#!/bin/sh\nIFS= read -r line\nprintf '%s\\n' '{"version":${CORE_PROTOCOL_VERSION},"request_id":"3","truncated":false,"result":{"status":"ok","value":{"kind":"compiled","value":{"digest":"ready","scopes":[]}}}}'\n`);
+    chmodSync(script, 0o700);
     expect(await client.request("compile", { bundle: { ...bundle, key: "later" } }))
-      .toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "terminated_child" } } });
-  }), 1000);
+      .toMatchObject({ ok: true, value: { kind: "compiled" } });
+  }), 10_000);
 
 test("invalid UTF-8 stderr stays bounded after decoding in health and fault detail", () => withChild(
   `python3 -c 'import sys; sys.stderr.buffer.write(bytes([255]) * 20000 + "😀tail".encode()); sys.stderr.buffer.flush()'
