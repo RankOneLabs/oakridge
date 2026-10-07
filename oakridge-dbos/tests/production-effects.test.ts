@@ -7,7 +7,7 @@ import type { CheckedValue } from "../src/core-client/generated-contracts";
 import type { DefinitionBundle } from "../src/core-client/generated-contracts";
 import type { EffectPayload } from "../src/effects/intents";
 import type { StableInvocation } from "../src/effects/provider";
-import { unit, withDatabase, waitUntil, operationBundle, begin } from "./effect-fixture";
+import { unit, withDatabase, waitUntil, operationBundle, sessionBundle, begin } from "./effect-fixture";
 import type { StartedRun } from "../src/storage/mutation-service";
 import { activeRoutes } from "../src/http/routes";
 import { developmentBundle, brief, repository, build_body } from "./development-runtime-fixture";
@@ -196,6 +196,27 @@ test("GitHub 403 publishes a typed auth fact and does not retry", async () => {
       expect({ calls, has_auth_fact: facts.some((fact) => fact.fact_key === "auth") }).toEqual({ calls: 1, has_auth_fact: true });
     } finally { await composition.close(); }
   });
+});
+
+test("a shipped unit session result commits an execution and confirms cleanup", async () => {
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: (request) => request.method === "PUT"
+    ? Response.json({ kind: "attached", session: { sid: "completed-session", status: "live" } })
+    : Response.json({ session: { endReason: "subprocess_exited" }, exit_code: 0 }) });
+  try {
+    await withDatabase(async ({ url, db }) => {
+      const composition = await createProductionComposition({ database_url: url,
+        core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"),
+        host: "127.0.0.1", kbbl_base_url: server.url.href,
+        timing: { retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, wake_timeout_seconds: 1 } });
+      try {
+        const run = await begin(composition, await sessionBundle(), { runtime: "claude-code", rendered_prompt: "publish the result", workdir: "/tmp", session_name: "completed",
+          session_identity: {}, worktree: { branchName: "selected", worktreeSubdir: "selected" } });
+        await waitUntil(async () => (await db.query<{ status: string }>("SELECT status FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='start'", [run.root_scope_id]))[0]?.status === "cleanup_confirmed");
+        expect((await db.query<{ status: string; result: CheckedValue }>("SELECT status,result FROM authority.execution WHERE scope_id=$1", [run.root_scope_id]))[0])
+          .toMatchObject({ status: "terminal", result: { schema: "unit", data: { kind: "record", fields: [] } } });
+      } finally { await composition.close(); }
+    });
+  } finally { server.stop(true); }
 });
 
 test("changed repository head and PR observations cannot enrich a selected kbbl request on replay", async () => {

@@ -136,7 +136,15 @@ export function createEffectProvider(options: ProductionProviderOptions): Effect
       if (result.kind === "pending") return { kind: "acknowledged", value: { kind: "running" } };
       const found = await context(invocation);
       if (!found) return rejected("execution context missing");
-      const finished = await completed(found, invocation, result.observation);
+      if (result.observation.kind !== "succeeded") {
+        const code = result.observation.kind === "failed" ? result.observation.code
+          : "code" in result.observation && typeof result.observation.code === "string" ? result.observation.code : "executor_cancelled";
+        return recovery(found, { kind: "permanently_rejected", code: "session_failed",
+          detail: `${code}: ${result.observation.detail ?? "session cancelled"}` }, invocation);
+      }
+      // A session publishes its products through its selected output contract.
+      // Its declared worker result remains unit, independent of adapter metadata.
+      const finished = await completed(found, invocation, {});
       return finished.kind === "acknowledged" && finished.value.kind === "completed"
         ? { kind: "acknowledged", value: { kind: "terminal", result: finished.value.result, ...(finished.value.evidence ? { evidence: finished.value.evidence } : {}) } } : finished.kind === "acknowledged" ? rejected("terminal result missing") : finished;
     },

@@ -354,7 +354,10 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
     if (typeof raw !== "object" || raw === null || !("session" in raw) || typeof raw.session !== "object" || raw.session === null || !("endReason" in raw.session)) {
       return terminal({ kind: "failed", code: "invalid_terminal_response", detail: "kbbl returned an invalid terminal response" });
     }
-    if (raw.session.endReason === "user_closed") return terminal({ kind: "cancelled", detail: "kbbl session was closed" });
+    if (raw.session.endReason === "user_closed") {
+      const cancelled = { kind: "cancelled" as const, code: "executor_cancelled", detail: "kbbl session was closed" };
+      return terminal(cancelled);
+    }
     const exitCode = "exit_code" in raw && typeof raw.exit_code === "number" ? raw.exit_code : null;
     // Success must be positively established. A session whose exit code kbbl
     // cannot report — it crashed before writing one, or predates exit-code
