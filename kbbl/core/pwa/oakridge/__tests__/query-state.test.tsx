@@ -5,7 +5,10 @@ import { afterEach, expect, test, vi } from "vitest";
 import { useRun } from "../hooks/useRun";
 import { GenericOperatorRunView } from "../views/GenericOperatorRunView";
 import { ReviewInboxView } from "../views/ReviewInboxView";
+import { OperatorRunListView } from "../views/OperatorRunListView";
 import { OperatorCommandForm } from "../components/organisms/OperatorCommandForm";
+import { invalidateOperatorFrame } from "../hooks/useOakridgeInvalidationStream";
+import { operatorTransition, runEventFrame } from "../lib/__fixtures__/run-event-frame";
 import { useReviewInbox } from "../hooks/useReviewInbox";
 import { savePendingCommand } from "../lib/operator-drafts";
 import type { OperatorCommandDescriptor, OperatorScopeView } from "../operator-contracts";
@@ -77,4 +80,39 @@ test("StrictMode recovery delivers one pending command with its retained request
   expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body)).request_id).toBe("stable-id");
   complete(Response.json({ kind: "accepted_pending", request_id: "stable-id", transition_id: "transition", scope_version: 2 }));
   await screen.findByText("Command accepted.");
+});
+
+function scopeOf(runId: string): string { return `${runId}-scope`; }
+/** Serves any run id, so one fan-out can be observed against two runs at once. */
+function anyRunResponse(url: string): Response {
+  if (url.endsWith("/api/inbox")) return Response.json({ cursor: [], items: [], next_cursor: null });
+  if (url.endsWith("/api/runs")) return Response.json([{ run_id: "run-one", scopes: [{ scope_id: scopeOf("run-one"), label: "One", is_terminal: false }] }]);
+  if (url.endsWith("/definition")) return Response.json({ source: { schemas: [] } });
+  if (url.endsWith("/history")) return Response.json({ transitions: [], facts: [] });
+  const runId = url.match(/\/runs\/([^/?]+)/)?.[1] ?? "run-one";
+  if (url.endsWith(`/scopes/${scopeOf(runId)}`)) return Response.json({ scope_id: scopeOf(runId), run_id: runId, label: `Scope of ${runId}`,
+    state: { schema: "text", data: { kind: "string", value: "snapshot" } }, outcome: null,
+    outputs: [], executions: [], commands: [], cursor: { scope_version: 1 } });
+  return Response.json({ run_id: runId, scopes: [{ scope_id: scopeOf(runId), label: `Scope of ${runId}` }] });
+}
+
+test("an authority event refreshes its own run and both shared lists, and leaves other runs alone", async () => {
+  const fetch = vi.fn(async (url: string) => anyRunResponse(url));
+  vi.stubGlobal("fetch", fetch);
+  const cache = client();
+  render(<QueryClientProvider client={cache}>
+    <OperatorRunListView onSelectRun={() => undefined} onNewRun={() => undefined} onDefinitions={() => undefined} />
+    <ReviewInboxView onSelectRun={() => undefined} onSelectArtifact={() => undefined} />
+    <GenericOperatorRunView runId="run-one" onBack={() => undefined} />
+    <GenericOperatorRunView runId="run-two" onBack={() => undefined} />
+  </QueryClientProvider>);
+  await screen.findByRole("heading", { name: "Scope of run-one" });
+  await screen.findByRole("heading", { name: "Scope of run-two" });
+  const served = (suffix: string) => fetch.mock.calls.filter(([url]) => url.endsWith(suffix)).length;
+  expect([served("/api/runs"), served("/api/inbox"), served(`/scopes/${scopeOf("run-two")}`)]).toEqual([1, 1, 1]);
+
+  invalidateOperatorFrame(cache, runEventFrame({ run_id: "run-one", effect: operatorTransition }));
+
+  await waitFor(() => expect([served("/api/runs"), served("/api/inbox"), served(`/scopes/${scopeOf("run-one")}`)]).toEqual([2, 2, 2]));
+  expect(served(`/scopes/${scopeOf("run-two")}`)).toBe(1);
 });
