@@ -68,6 +68,39 @@ function sampleRootFields(bundle: WorkflowDefinitionDescriptor): readonly Sample
 const rootInputRecord = (fields: readonly SampledRootField[]): unknown =>
   Object.fromEntries(fields.map((field) => [field.key, field.value]));
 
+/**
+ * The root field the bundle declares as a required string whose schema admits "",
+ * so a blank entry is a value the authority accepts rather than a missing input.
+ */
+function requiredEmptyStringField(bundle: WorkflowDefinitionDescriptor): SampledRootField {
+  const root = bundle.scopes.find((scope) => scope.key === bundle.root);
+  const shape = bundle.schemas.find((schema) => schema.key === root?.input_schema)?.shape;
+  if (shape?.kind !== "record") throw new Error("root input is not a record");
+  const declared = shape.fields.find((field) => {
+    const fieldShape = bundle.schemas.find((schema) => schema.key === field.schema)?.shape;
+    return field.required && fieldShape?.kind === "string" && fieldShape.min_length === 0;
+  });
+  if (!declared) throw new Error("no required root string admits an empty value");
+  const sampled = sampleRootFields(bundle).find((field) => field.key === declared.key);
+  if (!sampled) throw new Error(`${declared.key} is not a sampled root field`);
+  return sampled;
+}
+
+/** Serves one pinned bundle and accepts the launch it produces. */
+const launchFetch = (bundle: WorkflowDefinitionDescriptor) => vi.fn(async (url: string, init?: RequestInit) => {
+  if (url.endsWith("/definitions")) return Response.json([{ bundle_id: "pinned", digest: "pinned-digest", source: bundle }]);
+  if (url.endsWith("/runs") && init?.method === "POST") return Response.json({ run_id: "new-run" }, { status: 201 });
+  throw new Error(url);
+});
+
+/** Enters every sampled root field but the named one, which the test leaves to the form. */
+function enterRootFieldsExcept(fields: readonly SampledRootField[], skipped: string): void {
+  for (const field of fields) {
+    if (field.key === skipped) continue;
+    fireEvent.change(screen.getByLabelText(field.label), { target: { value: field.draft } });
+  }
+}
+
 function renderWithQuery(ui: React.ReactElement) {
   return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{ui}</QueryClientProvider>);
 }
@@ -296,4 +329,40 @@ test("switching run routes resets the selected scope before fetching the new run
   rerender(view("run-2"));
   await screen.findByRole("heading", { name: "run-2-root" });
   expect(requests.some((url) => url.includes("/runs/run-2/scopes/run-1-"))).toBe(false);
+});
+
+test("a required root string that admits an empty value launches without ever being entered", async () => {
+  const bundle = shippedBundle("development") as WorkflowDefinitionDescriptor;
+  const admitsEmpty = requiredEmptyStringField(bundle);
+  const fetch = launchFetch(bundle);
+  vi.stubGlobal("fetch", fetch);
+  renderWithQuery(<OperatorLaunchView onBack={() => undefined} onCreated={() => undefined} onEdit={() => undefined} />);
+  await screen.findByLabelText(admitsEmpty.label);
+  enterRootFieldsExcept(sampleRootFields(bundle), admitsEmpty.key);
+  fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+  expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body)).input[admitsEmpty.key]).toBe("");
+});
+
+test("clearing a required root string that admits an empty value submits the empty string", async () => {
+  const bundle = shippedBundle("development") as WorkflowDefinitionDescriptor;
+  const admitsEmpty = requiredEmptyStringField(bundle);
+  const fetch = launchFetch(bundle);
+  vi.stubGlobal("fetch", fetch);
+  renderWithQuery(<OperatorLaunchView onBack={() => undefined} onCreated={() => undefined} onEdit={() => undefined} />);
+  await screen.findByLabelText(admitsEmpty.label);
+  enterRootFieldsExcept(sampleRootFields(bundle), admitsEmpty.key);
+  fireEvent.change(screen.getByLabelText(admitsEmpty.label), { target: { value: admitsEmpty.draft } });
+  fireEvent.change(screen.getByLabelText(admitsEmpty.label), { target: { value: "" } });
+  fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+  expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body)).input[admitsEmpty.key]).toBe("");
+});
+
+test("a required root string that admits an empty value is not marked required in the browser", async () => {
+  const bundle = shippedBundle("development") as WorkflowDefinitionDescriptor;
+  const admitsEmpty = requiredEmptyStringField(bundle);
+  vi.stubGlobal("fetch", launchFetch(bundle));
+  renderWithQuery(<OperatorLaunchView onBack={() => undefined} onCreated={() => undefined} onEdit={() => undefined} />);
+  expect(await screen.findByLabelText<HTMLInputElement>(admitsEmpty.label)).toHaveProperty("required", false);
 });

@@ -33,13 +33,37 @@ function fieldText(value: unknown, schema: Schema | undefined): string {
   return schema?.shape.kind === "string" || schema?.shape.kind === "enum" ? String(value) : JSON.stringify(value, null, 2);
 }
 
+/**
+ * A string schema's own `min_length` decides whether "" is an acceptable value,
+ * so the form stops imposing a non-empty rule the bundle never stated. Null for
+ * every other shape, where a blank entry really does mean "no value".
+ */
+function stringFloor(schema: Schema | undefined): number | null {
+  return schema?.shape.kind === "string" ? schema.shape.min_length : null;
+}
+
 function buildRootInput(raw: string, fields: readonly RootField[] | null, drafts: FieldDrafts): unknown {
   if (!fields) return JSON.parse(raw);
   const record = inputRecord(raw);
   for (const { field, schema } of fields) {
+    const floor = stringFloor(schema);
     const draft = drafts[field.key];
     if (draft === undefined) {
-      if (field.required && record[field.key] === undefined) throw new Error(`${field.key} is required.`);
+      if (record[field.key] !== undefined || !field.required) continue;
+      if (floor === 0) { record[field.key] = ""; continue; } // A required zero-minimum string starts as the empty value it admits.
+      throw new Error(`${field.key} is required.`);
+    }
+    if (floor !== null) {
+      // Whitespace is content in a string, so only a truly empty draft is a question:
+      // omitted when the field is optional, "" when the schema's minimum admits it.
+      if (draft === "") {
+        if (!field.required) { delete record[field.key]; continue; }
+        if (floor > 0) throw new Error(`${field.key} is required.`);
+        record[field.key] = "";
+        continue;
+      }
+      if (draft.length < floor) throw new Error(`${field.key} must be at least ${floor} characters.`);
+      record[field.key] = draft;
       continue;
     }
     if (draft.trim() === "") {
@@ -137,7 +161,7 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
             <option value="">Select…</option><option value="true">Yes</option><option value="false">No</option>
           </select> : schema?.shape.kind === "integer" ? <input id={id} type="number" value={value} required={field.required}
             min={schema.shape.min} max={schema.shape.max} onChange={(event) => setValue(event.target.value)} />
-          : schema?.shape.kind === "string" ? <input id={id} type="text" value={value} required={field.required}
+          : schema?.shape.kind === "string" ? <input id={id} type="text" value={value} required={field.required && schema.shape.min_length > 0}
             minLength={schema.shape.min_length} maxLength={schema.shape.max_length} onChange={(event) => setValue(event.target.value)} />
           : <textarea id={id} value={value} required={field.required} onChange={(event) => setValue(event.target.value)}
             className="w-full min-h-24 rounded-md border p-3 font-mono text-xs" />}</div>;

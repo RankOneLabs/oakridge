@@ -141,6 +141,9 @@ proxying. Agent permission decisions are separate from HTTP control authenticati
 `OAKRIDGE_FALLBACK_REFRESH_MS` sets the operator surface's fallback refresh
 interval without a PWA rebuild; it is served from `/oakridge/config` and takes
 precedence over the bundle's `VITE_OAKRIDGE_FALLBACK_REFRESH_MS` default.
+That precedence holds only at or above the PWA's 1,000 ms minimum: the server
+accepts any positive value, but a served interval below the minimum is ignored
+by the PWA, which falls back to the bundle default and then to 30,000 ms.
 
 ## Development and layout
 

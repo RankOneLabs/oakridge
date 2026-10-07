@@ -35,14 +35,22 @@ export const fetchOperatorDefinitions = (): Promise<OperatorDefinitionSummary[]>
 export const pinOperatorDefinition = (source: WorkflowDefinitionDescriptor): Promise<OperatorDefinitionSummary> => post("/api/definitions", source);
 export const launchOperatorRun = (request: OperatorLaunchRequest): Promise<OperatorLaunchedRun> => post("/runs", request);
 const inFlightCommands = new Map<string, Promise<OperatorCommandReceipt>>();
+/**
+ * The authority scopes command idempotency by (run_id, scope_id, request_id).
+ * This dedup shares that identity rather than a prefix of it, so an id reused
+ * across scopes cannot hand one scope's receipt to another scope's caller.
+ */
+const commandIdentity = (input: OperatorCommandSubmission): string =>
+  JSON.stringify([input.run_id, input.scope_id, input.request_id]);
 export function submitOperatorCommand(input: OperatorCommandSubmission): Promise<OperatorCommandReceipt> {
-  const active = inFlightCommands.get(input.request_id);
+  const identity = commandIdentity(input);
+  const active = inFlightCommands.get(identity);
   if (active) return active;
   const delivery = post<OperatorCommandReceipt>(`/api/runs/${encodeURIComponent(input.run_id)}/scopes/${encodeURIComponent(input.scope_id)}/commands`, {
     scope_id: input.scope_id, command_key: input.command_key, expected_scope_version: input.owner_version,
     targets: input.targets, payload: input.payload, request_id: input.request_id,
   });
-  inFlightCommands.set(input.request_id, delivery);
-  void delivery.finally(() => { if (inFlightCommands.get(input.request_id) === delivery) inFlightCommands.delete(input.request_id); }).catch(() => undefined);
+  inFlightCommands.set(identity, delivery);
+  void delivery.finally(() => { if (inFlightCommands.get(identity) === delivery) inFlightCommands.delete(identity); }).catch(() => undefined);
   return delivery;
 }
