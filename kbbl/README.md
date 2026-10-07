@@ -18,8 +18,9 @@ available for read-only viewing; they are not the current execution backend.
 
 ## Quick start
 
-The workflow backend is intentionally unavailable until m3 authority.
-Start kbbl independently for direct agent sessions:
+For the workflow backend and operator PWA together, run
+`./scripts/oakridge-start` from the repository root. To start kbbl independently
+for direct agent sessions, run:
 
 ```bash
 ./kbbl/scripts/kbbl-start /absolute/path/to/repository
