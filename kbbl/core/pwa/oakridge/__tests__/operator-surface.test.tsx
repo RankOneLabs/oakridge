@@ -1,11 +1,20 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
-import canonicalDefinition from "../../../../../workflow-config/definitions/development.json";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { OakridgeShell } from "../OakridgeShell";
 import { OperatorLaunchView } from "../views/OperatorLaunchView";
 import { OperatorHistoryPane } from "../views/OperatorHistoryPane";
 import { OperatorDefinitionEditorView } from "../views/OperatorDefinitionEditorView";
+import { GenericOperatorRunView } from "../views/GenericOperatorRunView";
+import { savePendingCommand } from "../lib/operator-drafts";
+import type { WorkflowDefinitionDescriptor } from "../workflow-definition-types";
+
+function shippedBundle(name: string): unknown {
+  return JSON.parse(readFileSync(resolve(process.cwd(), `../../../workflow-config/definitions/${name}.json`), "utf8"));
+}
+const canonicalDefinition = shippedBundle("development") as { readonly version: number; readonly [key: string]: unknown };
 
 function renderWithQuery(ui: React.ReactElement) {
   return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{ui}</QueryClientProvider>);
@@ -14,17 +23,90 @@ afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clea
 
 test("pins the edited JSON definition for a fresh operator database", async () => {
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
-    if (url === "/oakridge/api/api/definitions" && init?.method === "GET") return Response.json([]);
+    if (url === "/oakridge/api/api/definitions" && init?.method === "GET")
+      return Response.json([{ bundle_id: "seed", digest: "seed-digest", source: canonicalDefinition }]);
     if (url === "/oakridge/api/api/definitions" && init?.method === "POST") return Response.json({ bundle_id: "bundle-1", digest: "sha-1" }, { status: 201 });
     throw new Error(`Unexpected request: ${url}`);
   });
   vi.stubGlobal("fetch", fetch);
   const onPinned = vi.fn();
   renderWithQuery(<OperatorDefinitionEditorView cloneFromId={null} onBack={() => undefined} onPinned={onPinned} />);
+  await waitFor(() => expect(screen.getByLabelText<HTMLTextAreaElement>("Source bundle").value).toContain('"root"'));
   fireEvent.click(screen.getByRole("button", { name: "Pin definition" }));
   await waitFor(() => expect(onPinned).toHaveBeenCalledOnce());
   expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body))).toHaveProperty("root");
 });
+
+test("the third bundle renders its extra root input as JSON and round-trips the raw editor", async () => {
+  const bundle = shippedBundle("development-verification");
+  const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/definitions")) return Response.json([{ bundle_id: "third", digest: "third-digest", source: bundle }]);
+    if (url.endsWith("/runs") && init?.method === "POST") return Response.json({ run_id: "new-run" }, { status: 201 });
+    throw new Error(url);
+  });
+  vi.stubGlobal("fetch", fetch);
+  renderWithQuery(<OperatorLaunchView onBack={() => undefined} onCreated={() => undefined} onEdit={() => undefined} />);
+  const note = await screen.findByLabelText<HTMLTextAreaElement>("verification_note JSON");
+  fireEvent.change(screen.getByLabelText("spec"), { target: { value: "verify" } });
+  fireEvent.change(screen.getByLabelText("repositories JSON"), { target: { value: "[]" } });
+  const session = { runtime: "codex", workdir: "/tmp", session_name: "sample" };
+  for (const field of ["analysis", "planning", "briefs"])
+    fireEvent.change(screen.getByLabelText(`${field} JSON`), { target: { value: JSON.stringify(session) } });
+  fireEvent.change(note, { target: { value: "null" } });
+  fireEvent.click(screen.getByLabelText("Raw JSON"));
+  expect(screen.getByLabelText<HTMLTextAreaElement>("Root input JSON").value).toContain('"verification_note": null');
+  fireEvent.click(screen.getByLabelText("Raw JSON"));
+  expect(screen.getByLabelText<HTMLTextAreaElement>("verification_note JSON").value).toBe("null");
+  fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+  expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body)).input).toEqual({ spec: "verify", repositories: [],
+    analysis: session, planning: session, briefs: session, verification_note: null });
+});
+
+test.each(["development", "development-independent-siblings", "development-verification"])(
+  "%s drives launch, commands, history and receipt recovery from its pinned source", async (name) => {
+    const bundle = shippedBundle(name) as WorkflowDefinitionDescriptor;
+    const root = bundle.scopes.find((scope) => scope.key === bundle.root);
+    if (!root) throw new Error("root scope missing");
+    const inputShape = bundle.schemas.find((schema) => schema.key === root.input_schema)?.shape;
+    if (inputShape?.kind !== "record") throw new Error("root input is not a record");
+    const recoveryCommand = root.commands[root.commands.length - 1];
+    if (!recoveryCommand) throw new Error("no recovery command");
+    const fact = root.facts[0];
+    const stringSchema = bundle.schemas.find((schema) => schema.shape.kind === "string");
+    if (!fact || !stringSchema) throw new Error("history fixture schema missing");
+    savePendingCommand({ run_id: "pinned-run", scope_id: "pinned-scope", command_key: recoveryCommand.key,
+      owner_version: 1, targets: [], request_id: `recover-${name}`, payload: {} });
+    const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/definitions")) return Response.json([{ bundle_id: name, digest: name, source: bundle }]);
+      if (url.endsWith("/runs/pinned-run/definition")) return Response.json({ bundle_id: name, digest: name, source: bundle });
+      if (url.endsWith("/runs/pinned-run/scopes/pinned-scope/history")) return Response.json({ scope_id: "pinned-scope",
+        transitions: [{ id: "transition", trigger_id: "trigger", version: 1, created_at: "2026-01-01T00:00:00Z", decision: { kind: "apply" } }],
+        facts: [{ id: "fact", fact_key: fact.key, payload: { schema: stringSchema.key, data: { kind: "string", value: "observed" } } }] });
+      if (url.endsWith("/runs/pinned-run/scopes/pinned-scope/commands") && init?.method === "POST")
+        return Response.json({ kind: "accepted_pending", request_id: `recover-${name}`, transition_id: "transition", scope_version: 2 }, { status: 202 });
+      if (url.endsWith("/runs/pinned-run/scopes/pinned-scope")) return Response.json({
+        run_id: "pinned-run", scope_id: "pinned-scope", label: root.presentation.label,
+        state: { schema: stringSchema.key, data: { kind: "string", value: "observed" } }, outcome: null,
+        outputs: [], executions: [], commands: root.commands, cursor: { scope_version: 1, transition_id: null },
+        command_targets: Object.fromEntries(root.commands.map((command) => [command.key, []])),
+      });
+      if (url.endsWith("/runs/pinned-run")) return Response.json({ run_id: "pinned-run", scopes: [{ scope_id: "pinned-scope", label: root.presentation.label }] });
+      throw new Error(url);
+    });
+    vi.stubGlobal("fetch", fetch);
+    renderWithQuery(<><OperatorLaunchView onBack={() => undefined} onCreated={() => undefined} onEdit={() => undefined} />
+      <GenericOperatorRunView runId="pinned-run" onBack={() => undefined} /></>);
+    const lastField = inputShape.fields[inputShape.fields.length - 1];
+    if (!lastField) throw new Error("root input has no fields");
+    expect(await screen.findByLabelText(new RegExp(`^${lastField.key}`))).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: root.presentation.label })).toBeTruthy();
+    for (const command of root.commands) expect(screen.getByRole("option", { name: command.label })).toBeTruthy();
+    expect(await screen.findByText(fact.key)).toBeTruthy();
+    expect(await screen.findByText(`Receipt recovered for ${recoveryCommand.key}.`)).toBeTruthy();
+    expect(fetch.mock.calls.filter(([url, init]) => url.endsWith("/commands") && init?.method === "POST")).toHaveLength(1);
+  },
+);
 
 test("launches a run using the pinned digest and entered root input", async () => {
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { expect, test } from "bun:test";
 
@@ -17,4 +17,14 @@ test("live operator shapes are explicitly extracted from DBOS projections", () =
 test("operator contracts have no handwritten base dependency", () => {
   const generated = read("kbbl/core/pwa/oakridge/operator-contracts.ts");
   expect(generated).not.toContain("operator-contracts.base");
+});
+
+test("PWA sources and tests do not import a bundled workflow definition", () => {
+  const directory = resolve(root, "kbbl/core/pwa");
+  const files = readdirSync(directory, { recursive: true }).filter((entry): entry is string => typeof entry === "string"
+    && /\.(ts|tsx)$/.test(entry) && !entry.includes("node_modules"));
+  for (const file of files) {
+    const source = readFileSync(resolve(directory, file), "utf8");
+    expect(source).not.toMatch(/\b(?:import|export)\s+(?:[^;]*?\sfrom\s+)?["'][^"']*workflow-config\/definitions\//);
+  }
 });
