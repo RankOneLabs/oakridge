@@ -43,6 +43,22 @@ function declaredRecovery(context: InvocationContext, invocation: StableInvocati
   return operation?.recovery?.find((mapping) => mapping.code === code) ?? null;
 }
 
+interface RecoveryDetailInput { readonly bundle: DefinitionBundle; readonly schema: string; readonly detail: string }
+/** Rust string bounds count Unicode scalar values, rather than UTF-16 code units. */
+function projectRecoveryDetail({ bundle, schema, detail }: RecoveryDetailInput): Result<string> {
+  const shape = bundle.schemas.find((item) => item.key === schema)?.shape;
+  if (shape?.kind !== "string" || shape.min_length !== 0) return { ok: false,
+    error: { operation: "project_recovery_detail", entity_id: schema, detail: "recovery requires a string schema accepting empty detail" } };
+  let projected = "";
+  let length = 0;
+  for (const character of detail) {
+    if (length >= shape.max_length) break;
+    projected += character;
+    length++;
+  }
+  return { ok: true, value: projected };
+}
+
 export function visibleProviderCode(operation_key: string, version: number, code: string, detail: string): Extract<ProviderResult<never>, { readonly kind: "permanently_rejected" }> {
   const operation = PROVIDER_CATALOG.operations.find((item) => item.key === operation_key && item.version === version);
   return operation?.emitted_codes.some((emitted) => emitted === code)
@@ -65,7 +81,9 @@ export async function recoverConfiguredFailure({ db, core, invocation, code, det
   const mapping = declaredRecovery(context, invocation, code);
   const fact = context.scope.facts.find((item) => item.key === mapping?.fact);
   if (!fact) return failure;
-  const checked = await core.request("validate_payload", { bundle: context.bundle, schema: fact.payload_schema, payload: detail });
+  const projected = projectRecoveryDetail({ bundle: context.bundle, schema: fact.payload_schema, detail });
+  if (!projected.ok) return rejected(projected.error.detail);
+  const checked = await core.request("validate_payload", { bundle: context.bundle, schema: fact.payload_schema, payload: projected.value });
   if (!checked.ok) return checked.error.kind === "domain" ? rejected(JSON.stringify(checked.error))
     : { kind: "transiently_unavailable", detail: JSON.stringify(checked.error) };
   if (checked.value.kind !== "validated") return rejected("core returned a non-validated recovery payload");
@@ -117,7 +135,9 @@ export function createEffectProvider(options: ProductionProviderOptions): Effect
     const mapping = declaredRecovery(context, invocation, result.code);
     const definition = context.scope.facts.find((fact) => fact.key === mapping?.fact);
     if (!definition) return result;
-    const checked = await validate(context, definition.payload_schema, result.detail);
+    const projected = projectRecoveryDetail({ bundle: context.bundle, schema: definition.payload_schema, detail: result.detail });
+    if (!projected.ok) return rejected(projected.error.detail);
+    const checked = await validate(context, definition.payload_schema, projected.value);
     if (checked.kind !== "acknowledged") return checked;
     const evidence: Trigger = { id: `${invocation.id}:error`, key: definition.key, payload: checked.value };
     return { ...result, evidence };
