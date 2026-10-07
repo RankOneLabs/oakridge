@@ -1,7 +1,7 @@
 import type { DecisionTree } from "../../source-contracts";
 import { literal, reference, variant } from "../../primitives/expressions";
 import type { RunPolicy } from "../policies";
-import { STAGE_TABLE, type StageTable, advanceStage, buildStageGate, cancelStageChildren, failureOutcome } from "./stage-table";
+import { STAGE_TABLE, type StageTable, buildStageGate, cancelStageChildren, failureOutcome } from "./stage-table";
 
 export function buildRootDispatch(table: StageTable = STAGE_TABLE, policy: RunPolicy): DecisionTree {
   const first = table[0];
@@ -30,6 +30,7 @@ export function buildRootDispatch(table: StageTable = STAGE_TABLE, policy: RunPo
     kind: "match", id: "root_dispatch", value: reference({ kind: "trigger" }, []),
     cases: [
       { variant: "begin", node: rootBegin },
+      ...(policy.stage_layout === "verification" ? [{ variant: "inspect", node: { kind: "apply" as const, id: "root_inspect", mutations: [], actions: [], outcome: null } }] : []),
       ...table.map((row) => ({ variant: `${row.key}_finished`, node: buildStageGate(table, row, policy) })),
       { variant: "cancel", node: rootCancel },
       { variant: "abandon", node: rootAbandon }

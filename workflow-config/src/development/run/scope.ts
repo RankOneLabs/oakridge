@@ -1,11 +1,13 @@
 import { defineScope } from "../../builder";
 import { buildRootDispatch } from "./decisions";
-import { STAGE_TABLE, buildStageChildren } from "./stage-table";
+import { buildStageChildren, stageTableFor } from "./stage-table";
 import type { RunPolicy } from "../policies";
 
-export function buildDevelopmentScope(policy: RunPolicy) { return defineScope({
+export function buildDevelopmentScope(policy: RunPolicy) {
+  const table = stageTableFor(policy);
+  return defineScope({
   key: "development",
-  input_schema: "run_input",
+  input_schema: policy.stage_layout === "verification" ? "run_input_verification" : "run_input",
   state_schema: "phase_root",
   initial: { kind: "ready", value: {  } },
   outcome_schema: "run_result",
@@ -40,24 +42,21 @@ export function buildDevelopmentScope(policy: RunPolicy) { return defineScope({
       label: "Abandon",
       consequence: "abandon",
       field_presentation: []
-    }
+    },
+    ...(policy.stage_layout === "verification" ? [{
+      key: "inspect", payload_schema: "unit", available_in: ["ready"], required: false, targets: [],
+      label: "Inspect", consequence: "inspect", field_presentation: []
+    }] : [])
   ],
-  facts: [
-    { key: "prepare_finished", payload_schema: "unit" },
-    { key: "analysis_finished", payload_schema: "unit" },
-    { key: "plan_finished", payload_schema: "unit" },
-    { key: "briefs_finished", payload_schema: "unit" },
-    { key: "implementation_finished", payload_schema: "unit" },
-    { key: "integration_finished", payload_schema: "unit" }
-  ],
+  facts: table.map((row) => ({ key: `${row.key}_finished`, payload_schema: "unit" })),
   outputs: [],
   workers: [],
-  children: buildStageChildren(STAGE_TABLE),
+  children: buildStageChildren(table),
   exports: [],
   resources: [],
   pools: [],
   cancellation: { trigger: "cancel" },
   presentation: { label: "Development", viewer: "generic" },
-  tree: buildRootDispatch(STAGE_TABLE, policy),
+  tree: buildRootDispatch(table, policy),
   entry_command: "begin"
 }); }

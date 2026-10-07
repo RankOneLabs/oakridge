@@ -19,7 +19,7 @@ export const workers: WorkerDefinition[] = [
             value: record("session_context", [{ key: "integration", value: optional("optional_integration", reference({ kind: "input" }, [])) }])
           }
         ]),
-        prompt: "final_integration_integrator_initial",
+        prompt: "final_integration_integrator_initial_v3",
         settings: [{ key: "evidence_fact", value: "submitted" }],
         tools: [],
         outputs: ["pr_summary"],
@@ -38,7 +38,7 @@ export const workers: WorkerDefinition[] = [
             value: record("session_context", [{ key: "integration", value: optional("optional_integration", reference({ kind: "input" }, [])) }])
           }
         ]),
-        prompt: "final_integration_integrator_retry",
+        prompt: "final_integration_integrator_retry_v3",
         settings: [{ key: "evidence_fact", value: "submitted" }],
         tools: [],
         outputs: ["pr_summary"],

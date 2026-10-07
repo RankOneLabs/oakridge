@@ -19,7 +19,7 @@ export const workers: WorkerDefinition[] = [
             value: record("session_context", [{ key: "task", value: optional("optional_task", reference({ kind: "input" }, [])) }])
           }
         ]),
-        prompt: "planning_author_initial",
+        prompt: "planning_author_initial_v3",
         settings: [{ key: "evidence_fact", value: "submitted" }],
         tools: [],
         outputs: ["plan"],
@@ -41,7 +41,7 @@ export const workers: WorkerDefinition[] = [
             ])
           }
         ]),
-        prompt: "planning_author_revise",
+        prompt: "planning_author_revise_v3",
         settings: [{ key: "evidence_fact", value: "submitted" }],
         tools: [],
         outputs: ["plan"],
@@ -60,7 +60,7 @@ export const workers: WorkerDefinition[] = [
             value: record("session_context", [{ key: "task", value: optional("optional_task", reference({ kind: "input" }, [])) }])
           }
         ]),
-        prompt: "planning_author_retry",
+        prompt: "planning_author_retry_v3",
         settings: [{ key: "evidence_fact", value: "submitted" }],
         tools: [],
         outputs: ["plan"],

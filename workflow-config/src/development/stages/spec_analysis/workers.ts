@@ -19,7 +19,7 @@ export const workers: WorkerDefinition[] = [
             value: record("session_context", [{ key: "task", value: optional("optional_task", reference({ kind: "input" }, [])) }])
           }
         ]),
-        prompt: "spec_analysis_author_initial",
+        prompt: "spec_analysis_author_initial_v3",
         settings: [{ key: "evidence_fact", value: "submitted" }],
         tools: [],
         outputs: ["analysis"],
@@ -41,7 +41,7 @@ export const workers: WorkerDefinition[] = [
             ])
           }
         ]),
-        prompt: "spec_analysis_author_revise",
+        prompt: "spec_analysis_author_revise_v3",
         settings: [{ key: "evidence_fact", value: "submitted" }],
         tools: [],
         outputs: ["analysis"],
@@ -60,7 +60,7 @@ export const workers: WorkerDefinition[] = [
             value: record("session_context", [{ key: "task", value: optional("optional_task", reference({ kind: "input" }, [])) }])
           }
         ]),
-        prompt: "spec_analysis_author_retry",
+        prompt: "spec_analysis_author_retry_v3",
         settings: [{ key: "evidence_fact", value: "submitted" }],
         tools: [],
         outputs: ["analysis"],

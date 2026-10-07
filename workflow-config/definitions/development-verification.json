@@ -1,6 +1,6 @@
 {
   "language_version": 1,
-  "key": "development",
+  "key": "development-verification",
   "version": 3,
   "root": "development",
   "schemas": [
@@ -206,12 +206,12 @@
             "required": true
           },
           {
-            "key": "push_remote_owner",
+            "key": "head",
             "schema": "ident",
             "required": true
           },
           {
-            "key": "head",
+            "key": "push_remote_owner",
             "schema": "ident",
             "required": true
           }
@@ -2006,17 +2006,17 @@
             "required": true
           },
           {
-            "key": "head_owner",
-            "schema": "ident",
-            "required": true
-          },
-          {
             "key": "head_branch",
             "schema": "ident",
             "required": true
           },
           {
             "key": "base_branch",
+            "schema": "ident",
+            "required": true
+          },
+          {
+            "key": "head_owner",
             "schema": "ident",
             "required": true
           }
@@ -2059,12 +2059,51 @@
         "item": "optional_ident",
         "max_items": 100
       }
+    },
+    {
+      "key": "run_input_verification",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "spec",
+            "schema": "text",
+            "required": true
+          },
+          {
+            "key": "repositories",
+            "schema": "repository_configs",
+            "required": true
+          },
+          {
+            "key": "analysis",
+            "schema": "session_config",
+            "required": true
+          },
+          {
+            "key": "planning",
+            "schema": "session_config",
+            "required": true
+          },
+          {
+            "key": "briefs",
+            "schema": "session_config",
+            "required": true
+          },
+          {
+            "key": "verification_note",
+            "schema": "optional_text",
+            "required": true
+          }
+        ],
+        "dictionary": null
+      }
     }
   ],
   "scopes": [
     {
       "key": "development",
-      "input_schema": "run_input",
+      "input_schema": "run_input_verification",
       "state_schema": "phase_root",
       "initial": {
         "kind": "ready",
@@ -2125,11 +2164,27 @@
           "label": "Abandon",
           "consequence": "abandon",
           "field_presentation": []
+        },
+        {
+          "key": "inspect",
+          "payload_schema": "unit",
+          "available_in": [
+            "ready"
+          ],
+          "required": false,
+          "targets": [],
+          "label": "Inspect",
+          "consequence": "inspect",
+          "field_presentation": []
         }
       ],
       "facts": [
         {
           "key": "prepare_finished",
+          "payload_schema": "unit"
+        },
+        {
+          "key": "verification_finished",
           "payload_schema": "unit"
         },
         {
@@ -2244,6 +2299,100 @@
             }
           },
           "on_terminal": "prepare_finished",
+          "on_terminal_payload": {
+            "kind": "empty_record"
+          }
+        },
+        {
+          "key": "verification",
+          "scope": "repository_preparation",
+          "input": {
+            "kind": "reference",
+            "root": {
+              "kind": "item"
+            },
+            "path": [
+              "input"
+            ]
+          },
+          "depends_on": [
+            "prepare"
+          ],
+          "imports": [
+            "references"
+          ],
+          "collection": {
+            "source": {
+              "kind": "map",
+              "source": {
+                "kind": "reference",
+                "root": {
+                  "kind": "input"
+                },
+                "path": [
+                  "repositories"
+                ]
+              },
+              "schema": "prepare_members",
+              "value": {
+                "kind": "record",
+                "schema": "prepare_member",
+                "fields": [
+                  {
+                    "key": "key",
+                    "value": {
+                      "kind": "reference",
+                      "root": {
+                        "kind": "item"
+                      },
+                      "path": [
+                        "key"
+                      ]
+                    }
+                  },
+                  {
+                    "key": "input",
+                    "value": {
+                      "kind": "reference",
+                      "root": {
+                        "kind": "item"
+                      },
+                      "path": [
+                        "preparation"
+                      ]
+                    }
+                  },
+                  {
+                    "key": "dependencies",
+                    "value": {
+                      "kind": "literal",
+                      "schema": "ids",
+                      "value": []
+                    }
+                  }
+                ]
+              }
+            },
+            "key_field": "key",
+            "input_field": "input",
+            "dependencies_field": "dependencies",
+            "min_items": 1,
+            "max_items": 100,
+            "empty": {
+              "kind": "complete",
+              "outcome": {
+                "kind": "variant",
+                "schema": "run_result",
+                "variant": "complete",
+                "value": {
+                  "kind": "literal",
+                  "schema": "unit",
+                  "value": {}
+                }
+              }
+            }
+          },
+          "on_terminal": "verification_finished",
           "on_terminal_payload": {
             "kind": "empty_record"
           }
@@ -2945,6 +3094,16 @@
             }
           },
           {
+            "variant": "inspect",
+            "node": {
+              "kind": "apply",
+              "id": "root_inspect",
+              "mutations": [],
+              "actions": [],
+              "outcome": null
+            }
+          },
+          {
             "variant": "prepare_finished",
             "node": {
               "kind": "match",
@@ -3006,7 +3165,7 @@
                             "value": {
                               "kind": "variant",
                               "schema": "phase_root",
-                              "variant": "analyzing",
+                              "variant": "preparing",
                               "value": {
                                 "kind": "literal",
                                 "schema": "unit",
@@ -3016,7 +3175,7 @@
                           },
                           {
                             "kind": "activate_child",
-                            "key": "analysis"
+                            "key": "verification"
                           }
                         ],
                         "actions": [],
@@ -3029,6 +3188,10 @@
                           {
                             "kind": "cancel_children",
                             "key": "prepare"
+                          },
+                          {
+                            "kind": "cancel_children",
+                            "key": "verification"
                           },
                           {
                             "kind": "cancel_children",
@@ -3132,6 +3295,197 @@
             }
           },
           {
+            "variant": "verification_finished",
+            "node": {
+              "kind": "match",
+              "id": "verification_parent_phase",
+              "value": {
+                "kind": "reference",
+                "root": {
+                  "kind": "state"
+                },
+                "path": []
+              },
+              "cases": [
+                {
+                  "variant": "preparing",
+                  "node": {
+                    "kind": "if",
+                    "id": "verification_all_terminal",
+                    "condition": {
+                      "kind": "reference",
+                      "root": {
+                        "kind": "children_complete",
+                        "key": "verification",
+                        "schema": "flag"
+                      },
+                      "path": []
+                    },
+                    "then": {
+                      "kind": "if",
+                      "id": "verification_success",
+                      "condition": {
+                        "kind": "every",
+                        "source": {
+                          "kind": "reference",
+                          "root": {
+                            "kind": "children_outcomes",
+                            "key": "verification",
+                            "schema": "results"
+                          },
+                          "path": []
+                        },
+                        "predicate": {
+                          "kind": "is_variant",
+                          "value": {
+                            "kind": "reference",
+                            "root": {
+                              "kind": "item"
+                            },
+                            "path": []
+                          },
+                          "variant": "complete"
+                        }
+                      },
+                      "then": {
+                        "kind": "apply",
+                        "id": "verification_advance",
+                        "mutations": [
+                          {
+                            "kind": "set_state",
+                            "value": {
+                              "kind": "variant",
+                              "schema": "phase_root",
+                              "variant": "analyzing",
+                              "value": {
+                                "kind": "literal",
+                                "schema": "unit",
+                                "value": {}
+                              }
+                            }
+                          },
+                          {
+                            "kind": "activate_child",
+                            "key": "analysis"
+                          }
+                        ],
+                        "actions": [],
+                        "outcome": null
+                      },
+                      "otherwise": {
+                        "kind": "apply",
+                        "id": "verification_failure",
+                        "mutations": [
+                          {
+                            "kind": "cancel_children",
+                            "key": "prepare"
+                          },
+                          {
+                            "kind": "cancel_children",
+                            "key": "verification"
+                          },
+                          {
+                            "kind": "cancel_children",
+                            "key": "analysis"
+                          },
+                          {
+                            "kind": "cancel_children",
+                            "key": "plan"
+                          },
+                          {
+                            "kind": "cancel_children",
+                            "key": "briefs"
+                          },
+                          {
+                            "kind": "cancel_children",
+                            "key": "implementation"
+                          },
+                          {
+                            "kind": "cancel_children",
+                            "key": "integration"
+                          }
+                        ],
+                        "actions": [],
+                        "outcome": {
+                          "kind": "variant",
+                          "schema": "run_result",
+                          "variant": "failed",
+                          "value": {
+                            "kind": "record",
+                            "schema": "failure_summary",
+                            "fields": [
+                              {
+                                "key": "failures",
+                                "value": {
+                                  "kind": "filter",
+                                  "source": {
+                                    "kind": "reference",
+                                    "root": {
+                                      "kind": "children_outcomes",
+                                      "key": "verification",
+                                      "schema": "results"
+                                    },
+                                    "path": []
+                                  },
+                                  "predicate": {
+                                    "kind": "not",
+                                    "value": {
+                                      "kind": "is_variant",
+                                      "value": {
+                                        "kind": "reference",
+                                        "root": {
+                                          "kind": "item"
+                                        },
+                                        "path": []
+                                      },
+                                      "variant": "complete"
+                                    }
+                                  }
+                                }
+                              },
+                              {
+                                "key": "prior_failures",
+                                "value": {
+                                  "kind": "literal",
+                                  "schema": "results",
+                                  "value": []
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    "otherwise": {
+                      "kind": "wait",
+                      "id": "verification_pending",
+                      "continuations": [
+                        "verification_finished"
+                      ],
+                      "reason": "awaiting declared work or operator review",
+                      "attention": {
+                        "label": "Awaiting work or review",
+                        "trigger": "verification_finished"
+                      }
+                    }
+                  }
+                }
+              ],
+              "otherwise": {
+                "kind": "wait",
+                "id": "verification_stale",
+                "continuations": [
+                  "verification_finished"
+                ],
+                "reason": "awaiting declared work or operator review",
+                "attention": {
+                  "label": "Awaiting work or review",
+                  "trigger": "verification_finished"
+                }
+              }
+            }
+          },
+          {
             "variant": "analysis_finished",
             "node": {
               "kind": "match",
@@ -3216,6 +3570,10 @@
                           {
                             "kind": "cancel_children",
                             "key": "prepare"
+                          },
+                          {
+                            "kind": "cancel_children",
+                            "key": "verification"
                           },
                           {
                             "kind": "cancel_children",
@@ -3406,6 +3764,10 @@
                           },
                           {
                             "kind": "cancel_children",
+                            "key": "verification"
+                          },
+                          {
+                            "kind": "cancel_children",
                             "key": "analysis"
                           },
                           {
@@ -3590,6 +3952,10 @@
                           {
                             "kind": "cancel_children",
                             "key": "prepare"
+                          },
+                          {
+                            "kind": "cancel_children",
+                            "key": "verification"
                           },
                           {
                             "kind": "cancel_children",
@@ -3790,6 +4156,10 @@
                         {
                           "kind": "cancel_children",
                           "key": "prepare"
+                        },
+                        {
+                          "kind": "cancel_children",
+                          "key": "verification"
                         },
                         {
                           "kind": "cancel_children",
@@ -4039,6 +4409,10 @@
                           },
                           {
                             "kind": "cancel_children",
+                            "key": "verification"
+                          },
+                          {
+                            "kind": "cancel_children",
                             "key": "analysis"
                           },
                           {
@@ -4171,6 +4545,10 @@
                 },
                 {
                   "kind": "cancel_children",
+                  "key": "verification"
+                },
+                {
+                  "kind": "cancel_children",
                   "key": "analysis"
                 },
                 {
@@ -4212,6 +4590,10 @@
                 {
                   "kind": "cancel_children",
                   "key": "prepare"
+                },
+                {
+                  "kind": "cancel_children",
+                  "key": "verification"
                 },
                 {
                   "kind": "cancel_children",
@@ -8466,18 +8848,6 @@
                           }
                         },
                         {
-                          "key": "head_owner",
-                          "value": {
-                            "kind": "reference",
-                            "root": {
-                              "kind": "input"
-                            },
-                            "path": [
-                              "push_remote_owner"
-                            ]
-                          }
-                        },
-                        {
                           "key": "head_branch",
                           "value": {
                             "kind": "reference",
@@ -8501,6 +8871,18 @@
                               "repository",
                               "forge",
                               "build_base"
+                            ]
+                          }
+                        },
+                        {
+                          "key": "head_owner",
+                          "value": {
+                            "kind": "reference",
+                            "root": {
+                              "kind": "input"
+                            },
+                            "path": [
+                              "push_remote_owner"
                             ]
                           }
                         }
@@ -8548,7 +8930,7 @@
       "pools": [
         {
           "key": "implementation_slots",
-          "limit": 4
+          "limit": 3
         }
       ],
       "cancellation": {
@@ -11824,18 +12206,6 @@
                           }
                         },
                         {
-                          "key": "head_owner",
-                          "value": {
-                            "kind": "reference",
-                            "root": {
-                              "kind": "input"
-                            },
-                            "path": [
-                              "push_remote_owner"
-                            ]
-                          }
-                        },
-                        {
                           "key": "head_branch",
                           "value": {
                             "kind": "reference",
@@ -11858,6 +12228,18 @@
                             "path": [
                               "forge",
                               "final_base"
+                            ]
+                          }
+                        },
+                        {
+                          "key": "head_owner",
+                          "value": {
+                            "kind": "reference",
+                            "root": {
+                              "kind": "input"
+                            },
+                            "path": [
+                              "push_remote_owner"
                             ]
                           }
                         }

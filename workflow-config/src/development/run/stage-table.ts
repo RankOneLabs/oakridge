@@ -10,12 +10,19 @@ export interface StageRow {
   readonly completion: "standard" | "implementation" | "integration";
   readonly dependencies: readonly string[];
   readonly child: Omit<ChildDefinition, "depends_on">;
+  readonly prompt_groups: readonly PromptGroup[];
+}
+export interface PromptGroup {
+  readonly template: string;
+  readonly prefix: string;
+  readonly actions: readonly string[];
+  readonly context: string;
 }
 export type StageTable = readonly StageRow[];
 
 /** Ordered stages are the source for child dependencies, completion routing and cancellation. */
 export const STAGE_TABLE: StageTable = [
-  { key: "prepare", phase: "preparing", next_phase: "analyzing", next_child: "analysis", completion: "standard", dependencies: [], child: {
+  { key: "prepare", phase: "preparing", next_phase: "analyzing", next_child: "analysis", completion: "standard", dependencies: [], prompt_groups: [], child: {
       key: "prepare",
       scope: "repository_preparation",
       input: reference({ kind: "item" }, ["input"]),
@@ -40,7 +47,7 @@ export const STAGE_TABLE: StageTable = [
       },
       on_terminal: "prepare_finished"
     } },
-  { key: "analysis", phase: "analyzing", next_phase: "planning", next_child: "plan", completion: "standard", dependencies: ["prepare"], child: {
+  { key: "analysis", phase: "analyzing", next_phase: "planning", next_child: "plan", completion: "standard", dependencies: ["prepare"], prompt_groups: [{ template: "spec_analysis_author", prefix: "spec_analysis_author", actions: ["initial", "revise", "retry"], context: "Analyze the specification" }], child: {
       key: "analysis",
       scope: "spec_analysis",
       input: record("task_input", [
@@ -58,7 +65,7 @@ export const STAGE_TABLE: StageTable = [
       collection: null,
       on_terminal: "analysis_finished"
     } },
-  { key: "plan", phase: "planning", next_phase: "briefing", next_child: "briefs", completion: "standard", dependencies: ["analysis", "prepare"], child: {
+  { key: "plan", phase: "planning", next_phase: "briefing", next_child: "briefs", completion: "standard", dependencies: ["analysis", "prepare"], prompt_groups: [{ template: "planning_author", prefix: "planning_author", actions: ["initial", "revise", "retry"], context: "Write the implementation plan" }], child: {
       key: "plan",
       scope: "planning",
       input: record("task_input", [
@@ -76,7 +83,7 @@ export const STAGE_TABLE: StageTable = [
       collection: null,
       on_terminal: "plan_finished"
     } },
-  { key: "briefs", phase: "briefing", next_phase: "implementing", next_child: "implementation", completion: "standard", dependencies: ["plan", "prepare"], child: {
+  { key: "briefs", phase: "briefing", next_phase: "implementing", next_child: "implementation", completion: "standard", dependencies: ["plan", "prepare"], prompt_groups: [{ template: "brief_writing_author", prefix: "brief_writing_author", actions: ["initial", "revise", "retry"], context: "Write cohort briefs" }], child: {
       key: "briefs",
       scope: "brief_writing",
       input: record("task_input", [
@@ -94,7 +101,7 @@ export const STAGE_TABLE: StageTable = [
       collection: null,
       on_terminal: "briefs_finished"
     } },
-  { key: "implementation", phase: "implementing", next_phase: "integrating", next_child: "integration", completion: "implementation", dependencies: ["briefs", "prepare"], child: {
+  { key: "implementation", phase: "implementing", next_phase: "integrating", next_child: "integration", completion: "implementation", dependencies: ["briefs", "prepare"], prompt_groups: [{ template: "implementation_build", prefix: "implementation_build", actions: ["initial", "revise", "replace_pr", "retry", "retry_missing_build", "retry_missing_pr", "revise_after_assessment"], context: "Build the cohort" }, { template: "implementation_assessment", prefix: "implementation_assessment", actions: ["initial", "retry", "discuss"], context: "Assess the build" }], child: {
       key: "implementation",
       scope: "implementation",
       input: reference({ kind: "item" }, ["input"]),
@@ -160,7 +167,7 @@ export const STAGE_TABLE: StageTable = [
       on_terminal: "implementation_finished",
       prerequisite_export: "accepted"
     } },
-  { key: "integration", phase: "integrating", next_phase: null, next_child: null, completion: "integration", dependencies: ["implementation", "prepare"], child: {
+  { key: "integration", phase: "integrating", next_phase: null, next_child: null, completion: "integration", dependencies: ["implementation", "prepare"], prompt_groups: [{ template: "final_integration_integrator", prefix: "final_integration_integrator", actions: ["initial", "retry"], context: "Integrate accepted cohorts" }], child: {
       key: "integration",
       scope: "final_integration",
       input: reference({ kind: "item" }, ["input"]),
@@ -207,6 +214,23 @@ export const STAGE_TABLE: StageTable = [
       on_terminal: "integration_finished"
     } },
 ];
+
+/** Adds one repository verification stage without a second handwritten gate. */
+export function stageTableFor(policy: RunPolicy): StageTable {
+  if (policy.stage_layout !== "verification") return STAGE_TABLE;
+  const prepare = STAGE_TABLE[0]!;
+  const verification: StageRow = {
+    ...prepare,
+    key: "verification",
+    phase: "preparing",
+    next_phase: "analyzing",
+    next_child: "analysis",
+    dependencies: ["prepare"],
+    prompt_groups: [],
+    child: { ...prepare.child, key: "verification", on_terminal: "verification_finished" }
+  };
+  return [{ ...prepare, next_phase: "preparing", next_child: "verification" }, verification, ...STAGE_TABLE.slice(1)];
+}
 
 export function buildStageChildren(table: StageTable): ChildDefinition[] {
   return table.map(({ child, dependencies }) => {
