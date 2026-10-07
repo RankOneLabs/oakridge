@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { resolveObserve, settleObserveRetry } from "../src/effects/outcomes";
 import type { StableInvocation } from "../src/effects/provider";
+import { requiresCleanup } from "../src/effects/intents";
 
 test("permanent and malformed terminal observations reject rather than retry", () => {
   const payload = { invocation: {} as StableInvocation, action: "start" as const, handle: null };
@@ -22,4 +23,9 @@ test("consecutive unavailable observations reject at the configured bound and ru
   const afterRunning = resolveObserve({ ...pending.payload, observe_unavailable_attempts: 0 }, unavailable);
   if (afterRunning.kind !== "retry") throw new Error("observation after running did not retry");
   expect(settleObserveRetry(initial, afterRunning, 2).status).toBe("acknowledged");
+});
+
+test("a rejected observation with an acknowledged handle still owes cleanup", () => {
+  expect(requiresCleanup({ status: "rejected", payload: { invocation: {} as StableInvocation, action: "start",
+    handle: { kind: "kbbl_session", session_id: "session" } } })).toBe(true);
 });

@@ -124,6 +124,27 @@ test("rejection after uncertainty cleans up even when its evidence makes the run
   } finally { await composition.close(); }
 }));
 
+test("observe rejection settles, delivers evidence, and cleans up its acknowledged session", async () => withDatabase(async ({ url, db }) => {
+  let stops = 0;
+  const composition = await createProductionComposition({ database_url: url,
+    core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1",
+    timing: { retry_initial_seconds: 0.01, retry_cap_seconds: 0.05, observe_interval_seconds: 0.01, wake_timeout_seconds: 0.05 },
+    effect_provider: {
+      start: async () => ({ kind: "acknowledged", value: { kind: "kbbl_session", session_id: "session" } }),
+      observe: async () => ({ kind: "permanently_rejected", code: "session_failed", detail: "provider rejected observation",
+        evidence: { id: "terminal-error", key: "session_failed", payload: { schema: "text", data: { kind: "string", value: "provider rejected observation" } } } }),
+      stop: async () => { stops++; return { kind: "acknowledged", value: { stopped: true } }; },
+    } });
+  try {
+    const run = await begin(composition, await sessionBundle(), { runtime: "claude-code", rendered_prompt: "publish", workdir: "/tmp", session_name: "rejected",
+      session_identity: {}, worktree: { branchName: "selected", worktreeSubdir: "selected" } });
+    await waitUntil(async () => (await db.query<{ status: string }>("SELECT status FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='stop'", [run.root_scope_id]))[0]?.status === "cleanup_confirmed");
+    expect((await db.query<{ status: string }>("SELECT status FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='start'", [run.root_scope_id]))[0]?.status).toBe("rejected");
+    expect((await db.query<{ count: string }>("SELECT count(*)::text AS count FROM authority.fact WHERE scope_id=$1 AND fact_key='session_failed'", [run.root_scope_id]))[0]?.count).toBe("1");
+    expect(stops).toBe(1);
+  } finally { await composition.close(); }
+}));
+
 test("production prepares the selected repository and routes durable results into configured scope decisions", async () => {
   await withDatabase(async ({ url, db }) => {
     const composition = await createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1", timing: { retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, wake_timeout_seconds: 1 } });
@@ -199,9 +220,12 @@ test("GitHub 403 publishes a typed auth fact and does not retry", async () => {
 });
 
 test("a shipped unit session result commits an execution and confirms cleanup", async () => {
-  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: (request) => request.method === "PUT"
-    ? Response.json({ kind: "attached", session: { sid: "completed-session", status: "live" } })
-    : Response.json({ session: { endReason: "subprocess_exited" }, exit_code: 0 }) });
+  let observations = 0;
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: (request) => {
+    if (request.method === "PUT") return Response.json({ kind: "attached", session: { sid: "completed-session", status: "live" } });
+    if (++observations === 1) return Response.json({ lastActivityTs: Date.now() }, { status: 202 });
+    return Response.json({ session: { endReason: "subprocess_exited" }, exit_code: 0 });
+  } });
   try {
     await withDatabase(async ({ url, db }) => {
       const composition = await createProductionComposition({ database_url: url,
@@ -214,6 +238,7 @@ test("a shipped unit session result commits an execution and confirms cleanup", 
         await waitUntil(async () => (await db.query<{ status: string }>("SELECT status FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='start'", [run.root_scope_id]))[0]?.status === "cleanup_confirmed");
         expect((await db.query<{ status: string; result: CheckedValue }>("SELECT status,result FROM authority.execution WHERE scope_id=$1", [run.root_scope_id]))[0])
           .toMatchObject({ status: "terminal", result: { schema: "unit", data: { kind: "record", fields: [] } } });
+        expect(observations).toBeGreaterThanOrEqual(2);
       } finally { await composition.close(); }
     });
   } finally { server.stop(true); }
