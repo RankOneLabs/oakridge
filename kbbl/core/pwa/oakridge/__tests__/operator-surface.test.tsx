@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { OakridgeShell } from "../OakridgeShell";
 import { OperatorLaunchView } from "../views/OperatorLaunchView";
@@ -12,7 +12,19 @@ import { savePendingCommand } from "../lib/operator-drafts";
 import type { WorkflowDefinitionDescriptor } from "../workflow-definition-types";
 
 function shippedBundle(name: string): unknown {
-  return JSON.parse(readFileSync(resolve(process.cwd(), `../../../workflow-config/definitions/${name}.json`), "utf8"));
+  const path = resolve(process.cwd(), `../../../workflow-config/definitions/${name}.json`);
+  if (existsSync(path)) return JSON.parse(readFileSync(path, "utf8"));
+  // PR 4's third bundle is absent at the integration baseline. Keep its extra
+  // root field represented there so the test fails for the missing form behavior.
+  if (name !== "development-verification") throw new Error(`Missing shipped bundle: ${name}`);
+  const source = shippedBundle("development") as WorkflowDefinitionDescriptor;
+  const root = source.scopes.find((scope) => scope.key === source.root);
+  const input = source.schemas.find((schema) => schema.key === root?.input_schema);
+  if (!root || input?.shape.kind !== "record" || !root.commands[0]) throw new Error("Invalid baseline bundle");
+  return { ...source, key: name, schemas: [...source.schemas, { key: "test_extended_root", shape: { ...input.shape,
+    fields: [...input.shape.fields, { key: "verification_note", schema: "optional_text", required: true }] } }],
+    scopes: source.scopes.map((scope) => scope.key === root.key ? { ...scope, input_schema: "test_extended_root",
+      commands: [...scope.commands, { ...root.commands[0], key: "test_extra", label: "Additional action" }] } : scope) };
 }
 const canonicalDefinition = shippedBundle("development") as { readonly version: number; readonly [key: string]: unknown };
 
