@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 
-import { mountOakridgeProxyRoutes } from "./oakridge-proxy";
+import { mountOakridgeProxyRoutes, parseFallbackRefreshMs } from "./oakridge-proxy";
 import { HTTP_ROUTES } from "../../../../oakridge-dbos/src/http/routes";
 
 const originalFetch = globalThis.fetch;
@@ -11,6 +11,31 @@ afterEach(() => {
 });
 
 describe("oakridge proxy", () => {
+  test("serves the operator refresh interval so it is settable without a PWA rebuild", async () => {
+    const app = new Hono();
+    mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test", fallbackRefreshMs: 5_000 });
+    expect(await (await app.request("/oakridge/config")).json()).toEqual({
+      available: true, core_url: "http://oakridge.test", fallback_refresh_ms: 5_000 });
+  });
+
+  test("states no interval when none is configured, leaving the PWA default in place", async () => {
+    const app = new Hono();
+    mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test" });
+    expect(await (await app.request("/oakridge/config")).json()).toEqual({ available: true, core_url: "http://oakridge.test" });
+  });
+
+  test("an unset refresh interval is absent, not a value", () => {
+    expect([parseFallbackRefreshMs(undefined), parseFallbackRefreshMs("  ")]).toEqual([undefined, undefined]);
+  });
+
+  test("a configured refresh interval parses to its millisecond value", () => {
+    expect(parseFallbackRefreshMs("5000")).toBe(5_000);
+  });
+
+  test.each(["soon", "0", "-1"])("a refresh interval of %s fails the boot rather than being ignored", (raw) => {
+    expect(() => parseFallbackRefreshMs(raw)).toThrow(/OAKRIDGE_FALLBACK_REFRESH_MS/);
+  });
+
   test("preserves a durable ingress receipt and the upstream acceptance status", async () => {
     let target = "";
     globalThis.fetch = (async (input, init) => {

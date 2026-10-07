@@ -138,6 +138,10 @@ This is not a public-internet deployment configuration.
 `OAKRIDGE_CONTROL_TOKEN` is used. Browser authorization is stripped before
 proxying. Agent permission decisions are separate from HTTP control authentication.
 
+`OAKRIDGE_FALLBACK_REFRESH_MS` sets the operator surface's fallback refresh
+interval without a PWA rebuild; it is served from `/oakridge/config` and takes
+precedence over the bundle's `VITE_OAKRIDGE_FALLBACK_REFRESH_MS` default.
+
 ## Development and layout
 
 From `kbbl/`:
