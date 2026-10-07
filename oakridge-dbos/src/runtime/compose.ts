@@ -5,6 +5,7 @@ import type { DefinitionBundle, Trigger } from "../core-client/generated-contrac
 import { CoreClient } from "../core-client/client";
 import { activeRoutes } from "../http/routes";
 import { controlTokenMiddleware, selectControlPlaneAccess } from "../http/control-auth";
+import { browserWriteMiddleware, configuredBrowserWritePolicy } from "../http/browser-write-policy";
 import { httpBodyLimit, installDefinitionApi } from "../http/app";
 import { authorityRepositories } from "../storage/repositories";
 import { createMutationService, cancelRun, deleteRun, type ScopeCancellationPayload, type ProviderCapabilities, type ProviderCapabilityInput } from "../storage/mutation-service";
@@ -150,6 +151,7 @@ export async function createProductionComposition(options: ProductionOptions): P
   const wake = (run_id: RunId): Promise<void> => wakeRun(run_id);
   const app = new Hono();
   app.use("*", httpBodyLimit());
+  app.use("*", browserWriteMiddleware(configuredBrowserWritePolicy()));
   if (access.kind === "token_required") app.use("*", controlTokenMiddleware(access.token));
   installDefinitionApi(app, { db, core, mutations, wake });
   app.get("/health", (context) => context.json({ status: "ok", application_version, core: core.health }));

@@ -49,6 +49,7 @@ function equalToken(header: string | undefined, token: string): boolean {
   const expected = createHash("sha256").update(`Bearer ${token}`).digest();
   return timingSafeEqual(supplied, expected);
 }
+export const isValidControlToken = equalToken;
 
 export const controlTokenMiddleware = (token: string): MiddlewareHandler => async (context, next) => {
   if (!requiresControlToken(context.req.method, context.req.path)) return next();

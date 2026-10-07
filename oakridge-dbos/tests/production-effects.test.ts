@@ -10,7 +10,38 @@ import type { StableInvocation } from "../src/effects/provider";
 import { unit, withDatabase, waitUntil, operationBundle, sessionBundle, begin } from "./effect-fixture";
 import type { StartedRun } from "../src/storage/mutation-service";
 import { activeRoutes } from "../src/http/routes";
+import { Hono } from "hono";
+import { mountOakridgeProxyRoutes } from "../../kbbl/core/server/handlers/oakridge-proxy";
 import { developmentBundle, brief, repository, build_body } from "./development-runtime-fixture";
+
+test("every table write rejects non-JSON bodies and unlisted browser origins on both paths", async () => {
+  const previous = process.env.OAKRIDGE_ALLOWED_ORIGINS;
+  process.env.OAKRIDGE_ALLOWED_ORIGINS = "https://operator.example";
+  try {
+    await withDatabase(async ({ url }) => {
+      const composition = await createProductionComposition({ database_url: url,
+        core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1" });
+      const proxy = new Hono();
+      mountOakridgeProxyRoutes(proxy, { baseUrl: "http://oakridge.test", allowedOrigins: ["https://operator.example"] });
+      try {
+        for (const route of activeRoutes(process.env.OAKRIDGE_ENABLE_RAW_INGRESS === "1").filter((item) => item.method !== "GET")) {
+          const path = route.path.replace(/:[^/]+/g, "id");
+          for (const [headers, expected] of [
+            [{ "content-type": "text/plain" }, 415],
+            [{ "content-type": "application/json", origin: "http://127.0.0.1:5173" }, 403],
+          ] as const) {
+            const options = { method: route.method, headers: new Headers(headers), body: "{}" };
+            expect((await composition.app.request(path, options)).status).toBe(expected);
+            expect((await proxy.request(`/oakridge/api${path}`, options)).status).toBe(expected);
+          }
+        }
+      } finally { await composition.close(); }
+    });
+  } finally {
+    if (previous === undefined) delete process.env.OAKRIDGE_ALLOWED_ORIGINS;
+    else process.env.OAKRIDGE_ALLOWED_ORIGINS = previous;
+  }
+});
 
 test("recovery replays the pinned prompt verbatim and its secret publishes without operator authority", async () => {
   const requests: string[] = [];

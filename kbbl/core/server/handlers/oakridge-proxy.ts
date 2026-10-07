@@ -1,6 +1,8 @@
 import type { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { matchRoute } from "../../../../oakridge-dbos/src/http/routes";
+import { browserWritePolicy, browserWriteRejection, configuredBrowserWritePolicy } from "../../../../oakridge-dbos/src/http/browser-write-policy";
+import { isValidControlToken } from "../../../../oakridge-dbos/src/http/control-auth";
 
 export interface OakridgeProxyDeps {
   baseUrl: string | undefined;
@@ -11,6 +13,8 @@ export interface OakridgeProxyDeps {
    * configured (core runs without auth, typically on a loopback bind).
    */
   coreControlToken?: string;
+  /** Explicit browser origins; an absent list trusts none, including loopback. */
+  allowedOrigins?: readonly string[];
   /**
    * Fallback refresh interval served to the PWA, in milliseconds. Undefined
    * leaves the PWA on its build-time default. The PWA enforces its own minimum
@@ -42,6 +46,7 @@ const OAKRIDGE_PROXY_TIMEOUT_MS = 30_000;
 const STREAMING_UPSTREAM_PATHS: ReadonlySet<string> = new Set(["/events"]);
 
 export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): void {
+  const write_policy = deps.allowedOrigins === undefined ? configuredBrowserWritePolicy() : browserWritePolicy(deps.allowedOrigins);
   // Config: tells the PWA whether the Oakridge backend is configured without
   // attempting a proxy request that would block the page.
   app.get("/oakridge/config", (c) => {
@@ -60,6 +65,11 @@ export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): vo
     }
 
     const subPath = c.req.path.slice("/oakridge/api".length);
+    const rejection = browserWriteRejection(write_policy, c.req.raw, subPath);
+    if (rejection) return rejection;
+    const route = matchRoute(c.req.method, subPath);
+    if (route?.authority === "operator" && deps.coreControlToken && !isValidControlToken(c.req.header("authorization"), deps.coreControlToken))
+      return c.json({ error: "unauthorized" }, 401);
     const search = new URL(c.req.url, "http://localhost").search;
     const targetUrl = deps.baseUrl.replace(/\/$/, "") + subPath + search;
 
@@ -70,7 +80,7 @@ export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): vo
     // to the Oakridge upstream. The retained core control token is then
     // injected server-side without the browser ever seeing the secret.
     const BLOCKED_HEADERS = new Set([
-      "host", "content-length", "cookie", "authorization",
+      "host", "content-length", "cookie",
       "connection", "transfer-encoding", "upgrade", "keep-alive",
       "proxy-authorization", "proxy-authenticate", "te", "trailer",
     ]);
@@ -83,12 +93,7 @@ export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): vo
 
     // Inject core control token for operator routes. The browser Authorization
     // header was stripped above; this is the server-side injection point.
-    if (
-      deps.coreControlToken &&
-      matchRoute(method, subPath)?.authority === "operator"
-    ) {
-      forwardHeaders.set("authorization", `Bearer ${deps.coreControlToken}`);
-    }
+    // Forward the supplied credential after enforcing the same operator check as the backend.
 
     let body: ArrayBuffer | undefined;
     if (method !== "GET" && method !== "HEAD") {

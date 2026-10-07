@@ -3,6 +3,8 @@ import { Hono } from "hono";
 
 import { mountOakridgeProxyRoutes, parseFallbackRefreshMs } from "./oakridge-proxy";
 import { HTTP_ROUTES } from "../../../../oakridge-dbos/src/http/routes";
+import { browserWriteMiddleware, browserWritePolicy } from "../../../../oakridge-dbos/src/http/browser-write-policy";
+import { controlTokenMiddleware } from "../../../../oakridge-dbos/src/http/control-auth";
 
 const originalFetch = globalThis.fetch;
 
@@ -11,6 +13,29 @@ afterEach(() => {
 });
 
 describe("oakridge proxy", () => {
+  test("the direct and proxy paths reject every table write with non-JSON content or an unlisted origin", async () => {
+    const direct = new Hono();
+    direct.use("*", browserWriteMiddleware(browserWritePolicy(["https://operator.example"])));
+    direct.use("*", controlTokenMiddleware("shared-token"));
+    direct.all("*", (c) => c.json({ accepted: true }));
+    const proxy = new Hono();
+    mountOakridgeProxyRoutes(proxy, { baseUrl: "http://oakridge.test", allowedOrigins: ["https://operator.example"], coreControlToken: "shared-token" });
+    for (const route of HTTP_ROUTES.filter((item) => item.method !== "GET")) {
+      const path = route.path.replace(/:[^/]+/g, "id");
+      for (const [headers, status] of [
+        [new Headers({ "content-type": "text/plain", authorization: "Bearer shared-token" }), 415],
+        [new Headers({ "content-type": "application/json", origin: "http://127.0.0.1:5173", authorization: "Bearer shared-token" }), 403],
+      ] as const) {
+        const options = { method: route.method, headers, body: "{}" };
+        expect((await direct.request(path, options)).status).toBe(status);
+        expect((await proxy.request(`/oakridge/api${path}`, options)).status).toBe(status);
+      }
+    }
+    const authorized = { method: "POST", headers: { "content-type": "application/json", origin: "https://operator.example", authorization: "Bearer shared-token" }, body: "{}" };
+    expect((await direct.request("/runs", authorized)).status).toBe(200);
+    expect((await direct.request("/runs", { ...authorized, headers: { ...authorized.headers, authorization: "Bearer wrong" } })).status).toBe(401);
+    expect((await proxy.request("/oakridge/api/runs", { ...authorized, headers: { ...authorized.headers, authorization: "Bearer wrong" } })).status).toBe(401);
+  });
   test("serves the operator refresh interval so it is settable without a PWA rebuild", async () => {
     const app = new Hono();
     mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test", fallbackRefreshMs: 5_000 });
@@ -45,7 +70,7 @@ describe("oakridge proxy", () => {
     }) as typeof fetch;
     const app = new Hono();
     mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test" });
-    const response = await app.request("/oakridge/api/runs/run-1/scopes/scope-1/commands", { method: "POST", body: "{}" });
+    const response = await app.request("/oakridge/api/runs/run-1/scopes/scope-1/commands", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     expect({ target, status: response.status, body: await response.json() }).toEqual({
       target: "http://oakridge.test/runs/run-1/scopes/scope-1/commands", status: 202,
       body: { kind: "accepted_pending", request_id: "request-1", transition_id: "transition-1", scope_version: 5 },
@@ -78,7 +103,7 @@ describe("oakridge proxy", () => {
     expect(signal).toBeInstanceOf(AbortSignal);
   });
 
-  test("injects core control token as Bearer on operator requests", async () => {
+  test("requires the client's core control token on operator requests", async () => {
     const captured = { authHeader: null as string | null };
     globalThis.fetch = (async (_input, init) => {
       const headers = init?.headers as Headers | undefined;
@@ -95,11 +120,12 @@ describe("oakridge proxy", () => {
       coreControlToken: "core-secret",
     });
 
-    await app.request("/oakridge/api/runs", { method: "POST", body: "{}" });
+    expect((await app.request("/oakridge/api/runs", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
+    await app.request("/oakridge/api/runs", { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer core-secret" }, body: "{}" });
     expect(captured.authHeader).toBe("Bearer core-secret");
   });
 
-  test("only table operator routes receive the control token", async () => {
+  test("table operator routes forward the supplied control token", async () => {
     const received: (string | null)[] = [];
     globalThis.fetch = (async (_input, init) => {
       received.push((init?.headers as Headers).get("authorization"));
@@ -109,9 +135,11 @@ describe("oakridge proxy", () => {
     mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test", coreControlToken: "core-secret" });
     for (const route of HTTP_ROUTES) {
       const path = route.path.replace(/:[^/]+/g, "id");
-      await app.request(`/oakridge/api${path}`, { method: route.method, body: route.method === "GET" ? undefined : "{}" });
+      await app.request(`/oakridge/api${path}`, { method: route.method,
+        headers: { authorization: route.authority === "operator" ? "Bearer core-secret" : "", "content-type": "application/json" },
+        body: route.method === "GET" ? undefined : "{}" });
     }
-    expect(received).toEqual(HTTP_ROUTES.map((route) => route.authority === "operator" ? "Bearer core-secret" : null));
+    expect(received).toEqual(HTTP_ROUTES.map((route) => route.authority === "operator" ? "Bearer core-secret" : ""));
   });
 
   test("a two MiB request returns a typed 413 before proxy buffering", async () => {
