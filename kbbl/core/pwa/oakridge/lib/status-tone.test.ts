@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ChipTone } from "../../components/atoms/Chip";
-import type { AssessmentVerdict, ArtifactRevisionStatus, FindingSeverity, PrReviewStatus, RunDisplayStatus, RunStatus, StageStatus, StageUnitStatus } from "../types";
+import type { AssessmentVerdict, ArtifactRevisionStatus, FindingSeverity, PrReviewStatus, RequirementStatus, RunDisplayStatus, RunStatus, StageStatus, StageUnitStatus } from "../types";
 import { selectStatusTone, type StatusToneSource } from "./status-tone";
 
 const run = {
@@ -16,6 +16,7 @@ const unit = {
 const display = { ...run, stuck: "warning" } satisfies Record<RunDisplayStatus, ChipTone>;
 const artifact = { draft: "warning", approved: "success", rejected: "danger" } satisfies Record<ArtifactRevisionStatus, ChipTone>;
 const severity = { blocking: "danger", warning: "warning", info: "info" } satisfies Record<FindingSeverity, ChipTone>;
+const requirement = { implementable: "success", blocked: "danger", ambiguous: "warning" } satisfies Record<RequirementStatus, ChipTone>;
 const verdict = { pass: "success", pass_with_notes: "warning", fail: "danger" } satisfies Record<AssessmentVerdict, ChipTone>;
 const prReview = {
   draft: "warning", ready: "info", changes_requested: "warning", approved: "success", merged: "success", closed: "muted",
@@ -23,7 +24,7 @@ const prReview = {
 
 describe("selectStatusTone", () => {
   it("maps every member of the API status unions", () => {
-    for (const mapping of [run, stage, unit, display, artifact, severity, verdict, prReview]) {
+    for (const mapping of [run, stage, unit, display, artifact, severity, requirement, verdict, prReview]) {
       for (const [status, tone] of Object.entries(mapping)) {
         expect(selectStatusTone(status as StatusToneSource)).toBe(tone);
       }

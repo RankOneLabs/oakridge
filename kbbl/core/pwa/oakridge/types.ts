@@ -409,6 +409,8 @@ export interface ArtifactRevision {
 export type ArtifactRevisionStatus = "draft" | "approved" | "rejected";
 /** Mirrors `FindingSeverity` in oakridge-dbos/src/domain/dev-flow-artifacts.ts. */
 export type FindingSeverity = "blocking" | "warning" | "info";
+/** Mirrors `RequirementStatus` in oakridge-dbos/src/domain/dev-flow-artifacts.ts. */
+export type RequirementStatus = "implementable" | "blocked" | "ambiguous";
 /** Mirrors `AssessmentVerdict` in oakridge-dbos/src/domain/dev-flow-artifacts.ts. */
 export type AssessmentVerdict = "pass" | "pass_with_notes" | "fail";
 /** Mirrors `PrReviewStatus` in oakridge-dbos/src/domain/dev-flow-artifacts.ts. */
