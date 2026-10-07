@@ -1,6 +1,7 @@
 import type { MiddlewareHandler } from "hono";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { matchRoute } from "./routes";
+import type { BrowserWritePolicy } from "./browser-write-policy";
 
 /**
  * The control plane's bind policy, decided once at startup.
@@ -51,9 +52,30 @@ function equalToken(header: string | undefined, token: string): boolean {
 }
 export const isValidControlToken = equalToken;
 
-export const controlTokenMiddleware = (token: string): MiddlewareHandler => async (context, next) => {
+function controlCookie(header: string | null): string | null {
+  for (const part of (header ?? "").split(";")) {
+    const [name, ...value] = part.trim().split("=");
+    if (name === "kbbl_ctrl") return value.join("=");
+  }
+  return null;
+}
+
+/** The backend and proxy accept the same token, whether carried by Bearer or the PWA's control cookie. */
+export function isValidControlRequest(request: Pick<Request, "method" | "headers">, token: string,
+  policy: BrowserWritePolicy = { allowed_origins: new Set() }): boolean {
+  const authorization = request.headers.get("authorization");
+  if (authorization !== null) return equalToken(authorization, token);
+  const cookie = controlCookie(request.headers.get("cookie"));
+  if (cookie === null || !equalToken(`Bearer ${cookie}`, token)) return false;
+  if (request.method === "GET" || request.method === "HEAD") return true;
+  const origin = request.headers.get("origin") ?? request.headers.get("referer");
+  if (!origin) return false;
+  try { return policy.allowed_origins.has(new URL(origin).origin); }
+  catch { return false; }
+}
+
+export const controlTokenMiddleware = (token: string, policy?: BrowserWritePolicy): MiddlewareHandler => async (context, next) => {
   if (!requiresControlToken(context.req.method, context.req.path)) return next();
-  const header = context.req.header("authorization");
-  if (!equalToken(header, token)) return context.json({ error: "unauthorized" }, 401);
+  if (!isValidControlRequest(context.req.raw, token, policy)) return context.json({ error: "unauthorized" }, 401);
   return next();
 };

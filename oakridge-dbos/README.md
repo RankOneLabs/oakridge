@@ -67,8 +67,9 @@ starting the service. Startup refuses a missing key or a key that cannot decrypt
 existing effect intents. Keep this key stable across restarts. Set
 `OAKRIDGE_ALLOWED_ORIGINS` to a comma-separated list of exact browser origins
 that may write; loopback origins need an explicit entry. Writes require
-`application/json`, and the kbbl proxy forwards the caller's authorization
-header under the same operator token check as the backend.
+`application/json`. The backend and kbbl proxy accept the same operator token
+as Bearer or through kbbl's HttpOnly control cookie; the proxy keeps the cookie
+local and forwards the verified token to the backend.
 
 Stop the service; run `pg_dump` to a file nothing in this repository reads;
 drop and recreate the Oakridge database empty; deploy the Rust CLI, DBOS

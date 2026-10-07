@@ -36,6 +36,37 @@ describe("oakridge proxy", () => {
     expect((await direct.request("/runs", { ...authorized, headers: { ...authorized.headers, authorization: "Bearer wrong" } })).status).toBe(401);
     expect((await proxy.request("/oakridge/api/runs", { ...authorized, headers: { ...authorized.headers, authorization: "Bearer wrong" } })).status).toBe(401);
   });
+
+  test("a control cookie authenticates the PWA on both paths and stays off the upstream wire", async () => {
+    const policy = browserWritePolicy(["https://operator.example"]);
+    const direct = new Hono();
+    direct.use("*", browserWriteMiddleware(policy));
+    direct.use("*", controlTokenMiddleware("shared-token", policy));
+    direct.all("*", (c) => c.json({ accepted: true }));
+    let upstream_authorization: string | null = null;
+    globalThis.fetch = (async (_input, init) => {
+      upstream_authorization = (init?.headers as Headers).get("authorization");
+      expect((init?.headers as Headers).get("cookie")).toBeNull();
+      return Response.json({ accepted: true });
+    }) as typeof fetch;
+    const proxy = new Hono();
+    mountOakridgeProxyRoutes(proxy, { baseUrl: "http://oakridge.test", coreControlToken: "shared-token",
+      allowedOrigins: ["https://operator.example"] });
+    const request = { method: "POST", headers: { "content-type": "application/json", origin: "https://operator.example",
+      cookie: "kbbl_ctrl=shared-token" }, body: "{}" };
+    expect((await direct.request("/runs", request)).status).toBe(200);
+    expect((await proxy.request("/oakridge/api/runs", request)).status).toBe(200);
+    expect(String(upstream_authorization)).toBe("Bearer shared-token");
+    expect((await direct.request("/runs", { headers: { cookie: "kbbl_ctrl=shared-token" } })).status).toBe(200);
+    expect((await proxy.request("/oakridge/api/runs", { headers: { cookie: "kbbl_ctrl=shared-token" } })).status).toBe(200);
+    expect((await direct.request("/runs", { ...request, headers: { ...request.headers, origin: "http://127.0.0.1:5173" } })).status).toBe(403);
+    expect((await proxy.request("/oakridge/api/runs", { ...request, headers: { ...request.headers, origin: "http://127.0.0.1:5173" } })).status).toBe(403);
+    const no_origin = { ...request, headers: { "content-type": "application/json", cookie: "kbbl_ctrl=shared-token" } };
+    expect((await direct.request("/runs", no_origin)).status).toBe(401);
+    expect((await proxy.request("/oakridge/api/runs", no_origin)).status).toBe(401);
+    expect((await direct.request("/runs", { ...request, headers: { ...request.headers, cookie: "kbbl_ctrl=wrong" } })).status).toBe(401);
+    expect((await proxy.request("/oakridge/api/runs", { ...request, headers: { ...request.headers, cookie: "kbbl_ctrl=wrong" } })).status).toBe(401);
+  });
   test("serves the operator refresh interval so it is settable without a PWA rebuild", async () => {
     const app = new Hono();
     mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test", fallbackRefreshMs: 5_000 });

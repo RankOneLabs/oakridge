@@ -160,8 +160,9 @@ export async function createProductionComposition(options: ProductionOptions): P
   const app = new Hono();
   app.use("*", httpBodyLimit());
   app.use("*", redactingReadResponses());
-  app.use("*", browserWriteMiddleware(configuredBrowserWritePolicy()));
-  if (access.kind === "token_required") app.use("*", controlTokenMiddleware(access.token));
+  const write_policy = configuredBrowserWritePolicy();
+  app.use("*", browserWriteMiddleware(write_policy));
+  if (access.kind === "token_required") app.use("*", controlTokenMiddleware(access.token, write_policy));
   installDefinitionApi(app, { db, core, mutations, wake });
   app.get("/health", (context) => context.json({ status: "ok", application_version, core: core.health }));
   app.post("/runs", async (context) => {

@@ -2,7 +2,7 @@ import type { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { matchRoute } from "../../../../oakridge-dbos/src/http/routes";
 import { browserWritePolicy, browserWriteRejection, configuredBrowserWritePolicy } from "../../../../oakridge-dbos/src/http/browser-write-policy";
-import { isValidControlToken } from "../../../../oakridge-dbos/src/http/control-auth";
+import { isValidControlRequest } from "../../../../oakridge-dbos/src/http/control-auth";
 
 export interface OakridgeProxyDeps {
   baseUrl: string | undefined;
@@ -68,7 +68,7 @@ export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): vo
     const rejection = browserWriteRejection(write_policy, c.req.raw, subPath);
     if (rejection) return rejection;
     const route = matchRoute(c.req.method, subPath);
-    if (route?.authority === "operator" && deps.coreControlToken && !isValidControlToken(c.req.header("authorization"), deps.coreControlToken))
+    if (route?.authority === "operator" && deps.coreControlToken && !isValidControlRequest(c.req.raw, deps.coreControlToken, write_policy))
       return c.json({ error: "unauthorized" }, 401);
     const search = new URL(c.req.url, "http://localhost").search;
     const targetUrl = deps.baseUrl.replace(/\/$/, "") + subPath + search;
@@ -93,7 +93,10 @@ export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): vo
 
     // Inject core control token for operator routes. The browser Authorization
     // header was stripped above; this is the server-side injection point.
-    // Forward the supplied credential after enforcing the same operator check as the backend.
+    // The PWA cookie stays local to kbbl. A verified cookie is translated to
+    // the same control token the backend would have accepted directly.
+    if (route?.authority === "operator" && deps.coreControlToken && !forwardHeaders.has("authorization"))
+      forwardHeaders.set("authorization", `Bearer ${deps.coreControlToken}`);
 
     let body: ArrayBuffer | undefined;
     if (method !== "GET" && method !== "HEAD") {
