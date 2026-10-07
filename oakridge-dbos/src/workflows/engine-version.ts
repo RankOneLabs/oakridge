@@ -57,7 +57,7 @@ export const ENGINE_SOURCE_MANIFEST: readonly string[] = [
  * injected services. Routes, projections, bundles and UI sources are outside
  * the engine manifest and do not change the recovery version.
  */
-export function computeEngineVersion(workflows_dir: string = import.meta.dir): string {
+export function computeEngineSourceDigest(workflows_dir: string = import.meta.dir): string {
   const hash = createHash("sha256");
   for (const name of [...ENGINE_SOURCE_MANIFEST].sort()) {
     hash.update(name);
@@ -65,6 +65,20 @@ export function computeEngineVersion(workflows_dir: string = import.meta.dir): s
     hash.update(readFileSync(resolve(workflows_dir, "..", name)));
     hash.update("\0");
   }
+  return hash.digest("hex");
+}
+
+/** The authority baseline is asserted independently of the TypeScript import graph. */
+export function computeStorageBaselineDigest(workflows_dir: string = import.meta.dir): string {
+  return createHash("sha256").update(readFileSync(resolve(workflows_dir, "../storage/migrations/0001_core_authority.sql"))).digest("hex");
+}
+
+export function computeEngineVersion(workflows_dir: string = import.meta.dir): string {
+  const hash = createHash("sha256");
+  hash.update("engine-source\0");
+  hash.update(computeEngineSourceDigest(workflows_dir));
+  hash.update("\0storage-baseline\0");
+  hash.update(computeStorageBaselineDigest(workflows_dir));
   return hash.digest("hex").slice(0, 16);
 }
 

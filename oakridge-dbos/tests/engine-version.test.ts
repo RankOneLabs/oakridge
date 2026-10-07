@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, relative, resolve } from "node:path";
-import { computeEngineVersion, ENGINE_SOURCE_MANIFEST, selectApplicationVersion } from "../src/workflows/engine-version";
+import { computeEngineSourceDigest, computeEngineVersion, computeStorageBaselineDigest, ENGINE_SOURCE_MANIFEST, selectApplicationVersion } from "../src/workflows/engine-version";
 import { buildGraph } from "./dependency-graph";
 
 test("engine manifest covers workflow imports and injected service implementations", () => {
@@ -21,13 +21,23 @@ test("changes in every engine dependency change the recovery version", () => {
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, "original");
     }
+    const baseline = resolve(root, "storage/migrations/0001_core_authority.sql");
+    mkdirSync(dirname(baseline), { recursive: true });
+    writeFileSync(baseline, "original storage");
     const workflows = resolve(root, "workflows");
     const original = computeEngineVersion(workflows);
+    const source_digest = computeEngineSourceDigest(workflows);
+    const storage_digest = computeStorageBaselineDigest(workflows);
     for (const name of ENGINE_SOURCE_MANIFEST) {
       writeFileSync(resolve(root, name), "changed");
       expect(computeEngineVersion(workflows)).not.toBe(original);
       writeFileSync(resolve(root, name), "original");
     }
+    writeFileSync(baseline, "changed storage");
+    expect(computeStorageBaselineDigest(workflows)).not.toBe(storage_digest);
+    expect(computeEngineSourceDigest(workflows)).toBe(source_digest);
+    expect(computeEngineVersion(workflows)).not.toBe(original);
+    writeFileSync(baseline, "original storage");
     for (const name of ["http/app.ts", "projections/run-view.ts", "workflows/topology.test.ts"]) {
       mkdirSync(dirname(resolve(root, name)), { recursive: true });
       writeFileSync(resolve(root, name), "unrelated change");
