@@ -45,8 +45,16 @@ function retryStart(payload: EffectPayload): StartOutcome {
     : { kind: "retry", payload };
 }
 
+/** An exhausted unfinished reservation may have reached the provider before a crash. */
+export function exhaustStart(payload: EffectPayload): StartOutcome {
+  return { kind: "rejected", payload: { ...payload, start_in_flight: false,
+    has_uncertain_start: payload.has_uncertain_start === true || payload.start_in_flight === true
+      || (payload.start_in_flight === undefined && payload.has_dispatched === true),
+    last_detail: `start attempts exhausted (${payload.start_attempts ?? 0}) during recovery` } };
+}
+
 export function resolveStart(payload: EffectPayload, result: ProviderResult<unknown>): StartOutcome {
-  const dispatched: EffectPayload = { ...payload, has_dispatched: true, start_attempts: payload.start_attempts ?? 1 };
+  const dispatched: EffectPayload = { ...payload, has_dispatched: true, start_attempts: payload.start_attempts ?? 1, start_in_flight: false };
   switch (result.kind) {
     case "acknowledged": {
       if (!isExternalHandle(result.value)) return retryStart({ ...dispatched, has_uncertain_start: true, last_detail: "provider acknowledged start without a valid handle" });

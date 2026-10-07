@@ -3,7 +3,7 @@ import type { CoreClient } from "../core-client/client";
 import type { CheckedValue } from "../core-client/generated-contracts";
 import { deliverEvidence, undeliveredEvidence } from "../effects/evidence";
 import { readIntent, type EffectIntent, type EffectPayload, type EffectStatus } from "../effects/intents";
-import { bounded, resolveObserve, resolveStart, resolveStop, startAttemptsExhausted } from "../effects/outcomes";
+import { bounded, exhaustStart, resolveObserve, resolveStart, resolveStop, startAttemptsExhausted, type StartOutcome } from "../effects/outcomes";
 import type { EffectProvider, ProviderResult } from "../effects/provider";
 import { advanceChildren, type LifecycleFailure } from "../runtime/advance-children";
 import { claimStartAttempt, persistEffectResult } from "../storage/effect-results";
@@ -58,17 +58,26 @@ const backoff = (attempt: number, timing: WorkflowTiming): number => Math.min(ti
 const loadIntentStep = DBOS.registerStep(async (intent_id: string): Promise<EffectIntent | null> => readIntent(current().db, intent_id),
   { name: "oakridgeLoadIntent", retriesAllowed: true, maxAttempts: 5 });
 
-const claimStartAttemptStep = DBOS.registerStep(async (intent_id: string): Promise<EffectPayload | null> => claimStartAttempt(current().db, intent_id),
-  { name: "oakridgeClaimStartAttempt", retriesAllowed: true, maxAttempts: 5 });
-
 async function callProvider<Value>(deadline_ms: number, operation: (signal: AbortSignal) => Promise<ProviderResult<Value>>): Promise<ProviderResult<Value>> {
   const controller = new AbortController();
   let call: Promise<ProviderResult<Value>>;
   try { call = operation(controller.signal); } catch (error) { call = Promise.resolve({ kind: "uncertain", detail: String(error) }); }
   return bounded(call, deadline_ms, controller);
 }
-const startStep = DBOS.registerStep(async (payload: EffectPayload): Promise<ProviderResult<unknown>> =>
-  callProvider(payload.invocation.selection.definition.deadline_ms, (signal) => current().provider.start(payload.invocation, { signal })), { name: "oakridgeStart" });
+// Reservation is inside the step's IO body: a re-execution before checkpointing
+// must claim another durable attempt, rather than replaying an earlier claim.
+export async function performStartAttempt(intent_id: string): Promise<StartOutcome | null> {
+  const { db, provider } = current();
+  const payload = await claimStartAttempt(db, intent_id);
+  if (!payload) {
+    const intent = await readIntent(db, intent_id);
+    return intent?.status === "pending" && startAttemptsExhausted(intent.payload) ? exhaustStart(intent.payload) : null;
+  }
+  const result = await callProvider(payload.invocation.selection.definition.deadline_ms,
+    (signal) => provider.start(payload.invocation, { signal }));
+  return resolveStart(payload, result);
+}
+const startStep = DBOS.registerStep(performStartAttempt, { name: "oakridgeStart" });
 const observeStep = DBOS.registerStep(async (payload: EffectPayload): Promise<ProviderResult<unknown>> =>
   callProvider(payload.invocation.selection.definition.deadline_ms, (signal) => current().provider.observe(payload.invocation, payload.handle, { signal })), { name: "oakridgeObserve" });
 const stopStep = DBOS.registerStep(async (payload: EffectPayload): Promise<ProviderResult<unknown>> =>
@@ -141,18 +150,12 @@ async function carryStart(intent_id: string): Promise<EffectStatus | null> {
   let status = intent.status;
   let terminal: CheckedValue | null = null;
   for (let attempt = 0; status === "pending"; attempt++) {
-    const claimed = await claimStartAttemptStep(intent_id);
-    if (!claimed) {
+    const outcome = await startStep(intent_id);
+    if (!outcome) {
       intent = await loadIntentStep(intent_id);
       if (!intent || intent.status !== "pending") return intent?.status ?? null;
-      payload = intent.payload;
-      if (!startAttemptsExhausted(payload)) continue;
-      // A reservation without a settled result may have reached the provider.
-      payload = { ...payload, has_uncertain_start: true, last_detail: "start attempts exhausted during recovery" };
+      continue;
     }
-    const outcome = claimed
-      ? resolveStart(claimed, await startStep(claimed))
-      : { kind: "rejected" as const, payload };
     payload = outcome.payload;
     if (outcome.kind === "retry") {
       const written = await persistStep({ intent_id, status: "pending", payload, terminal_result: null });

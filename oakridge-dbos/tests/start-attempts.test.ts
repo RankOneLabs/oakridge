@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { Invocation } from "../src/core-client/generated-contracts";
 import { requiresCleanup, type EffectPayload } from "../src/effects/intents";
-import { resolveStart, startAttemptsExhausted } from "../src/effects/outcomes";
+import { exhaustStart, resolveStart, startAttemptsExhausted } from "../src/effects/outcomes";
 import { selectedInvocation, type InvocationId } from "../src/effects/provider";
 
 const selection = { definition: { operation: "run", contract_version: 1, deadline_ms: 1000, input_schema: "input",
@@ -45,4 +45,14 @@ test("a one-attempt configuration rejects its first definite failure without cle
   const outcome = resolveStart(one_attempt, { kind: "transiently_unavailable", detail: "busy" });
   expect({ kind: outcome.kind, cleanup: requiresCleanup({ status: "rejected", payload: outcome.payload }) })
     .toEqual({ kind: "rejected", cleanup: false });
+});
+
+test("an exhausted unfinished reservation preserves cleanup when converted to rejection", () => {
+  const outcome = exhaustStart({ ...payload, start_attempts: 2, start_in_flight: true });
+  expect({ cleanup: requiresCleanup({ status: "rejected", payload: outcome.payload }), unfinished: outcome.payload.start_in_flight })
+    .toEqual({ cleanup: true, unfinished: false });
+});
+test("a definite provider result settles the current reserved attempt", () => {
+  expect(resolveStart({ ...payload, start_attempts: 1, start_in_flight: true },
+    { kind: "transiently_unavailable", detail: "busy" }).payload.start_in_flight).toBe(false);
 });
