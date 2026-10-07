@@ -2,7 +2,7 @@ import type { ComponentType } from "react";
 import type { ArtifactReviewDescriptor } from "./types";
 import { SpecAnalysisViewer } from "./components/molecules/SpecAnalysisViewer";
 import { PlanViewer } from "./components/molecules/PlanViewer";
-import { BuildResultViewer } from "./components/molecules/BuildResultViewer";
+import { BuildResultReview } from "./components/organisms/BuildResultReview";
 import { AssessmentViewer } from "./components/molecules/AssessmentViewer";
 import { PrSummaryViewer } from "./components/molecules/PrSummaryViewer";
 import { BuildBriefViewer } from "./components/molecules/BuildBriefViewer";
@@ -32,7 +32,7 @@ const REGISTRY: Record<string, RegistryEntry> = {
   "dev-spec-analysis-viewer": { Viewer: SpecAnalysisViewer },
   "dev-plan-viewer": { Viewer: PlanViewer },
   "dev-build-brief-viewer": { Viewer: BuildBriefViewer },
-  "dev-build-result-viewer": { Viewer: BuildResultViewer },
+  "dev-build-result-viewer": { Viewer: BuildResultReview },
   "dev-assessment-viewer": { Viewer: AssessmentViewer },
   "dev-pr-summary-viewer": { Viewer: PrSummaryViewer },
 };
