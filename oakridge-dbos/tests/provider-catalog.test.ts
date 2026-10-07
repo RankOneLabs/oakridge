@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { INPUT_CONTRACTS, PROVIDER_CATALOG, PROVIDER_ERROR_CODES, PROVIDER_KINDS } from "../src/effects/provider-catalog";
 import { visibleProviderCode } from "../src/effects/operations/production-provider";
+import { resolve } from "node:path";
 
 describe("provider declarations", () => {
   test("the provider catalog owns every shipped routing pair", () => {
@@ -21,5 +22,11 @@ describe("provider declarations", () => {
     expect(visibleProviderCode("repository.prepare", 1, "unexpected_failure", "details"))
       .toMatchObject({ kind: "permanently_rejected", code: PROVIDER_ERROR_CODES.undeclared_provider_code,
         detail: expect.stringContaining("unexpected_failure") });
+  });
+
+  test("the checked-in workflow-config data matches the provider-owned catalog", async () => {
+    const snapshot = await Bun.file(resolve(import.meta.dir, "../../workflow-config/provider-catalog.json")).json();
+    expect(snapshot).toEqual({ operations: PROVIDER_CATALOG.operations.filter((operation) => operation.provider_kind !== PROVIDER_KINDS.stub),
+      providers: PROVIDER_CATALOG.providers });
   });
 });

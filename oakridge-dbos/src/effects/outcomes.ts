@@ -1,6 +1,7 @@
 import { decodeCoreResponse, type CheckedValue, type Trigger } from "../core-client/generated-contracts";
 import type { EffectPayload } from "./intents";
 import type { ExternalHandle, ProviderResult, TerminalObservation } from "./provider";
+import { INPUT_CONTRACTS } from "./provider-catalog";
 
 /** Provider calls are bounded here; the step that runs them never hangs the workflow. */
 export function bounded<Value>(operation: Promise<ProviderResult<Value>>, timeout_ms: number, controller: AbortController): Promise<ProviderResult<Value>> {
@@ -16,7 +17,7 @@ export function isCheckedValue(value: unknown): value is CheckedValue {
 export function isExternalHandle(value: unknown): value is ExternalHandle {
   if (!value || typeof value !== "object" || !("kind" in value)) return false;
   if (value.kind === "completed") return "result" in value && isCheckedValue(value.result);
-  if (value.kind === "kbbl_session") return "session_id" in value && typeof value.session_id === "string";
+  if (value.kind === INPUT_CONTRACTS.session) return "session_id" in value && typeof value.session_id === "string";
   if (value.kind === "repository") return "path" in value && typeof value.path === "string";
   if (value.kind === "pull_request") return "owner" in value && typeof value.owner === "string"
     && "name" in value && typeof value.name === "string" && "number" in value && typeof value.number === "number";
@@ -41,7 +42,7 @@ export function startAttemptsExhausted(payload: EffectPayload): boolean {
 }
 function retryStart(payload: EffectPayload, detail: string): StartOutcome {
   return startAttemptsExhausted(payload)
-    ? { kind: "rejected", payload: { ...payload, failure: { kind: "start_attempts_exhausted", detail },
+    ? { kind: "rejected", payload: { ...payload, failure: { kind: "attempt_budget_exhausted", detail },
       last_detail: `start attempts exhausted (${payload.start_attempts}): ${detail}` } }
     : { kind: "retry", payload };
 }
@@ -51,7 +52,7 @@ export function exhaustStart(payload: EffectPayload): StartOutcome {
   return { kind: "rejected", payload: { ...payload, start_in_flight: false,
     has_uncertain_start: payload.has_uncertain_start === true || payload.start_in_flight === true
       || (payload.start_in_flight === undefined && payload.has_dispatched === true),
-    failure: { kind: "start_attempts_exhausted", detail: `start attempts exhausted (${payload.start_attempts ?? 0}) during recovery` },
+    failure: { kind: "attempt_budget_exhausted", detail: `start attempts exhausted (${payload.start_attempts ?? 0}) during recovery` },
     last_detail: `start attempts exhausted (${payload.start_attempts ?? 0}) during recovery` } };
 }
 

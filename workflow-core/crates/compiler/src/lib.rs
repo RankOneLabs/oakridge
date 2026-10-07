@@ -235,44 +235,131 @@ pub fn compile(
 }
 
 /** Validate against host-owned declarations before checking source contracts. */
-pub fn compile_with_catalog(source: &DefinitionBundle, catalog: &ProviderCatalog) -> CoreResult<CheckedProgram> {
+pub fn compile_with_catalog(
+    source: &DefinitionBundle,
+    catalog: &ProviderCatalog,
+) -> CoreResult<CheckedProgram> {
     for requested in &source.operations {
-        let route = catalog.providers.iter().find(|route| route.kind == requested.provider_kind)
-            .ok_or_else(|| error(DomainErrorKind::UnsupportedProvider, requested.key.to_string(), "provider kind is absent from the catalog"))?;
+        let route = catalog
+            .providers
+            .iter()
+            .find(|route| route.kind == requested.provider_kind)
+            .ok_or_else(|| {
+                error(
+                    DomainErrorKind::UnsupportedProvider,
+                    requested.key.to_string(),
+                    "provider kind is absent from the catalog",
+                )
+            })?;
         if route.input_contract != requested.input_contract {
-            return Err(error(DomainErrorKind::IncompatiblePort, requested.key.to_string(), "provider input contract differs from the catalog"));
+            return Err(error(
+                DomainErrorKind::IncompatiblePort,
+                requested.key.to_string(),
+                "provider input contract differs from the catalog",
+            ));
         }
-        let available = catalog.operations.iter().find(|operation| operation.key == requested.key)
-            .ok_or_else(|| error(DomainErrorKind::UnavailableOperation, requested.key.to_string(), "operation is absent from the catalog"))?;
+        let available = catalog
+            .operations
+            .iter()
+            .find(|operation| operation.key == requested.key)
+            .ok_or_else(|| {
+                error(
+                    DomainErrorKind::UnavailableOperation,
+                    requested.key.to_string(),
+                    "operation is absent from the catalog",
+                )
+            })?;
         if !requested.emitted_codes.is_empty() || !requested.required_recovery_codes.is_empty() {
-            return Err(error(DomainErrorKind::UnsupportedProvider, requested.key.to_string(), "bundle cannot declare provider-owned recovery requirements"));
+            return Err(error(
+                DomainErrorKind::UnsupportedProvider,
+                requested.key.to_string(),
+                "bundle cannot declare provider-owned recovery requirements",
+            ));
         }
-        unique(requested.recovery.iter().map(|mapping| mapping.code.as_str()), &requested.key.0)?;
+        unique(
+            requested
+                .recovery
+                .iter()
+                .map(|mapping| mapping.code.as_str()),
+            &requested.key.0,
+        )?;
         for code in &available.required_recovery_codes {
-            if !requested.recovery.iter().any(|mapping| &mapping.code == code) {
-                return Err(error(DomainErrorKind::UndeclaredTrigger, requested.key.to_string(), format!("required provider recovery code {code} has no trigger mapping")));
+            if !requested
+                .recovery
+                .iter()
+                .any(|mapping| &mapping.code == code)
+            {
+                return Err(error(
+                    DomainErrorKind::UndeclaredTrigger,
+                    requested.key.to_string(),
+                    format!("required provider recovery code {code} has no trigger mapping"),
+                ));
             }
         }
         for mapping in &requested.recovery {
             if !available.emitted_codes.contains(&mapping.code) {
-                return Err(error(DomainErrorKind::UnsupportedProvider, requested.key.to_string(), format!("provider cannot emit recovery code {}", mapping.code)));
+                return Err(error(
+                    DomainErrorKind::UnsupportedProvider,
+                    requested.key.to_string(),
+                    format!("provider cannot emit recovery code {}", mapping.code),
+                ));
             }
             for owner in &source.scopes {
-                if !owner.workers.iter().flat_map(|worker| &worker.actions).any(|action|
-                    action.operation == requested.key && action.contract_version == requested.version) { continue; }
-                let fact = owner.facts.iter().find(|fact| fact.key == mapping.fact)
-                    .ok_or_else(|| error(DomainErrorKind::UndeclaredTrigger, owner.key.to_string(), format!("recovery fact {} is absent", mapping.fact)))?;
-                if !matches!(schema(source, &fact.payload_schema)?, SchemaShape::String { min_length: 0, .. }) {
-                    return Err(error(DomainErrorKind::IncompatiblePort, mapping.fact.to_string(), "recovery detail requires a string payload accepting empty detail"));
+                if !owner
+                    .workers
+                    .iter()
+                    .flat_map(|worker| &worker.actions)
+                    .any(|action| {
+                        action.operation == requested.key
+                            && action.contract_version == requested.version
+                    })
+                {
+                    continue;
+                }
+                let fact = owner
+                    .facts
+                    .iter()
+                    .find(|fact| fact.key == mapping.fact)
+                    .ok_or_else(|| {
+                        error(
+                            DomainErrorKind::UndeclaredTrigger,
+                            owner.key.to_string(),
+                            format!("recovery fact {} is absent", mapping.fact),
+                        )
+                    })?;
+                if !matches!(
+                    schema(source, &fact.payload_schema)?,
+                    SchemaShape::String { min_length: 0, .. }
+                ) {
+                    return Err(error(
+                        DomainErrorKind::IncompatiblePort,
+                        mapping.fact.to_string(),
+                        "recovery detail requires a string payload accepting empty detail",
+                    ));
                 }
             }
         }
         if available.version != requested.version {
-            return Err(error(DomainErrorKind::UnsupportedVersion, requested.key.to_string(), "operation version differs from the catalog"));
+            return Err(error(
+                DomainErrorKind::UnsupportedVersion,
+                requested.key.to_string(),
+                "operation version differs from the catalog",
+            ));
         }
-        if requested.settings.iter().any(|setting| !available.settings.contains(setting))
-            || requested.tools.iter().any(|tool| !available.tools.contains(tool)) {
-            return Err(error(DomainErrorKind::UnsupportedAuthorization, requested.key.to_string(), "provider capability differs from the catalog"));
+        if requested
+            .settings
+            .iter()
+            .any(|setting| !available.settings.contains(setting))
+            || requested
+                .tools
+                .iter()
+                .any(|tool| !available.tools.contains(tool))
+        {
+            return Err(error(
+                DomainErrorKind::UnsupportedAuthorization,
+                requested.key.to_string(),
+                "provider capability differs from the catalog",
+            ));
         }
     }
     compile(source, &catalog.operations)

@@ -1,15 +1,30 @@
 use crate::{error, schema, scope, unique, variants};
 use std::collections::BTreeSet;
 use workflow_model::*;
-fn validate_lifecycle_payload(bundle: &DefinitionBundle, key: &SymbolKey, payload_schema: &SchemaId,
-    projection: &LifecyclePayloadProjection) -> CoreResult<()> {
+fn validate_lifecycle_payload(
+    bundle: &DefinitionBundle,
+    key: &SymbolKey,
+    payload_schema: &SchemaId,
+    projection: &LifecyclePayloadProjection,
+) -> CoreResult<()> {
     let shape = schema(bundle, payload_schema)?;
     let compatible = match projection {
-        LifecyclePayloadProjection::EmptyRecord => matches!(shape, SchemaShape::Record { fields, dictionary: None } if fields.is_empty()),
-        LifecyclePayloadProjection::Reason => matches!(shape, SchemaShape::String { min_length: 0, .. }),
+        LifecyclePayloadProjection::EmptyRecord => {
+            matches!(shape, SchemaShape::Record { fields, dictionary: None } if fields.is_empty())
+        }
+        LifecyclePayloadProjection::Reason => {
+            matches!(shape, SchemaShape::String { min_length: 0, .. })
+        }
     };
-    if compatible { Ok(()) } else { Err(error(DomainErrorKind::IncompatiblePort, key.to_string(),
-        "configured lifecycle projection cannot satisfy trigger payload schema")) }
+    if compatible {
+        Ok(())
+    } else {
+        Err(error(
+            DomainErrorKind::IncompatiblePort,
+            key.to_string(),
+            "configured lifecycle projection cannot satisfy trigger payload schema",
+        ))
+    }
 }
 pub fn validate_bundle(
     bundle: &DefinitionBundle,
@@ -88,11 +103,30 @@ pub fn validate_bundle(
             &owner.key.0,
         )?;
         unique(owner.pools.iter().map(|x| x.key.0.as_str()), &owner.key.0)?;
-        let cancellation = owner.commands.iter().map(|item| (&item.key, &item.payload_schema))
-            .chain(owner.facts.iter().map(|item| (&item.key, &item.payload_schema)))
+        let cancellation = owner
+            .commands
+            .iter()
+            .map(|item| (&item.key, &item.payload_schema))
+            .chain(
+                owner
+                    .facts
+                    .iter()
+                    .map(|item| (&item.key, &item.payload_schema)),
+            )
             .find(|(key, _)| **key == owner.cancellation.trigger)
-            .ok_or_else(|| error(DomainErrorKind::UndeclaredTrigger, owner.key.to_string(), "cancellation trigger is undeclared"))?;
-        validate_lifecycle_payload(bundle, cancellation.0, cancellation.1, &owner.cancellation.payload)?;
+            .ok_or_else(|| {
+                error(
+                    DomainErrorKind::UndeclaredTrigger,
+                    owner.key.to_string(),
+                    "cancellation trigger is undeclared",
+                )
+            })?;
+        validate_lifecycle_payload(
+            bundle,
+            cancellation.0,
+            cancellation.1,
+            &owner.cancellation.payload,
+        )?;
         crate::presentation::validate_presentation(&owner.presentation, &owner.key.0)?;
         for pool in &owner.pools {
             if pool.limit == 0 {
@@ -339,7 +373,12 @@ pub fn validate_bundle(
                         "child terminal fact missing",
                     )
                 })?;
-                validate_lifecycle_payload(bundle, key, &fact.payload_schema, &child.on_terminal_payload)?;
+                validate_lifecycle_payload(
+                    bundle,
+                    key,
+                    &fact.payload_schema,
+                    &child.on_terminal_payload,
+                )?;
             }
             unique(child.imports.iter().map(|x| x.0.as_str()), &child.key.0)?;
             if child

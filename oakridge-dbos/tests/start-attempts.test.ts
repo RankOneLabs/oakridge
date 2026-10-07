@@ -15,7 +15,7 @@ test("a transient failure retries below the pinned attempt limit", () => {
 });
 test("a transient failure rejects at the pinned attempt limit", () => {
   expect(resolveStart({ ...payload, start_attempts: 2 }, { kind: "transiently_unavailable", detail: "busy" })).toMatchObject({
-    kind: "rejected", payload: { start_attempts: 2, failure: { kind: "start_attempts_exhausted", detail: "busy" } },
+    kind: "rejected", payload: { start_attempts: 2, failure: { kind: "attempt_budget_exhausted", detail: "busy" } },
   });
 });
 test("a permanent start rejection retains its code separately from diagnostic text", () => {

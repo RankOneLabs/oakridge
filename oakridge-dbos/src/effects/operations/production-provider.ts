@@ -161,7 +161,9 @@ export function createEffectProvider(options: ProductionProviderOptions): Effect
         return result.kind === "acknowledged" ? completed(found, invocation, result.value)
           : result.kind === "permanently_rejected" ? recovery(found, result, invocation) : result;
       }
-      return rejected(`unsupported operation ${contract.operation}`);
+      if (invocation.request.kind === INPUT_CONTRACTS.stub) return rejected(`unsupported operation ${contract.operation}`);
+      const unhandled: never = invocation.request;
+      return unhandled;
   }
   return {
     start: (invocation, call = {}) => invocation.request?.kind === INPUT_CONTRACTS.repository || invocation.request?.kind === INPUT_CONTRACTS.pull_request

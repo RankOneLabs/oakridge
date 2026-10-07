@@ -17,7 +17,7 @@ import type { ExternalHandle, StableInvocation } from "./provider";
 export type EffectStatus = "pending" | "acknowledged" | "rejected" | "revoked" | "cleanup_pending" | "cleanup_confirmed";
 export type EffectFailure =
   | { readonly kind: "provider_rejection"; readonly code: string; readonly detail: string }
-  | { readonly kind: "start_attempts_exhausted"; readonly detail: string }
+  | { readonly kind: "attempt_budget_exhausted"; readonly detail: string }
   | { readonly kind: "observation_rejection"; readonly detail: string };
 export interface EffectPayload {
   readonly invocation: StableInvocation;

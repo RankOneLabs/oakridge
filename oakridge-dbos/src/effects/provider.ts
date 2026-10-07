@@ -30,7 +30,7 @@ export type ProviderResult<Value> =
 
 export type ExternalHandle =
   | { readonly kind: "completed"; readonly result: CheckedValue; readonly evidence?: Trigger }
-  | { readonly kind: "kbbl_session"; readonly session_id: string }
+  | { readonly kind: typeof INPUT_CONTRACTS.session; readonly session_id: string }
   | { readonly kind: "repository"; readonly path: string }
   | { readonly kind: "pull_request"; readonly owner: string; readonly name: string; readonly number: number };
 

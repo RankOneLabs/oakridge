@@ -174,7 +174,10 @@ pub struct ScopeDefinition {
     pub tree: DecisionTree,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entry_command: Option<SymbolKey>,
-    #[serde(default, skip_serializing_if = "LifecyclePayloadProjection::is_empty_record")]
+    #[serde(
+        default,
+        skip_serializing_if = "LifecyclePayloadProjection::is_empty_record"
+    )]
     pub entry_payload: LifecyclePayloadProjection,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -271,7 +274,10 @@ pub struct ChildDefinition {
     pub collection: Option<CollectionDefinition>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on_terminal: Option<SymbolKey>,
-    #[serde(default, skip_serializing_if = "LifecyclePayloadProjection::is_empty_record")]
+    #[serde(
+        default,
+        skip_serializing_if = "LifecyclePayloadProjection::is_empty_record"
+    )]
     pub on_terminal_payload: LifecyclePayloadProjection,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prerequisite_export: Option<SymbolKey>,
@@ -309,7 +315,10 @@ pub struct CapacityPool {
 #[serde(deny_unknown_fields)]
 pub struct CancellationDefinition {
     pub trigger: SymbolKey,
-    #[serde(default, skip_serializing_if = "LifecyclePayloadProjection::is_empty_record")]
+    #[serde(
+        default,
+        skip_serializing_if = "LifecyclePayloadProjection::is_empty_record"
+    )]
     pub payload: LifecyclePayloadProjection,
 }
 
@@ -322,7 +331,9 @@ pub enum LifecyclePayloadProjection {
 }
 
 impl LifecyclePayloadProjection {
-    pub fn is_empty_record(&self) -> bool { matches!(self, Self::EmptyRecord) }
+    pub fn is_empty_record(&self) -> bool {
+        matches!(self, Self::EmptyRecord)
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]

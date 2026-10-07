@@ -13,7 +13,7 @@ export class PullRequestObservationOperation {
   async execute(input: PullRequestObservationInput, options: ProviderCallOptions = {}): Promise<ProviderResult<PullRequestObservationResult>> {
     if (!this.reader.find_for_branches) return { kind: "permanently_rejected", code: PROVIDER_ERROR_CODES.discovery_unsupported, detail: "provider has no branch discovery operation" };
     const result = await this.reader.find_for_branches(input.query, options);
-    if (!result.ok) return result.error.kind === "auth" ? { kind: "permanently_rejected", code: PROVIDER_ERROR_CODES.auth, detail: result.error.detail }
+    if (!result.ok) return result.error.kind === PROVIDER_ERROR_CODES.auth ? { kind: "permanently_rejected", code: PROVIDER_ERROR_CODES.auth, detail: result.error.detail }
       : result.error.kind === "rejected" ? { kind: "permanently_rejected", code: PROVIDER_ERROR_CODES.provider_rejected, detail: result.error.detail }
       : { kind: "transiently_unavailable", detail: result.error.detail };
     return { kind: "acknowledged", value: { observations: result.value } };
