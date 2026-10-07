@@ -27,9 +27,19 @@ describe("parseAssessment", () => {
     expect(parsed.ok && parsed.value.test_evidence).toBeNull();
   });
 
-  test("reads an unknown finding status as unassessed", () => {
-    const parsed = parseAssessment({ ...body, findings: [{ criterion: "x", status: "done" }] });
-    expect(parsed.ok && parsed.value.findings[0]?.status).toBeNull();
+  test("names a finding status outside the contract", () => {
+    const parsed = parseAssessment({ ...body, findings: [body.findings[0], { criterion: "x", status: "done" }] });
+    expect(parsed.ok ? null : parsed.error.field).toBe("findings[1].status");
+  });
+
+  test("names a finding field that is not text", () => {
+    const parsed = parseAssessment({ ...body, findings: [{ criterion: "x", status: "met", evidence: 42 }] });
+    expect(parsed.ok ? null : parsed.error.field).toBe("findings[0].evidence");
+  });
+
+  test("reads an omitted status and description as null", () => {
+    const parsed = parseAssessment({ ...body, findings: [{ criterion: "x" }] });
+    expect(parsed.ok && [parsed.value.findings[0]?.status, parsed.value.findings[0]?.description]).toEqual([null, null]);
   });
 
   test("names the field of broken test evidence", () => {

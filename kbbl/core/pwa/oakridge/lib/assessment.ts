@@ -34,18 +34,28 @@ function isRecord(value: unknown): value is { [key: string]: unknown } {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function nullableText(value: unknown): string | null {
-  return typeof value === "string" && value.trim() !== "" ? value : null;
+const TEXT_FIELDS = ["criterion", "evidence", "description"] as const;
+
+/** A nullable text field: absent or null reads as null, as does a blank string; anything else that is not a string is refused. */
+function parseNullableText(value: unknown, field: string): Parsed<string | null> {
+  if (value === undefined || value === null) return { ok: true, value: null };
+  if (typeof value !== "string") return fail(field, "expected a string or null");
+  return { ok: true, value: value.trim() === "" ? null : value };
 }
 
-function readFinding(value: unknown): AssessmentFinding | null {
-  if (!isRecord(value)) return null;
-  return {
-    criterion: nullableText(value.criterion),
-    status: CRITERION_STATUSES.find((status) => status === value.status) ?? null,
-    evidence: nullableText(value.evidence),
-    description: nullableText(value.description),
-  };
+function parseFinding(value: unknown, field: string): Parsed<AssessmentFinding> {
+  if (!isRecord(value)) return fail(field, "expected an object");
+  const text: Partial<Record<(typeof TEXT_FIELDS)[number], string | null>> = {};
+  for (const key of TEXT_FIELDS) {
+    const parsed = parseNullableText(value[key], `${field}.${key}`);
+    if (!parsed.ok) return parsed;
+    text[key] = parsed.value;
+  }
+  const status = value.status === undefined || value.status === null
+    ? null
+    : CRITERION_STATUSES.find((candidate) => candidate === value.status);
+  if (status === undefined) return fail(`${field}.status`, "expected met, partial, not_met or null");
+  return { ok: true, value: { criterion: text.criterion ?? null, status, evidence: text.evidence ?? null, description: text.description ?? null } };
 }
 
 export function parseAssessment(body: unknown): Parsed<Assessment> {
@@ -53,9 +63,12 @@ export function parseAssessment(body: unknown): Parsed<Assessment> {
   const verdict = VERDICTS.find((candidate) => candidate === body.verdict);
   if (!verdict) return fail("verdict", "expected pass, pass_with_notes or fail");
   if (!Array.isArray(body.findings)) return fail("findings", "expected an array");
-  const findings = body.findings.map(readFinding);
-  const unreadable = findings.findIndex((finding) => finding === null);
-  if (unreadable !== -1) return fail(`findings[${unreadable}]`, "expected an object");
+  const findings: AssessmentFinding[] = [];
+  for (const [index, entry] of body.findings.entries()) {
+    const finding = parseFinding(entry, `findings[${index}]`);
+    if (!finding.ok) return finding;
+    findings.push(finding.value);
+  }
   const actions = body.recommended_next_actions;
   if (!Array.isArray(actions) || !actions.every((action) => typeof action === "string")) {
     return fail("recommended_next_actions", "expected an array of strings");
@@ -70,7 +83,7 @@ export function parseAssessment(body: unknown): Parsed<Assessment> {
     ok: true,
     value: {
       verdict,
-      findings: findings.filter((finding): finding is AssessmentFinding => finding !== null),
+      findings,
       test_evidence: testEvidence,
       recommended_next_actions: actions,
     },
