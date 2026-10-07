@@ -15,6 +15,8 @@ const MAX_RESPONSE_BYTES = CORE_MAX_RESPONSE_BYTES;
 const MAX_DIGEST_ENTRIES = 64;
 const STDERR_RING_BYTES = 16_384;
 const MIN_RESTART_INTERVAL_MS = 250;
+const MAX_RESPAWN_ATTEMPTS = 4;
+const MAX_RESPAWN_DELAY_MS = 2_000;
 function decodeStderr(bytes: Uint8Array): string {
   const decoded = new TextDecoder().decode(bytes);
   const encoded = new TextEncoder().encode(decoded);
@@ -43,6 +45,7 @@ export class CoreClient {
   private nextId = 0;
   private generation = 0;
   private closed = false;
+  private restarting: Promise<void> | null = null;
   private restartCount = 0;
   private lastSpawnAt = 0;
   private spawnedAt: number | null = null;
@@ -127,18 +130,31 @@ export class CoreClient {
     this.spawnedAt = null;
     ++this.generation;
     child?.kill();
-    const delay = Math.max(0, MIN_RESTART_INTERVAL_MS - (Date.now() - this.lastSpawnAt));
-    void new Promise<void>((resolve) => setTimeout(resolve, delay)).then(() => {
+    this.scheduleRespawn();
+  }
+  private scheduleRespawn(): void {
+    if (this.closed || this.process || this.restarting) return;
+    this.restarting = this.respawn().finally(() => {
+      this.restarting = null;
+      if (!this.closed && !this.process && this.pending.size) this.scheduleRespawn();
+    });
+  }
+  private async respawn(): Promise<void> {
+    let last_error: unknown = new Error("core child unavailable");
+    for (let attempt = 0; attempt < MAX_RESPAWN_ATTEMPTS && !this.closed; attempt++) {
+      const minimum = Math.max(0, MIN_RESTART_INTERVAL_MS - (Date.now() - this.lastSpawnAt));
+      const exponential = Math.min(MAX_RESPAWN_DELAY_MS, MIN_RESTART_INTERVAL_MS * 2 ** attempt);
+      await Bun.sleep(Math.max(minimum, Math.floor(exponential / 2 + Math.random() * exponential / 2)));
       if (this.closed) return;
       try {
         this.spawn();
         this.restartCount++;
         for (const [id, pending] of this.pending) void this.writeFrame(id, pending.frame, this.generation);
-      } catch (cause) {
-        this.closed = true;
-        for (const id of this.pending.keys()) this.settle(id, transportFailure("terminated_child", this.failureDetail(String(cause))));
-      }
-    });
+        return;
+      } catch (cause) { last_error = cause; }
+    }
+    if (!this.closed) for (const id of this.pending.keys())
+      this.settle(id, transportFailure("terminated_child", this.failureDetail(`core respawn exhausted: ${String(last_error)}`)));
   }
   private acceptLine(line: string, generation: number): void {
     let raw: unknown;
@@ -230,6 +246,7 @@ export class CoreClient {
     return new Promise((resolve) => {
       this.pending.set(request_id, { resolve, frame, timeout: null });
       if (this.process) void this.writeFrame(request_id, frame, this.generation);
+      else this.scheduleRespawn();
     });
   }
   private async writeFrame(id: string, frame: string, generation: number): Promise<void> {
