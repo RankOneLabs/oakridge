@@ -250,7 +250,7 @@ pub fn handle_frame(state: &mut CliState, frame: &[u8]) -> Response {
         )
     };
     let result = match request.operation {
-        Operation::Compile { bundle } => compile_with_host(&bundle, &state.host).map(|program| {
+        Operation::Compile { bundle, catalog } => compile_with_host(&bundle, &state.host, &catalog).map(|program| {
             let output = workflow_model::protocol::CompiledBundle {
                 digest: program.digest.clone(),
                 scopes: program.scopes.clone(),

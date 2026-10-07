@@ -233,9 +233,31 @@ pub fn compile(
         analysis: analyses,
     })
 }
+
+/** Validate against host-owned declarations before checking source contracts. */
+pub fn compile_with_catalog(source: &DefinitionBundle, catalog: &ProviderCatalog) -> CoreResult<CheckedProgram> {
+    for requested in &source.operations {
+        let route = catalog.providers.iter().find(|route| route.kind == requested.provider_kind)
+            .ok_or_else(|| error(DomainErrorKind::UnsupportedProvider, requested.key.to_string(), "provider kind is absent from the catalog"))?;
+        if route.input_contract != requested.input_contract {
+            return Err(error(DomainErrorKind::IncompatiblePort, requested.key.to_string(), "provider input contract differs from the catalog"));
+        }
+        let available = catalog.operations.iter().find(|operation| operation.key == requested.key)
+            .ok_or_else(|| error(DomainErrorKind::UnavailableOperation, requested.key.to_string(), "operation is absent from the catalog"))?;
+        if available.version != requested.version {
+            return Err(error(DomainErrorKind::UnsupportedVersion, requested.key.to_string(), "operation version differs from the catalog"));
+        }
+        if requested.settings.iter().any(|setting| !available.settings.contains(setting))
+            || requested.tools.iter().any(|tool| !available.tools.contains(tool)) {
+            return Err(error(DomainErrorKind::UnsupportedAuthorization, requested.key.to_string(), "provider capability differs from the catalog"));
+        }
+    }
+    compile(source, &catalog.operations)
+}
 pub fn compile_with_host(
     source: &DefinitionBundle,
     host: &ResourceLimits,
+    catalog: &ProviderCatalog,
 ) -> CoreResult<CheckedProgram> {
     for (name, requested, allowed) in [
         (
@@ -258,7 +280,7 @@ pub fn compile_with_host(
             ));
         }
     }
-    compile(source, &source.operations)
+    compile_with_catalog(source, catalog)
 }
 
 /// Domain JSON decoding detects duplicate keys before serde can discard them.

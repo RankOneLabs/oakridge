@@ -4,10 +4,13 @@ import { resolve } from "node:path";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { CoreClient } from "../src/core-client/client";
+import { PROVIDER_CATALOG } from "../src/effects/provider-catalog";
 import type { DefinitionBundle, Snapshot, CheckedValue } from "../src/core-client/generated-contracts";
 const root = resolve(import.meta.dir, "../..");
 const binary = resolve(root, "workflow-core/target/debug/workflow-cli");
 const bundle: DefinitionBundle = await Bun.file(resolve(root, "workflow-core/fixtures/bundles/minimal.json")).json();
+const catalog = { operations: PROVIDER_CATALOG.operations.map(({ emitted_codes: _codes, ...operation }) => operation),
+  providers: PROVIDER_CATALOG.providers };
 const unit: CheckedValue = { schema: "unit", data: { kind: "record", fields: [], dictionary: [] } };
 function snapshot(source = bundle, trigger = "begin"): Snapshot {
   return { owner: "instance", scope: source.root, version: 1, input: unit, state: { schema: "position", data: { kind: "variant", variant: "ready", value: unit } },
@@ -77,10 +80,10 @@ function rawFrames(frames: readonly object[], args: readonly string[] = []): Raw
   return new TextDecoder().decode(run.stdout).trim().split("\n").map((line) => JSON.parse(line) as RawResponse);
 }
 test("digest request evaluates after compile and unknown digest is typed", () => {
-  const compiled = rawFrames([{ version: CORE_PROTOCOL_VERSION, request_id: "compile", operation: "compile", input: { bundle } }])[0]!;
+  const compiled = rawFrames([{ version: CORE_PROTOCOL_VERSION, request_id: "compile", operation: "compile", input: { bundle, catalog } }])[0]!;
   const digest = (compiled.result.value as unknown as { value: { digest: string } }).value.digest;
   const responses = rawFrames([
-    { version: CORE_PROTOCOL_VERSION, request_id: "compile", operation: "compile", input: { bundle } },
+    { version: CORE_PROTOCOL_VERSION, request_id: "compile", operation: "compile", input: { bundle, catalog } },
     { version: CORE_PROTOCOL_VERSION, request_id: "evaluate", operation: "evaluate", input: { bundle_digest: digest, snapshot: snapshot() } },
     { version: CORE_PROTOCOL_VERSION, request_id: "unknown", operation: "evaluate", input: { bundle_digest: "missing", snapshot: snapshot() } },
   ]);
@@ -111,14 +114,14 @@ test("concurrent callers share one source re-send", async () => {
   } finally { client.close(); }
 });
 test("CLI host ceilings reject a larger requested budget", () => {
-  const response = rawFrames([{ version: CORE_PROTOCOL_VERSION, request_id: "host", operation: "compile", input: { bundle } }],
+  const response = rawFrames([{ version: CORE_PROTOCOL_VERSION, request_id: "host", operation: "compile", input: { bundle, catalog } }],
     ["--max-list-items", "10000", "--max-depth", "128", "--evaluation-budget", "100"])[0]!;
   expect(response).toMatchObject({ request_id: "host", result: { status: "domain_error", value: { kind: "limit_exceeds_host" } } });
 });
 // Frame-sized payloads take a few seconds to build and parse; the default 5 s is too tight on CI.
 const OVERSIZED_TEST_TIMEOUT_MS = 60_000;
 test("oversized frames echo the original request ID", () => {
-  const response = rawFrame(JSON.stringify({ version: CORE_PROTOCOL_VERSION, request_id: "oversized-origin", operation: "compile", input: { bundle }, padding: "x".repeat(CORE_MAX_FRAME_BYTES) }));
+  const response = rawFrame(JSON.stringify({ version: CORE_PROTOCOL_VERSION, request_id: "oversized-origin", operation: "compile", input: { bundle, catalog }, padding: "x".repeat(CORE_MAX_FRAME_BYTES) }));
   expect(response).toMatchObject({ request_id: "oversized-origin", result: { value: { kind: "oversized_payload" } } });
 }, OVERSIZED_TEST_TIMEOUT_MS);
 test("malformed frame has its own transport kind", () => expect(rawFrame("{").result.value.kind).toBe("malformed_frame"));
@@ -126,12 +129,12 @@ test("unsupported version has its own transport kind", () => expect(rawFrame(JSO
 test("oversized payload has its own transport kind", () => expect(rawFrame("x".repeat(CORE_MAX_FRAME_BYTES + 1)).result.value.kind).toBe("oversized_payload"), OVERSIZED_TEST_TIMEOUT_MS);
 test("unknown operation has its own transport kind", () => expect(rawFrame(JSON.stringify({ version: CORE_PROTOCOL_VERSION, request_id: "r", operation: "missing", input: {} })).result.value.kind).toBe("unknown_operation"));
 test("duplicate JSON keys are rejected before overwrite", () => {
-  const frame = JSON.stringify({ version: CORE_PROTOCOL_VERSION, request_id: "duplicate", operation: "compile", input: { bundle } }).replace('"language_version":1', '"language_version":1,"language_version":2');
+  const frame = JSON.stringify({ version: CORE_PROTOCOL_VERSION, request_id: "duplicate", operation: "compile", input: { bundle, catalog } }).replace('"language_version":1', '"language_version":1,"language_version":2');
   expect(rawFrame(frame).result.value.kind).toBe("duplicate_symbol");
 });
 test("compile response echoes the request ID and omits the checked source", () => {
   const source = bundle;
-  const response = rawFrame(JSON.stringify({ version: CORE_PROTOCOL_VERSION, request_id: "large", operation: "compile", input: { bundle: source } }));
+  const response = rawFrame(JSON.stringify({ version: CORE_PROTOCOL_VERSION, request_id: "large", operation: "compile", input: { bundle: source, catalog } }));
   expect(response).toMatchObject({ request_id: "large", truncated: false, result: { status: "ok", value: { kind: "compiled", value: { digest: expect.any(String), scopes: expect.any(Array) } } } });
   expect(JSON.stringify(response)).not.toContain('"content_digest"');
 });
@@ -237,7 +240,7 @@ test("shared invalid compiler corpus retains typed diagnostics through the real 
 
 test("unknown source fields are domain diagnostics with request correlation", () => {
   const response = rawFrame(JSON.stringify({ version: CORE_PROTOCOL_VERSION, request_id: "unknown-source", operation: "compile", input: {
-    bundle: { ...bundle, invented: true },
+    bundle: { ...bundle, invented: true }, catalog,
   } }));
   expect(response).toMatchObject({ request_id: "unknown-source", result: { status: "domain_error", value: { kind: "malformed_bundle", path: "invented" } } });
 });

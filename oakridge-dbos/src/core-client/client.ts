@@ -1,5 +1,6 @@
 import { CORE_MAX_FRAME_BYTES, CORE_MAX_RESPONSE_BYTES, CORE_PROTOCOL_VERSION, decodeCoreResponse, hasSafeWireNumbers, type CoreRequest, type CoreResponseResult, type CoreTransportKind, type DefinitionBundle, type Output } from "./generated-contracts";
 import { transportFailure, type CoreResult } from "./transport-errors";
+import { PROVIDER_CATALOG } from "../effects/provider-catalog";
 interface Pending { readonly resolve: (result: CoreResult<Output>) => void; readonly frame: string; timeout: ReturnType<typeof setTimeout> | null }
 interface ChildFault { readonly kind: CoreTransportKind; readonly detail: string; readonly generation: number; readonly request_id?: string }
 export interface CoreChildHealth { readonly pid: number | null; readonly uptime_ms: number | null; readonly restart_count: number; readonly last_stderr_lines: readonly string[] }
@@ -205,7 +206,10 @@ export class CoreClient {
   private async compileBundle(bundle: DefinitionBundle, cacheKey: string): Promise<CoreResult<Output>> {
     const existing = this.compiling.get(cacheKey);
     if (existing) return existing;
-    const task = this.send("compile", { bundle }).then((result) => {
+    const catalog = { operations: PROVIDER_CATALOG.operations.map(({ emitted_codes: _codes, ...operation }) => ({ ...operation,
+      settings: [...operation.settings], tools: [...operation.tools] })),
+      providers: PROVIDER_CATALOG.providers.map((provider) => ({ ...provider })) };
+    const task = this.send("compile", { bundle, catalog }).then((result) => {
       if (result.ok && result.value.kind === "compiled") this.rememberDigest(cacheKey, result.value.value.digest);
       return result;
     }).finally(() => { this.compiling.delete(cacheKey); });

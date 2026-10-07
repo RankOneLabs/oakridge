@@ -33,6 +33,7 @@ pub struct Request {
 pub enum Operation {
     Compile {
         bundle: DefinitionBundle,
+        catalog: ProviderCatalog,
     },
     ValidatePayload {
         bundle_digest: BundleDigest,

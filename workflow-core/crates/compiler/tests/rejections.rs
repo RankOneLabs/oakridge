@@ -1,5 +1,5 @@
 use serde_json::{json, Value};
-use workflow_compiler::{compile, decode_bundle};
+use workflow_compiler::{compile, compile_with_catalog, decode_bundle};
 use workflow_model::*;
 fn fixture() -> Value {
     serde_json::from_str(include_str!("../../../fixtures/bundles/minimal.json")).unwrap()
@@ -735,11 +735,44 @@ fn unsupported_provider_settings() {
 }
 #[test]
 fn incompatible_manifest_provider_and_input_contract() {
-    reject(
-        fixture(),
-        |v| v["operations"][0]["provider_kind"] = json!("github"),
-        DomainErrorKind::UnsupportedProvider,
-    );
+    let source: DefinitionBundle = serde_json::from_value(fixture()).unwrap();
+    let mut changed = source.clone();
+    changed.operations[0].provider_kind = "other".into();
+    let catalog = ProviderCatalog { operations: source.operations.clone(), providers: vec![
+        ProviderRoute { kind: "stub".into(), input_contract: "unsupported".into() },
+    ] };
+    assert_eq!(compile_with_catalog(&changed, &catalog).unwrap_err().kind, DomainErrorKind::UnsupportedProvider);
+}
+
+#[test]
+fn injected_catalog_rejects_absent_operations_and_accepts_new_routing_pairs() {
+    let mut source: DefinitionBundle = serde_json::from_value(fixture()).unwrap();
+    let missing = ProviderCatalog { operations: vec![], providers: vec![
+        ProviderRoute { kind: "stub".into(), input_contract: "unsupported".into() },
+    ] };
+    assert_eq!(compile_with_catalog(&source, &missing).unwrap_err().kind, DomainErrorKind::UnavailableOperation);
+    source.operations[0].provider_kind = "new_provider".into();
+    source.operations[0].input_contract = "new_contract".into();
+    let catalog = ProviderCatalog { operations: source.operations.clone(), providers: vec![
+        ProviderRoute { kind: "new_provider".into(), input_contract: "new_contract".into() },
+    ] };
+    assert!(compile_with_catalog(&source, &catalog).is_ok());
+}
+
+#[test]
+fn injected_catalog_names_version_contract_and_capability_mismatches() {
+    let source: DefinitionBundle = serde_json::from_value(fixture()).unwrap();
+    let mut catalog = ProviderCatalog { operations: source.operations.clone(), providers: vec![
+        ProviderRoute { kind: "stub".into(), input_contract: "unsupported".into() },
+    ] };
+    catalog.operations[0].version += 1;
+    assert_eq!(compile_with_catalog(&source, &catalog).unwrap_err().kind, DomainErrorKind::UnsupportedVersion);
+    catalog.operations[0].version -= 1;
+    catalog.providers[0].input_contract = "different".into();
+    assert_eq!(compile_with_catalog(&source, &catalog).unwrap_err().kind, DomainErrorKind::IncompatiblePort);
+    catalog.providers[0].input_contract = "unsupported".into();
+    catalog.operations[0].settings.clear();
+    assert_eq!(compile_with_catalog(&source, &catalog).unwrap_err().kind, DomainErrorKind::UnsupportedAuthorization);
 }
 #[test]
 fn unavailable_pinned_operation_version() {
@@ -1052,7 +1085,8 @@ fn e5_requested_budget_above_host_is_named() {
         max_depth: 128,
         evaluation_budget: 100,
     };
-    let error = workflow_compiler::compile_with_host(&bundle, &host).unwrap_err();
+    let catalog = ProviderCatalog { operations: bundle.operations.clone(), providers: vec![] };
+    let error = workflow_compiler::compile_with_host(&bundle, &host, &catalog).unwrap_err();
     assert_eq!(error.kind, DomainErrorKind::LimitExceedsHost);
     assert!(error.detail.contains("2000") && error.detail.contains("100"));
 }

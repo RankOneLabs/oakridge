@@ -1,0 +1,55 @@
+{
+  "operations": [
+    {
+      "key": "repository.prepare",
+      "version": 1,
+      "input_schema": "repo_input",
+      "provider_kind": "git",
+      "input_contract": "repository_preparation",
+      "settings": [
+        "result_fact"
+      ],
+      "tools": []
+    },
+    {
+      "key": "session.run",
+      "version": 1,
+      "input_schema": "session_action",
+      "provider_kind": "kbbl",
+      "input_contract": "kbbl_session",
+      "settings": [
+        "evidence_fact"
+      ],
+      "tools": []
+    },
+    {
+      "key": "pull_request.observe",
+      "version": 1,
+      "input_schema": "pr_observe_input",
+      "provider_kind": "github",
+      "input_contract": "pull_request_observation",
+      "settings": [
+        "result_fact"
+      ],
+      "tools": []
+    }
+  ],
+  "providers": [
+    {
+      "kind": "git",
+      "input_contract": "repository_preparation"
+    },
+    {
+      "kind": "kbbl",
+      "input_contract": "kbbl_session"
+    },
+    {
+      "kind": "github",
+      "input_contract": "pull_request_observation"
+    },
+    {
+      "kind": "stub",
+      "input_contract": "unsupported"
+    }
+  ]
+}

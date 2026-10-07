@@ -35,6 +35,8 @@ export const PROVIDER_CATALOG = {
       input_contract: INPUT_CONTRACTS.pull_request, settings: ["result_fact"], tools: [],
       emitted_codes: [PROVIDER_ERROR_CODES.discovery_unsupported, PROVIDER_ERROR_CODES.auth,
         PROVIDER_ERROR_CODES.provider_rejected, PROVIDER_ERROR_CODES.invalid_invocation] },
+    { key: "produce", version: 1, input_schema: "unit", provider_kind: PROVIDER_KINDS.stub,
+      input_contract: INPUT_CONTRACTS.stub, settings: ["model"], tools: ["read"], emitted_codes: [] },
   ],
   providers: [
     { kind: PROVIDER_KINDS.repository, input_contract: INPUT_CONTRACTS.repository },

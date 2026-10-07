@@ -123,6 +123,20 @@ pub struct OperationManifest {
     pub settings: Vec<String>,
     pub tools: Vec<String>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderRoute {
+    pub kind: String,
+    pub input_contract: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderCatalog {
+    pub operations: Vec<OperationManifest>,
+    pub providers: Vec<ProviderRoute>,
+}
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ScopeDefinition {
