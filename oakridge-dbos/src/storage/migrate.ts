@@ -11,10 +11,8 @@ export async function migrateEmptyDatabase(db: TransactionalSqlExecutor): Promis
   await db.transaction(async (transaction) => {
     // Serialize the check and DDL across independently starting processes.
     await transaction.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", ["oakridge:authority:baseline"]);
-    const baseline = await transaction.query<{ digest: string }>("SELECT digest FROM authority.schema_baseline LIMIT 1", []).catch((cause: unknown) => {
-      if (typeof cause === "object" && cause !== null && "code" in cause && (cause.code === "42P01" || cause.code === "3F000")) return [];
-      throw cause;
-    });
+    const relation = await transaction.query<{ name: string | null }>("SELECT to_regclass('authority.schema_baseline')::text AS name", []);
+    const baseline = relation[0]?.name ? await transaction.query<{ digest: string }>("SELECT digest FROM authority.schema_baseline LIMIT 1", []) : [];
     if (baseline[0]) {
       if (baseline[0].digest !== digest) throw new Error(`authority baseline digest mismatch: recorded ${baseline[0].digest}, current ${digest}`);
       return;
