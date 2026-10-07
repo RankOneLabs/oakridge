@@ -5,6 +5,7 @@ import type { ScopeDefinition } from "../source-contracts";
 import { STAGE_TABLE, buildStageGate } from "./run/stage-table";
 import { buildStageChildren, cancelStageChildren } from "./run/stage-table";
 import { buildRootDispatch } from "./run/decisions";
+import { renderPromptFiles } from "./prompts";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createHash } from "node:crypto";
@@ -130,4 +131,19 @@ test("the three deliberate inter-bundle differences stay visible", () => {
     .not.toEqual(independent.scopes.find((scope) => scope.key === "development")?.tree);
   expect(standard.schemas.find((schema) => schema.key === "repo_result")?.shape)
     .not.toEqual(independent.schemas.find((schema) => schema.key === "repo_result")?.shape);
+});
+
+test("check mode reports a generated prompt file that no stage row still claims", () => {
+  const table = STAGE_TABLE.map((row) => ({
+    ...row,
+    prompt_groups: row.prompt_groups.filter((group) => group.prefix !== "planning_author")
+  }));
+  const findings = renderPromptFiles(true, table);
+  expect(findings.filter((finding) => finding.kind === "content_drift")).toEqual([]);
+  expect(findings.map((finding) => finding.path)).toEqual([
+    "workflow-config/prompts/dev-flow/v3/planning_author_initial.md",
+    "workflow-config/prompts/dev-flow/v3/planning_author_retry.md",
+    "workflow-config/prompts/dev-flow/v3/planning_author_revise.md"
+  ]);
+  expect(renderPromptFiles(true)).toEqual([]);
 });

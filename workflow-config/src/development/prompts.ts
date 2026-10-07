@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import type { Prompt } from "../source-contracts";
 import { STAGE_TABLE, type StageTable } from "./run/stage-table";
 
@@ -31,18 +31,39 @@ export function renderPrompt(spec: PromptSpec): Buffer {
   return Buffer.from(`${template}\nStage: ${spec.stage}\nAction: ${spec.action.replaceAll("_", " ")}\nContext: ${spec.context}\n`);
 }
 
+export type PromptFinding =
+  | { readonly kind: "content_drift"; readonly path: string }
+  | { readonly kind: "orphan"; readonly path: string };
+
+/**
+ * Generated files no stage row still claims. They are reported and never deleted: a pinned
+ * run reads its prompt bytes back from disk at dispatch and at recovery replay, so removing
+ * one breaks every pin that still names it.
+ */
+function orphanPrompts(specs: readonly PromptSpec[]): PromptFinding[] {
+  const expected = new Set(specs.map((spec) => spec.path));
+  const directories = [...new Set(specs.map((spec) => dirname(spec.path)))].sort();
+  return directories.flatMap((directory) => readdirSync(resolve(repositoryRoot, directory))
+    .filter((entry) => entry.endsWith(".md"))
+    .map((entry) => `${directory}/${entry}`)
+    .filter((path) => !expected.has(path))
+    .sort()
+    .map((path) => ({ kind: "orphan" as const, path })));
+}
+
 /** In check mode, generated prompt drift is reported before bundle digests are read. */
-export function renderPromptFiles(check: boolean, table: StageTable = STAGE_TABLE): string[] {
-  const drift: string[] = [];
-  for (const spec of promptSpecs(table)) {
+export function renderPromptFiles(check: boolean, table: StageTable = STAGE_TABLE): PromptFinding[] {
+  const specs = promptSpecs(table);
+  const findings: PromptFinding[] = [];
+  for (const spec of specs) {
     const path = resolve(repositoryRoot, spec.path);
     const expected = renderPrompt(spec);
     if (check) {
-      try { if (!readFileSync(path).equals(expected)) drift.push(spec.path); }
-      catch { drift.push(spec.path); }
+      try { if (!readFileSync(path).equals(expected)) findings.push({ kind: "content_drift", path: spec.path }); }
+      catch { findings.push({ kind: "content_drift", path: spec.path }); }
     } else writeFileSync(path, expected);
   }
-  return drift;
+  return [...findings, ...orphanPrompts(specs)];
 }
 
 export function buildPrompts(table: StageTable = STAGE_TABLE): Prompt[] {

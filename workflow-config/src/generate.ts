@@ -6,9 +6,12 @@ import { DEVELOPMENT_POLICY, INDEPENDENT_SIBLINGS_POLICY, VERIFICATION_POLICY } 
 const root = resolve(import.meta.dir, "..");
 const variants = [DEVELOPMENT_POLICY, INDEPENDENT_SIBLINGS_POLICY, VERIFICATION_POLICY];
 const check = process.argv.includes("--check");
-const promptDrift = renderPromptFiles(check);
-for (const path of promptDrift) console.error(`Prompt drift: ${path}`);
-let drift = promptDrift.length > 0;
+const promptFindings = renderPromptFiles(check);
+for (const finding of promptFindings) console.error(finding.kind === "orphan"
+  ? `Orphan prompt, kept on disk for pinned runs: ${finding.path}`
+  : `Prompt drift: ${finding.path}`);
+// Writing cannot drift, so only the check gate fails the build; generation just reports orphans.
+let drift = check && promptFindings.length > 0;
 for (const variant of variants) {
   const path = resolve(root, "definitions", `${variant.key}.json`);
   const bytes = JSON.stringify(buildDevelopmentRun(variant), null, 2) + "\n";
