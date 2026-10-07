@@ -8,6 +8,7 @@ import { controlTokenMiddleware, selectControlPlaneAccess } from "../http/contro
 import { httpBodyLimit, installDefinitionApi } from "../http/app";
 import { authorityRepositories } from "../storage/repositories";
 import { createMutationService, cancelRun, deleteRun, type ScopeCancellationPayload, type ProviderCapabilities, type ProviderCapabilityInput } from "../storage/mutation-service";
+import { PROVIDER_KINDS } from "../effects/provider-catalog";
 import { PgPostgresExecutor } from "../storage/sql-executor";
 import type { RunId, ScopeId, ScopeInstanceRecord } from "../storage/schema-records";
 import type { OutputPublication } from "../storage/commit";
@@ -64,8 +65,29 @@ function forgeRepositories({ bundle, input }: ProviderCapabilityInput): readonly
   if (root) visit(root.input_schema, input, 0);
   return [...found.values()];
 }
-export function githubProviderCapabilities(token: string, http: typeof fetch = fetch): ProviderCapabilities {
-  return { async check_github(input) {
+export function githubProviderCapabilities(token: string, http: typeof fetch = fetch, kbbl_base_url = process.env.KBBL_BASE_URL ?? "http://127.0.0.1:8788"): ProviderCapabilities {
+  return {
+    async probe(kind) {
+      if (kind === PROVIDER_KINDS.repository) {
+        try {
+          const git = Bun.spawnSync({ cmd: ["git", "--version"], stdout: "ignore", stderr: "ignore" });
+          return git.exitCode === 0 ? { ok: true, value: true }
+            : { ok: false, error: { operation: "probe_provider", entity_id: kind, detail: "git is unavailable" } };
+        } catch (cause) { return { ok: false, error: { operation: "probe_provider", entity_id: kind, detail: String(cause) } }; }
+      }
+      if (kind === PROVIDER_KINDS.stub) return { ok: false, error: { operation: "probe_provider", entity_id: kind, detail: "stub has no live provider" } };
+      if (kind === PROVIDER_KINDS.pull_request && !token) return { ok: false, error: { operation: "probe_provider", entity_id: kind, detail: "token is absent" } };
+      const url = kind === PROVIDER_KINDS.session ? new URL("/", kbbl_base_url).href
+        : kind === PROVIDER_KINDS.pull_request ? "https://api.github.com/rate_limit" : null;
+      if (!url) return { ok: false, error: { operation: "probe_provider", entity_id: kind, detail: "unknown provider kind" } };
+      try {
+        const response = await http(url, { signal: AbortSignal.timeout(10_000),
+          ...(kind === PROVIDER_KINDS.pull_request ? { headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json", "user-agent": "oakridge" } } : {}) });
+        return response.ok ? { ok: true, value: true }
+          : { ok: false, error: { operation: "probe_provider", entity_id: kind, detail: `probe returned ${response.status}` } };
+      } catch (cause) { return { ok: false, error: { operation: "probe_provider", entity_id: kind, detail: String(cause) } }; }
+    },
+    async check_github(input) {
     if (!token) return { ok: false, error: { operation: "check_github", entity_id: "github", detail: "token is absent" } };
     const targets = forgeRepositories(input);
     // A reachable `/user` says nothing about pull-request access, so an input naming no repository fails closed.
@@ -78,7 +100,8 @@ export function githubProviderCapabilities(token: string, http: typeof fetch = f
       } catch (cause) { return { ok: false, error: { operation: "check_github", entity_id: url, detail: String(cause) } }; }
     }
     return { ok: true, value: true };
-  } };
+    },
+  };
 }
 
 function isBundle(value: unknown): value is DefinitionBundle {
@@ -114,7 +137,8 @@ export async function createProductionComposition(options: ProductionOptions): P
   if (!started.ok) throw new Error(`workflow-cli could not start: ${started.error.detail.detail}`);
   const core = started.value;
   const db = PgPostgresExecutor.connect(options.database_url);
-  const provider_capabilities = options.provider_capabilities ?? githubProviderCapabilities(process.env.OAKRIDGE_GITHUB_TOKEN ?? process.env.GITHUB_TOKEN ?? "");
+  const provider_capabilities = options.provider_capabilities ?? githubProviderCapabilities(process.env.OAKRIDGE_GITHUB_TOKEN ?? process.env.GITHUB_TOKEN ?? "", fetch,
+    options.kbbl_base_url ?? process.env.KBBL_BASE_URL ?? "http://127.0.0.1:8788");
   const mutations = createMutationService(db, core, provider_capabilities);
   const repositories = authorityRepositories(db);
   const provider = options.effect_provider ?? createEffectProvider({ db, core, kbbl_base_url: options.kbbl_base_url ?? process.env.KBBL_BASE_URL ?? "http://127.0.0.1:8788", pull_requests: options.pull_requests });
