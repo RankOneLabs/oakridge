@@ -1,3 +1,4 @@
+import { queryKeys } from "../queryKeys";
 import { useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchOperatorDefinitions, launchOperatorRun } from "../client";
@@ -10,7 +11,7 @@ import type { OperatorLaunchRequest } from "../operator-contracts";
 
 interface Props { readonly onBack: () => void; readonly onCreated: (runId: string) => void; readonly onEdit: () => void }
 export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
-  const definitions = useQuery({ queryKey: ["operator", "definitions"], queryFn: fetchOperatorDefinitions });
+  const definitions = useQuery({ queryKey: queryKeys.definitions, queryFn: fetchOperatorDefinitions });
   const [pending, setPending] = useState<OperatorLaunchRequest | null>(() => {
     try { return readPendingLaunch(); } catch { return null; } // Submission re-reads and fails closed if storage is unavailable or corrupt.
   });

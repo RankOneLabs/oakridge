@@ -1,3 +1,4 @@
+import { queryKeys } from "../queryKeys";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { decodeDefinitionBundle } from "../workflow-definition-types";
@@ -7,7 +8,7 @@ import canonicalDefinition from "../../../../../workflow-config/definitions/deve
 
 interface Props { readonly cloneFromId: string | null; readonly onBack: () => void; readonly onPinned: () => void }
 export function OperatorDefinitionEditorView({ cloneFromId, onBack, onPinned }: Props) {
-  const definitions = useQuery({ queryKey: ["operator", "definitions"], queryFn: fetchOperatorDefinitions });
+  const definitions = useQuery({ queryKey: queryKeys.definitions, queryFn: fetchOperatorDefinitions });
   const [source, setSource] = useState(() => cloneFromId ? "" : JSON.stringify(canonicalDefinition, null, 2));
   const [loadedId, setLoadedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);

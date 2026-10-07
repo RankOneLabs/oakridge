@@ -1,10 +1,11 @@
+import { queryKeys } from "../queryKeys";
 import { useQuery } from "@tanstack/react-query";
 import { fetchOperatorRuns } from "../client";
 import { Button } from "../../components/atoms/Button";
 
 interface Props { readonly onSelectRun: (id: string) => void; readonly onNewRun: () => void; readonly onDefinitions: () => void }
 export function OperatorRunListView({ onSelectRun, onNewRun, onDefinitions }: Props) {
-  const runs = useQuery({ queryKey: ["operator", "runs"], queryFn: fetchOperatorRuns, refetchInterval: 10_000 });
+  const runs = useQuery({ queryKey: queryKeys.runs, queryFn: fetchOperatorRuns });
   return <main className="or-page" data-testid="or-run-list">
     <header className="or-page-header"><h1 className="or-page-title">Runs</h1>
       <Button onClick={onNewRun}>Launch run</Button><Button variant="secondary" onClick={onDefinitions}>Definitions</Button></header>

@@ -1,3 +1,4 @@
+import { queryKeys } from "../queryKeys";
 import { useQuery } from "@tanstack/react-query";
 import { fetchOperatorScopeHistory } from "../client";
 import { OperatorTypedValue } from "../components/molecules/OperatorTypedValue";
@@ -9,7 +10,7 @@ function decisionKind(decision: unknown): string {
     ? decision.kind : "transition";
 }
 export function OperatorHistoryPane({ runId, scopeId, schemas }: Props) {
-  const history = useQuery({ queryKey: ["operator", runId, scopeId, "history"], queryFn: () => fetchOperatorScopeHistory(runId, scopeId) });
+  const history = useQuery({ queryKey: queryKeys.history(runId, scopeId), queryFn: () => fetchOperatorScopeHistory(runId, scopeId) });
   return <section data-testid="operator-history-pane"><h3>Scope history</h3>
     {history.isError && <p role="alert">{String(history.error)}</p>}
     {!history.data && !history.isError && <p role="status">Loading history…</p>}

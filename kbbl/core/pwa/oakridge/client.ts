@@ -31,10 +31,15 @@ export const fetchOperatorScopeHistory = (runId: string, scopeId: string): Promi
 export const fetchOperatorDefinitions = (): Promise<OperatorDefinitionSummary[]> => get("/api/definitions");
 export const pinOperatorDefinition = (source: WorkflowDefinitionDescriptor): Promise<OperatorDefinitionSummary> => post("/api/definitions", source);
 export const launchOperatorRun = (request: OperatorLaunchRequest): Promise<OperatorLaunchedRun> => post("/runs", request);
+const inFlightCommands = new Map<string, Promise<OperatorCommandReceipt>>();
 export function submitOperatorCommand(input: OperatorCommandSubmission): Promise<OperatorCommandReceipt> {
-  return post(`/api/runs/${encodeURIComponent(input.run_id)}/scopes/${encodeURIComponent(input.scope_id)}/commands`, {
+  const active = inFlightCommands.get(input.request_id);
+  if (active) return active;
+  const delivery = post<OperatorCommandReceipt>(`/api/runs/${encodeURIComponent(input.run_id)}/scopes/${encodeURIComponent(input.scope_id)}/commands`, {
     scope_id: input.scope_id, command_key: input.command_key, expected_scope_version: input.owner_version,
     targets: input.targets, payload: input.payload, request_id: input.request_id,
   });
+  inFlightCommands.set(input.request_id, delivery);
+  void delivery.finally(() => { if (inFlightCommands.get(input.request_id) === delivery) inFlightCommands.delete(input.request_id); }).catch(() => undefined);
+  return delivery;
 }
-
