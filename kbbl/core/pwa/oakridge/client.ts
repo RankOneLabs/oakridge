@@ -19,8 +19,12 @@ const get = <T,>(path: string): Promise<T> => request<T>("GET", path);
 const post = <T,>(path: string, body: unknown): Promise<T> => request<T>("POST", path, body);
 
 export async function fetchOakridgeConfig(): Promise<OakridgeConfig> {
+  const configuredInterval = Number(import.meta.env.VITE_OAKRIDGE_FALLBACK_REFRESH_MS ?? 30_000);
+  const fallback_refresh_ms = Number.isFinite(configuredInterval) && configuredInterval >= 1_000
+    ? configuredInterval : 30_000;
   const response = await fetch("/oakridge/config");
-  return response.ok ? response.json() as Promise<OakridgeConfig> : { available: false };
+  const config: OakridgeConfig = response.ok ? await response.json() as OakridgeConfig : { available: false };
+  return { ...config, fallback_refresh_ms };
 }
 export const fetchOperatorInbox = () => readAllInboxPages(get);
 export const fetchOperatorRuns = (): Promise<OperatorRunView[]> => get("/api/runs");
