@@ -440,10 +440,15 @@ export interface ArtifactTypeDescriptor {
   review?: ArtifactReviewDescriptor | null;
 }
 
-/** Where an artifact lives: its run, and its unit label (a cohort id for per-cohort artifacts). */
+/**
+ * Where an artifact lives: its run, and its unit label (a cohort id for
+ * per-cohort artifacts), as of the revision being viewed.
+ */
 export interface ArtifactSource {
   run_id: string;
   label: string | null;
+  /** `created_at` of the revision on screen; sibling artifacts are read as they stood then. */
+  as_of: string;
 }
 
 export interface ArtifactDetail {
