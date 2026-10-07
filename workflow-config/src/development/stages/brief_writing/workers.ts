@@ -19,7 +19,7 @@ export const workers: WorkerDefinition[] = [
             value: record("session_context", [{ key: "task", value: optional("optional_task", reference({ kind: "input" }, [])) }])
           }
         ]),
-        prompt: "brief_writing_author_initial",
+        prompt: "brief_writing_author_initial_v3",
         settings: [{ key: "evidence_fact", value: "submitted" }],
         tools: [],
         outputs: ["briefs"],
@@ -41,7 +41,7 @@ export const workers: WorkerDefinition[] = [
             ])
           }
         ]),
-        prompt: "brief_writing_author_revise",
+        prompt: "brief_writing_author_revise_v3",
         settings: [{ key: "evidence_fact", value: "submitted" }],
         tools: [],
         outputs: ["briefs"],
@@ -60,7 +60,7 @@ export const workers: WorkerDefinition[] = [
             value: record("session_context", [{ key: "task", value: optional("optional_task", reference({ kind: "input" }, [])) }])
           }
         ]),
-        prompt: "brief_writing_author_retry",
+        prompt: "brief_writing_author_retry_v3",
         settings: [{ key: "evidence_fact", value: "submitted" }],
         tools: [],
         outputs: ["briefs"],

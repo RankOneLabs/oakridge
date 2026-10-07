@@ -19,7 +19,7 @@ export const workers: WorkerDefinition[] = [
             value: record("session_context", [{ key: "implementation", value: optional("optional_implementation", reference({ kind: "input" }, [])) }])
           }
         ]),
-        prompt: "implementation_build_initial",
+        prompt: "implementation_build_initial_v3",
         settings: [{ key: "evidence_fact", value: "build_submitted" }],
         tools: [],
         outputs: ["build_result", "pr_summary"],
@@ -43,7 +43,7 @@ export const workers: WorkerDefinition[] = [
             ])
           }
         ]),
-        prompt: "implementation_build_revise",
+        prompt: "implementation_build_revise_v3",
         settings: [{ key: "evidence_fact", value: "build_submitted" }],
         tools: [],
         outputs: ["build_result", "pr_summary"],
@@ -62,7 +62,7 @@ export const workers: WorkerDefinition[] = [
             value: record("session_context", [{ key: "implementation", value: optional("optional_implementation", reference({ kind: "input" }, [])) }])
           }
         ]),
-        prompt: "implementation_build_replace_pr",
+        prompt: "implementation_build_replace_pr_v3",
         settings: [{ key: "evidence_fact", value: "build_submitted" }],
         tools: [],
         outputs: ["build_result", "pr_summary"],
@@ -85,7 +85,7 @@ export const workers: WorkerDefinition[] = [
             ])
           }
         ]),
-        prompt: "implementation_build_retry",
+        prompt: "implementation_build_retry_v3",
         settings: [{ key: "evidence_fact", value: "build_submitted" }],
         tools: [],
         outputs: ["build_result", "pr_summary"],
@@ -108,7 +108,7 @@ export const workers: WorkerDefinition[] = [
             ])
           }
         ]),
-        prompt: "implementation_build_retry_missing_build",
+        prompt: "implementation_build_retry_missing_build_v3",
         settings: [{ key: "evidence_fact", value: "build_submitted" }],
         tools: [],
         outputs: ["build_result"],
@@ -131,7 +131,7 @@ export const workers: WorkerDefinition[] = [
             ])
           }
         ]),
-        prompt: "implementation_build_retry_missing_pr",
+        prompt: "implementation_build_retry_missing_pr_v3",
         settings: [{ key: "evidence_fact", value: "build_submitted" }],
         tools: [],
         outputs: ["pr_summary"],
@@ -155,7 +155,7 @@ export const workers: WorkerDefinition[] = [
             ])
           }
         ]),
-        prompt: "implementation_build_revise_after_assessment",
+        prompt: "implementation_build_revise_after_assessment_v3",
         settings: [{ key: "evidence_fact", value: "build_submitted" }],
         tools: [],
         outputs: ["build_result", "pr_summary"],
@@ -186,7 +186,7 @@ export const workers: WorkerDefinition[] = [
             ])
           }
         ]),
-        prompt: "implementation_assessment_initial",
+        prompt: "implementation_assessment_initial_v3",
         settings: [{ key: "evidence_fact", value: "assessment_submitted" }],
         tools: [],
         outputs: ["assessment"],
@@ -210,7 +210,7 @@ export const workers: WorkerDefinition[] = [
             ])
           }
         ]),
-        prompt: "implementation_assessment_retry",
+        prompt: "implementation_assessment_retry_v3",
         settings: [{ key: "evidence_fact", value: "assessment_submitted" }],
         tools: [],
         outputs: ["assessment"],
@@ -242,7 +242,7 @@ export const workers: WorkerDefinition[] = [
             ])
           }
         ]),
-        prompt: "implementation_assessment_discuss",
+        prompt: "implementation_assessment_discuss_v3",
         settings: [{ key: "evidence_fact", value: "assessment_unchanged" }],
         tools: [],
         outputs: ["assessment"],

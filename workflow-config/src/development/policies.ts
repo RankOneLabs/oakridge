@@ -1,11 +1,11 @@
-import type { DecisionTree, FieldExpression, Schema, ScopeDefinition } from "../source-contracts";
-import { independent_parent_phase } from "./independent-siblings";
+import type { FieldExpression, Schema, ScopeDefinition } from "../source-contracts";
 
 export interface RunPolicy {
   readonly key: string;
   readonly implementation_capacity: number;
   readonly sibling_failure: "cancel" | "continue_independent";
   readonly contract_field_order: "canonical" | "alternate";
+  readonly stage_layout?: "standard" | "verification";
 }
 export const DEVELOPMENT_POLICY: RunPolicy = {
   key: "development", implementation_capacity: 4,
@@ -14,6 +14,10 @@ export const DEVELOPMENT_POLICY: RunPolicy = {
 export const INDEPENDENT_SIBLINGS_POLICY: RunPolicy = {
   key: "development-independent-siblings", implementation_capacity: 2,
   sibling_failure: "continue_independent", contract_field_order: "alternate",
+};
+export const VERIFICATION_POLICY: RunPolicy = {
+  key: "development-verification", implementation_capacity: 3,
+  sibling_failure: "cancel", contract_field_order: "alternate", stage_layout: "verification",
 };
 
 /** The alternate bundle also exercises provider decoding with reordered fields. */
@@ -49,13 +53,8 @@ function configureObserver(scope: ScopeDefinition, policy: RunPolicy): ScopeDefi
     }) };
   }) };
 }
-function configureParent(tree: DecisionTree, policy: RunPolicy): DecisionTree {
-  if (policy.sibling_failure === "cancel" || tree.kind !== "match") return tree;
-  return { ...tree, cases: tree.cases.map((entry) => entry.variant === "implementation_finished"
-    ? { ...entry, node: independent_parent_phase } : entry) };
-}
 export function configureScope(scope: ScopeDefinition, policy: RunPolicy): ScopeDefinition {
-  if (scope.key === "development") return { ...scope, tree: configureParent(scope.tree, policy) };
+  if (scope.key === "development") return scope;
   const configured = configureObserver(scope, policy);
   if (scope.key !== "implementation") return configured;
   return { ...configured, pools: configured.pools.map((pool) => pool.key === "implementation_slots"

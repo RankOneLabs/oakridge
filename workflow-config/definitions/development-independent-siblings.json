@@ -1,7 +1,7 @@
 {
   "language_version": 1,
   "key": "development-independent-siblings",
-  "version": 2,
+  "version": 3,
   "root": "development",
   "schemas": [
     {
@@ -4706,7 +4706,7 @@
                   }
                 ]
               },
-              "prompt": "spec_analysis_author_initial",
+              "prompt": "spec_analysis_author_initial_v3",
               "settings": [
                 {
                   "key": "evidence_fact",
@@ -4782,7 +4782,7 @@
                   }
                 ]
               },
-              "prompt": "spec_analysis_author_revise",
+              "prompt": "spec_analysis_author_revise_v3",
               "settings": [
                 {
                   "key": "evidence_fact",
@@ -4842,7 +4842,7 @@
                   }
                 ]
               },
-              "prompt": "spec_analysis_author_retry",
+              "prompt": "spec_analysis_author_retry_v3",
               "settings": [
                 {
                   "key": "evidence_fact",
@@ -5389,7 +5389,7 @@
                   }
                 ]
               },
-              "prompt": "planning_author_initial",
+              "prompt": "planning_author_initial_v3",
               "settings": [
                 {
                   "key": "evidence_fact",
@@ -5465,7 +5465,7 @@
                   }
                 ]
               },
-              "prompt": "planning_author_revise",
+              "prompt": "planning_author_revise_v3",
               "settings": [
                 {
                   "key": "evidence_fact",
@@ -5525,7 +5525,7 @@
                   }
                 ]
               },
-              "prompt": "planning_author_retry",
+              "prompt": "planning_author_retry_v3",
               "settings": [
                 {
                   "key": "evidence_fact",
@@ -6209,7 +6209,7 @@
                   }
                 ]
               },
-              "prompt": "brief_writing_author_initial",
+              "prompt": "brief_writing_author_initial_v3",
               "settings": [
                 {
                   "key": "evidence_fact",
@@ -6285,7 +6285,7 @@
                   }
                 ]
               },
-              "prompt": "brief_writing_author_revise",
+              "prompt": "brief_writing_author_revise_v3",
               "settings": [
                 {
                   "key": "evidence_fact",
@@ -6345,7 +6345,7 @@
                   }
                 ]
               },
-              "prompt": "brief_writing_author_retry",
+              "prompt": "brief_writing_author_retry_v3",
               "settings": [
                 {
                   "key": "evidence_fact",
@@ -7390,7 +7390,7 @@
                   }
                 ]
               },
-              "prompt": "implementation_build_initial",
+              "prompt": "implementation_build_initial_v3",
               "settings": [
                 {
                   "key": "evidence_fact",
@@ -7498,7 +7498,7 @@
                   }
                 ]
               },
-              "prompt": "implementation_build_revise",
+              "prompt": "implementation_build_revise_v3",
               "settings": [
                 {
                   "key": "evidence_fact",
@@ -7560,7 +7560,7 @@
                   }
                 ]
               },
-              "prompt": "implementation_build_replace_pr",
+              "prompt": "implementation_build_replace_pr_v3",
               "settings": [
                 {
                   "key": "evidence_fact",
@@ -7646,7 +7646,7 @@
                   }
                 ]
               },
-              "prompt": "implementation_build_retry",
+              "prompt": "implementation_build_retry_v3",
               "settings": [
                 {
                   "key": "evidence_fact",
@@ -7732,7 +7732,7 @@
                   }
                 ]
               },
-              "prompt": "implementation_build_retry_missing_build",
+              "prompt": "implementation_build_retry_missing_build_v3",
               "settings": [
                 {
                   "key": "evidence_fact",
@@ -7817,7 +7817,7 @@
                   }
                 ]
               },
-              "prompt": "implementation_build_retry_missing_pr",
+              "prompt": "implementation_build_retry_missing_pr_v3",
               "settings": [
                 {
                   "key": "evidence_fact",
@@ -7924,7 +7924,7 @@
                   }
                 ]
               },
-              "prompt": "implementation_build_revise_after_assessment",
+              "prompt": "implementation_build_revise_after_assessment_v3",
               "settings": [
                 {
                   "key": "evidence_fact",
@@ -8037,7 +8037,7 @@
                   }
                 ]
               },
-              "prompt": "implementation_assessment_initial",
+              "prompt": "implementation_assessment_initial_v3",
               "settings": [
                 {
                   "key": "evidence_fact",
@@ -8142,7 +8142,7 @@
                   }
                 ]
               },
-              "prompt": "implementation_assessment_retry",
+              "prompt": "implementation_assessment_retry_v3",
               "settings": [
                 {
                   "key": "evidence_fact",
@@ -8295,7 +8295,7 @@
                   }
                 ]
               },
-              "prompt": "implementation_assessment_discuss",
+              "prompt": "implementation_assessment_discuss_v3",
               "settings": [
                 {
                   "key": "evidence_fact",
@@ -11595,7 +11595,7 @@
                   }
                 ]
               },
-              "prompt": "final_integration_integrator_initial",
+              "prompt": "final_integration_integrator_initial_v3",
               "settings": [
                 {
                   "key": "evidence_fact",
@@ -11655,7 +11655,7 @@
                   }
                 ]
               },
-              "prompt": "final_integration_integrator_retry",
+              "prompt": "final_integration_integrator_retry_v3",
               "settings": [
                 {
                   "key": "evidence_fact",
@@ -12539,130 +12539,130 @@
   ],
   "prompts": [
     {
-      "key": "spec_analysis_author_initial",
-      "path": "workflow-config/prompts/dev-flow/spec_analysis_author_initial.md",
+      "key": "spec_analysis_author_initial_v3",
+      "path": "workflow-config/prompts/dev-flow/v3/spec_analysis_author_initial.md",
       "input_schema": "session_action",
-      "content_digest": "000d4ce14d29be748b3ee4de65fa22448535f7a23250e65e228acf61f8585aa3"
+      "content_digest": "4c85138020eeb9030760adfcea3fc8a60a5b96091e9d8bf57c5e52c3f7fdbd3a"
     },
     {
-      "key": "spec_analysis_author_revise",
-      "path": "workflow-config/prompts/dev-flow/spec_analysis_author_revise.md",
+      "key": "spec_analysis_author_revise_v3",
+      "path": "workflow-config/prompts/dev-flow/v3/spec_analysis_author_revise.md",
       "input_schema": "session_action",
-      "content_digest": "000d4ce14d29be748b3ee4de65fa22448535f7a23250e65e228acf61f8585aa3"
+      "content_digest": "cd9dd88a80e231eecc43faf82286c31aded66444f56668850fe9e0024c4dd790"
     },
     {
-      "key": "spec_analysis_author_retry",
-      "path": "workflow-config/prompts/dev-flow/spec_analysis_author_retry.md",
+      "key": "spec_analysis_author_retry_v3",
+      "path": "workflow-config/prompts/dev-flow/v3/spec_analysis_author_retry.md",
       "input_schema": "session_action",
-      "content_digest": "000d4ce14d29be748b3ee4de65fa22448535f7a23250e65e228acf61f8585aa3"
+      "content_digest": "a32e40ca06e393a063a30a6317f735eb13b9f223e21b27d3f44e15c85b67c2c5"
     },
     {
-      "key": "planning_author_initial",
-      "path": "workflow-config/prompts/dev-flow/planning_author_initial.md",
+      "key": "planning_author_initial_v3",
+      "path": "workflow-config/prompts/dev-flow/v3/planning_author_initial.md",
       "input_schema": "session_action",
-      "content_digest": "3c64ff0386aada30d98a22243f2d66e33934762b3d612881a081b8325d5c25e3"
+      "content_digest": "ef1eae61d940cc0e7f6c6b8b390ef83eec8916bf68c1a5386a29f19a5a4fb1d6"
     },
     {
-      "key": "planning_author_revise",
-      "path": "workflow-config/prompts/dev-flow/planning_author_revise.md",
+      "key": "planning_author_revise_v3",
+      "path": "workflow-config/prompts/dev-flow/v3/planning_author_revise.md",
       "input_schema": "session_action",
-      "content_digest": "3c64ff0386aada30d98a22243f2d66e33934762b3d612881a081b8325d5c25e3"
+      "content_digest": "0f537869fb241910ade008013457cb73b60f2db8f4bc4e341386316513c74a5d"
     },
     {
-      "key": "planning_author_retry",
-      "path": "workflow-config/prompts/dev-flow/planning_author_retry.md",
+      "key": "planning_author_retry_v3",
+      "path": "workflow-config/prompts/dev-flow/v3/planning_author_retry.md",
       "input_schema": "session_action",
-      "content_digest": "3c64ff0386aada30d98a22243f2d66e33934762b3d612881a081b8325d5c25e3"
+      "content_digest": "efcb131c0b5eb526cfa973977e5c6b5e893a0cc1b63b90d46e2db642581aee54"
     },
     {
-      "key": "brief_writing_author_initial",
-      "path": "workflow-config/prompts/dev-flow/brief_writing_author_initial.md",
+      "key": "brief_writing_author_initial_v3",
+      "path": "workflow-config/prompts/dev-flow/v3/brief_writing_author_initial.md",
       "input_schema": "session_action",
-      "content_digest": "81472b06de2ce081dbebf7676366438d1caf4c11bca8e93811d9c426b5e953b8"
+      "content_digest": "e0dc71cbe79f8345a12fce7c34c7e94edf3b561bd061042f8864b4cdec06e41b"
     },
     {
-      "key": "brief_writing_author_revise",
-      "path": "workflow-config/prompts/dev-flow/brief_writing_author_revise.md",
+      "key": "brief_writing_author_revise_v3",
+      "path": "workflow-config/prompts/dev-flow/v3/brief_writing_author_revise.md",
       "input_schema": "session_action",
-      "content_digest": "81472b06de2ce081dbebf7676366438d1caf4c11bca8e93811d9c426b5e953b8"
+      "content_digest": "0ba78d3c5aa7be58c07338d4efd1be04456c932a48b1db7d18fbdc5385494a95"
     },
     {
-      "key": "brief_writing_author_retry",
-      "path": "workflow-config/prompts/dev-flow/brief_writing_author_retry.md",
+      "key": "brief_writing_author_retry_v3",
+      "path": "workflow-config/prompts/dev-flow/v3/brief_writing_author_retry.md",
       "input_schema": "session_action",
-      "content_digest": "81472b06de2ce081dbebf7676366438d1caf4c11bca8e93811d9c426b5e953b8"
+      "content_digest": "479cc682aa910a6f71e9a968acee905607f09c142ef945d62df0aab0d4ca815f"
     },
     {
-      "key": "implementation_build_initial",
-      "path": "workflow-config/prompts/dev-flow/implementation_build_initial.md",
+      "key": "implementation_build_initial_v3",
+      "path": "workflow-config/prompts/dev-flow/v3/implementation_build_initial.md",
       "input_schema": "session_action",
-      "content_digest": "046070608268f3d0e35219e7039efd707b26ee230e59fc1d974976a310d44f4d"
+      "content_digest": "7a4c97fde8a4743e76580ae4ccbd94c821ca73390d2647de6b1c68efb69998a4"
     },
     {
-      "key": "implementation_build_revise",
-      "path": "workflow-config/prompts/dev-flow/implementation_build_revise.md",
+      "key": "implementation_build_revise_v3",
+      "path": "workflow-config/prompts/dev-flow/v3/implementation_build_revise.md",
       "input_schema": "session_action",
-      "content_digest": "046070608268f3d0e35219e7039efd707b26ee230e59fc1d974976a310d44f4d"
+      "content_digest": "0c06c542bf11dd8a942b2ff8c2e92b42d51f1c2ebc056d2f0d295de1b8873c76"
     },
     {
-      "key": "implementation_build_replace_pr",
-      "path": "workflow-config/prompts/dev-flow/implementation_build_replace_pr.md",
+      "key": "implementation_build_replace_pr_v3",
+      "path": "workflow-config/prompts/dev-flow/v3/implementation_build_replace_pr.md",
       "input_schema": "session_action",
-      "content_digest": "046070608268f3d0e35219e7039efd707b26ee230e59fc1d974976a310d44f4d"
+      "content_digest": "fed88708e86153995682b1be801e49fdbe73bd3acb53c35dd0dc51adba672d4b"
     },
     {
-      "key": "implementation_build_retry",
-      "path": "workflow-config/prompts/dev-flow/implementation_build_retry.md",
+      "key": "implementation_build_retry_v3",
+      "path": "workflow-config/prompts/dev-flow/v3/implementation_build_retry.md",
       "input_schema": "session_action",
-      "content_digest": "046070608268f3d0e35219e7039efd707b26ee230e59fc1d974976a310d44f4d"
+      "content_digest": "50c8aca946c53211135951bd3b5fea0ed5eed80e1783cfd91b37e8a4b60f96ec"
     },
     {
-      "key": "implementation_build_retry_missing_build",
-      "path": "workflow-config/prompts/dev-flow/implementation_build_retry_missing_build.md",
+      "key": "implementation_build_retry_missing_build_v3",
+      "path": "workflow-config/prompts/dev-flow/v3/implementation_build_retry_missing_build.md",
       "input_schema": "session_action",
-      "content_digest": "046070608268f3d0e35219e7039efd707b26ee230e59fc1d974976a310d44f4d"
+      "content_digest": "212edc898f5c5662414ecdc2fd2d527587f35bbd2d9cca400afa228c4af08907"
     },
     {
-      "key": "implementation_build_retry_missing_pr",
-      "path": "workflow-config/prompts/dev-flow/implementation_build_retry_missing_pr.md",
+      "key": "implementation_build_retry_missing_pr_v3",
+      "path": "workflow-config/prompts/dev-flow/v3/implementation_build_retry_missing_pr.md",
       "input_schema": "session_action",
-      "content_digest": "046070608268f3d0e35219e7039efd707b26ee230e59fc1d974976a310d44f4d"
+      "content_digest": "4742935e6ebf2e47739aed464780403dea09132e843b50c428eb00b896fe8042"
     },
     {
-      "key": "implementation_assessment_initial",
-      "path": "workflow-config/prompts/dev-flow/implementation_assessment_initial.md",
+      "key": "implementation_build_revise_after_assessment_v3",
+      "path": "workflow-config/prompts/dev-flow/v3/implementation_build_revise_after_assessment.md",
       "input_schema": "session_action",
-      "content_digest": "1eedf6fed0596bda856079312bb54c00d55b711d11a224e9d7346053df026e4d"
+      "content_digest": "f02b185efdf14fbd1da0f6d1363eca56f9ef8f77fe5fc6f44dba1387151ae31e"
     },
     {
-      "key": "implementation_assessment_retry",
-      "path": "workflow-config/prompts/dev-flow/implementation_assessment_retry.md",
+      "key": "implementation_assessment_initial_v3",
+      "path": "workflow-config/prompts/dev-flow/v3/implementation_assessment_initial.md",
       "input_schema": "session_action",
-      "content_digest": "1eedf6fed0596bda856079312bb54c00d55b711d11a224e9d7346053df026e4d"
+      "content_digest": "79592324bc77a818ef734d63fa6a1b6ba514d8c4964a936281537679ac45c9c5"
     },
     {
-      "key": "implementation_assessment_discuss",
-      "path": "workflow-config/prompts/dev-flow/implementation_assessment_discuss.md",
+      "key": "implementation_assessment_retry_v3",
+      "path": "workflow-config/prompts/dev-flow/v3/implementation_assessment_retry.md",
       "input_schema": "session_action",
-      "content_digest": "1eedf6fed0596bda856079312bb54c00d55b711d11a224e9d7346053df026e4d"
+      "content_digest": "c62049587260a26e92cde0fa8f4e5d8b8f3030ea641c39fc039c5c1dc9260399"
     },
     {
-      "key": "implementation_build_revise_after_assessment",
-      "path": "workflow-config/prompts/dev-flow/implementation_build_revise_after_assessment.md",
+      "key": "implementation_assessment_discuss_v3",
+      "path": "workflow-config/prompts/dev-flow/v3/implementation_assessment_discuss.md",
       "input_schema": "session_action",
-      "content_digest": "046070608268f3d0e35219e7039efd707b26ee230e59fc1d974976a310d44f4d"
+      "content_digest": "71984e22960c633a09da2ee0e63f75a329d8e83780e86b60dc19fa3f9bd995dd"
     },
     {
-      "key": "final_integration_integrator_initial",
-      "path": "workflow-config/prompts/dev-flow/final_integration_integrator_initial.md",
+      "key": "final_integration_integrator_initial_v3",
+      "path": "workflow-config/prompts/dev-flow/v3/final_integration_integrator_initial.md",
       "input_schema": "session_action",
-      "content_digest": "3ed66e609965916aadd144a23078a01debf7da4c48eab6364786d4631c902939"
+      "content_digest": "3f34074f1f6ef80a08a65945548c622e4f596ab460fc07edeb524887b1e031d6"
     },
     {
-      "key": "final_integration_integrator_retry",
-      "path": "workflow-config/prompts/dev-flow/final_integration_integrator_retry.md",
+      "key": "final_integration_integrator_retry_v3",
+      "path": "workflow-config/prompts/dev-flow/v3/final_integration_integrator_retry.md",
       "input_schema": "session_action",
-      "content_digest": "3ed66e609965916aadd144a23078a01debf7da4c48eab6364786d4631c902939"
+      "content_digest": "404a3304dc3d3a948ad95f638c315493d1b108e4c95ee64f032fdc4ddabebd5e"
     }
   ],
   "operations": [
