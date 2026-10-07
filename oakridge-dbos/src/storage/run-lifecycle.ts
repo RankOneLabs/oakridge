@@ -5,6 +5,7 @@ import type { DefinitionBundle } from "../core-client/generated-contracts";
 import type { RunId, ScopeId } from "./schema-records";
 import { pendingCleanupCount, type DeleteEligibility } from "../effects/intents";
 import { revokeStarts } from "./revocation";
+import { prepareLifecycleTrigger } from "./lifecycle-trigger";
 
 export interface ScopeCancellationPayload { readonly scope_id: ScopeId; readonly payload: unknown }
 export interface CancelRunCommand { readonly kind: "cancel_run"; readonly run_id: string; readonly reason: string; readonly payloads?: readonly ScopeCancellationPayload[] }
@@ -35,13 +36,13 @@ export async function cancelRun(db: TransactionalSqlExecutor, command: CancelRun
         const key = definition?.cancellation.trigger;
         const trigger = definition?.commands.find((item) => item.key === key) ?? definition?.facts.find((item) => item.key === key);
         if (!definition || !key || !trigger) throw new InvalidCancellation(`cancellation trigger missing for ${scope.scope_key}`);
-        const schema = bundle.schemas.find((schema) => schema.key === trigger.payload_schema);
         const provided = command.payloads?.find((item) => item.scope_id === scope.id);
-        const payload = provided ? provided.payload : schema?.shape.kind === "string" ? command.reason : {};
-        const checked = await core.request("validate_payload", { bundle, schema: trigger.payload_schema, payload });
-        if (!checked.ok || checked.value.kind !== "validated") throw new InvalidCancellation(`invalid cancellation payload for ${scope.scope_key}`);
+        const prepared = await prepareLifecycleTrigger({ core, bundle, id: `cancel:${scope.id}`, key, schema: trigger.payload_schema,
+          projection: definition.cancellation.payload, reason: command.reason,
+          has_supplied_payload: provided !== undefined, supplied_payload: provided?.payload });
+        if (!prepared.ok) throw new InvalidCancellation(`invalid cancellation payload for ${scope.scope_key}: ${prepared.error.detail}`);
         const outcome = await mutations.decide({ run_id: command.run_id as RunId, scope_id: scope.id, ingress_id: `cancel:${scope.id}`,
-          trigger: { id: `cancel:${scope.id}`, key, payload: checked.value.value }, operator_version: null });
+          trigger: prepared.value, operator_version: null });
         if (!outcome.ok || (outcome.value.kind !== "Committed" && outcome.value.kind !== "Replayed")) throw new InvalidCancellation(`configured cancellation was not committed for ${scope.scope_key}`);
       }
     }

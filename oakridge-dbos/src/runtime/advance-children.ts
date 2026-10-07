@@ -1,5 +1,6 @@
 import type { CoreClient } from "../core-client/client";
-import type { DefinitionBundle } from "../core-client/generated-contracts";
+import type { DefinitionBundle, LifecyclePayloadProjection } from "../core-client/generated-contracts";
+import { prepareLifecycleTrigger } from "../storage/lifecycle-trigger";
 import type { MutationService } from "../storage/mutation-service";
 import type { ChildCollectionRecord, RunId, ScopeId, ScopeInstanceRecord, ScopeExportRecord } from "../storage/schema-records";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
@@ -57,7 +58,7 @@ export async function advanceChildren({ db, core, mutations, run_ids }: ChildAdv
     const child = definition?.children.find((item) => item.key === collection.collection_key);
     const fact = definition?.facts.find((item) => item.key === child?.on_terminal);
     if (!fact) continue;
-    try { await deliver(parent, fact.key, `empty-collection:${collection.id}`, fact.payload_schema); } catch (error) { report(parent.id, error); }
+    try { await deliver(parent, fact.key, `empty-collection:${collection.id}`, fact.payload_schema, child?.on_terminal_payload); } catch (error) { report(parent.id, error); }
   }
   return failures;
 
@@ -90,7 +91,7 @@ export async function advanceChildren({ db, core, mutations, run_ids }: ChildAdv
         if (!succeeded) {
           const cancellation = definition.cancellation.trigger;
           const event = definition.commands.find((item) => item.key === cancellation) ?? definition.facts.find((item) => item.key === cancellation);
-          if (event) await deliver(scope, event.key, `dependency-cancel:${scope.id}`, event.payload_schema);
+          if (event) await deliver(scope, event.key, `dependency-cancel:${scope.id}`, event.payload_schema, definition.cancellation.payload);
           return;
         }
       }
@@ -99,25 +100,25 @@ export async function advanceChildren({ db, core, mutations, run_ids }: ChildAdv
       if (!command) return;
       const state = scope.local_state.data.kind === "variant" || scope.local_state.data.kind === "enum" ? scope.local_state.data.variant : null;
       if (!state || !command.available_in.includes(state)) return;
-      await deliver(scope, key, `entry:${scope.id}`, command.payload_schema);
+      await deliver(scope, key, `entry:${scope.id}`, command.payload_schema, definition.entry_payload);
     }
     if (scope.is_terminal && parent && !parent.is_terminal && child?.on_terminal) {
       const fact = parent_definition?.facts.find((fact) => fact.key === child?.on_terminal);
-      if (fact) await deliver(parent, fact.key, `child-terminal:${scope.id}`, fact.payload_schema);
+      if (fact) await deliver(parent, fact.key, `child-terminal:${scope.id}`, fact.payload_schema, child.on_terminal_payload);
     }
   }
-  async function deliver(scope: ScopeInstanceRecord, key: string, id: string, schema: string): Promise<void> {
+  async function deliver(scope: ScopeInstanceRecord, key: string, id: string, schema: string, projection?: LifecyclePayloadProjection): Promise<void> {
     const bundle = bundles.get(scope.run_id);
     if (!bundle) throw new Error(`lifecycle bundle missing: ${scope.run_id}`);
-    const checked = await core.request("validate_payload", { bundle, schema, payload: {} });
-    if (!checked.ok || checked.value.kind !== "validated") throw new Error(`invalid configured lifecycle payload: ${scope.id}/${key}`);
+    const prepared = await prepareLifecycleTrigger({ core, bundle, id, key, schema, projection, reason: id });
+    if (!prepared.ok) throw new Error(`invalid configured lifecycle payload: ${scope.id}/${key}: ${prepared.error.detail}`);
     // advanceRunStep may retry an infrastructure failure five times, so one
     // outer step can issue at most 5 × 3 decisions. A third Conflict becomes a
     // run diagnostic and does not consume the outer infrastructure retries.
     const max_conflict_attempts = 3;
     for (let attempt = 1; attempt <= max_conflict_attempts; attempt++) {
       const result = await mutations.decide({ run_id: scope.run_id, scope_id: scope.id as ScopeId, ingress_id: id,
-        trigger: { id, key, payload: checked.value.value }, operator_version: null });
+        trigger: prepared.value, operator_version: null });
       if (!result.ok) throw new Error(`${result.error.operation}/${result.error.entity_id}: ${result.error.detail}`);
       const outcome = result.value;
       switch (outcome.kind) {

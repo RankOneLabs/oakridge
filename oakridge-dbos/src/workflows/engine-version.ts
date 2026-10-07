@@ -37,6 +37,7 @@ export const ENGINE_SOURCE_MANIFEST: readonly string[] = [
   "storage/commit.ts",
   "storage/effect-results.ts",
   "storage/launch-receipts.ts",
+  "storage/lifecycle-trigger.ts",
   "storage/mutation-service.ts",
   "storage/receipts.ts",
   "storage/revocation.ts",

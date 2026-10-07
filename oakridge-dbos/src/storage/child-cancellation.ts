@@ -4,6 +4,7 @@ import type { Result, CommitRequest } from "./commit";
 import type { MutationInput, Decision } from "./mutation-service";
 import { prepareCommit, requestEvaluation } from "./mutation-service";
 import { readSnapshot, type AuthoritySnapshot } from "./snapshot-reader";
+import { prepareLifecycleTrigger } from "./lifecycle-trigger";
 import type { ScopeInstanceRecord } from "./schema-records";
 import type { TransactionalSqlExecutor } from "./sql-executor";
 
@@ -30,10 +31,11 @@ export async function prepareChildCancellations(db: TransactionalSqlExecutor, co
     const key = declaration?.cancellation.trigger;
     const event = declaration?.commands.find((item) => item.key === key) ?? declaration?.facts.find((item) => item.key === key);
     if (!key || !event) return failure(scope.id, "configured cancellation trigger missing");
-    const checked = await core.request("validate_payload", { bundle, schema: event.payload_schema, payload: {} });
-    if (!checked.ok || checked.value.kind !== "validated") return failure(scope.id, "cancellation requires a valid empty record payload");
     const id = `${input.ingress_id}:cancel:${scope.id}`;
-    const trigger = { id, key, payload: checked.value.value };
+    const prepared = await prepareLifecycleTrigger({ core, bundle, id, key, schema: event.payload_schema,
+      projection: declaration?.cancellation.payload, reason: "parent cancelled" });
+    if (!prepared.ok) return failure(scope.id, prepared.error.detail);
+    const trigger = prepared.value;
     const source = await readSnapshot(db, scope.id as import("./schema-records").ScopeId, trigger);
     if (!source) return failure(scope.id, "cancellation owner missing");
     // The parent's subtree witness covers this child, while a direct child

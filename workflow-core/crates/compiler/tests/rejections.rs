@@ -789,6 +789,15 @@ fn recovery_codes_and_detail_payloads_are_checked_against_provider_declarations(
     source.operations[0].recovery[0].fact = SymbolKey("missing".into());
     assert_eq!(compile_with_catalog(&source, &catalog).unwrap_err().kind, DomainErrorKind::UndeclaredTrigger);
 }
+
+#[test]
+fn cancellation_projection_must_satisfy_the_declared_trigger_schema() {
+    let mut source: DefinitionBundle = serde_json::from_value(fixture()).unwrap();
+    source.scopes[0].commands.iter_mut().find(|command| command.key.0 == "cancel").unwrap().payload_schema = SchemaId("text".into());
+    assert_eq!(compile(&source, &source.operations).unwrap_err().kind, DomainErrorKind::IncompatiblePort);
+    source.scopes[0].cancellation.payload = LifecyclePayloadProjection::Reason;
+    assert!(compile(&source, &source.operations).is_ok());
+}
 #[test]
 fn unavailable_pinned_operation_version() {
     let b: DefinitionBundle = serde_json::from_value(fixture()).unwrap();

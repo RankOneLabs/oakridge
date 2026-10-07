@@ -2243,7 +2243,10 @@
               }
             }
           },
-          "on_terminal": "prepare_finished"
+          "on_terminal": "prepare_finished",
+          "on_terminal_payload": {
+            "kind": "empty_record"
+          }
         },
         {
           "key": "analysis",
@@ -2327,7 +2330,10 @@
             "body"
           ],
           "collection": null,
-          "on_terminal": "analysis_finished"
+          "on_terminal": "analysis_finished",
+          "on_terminal_payload": {
+            "kind": "empty_record"
+          }
         },
         {
           "key": "plan",
@@ -2420,7 +2426,10 @@
             "body"
           ],
           "collection": null,
-          "on_terminal": "plan_finished"
+          "on_terminal": "plan_finished",
+          "on_terminal_payload": {
+            "kind": "empty_record"
+          }
         },
         {
           "key": "briefs",
@@ -2521,7 +2530,10 @@
             "briefs"
           ],
           "collection": null,
-          "on_terminal": "briefs_finished"
+          "on_terminal": "briefs_finished",
+          "on_terminal_payload": {
+            "kind": "empty_record"
+          }
         },
         {
           "key": "implementation",
@@ -2703,7 +2715,10 @@
             }
           },
           "on_terminal": "implementation_finished",
-          "prerequisite_export": "accepted"
+          "prerequisite_export": "accepted",
+          "on_terminal_payload": {
+            "kind": "empty_record"
+          }
         },
         {
           "key": "integration",
@@ -2871,14 +2886,20 @@
               }
             }
           },
-          "on_terminal": "integration_finished"
+          "on_terminal": "integration_finished",
+          "on_terminal_payload": {
+            "kind": "empty_record"
+          }
         }
       ],
       "exports": [],
       "resources": [],
       "pools": [],
       "cancellation": {
-        "trigger": "cancel"
+        "trigger": "cancel",
+        "payload": {
+          "kind": "empty_record"
+        }
       },
       "presentation": {
         "label": "Development",
@@ -4172,7 +4193,10 @@
           }
         }
       },
-      "entry_command": "begin"
+      "entry_command": "begin",
+      "entry_payload": {
+        "kind": "empty_record"
+      }
     },
     {
       "key": "repository_preparation",
@@ -4291,7 +4315,10 @@
       "resources": [],
       "pools": [],
       "cancellation": {
-        "trigger": "cancel"
+        "trigger": "cancel",
+        "payload": {
+          "kind": "empty_record"
+        }
       },
       "presentation": {
         "label": "Repository Preparation",
@@ -4453,7 +4480,10 @@
           }
         }
       },
-      "entry_command": "begin"
+      "entry_command": "begin",
+      "entry_payload": {
+        "kind": "empty_record"
+      }
     },
     {
       "key": "spec_analysis",
@@ -4811,7 +4841,10 @@
       "resources": [],
       "pools": [],
       "cancellation": {
-        "trigger": "cancel"
+        "trigger": "cancel",
+        "payload": {
+          "kind": "empty_record"
+        }
       },
       "presentation": {
         "label": "Spec Analysis",
@@ -5130,7 +5163,10 @@
           }
         }
       },
-      "entry_command": "begin"
+      "entry_command": "begin",
+      "entry_payload": {
+        "kind": "empty_record"
+      }
     },
     {
       "key": "planning",
@@ -5488,7 +5524,10 @@
       "resources": [],
       "pools": [],
       "cancellation": {
-        "trigger": "cancel"
+        "trigger": "cancel",
+        "payload": {
+          "kind": "empty_record"
+        }
       },
       "presentation": {
         "label": "Planning",
@@ -5944,7 +5983,10 @@
           }
         }
       },
-      "entry_command": "begin"
+      "entry_command": "begin",
+      "entry_payload": {
+        "kind": "empty_record"
+      }
     },
     {
       "key": "brief_writing",
@@ -6302,7 +6344,10 @@
       "resources": [],
       "pools": [],
       "cancellation": {
-        "trigger": "cancel"
+        "trigger": "cancel",
+        "payload": {
+          "kind": "empty_record"
+        }
       },
       "presentation": {
         "label": "Brief Writing",
@@ -6875,7 +6920,10 @@
           }
         }
       },
-      "entry_command": "begin"
+      "entry_command": "begin",
+      "entry_payload": {
+        "kind": "empty_record"
+      }
     },
     {
       "key": "implementation",
@@ -8362,7 +8410,10 @@
         }
       ],
       "cancellation": {
-        "trigger": "cancel"
+        "trigger": "cancel",
+        "payload": {
+          "kind": "empty_record"
+        }
       },
       "presentation": {
         "label": "Implementation",
@@ -11232,7 +11283,10 @@
           }
         }
       },
-      "entry_command": "begin"
+      "entry_command": "begin",
+      "entry_payload": {
+        "kind": "empty_record"
+      }
     },
     {
       "key": "final_integration",
@@ -11639,7 +11693,10 @@
       ],
       "pools": [],
       "cancellation": {
-        "trigger": "cancel"
+        "trigger": "cancel",
+        "payload": {
+          "kind": "empty_record"
+        }
       },
       "presentation": {
         "label": "Final Integration",
@@ -12341,7 +12398,10 @@
           }
         }
       },
-      "entry_command": "begin"
+      "entry_command": "begin",
+      "entry_payload": {
+        "kind": "empty_record"
+      }
     }
   ],
   "prompts": [
