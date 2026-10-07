@@ -1,17 +1,11 @@
 import type { ComponentType } from "react";
-import type { ArtifactReviewDescriptor } from "./types";
+import type { ArtifactReviewDescriptor, ArtifactSource } from "./types";
 import { SpecAnalysisViewer } from "./components/molecules/SpecAnalysisViewer";
 import { PlanViewer } from "./components/molecules/PlanViewer";
 import { BuildResultReview } from "./components/organisms/BuildResultReview";
 import { AssessmentViewer } from "./components/molecules/AssessmentViewer";
 import { PrSummaryViewer } from "./components/molecules/PrSummaryViewer";
 import { BuildBriefViewer } from "./components/molecules/BuildBriefViewer";
-
-/** Where the reviewed artifact lives: its run, and the unit label (a cohort id for per-cohort artifacts). */
-export interface ArtifactSource {
-  run_id: string;
-  label: string | null;
-}
 
 export interface ViewerProps {
   body: unknown;

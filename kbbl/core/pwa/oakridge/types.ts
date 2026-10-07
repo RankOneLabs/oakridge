@@ -413,6 +413,8 @@ export type FindingSeverity = "blocking" | "warning" | "info";
 export type RequirementStatus = "implementable" | "blocked" | "ambiguous";
 /** Mirrors `AssessmentVerdict` in oakridge-dbos/src/domain/dev-flow-artifacts.ts. */
 export type AssessmentVerdict = "pass" | "pass_with_notes" | "fail";
+/** Mirrors `CriterionStatus` in oakridge-dbos/src/domain/dev-flow-artifacts.ts. */
+export type CriterionStatus = "met" | "not_met" | "partial";
 /** Mirrors `PrReviewStatus` in oakridge-dbos/src/domain/dev-flow-artifacts.ts. */
 export type PrReviewStatus = "draft" | "ready" | "changes_requested" | "approved" | "merged" | "closed";
 
@@ -436,6 +438,12 @@ export interface ArtifactTypeDescriptor {
   capabilities: ArtifactCapabilities;
   anchor_schema: string[] | null;
   review?: ArtifactReviewDescriptor | null;
+}
+
+/** Where an artifact lives: its run, and its unit label (a cohort id for per-cohort artifacts). */
+export interface ArtifactSource {
+  run_id: string;
+  label: string | null;
 }
 
 export interface ArtifactDetail {
