@@ -15,6 +15,7 @@ export interface LifecycleTriggerInput {
 }
 
 export function projectLifecyclePayload(projection: LifecyclePayloadProjection | undefined, reason: string | undefined): Result<unknown> {
+  if (projection?.kind === "literal") return { ok: true, value: projection.value };
   switch (projection?.kind ?? "empty_record") {
     case "empty_record": return { ok: true, value: {} };
     case "reason": return reason === undefined

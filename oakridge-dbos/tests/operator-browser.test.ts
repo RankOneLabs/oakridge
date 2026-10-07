@@ -7,7 +7,7 @@ import { HTTP_ROUTES, matchRoute } from "../src/http/routes";
 import { installDefinitionApi } from "../src/http/app";
 import { createMutationService } from "../src/storage/mutation-service";
 import { createProductionComposition } from "../src/runtime/compose";
-import { withDatabase } from "./effect-fixture";
+import { stubProviderCapabilities, withDatabase } from "./effect-fixture";
 import type { DefinitionBundle } from "../src/core-client/generated-contracts";
 import type { CoreClient } from "../src/core-client/client";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
@@ -150,7 +150,7 @@ test("a digest launch resolves the pinned bundle before run creation", async () 
 test("an empty database lists, pins, launches and projects a run by digest", async () => {
   await withDatabase(async ({ url }) => {
     const composition = await createProductionComposition({ database_url: url,
-      core_binary: resolve(root, "workflow-core/target/debug/workflow-cli"), host: "127.0.0.1" });
+      core_binary: resolve(root, "workflow-core/target/debug/workflow-cli"), host: "127.0.0.1", provider_capabilities: stubProviderCapabilities });
     try {
       const app = composition.app;
       const emptyDefinitions = await app.request("/api/definitions");

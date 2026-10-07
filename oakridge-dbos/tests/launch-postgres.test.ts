@@ -5,7 +5,7 @@ import type { DefinitionBundle } from "../src/core-client/generated-contracts";
 import { deleteRun } from "../src/storage/run-lifecycle";
 import { createMutationService, type MutationService, type StartedRun } from "../src/storage/mutation-service";
 import { PgPostgresExecutor, type TransactionalSqlExecutor } from "../src/storage/sql-executor";
-import { withDatabase } from "./effect-fixture";
+import { stubProviderCapabilities, withDatabase } from "./effect-fixture";
 
 async function withLauncher(operation: (deps: { db: PgPostgresExecutor; core: CoreClient; mutations: MutationService; digest: string; url: string }) => Promise<void>): Promise<void> {
   await withDatabase(async ({ db, url }) => {
@@ -14,7 +14,7 @@ async function withLauncher(operation: (deps: { db: PgPostgresExecutor; core: Co
     const core = started.value;
     try {
       const bundle: DefinitionBundle = await Bun.file(resolve(import.meta.dir, "../../workflow-core/fixtures/bundles/minimal.json")).json();
-      const mutations = createMutationService(db, core);
+      const mutations = createMutationService(db, core, stubProviderCapabilities);
       const pinned = await mutations.pinDefinition({ bundle });
       if (!pinned.ok) throw new Error(pinned.error.detail);
       await operation({ db, core, mutations, digest: pinned.value.digest, url });

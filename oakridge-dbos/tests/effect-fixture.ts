@@ -6,6 +6,16 @@ import { PgPostgresExecutor } from "../src/storage/sql-executor";
 import { createProductionComposition } from "../src/runtime/compose";
 import type { DefinitionBundle, ScopeDefinition, CheckedValue, Schema } from "../src/core-client/generated-contracts";
 import type { RunId, ScopeId } from "../src/storage/schema-records";
+import type { ProviderCapabilities } from "../src/storage/mutation-service";
+import { PROVIDER_KINDS } from "../src/effects/provider-catalog";
+
+/** The minimal bundle declares a test-only stub, with no external provider IO. */
+export const stubProviderCapabilities: ProviderCapabilities = {
+  probe: async (kind) => kind === PROVIDER_KINDS.stub
+    ? { ok: true, value: true }
+    : { ok: false, error: { operation: "probe_test_provider", entity_id: kind, detail: "fixture provider unavailable" } },
+  check_github: async () => ({ ok: false, error: { operation: "probe_test_provider", entity_id: PROVIDER_KINDS.pull_request, detail: "fixture has no GitHub provider" } }),
+};
 
 export const unit: CheckedValue = { schema: "unit", data: { kind: "record", fields: [], dictionary: [] } };
 interface TestDatabase { readonly url: string; readonly db: PgPostgresExecutor }

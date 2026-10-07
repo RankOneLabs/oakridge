@@ -328,6 +328,11 @@ pub enum LifecyclePayloadProjection {
     #[default]
     EmptyRecord,
     Reason,
+    Literal {
+        #[serde(with = "crate::wire_numbers::json")]
+        #[schemars(with = "Value")]
+        value: Value,
+    },
 }
 
 impl LifecyclePayloadProjection {

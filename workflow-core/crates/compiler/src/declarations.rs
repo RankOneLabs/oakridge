@@ -12,6 +12,9 @@ fn validate_lifecycle_payload(
         LifecyclePayloadProjection::EmptyRecord => {
             matches!(shape, SchemaShape::Record { fields, dictionary: None } if fields.is_empty())
         }
+        LifecyclePayloadProjection::Literal { value } => {
+            crate::check_value(bundle, payload_schema, value).is_ok()
+        }
         LifecyclePayloadProjection::Reason => {
             matches!(shape, SchemaShape::String { min_length: 0, .. })
         }

@@ -164,6 +164,9 @@
     "CancellationDefinition": {
       "type": "object",
       "properties": {
+        "payload": {
+          "$ref": "#/$defs/LifecyclePayloadProjection"
+        },
         "trigger": {
           "type": "string"
         }
@@ -227,6 +230,9 @@
             "string",
             "null"
           ]
+        },
+        "on_terminal_payload": {
+          "$ref": "#/$defs/LifecyclePayloadProjection"
         },
         "prerequisite_export": {
           "type": [
@@ -1069,6 +1075,51 @@
         "value"
       ]
     },
+    "LifecyclePayloadProjection": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "empty_record"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "reason"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "literal"
+            },
+            "value": true
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "value"
+          ]
+        }
+      ]
+    },
     "MatchCase": {
       "type": "object",
       "properties": {
@@ -1304,6 +1355,12 @@
     "OperationManifest": {
       "type": "object",
       "properties": {
+        "emitted_codes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "input_contract": {
           "type": "string"
         },
@@ -1315,6 +1372,18 @@
         },
         "provider_kind": {
           "type": "string"
+        },
+        "recovery": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RecoveryMapping"
+          }
+        },
+        "required_recovery_codes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         },
         "settings": {
           "type": "array",
@@ -1454,6 +1523,22 @@
             "kind"
           ]
         }
+      ]
+    },
+    "RecoveryMapping": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "fact": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "fact"
       ]
     },
     "ReferenceBrand": {
@@ -2035,6 +2120,9 @@
             "string",
             "null"
           ]
+        },
+        "entry_payload": {
+          "$ref": "#/$defs/LifecyclePayloadProjection"
         },
         "errors": {
           "type": "array",

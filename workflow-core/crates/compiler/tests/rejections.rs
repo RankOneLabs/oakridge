@@ -857,6 +857,27 @@ fn cancellation_projection_must_satisfy_the_declared_trigger_schema() {
 }
 
 #[test]
+fn cancellation_literal_is_checked_against_the_declared_schema() {
+    let mut source: DefinitionBundle = serde_json::from_value(fixture()).unwrap();
+    source.scopes[0]
+        .commands
+        .iter_mut()
+        .find(|command| command.key.0 == "cancel")
+        .unwrap()
+        .payload_schema = SchemaId("text".into());
+    source.scopes[0].cancellation.payload = LifecyclePayloadProjection::Literal {
+        value: json!("automatic cancellation"),
+    };
+    assert!(compile(&source, &source.operations).is_ok());
+    source.scopes[0].cancellation.payload =
+        LifecyclePayloadProjection::Literal { value: json!(17) };
+    assert_eq!(
+        compile(&source, &source.operations).unwrap_err().kind,
+        DomainErrorKind::IncompatiblePort
+    );
+}
+
+#[test]
 fn provider_required_start_recovery_must_be_mapped_by_the_bundle() {
     let mut source: DefinitionBundle = serde_json::from_value(fixture()).unwrap();
     let mut catalog = ProviderCatalog {
