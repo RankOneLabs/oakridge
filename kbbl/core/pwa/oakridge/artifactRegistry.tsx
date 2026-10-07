@@ -3,7 +3,7 @@ import type { ArtifactReviewDescriptor, ArtifactSource } from "./types";
 import { SpecAnalysisViewer } from "./components/molecules/SpecAnalysisViewer";
 import { PlanViewer } from "./components/molecules/PlanViewer";
 import { BuildResultReview } from "./components/organisms/BuildResultReview";
-import { AssessmentViewer } from "./components/molecules/AssessmentViewer";
+import { AssessmentReview } from "./components/organisms/AssessmentReview";
 import { PrSummaryViewer } from "./components/molecules/PrSummaryViewer";
 import { BuildBriefViewer } from "./components/molecules/BuildBriefViewer";
 
@@ -27,7 +27,7 @@ const REGISTRY: Record<string, RegistryEntry> = {
   "dev-plan-viewer": { Viewer: PlanViewer },
   "dev-build-brief-viewer": { Viewer: BuildBriefViewer },
   "dev-build-result-viewer": { Viewer: BuildResultReview },
-  "dev-assessment-viewer": { Viewer: AssessmentViewer },
+  "dev-assessment-viewer": { Viewer: AssessmentReview },
   "dev-pr-summary-viewer": { Viewer: PrSummaryViewer },
 };
 
