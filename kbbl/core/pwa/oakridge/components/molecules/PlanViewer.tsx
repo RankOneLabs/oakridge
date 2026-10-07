@@ -1,161 +1,94 @@
-import { useState } from "react";
-import { DagEditor } from "../../../review/plan/DagEditor";
-import type { Cohort, CohortDependency } from "../../../review/plan/types";
-import type { ArtifactReviewDescriptor } from "../../types";
+import { useMemo, useState } from "react";
+import type { ViewerProps } from "../../artifactRegistry";
+import { parsePlan, selectOrderedCohorts, type PlanScope } from "../../lib/plan";
+import { selectPlanGraphLayout } from "../../lib/plan-graph";
+import type { ArtifactReviewDescriptor, CohortId } from "../../types";
+import { ArtifactSection, artifactLabelClass } from "./ArtifactSection";
+import { PlanCohortCard } from "./PlanCohortCard";
+import { PlanGraph } from "./PlanGraph";
+import { RiskCard } from "./RiskCard";
 
-// dev.plan body shape (subset used for display)
-interface PlanBody {
-  summary?: string;
-  cohorts?: unknown[];
-  dependency_order?: unknown[];
-  dependencies?: unknown[];
-  dependency_edges?: unknown[];
-  scope?: unknown;
-  acceptance_criteria?: unknown[];
-  risks?: unknown[];
+type PlanSection = "summary" | "scope" | "cohorts" | "risks" | "acceptance_criteria";
+
+/** A descriptor with no sections shows them all. */
+function isSectionVisible(descriptor: ArtifactReviewDescriptor | null | undefined, section: PlanSection): boolean {
+  const sections = descriptor?.sections ?? [];
+  return sections.length === 0 || sections.includes(section);
 }
 
-// Adapt plan.body.cohorts → DagEditor's Cohort[]
-function adaptCohorts(raw: unknown[]): Cohort[] {
-  return raw.map((c, i) => {
-    const obj = c as Record<string, unknown>;
-    return {
-      id: String(obj.id ?? i),
-      plan_id: "",
-      title: String(obj.title ?? obj.id ?? `Cohort ${i + 1}`),
-      notes: typeof obj.notes === "string" ? obj.notes : null,
-      position: typeof obj.position === "number" ? obj.position : i,
-      status: "planned" as const,
-      created_at: "",
-    };
-  });
+function ScopeColumns({ scope }: { scope: PlanScope }) {
+  const columns = [{ label: "In scope", values: scope.in_scope }, { label: "Out of scope", values: scope.out_of_scope }];
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      {columns.map(({ label, values }) => (
+        <div key={label} className="rounded-md border border-[var(--border-subtle)] px-3 py-2">
+          <div className={artifactLabelClass}>{label} ({values.length})</div>
+          {values.length > 0 ? (
+            <ul className="m-0 mt-1 list-disc space-y-1 pl-5 text-sm text-[var(--text-secondary)]">
+              {values.map((value, index) => <li key={`${index}-${value}`}>{value}</li>)}
+            </ul>
+          ) : <p className="mt-1 text-sm text-[var(--text-muted)]">None listed.</p>}
+        </div>
+      ))}
+    </div>
+  );
 }
 
-interface Props {
-  body: unknown;
-  descriptor?: ArtifactReviewDescriptor | null;
-}
+export function PlanViewer({ body, descriptor }: ViewerProps) {
+  const [selectedCohortId, setSelectedCohortId] = useState<CohortId | null>(null);
+  const parsed = useMemo(() => parsePlan(body), [body]);
+  const layout = useMemo(() => parsed.ok ? selectPlanGraphLayout(parsed.value.cohorts) : null, [parsed]);
 
-export function adaptDependencies(raw: unknown[]): CohortDependency[] {
-  return raw.flatMap((entry, index) => {
-    const value = entry as Record<string, unknown>;
-    const from = value.from_cohort_id ?? value.from ?? value.depends_on;
-    const to = value.to_cohort_id ?? value.to ?? value.cohort_id;
-    return from != null && to != null ? [{
-      id: String(value.id ?? `dependency-${index}`),
-      from_cohort_id: String(from),
-      to_cohort_id: String(to),
-    }] : [];
-  });
-}
-
-export function deriveCohortDependencies(rawCohorts: unknown[]): CohortDependency[] {
-  return rawCohorts.flatMap((entry, cohortIndex) => {
-    const cohort = entry as Record<string, unknown>;
-    const cohortId = String(cohort.id ?? cohortIndex);
-    const dependsOn = Array.isArray(cohort.depends_on) ? cohort.depends_on : [];
-    return dependsOn.map((dependencyId, dependencyIndex) => ({
-      id: `dependency-${String(dependencyId)}-${cohortId}-${dependencyIndex}`,
-      from_cohort_id: String(dependencyId),
-      to_cohort_id: cohortId,
-    }));
-  });
-}
-
-export function PlanViewer({ body, descriptor }: Props) {
-  const data = body as PlanBody;
-  const [selectedCohortId, setSelectedCohortId] = useState<string | null>(null);
-
-  const rawCohorts = Array.isArray(data.cohorts) ? data.cohorts : [];
-  const rawOrder = Array.isArray(data.dependency_order) ? data.dependency_order : [];
-  const rawDependencies = Array.isArray(data.dependency_edges)
-    ? data.dependency_edges
-    : Array.isArray(data.dependencies) ? data.dependencies : [];
-  const dependencies = rawDependencies.length > 0
-    ? adaptDependencies(rawDependencies)
-    : deriveCohortDependencies(rawCohorts);
-  const configuredSections = descriptor?.sections ?? [];
-  const visible = (section: string) => configuredSections.length === 0 || configuredSections.includes(section);
-  const cohorts = adaptCohorts(rawCohorts);
-  // dependency_order is a topological sort of IDs, not an explicit edge list;
-  // passing empty deps avoids rendering a false linear chain. Explicit edges
-  // will be wired when the artifact body carries them (cohort 5+).
+  if (!parsed.ok || !layout) {
+    const detail = parsed.ok ? "" : ` (${parsed.error.field}: ${parsed.error.detail})`;
+    return <div className="or-error" role="alert">This plan does not match the registered contract{detail}.</div>;
+  }
+  const plan = parsed.value;
+  const cohorts = selectOrderedCohorts(plan);
 
   return (
-    <div className="or-viewer or-viewer--plan">
-      {data.summary && visible("summary") && (
-        <section className="or-viewer__section">
-          <h3 className="or-viewer__section-title">Summary</h3>
-          <p className="or-viewer__summary">{data.summary}</p>
-        </section>
+    <article className="flex flex-col gap-5" data-testid="or-plan-viewer">
+      {isSectionVisible(descriptor, "summary") && (
+        <p className="text-sm leading-relaxed text-[var(--text-primary)]">{plan.summary}</p>
       )}
 
-      {cohorts.length > 0 && visible("cohorts") && (
-        <section className="or-viewer__section or-viewer__section--dag">
-          <h3 className="or-viewer__section-title">Cohorts ({cohorts.length})</h3>
-          <div style={{ height: 400 }}>
-            <DagEditor
-              cohorts={cohorts}
-              deps={dependencies}
-              threads={[]}
-              mode="review"
-              frozen={true}
-              selectedCohortId={selectedCohortId}
-              onSelectCohort={setSelectedCohortId}
-              onOpenThread={() => undefined}
-              onAddEdge={() => Promise.resolve()}
-              onDeleteEdge={() => Promise.resolve()}
-              onUpdatePosition={() => Promise.resolve()}
-            />
-          </div>
-        </section>
+      {isSectionVisible(descriptor, "cohorts") && cohorts.length > 0 && (
+        <ArtifactSection title={`Cohort graph (${cohorts.length})`} testId="or-plan-graph-section">
+          <PlanGraph layout={layout} selectedCohortId={selectedCohortId} onSelectCohort={setSelectedCohortId} />
+        </ArtifactSection>
       )}
 
-      {rawOrder.length > 0 && visible("dependency_order") && (
-        <section className="or-viewer__section">
-          <h3 className="or-viewer__section-title">Dependency Order</h3>
-          <ol className="or-viewer__list">
-            {rawOrder.map((id, i) => (
-              <li key={i} className="or-viewer__list-item">
-                <code>{String(id)}</code>
-              </li>
+      {isSectionVisible(descriptor, "risks") && (
+        <ArtifactSection title={`Risks (${plan.risks.length})`} testId="or-plan-risks">
+          {plan.risks.length > 0
+            ? plan.risks.map((risk, index) => <RiskCard key={`${index}-${risk.description}`} description={risk.description} mitigation={risk.mitigation} />)
+            : <p className="text-sm text-[var(--text-muted)]">No risks identified.</p>}
+        </ArtifactSection>
+      )}
+
+      {isSectionVisible(descriptor, "cohorts") && cohorts.length > 0 && (
+        <ArtifactSection title="Cohorts, in dependency order" testId="or-plan-cohorts">
+          <ol className="m-0 flex list-none flex-col gap-2 p-0">
+            {cohorts.map((cohort, index) => (
+              <PlanCohortCard key={cohort.id} cohort={cohort} order={index + 1} isSelected={cohort.id === selectedCohortId} onSelectCohort={setSelectedCohortId} />
             ))}
           </ol>
-        </section>
+        </ArtifactSection>
       )}
 
-      {data.scope !== undefined && visible("scope") && (
-        <section className="or-viewer__section">
-          <h3 className="or-viewer__section-title">Scope</h3>
-          <pre className="or-pre">{typeof data.scope === "string" ? data.scope : JSON.stringify(data.scope, null, 2)}</pre>
-        </section>
+      {isSectionVisible(descriptor, "scope") && (
+        <ArtifactSection title="Scope" testId="or-plan-scope">
+          <ScopeColumns scope={plan.scope} />
+        </ArtifactSection>
       )}
 
-      {Array.isArray(data.acceptance_criteria) && data.acceptance_criteria.length > 0 && visible("acceptance_criteria") && (
-        <section className="or-viewer__section">
-          <h3 className="or-viewer__section-title">Acceptance Criteria</h3>
-          <ul className="or-viewer__list">
-            {data.acceptance_criteria.map((c, i) => (
-              <li key={i} className="or-viewer__list-item">
-                {typeof c === "string" ? c : JSON.stringify(c)}
-              </li>
-            ))}
-          </ul>
-        </section>
+      {isSectionVisible(descriptor, "acceptance_criteria") && plan.acceptance_criteria.length > 0 && (
+        <ArtifactSection title={`Acceptance criteria (${plan.acceptance_criteria.length})`} testId="or-plan-acceptance">
+          <ol className="m-0 list-decimal space-y-1 pl-5 text-sm text-[var(--text-secondary)]">
+            {plan.acceptance_criteria.map((criterion, index) => <li key={`${index}-${criterion}`}>{criterion}</li>)}
+          </ol>
+        </ArtifactSection>
       )}
-
-      {Array.isArray(data.risks) && data.risks.length > 0 && visible("risks") && (
-        <section className="or-viewer__section">
-          <h3 className="or-viewer__section-title">Risks</h3>
-          <ul className="or-viewer__list">
-            {data.risks.map((risk, index) => (
-              <li key={index} className="or-viewer__list-item">
-                {typeof risk === "string" ? risk : JSON.stringify(risk)}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-    </div>
+    </article>
   );
 }

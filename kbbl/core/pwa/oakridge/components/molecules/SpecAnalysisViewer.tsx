@@ -1,21 +1,12 @@
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
 import type { ViewerProps } from "../../artifactRegistry";
-import { isSpecAnalysis, selectSpecAnalysisView, type SpecBlocker, type SpecRisk, type SpecAnalysisTally } from "../../lib/spec-analysis";
+import { isSpecAnalysis, selectSpecAnalysisView, type SpecBlocker, type SpecAnalysisTally } from "../../lib/spec-analysis";
 import { selectStatusTone, type StatusToneSource } from "../../lib/status-tone";
+import { ArtifactSection } from "./ArtifactSection";
 import { ExpandableText } from "./ExpandableText";
-
-const labelClass = "text-[0.6875rem] font-semibold uppercase tracking-[0.05em] text-[var(--text-muted)]";
-
-function Section({ title, testId, children }: { title: string; testId: string; children: ReactNode }) {
-  return (
-    <section className="flex flex-col gap-2" data-testid={testId}>
-      <h3 className={labelClass}>{title}</h3>
-      {children}
-    </section>
-  );
-}
+import { RiskCard } from "./RiskCard";
 
 function ItemRow({ status, id, description }: { status: StatusToneSource; id: string; description: string }) {
   return (
@@ -70,16 +61,6 @@ function BlockerCallout({ blockers }: { blockers: SpecBlocker[] }) {
   );
 }
 
-function RiskCard({ risk }: { risk: SpecRisk }) {
-  return (
-    <div className="rounded-md border border-[var(--amber-border)] bg-[var(--amber-bg)] px-3 py-2" data-testid="or-spec-risk">
-      <ExpandableText text={risk.description} className="text-sm font-medium text-[var(--text-primary)]" />
-      <div className={`${labelClass} mt-2`}>Mitigation</div>
-      <ExpandableText text={risk.mitigation} className="text-sm text-[var(--text-secondary)]" />
-    </div>
-  );
-}
-
 export function SpecAnalysisViewer({ body }: ViewerProps) {
   if (!isSpecAnalysis(body)) {
     return <div className="or-error" role="alert">This spec analysis does not match the registered contract.</div>;
@@ -96,26 +77,26 @@ export function SpecAnalysisViewer({ body }: ViewerProps) {
 
       <BlockerCallout blockers={view.blockers} />
 
-      <Section title={`Risks (${view.risks.length})`} testId="or-spec-risks">
+      <ArtifactSection title={`Risks (${view.risks.length})`} testId="or-spec-risks">
         {view.risks.length > 0
-          ? view.risks.map((risk, index) => <RiskCard key={`${index}-${risk.description}`} risk={risk} />)
+          ? view.risks.map((risk, index) => <RiskCard key={`${index}-${risk.description}`} description={risk.description} mitigation={risk.mitigation} />)
           : <p className="text-sm text-[var(--text-muted)]">No risks identified.</p>}
-      </Section>
+      </ArtifactSection>
 
       {view.findings.length > 0 && (
-        <Section title={`Findings (${view.findings.length})`} testId="or-spec-findings">
+        <ArtifactSection title={`Findings (${view.findings.length})`} testId="or-spec-findings">
           <ul className="divide-y divide-[var(--border-subtle)]">
             {view.findings.map((finding, index) => <ItemRow key={`${index}-${finding.id}`} status={finding.severity} id={finding.id} description={finding.description} />)}
           </ul>
-        </Section>
+        </ArtifactSection>
       )}
 
       {view.requirements.length > 0 && (
-        <Section title={`Requirements (${view.requirements.length})`} testId="or-spec-requirements">
+        <ArtifactSection title={`Requirements (${view.requirements.length})`} testId="or-spec-requirements">
           <ul className="divide-y divide-[var(--border-subtle)]">
             {view.requirements.map((requirement, index) => <ItemRow key={`${index}-${requirement.id}`} status={requirement.status} id={requirement.id} description={requirement.description} />)}
           </ul>
-        </Section>
+        </ArtifactSection>
       )}
     </article>
   );

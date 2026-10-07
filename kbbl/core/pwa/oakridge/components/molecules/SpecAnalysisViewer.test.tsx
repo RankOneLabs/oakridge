@@ -28,7 +28,7 @@ describe("SpecAnalysisViewer", () => {
 
   test("shows each risk's mitigation", () => {
     render(<SpecAnalysisViewer body={body} />);
-    expect(within(screen.getByTestId("or-spec-risk")).getByText("Backfill in batches")).toBeTruthy();
+    expect(within(screen.getByTestId("or-risk-card")).getByText("Backfill in batches")).toBeTruthy();
   });
 
   test("lists a blocker only in the callout", () => {
