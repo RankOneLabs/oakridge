@@ -103,3 +103,24 @@ test("ops retries a fork committed before an authority handover failure", async 
     status.mockRestore(); steps.mockRestore(); fork.mockRestore();
   }
 });
+
+for (const generation of [null, 2]) {
+  test(`ops refuses an ERROR run outside its authority generation (${generation})`, async () => {
+    const config = spyOn(DBOS, "setConfig").mockImplementation(() => undefined);
+    const launch = spyOn(DBOS, "launch").mockImplementation(async () => undefined);
+    const shutdown = spyOn(DBOS, "shutdown").mockImplementation(async () => undefined);
+    const connect = spyOn(PgPostgresExecutor, "connect").mockImplementation(() => ({
+      query: async () => generation === null ? [] : [{ current_generation: generation }], close: async () => {},
+    }) as never);
+    const status = spyOn(DBOS, "getWorkflowStatus").mockImplementation(async () => ({ workflowName: "oakridgeRunWorkflow", status: "ERROR", input: ["run-1"] }) as never);
+    const steps = spyOn(DBOS, "listWorkflowSteps").mockImplementation(async () => [] as never);
+    const fork = spyOn(DBOS, "forkWorkflow").mockImplementation(async () => ({} as never));
+    try {
+      await expect(runOps(["workflows", "recover", "run:run-1"], "postgres://test")).rejects.toThrow("not the current authority generation");
+      expect(fork).not.toHaveBeenCalled();
+    } finally {
+      config.mockRestore(); launch.mockRestore(); shutdown.mockRestore(); connect.mockRestore();
+      status.mockRestore(); steps.mockRestore(); fork.mockRestore();
+    }
+  });
+}

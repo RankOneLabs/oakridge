@@ -2,7 +2,7 @@ import { expect, spyOn, test } from "bun:test";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { withDatabase } from "./effect-fixture";
 import { DEFAULT_WORKFLOW_TIMING, RUN_MAX_ITERATIONS, ensureRunWorkflow, registerWorkflowServices,
-  runWorkflow, runWorkflowId, wakeRunOf } from "../src/workflows/topology";
+  dispatchChild, runWorkflow, runWorkflowId, wakeRunOf } from "../src/workflows/topology";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
 
 const forkTarget = DBOS.registerWorkflow(async (): Promise<string> => "done", { name: "oakridgeReviewForkTarget" });
@@ -71,7 +71,8 @@ test("RUN_MAX_ITERATIONS hands pending dispatches and the scan cursor to the suc
     let child_started = false;
     const db = { query: async (sql: string, parameters: readonly unknown[]) => {
       if (sql.includes("SELECT r.id AS run_id,b.source")) return [{ run_id: "run-1", source: { scopes: [] } }];
-      if (sql.includes("SELECT * FROM authority.scope_instance")) return scopes;
+      if (sql.includes("ORDER BY id LIMIT $3")) return scopes.filter((scope) => !parameters[1] || scope.id > String(parameters[1])).slice(0, Number(parameters[2]));
+      if (sql.includes("SELECT * FROM authority.scope_instance WHERE id=ANY")) return [];
       if (sql.includes("SELECT e.id,e.status")) return child_started ? [] : [{ id: "pending-child", status: "pending" }];
       if (sql.includes("SELECT is_terminal")) return [{ is_terminal: generation > 0 }];
       if (sql.includes("SELECT current_generation,current_cursor")) return [{ current_generation: generation, current_cursor: null }];
@@ -109,3 +110,53 @@ test("RUN_MAX_ITERATIONS hands pending dispatches and the scan cursor to the suc
     } finally { status.mockRestore(); start.mockRestore(); }
   });
 }), 60_000);
+
+const dispatchProbe = DBOS.registerWorkflow(async (intent_id: string, kind: "start" | "stop") =>
+  dispatchChild("run-1", intent_id, kind), { name: "oakridgeDispatchReviewProbe" });
+
+test("cancelled-child expiry retains its branch when replayed after the deadline", async () => withDatabase(async ({ url }) => {
+  await withDBOS(url, async () => {
+    registerWorkflowServices({ timing: DEFAULT_WORKFLOW_TIMING } as Parameters<typeof registerWorkflowServices>[0]);
+    const deadline = Date.now() + 250;
+    const status = spyOn(DBOS, "getWorkflowStatus").mockImplementation(async () => ({ status: "CANCELLED", deadlineEpochMS: deadline }) as never);
+    let should_fail_resume = true;
+    const resume = spyOn(DBOS, "resumeWorkflow").mockImplementation(async () => {
+      if (should_fail_resume) throw new Error("resume unavailable");
+      return {} as never;
+    });
+    try {
+      const original = await DBOS.startWorkflow(dispatchProbe, { workflowID: "expiry-original" })("effect-1", "start");
+      await expect(original.getResult()).rejects.toThrow("resume unavailable");
+      const expiry = (await DBOS.listWorkflowSteps("expiry-original"))?.find((step) => step.name === "oakridgeEffectExpired");
+      expect(expiry?.output).toBe(false);
+      await Bun.sleep(Math.max(0, deadline - Date.now() + 50));
+      should_fail_resume = false;
+      await (await DBOS.forkWorkflow("expiry-original", expiry!.functionID + 1)).getResult();
+      expect(resume).toHaveBeenCalledTimes(2);
+    } finally { status.mockRestore(); resume.mockRestore(); }
+  });
+}), 20_000);
+
+for (const kind of ["start", "stop"] as const) {
+  for (const workflow_status of ["SUCCESS", "ERROR"] as const) {
+    test(`${workflow_status} ${kind} dispatch tolerates an intent settled after the run scan`, async () => withDatabase(async ({ url }) => {
+      await withDBOS(url, async () => {
+        const db = { query: async () => [{ id: "effect-1", status: "cleanup_confirmed", version: 0, payload: { action: kind } }] } as unknown as TransactionalSqlExecutor;
+        registerWorkflowServices({ db, timing: DEFAULT_WORKFLOW_TIMING } as Parameters<typeof registerWorkflowServices>[0]);
+        const status = spyOn(DBOS, "getWorkflowStatus").mockImplementation(async () => ({ status: workflow_status }) as never);
+        try { await expect(dispatchChild("run-1", "effect-1", kind)).resolves.toBeUndefined(); }
+        finally { status.mockRestore(); }
+      });
+    }), 20_000);
+  }
+}
+
+test("a terminal child workflow still fails dispatch when its intent remains pending", async () => withDatabase(async ({ url }) => {
+  await withDBOS(url, async () => {
+    const db = { query: async () => [{ id: "effect-1", status: "pending", version: 0, payload: { action: "start" } }] } as unknown as TransactionalSqlExecutor;
+    registerWorkflowServices({ db } as Parameters<typeof registerWorkflowServices>[0]);
+    const status = spyOn(DBOS, "getWorkflowStatus").mockImplementation(async () => ({ status: "SUCCESS" }) as never);
+    try { await expect(dispatchChild("run-1", "effect-1", "start")).rejects.toThrow("intent remains pending"); }
+    finally { status.mockRestore(); }
+  });
+}), 20_000);

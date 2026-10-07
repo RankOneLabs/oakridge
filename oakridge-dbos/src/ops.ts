@@ -36,15 +36,16 @@ export async function runOps(args: readonly string[], database_url: string | und
     const startStep = forkStartStep(steps);
     let newWorkflowID: string | undefined;
     let runGeneration: { readonly run_id: string; readonly generation: number } | null = null;
-    if (status.workflowName === "oakridgeRunWorkflow" && typeof status.input?.[0] === "string") {
+    if (status.workflowName === "oakridgeRunWorkflow") {
+      if (typeof status.input?.[0] !== "string") throw new Error(`run workflow ${workflow_id} has no run identity`);
       const run_id = status.input[0];
       const db = PgPostgresExecutor.connect(database_url);
       try {
         const generation = await currentRunGeneration(db, run_id);
-        if (generation !== null && runWorkflowId(run_id, generation) === workflow_id) {
-          newWorkflowID = runWorkflowId(run_id, generation + 1);
-          runGeneration = { run_id, generation };
-        }
+        if (generation === null || runWorkflowId(run_id, generation) !== workflow_id)
+          throw new Error(`run workflow ${workflow_id} is not the current authority generation`);
+        newWorkflowID = runWorkflowId(run_id, generation + 1);
+        runGeneration = { run_id, generation };
       } finally { await db.close(); }
     }
     const application_version = selectApplicationVersion();

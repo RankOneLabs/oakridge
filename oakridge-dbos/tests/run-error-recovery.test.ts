@@ -4,7 +4,9 @@ import { DBOS } from "@dbos-inc/dbos-sdk";
 import { createProductionComposition } from "../src/runtime/compose";
 import { ensureRunWorkflow, runWorkflowId, wakeRun } from "../src/workflows/topology";
 import * as topology from "../src/workflows/topology";
-import { withDatabase } from "./effect-fixture";
+import { ensureStopIntent } from "../src/storage/revocation";
+import type { EffectIntent } from "../src/effects/intents";
+import { stubProviderCapabilities, unit, withDatabase } from "./effect-fixture";
 
 const binary = resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli");
 
@@ -96,5 +98,41 @@ test("startup adopts a recovery fork committed before the authority address chan
     await db.query("UPDATE authority.scope_instance SET is_terminal=true WHERE id=$1", [run.root_scope_id]);
     await wakeRun(run.run_id);
     await eventually(async () => (await DBOS.getWorkflowStatus(successor_id))?.status === "SUCCESS");
+  } finally { await composition.close(); }
+}), 30_000);
+
+test("startup finishes cleanup for a terminal root and later wakes preserve the completed generation", async () => withDatabase(async ({ url, db }) => {
+  let stop_calls = 0;
+  const options = { database_url: url, core_binary: binary, host: "127.0.0.1",
+    provider_capabilities: stubProviderCapabilities, timing: { wake_timeout_seconds: 0.05 },
+    effect_provider: {
+      start: async () => ({ kind: "acknowledged" as const, value: { kind: "completed" as const, result: unit } }),
+      observe: async () => ({ kind: "acknowledged" as const, value: { kind: "running" as const } }),
+      stop: async () => { stop_calls++; return { kind: "acknowledged" as const, value: { stopped: true as const } }; },
+    },
+  };
+  let composition = await createProductionComposition(options);
+  try {
+    const run = await activeRun(composition);
+    const response = await composition.app.request(`http://localhost/runs/${run.run_id}/scopes/${run.root_scope_id}/decide`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ingress_id: "begin",
+        trigger: { id: "begin", key: "begin", payload: unit } }),
+    });
+    expect(response.status).toBe(200);
+    await eventually(async () => (await db.query<EffectIntent>(
+      "SELECT * FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='start'", [run.root_scope_id]))[0]?.status === "cleanup_confirmed");
+    await composition.close();
+    const start = (await db.query<EffectIntent>("SELECT * FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='start'", [run.root_scope_id]))[0]!;
+    const stop_id = await db.transaction(async (tx) => {
+      await tx.query("UPDATE authority.scope_instance SET is_terminal=true WHERE id=$1", [run.root_scope_id]);
+      return ensureStopIntent(tx, start);
+    });
+    composition = await createProductionComposition(options);
+    await eventually(async () => (await db.query<{ status: string }>("SELECT status FROM authority.effect_intent WHERE id=$1", [stop_id]))[0]?.status === "cleanup_confirmed");
+    const generation = (await db.query<{ current_generation: string }>("SELECT current_generation FROM authority.run WHERE id=$1", [run.run_id]))[0]!.current_generation;
+    await eventually(async () => (await DBOS.getWorkflowStatus(runWorkflowId(run.run_id, Number(generation))))?.status === "SUCCESS");
+    expect(stop_calls).toBe(1);
+    await wakeRun(run.run_id); await wakeRun(run.run_id);
+    expect((await db.query<{ current_generation: string }>("SELECT current_generation FROM authority.run WHERE id=$1", [run.run_id]))[0]?.current_generation).toBe(generation);
   } finally { await composition.close(); }
 }), 30_000);

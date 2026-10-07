@@ -126,3 +126,22 @@ test("reconciling a parked successor resumes its workflow", async () => {
     expect(resume).toHaveBeenCalledWith("run:run-1:1");
   } finally { status.mockRestore(); resume.mockRestore(); }
 });
+
+for (const has_work of [false, true]) {
+  test(`a SUCCESS run starts a successor only when work remains (${has_work})`, async () => {
+    let claimed = false;
+    const db = { query: async (sql: string) => {
+      if (sql.includes("AS has_work")) return [{ has_work }];
+      if (sql.includes("UPDATE authority.run")) { claimed = true; return [{ current_generation: 1 }]; }
+      return [{ current_generation: 0, current_cursor: null }];
+    } } as unknown as TransactionalSqlExecutor;
+    registerWorkflowServices({ db } as Parameters<typeof registerWorkflowServices>[0]);
+    const status = spyOn(DBOS, "getWorkflowStatus").mockImplementation(async () => ({ status: "SUCCESS" }) as never);
+    const start = spyOn(DBOS, "startWorkflow").mockImplementation((() => async () => ({})) as never);
+    try {
+      await ensureRunWorkflow("run-1");
+      expect(claimed).toBe(has_work);
+      expect(start).toHaveBeenCalledTimes(has_work ? 1 : 0);
+    } finally { status.mockRestore(); start.mockRestore(); }
+  });
+}

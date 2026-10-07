@@ -9,7 +9,7 @@ import { bounded, exhaustStart, resolveObserve, resolveStart, resolveStop, settl
 import type { EffectProvider, ProviderResult } from "../effects/provider";
 import { advanceChildrenPage, type LifecycleFailure } from "../runtime/advance-children";
 import { claimStartAttempt, persistEffectResult } from "../storage/effect-results";
-import { claimRunGeneration, currentRunAddress, currentRunGeneration } from "../storage/run-lifecycle";
+import { claimRunGeneration, currentRunAddress, currentRunGeneration, RUN_NEEDS_WORK_SQL, runNeedsWork } from "../storage/run-lifecycle";
 import type { MutationService } from "../storage/mutation-service";
 import type { RunId } from "../storage/schema-records";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
@@ -364,6 +364,9 @@ async function settleExpiredEffect(intent_id: string): Promise<void> {
   DBOS.logger.error(`effect ${intent_id}: execution deadline exceeded`);
 }
 
+const effectExpiredStep = DBOS.registerStep(async (deadline_epoch_ms: number): Promise<boolean> =>
+  deadline_epoch_ms <= Date.now(), { name: "oakridgeEffectExpired" });
+
 export async function dispatchChild(run_id: string, intent_id: string, kind: "start" | "stop"): Promise<void> {
   const status = await DBOS.getWorkflowStatus(intent_id);
   if (!status) {
@@ -374,15 +377,21 @@ export async function dispatchChild(run_id: string, intent_id: string, kind: "st
   }
   if (status.status === "PENDING" || status.status === "ENQUEUED") return;
   if (status.status === "CANCELLED") {
-    if (kind === "start" && status.deadlineEpochMS !== undefined && status.deadlineEpochMS <= Date.now()) {
+    if (kind === "start" && status.deadlineEpochMS !== undefined && await effectExpiredStep(status.deadlineEpochMS)) {
       await settleExpiredEffect(intent_id);
       return;
     }
     await DBOS.resumeWorkflow(intent_id);
     return;
   }
-  if (status.status === "ERROR" || status.status === "SUCCESS")
-    throw new RunInfrastructureError(run_id, `dispatch ${kind} ${intent_id}`, `workflow ${status.status} while intent remains pending`);
+  if (status.status === "ERROR" || status.status === "SUCCESS") {
+    const intent = await loadIntentStep(intent_id);
+    const needs_dispatch = intent !== null && (kind === "start"
+      ? intent.payload.action === "start" && (intent.status === "pending" || intent.status === "acknowledged")
+      : intent.status === "cleanup_pending");
+    if (needs_dispatch)
+      throw new RunInfrastructureError(run_id, `dispatch ${kind} ${intent_id}`, `workflow ${status.status} while intent remains pending`);
+  }
 }
 
 export const runWorkflow = DBOS.registerWorkflow(async (run_id: string, initial_cursor: string | null = null): Promise<void> => {
@@ -443,6 +452,7 @@ export async function ensureRunWorkflow(run_id: string): Promise<void> {
     return;
   }
   if (existing?.status === "SUCCESS") {
+    if (!await runNeedsWork(db, run_id)) return;
     const successor = await claimRunGeneration(db, run_id, generation);
     if (successor === null) throw new RunInfrastructureError(run_id, "restart", "generation changed concurrently");
     await DBOS.startWorkflow(runWorkflow, { workflowID: runWorkflowId(run_id, successor) })(run_id, address.cursor);
@@ -492,7 +502,7 @@ export async function resumeActiveRuns(db: TransactionalSqlExecutor): Promise<nu
   const resumable = parked.filter((status) => !expired_ids.has(status.workflowID));
   if (resumable.length) await DBOS.resumeWorkflows(resumable.map((status) => status.workflowID));
   for (const status of expired) await settleExpiredEffect(status.workflowID);
-  const runs = await db.query<{ id: string }>("SELECT r.id FROM authority.run r WHERE EXISTS (SELECT 1 FROM authority.scope_instance s WHERE s.run_id=r.id AND s.parent_id IS NULL AND NOT s.is_terminal) ORDER BY r.id", []);
+  const runs = await db.query<{ id: string }>(`SELECT r.id FROM authority.run r WHERE ${RUN_NEEDS_WORK_SQL} ORDER BY r.id`, []);
   for (const run of runs) await ensureRunWorkflow(run.id);
   return runs.length;
 }

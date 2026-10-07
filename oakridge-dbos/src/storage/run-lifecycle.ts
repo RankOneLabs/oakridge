@@ -95,3 +95,18 @@ export async function claimRunGeneration(db: TransactionalSqlExecutor, run_id: s
     WHERE id=$1 AND current_generation=$2 RETURNING current_generation,current_cursor`, [run_id, expected, cursor !== undefined, cursor ?? null]);
   return rows[0] ? Number(rows[0].current_generation) : null;
 }
+
+/** A terminal root can still owe provider starts or cleanup. */
+export const RUN_NEEDS_WORK_SQL = `EXISTS (
+  SELECT 1 FROM authority.scope_instance s
+  WHERE s.run_id=r.id AND s.parent_id IS NULL AND NOT s.is_terminal
+) OR EXISTS (
+  SELECT 1 FROM authority.effect_intent e JOIN authority.scope_instance s ON s.id=e.scope_id
+  WHERE s.run_id=r.id AND ((e.payload->>'action'='start' AND e.status IN ('pending','acknowledged'))
+    OR e.status='cleanup_pending')
+)`;
+interface RunWorkRow { readonly has_work: boolean }
+export async function runNeedsWork(db: TransactionalSqlExecutor, run_id: string): Promise<boolean> {
+  const rows = await db.query<RunWorkRow>(`SELECT (${RUN_NEEDS_WORK_SQL}) AS has_work FROM authority.run r WHERE r.id=$1`, [run_id]);
+  return rows[0]?.has_work ?? false;
+}
