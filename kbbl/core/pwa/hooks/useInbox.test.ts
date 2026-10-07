@@ -30,7 +30,8 @@ class MockEventSource {
   }
   removeEventListener() {}
   dispatch(type: string, data: string) {
-    for (const cb of this.listeners[type] ?? []) cb({ data });
+    const topic = new URL(this.url, "http://localhost").searchParams.get("topic");
+    for (const cb of this.listeners.live ?? []) cb({ data: JSON.stringify({ topic, frame: { event: type, data } }) });
   }
   close() {
     this.closed = true;

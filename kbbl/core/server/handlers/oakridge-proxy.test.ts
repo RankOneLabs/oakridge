@@ -93,18 +93,20 @@ describe("oakridge proxy", () => {
     expect(captured.authHeader).toBeNull();
   });
 
-  test("leaves the invalidation stream unbounded so the deadline cannot sever it", async () => {
-    let signal: AbortSignal | null | undefined = null;
+  test("ties the unbounded invalidation stream to client cancellation", async () => {
+    const captured: { signal: AbortSignal | null | undefined } = { signal: null };
     globalThis.fetch = (async (_input, init) => {
-      signal = init?.signal;
+      captured.signal = init?.signal;
       return new Response("", { status: 200, headers: { "content-type": "text/event-stream" } });
     }) as typeof fetch;
 
     const app = new Hono();
     mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test" });
 
-    await app.request("/oakridge/api/events");
-    expect(signal).toBeUndefined();
+    const controller = new AbortController();
+    await app.request("/oakridge/api/events", { signal: controller.signal });
+    controller.abort();
+    expect(captured.signal?.aborted).toBe(true);
   });
 
   test("forwards the stream's no-cache directive instead of dropping it", async () => {

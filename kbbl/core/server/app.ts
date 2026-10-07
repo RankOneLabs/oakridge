@@ -20,6 +20,7 @@ import { mountDirectoriesRoutes } from "./handlers/directories";
 import { mountWorkspaceEventsRoutes } from "./handlers/workspace-events";
 import { mountSkillsRoutes } from "../skills/routes";
 import { mountOakridgeProxyRoutes } from "./handlers/oakridge-proxy";
+import { mountLiveStreamRoutes } from "./handlers/live-stream";
 import {
   isRuntimeId,
   RUNTIME_EFFORTS,
@@ -245,6 +246,7 @@ export function createApp(deps: CreateAppDeps): Hono {
 
   // ---- /inbox (always-on snapshot stream over the ACP session list) ----
   app.get("/inbox", acpInboxHandler(acp));
+  mountLiveStreamRoutes(app);
 
   // ---- static PWA ----
   app.use(

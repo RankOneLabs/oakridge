@@ -17,7 +17,7 @@ class EventSourceStub {
   removeEventListener(name: string, listener: EventListener): void { this.listeners.get(name)?.delete(listener); }
   close(): void {}
   emit(name: string, data: string): void {
-    for (const listener of this.listeners.get(name) ?? []) listener(new MessageEvent(name, { data }));
+    for (const listener of this.listeners.get("live") ?? []) listener(new MessageEvent("live", { data: JSON.stringify({ topic: "/oakridge/api/events", frame: { event: name, data } }) }));
   }
 }
 

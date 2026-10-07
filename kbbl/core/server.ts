@@ -247,7 +247,7 @@ try {
       // intentionally unbounded SSE request, so opt it out explicitly. Without
       // this, the browser reconnect loop can eventually trigger Bun 1.3.x's
       // timeout/crash path even though the stream sends heartbeats.
-      if (new URL(request.url).pathname === "/oakridge/api/events") {
+      if (["/live", "/oakridge/api/events"].includes(new URL(request.url).pathname)) {
         server.timeout(request, 0);
       }
       return app.fetch(request);

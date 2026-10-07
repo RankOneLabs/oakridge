@@ -122,6 +122,13 @@ and [acp-per-sid.ts](core/server/handlers/acp-per-sid.ts).
 - `POST /sessions/:sid/config` — `{ config_id, value }`.
 - `GET /artifacts/:artifactId/sessions` — sessions with a correlation tag.
 - `GET /inbox` — session-list SSE; `POST /inbox/workspace-events` ingests workspace events.
+- `GET /live?topic=...` — combines `/inbox`, `/oakridge/api/events`, and selected
+  `/sessions/:sid/stream` topics into one SSE connection per browser page.
+  Each `live` event carries `{ topic, frame: { event, data, id? } }`; the original
+  stream payloads and session replay epochs are preserved. Topic changes reopen
+  the feed and replay current state. Closing a page releases every underlying
+  subscription. Multiple pages can stream while leaving browser connections
+  available for message requests.
 - `GET /config` — defaults and available runtime descriptors.
 - `GET /directories?path=<absolute-path>` — directory picker.
 - `GET /:sid/handoff` — historical compaction handoff.
