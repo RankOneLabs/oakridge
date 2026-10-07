@@ -77,6 +77,21 @@ test("pinning rejects changed prompt bytes and paths outside the configured root
   } finally { core.close(); }
 });
 
+test("starting an inline bundle rejects invalid prompts before compilation or storage", async () => {
+  const prompt = bundle.prompts[0];
+  if (!prompt) throw new Error("prompt fixture missing");
+  let compiled = false;
+  let stored = false;
+  const core = { request: async () => { compiled = true; throw new Error("unexpected compilation"); } } as unknown as CoreClient;
+  const db = { transaction: async () => { stored = true; throw new Error("unexpected storage"); } } as unknown as TransactionalSqlExecutor;
+  const service = createMutationService(db, core);
+  const changed = await service.startRun({ bundle: { ...bundle, prompts: [{ ...prompt, content_digest: "0".repeat(64) }, ...bundle.prompts.slice(1)] }, input: {} });
+  expect(changed).toMatchObject({ ok: false, error: { operation: "start_run", detail: expect.stringContaining("digest mismatch") } });
+  const escaped = await service.startRun({ bundle: { ...bundle, prompts: [{ ...prompt, path: "../secret" }, ...bundle.prompts.slice(1)] }, input: {} });
+  expect(escaped).toMatchObject({ ok: false, error: { operation: "start_run", detail: expect.stringContaining("outside the configured allowlist") } });
+  expect({ compiled, stored }).toEqual({ compiled: false, stored: false });
+});
+
 test("selected prompt carries its pinned action input", () => {
   expect(promptWithActionInput("Review this build", { feedback: "fix scope", revision: "build-2" }))
     .toContain('"revision": "build-2"');
