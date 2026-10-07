@@ -203,6 +203,7 @@ export function ArtifactReview({ artifactId }: ArtifactReviewProps) {
             <Viewer
               body={revision.body}
               descriptor={artifact.review}
+              source={{ run_id: artifact.run_id, label: artifact.label ?? null }}
               edit={caps?.atom_editable ? {
                 enabled: revIdx === revisions.length - 1,
                 isPending: atomEdit.isPending,

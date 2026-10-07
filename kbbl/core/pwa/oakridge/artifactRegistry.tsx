@@ -7,9 +7,16 @@ import { AssessmentViewer } from "./components/molecules/AssessmentViewer";
 import { PrSummaryViewer } from "./components/molecules/PrSummaryViewer";
 import { BuildBriefViewer } from "./components/molecules/BuildBriefViewer";
 
+/** Where the reviewed artifact lives: its run, and the unit label (a cohort id for per-cohort artifacts). */
+export interface ArtifactSource {
+  run_id: string;
+  label: string | null;
+}
+
 export interface ViewerProps {
   body: unknown;
   descriptor?: ArtifactReviewDescriptor | null;
+  source?: ArtifactSource;
   edit?: {
     enabled: boolean;
     isPending: boolean;
