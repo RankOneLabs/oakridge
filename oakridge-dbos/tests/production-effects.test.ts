@@ -4,6 +4,7 @@ import { createProductionComposition } from "../src/runtime/compose";
 import { GithubPullRequestReader } from "../src/runtime/github-pull-requests";
 import { readSnapshot } from "../src/storage/snapshot-reader";
 import type { CheckedValue } from "../src/core-client/generated-contracts";
+import type { DefinitionBundle } from "../src/core-client/generated-contracts";
 import type { EffectPayload } from "../src/effects/intents";
 import type { StableInvocation } from "../src/effects/provider";
 import { unit, withDatabase, waitUntil, operationBundle, begin } from "./effect-fixture";
@@ -103,7 +104,15 @@ test("rejection after uncertainty cleans up even when its evidence makes the run
       },
     } });
   try {
-    const run = await begin(composition, await operationBundle("repository.prepare"), { repository_path: "/tmp", expected_head: null });
+    const shipped = await operationBundle("repository.prepare");
+    const root = shipped.scopes[0]!;
+    if (root.tree.kind !== "match") throw new Error("effect fixture must dispatch facts");
+    const bundle: DefinitionBundle = { ...shipped, scopes: [{ ...root,
+      facts: [...root.facts, { key: "worktree_unrecoverable", payload_schema: "text" }],
+      tree: { ...root.tree, cases: [...root.tree.cases, { variant: "worktree_unrecoverable",
+        node: { kind: "apply", id: "worktree_unrecoverable", actions: [], mutations: [],
+          outcome: { kind: "literal", schema: "result", value: { kind: "withdrawn", value: {} } } } }] } }] };
+    const run = await begin(composition, bundle, { repository_path: "/tmp", expected_head: null });
     await waitUntil(async () => stopped.length > 0 && (await db.query<{ is_terminal: boolean }>("SELECT is_terminal FROM authority.scope_instance WHERE id=$1", [run.root_scope_id]))[0]?.is_terminal === true);
     const deletion = await composition.app.request(`http://localhost/runs/${run.run_id}`, { method: "DELETE" });
     expect(deletion.status).toBe(409);
@@ -133,15 +142,13 @@ test("production prepares the selected repository and routes durable results int
   });
 });
 
-test("production routes lost-worktree evidence to the scope's configured recovery", async () => {
+test("production rejects a lost worktree when the shipped scope declares no recovery fact", async () => {
   await withDatabase(async ({ url, db }) => {
     const composition = await createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1", timing: { retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, wake_timeout_seconds: 1 } });
     try {
       const run = await begin(composition, await operationBundle("repository.prepare"), { repository_path: `/tmp/missing-${crypto.randomUUID()}`, expected_head: null });
-      await waitUntil(async () => (await db.query<{ is_terminal: boolean }>("SELECT is_terminal FROM authority.scope_instance WHERE id=$1", [run.root_scope_id]))[0]?.is_terminal === true);
-      const scope = await db.query<{ outcome: CheckedValue }>("SELECT outcome FROM authority.scope_instance WHERE id=$1", [run.root_scope_id]);
-      expect(scope[0]?.outcome.data).toMatchObject({ kind: "variant", variant: "withdrawn" });
-      expect((await db.query<{ count: string }>("SELECT count(*)::text AS count FROM authority.fact WHERE fact_key='worktree_unrecoverable'", []))[0]?.count).toBe("1");
+      await waitUntil(async () => (await db.query<{ status: string }>("SELECT status FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='start'", [run.root_scope_id]))[0]?.status === "rejected");
+      expect((await db.query<{ count: string }>("SELECT count(*)::text AS count FROM authority.fact WHERE fact_key='worktree_unrecoverable'", []))[0]?.count).toBe("0");
     } finally { await composition.close(); }
   });
 });
@@ -167,7 +174,7 @@ test("production PR discovery retries a real HTTP 503 and persists its selected 
         await waitUntil(async () => (await db.query<{ is_terminal: boolean }>("SELECT is_terminal FROM authority.scope_instance WHERE id=$1", [run.root_scope_id]))[0]?.is_terminal === true);
         const after = await db.query<{ payload: EffectPayload }>("SELECT payload FROM authority.effect_intent WHERE scope_id=$1", [run.root_scope_id]);
         expect(after[0]?.payload.invocation.bytes).toBe(before[0]?.payload.invocation.bytes);
-        expect((await db.query<{ count: string }>("SELECT count(*)::text AS count FROM authority.fact WHERE fact_key='prepared'", []))[0]?.count).toBe("1");
+        expect((await db.query<{ count: string }>("SELECT count(*)::text AS count FROM authority.fact WHERE fact_key='pr_observed'", []))[0]?.count).toBe("1");
       } finally { await composition.close(); }
     });
   } finally { server.stop(true); }
