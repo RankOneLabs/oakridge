@@ -72,7 +72,7 @@ export const brief_writing = defineScope({
       field_presentation: []
     }
   ],
-  facts: [{ key: "submitted", payload_schema: "unit" }],
+  facts: [{ key: "submitted", payload_schema: "unit" }, { key: "session_failed", payload_schema: "text" }],
   outputs: [
     {
       key: "briefs",

@@ -57,3 +57,26 @@ for (const definition of definitions) {
   });
 }
 
+test("every shipped session action points to a declared evidence fact", async () => {
+  for (const definition of definitions) {
+    const bundle: DefinitionBundle = await Bun.file(resolve(import.meta.dir, `../../workflow-config/definitions/${definition}.json`)).json();
+    const actions = bundle.scopes.flatMap((scope) => scope.workers.flatMap((worker) => worker.actions
+      .filter((action) => action.operation === "session.run")
+      .map((action) => ({ scope, action }))));
+    expect(actions).toHaveLength(21);
+    for (const { scope, action } of actions) {
+      const evidence = action.settings.find((setting) => setting.key === "evidence_fact")?.value;
+      expect(scope.facts.some((fact) => fact.key === evidence)).toBe(true);
+    }
+  }
+});
+
+test("failed and cancelled session observations deliver declared recovery evidence", async () => {
+  const bundle: DefinitionBundle = await Bun.file(resolve(import.meta.dir, "../../workflow-config/definitions/development.json")).json();
+  let observation: unknown = { session: { endReason: "subprocess_exited" }, exit_code: 1 };
+  await withObserver(bundle, () => observation, async (observe) => {
+    expect(await observe("spec_analysis", "author")).toMatchObject({ kind: "rejected", payload: { evidence: { key: "session_failed", payload: { schema: "text" } } } });
+    observation = { session: { endReason: "user_closed" } };
+    expect(await observe("spec_analysis", "author")).toMatchObject({ kind: "rejected", payload: { evidence: { key: "session_failed", payload: { schema: "text" } } } });
+  });
+});

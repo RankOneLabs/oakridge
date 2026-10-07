@@ -4572,6 +4572,10 @@
         {
           "key": "submitted",
           "payload_schema": "unit"
+        },
+        {
+          "key": "session_failed",
+          "payload_schema": "text"
         }
       ],
       "outputs": [
@@ -4641,7 +4645,12 @@
                 ]
               },
               "prompt": "spec_analysis_author_initial",
-              "settings": [],
+              "settings": [
+                {
+                  "key": "evidence_fact",
+                  "value": "submitted"
+                }
+              ],
               "tools": [],
               "outputs": [
                 "analysis"
@@ -4712,7 +4721,12 @@
                 ]
               },
               "prompt": "spec_analysis_author_revise",
-              "settings": [],
+              "settings": [
+                {
+                  "key": "evidence_fact",
+                  "value": "submitted"
+                }
+              ],
               "tools": [],
               "outputs": [
                 "analysis"
@@ -4767,7 +4781,12 @@
                 ]
               },
               "prompt": "spec_analysis_author_retry",
-              "settings": [],
+              "settings": [
+                {
+                  "key": "evidence_fact",
+                  "value": "submitted"
+                }
+              ],
               "tools": [],
               "outputs": [
                 "analysis"
@@ -5068,6 +5087,34 @@
                 }
               }
             }
+          },
+          {
+            "variant": "session_failed",
+            "node": {
+              "kind": "apply",
+              "id": "spec_analysis_session_failed",
+              "mutations": [
+                {
+                  "kind": "revoke",
+                  "worker": "author"
+                },
+                {
+                  "kind": "stop",
+                  "worker": "author"
+                }
+              ],
+              "actions": [],
+              "outcome": {
+                "kind": "variant",
+                "schema": "result",
+                "variant": "failed",
+                "value": {
+                  "kind": "literal",
+                  "schema": "unit",
+                  "value": {}
+                }
+              }
+            }
           }
         ],
         "otherwise": {
@@ -5202,6 +5249,10 @@
         {
           "key": "submitted",
           "payload_schema": "unit"
+        },
+        {
+          "key": "session_failed",
+          "payload_schema": "text"
         }
       ],
       "outputs": [
@@ -5271,7 +5322,12 @@
                 ]
               },
               "prompt": "planning_author_initial",
-              "settings": [],
+              "settings": [
+                {
+                  "key": "evidence_fact",
+                  "value": "submitted"
+                }
+              ],
               "tools": [],
               "outputs": [
                 "plan"
@@ -5342,7 +5398,12 @@
                 ]
               },
               "prompt": "planning_author_revise",
-              "settings": [],
+              "settings": [
+                {
+                  "key": "evidence_fact",
+                  "value": "submitted"
+                }
+              ],
               "tools": [],
               "outputs": [
                 "plan"
@@ -5397,7 +5458,12 @@
                 ]
               },
               "prompt": "planning_author_retry",
-              "settings": [],
+              "settings": [
+                {
+                  "key": "evidence_fact",
+                  "value": "submitted"
+                }
+              ],
               "tools": [],
               "outputs": [
                 "plan"
@@ -5835,6 +5901,34 @@
                 }
               }
             }
+          },
+          {
+            "variant": "session_failed",
+            "node": {
+              "kind": "apply",
+              "id": "planning_session_failed",
+              "mutations": [
+                {
+                  "kind": "revoke",
+                  "worker": "author"
+                },
+                {
+                  "kind": "stop",
+                  "worker": "author"
+                }
+              ],
+              "actions": [],
+              "outcome": {
+                "kind": "variant",
+                "schema": "result",
+                "variant": "failed",
+                "value": {
+                  "kind": "literal",
+                  "schema": "unit",
+                  "value": {}
+                }
+              }
+            }
           }
         ],
         "otherwise": {
@@ -5969,6 +6063,10 @@
         {
           "key": "submitted",
           "payload_schema": "unit"
+        },
+        {
+          "key": "session_failed",
+          "payload_schema": "text"
         }
       ],
       "outputs": [
@@ -6038,7 +6136,12 @@
                 ]
               },
               "prompt": "brief_writing_author_initial",
-              "settings": [],
+              "settings": [
+                {
+                  "key": "evidence_fact",
+                  "value": "submitted"
+                }
+              ],
               "tools": [],
               "outputs": [
                 "briefs"
@@ -6109,7 +6212,12 @@
                 ]
               },
               "prompt": "brief_writing_author_revise",
-              "settings": [],
+              "settings": [
+                {
+                  "key": "evidence_fact",
+                  "value": "submitted"
+                }
+              ],
               "tools": [],
               "outputs": [
                 "briefs"
@@ -6164,7 +6272,12 @@
                 ]
               },
               "prompt": "brief_writing_author_retry",
-              "settings": [],
+              "settings": [
+                {
+                  "key": "evidence_fact",
+                  "value": "submitted"
+                }
+              ],
               "tools": [],
               "outputs": [
                 "briefs"
@@ -6719,6 +6832,34 @@
                 }
               }
             }
+          },
+          {
+            "variant": "session_failed",
+            "node": {
+              "kind": "apply",
+              "id": "brief_writing_session_failed",
+              "mutations": [
+                {
+                  "kind": "revoke",
+                  "worker": "author"
+                },
+                {
+                  "kind": "stop",
+                  "worker": "author"
+                }
+              ],
+              "actions": [],
+              "outcome": {
+                "kind": "variant",
+                "schema": "result",
+                "variant": "failed",
+                "value": {
+                  "kind": "literal",
+                  "schema": "unit",
+                  "value": {}
+                }
+              }
+            }
           }
         ],
         "otherwise": {
@@ -7050,6 +7191,10 @@
       ],
       "facts": [
         {
+          "key": "session_failed",
+          "payload_schema": "text"
+        },
+        {
           "key": "build_submitted",
           "payload_schema": "unit"
         },
@@ -7162,7 +7307,12 @@
                 ]
               },
               "prompt": "implementation_build_initial",
-              "settings": [],
+              "settings": [
+                {
+                  "key": "evidence_fact",
+                  "value": "build_submitted"
+                }
+              ],
               "tools": [],
               "outputs": [
                 "build_result",
@@ -7265,7 +7415,12 @@
                 ]
               },
               "prompt": "implementation_build_revise",
-              "settings": [],
+              "settings": [
+                {
+                  "key": "evidence_fact",
+                  "value": "build_submitted"
+                }
+              ],
               "tools": [],
               "outputs": [
                 "build_result",
@@ -7322,7 +7477,12 @@
                 ]
               },
               "prompt": "implementation_build_replace_pr",
-              "settings": [],
+              "settings": [
+                {
+                  "key": "evidence_fact",
+                  "value": "build_submitted"
+                }
+              ],
               "tools": [],
               "outputs": [
                 "build_result",
@@ -7403,7 +7563,12 @@
                 ]
               },
               "prompt": "implementation_build_retry",
-              "settings": [],
+              "settings": [
+                {
+                  "key": "evidence_fact",
+                  "value": "build_submitted"
+                }
+              ],
               "tools": [],
               "outputs": [
                 "build_result",
@@ -7484,7 +7649,12 @@
                 ]
               },
               "prompt": "implementation_build_retry_missing_build",
-              "settings": [],
+              "settings": [
+                {
+                  "key": "evidence_fact",
+                  "value": "build_submitted"
+                }
+              ],
               "tools": [],
               "outputs": [
                 "build_result"
@@ -7564,7 +7734,12 @@
                 ]
               },
               "prompt": "implementation_build_retry_missing_pr",
-              "settings": [],
+              "settings": [
+                {
+                  "key": "evidence_fact",
+                  "value": "build_submitted"
+                }
+              ],
               "tools": [],
               "outputs": [
                 "pr_summary"
@@ -7666,7 +7841,12 @@
                 ]
               },
               "prompt": "implementation_build_revise_after_assessment",
-              "settings": [],
+              "settings": [
+                {
+                  "key": "evidence_fact",
+                  "value": "assessment_submitted"
+                }
+              ],
               "tools": [],
               "outputs": [
                 "build_result",
@@ -7774,7 +7954,12 @@
                 ]
               },
               "prompt": "implementation_assessment_initial",
-              "settings": [],
+              "settings": [
+                {
+                  "key": "evidence_fact",
+                  "value": "assessment_submitted"
+                }
+              ],
               "tools": [],
               "outputs": [
                 "assessment"
@@ -7874,7 +8059,12 @@
                 ]
               },
               "prompt": "implementation_assessment_retry",
-              "settings": [],
+              "settings": [
+                {
+                  "key": "evidence_fact",
+                  "value": "assessment_submitted"
+                }
+              ],
               "tools": [],
               "outputs": [
                 "assessment"
@@ -10858,6 +11048,63 @@
             }
           },
           {
+            "variant": "session_failed",
+            "node": {
+              "kind": "apply",
+              "id": "implementation_session_failed",
+              "mutations": [
+                {
+                  "kind": "revoke",
+                  "worker": "build"
+                },
+                {
+                  "kind": "stop",
+                  "worker": "build"
+                },
+                {
+                  "kind": "revoke",
+                  "worker": "assessment"
+                },
+                {
+                  "kind": "stop",
+                  "worker": "assessment"
+                },
+                {
+                  "kind": "release",
+                  "pool": "implementation_slots"
+                },
+                {
+                  "kind": "export",
+                  "key": "accepted",
+                  "value": {
+                    "kind": "literal",
+                    "schema": "flag",
+                    "value": false
+                  }
+                },
+                {
+                  "kind": "revoke",
+                  "worker": "pr_observer"
+                },
+                {
+                  "kind": "stop",
+                  "worker": "pr_observer"
+                }
+              ],
+              "actions": [],
+              "outcome": {
+                "kind": "variant",
+                "schema": "result",
+                "variant": "failed",
+                "value": {
+                  "kind": "literal",
+                  "schema": "unit",
+                  "value": {}
+                }
+              }
+            }
+          },
+          {
             "variant": "refresh_pr",
             "node": {
               "kind": "apply",
@@ -11115,6 +11362,10 @@
       ],
       "facts": [
         {
+          "key": "session_failed",
+          "payload_schema": "text"
+        },
+        {
           "key": "submitted",
           "payload_schema": "unit"
         },
@@ -11194,7 +11445,12 @@
                 ]
               },
               "prompt": "final_integration_integrator_initial",
-              "settings": [],
+              "settings": [
+                {
+                  "key": "evidence_fact",
+                  "value": "submitted"
+                }
+              ],
               "tools": [],
               "outputs": [
                 "pr_summary"
@@ -11249,7 +11505,12 @@
                 ]
               },
               "prompt": "final_integration_integrator_retry",
-              "settings": [],
+              "settings": [
+                {
+                  "key": "evidence_fact",
+                  "value": "submitted"
+                }
+              ],
               "tools": [],
               "outputs": [
                 "pr_summary"
@@ -11885,6 +12146,42 @@
             "node": {
               "kind": "apply",
               "id": "final_abandon",
+              "mutations": [
+                {
+                  "kind": "revoke",
+                  "worker": "integrator"
+                },
+                {
+                  "kind": "stop",
+                  "worker": "integrator"
+                },
+                {
+                  "kind": "revoke",
+                  "worker": "pr_observer"
+                },
+                {
+                  "kind": "stop",
+                  "worker": "pr_observer"
+                }
+              ],
+              "actions": [],
+              "outcome": {
+                "kind": "variant",
+                "schema": "result",
+                "variant": "failed",
+                "value": {
+                  "kind": "literal",
+                  "schema": "unit",
+                  "value": {}
+                }
+              }
+            }
+          },
+          {
+            "variant": "session_failed",
+            "node": {
+              "kind": "apply",
+              "id": "final_integration_session_failed",
               "mutations": [
                 {
                   "kind": "revoke",

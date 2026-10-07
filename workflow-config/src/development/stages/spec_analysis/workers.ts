@@ -20,7 +20,7 @@ export const workers: WorkerDefinition[] = [
           }
         ]),
         prompt: "spec_analysis_author_initial",
-        settings: [],
+        settings: [{ key: "evidence_fact", value: "submitted" }],
         tools: [],
         outputs: ["analysis"],
         deadline_ms: 3600000,
@@ -42,7 +42,7 @@ export const workers: WorkerDefinition[] = [
           }
         ]),
         prompt: "spec_analysis_author_revise",
-        settings: [],
+        settings: [{ key: "evidence_fact", value: "submitted" }],
         tools: [],
         outputs: ["analysis"],
         deadline_ms: 3600000,
@@ -61,7 +61,7 @@ export const workers: WorkerDefinition[] = [
           }
         ]),
         prompt: "spec_analysis_author_retry",
-        settings: [],
+        settings: [{ key: "evidence_fact", value: "submitted" }],
         tools: [],
         outputs: ["analysis"],
         deadline_ms: 3600000,

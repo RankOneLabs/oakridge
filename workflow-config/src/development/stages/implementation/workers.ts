@@ -20,7 +20,7 @@ export const workers: WorkerDefinition[] = [
           }
         ]),
         prompt: "implementation_build_initial",
-        settings: [],
+        settings: [{ key: "evidence_fact", value: "build_submitted" }],
         tools: [],
         outputs: ["build_result", "pr_summary"],
         deadline_ms: 3600000,
@@ -44,7 +44,7 @@ export const workers: WorkerDefinition[] = [
           }
         ]),
         prompt: "implementation_build_revise",
-        settings: [],
+        settings: [{ key: "evidence_fact", value: "build_submitted" }],
         tools: [],
         outputs: ["build_result", "pr_summary"],
         deadline_ms: 3600000,
@@ -63,7 +63,7 @@ export const workers: WorkerDefinition[] = [
           }
         ]),
         prompt: "implementation_build_replace_pr",
-        settings: [],
+        settings: [{ key: "evidence_fact", value: "build_submitted" }],
         tools: [],
         outputs: ["build_result", "pr_summary"],
         deadline_ms: 3600000,
@@ -86,7 +86,7 @@ export const workers: WorkerDefinition[] = [
           }
         ]),
         prompt: "implementation_build_retry",
-        settings: [],
+        settings: [{ key: "evidence_fact", value: "build_submitted" }],
         tools: [],
         outputs: ["build_result", "pr_summary"],
         deadline_ms: 3600000,
@@ -109,7 +109,7 @@ export const workers: WorkerDefinition[] = [
           }
         ]),
         prompt: "implementation_build_retry_missing_build",
-        settings: [],
+        settings: [{ key: "evidence_fact", value: "build_submitted" }],
         tools: [],
         outputs: ["build_result"],
         deadline_ms: 3600000,
@@ -132,7 +132,7 @@ export const workers: WorkerDefinition[] = [
           }
         ]),
         prompt: "implementation_build_retry_missing_pr",
-        settings: [],
+        settings: [{ key: "evidence_fact", value: "build_submitted" }],
         tools: [],
         outputs: ["pr_summary"],
         deadline_ms: 3600000,
@@ -156,7 +156,7 @@ export const workers: WorkerDefinition[] = [
           }
         ]),
         prompt: "implementation_build_revise_after_assessment",
-        settings: [],
+        settings: [{ key: "evidence_fact", value: "assessment_submitted" }],
         tools: [],
         outputs: ["build_result", "pr_summary"],
         deadline_ms: 3600000,
@@ -187,7 +187,7 @@ export const workers: WorkerDefinition[] = [
           }
         ]),
         prompt: "implementation_assessment_initial",
-        settings: [],
+        settings: [{ key: "evidence_fact", value: "assessment_submitted" }],
         tools: [],
         outputs: ["assessment"],
         deadline_ms: 3600000,
@@ -211,7 +211,7 @@ export const workers: WorkerDefinition[] = [
           }
         ]),
         prompt: "implementation_assessment_retry",
-        settings: [],
+        settings: [{ key: "evidence_fact", value: "assessment_submitted" }],
         tools: [],
         outputs: ["assessment"],
         deadline_ms: 3600000,
