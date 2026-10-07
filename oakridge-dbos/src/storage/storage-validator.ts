@@ -4,6 +4,32 @@ import type { AuthoritySnapshot } from "./snapshot-reader";
 import type { CommitRequest, Result } from "./commit";
 import type { DefinitionBundle, OutputDefinition } from "../core-client/generated-contracts";
 import type { SqlExecutor } from "./sql-executor";
+import { createHash } from "node:crypto";
+import { readFileSync, realpathSync } from "node:fs";
+import { isAbsolute, relative, resolve, sep } from "node:path";
+
+/** The allowlist is relative to the configured repository root. */
+const PROMPT_PREFIX = `workflow-config${sep}prompts${sep}`;
+export function readPinnedPrompt(prompt: DefinitionBundle["prompts"][number]): Result<string> {
+  const path = prompt.path;
+  if (isAbsolute(path) || path.includes("\\") || path.split("/").includes("..") || !path.startsWith("workflow-config/prompts/"))
+    return reject("resolve_prompt", prompt.key, "prompt path is outside the configured allowlist");
+  let root: string;
+  let actual: string;
+  let content: Buffer;
+  try {
+    root = realpathSync(process.env.OAKRIDGE_PROMPT_ROOT ?? resolve(import.meta.dir, "../../.."));
+    actual = realpathSync(resolve(root, path));
+    const relative_path = relative(root, actual);
+    if (relative_path.startsWith("..") || isAbsolute(relative_path) || !relative_path.startsWith(PROMPT_PREFIX))
+      return reject("resolve_prompt", prompt.key, "prompt path is outside the configured root or allowlist");
+    content = readFileSync(actual);
+  } catch (cause) { return reject("resolve_prompt", prompt.key, String(cause)); }
+  const digest = createHash("sha256").update(content).digest("hex");
+  if (digest !== prompt.content_digest)
+    return reject("resolve_prompt", prompt.key, `prompt content digest mismatch: expected ${prompt.content_digest}, actual ${digest}`);
+  return { ok: true, value: content.toString("utf8") };
+}
 
 function reject(operation: string, entity_id: string, detail: string): Result<never> {
   return { ok: false, error: { operation, entity_id, detail } };

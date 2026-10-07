@@ -10,6 +10,7 @@ import { requestDigest, findReceipt, type IngressIdentity } from "./receipts";
 import { readSnapshot, type AuthoritySnapshot } from "./snapshot-reader";
 import type { RunId, ScopeId } from "./schema-records";
 import type { TransactionalSqlExecutor } from "./sql-executor";
+import { readPinnedPrompt } from "./storage-validator";
 
 export interface CompileRequest { readonly bundle: DefinitionBundle }
 export interface CompileResult { readonly program: CompiledBundle }
@@ -34,6 +35,16 @@ export function selectMutationIdentity(input: MutationInput): IngressIdentity {
 }
 
 function error(operation: string, entity_id: string, detail: string): Result<never> { return { ok: false, error: { operation, entity_id, detail } }; }
+function validateBundlePrompts(bundle: DefinitionBundle, operation: string): Result<void> {
+  if (!Array.isArray(bundle.prompts) || bundle.prompts.some((prompt) =>
+    !prompt || typeof prompt.key !== "string" || typeof prompt.path !== "string" || typeof prompt.content_digest !== "string"))
+    return error(operation, bundle.key, "malformed prompt declaration");
+  for (const prompt of bundle.prompts) {
+    const resolved = readPinnedPrompt(prompt);
+    if (!resolved.ok) return { ok: false, error: { ...resolved.error, operation } };
+  }
+  return { ok: true, value: undefined };
+}
 function launchReplay(prior: LaunchReceiptLookup, request_id: string): Result<StartedRun> | null {
   if (prior.kind === "new") return null;
   if (prior.kind === "replay") return { ok: true, value: prior.run };
@@ -72,6 +83,8 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
   return {
     compile: (request) => compileBundle(core, request),
     async pinDefinition(request) {
+      const prompts = validateBundlePrompts(request.bundle, "pin_definition");
+      if (!prompts.ok) return prompts;
       const compiled = await compileBundle(core, request);
       if (!compiled.ok) return compiled;
       try {
@@ -93,6 +106,8 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
       } catch (cause) { return error("start_run_storage", request.request_id, String(cause)); }
     },
     async startRun(request) {
+      const prompts = validateBundlePrompts(request.bundle, "start_run");
+      if (!prompts.ok) return prompts;
       const compiled = await compileBundle(core, request);
       if (!compiled.ok) return compiled;
       if (requiredProviderKinds(request.bundle).includes("github")) {

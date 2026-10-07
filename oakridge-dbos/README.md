@@ -40,7 +40,9 @@ bumping it parks in-flight workflows until they are forked by hand.
 From the repository root:
 
 ```bash
-bun run --filter oakridge-dbos verify
+cargo build --locked --manifest-path workflow-core/Cargo.toml -p workflow-cli
+bun run typecheck
+bun run --filter oakridge-dbos test:unit
 ```
 
 The integration tests require `OAKRIDGE_TEST_DATABASE_URL` with create/drop
@@ -49,7 +51,9 @@ checks the production stack through an HTTP decision and read projection.
 
 ## Database cutover
 
-The authority baseline requires PostgreSQL 15 or newer.
+The authority baseline requires PostgreSQL 15 or newer. Repeating start against
+the same baseline succeeds; a changed baseline file is rejected with both
+digests. DBOS system tables may exist before the authority baseline is applied.
 
 Stop the service; run `pg_dump` to a file nothing in this repository reads;
 drop and recreate the Oakridge database empty; deploy the Rust CLI, DBOS

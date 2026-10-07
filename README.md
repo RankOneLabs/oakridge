@@ -27,6 +27,8 @@ workspace event returns an explicit failure.
 ```bash
 bun install --frozen-lockfile
 cargo build --locked --manifest-path workflow-core/Cargo.toml -p workflow-cli
+bash scripts/generate-core-contracts.sh --check
+bash scripts/generate-bundles.sh --check
 bun run typecheck
 bun run --filter kbbl test
 bun run --filter kbbl test:pwa
@@ -40,12 +42,21 @@ checks a committed decision through the full stack. The real-agent ACP smoke
 test requires `KBBL_ACP_REAL_AGENT` and is reported as skipped by the normal
 kbbl test command when no real agent is configured.
 
-For local startup, build the Rust CLI and set `DBOS_SYSTEM_DATABASE_URL` and
-`OAKRIDGE_CORE_BINARY` for `bun run --filter oakridge-dbos start`. Set
-`OAKRIDGE_CORE_BASE_URL` on kbbl to expose the backend through the same-origin
-operator proxy. `OAKRIDGE_GITHUB_TOKEN` (or `GITHUB_TOKEN`) authenticates pull
-request observation. The DBOS application version defaults to the engine digest
-(see `oakridge-dbos/README.md`); set `DBOS_APPLICATION_VERSION` only to pin it.
+For local startup, run `./scripts/oakridge-start` from the repository root. It
+builds the Rust CLI if needed, starts PostgreSQL through Docker when
+`DBOS_SYSTEM_DATABASE_URL` is unset, applies the authority baseline, and starts
+the DBOS backend and kbbl PWA. The baseline can be applied again when its
+recorded digest matches; a changed baseline file stops startup and reports both
+digests. Set `OAKRIDGE_PROMPT_ROOT` to the repository root when launching the
+backend separately so it can verify prompt files under `workflow-config/prompts/`.
+`OAKRIDGE_GITHUB_TOKEN` (or `GITHUB_TOKEN`) authenticates pull request
+observation. The DBOS application version defaults to the engine digest (see
+`oakridge-dbos/README.md`); set `DBOS_APPLICATION_VERSION` only to pin it.
+
+Edit example bundles in `workflow-config/src/development.ts`, then run
+`bash scripts/generate-bundles.sh`. The two generated JSON files are the
+authored pinning artifacts. Each prompt references a file by path and SHA-256
+content digest; see `workflow-config/README.md` for the exact byte rule.
 
 ## Database cutover
 

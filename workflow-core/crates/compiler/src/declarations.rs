@@ -7,7 +7,11 @@ pub fn validate_bundle(
 ) -> CoreResult<()> {
     for prompt in &bundle.prompts {
         let path = std::path::Path::new(&prompt.path);
-        if prompt.content.is_empty()
+        if prompt.content_digest.len() != 64
+            || !prompt
+                .content_digest
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
             || path.is_absolute()
             || path
                 .components()
@@ -16,7 +20,7 @@ pub fn validate_bundle(
             return Err(error(
                 DomainErrorKind::UnresolvedContent,
                 prompt.key.to_string(),
-                "prompt must have bundled content and a repository-contained path",
+                "prompt must have a SHA-256 content digest and a repository-contained path",
             ));
         }
         schema(bundle, &prompt.input_schema)?;

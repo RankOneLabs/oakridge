@@ -1405,7 +1405,7 @@
     "Prompt": {
       "type": "object",
       "properties": {
-        "content": {
+        "content_digest": {
           "type": "string"
         },
         "input_schema": {
@@ -1422,8 +1422,8 @@
       "required": [
         "key",
         "path",
-        "content",
-        "input_schema"
+        "input_schema",
+        "content_digest"
       ]
     },
     "PublicationPolicy": {

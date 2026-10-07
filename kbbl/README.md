@@ -9,9 +9,8 @@ the React PWA and manages agents through ACP (Agent Client Protocol).
 Workflow orchestration runs in [oakridge-dbos](../oakridge-dbos/README.md);
 definitions and prompts live in [workflow-config](../workflow-config/README.md).
 The kbbl v1 Projects/spec/plan/brief UI, dispatcher, review API, and prompts are
-retired. V2 launch presets use the DBOS project registry through
-`/oakridge/api/projects`. The separate legacy kbbl `/projects` registry
-remains available, along with shared session and v2 review components.
+retired. The separate legacy kbbl `/projects` registry remains available,
+along with shared session and v2 review components.
 
 Existing SQLite history and migrations are retained. Retirement does not delete
 stored projects, artifacts, or sessions. Archived pre-ACP JSONL sessions remain
@@ -19,8 +18,9 @@ available for read-only viewing; they are not the current execution backend.
 
 ## Quick start
 
-The workflow backend is intentionally unavailable until m3 authority.
-Start kbbl independently for direct agent sessions:
+For the workflow backend and operator PWA together, run
+`./scripts/oakridge-start` from the repository root. To start kbbl independently
+for direct agent sessions, run:
 
 ```bash
 ./kbbl/scripts/kbbl-start /absolute/path/to/repository
@@ -113,7 +113,6 @@ and [acp-per-sid.ts](core/server/handlers/acp-per-sid.ts).
 - `GET /directories?path=<absolute-path>` — directory picker.
 - `GET /:sid/handoff` — historical compaction handoff.
 - `/projects` — retained legacy kbbl project registry, not the v2 registry.
-- `/oakridge/api/projects` — DBOS project registry used by v2 launch presets.
 - `/oakridge/api/*` — same-origin DBOS proxy.
 
 Executor integration additionally uses resumable ensure, initial-turn observation,

@@ -130,12 +130,10 @@ test("duplicate JSON keys are rejected before overwrite", () => {
   expect(rawFrame(frame).result.value.kind).toBe("duplicate_symbol");
 });
 test("compile response echoes the request ID and omits the checked source", () => {
-  // Omission is asserted by size, not by crowding the response bound: a 1 MiB prompt keeps the debug binary fast on CI.
-  const prompt_bytes = 1_048_576;
-  const source = { ...bundle, prompts: bundle.prompts.map((prompt) => ({ ...prompt, content: "x".repeat(prompt_bytes) })) };
+  const source = bundle;
   const response = rawFrame(JSON.stringify({ version: CORE_PROTOCOL_VERSION, request_id: "large", operation: "compile", input: { bundle: source } }));
   expect(response).toMatchObject({ request_id: "large", truncated: false, result: { status: "ok", value: { kind: "compiled", value: { digest: expect.any(String), scopes: expect.any(Array) } } } });
-  expect(Buffer.byteLength(JSON.stringify(response))).toBeLessThan(prompt_bytes);
+  expect(JSON.stringify(response)).not.toContain('"content_digest"');
 });
 async function withChild(scriptBody: string, run: (client: CoreClient) => Promise<void>, deadlineMs = 1000, queue = 64, files: Readonly<Record<string, string>> = {}): Promise<void> {
   const directory = mkdtempSync(resolve(tmpdir(), "core-protocol-")); const script = resolve(directory, "child.sh");

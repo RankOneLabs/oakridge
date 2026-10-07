@@ -6,6 +6,7 @@ import type { Result } from "../../storage/commit";
 import { selectedPublicationInstructions } from "./selected-publication-contract";
 import type { ScopeInstanceRecord } from "../../storage/schema-records";
 import type { StableInvocation } from "../provider";
+import { readPinnedPrompt } from "../../storage/storage-validator";
 
 /** Reverse the checked wire representation using the same field indexes as the compiler. */
 export function invocationInput(value: CheckedValue, bundle: DefinitionBundle): Result<JsonValue> {
@@ -57,6 +58,8 @@ export function pinProviderRequest(input: ProviderRequestSelection): Result<Stab
   const prompt_key = invocation.selection.prompt_key;
   const prompt = prompt_key == null ? null : bundle.prompts.find((item) => item.key === prompt_key);
   if (prompt_key != null && !prompt) return { ok: false, error: { operation: "pin_request", entity_id: invocation.id, detail: "pinned prompt missing" } };
+  const prompt_content = prompt ? readPinnedPrompt(prompt) : { ok: true as const, value: "" };
+  if (!prompt_content.ok) return { ok: false, error: { ...prompt_content.error, operation: "pin_request" } };
   const isRecord = (value: JsonValue): value is { readonly [key: string]: JsonValue } => !!value && typeof value === "object" && !Array.isArray(value);
   const decoded_config = isRecord(decoded.value) && decoded.value.config && isRecord(decoded.value.config) ? decoded.value.config : decoded.value;
   const manifest = bundle.operations.find((item) => item.key === contract.operation && item.version === contract.contract_version);
@@ -67,7 +70,7 @@ export function pinProviderRequest(input: ProviderRequestSelection): Result<Stab
       unit_id: unit_id as UnitId, executor_type: "delegated_session", resolved_config: { ...decoded_config,
         session_identity: { run_id: scope.run_id, stage_instance_id: scope.id, unit_id,
           cohort_id: scope.child_key, operator_role: invocation.selection.selection.worker },
-        rendered_prompt: (prompt ? promptWithActionInput(prompt.content, decoded.value) : "")
+        rendered_prompt: (prompt ? promptWithActionInput(prompt_content.value, decoded.value) : "")
           + selectedPublicationInstructions({ invocation, bundle, scope, publication_secret }) },
       inputs: [], declared_outputs: [], expected_artifacts: [] };
     const rendered = renderSessionStart({ request, operation_id: invocation.id as unknown as ExecutorOperationId, executor_function_identity: "selected-v1" });

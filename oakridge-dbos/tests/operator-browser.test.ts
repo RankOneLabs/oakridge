@@ -129,7 +129,7 @@ test("an empty definition catalog accepts a compiled bundle and lists its digest
 });
 
 test("a digest launch resolves the pinned bundle before run creation", async () => {
-  const source = { key: "demo", root: "root", operations: [], scopes: [{ key: "root", input_schema: "unit", pools: [], workers: [] }] } as unknown as DefinitionBundle;
+  const source = { key: "demo", root: "root", prompts: [], operations: [], scopes: [{ key: "root", input_schema: "unit", pools: [], workers: [] }] } as unknown as DefinitionBundle;
   const checked = { schema: "unit", data: { kind: "record", fields: [], dictionary: [] } };
   const statements: string[] = [];
   const db = { async query(sql: string) {

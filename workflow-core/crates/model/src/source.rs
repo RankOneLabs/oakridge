@@ -107,8 +107,8 @@ pub enum ReferenceBrand {
 pub struct Prompt {
     pub key: SymbolKey,
     pub path: String,
-    pub content: String,
     pub input_schema: SchemaId,
+    pub content_digest: String,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]

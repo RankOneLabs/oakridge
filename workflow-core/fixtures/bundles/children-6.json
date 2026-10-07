@@ -746,9 +746,9 @@
   "prompts": [
     {
       "key": "shared_content",
-      "path": "assets/prompts/review.txt",
-      "content": "Produce a document using supplied input.",
-      "input_schema": "unit"
+      "path": "workflow-config/prompts/dev-flow/spec_analysis_author_initial.md",
+      "input_schema": "unit",
+      "content_digest": "000d4ce14d29be748b3ee4de65fa22448535f7a23250e65e228acf61f8585aa3"
     }
   ],
   "operations": [

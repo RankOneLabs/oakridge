@@ -49,7 +49,9 @@ operator decision, while merge confirmation remains tied to the accepted head.
 
 The authority baseline namespaces collection members by their collection key, so
 preparation and final integration may reuse repository keys under one parent.
-This repository's migration command requires a fresh database; no live database
-is migrated by this change. The frame and response transports are bounded at
+This repository's migration command applies the baseline to an empty authority
+database and exits successfully on repeat when its recorded digest still matches
+the baseline file. A changed file against an applied database is an error. The
+frame and response transports are bounded at
 64 MiB — a line-reader guard far above any legitimate scope state, not a domain
 limit — with both limits exported into the generated adapter contract.

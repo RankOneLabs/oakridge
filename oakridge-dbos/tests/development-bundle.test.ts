@@ -1,8 +1,12 @@
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
+import { createHash } from "node:crypto";
 import { repository } from "./development-runtime-fixture";
 import { CoreClient } from "../src/core-client/client";
 import { promptWithActionInput } from "../src/effects/operations/selected-request";
+import { readPinnedPrompt } from "../src/storage/storage-validator";
+import { createMutationService, type PinnedDefinition } from "../src/storage/mutation-service";
+import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
 import type { CheckedValue, DefinitionBundle, Snapshot } from "../src/core-client/generated-contracts";
 
 const root = resolve(import.meta.dir, "../..");
@@ -38,6 +42,56 @@ test("development declaration compiles against the generic core", async () => {
   } finally { core.close(); }
 });
 
+test("authored bundle bytes and pinned digest reproduce the generated source", async () => {
+  const authored = await Bun.file(resolve(root, "workflow-config/definitions/development.json")).text();
+  expect(JSON.stringify(bundle, null, 2) + "\n").toBe(authored);
+  for (const prompt of bundle.prompts) {
+    const bytes = await Bun.file(resolve(root, prompt.path)).bytes();
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe(prompt.content_digest);
+    expect("content" in prompt).toBe(false);
+  }
+  const core = client();
+  try {
+    let saved: PinnedDefinition | null = null;
+    const db = { query: async (sql: string, params: unknown[]) => {
+      if (sql.startsWith("INSERT")) { saved = { bundle_id: params[0] as string, digest: params[1] as string, source: bundle }; return []; }
+      return saved ? [saved] : [];
+    } } as unknown as TransactionalSqlExecutor;
+    const pinned = await createMutationService(db, core).pinDefinition({ bundle });
+    const compiled = await core.request("compile", { bundle });
+    expect(pinned.ok && compiled.ok && compiled.value.kind === "compiled" ? pinned.value.digest : null)
+      .toBe(compiled.ok && compiled.value.kind === "compiled" ? compiled.value.value.digest : null);
+  } finally { core.close(); }
+});
+
+test("pinning rejects changed prompt bytes and paths outside the configured root", async () => {
+  const core = client();
+  try {
+    const service = createMutationService({} as TransactionalSqlExecutor, core);
+    const prompt = bundle.prompts[0];
+    if (!prompt) throw new Error("prompt fixture missing");
+    const changed = await service.pinDefinition({ bundle: { ...bundle, prompts: [{ ...prompt, content_digest: "0".repeat(64) }, ...bundle.prompts.slice(1)] } });
+    expect(changed).toMatchObject({ ok: false, error: { operation: "pin_definition", detail: expect.stringContaining("digest mismatch") } });
+    const escaped = await service.pinDefinition({ bundle: { ...bundle, prompts: [{ ...prompt, path: "../secret" }, ...bundle.prompts.slice(1)] } });
+    expect(escaped).toMatchObject({ ok: false, error: { operation: "pin_definition", detail: expect.stringContaining("outside the configured allowlist") } });
+  } finally { core.close(); }
+});
+
+test("starting an inline bundle rejects invalid prompts before compilation or storage", async () => {
+  const prompt = bundle.prompts[0];
+  if (!prompt) throw new Error("prompt fixture missing");
+  let compiled = false;
+  let stored = false;
+  const core = { request: async () => { compiled = true; throw new Error("unexpected compilation"); } } as unknown as CoreClient;
+  const db = { transaction: async () => { stored = true; throw new Error("unexpected storage"); } } as unknown as TransactionalSqlExecutor;
+  const service = createMutationService(db, core);
+  const changed = await service.startRun({ bundle: { ...bundle, prompts: [{ ...prompt, content_digest: "0".repeat(64) }, ...bundle.prompts.slice(1)] }, input: {} });
+  expect(changed).toMatchObject({ ok: false, error: { operation: "start_run", detail: expect.stringContaining("digest mismatch") } });
+  const escaped = await service.startRun({ bundle: { ...bundle, prompts: [{ ...prompt, path: "../secret" }, ...bundle.prompts.slice(1)] }, input: {} });
+  expect(escaped).toMatchObject({ ok: false, error: { operation: "start_run", detail: expect.stringContaining("outside the configured allowlist") } });
+  expect({ compiled, stored }).toEqual({ compiled: false, stored: false });
+});
+
 test("selected prompt carries its pinned action input", () => {
   expect(promptWithActionInput("Review this build", { feedback: "fix scope", revision: "build-2" }))
     .toContain('"revision": "build-2"');
@@ -49,9 +103,14 @@ test("development prompt lookup preserves the rendered prompt bytes", () => {
   const authored = bundle.prompts.find((prompt) => prompt.key === action?.prompt);
   if (!action?.prompt || !authored) throw new Error("development prompt fixture missing");
   const action_input = { repository: "oakridge", instruction: "Build the pinned scope" };
-  const previous = promptWithActionInput(authored.content, action_input);
+  const content = readPinnedPrompt(authored);
+  if (!content.ok) throw new Error(content.error.detail);
+  const previous = promptWithActionInput(content.value, action_input);
   const resolved = bundle.prompts.find((prompt) => prompt.key === action.prompt);
-  expect(promptWithActionInput(resolved!.content, action_input)).toBe(previous);
+  if (!resolved) throw new Error("prompt missing");
+  const reread = readPinnedPrompt(resolved);
+  if (!reread.ok) throw new Error(reread.error.detail);
+  expect(promptWithActionInput(reread.value, action_input)).toBe(previous);
 });
 
 test("root selects repository preparation from the repository configuration collection", async () => {
