@@ -9,7 +9,13 @@
       "settings": [
         "result_fact"
       ],
-      "tools": []
+      "tools": [],
+      "recovery": [],
+      "emitted_codes": [
+        "worktree_unrecoverable",
+        "head_changed",
+        "invalid_invocation"
+      ]
     },
     {
       "key": "session.run",
@@ -20,7 +26,17 @@
       "settings": [
         "evidence_fact"
       ],
-      "tools": []
+      "tools": [],
+      "recovery": [
+        {
+          "code": "session_failed",
+          "fact": "session_failed"
+        }
+      ],
+      "emitted_codes": [
+        "session_failed",
+        "invalid_invocation"
+      ]
     },
     {
       "key": "pull_request.observe",
@@ -31,7 +47,19 @@
       "settings": [
         "result_fact"
       ],
-      "tools": []
+      "tools": [],
+      "recovery": [
+        {
+          "code": "auth",
+          "fact": "auth"
+        }
+      ],
+      "emitted_codes": [
+        "discovery_unsupported",
+        "auth",
+        "provider_rejected",
+        "invalid_invocation"
+      ]
     }
   ],
   "providers": [

@@ -9,7 +9,7 @@ import type { DefinitionBundle, Snapshot, CheckedValue } from "../src/core-clien
 const root = resolve(import.meta.dir, "../..");
 const binary = resolve(root, "workflow-core/target/debug/workflow-cli");
 const bundle: DefinitionBundle = await Bun.file(resolve(root, "workflow-core/fixtures/bundles/minimal.json")).json();
-const catalog = { operations: PROVIDER_CATALOG.operations.map(({ emitted_codes: _codes, ...operation }) => operation),
+const catalog = { operations: PROVIDER_CATALOG.operations.map((operation) => operation),
   providers: PROVIDER_CATALOG.providers };
 const unit: CheckedValue = { schema: "unit", data: { kind: "record", fields: [], dictionary: [] } };
 function snapshot(source = bundle, trigger = "begin"): Snapshot {

@@ -1,4 +1,4 @@
-import { PROVIDER_ERROR_CODES, INPUT_CONTRACTS } from "../provider-catalog";
+import { PROVIDER_CATALOG, PROVIDER_ERROR_CODES, INPUT_CONTRACTS } from "../provider-catalog";
 import type { CheckedValue, DefinitionBundle, ScopeDefinition, Trigger } from "../../core-client/generated-contracts";
 import type { CoreClient } from "../../core-client/client";
 import type { ExecutionId, JsonValue } from "../../domain/primitives";
@@ -37,6 +37,19 @@ function pinnedInput(invocation: StableInvocation): Result<JsonValue> {
 const isRecord = (value: JsonValue): value is { [key: string]: JsonValue } => !!value && typeof value === "object" && !Array.isArray(value);
 const rejected = (detail: string): ProviderResult<never> => ({ kind: "permanently_rejected", code: PROVIDER_ERROR_CODES.invalid_invocation, detail });
 
+function declaredRecovery(context: InvocationContext, invocation: StableInvocation, code: string): { readonly fact: string } | null {
+  const operation = context.bundle.operations.find((item) => item.key === invocation.selection.definition.operation
+    && item.version === invocation.selection.definition.contract_version);
+  return operation?.recovery?.find((mapping) => mapping.code === code) ?? null;
+}
+
+export function visibleProviderCode(operation_key: string, version: number, code: string, detail: string): Extract<ProviderResult<never>, { readonly kind: "permanently_rejected" }> {
+  const operation = PROVIDER_CATALOG.operations.find((item) => item.key === operation_key && item.version === version);
+  return operation?.emitted_codes.some((emitted) => emitted === code)
+    ? { kind: "permanently_rejected", code, detail }
+    : { kind: "permanently_rejected", code: PROVIDER_ERROR_CODES.undeclared_provider_code, detail: `provider returned undeclared code ${code}: ${detail}` };
+}
+
 interface SessionFailureInput {
   readonly db: SqlExecutor;
   readonly core: CoreClient;
@@ -48,13 +61,16 @@ export async function recoverSessionFailure({ db, core, invocation, detail }: Se
   const failure = { kind: "permanently_rejected" as const, code: PROVIDER_ERROR_CODES.session_failed, detail };
   if (invocation.request?.kind !== INPUT_CONTRACTS.session) return failure;
   const context = await readInvocationContext(db, invocation);
-  const fact = context?.scope.facts.find((fact) => fact.key === failure.code);
-  if (!context || !fact) return failure;
+  const visible = visibleProviderCode(invocation.selection.definition.operation, invocation.selection.definition.contract_version, failure.code, detail);
+  if (!context || visible.code !== failure.code) return visible;
+  const mapping = declaredRecovery(context, invocation, failure.code);
+  const fact = context.scope.facts.find((item) => item.key === mapping?.fact);
+  if (!fact) return failure;
   const checked = await core.request("validate_payload", { bundle: context.bundle, schema: fact.payload_schema, payload: detail });
   if (!checked.ok) return checked.error.kind === "domain" ? rejected(JSON.stringify(checked.error))
     : { kind: "transiently_unavailable", detail: JSON.stringify(checked.error) };
   if (checked.value.kind !== "validated") return rejected("core returned a non-validated recovery payload");
-  return { ...failure, evidence: { id: `${invocation.id}:error`, key: failure.code, payload: checked.value.value } };
+  return { ...failure, evidence: { id: `${invocation.id}:error`, key: fact.key, payload: checked.value.value } };
 }
 
 export function createEffectProvider(options: ProductionProviderOptions): EffectProvider {
@@ -87,11 +103,14 @@ export function createEffectProvider(options: ProductionProviderOptions): Effect
   }
   async function recovery(context: InvocationContext, result: ProviderResult<unknown>, invocation: StableInvocation): Promise<ProviderResult<never>> {
     if (result.kind !== "permanently_rejected") return rejected("expected a permanent rejection");
-    const definition = context.scope.facts.find((fact) => fact.key === result.code);
+    const visible = visibleProviderCode(invocation.selection.definition.operation, invocation.selection.definition.contract_version, result.code, result.detail);
+    if (visible.code !== result.code) return visible;
+    const mapping = declaredRecovery(context, invocation, result.code);
+    const definition = context.scope.facts.find((fact) => fact.key === mapping?.fact);
     if (!definition) return result;
     const checked = await validate(context, definition.payload_schema, result.detail);
     if (checked.kind !== "acknowledged") return checked;
-    const evidence: Trigger = { id: `${invocation.id}:error`, key: result.code, payload: checked.value };
+    const evidence: Trigger = { id: `${invocation.id}:error`, key: definition.key, payload: checked.value };
     return { ...result, evidence };
   }
   async function completed(context: InvocationContext, invocation: StableInvocation, result: unknown): Promise<ProviderResult<ExternalHandle>> {

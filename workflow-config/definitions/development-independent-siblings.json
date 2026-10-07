@@ -12482,7 +12482,8 @@
       "settings": [
         "result_fact"
       ],
-      "tools": []
+      "tools": [],
+      "recovery": []
     },
     {
       "key": "session.run",
@@ -12493,7 +12494,13 @@
       "settings": [
         "evidence_fact"
       ],
-      "tools": []
+      "tools": [],
+      "recovery": [
+        {
+          "code": "session_failed",
+          "fact": "session_failed"
+        }
+      ]
     },
     {
       "key": "pull_request.observe",
@@ -12504,7 +12511,13 @@
       "settings": [
         "result_fact"
       ],
-      "tools": []
+      "tools": [],
+      "recovery": [
+        {
+          "code": "auth",
+          "fact": "auth"
+        }
+      ]
     }
   ],
   "limits": {

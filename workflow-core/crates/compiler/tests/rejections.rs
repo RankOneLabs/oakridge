@@ -774,6 +774,21 @@ fn injected_catalog_names_version_contract_and_capability_mismatches() {
     catalog.operations[0].settings.clear();
     assert_eq!(compile_with_catalog(&source, &catalog).unwrap_err().kind, DomainErrorKind::UnsupportedAuthorization);
 }
+
+#[test]
+fn recovery_codes_and_detail_payloads_are_checked_against_provider_declarations() {
+    let mut source: DefinitionBundle = serde_json::from_value(fixture()).unwrap();
+    let mut catalog = ProviderCatalog { operations: source.operations.clone(), providers: vec![
+        ProviderRoute { kind: "stub".into(), input_contract: "unsupported".into() },
+    ] };
+    source.operations[0].recovery = vec![RecoveryMapping { code: "unknown_code".into(), fact: SymbolKey("tick".into()) }];
+    assert_eq!(compile_with_catalog(&source, &catalog).unwrap_err().kind, DomainErrorKind::UnsupportedProvider);
+    catalog.operations[0].emitted_codes.push("known_code".into());
+    source.operations[0].recovery[0].code = "known_code".into();
+    assert_eq!(compile_with_catalog(&source, &catalog).unwrap_err().kind, DomainErrorKind::IncompatiblePort);
+    source.operations[0].recovery[0].fact = SymbolKey("missing".into());
+    assert_eq!(compile_with_catalog(&source, &catalog).unwrap_err().kind, DomainErrorKind::UndeclaredTrigger);
+}
 #[test]
 fn unavailable_pinned_operation_version() {
     let b: DefinitionBundle = serde_json::from_value(fixture()).unwrap();

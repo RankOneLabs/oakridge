@@ -206,8 +206,9 @@ export class CoreClient {
   private async compileBundle(bundle: DefinitionBundle, cacheKey: string): Promise<CoreResult<Output>> {
     const existing = this.compiling.get(cacheKey);
     if (existing) return existing;
-    const catalog = { operations: PROVIDER_CATALOG.operations.map(({ emitted_codes: _codes, ...operation }) => ({ ...operation,
-      settings: [...operation.settings], tools: [...operation.tools] })),
+    const catalog = { operations: PROVIDER_CATALOG.operations.map((operation) => ({ ...operation,
+      settings: [...operation.settings], tools: [...operation.tools], emitted_codes: [...operation.emitted_codes],
+      recovery: operation.recovery.map((mapping) => ({ ...mapping })) })),
       providers: PROVIDER_CATALOG.providers.map((provider) => ({ ...provider })) };
     const task = this.send("compile", { bundle, catalog }).then((result) => {
       if (result.ok && result.value.kind === "compiled") this.rememberDigest(cacheKey, result.value.value.digest);

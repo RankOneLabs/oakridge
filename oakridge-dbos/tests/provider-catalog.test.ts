@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { INPUT_CONTRACTS, PROVIDER_CATALOG, PROVIDER_ERROR_CODES, PROVIDER_KINDS } from "../src/effects/provider-catalog";
+import { visibleProviderCode } from "../src/effects/operations/production-provider";
 
 describe("provider declarations", () => {
   test("the provider catalog owns every shipped routing pair", () => {
@@ -14,5 +15,11 @@ describe("provider declarations", () => {
   test("the catalog declares emitted codes independently of bundle facts", () => {
     expect(PROVIDER_CATALOG.operations.find((operation) => operation.provider_kind === PROVIDER_KINDS.repository)?.emitted_codes)
       .toContain(PROVIDER_ERROR_CODES.head_changed);
+  });
+
+  test("an undeclared provider code is a visible rejected outcome naming the original code", () => {
+    expect(visibleProviderCode("repository.prepare", 1, "unexpected_failure", "details"))
+      .toMatchObject({ kind: "permanently_rejected", code: PROVIDER_ERROR_CODES.undeclared_provider_code,
+        detail: expect.stringContaining("unexpected_failure") });
   });
 });

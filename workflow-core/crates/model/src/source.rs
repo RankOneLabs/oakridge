@@ -122,6 +122,17 @@ pub struct OperationManifest {
     pub input_contract: String,
     pub settings: Vec<String>,
     pub tools: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recovery: Vec<RecoveryMapping>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub emitted_codes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryMapping {
+    pub code: String,
+    pub fact: SymbolKey,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
