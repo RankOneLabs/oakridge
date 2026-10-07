@@ -28,6 +28,46 @@ function shippedBundle(name: string): unknown {
 }
 const canonicalDefinition = shippedBundle("development") as { readonly version: number; readonly [key: string]: unknown };
 
+/** Field kinds the launch form renders as a plain control; every other kind gets a JSON entry. */
+const DIRECT_ENTRY_KINDS: readonly string[] = ["string", "integer", "boolean", "enum"];
+
+function sampleSchemaValue(bundle: WorkflowDefinitionDescriptor, key: string): unknown {
+  const shape = bundle.schemas.find((schema) => schema.key === key)?.shape;
+  if (!shape) throw new Error(`Unknown schema: ${key}`);
+  if (shape.kind === "string") return "sample";
+  if (shape.kind === "integer") return shape.min;
+  if (shape.kind === "boolean") return true;
+  if (shape.kind === "enum") {
+    const [variant] = shape.variants;
+    if (variant === undefined) throw new Error(`Enum has no variants: ${key}`);
+    return variant;
+  }
+  if (shape.kind === "list") return [];
+  if (shape.kind === "optional") return null;
+  if (shape.kind === "record") return Object.fromEntries(shape.fields.filter((field) => field.required)
+    .map((field) => [field.key, sampleSchemaValue(bundle, field.schema)]));
+  throw new Error(`No sample value for schema kind: ${shape.kind}`);
+}
+
+interface SampledRootField { readonly key: string; readonly label: string; readonly draft: string; readonly value: unknown }
+
+/** Every root input field a bundle declares, with the label and entry text the form expects for it. */
+function sampleRootFields(bundle: WorkflowDefinitionDescriptor): readonly SampledRootField[] {
+  const root = bundle.scopes.find((scope) => scope.key === bundle.root);
+  const shape = bundle.schemas.find((schema) => schema.key === root?.input_schema)?.shape;
+  if (shape?.kind !== "record") throw new Error("root input is not a record");
+  return shape.fields.map((field) => {
+    const kind = bundle.schemas.find((schema) => schema.key === field.schema)?.shape.kind;
+    if (kind === undefined) throw new Error(`Unknown field schema: ${field.schema}`);
+    const value = sampleSchemaValue(bundle, field.schema);
+    return { key: field.key, value,
+      label: `${field.key}${DIRECT_ENTRY_KINDS.includes(kind) ? "" : " JSON"}`,
+      draft: kind === "string" || kind === "enum" ? String(value) : JSON.stringify(value) };
+  });
+}
+const rootInputRecord = (fields: readonly SampledRootField[]): unknown =>
+  Object.fromEntries(fields.map((field) => [field.key, field.value]));
+
 function renderWithQuery(ui: React.ReactElement) {
   return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{ui}</QueryClientProvider>);
 }
@@ -57,7 +97,11 @@ test("an empty catalog does not seed the editor from a bundled definition", asyn
 });
 
 test("the third bundle renders its extra root input as JSON and round-trips the raw editor", async () => {
-  const bundle = shippedBundle("development-verification");
+  const bundle = shippedBundle("development-verification") as WorkflowDefinitionDescriptor;
+  const fields = sampleRootFields(bundle);
+  const extra = fields[fields.length - 1];
+  if (!extra) throw new Error("root input has no fields");
+  if (!extra.label.endsWith(" JSON")) throw new Error(`${extra.key} no longer needs a JSON fallback`);
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
     if (url.endsWith("/definitions")) return Response.json([{ bundle_id: "third", digest: "third-digest", source: bundle }]);
     if (url.endsWith("/runs") && init?.method === "POST") return Response.json({ run_id: "new-run" }, { status: 201 });
@@ -65,21 +109,15 @@ test("the third bundle renders its extra root input as JSON and round-trips the 
   });
   vi.stubGlobal("fetch", fetch);
   renderWithQuery(<OperatorLaunchView onBack={() => undefined} onCreated={() => undefined} onEdit={() => undefined} />);
-  const note = await screen.findByLabelText<HTMLTextAreaElement>("verification_note JSON");
-  fireEvent.change(screen.getByLabelText("spec"), { target: { value: "verify" } });
-  fireEvent.change(screen.getByLabelText("repositories JSON"), { target: { value: "[]" } });
-  const session = { runtime: "codex", workdir: "/tmp", session_name: "sample" };
-  for (const field of ["analysis", "planning", "briefs"])
-    fireEvent.change(screen.getByLabelText(`${field} JSON`), { target: { value: JSON.stringify(session) } });
-  fireEvent.change(note, { target: { value: "null" } });
+  await screen.findByLabelText(extra.label);
+  for (const field of fields) fireEvent.change(screen.getByLabelText(field.label), { target: { value: field.draft } });
   fireEvent.click(screen.getByLabelText("Raw JSON"));
-  expect(screen.getByLabelText<HTMLTextAreaElement>("Root input JSON").value).toContain('"verification_note": null');
+  expect(JSON.parse(screen.getByLabelText<HTMLTextAreaElement>("Root input JSON").value)).toEqual(rootInputRecord(fields));
   fireEvent.click(screen.getByLabelText("Raw JSON"));
-  expect(screen.getByLabelText<HTMLTextAreaElement>("verification_note JSON").value).toBe("null");
+  expect(JSON.parse(screen.getByLabelText<HTMLTextAreaElement>(extra.label).value)).toEqual(extra.value);
   fireEvent.click(screen.getByRole("button", { name: "Launch" }));
   await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
-  expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body)).input).toEqual({ spec: "verify", repositories: [],
-    analysis: session, planning: session, briefs: session, verification_note: null });
+  expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body)).input).toEqual(rootInputRecord(fields));
 });
 
 test.each(["development", "development-independent-siblings", "development-verification"])(
