@@ -161,6 +161,7 @@ export const implementation = defineScope({
     }
   ],
   facts: [
+    { key: "session_failed", payload_schema: "text" },
     { key: "build_submitted", payload_schema: "unit" },
     { key: "assessment_submitted", payload_schema: "unit" },
     { key: "assessment_unchanged", payload_schema: "unchanged_target" },

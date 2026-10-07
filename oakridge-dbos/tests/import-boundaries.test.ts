@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { resolve, relative } from "node:path";
 import { readFileSync } from "node:fs";
-import { buildGraph, reachable, projectionViolations, mutationViolations, closedCommandViolations, evaluatorViolations, labels, type ModuleNode, type ModuleGraph } from "./dependency-graph";
+import { buildGraph, reachable, projectionViolations, mutationViolations, closedCommandViolations, evaluatorViolations, labels, authorityWriteSites, undocumentedAuthorityWrites, type ModuleNode, type ModuleGraph } from "./dependency-graph";
 
 const root = resolve(import.meta.dir, "../..");
 const dbosMain = resolve(root, "oakridge-dbos/src/main.ts");
@@ -40,6 +40,23 @@ test("handlers, adapters and observers cannot reach domain writes without crossi
   expect(entries.length).toBeGreaterThan(0);
   expect(labels(root, mutationViolations(graph, entries, mutationEntry))).toEqual([]);
 });
+test("state ownership inventory covers every production authority write with its named writer", () => {
+  const inventory = readFileSync(resolve(root, "comms/oakridge-state-ownership-inventory.md"), "utf8");
+  const sites = reachable(graph, dbosMain).flatMap(authorityWriteSites);
+  expect(sites.length).toBeGreaterThan(0);
+  expect(undocumentedAuthorityWrites({ root, nodes: reachable(graph, dbosMain), inventory })).toEqual([]);
+});
+test("an additional production writer cannot hide behind existing inventory citations", () => {
+  const node = injected("oakridge-dbos/src/effects/injected.ts", `
+    export async function unlistedWriter(db: Executor) {
+      await db.query("UPDATE authority.effect_intent SET version=version+1");
+    }
+  `);
+  expect(authorityWriteSites(node)).toEqual([{ path: node.path, line: 3, writer: "unlistedWriter" }]);
+  const inventory = readFileSync(resolve(root, "comms/oakridge-state-ownership-inventory.md"), "utf8");
+  expect(undocumentedAuthorityWrites({ root, nodes: [node], inventory })).toEqual(authorityWriteSites(node));
+});
+
 test("an indirect storage write fails the mutation boundary, but one behind the service passes", () => {
   const http = resolve(root, "oakridge-dbos/src/http/app.ts");
   const node = injected("oakridge-dbos/src/storage/injected.ts", 'tx.query("UPDATE authority.scope_instance SET version=version+1")');

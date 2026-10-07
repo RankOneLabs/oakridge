@@ -203,7 +203,8 @@ export const brief_dispatch: DecisionTree = {
     { variant: "request_changes", node: brief_feedback_exact },
     { variant: "retry", node: brief_retry },
     { variant: "cancel", node: brief_cancel },
-    { variant: "abandon", node: brief_abandon }
+    { variant: "abandon", node: brief_abandon },
+    { variant: "session_failed", node: { ...brief_abandon, id: "brief_writing_session_failed" } },
   ],
   otherwise: brief_wait
 };

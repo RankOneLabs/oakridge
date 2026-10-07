@@ -251,6 +251,7 @@ export const final_dispatch: DecisionTree = {
     { variant: "confirm_merged", node: final_review_context },
     { variant: "cancel", node: final_cancel },
     { variant: "abandon", node: final_abandon },
+    { variant: "session_failed", node: { ...final_abandon, id: "final_integration_session_failed" } },
     { variant: "refresh_pr", node: refresh_pr },
     { variant: "pr_observed", node: matching_pr_observation }
   ],

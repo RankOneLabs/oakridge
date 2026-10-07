@@ -20,7 +20,7 @@ export const workers: WorkerDefinition[] = [
           }
         ]),
         prompt: "brief_writing_author_initial",
-        settings: [],
+        settings: [{ key: "evidence_fact", value: "submitted" }],
         tools: [],
         outputs: ["briefs"],
         deadline_ms: 3600000,
@@ -42,7 +42,7 @@ export const workers: WorkerDefinition[] = [
           }
         ]),
         prompt: "brief_writing_author_revise",
-        settings: [],
+        settings: [{ key: "evidence_fact", value: "submitted" }],
         tools: [],
         outputs: ["briefs"],
         deadline_ms: 3600000,
@@ -61,7 +61,7 @@ export const workers: WorkerDefinition[] = [
           }
         ]),
         prompt: "brief_writing_author_retry",
-        settings: [],
+        settings: [{ key: "evidence_fact", value: "submitted" }],
         tools: [],
         outputs: ["briefs"],
         deadline_ms: 3600000,

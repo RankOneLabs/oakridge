@@ -147,7 +147,8 @@ export const planning_dispatch: DecisionTree = {
     { variant: "request_changes", node: planning_feedback_exact },
     { variant: "retry", node: planning_retry },
     { variant: "cancel", node: planning_cancel },
-    { variant: "abandon", node: planning_abandon }
+    { variant: "abandon", node: planning_abandon },
+    { variant: "session_failed", node: { ...planning_abandon, id: "planning_session_failed" } },
   ],
   otherwise: planning_wait
 };

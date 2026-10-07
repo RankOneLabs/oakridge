@@ -21,6 +21,13 @@ export interface ProductionProviderOptions {
 interface InvocationContext { readonly bundle: DefinitionBundle; readonly scope: ScopeDefinition; readonly scope_id: string; readonly run_id: string }
 interface ContextRow { readonly source: DefinitionBundle; readonly scope_key: string; readonly scope_id: string; readonly run_id: string }
 
+async function readInvocationContext(db: SqlExecutor, invocation: StableInvocation): Promise<InvocationContext | null> {
+  const rows = await db.query<ContextRow>("SELECT b.source,s.scope_key,s.id AS scope_id,s.run_id FROM authority.execution e JOIN authority.scope_instance s ON s.id=e.scope_id JOIN authority.run r ON r.id=s.run_id JOIN authority.definition_bundle b ON b.id=r.definition_bundle_id WHERE e.id=$1", [invocation.execution_id]);
+  const row = rows[0];
+  const scope = row?.source.scopes.find((scope) => scope.key === row.scope_key);
+  return row && scope ? { bundle: row.source, scope, scope_id: row.scope_id, run_id: row.run_id } : null;
+}
+
 interface ActiveFiniteCall { readonly controller: AbortController; readonly finished: Promise<void> }
 function pinnedInput(invocation: StableInvocation): Result<JsonValue> {
   try { return { ok: true, value: JSON.parse(invocation.bytes) as JsonValue }; }
@@ -28,6 +35,26 @@ function pinnedInput(invocation: StableInvocation): Result<JsonValue> {
 }
 const isRecord = (value: JsonValue): value is { [key: string]: JsonValue } => !!value && typeof value === "object" && !Array.isArray(value);
 const rejected = (detail: string): ProviderResult<never> => ({ kind: "permanently_rejected", code: "invalid_invocation", detail });
+
+interface SessionFailureInput {
+  readonly db: SqlExecutor;
+  readonly core: CoreClient;
+  readonly invocation: StableInvocation;
+  readonly detail: string;
+}
+/** Host-side observation failures use the same declared recovery fact as failed sessions. */
+export async function recoverSessionFailure({ db, core, invocation, detail }: SessionFailureInput): Promise<ProviderResult<never>> {
+  const failure = { kind: "permanently_rejected" as const, code: "session_failed", detail };
+  if (invocation.request?.kind !== "kbbl_session") return failure;
+  const context = await readInvocationContext(db, invocation);
+  const fact = context?.scope.facts.find((fact) => fact.key === failure.code);
+  if (!context || !fact) return failure;
+  const checked = await core.request("validate_payload", { bundle: context.bundle, schema: fact.payload_schema, payload: detail });
+  if (!checked.ok) return checked.error.kind === "domain" ? rejected(JSON.stringify(checked.error))
+    : { kind: "transiently_unavailable", detail: JSON.stringify(checked.error) };
+  if (checked.value.kind !== "validated") return rejected("core returned a non-validated recovery payload");
+  return { ...failure, evidence: { id: `${invocation.id}:error`, key: failure.code, payload: checked.value.value } };
+}
 
 export function createEffectProvider(options: ProductionProviderOptions): EffectProvider {
   const active_finite_calls = new Map<string, Set<ActiveFiniteCall>>();
@@ -50,10 +77,7 @@ export function createEffectProvider(options: ProductionProviderOptions): Effect
     finally { calls.delete(active); if (!calls.size) active_finite_calls.delete(invocation.id); finish(); }
   }
   async function context(invocation: StableInvocation): Promise<InvocationContext | null> {
-    const rows = await options.db.query<ContextRow>("SELECT b.source,s.scope_key,s.id AS scope_id,s.run_id FROM authority.execution e JOIN authority.scope_instance s ON s.id=e.scope_id JOIN authority.run r ON r.id=s.run_id JOIN authority.definition_bundle b ON b.id=r.definition_bundle_id WHERE e.id=$1", [invocation.execution_id]);
-    const row = rows[0];
-    const scope = row?.source.scopes.find((scope) => scope.key === row.scope_key);
-    return row && scope ? { bundle: row.source, scope, scope_id: row.scope_id, run_id: row.run_id } : null;
+    return readInvocationContext(options.db, invocation);
   }
   async function validate(context: InvocationContext, schema: string, payload: unknown): Promise<ProviderResult<CheckedValue>> {
     const result = await options.core.request("validate_payload", { bundle: context.bundle, schema, payload });
@@ -136,7 +160,15 @@ export function createEffectProvider(options: ProductionProviderOptions): Effect
       if (result.kind === "pending") return { kind: "acknowledged", value: { kind: "running" } };
       const found = await context(invocation);
       if (!found) return rejected("execution context missing");
-      const finished = await completed(found, invocation, result.observation);
+      if (result.observation.kind !== "succeeded") {
+        const code = result.observation.kind === "failed" ? result.observation.code
+          : "code" in result.observation && typeof result.observation.code === "string" ? result.observation.code : "executor_cancelled";
+        return recoverSessionFailure({ db: options.db, core: options.core, invocation,
+          detail: `${code}: ${result.observation.detail ?? "session cancelled"}` });
+      }
+      // A session publishes its products through its selected output contract.
+      // Its declared worker result remains unit, independent of adapter metadata.
+      const finished = await completed(found, invocation, {});
       return finished.kind === "acknowledged" && finished.value.kind === "completed"
         ? { kind: "acknowledged", value: { kind: "terminal", result: finished.value.result, ...(finished.value.evidence ? { evidence: finished.value.evidence } : {}) } } : finished.kind === "acknowledged" ? rejected("terminal result missing") : finished;
     },

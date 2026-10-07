@@ -5,12 +5,11 @@ import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 
 export const READ_RELATIONS = ["scope_instance", "scope_export", "child_collection", "execution_selection", "execution", "output_slot", "artifact_revision", "resource_binding", "capacity_pool", "capacity_reservation"] as const;
 export type ReadRelation = typeof READ_RELATIONS[number];
-/** Pool capacity and reservations span sibling scopes, so both remain run-scoped. */
-export const RUN_SCOPED_READ_RELATIONS: readonly ReadRelation[] = ["capacity_pool", "capacity_reservation"];
-export const SUBTREE_READ_RELATIONS = READ_RELATIONS.filter((relation) => !RUN_SCOPED_READ_RELATIONS.includes(relation));
+/** Capacity rows use separate lock handling when the decision has no capacity change. */
+export const CAPACITY_READ_RELATIONS: readonly ReadRelation[] = ["capacity_pool", "capacity_reservation"];
 export interface ReadWitness { readonly relation: ReadRelation; readonly id: string; readonly version: number }
 export interface MembershipWitness { readonly relation: ReadRelation; readonly run_id: string; readonly signature: string }
-export interface ReadSet { readonly scope_id: ScopeId; readonly rows: readonly ReadWitness[]; readonly membership: readonly MembershipWitness[] }
+export interface ReadSet { readonly scope_id: ScopeId; readonly pool_keys: readonly string[]; readonly rows: readonly ReadWitness[]; readonly membership: readonly MembershipWitness[] }
 export interface AuthoritySnapshot { readonly snapshot: Snapshot; readonly reads: readonly ReferenceRoot[]; readonly read_set: ReadSet; readonly owner: ScopeInstanceRecord; readonly pools: readonly CapacityPoolRecord[]; readonly current_outputs: readonly CurrentOutput[] }
 export interface CurrentOutput extends OutputSlotRecord { readonly current_revision_id: RevisionId; readonly body: VersionedValue["value"] }
 interface ImportedExport extends ScopeExportRecord { readonly child_key: string; readonly child_id: string; readonly collection_key: string | null }
@@ -25,10 +24,10 @@ const membershipSql: { readonly [Relation in ReadRelation]: string } = {
   output_slot: "SELECT id,version FROM authority.output_slot WHERE scope_id=ANY($1::text[]) ORDER BY id",
   artifact_revision: "SELECT id,version FROM authority.artifact_revision WHERE scope_id=ANY($1::text[]) ORDER BY id",
   resource_binding: "SELECT id,version FROM authority.resource_binding WHERE scope_id=ANY($1::text[]) ORDER BY id",
-  capacity_pool: "SELECT id,version FROM authority.capacity_pool WHERE run_id=$1 ORDER BY id",
-  capacity_reservation: "SELECT e.id,e.version FROM authority.capacity_reservation e JOIN authority.scope_instance s ON s.id=e.scope_id WHERE s.run_id=$1 ORDER BY e.id",
+  capacity_pool: "SELECT id,version FROM authority.capacity_pool WHERE run_id=$1 AND pool_key=ANY($2::text[]) ORDER BY id",
+  capacity_reservation: "SELECT id,version FROM authority.capacity_reservation WHERE scope_id=ANY($1::text[]) ORDER BY id",
 };
-export async function readWitnesses(tx: SqlExecutor, run_id: string, scope_id: ScopeId): Promise<ReadSet> {
+export async function readWitnesses(tx: SqlExecutor, run_id: string, scope_id: ScopeId, pool_keys: readonly string[]): Promise<ReadSet> {
   const descendants = await tx.query<{ id: string }>(`WITH RECURSIVE subtree AS (
     SELECT id FROM authority.scope_instance WHERE id=$1 AND run_id=$2
     UNION ALL SELECT child.id FROM authority.scope_instance child JOIN subtree parent ON child.parent_id=parent.id
@@ -37,12 +36,12 @@ export async function readWitnesses(tx: SqlExecutor, run_id: string, scope_id: S
   const rows: ReadWitness[] = [];
   const membership: MembershipWitness[] = [];
   for (const relation of READ_RELATIONS) {
-    const found = await tx.query<VersionRow>(membershipSql[relation], RUN_SCOPED_READ_RELATIONS.includes(relation) ? [run_id] : [scope_ids]);
+    const found = await tx.query<VersionRow>(membershipSql[relation], relation === "capacity_pool" ? [run_id, pool_keys] : [scope_ids]);
     const signature = JSON.stringify(found.map((row) => [row.id, String(row.version)]));
     membership.push({ relation, run_id, signature });
     for (const row of found) rows.push({ relation, id: row.id, version: Number(row.version) });
   }
-  return { scope_id, rows, membership };
+  return { scope_id, pool_keys, rows, membership };
 }
 
 interface ScopeObservations { readonly observations: VersionedValue[]; readonly current_outputs: readonly CurrentOutput[] }
@@ -113,12 +112,12 @@ export async function readSnapshot(db: TransactionalSqlExecutor, scope_id: Scope
     const owners = await tx.query<ScopeInstanceRecord>("SELECT * FROM authority.scope_instance WHERE id=$1", [scope_id]);
     const owner = owners[0];
     if (!owner) return null;
-    const read_set = await readWitnesses(tx, owner.run_id, scope_id);
     const definition = pinned_definition ?? (await tx.query<{ source: DefinitionBundle; checked_program: CompiledBundle }>("SELECT b.source,b.checked_program FROM authority.definition_bundle b JOIN authority.run r ON r.definition_bundle_id=b.id WHERE r.id=$1", [owner.run_id]))[0];
     const bundle = definition?.source;
     const scope = bundle?.scopes.find((scope) => scope.key === owner.scope_key);
     const reads = definition?.checked_program?.scopes?.find((scope) => scope.key === owner.scope_key)?.reads;
     if (!scope || !bundle || !reads) return null;
+    const read_set = await readWitnesses(tx, owner.run_id, scope_id, (scope.pools ?? []).map((pool) => pool.key));
     const { observations, current_outputs } = await readScopeObservations(tx, { owner, scope, bundle, reads });
     const pools = await tx.query<CapacityPoolRecord>("SELECT * FROM authority.capacity_pool WHERE run_id=$1", [owner.run_id]);
     const snapshot: Snapshot = { owner: owner.id, scope: owner.scope_key, input: owner.input, state: owner.local_state,
@@ -129,9 +128,9 @@ export async function readSnapshot(db: TransactionalSqlExecutor, scope_id: Scope
 
 export async function hasSameReadSet(tx: SqlExecutor, read_set: ReadSet): Promise<boolean> {
   const run_id = read_set.membership[0]?.run_id;
-  const expected_relations = [...SUBTREE_READ_RELATIONS, ...RUN_SCOPED_READ_RELATIONS];
+  const expected_relations = READ_RELATIONS;
   if (!run_id || read_set.membership.length !== expected_relations.length
     || expected_relations.some((relation) => !read_set.membership.some((item) => item.relation === relation))) return false;
-  const current = await readWitnesses(tx, run_id, read_set.scope_id);
+  const current = await readWitnesses(tx, run_id, read_set.scope_id, read_set.pool_keys);
   return current.membership.every((item, index) => item.relation === read_set.membership[index]?.relation && item.signature === read_set.membership[index]?.signature);
 }

@@ -83,6 +83,7 @@ export const final_integration = defineScope({
     }
   ],
   facts: [
+    { key: "session_failed", payload_schema: "text" },
     { key: "submitted", payload_schema: "unit" },
     { key: "pr_observed", payload_schema: "pr_observe_result" },
     { key: "auth", payload_schema: "text" }

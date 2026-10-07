@@ -111,18 +111,28 @@ export async function advanceChildren({ db, core, mutations, run_ids }: ChildAdv
     if (!bundle) throw new Error(`lifecycle bundle missing: ${scope.run_id}`);
     const checked = await core.request("validate_payload", { bundle, schema, payload: {} });
     if (!checked.ok || checked.value.kind !== "validated") throw new Error(`invalid configured lifecycle payload: ${scope.id}/${key}`);
-    const result = await mutations.decide({ run_id: scope.run_id, scope_id: scope.id as ScopeId, ingress_id: id,
-      trigger: { id, key, payload: checked.value.value }, operator_version: null });
-    if (!result.ok) throw new Error(`${result.error.operation}/${result.error.entity_id}: ${result.error.detail}`);
-    const outcome = result.value;
-    switch (outcome.kind) {
-      case "Committed": case "Replayed": case "Conflict": return;
-      case "Rejected":
-        if (outcome.detail === "owner is terminal" || outcome.detail.startsWith("apply_capacity/")) return;
-        throw new Error(outcome.detail);
-      case "snapshot_too_large":
-        throw new Error(`snapshot_too_large: ${outcome.scope} ${outcome.bytes}/${outcome.limit}`);
-      default: { const unhandled: never = outcome; throw new Error(`unhandled commit outcome: ${JSON.stringify(unhandled)}`); }
+    // advanceRunStep may retry an infrastructure failure five times, so one
+    // outer step can issue at most 5 × 3 decisions. A third Conflict becomes a
+    // run diagnostic and does not consume the outer infrastructure retries.
+    const max_conflict_attempts = 3;
+    for (let attempt = 1; attempt <= max_conflict_attempts; attempt++) {
+      const result = await mutations.decide({ run_id: scope.run_id, scope_id: scope.id as ScopeId, ingress_id: id,
+        trigger: { id, key, payload: checked.value.value }, operator_version: null });
+      if (!result.ok) throw new Error(`${result.error.operation}/${result.error.entity_id}: ${result.error.detail}`);
+      const outcome = result.value;
+      switch (outcome.kind) {
+        case "Committed": case "Replayed": return;
+        case "Conflict":
+          if (attempt === max_conflict_attempts) throw new Error(`lifecycle trigger ${key} for scope ${scope.id}: Conflict after ${attempt} attempts`);
+          await Bun.sleep(10 * attempt + Math.random() * 20);
+          break;
+        case "Rejected":
+          if (outcome.detail === "owner is terminal" || outcome.detail.startsWith("apply_capacity/")) return;
+          throw new Error(outcome.detail);
+        case "snapshot_too_large":
+          throw new Error(`snapshot_too_large: ${outcome.scope} ${outcome.bytes}/${outcome.limit}`);
+        default: { const unhandled: never = outcome; throw new Error(`unhandled commit outcome: ${JSON.stringify(unhandled)}`); }
+      }
     }
   }
 }

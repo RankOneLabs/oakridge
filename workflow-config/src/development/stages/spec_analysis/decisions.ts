@@ -109,7 +109,8 @@ export const spec_analysis_dispatch: DecisionTree = {
     { variant: "request_changes", node: spec_analysis_feedback_exact },
     { variant: "retry", node: spec_analysis_retry },
     { variant: "cancel", node: spec_analysis_cancel },
-    { variant: "abandon", node: spec_analysis_abandon }
+    { variant: "abandon", node: spec_analysis_abandon },
+    { variant: "session_failed", node: { ...spec_analysis_abandon, id: "spec_analysis_session_failed" } },
   ],
   otherwise: spec_analysis_wait
 };

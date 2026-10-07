@@ -20,7 +20,7 @@ export const workers: WorkerDefinition[] = [
           }
         ]),
         prompt: "final_integration_integrator_initial",
-        settings: [],
+        settings: [{ key: "evidence_fact", value: "submitted" }],
         tools: [],
         outputs: ["pr_summary"],
         deadline_ms: 3600000,
@@ -39,7 +39,7 @@ export const workers: WorkerDefinition[] = [
           }
         ]),
         prompt: "final_integration_integrator_retry",
-        settings: [],
+        settings: [{ key: "evidence_fact", value: "submitted" }],
         tools: [],
         outputs: ["pr_summary"],
         deadline_ms: 3600000,
