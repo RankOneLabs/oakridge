@@ -37,6 +37,13 @@ test("pins the edited JSON definition for a fresh operator database", async () =
   expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body))).toHaveProperty("root");
 });
 
+test("an empty catalog does not seed the editor from a bundled definition", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json([])));
+  renderWithQuery(<OperatorDefinitionEditorView cloneFromId={null} onBack={() => undefined} onPinned={() => undefined} />);
+  await screen.findByLabelText("Source bundle");
+  expect(screen.getByLabelText<HTMLTextAreaElement>("Source bundle").value).toBe("");
+});
+
 test("the third bundle renders its extra root input as JSON and round-trips the raw editor", async () => {
   const bundle = shippedBundle("development-verification");
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
