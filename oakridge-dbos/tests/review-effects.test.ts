@@ -6,6 +6,7 @@ import { createMutationService, type MutationService, type StartedRun } from "..
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
 import { cancelRun, deleteRun } from "../src/storage/mutation-service";
 import type { StableInvocation } from "../src/effects/provider";
+import { readIntent } from "../src/effects/intents";
 import { createEffectProvider } from "../src/effects/operations/production-provider";
 import { createProductionComposition } from "../src/runtime/compose";
 import { operationBundle, sessionBundle, unit, waitUntil, withDatabase } from "./effect-fixture";
@@ -23,8 +24,10 @@ async function withSelection(input: SelectionInput, operation: (fixture: Selecte
       if (!run.ok) throw new Error(JSON.stringify(run.error));
       const result = await mutations.decide({ run_id: run.value.run_id, scope_id: run.value.root_scope_id, ingress_id: "begin", trigger: { id: "begin", key: "begin", payload: unit }, operator_version: null });
       if (!result.ok || result.value.kind !== "Committed") throw new Error(JSON.stringify(result));
-      const rows = await db.query<{ invocation: StableInvocation }>("SELECT payload->'invocation' AS invocation FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='start'", [run.value.root_scope_id]);
-      await operation({ db, core, mutations, run: run.value, invocation: rows[0]!.invocation });
+      const rows = await db.query<{ id: string }>("SELECT id FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='start'", [run.value.root_scope_id]);
+      const invocation = rows[0] ? (await readIntent(db, rows[0].id))?.payload.invocation : null;
+      if (!invocation) throw new Error("selected invocation missing");
+      await operation({ db, core, mutations, run: run.value, invocation });
     } finally { core.close(); }
   });
 }

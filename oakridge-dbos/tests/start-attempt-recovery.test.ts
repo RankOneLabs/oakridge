@@ -4,6 +4,7 @@ import type { Invocation } from "../src/core-client/generated-contracts";
 import { pendingCleanupCount, type EffectPayload } from "../src/effects/intents";
 import { selectedInvocation, type EffectProvider, type InvocationId } from "../src/effects/provider";
 import { persistEffectResult } from "../src/storage/effect-results";
+import { sealEffectPayload } from "../src/storage/effect-secret";
 import { createMutationService } from "../src/storage/mutation-service";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
 import { DEFAULT_WORKFLOW_TIMING, performStartAttempt, registerWorkflowServices } from "../src/workflows/topology";
@@ -14,12 +15,13 @@ const selection = { definition: { operation: "run", contract_version: 1, deadlin
   selection: { worker: "agent", action: "build" } } satisfies Invocation;
 const start: EffectPayload = { action: "start", handle: null,
   invocation: selectedInvocation("invocation" as InvocationId, "execution", selection) };
+process.env.OAKRIDGE_EFFECT_ENCRYPTION_KEY ??= Buffer.alloc(32, 17).toString("base64url");
 async function prepare(db: TransactionalSqlExecutor, payload: EffectPayload, provider: EffectProvider): Promise<void> {
   await db.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ('bundle','digest','{}','{}')", []);
   await db.query("INSERT INTO authority.run (id,definition_bundle_id) VALUES ('run','bundle')", []);
   await db.query("INSERT INTO authority.scope_instance (id,run_id,scope_key,input,local_state) VALUES ('scope','run','scope','{}','{}')", []);
   await db.query("INSERT INTO authority.execution (id,scope_id,worker_key,generation,status) VALUES ('execution','scope','agent',1,'pending')", []);
-  await db.query("INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload) VALUES ('start','scope','execution','ingress:0',$1)", [JSON.stringify(payload)]);
+  await db.query("INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload) VALUES ('start','scope','execution','ingress:0',$1)", [JSON.stringify(sealEffectPayload(payload))]);
   const core = { request: async () => { throw new Error("unexpected core IO in provider-start test"); } } as unknown as CoreClient;
   registerWorkflowServices({ db, core, mutations: createMutationService(db, core), provider, timing: DEFAULT_WORKFLOW_TIMING });
 }

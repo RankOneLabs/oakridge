@@ -40,21 +40,26 @@ export async function readScopeView(db: TransactionalSqlExecutor, scope_id: Scop
 
 export const DEFAULT_INBOX_LIMIT = 100;
 export interface InboxQuery { readonly run_id?: RunId; readonly cursor?: string; readonly limit?: number }
+interface InboxScopeRow extends Omit<InboxRow, "source"> { readonly definition_bundle_id: string }
 export async function readInbox(db: TransactionalSqlExecutor, query: InboxQuery = {}): Promise<{ readonly cursor: readonly { readonly scope_id: string; readonly version: number }[]; readonly items: readonly InboxItem[]; readonly next_cursor: string | null }> {
   const limit = Math.min(Math.max(1, query.limit ?? DEFAULT_INBOX_LIMIT), DEFAULT_INBOX_LIMIT);
   const after = query.cursor ? JSON.parse(Buffer.from(query.cursor, "base64url").toString("utf8")) as readonly [string, string] : null;
   if (after && (!Array.isArray(after) || after.length !== 2 || after.some((item) => typeof item !== "string"))) throw new Error("invalid inbox cursor");
   return db.transaction(async (tx) => {
-    const rows = await tx.query<InboxRow>(`SELECT s.*, b.source,
+    const rows = await tx.query<InboxScopeRow>(`SELECT s.*, r.definition_bundle_id,
       (SELECT t.decision FROM authority.transition t WHERE t.scope_id=s.id ORDER BY t.created_at DESC,t.id DESC LIMIT 1) AS decision,
       (SELECT jsonb_agg(jsonb_build_object('fact_key', f.fact_key) ORDER BY f.id) FROM authority.fact f WHERE f.scope_id=s.id) AS diagnostics
       FROM authority.scope_instance s JOIN authority.run r ON r.id=s.run_id
-      LEFT JOIN authority.definition_bundle b ON b.id=r.definition_bundle_id
       WHERE ($1::text IS NULL OR s.run_id=$1) AND ($2::text IS NULL OR (s.run_id,s.id)>($2,$3))
       ORDER BY s.run_id,s.id LIMIT $4`, [query.run_id ?? null, after?.[0] ?? null, after?.[1] ?? null, limit + 1]);
     const page = rows.slice(0, limit);
+    const bundle_ids = [...new Set(page.map((row) => row.definition_bundle_id))];
+    const bundles = bundle_ids.length ? await tx.query<{ id: string; source: DefinitionBundle }>(
+      "SELECT id,source FROM authority.definition_bundle WHERE id=ANY($1::text[])", [bundle_ids]) : [];
+    const sources = new Map(bundles.map((bundle) => [bundle.id, bundle.source]));
     const last = page.at(-1);
-    return { cursor: page.map((row) => ({ scope_id: row.id, version: Number(row.version) })), items: page.flatMap(selectInboxItems),
+    return { cursor: page.map((row) => ({ scope_id: row.id, version: Number(row.version) })),
+      items: page.flatMap((row) => selectInboxItems({ ...row, source: sources.get(row.definition_bundle_id) ?? null })),
       next_cursor: rows.length > limit && last ? Buffer.from(JSON.stringify([last.run_id, last.id])).toString("base64url") : null };
   }, "repeatable read");
 }

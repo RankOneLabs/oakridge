@@ -1,7 +1,9 @@
 # Oakridge DBOS backend
 
 The TypeScript backend owns durable scope authority. `src/main.ts` starts the
-production composition: the Rust CLI evaluates pinned definitions, the mutation
+production composition after applying the authority baseline under a PostgreSQL
+advisory lock. It then launches DBOS and binds HTTP; a failed stage closes the
+resources it started. The Rust CLI evaluates pinned definitions, the mutation
 service commits accepted decisions and receipts, DBOS drives effects and
 recovery, and projections read committed state. Commands and publications use
 run and scope identities; accepted writes return durable receipts.
@@ -49,11 +51,24 @@ The integration tests require `OAKRIDGE_TEST_DATABASE_URL` with create/drop
 database permission. `tests/fresh-boot.test.ts` creates an empty database and
 checks the production stack through an HTTP decision and read projection.
 
+The core client caches compilation by an incremental content hash of the source
+bundle. The compiler's `bundle_digest` is an output of that request, so it is
+not available at cache lookup time. Snapshot reconstruction logs duration,
+observation count, read roots, and witness rows for cost comparison.
+
 ## Database cutover
 
 The authority baseline requires PostgreSQL 15 or newer. Repeating start against
 the same baseline succeeds; a changed baseline file is rejected with both
 digests. DBOS system tables may exist before the authority baseline is applied.
+
+Set `OAKRIDGE_EFFECT_ENCRYPTION_KEY` to a generated 32-byte base64url key before
+starting the service. Startup refuses a missing key or a key that cannot decrypt
+existing effect intents. Keep this key stable across restarts. Set
+`OAKRIDGE_ALLOWED_ORIGINS` to a comma-separated list of exact browser origins
+that may write; loopback origins need an explicit entry. Writes require
+`application/json`, and the kbbl proxy forwards the caller's authorization
+header under the same operator token check as the backend.
 
 Stop the service; run `pg_dump` to a file nothing in this repository reads;
 drop and recreate the Oakridge database empty; deploy the Rust CLI, DBOS

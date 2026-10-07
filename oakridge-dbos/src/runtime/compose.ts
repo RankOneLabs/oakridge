@@ -139,7 +139,9 @@ export async function createProductionComposition(options: ProductionOptions): P
     args: ["--max-list-items", "10000", "--max-depth", "128", "--evaluation-budget", "1000000"], deadlineMs: 10_000 });
   if (!started.ok) throw new Error(`workflow-cli could not start: ${started.error.detail.detail}`);
   const core = started.value;
-  const db = PgPostgresExecutor.connect(options.database_url);
+  let db: PgPostgresExecutor;
+  try { db = PgPostgresExecutor.connect(options.database_url); }
+  catch (cause) { core.close(); throw cause; }
   let launch_attempted = false;
   try {
   await verifyEffectEncryption(db);

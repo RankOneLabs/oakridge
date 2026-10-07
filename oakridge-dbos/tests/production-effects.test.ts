@@ -11,10 +11,16 @@ import { unit, withDatabase, waitUntil, operationBundle, sessionBundle, begin } 
 import type { StartedRun } from "../src/storage/mutation-service";
 import { activeRoutes } from "../src/http/routes";
 import { Hono } from "hono";
+import { Pool } from "pg";
 import { mountOakridgeProxyRoutes } from "../../kbbl/core/server/handlers/oakridge-proxy";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
-import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
+import { PgPostgresExecutor, type TransactionalSqlExecutor } from "../src/storage/sql-executor";
 import { readIntent } from "../src/effects/intents";
+import { readInbox } from "../src/storage/projection-reader";
+import { bundleContentHash } from "../src/core-client/bundle-content-hash";
+import { installDefinitionApi } from "../src/http/app";
+import type { CoreClient } from "../src/core-client/client";
+import type { MutationService } from "../src/storage/mutation-service";
 import { redactingView } from "../src/projections/serialization-view";
 import { sealEffectPayload, unsealEffectPayload, verifyEffectEncryption } from "../src/storage/effect-secret";
 import { developmentBundle, brief, repository, build_body } from "./development-runtime-fixture";
@@ -52,7 +58,8 @@ test("baseline inspection and application share an advisory-locked transaction",
   const tx = { query: async <Row extends object>(sql: string): Promise<readonly Row[]> => {
     statements.push(sql);
     if (sql.includes("server_version_num")) return [{ server_version_num: "150000" }] as unknown as readonly Row[];
-    if (sql.includes("schema_baseline")) return [{ digest: "mismatch" }] as unknown as readonly Row[];
+    if (sql.includes("to_regclass")) return [{ name: "authority.schema_baseline" }] as unknown as readonly Row[];
+    if (sql.includes("SELECT digest FROM authority.schema_baseline")) return [{ digest: "mismatch" }] as unknown as readonly Row[];
     return [];
   } };
   const db: TransactionalSqlExecutor = { query: tx.query,
@@ -60,6 +67,83 @@ test("baseline inspection and application share an advisory-locked transaction",
   await expect(migrateEmptyDatabase(db)).rejects.toThrow("digest mismatch");
   expect(statements.findIndex((sql) => sql.includes("pg_advisory_xact_lock"))).toBeGreaterThanOrEqual(0);
   expect(statements.findIndex((sql) => sql.includes("pg_advisory_xact_lock"))).toBeLessThan(statements.findIndex((sql) => sql.includes("SELECT digest FROM authority.schema_baseline")));
+});
+
+test("two processes can apply the empty authority baseline concurrently exactly once", async () => {
+  const admin_url = process.env.OAKRIDGE_TEST_DATABASE_URL;
+  if (!admin_url) throw new Error("OAKRIDGE_TEST_DATABASE_URL is required");
+  const admin = new Pool({ connectionString: admin_url });
+  const name = `migration_${crypto.randomUUID().replaceAll("-", "")}`;
+  const url = new URL(admin_url);
+  url.pathname = `/${name}`;
+  await admin.query(`CREATE DATABASE ${name}`);
+  const first = PgPostgresExecutor.connect(url.href);
+  const second = PgPostgresExecutor.connect(url.href);
+  try {
+    await Promise.all([migrateEmptyDatabase(first), migrateEmptyDatabase(second)]);
+    const baselines = await first.query<{ count: number }>("SELECT count(*)::int AS count FROM authority.schema_baseline", []);
+    expect(baselines[0]?.count).toBe(1);
+  } finally {
+    await Promise.all([first.close(), second.close()]);
+    await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
+    await admin.end();
+  }
+});
+
+test("inbox materializes each distinct pinned bundle source once", async () => {
+  const fetched: string[] = [];
+  const tx = { query: async <Row extends object>(sql: string, parameters: readonly unknown[]): Promise<readonly Row[]> => {
+    if (sql.includes("FROM authority.scope_instance")) return [
+      { id: "scope-1", run_id: "run-1", definition_bundle_id: "bundle-1", version: 0, scope_key: "root", is_terminal: true },
+      { id: "scope-2", run_id: "run-1", definition_bundle_id: "bundle-1", version: 0, scope_key: "root", is_terminal: true },
+    ] as unknown as readonly Row[];
+    if (sql.includes("FROM authority.definition_bundle")) {
+      fetched.push(String(parameters[0]));
+      return [{ id: "bundle-1", source: { scopes: [{ key: "root", commands: [] }] } }] as unknown as readonly Row[];
+    }
+    return [];
+  } };
+  const db = { query: tx.query, transaction: async (operation: (executor: typeof tx) => Promise<unknown>) => operation(tx) } as unknown as TransactionalSqlExecutor;
+  const page = await readInbox(db);
+  expect(page.cursor).toHaveLength(2);
+  expect(fetched).toHaveLength(1);
+});
+
+test("bundle content hash is stable across equivalent sources and refuses cycles", () => {
+  expect(bundleContentHash({ key: "one", nested: [1, 2] })).toBe(bundleContentHash({ key: "one", nested: [1, 2] }));
+  expect(bundleContentHash({ key: "two" })).not.toBe(bundleContentHash({ key: "one" }));
+  const cycle: { self?: unknown } = {};
+  cycle.self = cycle;
+  expect(() => bundleContentHash(cycle)).toThrow("cycle");
+});
+
+test("run and definition pages expose stable next cursors and refuse malformed cursors", async () => {
+  const ids = ["00000000-0000-0000-0000-000000000002", "00000000-0000-0000-0000-000000000001"];
+  const query = async <Row extends object>(sql: string, parameters: readonly unknown[]): Promise<readonly Row[]> => {
+    if (sql.includes("SELECT id AS run_id,created_at FROM authority.run")) {
+      const after = parameters[1];
+      return ids.filter((id) => typeof after !== "string" || id < after).map((id) => ({ run_id: id, created_at: new Date("2026-01-01T00:00:00.000Z") })).slice(0, Number(parameters[2])) as unknown as readonly Row[];
+    }
+    if (sql.includes("SELECT * FROM authority.run WHERE id=")) return [{ id: parameters[0], definition_bundle_id: ids[0], version: 0 }] as unknown as readonly Row[];
+    if (sql.includes("SELECT source,digest FROM authority.definition_bundle")) return [{ source: { scopes: [] }, digest: "digest" }] as unknown as readonly Row[];
+    if (sql.includes("SELECT * FROM authority.scope_instance WHERE run_id=")) return [];
+    if (sql.includes("FROM authority.definition_bundle")) return ids.filter((id) => typeof parameters[0] !== "string" || id < parameters[0])
+      .map((id) => ({ bundle_id: id, digest: id, source: { key: id, scopes: [] } })).slice(0, Number(parameters[1])) as unknown as readonly Row[];
+    return [];
+  };
+  const db = { query, transaction: async (operation: (tx: { query: typeof query }) => Promise<unknown>) => operation({ query }) } as unknown as TransactionalSqlExecutor;
+  const app = new Hono();
+  installDefinitionApi(app, { db, core: {} as CoreClient, mutations: {} as MutationService, wake: async () => undefined });
+  for (const path of ["/api/runs", "/api/definitions"]) {
+    const first = await app.request(`${path}?limit=1`);
+    expect(first.status).toBe(200);
+    const first_page: { items: unknown[]; next_cursor: string | null } = await first.json();
+    expect(first_page.items).toHaveLength(1);
+    expect(first_page.next_cursor).not.toBeNull();
+    const second = await app.request(`${path}?limit=1&cursor=${encodeURIComponent(first_page.next_cursor ?? "")}`);
+    expect((await second.json() as { items: unknown[]; next_cursor: string | null }).items).toHaveLength(1);
+    expect((await app.request(`${path}?cursor=invalid`)).status).toBe(400);
+  }
 });
 
 test("every table write rejects non-JSON bodies and unlisted browser origins on both paths", async () => {
@@ -196,13 +280,13 @@ test("rejection after uncertainty cleans up even when its evidence makes the run
           outcome: { kind: "literal", schema: "result", value: { kind: "withdrawn", value: {} } } } }] } }] };
     const run = await begin(composition, bundle, { repository_path: "/tmp", expected_head: null });
     await waitUntil(async () => stopped.length > 0 && (await db.query<{ is_terminal: boolean }>("SELECT is_terminal FROM authority.scope_instance WHERE id=$1", [run.root_scope_id]))[0]?.is_terminal === true);
-    const deletion = await composition.app.request(`http://localhost/runs/${run.run_id}`, { method: "DELETE" });
+    const deletion = await composition.app.request(`http://localhost/runs/${run.run_id}`, { method: "DELETE", headers: { "content-type": "application/json" }, body: "{}" });
     expect(deletion.status).toBe(409);
     can_confirm_stop = true;
     await waitUntil(async () => (await db.query<{ status: string }>("SELECT status FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='stop'", [run.root_scope_id]))[0]?.status === "cleanup_confirmed");
     const start = await db.query<{ payload: EffectPayload }>("SELECT payload FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='start'", [run.root_scope_id]);
-    expect(stopped.every((invocation) => invocation.bytes === start[0]?.payload.invocation.bytes)).toBe(true);
-    expect((await composition.app.request(`http://localhost/runs/${run.run_id}`, { method: "DELETE" })).status).toBe(200);
+    expect(stopped.every((invocation) => invocation.bytes === (start[0] ? unsealEffectPayload(start[0].payload).invocation.bytes : null))).toBe(true);
+    expect((await composition.app.request(`http://localhost/runs/${run.run_id}`, { method: "DELETE", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(200);
   } finally { await composition.close(); }
 }));
 
@@ -276,7 +360,8 @@ test("production PR discovery retries a real HTTP 503 and persists its selected 
         is_available = true;
         await waitUntil(async () => (await db.query<{ is_terminal: boolean }>("SELECT is_terminal FROM authority.scope_instance WHERE id=$1", [run.root_scope_id]))[0]?.is_terminal === true);
         const after = await db.query<{ payload: EffectPayload }>("SELECT payload FROM authority.effect_intent WHERE scope_id=$1", [run.root_scope_id]);
-        expect(after[0]?.payload.invocation.bytes).toBe(before[0]?.payload.invocation.bytes);
+        expect(after[0] && unsealEffectPayload(after[0].payload).invocation.bytes)
+          .toBe(before[0] && unsealEffectPayload(before[0].payload).invocation.bytes);
         expect((await db.query<{ count: string }>("SELECT count(*)::text AS count FROM authority.fact WHERE fact_key='pr_observed'", []))[0]?.count).toBe("1");
       } finally { await composition.close(); }
     });

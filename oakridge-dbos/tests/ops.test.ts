@@ -46,8 +46,8 @@ test("ops migrate may be repeated against the same authority baseline", async ()
   const db: FakeMigrationDb = {
     async query(statement: string, parameters: readonly unknown[]) {
       if (statement.includes("server_version_num")) return [{ server_version_num: "150000" }];
+      if (statement.includes("to_regclass")) return [{ name: digest === null ? null : "authority.schema_baseline" }];
       if (statement.includes("SELECT digest FROM authority.schema_baseline")) {
-        if (digest === null) throw Object.assign(new Error("relation missing"), { code: "42P01" });
         return [{ digest }];
       }
       if (statement.includes("information_schema.tables")) return [];

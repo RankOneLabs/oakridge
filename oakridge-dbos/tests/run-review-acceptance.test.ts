@@ -4,6 +4,8 @@ import { withDatabase } from "./effect-fixture";
 import { DEFAULT_WORKFLOW_TIMING, RUN_MAX_ITERATIONS, ensureRunWorkflow, registerWorkflowServices,
   dispatchChild, runWorkflow, runWorkflowId, wakeRunOf } from "../src/workflows/topology";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
+import { sealEffectPayload } from "../src/storage/effect-secret";
+import type { EffectPayload } from "../src/effects/intents";
 
 const forkTarget = DBOS.registerWorkflow(async (): Promise<string> => "done", { name: "oakridgeReviewForkTarget" });
 const forkProbe = DBOS.registerWorkflow(async (target_id: string): Promise<void> => {
@@ -113,6 +115,8 @@ test("RUN_MAX_ITERATIONS hands pending dispatches and the scan cursor to the suc
 
 const dispatchProbe = DBOS.registerWorkflow(async (intent_id: string, kind: "start" | "stop") =>
   dispatchChild("run-1", intent_id, kind), { name: "oakridgeDispatchReviewProbe" });
+const storedPayload = (action: "start" | "stop") => sealEffectPayload({ action, handle: null,
+  invocation: { id: "effect-1", execution_id: "execution-1", selection: {}, bytes: "pinned" } } as unknown as EffectPayload);
 
 test("cancelled-child expiry retains its branch when replayed after the deadline", async () => withDatabase(async ({ url }) => {
   await withDBOS(url, async () => {
@@ -141,7 +145,7 @@ for (const kind of ["start", "stop"] as const) {
   for (const workflow_status of ["SUCCESS", "ERROR"] as const) {
     test(`${workflow_status} ${kind} dispatch tolerates an intent settled after the run scan`, async () => withDatabase(async ({ url }) => {
       await withDBOS(url, async () => {
-        const db = { query: async () => [{ id: "effect-1", status: "cleanup_confirmed", version: 0, payload: { action: kind } }] } as unknown as TransactionalSqlExecutor;
+        const db = { query: async () => [{ id: "effect-1", status: "cleanup_confirmed", version: 0, payload: storedPayload(kind) }] } as unknown as TransactionalSqlExecutor;
         registerWorkflowServices({ db, timing: DEFAULT_WORKFLOW_TIMING } as Parameters<typeof registerWorkflowServices>[0]);
         const status = spyOn(DBOS, "getWorkflowStatus").mockImplementation(async () => ({ status: workflow_status }) as never);
         try { await expect(dispatchChild("run-1", "effect-1", kind)).resolves.toBeUndefined(); }
@@ -153,7 +157,7 @@ for (const kind of ["start", "stop"] as const) {
 
 test("a terminal child workflow still fails dispatch when its intent remains pending", async () => withDatabase(async ({ url }) => {
   await withDBOS(url, async () => {
-    const db = { query: async () => [{ id: "effect-1", status: "pending", version: 0, payload: { action: "start" } }] } as unknown as TransactionalSqlExecutor;
+    const db = { query: async () => [{ id: "effect-1", status: "pending", version: 0, payload: storedPayload("start") }] } as unknown as TransactionalSqlExecutor;
     registerWorkflowServices({ db } as Parameters<typeof registerWorkflowServices>[0]);
     const status = spyOn(DBOS, "getWorkflowStatus").mockImplementation(async () => ({ status: "SUCCESS" }) as never);
     try { await expect(dispatchChild("run-1", "effect-1", "start")).rejects.toThrow("intent remains pending"); }

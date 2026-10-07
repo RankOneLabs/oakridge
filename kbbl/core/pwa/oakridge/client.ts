@@ -18,6 +18,17 @@ async function request<T>(method: "GET" | "POST", path: string, body?: unknown):
 }
 const get = <T,>(path: string): Promise<T> => request<T>("GET", path);
 const post = <T,>(path: string, body: unknown): Promise<T> => request<T>("POST", path, body);
+interface CursorPage<Item> { readonly items: readonly Item[]; readonly next_cursor: string | null }
+async function readAllPages<Item>(path: string): Promise<Item[]> {
+  const items: Item[] = [];
+  let next_cursor: string | null = null;
+  do {
+    const page: CursorPage<Item> = await get(next_cursor === null ? path : `${path}?cursor=${encodeURIComponent(next_cursor)}`);
+    items.push(...page.items);
+    next_cursor = page.next_cursor;
+  } while (next_cursor !== null);
+  return items;
+}
 
 export async function fetchOakridgeConfig(): Promise<OakridgeConfig> {
   const response = await fetch("/oakridge/config");
@@ -26,12 +37,12 @@ export async function fetchOakridgeConfig(): Promise<OakridgeConfig> {
     served: served.fallback_refresh_ms, configured: import.meta.env.VITE_OAKRIDGE_FALLBACK_REFRESH_MS }) };
 }
 export const fetchOperatorInbox = () => readAllInboxPages(get);
-export const fetchOperatorRuns = (): Promise<OperatorRunView[]> => get("/api/runs");
+export const fetchOperatorRuns = (): Promise<OperatorRunView[]> => readAllPages("/api/runs");
 export const fetchOperatorRun = (runId: string): Promise<OperatorRunView> => get(`/api/runs/${encodeURIComponent(runId)}`);
 export const fetchOperatorDefinition = (runId: string): Promise<OperatorPinnedDefinition> => get(`/api/runs/${encodeURIComponent(runId)}/definition`);
 export const fetchOperatorScope = (runId: string, scopeId: string): Promise<OperatorScopeProjection> => get(`/api/runs/${encodeURIComponent(runId)}/scopes/${encodeURIComponent(scopeId)}`);
 export const fetchOperatorScopeHistory = (runId: string, scopeId: string): Promise<OperatorScopeHistory> => get(`/api/runs/${encodeURIComponent(runId)}/scopes/${encodeURIComponent(scopeId)}/history`);
-export const fetchOperatorDefinitions = (): Promise<OperatorDefinitionSummary[]> => get("/api/definitions");
+export const fetchOperatorDefinitions = (): Promise<OperatorDefinitionSummary[]> => readAllPages("/api/definitions");
 export const pinOperatorDefinition = (source: WorkflowDefinitionDescriptor): Promise<OperatorDefinitionSummary> => post("/api/definitions", source);
 export const launchOperatorRun = (request: OperatorLaunchRequest): Promise<OperatorLaunchedRun> => post("/runs", request);
 const inFlightCommands = new Map<string, Promise<OperatorCommandReceipt>>();

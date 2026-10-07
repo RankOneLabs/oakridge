@@ -8,6 +8,8 @@ import { createMutationService } from "../src/storage/mutation-service";
 import type { ScopeId, ScopeInstanceRecord } from "../src/storage/schema-records";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
 import { advanceChildren } from "../src/runtime/advance-children";
+import { unsealEffectPayload } from "../src/storage/effect-secret";
+import type { EffectPayload } from "../src/effects/intents";
 export const revision = (id: string) => ({ brand: "artifact_revision", id });
 export const session = { runtime: "codex", workdir: "/tmp", session_name: "development" };
 export const repository = { key: "repo", preparation: { repository_path: "/tmp", expected_head: null }, build: session, integration: session,
@@ -66,9 +68,9 @@ export async function runtimeFixture(db: TransactionalSqlExecutor, bundle: Defin
     return rows[0].execution_id;
   };
   const publicationSecret = async (execution_id: string): Promise<string> => {
-    const rows = await db.query<{ payload: { invocation: { bytes: string } } }>(
+    const rows = await db.query<{ payload: EffectPayload }>(
       "SELECT payload FROM authority.effect_intent WHERE execution_id=$1 AND payload->>'action'='start'", [execution_id]);
-    const secret = rows[0]?.payload.invocation.bytes.match(/Authorization: Bearer ([A-Za-z0-9_-]+)/)?.[1];
+    const secret = rows[0] ? unsealEffectPayload(rows[0].payload).invocation.bytes.match(/Authorization: Bearer ([A-Za-z0-9_-]+)/)?.[1] : undefined;
     if (!secret) throw new Error("pinned publication secret missing");
     return secret;
   };

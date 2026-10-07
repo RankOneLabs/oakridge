@@ -18,6 +18,33 @@ import { commandStatus, ConflictError, InternalFaultError, InvalidPayloadError, 
 export interface DefinitionApiDependencies { readonly db: TransactionalSqlExecutor; readonly core: CoreClient; readonly mutations: MutationService; readonly wake: (run_id: RunId) => Promise<void> }
 export const httpBodyLimit = () => bodyLimit({ maxSize: 1_048_576,
   onError: (context) => context.json({ kind: "oversized_payload", limit: 1_048_576 }, 413) });
+interface PageQuery { readonly cursor: string | null; readonly limit: number }
+const DEFAULT_PAGE_LIMIT = 100;
+function pageQuery(limit_raw: string | undefined, cursor_raw: string | undefined): PageQuery | MalformedRequestError {
+  const limit = limit_raw === undefined ? DEFAULT_PAGE_LIMIT : Number(limit_raw);
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > DEFAULT_PAGE_LIMIT)
+    return new MalformedRequestError("invalid page limit");
+  return { cursor: cursor_raw ?? null, limit };
+}
+interface RunPageCursor { readonly created_at: string; readonly id: string }
+function runCursor(raw: string | null): RunPageCursor | null | MalformedRequestError {
+  if (raw === null) return null;
+  try {
+    const value: unknown = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
+    if (!value || typeof value !== "object" || !("created_at" in value) || typeof value.created_at !== "string"
+      || !Number.isFinite(Date.parse(value.created_at)) || !("id" in value) || typeof value.id !== "string" || !value.id)
+      throw new Error("bad cursor");
+    return { created_at: value.created_at, id: value.id };
+  } catch { return new MalformedRequestError("invalid runs cursor"); }
+}
+function definitionCursor(raw: string | null): string | null | MalformedRequestError {
+  if (raw === null) return null;
+  try {
+    const value = Buffer.from(raw, "base64url").toString("utf8");
+    if (!/^[0-9a-f-]{36}$/i.test(value)) throw new Error("bad cursor");
+    return value;
+  } catch { return new MalformedRequestError("invalid definitions cursor"); }
+}
 function errorResponse(error: CommandError): { readonly error: string; readonly detail: string; readonly trace_id?: string } {
   return error instanceof InternalFaultError ? { error: error.kind, detail: "internal fault", trace_id: error.trace_id } : { error: error.kind, detail: error.detail };
 }
@@ -31,12 +58,27 @@ async function body(request: Request): Promise<unknown | MalformedRequestError> 
 export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies): void {
   installSelectedPublicationApi(app, deps);
   installSelectedEvidenceApi(app, deps);
-  app.get("/api/runs", async () => { try {
-    const rows = await deps.db.query<{ run_id: RunId }>("SELECT id AS run_id FROM authority.run ORDER BY created_at DESC,id DESC", []);
-    const runs = await Promise.all(rows.map((row) => readRunView(deps.db, row.run_id)));
-    return Response.json(runs.filter((run) => run !== null));
+  app.get("/api/runs", async (c) => { try {
+    const page = pageQuery(c.req.query("limit"), c.req.query("cursor"));
+    if (page instanceof MalformedRequestError) return response({ ok: false, error: page });
+    const after = runCursor(page.cursor);
+    if (after instanceof MalformedRequestError) return response({ ok: false, error: after });
+    const rows = await deps.db.query<{ run_id: RunId; created_at: Date }>(`SELECT id AS run_id,created_at FROM authority.run
+      WHERE ($1::timestamptz IS NULL OR (created_at,id)<($1::timestamptz,$2::text))
+      ORDER BY created_at DESC,id DESC LIMIT $3`, [after?.created_at ?? null, after?.id ?? null, page.limit + 1]);
+    const selected = rows.slice(0, page.limit);
+    const runs = await Promise.all(selected.map((row) => readRunView(deps.db, row.run_id)));
+    const last = selected.at(-1);
+    const next_cursor = rows.length > page.limit && last ? Buffer.from(JSON.stringify({ created_at: new Date(last.created_at).toISOString(), id: last.run_id })).toString("base64url") : null;
+    return Response.json({ items: runs.filter((run) => run !== null), next_cursor });
   } catch (cause) { return fault(cause); } });
-  app.get("/api/definitions", async () => { try { return Response.json(await listDefinitions(deps.db)); }
+  app.get("/api/definitions", async (c) => { try {
+    const page = pageQuery(c.req.query("limit"), c.req.query("cursor"));
+    if (page instanceof MalformedRequestError) return response({ ok: false, error: page });
+    const after = definitionCursor(page.cursor);
+    if (after instanceof MalformedRequestError) return response({ ok: false, error: after });
+    return Response.json(await listDefinitions(deps.db, after, page.limit));
+  }
     catch (cause) { return fault(cause); } });
   app.post("/api/definitions", async (c) => {
     const source = await body(c.req.raw);
