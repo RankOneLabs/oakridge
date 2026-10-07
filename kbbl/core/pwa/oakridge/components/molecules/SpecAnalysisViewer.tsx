@@ -22,7 +22,7 @@ function SourceRefs({ refs }: { refs: string[] }) {
   const [isOpen, setIsOpen] = useState(false);
   return (
     <div className="flex flex-col gap-1.5" data-testid="or-spec-sources">
-      <Button variant="secondary" size="xsmall" className="self-start" aria-expanded={isOpen} onClick={() => setIsOpen(!isOpen)}>
+      <Button variant="secondary" size="xsmall" className="self-start text-xs!" aria-expanded={isOpen} onClick={() => setIsOpen(!isOpen)}>
         {isOpen ? "▾" : "▸"} {refs.length} {refs.length === 1 ? "source" : "sources"}
       </Button>
       {isOpen && (

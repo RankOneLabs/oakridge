@@ -65,7 +65,7 @@ export function BuildBriefViewer({ body, edit }: ViewerProps) {
           {edit?.enabled && (
             <div className="ml-auto flex items-center gap-2">
               {editor?.isPending && <span className="text-xs text-[var(--text-muted)]">Saving…</span>}
-              <Button variant={isEditing ? "primary" : "secondary"} size="xsmall" aria-pressed={isEditing} onClick={() => setIsEditing(!isEditing)}>
+              <Button variant={isEditing ? "primary" : "secondary"} size="xsmall" className="text-xs!" aria-pressed={isEditing} onClick={() => setIsEditing(!isEditing)}>
                 {isEditing ? "Done editing" : "Edit brief"}
               </Button>
             </div>
