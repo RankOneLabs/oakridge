@@ -1,6 +1,9 @@
 -- Oakridge authority baseline. Apply only to a new database.
 CREATE SCHEMA authority;
 
+CREATE TYPE authority.execution_status AS ENUM ('pending', 'terminal');
+CREATE TYPE authority.effect_status AS ENUM ('pending', 'acknowledged', 'rejected', 'revoked', 'cleanup_pending', 'cleanup_confirmed');
+
 CREATE TABLE authority.schema_baseline (
   id boolean PRIMARY KEY DEFAULT true CHECK (id),
   digest text NOT NULL CHECK (digest ~ '^[0-9a-f]{64}$'),
@@ -71,7 +74,7 @@ CREATE TABLE authority.execution_selection (
 CREATE TABLE authority.execution (
   id text PRIMARY KEY, run_id text NOT NULL, scope_id text NOT NULL,
   worker_key text NOT NULL, generation bigint NOT NULL CHECK (generation >= 0),
-  status text NOT NULL CHECK (status IN ('pending', 'terminal')), result jsonb,
+  status authority.execution_status NOT NULL, result jsonb,
   publication_secret_hash text CHECK (publication_secret_hash IS NULL OR publication_secret_hash ~ '^[0-9a-f]{64}$'),
   version bigint NOT NULL DEFAULT 0 CHECK (version >= 0),
   UNIQUE (scope_id, worker_key, generation), UNIQUE (run_id, id),
@@ -122,8 +125,7 @@ CREATE TABLE authority.ingress_receipt (
 CREATE TABLE authority.effect_intent (
   id text PRIMARY KEY, run_id text NOT NULL, scope_id text NOT NULL,
   execution_id text, effect_key text NOT NULL,
-  payload jsonb NOT NULL, status text NOT NULL DEFAULT 'pending'
-    CHECK (status IN ('pending', 'acknowledged', 'rejected', 'revoked', 'cleanup_pending', 'cleanup_confirmed')),
+  payload jsonb NOT NULL, status authority.effect_status NOT NULL DEFAULT 'pending',
   version bigint NOT NULL DEFAULT 0 CHECK (version >= 0), UNIQUE (scope_id, effect_key),
   FOREIGN KEY (run_id, scope_id) REFERENCES authority.scope_instance(run_id, id),
   FOREIGN KEY (run_id, execution_id) REFERENCES authority.execution(run_id, id)
@@ -167,3 +169,20 @@ CREATE INDEX effect_intent_status_idx ON authority.effect_intent(status);
 CREATE INDEX fact_scope_idx ON authority.fact(scope_id);
 CREATE INDEX transition_scope_idx ON authority.transition(scope_id);
 CREATE INDEX execution_selection_execution_idx ON authority.execution_selection(execution_id);
+
+-- JSON column types for the generated storage records (scripts/generate-storage-records.ts).
+-- Each @type names an export of src/storage/json-column-types.ts.
+COMMENT ON COLUMN authority.definition_bundle.source IS '@type {DefinitionBundleSource}';
+COMMENT ON COLUMN authority.definition_bundle.checked_program IS '@type {CompiledBundle}';
+COMMENT ON COLUMN authority.scope_instance.input IS '@type {CheckedValue}';
+COMMENT ON COLUMN authority.scope_instance.local_state IS '@type {CheckedValue}';
+COMMENT ON COLUMN authority.scope_instance.outcome IS '@type {CheckedValue}';
+COMMENT ON COLUMN authority.scope_export.value IS '@type {CheckedValue}';
+COMMENT ON COLUMN authority.child_collection.members IS '@type {ChildCollectionMembers}';
+COMMENT ON COLUMN authority.execution.result IS '@type {CheckedValue}';
+COMMENT ON COLUMN authority.artifact_revision.body IS '@type {CheckedValue}';
+COMMENT ON COLUMN authority.fact.payload IS '@type {CheckedValue}';
+COMMENT ON COLUMN authority.transition.decision IS '@type {DecisionOutcome}';
+COMMENT ON COLUMN authority.ingress_receipt.result IS '@type {CommitReceipt}';
+COMMENT ON COLUMN authority.effect_intent.payload IS '@type {EffectIntentPayload}';
+COMMENT ON COLUMN authority.resource_binding.observation IS '@type {CheckedValue}';

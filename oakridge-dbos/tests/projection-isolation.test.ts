@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { selectInboxItems } from "../src/projections/inbox";
 import { DEFAULT_INBOX_LIMIT, readInbox } from "../src/storage/projection-reader";
-import type { RunId, ScopeInstanceRecord } from "../src/storage/schema-records";
+import type { RunId, ScopeId, ScopeInstanceRecord } from "../src/storage/schema-records";
 import type { DefinitionBundle } from "../src/core-client/generated-contracts";
 import type { SqlExecutor, TransactionalSqlExecutor } from "../src/storage/sql-executor";
 
@@ -11,7 +11,7 @@ const source = { scopes: [{ key: "scope", commands: [{ key: "review", label: "Re
 
 test("damaged scope produces its own diagnostic while another run stays available", () => {
   const damaged = selectInboxItems({ ...scope, source: null, decision: null });
-  const healthy = selectInboxItems({ ...scope, id: "scope-2", run_id: "run-2" as RunId, source, decision: null });
+  const healthy = selectInboxItems({ ...scope, id: "scope-2" as ScopeId, run_id: "run-2" as RunId, source, decision: null });
   expect(damaged[0]?.kind).toBe("diagnostic");
   expect(healthy[0]?.kind).toBe("command");
 });

@@ -1,7 +1,7 @@
-import type { EffectIntentRecord, ExecutionRecord, ResourceBindingRecord } from "../storage/schema-records";
+import type { EffectIntentRecord, ResourceBindingRecord } from "../storage/schema-records";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
 
-import { normalizeExecutionRecord, normalizeRecordVersion, selectRecordVersions, selectTransitionHistory, type RecordVersion, type StoredExecutionRecord, type StoredTransitionHistory, type StoredVersionedRecord, type TransitionHistory } from "../projections/record-selectors";
+import { normalizeExecutionRecord, normalizeRecordVersion, selectRecordVersions, selectTransitionHistory, type ExecutionView, type RecordVersion, type StoredExecutionRecord, type StoredTransitionHistory, type StoredVersionedRecord, type TransitionHistory } from "../projections/record-selectors";
 
 export type EffectDiagnosticRecord = Pick<EffectIntentRecord, "id" | "effect_key" | "status" | "version">;
 export interface DiagnosticsCursor {
@@ -12,7 +12,7 @@ export interface DiagnosticsCursor {
 }
 export interface ScopeDiagnostics {
   readonly scope_id: string; readonly scope_version: number;
-  readonly executions: readonly ExecutionRecord[]; readonly resources: readonly ResourceBindingRecord[];
+  readonly executions: readonly ExecutionView[]; readonly resources: readonly ResourceBindingRecord[];
   readonly effects: readonly EffectDiagnosticRecord[];
   readonly cursor: DiagnosticsCursor;
 }

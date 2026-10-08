@@ -24,7 +24,7 @@ export async function harness(options: HarnessOptions = {}) {
       targets: [{ kind: "reference", root: { kind: "result", worker: "potter" }, path: [] }],
       field_presentation: [{ key: "text", presentation: { label: "Feedback", viewer: null } }] })) };
   }
-  let owner: ScopeInstanceRecord = { id: scope_id, version: 4, run_id, parent_id: null, scope_key: bundle.root, child_key: null,
+  let owner: ScopeInstanceRecord = { id: scope_id, version: 4, run_id, parent_id: null, scope_key: bundle.root, child_key: null, collection_key: null,
     input: unit, local_state: { schema: "phase", data: { kind: "variant", variant: "inspection", value: unit } }, outcome: null, is_terminal: false };
   let slot_version = 3;
   let execution_version = 6;
@@ -58,7 +58,7 @@ export async function harness(options: HarnessOptions = {}) {
       else if (sql.startsWith("UPDATE authority.scope_instance SET version")) owner = { ...owner, version: owner.version + 1 };
       else if (sql === "SELECT version FROM authority.scope_instance WHERE id=$1") rows = [{ version: owner.version }];
       else if (sql.startsWith("INSERT INTO authority.fact")) committed_payload = JSON.parse(String(parameters[3]));
-      else if (sql.startsWith("INSERT INTO authority.ingress_receipt")) receipt = { id: String(parameters[0]), version: 0, run_id, scope_id,
+      else if (sql.startsWith("INSERT INTO authority.ingress_receipt")) receipt = { id: String(parameters[0]), run_id, scope_id,
         ingress_id: String(parameters[3]), request_digest: String(parameters[4]), result: JSON.parse(String(parameters[5])) };
       return rows as readonly Row[];
     },

@@ -23,6 +23,11 @@ export type StageInstanceId = Brand<string, "StageInstanceId">;
 export type ArtifactId = Brand<string, "ArtifactId">;
 export type ProjectId = Brand<string, "ProjectId">;
 export type ExecutionId = Brand<string, "ExecutionId">;
+/** Authority row identities; storage/schema-records.ts applies them to the generated rows. */
+export type RunId = Brand<string, "RunId">;
+export type ScopeId = Brand<string, "ScopeId">;
+export type RevisionId = Brand<string, "RevisionId">;
+export type PoolId = Brand<string, "PoolId">;
 export type RootWorkflowId = Brand<string, "RootWorkflowId">;
 export type StageCoordinatorWorkflowId = Brand<string, "StageCoordinatorWorkflowId">;
 export type UnitId = Brand<string, "UnitId">;

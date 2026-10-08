@@ -23,7 +23,8 @@ test("baseline creates constrained authority relations and accepts a matching se
       expect(indexes.some((row) => row.indexname === name)).toBe(true);
     const constraints = await db.query<{ table_name: string; type: string; definition: string }>(`SELECT c.conrelid::regclass::text AS table_name,c.contype AS type,pg_get_constraintdef(c.oid) AS definition
       FROM pg_constraint c WHERE c.connamespace='authority'::regnamespace`, []);
-    for (const name of ["execution", "effect_intent"]) expect(constraints.some((row) => row.table_name === `authority.${name}` && row.type === "c" && row.definition.includes("status"))).toBe(true);
+    const statuses = await db.query<{ table_name: string; udt_name: string }>("SELECT table_name,udt_name FROM information_schema.columns WHERE table_schema='authority' AND column_name='status' ORDER BY table_name", []);
+    expect(statuses).toEqual([{ table_name: "effect_intent", udt_name: "effect_status" }, { table_name: "execution", udt_name: "execution_status" }]);
     for (const name of ["scope_export", "child_collection", "execution_selection", "execution", "artifact_revision", "output_slot", "fact", "transition", "ingress_receipt", "effect_intent", "capacity_reservation", "resource_binding"])
       expect(constraints.some((row) => row.table_name === `authority.${name}` && row.type === "f" && row.definition.includes("FOREIGN KEY (run_id, scope_id)"))).toBe(true);
     const digest = createHash("sha256").update(await Bun.file(new URL("../src/storage/migrations/0001_core_authority.sql", import.meta.url)).text()).digest("hex");
@@ -43,8 +44,8 @@ test("baseline creates constrained authority relations and accepts a matching se
     await expect(db.query("INSERT INTO authority.transition (id,scope_id,trigger_id,decision) VALUES ('second','scope','same','{}')", [])).rejects.toMatchObject({ code: "23505" });
     await db.query("INSERT INTO authority.run (id,definition_bundle_id) VALUES ('other-run','bundle')", []);
     await expect(db.query("INSERT INTO authority.fact (id,run_id,scope_id,fact_key,payload) VALUES ('cross-run','other-run','scope','event','{}')", [])).rejects.toMatchObject({ code: "23503" });
-    await expect(db.query("INSERT INTO authority.execution (id,scope_id,worker_key,generation,status) VALUES ('bad-status','scope','worker',1,'unknown')", [])).rejects.toMatchObject({ code: "23514" });
-    await expect(db.query("INSERT INTO authority.effect_intent (id,scope_id,effect_key,payload,status) VALUES ('bad-effect','scope','key','{}','unknown')", [])).rejects.toMatchObject({ code: "23514" });
+    await expect(db.query("INSERT INTO authority.execution (id,scope_id,worker_key,generation,status) VALUES ('bad-status','scope','worker',1,'unknown')", [])).rejects.toMatchObject({ code: "22P02" });
+    await expect(db.query("INSERT INTO authority.effect_intent (id,scope_id,effect_key,payload,status) VALUES ('bad-effect','scope','key','{}','unknown')", [])).rejects.toMatchObject({ code: "22P02" });
     await expect(migrateEmptyDatabase(db)).resolves.toBeUndefined();
     await db.query("UPDATE authority.schema_baseline SET digest=$1", ["0".repeat(64)]);
     await expect(migrateEmptyDatabase(db)).rejects.toThrow(`recorded ${"0".repeat(64)}, current ${digest}`);

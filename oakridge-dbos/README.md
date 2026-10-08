@@ -65,6 +65,19 @@ the run's next recheck starts this version's carrier for any intent still owed.
 The older rows remain as history. A carried effect starts a fresh DBOS
 execution deadline.
 
+## Storage records
+
+`src/storage/migrations/0001_core_authority.sql` is the only hand-written
+description of the authority tables. `scripts/generate-storage-records.ts`
+applies it to a scratch database on `OAKRIDGE_TEST_DATABASE_URL`'s server and
+runs [pg-to-ts](https://github.com/danvk/pg-to-ts) over the result, writing
+`src/storage/generated-records.ts`. Each jsonb column names its TypeScript type
+with a `COMMENT ON COLUMN ... IS '@type {Name}'`, resolved in
+`src/storage/json-column-types.ts`; status columns are Postgres enums, so their
+unions are generated too. `src/storage/schema-records.ts` adds only the id
+brands. After editing the baseline, run `bun run generate:records`; CI fails
+when the committed file differs.
+
 ## Verify
 
 From the repository root:

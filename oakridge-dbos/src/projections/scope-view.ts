@@ -1,7 +1,7 @@
 import type { CheckedValue, CommandDefinition, DefinitionBundle, DecisionOutcome } from "../core-client/generated-contracts";
-import type { ScopeId, ScopeInstanceRecord, ExecutionRecord, OutputSlotRecord, ArtifactRevisionRecord, ResourceBindingRecord } from "../storage/schema-records";
+import type { ScopeId, ScopeInstanceRecord, OutputSlotRecord, ArtifactRevisionRecord, ResourceBindingRecord } from "../storage/schema-records";
 import type { TargetRevision } from "../storage/command-selection";
-import { normalizeRecordVersion, type StoredVersionedRecord } from "./record-selectors";
+import { normalizeRecordVersion, type ExecutionView, type StoredVersionedRecord } from "./record-selectors";
 
 export interface ProjectionCursor { readonly scope_version: number; readonly transition_id: string | null }
 export interface OperatorResourceBinding { readonly id: string; readonly version: number; readonly scope_id: string; readonly resource_key: string; readonly observation: OperatorCheckedValue | null }
@@ -13,7 +13,7 @@ export function normalizeOutputSlot(row: StoredVersionedRecord<StoredOutputSlotV
 export interface ScopeView {
   readonly scope_id: ScopeId; readonly run_id: string; readonly scope_key: string; readonly label: string;
   readonly state: CheckedValue; readonly outcome: CheckedValue | null; readonly is_terminal: boolean;
-  readonly commands: readonly CommandDefinition[]; readonly executions: readonly ExecutionRecord[];
+  readonly commands: readonly CommandDefinition[]; readonly executions: readonly ExecutionView[];
   readonly outputs: readonly OutputSlotView[]; readonly resources: readonly ResourceBindingRecord[];
   readonly command_targets: Readonly<{ readonly [command_key: string]: readonly TargetRevision[] }>;
   readonly decision: DecisionOutcome | null; readonly cursor: ProjectionCursor;

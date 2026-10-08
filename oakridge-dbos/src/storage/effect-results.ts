@@ -1,6 +1,6 @@
 import type { CheckedValue } from "../core-client/generated-contracts";
 import type { TransactionalSqlExecutor } from "./sql-executor";
-import { requiresCleanup, type EffectPayload, type EffectStatus } from "../effects/intents";
+import { requiresCleanup, type EffectIntent, type EffectPayload, type EffectStatus } from "../effects/intents";
 import { ensureStopIntent } from "./revocation";
 import { sealEffectPayload, unsealEffectPayload } from "./effect-secret";
 
@@ -10,7 +10,7 @@ export interface EffectResultInput {
   readonly payload: EffectPayload;
   readonly terminal_result: CheckedValue | null;
 }
-interface WrittenRow { readonly status: EffectStatus; readonly scope_id: string; readonly execution_id: string | null; readonly effect_key: string }
+type WrittenRow = Pick<EffectIntent, "status" | "scope_id" | "execution_id" | "effect_key">;
 
 /**
  * Reserve before provider IO. An unfinished predecessor (including a legacy
@@ -50,7 +50,7 @@ export async function persistEffectResult(db: TransactionalSqlExecutor, input: E
   return db.transaction(async (tx) => {
     await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [owner[0]!.run_id]);
     const rows = await tx.query<WrittenRow>(`UPDATE authority.effect_intent SET payload=$2,
-      status=CASE WHEN status='revoked' AND $3<>'cleanup_confirmed' THEN status ELSE $3 END, version=version+1
+      status=CASE WHEN status='revoked' AND $3::authority.effect_status<>'cleanup_confirmed' THEN status ELSE $3::authority.effect_status END, version=version+1
       WHERE id=$1 RETURNING status,scope_id,execution_id,effect_key`, [intent_id, JSON.stringify(sealEffectPayload(payload)), status]);
     const written = rows[0];
     if (!written) return null;
