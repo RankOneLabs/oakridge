@@ -114,7 +114,7 @@ function renderWithQuery(ui: React.ReactElement) {
 }
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); });
 
-test("pins the edited JSON definition for a fresh operator database", async () => {
+test("pins the entered JSON definition", async () => {
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
     if (url === "/oakridge/api/api/definitions" && init?.method === "GET")
       return cursorPage([{ bundle_id: "seed", digest: "seed-digest", source: canonicalDefinition }]);
@@ -124,10 +124,41 @@ test("pins the edited JSON definition for a fresh operator database", async () =
   vi.stubGlobal("fetch", fetch);
   const onPinned = vi.fn();
   renderWithQuery(<OperatorDefinitionEditorView cloneFromId={null} onBack={() => undefined} onPinned={onPinned} />);
-  await waitFor(() => expect(screen.getByLabelText<HTMLTextAreaElement>("Source bundle").value).toContain('"root"'));
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+  fireEvent.change(screen.getByLabelText("Source bundle"), { target: { value: JSON.stringify(canonicalDefinition) } });
   fireEvent.click(screen.getByRole("button", { name: "Pin definition" }));
   await waitFor(() => expect(onPinned).toHaveBeenCalledOnce());
   expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body))).toHaveProperty("root");
+});
+
+test("a new definition is not seeded from an arbitrary catalog entry", async () => {
+  const other = { ...canonicalDefinition, key: "other" };
+  vi.stubGlobal("fetch", vi.fn(async () => cursorPage([
+    { bundle_id: "a", digest: "a-digest", source: canonicalDefinition }, { bundle_id: "b", digest: "b-digest", source: other }])));
+  renderWithQuery(<OperatorDefinitionEditorView cloneFromId={null} onBack={() => undefined} onPinned={() => undefined} />);
+  await screen.findByLabelText("Source bundle");
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(screen.getByLabelText<HTMLTextAreaElement>("Source bundle").value).toBe("");
+});
+
+test("with several pinned definitions the operator must choose one before launching", async () => {
+  const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/definitions")) return cursorPage([
+      { bundle_id: "b1", digest: "sha-1", source: { key: "alpha", version: 1 } },
+      { bundle_id: "b2", digest: "sha-2", source: { key: "beta", version: 1 } }]);
+    if (url.endsWith("/runs") && init?.method === "POST") return Response.json({ run_id: "run-1" }, { status: 201 });
+    throw new Error(url);
+  });
+  vi.stubGlobal("fetch", fetch);
+  renderWithQuery(<OperatorLaunchView onBack={() => undefined} onCreated={() => undefined} onEdit={() => undefined} />);
+  await screen.findByText(/beta v1/);
+  expect(screen.getByLabelText<HTMLSelectElement>("Definition digest").value).toBe("");
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Launch" }).disabled).toBe(true);
+  fireEvent.change(screen.getByLabelText("Definition digest"), { target: { value: "sha-2" } });
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Launch" }).disabled).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+  expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body)).digest).toBe("sha-2");
 });
 
 test("an empty catalog does not seed the editor from a bundled definition", async () => {

@@ -9,24 +9,20 @@ interface Props { readonly cloneFromId: string | null; readonly onBack: () => vo
 export function OperatorDefinitionEditorView({ cloneFromId, onBack, onPinned }: Props) {
   const definitions = useQuery({ queryKey: queryKeys.definitions, queryFn: fetchOperatorDefinitions });
   const [source, setSource] = useState("");
-  const [hasSeededNew, setHasSeededNew] = useState(false);
   const [loadedId, setLoadedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const isReady = cloneFromId === null || loadedId === cloneFromId;
   useEffect(() => {
     if (!cloneFromId) {
-      if (!hasSeededNew && definitions.data) {
-        setSource(definitions.data[0] ? JSON.stringify(definitions.data[0].source, null, 2) : "");
-        setHasSeededNew(true);
-      }
+      // A new definition starts empty: the catalog has no order that makes any entry the natural template.
       if (loadedId !== null) setLoadedId(null);
       return;
     }
     if (loadedId === cloneFromId) return;
     const definition = definitions.data?.find((item) => item.bundle_id === cloneFromId);
     if (definition) { setSource(JSON.stringify({ ...definition.source, version: definition.source.version + 1 }, null, 2)); setLoadedId(cloneFromId); }
-  }, [cloneFromId, definitions.data, hasSeededNew, loadedId]);
+  }, [cloneFromId, definitions.data, loadedId]);
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!isReady || saving) return;

@@ -10,6 +10,7 @@ import { isDefinitiveRequestRejection } from "../lib/client-errors";
 import type { OperatorLaunchRequest } from "../operator-contracts";
 import type { Schema, SchemaField, WorkflowDefinitionDescriptor } from "../workflow-definition-types";
 import { parseOperatorFieldValue } from "../lib/operator-payload";
+import { selectLaunchDigest } from "../lib/operator-selectors";
 
 interface RootField { readonly field: SchemaField; readonly schema: Schema | undefined }
 type FieldDrafts = { readonly [key: string]: string };
@@ -91,7 +92,7 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
   const [rawMode, setRawMode] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [launching, setLaunching] = useState(false);
-  const selected = pending?.digest || digest || definitions.data?.[0]?.digest || "";
+  const selected = selectLaunchDigest({ pending_digest: pending?.digest, chosen_digest: digest, definitions: definitions.data });
   const selectedDefinition = definitions.data?.find((item) => item.digest === selected);
   const fields = selectRootFields(selectedDefinition?.source);
   const inputValues = (() => { try { return inputRecord(input); } catch { return {}; } })();
@@ -139,6 +140,7 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
       <select id="operator-digest" value={selected} disabled={pending !== null || launching} onChange={(event) => {
         setDigest(event.target.value); setInput("{}"); setFieldDrafts({}); setRawMode(false);
       }}>
+        {selected === "" && <option value="" disabled>Select a definition…</option>}
         {pending && !definitions.data?.some((item) => item.digest === pending.digest)
           && <option value={pending.digest}>{pending.digest}</option>}
         {definitions.data?.map((item) => <option key={item.digest} value={item.digest}>{item.source.key} v{item.source.version} · {item.digest}</option>)}
