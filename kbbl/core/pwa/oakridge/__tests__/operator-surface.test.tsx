@@ -287,6 +287,18 @@ test("clone editing and pinning wait for the requested bundle, then preserve edi
   expect(editor.value).toBe("my edits");
 });
 
+test("leaving a clone for a new definition empties the editor", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => cursorPage([{ bundle_id: "bundle-1", digest: "sha-1", source: canonicalDefinition }])));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const editorAt = (cloneFromId: string | null) => <QueryClientProvider client={client}>
+    <OperatorDefinitionEditorView cloneFromId={cloneFromId} onBack={() => undefined} onPinned={() => undefined} /></QueryClientProvider>;
+  const { rerender } = render(editorAt("bundle-1"));
+  const editor = screen.getByLabelText<HTMLTextAreaElement>("Source bundle");
+  await waitFor(() => expect(editor.value).not.toBe(""));
+  rerender(editorAt(null));
+  await waitFor(() => expect(editor.value).toBe(""));
+});
+
 test.each([
   { name: "failed", response: () => Response.json({ error: "catalog unavailable" }, { status: 503 }), message: /Could not load definition/ },
   { name: "missing", response: () => cursorPage([]), message: /Definition not found: missing-bundle/ },

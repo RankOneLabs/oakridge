@@ -18,7 +18,8 @@ export function OperatorDefinitionEditorView({ cloneFromId, onBack, onPinned }: 
   useEffect(() => {
     if (!cloneFromId) {
       // A new definition starts empty: the catalog has no order that makes any entry the natural template.
-      if (loadedId !== null) setLoadedId(null);
+      // Leaving a clone keeps this instance mounted, so its cloned source is cleared here.
+      if (loadedId !== null) { setSource(""); setLoadedId(null); }
       return;
     }
     if (loadedId === cloneFromId) return;
