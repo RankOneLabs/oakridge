@@ -5,7 +5,7 @@ import { fetchOperatorDefinitions, launchOperatorRun } from "../client";
 import { Button } from "../../components/atoms/Button";
 
 import { randomUuid } from "../../lib/random-uuid";
-import { clearPendingLaunch, readPendingLaunch, savePendingLaunch } from "../lib/operator-launch";
+import { clearPendingLaunch, discardPendingLaunch, readPendingLaunch, savePendingLaunch } from "../lib/operator-launch";
 import { isDefinitiveRequestRejection } from "../lib/client-errors";
 import type { OperatorLaunchRequest, OperatorSchema } from "../operator-contracts";
 import type { WorkflowDefinitionDescriptor } from "../workflow-definition-types";
@@ -31,15 +31,18 @@ interface Props { readonly onBack: () => void; readonly onCreated: (runId: strin
 export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
   const client = useQueryClient();
   const definitions = useQuery({ queryKey: queryKeys.definitions, queryFn: fetchOperatorDefinitions });
-  const [pending, setPending] = useState<OperatorLaunchRequest | null>(() => {
-    try { return readPendingLaunch(); } catch { return null; } // Submission re-reads and fails closed if storage is unavailable or corrupt.
+  const [stored] = useState<{ readonly pending: OperatorLaunchRequest | null; readonly error: string | null }>(() => {
+    try { return { pending: readPendingLaunch(), error: null }; } // Submission re-reads and fails closed if storage is unavailable or corrupt.
+    catch (cause) { return { pending: null, error: String(cause) }; }
   });
+  const [pending, setPending] = useState(stored.pending);
+  const [isStorageUnreadable, setIsStorageUnreadable] = useState(stored.error !== null);
   const deliveryInProgress = useRef(false);
   const [digest, setDigest] = useState("");
   const [input, setInput] = useState("{}");
   const [fieldDrafts, setFieldDrafts] = useState<FieldDrafts>({});
   const [rawMode, setRawMode] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(stored.error);
   const [launching, setLaunching] = useState(false);
   const selected = selectLaunchDigest({ pending_digest: pending?.digest, chosen_digest: digest, definitions: definitions.data });
   const selectedDefinition = definitions.data?.find((item) => item.digest === selected);
@@ -57,9 +60,11 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
     event.preventDefault();
     if (deliveryInProgress.current) return;
     setError(null);
+    let retained: OperatorLaunchRequest | null;
+    try { retained = readPendingLaunch(); }
+    catch (cause) { setIsStorageUnreadable(true); setError(String(cause)); return; }
     let request: OperatorLaunchRequest;
     try {
-      const retained = readPendingLaunch();
       request = retained ?? { request_id: randomUuid(), digest: selected,
         input: rawMode ? JSON.parse(input) : buildRootInput(input, fields, fieldDrafts) };
       savePendingLaunch(request);
@@ -80,6 +85,11 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
         setError(String(cause));
       } else setError("Launch delivery is uncertain. Retry to recover the original run.");
     } finally { deliveryInProgress.current = false; setLaunching(false); }
+  };
+  const discard = () => {
+    try { discardPendingLaunch(); } catch (cause) { setError(String(cause)); return; }
+    setPending(null); setIsStorageUnreadable(false); setError(null);
+    setDigest(""); setInput("{}"); setFieldDrafts({}); setRawMode(false);
   };
   return <main className="or-page" data-testid="or-new-run">
     <header className="or-page-header"><Button variant="secondary" onClick={onBack}>Back</Button><h1 className="or-page-title">Launch pinned run</h1></header>
@@ -118,9 +128,11 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
           : <textarea id={id} value={value} required={field.required} onChange={(event) => setValue(event.target.value)}
             className="w-full min-h-24 rounded-md border p-3 font-mono text-xs" />}</div>;
       })}</div>}
-      {pending && <p role="status">A launch is awaiting confirmation. Retry to recover its result.</p>}
+      {pending && <p role="status">A launch is awaiting confirmation. Retry to recover its result, or discard it to compose a new launch. Discarding forgets the retry identity, and the earlier attempt may still have created a run; check the runs list.</p>}
+      {isStorageUnreadable && !pending && <p role="status">Stored launch state is unreadable. Discard it to compose a new launch; any earlier attempt may still have created a run, so check the runs list.</p>}
       {error && <p role="alert">{error}</p>}
       <Button type="submit" disabled={!selected || launching}>{pending ? "Retry launch" : "Launch"}</Button>
+      {(pending || isStorageUnreadable) && <Button variant="secondary" onClick={discard} disabled={launching}>Discard</Button>}
     </form>
   </main>;
 }
