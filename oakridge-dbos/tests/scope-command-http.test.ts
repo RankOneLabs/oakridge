@@ -38,6 +38,10 @@ test("a command without targets retries after a witness change even when its out
   const response = await api.submit({ ...api.request, command_key: "rework", payload: {}, targets: [] });
   expect({ status: response.status, evaluations: api.evaluationCount() }).toEqual({ status: 202, evaluations: 2 });
 });
+test("a targeted command whose decision collapses to wait is accepted, not conflicted over stale targets", async () => {
+  const api = await harness({ wait_decision: true });
+  expect((await api.submit()).status).toBe(202);
+});
 test("a changed target between validation and commit re-evaluates and then conflicts with 409", async () => {
   const api = await harness({ change_target_before_commit: true });
   expect({ status: (await api.submit()).status, evaluations: api.evaluationCount() }).toEqual({ status: 409, evaluations: 2 });
