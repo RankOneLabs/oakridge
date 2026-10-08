@@ -82,11 +82,14 @@ test("StrictMode recovery delivers one pending command with its retained request
   await screen.findByText("Command accepted.");
 });
 
+/** The authority pages GET /api/runs, so a mocked list carries the envelope the client reads. */
+const cursorPage = (items: readonly unknown[]): Response => Response.json({ items, next_cursor: null });
+
 function scopeOf(runId: string): string { return `${runId}-scope`; }
 /** Serves any run id, so one fan-out can be observed against two runs at once. */
 function anyRunResponse(url: string): Response {
   if (url.endsWith("/api/inbox")) return Response.json({ cursor: [], items: [], next_cursor: null });
-  if (url.endsWith("/api/runs")) return Response.json([{ run_id: "run-one", scopes: [{ scope_id: scopeOf("run-one"), label: "One", is_terminal: false }] }]);
+  if (url.endsWith("/api/runs")) return cursorPage([{ run_id: "run-one", scopes: [{ scope_id: scopeOf("run-one"), label: "One", is_terminal: false }] }]);
   if (url.endsWith("/definition")) return Response.json({ source: { root: "root", schemas: [] } });
   if (url.endsWith("/history")) return Response.json({ transitions: [], facts: [] });
   const runId = url.match(/\/runs\/([^/?]+)/)?.[1] ?? "run-one";
@@ -108,6 +111,8 @@ test("an authority event refreshes its own run and both shared lists, and leaves
   </QueryClientProvider>);
   await screen.findByRole("heading", { name: "Scope of run-one" });
   await screen.findByRole("heading", { name: "Scope of run-two" });
+  expect(await screen.findByText("0/1 scopes complete")).toBeTruthy();
+  expect(screen.queryByText(/Error/)).toBeNull();
   const served = (suffix: string) => fetch.mock.calls.filter(([url]) => url.endsWith(suffix)).length;
   expect([served("/api/runs"), served("/api/inbox"), served(`/scopes/${scopeOf("run-two")}`)]).toEqual([1, 1, 1]);
 
