@@ -5,6 +5,8 @@ import { DBOS } from "@dbos-inc/dbos-sdk";
 import { createProductionComposition } from "../src/runtime/compose";
 import { wakeRun } from "../src/workflows/topology";
 import { begin, sessionBundle, withDatabase } from "./effect-fixture";
+import { sealEffectPayload } from "../src/storage/effect-secret";
+import type { EffectPayload } from "../src/effects/intents";
 
 const topology = readFileSync(resolve(import.meta.dir, "../src/workflows/topology.ts"), "utf8");
 const completedChild = DBOS.registerWorkflow(async (): Promise<null> => null, { name: "oakridgeTestCompletedChild" });
@@ -75,7 +77,9 @@ test("a loop-boundary dispatch failure strands the run as a typed, visible ERROR
     const intent_id = crypto.randomUUID();
     await (await DBOS.startWorkflow(completedChild, { workflowID: intent_id })()).getResult();
     await db.query(`INSERT INTO authority.effect_intent (id,run_id,scope_id,effect_key,payload,status)
-      VALUES ($1,$2,$3,$4,$5,'pending')`, [intent_id, run.run_id, run.root_scope_id, "inconsistent-child", JSON.stringify({ action: "start" })]);
+      VALUES ($1,$2,$3,$4,$5,'pending')`, [intent_id, run.run_id, run.root_scope_id, "inconsistent-child",
+        JSON.stringify(sealEffectPayload({ action: "start", handle: null,
+          invocation: { id: intent_id, execution_id: "execution-1", selection: {}, bytes: "pinned" } } as unknown as EffectPayload))]);
     await wakeRun(run.run_id);
     const until = Date.now() + 5_000;
     while (Date.now() < until) {

@@ -2,6 +2,8 @@ import { expect } from "bun:test";
 import { Pool } from "pg";
 import { resolve } from "node:path";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
+
+process.env.OAKRIDGE_EFFECT_ENCRYPTION_KEY ??= Buffer.alloc(32, 17).toString("base64url");
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
 import { createProductionComposition } from "../src/runtime/compose";
 import type { DefinitionBundle, ScopeDefinition, CheckedValue, Schema } from "../src/core-client/generated-contracts";

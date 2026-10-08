@@ -138,7 +138,7 @@ describe("SessionListView grouping", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url === "/oakridge/api/api/runs") {
-        return new Response(JSON.stringify([runSummary]), { status: 200 });
+        return new Response(JSON.stringify({ items: [runSummary], next_cursor: null }), { status: 200 });
       }
       if (url === "/oakridge/api/api/runs/run-1") {
         return new Response(JSON.stringify(runDetail), { status: 200 });
@@ -198,7 +198,7 @@ describe("SessionListView grouping", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url === "/oakridge/api/api/runs") {
-        return new Response(JSON.stringify([runSummary]), { status: 200 });
+        return new Response(JSON.stringify({ items: [runSummary], next_cursor: null }), { status: 200 });
       }
       return new Response(null, { status: 404 });
     });

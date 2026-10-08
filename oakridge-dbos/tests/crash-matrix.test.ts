@@ -5,6 +5,7 @@ import { CoreClient } from "../src/core-client/client";
 import { pendingCleanupCount, type EffectPayload } from "../src/effects/intents";
 import type { EffectProvider } from "../src/effects/provider";
 import { createProductionComposition } from "../src/runtime/compose";
+import { unsealEffectPayload } from "../src/storage/effect-secret";
 import { cancelRun, createMutationService, deleteRun } from "../src/storage/mutation-service";
 import { unit, waitUntil, withDatabase } from "./effect-fixture";
 
@@ -105,7 +106,8 @@ for (const cut of cuts) {
         } else expect(await mutations.decide(begin)).toMatchObject({ ok: true, value: { kind: "Replayed" } });
         const starts = await db.query<StartRow>("SELECT * FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='start'", [run.root_scope_id]);
         expect(starts).toHaveLength(1);
-        if (starts_before.length) expect(starts[0]?.payload.invocation.bytes).toBe(starts_before[0]?.payload.invocation.bytes);
+        if (starts_before.length) expect(starts[0] && unsealEffectPayload(starts[0].payload).invocation.bytes)
+          .toBe(starts_before[0] && unsealEffectPayload(starts_before[0].payload).invocation.bytes);
         expect((await db.query<{ count: string }>("SELECT count(*)::text AS count FROM authority.execution", []))[0]?.count).toBe("1");
         const is_revoked = cut === "after_revocation_before_stop" || cut === "after_stop_before_ack";
         expect((await db.query<{ count: string }>("SELECT count(*)::text AS count FROM authority.execution_selection WHERE execution_id IS NOT NULL", []))[0]?.count).toBe(is_revoked ? "0" : "1");

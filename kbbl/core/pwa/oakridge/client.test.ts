@@ -1,9 +1,22 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { fetchOakridgeConfig, submitOperatorCommand } from "./client";
+import { fetchOakridgeConfig, fetchOperatorRuns, fetchOperatorDefinitions, submitOperatorCommand } from "./client";
 import { DEFAULT_FALLBACK_REFRESH_MS } from "./lib/oakridge-config";
 import type { OperatorCommandSubmission } from "./operator-contracts";
 
 afterEach(() => { vi.unstubAllGlobals(); });
+
+test("run and definition consumers follow every cursor page", async () => {
+  const fetch = vi.fn(async (url: string) => Response.json(url.includes("cursor=")
+    ? { items: [{ marker: "second" }], next_cursor: null }
+    : { items: [{ marker: "first" }], next_cursor: "next" }));
+  vi.stubGlobal("fetch", fetch);
+  expect((await fetchOperatorRuns()).map((item) => (item as unknown as { marker: string }).marker)).toEqual(["first", "second"]);
+  expect((await fetchOperatorDefinitions()).map((item) => (item as unknown as { marker: string }).marker)).toEqual(["first", "second"]);
+  expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+    "/oakridge/api/api/runs", "/oakridge/api/api/runs?cursor=next",
+    "/oakridge/api/api/definitions", "/oakridge/api/api/definitions?cursor=next",
+  ]);
+});
 
 test("the served fallback refresh interval survives into the config the PWA uses", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({ available: true, core_url: "http://oakridge.test", fallback_refresh_ms: 5_000 })));

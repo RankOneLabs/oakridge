@@ -9,6 +9,11 @@ if [[ "$suite" == integration && -z "${OAKRIDGE_TEST_DATABASE_URL:-}" ]]; then
   echo "OAKRIDGE_TEST_DATABASE_URL is required for test:integration" >&2
   exit 2
 fi
+# Booting a composition requires an effect-encryption key, and CI supplies none.
+# Default one for the whole suite so a new test that boots the authority cannot
+# omit it; production-effects.test.ts still unsets it at runtime to assert that a
+# missing key fails startup.
+export OAKRIDGE_EFFECT_ENCRYPTION_KEY="${OAKRIDGE_EFFECT_ENCRYPTION_KEY:-ERERERERERERERERERERERERERERERERERERERERERE}"
 integration=' advance-children authority-schema cancellation-obligations capacity-reservations child-page commit-atomicity concurrent-decisions crash-matrix development-lifecycle development-publication effect-deadline fresh-boot launch-postgres operator-browser ops-live production-effects receipt-replay retained-operations review-effects run-durability run-error-recovery run-review-acceptance run-rollover session-observe-recovery scope-command-postgres snapshot-reader stage-publications start-attempt-recovery '
 mapfile -d '' files < <(find src tests -name '*.test.ts' -print0 | sort -z)
 selected=()

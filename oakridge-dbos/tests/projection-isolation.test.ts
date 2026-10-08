@@ -20,7 +20,8 @@ test("inbox rebuilds from one committed database snapshot", async () => {
   const db: TransactionalSqlExecutor = {
     async query<Row extends object>(statement: string): Promise<readonly Row[]> {
       statements.push(statement);
-      return [{ ...scope, source: null, decision: null }, { ...scope, id: "scope-2", run_id: "run-2", source, decision: null }] as unknown as Row[];
+      if (statement.includes("FROM authority.definition_bundle")) return [{ id: "bundle-2", source }] as unknown as Row[];
+      return [{ ...scope, definition_bundle_id: "missing", decision: null }, { ...scope, id: "scope-2", run_id: "run-2", definition_bundle_id: "bundle-2", decision: null }] as unknown as Row[];
     },
     async transaction<Value>(operation: (tx: SqlExecutor) => Promise<Value>, isolation?: "read committed" | "repeatable read"): Promise<Value> {
       expect(isolation).toBe("repeatable read");
@@ -29,14 +30,15 @@ test("inbox rebuilds from one committed database snapshot", async () => {
   };
   const inbox = await readInbox(db);
   expect(inbox.items.map((item) => item.kind)).toEqual(["diagnostic", "command"]);
-  expect(statements).toHaveLength(1);
+  expect(statements).toHaveLength(2);
 });
 
 test("inbox limits a run page and returns a usable cursor", async () => {
   const rows = Array.from({ length: DEFAULT_INBOX_LIMIT + 1 }, (_, index) => ({ ...scope,
-    id: `scope-${String(index).padStart(3, "0")}`, source: null, decision: null }));
+    id: `scope-${String(index).padStart(3, "0")}`, definition_bundle_id: "missing", decision: null }));
   const db: TransactionalSqlExecutor = {
     async query<Row extends object>(statement: string, params?: readonly unknown[]): Promise<readonly Row[]> {
+      if (statement.includes("FROM authority.definition_bundle")) return [];
       expect(statement).toContain("LIMIT $4");
       expect(params?.[0]).toBe("run-1");
       const after = params?.[2] as string | null;

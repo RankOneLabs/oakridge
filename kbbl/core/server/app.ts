@@ -239,6 +239,7 @@ export function createApp(deps: CreateAppDeps): Hono {
   mountOakridgeProxyRoutes(app, {
     baseUrl: process.env.OAKRIDGE_CORE_BASE_URL,
     coreControlToken,
+    browserControlToken: authPolicy.mode === "token" ? authPolicy.token : undefined,
     fallbackRefreshMs: parseFallbackRefreshMs(process.env.OAKRIDGE_FALLBACK_REFRESH_MS),
   });
 

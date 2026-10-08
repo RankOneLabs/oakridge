@@ -134,9 +134,6 @@ stop_from_signal() {
 trap stop_from_signal INT TERM
 trap stop_services EXIT
 
-echo "oakridge: applying domain migrations"
-DBOS_SYSTEM_DATABASE_URL="$DBOS_SYSTEM_DATABASE_URL" bun run "$DBOS_ROOT/src/storage/migrate.ts"
-
 echo "oakridge: starting DBOS backend at $DBOS_URL"
 (
   cd "$DBOS_ROOT"

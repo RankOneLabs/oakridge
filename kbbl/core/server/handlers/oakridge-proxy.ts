@@ -1,6 +1,8 @@
 import type { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { matchRoute } from "../../../../oakridge-dbos/src/http/routes";
+import { browserWritePolicy, browserWriteRejection, configuredBrowserWritePolicy } from "../../../../oakridge-dbos/src/http/browser-write-policy";
+import { isValidControlRequest } from "../../../../oakridge-dbos/src/http/control-auth";
 
 export interface OakridgeProxyDeps {
   baseUrl: string | undefined;
@@ -11,6 +13,18 @@ export interface OakridgeProxyDeps {
    * configured (core runs without auth, typically on a loopback bind).
    */
   coreControlToken?: string;
+  /**
+   * kbbl's own control token — the value its `kbbl_ctrl` cookie carries and its
+   * global middleware validates. The browser is authenticated against THIS, not
+   * against `coreControlToken`: the two differ whenever the documented
+   * `OAKRIDGE_CORE_CONTROL_TOKEN` override is set, and checking the browser's
+   * credential against the upstream's would reject every proxied operator
+   * request. Undefined when kbbl runs without auth, which leaves the inbound
+   * check to kbbl's policy exactly as the direct path does.
+   */
+  browserControlToken?: string;
+  /** Explicit browser origins; an absent list trusts none, including loopback. */
+  allowedOrigins?: readonly string[];
   /**
    * Fallback refresh interval served to the PWA, in milliseconds. Undefined
    * leaves the PWA on its build-time default. The PWA enforces its own minimum
@@ -42,6 +56,7 @@ const OAKRIDGE_PROXY_TIMEOUT_MS = 30_000;
 const STREAMING_UPSTREAM_PATHS: ReadonlySet<string> = new Set(["/events"]);
 
 export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): void {
+  const write_policy = deps.allowedOrigins === undefined ? configuredBrowserWritePolicy() : browserWritePolicy(deps.allowedOrigins);
   // Config: tells the PWA whether the Oakridge backend is configured without
   // attempting a proxy request that would block the page.
   app.get("/oakridge/config", (c) => {
@@ -60,6 +75,11 @@ export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): vo
     }
 
     const subPath = c.req.path.slice("/oakridge/api".length);
+    const rejection = browserWriteRejection(write_policy, c.req.raw, subPath);
+    if (rejection) return rejection;
+    const route = matchRoute(c.req.method, subPath);
+    if (route?.authority === "operator" && deps.browserControlToken && !isValidControlRequest(c.req.raw, deps.browserControlToken, write_policy))
+      return c.json({ error: "unauthorized" }, 401);
     const search = new URL(c.req.url, "http://localhost").search;
     const targetUrl = deps.baseUrl.replace(/\/$/, "") + subPath + search;
 
@@ -81,14 +101,14 @@ export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): vo
       }
     }
 
-    // Inject core control token for operator routes. The browser Authorization
-    // header was stripped above; this is the server-side injection point.
-    if (
-      deps.coreControlToken &&
-      matchRoute(method, subPath)?.authority === "operator"
-    ) {
+    // Inject the core control token for operator routes. The browser's own
+    // Authorization header is stripped above rather than forwarded, so kbbl's
+    // credential never reaches the upstream and cannot suppress this injection
+    // by occupying the header. The PWA cookie likewise stays local to kbbl; a
+    // verified browser credential is replaced here by the control token the
+    // backend would have accepted directly.
+    if (route?.authority === "operator" && deps.coreControlToken)
       forwardHeaders.set("authorization", `Bearer ${deps.coreControlToken}`);
-    }
 
     let body: ArrayBuffer | undefined;
     if (method !== "GET" && method !== "HEAD") {

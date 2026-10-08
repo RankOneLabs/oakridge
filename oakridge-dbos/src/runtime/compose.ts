@@ -5,11 +5,14 @@ import type { DefinitionBundle, Trigger } from "../core-client/generated-contrac
 import { CoreClient } from "../core-client/client";
 import { activeRoutes } from "../http/routes";
 import { controlTokenMiddleware, selectControlPlaneAccess } from "../http/control-auth";
+import { browserWriteMiddleware, configuredBrowserWritePolicy } from "../http/browser-write-policy";
 import { httpBodyLimit, installDefinitionApi } from "../http/app";
 import { authorityRepositories } from "../storage/repositories";
 import { createMutationService, cancelRun, deleteRun, type ScopeCancellationPayload, type ProviderCapabilities, type ProviderCapabilityInput } from "../storage/mutation-service";
 import { PROVIDER_KINDS } from "../effects/provider-catalog";
 import { PgPostgresExecutor } from "../storage/sql-executor";
+import { verifyEffectEncryption } from "../storage/effect-secret";
+import { redactingReadResponses } from "../projections/serialization-view";
 import type { RunId, ScopeId, ScopeInstanceRecord } from "../storage/schema-records";
 import type { OutputPublication } from "../storage/commit";
 import type { EffectProvider } from "../effects/provider";
@@ -136,7 +139,12 @@ export async function createProductionComposition(options: ProductionOptions): P
     args: ["--max-list-items", "10000", "--max-depth", "128", "--evaluation-budget", "1000000"], deadlineMs: 10_000 });
   if (!started.ok) throw new Error(`workflow-cli could not start: ${started.error.detail.detail}`);
   const core = started.value;
-  const db = PgPostgresExecutor.connect(options.database_url);
+  let db: PgPostgresExecutor;
+  try { db = PgPostgresExecutor.connect(options.database_url); }
+  catch (cause) { core.close(); throw cause; }
+  let launch_attempted = false;
+  try {
+  await verifyEffectEncryption(db);
   const provider_capabilities = options.provider_capabilities ?? githubProviderCapabilities(process.env.OAKRIDGE_GITHUB_TOKEN ?? process.env.GITHUB_TOKEN ?? "", fetch,
     options.kbbl_base_url ?? process.env.KBBL_BASE_URL ?? "http://127.0.0.1:8788");
   const mutations = createMutationService(db, core, provider_capabilities);
@@ -145,12 +153,16 @@ export async function createProductionComposition(options: ProductionOptions): P
   const application_version = options.application_version ?? selectApplicationVersion();
   registerWorkflowServices({ db, core, mutations, provider, timing: { ...DEFAULT_WORKFLOW_TIMING, ...options.timing } });
   DBOS.setConfig({ name: "oakridge", systemDatabaseUrl: options.database_url, applicationVersion: application_version });
-  try { await DBOS.launch(); } catch (error) { core.close(); await db.close(); throw error; }
+  launch_attempted = true;
+  await DBOS.launch();
   await resumeActiveRuns(db);
   const wake = (run_id: RunId): Promise<void> => wakeRun(run_id);
   const app = new Hono();
   app.use("*", httpBodyLimit());
-  if (access.kind === "token_required") app.use("*", controlTokenMiddleware(access.token));
+  app.use("*", redactingReadResponses());
+  const write_policy = configuredBrowserWritePolicy();
+  app.use("*", browserWriteMiddleware(write_policy));
+  if (access.kind === "token_required") app.use("*", controlTokenMiddleware(access.token, write_policy));
   installDefinitionApi(app, { db, core, mutations, wake });
   app.get("/health", (context) => context.json({ status: "ok", application_version, core: core.health }));
   app.post("/runs", async (context) => {
@@ -216,5 +228,13 @@ export async function createProductionComposition(options: ProductionOptions): P
       void wake(context.req.param("run_id") as RunId);
     return result.ok ? context.json(result.value) : context.json({ error: result.error }, 422);
   });
-  return { app, application_version, provider_capabilities, async close() { try { await parkRunningWorkflows(); await DBOS.shutdown(); } finally { core.close(); await db.close(); } } };
+  return { app, application_version, provider_capabilities, async close() {
+    try { await parkRunningWorkflows(); }
+    finally { try { await DBOS.shutdown(); } finally { core.close(); await db.close(); } }
+  } };
+  } catch (cause) {
+    try { if (launch_attempted) await DBOS.shutdown(); }
+    finally { core.close(); await db.close(); }
+    throw cause;
+  }
 }

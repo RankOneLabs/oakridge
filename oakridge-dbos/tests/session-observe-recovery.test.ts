@@ -52,10 +52,10 @@ for (const rejection of cases) test(`${rejection.name}, fail the scope, and disc
     expect(start).toMatchObject({ status: "rejected", payload: { evidence: { key: "session_failed" }, evidence_delivered: true } });
     expect((await db.query<{ count: string }>(
       "SELECT count(*)::text AS count FROM authority.fact WHERE scope_id=$1 AND fact_key='session_failed'", [run.root_scope_id]))[0]?.count).toBe("1");
-    expect((await composition.app.request(`/runs/${run.run_id}`, { method: "DELETE" })).status).toBe(409);
+    expect((await composition.app.request(`/runs/${run.run_id}`, { method: "DELETE", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(409);
     can_confirm_stop = true;
     await waitUntil(async () => (await db.query<{ status: string }>(
       "SELECT status FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='stop'", [run.root_scope_id]))[0]?.status === "cleanup_confirmed");
-    expect((await composition.app.request(`/runs/${run.run_id}`, { method: "DELETE" })).status).toBe(200);
+    expect((await composition.app.request(`/runs/${run.run_id}`, { method: "DELETE", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(200);
   } finally { can_confirm_stop = true; await composition.close(); }
 }));

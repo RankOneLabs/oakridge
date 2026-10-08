@@ -30,3 +30,27 @@ The writer column names the mutation-service entry and the function that execute
 `deleteRun` removes run-owned rows after cleanup obligations are discharged (`oakridge-dbos/src/storage/run-lifecycle.ts:73`, `oakridge-dbos/src/storage/run-lifecycle.ts:74`, `oakridge-dbos/src/storage/run-lifecycle.ts:75`, `oakridge-dbos/src/storage/run-lifecycle.ts:76`). The explicit duplicate values above are the input to the later state-ownership re-scope; this inventory does not change which copy is authoritative.
 
 The ownership check enumerates every authority SQL write site in the active backend dependency graph and requires a citation naming its enclosing function. New write sites, including IO ledger writes and deletions, must be documented; citation formatting alone does not establish completeness.
+
+## Current SQL write-site citations
+
+These citations keep the authority inventory aligned with the startup, encryption, and recovery paths.
+
+- `ensureStopIntent` `oakridge-dbos/src/storage/revocation.ts:10`
+- `revokeStarts` `oakridge-dbos/src/storage/revocation.ts:32`
+- `claimStartAttempt` `oakridge-dbos/src/storage/effect-results.ts:24`
+- `persistEffectResult` `oakridge-dbos/src/storage/effect-results.ts:52`
+- `persistEffectResult` `oakridge-dbos/src/storage/effect-results.ts:64`
+- `persistEffectResult` `oakridge-dbos/src/storage/effect-results.ts:68`
+- `writeOutputs` `oakridge-dbos/src/storage/commit.ts:86`
+- `writeDecision` `oakridge-dbos/src/storage/commit.ts:104`
+- `writeDecision` `oakridge-dbos/src/storage/commit.ts:107`
+- `writeDecision` `oakridge-dbos/src/storage/commit.ts:114`
+- `writeDecision` `oakridge-dbos/src/storage/commit.ts:123`
+- `writeDecision` `oakridge-dbos/src/storage/commit.ts:125`
+- `writeDecision` `oakridge-dbos/src/storage/commit.ts:135`
+- `writeDecision` `oakridge-dbos/src/storage/commit.ts:137`
+- `writeDecision` `oakridge-dbos/src/storage/commit.ts:153`
+- `writeDecision` `oakridge-dbos/src/storage/commit.ts:155`
+- `writeDecision` `oakridge-dbos/src/storage/commit.ts:157`
+- `writeDecision` `oakridge-dbos/src/storage/commit.ts:160`
+- `writeDecision` `oakridge-dbos/src/storage/commit.ts:163`

@@ -86,9 +86,17 @@ function requiredEmptyStringField(bundle: WorkflowDefinitionDescriptor): Sampled
   return sampled;
 }
 
+/**
+ * The authority pages GET /api/runs and GET /api/definitions, so a mocked list
+ * body carries the page envelope the client's CursorPage reads. A bare array
+ * here would leave `page.items` undefined and fail inside readAllPages rather
+ * than in the view under test.
+ */
+const cursorPage = (items: readonly unknown[]): Response => Response.json({ items, next_cursor: null });
+
 /** Serves one pinned bundle and accepts the launch it produces. */
 const launchFetch = (bundle: WorkflowDefinitionDescriptor) => vi.fn(async (url: string, init?: RequestInit) => {
-  if (url.endsWith("/definitions")) return Response.json([{ bundle_id: "pinned", digest: "pinned-digest", source: bundle }]);
+  if (url.endsWith("/definitions")) return cursorPage([{ bundle_id: "pinned", digest: "pinned-digest", source: bundle }]);
   if (url.endsWith("/runs") && init?.method === "POST") return Response.json({ run_id: "new-run" }, { status: 201 });
   throw new Error(url);
 });
@@ -109,7 +117,7 @@ afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clea
 test("pins the edited JSON definition for a fresh operator database", async () => {
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
     if (url === "/oakridge/api/api/definitions" && init?.method === "GET")
-      return Response.json([{ bundle_id: "seed", digest: "seed-digest", source: canonicalDefinition }]);
+      return cursorPage([{ bundle_id: "seed", digest: "seed-digest", source: canonicalDefinition }]);
     if (url === "/oakridge/api/api/definitions" && init?.method === "POST") return Response.json({ bundle_id: "bundle-1", digest: "sha-1" }, { status: 201 });
     throw new Error(`Unexpected request: ${url}`);
   });
@@ -123,7 +131,7 @@ test("pins the edited JSON definition for a fresh operator database", async () =
 });
 
 test("an empty catalog does not seed the editor from a bundled definition", async () => {
-  vi.stubGlobal("fetch", vi.fn(async () => Response.json([])));
+  vi.stubGlobal("fetch", vi.fn(async () => cursorPage([])));
   renderWithQuery(<OperatorDefinitionEditorView cloneFromId={null} onBack={() => undefined} onPinned={() => undefined} />);
   await screen.findByLabelText("Source bundle");
   expect(screen.getByLabelText<HTMLTextAreaElement>("Source bundle").value).toBe("");
@@ -136,7 +144,7 @@ test("the third bundle renders its extra root input as JSON and round-trips the 
   if (!extra) throw new Error("root input has no fields");
   if (!extra.label.endsWith(" JSON")) throw new Error(`${extra.key} no longer needs a JSON fallback`);
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
-    if (url.endsWith("/definitions")) return Response.json([{ bundle_id: "third", digest: "third-digest", source: bundle }]);
+    if (url.endsWith("/definitions")) return cursorPage([{ bundle_id: "third", digest: "third-digest", source: bundle }]);
     if (url.endsWith("/runs") && init?.method === "POST") return Response.json({ run_id: "new-run" }, { status: 201 });
     throw new Error(url);
   });
@@ -168,7 +176,7 @@ test.each(["development", "development-independent-siblings", "development-verif
     savePendingCommand({ run_id: "pinned-run", scope_id: "pinned-scope", command_key: recoveryCommand.key,
       owner_version: 1, targets: [], request_id: `recover-${name}`, payload: {} });
     const fetch = vi.fn(async (url: string, init?: RequestInit) => {
-      if (url.endsWith("/definitions")) return Response.json([{ bundle_id: name, digest: name, source: bundle }]);
+      if (url.endsWith("/definitions")) return cursorPage([{ bundle_id: name, digest: name, source: bundle }]);
       if (url.endsWith("/runs/pinned-run/definition")) return Response.json({ bundle_id: name, digest: name, source: bundle });
       if (url.endsWith("/runs/pinned-run/scopes/pinned-scope/history")) return Response.json({ scope_id: "pinned-scope",
         transitions: [{ id: "transition", trigger_id: "trigger", version: 1, created_at: "2026-01-01T00:00:00Z", decision: { kind: "apply" } }],
@@ -200,7 +208,7 @@ test.each(["development", "development-independent-siblings", "development-verif
 
 test("launches a run using the pinned digest and entered root input", async () => {
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
-    if (url === "/oakridge/api/api/definitions") return Response.json([{ bundle_id: "bundle-1", digest: "sha-1", source: { key: "demo", version: 1 } }]);
+    if (url === "/oakridge/api/api/definitions") return cursorPage([{ bundle_id: "bundle-1", digest: "sha-1", source: { key: "demo", version: 1 } }]);
     if (url === "/oakridge/api/runs" && init?.method === "POST") return Response.json({ run_id: "run-1" }, { status: 201 });
     throw new Error(`Unexpected request: ${url}`);
   });
@@ -239,18 +247,18 @@ test("clone editing and pinning wait for the requested bundle, then preserve edi
   expect({ editable: !editor.disabled, canPin: !submit.disabled, source: editor.value }).toEqual({ editable: false, canPin: false, source: "" });
   fireEvent.submit(submit.closest("form") as HTMLFormElement);
   expect(fetch).toHaveBeenCalledTimes(1);
-  resolveCatalog(Response.json([{ bundle_id: "bundle-1", digest: "sha-1", source: { ...canonicalDefinition, version: 7 } }]));
+  resolveCatalog(cursorPage([{ bundle_id: "bundle-1", digest: "sha-1", source: { ...canonicalDefinition, version: 7 } }]));
   await waitFor(() => expect({ editable: !editor.disabled, canPin: !submit.disabled, version: JSON.parse(editor.value).version })
     .toEqual({ editable: true, canPin: true, version: 8 }));
   fireEvent.change(editor, { target: { value: "my edits" } });
-  fetch.mockResolvedValue(Response.json([{ bundle_id: "bundle-1", digest: "sha-1", source: canonicalDefinition }]));
+  fetch.mockResolvedValue(cursorPage([{ bundle_id: "bundle-1", digest: "sha-1", source: canonicalDefinition }]));
   await client.invalidateQueries({ queryKey: ["operator", "definitions"] });
   expect(editor.value).toBe("my edits");
 });
 
 test.each([
   { name: "failed", response: () => Response.json({ error: "catalog unavailable" }, { status: 503 }), message: /Could not load definition/ },
-  { name: "missing", response: () => Response.json([]), message: /Definition not found: missing-bundle/ },
+  { name: "missing", response: () => cursorPage([]), message: /Definition not found: missing-bundle/ },
 ])("a $name clone lookup reports the error and keeps editing and pinning blocked", async ({ response, message }) => {
   const fetch = vi.fn(async () => response());
   vi.stubGlobal("fetch", fetch);
@@ -265,7 +273,7 @@ test.each([
 test.each([503, 408, 429])("a %s launch response retains the original request for retry", async (status) => {
   const requests: unknown[] = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-    if (url.endsWith("/definitions")) return Response.json([{ bundle_id: "bundle-1", digest: "sha-1", source: { key: "demo", version: 1 } }]);
+    if (url.endsWith("/definitions")) return cursorPage([{ bundle_id: "bundle-1", digest: "sha-1", source: { key: "demo", version: 1 } }]);
     requests.push(JSON.parse(String(init?.body)));
     return requests.length === 1 ? Response.json({ error: "uncertain" }, { status }) : Response.json({ run_id: "run-1" }, { status: 201 });
   }));
@@ -281,7 +289,7 @@ test.each([503, 408, 429])("a %s launch response retains the original request fo
 
 test("a rejected launch unlocks the form for a corrected input", async () => {
   vi.stubGlobal("fetch", vi.fn(async (url: string) => url.endsWith("/definitions")
-    ? Response.json([{ bundle_id: "bundle-1", digest: "sha-1", source: { key: "demo", version: 1 } }])
+    ? cursorPage([{ bundle_id: "bundle-1", digest: "sha-1", source: { key: "demo", version: 1 } }])
     : Response.json({ error: "invalid root input" }, { status: 422 })));
   renderWithQuery(<OperatorLaunchView onBack={() => undefined} onCreated={() => undefined} onEdit={() => undefined} />);
   await screen.findByText(/demo v1/);
@@ -292,7 +300,7 @@ test("a rejected launch unlocks the form for a corrected input", async () => {
 });
 
 test("launch is not sent when its request identity cannot be persisted", async () => {
-  const fetch = vi.fn(async () => Response.json([{ bundle_id: "bundle-1", digest: "sha-1", source: { key: "demo", version: 1 } }]));
+  const fetch = vi.fn(async () => cursorPage([{ bundle_id: "bundle-1", digest: "sha-1", source: { key: "demo", version: 1 } }]));
   vi.stubGlobal("fetch", fetch);
   vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("storage unavailable"); });
   renderWithQuery(<OperatorLaunchView onBack={() => undefined} onCreated={() => undefined} onEdit={() => undefined} />);

@@ -176,7 +176,13 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
         for (let attempt = 0; attempt < 3; attempt++) {
           // Prepared sources are valid only for the first attempt. A conflict must
           // rebuild both the snapshot and its decision against fresh witnesses.
-          const source = attempt === 0 && input.prepared?.decision.source || await readSnapshot(db, input.scope_id, input.trigger);
+          const prepared_source = attempt === 0 ? input.prepared?.decision.source : undefined;
+          const reconstruction_started = performance.now();
+          const source = prepared_source ?? await readSnapshot(db, input.scope_id, input.trigger);
+          console.info(JSON.stringify({ event: "snapshot_reconstruction", scope_id: input.scope_id, attempt,
+            duration_ms: Number((performance.now() - reconstruction_started).toFixed(3)),
+            reused_prepared: prepared_source !== undefined, read_roots: source?.reads.length ?? 0,
+            observations: source?.snapshot.observations.length ?? 0, witness_rows: source?.read_set.rows.length ?? 0 }));
           if (!source || source.owner.run_id !== input.run_id) return error("decide", input.scope_id, "scope not found in run");
           if (input.operator_version !== null && input.operator_version !== source.owner.version) return { ok: true, value: { kind: "Conflict", detail: "operator target changed; refresh decision" } };
           if (source.owner.is_terminal) return { ok: true, value: { kind: "Rejected", reason: "owner_terminal", detail: "owner is terminal" } };

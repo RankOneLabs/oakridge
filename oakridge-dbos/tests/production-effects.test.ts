@@ -10,7 +10,170 @@ import type { StableInvocation } from "../src/effects/provider";
 import { unit, withDatabase, waitUntil, operationBundle, sessionBundle, begin } from "./effect-fixture";
 import type { StartedRun } from "../src/storage/mutation-service";
 import { activeRoutes } from "../src/http/routes";
+import { Hono } from "hono";
+import { Pool } from "pg";
+import { mountOakridgeProxyRoutes } from "../../kbbl/core/server/handlers/oakridge-proxy";
+import { migrateEmptyDatabase } from "../src/storage/migrate";
+import { PgPostgresExecutor, type TransactionalSqlExecutor } from "../src/storage/sql-executor";
+import { readIntent } from "../src/effects/intents";
+import { readInbox } from "../src/storage/projection-reader";
+import { bundleContentHash } from "../src/core-client/bundle-content-hash";
+import { installDefinitionApi } from "../src/http/app";
+import type { CoreClient } from "../src/core-client/client";
+import type { MutationService } from "../src/storage/mutation-service";
+import { redactingView } from "../src/projections/serialization-view";
+import { sealEffectPayload, unsealEffectPayload, verifyEffectEncryption } from "../src/storage/effect-secret";
 import { developmentBundle, brief, repository, build_body } from "./development-runtime-fixture";
+
+process.env.OAKRIDGE_EFFECT_ENCRYPTION_KEY ??= Buffer.alloc(32, 17).toString("base64url");
+
+test("the outward serialization view removes publication credentials without changing replay bytes", () => {
+  const prompt = "Authorization: Bearer very-secret-token";
+  const source = { invocation: { bytes: prompt }, publication_secret_hash: "secret-hash" };
+  expect(JSON.stringify(redactingView(source))).not.toContain("very-secret-token");
+  expect(JSON.stringify(redactingView(source))).not.toContain("secret-hash");
+  expect(source.invocation.bytes).toBe(prompt);
+});
+
+test("effect bytes are encrypted at rest and a missing or wrong key fails verification", async () => {
+  const payload = { action: "start", handle: null, invocation: { id: "id", execution_id: "execution", selection: {},
+    bytes: "Authorization: Bearer secret" } } as unknown as EffectPayload;
+  const sealed = sealEffectPayload(payload);
+  expect(JSON.stringify(sealed)).not.toContain("Bearer secret");
+  expect(unsealEffectPayload(sealed).invocation.bytes).toBe(payload.invocation.bytes);
+  const original = process.env.OAKRIDGE_EFFECT_ENCRYPTION_KEY;
+  const db = { query: async () => [{ payload: sealed }] } as unknown as TransactionalSqlExecutor;
+  try {
+    delete process.env.OAKRIDGE_EFFECT_ENCRYPTION_KEY;
+    await expect(verifyEffectEncryption(db)).rejects.toThrow("OAKRIDGE_EFFECT_ENCRYPTION_KEY");
+    process.env.OAKRIDGE_EFFECT_ENCRYPTION_KEY = Buffer.alloc(32, 19).toString("base64url");
+    await expect(verifyEffectEncryption(db)).rejects.toThrow("encryption key is wrong");
+  } finally {
+    if (original) process.env.OAKRIDGE_EFFECT_ENCRYPTION_KEY = original;
+  }
+});
+
+test("baseline inspection and application share an advisory-locked transaction", async () => {
+  const statements: string[] = [];
+  const tx = { query: async <Row extends object>(sql: string): Promise<readonly Row[]> => {
+    statements.push(sql);
+    if (sql.includes("server_version_num")) return [{ server_version_num: "150000" }] as unknown as readonly Row[];
+    if (sql.includes("to_regclass")) return [{ name: "authority.schema_baseline" }] as unknown as readonly Row[];
+    if (sql.includes("SELECT digest FROM authority.schema_baseline")) return [{ digest: "mismatch" }] as unknown as readonly Row[];
+    return [];
+  } };
+  const db: TransactionalSqlExecutor = { query: tx.query,
+    transaction: async (operation) => operation(tx) };
+  await expect(migrateEmptyDatabase(db)).rejects.toThrow("digest mismatch");
+  expect(statements.findIndex((sql) => sql.includes("pg_advisory_xact_lock"))).toBeGreaterThanOrEqual(0);
+  expect(statements.findIndex((sql) => sql.includes("pg_advisory_xact_lock"))).toBeLessThan(statements.findIndex((sql) => sql.includes("SELECT digest FROM authority.schema_baseline")));
+});
+
+test("two processes can apply the empty authority baseline concurrently exactly once", async () => {
+  const admin_url = process.env.OAKRIDGE_TEST_DATABASE_URL;
+  if (!admin_url) throw new Error("OAKRIDGE_TEST_DATABASE_URL is required");
+  const admin = new Pool({ connectionString: admin_url });
+  const name = `migration_${crypto.randomUUID().replaceAll("-", "")}`;
+  const url = new URL(admin_url);
+  url.pathname = `/${name}`;
+  await admin.query(`CREATE DATABASE ${name}`);
+  const first = PgPostgresExecutor.connect(url.href);
+  const second = PgPostgresExecutor.connect(url.href);
+  try {
+    await Promise.all([migrateEmptyDatabase(first), migrateEmptyDatabase(second)]);
+    const baselines = await first.query<{ count: number }>("SELECT count(*)::int AS count FROM authority.schema_baseline", []);
+    expect(baselines[0]?.count).toBe(1);
+  } finally {
+    await Promise.all([first.close(), second.close()]);
+    await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
+    await admin.end();
+  }
+});
+
+test("inbox materializes each distinct pinned bundle source once", async () => {
+  const fetched: string[] = [];
+  const tx = { query: async <Row extends object>(sql: string, parameters: readonly unknown[]): Promise<readonly Row[]> => {
+    if (sql.includes("FROM authority.scope_instance")) return [
+      { id: "scope-1", run_id: "run-1", definition_bundle_id: "bundle-1", version: 0, scope_key: "root", is_terminal: true },
+      { id: "scope-2", run_id: "run-1", definition_bundle_id: "bundle-1", version: 0, scope_key: "root", is_terminal: true },
+    ] as unknown as readonly Row[];
+    if (sql.includes("FROM authority.definition_bundle")) {
+      fetched.push(String(parameters[0]));
+      return [{ id: "bundle-1", source: { scopes: [{ key: "root", commands: [] }] } }] as unknown as readonly Row[];
+    }
+    return [];
+  } };
+  const db = { query: tx.query, transaction: async (operation: (executor: typeof tx) => Promise<unknown>) => operation(tx) } as unknown as TransactionalSqlExecutor;
+  const page = await readInbox(db);
+  expect(page.cursor).toHaveLength(2);
+  expect(fetched).toHaveLength(1);
+});
+
+test("bundle content hash is stable across equivalent sources and refuses cycles", () => {
+  expect(bundleContentHash({ key: "one", nested: [1, 2] })).toBe(bundleContentHash({ key: "one", nested: [1, 2] }));
+  expect(bundleContentHash({ key: "two" })).not.toBe(bundleContentHash({ key: "one" }));
+  const cycle: { self?: unknown } = {};
+  cycle.self = cycle;
+  expect(() => bundleContentHash(cycle)).toThrow("cycle");
+});
+
+test("run and definition pages expose stable next cursors and refuse malformed cursors", async () => {
+  const ids = ["00000000-0000-0000-0000-000000000002", "00000000-0000-0000-0000-000000000001"];
+  const query = async <Row extends object>(sql: string, parameters: readonly unknown[]): Promise<readonly Row[]> => {
+    if (sql.includes("SELECT id AS run_id,created_at FROM authority.run")) {
+      const after = parameters[1];
+      return ids.filter((id) => typeof after !== "string" || id < after).map((id) => ({ run_id: id, created_at: new Date("2026-01-01T00:00:00.000Z") })).slice(0, Number(parameters[2])) as unknown as readonly Row[];
+    }
+    if (sql.includes("SELECT * FROM authority.run WHERE id=")) return [{ id: parameters[0], definition_bundle_id: ids[0], version: 0 }] as unknown as readonly Row[];
+    if (sql.includes("SELECT source,digest FROM authority.definition_bundle")) return [{ source: { scopes: [] }, digest: "digest" }] as unknown as readonly Row[];
+    if (sql.includes("SELECT * FROM authority.scope_instance WHERE run_id=")) return [];
+    if (sql.includes("FROM authority.definition_bundle")) return ids.filter((id) => typeof parameters[0] !== "string" || id < parameters[0])
+      .map((id) => ({ bundle_id: id, digest: id, source: { key: id, scopes: [] } })).slice(0, Number(parameters[1])) as unknown as readonly Row[];
+    return [];
+  };
+  const db = { query, transaction: async (operation: (tx: { query: typeof query }) => Promise<unknown>) => operation({ query }) } as unknown as TransactionalSqlExecutor;
+  const app = new Hono();
+  installDefinitionApi(app, { db, core: {} as CoreClient, mutations: {} as MutationService, wake: async () => undefined });
+  for (const path of ["/api/runs", "/api/definitions"]) {
+    const first = await app.request(`${path}?limit=1`);
+    expect(first.status).toBe(200);
+    const first_page: { items: unknown[]; next_cursor: string | null } = await first.json();
+    expect(first_page.items).toHaveLength(1);
+    expect(first_page.next_cursor).not.toBeNull();
+    const second = await app.request(`${path}?limit=1&cursor=${encodeURIComponent(first_page.next_cursor ?? "")}`);
+    expect((await second.json() as { items: unknown[]; next_cursor: string | null }).items).toHaveLength(1);
+    expect((await app.request(`${path}?cursor=invalid`)).status).toBe(400);
+  }
+});
+
+test("every table write rejects non-JSON bodies and unlisted browser origins on both paths", async () => {
+  const previous = process.env.OAKRIDGE_ALLOWED_ORIGINS;
+  process.env.OAKRIDGE_ALLOWED_ORIGINS = "https://operator.example";
+  try {
+    await withDatabase(async ({ url }) => {
+      const composition = await createProductionComposition({ database_url: url,
+        core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1" });
+      const proxy = new Hono();
+      mountOakridgeProxyRoutes(proxy, { baseUrl: "http://oakridge.test", allowedOrigins: ["https://operator.example"] });
+      try {
+        for (const route of activeRoutes(process.env.OAKRIDGE_ENABLE_RAW_INGRESS === "1").filter((item) => item.method !== "GET")) {
+          const path = route.path.replace(/:[^/]+/g, "id");
+          for (const [headers, expected] of [
+            [{ "content-type": "text/plain" }, 415],
+            [{ "content-type": "application/json", origin: "http://127.0.0.1:5173" }, 403],
+          ] as const) {
+            const options = { method: route.method, headers: new Headers(headers), body: "{}" };
+            expect((await composition.app.request(path, options)).status).toBe(expected);
+            expect((await proxy.request(`/oakridge/api${path}`, options)).status).toBe(expected);
+          }
+        }
+      } finally { await composition.close(); }
+    });
+  } finally {
+    if (previous === undefined) delete process.env.OAKRIDGE_ALLOWED_ORIGINS;
+    else process.env.OAKRIDGE_ALLOWED_ORIGINS = previous;
+  }
+});
 
 test("recovery replays the pinned prompt verbatim and its secret publishes without operator authority", async () => {
   const requests: string[] = [];
@@ -42,12 +205,15 @@ test("recovery replays the pinned prompt verbatim and its secret publishes witho
             expected_scope_version: 0, targets: [] }) });
         expect(begin.status).toBe(202);
         await waitUntil(async () => requests.length >= 2);
-        const pinned = (await db.query<{ payload: EffectPayload }>(
-          "SELECT payload FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='start'", [run.root_scope_id]))[0]?.payload.invocation;
+        const stored = (await db.query<{ id: string; payload: EffectPayload }>(
+          "SELECT id,payload FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='start'", [run.root_scope_id]))[0];
+        const pinned = stored ? (await readIntent(db, stored.id))?.payload.invocation : null;
         if (!pinned) throw new Error("persisted invocation missing");
         expect(requests).toEqual(requests.map(() => pinned.bytes));
         const secret = requests[1]?.match(/Authorization: Bearer ([A-Za-z0-9_-]+)/)?.[1];
         if (!secret) throw new Error("replayed prompt lacks publication credential");
+        expect(JSON.stringify(stored?.payload)).not.toContain(secret);
+        expect(stored?.payload.invocation.bytes.startsWith("enc:v1:")).toBe(true);
         const execution_path = `${scope_path}/executions/${pinned.execution_id}`;
         expect((await composition.app.request(`${execution_path}/contract`, {
           headers: { authorization: `Bearer ${secret}` } })).status).toBe(200);
@@ -114,13 +280,13 @@ test("rejection after uncertainty cleans up even when its evidence makes the run
           outcome: { kind: "literal", schema: "result", value: { kind: "withdrawn", value: {} } } } }] } }] };
     const run = await begin(composition, bundle, { repository_path: "/tmp", expected_head: null });
     await waitUntil(async () => stopped.length > 0 && (await db.query<{ is_terminal: boolean }>("SELECT is_terminal FROM authority.scope_instance WHERE id=$1", [run.root_scope_id]))[0]?.is_terminal === true);
-    const deletion = await composition.app.request(`http://localhost/runs/${run.run_id}`, { method: "DELETE" });
+    const deletion = await composition.app.request(`http://localhost/runs/${run.run_id}`, { method: "DELETE", headers: { "content-type": "application/json" }, body: "{}" });
     expect(deletion.status).toBe(409);
     can_confirm_stop = true;
     await waitUntil(async () => (await db.query<{ status: string }>("SELECT status FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='stop'", [run.root_scope_id]))[0]?.status === "cleanup_confirmed");
     const start = await db.query<{ payload: EffectPayload }>("SELECT payload FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='start'", [run.root_scope_id]);
-    expect(stopped.every((invocation) => invocation.bytes === start[0]?.payload.invocation.bytes)).toBe(true);
-    expect((await composition.app.request(`http://localhost/runs/${run.run_id}`, { method: "DELETE" })).status).toBe(200);
+    expect(stopped.every((invocation) => invocation.bytes === (start[0] ? unsealEffectPayload(start[0].payload).invocation.bytes : null))).toBe(true);
+    expect((await composition.app.request(`http://localhost/runs/${run.run_id}`, { method: "DELETE", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(200);
   } finally { await composition.close(); }
 }));
 
@@ -194,7 +360,8 @@ test("production PR discovery retries a real HTTP 503 and persists its selected 
         is_available = true;
         await waitUntil(async () => (await db.query<{ is_terminal: boolean }>("SELECT is_terminal FROM authority.scope_instance WHERE id=$1", [run.root_scope_id]))[0]?.is_terminal === true);
         const after = await db.query<{ payload: EffectPayload }>("SELECT payload FROM authority.effect_intent WHERE scope_id=$1", [run.root_scope_id]);
-        expect(after[0]?.payload.invocation.bytes).toBe(before[0]?.payload.invocation.bytes);
+        expect(after[0] && unsealEffectPayload(after[0].payload).invocation.bytes)
+          .toBe(before[0] && unsealEffectPayload(before[0].payload).invocation.bytes);
         expect((await db.query<{ count: string }>("SELECT count(*)::text AS count FROM authority.fact WHERE fact_key='pr_observed'", []))[0]?.count).toBe("1");
       } finally { await composition.close(); }
     });

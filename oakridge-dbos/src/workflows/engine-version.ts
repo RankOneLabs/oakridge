@@ -9,6 +9,7 @@ import { resolve } from "node:path";
  */
 export const ENGINE_SOURCE_MANIFEST: readonly string[] = [
   "adapters/kbbl.ts",
+  "core-client/bundle-content-hash.ts",
   "core-client/client.ts",
   "core-client/generated-contracts.ts",
   "core-client/observation-roots.ts",
@@ -36,6 +37,7 @@ export const ENGINE_SOURCE_MANIFEST: readonly string[] = [
   "storage/command-selection.ts",
   "storage/commit.ts",
   "storage/effect-results.ts",
+  "storage/effect-secret.ts",
   "storage/launch-receipts.ts",
   "storage/lifecycle-trigger.ts",
   "storage/mutation-service.ts",

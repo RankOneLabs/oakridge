@@ -6,6 +6,7 @@ import { deletionEligibility, pendingCleanupCount, requiresCleanup, type EffectP
 import { selectedInvocation, type InvocationId } from "../src/effects/provider";
 import { cancelRun, createMutationService, deleteRun } from "../src/storage/mutation-service";
 import { claimStartAttempt, persistEffectResult } from "../src/storage/effect-results";
+import { sealEffectPayload, unsealEffectPayload } from "../src/storage/effect-secret";
 import type { ScopeId } from "../src/storage/schema-records";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
 import { unit, withDatabase } from "./effect-fixture";
@@ -14,6 +15,7 @@ const selection = { definition: { operation: "run", contract_version: 1, deadlin
   max_attempts: 1, outputs: [], settings: [], tools: [] }, input: { schema: "input", data: { kind: "string", value: "pinned" } },
   selection: { worker: "agent", action: "build" } } satisfies Invocation;
 const start: EffectPayload = { action: "start", handle: null, invocation: selectedInvocation("invocation-1" as InvocationId, "execution-1", selection) };
+process.env.OAKRIDGE_EFFECT_ENCRYPTION_KEY ??= Buffer.alloc(32, 17).toString("base64url");
 
 test("cleanup is owed exactly when an external execution may exist", () => {
   expect(requiresCleanup({ status: "pending", payload: start })).toBe(false);
@@ -33,14 +35,14 @@ test("cancelling an uncertain start retains its identity in a stop intent", asyn
     query: async (sql: string, parameters: readonly unknown[]) => {
       if (sql.includes("SELECT id FROM authority.run")) return [{ id: "run" }];
       if (sql.includes("FROM authority.effect_intent i") && sql.includes("FOR UPDATE OF i"))
-        return [{ id: "start", scope_id: "scope", execution_id: "execution-1", effect_key: "start", payload: { ...start, has_dispatched: true, has_uncertain_start: true }, status: "pending", version: 1 }];
+        return [{ id: "start", scope_id: "scope", execution_id: "execution-1", effect_key: "start", payload: sealEffectPayload({ ...start, has_dispatched: true, has_uncertain_start: true }), status: "pending", version: 1 }];
       if (sql.includes("INSERT INTO authority.effect_intent")) { inserted.push(parameters); return [{ id: parameters[0] }]; }
       return [];
     },
   } as unknown as TransactionalSqlExecutor;
   expect(await cancelRun(db, { kind: "cancel_run", run_id: "run", reason: "operator" })).toEqual({ kind: "cancelled", stop_intents: 1 });
   const stop = JSON.parse(String(inserted[0]?.[4])) as EffectPayload;
-  expect(stop.invocation.id).toBe(start.invocation.id);
+  expect(unsealEffectPayload(stop).invocation.id).toBe(start.invocation.id);
   expect(stop.handle).toBeNull();
 });
 
@@ -54,7 +56,7 @@ test("a cancellation that lands before dispatch wins: the provider is never call
   await db.query("INSERT INTO authority.run (id,definition_bundle_id) VALUES ('run','bundle')", []);
   await db.query("INSERT INTO authority.scope_instance (id,run_id,scope_key,input,local_state) VALUES ('scope','run','scope','{}','{}')", []);
   await db.query("INSERT INTO authority.execution (id,scope_id,worker_key,generation,status) VALUES ('execution-1','scope','agent',1,'pending')", []);
-  await db.query("INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload) VALUES ('start','scope','execution-1','ingress:0',$1)", [JSON.stringify(start)]);
+  await db.query("INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload) VALUES ('start','scope','execution-1','ingress:0',$1)", [JSON.stringify(sealEffectPayload(start))]);
   // The effect workflow has loaded the pending row; cancellation commits before it claims dispatch.
   expect(await cancelRun(db, { kind: "cancel_run", run_id: "run", reason: "operator" })).toEqual({ kind: "cancelled", stop_intents: 0 });
   expect(await claimStartAttempt(db, "start")).toBeNull();
@@ -70,7 +72,7 @@ test("a start rejected after an uncertain attempt stays rejected and still recei
   await db.query("INSERT INTO authority.run (id,definition_bundle_id) VALUES ('run','bundle')", []);
   await db.query("INSERT INTO authority.scope_instance (id,run_id,scope_key,input,local_state) VALUES ('scope','run','scope','{}','{}')", []);
   await db.query("INSERT INTO authority.execution (id,scope_id,worker_key,generation,status) VALUES ('execution-1','scope','agent',1,'pending')", []);
-  await db.query("INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload,status) VALUES ('start','scope','execution-1','ingress:0',$1,'rejected')", [JSON.stringify({ ...start, has_dispatched: true, has_uncertain_start: true })]);
+  await db.query("INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload,status) VALUES ('start','scope','execution-1','ingress:0',$1,'rejected')", [JSON.stringify(sealEffectPayload({ ...start, has_dispatched: true, has_uncertain_start: true }))]);
   expect(await pendingCleanupCount(db, "run")).toBe(1);
   expect(await cancelRun(db, { kind: "cancel_run", run_id: "run", reason: "operator" })).toEqual({ kind: "cancelled", stop_intents: 1 });
   const rows = await db.query<{ effect_key: string; status: string }>("SELECT effect_key,status FROM authority.effect_intent ORDER BY effect_key", []);
@@ -84,12 +86,13 @@ test.each([false, true])("recording rejection creates cleanup only after an unce
   await db.query("INSERT INTO authority.run (id,definition_bundle_id) VALUES ('run','bundle')", []);
   await db.query("INSERT INTO authority.scope_instance (id,run_id,scope_key,input,local_state) VALUES ('scope','run','scope','{}','{}')", []);
   await db.query("INSERT INTO authority.execution (id,scope_id,worker_key,generation,status) VALUES ('execution-1','scope','agent',1,'pending')", []);
-  await db.query("INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload) VALUES ('start','scope','execution-1','ingress:0',$1)", [JSON.stringify(start)]);
+  await db.query("INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload) VALUES ('start','scope','execution-1','ingress:0',$1)", [JSON.stringify(sealEffectPayload(start))]);
   const input = { intent_id: "start", status: "rejected" as const, payload: { ...start, has_dispatched: true, has_uncertain_start }, terminal_result: null };
   await persistEffectResult(db, input);
   await persistEffectResult(db, input); // replay must preserve the one stop identity
   const stops = await db.query<{ payload: EffectPayload; status: string }>("SELECT payload,status FROM authority.effect_intent WHERE payload->>'action'='stop'", []);
-  expect(stops).toEqual(has_uncertain_start ? [{ status: "cleanup_pending", payload: { action: "stop", handle: null, invocation: start.invocation } }] : []);
+  expect(stops.map((stop) => ({ ...stop, payload: unsealEffectPayload(stop.payload) })))
+    .toEqual(has_uncertain_start ? [{ status: "cleanup_pending", payload: { action: "stop", handle: null, invocation: start.invocation } }] : []);
 }));
 
 test("selected invocation survives cancellation and blocks deletion until stop is acknowledged", async () => withDatabase(async ({ db }) => {
@@ -98,7 +101,7 @@ test("selected invocation survives cancellation and blocks deletion until stop i
   await db.query("INSERT INTO authority.scope_instance (id,run_id,scope_key,input,local_state) VALUES ('scope','run','scope','{}','{}')", []);
   await db.query("INSERT INTO authority.execution (id,scope_id,worker_key,generation,status) VALUES ('execution-1','scope','agent',1,'pending')", []);
   await db.query("INSERT INTO authority.execution_selection (id,scope_id,worker_key,execution_id,generation) VALUES ('selection','scope','agent','execution-1',1)", []);
-  await db.query("INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload) VALUES ('start','scope','execution-1','ingress:0',$1)", [JSON.stringify(start)]);
+  await db.query("INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload) VALUES ('start','scope','execution-1','ingress:0',$1)", [JSON.stringify(sealEffectPayload(start))]);
   expect(await pendingCleanupCount(db, "run")).toBe(0);
   await db.query("UPDATE authority.effect_intent SET payload=payload||'{\"has_dispatched\":true,\"has_uncertain_start\":true}' WHERE id='start'", []);
   expect(await pendingCleanupCount(db, "run")).toBe(1);
@@ -143,7 +146,7 @@ test("start attempt reservations stop at the pinned limit across payload reloads
   await db.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ('bundle','digest','{}','{}')", []);
   await db.query("INSERT INTO authority.run (id,definition_bundle_id) VALUES ('run','bundle')", []);
   await db.query("INSERT INTO authority.scope_instance (id,run_id,scope_key,input,local_state) VALUES ('scope','run','scope','{}','{}')", []);
-  await db.query("INSERT INTO authority.effect_intent (id,scope_id,effect_key,payload) VALUES ('start','scope','ingress:0',$1)", [JSON.stringify(start)]);
+  await db.query("INSERT INTO authority.effect_intent (id,scope_id,effect_key,payload) VALUES ('start','scope','ingress:0',$1)", [JSON.stringify(sealEffectPayload(start))]);
   const first = await claimStartAttempt(db, "start");
   const second = await claimStartAttempt(db, "start");
   const rows = await db.query<{ payload: EffectPayload }>("SELECT payload FROM authority.effect_intent WHERE id='start'", []);

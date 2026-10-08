@@ -1,6 +1,12 @@
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { Pool } from "pg";
+
+// createProductionComposition refuses to start without an effect-encryption
+// key. This file boots a real composition but imports no fixture that defaults
+// one, so it supplies its own the way the other direct-boot suites do.
+process.env.OAKRIDGE_EFFECT_ENCRYPTION_KEY ??= Buffer.alloc(32, 17).toString("base64url");
+
 import { readSnapshot } from "../src/storage/snapshot-reader";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";

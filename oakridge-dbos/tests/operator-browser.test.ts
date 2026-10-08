@@ -112,7 +112,7 @@ test("an empty definition catalog accepts a compiled bundle and lists its digest
   const db = { async query(sql: string, parameters: readonly unknown[]) {
     if (sql.startsWith("INSERT INTO authority.definition_bundle")) { catalog.push({ bundle_id: String(parameters[0]), digest: String(parameters[1]), source }); return []; }
     if (sql.includes("WHERE digest=$1")) return catalog.filter((item) => item.digest === parameters[0]);
-    if (sql.includes("FROM authority.definition_bundle ORDER BY")) return catalog;
+    if (sql.includes("FROM authority.definition_bundle") && sql.includes("ORDER BY id DESC")) return catalog;
     return [];
   } } as unknown as TransactionalSqlExecutor;
   const mutations = { async pinDefinition() {
@@ -125,7 +125,7 @@ test("an empty definition catalog accepts a compiled bundle and lists its digest
   const pinned = await app.request("/api/definitions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(source) });
   const listed = await app.request("/api/definitions");
   expect({ pin_status: pinned.status, list_status: listed.status, rows: await listed.json() })
-    .toMatchObject({ pin_status: 201, list_status: 200, rows: [{ digest: "sha-1", source: { key: "demo" } }] });
+    .toMatchObject({ pin_status: 201, list_status: 200, rows: { items: [{ digest: "sha-1", source: { key: "demo" } }], next_cursor: null } });
 });
 
 test("a digest launch resolves the pinned bundle before run creation", async () => {
@@ -155,7 +155,8 @@ test("an empty database lists, pins, launches and projects a run by digest", asy
       const app = composition.app;
       const emptyDefinitions = await app.request("/api/definitions");
       const emptyRuns = await app.request("/api/runs");
-      expect({ definitions: await emptyDefinitions.json(), runs: await emptyRuns.json() }).toEqual({ definitions: [], runs: [] });
+      expect({ definitions: await emptyDefinitions.json(), runs: await emptyRuns.json() })
+        .toEqual({ definitions: { items: [], next_cursor: null }, runs: { items: [], next_cursor: null } });
       const bundle: DefinitionBundle = await Bun.file(resolve(root, "workflow-core/fixtures/bundles/minimal.json")).json();
       const pinned = await app.request("/api/definitions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(bundle) });
       expect(pinned.status).toBe(201);
@@ -177,7 +178,7 @@ test("an empty database lists, pins, launches and projects a run by digest", asy
       }
       const runs = await app.request("/api/runs");
       const history = await app.request(`/api/runs/${run.run_id}/scopes/${run.root_scope_id}/history`);
-      expect({ runs: await runs.json(), history: await history.json() }).toMatchObject({ runs: [{ run_id: run.run_id, definition_digest: definition.digest }],
+      expect({ runs: await runs.json(), history: await history.json() }).toMatchObject({ runs: { items: [{ run_id: run.run_id, definition_digest: definition.digest }], next_cursor: null },
         history: { scope_id: run.root_scope_id, transitions: [], facts: [] } });
     } finally { await composition.close(); }
   });

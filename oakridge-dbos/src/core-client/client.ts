@@ -1,6 +1,7 @@
 import { CORE_MAX_FRAME_BYTES, CORE_MAX_RESPONSE_BYTES, CORE_PROTOCOL_VERSION, decodeCoreResponse, hasSafeWireNumbers, type CoreRequest, type CoreResponseResult, type CoreTransportKind, type DefinitionBundle, type Output } from "./generated-contracts";
 import { transportFailure, type CoreResult } from "./transport-errors";
 import { PROVIDER_CATALOG } from "../effects/provider-catalog";
+import { bundleContentHash } from "./bundle-content-hash";
 interface Pending { readonly resolve: (result: CoreResult<Output>) => void; readonly frame: string; timeout: ReturnType<typeof setTimeout> | null }
 interface ChildFault { readonly kind: CoreTransportKind; readonly detail: string; readonly generation: number; readonly request_id?: string }
 export interface CoreChildHealth { readonly pid: number | null; readonly uptime_ms: number | null; readonly restart_count: number; readonly last_stderr_lines: readonly string[] }
@@ -198,7 +199,7 @@ export class CoreClient {
     const bundle = input.bundle;
     // Same boundary as `send`: a BigInt or cycle in the bundle is a typed transport failure, not a rejection.
     let cacheKey: string;
-    try { cacheKey = JSON.stringify(bundle); }
+    try { cacheKey = bundleContentHash(bundle); }
     catch (cause) { return transportFailure("malformed_frame", String(cause)); }
     if (operation === "compile") return this.compileBundle(bundle, cacheKey);
     let digest = this.digestFor(cacheKey);
