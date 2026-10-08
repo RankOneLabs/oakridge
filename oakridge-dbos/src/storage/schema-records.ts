@@ -1,32 +1,44 @@
-import type { EffectPayload } from "../effects/intents";
-import type { CheckedValue, DecisionOutcome, DefinitionBundle, Materialization } from "../core-client/generated-contracts";
+import type * as Rows from "./generated-records";
+import type { ExecutionId, PoolId, RevisionId, RunId, ScopeId } from "../domain/primitives";
+import type { Materialization } from "../core-client/generated-contracts";
 
-export type Id<Kind extends string> = string & { readonly __id_kind: Kind };
-export type RunId = Id<"run">;
-export type ScopeId = Id<"scope">;
-export type ExecutionId = Id<"execution">;
-export type RevisionId = Id<"revision">;
-export type PoolId = Id<"pool">;
+export type { ExecutionId, PoolId, RevisionId, RunId, ScopeId } from "../domain/primitives";
+export type { ChildCollectionMember, CommitReceipt } from "./json-column-types";
+
+/**
+ * Authority rows as read with `SELECT *`. Columns, nullability and jsonb types
+ * come from generated-records.ts; this layer only names which id columns carry
+ * which brand. A brand on a nullable column stays nullable.
+ */
+type Branded<Row, Ids extends { readonly [Column in keyof Ids]: Column extends keyof Row ? string : never }> =
+  Readonly<Omit<Row, keyof Ids> & { readonly [Column in keyof Ids]: Column extends keyof Row ? null extends Row[Column] ? Ids[Column] | null : Ids[Column] : never }>;
+
+/** Generated from the authority.effect_status and authority.execution_status enums. */
+export type EffectStatus = Rows.effect_status;
+export type ExecutionStatus = Rows.execution_status;
+
 export type Version = number;
+/** Any authority row that carries optimistic-concurrency state. */
 export interface VersionedRecord { readonly id: string; readonly version: Version }
-export interface DefinitionBundleRecord extends VersionedRecord { readonly digest: string; readonly source: DefinitionBundle; readonly checked_program: import("../core-client/generated-contracts").CompiledBundle }
-export interface RunRecord extends VersionedRecord { readonly definition_bundle_id: string; readonly created_at: Date }
-export interface ScopeInstanceRecord extends VersionedRecord { readonly run_id: RunId; readonly parent_id: ScopeId | null; readonly scope_key: string; readonly child_key: string | null; readonly collection_key?: string | null; readonly input: CheckedValue; readonly local_state: CheckedValue; readonly outcome: CheckedValue | null; readonly is_terminal: boolean }
-export interface ScopeExportRecord extends VersionedRecord { readonly scope_id: ScopeId; readonly export_key: string; readonly value: CheckedValue }
-export interface ChildCollectionMember { readonly id: ScopeId; readonly key: string; readonly depends_on: readonly string[] }
-export interface ChildCollectionRecord extends VersionedRecord { readonly scope_id: ScopeId; readonly collection_key: string; readonly members: readonly (string | ChildCollectionMember)[] }
-export interface ExecutionSelectionRecord extends VersionedRecord { readonly scope_id: ScopeId; readonly worker_key: string; readonly execution_id: ExecutionId | null; readonly generation: number }
-export interface ExecutionRecord extends VersionedRecord { readonly scope_id: ScopeId; readonly worker_key: string; readonly generation: number; readonly status: string; readonly result: CheckedValue | null }
-export interface ArtifactRevisionRecord extends VersionedRecord { readonly scope_id: ScopeId; readonly execution_id: ExecutionId | null; readonly output_key: string; readonly collection_key: string | null; readonly body: CheckedValue; readonly predecessor_id: RevisionId | null }
-export interface OutputSlotRecord extends VersionedRecord { readonly scope_id: ScopeId; readonly output_key: string; readonly collection_key: string; readonly current_revision_id: RevisionId | null }
-export interface FactRecord extends VersionedRecord { readonly scope_id: ScopeId; readonly fact_key: string; readonly payload: CheckedValue }
-export interface TransitionRecord extends VersionedRecord { readonly scope_id: ScopeId; readonly trigger_id: string; readonly decision: DecisionOutcome; readonly created_at: Date }
-export interface IngressReceiptRecord extends VersionedRecord { readonly run_id: RunId; readonly scope_id: ScopeId; readonly ingress_id: string; readonly request_digest: string; readonly result: CommitReceipt }
-export interface EffectIntentRecord extends VersionedRecord { readonly scope_id: ScopeId; readonly execution_id: ExecutionId | null; readonly effect_key: string; readonly payload: CheckedValue | EffectPayload; readonly status: string }
-export interface CapacityPoolRecord extends VersionedRecord { readonly id: PoolId; readonly run_id: RunId; readonly pool_key: string; readonly capacity: number }
-export interface CapacityReservationRecord extends VersionedRecord { readonly pool_id: PoolId; readonly scope_id: ScopeId; readonly is_active: boolean }
-export interface ResourceBindingRecord extends VersionedRecord { readonly scope_id: ScopeId; readonly resource_key: string; readonly observation: CheckedValue | null }
-export interface CommitReceipt { readonly transition_id: string; readonly scope_version: number }
+
+export type DefinitionBundleRecord = Readonly<Rows.DefinitionBundle>;
+export type PromptContentRecord = Readonly<Rows.PromptContent>;
+export type RunRecord = Branded<Rows.Run, { id: RunId }>;
+export type LaunchReceiptRecord = Branded<Rows.LaunchReceipt, { run_id: RunId; root_scope_id: ScopeId }>;
+export type ScopeInstanceRecord = Branded<Rows.ScopeInstance, { id: ScopeId; run_id: RunId; parent_id: ScopeId }>;
+export type ScopeExportRecord = Branded<Rows.ScopeExport, { run_id: RunId; scope_id: ScopeId }>;
+export type ChildCollectionRecord = Branded<Rows.ChildCollection, { run_id: RunId; scope_id: ScopeId }>;
+export type ExecutionSelectionRecord = Branded<Rows.ExecutionSelection, { run_id: RunId; scope_id: ScopeId; execution_id: ExecutionId }>;
+export type ExecutionRecord = Branded<Rows.Execution, { id: ExecutionId; run_id: RunId; scope_id: ScopeId }>;
+export type ArtifactRevisionRecord = Branded<Rows.ArtifactRevision, { id: RevisionId; run_id: RunId; scope_id: ScopeId; execution_id: ExecutionId; predecessor_id: RevisionId }>;
+export type OutputSlotRecord = Branded<Rows.OutputSlot, { run_id: RunId; scope_id: ScopeId; current_revision_id: RevisionId }>;
+export type FactRecord = Branded<Rows.Fact, { run_id: RunId; scope_id: ScopeId }>;
+export type TransitionRecord = Branded<Rows.Transition, { run_id: RunId; scope_id: ScopeId }>;
+export type IngressReceiptRecord = Branded<Rows.IngressReceipt, { run_id: RunId; scope_id: ScopeId }>;
+export type EffectIntentRecord = Branded<Rows.EffectIntent, { run_id: RunId; scope_id: ScopeId; execution_id: ExecutionId }>;
+export type CapacityPoolRecord = Branded<Rows.CapacityPool, { id: PoolId; run_id: RunId }>;
+export type CapacityReservationRecord = Branded<Rows.CapacityReservation, { run_id: RunId; pool_id: PoolId; scope_id: ScopeId }>;
+export type ResourceBindingRecord = Branded<Rows.ResourceBinding, { run_id: RunId; scope_id: ScopeId }>;
 
 // Wire payloads remain the generated Rust contracts; persistence adds identity and version.
 export type CompiledBundle = import("../core-client/generated-contracts").CompiledBundle;

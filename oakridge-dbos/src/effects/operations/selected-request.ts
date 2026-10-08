@@ -66,7 +66,7 @@ export function pinProviderRequest(input: ProviderRequestSelection): Result<Stab
   if (!manifest) return { ok: false, error: { operation: "pin_request", entity_id: invocation.id, detail: "pinned operation manifest missing" } };
   if (manifest.input_contract === INPUT_CONTRACTS.session) {
     if (!isRecord(decoded_config)) return { ok: false, error: { operation: "pin_request", entity_id: invocation.id, detail: "kbbl launch input must be a record" } };
-    const request: ExecutionRequest = { execution_id: invocation.execution_id as ExecutionId, stage_instance_id: scope.id as StageInstanceId,
+    const request: ExecutionRequest = { execution_id: invocation.execution_id as ExecutionId, stage_instance_id: scope.id as string as StageInstanceId,
       unit_id: unit_id as UnitId, executor_type: "delegated_session", resolved_config: { ...decoded_config,
         session_identity: { run_id: scope.run_id, stage_instance_id: scope.id, unit_id,
           cohort_id: scope.child_key, operator_role: invocation.selection.selection.worker },

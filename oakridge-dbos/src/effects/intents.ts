@@ -1,10 +1,11 @@
 import type { Trigger } from "../core-client/generated-contracts";
 import type { SqlExecutor } from "../storage/sql-executor";
+import type { EffectIntentRecord, EffectStatus } from "../storage/schema-records";
 import type { ExternalHandle, StableInvocation } from "./provider";
 import { unsealEffectPayload } from "../storage/effect-secret";
 
 /**
- * Durable effect intent states. The row is the authority on what the runtime
+ * Durable effect intent states (the authority.effect_status enum). The row is the authority on what the runtime
  * owes the outside world; DBOS owns the execution that moves a row between
  * these states, including retries, sleeps and recovery after a crash.
  *
@@ -15,7 +16,7 @@ import { unsealEffectPayload } from "../storage/effect-secret";
  * - `cleanup_pending`: a stop intent whose acknowledgement is still owed.
  * - `cleanup_confirmed`: a terminal observation (start) or acknowledged stop (stop).
  */
-export type EffectStatus = "pending" | "acknowledged" | "rejected" | "revoked" | "cleanup_pending" | "cleanup_confirmed";
+export type { EffectStatus };
 export type EffectFailure =
   | { readonly kind: "provider_rejection"; readonly code: string; readonly detail: string }
   | { readonly kind: "attempt_budget_exhausted"; readonly detail: string }
@@ -39,15 +40,8 @@ export interface EffectPayload {
   /** A start attempt ended without a definite answer; an external execution may exist. */
   readonly has_uncertain_start?: boolean;
 }
-export interface EffectIntent {
-  readonly id: string;
-  readonly scope_id: string;
-  readonly execution_id: string | null;
-  readonly effect_key: string;
-  readonly payload: EffectPayload;
-  readonly status: EffectStatus;
-  readonly version: number;
-}
+/** An effect_intent row with its payload unsealed. */
+export type EffectIntent = Omit<EffectIntentRecord, "run_id" | "payload"> & { readonly payload: EffectPayload };
 interface EffectRow extends Omit<EffectIntent, "version"> { readonly version: string | number }
 
 export async function readIntent(db: SqlExecutor, intent_id: string): Promise<EffectIntent | null> {

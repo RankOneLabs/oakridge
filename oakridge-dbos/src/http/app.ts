@@ -11,6 +11,7 @@ import { readScopeView, readRunView, readInbox } from "../storage/projection-rea
 import { listDefinitions, readPinnedDefinition } from "./definition-inspection";
 import type { DefinitionBundle } from "../core-client/generated-contracts";
 import { readScopeDiagnostics, readScopeHistory } from "./diagnostics";
+import type { RunPage } from "../projections/run-view";
 import { invocationInput } from "../effects/operations/selected-request";
 import { MAX_PUBLICATION_VALUE_BYTES, parsePublication, publicationReceipt, publicationRevisionId, publicationValueBytes } from "./publication";
 import { commandStatus, ConflictError, InternalFaultError, InvalidPayloadError, MalformedRequestError, MissingEntityError, parseScopeCommand, submitScopeCommand, type CommandError, type CommandResult } from "./scope-commands";
@@ -70,7 +71,8 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
     const runs = await Promise.all(selected.map((row) => readRunView(deps.db, row.run_id)));
     const last = selected.at(-1);
     const next_cursor = rows.length > page.limit && last ? Buffer.from(JSON.stringify({ created_at: new Date(last.created_at).toISOString(), id: last.run_id })).toString("base64url") : null;
-    return Response.json({ items: runs.filter((run) => run !== null), next_cursor });
+    const run_page: RunPage = { items: runs.filter((run) => run !== null), next_cursor };
+    return Response.json(run_page);
   } catch (cause) { return fault(cause); } });
   app.get("/api/definitions", async (c) => { try {
     const page = pageQuery(c.req.query("limit"), c.req.query("cursor"));

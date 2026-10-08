@@ -5,7 +5,8 @@ import { repository } from "./development-runtime-fixture";
 import { CoreClient } from "../src/core-client/client";
 import { promptWithActionInput } from "../src/effects/operations/selected-request";
 import { readAuthoredPrompt } from "../src/storage/prompt-content";
-import { createMutationService, type PinnedDefinition } from "../src/storage/mutation-service";
+import { createMutationService } from "../src/storage/mutation-service";
+import type { DefinitionSummary } from "../src/projections/definition-view";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
 import type { CheckedValue, DefinitionBundle, Snapshot } from "../src/core-client/generated-contracts";
 
@@ -50,7 +51,7 @@ test("prompt bytes and pinned digest reproduce the generated source", async () =
   }
   const core = client();
   try {
-    let saved: PinnedDefinition | null = null;
+    let saved: DefinitionSummary | null = null;
     const query = async (sql: string, params: unknown[]) => {
       if (sql.startsWith("INSERT INTO authority.definition_bundle")) { saved = { bundle_id: params[0] as string, digest: params[1] as string, source: bundle }; return []; }
       if (sql.includes("FROM authority.definition_bundle")) return saved ? [saved] : [];

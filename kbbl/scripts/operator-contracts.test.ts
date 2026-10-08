@@ -5,15 +5,18 @@ import { expect, test } from "bun:test";
 const root = resolve(import.meta.dir, "../..");
 const read = (path: string) => readFileSync(resolve(root, path), "utf8");
 
-test("live operator shapes are explicitly extracted from DBOS projections", () => {
-  const generator = read("kbbl/scripts/generate-operator-contracts.ts");
-  const projections = ["scope-view.ts", "inbox.ts"].map((file) => read(`oakridge-dbos/src/projections/${file}`)).join("\n");
-  for (const name of ["OperatorCheckedValue", "OperatorScopeView", "OperatorInbox", "OperatorInboxPage",
-    "OperatorSchema", "OperatorCommandDescriptor", "OperatorTargetRevision", "OperatorOutputSlot",
-    "OperatorPinnedDefinition", "OperatorDraftKey", "OperatorCommandSubmission", "OperatorCommandReceipt"]) {
-    expect(projections).toContain(`export interface ${name}`);
-    expect(generator).toContain(`"${name}"`);
-  }
+test("every operator API export is generated, and the PWA contract imports nothing", () => {
+  const api = read("oakridge-dbos/src/http/operator-api.ts");
+  const generated = read("kbbl/core/pwa/oakridge/operator-contracts.ts");
+  const exported = [...api.matchAll(/export type \{([^}]+)\}/g)].flatMap((match) => match[1]!.split(",").map((name) => name.trim()));
+  expect(exported.length).toBeGreaterThan(0);
+  for (const name of exported) expect(generated).toMatch(new RegExp(`export (interface|type) Operator${name}\\b`));
+  expect(generated).not.toMatch(/^import /m);
+});
+
+test("the backend declares no hand-mirrored operator wire types", () => {
+  const projections = ["scope-view.ts", "inbox.ts", "run-view.ts"].map((file) => read(`oakridge-dbos/src/projections/${file}`)).join("\n");
+  expect(projections).not.toMatch(/export (interface|type) Operator/);
 });
 
 test("operator contracts have no handwritten base dependency", () => {

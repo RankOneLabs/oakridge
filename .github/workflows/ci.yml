@@ -147,6 +147,9 @@ jobs:
       - run: chmod +x workflow-core/target/debug/workflow-cli
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
+      - name: Check generated storage records
+        if: matrix.shard == 0
+        run: bun oakridge-dbos/scripts/generate-storage-records.ts --check
       - name: Run DBOS integration shard
         env:
           TEST_SHARD: ${{ matrix.shard }}

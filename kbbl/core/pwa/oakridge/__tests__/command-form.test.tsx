@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { GenericOperatorRunView } from "../views/GenericOperatorRunView";
 import { afterEach, expect, test, vi } from "vitest";
 import { OperatorCommandForm } from "../components/organisms/OperatorCommandForm";
-import type { OperatorCommandDescriptor, OperatorScopeView } from "../operator-contracts";
+import type { OperatorCommandDefinition, OperatorScopeView } from "../operator-contracts";
 
 afterEach(() => { vi.unstubAllGlobals(); localStorage.clear(); });
 
@@ -12,7 +12,7 @@ const noteSchemas = (min_length: number) => [
   { key: "payload", shape: { kind: "record", fields: [{ key: "note", schema: "text", required: true }], dictionary: null } },
 ] as const;
 const noteCommand = { key: "act", label: "Act", consequence: "Go", payload_schema: "payload",
-  field_presentation: [], targets: [] } as unknown as OperatorCommandDescriptor;
+  field_presentation: [], targets: [] } as unknown as OperatorCommandDefinition;
 const noteScope = (scope_version: number) => ({ run_id: "run-one", scope_id: "scope-one", commands: [noteCommand], outputs: [],
   cursor: { scope_version, transition_id: null }, command_targets: { act: [] } }) as unknown as OperatorScopeView;
 

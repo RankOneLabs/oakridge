@@ -1,4 +1,5 @@
 import { findLaunchReceipt, type LaunchReceiptLookup } from "./launch-receipts";
+import type { DefinitionSummary } from "../projections/definition-view";
 import type { CoreResult } from "../core-client/transport-errors";
 import { stagePublications } from "./stage-publications";
 import { currentTargetRevisions, targetsMatch, type TargetRevision } from "./command-selection";
@@ -16,14 +17,13 @@ export interface CompileRequest { readonly bundle: DefinitionBundle }
 export interface CompileResult { readonly program: CompiledBundle }
 export interface StartRunRequest extends CompileRequest { readonly input: unknown; readonly request_id?: string }
 export interface StartPinnedRunRequest { readonly digest: string; readonly input: unknown; readonly request_id: string }
-export interface PinnedDefinition { readonly bundle_id: string; readonly digest: string; readonly source: DefinitionBundle }
 export interface EvaluationInput { readonly source: AuthoritySnapshot; readonly bundle: DefinitionBundle }
 export interface EvaluationResult { readonly decision: DecisionOutcome }
 export interface Decision { readonly source: AuthoritySnapshot; readonly outcome: DecisionOutcome }
 export interface PreparedDecision { readonly request_digest: string; readonly decision: Decision; readonly target_revisions?: readonly TargetRevision[] }
 export interface MutationInput { readonly request_digest?: string; readonly execution_authority?: string; readonly run_id: RunId; readonly scope_id: ScopeId; readonly ingress_id: string; readonly trigger: Trigger; readonly operator_version: number | null; readonly outputs?: readonly OutputPublication[]; readonly prepared?: PreparedDecision }
 export interface StartedRun { readonly run_id: RunId; readonly root_scope_id: ScopeId; readonly bundle_id: string }
-export interface MutationService { compile(request: CompileRequest): Promise<Result<CompileResult>>; pinDefinition(request: CompileRequest): Promise<Result<PinnedDefinition>>; startRun(request: StartRunRequest): Promise<Result<StartedRun>>; startRunByDigest(request: StartPinnedRunRequest): Promise<Result<StartedRun>>; decide(input: MutationInput): Promise<Result<CommitResult>> }
+export interface MutationService { compile(request: CompileRequest): Promise<Result<CompileResult>>; pinDefinition(request: CompileRequest): Promise<Result<DefinitionSummary>>; startRun(request: StartRunRequest): Promise<Result<StartedRun>>; startRunByDigest(request: StartPinnedRunRequest): Promise<Result<StartedRun>>; decide(input: MutationInput): Promise<Result<CommitResult>> }
 export interface ProviderCapabilityInput { readonly bundle: DefinitionBundle; readonly input: unknown }
 export interface ProviderCapabilities {
   readonly probe?: (kind: string) => Promise<Result<true>>;
@@ -54,6 +54,25 @@ export async function compileBundle(core: CoreClient, request: CompileRequest): 
   if (!response.ok) return error("compile", request.bundle.key, JSON.stringify(response.error));
   if (response.value.kind !== "compiled") return error("compile", request.bundle.key, "core returned a non-compiled response");
   return { ok: true, value: { program: response.value.value } };
+}
+/** Whether every published output still matches its declared schema. */
+export type PublicationCheck = { readonly kind: "valid" } | { readonly kind: "mismatch"; readonly output_key: string };
+/**
+ * Published outputs arrive as checked values from outside the core, so the
+ * core rechecks each against the schema its scope declares. Undeclared
+ * outputs are left to the commit's declaration check.
+ */
+export async function checkPublications(core: CoreClient, bundle: DefinitionBundle, scope_key: string, outputs: readonly OutputPublication[]): Promise<Result<PublicationCheck>> {
+  const scope = bundle.scopes.find((item) => item.key === scope_key);
+  for (const output of outputs) {
+    const declared = scope?.outputs.find((item) => item.key === output.output_key);
+    if (!declared) continue;
+    const checked = await core.request("validate_value", { bundle, schema: declared.schema, value: output.body });
+    if (checked.ok) continue;
+    if (checked.error.kind === "transport") return error("validate_publication", output.output_key, checked.error.detail.detail);
+    return { ok: true, value: { kind: "mismatch", output_key: output.output_key } };
+  }
+  return { ok: true, value: { kind: "valid" } };
 }
 /** The sole evaluator call; callers retain the core transport/domain error distinction. */
 export function requestEvaluation(core: CoreClient, input: EvaluationInput): Promise<CoreResult<Output>> {
@@ -97,7 +116,7 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
           await storePromptContents(tx, prompts.value);
           await tx.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ($1,$2,$3,$4) ON CONFLICT (digest) DO NOTHING",
             [bundle_id, compiled.value.program.digest, JSON.stringify(request.bundle), JSON.stringify(compiled.value.program)]);
-          return tx.query<PinnedDefinition>("SELECT id AS bundle_id,digest,source FROM authority.definition_bundle WHERE digest=$1", [compiled.value.program.digest]);
+          return tx.query<DefinitionSummary>("SELECT id AS bundle_id,digest,source FROM authority.definition_bundle WHERE digest=$1", [compiled.value.program.digest]);
         });
         if (!rows[0]) return error("pin_definition", compiled.value.program.digest, "stored definition missing");
         return { ok: true, value: rows[0] };
@@ -187,6 +206,11 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
           const bundles = await db.query<{ source: DefinitionBundle }>("SELECT b.source FROM authority.definition_bundle b JOIN authority.run r ON r.definition_bundle_id=b.id WHERE r.id=$1", [input.run_id]);
           const bundle = bundles[0]?.source;
           if (!bundle) return error("decide", input.run_id, "definition bundle missing");
+          if (attempt === 0) {
+            const publications = await checkPublications(core, bundle, source.owner.scope_key, staged_input.outputs ?? []);
+            if (!publications.ok) return publications;
+            if (publications.value.kind === "mismatch") return { ok: true, value: { kind: "Rejected", reason: "invalid", detail: "output schema mismatch" } };
+          }
           const staged = stagePublications(bundle, source, staged_input.outputs ?? []);
           if (!staged.ok) return staged;
           const evaluated: Result<EvaluationResult> = attempt === 0 && input.prepared

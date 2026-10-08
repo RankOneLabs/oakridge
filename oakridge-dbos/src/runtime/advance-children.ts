@@ -183,7 +183,7 @@ async function advanceChildrenInternal({ db, core, mutations, run_ids, ...page }
       const required = dependencies.flatMap((key) => {
         const collection = collections.find((item) => item.collection_key === key);
         if (!collection) return [scopes.find((item) => item.parent_id === parent?.id && item.child_key === key && (item.collection_key ?? null) === (scope.collection_key ?? null))];
-        return collection.members.map((member) => scopes_by_id.get(typeof member === "string" ? member : member.id));
+        return collection.members.map((member) => scopes_by_id.get(typeof member === "string" ? member as ScopeId : member.id));
       });
       if (required.some((item) => !item?.is_terminal)) return;
       if (child?.prerequisite_export && required.length) {

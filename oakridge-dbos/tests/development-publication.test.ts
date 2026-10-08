@@ -48,6 +48,22 @@ test("publication trigger mismatches are typed HTTP rejections and storage rejec
   } finally { f.core.close(); }
 }));
 
+test("the core rejects a published output whose checked body does not match its declared schema", async () => withDatabase(async ({ db }) => {
+  const bundle = await developmentBundle();
+  const f = await runtimeFixture(db, bundle, { brief, repository });
+  try {
+    await f.fact("begin");
+    const execution_id = await f.selected("build");
+    const forged = { schema: "build_body", data: { kind: "integer" as const, value: 1 } };
+    const decided = await f.mutations.decide({ run_id: f.run_id, scope_id: f.root_scope_id, ingress_id: "forged-output", operator_version: null,
+      trigger: { id: "forged-output", key: "build_submitted", payload: await f.checked("unit", {}) },
+      outputs: [{ scope_id: f.root_scope_id, output_key: "build_result", collection_key: "", execution_id,
+        predecessor_id: null, expected_slot_version: null, body: forged }] });
+    expect(decided).toMatchObject({ ok: true, value: { kind: "Rejected", detail: "output schema mismatch" } });
+    expect(await db.query("SELECT id FROM authority.artifact_revision WHERE scope_id=$1", [f.root_scope_id])).toEqual([]);
+  } finally { f.core.close(); }
+}));
+
 const publication_routes = HTTP_ROUTES.filter((route) => route.path.endsWith("/publications")
   || route.path.endsWith("/outputs/:output_key") || route.path.endsWith("/facts/:fact_key"));
 for (const route of publication_routes) {

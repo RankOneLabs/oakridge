@@ -1,6 +1,7 @@
 import { ExecutorStartRejectedError, type ExecutionRequest, type ExpectedArtifactContract, type ExecutorAdapter, type ExecutorObservationAttempt, type ExecutorTerminalObservation, type ExecutorUnavailable, type ExternalExecutionReference } from "../domain/execution";
 import type { ExecutionId, ExecutorOperationId, JsonValue, } from "../domain/primitives";
 import type { InvocationId, ProviderResult } from "../effects/provider";
+import type { ResumableEnsureRequest, ResumableEnsureResponse, ResumableInputRequest, ResumableSessionSnapshot, ResumableTerminalFailure } from "../../../kbbl/core/acp/resumable-wire";
 
 /**
  * How long kbbl may hold one observation request open. Well under kbbl's own
@@ -29,15 +30,13 @@ const terminal = (observation: ExecutorTerminalObservation): ExecutorObservation
 
 /**
  * The structured failure kbbl attaches to a terminal body when a session
- * ended badly (`toTerminalBody` in kbbl/core/acp/legacy-wire.ts). It is the
- * only place the actual reason survives: the exit code is always 1, so
- * without this a provisioning failure, a killed child, and a failed prompt
- * are indistinguishable to an operator reading the run record.
+ * ended badly (`ResumableTerminalFailure`). It is the only place the actual
+ * reason survives: the exit code is always 1, so without this a provisioning
+ * failure, a killed child, and a failed prompt are indistinguishable to an
+ * operator reading the run record. Any non-empty code is kept, so a code a
+ * newer kbbl adds still reaches the record.
  */
-interface KbblTerminalFailure {
-  readonly code: string;
-  readonly detail: string;
-}
+type KbblTerminalFailure = Omit<ResumableTerminalFailure, "code"> & { readonly code: string };
 
 /** Reads kbbl's `failure` sidecar off a terminal body; null when absent. */
 function parseTerminalFailure(raw: unknown): KbblTerminalFailure | null {
@@ -73,17 +72,9 @@ interface KbblResolvedConfig {
   readonly session_identity: KbblResolvedSessionIdentity;
 }
 
-interface KbblSessionSummary {
-  readonly sid: string;
-  readonly status: "starting" | "live" | "compacting" | "ended";
-  readonly endReason: "user_closed" | "subprocess_exited" | "compacted" | null;
-  readonly worktreeBaseRef: string | null;
-}
-
-interface EnsureSessionResponse {
-  readonly kind: "attached" | "started" | "terminal";
-  readonly session: KbblSessionSummary;
-}
+/** The part of a resumable session snapshot the adapter reads. */
+type KbblSessionSummary = Readonly<Pick<ResumableSessionSnapshot, "sid" | "status" | "endReason" | "worktreeBaseRef">>;
+interface EnsureSessionResponse { readonly kind: ResumableEnsureResponse["kind"]; readonly session: KbblSessionSummary }
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
@@ -154,7 +145,7 @@ const parseEnsureResponse = (value: unknown): EnsureSessionResponse => {
   }
   const status = session.status;
   if (status !== "starting" && status !== "live" && status !== "compacting" && status !== "ended") throw new Error("invalid kbbl session status");
-  const endReason = "endReason" in session && (session.endReason === "user_closed" || session.endReason === "subprocess_exited" || session.endReason === "compacted") ? session.endReason : null;
+  const endReason = "endReason" in session && (session.endReason === "user_closed" || session.endReason === "subprocess_exited") ? session.endReason : null;
   const worktreeBaseRef = "worktreeBaseRef" in session && typeof session.worktreeBaseRef === "string" ? session.worktreeBaseRef : null;
   return { kind, session: { sid: session.sid, status, endReason, worktreeBaseRef } };
 };
@@ -219,7 +210,7 @@ export function renderSessionStart(input: SessionStartSelection): ProviderResult
   let config: KbblResolvedConfig;
   try { config = parseResolvedConfig(request.resolved_config); }
   catch (error) { return { kind: "permanently_rejected", code: "start_rejected", detail: error instanceof Error ? error.message : String(error) }; }
-  return { kind: "acknowledged", value: { session_key: sessionKeyFor(operation_id, executor_function_identity), body: JSON.stringify({
+  const body: ResumableEnsureRequest = {
         initial_prompt: config.rendered_prompt,
         workdir: config.workdir,
         name: config.session_name,
@@ -238,7 +229,8 @@ export function renderSessionStart(input: SessionStartSelection): ProviderResult
           ...(config.session_identity.cohort_title ? { cohort_title: config.session_identity.cohort_title } : {}),
           ...(config.session_identity.repository_key ? { repository_key: config.session_identity.repository_key } : {}),
         },
-      }) } };
+      };
+  return { kind: "acknowledged", value: { session_key: sessionKeyFor(operation_id, executor_function_identity), body: JSON.stringify(body) } };
 }
 
 export class KbblExecutorAdapter implements ExecutorAdapter {
@@ -399,7 +391,7 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
   async deliver_input(execution_id: ExecutionId, delivery_key: string, input: string, external_reference: ExternalExecutionReference): Promise<void> {
     const sessionId = sessionIdOf(external_reference, execution_id);
     const response = await this.fetch(`${this.options.base_url}/sessions/resumable/${encodeURIComponent(sessionId)}/input/${encodeURIComponent(delivery_key)}`, {
-      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: input }),
+      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: input } satisfies ResumableInputRequest),
     });
     if (!response.ok) throw new Error(`kbbl input delivery failed (${response.status}): ${await response.text()}`);
   }

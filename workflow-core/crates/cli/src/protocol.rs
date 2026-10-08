@@ -1,5 +1,7 @@
 use std::collections::VecDeque;
-use workflow_compiler::{check_value, compile_with_host, decode_bundle, decode_unique_json};
+use workflow_compiler::{
+    check_value, compile_with_host, decode_bundle, decode_unique_json, validate_checked_value,
+};
 use workflow_evaluator::{evaluate, materialize};
 use workflow_model::protocol::{
     Operation, Output, Request, Response, ResponseResult, TransportError, TransportErrorKind,
@@ -211,6 +213,7 @@ pub fn handle_frame(state: &mut CliState, frame: &[u8]) -> Response {
     if ![
         "compile",
         "validate_payload",
+        "validate_value",
         "evaluate",
         "materialize",
         "explain",
@@ -270,6 +273,15 @@ pub fn handle_frame(state: &mut CliState, frame: &[u8]) -> Response {
             .ok_or_else(|| unknown(&bundle_digest))
             .and_then(|program| check_value(&program.derived, &schema, &payload))
             .map(Output::Validated),
+        Operation::ValidateValue {
+            bundle_digest,
+            schema,
+            value,
+        } => state
+            .find(&bundle_digest)
+            .ok_or_else(|| unknown(&bundle_digest))
+            .and_then(|program| validate_checked_value(&program.derived, &schema, &value))
+            .map(|()| Output::Validated(value)),
         Operation::Evaluate {
             bundle_digest,
             snapshot,
@@ -588,6 +600,51 @@ mod tests {
             &frame("compile", json!({"bundle": bundle, "catalog": catalog})),
         )
         .result
+    }
+
+    #[test]
+    fn validate_value_rechecks_an_already_checked_value_against_its_schema() {
+        let mut state = CliState::new(host());
+        let ResponseResult::Ok(Output::Compiled(compiled)) = compile_outcome(&mut state, minimal())
+        else {
+            panic!("minimal must compile");
+        };
+        let flag = json!({"schema": "flag", "data": {"kind": "boolean", "value": true}});
+        let accepted = handle_frame(
+            &mut state,
+            &frame(
+                "validate_value",
+                json!({"bundle_digest": compiled.digest, "schema": "flag", "value": flag}),
+            ),
+        );
+        assert!(
+            matches!(accepted.result, ResponseResult::Ok(Output::Validated(_))),
+            "{:?}",
+            accepted.result
+        );
+        let forged = json!({"schema": "flag", "data": {"kind": "integer", "value": 1}});
+        let rejected = handle_frame(
+            &mut state,
+            &frame(
+                "validate_value",
+                json!({"bundle_digest": compiled.digest, "schema": "flag", "value": forged}),
+            ),
+        );
+        let ResponseResult::DomainError(error) = rejected.result else {
+            panic!(
+                "a forged value must be a domain error: {:?}",
+                rejected.result
+            );
+        };
+        assert_eq!(error.kind, DomainErrorKind::InvalidSnapshot);
+        let renamed = handle_frame(
+            &mut state,
+            &frame(
+                "validate_value",
+                json!({"bundle_digest": compiled.digest, "schema": "text", "value": flag}),
+            ),
+        );
+        assert!(matches!(renamed.result, ResponseResult::DomainError(_)));
     }
 
     #[test]

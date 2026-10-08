@@ -11,7 +11,7 @@ import { invalidateOperatorFrame } from "../hooks/useOakridgeInvalidationStream"
 import { operatorTransition, runEventFrame } from "../lib/__fixtures__/run-event-frame";
 import { useReviewInbox } from "../hooks/useReviewInbox";
 import { savePendingCommand } from "../lib/operator-drafts";
-import type { OperatorCommandDescriptor, OperatorScopeView } from "../operator-contracts";
+import type { OperatorCommandDefinition, OperatorScopeView } from "../operator-contracts";
 
 const client = () => new QueryClient({ defaultOptions: { queries: { retry: false } } });
 afterEach(() => { vi.unstubAllGlobals(); localStorage.clear(); });
@@ -66,7 +66,7 @@ test("the app badge and visible inbox share one fetch and one invalidation key",
 
 test("StrictMode recovery delivers one pending command with its retained request id", async () => {
   const command = { key: "action", label: "Act", consequence: "Continue", payload_schema: "empty",
-    field_presentation: [], targets: [] } as OperatorCommandDescriptor;
+    available_in: [], required: true, field_presentation: [], targets: [] } satisfies OperatorCommandDefinition;
   const scope = { run_id: "run-one", scope_id: "scope-one", commands: [command], outputs: [],
     cursor: { scope_version: 1, transition_id: null }, command_targets: { action: [] } } as unknown as OperatorScopeView;
   savePendingCommand({ run_id: "run-one", scope_id: "scope-one", command_key: "action", owner_version: 1,

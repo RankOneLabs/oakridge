@@ -1,7 +1,8 @@
-import type { OperatorCommandDescriptor, OperatorDefinitionSummary, OperatorDraftKey, OperatorGenericRun, OperatorScopeView, OperatorTargetRevision } from "../operator-contracts";
+import type { OperatorCommandDefinition, OperatorDefinitionSummary, OperatorRunView, OperatorScopeView, OperatorTargetRevision } from "../operator-contracts";
+import type { OperatorDraftKey } from "./operator-drafts";
 
 /** Target identities must come from the observed projection, never a later fetch. */
-export function selectCommandTargets(scope: OperatorScopeView, command: OperatorCommandDescriptor): readonly OperatorTargetRevision[] | null {
+export function selectCommandTargets(scope: OperatorScopeView, command: OperatorCommandDefinition): readonly OperatorTargetRevision[] | null {
   const supplied = scope.command_targets?.[command.key];
   if (supplied) return supplied.length === command.targets.length ? supplied : null;
   if (command.targets.length === 0) return [];
@@ -19,13 +20,13 @@ export function selectCommandTargets(scope: OperatorScopeView, command: Operator
   return selected;
 }
 
-export function selectDraftKey(scope: OperatorScopeView, command: OperatorCommandDescriptor): OperatorDraftKey | null {
+export function selectDraftKey(scope: OperatorScopeView, command: OperatorCommandDefinition): OperatorDraftKey | null {
   const targets = selectCommandTargets(scope, command);
   return targets === null ? null : { run_id: scope.run_id, scope_id: scope.scope_id,
     command_key: command.key, owner_version: scope.cursor.scope_version, targets };
 }
 
-export interface RootScopeInput { readonly scopes: readonly Pick<OperatorGenericRun["scopes"][number], "scope_id" | "scope_key">[]; readonly root_key: string }
+export interface RootScopeInput { readonly scopes: readonly Pick<OperatorRunView["scopes"][number], "scope_id" | "scope_key">[]; readonly root_key: string }
 
 /**
  * The server lists a run's scopes by random id, so position says nothing; the

@@ -1,10 +1,10 @@
 import type { MutationService } from "../storage/mutation-service";
-import type { RunId, ScopeId } from "../storage/schema-records";
+import type { EffectIntentRecord, RunId, ScopeId } from "../storage/schema-records";
 import type { SqlExecutor, TransactionalSqlExecutor } from "../storage/sql-executor";
 import type { EffectIntent, EffectPayload } from "./intents";
 
 export type EvidenceDelivery = { readonly kind: "none" } | { readonly kind: "delivered" } | { readonly kind: "deferred"; readonly detail: string };
-interface EvidenceRow { readonly id: string; readonly execution_id: string | null; readonly scope_id: ScopeId; readonly run_id: RunId; readonly payload: EffectPayload }
+type EvidenceRow = Pick<EffectIntentRecord, "id" | "execution_id" | "scope_id" | "run_id"> & { readonly payload: EffectPayload };
 
 /** Delivery is receipt-backed: repeating the same evidence after a crash is a replay, not a second fact. */
 export async function deliverEvidence(db: TransactionalSqlExecutor, mutations: MutationService, intent: Pick<EffectIntent, "id" | "scope_id" | "execution_id" | "payload">): Promise<EvidenceDelivery> {

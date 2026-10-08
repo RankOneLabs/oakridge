@@ -2,8 +2,9 @@ import { readAllInboxPages } from "./lib/operator-inbox";
 import { OakridgeHttpError, selectFailureDetail } from "./lib/client-errors";
 import { selectFallbackRefreshMs } from "./lib/oakridge-config";
 import type { OakridgeConfig } from "./types";
-import type { OperatorLaunchRequest, OperatorLaunchedRun, OperatorRunView, OperatorDefinitionSummary, OperatorScopeHistory, OperatorPinnedDefinition, OperatorScopeProjection, OperatorCommandSubmission, OperatorCommandReceipt } from "./operator-contracts";
+import type { OperatorStartPinnedRunRequest, OperatorStartedRun, OperatorRunView, OperatorDefinitionSummary, OperatorScopeHistory, OperatorPinnedDefinition, OperatorScopeView, OperatorCommandReceipt } from "./operator-contracts";
 import type { WorkflowDefinitionDescriptor } from "./workflow-definition-types";
+import type { OperatorCommandSubmission } from "./lib/operator-drafts";
 
 export { selectFailureDetail } from "./lib/client-errors";
 const API = "/oakridge/api";
@@ -40,11 +41,11 @@ export const fetchOperatorInbox = () => readAllInboxPages(get);
 export const fetchOperatorRuns = (): Promise<OperatorRunView[]> => readAllPages("/api/runs");
 export const fetchOperatorRun = (runId: string): Promise<OperatorRunView> => get(`/api/runs/${encodeURIComponent(runId)}`);
 export const fetchOperatorDefinition = (runId: string): Promise<OperatorPinnedDefinition> => get(`/api/runs/${encodeURIComponent(runId)}/definition`);
-export const fetchOperatorScope = (runId: string, scopeId: string): Promise<OperatorScopeProjection> => get(`/api/runs/${encodeURIComponent(runId)}/scopes/${encodeURIComponent(scopeId)}`);
+export const fetchOperatorScope = (runId: string, scopeId: string): Promise<OperatorScopeView> => get(`/api/runs/${encodeURIComponent(runId)}/scopes/${encodeURIComponent(scopeId)}`);
 export const fetchOperatorScopeHistory = (runId: string, scopeId: string): Promise<OperatorScopeHistory> => get(`/api/runs/${encodeURIComponent(runId)}/scopes/${encodeURIComponent(scopeId)}/history`);
 export const fetchOperatorDefinitions = (): Promise<OperatorDefinitionSummary[]> => readAllPages("/api/definitions");
 export const pinOperatorDefinition = (source: WorkflowDefinitionDescriptor): Promise<OperatorDefinitionSummary> => post("/api/definitions", source);
-export const launchOperatorRun = (request: OperatorLaunchRequest): Promise<OperatorLaunchedRun> => post("/runs", request);
+export const launchOperatorRun = (request: OperatorStartPinnedRunRequest): Promise<OperatorStartedRun> => post("/runs", request);
 const inFlightCommands = new Map<string, Promise<OperatorCommandReceipt>>();
 /**
  * The authority scopes command idempotency by (run_id, scope_id, request_id).
