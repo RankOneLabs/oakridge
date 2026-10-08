@@ -76,6 +76,9 @@ test("RUN_MAX_ITERATIONS hands pending dispatches and the scan cursor to the suc
       if (sql.includes("ORDER BY id LIMIT $3")) return scopes.filter((scope) => !parameters[1] || scope.id > String(parameters[1])).slice(0, Number(parameters[2]));
       if (sql.includes("SELECT * FROM authority.scope_instance WHERE id=ANY")) return [];
       if (sql.includes("SELECT e.id,e.status")) return child_started ? [] : [{ id: "pending-child", status: "pending" }];
+      if (sql.includes("SELECT * FROM authority.effect_intent WHERE id=$1")) return [{ id: "pending-child", run_id: "run-1", scope_id: "scope-001",
+        execution_id: null, effect_key: "key", payload: storedPayload("start"), status: "pending",
+        dispatch_generation: 0, redispatch_failures: 0, deadline_epoch_ms: null, version: 0 }];
       if (sql.includes("SELECT is_terminal")) return [{ is_terminal: generation > 0 }];
       if (sql.includes("SELECT current_generation,current_cursor")) return [{ current_generation: generation, current_cursor: null }];
       if (sql.includes("UPDATE authority.run SET current_generation")) {
@@ -120,7 +123,9 @@ const storedPayload = (action: "start" | "stop") => sealEffectPayload({ action, 
 
 test("cancelled-child expiry retains its branch when replayed after the deadline", async () => withDatabase(async ({ url }) => {
   await withDBOS(url, async () => {
-    registerWorkflowServices({ timing: DEFAULT_WORKFLOW_TIMING } as Parameters<typeof registerWorkflowServices>[0]);
+    const db = { query: async () => [{ id: "effect-1", run_id: "run-1", scope_id: "scope-1", execution_id: null, effect_key: "key",
+      payload: storedPayload("start"), status: "pending", dispatch_generation: 0, redispatch_failures: 0, deadline_epoch_ms: null, version: 0 }] } as unknown as TransactionalSqlExecutor;
+    registerWorkflowServices({ db, timing: DEFAULT_WORKFLOW_TIMING } as Parameters<typeof registerWorkflowServices>[0]);
     const deadline = Date.now() + 250;
     const status = spyOn(DBOS, "getWorkflowStatus").mockImplementation(async () => ({ status: "CANCELLED", deadlineEpochMS: deadline }) as never);
     let should_fail_resume = true;

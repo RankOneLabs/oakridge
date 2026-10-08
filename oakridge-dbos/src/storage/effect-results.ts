@@ -37,6 +37,14 @@ export async function claimStartAttempt(db: TransactionalSqlExecutor, intent_id:
   });
 }
 
+/** Claim the next dispatch generation only while the caller still owns the recorded one. */
+export async function claimDispatchGeneration(db: TransactionalSqlExecutor, intent_id: string, expected: number): Promise<number | null> {
+  const rows = await db.query<{ dispatch_generation: string | number }>(`UPDATE authority.effect_intent
+    SET dispatch_generation=dispatch_generation+1, version=version+1
+    WHERE id=$1 AND dispatch_generation=$2 RETURNING dispatch_generation`, [intent_id, expected]);
+  return rows[0] ? Number(rows[0].dispatch_generation) : null;
+}
+
 /**
  * Record what a provider call taught us, with the domain result in the same
  * transaction. A revocation that landed while the call was in flight wins over
