@@ -125,3 +125,14 @@ test("root selects repository preparation from the repository configuration coll
     expect(result).toMatchObject({ ok: true, value: { kind: "evaluated", value: { kind: "apply", mutations: expect.arrayContaining([expect.objectContaining({ kind: "activate_collection", key: "prepare" })]) } } });
   } finally { core.close(); }
 });
+
+test("a run that names no repository is refused at begin rather than starting an empty stage", async () => {
+  const core = client();
+  try {
+    const config = { runtime: "codex", workdir: "/tmp", session_name: "development" };
+    const root_input = await checked(core, "run_input", { spec: "Implement feature", repositories: [], analysis: config, planning: config, briefs: config });
+    const result = await core.request("evaluate", { bundle,
+      snapshot: snapshot("development", root_input, "phase_root", "ready", "begin") });
+    expect(result).toMatchObject({ ok: true, value: { kind: "evaluated", value: { kind: "reject", error: "invalid_command" } } });
+  } finally { core.close(); }
+});

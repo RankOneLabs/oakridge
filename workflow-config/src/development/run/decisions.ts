@@ -1,7 +1,8 @@
 import type { DecisionTree } from "../../source-contracts";
 import { literal, reference, variant } from "../../primitives/expressions";
 import type { RunPolicy } from "../policies";
-import { STAGE_TABLE, type StageTable, buildStageGate, cancelStageChildren, failureOutcome } from "./stage-table";
+import { nonEmpty } from "../../primitives/expressions";
+import { STAGE_TABLE, type StageTable, buildStageGate, cancelStageChildren, failureOutcome, stageMembers } from "./stage-table";
 
 export function buildRootDispatch(table: StageTable = STAGE_TABLE, policy: RunPolicy): DecisionTree {
   const first = table[0];
@@ -14,6 +15,11 @@ export function buildRootDispatch(table: StageTable = STAGE_TABLE, policy: RunPo
       { kind: "activate_child", key: first.key }
     ], actions: [], outcome: null
   };
+  // The first stage must have members; a run that names no work is refused at begin.
+  const first_members = stageMembers(first);
+  const begin: DecisionTree = first_members === null ? rootBegin : { kind: "if", id: "root_begin_has_work",
+    condition: nonEmpty(first_members), then: rootBegin,
+    otherwise: { kind: "reject", id: "root_begin_without_work", error: "invalid_command", detail: "the run input names no work for its first stage" } };
   const rootCancel: DecisionTree = {
     kind: "apply", id: "root_cancel", mutations: cancelStageChildren(table), actions: [],
     outcome: variant({ schema: "run_result", variant: "cancelled", value: literal("unit", {}) })
@@ -29,7 +35,7 @@ export function buildRootDispatch(table: StageTable = STAGE_TABLE, policy: RunPo
   return {
     kind: "match", id: "root_dispatch", value: reference({ kind: "trigger" }, []),
     cases: [
-      { variant: "begin", node: rootBegin },
+      { variant: "begin", node: begin },
       ...(policy.stage_layout === "verification" ? [{ variant: "inspect", node: { kind: "apply" as const, id: "root_inspect", mutations: [], actions: [], outcome: null } }] : []),
       ...table.map((row) => ({ variant: `${row.key}_finished`, node: buildStageGate(table, row, policy) })),
       { variant: "cancel", node: rootCancel },

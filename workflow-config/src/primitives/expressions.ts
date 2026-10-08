@@ -7,3 +7,6 @@ export const record = (schema: string, fields: FieldExpression[]): Expression =>
 export const optional = (schema: string, value: Expression | null): Expression => ({ kind: "optional", schema, value });
 type VariantInput = Omit<Extract<Expression, { kind: "variant" }>, "kind">;
 export const variant = (input: VariantInput): Expression => ({ kind: "variant", ...input });
+/** True when a list has an item: `every` over an empty list is vacuously true. */
+export const nonEmpty = (source: Expression): Expression =>
+  ({ kind: "not", value: { kind: "every", source, predicate: literal("flag", false) } });
