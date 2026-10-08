@@ -14,8 +14,11 @@ run and scope identities; accepted writes return durable receipts.
 ## Runtime
 
 DBOS (`@dbos-inc/dbos-sdk`) is the execution runtime; nothing in this package
-polls or leases. `src/workflows/topology.ts` declares three generic workflows
-that interpret every pinned bundle without knowing its stages:
+leases external state. A run workflow waits on a bounded wake (`DBOS.recv`
+with a timeout) rather than retrying a status check, and an effect workflow
+sleeps a fixed interval between observations rather than polling a queue.
+`src/workflows/topology.ts` declares three generic workflows that interpret
+every pinned bundle without knowing its stages:
 
 - `oakridgeRunWorkflow` (id `run:<run_id>`) — on each wake re-reads the
   authority, delivers configured lifecycle triggers, retries deferred evidence
@@ -27,12 +30,19 @@ that interpret every pinned bundle without knowing its stages:
 - `oakridgeCleanupWorkflow` (id = `<stop intent id>@<application version>`) — carries one committed stop
   until the provider positively acknowledges it.
 
-Steps are IO boundaries (one DB write, one core call, one provider call). A
-crash mid-step resumes at that step on the next process of the same application
-version. A clean shutdown parks running workflows (DBOS cancel), and the next
-boot of the same version resumes them. A boot of a different version carries
-them over instead (see Application version). An `ERROR` run is forked at its failed step into the next
-generation; a long run rolls over after 128 iterations with its scan cursor.
+Most steps are one IO boundary (one DB write, one core call, one provider
+call); the run's advance step is the exception, bundling a scope scan page,
+an evidence delivery loop and several queries into one step, so a crash
+mid-advance replays the whole page rather than resuming partway through it. A
+crash mid-step otherwise resumes at that step on the next process of the same
+application version. A clean shutdown parks running workflows (DBOS cancel).
+The next boot of the same version resumes each affected run directly; a
+parked effect or cleanup workflow it still owes is resumed lazily by that
+run's own recheck rather than in one startup sweep, except one already past
+its stamped execution deadline, which settles as expired instead. A boot of
+a different version carries runs over instead (see Application version). An
+`ERROR` run is forked at its failed step into the next generation; a long run
+rolls over after 128 iterations with its scan cursor.
 Child dispatch reads durable intent and workflow status, so restart neither
 redelivers a settled child nor forgets one still pending.
 
@@ -61,9 +71,12 @@ them over instead of resuming them. Live workflows of another version are
 cancelled to fence any process still running it. A run whose current
 generation belongs to another version gets a fresh generation that rereads the
 authority from its scan cursor. Intent workflows are addressed per version, so
-the run's next recheck starts this version's carrier for any intent still owed.
-The older rows remain as history. A carried effect starts a fresh DBOS
-execution deadline.
+the run's next recheck starts this version's carrier for any intent still owed,
+under the next claimed dispatch generation rather than resuming the stale one.
+The older rows remain as history. A carried effect keeps its original,
+absolute execution deadline — stamped once into the authority row on first
+dispatch and never refreshed — so a carry-over cannot extend how long an
+intent is owed.
 
 ## Storage records
 

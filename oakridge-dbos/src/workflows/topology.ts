@@ -624,10 +624,14 @@ export async function fenceOtherEngineWorkflows(): Promise<number> {
 }
 
 /**
- * Boot: workflows this engine parked at its last shutdown resume from their
- * last step, and every run whose root is still active gets its workflow back.
- * Another version's workflows are fenced; the run recheck starts this
- * version's carriers for any intent still owed.
+ * Boot: a parked effect or cleanup workflow past its stamped execution
+ * deadline settles as expired. Every run still owed work gets its run
+ * workflow back directly, resuming from its last step; any other parked
+ * effect or cleanup workflow that run still owes is resumed lazily, by that
+ * run's own recheck, not by a startup sweep over every parked child.
+ * Another version's workflows are fenced first; the run recheck starts this
+ * version's carrier, under the next dispatch generation, for any intent
+ * still owed.
  */
 export async function resumeActiveRuns(db: TransactionalSqlExecutor): Promise<number> {
   await fenceOtherEngineWorkflows();
