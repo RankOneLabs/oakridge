@@ -17,12 +17,12 @@ if [ -z "${OAKRIDGE_CORE_BINARY:-}" ]; then
   if command -v cargo >/dev/null 2>&1; then
     echo "oakridge: building workflow-cli"
     cargo build --locked --manifest-path "$OAKRIDGE_ROOT/workflow-core/Cargo.toml" -p workflow-cli
-  elif [ -x "$CORE_BINARY" ]; then
-    echo "oakridge: cargo is missing; $CORE_BINARY may be older than workflow-core/ and is used as built" >&2
   else
+    # Never start the default binary unverified: it may predate workflow-core/.
     CORE_TOOLCHAIN="$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$OAKRIDGE_ROOT/workflow-core/rust-toolchain.toml")"
     echo "oakridge: Rust toolchain (cargo) is missing; install the pinned toolchain with: rustup toolchain install $CORE_TOOLCHAIN" >&2
     echo "oakridge: then build workflow-cli with: cargo build --locked --manifest-path workflow-core/Cargo.toml -p workflow-cli" >&2
+    echo "oakridge: or set OAKRIDGE_CORE_BINARY to a workflow-cli built from this tree" >&2
     exit 1
   fi
 fi

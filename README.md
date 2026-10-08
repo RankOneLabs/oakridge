@@ -44,8 +44,8 @@ test requires `KBBL_ACP_REAL_AGENT` and is reported as skipped by the normal
 kbbl test command when no real agent is configured.
 
 For local startup, run `./scripts/oakridge-start` from the repository root. It
-rebuilds the Rust CLI (a no-op when it is current; an explicit
-`OAKRIDGE_CORE_BINARY` is used as given), starts PostgreSQL through Docker when
+rebuilds the Rust CLI (a no-op when it is current; it stops if cargo is
+missing, and an explicit `OAKRIDGE_CORE_BINARY` is used as given), starts PostgreSQL through Docker when
 `DBOS_SYSTEM_DATABASE_URL` is unset, applies the authority baseline, and starts
 the DBOS backend and kbbl PWA. The baseline can be applied again when its
 recorded digest matches; a changed baseline file stops startup and reports both
