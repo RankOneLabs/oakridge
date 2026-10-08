@@ -44,7 +44,8 @@ test("GitHub capability is checked before the mutation-service definition insert
   const bundle: DefinitionBundle = await Bun.file(resolve(import.meta.dir, "../../workflow-config/definitions/development.json")).json();
   const core = { request: async () => ({ ok: true, value: { kind: "compiled", value: { scopes: [], digest: "test" } } }) } as unknown as CoreClient;
   let inserted = false;
-  const db = { transaction: async () => { inserted = true; throw new Error("unexpected insert"); } } as unknown as TransactionalSqlExecutor;
+  // Stored-prompt reads may precede the check; any write may not.
+  const db = { query: async () => [], transaction: async () => { inserted = true; throw new Error("unexpected insert"); } } as unknown as TransactionalSqlExecutor;
   const mutations = createMutationService(db, core, githubProviderCapabilities(""));
   const result = await mutations.startRun({ bundle, input: {} });
   expect({ inserted, detail: result.ok ? "" : result.error.detail }).toEqual({ inserted: false, detail: "missing provider capability: github token is absent" });
@@ -53,7 +54,8 @@ test("GitHub capability is checked before the mutation-service definition insert
 test("pinning checks every declared provider and names an unreachable kbbl kind", async () => {
   const core = { request: async () => ({ ok: true, value: { kind: "compiled", value: { scopes: [], digest: "test" } } }) } as unknown as CoreClient;
   let inserted = false;
-  const db = { query: async () => { inserted = true; return []; } } as unknown as TransactionalSqlExecutor;
+  const db = { query: async (sql: string) => { if (!sql.trimStart().startsWith("SELECT")) inserted = true; return []; },
+    transaction: async () => { inserted = true; throw new Error("unexpected insert"); } } as unknown as TransactionalSqlExecutor;
   const checked: string[] = [];
   const mutations = createMutationService(db, core, {
     probe: async (kind) => { checked.push(kind); return kind === "kbbl"
