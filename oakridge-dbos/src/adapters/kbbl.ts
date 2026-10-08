@@ -180,9 +180,11 @@ export interface KbblExecutorAdapterOptions {
 
 /**
  * How the adapter treats an HTTP response status, independent of parsing its
- * body. `pending` is only meaningful to `observe_terminal`'s 202 contract;
- * elsewhere it is handled the same as `ok`, matching `Response.ok`'s own
- * 200-299 range (which includes 202) for call sites that never receive one.
+ * body. `pending` is meaningful only to `observe_terminal`'s 202 contract,
+ * where it is handled before this classification is otherwise consulted; a
+ * 202 is not expected from any other call, but a caller comparing against
+ * "ok" exactly (`cancel_or_fence`, `deliver_input`) would treat one as a
+ * failure rather than as `Response.ok`'s own 200-299 range does.
  */
 export type KbblStatusClass = "ok" | "pending" | "rejected" | "unavailable";
 

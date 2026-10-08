@@ -347,6 +347,18 @@ describe("oakridge proxy", () => {
       expect(captured.authHeader).toBe("Bearer core-secret");
     });
 
+    // A bracketed IPv6 Host ("[::1]:8788") naively split on ":" yields "[" as
+    // the hostname, which is not loopback — an IPv6 loopback bind would then
+    // refuse to inject its own token for its own PWA.
+    test("tokenless mode still injects for a bracketed IPv6 loopback Host", async () => {
+      const captured = captureAuthHeader();
+      const app = new Hono();
+      mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test", coreControlToken: "core-secret" });
+      await app.request("/oakridge/api/runs", { method: "POST",
+        headers: { "content-type": "application/json", host: "[::1]:8788" }, body: "{}" });
+      expect(captured.authHeader).toBe("Bearer core-secret");
+    });
+
     test("tokenless mode still injects for a request naming no Origin or Host at all", async () => {
       const captured = captureAuthHeader();
       const app = new Hono();

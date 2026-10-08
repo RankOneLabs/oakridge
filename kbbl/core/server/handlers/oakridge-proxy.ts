@@ -63,7 +63,10 @@ export function isTrustedOperatorRequest(request: Pick<Request, "headers">, poli
   if (origin !== null && !policy.allowed_origins.has(origin)) return false;
   const host = request.headers.get("host");
   if (host !== null) {
-    const hostname = host.split(":")[0] ?? host;
+    // A bracketed IPv6 Host ("[::1]:8788") splits on ":" into "[", "", "1]",
+    // "8788" — take everything inside the brackets instead, or an IPv6
+    // loopback bind would refuse to inject the token for its own PWA.
+    const hostname = host.startsWith("[") ? host.slice(1, host.indexOf("]")) : (host.split(":")[0] ?? host);
     const hostTrusted = isLoopbackHost(hostname) || [...policy.allowed_origins].some((allowed) => {
       try { return new URL(allowed).hostname === hostname; }
       catch { return false; }

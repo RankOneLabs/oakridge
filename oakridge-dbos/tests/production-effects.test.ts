@@ -477,12 +477,18 @@ test("a startup probe kbbl rejects aborts startup before DBOS.launch()", async (
 
 test("an injected effect_provider skips the startup probe and performs no kbbl network IO", async () =>
   withEnv("OAKRIDGE_KBBL_SERVICE_TOKEN", "configured-token", () => withDatabase(async ({ url }) => {
-    const composition = await createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"),
-      host: "127.0.0.1", kbbl_base_url: "https://kbbl.invalid",
-      effect_provider: {
-        start: async () => { throw new Error("must not be called: probe should not reach the production provider"); },
-        observe: async () => { throw new Error("must not be called: probe should not reach the production provider"); },
-        stop: async () => { throw new Error("must not be called: probe should not reach the production provider"); },
-      } });
-    try { expect(composition.application_version).toBeTruthy(); } finally { await composition.close(); }
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = ((...args: Parameters<typeof fetch>) => { calls++; return originalFetch(...args); }) as typeof fetch;
+    try {
+      const composition = await createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"),
+        host: "127.0.0.1", kbbl_base_url: "https://kbbl.invalid",
+        effect_provider: {
+          start: async () => { throw new Error("must not be called: probe should not reach the production provider"); },
+          observe: async () => { throw new Error("must not be called: probe should not reach the production provider"); },
+          stop: async () => { throw new Error("must not be called: probe should not reach the production provider"); },
+        } });
+      try { expect(composition.application_version).toBeTruthy(); } finally { await composition.close(); }
+      expect(calls).toBe(0);
+    } finally { globalThis.fetch = originalFetch; }
   })));

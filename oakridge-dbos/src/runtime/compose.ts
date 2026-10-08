@@ -83,7 +83,10 @@ export function isLoopbackKbblUrl(url: string): boolean {
   catch { return false; }
   if (LOOPBACK_KBBL_HOSTNAMES.has(hostname)) return true;
   const parts = hostname.split(".");
-  return parts.length === 4 && parts[0] === "127";
+  // Every octet must be a bare 0-255 integer, or a hostname like
+  // "127.attacker.co.uk" (four dot-separated parts, first is "127") would
+  // pass as loopback and bypass the no-credential fail-fast guard below.
+  return parts.length === 4 && parts[0] === "127" && parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255);
 }
 
 /**
