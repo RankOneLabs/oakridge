@@ -1,5 +1,5 @@
 import { StrictMode } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
 import { useRun } from "../hooks/useRun";
@@ -136,4 +136,21 @@ test("the root scope is displayed even when the server lists a child scope first
   reverse = true;
   await cache.invalidateQueries({ queryKey: ["operator", "run-one"] });
   expect(screen.getByRole("heading", { name: "Root scope" })).toBeTruthy();
+});
+
+test("a failed scope fetch keeps the back button and scope selector and shows the error inline", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    if (url.endsWith("/runs/run-one")) return Response.json({ run_id: "run-one", scopes: [
+      { scope_id: "scope-one", scope_key: "root", label: "Current scope" }, { scope_id: "broken", scope_key: "child", label: "Broken scope" }] });
+    if (url.endsWith("/scopes/broken")) return Response.json({ error: "conflict", detail: "scope is unreadable" }, { status: 500 });
+    return runResponse(url);
+  }));
+  const onBack = vi.fn();
+  render(<QueryClientProvider client={client()}><GenericOperatorRunView runId="run-one" onBack={onBack} /></QueryClientProvider>);
+  await screen.findByRole("heading", { name: "Current scope" });
+  fireEvent.change(screen.getByLabelText("Scope"), { target: { value: "broken" } });
+  expect((await screen.findByRole("alert")).textContent).toMatch(/scope is unreadable/);
+  expect(screen.getByLabelText<HTMLSelectElement>("Scope").value).toBe("broken");
+  fireEvent.click(screen.getByRole("button", { name: "← Runs" }));
+  expect(onBack).toHaveBeenCalledOnce();
 });

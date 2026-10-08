@@ -44,34 +44,38 @@ export function GenericOperatorRunView({ runId, onBack }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runId, scope.data?.cursor.scope_version]);
   const refreshError = run.error ?? definition.error ?? scope.error;
-  if (run.data && definition.data && scopeId === null) return <div role="alert">This run has no scope matching the definition's root.</div>;
-  if (!run.data || !definition.data || !scope.data) return refreshError
+  if (!run.data || !definition.data) return refreshError
     ? <div role="alert">{String(refreshError)}</div> : <p role="status">Loading operator context…</p>;
+  if (scopeId === null) return <div role="alert">This run has no scope matching the definition's root.</div>;
+  const data = scope.data;
   return <main className="or-page or-page--wide" data-testid="operator-run-view">
-    {refreshError && <p role="alert">Refresh failed: {String(refreshError)}. Showing the last snapshot.</p>}
+    {refreshError && data && <p role="alert">Refresh failed: {String(refreshError)}. Showing the last snapshot.</p>}
     {recovery && <p role="status">{recovery}</p>}
     <header className="or-page-header"><Button type="button" variant="secondary" onClick={onBack}>← Runs</Button><h2 className="or-page-title">Operator workspace</h2><Button type="button" variant="secondary" onClick={refresh}>Refresh</Button></header>
-    <label>Scope <select aria-label="Scope" value={scopeId ?? ""} onChange={(event) => { setSelectedScope(event.target.value); setSelectedCommand(null); }}>
+    <label>Scope <select aria-label="Scope" value={scopeId} onChange={(event) => { setSelectedScope(event.target.value); setSelectedCommand(null); }}>
       {run.data.scopes.map((item) => <option key={item.scope_id} value={item.scope_id}>{item.label}</option>)}
     </select></label>
-    <section><h3>{scope.data.label}</h3><OperatorTypedValue value={scope.data.state} schemas={schemas} />
-      {scope.data.outcome && <><h4>Outcome</h4><OperatorTypedValue value={scope.data.outcome} schemas={schemas} /></>}
-      {scope.data.outputs.map((output) => <section key={output.id}>
+    {!data && (scope.error ? <p role="alert">Could not load scope: {String(scope.error)}</p> : <p role="status">Loading scope…</p>)}
+    {data && <>
+    <section><h3>{data.label}</h3><OperatorTypedValue value={data.state} schemas={schemas} />
+      {data.outcome && <><h4>Outcome</h4><OperatorTypedValue value={data.outcome} schemas={schemas} /></>}
+      {data.outputs.map((output) => <section key={output.id}>
         <h4>{output.output_key}{output.collection_key && ` · ${output.collection_key}`}</h4>
         {output.current_revision ? <OperatorTypedValue value={output.current_revision.body} schemas={schemas} />
           : <p>No artifact published.</p>}
       </section>)}
-      {scope.data.executions.map((execution) => <section key={execution.id}><h4>{execution.worker_key} · {execution.status}</h4>
+      {data.executions.map((execution) => <section key={execution.id}><h4>{execution.worker_key} · {execution.status}</h4>
         {execution.result && <OperatorTypedValue value={execution.result} schemas={schemas} />}</section>)}
     </section>
     <OperatorHistoryPane runId={runId} scopeId={scopeId ?? ""} schemas={schemas} />
-    {scope.data.commands.length > 0 && <section><h3>Commands</h3>
+    {data.commands.length > 0 && <section><h3>Commands</h3>
       <label>Action <select aria-label="Action" value={selected?.key ?? ""} onChange={(event) => setSelectedCommand(event.target.value)}>
-        {scope.data.commands.map((command) => <option key={command.key} value={command.key}>{command.label}</option>)}
+        {data.commands.map((command) => <option key={command.key} value={command.key}>{command.label}</option>)}
       </select></label>
-      {selected && selectDraftKey(scope.data, selected) && <OperatorCommandForm key={operatorDraftIdentity(selectDraftKey(scope.data, selected)!)}
-        scope={scope.data} command={selected} schemas={schemas} onRefresh={refresh} />}
-      {selected && !selectDraftKey(scope.data, selected) && <p role="status">Target revisions are unavailable. Refresh this scope before acting.</p>}
+      {selected && selectDraftKey(data, selected) && <OperatorCommandForm key={operatorDraftIdentity(selectDraftKey(data, selected)!)}
+        scope={data} command={selected} schemas={schemas} onRefresh={refresh} />}
+      {selected && !selectDraftKey(data, selected) && <p role="status">Target revisions are unavailable. Refresh this scope before acting.</p>}
     </section>}
+    </>}
   </main>;
 }
