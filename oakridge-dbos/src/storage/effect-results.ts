@@ -45,6 +45,15 @@ export async function claimDispatchGeneration(db: TransactionalSqlExecutor, inte
   return rows[0] ? Number(rows[0].dispatch_generation) : null;
 }
 
+export interface ChildRedispatchClaim { readonly generation: number; readonly failures: number }
+/** Like claimDispatchGeneration, but also counts the redispatch as a carrier failure (never cleared). */
+export async function claimChildRedispatch(db: TransactionalSqlExecutor, intent_id: string, expected: number): Promise<ChildRedispatchClaim | null> {
+  const rows = await db.query<{ dispatch_generation: string | number; redispatch_failures: string | number }>(`UPDATE authority.effect_intent
+    SET dispatch_generation=dispatch_generation+1, redispatch_failures=redispatch_failures+1, version=version+1
+    WHERE id=$1 AND dispatch_generation=$2 RETURNING dispatch_generation,redispatch_failures`, [intent_id, expected]);
+  return rows[0] ? { generation: Number(rows[0].dispatch_generation), failures: Number(rows[0].redispatch_failures) } : null;
+}
+
 /**
  * Record what a provider call taught us, with the domain result in the same
  * transaction. A revocation that landed while the call was in flight wins over

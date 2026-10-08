@@ -8,7 +8,7 @@ import { readIntent, type EffectIntent, type EffectPayload, type EffectStatus } 
 import { bounded, exhaustStart, resolveObserve, resolveStart, resolveStop, settleObserveRetry, startAttemptsExhausted, type StartOutcome } from "../effects/outcomes";
 import type { EffectProvider, ProviderResult } from "../effects/provider";
 import { advanceChildrenPage, type LifecycleFailure } from "../runtime/advance-children";
-import { claimDispatchGeneration, claimStartAttempt, persistEffectResult } from "../storage/effect-results";
+import { claimChildRedispatch, claimDispatchGeneration, claimStartAttempt, persistEffectResult } from "../storage/effect-results";
 import { claimRunGeneration, currentRunAddress, currentRunGeneration, RUN_NEEDS_WORK_SQL, runNeedsWork } from "../storage/run-lifecycle";
 import type { MutationService } from "../storage/mutation-service";
 import type { RunId } from "../storage/schema-records";
@@ -53,12 +53,14 @@ export interface WorkflowTiming {
   readonly child_scan_per_scope_deadline_ms: number;
   /** Cap on the serial child request budget within the run advance step. */
   readonly child_scan_max_request_deadline_ms: number;
+  /** Maximum redispatches of a start intent whose carrier ended ERROR or SUCCESS while still owed; a stop retries without limit. */
+  readonly child_redispatch_max: number;
 }
 export const DEFAULT_WORKFLOW_TIMING: WorkflowTiming = {
   retry_initial_seconds: 1, retry_cap_seconds: 30, observe_interval_seconds: 5,
   max_observe_unavailable_attempts: 10, wake_timeout_seconds: 30, execution_deadline_ms: 3_600_000,
   child_scan_max_scopes: 2, child_scan_per_scope_deadline_ms: 60_000,
-  child_scan_max_request_deadline_ms: 120_000,
+  child_scan_max_request_deadline_ms: 120_000, child_redispatch_max: 5,
 };
 
 let services: WorkflowServices | null = null;
@@ -335,6 +337,8 @@ const claimRunGenerationStep = DBOS.registerStep(async (run_id: string, generati
 }, { name: "oakridgeClaimRunGeneration", retriesAllowed: true, maxAttempts: 5 });
 const claimDispatchGenerationStep = DBOS.registerStep(async (intent_id: string, generation: number): Promise<number | null> =>
   claimDispatchGeneration(current().db, intent_id, generation), { name: "oakridgeClaimDispatchGeneration", retriesAllowed: true, maxAttempts: 5 });
+const claimChildRedispatchStep = DBOS.registerStep(async (intent_id: string, generation: number) =>
+  claimChildRedispatch(current().db, intent_id, generation), { name: "oakridgeClaimChildRedispatch", retriesAllowed: true, maxAttempts: 5 });
 
 export function forkStartStep(steps: readonly { readonly functionID: number; readonly error: Error | null }[]): number {
   const failed = steps.filter((step) => step.error !== null).map((step) => step.functionID);
@@ -379,14 +383,17 @@ async function recoverErroredRun(run_id: string, generation: number): Promise<nu
   return successor;
 }
 
-async function settleExpiredEffect(intent_id: string): Promise<void> {
+async function settleEffectFailure(intent_id: string, detail: string): Promise<void> {
   const intent = await loadIntentStep(intent_id);
   if (!intent || (intent.status !== "pending" && intent.status !== "acknowledged")) return;
   const payload = await startRejectionStep({ ...intent.payload,
-    failure: { kind: "attempt_budget_exhausted", detail: `execution deadline exceeded for ${intent_id}` } });
+    failure: { kind: "attempt_budget_exhausted", detail } });
   await persistStep({ intent_id, status: "rejected", payload, terminal_result: null });
   await deliverEvidenceStep(intent_id);
-  DBOS.logger.error(`effect ${intent_id}: execution deadline exceeded`);
+  DBOS.logger.error(`effect ${intent_id}: ${detail}`);
+}
+async function settleExpiredEffect(intent_id: string): Promise<void> {
+  await settleEffectFailure(intent_id, `execution deadline exceeded for ${intent_id}`);
 }
 
 const effectExpiredStep = DBOS.registerStep(async (deadline_epoch_ms: number): Promise<boolean> =>
@@ -455,12 +462,29 @@ export async function dispatchChild(run_id: string, intent_id: string, kind: "st
     await DBOS.resumeWorkflow(workflow_id);
     return;
   }
-  // category is "failed" or "done"
+  // category is "failed" or "done", with the intent still owed: the carrier
+  // ended without settling it. Redispatch under a new generation rather than
+  // wedging the run; a stop retries without limit, a start gives up after
+  // child_redispatch_max and settles as attempt_budget_exhausted.
   const needs_dispatch = kind === "start"
     ? intent.payload.action === "start" && (intent.status === "pending" || intent.status === "acknowledged")
     : intent.status === "cleanup_pending";
-  if (needs_dispatch)
-    throw new RunInfrastructureError(run_id, `dispatch ${kind} ${intent_id}`, `workflow ${status.status} while intent remains pending`);
+  if (!needs_dispatch) return;
+  const timing = current().timing;
+  if (kind === "stop") {
+    await DBOS.sleepSeconds(backoff(intent.redispatch_failures, timing));
+    const claimed = await claimChildRedispatchStep(intent_id, intent.dispatch_generation);
+    if (claimed === null) return; // another recheck already claimed the redispatch
+    await startChildWorkflow(kind, childWorkflowId(intent_id, claimed.generation), intent_id);
+    return;
+  }
+  if (intent.redispatch_failures >= timing.child_redispatch_max) {
+    await settleEffectFailure(intent_id, `run ${run_id}: carrier ended ${status.status} after ${intent.redispatch_failures} redispatch attempts for ${intent_id}`);
+    return;
+  }
+  const claimed = await claimChildRedispatchStep(intent_id, intent.dispatch_generation);
+  if (claimed === null) return;
+  await startChildWorkflow(kind, childWorkflowId(intent_id, claimed.generation), intent_id);
 }
 
 export const runWorkflow = DBOS.registerWorkflow(async (run_id: string, initial_cursor: string | null = null): Promise<void> => {
