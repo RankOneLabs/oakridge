@@ -1,7 +1,7 @@
 import { expect, spyOn, test } from "bun:test";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { serialChildrenRequestDeadlineMs } from "../src/runtime/advance-children";
-import { DEFAULT_WORKFLOW_TIMING, ensureRunRecoveryFork, RunInfrastructureError, dispatchChild, ensureRunWorkflow, forkStartStep, registerWorkflowServices, resumeActiveRuns, runWorkflowId, wakeRun } from "../src/workflows/topology";
+import { DEFAULT_WORKFLOW_TIMING, ensureRunRecoveryFork, RunInfrastructureError, dispatchChild, ensureRunWorkflow, fenceOtherEngineWorkflows, forkStartStep, intentWorkflowId, registerWorkflowServices, resumeActiveRuns, runWorkflowId, wakeRun } from "../src/workflows/topology";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
 
 test("a run boundary failure retains its run and operation in the diagnostic", () => {
@@ -43,7 +43,7 @@ test("a PENDING child is not dispatched again, while a missing child is started"
     expect(calls).toEqual([]);
     status.mockImplementation(async () => null as never);
     await dispatchChild("run-1", "intent-1", "start");
-    expect(calls).toEqual([[{ workflowID: "intent-1", timeoutMS: DEFAULT_WORKFLOW_TIMING.execution_deadline_ms }], ["intent-1"]]);
+    expect(calls).toEqual([[{ workflowID: intentWorkflowId("intent-1"), timeoutMS: DEFAULT_WORKFLOW_TIMING.execution_deadline_ms }], ["intent-1"]]);
   } finally { status.mockRestore(); start.mockRestore(); }
 });
 
@@ -145,3 +145,67 @@ for (const has_work of [false, true]) {
     } finally { status.mockRestore(); start.mockRestore(); }
   });
 }
+
+test("an intent workflow is addressed by intent and engine version", () => {
+  expect(intentWorkflowId("intent-1", "engine-a")).toBe("intent-1@engine-a");
+  expect(intentWorkflowId("intent-1", "engine-b")).not.toBe(intentWorkflowId("intent-1", "engine-a"));
+});
+
+for (const parked_status of ["CANCELLED", "ENQUEUED", "PENDING", "ERROR"] as const) {
+  test(`a ${parked_status} run of another engine is carried on a new generation from the authority`, async () => {
+    const db = { query: async (sql: string) => sql.includes("UPDATE authority.run")
+      ? [{ current_generation: 3, current_cursor: "scope-9" }] : [{ current_generation: 2, current_cursor: "scope-9" }] } as unknown as TransactionalSqlExecutor;
+    registerWorkflowServices({ db } as Parameters<typeof registerWorkflowServices>[0]);
+    const status = spyOn(DBOS, "getWorkflowStatus").mockImplementation(async () =>
+      ({ status: parked_status, applicationVersion: "previous-engine" }) as never);
+    const cancel = spyOn(DBOS, "cancelWorkflow").mockImplementation(async () => undefined as never);
+    const resume = spyOn(DBOS, "resumeWorkflow").mockImplementation(async () => ({} as never));
+    const fork = spyOn(DBOS, "forkWorkflow").mockImplementation(async () => ({} as never));
+    const calls: unknown[][] = [];
+    const start = spyOn(DBOS, "startWorkflow").mockImplementation(((_workflow: unknown, options: unknown) => {
+      calls.push([options]);
+      return async (...args: unknown[]) => { calls.push(args); return {} as never; };
+    }) as never);
+    try {
+      await ensureRunWorkflow("run-1");
+      expect({ calls, resumed: resume.mock.calls.length, forked: fork.mock.calls.length,
+        cancelled: cancel.mock.calls.map((call) => call[0]) }).toEqual({
+        calls: [[{ workflowID: "run:run-1:3" }], ["run-1", "scope-9"]], resumed: 0, forked: 0,
+        cancelled: parked_status === "PENDING" || parked_status === "ENQUEUED" ? ["run:run-1:2"] : [] });
+    } finally { status.mockRestore(); cancel.mockRestore(); resume.mockRestore(); fork.mockRestore(); start.mockRestore(); }
+  });
+}
+
+test("a finished run of another engine is left as history", async () => {
+  const db = { query: async (sql: string) => sql.includes("AS has_work") ? [{ has_work: false }] : [{ current_generation: 0, current_cursor: null }] } as unknown as TransactionalSqlExecutor;
+  registerWorkflowServices({ db } as Parameters<typeof registerWorkflowServices>[0]);
+  const status = spyOn(DBOS, "getWorkflowStatus").mockImplementation(async () =>
+    ({ status: "SUCCESS", applicationVersion: "previous-engine" }) as never);
+  const start = spyOn(DBOS, "startWorkflow").mockImplementation((() => async () => ({})) as never);
+  try {
+    await ensureRunWorkflow("run-1");
+    expect(start).not.toHaveBeenCalled();
+  } finally { status.mockRestore(); start.mockRestore(); }
+});
+
+test("boot fences live workflows of another engine and leaves this engine's alone", async () => {
+  const list = spyOn(DBOS, "listWorkflows").mockImplementation(async () => [
+    { workflowID: "run:run-1", applicationVersion: "previous-engine" },
+    { workflowID: "run:run-2", applicationVersion: DBOS.applicationVersion },
+  ] as never);
+  const cancel = spyOn(DBOS, "cancelWorkflows").mockImplementation(async () => undefined as never);
+  try {
+    expect(await fenceOtherEngineWorkflows()).toBe(1);
+    expect(cancel).toHaveBeenCalledWith(["run:run-1"]);
+  } finally { list.mockRestore(); cancel.mockRestore(); }
+});
+
+test("boot resumes only this engine's parked intent workflows", async () => {
+  const db = { query: async () => [] } as unknown as TransactionalSqlExecutor;
+  registerWorkflowServices({ db } as Parameters<typeof registerWorkflowServices>[0]);
+  const list = spyOn(DBOS, "listWorkflows").mockImplementation(async () => [] as never);
+  try {
+    await resumeActiveRuns(db);
+    expect(list).toHaveBeenCalledWith(expect.objectContaining({ status: "CANCELLED", applicationVersion: DBOS.applicationVersion }));
+  } finally { list.mockRestore(); }
+});

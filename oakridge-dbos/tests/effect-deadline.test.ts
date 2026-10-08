@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { createProductionComposition } from "../src/runtime/compose";
-import { DEFAULT_WORKFLOW_TIMING } from "../src/workflows/topology";
+import { DEFAULT_WORKFLOW_TIMING, intentWorkflowId } from "../src/workflows/topology";
 import { begin, sessionBundle, withDatabase } from "./effect-fixture";
 
 test("effect workflows have a finite execution deadline by default", () => {
@@ -29,7 +29,7 @@ test("execution_deadline_ms cancels a long-running effect and records a visible 
       intent_id = rows[0]?.id ?? null;
       if (rows[0]?.status === "rejected") {
         expect(rows[0].payload.failure?.detail).toContain("execution deadline exceeded");
-        expect((await DBOS.getWorkflowStatus(intent_id!))?.status).toBe("CANCELLED");
+        expect((await DBOS.getWorkflowStatus(intentWorkflowId(intent_id!)))?.status).toBe("CANCELLED");
         return;
       }
       await Bun.sleep(25);
@@ -59,13 +59,14 @@ test("startup settles an expired CANCELLED effect with evidence instead of resum
       const rows = await db.query<{ id: string; status: string }>(
         "SELECT id,status FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='start'", [run.root_scope_id]);
       intent_id = rows[0]?.id ?? null;
-      if (rows[0]?.status === "acknowledged" && (await DBOS.getWorkflowStatus(intent_id!))?.status === "PENDING") break;
+      if (rows[0]?.status === "acknowledged" && (await DBOS.getWorkflowStatus(intentWorkflowId(intent_id!)))?.status === "PENDING") break;
       await Bun.sleep(25);
     }
     if (!intent_id) throw new Error("effect intent was not dispatched");
+    const workflow_id = intentWorkflowId(intent_id);
     await composition.close();
     await db.query("UPDATE dbos.workflow_status SET workflow_deadline_epoch_ms=$2 WHERE workflow_uuid=$1",
-      [intent_id, Date.now() - 1_000]);
+      [workflow_id, Date.now() - 1_000]);
     composition = await createProductionComposition(options);
     const after = Date.now() + 10_000;
     let payload: { failure?: { detail: string }; evidence_delivered?: boolean } | null = null;
@@ -77,6 +78,6 @@ test("startup settles an expired CANCELLED effect with evidence instead of resum
     }
     expect(payload?.failure?.detail).toContain("execution deadline exceeded");
     expect(payload?.evidence_delivered).toBe(true);
-    expect((await DBOS.getWorkflowStatus(intent_id))?.status).toBe("CANCELLED");
+    expect((await DBOS.getWorkflowStatus(workflow_id))?.status).toBe("CANCELLED");
   } finally { await composition.close(); }
 }), 25_000);

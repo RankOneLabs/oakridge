@@ -2,7 +2,7 @@ import { expect, spyOn, test } from "bun:test";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { withDatabase } from "./effect-fixture";
 import { DEFAULT_WORKFLOW_TIMING, RUN_MAX_ITERATIONS, ensureRunWorkflow, registerWorkflowServices,
-  dispatchChild, runWorkflow, runWorkflowId, wakeRunOf } from "../src/workflows/topology";
+  dispatchChild, intentWorkflowId, runWorkflow, runWorkflowId, wakeRunOf } from "../src/workflows/topology";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
 import { sealEffectPayload } from "../src/storage/effect-secret";
 import type { EffectPayload } from "../src/effects/intents";
@@ -95,7 +95,7 @@ test("RUN_MAX_ITERATIONS hands pending dispatches and the scan cursor to the suc
       options.workflowID === runWorkflowId("run-1") ? original_start(workflow as typeof runWorkflow, options)
         : async (...args: unknown[]) => {
           starts.push({ options, args });
-          if (options.workflowID === "pending-child") { child_started = true; return {} as never; }
+          if (options.workflowID === intentWorkflowId("pending-child")) { child_started = true; return {} as never; }
           successor = await original_start(workflow as typeof runWorkflow, options)(args[0] as string, args[1] as string | null);
           return successor as never;
         }) as never);
@@ -107,7 +107,7 @@ test("RUN_MAX_ITERATIONS hands pending dispatches and the scan cursor to the suc
       expect(carried_cursor as string | null).toBe(`scope-${String(RUN_MAX_ITERATIONS).padStart(3, "0")}`);
       expect(starts).toEqual([
         { options: { workflowID: runWorkflowId("run-1", 1) }, args: ["run-1", carried_cursor] },
-        { options: { workflowID: "pending-child", timeoutMS: DEFAULT_WORKFLOW_TIMING.execution_deadline_ms }, args: ["pending-child"] },
+        { options: { workflowID: intentWorkflowId("pending-child"), timeoutMS: DEFAULT_WORKFLOW_TIMING.execution_deadline_ms }, args: ["pending-child"] },
       ]);
     } finally { status.mockRestore(); start.mockRestore(); }
   });

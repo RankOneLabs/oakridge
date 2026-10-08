@@ -20,6 +20,9 @@ import type { TransactionalSqlExecutor } from "../storage/sql-executor";
  * authority tables record, and these workflows only carry committed intents to
  * providers and committed evidence back. DBOS owns the execution — a crash
  * mid-step resumes at that step on the next process of the same engine version.
+ * A process of a different engine version never runs another version's
+ * workflows (DBOS dequeues and recovers only its own), so on boot it fences
+ * them and carries their runs and intents again from the authority rows.
  *
  * The services are process-wide and registered by the composition before
  * `DBOS.launch`; a workflow step never receives a connection as an argument.
@@ -67,6 +70,17 @@ function current(): WorkflowServices {
 
 export const RUN_WAKE_TOPIC = "oakridge-run-wake";
 export const runWorkflowId = (run_id: string, generation = 0): string => generation === 0 ? `run:${run_id}` : `run:${run_id}:${generation}`;
+/**
+ * Intent workflows are addressed per engine version: a new engine starts its
+ * own carrier for an intent its predecessor parked, rather than inheriting a
+ * row it can never run. The workflow's argument, not its id, names the intent.
+ */
+export const intentWorkflowId = (intent_id: string, application_version: string = DBOS.applicationVersion): string =>
+  `${intent_id}@${application_version}`;
+/** DBOS dequeues and recovers only rows recorded under the running version. */
+export function isFromOtherEngine(status: WorkflowStatus): boolean {
+  return status.applicationVersion !== undefined && status.applicationVersion !== DBOS.applicationVersion;
+}
 export class RunInfrastructureError extends Error {
   override readonly name = "RunInfrastructureError";
   constructor(readonly run_id: string, readonly operation: string, readonly detail: string) {
@@ -196,7 +210,7 @@ async function untilSettled<Value>(label: string, body: () => Promise<Value>): P
   }
 }
 
-/** Carries one committed start intent to its provider and its terminal result back. Workflow id = intent id. */
+/** Carries one committed start intent to its provider and its terminal result back. Workflow id = `intentWorkflowId(intent_id)`. */
 export const effectWorkflow = DBOS.registerWorkflow((intent_id: string) => untilSettled(`effect ${intent_id}`, () => carryStart(intent_id)), { name: "oakridgeEffectWorkflow" });
 async function carryStart(intent_id: string): Promise<EffectStatus | null> {
   const timing = current().timing;
@@ -264,7 +278,7 @@ async function carryStart(intent_id: string): Promise<EffectStatus | null> {
   return status;
 }
 
-/** Carries one committed stop intent to its provider until the provider positively acknowledges it. Workflow id = intent id. */
+/** Carries one committed stop intent to its provider until the provider positively acknowledges it. Workflow id = `intentWorkflowId(intent_id)`. */
 export const cleanupWorkflow = DBOS.registerWorkflow((intent_id: string) => untilSettled(`cleanup ${intent_id}`, () => carryStop(intent_id)), { name: "oakridgeCleanupWorkflow" });
 async function carryStop(intent_id: string): Promise<EffectStatus | null> {
   const timing = current().timing;
@@ -368,11 +382,12 @@ const effectExpiredStep = DBOS.registerStep(async (deadline_epoch_ms: number): P
   deadline_epoch_ms <= Date.now(), { name: "oakridgeEffectExpired" });
 
 export async function dispatchChild(run_id: string, intent_id: string, kind: "start" | "stop"): Promise<void> {
-  const status = await DBOS.getWorkflowStatus(intent_id);
+  const workflow_id = intentWorkflowId(intent_id);
+  const status = await DBOS.getWorkflowStatus(workflow_id);
   if (!status) {
     if (kind === "start") await DBOS.startWorkflow(effectWorkflow,
-      { workflowID: intent_id, timeoutMS: current().timing.execution_deadline_ms })(intent_id);
-    else await DBOS.startWorkflow(cleanupWorkflow, { workflowID: intent_id })(intent_id);
+      { workflowID: workflow_id, timeoutMS: current().timing.execution_deadline_ms })(intent_id);
+    else await DBOS.startWorkflow(cleanupWorkflow, { workflowID: workflow_id })(intent_id);
     return;
   }
   if (status.status === "PENDING" || status.status === "ENQUEUED") return;
@@ -381,7 +396,7 @@ export async function dispatchChild(run_id: string, intent_id: string, kind: "st
       await settleExpiredEffect(intent_id);
       return;
     }
-    await DBOS.resumeWorkflow(intent_id);
+    await DBOS.resumeWorkflow(workflow_id);
     return;
   }
   if (status.status === "ERROR" || status.status === "SUCCESS") {
@@ -445,6 +460,15 @@ export async function ensureRunWorkflow(run_id: string): Promise<void> {
   const { generation } = address;
   const id = runWorkflowId(run_id, generation);
   const existing = await DBOS.getWorkflowStatus(id);
+  if (existing && isFromOtherEngine(existing) && existing.status !== "SUCCESS") {
+    // Another engine's workflow never runs here, and replaying its steps under
+    // this code would be unsound. Fence it and carry the run from the authority.
+    if (existing.status === "PENDING" || existing.status === "ENQUEUED") await DBOS.cancelWorkflow(id);
+    const successor = await claimRunGeneration(db, run_id, generation);
+    if (successor === null) throw new RunInfrastructureError(run_id, "carry over", "generation changed concurrently");
+    await DBOS.startWorkflow(runWorkflow, { workflowID: runWorkflowId(run_id, successor) })(run_id, address.cursor);
+    return;
+  }
   if (existing?.status === "PENDING" || existing?.status === "ENQUEUED") return;
   if (existing?.status === "CANCELLED") { await DBOS.resumeWorkflow(id); return; }
   if (existing?.status === "ERROR") {
@@ -475,7 +499,8 @@ export async function wakeRunOf(scope_id: string): Promise<void> {
   if (!address) return;
   let generation = Number(address.current_generation);
   const status = await DBOS.getWorkflowStatus(runWorkflowId(address.run_id, generation));
-  if (status?.status === "ERROR") generation = await recoverErroredRun(address.run_id, generation);
+  // Another engine's run is carried over by ensureRunWorkflow, never forked here.
+  if (status?.status === "ERROR" && !isFromOtherEngine(status)) generation = await recoverErroredRun(address.run_id, generation);
   await DBOS.send(runWorkflowId(address.run_id, generation), null, RUN_WAKE_TOPIC);
 }
 interface RunAddress { readonly run_id: string; readonly current_generation: string | number }
@@ -490,18 +515,42 @@ function isExpiredEffectWorkflow(status: WorkflowStatus, now_ms: number): boolea
     && status.deadlineEpochMS !== undefined && status.deadlineEpochMS <= now_ms;
 }
 
+function intentOf(status: WorkflowStatus): string | null {
+  const intent_id = status.input?.[0];
+  return typeof intent_id === "string" ? intent_id : null;
+}
+
+/**
+ * A live workflow of another engine version is one a crashed or replaced
+ * process left behind. Cancelling it fences any process of that version still
+ * running; its run and intents are carried again under this version.
+ */
+export async function fenceOtherEngineWorkflows(): Promise<number> {
+  const live = await DBOS.listWorkflows({ status: ["PENDING", "ENQUEUED"], workflowName: WORKFLOW_NAMES });
+  const stale = live.filter(isFromOtherEngine);
+  if (stale.length) await DBOS.cancelWorkflows(stale.map((status) => status.workflowID));
+  return stale.length;
+}
+
 /**
  * Boot: workflows this engine parked at its last shutdown resume from their
  * last step, and every run whose root is still active gets its workflow back.
+ * Another version's workflows are fenced; the run recheck starts this
+ * version's carriers for any intent still owed.
  */
 export async function resumeActiveRuns(db: TransactionalSqlExecutor): Promise<number> {
-  const parked = await DBOS.listWorkflows({ status: "CANCELLED", workflowName: WORKFLOW_NAMES.slice(1) });
+  await fenceOtherEngineWorkflows();
+  const parked = await DBOS.listWorkflows({ status: "CANCELLED", workflowName: WORKFLOW_NAMES.slice(1),
+    applicationVersion: DBOS.applicationVersion });
   const now_ms = Date.now();
   const expired = parked.filter((status) => isExpiredEffectWorkflow(status, now_ms));
   const expired_ids = new Set(expired.map((status) => status.workflowID));
   const resumable = parked.filter((status) => !expired_ids.has(status.workflowID));
   if (resumable.length) await DBOS.resumeWorkflows(resumable.map((status) => status.workflowID));
-  for (const status of expired) await settleExpiredEffect(status.workflowID);
+  for (const status of expired) {
+    const intent_id = intentOf(status);
+    if (intent_id !== null) await settleExpiredEffect(intent_id);
+  }
   const runs = await db.query<{ id: string }>(`SELECT r.id FROM authority.run r WHERE ${RUN_NEEDS_WORK_SQL} ORDER BY r.id`, []);
   for (const run of runs) await ensureRunWorkflow(run.id);
   return runs.length;

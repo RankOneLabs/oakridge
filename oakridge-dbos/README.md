@@ -21,16 +21,17 @@ that interpret every pinned bundle without knowing its stages:
   authority, delivers configured lifecycle triggers, retries deferred evidence
   and starts workflows for intents that need one; exits when the root scope is
   terminal and nothing is owed. Every accepted command sends it a wake.
-- `oakridgeEffectWorkflow` (id = start intent id) — carries one committed start
+- `oakridgeEffectWorkflow` (id = `<start intent id>@<application version>`) — carries one committed start
   to its provider with capped backoff, observes until terminal, persists the
   result and delivers evidence.
-- `oakridgeCleanupWorkflow` (id = stop intent id) — carries one committed stop
+- `oakridgeCleanupWorkflow` (id = `<stop intent id>@<application version>`) — carries one committed stop
   until the provider positively acknowledges it.
 
 Steps are IO boundaries (one DB write, one core call, one provider call). A
 crash mid-step resumes at that step on the next process of the same application
-version. A clean shutdown parks running workflows (DBOS cancel) and the next
-boot resumes them. An `ERROR` run is forked at its failed step into the next
+version. A clean shutdown parks running workflows (DBOS cancel), and the next
+boot of the same version resumes them. A boot of a different version carries
+them over instead (see Application version). An `ERROR` run is forked at its failed step into the next
 generation; a long run rolls over after 128 iterations with its scan cursor.
 Child dispatch reads durable intent and workflow status, so restart neither
 redelivers a settled child nor forgets one still pending.
@@ -53,7 +54,16 @@ the process spawns. The final SHA-256 is truncated to 16 hex characters. This
 includes workflow dependencies, the authority schema baseline and the Rust
 evaluator build. Bundle, route, projection, prompt and UI changes leave it
 unchanged. `DBOS_APPLICATION_VERSION` overrides it for controlled forks and
-rollbacks; a different version does not resume workflows pinned to the old one.
+rollbacks.
+
+DBOS never runs a workflow recorded under another version, so boot carries
+them over instead of resuming them. Live workflows of another version are
+cancelled to fence any process still running it. A run whose current
+generation belongs to another version gets a fresh generation that rereads the
+authority from its scan cursor. Intent workflows are addressed per version, so
+the run's next recheck starts this version's carrier for any intent still owed.
+The older rows remain as history. A carried effect starts a fresh DBOS
+execution deadline.
 
 ## Verify
 
