@@ -1,8 +1,8 @@
-import type { ArtifactId, AttemptId, CohortId, ExecutionId, ExecutorOperationId, JsonValue, SessionId, StageInstanceId, UnitId, WorkflowRunId } from "./primitives";
+import type { ArtifactId, ExecutionId, ExecutorOperationId, JsonValue, StageInstanceId, UnitId } from "./primitives";
 import type { ArtifactTypeId } from "./workflow";
 import type { CommittedSessionLaunch } from "./delegated-session";
 
-export interface ArtifactEnvelope {
+interface ArtifactEnvelope {
   readonly artifact_id: ArtifactId;
   readonly artifact_type: ArtifactTypeId;
   readonly output_name: string;
@@ -19,7 +19,7 @@ export interface ArtifactEnvelope {
   readonly chain_id?: ArtifactId;
 }
 
-export interface OutputContract { readonly name: string; readonly artifact_type: ArtifactTypeId; readonly required: boolean }
+interface OutputContract { readonly name: string; readonly artifact_type: ArtifactTypeId; readonly required: boolean }
 export interface ExpectedArtifactContract { readonly unit_id: UnitId; readonly output_name: string; readonly artifact_type: ArtifactTypeId }
 
 export interface ExecutionRequest {
@@ -106,12 +106,4 @@ export interface ExecutorAdapter {
   observe_terminal(execution_id: ExecutionId, external_reference: ExternalExecutionReference): Promise<ExecutorObservationAttempt | ExecutorUnavailable>;
   deliver_input(execution_id: ExecutionId, delivery_key: string, input: string, external_reference: ExternalExecutionReference): Promise<void>;
   cancel_or_fence(execution_id: ExecutionId, external_reference: ExternalExecutionReference): Promise<void | ExecutorUnavailable>;
-}
-
-export interface AttemptExecutionContext {
-  readonly run_id: WorkflowRunId;
-  readonly stage_instance_id: StageInstanceId;
-  readonly cohort_id: CohortId;
-  readonly attempt_id: AttemptId;
-  readonly session_id: SessionId | null;
 }

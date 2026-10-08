@@ -13,12 +13,14 @@ import { MAX_SNAPSHOT_BYTES, measureAuthoritySnapshot } from "../effects/operati
 export { MAX_SNAPSHOT_BYTES, measureAuthoritySnapshot } from "../effects/operations/selected-publication-contract";
 import { selectedInvocation, type InvocationId } from "../effects/provider";
 import type { EffectPayload } from "../effects/intents";
+import type { Result as SharedResult } from "../domain/primitives";
 import { sealEffectPayload } from "./effect-secret";
 import { revokeStarts } from "./revocation";
 import { validateDecision, validateStorageAuthority } from "./storage-validator";
 
 export interface DomainError { readonly operation: string; readonly entity_id: string; readonly detail: string; readonly reason?: CommitRejectionReason }
-export type Result<Value> = { readonly ok: true; readonly value: Value } | { readonly ok: false; readonly error: DomainError };
+/** A storage result: the shared Result with a traced domain error. */
+export type Result<Value> = SharedResult<Value, DomainError>;
 export interface OutputPublication { readonly revision_id?: string; readonly scope_id: ScopeId; readonly output_key: string; readonly collection_key: string; readonly body: CheckedValue; readonly predecessor_id: string | null; readonly expected_slot_version: number | null; readonly execution_id: string | null }
 export interface EffectPublication { readonly effect_key: string; readonly payload: CheckedValue; readonly execution_id: string | null }
 export interface CommitRequest { readonly execution_authority?: string; readonly child_cancellations?: readonly import("./child-cancellation").ChildCancellation[]; readonly identity: IngressIdentity; readonly read_set: ReadSet; readonly decision: DecisionOutcome; readonly outputs: readonly OutputPublication[]; readonly capacity: readonly CapacityChange[]; readonly effects: readonly EffectPublication[]; readonly operator_version: number | null }
