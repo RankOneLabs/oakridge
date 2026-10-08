@@ -357,6 +357,38 @@ fn bounded_evaluation_reports_engine_error() {
 }
 
 #[test]
+fn repeated_unchanged_assignments_wait_without_committing() {
+    let b = bundle("minimal");
+    let mut p = compile(&b, &b.operations).unwrap();
+    let CheckedTree::Match { cases, .. } = &mut p.scopes[0].tree else {
+        panic!("dispatch match")
+    };
+    let CheckedTree::Apply {
+        mutations,
+        actions,
+        outcome,
+        ..
+    } = &mut cases[0].node
+    else {
+        panic!("begin apply")
+    };
+    let unchanged = CheckedMutation::SetState {
+        value: CheckedExpression {
+            schema: SchemaId::from("position"),
+            node: CheckedExpressionNode::Reference {
+                root: ReferenceRoot::State,
+                selectors: vec![],
+            },
+        },
+    };
+    *mutations = vec![unchanged.clone(), unchanged];
+    actions.clear();
+    *outcome = None;
+    let result = evaluate(&p, &snapshot(&b, json!({}), "ready", "begin")).unwrap();
+    assert!(matches!(result, DecisionOutcome::Wait { .. }), "{result:?}");
+}
+
+#[test]
 fn optional_payload_is_bound_only_inside_presence_match() {
     let mut b = bundle("minimal");
     b.scopes[0].input_schema = SchemaId::from("optional_unit");

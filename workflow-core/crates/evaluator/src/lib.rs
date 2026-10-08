@@ -350,7 +350,7 @@ pub fn evaluate(program: &CheckedProgram, snapshot: &Snapshot) -> CoreResult<Dec
                         },
                     });
                 }
-                let invocations = actions
+                let invocations: Vec<Invocation> = actions
                     .iter()
                     .map(|a| {
                         Ok(Invocation {
@@ -377,16 +377,29 @@ pub fn evaluate(program: &CheckedProgram, snapshot: &Snapshot) -> CoreResult<Dec
                     })
                     .transpose()?
                     .unwrap_or_default();
-                if selected.len() == 1 && outcome.is_none() && actions.is_empty() {
-                    if let MutationValue::SetState { value } = &selected[0] {
-                        if *value == snapshot.state {
-                            return Ok(DecisionOutcome::Wait {
-                                explanation,
-                                continuations: vec![snapshot.trigger.key.clone()],
-                                reason: "unchanged state; awaiting a new trigger".into(),
-                                attention: None,
-                            });
+                if !selected.is_empty()
+                    && outcome.is_none()
+                    && invocations.is_empty()
+                    && selected
+                        .iter()
+                        .all(|mutation| matches!(mutation, MutationValue::SetState { .. }))
+                {
+                    let mut is_unchanged = true;
+                    for mutation in &selected {
+                        let MutationValue::SetState { value } = mutation else {
+                            unreachable!()
+                        };
+                        if !expressions::equal_values(value, &snapshot.state, context.budget)? {
+                            is_unchanged = false;
                         }
+                    }
+                    if is_unchanged {
+                        return Ok(DecisionOutcome::Wait {
+                            explanation,
+                            continuations: vec![snapshot.trigger.key.clone()],
+                            reason: "unchanged state; awaiting a new trigger".into(),
+                            attention: None,
+                        });
                     }
                 }
                 if selected.is_empty() && outcome.is_none() && actions.is_empty() {
