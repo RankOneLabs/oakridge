@@ -1,5 +1,5 @@
 import type { WorkerDefinition } from "../../../source-contracts";
-import { optional, record, reference } from "../../../primitives/expressions";
+import { record, reference } from "../../../primitives/expressions";
 
 export const workers: WorkerDefinition[] = [
   {
@@ -16,7 +16,7 @@ export const workers: WorkerDefinition[] = [
           { key: "config", value: reference({ kind: "input" }, ["config"]) },
           {
             key: "context",
-            value: record("session_context", [{ key: "task", value: optional("optional_task", reference({ kind: "input" }, [])) }])
+            value: record("session_context", [{ key: "task", value: reference({ kind: "input" }, []) }])
           }
         ]),
         prompt: "planning_author_initial_v3",
@@ -36,8 +36,8 @@ export const workers: WorkerDefinition[] = [
           {
             key: "context",
             value: record("session_context", [
-              { key: "task", value: optional("optional_task", reference({ kind: "input" }, [])) },
-              { key: "feedback", value: optional("optional_text", reference({ kind: "trigger" }, ["text"])) }
+              { key: "task", value: reference({ kind: "input" }, []) },
+              { key: "feedback", value: reference({ kind: "trigger" }, ["text"]) }
             ])
           }
         ]),
@@ -57,7 +57,7 @@ export const workers: WorkerDefinition[] = [
           { key: "config", value: reference({ kind: "input" }, ["config"]) },
           {
             key: "context",
-            value: record("session_context", [{ key: "task", value: optional("optional_task", reference({ kind: "input" }, [])) }])
+            value: record("session_context", [{ key: "task", value: reference({ kind: "input" }, []) }])
           }
         ]),
         prompt: "planning_author_retry_v3",

@@ -516,6 +516,32 @@ fn recursive_value_schema() {
     );
 }
 #[test]
+fn nested_optional_schema_is_rejected() {
+    let mut value = fixture();
+    value["schemas"].as_array_mut().unwrap().extend([
+        json!({"key":"inner_optional","shape":{"kind":"optional","item":"unit"}}),
+        json!({"key":"outer_optional","shape":{"kind":"optional","item":"inner_optional"}}),
+    ]);
+    let source: DefinitionBundle = serde_json::from_value(value).unwrap();
+    let diagnostic = compile(&source, &source.operations).unwrap_err();
+    assert_eq!(diagnostic.kind, DomainErrorKind::InvalidSchema);
+    assert_eq!(diagnostic.entity_id.as_ref(), "outer_optional");
+}
+#[test]
+fn optional_record_field_cannot_declare_an_already_optional_schema() {
+    let mut value = fixture();
+    value["schemas"].as_array_mut().unwrap().extend([
+        json!({"key":"inner_optional","shape":{"kind":"optional","item":"unit"}}),
+        json!({"key":"holder","shape":{"kind":"record","fields":[
+            {"key":"maybe","schema":"inner_optional","required":false}
+        ],"dictionary":null}}),
+    ]);
+    let source: DefinitionBundle = serde_json::from_value(value).unwrap();
+    let diagnostic = compile(&source, &source.operations).unwrap_err();
+    assert_eq!(diagnostic.kind, DomainErrorKind::InvalidSchema);
+    assert_eq!(diagnostic.entity_id.as_ref(), "holder.maybe");
+}
+#[test]
 fn wrong_action_input_port() {
     reject(
         fixture(),
@@ -1169,14 +1195,14 @@ fn e3_shared_schema_still_counts_at_deeper_depth() {
     let mut source = fixture();
     source["limits"]["max_depth"] = json!(3);
     let schemas = source["schemas"].as_array_mut().unwrap();
-    schemas.push(json!({"key":"depth_leaf","shape":{"kind":"optional","item":"unit"}}));
+    schemas.push(json!({"key":"depth_leaf","shape":{"kind":"list","item":"unit","max_items":1}}));
     for (key, item) in [
         ("depth_a", "depth_b"),
         ("depth_b", "depth_c"),
         ("depth_c", "depth_d"),
         ("depth_d", "depth_leaf"),
     ] {
-        schemas.push(json!({"key":key,"shape":{"kind":"optional","item":item}}));
+        schemas.push(json!({"key":key,"shape":{"kind":"list","item":item,"max_items":1}}));
     }
     let bundle: DefinitionBundle = serde_json::from_value(source).unwrap();
     assert_eq!(
@@ -1196,9 +1222,9 @@ enum Declaration {
 /// the given order. Returns the error kind, or None when the bundle compiles.
 fn chain_outcome(order: Declaration, max_depth: usize) -> Option<DomainErrorKind> {
     let mut links = vec![
-        json!({"key":"depth_a","shape":{"kind":"optional","item":"depth_b"}}),
-        json!({"key":"depth_b","shape":{"kind":"optional","item":"depth_c"}}),
-        json!({"key":"depth_c","shape":{"kind":"optional","item":"unit"}}),
+        json!({"key":"depth_a","shape":{"kind":"list","item":"depth_b","max_items":1}}),
+        json!({"key":"depth_b","shape":{"kind":"list","item":"depth_c","max_items":1}}),
+        json!({"key":"depth_c","shape":{"kind":"list","item":"unit","max_items":1}}),
     ];
     if matches!(order, Declaration::DependencyFirst) {
         links.reverse();
