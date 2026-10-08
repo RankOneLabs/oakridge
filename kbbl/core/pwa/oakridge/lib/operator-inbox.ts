@@ -1,4 +1,7 @@
-import type { OperatorInbox, OperatorInboxPage } from "../operator-contracts";
+import type { OperatorInboxPage } from "../operator-contracts";
+
+/** Every inbox page, merged. */
+export type OperatorInbox = Omit<OperatorInboxPage, "next_cursor">;
 
 export async function readAllInboxPages(fetch_page: (path: string) => Promise<OperatorInboxPage>): Promise<OperatorInbox> {
   const cursor: OperatorInbox["cursor"][number][] = [];

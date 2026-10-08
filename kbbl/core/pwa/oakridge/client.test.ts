@@ -1,7 +1,7 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { fetchOakridgeConfig, fetchOperatorRuns, fetchOperatorDefinitions, submitOperatorCommand } from "./client";
 import { DEFAULT_FALLBACK_REFRESH_MS } from "./lib/oakridge-config";
-import type { OperatorCommandSubmission } from "./operator-contracts";
+import type { OperatorCommandSubmission } from "./lib/operator-drafts";
 
 afterEach(() => { vi.unstubAllGlobals(); });
 

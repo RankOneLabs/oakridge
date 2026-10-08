@@ -1,4 +1,5 @@
 import { findLaunchReceipt, type LaunchReceiptLookup } from "./launch-receipts";
+import type { DefinitionSummary } from "../projections/definition-view";
 import type { CoreResult } from "../core-client/transport-errors";
 import { stagePublications } from "./stage-publications";
 import { currentTargetRevisions, targetsMatch, type TargetRevision } from "./command-selection";
@@ -16,14 +17,13 @@ export interface CompileRequest { readonly bundle: DefinitionBundle }
 export interface CompileResult { readonly program: CompiledBundle }
 export interface StartRunRequest extends CompileRequest { readonly input: unknown; readonly request_id?: string }
 export interface StartPinnedRunRequest { readonly digest: string; readonly input: unknown; readonly request_id: string }
-export interface PinnedDefinition { readonly bundle_id: string; readonly digest: string; readonly source: DefinitionBundle }
 export interface EvaluationInput { readonly source: AuthoritySnapshot; readonly bundle: DefinitionBundle }
 export interface EvaluationResult { readonly decision: DecisionOutcome }
 export interface Decision { readonly source: AuthoritySnapshot; readonly outcome: DecisionOutcome }
 export interface PreparedDecision { readonly request_digest: string; readonly decision: Decision; readonly target_revisions?: readonly TargetRevision[] }
 export interface MutationInput { readonly request_digest?: string; readonly execution_authority?: string; readonly run_id: RunId; readonly scope_id: ScopeId; readonly ingress_id: string; readonly trigger: Trigger; readonly operator_version: number | null; readonly outputs?: readonly OutputPublication[]; readonly prepared?: PreparedDecision }
 export interface StartedRun { readonly run_id: RunId; readonly root_scope_id: ScopeId; readonly bundle_id: string }
-export interface MutationService { compile(request: CompileRequest): Promise<Result<CompileResult>>; pinDefinition(request: CompileRequest): Promise<Result<PinnedDefinition>>; startRun(request: StartRunRequest): Promise<Result<StartedRun>>; startRunByDigest(request: StartPinnedRunRequest): Promise<Result<StartedRun>>; decide(input: MutationInput): Promise<Result<CommitResult>> }
+export interface MutationService { compile(request: CompileRequest): Promise<Result<CompileResult>>; pinDefinition(request: CompileRequest): Promise<Result<DefinitionSummary>>; startRun(request: StartRunRequest): Promise<Result<StartedRun>>; startRunByDigest(request: StartPinnedRunRequest): Promise<Result<StartedRun>>; decide(input: MutationInput): Promise<Result<CommitResult>> }
 export interface ProviderCapabilityInput { readonly bundle: DefinitionBundle; readonly input: unknown }
 export interface ProviderCapabilities {
   readonly probe?: (kind: string) => Promise<Result<true>>;
@@ -97,7 +97,7 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
           await storePromptContents(tx, prompts.value);
           await tx.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ($1,$2,$3,$4) ON CONFLICT (digest) DO NOTHING",
             [bundle_id, compiled.value.program.digest, JSON.stringify(request.bundle), JSON.stringify(compiled.value.program)]);
-          return tx.query<PinnedDefinition>("SELECT id AS bundle_id,digest,source FROM authority.definition_bundle WHERE digest=$1", [compiled.value.program.digest]);
+          return tx.query<DefinitionSummary>("SELECT id AS bundle_id,digest,source FROM authority.definition_bundle WHERE digest=$1", [compiled.value.program.digest]);
         });
         if (!rows[0]) return error("pin_definition", compiled.value.program.digest, "stored definition missing");
         return { ok: true, value: rows[0] };

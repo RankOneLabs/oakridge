@@ -5,7 +5,7 @@ import { readScopeObservations } from "./snapshot-reader";
 import { currentTargetRevisions } from "./command-selection";
 import { normalizeExecutionRecord, normalizeRecordVersion, type StoredExecutionRecord, type StoredVersionedRecord } from "../projections/record-selectors";
 import { normalizeOutputSlot, selectAvailableCommands, type ScopeView, type StoredOutputSlotView, type TransitionRow } from "../projections/scope-view";
-import { selectInboxItems, type InboxItem, type InboxRow } from "../projections/inbox";
+import { selectInboxItems, type InboxPage, type InboxRow } from "../projections/inbox";
 import type { RunView } from "../projections/run-view";
 
 export async function readScopeView(db: TransactionalSqlExecutor, scope_id: ScopeId): Promise<ScopeView | null> {
@@ -41,7 +41,7 @@ export async function readScopeView(db: TransactionalSqlExecutor, scope_id: Scop
 export const DEFAULT_INBOX_LIMIT = 100;
 export interface InboxQuery { readonly run_id?: RunId; readonly cursor?: string; readonly limit?: number }
 interface InboxScopeRow extends Omit<InboxRow, "source"> { readonly definition_bundle_id: string }
-export async function readInbox(db: TransactionalSqlExecutor, query: InboxQuery = {}): Promise<{ readonly cursor: readonly { readonly scope_id: string; readonly version: number }[]; readonly items: readonly InboxItem[]; readonly next_cursor: string | null }> {
+export async function readInbox(db: TransactionalSqlExecutor, query: InboxQuery = {}): Promise<InboxPage> {
   const limit = Math.min(Math.max(1, query.limit ?? DEFAULT_INBOX_LIMIT), DEFAULT_INBOX_LIMIT);
   const after = query.cursor ? JSON.parse(Buffer.from(query.cursor, "base64url").toString("utf8")) as readonly [string, string] : null;
   if (after && (!Array.isArray(after) || after.length !== 2 || after.some((item) => typeof item !== "string"))) throw new Error("invalid inbox cursor");

@@ -7,7 +7,7 @@ import { Button } from "../../components/atoms/Button";
 import { randomUuid } from "../../lib/random-uuid";
 import { clearPendingLaunch, discardPendingLaunch, readPendingLaunch, savePendingLaunch } from "../lib/operator-launch";
 import { isDefinitiveRequestRejection } from "../lib/client-errors";
-import type { OperatorLaunchRequest, OperatorSchema } from "../operator-contracts";
+import type { OperatorStartPinnedRunRequest, OperatorSchema } from "../operator-contracts";
 import type { WorkflowDefinitionDescriptor } from "../workflow-definition-types";
 import { buildRootInput, inputRecord, type FieldDrafts, type InputField } from "../lib/operator-input";
 import { invalidateRunLists } from "../lib/operator-invalidation";
@@ -31,7 +31,7 @@ interface Props { readonly onBack: () => void; readonly onCreated: (runId: strin
 export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
   const client = useQueryClient();
   const definitions = useQuery({ queryKey: queryKeys.definitions, queryFn: fetchOperatorDefinitions });
-  const [stored] = useState<{ readonly pending: OperatorLaunchRequest | null; readonly error: string | null }>(() => {
+  const [stored] = useState<{ readonly pending: OperatorStartPinnedRunRequest | null; readonly error: string | null }>(() => {
     try { return { pending: readPendingLaunch(), error: null }; } // Submission re-reads and fails closed if storage is unavailable or corrupt.
     catch (cause) { return { pending: null, error: String(cause) }; }
   });
@@ -60,10 +60,10 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
     event.preventDefault();
     if (deliveryInProgress.current) return;
     setError(null);
-    let retained: OperatorLaunchRequest | null;
+    let retained: OperatorStartPinnedRunRequest | null;
     try { retained = readPendingLaunch(); }
     catch (cause) { setIsStorageUnreadable(true); setError(String(cause)); return; }
-    let request: OperatorLaunchRequest;
+    let request: OperatorStartPinnedRunRequest;
     try {
       request = retained ?? { request_id: randomUuid(), digest: selected,
         input: rawMode ? JSON.parse(input) : buildRootInput(input, fields, fieldDrafts) };

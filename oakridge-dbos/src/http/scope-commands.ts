@@ -25,7 +25,9 @@ export class MissingEntityError { readonly kind = "missing_entity"; constructor(
 export class ConflictError { readonly kind = "conflict"; constructor(readonly detail: string) {} }
 export class TransientServiceError { readonly kind = "transient_service"; constructor(readonly detail: string) {} }
 export class InternalFaultError { readonly kind = "internal_fault"; readonly trace_id = crypto.randomUUID(); constructor(readonly detail: string) {} }
-export class PendingWork { readonly kind = "accepted_pending"; constructor(readonly request_id: string, readonly transition_id: string, readonly scope_version: number) {} }
+/** The body of an accepted command (202). */
+export interface CommandReceipt { readonly kind: "accepted_pending"; readonly request_id: string; readonly transition_id: string; readonly scope_version: number }
+export class PendingWork implements CommandReceipt { readonly kind = "accepted_pending"; constructor(readonly request_id: string, readonly transition_id: string, readonly scope_version: number) {} }
 
 const isObject = (value: unknown): value is { readonly [key: string]: unknown } => value !== null && typeof value === "object" && !Array.isArray(value);
 const isVersion = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;

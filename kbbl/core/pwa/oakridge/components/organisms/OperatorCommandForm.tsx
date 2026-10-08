@@ -7,9 +7,9 @@ import { clearOperatorDraft, clearPendingCommand, findRetainedDrafts, operatorDr
 import { buildRootInput, stringFloor, type FieldDrafts } from "../../lib/operator-input";
 import { parseOperatorFieldValue } from "../../lib/operator-payload";
 import { selectDraftKey } from "../../lib/operator-selectors";
-import type { OperatorCommandDescriptor, OperatorSchema, OperatorScopeView } from "../../operator-contracts";
+import type { OperatorCommandDefinition, OperatorSchema, OperatorScopeView } from "../../operator-contracts";
 
-interface Props { readonly scope: OperatorScopeView; readonly command: OperatorCommandDescriptor;
+interface Props { readonly scope: OperatorScopeView; readonly command: OperatorCommandDefinition;
   readonly schemas: readonly OperatorSchema[]; readonly onRefresh: () => void }
 
 export function OperatorCommandForm({ scope, command, schemas, onRefresh }: Props) {

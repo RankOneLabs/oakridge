@@ -1,4 +1,11 @@
-import type { OperatorCommandSubmission, OperatorDraftKey } from "../operator-contracts";
+import type { OperatorScopeCommandRequest } from "../operator-contracts";
+
+/** What a command form edits: one command on one scope, at an owner version and target revisions. */
+export interface OperatorDraftKey extends Pick<OperatorScopeCommandRequest, "command_key" | "targets"> {
+  readonly run_id: string; readonly scope_id: string; readonly owner_version: number;
+}
+/** A command the operator submitted, retained until the authority acknowledges it. */
+export interface OperatorCommandSubmission extends OperatorDraftKey, Pick<OperatorScopeCommandRequest, "request_id" | "payload"> {}
 
 const DRAFT_PREFIX = "oakridge:operator:draft:";
 const PENDING_PREFIX = "oakridge:operator:pending:";

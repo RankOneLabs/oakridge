@@ -1,9 +1,7 @@
-import type { DefinitionBundle, CompiledBundle } from "../core-client/generated-contracts";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
+import type { DefinitionPage, DefinitionSummary, PinnedDefinition } from "../projections/definition-view";
 
-export interface PinnedDefinition { readonly bundle_id: string; readonly digest: string; readonly source: DefinitionBundle; readonly checked_program: CompiledBundle }
-export interface DefinitionSummary { readonly bundle_id: string; readonly digest: string; readonly source: DefinitionBundle }
-export interface DefinitionPage { readonly items: readonly DefinitionSummary[]; readonly next_cursor: string | null }
+export type { DefinitionPage, DefinitionSummary, PinnedDefinition } from "../projections/definition-view";
 export async function listDefinitions(db: TransactionalSqlExecutor, after: string | null, limit: number): Promise<DefinitionPage> {
   const rows = await db.query<DefinitionSummary>(`SELECT id AS bundle_id,digest,source FROM authority.definition_bundle
     WHERE ($1::text IS NULL OR id<$1) ORDER BY id DESC LIMIT $2`, [after, limit + 1]);
