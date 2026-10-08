@@ -528,6 +528,20 @@ fn nested_optional_schema_is_rejected() {
     assert_eq!(diagnostic.entity_id.as_ref(), "outer_optional");
 }
 #[test]
+fn optional_record_field_cannot_declare_an_already_optional_schema() {
+    let mut value = fixture();
+    value["schemas"].as_array_mut().unwrap().extend([
+        json!({"key":"inner_optional","shape":{"kind":"optional","item":"unit"}}),
+        json!({"key":"holder","shape":{"kind":"record","fields":[
+            {"key":"maybe","schema":"inner_optional","required":false}
+        ],"dictionary":null}}),
+    ]);
+    let source: DefinitionBundle = serde_json::from_value(value).unwrap();
+    let diagnostic = compile(&source, &source.operations).unwrap_err();
+    assert_eq!(diagnostic.kind, DomainErrorKind::InvalidSchema);
+    assert_eq!(diagnostic.entity_id.as_ref(), "holder.maybe");
+}
+#[test]
 fn wrong_action_input_port() {
     reject(
         fixture(),

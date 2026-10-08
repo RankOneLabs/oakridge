@@ -10,9 +10,7 @@ export const executionSchemas: Schema[] = [
     field("analysis", "optional_analysis"),
     field("plan", "optional_plan")
   ]),
-  { key: "optional_task", shape: { kind: "optional", item: "task_input" } },
   recordSchema("implementation_input", [field("brief", "brief_body"), field("repository", "repository_config"), field("push_remote_owner", "ident")]),
-  { key: "optional_implementation", shape: { kind: "optional", item: "implementation_input" } },
   recordSchema("completed_work", [field("repository_key", "ident"), field("pr_url", "text"), field("head_sha", "ident"), field("branch", "ident")]),
   { key: "completed_works", shape: { kind: "list", item: "completed_work", max_items: 100 } },
   recordSchema("integration_input", [
@@ -22,20 +20,22 @@ export const executionSchemas: Schema[] = [
     field("forge", "forge_config"),
     field("push_remote_owner", "ident")
   ]),
-  { key: "optional_integration", shape: { kind: "optional", item: "integration_input" } },
   recordSchema("integration_seed", [field("repository_key", "ident"), field("config", "session_config"), field("forge", "forge_config"), field("push_remote_owner", "ident")]),
   { key: "integration_seeds", shape: { kind: "list", item: "integration_seed", max_items: 100 } },
+  // Retry evidence the operator may or may not have resubmitted. Scoped to its own record
+  // (rather than two more session_context fields) so the genuine nullability of each value
+  // stays on required fields - session_context itself only ever omits or includes this as a whole.
+  recordSchema("retained_evidence", [field("build_result", "optional_revision"), field("pr_summary", "optional_revision")]),
   recordSchema("session_context", [
-    optionalField("task", "optional_task"),
-    optionalField("implementation", "optional_implementation"),
-    optionalField("integration", "optional_integration"),
-    optionalField("feedback", "optional_text"),
-    optionalField("accepted_build", "optional_build_target"),
-    optionalField("build_result", "optional_build_body"),
-    optionalField("pr_summary", "optional_pr_body"),
-    optionalField("assessment", "optional_assessment_body"),
-    optionalField("retained_build", "optional_revision"),
-    optionalField("retained_pr", "optional_revision")
+    optionalField("task", "task_input"),
+    optionalField("implementation", "implementation_input"),
+    optionalField("integration", "integration_input"),
+    optionalField("feedback", "text"),
+    optionalField("accepted_build", "build_target"),
+    optionalField("build_result", "build_body"),
+    optionalField("pr_summary", "pr_body"),
+    optionalField("assessment", "assessment_body"),
+    optionalField("retained", "retained_evidence")
   ]),
   recordSchema("session_action", [field("config", "session_config"), field("context", "session_context")]),
   {

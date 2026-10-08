@@ -87,7 +87,16 @@ pub fn validate_schemas(bundle: &DefinitionBundle) -> CoreResult<()> {
                 }
             }
             SchemaShape::Record { fields, .. } => {
-                unique(fields.iter().map(|f| f.key.as_str()), &key.0)?
+                unique(fields.iter().map(|f| f.key.as_str()), &key.0)?;
+                for field in fields.iter().filter(|f| !f.required) {
+                    if let SchemaShape::Optional { .. } = schema(bundle, &field.schema)? {
+                        return Err(error(
+                            DomainErrorKind::InvalidSchema,
+                            format!("{key}.{}", field.key),
+                            "optional field cannot declare an already-optional schema: the compiler's synthesized field-presence wrapper would itself be Optional<Optional<T>>; null decodes to None at every level, so Some(None) is unrepresentable",
+                        ));
+                    }
+                }
             }
             SchemaShape::Union { variants } => {
                 unique(variants.iter().map(|v| v.key.as_str()), &key.0)?;

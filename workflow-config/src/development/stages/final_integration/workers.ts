@@ -1,5 +1,5 @@
 import type { WorkerDefinition } from "../../../source-contracts";
-import { optional, record, reference } from "../../../primitives/expressions";
+import { record, reference } from "../../../primitives/expressions";
 
 export const workers: WorkerDefinition[] = [
   {
@@ -16,7 +16,7 @@ export const workers: WorkerDefinition[] = [
           { key: "config", value: reference({ kind: "input" }, ["config"]) },
           {
             key: "context",
-            value: record("session_context", [{ key: "integration", value: optional("optional_integration", reference({ kind: "input" }, [])) }])
+            value: record("session_context", [{ key: "integration", value: reference({ kind: "input" }, []) }])
           }
         ]),
         prompt: "final_integration_integrator_initial_v3",
@@ -35,7 +35,7 @@ export const workers: WorkerDefinition[] = [
           { key: "config", value: reference({ kind: "input" }, ["config"]) },
           {
             key: "context",
-            value: record("session_context", [{ key: "integration", value: optional("optional_integration", reference({ kind: "input" }, [])) }])
+            value: record("session_context", [{ key: "integration", value: reference({ kind: "input" }, []) }])
           }
         ]),
         prompt: "final_integration_integrator_retry_v3",
