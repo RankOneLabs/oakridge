@@ -1,32 +1,31 @@
 import { queryKeys } from "../queryKeys";
 import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { decodeDefinitionBundle } from "../workflow-definition-types";
 import { fetchOperatorDefinitions, pinOperatorDefinition } from "../client";
+import { invalidateDefinitions } from "../lib/operator-invalidation";
 import { Button } from "../../components/atoms/Button";
 
 interface Props { readonly cloneFromId: string | null; readonly onBack: () => void; readonly onPinned: () => void }
 export function OperatorDefinitionEditorView({ cloneFromId, onBack, onPinned }: Props) {
+  const client = useQueryClient();
   const definitions = useQuery({ queryKey: queryKeys.definitions, queryFn: fetchOperatorDefinitions });
   const [source, setSource] = useState("");
-  const [hasSeededNew, setHasSeededNew] = useState(false);
   const [loadedId, setLoadedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const isReady = cloneFromId === null || loadedId === cloneFromId;
   useEffect(() => {
     if (!cloneFromId) {
-      if (!hasSeededNew && definitions.data) {
-        setSource(definitions.data[0] ? JSON.stringify(definitions.data[0].source, null, 2) : "");
-        setHasSeededNew(true);
-      }
-      if (loadedId !== null) setLoadedId(null);
+      // A new definition starts empty: the catalog has no order that makes any entry the natural template.
+      // Leaving a clone keeps this instance mounted, so its cloned source is cleared here.
+      if (loadedId !== null) { setSource(""); setLoadedId(null); }
       return;
     }
     if (loadedId === cloneFromId) return;
     const definition = definitions.data?.find((item) => item.bundle_id === cloneFromId);
     if (definition) { setSource(JSON.stringify({ ...definition.source, version: definition.source.version + 1 }, null, 2)); setLoadedId(cloneFromId); }
-  }, [cloneFromId, definitions.data, hasSeededNew, loadedId]);
+  }, [cloneFromId, definitions.data, loadedId]);
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!isReady || saving) return;
@@ -36,7 +35,7 @@ export function OperatorDefinitionEditorView({ cloneFromId, onBack, onPinned }: 
     const definition = decodeDefinitionBundle(parsed);
     if (!definition) { setError("Definition does not match the source schema."); return; }
     setSaving(true);
-    try { await pinOperatorDefinition(definition); onPinned(); }
+    try { await pinOperatorDefinition(definition); invalidateDefinitions(client); onPinned(); }
     catch (cause) { setError(String(cause)); }
     finally { setSaving(false); }
   };

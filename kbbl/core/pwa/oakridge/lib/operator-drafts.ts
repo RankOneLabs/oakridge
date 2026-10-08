@@ -8,6 +8,15 @@ export function operatorDraftIdentity(key: OperatorDraftKey): string {
     key.targets.map((target) => [target.identity, target.version])]);
 }
 
+/**
+ * What a mounted command form stands for: the command and its target revisions,
+ * without the owner version. A version bump moves the draft under a new storage
+ * identity but must not replace the form that is holding the operator's edits.
+ */
+export function operatorFormIdentity(key: OperatorDraftKey): string {
+  return JSON.stringify([key.run_id, key.scope_id, key.command_key, key.targets.map((target) => [target.identity, target.version])]);
+}
+
 export function readOperatorDraft(key: OperatorDraftKey): string {
   try { return localStorage.getItem(DRAFT_PREFIX + operatorDraftIdentity(key)) ?? ""; }
   catch { return ""; }

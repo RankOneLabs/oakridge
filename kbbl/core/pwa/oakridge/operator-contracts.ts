@@ -43,7 +43,7 @@ export interface OperatorScopeDefinition {
 
 export interface OperatorPinnedDefinition {
   readonly bundle_id: string; readonly digest: string;
-  readonly source: { readonly schemas: readonly OperatorSchema[]; readonly scopes: readonly OperatorScopeDefinition[] };
+  readonly source: { readonly root: string; readonly schemas: readonly OperatorSchema[]; readonly scopes: readonly OperatorScopeDefinition[] };
 }
 
 export interface OperatorGenericRun {

@@ -1,5 +1,5 @@
 import { StrictMode } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
 import { useRun } from "../hooks/useRun";
@@ -19,8 +19,8 @@ afterEach(() => { vi.unstubAllGlobals(); localStorage.clear(); });
 function RunConsumer() { useRun("run-one"); return null; }
 function InboxConsumer() { useReviewInbox(); return null; }
 function runResponse(url: string): Response {
-  if (url.endsWith("/runs/run-one")) return Response.json({ run_id: "run-one", scopes: [{ scope_id: "scope-one", label: "Current scope" }] });
-  if (url.endsWith("/definition")) return Response.json({ source: { schemas: [] } });
+  if (url.endsWith("/runs/run-one")) return Response.json({ run_id: "run-one", scopes: [{ scope_id: "scope-one", scope_key: "root", label: "Current scope" }] });
+  if (url.endsWith("/definition")) return Response.json({ source: { root: "root", schemas: [] } });
   if (url.endsWith("/history")) return Response.json({ transitions: [], facts: [] });
   return Response.json({ scope_id: "scope-one", run_id: "run-one", label: "Current scope",
     state: { schema: "text", data: { kind: "string", value: "snapshot" } }, outcome: null,
@@ -82,18 +82,21 @@ test("StrictMode recovery delivers one pending command with its retained request
   await screen.findByText("Command accepted.");
 });
 
+/** The authority pages GET /api/runs, so a mocked list carries the envelope the client reads. */
+const cursorPage = (items: readonly unknown[]): Response => Response.json({ items, next_cursor: null });
+
 function scopeOf(runId: string): string { return `${runId}-scope`; }
 /** Serves any run id, so one fan-out can be observed against two runs at once. */
 function anyRunResponse(url: string): Response {
   if (url.endsWith("/api/inbox")) return Response.json({ cursor: [], items: [], next_cursor: null });
-  if (url.endsWith("/api/runs")) return Response.json([{ run_id: "run-one", scopes: [{ scope_id: scopeOf("run-one"), label: "One", is_terminal: false }] }]);
-  if (url.endsWith("/definition")) return Response.json({ source: { schemas: [] } });
+  if (url.endsWith("/api/runs")) return cursorPage([{ run_id: "run-one", scopes: [{ scope_id: scopeOf("run-one"), label: "One", is_terminal: false }] }]);
+  if (url.endsWith("/definition")) return Response.json({ source: { root: "root", schemas: [] } });
   if (url.endsWith("/history")) return Response.json({ transitions: [], facts: [] });
   const runId = url.match(/\/runs\/([^/?]+)/)?.[1] ?? "run-one";
   if (url.endsWith(`/scopes/${scopeOf(runId)}`)) return Response.json({ scope_id: scopeOf(runId), run_id: runId, label: `Scope of ${runId}`,
     state: { schema: "text", data: { kind: "string", value: "snapshot" } }, outcome: null,
     outputs: [], executions: [], commands: [], cursor: { scope_version: 1 } });
-  return Response.json({ run_id: runId, scopes: [{ scope_id: scopeOf(runId), label: `Scope of ${runId}` }] });
+  return Response.json({ run_id: runId, scopes: [{ scope_id: scopeOf(runId), scope_key: "root", label: `Scope of ${runId}` }] });
 }
 
 test("an authority event refreshes its own run and both shared lists, and leaves other runs alone", async () => {
@@ -108,6 +111,8 @@ test("an authority event refreshes its own run and both shared lists, and leaves
   </QueryClientProvider>);
   await screen.findByRole("heading", { name: "Scope of run-one" });
   await screen.findByRole("heading", { name: "Scope of run-two" });
+  expect(await screen.findByText("0/1 scopes complete")).toBeTruthy();
+  expect(screen.queryByText(/Error/)).toBeNull();
   const served = (suffix: string) => fetch.mock.calls.filter(([url]) => url.endsWith(suffix)).length;
   expect([served("/api/runs"), served("/api/inbox"), served(`/scopes/${scopeOf("run-two")}`)]).toEqual([1, 1, 1]);
 
@@ -115,4 +120,42 @@ test("an authority event refreshes its own run and both shared lists, and leaves
 
   await waitFor(() => expect([served("/api/runs"), served("/api/inbox"), served(`/scopes/${scopeOf("run-one")}`)]).toEqual([2, 2, 2]));
   expect(served(`/scopes/${scopeOf("run-two")}`)).toBe(1);
+});
+
+test("the root scope is displayed even when the server lists a child scope first, and stays through a refetch", async () => {
+  let reverse = false;
+  const scopes = () => [{ scope_id: "a-child", scope_key: "child", label: "Child" }, { scope_id: "z-root", scope_key: "root", label: "Root" }];
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    if (url.endsWith("/runs/run-one")) return Response.json({ run_id: "run-one", scopes: reverse ? scopes().reverse() : scopes() });
+    if (url.endsWith("/scopes/z-root") || url.endsWith("/scopes/a-child")) {
+      const scope_id = url.split("/").pop() ?? "";
+      return Response.json({ scope_id, run_id: "run-one", label: scope_id === "z-root" ? "Root scope" : "Child scope",
+        state: { schema: "text", data: { kind: "string", value: "s" } }, outcome: null, outputs: [], executions: [],
+        commands: [], cursor: { scope_version: 1 } });
+    }
+    return runResponse(url);
+  }));
+  const cache = client();
+  render(<QueryClientProvider client={cache}><GenericOperatorRunView runId="run-one" onBack={() => undefined} /></QueryClientProvider>);
+  await screen.findByRole("heading", { name: "Root scope" });
+  reverse = true;
+  await cache.invalidateQueries({ queryKey: ["operator", "run-one"] });
+  expect(screen.getByRole("heading", { name: "Root scope" })).toBeTruthy();
+});
+
+test("a failed scope fetch keeps the back button and scope selector and shows the error inline", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    if (url.endsWith("/runs/run-one")) return Response.json({ run_id: "run-one", scopes: [
+      { scope_id: "scope-one", scope_key: "root", label: "Current scope" }, { scope_id: "broken", scope_key: "child", label: "Broken scope" }] });
+    if (url.endsWith("/scopes/broken")) return Response.json({ error: "conflict", detail: "scope is unreadable" }, { status: 500 });
+    return runResponse(url);
+  }));
+  const onBack = vi.fn();
+  render(<QueryClientProvider client={client()}><GenericOperatorRunView runId="run-one" onBack={onBack} /></QueryClientProvider>);
+  await screen.findByRole("heading", { name: "Current scope" });
+  fireEvent.change(screen.getByLabelText("Scope"), { target: { value: "broken" } });
+  expect((await screen.findByRole("alert")).textContent).toMatch(/scope is unreadable/);
+  expect(screen.getByLabelText<HTMLSelectElement>("Scope").value).toBe("broken");
+  fireEvent.click(screen.getByRole("button", { name: "← Runs" }));
+  expect(onBack).toHaveBeenCalledOnce();
 });

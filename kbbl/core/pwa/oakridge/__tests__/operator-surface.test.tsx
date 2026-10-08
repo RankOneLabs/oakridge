@@ -114,7 +114,7 @@ function renderWithQuery(ui: React.ReactElement) {
 }
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); });
 
-test("pins the edited JSON definition for a fresh operator database", async () => {
+test("pins the entered JSON definition", async () => {
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
     if (url === "/oakridge/api/api/definitions" && init?.method === "GET")
       return cursorPage([{ bundle_id: "seed", digest: "seed-digest", source: canonicalDefinition }]);
@@ -124,10 +124,41 @@ test("pins the edited JSON definition for a fresh operator database", async () =
   vi.stubGlobal("fetch", fetch);
   const onPinned = vi.fn();
   renderWithQuery(<OperatorDefinitionEditorView cloneFromId={null} onBack={() => undefined} onPinned={onPinned} />);
-  await waitFor(() => expect(screen.getByLabelText<HTMLTextAreaElement>("Source bundle").value).toContain('"root"'));
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+  fireEvent.change(screen.getByLabelText("Source bundle"), { target: { value: JSON.stringify(canonicalDefinition) } });
   fireEvent.click(screen.getByRole("button", { name: "Pin definition" }));
   await waitFor(() => expect(onPinned).toHaveBeenCalledOnce());
   expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body))).toHaveProperty("root");
+});
+
+test("a new definition is not seeded from an arbitrary catalog entry", async () => {
+  const other = { ...canonicalDefinition, key: "other" };
+  vi.stubGlobal("fetch", vi.fn(async () => cursorPage([
+    { bundle_id: "a", digest: "a-digest", source: canonicalDefinition }, { bundle_id: "b", digest: "b-digest", source: other }])));
+  renderWithQuery(<OperatorDefinitionEditorView cloneFromId={null} onBack={() => undefined} onPinned={() => undefined} />);
+  await screen.findByLabelText("Source bundle");
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(screen.getByLabelText<HTMLTextAreaElement>("Source bundle").value).toBe("");
+});
+
+test("with several pinned definitions the operator must choose one before launching", async () => {
+  const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/definitions")) return cursorPage([
+      { bundle_id: "b1", digest: "sha-1", source: { key: "alpha", version: 1 } },
+      { bundle_id: "b2", digest: "sha-2", source: { key: "beta", version: 1 } }]);
+    if (url.endsWith("/runs") && init?.method === "POST") return Response.json({ run_id: "run-1" }, { status: 201 });
+    throw new Error(url);
+  });
+  vi.stubGlobal("fetch", fetch);
+  renderWithQuery(<OperatorLaunchView onBack={() => undefined} onCreated={() => undefined} onEdit={() => undefined} />);
+  await screen.findByText(/beta v1/);
+  expect(screen.getByLabelText<HTMLSelectElement>("Definition digest").value).toBe("");
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Launch" }).disabled).toBe(true);
+  fireEvent.change(screen.getByLabelText("Definition digest"), { target: { value: "sha-2" } });
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Launch" }).disabled).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+  expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body)).digest).toBe("sha-2");
 });
 
 test("an empty catalog does not seed the editor from a bundled definition", async () => {
@@ -189,7 +220,7 @@ test.each(["development", "development-independent-siblings", "development-verif
         outputs: [], executions: [], commands: root.commands, cursor: { scope_version: 1, transition_id: null },
         command_targets: Object.fromEntries(root.commands.map((command) => [command.key, []])),
       });
-      if (url.endsWith("/runs/pinned-run")) return Response.json({ run_id: "pinned-run", scopes: [{ scope_id: "pinned-scope", label: root.presentation.label }] });
+      if (url.endsWith("/runs/pinned-run")) return Response.json({ run_id: "pinned-run", scopes: [{ scope_id: "pinned-scope", scope_key: root.key, label: root.presentation.label }] });
       throw new Error(url);
     });
     vi.stubGlobal("fetch", fetch);
@@ -256,6 +287,18 @@ test("clone editing and pinning wait for the requested bundle, then preserve edi
   expect(editor.value).toBe("my edits");
 });
 
+test("leaving a clone for a new definition empties the editor", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => cursorPage([{ bundle_id: "bundle-1", digest: "sha-1", source: canonicalDefinition }])));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const editorAt = (cloneFromId: string | null) => <QueryClientProvider client={client}>
+    <OperatorDefinitionEditorView cloneFromId={cloneFromId} onBack={() => undefined} onPinned={() => undefined} /></QueryClientProvider>;
+  const { rerender } = render(editorAt("bundle-1"));
+  const editor = screen.getByLabelText<HTMLTextAreaElement>("Source bundle");
+  await waitFor(() => expect(editor.value).not.toBe(""));
+  rerender(editorAt(null));
+  await waitFor(() => expect(editor.value).toBe(""));
+});
+
 test.each([
   { name: "failed", response: () => Response.json({ error: "catalog unavailable" }, { status: 503 }), message: /Could not load definition/ },
   { name: "missing", response: () => cursorPage([]), message: /Definition not found: missing-bundle/ },
@@ -320,8 +363,8 @@ test("switching run routes resets the selected scope before fetching the new run
     const [, runId, suffix] = match;
     const root = `${runId}-root`;
     const child = `${runId}-child`;
-    if (!suffix) return Response.json({ run_id: runId, scopes: [root, child].map((scope_id) => ({ scope_id, label: scope_id })) });
-    if (suffix === "definition") return Response.json({ source: { schemas: [] } });
+    if (!suffix) return Response.json({ run_id: runId, scopes: [child, root].map((scope_id) => ({ scope_id, scope_key: scope_id === root ? "root" : "child", label: scope_id })) });
+    if (suffix === "definition") return Response.json({ source: { root: "root", schemas: [] } });
     if (suffix.endsWith("/history")) return Response.json({ transitions: [], facts: [] });
     const scope_id = suffix.slice("scopes/".length);
     return Response.json({ scope_id, run_id: runId, label: scope_id,
@@ -373,4 +416,58 @@ test("a required root string that admits an empty value is not marked required i
   vi.stubGlobal("fetch", launchFetch(bundle));
   renderWithQuery(<OperatorLaunchView onBack={() => undefined} onCreated={() => undefined} onEdit={() => undefined} />);
   expect(await screen.findByLabelText<HTMLInputElement>(admitsEmpty.label)).toHaveProperty("required", false);
+});
+
+function renderWithClient(cache: QueryClient, ui: React.ReactElement) {
+  return render(<QueryClientProvider client={cache}>{ui}</QueryClientProvider>);
+}
+const invalidatedKeys = (cache: QueryClient) => vi.spyOn(cache, "invalidateQueries");
+const expectInvalidated = (spy: ReturnType<typeof invalidatedKeys>, ...keys: readonly (readonly string[])[]) => {
+  for (const queryKey of keys) expect(spy).toHaveBeenCalledWith({ queryKey });
+};
+
+test("pinning a definition refreshes the definition catalog", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => init?.method === "POST"
+    ? Response.json({ bundle_id: "b", digest: "d" }, { status: 201 }) : cursorPage([])));
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const spy = invalidatedKeys(cache);
+  const onPinned = vi.fn();
+  renderWithClient(cache, <OperatorDefinitionEditorView cloneFromId={null} onBack={() => undefined} onPinned={onPinned} />);
+  fireEvent.change(screen.getByLabelText("Source bundle"), { target: { value: JSON.stringify(canonicalDefinition) } });
+  fireEvent.click(screen.getByRole("button", { name: "Pin definition" }));
+  await waitFor(() => expect(onPinned).toHaveBeenCalledOnce());
+  expectInvalidated(spy, ["operator", "definitions"]);
+});
+
+test("launching a run refreshes the run list and the inbox", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => init?.method === "POST"
+    ? Response.json({ run_id: "run-1" }, { status: 201 })
+    : cursorPage([{ bundle_id: "b", digest: "sha-1", source: { key: "demo", version: 1 } }])));
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const spy = invalidatedKeys(cache);
+  const onCreated = vi.fn();
+  renderWithClient(cache, <OperatorLaunchView onBack={() => undefined} onCreated={onCreated} onEdit={() => undefined} />);
+  await screen.findByText(/demo v1/);
+  fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+  await waitFor(() => expect(onCreated).toHaveBeenCalledWith("run-1"));
+  expectInvalidated(spy, ["operator", "runs"], ["operator", "inbox"]);
+});
+
+test("an accepted command refreshes the run, the run list and the inbox", async () => {
+  const command = { key: "act", label: "Act", consequence: "Go", payload_schema: "empty", field_presentation: [], targets: [] };
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/commands") && init?.method === "POST")
+      return Response.json({ kind: "accepted_pending", request_id: "r", transition_id: "t", scope_version: 2 }, { status: 202 });
+    if (url.endsWith("/runs/run-1")) return Response.json({ run_id: "run-1", scopes: [{ scope_id: "s", scope_key: "root", label: "Root" }] });
+    if (url.endsWith("/definition")) return Response.json({ source: { root: "root", schemas: [{ key: "empty", shape: { kind: "record", fields: [], dictionary: null } }] } });
+    if (url.endsWith("/history")) return Response.json({ transitions: [], facts: [] });
+    return Response.json({ scope_id: "s", run_id: "run-1", label: "Root", state: { schema: "empty", data: { kind: "string", value: "x" } },
+      outcome: null, outputs: [], executions: [], commands: [command], command_targets: { act: [] }, cursor: { scope_version: 1 } });
+  }));
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const spy = invalidatedKeys(cache);
+  renderWithClient(cache, <GenericOperatorRunView runId="run-1" onBack={() => undefined} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Submit Act" }));
+  await screen.findByText("Command accepted.");
+  expectInvalidated(spy, ["operator", "run-1"], ["operator", "runs"], ["operator", "inbox"]);
 });

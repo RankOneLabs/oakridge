@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { randomUuid } from "../../../lib/random-uuid";
 import { submitOperatorCommand } from "../../client";
 import { isDefinitiveRequestRejection } from "../../lib/client-errors";
-import { clearOperatorDraft, clearPendingCommand, findRetainedDrafts, readOperatorDraft, readPendingCommand, saveOperatorDraft, savePendingCommand } from "../../lib/operator-drafts";
+import { clearOperatorDraft, clearPendingCommand, findRetainedDrafts, operatorDraftIdentity, readOperatorDraft, readPendingCommand, saveOperatorDraft, savePendingCommand } from "../../lib/operator-drafts";
+import { buildRootInput, stringFloor, type FieldDrafts } from "../../lib/operator-input";
 import { parseOperatorFieldValue } from "../../lib/operator-payload";
 import { selectDraftKey } from "../../lib/operator-selectors";
 import type { OperatorCommandDescriptor, OperatorSchema, OperatorScopeView } from "../../operator-contracts";
@@ -26,6 +27,7 @@ export function OperatorCommandForm({ scope, command, schemas, onRefresh }: Prop
       await submitOperatorCommand(input);
       clearPendingCommand(input);
       clearOperatorDraft(input);
+      setDraft("");
       setCompleted(true);
       setError("");
       onRefresh();
@@ -33,7 +35,7 @@ export function OperatorCommandForm({ scope, command, schemas, onRefresh }: Prop
       if (isDefinitiveRequestRejection(cause)) {
         clearPendingCommand(input);
         onRefresh();
-        setError(`${cause instanceof Error ? cause.message : "Command rejected"}. Draft retained for this version.`);
+        setError(`${cause instanceof Error ? cause.message : "Command rejected"}. Your input is kept.`);
       } else setError(`Delivery is uncertain. Request ${input.request_id} will be retried with the same payload.`);
     } finally { setIsSubmitting(false); }
   }
@@ -42,9 +44,23 @@ export function OperatorCommandForm({ scope, command, schemas, onRefresh }: Prop
     if (!key) return;
     const pending = readPendingCommand(key);
     if (pending) void deliver(pending);
-    // The component is keyed by its full draft identity, so this runs once per observed command.
+    // The component is keyed by its form identity, so this runs once per command and target revisions;
+    // a pending command left under an earlier owner version is recovered by the run view instead.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // The parent keys this form without the owner version, so a bump arrives as a new `key` on live
+  // state: move the stored draft to the new version's identity rather than losing the edits.
+  const storedKey = useRef(key);
+  useEffect(() => {
+    const previous = storedKey.current;
+    storedKey.current = key ?? previous;
+    if (completed || !key || !previous || operatorDraftIdentity(previous) === operatorDraftIdentity(key)) return;
+    if (draft !== "") saveOperatorDraft(key, draft);
+    clearOperatorDraft(previous);
+    // Only a change of the observed identity moves the draft.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key ? operatorDraftIdentity(key) : null]);
 
   if (!key) return <p role="status">Target revisions are unavailable. Refresh this scope before acting.</p>;
   if (completed) return <p role="status">Command accepted.</p>;
@@ -56,16 +72,8 @@ export function OperatorCommandForm({ scope, command, schemas, onRefresh }: Prop
     try {
       let payload: unknown;
       if (fields) {
-        const raw = JSON.parse(draft || "{}") as { readonly [field: string]: string };
-        const entries: Array<readonly [string, unknown]> = [];
-        for (const field of fields) {
-          const value = raw[field.key];
-          if (value === undefined || value === "") continue;
-          const parsed = parseOperatorFieldValue({ raw: value, schema: schemas.find((schema) => schema.key === field.schema) });
-          if (!parsed.ok) { setError(`${field.key}: ${parsed.error.detail}`); return; }
-          entries.push([field.key, parsed.value]);
-        }
-        payload = Object.fromEntries(entries);
+        const entered = JSON.parse(draft || "{}") as FieldDrafts;
+        payload = buildRootInput("{}", fields.map((field) => ({ field, schema: schemas.find((schema) => schema.key === field.schema) })), entered);
       } else {
         const parsed = parseOperatorFieldValue({ raw: draft, schema: schemas.find((schema) => schema.key === command.payload_schema) });
         if (!parsed.ok) { setError(parsed.error.detail); return; }
@@ -90,7 +98,8 @@ export function OperatorCommandForm({ scope, command, schemas, onRefresh }: Prop
         {fieldSchema?.shape.kind === "enum" ? <select value={value} required={field.required} onChange={(event) => change(event.target.value)}><option value="">Select…</option>{fieldSchema.shape.variants.map((variant) => <option key={variant} value={variant}>{variant}</option>)}</select>
           : fieldSchema?.shape.kind === "boolean" ? <select value={value} required={field.required} onChange={(event) => change(event.target.value)}><option value="">Select…</option><option value="true">Yes</option><option value="false">No</option></select>
           : fieldSchema?.shape.kind === "integer" ? <input type="number" value={value} required={field.required} min={fieldSchema.shape.min} max={fieldSchema.shape.max} onChange={(event) => change(event.target.value)} />
-          : <textarea value={value} required={field.required} onChange={(event) => change(event.target.value)} />}</label>;
+          : <textarea value={value} required={field.required && stringFloor(fieldSchema) !== 0} minLength={fieldSchema?.shape.kind === "string" ? fieldSchema.shape.min_length : undefined}
+            maxLength={fieldSchema?.shape.kind === "string" ? fieldSchema.shape.max_length : undefined} onChange={(event) => change(event.target.value)} />}</label>;
     }) : <label className="flex flex-col gap-1">Payload<textarea value={draft} onChange={(event) => update(event.target.value)} /></label>}
     <Button type="submit" variant="primary" disabled={isSubmitting}>{isSubmitting ? "Submitting…" : `Submit ${command.label}`}</Button>
     {error && <p role="alert">{error}</p>}

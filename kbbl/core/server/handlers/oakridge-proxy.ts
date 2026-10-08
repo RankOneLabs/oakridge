@@ -33,6 +33,9 @@ export interface OakridgeProxyDeps {
   fallbackRefreshMs?: number;
 }
 
+/** setInterval stores its delay as a signed 32-bit integer; a larger one fires roughly every millisecond. */
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
 /**
  * Parses OAKRIDGE_FALLBACK_REFRESH_MS at startup so a typo surfaces as a boot
  * failure rather than as an operator interval that silently never took effect.
@@ -40,7 +43,8 @@ export interface OakridgeProxyDeps {
 export function parseFallbackRefreshMs(raw: string | undefined): number | undefined {
   if (raw === undefined || raw.trim() === "") return undefined;
   const value = Number(raw);
-  if (!Number.isFinite(value) || value <= 0) throw new Error(`OAKRIDGE_FALLBACK_REFRESH_MS must be a positive number of milliseconds, got: ${raw}`);
+  if (!Number.isFinite(value) || value <= 0 || value > MAX_TIMER_DELAY_MS)
+    throw new Error(`OAKRIDGE_FALLBACK_REFRESH_MS must be a positive number of milliseconds no greater than ${MAX_TIMER_DELAY_MS}, got: ${raw}`);
   return value;
 }
 
