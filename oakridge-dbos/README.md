@@ -1,8 +1,11 @@
 # Oakridge DBOS backend
 
-The TypeScript backend owns durable scope authority. `src/main.ts` starts the
-production composition after applying the authority baseline under a PostgreSQL
-advisory lock. It then launches DBOS and binds HTTP; a failed stage closes the
+The TypeScript backend owns durable scope authority. `src/main.ts` applies the
+authority baseline under a PostgreSQL advisory lock, then starts the production
+composition. The composition starts the Rust CLI, connects to PostgreSQL,
+verifies the effect encryption key against stored intents, registers provider
+and workflow services, launches DBOS, and resumes active runs and parked effects.
+Only after this succeeds does `main.ts` bind HTTP; a failed stage closes the
 resources it started. The Rust CLI evaluates pinned definitions, the mutation
 service commits accepted decisions and receipts, DBOS drives effects and
 recovery, and projections read committed state. Commands and publications use
@@ -25,17 +28,31 @@ that interpret every pinned bundle without knowing its stages:
   until the provider positively acknowledges it.
 
 Steps are IO boundaries (one DB write, one core call, one provider call). A
-crash mid-step resumes at that step on the next process. A clean shutdown parks
-running workflows (DBOS cancel) and the next boot resumes them.
+crash mid-step resumes at that step on the next process of the same application
+version. A clean shutdown parks running workflows (DBOS cancel) and the next
+boot resumes them. An `ERROR` run is forked at its failed step into the next
+generation; a long run rolls over after 128 iterations with its scan cursor.
+Child dispatch reads durable intent and workflow status, so restart neither
+redelivers a settled child nor forgets one still pending.
+
+Each provider start, observe and stop call uses its action's pinned
+`deadline_ms`. Start and observation retries share a DBOS execution timeout
+(one hour by default); if that deadline expires while parked, startup settles
+the intent as rejected and delivers failure evidence. Cleanup remains pending
+until the provider acknowledges it. Provider rejections and exhausted attempts
+follow the bundle's declared recovery policy; infrastructure failures surface
+as run workflow errors and are recovered through a fork.
 
 ### Application version
 
 DBOS resumes only workflows recorded under the running `applicationVersion`.
-The version is the digest of `ENGINE_SOURCE_MANIFEST` in
-`src/workflows/engine-version.ts`, covering workflow functions and their
-runtime dependencies. Bundle, route, projection, prompt and UI changes leave
-it unchanged. `DBOS_APPLICATION_VERSION` overrides it for forks and rollbacks;
-bumping it parks in-flight workflows until they are forked by hand.
+`src/workflows/engine-version.ts` hashes the sorted `ENGINE_SOURCE_MANIFEST`
+paths and bytes, then combines that source digest with the SHA-256 digest of
+`src/storage/migrations/0001_core_authority.sql`. The final SHA-256 is truncated
+to 16 hex characters. This includes workflow dependencies and the authority
+schema baseline. Bundle, route, projection, prompt and UI changes leave it
+unchanged. `DBOS_APPLICATION_VERSION` overrides it for controlled forks and
+rollbacks; a different version does not resume workflows pinned to the old one.
 
 ## Verify
 
@@ -45,11 +62,13 @@ From the repository root:
 cargo build --locked --manifest-path workflow-core/Cargo.toml -p workflow-cli
 bun run typecheck
 bun run --filter oakridge-dbos test:unit
+bun run --filter oakridge-dbos test:integration
 ```
 
-The integration tests require `OAKRIDGE_TEST_DATABASE_URL` with create/drop
-database permission. `tests/fresh-boot.test.ts` creates an empty database and
-checks the production stack through an HTTP decision and read projection.
+The integration tests require `OAKRIDGE_TEST_DATABASE_URL` for PostgreSQL 15+
+with create/drop database permission. The provider-driven bundle suite uses
+`createProductionComposition` and the shipped JSON definitions, including
+failure, cancellation, capacity, revision and process recovery cases.
 
 The core client caches compilation by an incremental content hash of the source
 bundle. The compiler's `bundle_digest` is an output of that request, so it is
