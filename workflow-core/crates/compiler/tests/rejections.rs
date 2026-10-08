@@ -517,16 +517,15 @@ fn recursive_value_schema() {
 }
 #[test]
 fn nested_optional_schema_is_rejected() {
-    reject(
-        fixture(),
-        |v| {
-            v["schemas"].as_array_mut().unwrap().extend([
-                json!({"key":"inner_optional","shape":{"kind":"optional","item":"unit"}}),
-                json!({"key":"outer_optional","shape":{"kind":"optional","item":"inner_optional"}}),
-            ]);
-        },
-        DomainErrorKind::InvalidSchema,
-    );
+    let mut value = fixture();
+    value["schemas"].as_array_mut().unwrap().extend([
+        json!({"key":"inner_optional","shape":{"kind":"optional","item":"unit"}}),
+        json!({"key":"outer_optional","shape":{"kind":"optional","item":"inner_optional"}}),
+    ]);
+    let source: DefinitionBundle = serde_json::from_value(value).unwrap();
+    let diagnostic = compile(&source, &source.operations).unwrap_err();
+    assert_eq!(diagnostic.kind, DomainErrorKind::InvalidSchema);
+    assert_eq!(diagnostic.entity_id.as_ref(), "outer_optional");
 }
 #[test]
 fn wrong_action_input_port() {
