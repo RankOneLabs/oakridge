@@ -343,6 +343,63 @@ fn empty_collection_uses_declared_outcome() {
     .empty_outcome
     .is_some());
 }
+/// The dynamic fixture with one leaf (by case index) also activating `items`.
+fn dynamic_activating_items(case: usize, leaf: &str) -> DefinitionBundle {
+    let mut source: Value =
+        serde_json::from_str(include_str!("../../../fixtures/bundles/dynamic.json")).unwrap();
+    let node = &mut source["scopes"][0]["tree"]["cases"][case]["node"];
+    assert_eq!(node["id"], leaf);
+    node["mutations"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"kind": "activate_child", "key": "items"}));
+    serde_json::from_value(source).unwrap()
+}
+#[test]
+fn empty_collection_activation_completes_the_owner() {
+    let b = dynamic_activating_items(0, "start");
+    let p = compile(&b, &b.operations).unwrap();
+    let DecisionOutcome::Apply { outcome, .. } =
+        evaluate(&p, &snapshot(&b, json!([]), "ready", "begin")).unwrap()
+    else {
+        panic!("expected apply");
+    };
+    assert_eq!(
+        outcome,
+        Some(
+            check_value(
+                &b,
+                &SchemaId::from("result"),
+                &json!({"kind": "released", "value": {}})
+            )
+            .unwrap()
+        )
+    );
+}
+#[test]
+fn nonempty_collection_activation_leaves_the_owner_open() {
+    let b = dynamic_activating_items(0, "start");
+    let p = compile(&b, &b.operations).unwrap();
+    let input = json!([{"key": "a", "input": {}, "dependencies": []}]);
+    let DecisionOutcome::Apply { outcome, .. } =
+        evaluate(&p, &snapshot(&b, input, "ready", "begin")).unwrap()
+    else {
+        panic!("expected apply");
+    };
+    assert_eq!(outcome, None);
+}
+#[test]
+fn empty_collection_outcome_conflicting_with_leaf_outcome_is_rejected() {
+    // The `cancelled` leaf completes with `withdrawn`; the empty collection declares `released`.
+    let b = dynamic_activating_items(2, "cancelled");
+    let p = compile(&b, &b.operations).unwrap();
+    assert_eq!(
+        evaluate(&p, &snapshot(&b, json!([]), "ready", "cancel"))
+            .unwrap_err()
+            .kind,
+        DomainErrorKind::ConflictingWrite
+    );
+}
 #[test]
 fn bounded_evaluation_reports_engine_error() {
     let mut b = bundle("minimal");

@@ -178,6 +178,42 @@ pub(crate) fn snapshot_valid(
     }
     Ok(())
 }
+/// An empty collection completes its owner with the declared outcome. The
+/// decision carries that outcome, so the commit applies one terminal value; a
+/// different explicit or empty-collection outcome in the same leaf conflicts.
+fn fold_empty_collection_outcomes(
+    outcome: Option<CheckedValue>,
+    selected: &[MutationValue],
+    budget: &mut usize,
+) -> CoreResult<Option<CheckedValue>> {
+    let mut folded = outcome;
+    for mutation in selected {
+        let MutationValue::ActivateCollection {
+            key,
+            materialization:
+                Materialization {
+                    empty_outcome: Some(empty),
+                    ..
+                },
+        } = mutation
+        else {
+            continue;
+        };
+        match &folded {
+            None => folded = Some(expressions::clone_value(empty, budget)?),
+            Some(current) if expressions::equal_values(current, empty, budget)? => {}
+            Some(_) => {
+                return Err(failure(
+                    DomainErrorKind::ConflictingWrite,
+                    key.to_string(),
+                    "empty collection outcome conflicts with the decision outcome",
+                ))
+            }
+        }
+    }
+    Ok(folded)
+}
+
 pub fn evaluate(program: &CheckedProgram, snapshot: &Snapshot) -> CoreResult<DecisionOutcome> {
     let mut budget = program.derived.limits.evaluation_budget;
     snapshot_valid(program, snapshot, &mut budget)?;
@@ -388,6 +424,7 @@ pub fn evaluate(program: &CheckedProgram, snapshot: &Snapshot) -> CoreResult<Dec
                     .as_ref()
                     .map(|e| expressions::evaluate_expression(e, &mut context))
                     .transpose()?;
+                let outcome = fold_empty_collection_outcomes(outcome, &selected, context.budget)?;
                 let targets = checked
                     .command_targets
                     .iter()
