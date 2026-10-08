@@ -24,7 +24,11 @@ pub(crate) fn field(value: &CheckedValue, index: usize) -> CoreResult<&CheckedVa
 }
 pub(crate) fn text(value: &CheckedValue, budget: &mut usize) -> CoreResult<String> {
     if let CheckedData::String { value } = &value.data {
-        charge(budget, value.len(), "collection member key")?;
+        charge(
+            budget,
+            value.len().div_ceil(256).max(1),
+            "collection member key",
+        )?;
         Ok(value.clone())
     } else {
         Err(failure(

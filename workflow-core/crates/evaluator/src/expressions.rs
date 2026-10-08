@@ -17,23 +17,23 @@ pub(crate) fn charge(budget: &mut usize, amount: usize, entity: &str) -> CoreRes
     *budget -= amount;
     Ok(())
 }
-pub(crate) fn value_cost(value: &CheckedValue) -> usize {
+fn value_size(value: &CheckedValue) -> usize {
     let nested = match &value.data {
         CheckedData::String { value } => value.len(),
         CheckedData::Enum { variant } => variant.len(),
         CheckedData::Reference { id, .. } => id.len(),
-        CheckedData::Variant { variant, value } => variant.len().saturating_add(value_cost(value)),
-        CheckedData::Optional { value } => value.as_ref().map_or(0, |value| value_cost(value)),
+        CheckedData::Variant { variant, value } => variant.len().saturating_add(value_size(value)),
+        CheckedData::Optional { value } => value.as_ref().map_or(0, |value| value_size(value)),
         CheckedData::List { items } => items
             .iter()
-            .fold(0usize, |cost, item| cost.saturating_add(value_cost(item))),
+            .fold(0usize, |cost, item| cost.saturating_add(value_size(item))),
         CheckedData::Record { fields, dictionary } => {
             let fields_cost = fields.iter().fold(0usize, |cost, field| {
-                cost.saturating_add(field.value.as_ref().map_or(1, value_cost))
+                cost.saturating_add(field.value.as_ref().map_or(1, value_size))
             });
             dictionary.iter().fold(fields_cost, |cost, entry| {
                 cost.saturating_add(entry.key.len())
-                    .saturating_add(value_cost(&entry.value))
+                    .saturating_add(value_size(&entry.value))
             })
         }
         CheckedData::Boolean { .. } | CheckedData::Integer { .. } => 0,
@@ -44,6 +44,10 @@ pub(crate) fn value_cost(value: &CheckedValue) -> usize {
         .len()
         .saturating_add(1)
         .saturating_add(nested)
+}
+pub(crate) fn value_cost(value: &CheckedValue) -> usize {
+    // A budget unit covers at most 256 bytes of copy or comparison work.
+    value_size(value).div_ceil(256).max(1)
 }
 pub(crate) fn clone_value(value: &CheckedValue, budget: &mut usize) -> CoreResult<CheckedValue> {
     charge(budget, value_cost(value), &value.schema.0)?;
@@ -624,7 +628,7 @@ mod tests {
             schema: SchemaId::from("text"),
             node: CheckedExpressionNode::Literal { value },
         };
-        let mut budget = 10;
+        let mut budget = 3;
         let mut context = EvaluationContext {
             program: &program,
             snapshot: &snapshot,
