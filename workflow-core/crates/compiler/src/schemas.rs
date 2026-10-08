@@ -112,6 +112,15 @@ pub fn validate_schemas(bundle: &DefinitionBundle) -> CoreResult<()> {
         for dep in dependencies(shape) {
             height = height.max(1 + visit(bundle, dep, active, heights, depth + 1)?);
         }
+        if let SchemaShape::Optional { item } = shape {
+            if let SchemaShape::Optional { .. } = schema(bundle, item)? {
+                return Err(error(
+                    DomainErrorKind::InvalidSchema,
+                    key.to_string(),
+                    "optional schema cannot wrap another optional: null decodes to None at every level, so Some(None) is unrepresentable",
+                ));
+            }
+        }
         active.remove(key);
         heights.insert(key.clone(), height);
         Ok(height)
