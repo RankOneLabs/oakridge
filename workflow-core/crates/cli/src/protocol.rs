@@ -206,6 +206,8 @@ pub fn handle_frame(state: &mut CliState, frame: &[u8]) -> Response {
         .get("operation")
         .and_then(serde_json::Value::as_str)
         .unwrap_or("");
+    // `DomainError::new` cannot know which request it serves; the transport does.
+    let operation_name: Box<str> = operation.into();
     if ![
         "compile",
         "validate_payload",
@@ -300,7 +302,10 @@ pub fn handle_frame(state: &mut CliState, frame: &[u8]) -> Response {
         truncated: false,
         result: match result {
             Ok(output) => ResponseResult::Ok(output),
-            Err(error) => ResponseResult::DomainError(error),
+            Err(mut error) => {
+                error.operation = operation_name;
+                ResponseResult::DomainError(error)
+            }
         },
     }
 }
@@ -404,6 +409,48 @@ mod tests {
                 ..
             })
         ));
+    }
+    #[test]
+    fn domain_errors_report_the_requested_operation() {
+        let mut state = CliState::new(ResourceLimits {
+            max_list_items: 10_000,
+            max_depth: 128,
+            evaluation_budget: 1_000_000,
+        });
+        let digest = "0".repeat(64);
+        let unit = r#"{"schema":"unit","data":{"kind":"record","fields":[],"dictionary":[]}}"#;
+        let snapshot = format!(
+            r#"{{"owner":"i","scope":"s","version":1,"input":{unit},"state":{unit},"trigger":{{"id":"t","key":"k","payload":{unit}}},"observations":[],"timestamp_ms":1,"random_seed":1}}"#
+        );
+        let inputs = [
+            (
+                "validate_payload",
+                format!(r#"{{"bundle_digest":"{digest}","schema":"x","payload":1}}"#),
+            ),
+            (
+                "evaluate",
+                format!(r#"{{"bundle_digest":"{digest}","snapshot":{snapshot}}}"#),
+            ),
+            (
+                "explain",
+                format!(r#"{{"bundle_digest":"{digest}","snapshot":{snapshot}}}"#),
+            ),
+            (
+                "materialize",
+                format!(r#"{{"bundle_digest":"{digest}","snapshot":{snapshot},"template":"m"}}"#),
+            ),
+        ];
+        for (operation, input) in inputs {
+            let frame = format!(
+                r#"{{"version":{PROTOCOL_VERSION},"request_id":"r","operation":"{operation}","input":{input}}}"#
+            );
+            let response = handle_frame(&mut state, frame.as_bytes());
+            let ResponseResult::DomainError(error) = response.result else {
+                panic!("{operation}: expected a domain error");
+            };
+            assert_eq!(error.kind, DomainErrorKind::UnknownBundle, "{operation}");
+            assert_eq!(&*error.operation, operation);
+        }
     }
     #[test]
     fn transport_failures_are_distinct() {
