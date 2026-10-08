@@ -1,4 +1,4 @@
-import { DBOS, Error as DBOSErrors, type WorkflowStatus } from "@dbos-inc/dbos-sdk";
+import { DBOS, Error as DBOSErrors, type WorkflowStatus, type WorkflowStatusString } from "@dbos-inc/dbos-sdk";
 import type { CoreClient } from "../core-client/client";
 import type { CheckedValue } from "../core-client/generated-contracts";
 import { recoverConfiguredFailure, recoverSessionFailure, recoverStartFailure } from "../effects/operations/production-provider";
@@ -381,6 +381,33 @@ async function settleExpiredEffect(intent_id: string): Promise<void> {
 const effectExpiredStep = DBOS.registerStep(async (deadline_epoch_ms: number): Promise<boolean> =>
   deadline_epoch_ms <= Date.now(), { name: "oakridgeEffectExpired" });
 
+/**
+ * Collapses the seven DBOS workflow statuses into the four categories
+ * dispatchChild and ensureRunWorkflow actually branch on. The `never` default
+ * means an eighth status added to the SDK fails typecheck here rather than
+ * falling through unhandled.
+ */
+export type WorkflowStatusCategory = "in_flight" | "parked" | "failed" | "done";
+export function classifyWorkflowStatus(status: WorkflowStatusString): WorkflowStatusCategory {
+  switch (status) {
+    case "PENDING":
+    case "ENQUEUED":
+    case "DELAYED":
+      return "in_flight";
+    case "CANCELLED":
+      return "parked";
+    case "ERROR":
+    case "MAX_RECOVERY_ATTEMPTS_EXCEEDED":
+      return "failed";
+    case "SUCCESS":
+      return "done";
+    default: {
+      const exhaustive: never = status;
+      return exhaustive;
+    }
+  }
+}
+
 export async function dispatchChild(run_id: string, intent_id: string, kind: "start" | "stop"): Promise<void> {
   const workflow_id = intentWorkflowId(intent_id);
   const status = await DBOS.getWorkflowStatus(workflow_id);
@@ -390,8 +417,9 @@ export async function dispatchChild(run_id: string, intent_id: string, kind: "st
     else await DBOS.startWorkflow(cleanupWorkflow, { workflowID: workflow_id })(intent_id);
     return;
   }
-  if (status.status === "PENDING" || status.status === "ENQUEUED") return;
-  if (status.status === "CANCELLED") {
+  const category = classifyWorkflowStatus(status.status as WorkflowStatusString);
+  if (category === "in_flight") return;
+  if (category === "parked") {
     if (kind === "start" && status.deadlineEpochMS !== undefined && await effectExpiredStep(status.deadlineEpochMS)) {
       await settleExpiredEffect(intent_id);
       return;
@@ -399,14 +427,13 @@ export async function dispatchChild(run_id: string, intent_id: string, kind: "st
     await DBOS.resumeWorkflow(workflow_id);
     return;
   }
-  if (status.status === "ERROR" || status.status === "SUCCESS") {
-    const intent = await loadIntentStep(intent_id);
-    const needs_dispatch = intent !== null && (kind === "start"
-      ? intent.payload.action === "start" && (intent.status === "pending" || intent.status === "acknowledged")
-      : intent.status === "cleanup_pending");
-    if (needs_dispatch)
-      throw new RunInfrastructureError(run_id, `dispatch ${kind} ${intent_id}`, `workflow ${status.status} while intent remains pending`);
-  }
+  // category is "failed" or "done"
+  const intent = await loadIntentStep(intent_id);
+  const needs_dispatch = intent !== null && (kind === "start"
+    ? intent.payload.action === "start" && (intent.status === "pending" || intent.status === "acknowledged")
+    : intent.status === "cleanup_pending");
+  if (needs_dispatch)
+    throw new RunInfrastructureError(run_id, `dispatch ${kind} ${intent_id}`, `workflow ${status.status} while intent remains pending`);
 }
 
 export const runWorkflow = DBOS.registerWorkflow(async (run_id: string, initial_cursor: string | null = null): Promise<void> => {
@@ -469,20 +496,19 @@ export async function ensureRunWorkflow(run_id: string): Promise<void> {
     await DBOS.startWorkflow(runWorkflow, { workflowID: runWorkflowId(run_id, successor) })(run_id, address.cursor);
     return;
   }
-  if (existing?.status === "PENDING" || existing?.status === "ENQUEUED") return;
-  if (existing?.status === "CANCELLED") { await DBOS.resumeWorkflow(id); return; }
-  if (existing?.status === "ERROR") {
+  if (!existing) { await DBOS.startWorkflow(runWorkflow, { workflowID: id })(run_id, address.cursor); return; }
+  const category = classifyWorkflowStatus(existing.status as WorkflowStatusString);
+  if (category === "in_flight") return;
+  if (category === "parked") { await DBOS.resumeWorkflow(id); return; }
+  if (category === "failed") {
     await recoverErroredRun(run_id, generation);
     return;
   }
-  if (existing?.status === "SUCCESS") {
-    if (!await runNeedsWork(db, run_id)) return;
-    const successor = await claimRunGeneration(db, run_id, generation);
-    if (successor === null) throw new RunInfrastructureError(run_id, "restart", "generation changed concurrently");
-    await DBOS.startWorkflow(runWorkflow, { workflowID: runWorkflowId(run_id, successor) })(run_id, address.cursor);
-    return;
-  }
-  await DBOS.startWorkflow(runWorkflow, { workflowID: id })(run_id, address.cursor);
+  // category is "done"
+  if (!await runNeedsWork(db, run_id)) return;
+  const successor = await claimRunGeneration(db, run_id, generation);
+  if (successor === null) throw new RunInfrastructureError(run_id, "restart", "generation changed concurrently");
+  await DBOS.startWorkflow(runWorkflow, { workflowID: runWorkflowId(run_id, successor) })(run_id, address.cursor);
 }
 
 /** A wake is a hint, never a fact: the run re-reads the authority on receipt. */
