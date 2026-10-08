@@ -1,4 +1,5 @@
 import type { Theme } from "../../types";
+import { Button } from "../atoms/Button";
 
 export type PrimarySurface = "runs" | "sessions" | "attention";
 
@@ -27,15 +28,16 @@ export function PrimaryNav({ activeSurface, attentionCount, onNavigate, theme, o
         Attention
         {attentionCount > 0 && <span className="app-surface-nav__count">{attentionCount}</span>}
       </button>
-      <button
-        type="button"
-        className="theme-toggle app-surface-nav__theme"
+      <Button
+        variant="secondary"
+        size="xsmall"
+        className="app-surface-nav__theme min-h-11"
         onClick={onToggleTheme}
         title={toggleLabel}
         aria-label={toggleLabel}
       >
         {theme === "dark" ? "LIGHT" : "DARK"}
-      </button>
+      </Button>
     </nav>
   );
 }

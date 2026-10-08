@@ -268,8 +268,7 @@ body {
   color: var(--text-muted);
 }
 
-.yolo-toggle,
-.theme-toggle {
+.yolo-toggle {
   background: var(--bg-surface);
   color: var(--text-muted);
   border: 1px solid var(--border-subtle);
@@ -294,8 +293,7 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.yolo-toggle:hover:not(:disabled),
-.theme-toggle:hover:not(:disabled) {
+.yolo-toggle:hover:not(:disabled) {
   border-color: var(--border-hover);
   color: var(--text-secondary);
 }
@@ -364,7 +362,6 @@ body {
 .input-bar button:focus-visible,
 .card-permission-buttons button:focus-visible,
 .yolo-toggle:focus-visible,
-.theme-toggle:focus-visible,
 .card summary:focus-visible,
 .row-thinking summary:focus-visible,
 .tool-batch-summary:focus-visible,
@@ -4493,6 +4490,25 @@ a:focus-visible {
 
   .workspace-status .event-count {
     display: none;
+  }
+
+  /* No room for the brand beside three surfaces and the theme toggle at phone
+     width; drop it and let the toggle take its auto margin. */
+  .app-surface-nav {
+    gap: 0.25rem;
+    padding-inline: 0.5rem;
+  }
+
+  .app-surface-nav__brand {
+    display: none;
+  }
+
+  .app-surface-nav__item {
+    padding-inline: 0.5rem;
+  }
+
+  .app-surface-nav__theme {
+    margin-left: auto;
   }
 }
 

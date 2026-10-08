@@ -118,7 +118,7 @@ describe("the session pane", () => {
     expect(topBar?.querySelector(".status")).toBeTruthy();
     expect(topBar?.querySelector(".session-label-name")?.textContent).toBe("session sid-c1");
     expect(topBar?.querySelector(".back-button")).toBeNull();
-    expect(topBar?.querySelector(".theme-toggle")).toBeNull();
+    expect(topBar?.querySelector('[aria-label^="Switch to"]')).toBeNull();
   });
 });
 
