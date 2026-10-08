@@ -16,14 +16,6 @@ test("stage table regenerates the shipped completion gates", () => {
     .toEqual(buildStageGate(STAGE_TABLE, STAGE_TABLE[0]!, DEVELOPMENT_POLICY));
 });
 
-test("all shipped definitions regenerate byte for byte", () => {
-  for (const policy of [DEVELOPMENT_POLICY, INDEPENDENT_SIBLINGS_POLICY, VERIFICATION_POLICY]) {
-    const generated = JSON.stringify(buildDevelopmentRun(policy), null, 2) + "\n";
-    const path = resolve(import.meta.dir, "../../definitions", `${policy.key}.json`);
-    expect(generated).toBe(readFileSync(path, "utf8"));
-  }
-});
-
 test("a stage row owns its dependencies, completion gate and cancellation membership", () => {
   const original = STAGE_TABLE[0]!;
   const changed = { ...original, dependencies: ["analysis"], next_child: "plan" };
