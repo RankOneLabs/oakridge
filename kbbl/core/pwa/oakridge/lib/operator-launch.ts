@@ -17,3 +17,7 @@ export function savePendingLaunch(request: OperatorLaunchRequest): void {
 export function clearPendingLaunch(request: OperatorLaunchRequest): void {
   if (readPendingLaunch()?.request_id === request.request_id) localStorage.removeItem(PENDING_LAUNCH_KEY);
 }
+/** Forgets the retry identity without parsing, so unreadable stored state can still be removed. */
+export function discardPendingLaunch(): void {
+  localStorage.removeItem(PENDING_LAUNCH_KEY);
+}

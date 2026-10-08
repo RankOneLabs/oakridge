@@ -21,28 +21,34 @@ function localRepository(): string {
   return path;
 }
 
-async function eventually<T>(read: () => Promise<T | null | undefined>, label: string): Promise<T> {
+async function eventually<T>(read: () => Promise<T | null | undefined>, label: string, detail?: () => Promise<string>): Promise<T> {
   const deadline = Date.now() + 20_000;
   while (Date.now() < deadline) {
     const value = await read();
     if (value !== null && value !== undefined) return value;
     await Bun.sleep(30);
   }
-  throw new Error(`timed out awaiting ${label}`);
+  // The detail is read at timeout so it reports the stalled state, not the state at the call.
+  throw new Error(`timed out awaiting ${label}${detail ? `; ${await detail()}` : ""}`);
 }
 
 for (const name of names) test(`${name}: shipped bundle starts through the production provider`, async () => {
   const repository_path = localRepository();
+  // Mirrors kbbl's resumable routes: the session key is a decoded route parameter
+  // and kbbl answers with its own sid, which later requests address.
   const sessions = new Map<string, { completed: boolean; failed: boolean }>();
+  const sids = new Map<string, string>();
   const kbbl = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: async (request) => {
-    const path = new URL(request.url).pathname;
-    const key = path.split("/")[3] ?? "";
+    const segments = new URL(request.url).pathname.split("/").filter(Boolean).map(decodeURIComponent);
+    const target = segments[0] === "sessions" && segments[1] === "resumable" ? segments[2] ?? "" : segments[1] ?? "";
     if (request.method === "PUT") {
-      sessions.set(key, { completed: true, failed: false });
-      return Response.json({ kind: "attached", session: { sid: key, status: "live" } });
+      const sid = sids.get(target) ?? crypto.randomUUID();
+      sids.set(target, sid);
+      sessions.set(sid, { completed: true, failed: false });
+      return Response.json({ kind: "attached", session: { sid, status: "live" } });
     }
     if (request.method === "DELETE") return Response.json({ stopped: true });
-    const session = sessions.get(key);
+    const session = sessions.get(target);
     return session?.completed ? Response.json({ session: { endReason: "subprocess_exited" }, exit_code: session.failed ? 1 : 0 })
       : Response.json({ pending: true }, { status: 202 });
   } });
@@ -80,15 +86,12 @@ for (const name of names) test(`${name}: shipped bundle starts through the produ
           "SELECT * FROM authority.scope_instance WHERE parent_id=$1 AND scope_key='repository_preparation' LIMIT 1", [run.root_scope_id]))[0], "repository child");
         await eventually(async () => (await db.query<{ status: string }>(
           "SELECT status FROM authority.execution WHERE scope_id=$1 ORDER BY id LIMIT 1", [first.id]))[0]?.status === "terminal" ? true : null, "prepared repository");
-        // The opt-in path records the current blocking runtime behavior without
-        // making the default suite conceal a failed session as a passing result.
-        if (process.env.OAKRIDGE_REPRO_PENDING_SESSION !== "1") return;
         const analysis = await eventually(async () => (await db.query<ScopeInstanceRecord>(
           "SELECT * FROM authority.scope_instance WHERE parent_id=$1 AND scope_key='spec_analysis' LIMIT 1", [run.root_scope_id]))[0], "analysis child");
         await command(analysis.id, "begin");
         await eventually(async () => (await db.query<{ status: string }>(
           "SELECT status FROM authority.execution WHERE scope_id=$1 ORDER BY id LIMIT 1", [analysis.id]))[0]?.status === "terminal" ? true : null,
-          `analysis session terminal; sessions=${JSON.stringify([...sessions])}; executions=${JSON.stringify(await db.query("SELECT id,status FROM authority.execution WHERE scope_id=$1", [analysis.id]))}; intents=${JSON.stringify(await db.query("SELECT id,status FROM authority.effect_intent WHERE scope_id=$1", [analysis.id]))}`);
+          "analysis session terminal", async () => `sessions=${JSON.stringify([...sessions])}; executions=${JSON.stringify(await db.query("SELECT id,status FROM authority.execution WHERE scope_id=$1", [analysis.id]))}; intents=${JSON.stringify(await db.query("SELECT id,status FROM authority.effect_intent WHERE scope_id=$1", [analysis.id]))}`);
         expect((await db.query<{ result: unknown }>("SELECT result FROM authority.execution WHERE scope_id=$1", [analysis.id]))[0]?.result)
           .toMatchObject({ schema: "unit", data: { kind: "record" } });
       } finally { await composition.close(); }

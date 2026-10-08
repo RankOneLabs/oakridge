@@ -95,6 +95,21 @@ test.each([false, true])("recording rejection creates cleanup only after an unce
     .toEqual(has_uncertain_start ? [{ status: "cleanup_pending", payload: { action: "stop", handle: null, invocation: start.invocation } }] : []);
 }));
 
+test("a handle learned after cancellation reaches the stop recorded while the start was in flight", async () => withDatabase(async ({ db }) => {
+  await db.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ('bundle','digest','{}','{}')", []);
+  await db.query("INSERT INTO authority.run (id,definition_bundle_id) VALUES ('run','bundle')", []);
+  await db.query("INSERT INTO authority.scope_instance (id,run_id,scope_key,input,local_state) VALUES ('scope','run','scope','{}','{}')", []);
+  await db.query("INSERT INTO authority.execution (id,scope_id,worker_key,generation,status) VALUES ('execution-1','scope','agent',1,'pending')", []);
+  await db.query("INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload) VALUES ('start','scope','execution-1','ingress:0',$1)", [JSON.stringify(sealEffectPayload(start))]);
+  const claimed = await claimStartAttempt(db, "start");
+  if (!claimed) throw new Error("start attempt was not reserved");
+  expect(await cancelRun(db, { kind: "cancel_run", run_id: "run", reason: "operator" })).toEqual({ kind: "cancelled", stop_intents: 1 });
+  const handle = { kind: "kbbl_session" as const, session_id: "session-1" };
+  expect(await persistEffectResult(db, { intent_id: "start", status: "acknowledged", payload: { ...claimed, handle, start_in_flight: false }, terminal_result: null })).toBe("revoked");
+  const stops = await db.query<{ payload: EffectPayload }>("SELECT payload FROM authority.effect_intent WHERE effect_key='ingress:0:stop'", []);
+  expect(stops[0]?.payload.handle).toEqual(handle);
+}));
+
 test("selected invocation survives cancellation and blocks deletion until stop is acknowledged", async () => withDatabase(async ({ db }) => {
   await db.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ('bundle','digest','{}','{}')", []);
   await db.query("INSERT INTO authority.run (id,definition_bundle_id) VALUES ('run','bundle')", []);
