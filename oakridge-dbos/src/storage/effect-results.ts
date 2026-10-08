@@ -59,6 +59,12 @@ export async function persistEffectResult(db: TransactionalSqlExecutor, input: E
     if (written.status === "rejected" && requiresCleanup({ status: written.status, payload })) {
       await ensureStopIntent(tx, { ...written, payload });
     }
+    // A stop recorded while this start was in flight copied a null handle; give it the one just learned.
+    if (payload.action === "start" && payload.handle !== null) {
+      await tx.query(`UPDATE authority.effect_intent SET payload=jsonb_set(payload,'{handle}',$3::jsonb),version=version+1
+        WHERE scope_id=$1 AND effect_key=$2 AND payload->>'action'='stop' AND jsonb_typeof(payload->'handle')='null'
+          AND status<>'cleanup_confirmed'`, [written.scope_id, `${written.effect_key}:stop`, JSON.stringify(payload.handle)]);
+    }
     if (terminal_result && written.execution_id) {
       // A step that crashed after this transaction committed re-runs; the result is recorded once.
       const facts = await tx.query<{ id: string }>(`INSERT INTO authority.fact (id,scope_id,fact_key,payload) SELECT $1,$2,$3,$4
