@@ -1406,3 +1406,22 @@ fn find_node<'a>(tree: &'a mut Value, id: &str) -> &'a mut Value {
             Err(_) => &mut node[step.as_str()],
         })
 }
+
+#[test]
+fn declared_max_depth_may_not_exceed_the_wire_safe_ceiling() {
+    use workflow_model::protocol::MAX_DEPTH_CEILING;
+    let mut at_ceiling = fixture();
+    at_ceiling["limits"]["max_depth"] = json!(MAX_DEPTH_CEILING);
+    let source: DefinitionBundle = serde_json::from_value(at_ceiling).unwrap();
+    assert!(compile(&source, &source.operations).is_ok());
+    let mut beyond = fixture();
+    beyond["limits"]["max_depth"] = json!(MAX_DEPTH_CEILING + 1);
+    let source: DefinitionBundle = serde_json::from_value(beyond).unwrap();
+    let error = compile(&source, &source.operations).unwrap_err();
+    assert_eq!(error.kind, DomainErrorKind::ResourceLimit);
+    assert!(
+        error.detail.contains("exceeds the ceiling"),
+        "{}",
+        error.detail
+    );
+}

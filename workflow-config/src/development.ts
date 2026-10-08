@@ -40,7 +40,7 @@ export function buildDevelopmentRun(policy: RunPolicy): DefinitionBundle {
     ].map((scope) => configureScope(scope, policy)),
     prompts: buildPrompts(stageTableFor(policy)),
     operations,
-    limits: { max_list_items: 100, max_depth: 64, evaluation_budget: 20000 },
+    limits: { max_list_items: 100, max_depth: 28, evaluation_budget: 20000 },
   }));
 }
 

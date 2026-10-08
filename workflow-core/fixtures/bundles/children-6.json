@@ -768,7 +768,7 @@
   ],
   "limits": {
     "max_list_items": 100,
-    "max_depth": 64,
+    "max_depth": 28,
     "evaluation_budget": 2000
   }
 }
