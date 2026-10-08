@@ -5,7 +5,7 @@ import { fetchOperatorDefinition, fetchOperatorRun, fetchOperatorScope, submitOp
 import { OperatorCommandForm } from "../components/organisms/OperatorCommandForm";
 import { OperatorTypedValue } from "../components/molecules/OperatorTypedValue";
 import { clearOperatorDraft, clearPendingCommand, listPendingCommands, operatorDraftIdentity } from "../lib/operator-drafts";
-import { selectDraftKey } from "../lib/operator-selectors";
+import { selectDraftKey, selectRootScopeId } from "../lib/operator-selectors";
 import { Button } from "../../components/atoms/Button";
 import { isDefinitiveRequestRejection } from "../lib/client-errors";
 import { OperatorHistoryPane } from "./OperatorHistoryPane";
@@ -16,7 +16,9 @@ export function GenericOperatorRunView({ runId, onBack }: Props) {
   const run = useQuery({ queryKey: queryKeys.run(runId), queryFn: () => fetchOperatorRun(runId) });
   const definition = useQuery({ queryKey: queryKeys.definition(runId), queryFn: () => fetchOperatorDefinition(runId) });
   const [selectedScope, setSelectedScope] = useState<string | null>(null);
-  const scopeId = selectedScope ?? run.data?.scopes?.[0]?.scope_id ?? null;
+  const rootScopeId = run.data && definition.data
+    ? selectRootScopeId({ scopes: run.data.scopes, root_key: definition.data.source.root }) : null;
+  const scopeId = selectedScope ?? rootScopeId;
   const scope = useQuery({ queryKey: queryKeys.scope(runId, scopeId), queryFn: () => fetchOperatorScope(runId, scopeId ?? ""), enabled: scopeId !== null });
   const [selectedCommand, setSelectedCommand] = useState<string | null>(null);
   const selected = scope.data?.commands.find((command) => command.key === selectedCommand) ?? scope.data?.commands[0];
@@ -42,6 +44,7 @@ export function GenericOperatorRunView({ runId, onBack }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runId, scope.data?.cursor.scope_version]);
   const refreshError = run.error ?? definition.error ?? scope.error;
+  if (run.data && definition.data && scopeId === null) return <div role="alert">This run has no scope matching the definition's root.</div>;
   if (!run.data || !definition.data || !scope.data) return refreshError
     ? <div role="alert">{String(refreshError)}</div> : <p role="status">Loading operator context…</p>;
   return <main className="or-page or-page--wide" data-testid="operator-run-view">

@@ -189,7 +189,7 @@ test.each(["development", "development-independent-siblings", "development-verif
         outputs: [], executions: [], commands: root.commands, cursor: { scope_version: 1, transition_id: null },
         command_targets: Object.fromEntries(root.commands.map((command) => [command.key, []])),
       });
-      if (url.endsWith("/runs/pinned-run")) return Response.json({ run_id: "pinned-run", scopes: [{ scope_id: "pinned-scope", label: root.presentation.label }] });
+      if (url.endsWith("/runs/pinned-run")) return Response.json({ run_id: "pinned-run", scopes: [{ scope_id: "pinned-scope", scope_key: root.key, label: root.presentation.label }] });
       throw new Error(url);
     });
     vi.stubGlobal("fetch", fetch);
@@ -320,8 +320,8 @@ test("switching run routes resets the selected scope before fetching the new run
     const [, runId, suffix] = match;
     const root = `${runId}-root`;
     const child = `${runId}-child`;
-    if (!suffix) return Response.json({ run_id: runId, scopes: [root, child].map((scope_id) => ({ scope_id, label: scope_id })) });
-    if (suffix === "definition") return Response.json({ source: { schemas: [] } });
+    if (!suffix) return Response.json({ run_id: runId, scopes: [child, root].map((scope_id) => ({ scope_id, scope_key: scope_id === root ? "root" : "child", label: scope_id })) });
+    if (suffix === "definition") return Response.json({ source: { root: "root", schemas: [] } });
     if (suffix.endsWith("/history")) return Response.json({ transitions: [], facts: [] });
     const scope_id = suffix.slice("scopes/".length);
     return Response.json({ scope_id, run_id: runId, label: scope_id,
