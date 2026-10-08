@@ -17,7 +17,7 @@ export function OperatorCommandForm({ scope, command, schemas, onRefresh }: Prop
   const [draft, setDraft] = useState(() => key ? readOperatorDraft(key) : "");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [completed, setCompleted] = useState(false);
+  const [isAccepted, setIsAccepted] = useState(false);
   const shape = schemas.find((schema) => schema.key === command.payload_schema)?.shape;
   const fields = shape?.kind === "record" ? shape.fields : null;
 
@@ -28,7 +28,7 @@ export function OperatorCommandForm({ scope, command, schemas, onRefresh }: Prop
       clearPendingCommand(input);
       clearOperatorDraft(input);
       setDraft("");
-      setCompleted(true);
+      setIsAccepted(true);
       setError("");
       onRefresh();
     } catch (cause) {
@@ -55,7 +55,7 @@ export function OperatorCommandForm({ scope, command, schemas, onRefresh }: Prop
   useEffect(() => {
     const previous = storedKey.current;
     storedKey.current = key ?? previous;
-    if (completed || !key || !previous || operatorDraftIdentity(previous) === operatorDraftIdentity(key)) return;
+    if (!key || !previous || operatorDraftIdentity(previous) === operatorDraftIdentity(key)) return;
     if (draft !== "") saveOperatorDraft(key, draft);
     clearOperatorDraft(previous);
     // Only a change of the observed identity moves the draft.
@@ -63,12 +63,12 @@ export function OperatorCommandForm({ scope, command, schemas, onRefresh }: Prop
   }, [key ? operatorDraftIdentity(key) : null]);
 
   if (!key) return <p role="status">Target revisions are unavailable. Refresh this scope before acting.</p>;
-  if (completed) return <p role="status">Command accepted.</p>;
 
-  const update = (value: string) => { setDraft(value); saveOperatorDraft(key, value); };
+  const update = (value: string) => { setIsAccepted(false); setDraft(value); saveOperatorDraft(key, value); };
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
     if (isSubmitting) return;
+    setIsAccepted(false);
     try {
       let payload: unknown;
       if (fields) {
@@ -102,6 +102,7 @@ export function OperatorCommandForm({ scope, command, schemas, onRefresh }: Prop
             maxLength={fieldSchema?.shape.kind === "string" ? fieldSchema.shape.max_length : undefined} onChange={(event) => change(event.target.value)} />}</label>;
     }) : <label className="flex flex-col gap-1">Payload<textarea value={draft} onChange={(event) => update(event.target.value)} /></label>}
     <Button type="submit" variant="primary" disabled={isSubmitting}>{isSubmitting ? "Submitting…" : `Submit ${command.label}`}</Button>
+    {isAccepted && <p role="status">Command accepted.</p>}
     {error && <p role="alert">{error}</p>}
   </form>;
 }
