@@ -408,6 +408,13 @@ pub fn validate_bundle(
                 ));
             }
             if let Some(collection) = &child.collection {
+                if collection.min_items == 0 {
+                    return Err(error(
+                        DomainErrorKind::InvalidTemplate,
+                        child.key.to_string(),
+                        "a collection must require at least one member",
+                    ));
+                }
                 if collection.min_items > collection.max_items
                     || collection.max_items > bundle.limits.max_list_items
                 {

@@ -42,8 +42,7 @@ export const STAGE_TABLE: StageTable = [
         input_field: "input",
         dependencies_field: "dependencies",
         min_items: 1,
-        max_items: 100,
-        empty: { kind: "complete", outcome: variant({ schema: "run_result", variant: "complete", value: literal("unit", {}) }) }
+        max_items: 100
       },
       on_terminal: "prepare_finished"
     } },
@@ -160,9 +159,8 @@ export const STAGE_TABLE: StageTable = [
         key_field: "key",
         input_field: "input",
         dependencies_field: "dependencies",
-        min_items: 0,
-        max_items: 100,
-        empty: { kind: "complete", outcome: variant({ schema: "run_result", variant: "complete", value: literal("unit", {}) }) }
+        min_items: 1,
+        max_items: 100
       },
       on_terminal: "implementation_finished",
       prerequisite_export: "accepted"
@@ -207,9 +205,8 @@ export const STAGE_TABLE: StageTable = [
         key_field: "key",
         input_field: "input",
         dependencies_field: "dependencies",
-        min_items: 0,
-        max_items: 100,
-        empty: { kind: "complete", outcome: variant({ schema: "run_result", variant: "complete", value: literal("unit", {}) }) }
+        min_items: 1,
+        max_items: 100
       },
       on_terminal: "integration_finished"
     } },

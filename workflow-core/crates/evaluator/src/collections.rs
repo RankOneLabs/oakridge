@@ -91,7 +91,6 @@ pub(crate) fn materialize_with_budget(
                 input: evaluate_expression(&child.input, &mut context)?,
                 depends_on: source.depends_on.iter().map(|k| k.0.clone()).collect(),
             }],
-            empty_outcome: None,
         });
     };
     let Some(policy) = &source.collection else {
@@ -115,19 +114,6 @@ pub(crate) fn materialize_with_budget(
             template.to_string(),
             "collection cardinality violated",
         ));
-    }
-    if items.is_empty() {
-        return match &collection.empty_outcome {
-            Some(e) => Ok(Materialization {
-                children: vec![],
-                empty_outcome: Some(evaluate_expression(e, &mut context)?),
-            }),
-            None => Err(failure(
-                DomainErrorKind::InvalidTemplate,
-                template.to_string(),
-                "empty collection rejected by policy",
-            )),
-        };
     }
     let mut keys = BTreeSet::new();
     let mut children = Vec::new();
@@ -216,10 +202,7 @@ pub(crate) fn materialize_with_budget(
         })
         .collect();
     check_acyclic(&members, &template.0, context.budget)?;
-    Ok(Materialization {
-        children,
-        empty_outcome: None,
-    })
+    Ok(Materialization { children })
 }
 
 /// Checked collection constraints apply before acceptance as well as materialization.

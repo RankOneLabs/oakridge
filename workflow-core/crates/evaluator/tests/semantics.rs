@@ -331,17 +331,19 @@ fn dynamic_cycle_is_rejected() {
     );
 }
 #[test]
-fn empty_collection_uses_declared_outcome() {
+fn empty_collection_activation_is_rejected() {
     let b = bundle("dynamic");
     let p = compile(&b, &b.operations).unwrap();
-    assert!(materialize(
-        &p,
-        &snapshot(&b, json!([]), "ready", "begin"),
-        &SymbolKey::from("items")
-    )
-    .unwrap()
-    .empty_outcome
-    .is_some());
+    assert_eq!(
+        materialize(
+            &p,
+            &snapshot(&b, json!([]), "ready", "begin"),
+            &SymbolKey::from("items")
+        )
+        .unwrap_err()
+        .kind,
+        DomainErrorKind::InvalidTemplate
+    );
 }
 #[test]
 fn bounded_evaluation_reports_engine_error() {

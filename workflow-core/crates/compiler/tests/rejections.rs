@@ -669,6 +669,23 @@ fn invalid_dynamic_input_mapping() {
     );
 }
 #[test]
+fn collection_allowing_no_members_is_rejected() {
+    let v: Value =
+        serde_json::from_str(include_str!("../../../fixtures/bundles/dynamic.json")).unwrap();
+    reject(
+        v,
+        |v| v["scopes"][0]["children"][0]["collection"]["min_items"] = json!(0),
+        DomainErrorKind::InvalidTemplate,
+    );
+}
+#[test]
+fn collection_empty_policy_is_not_part_of_the_contract() {
+    let mut v: Value =
+        serde_json::from_str(include_str!("../../../fixtures/bundles/dynamic.json")).unwrap();
+    v["scopes"][0]["children"][0]["collection"]["empty"] = json!({"kind": "reject"});
+    assert!(serde_json::from_value::<DefinitionBundle>(v).is_err());
+}
+#[test]
 fn structurally_unreachable_state() {
     reject(
         fixture(),
