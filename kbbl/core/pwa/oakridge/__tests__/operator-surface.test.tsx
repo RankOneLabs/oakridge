@@ -415,7 +415,7 @@ const expectInvalidated = (spy: ReturnType<typeof invalidatedKeys>, ...keys: rea
 };
 
 test("pinning a definition refreshes the definition catalog", async () => {
-  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => init?.method === "POST"
+  vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => init?.method === "POST"
     ? Response.json({ bundle_id: "b", digest: "d" }, { status: 201 }) : cursorPage([])));
   const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const spy = invalidatedKeys(cache);
@@ -428,7 +428,7 @@ test("pinning a definition refreshes the definition catalog", async () => {
 });
 
 test("launching a run refreshes the run list and the inbox", async () => {
-  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => init?.method === "POST"
+  vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => init?.method === "POST"
     ? Response.json({ run_id: "run-1" }, { status: 201 })
     : cursorPage([{ bundle_id: "b", digest: "sha-1", source: { key: "demo", version: 1 } }])));
   const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } });

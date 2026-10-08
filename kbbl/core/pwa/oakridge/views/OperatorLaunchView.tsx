@@ -8,15 +8,13 @@ import { randomUuid } from "../../lib/random-uuid";
 import { clearPendingLaunch, readPendingLaunch, savePendingLaunch } from "../lib/operator-launch";
 import { isDefinitiveRequestRejection } from "../lib/client-errors";
 import type { OperatorLaunchRequest } from "../operator-contracts";
-import type { Schema, SchemaField, WorkflowDefinitionDescriptor } from "../workflow-definition-types";
-import { parseOperatorFieldValue } from "../lib/operator-payload";
+import type { Schema, WorkflowDefinitionDescriptor } from "../workflow-definition-types";
+import { buildRootInput, inputRecord, type FieldDrafts, type InputField } from "../lib/operator-input";
 import { invalidateRunLists } from "../lib/operator-invalidation";
 import { selectLaunchDigest } from "../lib/operator-selectors";
 
-interface RootField { readonly field: SchemaField; readonly schema: Schema | undefined }
-type FieldDrafts = { readonly [key: string]: string };
 
-function selectRootFields(source: WorkflowDefinitionDescriptor | undefined): readonly RootField[] | null {
+function selectInputFields(source: WorkflowDefinitionDescriptor | undefined): readonly InputField[] | null {
   if (!source || !Array.isArray(source.scopes) || !Array.isArray(source.schemas)) return null;
   const root = source.scopes.find((scope) => scope.key === source.root);
   const shape = source.schemas.find((schema) => schema.key === root?.input_schema)?.shape;
@@ -24,60 +22,9 @@ function selectRootFields(source: WorkflowDefinitionDescriptor | undefined): rea
     schema: source.schemas.find((schema) => schema.key === field.schema) })) : null;
 }
 
-function inputRecord(raw: string): { [key: string]: unknown } {
-  const parsed: unknown = JSON.parse(raw);
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Root input must be a JSON object.");
-  return parsed as { [key: string]: unknown };
-}
-
 function fieldText(value: unknown, schema: Schema | undefined): string {
   if (value === undefined) return "";
   return schema?.shape.kind === "string" || schema?.shape.kind === "enum" ? String(value) : JSON.stringify(value, null, 2);
-}
-
-/**
- * A string schema's own `min_length` decides whether "" is an acceptable value,
- * so the form stops imposing a non-empty rule the bundle never stated. Null for
- * every other shape, where a blank entry really does mean "no value".
- */
-function stringFloor(schema: Schema | undefined): number | null {
-  return schema?.shape.kind === "string" ? schema.shape.min_length : null;
-}
-
-function buildRootInput(raw: string, fields: readonly RootField[] | null, drafts: FieldDrafts): unknown {
-  if (!fields) return JSON.parse(raw);
-  const record = inputRecord(raw);
-  for (const { field, schema } of fields) {
-    const floor = stringFloor(schema);
-    const draft = drafts[field.key];
-    if (draft === undefined) {
-      if (record[field.key] !== undefined || !field.required) continue;
-      if (floor === 0) { record[field.key] = ""; continue; } // A required zero-minimum string starts as the empty value it admits.
-      throw new Error(`${field.key} is required.`);
-    }
-    if (floor !== null) {
-      // Whitespace is content in a string, so only a truly empty draft is a question:
-      // omitted when the field is optional, "" when the schema's minimum admits it.
-      if (draft === "") {
-        if (!field.required) { delete record[field.key]; continue; }
-        if (floor > 0) throw new Error(`${field.key} is required.`);
-        record[field.key] = "";
-        continue;
-      }
-      if (draft.length < floor) throw new Error(`${field.key} must be at least ${floor} characters.`);
-      record[field.key] = draft;
-      continue;
-    }
-    if (draft.trim() === "") {
-      if (field.required) throw new Error(`${field.key} is required.`);
-      delete record[field.key];
-      continue;
-    }
-    const parsed = parseOperatorFieldValue({ raw: draft, schema });
-    if (!parsed.ok) throw new Error(`${field.key}: ${parsed.error.detail}`);
-    record[field.key] = parsed.value;
-  }
-  return record;
 }
 
 interface Props { readonly onBack: () => void; readonly onCreated: (runId: string) => void; readonly onEdit: () => void }
@@ -96,7 +43,7 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
   const [launching, setLaunching] = useState(false);
   const selected = selectLaunchDigest({ pending_digest: pending?.digest, chosen_digest: digest, definitions: definitions.data });
   const selectedDefinition = definitions.data?.find((item) => item.digest === selected);
-  const fields = selectRootFields(selectedDefinition?.source);
+  const fields = selectInputFields(selectedDefinition?.source);
   const inputValues = (() => { try { return inputRecord(input); } catch { return {}; } })();
   const toggleRaw = () => {
     setError(null);
