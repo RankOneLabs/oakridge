@@ -98,11 +98,9 @@ function renderList(
       <SessionListView
         sessions={sessions}
         inboxStatus="connected"
-        theme="dark"
         defaultWorkdir="/repo"
         defaultRuntimeId="claude-code"
         runtimes={runtimes}
-        onToggleTheme={() => {}}
         onSelect={() => {}}
         onHydrateSession={() => {}}
       />
@@ -130,11 +128,9 @@ describe("SessionListView grouping", () => {
           <SessionListView
             sessions={new Map()}
             inboxStatus="connected"
-            theme="dark"
             defaultWorkdir="/repo"
             defaultRuntimeId="claude-code"
             runtimes={runtimes}
-            onToggleTheme={() => {}}
             onSelect={onSelect}
             onHydrateSession={onHydrateSession}
           />
@@ -248,11 +244,9 @@ describe("SessionListView grouping", () => {
         <SessionListView
           sessions={sessions}
           inboxStatus="connected"
-          theme="dark"
           defaultWorkdir="/repo"
           defaultRuntimeId="claude-code"
           runtimes={runtimes}
-          onToggleTheme={() => {}}
           onSelect={() => {}}
           onHydrateSession={() => {}}
         />
