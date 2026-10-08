@@ -22,7 +22,7 @@ fn main() -> io::Result<()> {
     }
     let mut host = workflow_model::ResourceLimits {
         max_list_items: 10_000,
-        max_depth: 128,
+        max_depth: workflow_model::protocol::MAX_DEPTH_CEILING,
         evaluation_budget: 1_000_000,
     };
     let mut arguments = std::env::args().skip(1);

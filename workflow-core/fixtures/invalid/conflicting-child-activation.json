@@ -1,6 +1,6 @@
 {
   "language_version": 1,
-  "key": "batch_7",
+  "key": "batch_1",
   "version": 1,
   "root": "batch",
   "schemas": [
@@ -205,90 +205,6 @@
             "released"
           ],
           "collection": null
-        },
-        {
-          "key": "item_1",
-          "scope": "document",
-          "input": {
-            "kind": "literal",
-            "schema": "unit",
-            "value": {}
-          },
-          "depends_on": [],
-          "imports": [
-            "released"
-          ],
-          "collection": null
-        },
-        {
-          "key": "item_2",
-          "scope": "document",
-          "input": {
-            "kind": "literal",
-            "schema": "unit",
-            "value": {}
-          },
-          "depends_on": [],
-          "imports": [
-            "released"
-          ],
-          "collection": null
-        },
-        {
-          "key": "item_3",
-          "scope": "document",
-          "input": {
-            "kind": "literal",
-            "schema": "unit",
-            "value": {}
-          },
-          "depends_on": [],
-          "imports": [
-            "released"
-          ],
-          "collection": null
-        },
-        {
-          "key": "item_4",
-          "scope": "document",
-          "input": {
-            "kind": "literal",
-            "schema": "unit",
-            "value": {}
-          },
-          "depends_on": [],
-          "imports": [
-            "released"
-          ],
-          "collection": null
-        },
-        {
-          "key": "item_5",
-          "scope": "document",
-          "input": {
-            "kind": "literal",
-            "schema": "unit",
-            "value": {}
-          },
-          "depends_on": [],
-          "imports": [
-            "released"
-          ],
-          "collection": null
-        },
-        {
-          "key": "item_6",
-          "scope": "document",
-          "input": {
-            "kind": "literal",
-            "schema": "unit",
-            "value": {}
-          },
-          "depends_on": [],
-          "imports": [
-            "released"
-          ],
-          "collection": null
         }
       ],
       "exports": [
@@ -349,28 +265,8 @@
                   "key": "item_0"
                 },
                 {
-                  "kind": "activate_child",
-                  "key": "item_1"
-                },
-                {
-                  "kind": "activate_child",
-                  "key": "item_2"
-                },
-                {
-                  "kind": "activate_child",
-                  "key": "item_3"
-                },
-                {
-                  "kind": "activate_child",
-                  "key": "item_4"
-                },
-                {
-                  "kind": "activate_child",
-                  "key": "item_5"
-                },
-                {
-                  "kind": "activate_child",
-                  "key": "item_6"
+                  "kind": "cancel_children",
+                  "key": "item_0"
                 }
               ],
               "actions": [],
@@ -390,60 +286,6 @@
                     "root": {
                       "kind": "child",
                       "key": "item_0",
-                      "export": "released"
-                    },
-                    "path": []
-                  },
-                  {
-                    "kind": "reference",
-                    "root": {
-                      "kind": "child",
-                      "key": "item_1",
-                      "export": "released"
-                    },
-                    "path": []
-                  },
-                  {
-                    "kind": "reference",
-                    "root": {
-                      "kind": "child",
-                      "key": "item_2",
-                      "export": "released"
-                    },
-                    "path": []
-                  },
-                  {
-                    "kind": "reference",
-                    "root": {
-                      "kind": "child",
-                      "key": "item_3",
-                      "export": "released"
-                    },
-                    "path": []
-                  },
-                  {
-                    "kind": "reference",
-                    "root": {
-                      "kind": "child",
-                      "key": "item_4",
-                      "export": "released"
-                    },
-                    "path": []
-                  },
-                  {
-                    "kind": "reference",
-                    "root": {
-                      "kind": "child",
-                      "key": "item_5",
-                      "export": "released"
-                    },
-                    "path": []
-                  },
-                  {
-                    "kind": "reference",
-                    "root": {
-                      "kind": "child",
-                      "key": "item_6",
                       "export": "released"
                     },
                     "path": []
@@ -486,7 +328,10 @@
                   "cancel"
                 ],
                 "reason": "waiting for declared input",
-                "attention": {"label": "Awaiting input", "trigger": "publish"}
+                "attention": {
+                  "label": "Awaiting input",
+                  "trigger": "publish"
+                }
               }
             }
           },
@@ -516,7 +361,10 @@
             "cancel"
           ],
           "reason": "waiting for declared input",
-          "attention": {"label": "Awaiting input", "trigger": "publish"}
+          "attention": {
+            "label": "Awaiting input",
+            "trigger": "publish"
+          }
         }
       }
     },
@@ -765,7 +613,10 @@
             "cancel"
           ],
           "reason": "waiting for declared input",
-          "attention": {"label": "Awaiting input", "trigger": "publish"}
+          "attention": {
+            "label": "Awaiting input",
+            "trigger": "publish"
+          }
         }
       }
     }

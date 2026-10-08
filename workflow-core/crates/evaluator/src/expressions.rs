@@ -443,11 +443,6 @@ pub fn evaluate_expression(
                 dependencies_field, ..
             } = &expression.node
             {
-                charge(
-                    context.budget,
-                    items.len().saturating_mul(items.len()),
-                    &expression.schema.0,
-                )?;
                 crate::collections::validate_collection(
                     &items,
                     *key_field,

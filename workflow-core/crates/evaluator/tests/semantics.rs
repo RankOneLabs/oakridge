@@ -881,3 +881,73 @@ fn collection_constraints_are_generic_transforms_before_materialization() {
         );
     }
 }
+
+/// Every member depends on every earlier one: the shape that made a pass-based
+/// sweep cubic (each pass rechecked the whole completed prefix for every member).
+fn dense_members(length: usize) -> Vec<Value> {
+    (0..length)
+        .map(|index| {
+            let dependencies: Vec<String> = (0..index)
+                .map(|earlier| format!("member_{earlier}"))
+                .collect();
+            json!({"key": format!("member_{index}"), "input": {}, "dependencies": dependencies})
+        })
+        .collect()
+}
+fn dense_bundles() -> [DefinitionBundle; 2] {
+    let mut materialized = bundle("dynamic");
+    materialized.limits.max_list_items = 1_000;
+    materialized.limits.evaluation_budget = 1_000_000;
+    let mut checked = materialized.clone();
+    let collection = checked.scopes[0].children[0].collection.as_mut().unwrap();
+    collection.source = serde_json::from_value(json!({"kind":"check_collection","source":{"kind":"reference","root":{"kind":"input"},"path":[]},"key_field":"key","dependencies_field":"dependencies"})).unwrap();
+    [materialized, checked]
+}
+/// Both prerequisite checks (materialization and `check_collection`) accept a
+/// dense acyclic graph whole: each member and each edge is visited once.
+#[test]
+fn dense_prerequisite_graph_is_accepted_in_both_paths() {
+    let length = 100;
+    for b in dense_bundles() {
+        let p = compile(&b, &b.operations).unwrap();
+        let s = snapshot(&b, Value::Array(dense_members(length)), "ready", "begin");
+        let batch = materialize(&p, &s, &SymbolKey::from("items")).unwrap();
+        assert_eq!(batch.children.len(), length);
+    }
+}
+#[test]
+fn dense_prerequisite_graph_with_one_back_edge_is_a_cycle_in_both_paths() {
+    let length = 100;
+    for b in dense_bundles() {
+        let p = compile(&b, &b.operations).unwrap();
+        let mut members = dense_members(length);
+        members[0]["dependencies"] = json!([format!("member_{}", length - 1)]);
+        let s = snapshot(&b, Value::Array(members), "ready", "begin");
+        assert_eq!(
+            materialize(&p, &s, &SymbolKey::from("items"))
+                .unwrap_err()
+                .kind,
+            DomainErrorKind::CyclicPrerequisite
+        );
+    }
+}
+/// Walking a large snapshot to validate it is metered: a snapshot whose values
+/// cost more than the whole budget is refused before any tree node runs (the
+/// tree's own exhaustion reports a different detail).
+#[test]
+fn snapshot_validation_is_charged_against_the_budget() {
+    let mut b = bundle("dynamic");
+    b.limits.max_list_items = 1_000;
+    b.limits.evaluation_budget = 25;
+    let p = compile(&b, &b.operations).unwrap();
+    // 100 members with 200-byte keys: roughly 80 budget units of value to walk.
+    let members: Vec<Value> = (0..100)
+        .map(|index| json!({"key": format!("{index:0>200}"), "input": {}, "dependencies": []}))
+        .collect();
+    let error = evaluate(&p, &snapshot(&b, Value::Array(members), "ready", "begin"))
+        .map(|_| ())
+        .unwrap_err();
+    assert_eq!(error.kind, DomainErrorKind::ResourceLimit);
+    assert_eq!(&*error.detail, "expression budget exhausted");
+    assert_eq!(&*error.operation, "evaluate");
+}

@@ -2,8 +2,16 @@ use schemars::schema_for;
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use workflow_model::protocol::{
-    Request, Response, MAX_FRAME_BYTES, MAX_RESPONSE_BYTES, PROTOCOL_VERSION,
+    Request, Response, DECODER_MAX_JSON_DEPTH, DECODER_MAX_SCHEMA_HOPS, MAX_DEPTH_CEILING,
+    MAX_FRAME_BYTES, MAX_RESPONSE_BYTES, PROTOCOL_VERSION,
 };
+
+/// The decoder source with its depth guards filled in from the protocol constants.
+fn schema_decoder() -> String {
+    include_str!("schema-decoder.ts.txt")
+        .replace("{{MAX_JSON_DEPTH}}", &DECODER_MAX_JSON_DEPTH.to_string())
+        .replace("{{MAX_SCHEMA_HOPS}}", &DECODER_MAX_SCHEMA_HOPS.to_string())
+}
 
 fn schema_to_ts(schema: &Value) -> String {
     if schema == &Value::Bool(true) {
@@ -140,7 +148,7 @@ pub fn generate() -> String {
         }
     }
     let mut output = format!("// Generated from workflow-model::protocol. Run scripts/generate-core-contracts.sh.\nexport const CORE_PROTOCOL_SCHEMA = {} as const;\n", schemas);
-    output.push_str(&format!("export const CORE_PROTOCOL_VERSION = {PROTOCOL_VERSION};\nexport const CORE_MAX_FRAME_BYTES = {MAX_FRAME_BYTES};\nexport const CORE_MAX_RESPONSE_BYTES = {MAX_RESPONSE_BYTES};\n"));
+    output.push_str(&format!("export const CORE_PROTOCOL_VERSION = {PROTOCOL_VERSION};\nexport const CORE_MAX_FRAME_BYTES = {MAX_FRAME_BYTES};\nexport const CORE_MAX_RESPONSE_BYTES = {MAX_RESPONSE_BYTES};\nexport const CORE_MAX_DEPTH = {MAX_DEPTH_CEILING};\n"));
     for (name, schema) in definitions {
         output.push_str(&format!("export type {name} = {};\n", schema_to_ts(schema)));
     }
@@ -153,7 +161,7 @@ pub fn generate() -> String {
         schema_to_ts(&schemas["response"])
     ));
     output.push_str("export type CoreDomainError = DomainError;\nexport type CoreTransportError = TransportError;\nexport type CoreTransportKind = TransportErrorKind;\nexport type CoreResponseResult = ResponseResult;\n");
-    output.push_str(include_str!("schema-decoder.ts.txt"));
+    output.push_str(&schema_decoder());
     output.push_str(include_str!("response-decoder.ts.txt"));
     output
 }
@@ -177,7 +185,7 @@ pub fn generate_source() -> String {
         "export type WorkflowDefinitionDescriptor = {};\n",
         schema_to_ts(&schema)
     ));
-    output.push_str(include_str!("schema-decoder.ts.txt"));
+    output.push_str(&schema_decoder());
     output.push_str("export function decodeDefinitionBundle(value: unknown): WorkflowDefinitionDescriptor | null {\n  return hasSafeWireNumbers(value) && matchesProtocolSchema(value, SOURCE_SCHEMA, SOURCE_SCHEMA.$defs, 0)\n    ? value as WorkflowDefinitionDescriptor : null;\n}\n");
     output
 }

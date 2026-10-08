@@ -2,6 +2,19 @@ use crate::expressions::{boolean_schema, compatible, compile_expression, Context
 use crate::{check_value, error, unique, variants};
 use std::collections::BTreeSet;
 use workflow_model::*;
+/// Write keys that name different mutations of one entity. Their host-side
+/// effects do not commute, so one leaf may carry at most one of each pair:
+/// activating a child while cancelling it, and binding or clearing a resource
+/// while observing it (the observation reads the binding being rewritten).
+fn opposing_field(field: &str) -> Option<String> {
+    const PAIRS: [(&str, &str); 2] = [("child/", "cancel_child/"), ("resource/", "observe/")];
+    PAIRS.iter().find_map(|(left, right)| {
+        field
+            .strip_prefix(left)
+            .map(|key| format!("{right}{key}"))
+            .or_else(|| field.strip_prefix(right).map(|key| format!("{left}{key}")))
+    })
+}
 pub(crate) fn compile_tree(
     bundle: &DefinitionBundle,
     owner: &ScopeDefinition,
@@ -284,13 +297,23 @@ pub(crate) fn compile_tree(
                         )
                     }
                 };
-                if !writes.insert(field) {
+                if writes.contains(&field) {
                     return Err(error(
                         DomainErrorKind::ConflictingWrite,
                         id.to_string(),
                         "leaf writes the same owned field twice",
                     ));
                 }
+                if let Some(opposed) = opposing_field(&field) {
+                    if writes.contains(&opposed) {
+                        return Err(error(
+                            DomainErrorKind::ConflictingWrite,
+                            id.to_string(),
+                            format!("leaf mutates {field} and {opposed}; the outcome would depend on host mutation order"),
+                        ));
+                    }
+                }
+                writes.insert(field);
                 checked.push(value);
             }
             let mut launches = BTreeSet::new();

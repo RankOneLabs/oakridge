@@ -52,15 +52,19 @@ interface ProtocolSchemaObject {
   readonly minimum?: number;
   readonly maximum?: number;
 }
+// Runaway guards, not domain limits: the generator fills these in from workflow-model::protocol,
+// sized above the deepest document the Rust side can emit.
+const MAX_JSON_DEPTH = 256;
+const MAX_SCHEMA_HOPS = 1024;
 export function hasSafeWireNumbers(value: unknown, depth = 0): boolean {
-  if (depth > 128) return false;
+  if (depth > MAX_JSON_DEPTH) return false;
   if (typeof value === "number") return Number.isFinite(value) && Math.abs(value) <= Number.MAX_SAFE_INTEGER;
   if (Array.isArray(value)) return value.every((member) => hasSafeWireNumbers(member, depth + 1));
   if (typeof value === "object" && value !== null) return Object.values(value).every((member) => hasSafeWireNumbers(member, depth + 1));
   return true;
 }
 function matchesProtocolSchema(value: unknown, schema: ProtocolSchema, definitions: { readonly [key: string]: ProtocolSchema }, depth: number): boolean {
-  if (depth > 128) return false;
+  if (depth > MAX_SCHEMA_HOPS) return false;
   if (typeof schema === "boolean") return schema;
   if (schema.$ref) {
     const resolved = definitions[schema.$ref.replace("#/$defs/", "")];

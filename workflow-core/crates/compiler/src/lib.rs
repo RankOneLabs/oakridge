@@ -137,8 +137,19 @@ pub fn compile(
             "language version 1 and positive bundle version required",
         ));
     }
+    if source.limits.max_depth > workflow_model::protocol::MAX_DEPTH_CEILING {
+        return Err(error(
+            DomainErrorKind::ResourceLimit,
+            source.key.to_string(),
+            format!(
+                "max_depth {} exceeds the ceiling {}: a bundle or value nested that deep may not fit the {}-level wire",
+                source.limits.max_depth,
+                workflow_model::protocol::MAX_DEPTH_CEILING,
+                workflow_model::protocol::WIRE_MAX_JSON_DEPTH,
+            ),
+        ));
+    }
     if source.limits.max_depth == 0
-        || source.limits.max_depth > 128
         || source.limits.max_list_items == 0
         || source.limits.evaluation_budget == 0
     {

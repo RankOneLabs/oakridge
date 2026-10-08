@@ -226,10 +226,6 @@
                 {
                   "key": "model",
                   "value": "example"
-                },
-                {
-                  "key": "unsupported",
-                  "value": "yes"
                 }
               ],
               "tools": [
@@ -301,6 +297,14 @@
                 {
                   "kind": "acquire",
                   "pool": "work"
+                },
+                {
+                  "kind": "observe",
+                  "resource": "source"
+                },
+                {
+                  "kind": "clear_resource",
+                  "key": "source"
                 }
               ],
               "actions": [
@@ -378,7 +382,10 @@
             "cancel"
           ],
           "reason": "waiting for declared input",
-          "attention": {"label": "Awaiting input", "trigger": "publish"}
+          "attention": {
+            "label": "Awaiting input",
+            "trigger": "publish"
+          }
         }
       }
     }

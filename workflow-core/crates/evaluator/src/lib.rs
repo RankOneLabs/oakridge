@@ -43,7 +43,30 @@ pub(crate) fn owner<'a>(
         })?;
     Ok((source, checked))
 }
-pub(crate) fn snapshot_valid(program: &CheckedProgram, snapshot: &Snapshot) -> CoreResult<()> {
+/// Validation walks every value the snapshot carries, and the observation
+/// uniqueness checks compare each root against its predecessors, so both are
+/// charged to the evaluation budget before the work is done.
+pub(crate) fn snapshot_valid(
+    program: &CheckedProgram,
+    snapshot: &Snapshot,
+    budget: &mut usize,
+) -> CoreResult<()> {
+    let entity = snapshot.owner.0.as_str();
+    let carried = [&snapshot.input, &snapshot.state, &snapshot.trigger.payload]
+        .into_iter()
+        .chain(snapshot.observations.iter().map(|o| &o.value))
+        .fold(0usize, |cost, value| {
+            cost.saturating_add(expressions::value_cost(value))
+        });
+    expressions::charge(budget, carried, entity)?;
+    expressions::charge(
+        budget,
+        snapshot
+            .observations
+            .len()
+            .saturating_mul(snapshot.observations.len()),
+        entity,
+    )?;
     let maximum = wire_numbers::MAX_SAFE_INTEGER as u64;
     if snapshot.version > maximum
         || snapshot.random_seed > maximum
@@ -156,7 +179,8 @@ pub(crate) fn snapshot_valid(program: &CheckedProgram, snapshot: &Snapshot) -> C
     Ok(())
 }
 pub fn evaluate(program: &CheckedProgram, snapshot: &Snapshot) -> CoreResult<DecisionOutcome> {
-    snapshot_valid(program, snapshot)?;
+    let mut budget = program.derived.limits.evaluation_budget;
+    snapshot_valid(program, snapshot, &mut budget)?;
     let (scope, checked) = owner(program, snapshot)?;
     let state = expressions::variant(&snapshot.state)?;
     let mut read_set = vec![ReadVersion {
@@ -189,7 +213,6 @@ pub fn evaluate(program: &CheckedProgram, snapshot: &Snapshot) -> CoreResult<Dec
             ));
         }
     }
-    let mut budget = program.derived.limits.evaluation_budget;
     let mut node = &checked.tree;
     loop {
         if budget == 0 {
