@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchOperatorDefinition, fetchOperatorRun, fetchOperatorScope, submitOperatorCommand } from "../client";
 import { OperatorCommandForm } from "../components/organisms/OperatorCommandForm";
 import { OperatorTypedValue } from "../components/molecules/OperatorTypedValue";
-import { clearOperatorDraft, clearPendingCommand, listPendingCommands, operatorDraftIdentity } from "../lib/operator-drafts";
+import { clearOperatorDraft, clearPendingCommand, listPendingCommands, operatorDraftIdentity, operatorFormIdentity } from "../lib/operator-drafts";
 import { selectDraftKey, selectRootScopeId } from "../lib/operator-selectors";
 import { Button } from "../../components/atoms/Button";
 import { invalidateRunLists } from "../lib/operator-invalidation";
@@ -73,7 +73,7 @@ export function GenericOperatorRunView({ runId, onBack }: Props) {
       <label>Action <select aria-label="Action" value={selected?.key ?? ""} onChange={(event) => setSelectedCommand(event.target.value)}>
         {data.commands.map((command) => <option key={command.key} value={command.key}>{command.label}</option>)}
       </select></label>
-      {selected && selectDraftKey(data, selected) && <OperatorCommandForm key={operatorDraftIdentity(selectDraftKey(data, selected)!)}
+      {selected && selectDraftKey(data, selected) && <OperatorCommandForm key={operatorFormIdentity(selectDraftKey(data, selected)!)}
         scope={data} command={selected} schemas={schemas} onRefresh={refresh} />}
       {selected && !selectDraftKey(data, selected) && <p role="status">Target revisions are unavailable. Refresh this scope before acting.</p>}
     </section>}

@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { randomUuid } from "../../../lib/random-uuid";
 import { submitOperatorCommand } from "../../client";
 import { isDefinitiveRequestRejection } from "../../lib/client-errors";
-import { clearOperatorDraft, clearPendingCommand, findRetainedDrafts, readOperatorDraft, readPendingCommand, saveOperatorDraft, savePendingCommand } from "../../lib/operator-drafts";
+import { clearOperatorDraft, clearPendingCommand, findRetainedDrafts, operatorDraftIdentity, readOperatorDraft, readPendingCommand, saveOperatorDraft, savePendingCommand } from "../../lib/operator-drafts";
 import { buildRootInput, stringFloor, type FieldDrafts } from "../../lib/operator-input";
 import { parseOperatorFieldValue } from "../../lib/operator-payload";
 import { selectDraftKey } from "../../lib/operator-selectors";
@@ -34,7 +34,7 @@ export function OperatorCommandForm({ scope, command, schemas, onRefresh }: Prop
       if (isDefinitiveRequestRejection(cause)) {
         clearPendingCommand(input);
         onRefresh();
-        setError(`${cause instanceof Error ? cause.message : "Command rejected"}. Draft retained for this version.`);
+        setError(`${cause instanceof Error ? cause.message : "Command rejected"}. Your input is kept.`);
       } else setError(`Delivery is uncertain. Request ${input.request_id} will be retried with the same payload.`);
     } finally { setIsSubmitting(false); }
   }
@@ -46,6 +46,19 @@ export function OperatorCommandForm({ scope, command, schemas, onRefresh }: Prop
     // The component is keyed by its full draft identity, so this runs once per observed command.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // The parent keys this form without the owner version, so a bump arrives as a new `key` on live
+  // state: move the stored draft to the new version's identity rather than losing the edits.
+  const storedKey = useRef(key);
+  useEffect(() => {
+    const previous = storedKey.current;
+    storedKey.current = key ?? previous;
+    if (!key || !previous || operatorDraftIdentity(previous) === operatorDraftIdentity(key)) return;
+    if (draft !== "") saveOperatorDraft(key, draft);
+    clearOperatorDraft(previous);
+    // Only a change of the observed identity moves the draft.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key ? operatorDraftIdentity(key) : null]);
 
   if (!key) return <p role="status">Target revisions are unavailable. Refresh this scope before acting.</p>;
   if (completed) return <p role="status">Command accepted.</p>;
