@@ -7,8 +7,8 @@ import { Button } from "../../components/atoms/Button";
 import { randomUuid } from "../../lib/random-uuid";
 import { clearPendingLaunch, readPendingLaunch, savePendingLaunch } from "../lib/operator-launch";
 import { isDefinitiveRequestRejection } from "../lib/client-errors";
-import type { OperatorLaunchRequest } from "../operator-contracts";
-import type { Schema, WorkflowDefinitionDescriptor } from "../workflow-definition-types";
+import type { OperatorLaunchRequest, OperatorSchema } from "../operator-contracts";
+import type { WorkflowDefinitionDescriptor } from "../workflow-definition-types";
 import { buildRootInput, inputRecord, type FieldDrafts, type InputField } from "../lib/operator-input";
 import { invalidateRunLists } from "../lib/operator-invalidation";
 import { selectLaunchDigest } from "../lib/operator-selectors";
@@ -22,7 +22,7 @@ function selectInputFields(source: WorkflowDefinitionDescriptor | undefined): re
     schema: source.schemas.find((schema) => schema.key === field.schema) })) : null;
 }
 
-function fieldText(value: unknown, schema: Schema | undefined): string {
+function fieldText(value: unknown, schema: OperatorSchema | undefined): string {
   if (value === undefined) return "";
   return schema?.shape.kind === "string" || schema?.shape.kind === "enum" ? String(value) : JSON.stringify(value, null, 2);
 }

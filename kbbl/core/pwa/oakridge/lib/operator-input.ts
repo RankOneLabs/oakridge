@@ -1,7 +1,7 @@
-import type { Schema, SchemaField } from "../workflow-definition-types";
+import type { OperatorSchema, OperatorSchemaField } from "../operator-contracts";
 import { parseOperatorFieldValue } from "./operator-payload";
 
-export interface InputField { readonly field: SchemaField; readonly schema: Schema | undefined }
+export interface InputField { readonly field: OperatorSchemaField; readonly schema: OperatorSchema | undefined }
 export type FieldDrafts = { readonly [key: string]: string };
 
 export function inputRecord(raw: string): { [key: string]: unknown } {
@@ -15,7 +15,7 @@ export function inputRecord(raw: string): { [key: string]: unknown } {
  * so the form stops imposing a non-empty rule the bundle never stated. Null for
  * every other shape, where a blank entry really does mean "no value".
  */
-export function stringFloor(schema: Schema | undefined): number | null {
+export function stringFloor(schema: OperatorSchema | undefined): number | null {
   return schema?.shape.kind === "string" ? schema.shape.min_length : null;
 }
 
