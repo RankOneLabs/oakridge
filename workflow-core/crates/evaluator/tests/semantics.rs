@@ -357,6 +357,54 @@ fn bounded_evaluation_reports_engine_error() {
 }
 
 #[test]
+fn references_are_charged_without_the_unread_trigger_payload() {
+    // A large trigger payload, read once by the dispatch match and never by
+    // the assignments below. Charging it again per reference would exhaust a
+    // budget that the selected work comfortably fits in.
+    let mut b = bundle("minimal");
+    b.scopes[0]
+        .commands
+        .iter_mut()
+        .find(|command| command.key == SymbolKey::from("begin"))
+        .expect("begin command")
+        .payload_schema = SchemaId::from("text");
+    b.limits.evaluation_budget = 800;
+    let mut p = compile(&b, &b.operations).unwrap();
+    let CheckedTree::Match { cases, .. } = &mut p.scopes[0].tree else {
+        panic!("dispatch match")
+    };
+    let CheckedTree::Apply {
+        mutations,
+        actions,
+        outcome,
+        ..
+    } = &mut cases[0].node
+    else {
+        panic!("begin apply")
+    };
+    let state_reference = CheckedMutation::SetState {
+        value: CheckedExpression {
+            schema: SchemaId::from("position"),
+            node: CheckedExpressionNode::Reference {
+                root: ReferenceRoot::State,
+                selectors: vec![],
+            },
+        },
+    };
+    *mutations = vec![
+        state_reference.clone(),
+        state_reference.clone(),
+        state_reference,
+    ];
+    actions.clear();
+    *outcome = None;
+    let mut s = snapshot(&b, json!({}), "ready", "begin");
+    s.trigger.payload =
+        check_value(&b, &SchemaId::from("text"), &json!("x".repeat(100_000))).unwrap();
+    assert!(evaluate(&p, &s).is_ok());
+}
+
+#[test]
 fn repeated_unchanged_assignments_wait_without_committing() {
     let b = bundle("minimal");
     let mut p = compile(&b, &b.operations).unwrap();

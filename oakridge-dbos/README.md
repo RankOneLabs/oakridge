@@ -32,8 +32,21 @@ crash mid-step resumes at that step on the next process of the same application
 version. A clean shutdown parks running workflows (DBOS cancel) and the next
 boot resumes them. An `ERROR` run is forked at its failed step into the next
 generation; a long run rolls over after 128 iterations with its scan cursor.
-Child dispatch reads durable intent and workflow status, so restart neither
-redelivers a settled child nor forgets one still pending.
+Child dispatch reads durable intent and workflow status, so a restart of the
+same application version neither redelivers a settled child nor forgets one
+still pending. The two statuses are recovered by different mechanisms, and the
+guarantee holds only because both run: `DBOS.launch` recovers `PENDING` and
+`ENQUEUED` workflows left behind by a process that died without parking, which
+is why `dispatchChild` treats those statuses as already dispatched rather than
+starting a second one; `resumeActiveRuns` resumes the `CANCELLED` set a clean
+shutdown parked, settling any whose execution deadline passed while parked.
+A child recorded under a *different* application version is outside this
+guarantee — DBOS does not recover it, and dispatch will not replace it — which
+is the cost of the version pinning described below.
+`oakridge-dbos/tests/provider-driven-recovery.test.ts` holds this down by
+`SIGKILL`ing a process with a live dispatched session and asserting the
+replacement carries that same session to a committed terminal state with one
+start intent and one kbbl session.
 
 Each provider start, observe and stop call uses its action's pinned
 `deadline_ms`. Start and observation retries share a DBOS execution timeout

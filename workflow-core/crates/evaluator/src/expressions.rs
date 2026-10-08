@@ -103,20 +103,33 @@ pub fn evaluate_expression(
     let data = match &expression.node {
         CheckedExpressionNode::Literal { value } => return clone_value(value, context.budget),
         CheckedExpressionNode::Reference { root, selectors } => {
-            let trigger = CheckedValue {
-                schema: SchemaId(format!("$trigger/{}", context.snapshot.scope)),
-                data: CheckedData::Variant {
-                    variant: context.snapshot.trigger.key.0.clone(),
-                    value: Box::new(clone_value(
-                        &context.snapshot.trigger.payload,
-                        context.budget,
-                    )?),
-                },
+            // Built only for `$trigger`, and bound here so the reference below
+            // outlives it. Cloning the payload is charged against the budget,
+            // so constructing it for every root would make an unrelated
+            // reference fail on the size of a payload it never reads.
+            let trigger = match root {
+                ReferenceRoot::Trigger => Some(CheckedValue {
+                    schema: SchemaId(format!("$trigger/{}", context.snapshot.scope)),
+                    data: CheckedData::Variant {
+                        variant: context.snapshot.trigger.key.0.clone(),
+                        value: Box::new(clone_value(
+                            &context.snapshot.trigger.payload,
+                            context.budget,
+                        )?),
+                    },
+                }),
+                _ => None,
             };
             let mut value = match root {
                 ReferenceRoot::Input => &context.snapshot.input,
                 ReferenceRoot::State => &context.snapshot.state,
-                ReferenceRoot::Trigger => &trigger,
+                ReferenceRoot::Trigger => trigger.as_ref().ok_or_else(|| {
+                    failure(
+                        DomainErrorKind::InvalidSnapshot,
+                        "trigger",
+                        "missing trigger value",
+                    )
+                })?,
                 ReferenceRoot::Item => context.item.ok_or_else(|| {
                     failure(
                         DomainErrorKind::InvalidSnapshot,
