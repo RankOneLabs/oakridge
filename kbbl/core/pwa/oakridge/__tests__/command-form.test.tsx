@@ -75,3 +75,13 @@ test("a version-conflict rejection stays visible, with the typed input, after th
   expect((await screen.findByRole("alert")).textContent).toMatch(/scope version changed/);
   expect(screen.getByLabelText<HTMLTextAreaElement>("note").value).toBe("my words");
 });
+
+test("an accepted command's input is not restored as a draft after the refresh bumps the version", async () => {
+  const { state } = versionedRun(1, () => { state.version = 2; return Response.json({ kind: "accepted_pending", request_id: "r", transition_id: "t", scope_version: 2 }); });
+  const cache = mountRun();
+  fireEvent.change(await screen.findByLabelText("note"), { target: { value: "already sent" } });
+  fireEvent.click(screen.getByRole("button", { name: "Submit Act" }));
+  await screen.findByText("Command accepted.");
+  await waitFor(() => expect(cache.getQueryData<{ cursor: { scope_version: number } }>(["operator", "run-one", "scope", "scope-one"])?.cursor.scope_version).toBe(2));
+  expect(Object.keys(localStorage).filter((key) => localStorage.getItem(key)?.includes("already sent"))).toEqual([]);
+});

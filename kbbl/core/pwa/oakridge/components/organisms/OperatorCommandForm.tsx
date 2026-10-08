@@ -27,6 +27,7 @@ export function OperatorCommandForm({ scope, command, schemas, onRefresh }: Prop
       await submitOperatorCommand(input);
       clearPendingCommand(input);
       clearOperatorDraft(input);
+      setDraft("");
       setCompleted(true);
       setError("");
       onRefresh();
@@ -43,7 +44,8 @@ export function OperatorCommandForm({ scope, command, schemas, onRefresh }: Prop
     if (!key) return;
     const pending = readPendingCommand(key);
     if (pending) void deliver(pending);
-    // The component is keyed by its full draft identity, so this runs once per observed command.
+    // The component is keyed by its form identity, so this runs once per command and target revisions;
+    // a pending command left under an earlier owner version is recovered by the run view instead.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -53,7 +55,7 @@ export function OperatorCommandForm({ scope, command, schemas, onRefresh }: Prop
   useEffect(() => {
     const previous = storedKey.current;
     storedKey.current = key ?? previous;
-    if (!key || !previous || operatorDraftIdentity(previous) === operatorDraftIdentity(key)) return;
+    if (completed || !key || !previous || operatorDraftIdentity(previous) === operatorDraftIdentity(key)) return;
     if (draft !== "") saveOperatorDraft(key, draft);
     clearOperatorDraft(previous);
     // Only a change of the observed identity moves the draft.
