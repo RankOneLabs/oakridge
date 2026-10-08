@@ -8,7 +8,7 @@ import { readIntent, type EffectIntent, type EffectPayload, type EffectStatus } 
 import { bounded, exhaustStart, resolveObserve, resolveStart, resolveStop, settleObserveRetry, startAttemptsExhausted, type StartOutcome } from "../effects/outcomes";
 import type { EffectProvider, ProviderResult } from "../effects/provider";
 import { advanceChildrenPage, type LifecycleFailure } from "../runtime/advance-children";
-import { claimChildRedispatch, claimDispatchGeneration, claimStartAttempt, persistEffectResult } from "../storage/effect-results";
+import { claimChildRedispatch, claimDispatchGeneration, claimStartAttempt, persistEffectResult, stampEffectDeadline } from "../storage/effect-results";
 import { claimRunGeneration, currentRunAddress, currentRunGeneration, RUN_NEEDS_WORK_SQL, runNeedsWork } from "../storage/run-lifecycle";
 import type { MutationService } from "../storage/mutation-service";
 import type { RunId } from "../storage/schema-records";
@@ -227,10 +227,13 @@ async function carryStart(intent_id: string): Promise<EffectStatus | null> {
   const timing = current().timing;
   let intent = await loadIntentStep(intent_id);
   if (!intent || intent.payload.action !== "start") return intent?.status ?? null;
+  const deadline_epoch_ms = intent.deadline_epoch_ms;
+  const expired = async (): Promise<boolean> => deadline_epoch_ms !== null && await effectExpiredStep(deadline_epoch_ms);
   let payload = intent.payload;
   let status = intent.status;
   let terminal: CheckedValue | null = null;
   for (let attempt = 0; status === "pending"; attempt++) {
+    if (await expired()) { await settleExpiredEffect(intent_id); return (await loadIntentStep(intent_id))?.status ?? null; }
     const outcome = await startStep(intent_id);
     if (!outcome) {
       intent = await loadIntentStep(intent_id);
@@ -256,6 +259,7 @@ async function carryStart(intent_id: string): Promise<EffectStatus | null> {
     status = written;
   }
   while (status === "acknowledged") {
+    if (await expired()) { await settleExpiredEffect(intent_id); return (await loadIntentStep(intent_id))?.status ?? null; }
     const outcome = resolveObserve(payload, await observeStep(payload));
     if (outcome.kind === "terminal") {
       payload = outcome.payload;
@@ -398,6 +402,10 @@ async function settleExpiredEffect(intent_id: string): Promise<void> {
 
 const effectExpiredStep = DBOS.registerStep(async (deadline_epoch_ms: number): Promise<boolean> =>
   deadline_epoch_ms <= Date.now(), { name: "oakridgeEffectExpired" });
+/** First dispatch stamps the deadline; every later call returns the same recorded value. */
+const stampEffectDeadlineStep = DBOS.registerStep(async (intent_id: string): Promise<number | null> =>
+  stampEffectDeadline(current().db, intent_id, Date.now() + current().timing.execution_deadline_ms),
+  { name: "oakridgeStampEffectDeadline", retriesAllowed: true, maxAttempts: 5 });
 
 /**
  * Collapses the seven DBOS workflow statuses into the four categories
@@ -426,10 +434,20 @@ export function classifyWorkflowStatus(status: WorkflowStatusString): WorkflowSt
   }
 }
 
-function startChildWorkflow(kind: "start" | "stop", workflow_id: string, intent_id: string): Promise<unknown> {
-  return kind === "start"
-    ? DBOS.startWorkflow(effectWorkflow, { workflowID: workflow_id, timeoutMS: current().timing.execution_deadline_ms })(intent_id)
-    : DBOS.startWorkflow(cleanupWorkflow, { workflowID: workflow_id })(intent_id);
+/**
+ * A start intent's absolute deadline is stamped once, in the authority row,
+ * because the SDK's own deadline does not survive park-and-resume
+ * (resumeWorkflows NULLs it) or a fork (which does not copy workflow_timeout_ms).
+ * Every start computes its timeoutMS from that stamped deadline, and settles
+ * as expired immediately rather than dispatching past it.
+ */
+async function startChildWorkflow(kind: "start" | "stop", workflow_id: string, intent_id: string): Promise<void> {
+  if (kind === "stop") { await DBOS.startWorkflow(cleanupWorkflow, { workflowID: workflow_id })(intent_id); return; }
+  const deadline_epoch_ms = await stampEffectDeadlineStep(intent_id);
+  if (deadline_epoch_ms === null) return; // intent no longer exists
+  const timeout_ms = deadline_epoch_ms - Date.now();
+  if (timeout_ms <= 0) { await settleExpiredEffect(intent_id); return; }
+  await DBOS.startWorkflow(effectWorkflow, { workflowID: workflow_id, timeoutMS: timeout_ms })(intent_id);
 }
 
 export async function dispatchChild(run_id: string, intent_id: string, kind: "start" | "stop"): Promise<void> {
@@ -455,7 +473,7 @@ export async function dispatchChild(run_id: string, intent_id: string, kind: "st
   const category = classifyWorkflowStatus(status.status as WorkflowStatusString);
   if (category === "in_flight") return;
   if (category === "parked") {
-    if (kind === "start" && status.deadlineEpochMS !== undefined && await effectExpiredStep(status.deadlineEpochMS)) {
+    if (kind === "start" && intent.deadline_epoch_ms !== null && await effectExpiredStep(intent.deadline_epoch_ms)) {
       await settleExpiredEffect(intent_id);
       return;
     }
@@ -587,10 +605,6 @@ const runOfScopeStep = DBOS.registerStep(async (scope_id: string): Promise<RunAd
 }, { name: "oakridgeRunOfScope", retriesAllowed: true, maxAttempts: 5 });
 
 const WORKFLOW_NAMES = ["oakridgeRunWorkflow", "oakridgeEffectWorkflow", "oakridgeCleanupWorkflow"];
-function isExpiredEffectWorkflow(status: WorkflowStatus, now_ms: number): boolean {
-  return status.workflowName === "oakridgeEffectWorkflow"
-    && status.deadlineEpochMS !== undefined && status.deadlineEpochMS <= now_ms;
-}
 
 function intentOf(status: WorkflowStatus): string | null {
   const intent_id = status.input?.[0];
@@ -618,11 +632,24 @@ export async function fenceOtherEngineWorkflows(): Promise<number> {
 export async function resumeActiveRuns(db: TransactionalSqlExecutor): Promise<number> {
   await fenceOtherEngineWorkflows();
   // A parked child past its absolute deadline settles as expired rather than
-  // resuming into a run recheck that would otherwise redispatch it.
+  // resuming into a run recheck that would otherwise redispatch it. The
+  // authority column is the source of truth here, not the SDK's own
+  // deadlineEpochMS: resumeWorkflows NULLs it and fork does not copy it.
   const parked = await DBOS.listWorkflows({ status: "CANCELLED", workflowName: WORKFLOW_NAMES.slice(1),
     applicationVersion: DBOS.applicationVersion });
   const now_ms = Date.now();
-  const expired = parked.filter((status) => isExpiredEffectWorkflow(status, now_ms));
+  const effect_parked = parked.filter((status) => status.workflowName === "oakridgeEffectWorkflow");
+  const effect_intent_ids = effect_parked.map(intentOf).filter((id): id is string => id !== null);
+  const deadlines = effect_intent_ids.length
+    ? await db.query<{ id: string; deadline_epoch_ms: string | number | null }>(
+        "SELECT id,deadline_epoch_ms FROM authority.effect_intent WHERE id=ANY($1)", [effect_intent_ids])
+    : [];
+  const deadline_by_intent = new Map(deadlines.map((row) => [row.id, row.deadline_epoch_ms === null ? null : Number(row.deadline_epoch_ms)]));
+  const expired = effect_parked.filter((status) => {
+    const intent_id = intentOf(status);
+    const deadline = intent_id === null ? null : deadline_by_intent.get(intent_id);
+    return deadline !== null && deadline !== undefined && deadline <= now_ms;
+  });
   for (const status of expired) {
     const intent_id = intentOf(status);
     if (intent_id !== null) await settleExpiredEffect(intent_id);

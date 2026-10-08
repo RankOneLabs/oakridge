@@ -55,6 +55,18 @@ export async function claimChildRedispatch(db: TransactionalSqlExecutor, intent_
 }
 
 /**
+ * Stamp the absolute deadline on first dispatch; a later call is a no-op that
+ * returns the already-recorded value. Absolute, because resumeWorkflows NULLs
+ * the SDK's own deadline on park-and-resume and fork does not copy it either.
+ */
+export async function stampEffectDeadline(db: TransactionalSqlExecutor, intent_id: string, candidate_deadline_epoch_ms: number): Promise<number | null> {
+  const rows = await db.query<{ deadline_epoch_ms: string | number }>(`UPDATE authority.effect_intent
+    SET deadline_epoch_ms=COALESCE(deadline_epoch_ms,$2), version=version+1
+    WHERE id=$1 RETURNING deadline_epoch_ms`, [intent_id, candidate_deadline_epoch_ms]);
+  return rows[0] ? Number(rows[0].deadline_epoch_ms) : null;
+}
+
+/**
  * Record what a provider call taught us, with the domain result in the same
  * transaction. A revocation that landed while the call was in flight wins over
  * every status except cleanup proof: the stop intent it created still needs the
