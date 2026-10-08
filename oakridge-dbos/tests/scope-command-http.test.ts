@@ -42,6 +42,14 @@ test("a targeted command whose decision collapses to wait is accepted, not confl
   const api = await harness({ wait_decision: true });
   expect((await api.submit()).status).toBe(202);
 });
+test("a targeted command whose collapsed wait carries evaluated targets matching current revisions is accepted", async () => {
+  const api = await harness({ wait_decision_with_targets: true });
+  expect((await api.submit()).status).toBe(202);
+});
+test("a targeted command whose collapsed wait's evaluated targets go stale before commit conflicts with 409", async () => {
+  const api = await harness({ wait_decision_with_targets: true, change_target_before_commit: true });
+  expect({ status: (await api.submit()).status, evaluations: api.evaluationCount() }).toEqual({ status: 409, evaluations: 2 });
+});
 test("a changed target between validation and commit re-evaluates and then conflicts with 409", async () => {
   const api = await harness({ change_target_before_commit: true });
   expect({ status: (await api.submit()).status, evaluations: api.evaluationCount() }).toEqual({ status: 409, evaluations: 2 });
