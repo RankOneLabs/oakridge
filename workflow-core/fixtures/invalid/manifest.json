@@ -58,5 +58,13 @@
   {
     "file": "publication-pair-foreign-producer.json",
     "expected": "unsupported_publication"
+  },
+  {
+    "file": "conflicting-child-activation.json",
+    "expected": "conflicting_write"
+  },
+  {
+    "file": "conflicting-resource-observation.json",
+    "expected": "conflicting_write"
   }
 ]

@@ -1342,3 +1342,67 @@ fn compiler_emits_the_complete_dynamic_scope_read_set() {
         &vec![ReferenceRoot::Trigger, ReferenceRoot::Input]
     );
 }
+
+/// Opposing mutations of one entity in one leaf are rejected whichever order
+/// they are written in: the host applies them in an order the bundle does not fix.
+#[test]
+fn opposing_mutations_of_one_entity_conflict_in_either_order() {
+    let children: Value =
+        serde_json::from_str(include_str!("../../../fixtures/bundles/children-1.json")).unwrap();
+    let cancel = json!({"kind":"cancel_children","key":"item_0"});
+    reject(
+        children,
+        |v| {
+            // children-1 activates item_0 in `start`; put the cancel first instead of last.
+            let node = find_node(&mut v["scopes"][0]["tree"], "start");
+            node["mutations"].as_array_mut().unwrap().insert(0, cancel);
+        },
+        DomainErrorKind::ConflictingWrite,
+    );
+    reject(
+        fixture(),
+        |v| {
+            v["scopes"][0]["tree"]["cases"][0]["node"]["mutations"]
+                .as_array_mut()
+                .unwrap()
+                .extend([
+                    json!({"kind":"clear_resource","key":"source"}),
+                    json!({"kind":"observe","resource":"source"}),
+                ])
+        },
+        DomainErrorKind::ConflictingWrite,
+    );
+}
+fn find_node<'a>(tree: &'a mut Value, id: &str) -> &'a mut Value {
+    fn locate(tree: &Value, id: &str, path: &mut Vec<String>) -> bool {
+        if tree["id"] == id {
+            return true;
+        }
+        if let Some(cases) = tree["cases"].as_array() {
+            for (index, case) in cases.iter().enumerate() {
+                path.extend(["cases".into(), index.to_string(), "node".into()]);
+                if locate(&case["node"], id, path) {
+                    return true;
+                }
+                path.truncate(path.len() - 3);
+            }
+        }
+        for branch in ["then", "otherwise"] {
+            if tree[branch].is_object() {
+                path.push(branch.into());
+                if locate(&tree[branch], id, path) {
+                    return true;
+                }
+                path.pop();
+            }
+        }
+        false
+    }
+    let mut path = Vec::new();
+    assert!(locate(tree, id, &mut path), "node {id} not found");
+    path.iter()
+        .fold(tree, |node, step| match step.parse::<usize>() {
+            Ok(index) => &mut node[index],
+            Err(_) => &mut node[step.as_str()],
+        })
+}
