@@ -1,4 +1,4 @@
-use crate::expressions::{evaluate_expression, EvaluationContext};
+use crate::expressions::{charge, evaluate_expression, EvaluationContext};
 use crate::{failure, owner, snapshot_valid};
 use std::collections::BTreeSet;
 use workflow_model::*;
@@ -22,8 +22,13 @@ pub(crate) fn field(value: &CheckedValue, index: usize) -> CoreResult<&CheckedVa
             )
         })
 }
-pub(crate) fn text(value: &CheckedValue) -> CoreResult<String> {
+pub(crate) fn text(value: &CheckedValue, budget: &mut usize) -> CoreResult<String> {
     if let CheckedData::String { value } = &value.data {
+        charge(
+            budget,
+            value.len().div_ceil(256).max(1),
+            "collection member key",
+        )?;
         Ok(value.clone())
     } else {
         Err(failure(
@@ -127,7 +132,7 @@ pub(crate) fn materialize_with_budget(
     let mut keys = BTreeSet::new();
     let mut children = Vec::new();
     for item in &items {
-        let key = text(field(item, collection.key_field)?)?;
+        let key = text(field(item, collection.key_field)?, context.budget)?;
         if key.is_empty()
             || key.len() > 256
             || key.chars().any(|c| c.is_control() || c == '/' || c == '\\')
@@ -151,7 +156,7 @@ pub(crate) fn materialize_with_budget(
         };
         let depends_on = dependencies
             .iter()
-            .map(text)
+            .map(|value| text(value, context.budget))
             .collect::<CoreResult<Vec<_>>>()?;
         if depends_on.iter().collect::<BTreeSet<_>>().len() != depends_on.len() {
             return Err(failure(
@@ -231,11 +236,12 @@ pub(crate) fn validate_collection(
     items: &[CheckedValue],
     key_field: usize,
     dependencies_field: usize,
+    budget: &mut usize,
 ) -> CoreResult<()> {
     let mut keys = BTreeSet::new();
     let mut members = Vec::new();
     for item in items {
-        let key = text(field(item, key_field)?)?;
+        let key = text(field(item, key_field)?, budget)?;
         if key.is_empty()
             || key.len() > 256
             || key.chars().any(|c| c.is_control() || c == '/' || c == '\\')
@@ -254,7 +260,10 @@ pub(crate) fn validate_collection(
                 "dependencies not list",
             ));
         };
-        let deps = deps.iter().map(text).collect::<CoreResult<Vec<_>>>()?;
+        let deps = deps
+            .iter()
+            .map(|value| text(value, budget))
+            .collect::<CoreResult<Vec<_>>>()?;
         if deps.iter().collect::<BTreeSet<_>>().len() != deps.len() {
             return Err(failure(
                 DomainErrorKind::InvalidTemplate,

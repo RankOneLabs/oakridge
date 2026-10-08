@@ -6,7 +6,7 @@ pub struct EvaluationContext<'a> {
     pub item: Option<&'a CheckedValue>,
     pub budget: &'a mut usize,
 }
-fn charge(budget: &mut usize, amount: usize, entity: &str) -> CoreResult<()> {
+pub(crate) fn charge(budget: &mut usize, amount: usize, entity: &str) -> CoreResult<()> {
     if *budget < amount {
         return Err(failure(
             DomainErrorKind::ResourceLimit,
@@ -16,6 +16,54 @@ fn charge(budget: &mut usize, amount: usize, entity: &str) -> CoreResult<()> {
     }
     *budget -= amount;
     Ok(())
+}
+fn value_size(value: &CheckedValue) -> usize {
+    let nested = match &value.data {
+        CheckedData::String { value } => value.len(),
+        CheckedData::Enum { variant } => variant.len(),
+        CheckedData::Reference { id, .. } => id.len(),
+        CheckedData::Variant { variant, value } => variant.len().saturating_add(value_size(value)),
+        CheckedData::Optional { value } => value.as_ref().map_or(0, |value| value_size(value)),
+        CheckedData::List { items } => items
+            .iter()
+            .fold(0usize, |cost, item| cost.saturating_add(value_size(item))),
+        CheckedData::Record { fields, dictionary } => {
+            let fields_cost = fields.iter().fold(0usize, |cost, field| {
+                cost.saturating_add(field.value.as_ref().map_or(1, value_size))
+            });
+            dictionary.iter().fold(fields_cost, |cost, entry| {
+                cost.saturating_add(entry.key.len())
+                    .saturating_add(value_size(&entry.value))
+            })
+        }
+        CheckedData::Boolean { .. } | CheckedData::Integer { .. } => 0,
+    };
+    value
+        .schema
+        .0
+        .len()
+        .saturating_add(1)
+        .saturating_add(nested)
+}
+pub(crate) fn value_cost(value: &CheckedValue) -> usize {
+    // A budget unit covers at most 256 bytes of copy or comparison work.
+    value_size(value).div_ceil(256).max(1)
+}
+pub(crate) fn clone_value(value: &CheckedValue, budget: &mut usize) -> CoreResult<CheckedValue> {
+    charge(budget, value_cost(value), &value.schema.0)?;
+    Ok(value.clone())
+}
+pub(crate) fn equal_values(
+    left: &CheckedValue,
+    right: &CheckedValue,
+    budget: &mut usize,
+) -> CoreResult<bool> {
+    charge(
+        budget,
+        value_cost(left).saturating_add(value_cost(right)),
+        &left.schema.0,
+    )?;
+    Ok(left == right)
 }
 pub fn boolean(value: &CheckedValue) -> CoreResult<bool> {
     if let CheckedData::Boolean { value } = &value.data {
@@ -53,13 +101,16 @@ pub fn evaluate_expression(
     }
     *context.budget -= 1;
     let data = match &expression.node {
-        CheckedExpressionNode::Literal { value } => return Ok(value.clone()),
+        CheckedExpressionNode::Literal { value } => return clone_value(value, context.budget),
         CheckedExpressionNode::Reference { root, selectors } => {
             let trigger = CheckedValue {
                 schema: SchemaId(format!("$trigger/{}", context.snapshot.scope)),
                 data: CheckedData::Variant {
                     variant: context.snapshot.trigger.key.0.clone(),
-                    value: Box::new(context.snapshot.trigger.payload.clone()),
+                    value: Box::new(clone_value(
+                        &context.snapshot.trigger.payload,
+                        context.budget,
+                    )?),
                 },
             };
             let mut value = match root {
@@ -103,7 +154,9 @@ pub fn evaluate_expression(
                             value: fields
                                 .iter()
                                 .find(|field| field.field_id == *index)
-                                .and_then(|field| field.value.clone())
+                                .and_then(|field| field.value.as_ref())
+                                .map(|value| clone_value(value, context.budget))
+                                .transpose()?
                                 .map(Box::new),
                         },
                     });
@@ -145,7 +198,7 @@ pub fn evaluate_expression(
                     }
                 };
             }
-            return Ok(value.clone());
+            return clone_value(value, context.budget);
         }
         CheckedExpressionNode::Record { fields } => {
             let schema = context
@@ -196,9 +249,13 @@ pub fn evaluate_expression(
             variant: variant.clone(),
             value: Box::new(evaluate_expression(value, context)?),
         },
-        CheckedExpressionNode::Equals { left, right } => CheckedData::Boolean {
-            value: evaluate_expression(left, context)? == evaluate_expression(right, context)?,
-        },
+        CheckedExpressionNode::Equals { left, right } => {
+            let left = evaluate_expression(left, context)?;
+            let right = evaluate_expression(right, context)?;
+            CheckedData::Boolean {
+                value: equal_values(&left, &right, context.budget)?,
+            }
+        }
         CheckedExpressionNode::IsVariant {
             value,
             variant: expected,
@@ -259,7 +316,7 @@ pub fn evaluate_expression(
         },
         CheckedExpressionNode::Field { value, index } => {
             let value = evaluate_expression(value, context)?;
-            return Ok(crate::collections::field(&value, *index)?.clone());
+            return clone_value(crate::collections::field(&value, *index)?, context.budget);
         }
         CheckedExpressionNode::FilterBy {
             source,
@@ -278,7 +335,11 @@ pub fn evaluate_expression(
             let mut filtered = Vec::new();
             for item in items {
                 charge(context.budget, 1, &expression.schema.0)?;
-                if *crate::collections::field(&item, *key_field)? == key {
+                if equal_values(
+                    crate::collections::field(&item, *key_field)?,
+                    &key,
+                    context.budget,
+                )? {
                     filtered.push(item);
                 }
             }
@@ -297,7 +358,14 @@ pub fn evaluate_expression(
                 value: {
                     let needle = evaluate_expression(value, context)?;
                     charge(context.budget, items.len(), &expression.schema.0)?;
-                    items.contains(&needle)
+                    let mut found = false;
+                    for item in &items {
+                        if equal_values(item, &needle, context.budget)? {
+                            found = true;
+                            break;
+                        }
+                    }
+                    found
                 },
             }
         }
@@ -316,12 +384,16 @@ pub fn evaluate_expression(
             };
             let key = evaluate_expression(key, context)?;
             charge(context.budget, items.len(), &expression.schema.0)?;
-            let matches = items
-                .iter()
-                .filter(|item| {
-                    crate::collections::field(item, *key_field).is_ok_and(|value| *value == key)
-                })
-                .collect::<Vec<_>>();
+            let mut matches = Vec::new();
+            for item in &items {
+                if equal_values(
+                    crate::collections::field(item, *key_field)?,
+                    &key,
+                    context.budget,
+                )? {
+                    matches.push(item);
+                }
+            }
             if matches.len() != 1 {
                 return Err(failure(
                     DomainErrorKind::InvalidTemplate,
@@ -329,7 +401,7 @@ pub fn evaluate_expression(
                     "lookup requires exactly one matching key",
                 ));
             }
-            return Ok(matches[0].clone());
+            return clone_value(matches[0], context.budget);
         }
         CheckedExpressionNode::Filter { source, predicate } => {
             let collection = evaluate_expression(source, context)?;
@@ -376,18 +448,31 @@ pub fn evaluate_expression(
                     items.len().saturating_mul(items.len()),
                     &expression.schema.0,
                 )?;
-                crate::collections::validate_collection(&items, *key_field, *dependencies_field)?;
+                crate::collections::validate_collection(
+                    &items,
+                    *key_field,
+                    *dependencies_field,
+                    context.budget,
+                )?;
                 CheckedData::List { items }
             } else {
                 let mut unique: Vec<CheckedValue> = Vec::new();
                 for item in items {
                     charge(context.budget, unique.len() + 1, &expression.schema.0)?;
                     let key = crate::collections::field(&item, *key_field)?;
-                    if let Some(previous) = unique.iter().find(|previous| {
-                        crate::collections::field(previous, *key_field)
-                            .is_ok_and(|value| value == key)
-                    }) {
-                        if previous != &item {
+                    let mut previous = None;
+                    for candidate in &unique {
+                        if equal_values(
+                            crate::collections::field(candidate, *key_field)?,
+                            key,
+                            context.budget,
+                        )? {
+                            previous = Some(candidate);
+                            break;
+                        }
+                    }
+                    if let Some(previous) = previous {
+                        if !equal_values(previous, &item, context.budget)? {
                             return Err(failure(
                                 DomainErrorKind::InvalidTemplate,
                                 source.schema.to_string(),
@@ -491,6 +576,57 @@ mod tests {
                 source: Box::new(source),
                 value: Box::new(needle),
             },
+        };
+        let mut budget = 3;
+        let mut context = EvaluationContext {
+            program: &program,
+            snapshot: &snapshot,
+            item: None,
+            budget: &mut budget,
+        };
+        assert_eq!(
+            evaluate_expression(&expression, &mut context)
+                .unwrap_err()
+                .kind,
+            DomainErrorKind::ResourceLimit
+        );
+    }
+
+    #[test]
+    fn large_literal_clone_exhausts_evaluation_budget() {
+        let bundle: DefinitionBundle =
+            serde_json::from_str(include_str!("../../../fixtures/bundles/minimal.json")).unwrap();
+        let program = compile(&bundle, &bundle.operations).unwrap();
+        let unit = check_value(&bundle, &SchemaId::from("unit"), &serde_json::json!({})).unwrap();
+        let snapshot = Snapshot {
+            owner: InstanceId::from("scope"),
+            scope: ScopeKey::from("document"),
+            version: 1,
+            input: unit.clone(),
+            state: check_value(
+                &bundle,
+                &SchemaId::from("position"),
+                &serde_json::json!({"kind":"ready","value":{}}),
+            )
+            .unwrap(),
+            trigger: Trigger {
+                id: TriggerId::from("begin"),
+                key: SymbolKey::from("begin"),
+                payload: unit,
+            },
+            observations: vec![],
+            timestamp_ms: 1,
+            random_seed: 1,
+        };
+        let value = check_value(
+            &bundle,
+            &SchemaId::from("text"),
+            &serde_json::json!("x".repeat(1000)),
+        )
+        .unwrap();
+        let expression = CheckedExpression {
+            schema: SchemaId::from("text"),
+            node: CheckedExpressionNode::Literal { value },
         };
         let mut budget = 3;
         let mut context = EvaluationContext {
