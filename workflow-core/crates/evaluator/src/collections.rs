@@ -44,8 +44,8 @@ pub fn materialize(
     snapshot: &Snapshot,
     template: &SymbolKey,
 ) -> CoreResult<Materialization> {
-    snapshot_valid(program, snapshot)?;
     let mut budget = program.derived.limits.evaluation_budget;
+    snapshot_valid(program, snapshot, &mut budget)?;
     materialize_with_budget(program, snapshot, template, &mut budget)
 }
 pub(crate) fn materialize_with_budget(
@@ -206,6 +206,13 @@ pub(crate) fn materialize_with_budget(
             "prerequisite references missing member",
         ));
     }
+    // One member can complete per pass on a chain, so the sweep is quadratic; charge it
+    // the way `validate_collection`'s caller does before doing the work.
+    charge(
+        context.budget,
+        children.len().saturating_mul(children.len()),
+        &template.0,
+    )?;
     let mut complete = BTreeSet::new();
     while complete.len() < children.len() {
         let ready: Vec<_> = children
