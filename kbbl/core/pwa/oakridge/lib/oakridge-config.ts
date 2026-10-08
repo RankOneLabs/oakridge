@@ -1,5 +1,7 @@
 /** Shortest interval worth scheduling; below it the fallback refresh becomes a poll storm. */
 export const MIN_FALLBACK_REFRESH_MS = 1_000;
+/** Longest delay a timer honors; setInterval treats anything larger as ~1ms, a poll storm. */
+export const MAX_FALLBACK_REFRESH_MS = 2_147_483_647;
 export const DEFAULT_FALLBACK_REFRESH_MS = 30_000;
 
 export interface FallbackRefreshSources {
@@ -12,7 +14,7 @@ export interface FallbackRefreshSources {
 const selectInterval = (candidate: unknown): number | null => {
   if (candidate === null || candidate === undefined || candidate === "") return null;
   const value = Number(candidate);
-  return Number.isFinite(value) && value >= MIN_FALLBACK_REFRESH_MS ? value : null;
+  return Number.isFinite(value) && value >= MIN_FALLBACK_REFRESH_MS && value <= MAX_FALLBACK_REFRESH_MS ? value : null;
 };
 
 /**

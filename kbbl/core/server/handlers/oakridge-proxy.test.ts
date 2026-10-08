@@ -89,7 +89,11 @@ describe("oakridge proxy", () => {
     expect(parseFallbackRefreshMs("5000")).toBe(5_000);
   });
 
-  test.each(["soon", "0", "-1"])("a refresh interval of %s fails the boot rather than being ignored", (raw) => {
+  test("the largest timer delay is still accepted", () => {
+    expect(parseFallbackRefreshMs("2147483647")).toBe(2_147_483_647);
+  });
+
+  test.each(["soon", "0", "-1", "2147483648", "1e12"])("a refresh interval of %s fails the boot rather than being ignored", (raw) => {
     expect(() => parseFallbackRefreshMs(raw)).toThrow(/OAKRIDGE_FALLBACK_REFRESH_MS/);
   });
 
