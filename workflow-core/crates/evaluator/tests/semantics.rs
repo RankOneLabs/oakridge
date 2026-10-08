@@ -554,7 +554,10 @@ fn collapsed_wait_targets_track_the_same_observation_apply_would_have_carried() 
         panic!("expected wait")
     };
     assert_ne!(first_targets, second_targets);
-    assert_eq!(first_targets, Some(vec![first.observations[0].value.clone()]));
+    assert_eq!(
+        first_targets,
+        Some(vec![first.observations[0].value.clone()])
+    );
     assert_eq!(
         second_targets,
         Some(vec![second.observations[0].value.clone()])
