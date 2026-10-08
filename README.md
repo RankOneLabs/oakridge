@@ -52,7 +52,8 @@ recorded digest matches; a changed baseline file stops startup and reports both
 digests. Startup verifies the encryption key and existing intents, registers
 the provider and workflow services, launches DBOS, resumes active runs and
 parked effects, and only then binds HTTP. Set `OAKRIDGE_PROMPT_ROOT` to the repository root when launching the
-backend separately so it can verify prompt files under `workflow-config/prompts/`.
+backend separately so it can read prompt files under `workflow-config/prompts/`
+when a definition is first pinned; runs render from the stored copy.
 `OAKRIDGE_GITHUB_TOKEN` (or `GITHUB_TOKEN`) authenticates pull request
 observation. The DBOS application version defaults to a 16-character SHA-256
 digest combining the sorted `ENGINE_SOURCE_MANIFEST` source digest, the

@@ -7,7 +7,7 @@ import type { Result } from "../../storage/commit";
 import { selectedPublicationInstructions } from "./selected-publication-contract";
 import type { ScopeInstanceRecord } from "../../storage/schema-records";
 import type { StableInvocation } from "../provider";
-import { readPinnedPrompt } from "../../storage/storage-validator";
+import type { PromptTexts } from "../../storage/prompt-content";
 
 /** Reverse the checked wire representation using the same field indexes as the compiler. */
 export function invocationInput(value: CheckedValue, bundle: DefinitionBundle): Result<JsonValue> {
@@ -45,22 +45,21 @@ export function invocationInput(value: CheckedValue, bundle: DefinitionBundle): 
   }
 }
 
-export interface ProviderRequestSelection { readonly invocation: StableInvocation; readonly bundle: DefinitionBundle; readonly scope: Pick<ScopeInstanceRecord, "id" | "run_id" | "child_key" | "scope_key">; readonly publication_secret?: string }
+/** `prompts` holds the stored text of every prompt the decision selected; a render never reads a prompt file. */
+export interface ProviderRequestSelection { readonly invocation: StableInvocation; readonly bundle: DefinitionBundle; readonly prompts: PromptTexts; readonly scope: Pick<ScopeInstanceRecord, "id" | "run_id" | "child_key" | "scope_key">; readonly publication_secret?: string }
 /** Keep the selected action input in the pinned prompt so retries read identical context. */
 export function promptWithActionInput(prompt: string, input: JsonValue): string {
   return `${prompt}\n\n## Pinned action input\n\n${JSON.stringify(input, null, 2)}\n`;
 }
 export function pinProviderRequest(input: ProviderRequestSelection): Result<StableInvocation> {
-  const { invocation, bundle, scope, publication_secret } = input;
+  const { invocation, bundle, prompts, scope, publication_secret } = input;
   const unit_id = scope.child_key ?? scope.id;
   const decoded = invocationInput(invocation.selection.input, bundle);
   if (!decoded.ok) return decoded;
   const contract = invocation.selection.definition;
   const prompt_key = invocation.selection.prompt_key;
-  const prompt = prompt_key == null ? null : bundle.prompts.find((item) => item.key === prompt_key);
-  if (prompt_key != null && !prompt) return { ok: false, error: { operation: "pin_request", entity_id: invocation.id, detail: "pinned prompt missing" } };
-  const prompt_content = prompt ? readPinnedPrompt(prompt) : { ok: true as const, value: "" };
-  if (!prompt_content.ok) return { ok: false, error: { ...prompt_content.error, operation: "pin_request" } };
+  const prompt_content = prompt_key == null ? null : prompts.get(prompt_key);
+  if (prompt_content === undefined) return { ok: false, error: { operation: "pin_request", entity_id: invocation.id, detail: "pinned prompt missing" } };
   const isRecord = (value: JsonValue): value is { readonly [key: string]: JsonValue } => !!value && typeof value === "object" && !Array.isArray(value);
   const decoded_config = isRecord(decoded.value) && decoded.value.config && isRecord(decoded.value.config) ? decoded.value.config : decoded.value;
   const manifest = bundle.operations.find((item) => item.key === contract.operation && item.version === contract.contract_version);
@@ -71,7 +70,7 @@ export function pinProviderRequest(input: ProviderRequestSelection): Result<Stab
       unit_id: unit_id as UnitId, executor_type: "delegated_session", resolved_config: { ...decoded_config,
         session_identity: { run_id: scope.run_id, stage_instance_id: scope.id, unit_id,
           cohort_id: scope.child_key, operator_role: invocation.selection.selection.worker },
-        rendered_prompt: (prompt ? promptWithActionInput(prompt_content.value, decoded.value) : "")
+        rendered_prompt: (prompt_content === null ? "" : promptWithActionInput(prompt_content, decoded.value))
           + selectedPublicationInstructions({ invocation, bundle, scope, publication_secret }) },
       inputs: [], declared_outputs: [], expected_artifacts: [] };
     const rendered = renderSessionStart({ request, operation_id: invocation.id as unknown as ExecutorOperationId, executor_function_identity: "selected-v1" });

@@ -9,8 +9,8 @@ import { commitDecision, type CommitRequest, type CommitResult, type OutputPubli
 import { requestDigest, findReceipt, type IngressIdentity } from "./receipts";
 import { readSnapshot, type AuthoritySnapshot } from "./snapshot-reader";
 import type { RunId, ScopeId } from "./schema-records";
-import type { TransactionalSqlExecutor } from "./sql-executor";
-import { readPinnedPrompt } from "./storage-validator";
+import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
+import { resolveBundlePrompts, storePromptContents, type PromptContent } from "./prompt-content";
 
 export interface CompileRequest { readonly bundle: DefinitionBundle }
 export interface CompileResult { readonly program: CompiledBundle }
@@ -38,15 +38,9 @@ export function selectMutationIdentity(input: MutationInput): IngressIdentity {
 }
 
 function error(operation: string, entity_id: string, detail: string): Result<never> { return { ok: false, error: { operation, entity_id, detail } }; }
-function validateBundlePrompts(bundle: DefinitionBundle, operation: string): Result<void> {
-  if (!Array.isArray(bundle.prompts) || bundle.prompts.some((prompt) =>
-    !prompt || typeof prompt.key !== "string" || typeof prompt.path !== "string" || typeof prompt.content_digest !== "string"))
-    return error(operation, bundle.key, "malformed prompt declaration");
-  for (const prompt of bundle.prompts) {
-    const resolved = readPinnedPrompt(prompt);
-    if (!resolved.ok) return { ok: false, error: { ...resolved.error, operation } };
-  }
-  return { ok: true, value: undefined };
+async function bundlePrompts(db: SqlExecutor, bundle: DefinitionBundle, operation: string): Promise<Result<readonly PromptContent[]>> {
+  try { return await resolveBundlePrompts(db, bundle, operation); }
+  catch (cause) { return error(operation, bundle.key, String(cause)); }
 }
 function launchReplay(prior: LaunchReceiptLookup, request_id: string): Result<StartedRun> | null {
   if (prior.kind === "new") return null;
@@ -86,7 +80,7 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
   return {
     compile: (request) => compileBundle(core, request),
     async pinDefinition(request) {
-      const prompts = validateBundlePrompts(request.bundle, "pin_definition");
+      const prompts = await bundlePrompts(db, request.bundle, "pin_definition");
       if (!prompts.ok) return prompts;
       const compiled = await compileBundle(core, request);
       if (!compiled.ok) return compiled;
@@ -99,9 +93,12 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
       }
       try {
         const bundle_id = crypto.randomUUID();
-        await db.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ($1,$2,$3,$4) ON CONFLICT (digest) DO NOTHING",
-          [bundle_id, compiled.value.program.digest, JSON.stringify(request.bundle), JSON.stringify(compiled.value.program)]);
-        const rows = await db.query<PinnedDefinition>("SELECT id AS bundle_id,digest,source FROM authority.definition_bundle WHERE digest=$1", [compiled.value.program.digest]);
+        const rows = await db.transaction(async (tx) => {
+          await storePromptContents(tx, prompts.value);
+          await tx.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ($1,$2,$3,$4) ON CONFLICT (digest) DO NOTHING",
+            [bundle_id, compiled.value.program.digest, JSON.stringify(request.bundle), JSON.stringify(compiled.value.program)]);
+          return tx.query<PinnedDefinition>("SELECT id AS bundle_id,digest,source FROM authority.definition_bundle WHERE digest=$1", [compiled.value.program.digest]);
+        });
         if (!rows[0]) return error("pin_definition", compiled.value.program.digest, "stored definition missing");
         return { ok: true, value: rows[0] };
       } catch (cause) { return error("pin_definition", request.bundle.key, String(cause)); }
@@ -116,7 +113,7 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
       } catch (cause) { return error("start_run_storage", request.request_id, String(cause)); }
     },
     async startRun(request) {
-      const prompts = validateBundlePrompts(request.bundle, "start_run");
+      const prompts = await bundlePrompts(db, request.bundle, "start_run");
       if (!prompts.ok) return prompts;
       const compiled = await compileBundle(core, request);
       if (!compiled.ok) return compiled;
@@ -145,6 +142,7 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
             const prior = launchReplay(await findLaunchReceipt(tx, request.request_id, request_digest), request.request_id);
             if (prior) return prior;
           }
+          await storePromptContents(tx, prompts.value);
           await tx.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ($1,$2,$3,$4) ON CONFLICT (digest) DO NOTHING", [bundle_id, compiled.value.program.digest, JSON.stringify(request.bundle), JSON.stringify(compiled.value.program)]);
           const stored = await tx.query<{ id: string }>("SELECT id FROM authority.definition_bundle WHERE digest=$1", [compiled.value.program.digest]);
           const actual_bundle_id = stored[0]!.id;

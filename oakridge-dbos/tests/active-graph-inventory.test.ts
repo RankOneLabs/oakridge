@@ -32,7 +32,7 @@ test("active schema and symbols reflect the scope authority", () => {
   const tables = [...sql.matchAll(/CREATE TABLE\s+([\w.]+)/g)].map((match) => match[1]);
   expect(tables).toEqual([
     "authority.schema_baseline",
-    "authority.definition_bundle", "authority.run", "authority.scope_instance", "authority.launch_receipt", "authority.scope_export",
+    "authority.definition_bundle", "authority.prompt_content", "authority.run", "authority.scope_instance", "authority.launch_receipt", "authority.scope_export",
     "authority.child_collection", "authority.execution_selection", "authority.execution", "authority.artifact_revision",
     "authority.output_slot", "authority.fact", "authority.transition", "authority.ingress_receipt",
     "authority.effect_intent", "authority.capacity_pool", "authority.capacity_reservation", "authority.resource_binding",

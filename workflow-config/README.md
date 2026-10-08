@@ -42,8 +42,10 @@ declares `key`, repository-relative `path`, `input_schema`, and the SHA-256
 `content_digest` of the file's exact bytes. The server resolves each path under
 `OAKRIDGE_PROMPT_ROOT` (default: repository root), permits only
 `workflow-config/prompts/`, rejects traversal and symlinks escaping that root,
-and verifies the digest before pinning. It repeats the check before rendering
-an execution prompt. The generated JSON is the source sent to `/api/definitions`:
+and verifies the digest before pinning, the first time that digest is pinned.
+The pinned bytes are stored in the authority by digest, and every execution
+prompt renders from that stored copy, so editing or regenerating a prompt file
+never changes or breaks a definition that is already pinned. The generated JSON is the source sent to `/api/definitions`:
 the server compiles its parsed fields unchanged, so Rust's canonical digest
 identifies the same authored artifact. `JSON.stringify(bundle, null, 2) + "\n"`
 reproduces its bytes. Prompts under `prompts/dev-flow/` receive pinned action
