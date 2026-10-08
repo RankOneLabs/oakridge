@@ -7,6 +7,7 @@ import { OperatorTypedValue } from "../components/molecules/OperatorTypedValue";
 import { clearOperatorDraft, clearPendingCommand, listPendingCommands, operatorDraftIdentity } from "../lib/operator-drafts";
 import { selectDraftKey, selectRootScopeId } from "../lib/operator-selectors";
 import { Button } from "../../components/atoms/Button";
+import { invalidateRunLists } from "../lib/operator-invalidation";
 import { isDefinitiveRequestRejection } from "../lib/client-errors";
 import { OperatorHistoryPane } from "./OperatorHistoryPane";
 
@@ -23,7 +24,7 @@ export function GenericOperatorRunView({ runId, onBack }: Props) {
   const [selectedCommand, setSelectedCommand] = useState<string | null>(null);
   const selected = scope.data?.commands.find((command) => command.key === selectedCommand) ?? scope.data?.commands[0];
   const schemas = definition.data?.source.schemas ?? [];
-  const refresh = () => { void client.invalidateQueries({ queryKey: queryKeys.run(runId) }); };
+  const refresh = () => { void client.invalidateQueries({ queryKey: queryKeys.run(runId) }); invalidateRunLists(client); };
   const [recovery, setRecovery] = useState("");
   useEffect(() => {
     if (!scope.data) return;

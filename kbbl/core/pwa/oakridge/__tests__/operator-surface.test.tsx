@@ -405,3 +405,57 @@ test("a required root string that admits an empty value is not marked required i
   renderWithQuery(<OperatorLaunchView onBack={() => undefined} onCreated={() => undefined} onEdit={() => undefined} />);
   expect(await screen.findByLabelText<HTMLInputElement>(admitsEmpty.label)).toHaveProperty("required", false);
 });
+
+function renderWithClient(cache: QueryClient, ui: React.ReactElement) {
+  return render(<QueryClientProvider client={cache}>{ui}</QueryClientProvider>);
+}
+const invalidatedKeys = (cache: QueryClient) => vi.spyOn(cache, "invalidateQueries");
+const expectInvalidated = (spy: ReturnType<typeof invalidatedKeys>, ...keys: readonly (readonly string[])[]) => {
+  for (const queryKey of keys) expect(spy).toHaveBeenCalledWith({ queryKey });
+};
+
+test("pinning a definition refreshes the definition catalog", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => init?.method === "POST"
+    ? Response.json({ bundle_id: "b", digest: "d" }, { status: 201 }) : cursorPage([])));
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const spy = invalidatedKeys(cache);
+  const onPinned = vi.fn();
+  renderWithClient(cache, <OperatorDefinitionEditorView cloneFromId={null} onBack={() => undefined} onPinned={onPinned} />);
+  fireEvent.change(screen.getByLabelText("Source bundle"), { target: { value: JSON.stringify(canonicalDefinition) } });
+  fireEvent.click(screen.getByRole("button", { name: "Pin definition" }));
+  await waitFor(() => expect(onPinned).toHaveBeenCalledOnce());
+  expectInvalidated(spy, ["operator", "definitions"]);
+});
+
+test("launching a run refreshes the run list and the inbox", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => init?.method === "POST"
+    ? Response.json({ run_id: "run-1" }, { status: 201 })
+    : cursorPage([{ bundle_id: "b", digest: "sha-1", source: { key: "demo", version: 1 } }])));
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const spy = invalidatedKeys(cache);
+  const onCreated = vi.fn();
+  renderWithClient(cache, <OperatorLaunchView onBack={() => undefined} onCreated={onCreated} onEdit={() => undefined} />);
+  await screen.findByText(/demo v1/);
+  fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+  await waitFor(() => expect(onCreated).toHaveBeenCalledWith("run-1"));
+  expectInvalidated(spy, ["operator", "runs"], ["operator", "inbox"]);
+});
+
+test("an accepted command refreshes the run, the run list and the inbox", async () => {
+  const command = { key: "act", label: "Act", consequence: "Go", payload_schema: "empty", field_presentation: [], targets: [] };
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/commands") && init?.method === "POST")
+      return Response.json({ kind: "accepted_pending", request_id: "r", transition_id: "t", scope_version: 2 }, { status: 202 });
+    if (url.endsWith("/runs/run-1")) return Response.json({ run_id: "run-1", scopes: [{ scope_id: "s", scope_key: "root", label: "Root" }] });
+    if (url.endsWith("/definition")) return Response.json({ source: { root: "root", schemas: [{ key: "empty", shape: { kind: "record", fields: [], dictionary: null } }] } });
+    if (url.endsWith("/history")) return Response.json({ transitions: [], facts: [] });
+    return Response.json({ scope_id: "s", run_id: "run-1", label: "Root", state: { schema: "empty", data: { kind: "string", value: "x" } },
+      outcome: null, outputs: [], executions: [], commands: [command], command_targets: { act: [] }, cursor: { scope_version: 1 } });
+  }));
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const spy = invalidatedKeys(cache);
+  renderWithClient(cache, <GenericOperatorRunView runId="run-1" onBack={() => undefined} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Submit Act" }));
+  await screen.findByText("Command accepted.");
+  expectInvalidated(spy, ["operator", "run-1"], ["operator", "runs"], ["operator", "inbox"]);
+});

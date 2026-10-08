@@ -1,12 +1,14 @@
 import { queryKeys } from "../queryKeys";
 import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { decodeDefinitionBundle } from "../workflow-definition-types";
 import { fetchOperatorDefinitions, pinOperatorDefinition } from "../client";
+import { invalidateDefinitions } from "../lib/operator-invalidation";
 import { Button } from "../../components/atoms/Button";
 
 interface Props { readonly cloneFromId: string | null; readonly onBack: () => void; readonly onPinned: () => void }
 export function OperatorDefinitionEditorView({ cloneFromId, onBack, onPinned }: Props) {
+  const client = useQueryClient();
   const definitions = useQuery({ queryKey: queryKeys.definitions, queryFn: fetchOperatorDefinitions });
   const [source, setSource] = useState("");
   const [loadedId, setLoadedId] = useState<string | null>(null);
@@ -32,7 +34,7 @@ export function OperatorDefinitionEditorView({ cloneFromId, onBack, onPinned }: 
     const definition = decodeDefinitionBundle(parsed);
     if (!definition) { setError("Definition does not match the source schema."); return; }
     setSaving(true);
-    try { await pinOperatorDefinition(definition); onPinned(); }
+    try { await pinOperatorDefinition(definition); invalidateDefinitions(client); onPinned(); }
     catch (cause) { setError(String(cause)); }
     finally { setSaving(false); }
   };

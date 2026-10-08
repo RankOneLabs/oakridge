@@ -1,6 +1,6 @@
 import { queryKeys } from "../queryKeys";
 import { useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchOperatorDefinitions, launchOperatorRun } from "../client";
 import { Button } from "../../components/atoms/Button";
 
@@ -10,6 +10,7 @@ import { isDefinitiveRequestRejection } from "../lib/client-errors";
 import type { OperatorLaunchRequest } from "../operator-contracts";
 import type { Schema, SchemaField, WorkflowDefinitionDescriptor } from "../workflow-definition-types";
 import { parseOperatorFieldValue } from "../lib/operator-payload";
+import { invalidateRunLists } from "../lib/operator-invalidation";
 import { selectLaunchDigest } from "../lib/operator-selectors";
 
 interface RootField { readonly field: SchemaField; readonly schema: Schema | undefined }
@@ -81,6 +82,7 @@ function buildRootInput(raw: string, fields: readonly RootField[] | null, drafts
 
 interface Props { readonly onBack: () => void; readonly onCreated: (runId: string) => void; readonly onEdit: () => void }
 export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
+  const client = useQueryClient();
   const definitions = useQuery({ queryKey: queryKeys.definitions, queryFn: fetchOperatorDefinitions });
   const [pending, setPending] = useState<OperatorLaunchRequest | null>(() => {
     try { return readPendingLaunch(); } catch { return null; } // Submission re-reads and fails closed if storage is unavailable or corrupt.
@@ -122,6 +124,7 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
       const run = await launchOperatorRun(request);
       clearPendingLaunch(request);
       setPending(null);
+      invalidateRunLists(client);
       onCreated(run.run_id);
     } catch (cause) {
       if (isDefinitiveRequestRejection(cause)) {
