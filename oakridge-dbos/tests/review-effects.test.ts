@@ -8,6 +8,7 @@ import { cancelRun, deleteRun } from "../src/storage/mutation-service";
 import type { StableInvocation } from "../src/effects/provider";
 import { readIntent } from "../src/effects/intents";
 import { createEffectProvider } from "../src/effects/operations/production-provider";
+import { asKbblCredential } from "../src/adapters/kbbl";
 import { createProductionComposition } from "../src/runtime/compose";
 import { operationBundle, sessionBundle, unit, waitUntil, withDatabase } from "./effect-fixture";
 
@@ -62,7 +63,7 @@ test("production replay sends persisted HTTP bytes despite changed launch render
   try {
     await withSelection({ bundle: await sessionBundle(), input: { runtime: "claude-code", rendered_prompt: "original selected prompt", workdir: "/tmp", session_name: "replay",
       session_identity: { run_id: "selected-run", stage_instance_id: "selected-scope", unit_id: "author" }, worktree: { branchName: "selected", worktreeSubdir: "selected", baseRef: "a".repeat(40) } } }, async ({ db, core, invocation }) => {
-      const provider = createEffectProvider({ db, core, kbbl_base_url: server.url.href });
+      const provider = createEffectProvider({ db, core, kbbl_base_url: server.url.href, credential: asKbblCredential("test-token") });
       const changed: StableInvocation = { ...invocation, selection: { ...invocation.selection, prompt_key: "new_adapter_rendering",
         input: { schema: "launch", data: { kind: "record", fields: [], dictionary: [] } } } };
       expect(await provider.start(changed)).toMatchObject({ kind: "acknowledged" });
@@ -78,7 +79,7 @@ test("finite operation cleanup aborts an in-flight read and waits for confirmed 
     let has_started = false;
     let has_aborted = false;
     let finish_io = (): void => {};
-    const provider = createEffectProvider({ db, core, kbbl_base_url: "http://unused", git: { run: async (_path, _args, options) => {
+    const provider = createEffectProvider({ db, core, kbbl_base_url: "http://unused", credential: asKbblCredential("test-token"), git: { run: async (_path, _args, options) => {
       has_started = true;
       await new Promise<void>((resolve) => { finish_io = resolve; options?.signal?.addEventListener("abort", () => { has_aborted = true; }, { once: true }); });
       return { exit_code: 130, stdout: "", stderr: "aborted" };

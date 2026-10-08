@@ -5,7 +5,7 @@ import type { Context, MiddlewareHandler, Next } from "hono";
 
 export type AuthPolicy =
   | { mode: "loopback" }
-  | { mode: "token"; token: string }
+  | { mode: "token"; token: string; serviceToken?: string }
   | { mode: "insecure-non-loopback" };
 
 const LOOPBACK_HOSTS = new Set([
@@ -32,16 +32,19 @@ export function resolveStartupAuthPolicy(opts: {
   host: string;
   controlToken: string | undefined;
   allowInsecure: boolean;
+  /** A Bearer-only credential accepted alongside controlToken; never cookie-eligible. */
+  serviceToken?: string;
 }): AuthPolicy {
   const { host, allowInsecure } = opts;
   const controlToken = opts.controlToken?.trim() || undefined;
+  const serviceToken = opts.serviceToken?.trim() || undefined;
 
   if (isLoopbackHost(host)) {
     return { mode: "loopback" };
   }
 
   if (controlToken) {
-    return { mode: "token", token: controlToken };
+    return { mode: "token", token: controlToken, ...(serviceToken ? { serviceToken } : {}) };
   }
 
   if (allowInsecure) {
@@ -123,7 +126,12 @@ function forbidden(c: Context, reason: string): Response {
 
 // ---- request auth middleware -----------------------------------------------
 
-function verifyControlCredentials(c: Context, token: string): Response | null {
+/**
+ * `serviceToken`, when configured, is accepted only on the Bearer branch
+ * below — never on the cookie branch — so a leaked service credential
+ * cannot be replayed as a `kbbl_ctrl` cookie value.
+ */
+function verifyControlCredentials(c: Context, token: string, serviceToken?: string): Response | null {
   const authHeader = c.req.header("authorization");
   if (authHeader !== undefined) {
     const space = authHeader.indexOf(" ");
@@ -136,6 +144,9 @@ function verifyControlCredentials(c: Context, token: string): Response | null {
     }
     const presented = authHeader.slice(space + 1);
     if (tokenEquals(presented, token)) {
+      return null;
+    }
+    if (serviceToken !== undefined && tokenEquals(presented, serviceToken)) {
       return null;
     }
     return forbidden(c, "bearer_token_mismatch");
@@ -174,7 +185,7 @@ export function makeControlAuthMiddleware(policy: AuthPolicy): MiddlewareHandler
     return async (_c: Context, next: Next) => { await next(); };
   }
 
-  const { token } = policy;
+  const { token, serviceToken } = policy;
 
   return async (c: Context, next: Next) => {
     const method = c.req.method;
@@ -189,7 +200,7 @@ export function makeControlAuthMiddleware(policy: AuthPolicy): MiddlewareHandler
       return;
     }
 
-    const rejection = verifyControlCredentials(c, token);
+    const rejection = verifyControlCredentials(c, token, serviceToken);
     if (rejection) return rejection;
     await next();
   };
@@ -236,7 +247,11 @@ export function makeCookieHandler(
         { "www-authenticate": 'Bearer realm="kbbl"' },
       ) as Response;
     }
-    const cookieValue = `${COOKIE_NAME}=${token}; HttpOnly; SameSite=Lax; Path=/`;
+    // Secure only over HTTPS: unconditional Secure would break the loopback
+    // HTTP development path, while omitting it over HTTPS would leak the
+    // cookie to a plaintext downgrade.
+    const secure = c.req.url.startsWith("https://") ? "; Secure" : "";
+    const cookieValue = `${COOKIE_NAME}=${token}; HttpOnly; SameSite=Lax; Path=/${secure}`;
     return c.json({ ok: true }, 200, { "set-cookie": cookieValue }) as Response;
   };
 }

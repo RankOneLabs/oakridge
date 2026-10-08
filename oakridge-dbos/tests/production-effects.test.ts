@@ -447,3 +447,42 @@ test("changed repository head and PR observations cannot enrich a selected kbbl 
     });
   } finally { server.stop(true); }
 });
+
+// ---- kbbl service credential ----
+
+function withEnv(name: string, value: string | undefined, operation: () => Promise<void>): Promise<void> {
+  const previous = process.env[name];
+  if (value === undefined) delete process.env[name]; else process.env[name] = value;
+  return operation().finally(() => { if (previous === undefined) delete process.env[name]; else process.env[name] = previous; });
+}
+
+test("createProductionComposition refuses a non-loopback KBBL_BASE_URL with no configured credential", async () =>
+  withEnv("OAKRIDGE_KBBL_SERVICE_TOKEN", undefined, () => withDatabase(async ({ url }) => {
+    await expect(createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"),
+      host: "127.0.0.1", kbbl_base_url: "https://kbbl.example.com" })).rejects.toThrow(/OAKRIDGE_KBBL_SERVICE_TOKEN/);
+  })));
+
+test("a startup probe kbbl rejects aborts startup before DBOS.launch()", async () =>
+  withEnv("OAKRIDGE_KBBL_SERVICE_TOKEN", "wrong-token", () => withDatabase(async ({ url }) => {
+    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: (request) => {
+      const path = new URL(request.url).pathname;
+      if (request.method === "DELETE" && path === "/sessions/startup-probe") return new Response(null, { status: 403 });
+      return new Response(null, { status: 404 });
+    } });
+    try {
+      await expect(createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"),
+        host: "127.0.0.1", kbbl_base_url: server.url.href })).rejects.toThrow(/kbbl rejected/);
+    } finally { server.stop(true); }
+  })));
+
+test("an injected effect_provider skips the startup probe and performs no kbbl network IO", async () =>
+  withEnv("OAKRIDGE_KBBL_SERVICE_TOKEN", "configured-token", () => withDatabase(async ({ url }) => {
+    const composition = await createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"),
+      host: "127.0.0.1", kbbl_base_url: "https://kbbl.invalid",
+      effect_provider: {
+        start: async () => { throw new Error("must not be called: probe should not reach the production provider"); },
+        observe: async () => { throw new Error("must not be called: probe should not reach the production provider"); },
+        stop: async () => { throw new Error("must not be called: probe should not reach the production provider"); },
+      } });
+    try { expect(composition.application_version).toBeTruthy(); } finally { await composition.close(); }
+  })));

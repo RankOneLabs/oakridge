@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import type { DefinitionBundle } from "../src/core-client/generated-contracts";
 import { CoreClient } from "../src/core-client/client";
 import { createEffectProvider, recoverConfiguredFailure, recoverStartFailure } from "../src/effects/operations/production-provider";
+import { asKbblCredential } from "../src/adapters/kbbl";
 import { PROVIDER_ERROR_CODES } from "../src/effects/provider-catalog";
 import type { InvocationId, StableInvocation } from "../src/effects/provider";
 import type { SqlExecutor } from "../src/storage/sql-executor";
@@ -72,7 +73,7 @@ test("direct provider rejections retain their full diagnostic and bounded recove
     request: { version: 1, kind: "repository_preparation" }, bytes: JSON.stringify({ repository_path: "/missing", expected_head: null }) };
   const db = { query: async () => [{ source, scope_key: "repository_preparation", scope_id: "scope", run_id: "run" }] } as unknown as SqlExecutor;
   await withRecoveryCore(async (core) => {
-    const provider = createEffectProvider({ db, core, kbbl_base_url: "http://unused",
+    const provider = createEffectProvider({ db, core, kbbl_base_url: "http://unused", credential: asKbblCredential("test-token"),
       git: { run: async () => ({ exit_code: 1, stdout: "", stderr: "missing worktree" }) } });
     expect(await provider.start(invocation)).toMatchObject({ kind: "permanently_rejected",
       code: PROVIDER_ERROR_CODES.worktree_unrecoverable, detail: "repository at /missing cannot be inspected: missing worktree",

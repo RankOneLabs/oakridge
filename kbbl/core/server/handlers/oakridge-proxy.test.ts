@@ -305,3 +305,73 @@ describe("oakridge proxy", () => {
     expect(captured.lastEventId).toBe("cursor-7");
   });
 });
+
+  // Previously the injection ran unconditionally whenever coreControlToken was
+  // configured and browserControlToken was not (loopback / insecure-non-loopback
+  // mode): a request from any origin at all received operator authority.
+  describe("isTrustedOperatorRequest gates coreControlToken injection in every mode", () => {
+    function captureAuthHeader(): { authHeader: string | null } {
+      const captured = { authHeader: null as string | null };
+      globalThis.fetch = (async (_input, init) => {
+        const headers = init?.headers as Headers | undefined;
+        captured.authHeader = headers?.get("authorization") ?? null;
+        return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+      }) as typeof fetch;
+      return captured;
+    }
+
+    test("tokenless mode refuses injection for a request with a foreign Origin", async () => {
+      const captured = captureAuthHeader();
+      const app = new Hono();
+      mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test", coreControlToken: "core-secret" });
+      await app.request("/oakridge/api/runs", { method: "POST",
+        headers: { "content-type": "application/json", origin: "https://attacker.example" }, body: "{}" });
+      expect(captured.authHeader).toBeNull();
+    });
+
+    test("tokenless mode refuses injection for a request with a foreign Host", async () => {
+      const captured = captureAuthHeader();
+      const app = new Hono();
+      mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test", coreControlToken: "core-secret" });
+      await app.request("/oakridge/api/runs", { method: "POST",
+        headers: { "content-type": "application/json", host: "attacker.example" }, body: "{}" });
+      expect(captured.authHeader).toBeNull();
+    });
+
+    test("tokenless mode still injects for a loopback Host", async () => {
+      const captured = captureAuthHeader();
+      const app = new Hono();
+      mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test", coreControlToken: "core-secret" });
+      await app.request("/oakridge/api/runs", { method: "POST",
+        headers: { "content-type": "application/json", host: "127.0.0.1:8788" }, body: "{}" });
+      expect(captured.authHeader).toBe("Bearer core-secret");
+    });
+
+    test("tokenless mode still injects for a request naming no Origin or Host at all", async () => {
+      const captured = captureAuthHeader();
+      const app = new Hono();
+      mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test", coreControlToken: "core-secret" });
+      await app.request("/oakridge/api/runs", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+      expect(captured.authHeader).toBe("Bearer core-secret");
+    });
+
+    test("tokenless mode injects for an explicitly allowed browser Origin", async () => {
+      const captured = captureAuthHeader();
+      const app = new Hono();
+      mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test", coreControlToken: "core-secret", allowedOrigins: ["https://operator.example"] });
+      await app.request("/oakridge/api/runs", { method: "POST",
+        headers: { "content-type": "application/json", origin: "https://operator.example" }, body: "{}" });
+      expect(captured.authHeader).toBe("Bearer core-secret");
+    });
+
+    test("token mode refuses injection for a valid control cookie presented from a foreign Origin", async () => {
+      const captured = captureAuthHeader();
+      const app = new Hono();
+      mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test", browserControlToken: "kbbl-token", coreControlToken: "core-secret",
+        allowedOrigins: ["https://operator.example"] });
+      const res = await app.request("/oakridge/api/runs", { method: "POST",
+        headers: { "content-type": "application/json", cookie: "kbbl_ctrl=kbbl-token", origin: "https://attacker.example" }, body: "{}" });
+      expect(res.status).toBe(403);
+      expect(captured.authHeader).toBeNull();
+    });
+  });

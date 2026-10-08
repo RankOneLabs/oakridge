@@ -69,6 +69,7 @@ try {
     host,
     controlToken: process.env.OAKRIDGE_CONTROL_TOKEN,
     allowInsecure: process.env.ALLOW_INSECURE_NON_LOOPBACK_CONTROL === "1",
+    serviceToken: process.env.OAKRIDGE_KBBL_SERVICE_TOKEN,
   });
 } catch (err) {
   console.error(err instanceof Error ? err.message : String(err));
