@@ -9,6 +9,8 @@ if [[ "$suite" == integration && -z "${OAKRIDGE_TEST_DATABASE_URL:-}" ]]; then
   echo "OAKRIDGE_TEST_DATABASE_URL is required for test:integration" >&2
   exit 2
 fi
+# Shipped bundles are generated, not committed.
+bash "$(dirname "$0")/../../scripts/generate-bundles.sh"
 # Booting a composition requires an effect-encryption key, and CI supplies none.
 # Default one for the whole suite so a new test that boots the authority cannot
 # omit it; production-effects.test.ts still unsets it at runtime to assert that a

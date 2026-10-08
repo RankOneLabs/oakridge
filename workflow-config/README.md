@@ -1,8 +1,10 @@
 # Workflow configuration
 
 `src/development.ts` composes three pinned example bundles from the Rust-generated
-TypeScript source contract. Run `bash scripts/generate-bundles.sh` after editing
-the authored configuration; CI runs it with `--check`.
+TypeScript source contract. The bundles under `definitions/` are generated, not
+committed: `bash scripts/generate-bundles.sh` renders the prompts and writes the
+bundles, and every consumer runs it first. CI runs it with `--check`, which
+fails when a rendered prompt differs from its committed file.
 
 The maintained source has three layers:
 
@@ -24,7 +26,7 @@ selects schema fields, workers and command cases by name, never array position.
 
 Declaration order and object field order contribute to the serialized pinned
 bundle. Refactoring the authoring source should leave generated bundles unchanged;
-an intentional behavior change requires regenerating and reviewing their diff.
+compare `generate-bundles.sh` output before and after to confirm it.
 
 `definitions/development.json` is an example pinned scope bundle.
 `definitions/development-independent-siblings.json` illustrates independent

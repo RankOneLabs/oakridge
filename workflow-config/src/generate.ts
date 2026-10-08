@@ -8,15 +8,10 @@ const variants = [DEVELOPMENT_POLICY, INDEPENDENT_SIBLINGS_POLICY, VERIFICATION_
 const check = process.argv.includes("--check");
 const promptDrift = renderPromptFiles(check);
 for (const path of promptDrift) console.error(`Prompt drift: ${path}`);
-let drift = promptDrift.length > 0;
-for (const variant of variants) {
-  const path = resolve(root, "definitions", `${variant.key}.json`);
-  const bytes = JSON.stringify(buildDevelopmentRun(variant), null, 2) + "\n";
-  if (check) {
-    if (await Bun.file(path).text() !== bytes) { console.error(`Bundle drift: ${path}`); drift = true; }
-  } else await Bun.write(path, bytes);
-}
-if (drift) process.exit(1);
+if (promptDrift.length > 0) process.exit(1);
+// Bundles are not committed; every consumer generates them first.
+for (const variant of variants)
+  await Bun.write(resolve(root, "definitions", `${variant.key}.json`), JSON.stringify(buildDevelopmentRun(variant), null, 2) + "\n");
 if (check) {
   const stageTests = Bun.spawnSync({
     cmd: ["bun", "test", "workflow-config/src/development/policies.test.ts"],

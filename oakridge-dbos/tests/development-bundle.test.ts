@@ -42,9 +42,7 @@ test("development declaration compiles against the generic core", async () => {
   } finally { core.close(); }
 });
 
-test("authored bundle bytes and pinned digest reproduce the generated source", async () => {
-  const authored = await Bun.file(resolve(root, "workflow-config/definitions/development.json")).text();
-  expect(JSON.stringify(bundle, null, 2) + "\n").toBe(authored);
+test("prompt bytes and pinned digest reproduce the generated source", async () => {
   for (const prompt of bundle.prompts) {
     const bytes = await Bun.file(resolve(root, prompt.path)).bytes();
     expect(createHash("sha256").update(bytes).digest("hex")).toBe(prompt.content_digest);

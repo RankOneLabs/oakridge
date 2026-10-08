@@ -59,9 +59,10 @@ digest combining the sorted `ENGINE_SOURCE_MANIFEST` source digest and the
 Bundle, route, projection, prompt and UI edits do not change it; set
 `DBOS_APPLICATION_VERSION` only to pin it for a controlled fork or rollback.
 
-Edit example bundles in `workflow-config/src/development.ts`, then run
-`bash scripts/generate-bundles.sh`. The three generated JSON files are the
-authored pinning artifacts. Each prompt references a file by path and SHA-256
+Edit example bundles in `workflow-config/src/development.ts`. The three
+bundles under `workflow-config/definitions/` are generated, not committed:
+`bash scripts/generate-bundles.sh` writes them, and the test suites run it
+first. Each prompt references a file by path and SHA-256
 content digest; see `workflow-config/README.md` for the exact byte rule.
 
 Each selected action has a pinned `deadline_ms` that bounds an individual

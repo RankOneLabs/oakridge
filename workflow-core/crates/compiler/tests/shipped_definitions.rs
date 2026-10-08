@@ -16,7 +16,9 @@ fn runtime_catalog() -> ProviderCatalog {
 fn verification_bundle_decodes_reordered_provider_records() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../../workflow-config/definitions/development-verification.json");
-    let bundle = decode_bundle(&fs::read(path).unwrap()).unwrap();
+    let bundle =
+        decode_bundle(&fs::read(path).expect("generated bundle; run scripts/generate-bundles.sh"))
+            .unwrap();
     workflow_compiler::check_value(
         &bundle,
         &SchemaId::from("repo_result"),
@@ -34,7 +36,7 @@ fn every_shipped_definition_compiles() {
     let definitions =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../workflow-config/definitions");
     let mut paths: Vec<_> = fs::read_dir(&definitions)
-        .expect("shipped definitions directory")
+        .expect("generated bundles; run scripts/generate-bundles.sh")
         .map(|entry| entry.expect("definition entry").path())
         .filter(|path| {
             path.extension()

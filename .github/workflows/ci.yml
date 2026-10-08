@@ -22,8 +22,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: workflow-core
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+        working-directory: .
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets -- -D warnings
+      # shipped_definitions compiles the generated bundles.
+      - run: bash scripts/generate-bundles.sh
+        working-directory: .
       - run: cargo test --locked
       - run: cargo build --locked -p workflow-cli
       - uses: actions/upload-artifact@v4

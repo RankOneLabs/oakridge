@@ -13,7 +13,7 @@
     "test": "bun test ./core/acp ./core/config.test.ts ./core/db ./core/server ./core/session ./core/skills ./core/worktree ./scripts",
     "test:acp:codex:real": "KBBL_ACP_REAL_AGENT=codex bun test core/acp/real-agent.smoke.test.ts",
     "test:acp:claude:real": "KBBL_ACP_REAL_AGENT=claude-code bun test core/acp/real-agent.smoke.test.ts",
-    "test:pwa": "cd core/pwa && vitest run",
+    "test:pwa": "bash ../scripts/generate-bundles.sh && cd core/pwa && vitest run",
     "test:browser": "bun test ./tests/browser",
     "test:all": "bun run test && bun run test:pwa && bun run test:browser"
   },
