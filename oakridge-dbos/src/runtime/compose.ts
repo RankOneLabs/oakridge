@@ -1,6 +1,6 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { Hono } from "hono";
-import { decodeCoreResponse } from "../core-client/generated-contracts";
+import { CORE_MAX_DEPTH, decodeCoreResponse } from "../core-client/generated-contracts";
 import type { DefinitionBundle, Trigger } from "../core-client/generated-contracts";
 import { CoreClient } from "../core-client/client";
 import { activeRoutes } from "../http/routes";
@@ -136,7 +136,7 @@ export async function createProductionComposition(options: ProductionOptions): P
   const access = selectControlPlaneAccess({ host: options.host, token: options.control_token, allow_insecure_non_loopback: process.env.ALLOW_INSECURE_NON_LOOPBACK_CONTROL === "1" });
   if (access.kind === "refused") throw new Error(access.detail);
   const started = CoreClient.start({ binary: options.core_binary,
-    args: ["--max-list-items", "10000", "--max-depth", "128", "--evaluation-budget", "1000000"], deadlineMs: 10_000 });
+    args: ["--max-list-items", "10000", "--max-depth", String(CORE_MAX_DEPTH), "--evaluation-budget", "1000000"], deadlineMs: 10_000 });
   if (!started.ok) throw new Error(`workflow-cli could not start: ${started.error.detail.detail}`);
   const core = started.value;
   let db: PgPostgresExecutor;
