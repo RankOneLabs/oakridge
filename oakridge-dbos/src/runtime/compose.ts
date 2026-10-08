@@ -128,6 +128,26 @@ function isCancellationPayloads(value: unknown): value is readonly ScopeCancella
   return Array.isArray(value) && value.every((item: unknown) => !!item && typeof item === "object" && "scope_id" in item && typeof item.scope_id === "string" && "payload" in item);
 }
 /**
+ * Deliberately invalid: compiling it always fails with a domain error, never a
+ * successful bundle. Its only purpose is eliciting one versioned response from
+ * the freshly spawned core binary before this composition claims to be healthy.
+ */
+const STARTUP_PROBE_BUNDLE: DefinitionBundle = { key: "startup_probe", language_version: 1, version: 1, root: "root",
+  schemas: [], scopes: [], prompts: [], operations: [], limits: { evaluation_budget: 1, max_depth: 1, max_list_items: 1 } };
+/**
+ * `CoreClient` already refuses a response whose `version` doesn't match this
+ * build's `CORE_PROTOCOL_VERSION`, settling the request with a transport
+ * failure — but only once a request is actually sent. A domain error here
+ * means the round trip succeeded with a compatible binary; anything else
+ * means the configured `OAKRIDGE_CORE_BINARY` cannot serve this build and
+ * startup must not proceed.
+ */
+async function probeCoreProtocolCompatibility(core: CoreClient, binary: string): Promise<void> {
+  const probe = await core.request("compile", { bundle: STARTUP_PROBE_BUNDLE });
+  if (!probe.ok && probe.error.kind === "transport")
+    throw new Error(`core binary at ${binary} failed the startup protocol probe: ${probe.error.detail.detail}`);
+}
+/**
  * The production composition. DBOS is the runtime: it is configured and
  * launched here, every run gets a durable workflow, and effect intents are
  * carried by workflows that resume after a crash. Nothing here polls.
@@ -139,6 +159,8 @@ export async function createProductionComposition(options: ProductionOptions): P
     args: ["--max-list-items", "10000", "--max-depth", String(CORE_MAX_DEPTH), "--evaluation-budget", "1000000"], deadlineMs: 10_000 });
   if (!started.ok) throw new Error(`workflow-cli could not start: ${started.error.detail.detail}`);
   const core = started.value;
+  try { await probeCoreProtocolCompatibility(core, options.core_binary); }
+  catch (cause) { core.close(); throw cause; }
   let db: PgPostgresExecutor;
   try { db = PgPostgresExecutor.connect(options.database_url); }
   catch (cause) { core.close(); throw cause; }
