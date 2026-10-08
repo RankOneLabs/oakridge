@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { withDatabase } from "./effect-fixture";
-import { developmentBundle, runtimeFixture, launch, brief, throughBriefs } from "./development-runtime-fixture";
+import { developmentBundle, runtimeFixture, launch, brief, revision, throughAnalysis, throughBriefs } from "./development-runtime-fixture";
 
 test("accepted brief keys materialize children and failure atomically cancels siblings and releases capacity", async () => withDatabase(async ({ db }) => {
   const f = await runtimeFixture(db, await developmentBundle("development"), launch);
@@ -32,6 +32,24 @@ test("independent policy cancels dependents, continues independent siblings, and
     await f.fact("abandon", {}, third.id);
     await f.advance(); await f.advance();
     expect((await f.scope()).outcome?.data).toMatchObject({ kind: "variant", variant: "failed" });
+    // No implementation succeeded, so integration had no members and was never activated.
+    const integrations = await db.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM authority.scope_instance WHERE parent_id=$1 AND scope_key='final_integration'", [f.root_scope_id]);
+    expect(integrations[0]?.count).toBe("0");
+  } finally { f.core.close(); }
+}), 30_000);
+
+test("a plan with no cohorts is refused at acceptance", async () => withDatabase(async ({ db }) => {
+  const f = await runtimeFixture(db, await developmentBundle("development"), launch);
+  try {
+    const planning = await throughAnalysis(f, db);
+    const empty_plan = { summary: "Plan", cohorts: [], dependency_order: [], scope: { in_scope: [], out_of_scope: [] }, acceptance_criteria: [], risks: [] };
+    const planned = await f.publish("plan", empty_plan, "author", planning);
+    expect(planned.status).toBe(201);
+    const accepted = await f.command("accept", { revision: revision((await planned.json()).revision_id) }, planning);
+    // The same acceptance with cohorts returns 202 (throughBriefs); only the empty plan is refused.
+    expect({ status: accepted.status, body: await accepted.json(), terminal: (await f.scope(planning)).is_terminal })
+      .toEqual({ status: 422, body: { error: "invalid_payload", detail: "invalid_command" }, terminal: false });
   } finally { f.core.close(); }
 }), 30_000);
 

@@ -84,12 +84,14 @@ export async function runtimeFixture(db: TransactionalSqlExecutor, bundle: Defin
   const advance = () => advanceChildren({ db, core, mutations, run_ids: [run_id] });
   return { app, core, mutations, run_id, root_scope_id, checked, scope, fact, command, selected, publicationSecret, publish, observe, advance };
 }
-export async function throughBriefs(f: Awaited<ReturnType<typeof runtimeFixture>>, briefs: readonly (typeof brief)[], db: TransactionalSqlExecutor): Promise<readonly DevelopmentScope[]> {
-  const child = async (key: string) => {
-    const rows = await db.query<DevelopmentScope>("SELECT * FROM authority.scope_instance WHERE parent_id=$1 AND child_key=$2", [f.root_scope_id, key]);
-    if (!rows[0]) throw new Error(`child missing: ${key}`);
-    return rows[0].id;
-  };
+async function rootChild(f: Awaited<ReturnType<typeof runtimeFixture>>, db: TransactionalSqlExecutor, key: string): Promise<ScopeId> {
+  const rows = await db.query<DevelopmentScope>("SELECT * FROM authority.scope_instance WHERE parent_id=$1 AND child_key=$2", [f.root_scope_id, key]);
+  if (!rows[0]) throw new Error(`child missing: ${key}`);
+  return rows[0].id;
+}
+/** Begin, prepare and accept the analysis; returns the planning scope awaiting its plan. */
+export async function throughAnalysis(f: Awaited<ReturnType<typeof runtimeFixture>>, db: TransactionalSqlExecutor): Promise<ScopeId> {
+  const child = (key: string) => rootChild(f, db, key);
   await f.fact("begin"); await f.advance();
   const preparations = await db.query<DevelopmentScope>("SELECT * FROM authority.scope_instance WHERE parent_id=$1 AND scope_key='repository_preparation'", [f.root_scope_id]);
   for (const preparation of preparations) await f.fact("prepared", { repository_path: preparation.child_key === "other" ? "/tmp/other" : "/tmp", head: "head1", push_remote_owner: repository.forge.owner }, preparation.id);
@@ -100,7 +102,11 @@ export async function throughBriefs(f: Awaited<ReturnType<typeof runtimeFixture>
   const accepted_analysis = await f.command("accept", { revision: revision((await publication.json()).revision_id) }, analysis);
   if (accepted_analysis.status !== 202) throw new Error(await accepted_analysis.text());
   await f.advance(); await f.advance();
-  const planning = await child("plan");
+  return child("plan");
+}
+export async function throughBriefs(f: Awaited<ReturnType<typeof runtimeFixture>>, briefs: readonly (typeof brief)[], db: TransactionalSqlExecutor): Promise<readonly DevelopmentScope[]> {
+  const child = (key: string) => rootChild(f, db, key);
+  const planning = await throughAnalysis(f, db);
   const plan = { summary: "Plan", cohorts: briefs.map((item) => ({ id: item.cohort_id, repository_key: item.repository_key, title: item.title, scope: item.goal, depends_on: item.depends_on,
     description: null, files_in_scope: item.files_in_scope, decisions: [], acceptance_criteria: item.acceptance_criteria })), dependency_order: briefs.map((item) => item.cohort_id), scope: { in_scope: [], out_of_scope: [] }, acceptance_criteria: [], risks: [] };
   const planned = await f.publish("plan", plan, "author", planning);
