@@ -103,20 +103,23 @@ pub fn evaluate_expression(
     let data = match &expression.node {
         CheckedExpressionNode::Literal { value } => return clone_value(value, context.budget),
         CheckedExpressionNode::Reference { root, selectors } => {
-            let trigger = CheckedValue {
-                schema: SchemaId(format!("$trigger/{}", context.snapshot.scope)),
-                data: CheckedData::Variant {
-                    variant: context.snapshot.trigger.key.0.clone(),
-                    value: Box::new(clone_value(
-                        &context.snapshot.trigger.payload,
-                        context.budget,
-                    )?),
-                },
-            };
+            let trigger_wrapper;
             let mut value = match root {
                 ReferenceRoot::Input => &context.snapshot.input,
                 ReferenceRoot::State => &context.snapshot.state,
-                ReferenceRoot::Trigger => &trigger,
+                ReferenceRoot::Trigger => {
+                    trigger_wrapper = CheckedValue {
+                        schema: SchemaId(format!("$trigger/{}", context.snapshot.scope)),
+                        data: CheckedData::Variant {
+                            variant: context.snapshot.trigger.key.0.clone(),
+                            value: Box::new(clone_value(
+                                &context.snapshot.trigger.payload,
+                                context.budget,
+                            )?),
+                        },
+                    };
+                    &trigger_wrapper
+                }
                 ReferenceRoot::Item => context.item.ok_or_else(|| {
                     failure(
                         DomainErrorKind::InvalidSnapshot,

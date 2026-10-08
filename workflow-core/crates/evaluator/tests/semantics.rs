@@ -953,3 +953,120 @@ fn snapshot_validation_is_charged_against_the_budget() {
     assert_eq!(&*error.detail, "expression budget exhausted");
     assert_eq!(&*error.operation, "evaluate");
 }
+/// A reference into State must not pay for cloning the trigger payload: with a
+/// large trigger and more than twelve non-trigger references, the development
+/// budget of 20000 is only enough if each reference is charged for what it
+/// actually reads.
+#[test]
+fn non_trigger_references_are_not_charged_for_the_trigger_payload() {
+    let mut b = bundle("minimal");
+    b.scopes[0].commands[0].payload_schema = SchemaId::from("text");
+    b.limits.evaluation_budget = 20_000;
+    let mut p = compile(&b, &b.operations).unwrap();
+    let CheckedTree::Match { cases, .. } = &mut p.scopes[0].tree else {
+        panic!("dispatch match")
+    };
+    let CheckedTree::Apply {
+        mutations,
+        actions,
+        outcome,
+        ..
+    } = &mut cases[0].node
+    else {
+        panic!("begin apply")
+    };
+    let state_reference = CheckedMutation::SetState {
+        value: CheckedExpression {
+            schema: SchemaId::from("position"),
+            node: CheckedExpressionNode::Reference {
+                root: ReferenceRoot::State,
+                selectors: vec![],
+            },
+        },
+    };
+    *mutations = vec![state_reference; 13];
+    actions.clear();
+    *outcome = None;
+    let owner = &b.scopes[0];
+    let large_trigger_payload = "x".repeat(400_000);
+    let s = Snapshot {
+        owner: InstanceId::from("instance"),
+        scope: owner.key.clone(),
+        version: 9,
+        input: check_value(&b, &owner.input_schema, &json!({})).unwrap(),
+        state: check_value(&b, &owner.state_schema, &json!({"kind":"ready","value":{}})).unwrap(),
+        trigger: Trigger {
+            id: TriggerId::from("command-1"),
+            key: SymbolKey::from("begin"),
+            payload: check_value(&b, &SchemaId::from("text"), &json!(large_trigger_payload))
+                .unwrap(),
+        },
+        observations: vec![],
+        timestamp_ms: 42,
+        random_seed: 7,
+    };
+    let result = evaluate(&p, &s).unwrap();
+    assert!(matches!(result, DecisionOutcome::Wait { .. }), "{result:?}");
+}
+/// Only the Trigger root pays for the wrapper, but a Trigger reference must
+/// still resolve to it: both the successful read and the checked-selector
+/// failure report the `$trigger/<scope>` schema.
+#[test]
+fn trigger_reference_resolves_to_the_trigger_wrapper_schema() {
+    let b = bundle("minimal");
+    let mut p = compile(&b, &b.operations).unwrap();
+    let CheckedTree::Match { cases, .. } = &mut p.scopes[0].tree else {
+        panic!("dispatch match")
+    };
+    let CheckedTree::Apply {
+        mutations,
+        actions,
+        outcome,
+        ..
+    } = &mut cases[0].node
+    else {
+        panic!("begin apply")
+    };
+    let trigger_reference = CheckedExpression {
+        schema: SchemaId::from("position"),
+        node: CheckedExpressionNode::Reference {
+            root: ReferenceRoot::Trigger,
+            selectors: vec![],
+        },
+    };
+    *mutations = vec![CheckedMutation::SetState {
+        value: trigger_reference,
+    }];
+    actions.clear();
+    *outcome = None;
+    let DecisionOutcome::Apply { mutations, .. } =
+        evaluate(&p, &snapshot(&b, json!({}), "ready", "begin")).unwrap()
+    else {
+        panic!("expected an apply outcome")
+    };
+    let MutationValue::SetState { value } = &mutations[0] else {
+        panic!("expected a set-state mutation")
+    };
+    assert_eq!(value.schema.to_string(), "$trigger/document");
+
+    let CheckedTree::Match { cases, .. } = &mut p.scopes[0].tree else {
+        panic!("dispatch match")
+    };
+    let CheckedTree::Apply { mutations, .. } = &mut cases[0].node else {
+        panic!("begin apply")
+    };
+    let CheckedMutation::SetState { value } = &mut mutations[0] else {
+        panic!("expected a set-state mutation")
+    };
+    let CheckedExpressionNode::Reference { selectors, .. } = &mut value.node else {
+        panic!("expected a reference expression")
+    };
+    *selectors = vec![Selector::Variant {
+        variant: "not_the_trigger_command".into(),
+    }];
+    let error = evaluate(&p, &snapshot(&b, json!({}), "ready", "begin"))
+        .map(|_| ())
+        .unwrap_err();
+    assert_eq!(error.kind, DomainErrorKind::InvalidSnapshot);
+    assert_eq!(&*error.entity_id, "$trigger/document");
+}
