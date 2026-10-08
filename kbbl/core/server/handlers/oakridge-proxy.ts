@@ -124,7 +124,7 @@ export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): vo
         method,
         headers: forwardHeaders,
         body,
-        signal: STREAMING_UPSTREAM_PATHS.has(subPath) ? undefined : AbortSignal.timeout(OAKRIDGE_PROXY_TIMEOUT_MS),
+        signal: STREAMING_UPSTREAM_PATHS.has(subPath) ? c.req.raw.signal : AbortSignal.timeout(OAKRIDGE_PROXY_TIMEOUT_MS),
       });
       const ct = upstream.headers.get("content-type") ?? "application/json";
       const responseHeaders = new Headers({ "content-type": ct });

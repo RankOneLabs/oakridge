@@ -9,7 +9,7 @@ and Codex sessions through ACP. Workflow orchestration belongs to
 `oakridge-dbos/`; kbbl hosts its v2 UI and same-origin proxy. The old kbbl
 v1 Projects UI and review/dispatch backend have been removed. V2 uses the
 DBOS project registry at `/oakridge/api/projects`; the separate legacy
-kbbl `/projects` registry and shared v2 DAG/collaboration components remain.
+kbbl `/projects` registry and shared v2 collaboration components remain.
 Session-shaped UX (live transcripts, inbox, per-sid streams). LBC's
 project-shaped dashboard lives separately in `../lbc-dashboard` — do not
 conflate.
@@ -34,10 +34,9 @@ SQLite ACP ledger.
 - **Backend**: Bun + Hono, SQLite via `bun:sqlite`
 - **Frontend**: React 19 + Vite, served as static bundle from Hono in production
 - **Realtime**: Server-Sent Events (Hono `streamSSE`)
-- **DAG**: `reactflow@11` + `dagre` for plan-review cohort layout
+- **Plan graph**: `dagre` lays out the plan cohort graph, drawn as static SVG
 - **Markdown**: `react-markdown` with `rehype-sanitize`
 - **Styling**: Tailwind CSS v4 is imported by `core/pwa/styles.css`.
-  Shared DAG components still use `.cohort-node__*` classes.
 
 ## Frontend file organization
 
@@ -57,8 +56,7 @@ core/pwa/
 │   └── organisms/
 ├── oakridge/             # v2 workflow views, components, hooks, selectors
 └── review/               # shared v2 building blocks, not v1 routes
-    ├── plan/              # DagEditor, CohortNode, shared DAG types
-    └── shared/            # ThreadSidebar, ThreadView, atom comment affordance
+    └── shared/            # ThreadSidebar, ThreadView
 ```
 
 ## Hard rules
@@ -90,11 +88,11 @@ core/pwa/
    Do not restore retired `#plan`, `#brief`, `#cohort`, `#repo`, or `#epic` routes.
 
 5. **External library CSS must be imported at the consumer.** Forgetting
-   `import "reactflow/dist/style.css"` in `DagEditor.tsx` is what broke
-   cohort clicks in May 2026 — nodes rendered as stacked unstyled divs
-   with no pointer-events. When pulling in a UI lib (reactflow,
-   react-day-picker, etc.), the CSS import goes in the same file as the
-   import that uses it, with a comment explaining why.
+   `import "reactflow/dist/style.css"` in the old plan canvas is what
+   broke cohort clicks in May 2026 — nodes rendered as stacked unstyled
+   divs with no pointer-events. When pulling in a UI lib (react-day-picker,
+   etc.), the CSS import goes in the same file as the import that uses it,
+   with a comment explaining why.
 
 6. **No vestigial route names.** When a backend integration is ripped out,
    rename the routes it touched so the URL surface reflects what's actually

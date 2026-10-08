@@ -1900,42 +1900,6 @@ body {
   }
 }
 
-/* === persistent session actions === */
-.compact-control {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  justify-content: flex-end;
-  padding: 0.35rem 0.75rem;
-  background: var(--bg-surface);
-  border-top: 1px solid var(--border-subtle);
-  font-size: 0.85rem;
-}
-.compact-control__error {
-  flex: 1;
-  min-width: 12rem;
-  color: var(--danger-fg);
-}
-.compact-control__action {
-  min-height: 36px;
-  padding: 0.25rem 0.75rem;
-  border-radius: 4px;
-  border: 1px solid var(--border-subtle);
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 0.8rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-.compact-control__action:hover:not(:disabled) {
-  border-color: var(--border-hover);
-  color: var(--text-primary);
-}
-.compact-control__action:disabled {
-  cursor: wait;
-  opacity: 0.6;
-}
-
 /* === threshold setting input in SessionTopBar === */
 .threshold-setting {
   display: flex;
@@ -2239,7 +2203,6 @@ body {
   letter-spacing: 0.04em;
 }
 
-
 /* === plan review cohort-detail pane (cohort 2) === */
 
 .plan-review__cohort-pane {
@@ -2312,128 +2275,6 @@ body {
   position: absolute;
   top: 8px;
   right: 8px;
-}
-
-
-/* === canvas content class vocabulary (Cohort 3) === */
-
-/* --- brief canvas type ramp --- */
-
-.brief-hero {
-  font-size: 22px;
-  font-weight: 700;
-  line-height: 1.25;
-  color: var(--text-primary);
-}
-
-.brief-section {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 16px 0;
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.brief-section-label {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-}
-
-.brief-decision-card {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-subtle);
-  border-radius: 6px;
-  padding: 12px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.brief-decision-card__header {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-  white-space: pre-wrap;
-}
-
-.brief-decision-card__rationale-label {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-muted);
-}
-
-.brief-decision-card__rationale-body {
-  font-size: 13px;
-  color: var(--text-secondary);
-  white-space: pre-wrap;
-}
-
-.brief-approach-rejected {
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: 6px;
-  padding: 8px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.brief-approach-rejected__header {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  white-space: pre-wrap;
-}
-
-.brief-approach-rejected__reason-label {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-muted);
-}
-
-.brief-approach-rejected__reason-body {
-  font-size: 12px;
-  color: var(--text-tertiary);
-  white-space: pre-wrap;
-}
-
-.brief-next-action {
-  background: var(--accent-muted);
-  border-left: 3px solid var(--accent-blue);
-  padding: 12px 14px;
-  border-radius: 4px;
-  font-size: 14px;
-  color: var(--text-primary);
-  white-space: pre-wrap;
-}
-
-.brief-atom-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.brief-atom-list__item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 8px;
-  border-radius: 3px;
-  font-family: "SF Mono", Menlo, monospace;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.brief-empty {
-  font-size: 13px;
-  color: var(--text-muted);
-  font-style: italic;
 }
 
 /* --- plan canvas: cohort detail panel --- */
@@ -2533,84 +2374,6 @@ body {
 .cohort-detail__thread-status {
   opacity: 0.6;
   font-size: 11px;
-}
-
-/* --- plan canvas: cohort node --- */
-
-.cohort-node {
-  padding: 12px 14px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 6px;
-  background: var(--bg-elevated);
-  cursor: pointer;
-  user-select: none;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  overflow: hidden;
-}
-
-.cohort-node--selected {
-  border-color: var(--accent-blue);
-  box-shadow: 0 0 0 1px var(--accent-blue);
-}
-
-.cohort-node__title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-  flex: 1;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-}
-
-.cohort-node__title-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-}
-
-.cohort-node__bottom-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-}
-
-.cohort-node__status {
-  font-size: 10px;
-  padding: 2px 6px;
-  border-radius: 3px;
-  background: var(--bg-surface);
-  color: var(--text-tertiary);
-}
-
-.cohort-node__comments {
-  /* semantic grouping wrapper; affordance carries its own class */
-}
-
-/* --- sweep-residual: atom comment affordance --- */
-
-.atom-comment-affordance {
-  font-size: 11px;
-  padding: 1px 6px;
-  border-radius: 3px;
-  background: transparent;
-  border: 1px solid var(--border-subtle);
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-.atom-comment-affordance--has-threads {
-  background: var(--accent-muted);
-}
-
-.atom-comment-affordance:disabled {
-  opacity: 0.5;
-  cursor: default;
 }
 
 /* --- sweep-residual: mode toggle --- */
@@ -2894,28 +2657,6 @@ body {
   color: var(--danger-fg);
 }
 
-/* --- sweep-residual: brief debrief block --- */
-
-.brief-debrief {
-  margin-top: 24px;
-  padding: 12px 16px;
-  border-radius: 6px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-subtle);
-}
-
-.brief-debrief__label {
-  font-weight: 600;
-  font-size: 13px;
-  opacity: 0.7;
-  margin-bottom: 8px;
-}
-
-.brief-debrief__body {
-  font-size: 13px;
-  white-space: pre-wrap;
-}
-
 /* --- sweep-residual: run build button --- */
 
 .run-build-button {
@@ -2974,253 +2715,12 @@ body {
   background: var(--bg-app);
 }
 
-.cohort-view__header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.cohort-view__back,
-.cohort-view__plan-link,
-.cohort-view__theme {
-  background: transparent;
-  border: 1px solid var(--border-subtle);
-  color: var(--text-secondary);
-  padding: 4px 10px;
-  border-radius: 4px;
-  cursor: pointer;
-  font: inherit;
-  font-size: 13px;
-  /* Touch target parity with .review-shell__tap-target — header controls
-     must meet the 44px minimum even though we're outside ReviewShell. */
-  min-block-size: 44px;
-  min-inline-size: 44px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  box-sizing: border-box;
-}
-.cohort-view__back:hover,
-.cohort-view__plan-link:hover,
-.cohort-view__theme:hover {
-  color: var(--text-primary);
-  border-color: var(--border-hover);
-}
-
-.cohort-view__spacer { flex: 1; }
-
-.cohort-view__body {
-  flex: 1;
-  overflow: auto;
-  padding: 24px;
-  max-width: 720px;
-  width: 100%;
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.cohort-view__title {
-  margin: 0;
-  font-size: 1.4rem;
-  line-height: 1.3;
-}
-
-.cohort-view__meta {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.cohort-view__status {
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  padding: 2px 8px;
-  border-radius: 10px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-subtle);
-}
-
-.cohort-view__position {
-  font-size: 0.75rem;
-  opacity: 0.5;
-}
-
-.cohort-view__section {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.cohort-view__section-label {
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  opacity: 0.6;
-}
-
-.cohort-view__notes {
-  white-space: pre-wrap;
-  font-size: 0.9rem;
-  line-height: 1.5;
-  padding: 12px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-subtle);
-  border-radius: 6px;
-}
-
-.cohort-view__brief {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.cohort-view__brief-link {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  text-align: left;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-subtle);
-  border-radius: 6px;
-  padding: 10px 12px;
-  cursor: pointer;
-  color: inherit;
-  font: inherit;
-  /* Touch target parity with .review-shell__tap-target — a single-line brief
-     goal would otherwise render below the 44px minimum. */
-  min-block-size: 44px;
-  box-sizing: border-box;
-}
-.cohort-view__brief-link:hover {
-  border-color: var(--border-hover);
-}
-
-.cohort-view__brief-status {
-  font-size: 0.65rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  padding: 2px 6px;
-  border-radius: 3px;
-  background: var(--bg-app);
-  flex: 0 0 auto;
-  margin-top: 2px;
-}
-
-.cohort-view__brief-goal {
-  font-size: 0.85rem;
-  line-height: 1.4;
-}
-
-.cohort-view__brief-empty {
-  font-size: 0.85rem;
-  opacity: 0.5;
-  font-style: italic;
-}
-
-.cohort-view__brief-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 /* --- brief + plan canvas wrappers --- */
-
-.brief-canvas-scroll {
-  flex: 1;
-  overflow: auto;
-  padding: 0 16px 24px;
-}
 
 .plan-canvas-slot {
   flex: 1;
   display: flex;
   overflow: hidden;
-}
-
-.dag-editor {
-  flex: 1;
-  height: 100%;
-  min-height: 400px;
-}
-
-/* --- structured-doc atom primitive (AtomField internals) --- */
-
-.structured-doc {
-  display: flex;
-  flex-direction: column;
-}
-
-.structured-doc__atom {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.structured-doc__atom-label {
-  font-size: 11px;
-  opacity: 0.6;
-  font-weight: 500;
-}
-
-.structured-doc__atom-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 4px;
-}
-
-.structured-doc__field-display {
-  flex: 1;
-  font-size: 13px;
-  padding: 2px 4px;
-  border-radius: 3px;
-  cursor: default;
-  background: transparent;
-  white-space: pre-wrap;
-  min-height: 20px;
-}
-
-.structured-doc__field-display--editable {
-  cursor: text;
-  background: var(--bg-surface);
-}
-
-.structured-doc__placeholder {
-  opacity: 0.4;
-}
-
-.structured-doc__textarea {
-  flex: 1;
-  font-size: 13px;
-  resize: vertical;
-  min-height: 60px;
-}
-
-.structured-doc__input {
-  flex: 1;
-  font-size: 13px;
-}
-
-/* === structured doc editor (cohort 2) === */
-
-.structured-doc__edit-trigger {
-  text-align: left;
-  background: var(--bg-surface);
-  border: none;
-  font: inherit;
-  font-size: 13px;
-  cursor: text;
-  padding: 8px 10px;
-  width: 100%;
-  flex: 1;
-  border-radius: 4px;
-  justify-content: flex-start;
-  align-items: flex-start;
-  white-space: pre-wrap;
 }
 
 /* === inbox artifact cards (pending plans + pending build briefs) === */
@@ -3456,23 +2956,6 @@ body {
 .merge-cohort-button:disabled {
   opacity: 0.5;
   cursor: default;
-}
-
-/* --- cohort meta PR link --- */
-
-.cohort-view__pr-link {
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  padding: 2px 8px;
-  border-radius: 10px;
-  border: 1px solid var(--border-subtle);
-  color: var(--accent-blue);
-  text-decoration: none;
-}
-
-.cohort-view__pr-link:hover {
-  border-color: var(--accent-blue);
 }
 
 /* --- unresolved thread list in modal --- */
@@ -5340,7 +4823,6 @@ a:focus-visible {
   justify-content: flex-end;
   gap: 0.6rem;
 }
-
 
 .or-form-card {
   display: flex;
