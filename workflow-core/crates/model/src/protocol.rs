@@ -6,8 +6,9 @@ use serde_json::Value;
 /// operations address a cached bundle by `bundle_digest` instead of carrying
 /// the source, `available_operations` is gone, and `compiled` returns the
 /// digest and scope summaries rather than the checked program. v3: the frame
-/// cap rose from 1 MiB to 64 MiB.
-pub const PROTOCOL_VERSION: u32 = 3;
+/// cap rose from 1 MiB to 64 MiB. v4: `DecisionOutcome::Wait` carries
+/// `targets`, populated when the decision collapsed from an evaluated apply.
+pub const PROTOCOL_VERSION: u32 = 4;
 /// Guards the line reader, not the domain: a scope's whole snapshot travels in
 /// one evaluate frame, so this cap must sit far above any legitimate state.
 /// It changes only with a protocol version bump and regenerated TypeScript contracts.

@@ -390,6 +390,203 @@ fn repeated_unchanged_assignments_wait_without_committing() {
     assert!(matches!(result, DecisionOutcome::Wait { .. }), "{result:?}");
 }
 
+fn certify_case(p: &mut CheckedProgram) -> &mut CheckedTree {
+    let CheckedTree::Match { cases, .. } = &mut p.scopes[0].tree else {
+        panic!("dispatch match")
+    };
+    let node = &mut cases
+        .iter_mut()
+        .find(|c| c.variant == "certify")
+        .expect("certify case")
+        .node;
+    let CheckedTree::If { then, .. } = node else {
+        panic!("certify guard")
+    };
+    then
+}
+
+fn certify_snapshot(b: &DefinitionBundle, specimen: &str) -> Snapshot {
+    let mut s = snapshot(b, json!({}), "inspection", "certify");
+    s.observations
+        .push(observed_revision(b, "specimen", specimen, 3));
+    s.trigger.payload = check_value(
+        b,
+        &SchemaId::from("inspection_request"),
+        &json!({"specimen":{"brand":"artifact_revision","id":specimen}}),
+    )
+    .unwrap();
+    s
+}
+
+#[test]
+fn declared_wait_for_a_targeted_command_carries_no_targets() {
+    let b = bundle("exact-review-target");
+    let mut p = compile(&b, &b.operations).unwrap();
+    *certify_case(&mut p) = CheckedTree::Wait {
+        id: NodeId("certify_wait".into()),
+        continuations: vec![SymbolKey::from("certify")],
+        reason: "declared wait".into(),
+        attention: AttentionMetadata {
+            label: "Awaiting certification".into(),
+            trigger: SymbolKey::from("certify"),
+        },
+    };
+    let result = evaluate(&p, &certify_snapshot(&b, "r")).unwrap();
+    let DecisionOutcome::Wait { targets, .. } = result else {
+        panic!("expected wait")
+    };
+    assert_eq!(targets, None);
+}
+
+#[test]
+fn unchanged_assignment_collapse_for_a_targeted_command_carries_evaluated_targets() {
+    let b = bundle("exact-review-target");
+    let mut p = compile(&b, &b.operations).unwrap();
+    let unchanged = CheckedMutation::SetState {
+        value: CheckedExpression {
+            schema: SchemaId::from("phase"),
+            node: CheckedExpressionNode::Reference {
+                root: ReferenceRoot::State,
+                selectors: vec![],
+            },
+        },
+    };
+    let CheckedTree::Apply {
+        mutations,
+        actions,
+        outcome,
+        ..
+    } = certify_case(&mut p)
+    else {
+        panic!("certify apply")
+    };
+    *mutations = vec![unchanged.clone(), unchanged];
+    actions.clear();
+    *outcome = None;
+    let s = certify_snapshot(&b, "r");
+    let result = evaluate(&p, &s).unwrap();
+    let DecisionOutcome::Wait { targets, .. } = result else {
+        panic!("expected wait, got {result:?}")
+    };
+    assert_eq!(targets, Some(vec![s.observations[0].value.clone()]));
+}
+
+#[test]
+fn mutation_free_leaf_collapse_for_a_targeted_command_carries_evaluated_targets() {
+    let b = bundle("exact-review-target");
+    let mut p = compile(&b, &b.operations).unwrap();
+    let CheckedTree::Apply {
+        mutations,
+        actions,
+        outcome,
+        ..
+    } = certify_case(&mut p)
+    else {
+        panic!("certify apply")
+    };
+    mutations.clear();
+    actions.clear();
+    *outcome = None;
+    let s = certify_snapshot(&b, "r");
+    let result = evaluate(&p, &s).unwrap();
+    let DecisionOutcome::Wait { targets, .. } = result else {
+        panic!("expected wait, got {result:?}")
+    };
+    assert_eq!(targets, Some(vec![s.observations[0].value.clone()]));
+}
+
+#[test]
+fn collapse_for_an_untargeted_command_carries_an_evaluated_empty_target_list() {
+    let b = bundle("minimal");
+    let mut p = compile(&b, &b.operations).unwrap();
+    let CheckedTree::Match { cases, .. } = &mut p.scopes[0].tree else {
+        panic!("dispatch match")
+    };
+    let CheckedTree::Apply {
+        mutations,
+        actions,
+        outcome,
+        ..
+    } = &mut cases[0].node
+    else {
+        panic!("begin apply")
+    };
+    mutations.clear();
+    actions.clear();
+    *outcome = None;
+    let result = evaluate(&p, &snapshot(&b, json!({}), "ready", "begin")).unwrap();
+    let DecisionOutcome::Wait { targets, .. } = result else {
+        panic!("expected wait, got {result:?}")
+    };
+    assert_eq!(targets, Some(vec![]));
+}
+
+#[test]
+fn collapsed_wait_targets_track_the_same_observation_apply_would_have_carried() {
+    let b = bundle("exact-review-target");
+    let mut p = compile(&b, &b.operations).unwrap();
+    let CheckedTree::Apply {
+        mutations,
+        actions,
+        outcome,
+        ..
+    } = certify_case(&mut p)
+    else {
+        panic!("certify apply")
+    };
+    mutations.clear();
+    actions.clear();
+    *outcome = None;
+    let first = certify_snapshot(&b, "r");
+    let DecisionOutcome::Wait {
+        targets: first_targets,
+        ..
+    } = evaluate(&p, &first).unwrap()
+    else {
+        panic!("expected wait")
+    };
+    let second = certify_snapshot(&b, "r-plus-one");
+    let DecisionOutcome::Wait {
+        targets: second_targets,
+        ..
+    } = evaluate(&p, &second).unwrap()
+    else {
+        panic!("expected wait")
+    };
+    assert_ne!(first_targets, second_targets);
+    assert_eq!(
+        first_targets,
+        Some(vec![first.observations[0].value.clone()])
+    );
+    assert_eq!(
+        second_targets,
+        Some(vec![second.observations[0].value.clone()])
+    );
+}
+
+#[test]
+fn same_snapshot_replays_byte_identical_wait_decision_with_targets() {
+    let b = bundle("exact-review-target");
+    let mut p = compile(&b, &b.operations).unwrap();
+    let CheckedTree::Apply {
+        mutations,
+        actions,
+        outcome,
+        ..
+    } = certify_case(&mut p)
+    else {
+        panic!("certify apply")
+    };
+    mutations.clear();
+    actions.clear();
+    *outcome = None;
+    let s = certify_snapshot(&b, "r");
+    assert_eq!(
+        serde_json::to_vec(&evaluate(&p, &s).unwrap()).unwrap(),
+        serde_json::to_vec(&evaluate(&p, &s).unwrap()).unwrap()
+    );
+}
+
 #[test]
 fn optional_payload_is_bound_only_inside_presence_match() {
     let mut b = bundle("minimal");

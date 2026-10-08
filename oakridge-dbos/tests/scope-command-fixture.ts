@@ -13,7 +13,7 @@ const run_id = "run-1" as RunId;
 const scope_id = "scope-1" as ScopeId;
 export const unit: CheckedValue = { schema: "unit", data: { kind: "record", fields: [], dictionary: [] } };
 const revision: CheckedValue = { schema: "revision", data: { kind: "reference", brand: "artifact_revision", id: "revision-1" } };
-interface HarnessOptions { readonly transport_failure?: boolean; readonly malformed_core?: boolean; readonly missing_scope?: boolean; readonly database_failure?: boolean; readonly change_target_before_commit?: boolean; readonly change_witness_before_commit?: boolean; readonly wait_decision?: boolean; readonly operator_workspace?: boolean }
+interface HarnessOptions { readonly transport_failure?: boolean; readonly malformed_core?: boolean; readonly missing_scope?: boolean; readonly database_failure?: boolean; readonly change_target_before_commit?: boolean; readonly change_witness_before_commit?: boolean; readonly wait_decision?: boolean; readonly wait_decision_with_targets?: boolean; readonly operator_workspace?: boolean }
 
 export async function harness(options: HarnessOptions = {}) {
   const bundle: DefinitionBundle = await Bun.file(resolve(import.meta.dir, "../../workflow-core/fixtures/bundles/exact-review-target.json")).json();
@@ -74,6 +74,7 @@ export async function harness(options: HarnessOptions = {}) {
   };
   const explanation = { bundle_digest: "pinned", node_id: "finish_inspection", owner: scope_id, read_set: [], trace: [], trigger_id: "request-1" };
   const decision: DecisionOutcome = options.wait_decision ? { kind: "wait", reason: "awaiting rework", continuations: ["certify"], attention: null, explanation }
+    : options.wait_decision_with_targets ? { kind: "wait", reason: "awaiting rework", continuations: ["certify"], attention: null, explanation, targets: [revision] }
     : { kind: "apply", targets: [revision], mutations: [], invocations: [], outcome: null, explanation };
   const core = {
     async request(operation: string): Promise<CoreResult<Output>> {

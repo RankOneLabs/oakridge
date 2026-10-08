@@ -28,6 +28,29 @@ test("target revision must match the evaluated target and witness", () => {
   expect(targetsMatch(targeted, outcome, [{ identity: "revision-1", version: 3 }], current)).toBe(true);
   expect(targetsMatch(targeted, outcome, [{ identity: "revision-1", version: 2 }], current)).toBe(false);
 });
+test("a wait with no evaluated targets matches regardless of submitted or current revisions", () => {
+  const root = { kind: "output" as const, key: "specimen" };
+  const targeted = { ...command, targets: [{ kind: "reference" as const, root, path: [] }] };
+  const outcome = { kind: "wait", targets: null } as DecisionOutcome;
+  const current = [{ identity: "revision-1", version: 3 }];
+  expect(targetsMatch(targeted, outcome, [{ identity: "revision-2", version: 9 }], current)).toBe(true);
+});
+test("a wait carrying evaluated targets is compared exactly as apply", () => {
+  const root = { kind: "output" as const, key: "specimen" };
+  const targeted = { ...command, targets: [{ kind: "reference" as const, root, path: [] }] };
+  const target = { schema: "text", data: { kind: "string" as const, value: "content" } };
+  const outcome = { kind: "wait", targets: [target] } as DecisionOutcome;
+  const current = [{ identity: "revision-1", version: 3 }];
+  expect(targetsMatch(targeted, outcome, [{ identity: "revision-1", version: 3 }], current)).toBe(true);
+  expect(targetsMatch(targeted, outcome, [{ identity: "revision-1", version: 2 }], current)).toBe(false);
+});
+test("a reject outcome never matches targets", () => {
+  const root = { kind: "output" as const, key: "specimen" };
+  const targeted = { ...command, targets: [{ kind: "reference" as const, root, path: [] }] };
+  const outcome = { kind: "reject" } as DecisionOutcome;
+  const current = [{ identity: "revision-1", version: 3 }];
+  expect(targetsMatch(targeted, outcome, [{ identity: "revision-1", version: 3 }], current)).toBe(false);
+});
 test("output target resolves to its revision and snapshot slot version", async () => {
   const targeted = { ...command, targets: [{ kind: "reference" as const, root: { kind: "output" as const, key: "specimen" }, path: [] }] };
   const db = { query: async () => [{ id: "slot", current_revision_id: "revision-1", version: 3 }] } as unknown as TransactionalSqlExecutor;

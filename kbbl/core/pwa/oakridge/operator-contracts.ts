@@ -69,7 +69,7 @@ export type OperatorResourceBindingRecord = OperatorBranded<OperatorResourceBind
 
 export interface OperatorTargetRevision { readonly identity: string; readonly version: number }
 
-export type OperatorDecisionOutcome = { readonly "explanation": OperatorExplanation; readonly "invocations": (OperatorInvocation)[]; readonly "kind": "apply"; readonly "mutations": (OperatorMutationValue)[]; readonly "outcome"?: OperatorCheckedValue | null; readonly "targets": (OperatorCheckedValue)[] } | { readonly "attention"?: OperatorAttentionMetadata | null; readonly "continuations": (string)[]; readonly "explanation": OperatorExplanation; readonly "kind": "wait"; readonly "reason": string } | { readonly "detail": OperatorCheckedValue; readonly "error": string; readonly "explanation": OperatorExplanation; readonly "kind": "reject" };
+export type OperatorDecisionOutcome = { readonly "explanation": OperatorExplanation; readonly "invocations": (OperatorInvocation)[]; readonly "kind": "apply"; readonly "mutations": (OperatorMutationValue)[]; readonly "outcome"?: OperatorCheckedValue | null; readonly "targets": (OperatorCheckedValue)[] } | { readonly "attention"?: OperatorAttentionMetadata | null; readonly "continuations": (string)[]; readonly "explanation": OperatorExplanation; readonly "kind": "wait"; readonly "reason": string; readonly "targets"?: (OperatorCheckedValue)[] | null } | { readonly "detail": OperatorCheckedValue; readonly "error": string; readonly "explanation": OperatorExplanation; readonly "kind": "reject" };
 
 export interface OperatorProjectionCursor { readonly scope_version: number; readonly transition_id: string | null }
 
