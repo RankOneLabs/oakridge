@@ -6,6 +6,7 @@ The writer column names the mutation-service entry and the function that execute
 | --- | --- | --- |
 | Schema baseline | `migrateEmptyDatabase` → `migrate`, `oakridge-dbos/src/storage/migrate.ts:24` | Migration bookkeeping only. |
 | Pinned definition and checked program | `createMutationService.pinDefinition`, `oakridge-dbos/src/storage/mutation-service.ts:102`; `createMutationService.startRun`, `oakridge-dbos/src/storage/mutation-service.ts:148` | The source bundle and compiled program are pinned together by digest. |
+| Pinned prompt content | `storePromptContents`, `oakridge-dbos/src/storage/prompt-content.ts:80`, called by `createMutationService.pinDefinition` and `createMutationService.startRun` | Content-addressed by SHA-256 and immutable; a pinned definition names its prompts by digest and every render reads this copy, never the authored file. |
 | Run identity and bundle link | `createMutationService.startRun`, `oakridge-dbos/src/storage/mutation-service.ts:151`; `deleteRun`, `oakridge-dbos/src/storage/run-lifecycle.ts:76` | One run refers to one pinned definition. |
 | Current run workflow generation and scope cursor | `claimRunGeneration`, `oakridge-dbos/src/storage/run-lifecycle.ts:93` | The run workflow's address and pending scan position survive rollover and restart. |
 | Root scope and initial state | `createMutationService.startRun`, `oakridge-dbos/src/storage/mutation-service.ts:152` | Initial state comes from the checked root definition. |
@@ -35,24 +36,50 @@ The ownership check enumerates every authority SQL write site in the active back
 
 These citations keep the authority inventory aligned with the startup, encryption, and recovery paths.
 
+- `migrateEmptyDatabase` `oakridge-dbos/src/storage/migrate.ts:24`
+- `cancelRun` `oakridge-dbos/src/storage/run-lifecycle.ts:49`
+- `deleteRun` `oakridge-dbos/src/storage/run-lifecycle.ts:73`
+- `deleteRun` `oakridge-dbos/src/storage/run-lifecycle.ts:74`
+- `deleteRun` `oakridge-dbos/src/storage/run-lifecycle.ts:75`
+- `deleteRun` `oakridge-dbos/src/storage/run-lifecycle.ts:76`
+- `claimRunGeneration` `oakridge-dbos/src/storage/run-lifecycle.ts:93`
 - `ensureStopIntent` `oakridge-dbos/src/storage/revocation.ts:10`
 - `revokeStarts` `oakridge-dbos/src/storage/revocation.ts:32`
+- `createMutationService.pinDefinition` `oakridge-dbos/src/storage/mutation-service.ts:98`
+- `createMutationService.startRun` `oakridge-dbos/src/storage/mutation-service.ts:146`
+- `createMutationService.startRun` `oakridge-dbos/src/storage/mutation-service.ts:149`
+- `createMutationService.startRun` `oakridge-dbos/src/storage/mutation-service.ts:150`
+- `createMutationService.startRun` `oakridge-dbos/src/storage/mutation-service.ts:157`
+- `createMutationService.startRun` `oakridge-dbos/src/storage/mutation-service.ts:160`
 - `claimStartAttempt` `oakridge-dbos/src/storage/effect-results.ts:24`
 - `persistEffectResult` `oakridge-dbos/src/storage/effect-results.ts:52`
 - `persistEffectResult` `oakridge-dbos/src/storage/effect-results.ts:64`
 - `persistEffectResult` `oakridge-dbos/src/storage/effect-results.ts:70`
 - `persistEffectResult` `oakridge-dbos/src/storage/effect-results.ts:73`
 - `persistEffectResult` `oakridge-dbos/src/storage/effect-results.ts:74`
+- `storePromptContents` `oakridge-dbos/src/storage/prompt-content.ts:80`
+- `writeOutputs` `oakridge-dbos/src/storage/commit.ts:85`
 - `writeOutputs` `oakridge-dbos/src/storage/commit.ts:86`
+- `writeOutputs` `oakridge-dbos/src/storage/commit.ts:87`
+- `writeDecision` `oakridge-dbos/src/storage/commit.ts:101`
+- `writeDecision` `oakridge-dbos/src/storage/commit.ts:102`
+- `writeDecision` `oakridge-dbos/src/storage/commit.ts:103`
 - `writeDecision` `oakridge-dbos/src/storage/commit.ts:104`
-- `writeDecision` `oakridge-dbos/src/storage/commit.ts:107`
-- `writeDecision` `oakridge-dbos/src/storage/commit.ts:114`
-- `writeDecision` `oakridge-dbos/src/storage/commit.ts:123`
-- `writeDecision` `oakridge-dbos/src/storage/commit.ts:125`
+- `writeDecision` `oakridge-dbos/src/storage/commit.ts:105`
+- `writeDecision` `oakridge-dbos/src/storage/commit.ts:108`
+- `writeDecision` `oakridge-dbos/src/storage/commit.ts:115`
+- `writeDecision` `oakridge-dbos/src/storage/commit.ts:124`
+- `writeDecision` `oakridge-dbos/src/storage/commit.ts:126`
 - `writeDecision` `oakridge-dbos/src/storage/commit.ts:135`
-- `writeDecision` `oakridge-dbos/src/storage/commit.ts:137`
-- `writeDecision` `oakridge-dbos/src/storage/commit.ts:153`
-- `writeDecision` `oakridge-dbos/src/storage/commit.ts:155`
-- `writeDecision` `oakridge-dbos/src/storage/commit.ts:157`
+- `writeDecision` `oakridge-dbos/src/storage/commit.ts:136`
+- `writeDecision` `oakridge-dbos/src/storage/commit.ts:138`
+- `writeDecision` `oakridge-dbos/src/storage/commit.ts:156`
+- `writeDecision` `oakridge-dbos/src/storage/commit.ts:158`
 - `writeDecision` `oakridge-dbos/src/storage/commit.ts:160`
+- `writeDecision` `oakridge-dbos/src/storage/commit.ts:162`
 - `writeDecision` `oakridge-dbos/src/storage/commit.ts:163`
+- `writeDecision` `oakridge-dbos/src/storage/commit.ts:166`
+- `applyCapacityChanges` `oakridge-dbos/src/storage/capacity.ts:14`
+- `applyCapacityChanges` `oakridge-dbos/src/storage/capacity.ts:15`
+- `applyCapacityChanges` `oakridge-dbos/src/storage/capacity.ts:16`
+- `deliverEvidence` `oakridge-dbos/src/effects/evidence.ts:24`

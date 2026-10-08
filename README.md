@@ -44,18 +44,21 @@ test requires `KBBL_ACP_REAL_AGENT` and is reported as skipped by the normal
 kbbl test command when no real agent is configured.
 
 For local startup, run `./scripts/oakridge-start` from the repository root. It
-builds the Rust CLI if needed, starts PostgreSQL through Docker when
+rebuilds the Rust CLI (a no-op when it is current; it stops if cargo is
+missing, and an explicit `OAKRIDGE_CORE_BINARY` is used as given), starts PostgreSQL through Docker when
 `DBOS_SYSTEM_DATABASE_URL` is unset, applies the authority baseline, and starts
 the DBOS backend and kbbl PWA. The baseline can be applied again when its
 recorded digest matches; a changed baseline file stops startup and reports both
 digests. Startup verifies the encryption key and existing intents, registers
 the provider and workflow services, launches DBOS, resumes active runs and
 parked effects, and only then binds HTTP. Set `OAKRIDGE_PROMPT_ROOT` to the repository root when launching the
-backend separately so it can verify prompt files under `workflow-config/prompts/`.
+backend separately so it can read prompt files under `workflow-config/prompts/`
+when a definition is first pinned; runs render from the stored copy.
 `OAKRIDGE_GITHUB_TOKEN` (or `GITHUB_TOKEN`) authenticates pull request
 observation. The DBOS application version defaults to a 16-character SHA-256
-digest combining the sorted `ENGINE_SOURCE_MANIFEST` source digest and the
-`0001_core_authority.sql` baseline digest (see `oakridge-dbos/README.md`).
+digest combining the sorted `ENGINE_SOURCE_MANIFEST` source digest, the
+`0001_core_authority.sql` baseline digest and the digest of the core binary it
+spawns (see `oakridge-dbos/README.md`).
 Bundle, route, projection, prompt and UI edits do not change it; set
 `DBOS_APPLICATION_VERSION` only to pin it for a controlled fork or rollback.
 

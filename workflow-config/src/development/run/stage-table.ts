@@ -1,5 +1,5 @@
 import type { ChildDefinition, DecisionTree, Expression, Mutation } from "../../source-contracts";
-import { literal, optional, record, reference, variant } from "../../primitives/expressions";
+import { literal, nonEmpty, optional, record, reference, variant } from "../../primitives/expressions";
 import type { RunPolicy } from "../policies";
 
 export interface StageRow {
@@ -42,8 +42,7 @@ export const STAGE_TABLE: StageTable = [
         input_field: "input",
         dependencies_field: "dependencies",
         min_items: 1,
-        max_items: 100,
-        empty: { kind: "complete", outcome: variant({ schema: "run_result", variant: "complete", value: literal("unit", {}) }) }
+        max_items: 100
       },
       on_terminal: "prepare_finished"
     } },
@@ -160,9 +159,8 @@ export const STAGE_TABLE: StageTable = [
         key_field: "key",
         input_field: "input",
         dependencies_field: "dependencies",
-        min_items: 0,
-        max_items: 100,
-        empty: { kind: "complete", outcome: variant({ schema: "run_result", variant: "complete", value: literal("unit", {}) }) }
+        min_items: 1,
+        max_items: 100
       },
       on_terminal: "implementation_finished",
       prerequisite_export: "accepted"
@@ -207,9 +205,8 @@ export const STAGE_TABLE: StageTable = [
         key_field: "key",
         input_field: "input",
         dependencies_field: "dependencies",
-        min_items: 0,
-        max_items: 100,
-        empty: { kind: "complete", outcome: variant({ schema: "run_result", variant: "complete", value: literal("unit", {}) }) }
+        min_items: 1,
+        max_items: 100
       },
       on_terminal: "integration_finished"
     } },
@@ -277,6 +274,26 @@ export function advanceStage(row: StageRow, id = `${row.key}_advance`): Decision
   };
 }
 
+/** The list a collection stage maps to members, or null when the stage is a single child. */
+export function stageMembers(row: StageRow): Expression | null {
+  const source = row.child.collection?.source;
+  if (!source) return null;
+  return source.kind === "map" ? source.source : source;
+}
+
+/**
+ * Every stage runs something: a collection stage with no members is never
+ * activated. When the successor would be empty, this stage fails instead.
+ */
+function advanceWithWork(table: StageTable, row: StageRow, id?: string): DecisionTree {
+  const advance = advanceStage(row, id);
+  const next = table.find((entry) => entry.key === row.next_child);
+  const members = next ? stageMembers(next) : null;
+  if (members === null) return advance;
+  return { kind: "if", id: `${row.key}_successor_has_work`, condition: nonEmpty(members),
+    then: advance, otherwise: failure(table, row, `${row.key}_successor_without_work`) };
+}
+
 function waiting(row: StageRow, id: string): DecisionTree {
   const trigger = `${row.key}_finished`;
   return { kind: "wait", id, continuations: [trigger], reason: "awaiting declared work or operator review",
@@ -290,7 +307,7 @@ function failure(table: StageTable, row: StageRow, id: string, priorKey: string 
 function standardGate(table: StageTable, row: StageRow): DecisionTree {
   const pending = waiting(row, `${row.key}_pending`);
   const success: DecisionTree = { kind: "if", id: `${row.key}_success`, condition: allSuccessful(row.key),
-    then: advanceStage(row), otherwise: failure(table, row, `${row.key}_failure`) };
+    then: advanceWithWork(table, row), otherwise: failure(table, row, `${row.key}_failure`) };
   const terminal: DecisionTree = { kind: "if", id: `${row.key}_all_terminal`,
     condition: reference({ kind: "children_complete", key: row.key, schema: "flag" }, []),
     then: success, otherwise: pending };
@@ -300,7 +317,7 @@ function standardGate(table: StageTable, row: StageRow): DecisionTree {
 
 function implementationGate(table: StageTable, row: StageRow, policy: RunPolicy): DecisionTree {
   const independent = policy.sibling_failure === "continue_independent";
-  const advance = advanceStage(row, independent ? "independent_advance" : "implementation_advance");
+  const advance = advanceWithWork(table, row, independent ? "independent_advance" : "implementation_advance");
   const pending = waiting(row, independent ? "independent_pending" : "implementation_pending");
   const terminal: DecisionTree = { kind: "if", id: independent ? "independent_all_terminal" : "implementation_all_terminal",
     condition: reference({ kind: "children_complete", key: row.key, schema: "flag" }, []),

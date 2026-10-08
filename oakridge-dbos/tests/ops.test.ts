@@ -1,10 +1,25 @@
-import { expect, spyOn, test } from "bun:test";
+import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { DBOS } from "@dbos-inc/dbos-sdk";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { DEFAULT_WORKFLOW_TIMING } from "../src/workflows/topology";
 import { runOps } from "../src/ops";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
+
+// Recovery forks onto the running engine version, which hashes the core binary.
+const core_dir = mkdtempSync(resolve(tmpdir(), "oakridge-ops-core-"));
+const previous_core_binary = process.env.OAKRIDGE_CORE_BINARY;
+beforeAll(() => {
+  const core_binary = resolve(core_dir, "workflow-cli");
+  writeFileSync(core_binary, "core");
+  process.env.OAKRIDGE_CORE_BINARY = core_binary;
+});
+afterAll(() => {
+  if (previous_core_binary === undefined) delete process.env.OAKRIDGE_CORE_BINARY;
+  else process.env.OAKRIDGE_CORE_BINARY = previous_core_binary;
+  rmSync(core_dir, { recursive: true, force: true });
+});
 
 test("ops script exposes the workflow operator entry point", () => {
   const package_json = JSON.parse(readFileSync(resolve(import.meta.dir, "../package.json"), "utf8")) as { scripts: Record<string, string> };

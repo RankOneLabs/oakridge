@@ -1,5 +1,5 @@
 import type { DecisionTree } from "../../../source-contracts";
-import { literal, optional, record, reference, variant } from "../../../primitives/expressions";
+import { literal, nonEmpty, optional, record, reference, variant } from "../../../primitives/expressions";
 
 const planning_begin: DecisionTree = {
   kind: "apply",
@@ -60,6 +60,8 @@ const planning_exact: DecisionTree = {
         left: reference({ kind: "trigger" }, ["revision"]),
         right: reference({ kind: "output_revision", key: "plan", schema: "revision" }, [])
       },
+      // A plan must name at least one cohort; implementation never runs empty.
+      nonEmpty(reference({ kind: "output", key: "plan" }, ["cohorts"])),
       {
         kind: "every",
         source: reference({ kind: "output", key: "plan" }, ["cohorts"]),

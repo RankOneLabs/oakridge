@@ -68,7 +68,6 @@ pub struct CheckedCollection {
     #[serde(with = "crate::wire_numbers::index")]
     #[schemars(schema_with = "crate::wire_numbers::index::schema")]
     pub dependencies_field: usize,
-    pub empty_outcome: Option<CheckedExpression>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -416,5 +415,4 @@ pub struct MaterializedChild {
 #[serde(deny_unknown_fields)]
 pub struct Materialization {
     pub children: Vec<MaterializedChild>,
-    pub empty_outcome: Option<CheckedValue>,
 }

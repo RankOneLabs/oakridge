@@ -219,19 +219,8 @@
             "key_field": "key",
             "input_field": "input",
             "dependencies_field": "dependencies",
-            "min_items": 0,
-            "max_items": 100,
-            "empty": {
-              "kind": "complete",
-              "outcome": {
-                "kind": "literal",
-                "schema": "result",
-                "value": {
-                  "kind": "released",
-                  "value": {}
-                }
-              }
-            }
+            "min_items": 1,
+            "max_items": 100
           }
         }
       ],

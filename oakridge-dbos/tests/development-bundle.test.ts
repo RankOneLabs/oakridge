@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { repository } from "./development-runtime-fixture";
 import { CoreClient } from "../src/core-client/client";
 import { promptWithActionInput } from "../src/effects/operations/selected-request";
-import { readPinnedPrompt } from "../src/storage/storage-validator";
+import { readAuthoredPrompt } from "../src/storage/prompt-content";
 import { createMutationService, type PinnedDefinition } from "../src/storage/mutation-service";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
 import type { CheckedValue, DefinitionBundle, Snapshot } from "../src/core-client/generated-contracts";
@@ -51,10 +51,12 @@ test("prompt bytes and pinned digest reproduce the generated source", async () =
   const core = client();
   try {
     let saved: PinnedDefinition | null = null;
-    const db = { query: async (sql: string, params: unknown[]) => {
-      if (sql.startsWith("INSERT")) { saved = { bundle_id: params[0] as string, digest: params[1] as string, source: bundle }; return []; }
-      return saved ? [saved] : [];
-    } } as unknown as TransactionalSqlExecutor;
+    const query = async (sql: string, params: unknown[]) => {
+      if (sql.startsWith("INSERT INTO authority.definition_bundle")) { saved = { bundle_id: params[0] as string, digest: params[1] as string, source: bundle }; return []; }
+      if (sql.includes("FROM authority.definition_bundle")) return saved ? [saved] : [];
+      return [];
+    };
+    const db = { query, transaction: async (operation: (tx: unknown) => Promise<unknown>) => operation({ query }) } as unknown as TransactionalSqlExecutor;
     const pinned = await createMutationService(db, core, { probe: async () => ({ ok: true, value: true }),
       check_github: async () => ({ ok: true, value: true }) }).pinDefinition({ bundle });
     const compiled = await core.request("compile", { bundle });
@@ -66,7 +68,8 @@ test("prompt bytes and pinned digest reproduce the generated source", async () =
 test("pinning rejects changed prompt bytes and paths outside the configured root", async () => {
   const core = client();
   try {
-    const service = createMutationService({} as TransactionalSqlExecutor, core);
+    // No prompt is stored yet, so pinning reads and verifies the authored files.
+    const service = createMutationService({ query: async () => [] } as unknown as TransactionalSqlExecutor, core);
     const prompt = bundle.prompts[0];
     if (!prompt) throw new Error("prompt fixture missing");
     const changed = await service.pinDefinition({ bundle: { ...bundle, prompts: [{ ...prompt, content_digest: "0".repeat(64) }, ...bundle.prompts.slice(1)] } });
@@ -82,7 +85,7 @@ test("starting an inline bundle rejects invalid prompts before compilation or st
   let compiled = false;
   let stored = false;
   const core = { request: async () => { compiled = true; throw new Error("unexpected compilation"); } } as unknown as CoreClient;
-  const db = { transaction: async () => { stored = true; throw new Error("unexpected storage"); } } as unknown as TransactionalSqlExecutor;
+  const db = { query: async () => [], transaction: async () => { stored = true; throw new Error("unexpected storage"); } } as unknown as TransactionalSqlExecutor;
   const service = createMutationService(db, core);
   const changed = await service.startRun({ bundle: { ...bundle, prompts: [{ ...prompt, content_digest: "0".repeat(64) }, ...bundle.prompts.slice(1)] }, input: {} });
   expect(changed).toMatchObject({ ok: false, error: { operation: "start_run", detail: expect.stringContaining("digest mismatch") } });
@@ -102,14 +105,14 @@ test("development prompt lookup preserves the rendered prompt bytes", () => {
   const authored = bundle.prompts.find((prompt) => prompt.key === action?.prompt);
   if (!action?.prompt || !authored) throw new Error("development prompt fixture missing");
   const action_input = { repository: "oakridge", instruction: "Build the pinned scope" };
-  const content = readPinnedPrompt(authored);
+  const content = readAuthoredPrompt(authored);
   if (!content.ok) throw new Error(content.error.detail);
-  const previous = promptWithActionInput(content.value, action_input);
+  const previous = promptWithActionInput(content.value.content, action_input);
   const resolved = bundle.prompts.find((prompt) => prompt.key === action.prompt);
   if (!resolved) throw new Error("prompt missing");
-  const reread = readPinnedPrompt(resolved);
+  const reread = readAuthoredPrompt(resolved);
   if (!reread.ok) throw new Error(reread.error.detail);
-  expect(promptWithActionInput(reread.value, action_input)).toBe(previous);
+  expect(promptWithActionInput(reread.value.content, action_input)).toBe(previous);
 });
 
 test("root selects repository preparation from the repository configuration collection", async () => {
@@ -120,5 +123,16 @@ test("root selects repository preparation from the repository configuration coll
     const result = await core.request("evaluate", { bundle,
       snapshot: snapshot("development", root_input, "phase_root", "ready", "begin") });
     expect(result).toMatchObject({ ok: true, value: { kind: "evaluated", value: { kind: "apply", mutations: expect.arrayContaining([expect.objectContaining({ kind: "activate_collection", key: "prepare" })]) } } });
+  } finally { core.close(); }
+});
+
+test("a run that names no repository is refused at begin rather than starting an empty stage", async () => {
+  const core = client();
+  try {
+    const config = { runtime: "codex", workdir: "/tmp", session_name: "development" };
+    const root_input = await checked(core, "run_input", { spec: "Implement feature", repositories: [], analysis: config, planning: config, briefs: config });
+    const result = await core.request("evaluate", { bundle,
+      snapshot: snapshot("development", root_input, "phase_root", "ready", "begin") });
+    expect(result).toMatchObject({ ok: true, value: { kind: "evaluated", value: { kind: "reject", error: "invalid_command" } } });
   } finally { core.close(); }
 });

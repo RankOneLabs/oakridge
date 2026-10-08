@@ -5,6 +5,14 @@ import { PgPostgresExecutor } from "./storage/sql-executor";
 import { selectApplicationVersion } from "./workflows/engine-version";
 import { DEFAULT_WORKFLOW_TIMING, ensureRunRecoveryFork, forkStartStep, runWorkflowId } from "./workflows/topology";
 
+/** Recovery forks onto the version the production process runs, which includes its core binary. */
+function opsApplicationVersion(env: NodeJS.ProcessEnv = process.env): string {
+  const core_binary = env.OAKRIDGE_CORE_BINARY;
+  if (!core_binary && !env.DBOS_APPLICATION_VERSION?.trim())
+    throw new Error("recover requires OAKRIDGE_CORE_BINARY (or DBOS_APPLICATION_VERSION) to select the running engine version");
+  return selectApplicationVersion(core_binary ?? "", env);
+}
+
 type OpsCommand = readonly ["workflows", "list" | "inspect" | "recover", ...string[]] | readonly ["migrate"];
 
 export async function runOps(args: readonly string[], database_url: string | undefined = process.env.DBOS_SYSTEM_DATABASE_URL): Promise<unknown> {
@@ -48,7 +56,7 @@ export async function runOps(args: readonly string[], database_url: string | und
         runGeneration = { run_id, generation };
       } finally { await db.close(); }
     }
-    const application_version = selectApplicationVersion();
+    const application_version = opsApplicationVersion();
     let recovered_workflow_id: string;
     if (newWorkflowID) {
       await ensureRunRecoveryFork({ workflow_id: workflow_id!, successor_id: newWorkflowID,

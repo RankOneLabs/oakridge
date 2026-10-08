@@ -289,19 +289,14 @@ pub struct CollectionDefinition {
     pub key_field: String,
     pub input_field: String,
     pub dependencies_field: String,
+    /// At least one: a stage always runs something, so an empty collection is
+    /// never valid. Configuration refuses empty work before activating it.
     #[serde(with = "crate::wire_numbers::index")]
     #[schemars(schema_with = "crate::wire_numbers::index::schema")]
     pub min_items: usize,
     #[serde(with = "crate::wire_numbers::index")]
     #[schemars(schema_with = "crate::wire_numbers::index::schema")]
     pub max_items: usize,
-    pub empty: EmptyPolicy,
-}
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum EmptyPolicy {
-    Reject,
-    Complete { outcome: Expression },
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { createProductionComposition } from "../src/runtime/compose";
-import { wakeRun } from "../src/workflows/topology";
+import { intentWorkflowId, wakeRun } from "../src/workflows/topology";
 import { begin, sessionBundle, withDatabase } from "./effect-fixture";
 import { sealEffectPayload } from "../src/storage/effect-secret";
 import type { EffectPayload } from "../src/effects/intents";
@@ -75,7 +75,7 @@ test("a loop-boundary dispatch failure strands the run as a typed, visible ERROR
     expect(response.status).toBe(201);
     const run: { run_id: string; root_scope_id: string } = await response.json();
     const intent_id = crypto.randomUUID();
-    await (await DBOS.startWorkflow(completedChild, { workflowID: intent_id })()).getResult();
+    await (await DBOS.startWorkflow(completedChild, { workflowID: intentWorkflowId(intent_id) })()).getResult();
     await db.query(`INSERT INTO authority.effect_intent (id,run_id,scope_id,effect_key,payload,status)
       VALUES ($1,$2,$3,$4,$5,'pending')`, [intent_id, run.run_id, run.root_scope_id, "inconsistent-child",
         JSON.stringify(sealEffectPayload({ action: "start", handle: null,

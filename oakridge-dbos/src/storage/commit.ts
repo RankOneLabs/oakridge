@@ -8,6 +8,7 @@ import { hasSameReadSet, readSnapshot, READ_RELATIONS, CAPACITY_READ_RELATIONS }
 import type { ChildCollectionMember, CommitReceipt, ScopeId } from "./schema-records";
 import { inTransaction, type SqlExecutor, type TransactionalSqlExecutor } from "./sql-executor";
 import { pinProviderRequest } from "../effects/operations/selected-request";
+import { readStoredPrompts } from "./prompt-content";
 import { MAX_SNAPSHOT_BYTES, measureAuthoritySnapshot } from "../effects/operations/selected-publication-contract";
 export { MAX_SNAPSHOT_BYTES, measureAuthoritySnapshot } from "../effects/operations/selected-publication-contract";
 import { selectedInvocation, type InvocationId } from "../effects/provider";
@@ -142,13 +143,15 @@ async function writeDecision(tx: SqlExecutor, request: CommitRequest, source: Au
   // Every effect intent is one selected invocation, pinned here so recovery never re-renders a request.
   const invocations = request.decision.kind === "apply" ? request.decision.invocations : [];
   if (request.effects.length !== invocations.length) fail({ kind: "Rejected", reason: "invalid", detail: "effects do not pair with selected invocations" });
+  const prompts = await readStoredPrompts(tx, definition.source, invocations.flatMap((invocation) => invocation.prompt_key == null ? [] : [invocation.prompt_key]));
+  if (!prompts.ok) fail({ kind: "Rejected", reason: "invalid", detail: `${prompts.error.entity_id}: ${prompts.error.detail}` });
   for (const [index, effect] of request.effects.entries()) {
     const id = crypto.randomUUID();
     const execution_id = effect.execution_id ?? execution_ids[index] ?? null;
     const selection = invocations[index];
     if (!selection || !execution_id) fail({ kind: "Rejected", reason: "invalid", detail: "effect without a selected execution" });
     const publication_secret = randomBytes(32).toString("base64url");
-    const pinned = pinProviderRequest({ invocation: selectedInvocation(id as InvocationId, execution_id, selection), bundle: definition.source, scope: source.owner, publication_secret });
+    const pinned = pinProviderRequest({ invocation: selectedInvocation(id as InvocationId, execution_id, selection), bundle: definition.source, prompts: prompts.value, scope: source.owner, publication_secret });
     if (!pinned.ok) fail({ kind: "Rejected", reason: "invalid", detail: pinned.error.detail });
     await tx.query("UPDATE authority.execution SET publication_secret_hash=$1 WHERE id=$2", [createHash("sha256").update(publication_secret).digest("hex"), execution_id]);
     const payload: EffectPayload = { invocation: pinned.value, action: "start", handle: null };

@@ -111,20 +111,11 @@ pub fn compile_scope(
                 ));
             }
             context.item = Some(item.clone());
-            let empty_outcome = match &c.empty {
-                EmptyPolicy::Reject => None,
-                EmptyPolicy::Complete { outcome } => {
-                    let value = compile_expression(bundle, owner, outcome, &Context::default(), 0)?;
-                    compatible(bundle, &owner.outcome_schema, &value.schema, &child.key.0)?;
-                    Some(value)
-                }
-            };
             Some(CheckedCollection {
                 source,
                 key_field,
                 input_field,
                 dependencies_field,
-                empty_outcome,
             })
         } else {
             None
@@ -304,9 +295,6 @@ fn observation_reads(owner: &ScopeDefinition) -> Vec<ReferenceRoot> {
         expression(&child.input, &mut roots);
         if let Some(collection) = &child.collection {
             expression(&collection.source, &mut roots);
-            if let EmptyPolicy::Complete { outcome } = &collection.empty {
-                expression(outcome, &mut roots);
-            }
         }
     }
     roots

@@ -21,6 +21,11 @@ CREATE TABLE authority.definition_bundle (
   id text PRIMARY KEY, digest text NOT NULL UNIQUE, source jsonb NOT NULL,
   checked_program jsonb NOT NULL, version bigint NOT NULL DEFAULT 0 CHECK (version >= 0)
 );
+-- Prompt text a pinned definition references by digest; immutable and content-addressed.
+CREATE TABLE authority.prompt_content (
+  content_digest text PRIMARY KEY, content text NOT NULL,
+  CHECK (content_digest = encode(sha256(convert_to(content, 'UTF8')), 'hex'))
+);
 CREATE TABLE authority.run (
   id text PRIMARY KEY, definition_bundle_id text NOT NULL REFERENCES authority.definition_bundle(id),
   created_at timestamptz NOT NULL DEFAULT now(), version bigint NOT NULL DEFAULT 0 CHECK (version >= 0),
