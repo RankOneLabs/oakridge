@@ -1,9 +1,13 @@
+import type { Theme } from "../../types";
+
 export type PrimarySurface = "runs" | "sessions" | "attention";
 
 interface PrimaryNavProps {
   activeSurface: PrimarySurface;
   attentionCount: number;
   onNavigate: (surface: PrimarySurface) => void;
+  theme: Theme;
+  onToggleTheme: () => void;
 }
 
 function navItemClass(isActive: boolean): string {
@@ -12,7 +16,8 @@ function navItemClass(isActive: boolean): string {
     : "app-surface-nav__item";
 }
 
-export function PrimaryNav({ activeSurface, attentionCount, onNavigate }: PrimaryNavProps) {
+export function PrimaryNav({ activeSurface, attentionCount, onNavigate, theme, onToggleTheme }: PrimaryNavProps) {
+  const toggleLabel = theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
   return (
     <nav className="app-surface-nav" aria-label="Primary">
       <span className="app-surface-nav__brand">oakridge</span>
@@ -21,6 +26,15 @@ export function PrimaryNav({ activeSurface, attentionCount, onNavigate }: Primar
       <button type="button" className={navItemClass(activeSurface === "attention")} onClick={() => onNavigate("attention")}>
         Attention
         {attentionCount > 0 && <span className="app-surface-nav__count">{attentionCount}</span>}
+      </button>
+      <button
+        type="button"
+        className="theme-toggle app-surface-nav__theme"
+        onClick={onToggleTheme}
+        title={toggleLabel}
+        aria-label={toggleLabel}
+      >
+        {theme === "dark" ? "LIGHT" : "DARK"}
       </button>
     </nav>
   );

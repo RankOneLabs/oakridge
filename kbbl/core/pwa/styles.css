@@ -180,6 +180,10 @@ body {
   color: var(--accent-blue);
 }
 
+.app-surface-nav__theme {
+  margin-left: 0.5rem;
+}
+
 .app-surface-nav__count {
   min-width: 1.25rem;
   padding: 0.1rem 0.35rem;

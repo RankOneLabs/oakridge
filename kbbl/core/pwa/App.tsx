@@ -125,6 +125,8 @@ export function App() {
         activeSurface={activeSurface}
         attentionCount={attentionCount}
         onNavigate={navigateToSurface}
+        theme={theme}
+        onToggleTheme={toggleTheme}
       />
       {view}
       <PendingApprovalsBadge />
