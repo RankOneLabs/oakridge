@@ -1,6 +1,6 @@
 use crate::expressions::{charge, evaluate_expression, EvaluationContext};
 use crate::{failure, owner, snapshot_valid};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use workflow_model::*;
 pub(crate) fn field(value: &CheckedValue, index: usize) -> CoreResult<&CheckedValue> {
     let CheckedData::Record { fields, .. } = &value.data else {
@@ -206,32 +206,16 @@ pub(crate) fn materialize_with_budget(
             "prerequisite references missing member",
         ));
     }
-    // One member can complete per pass on a chain, so the sweep is quadratic; charge it
-    // the way `validate_collection`'s caller does before doing the work.
-    charge(
-        context.budget,
-        children.len().saturating_mul(children.len()),
-        &template.0,
-    )?;
-    let mut complete = BTreeSet::new();
-    while complete.len() < children.len() {
-        let ready: Vec<_> = children
-            .iter()
-            .filter(|c| {
-                !complete.contains(&c.key) && c.depends_on.iter().all(|d| complete.contains(d))
-            })
-            .collect();
-        if ready.is_empty() {
-            return Err(failure(
-                DomainErrorKind::CyclicPrerequisite,
-                template.to_string(),
-                "collection prerequisite cycle",
-            ));
-        }
-        for c in ready {
-            complete.insert(c.key.clone());
-        }
-    }
+    let members: Vec<_> = children
+        .iter()
+        .map(|c| {
+            (
+                c.key.as_str(),
+                c.depends_on.iter().map(String::as_str).collect(),
+            )
+        })
+        .collect();
+    check_acyclic(&members, &template.0, context.budget)?;
     Ok(Materialization {
         children,
         empty_outcome: None,
@@ -290,23 +274,59 @@ pub(crate) fn validate_collection(
             "prerequisite references missing member",
         ));
     }
-    let mut complete = BTreeSet::new();
-    while complete.len() < members.len() {
-        let ready: Vec<_> = members
-            .iter()
-            .filter(|(key, deps)| {
-                !complete.contains(key) && deps.iter().all(|d| complete.contains(d))
-            })
-            .map(|(key, _)| key.clone())
-            .collect();
-        if ready.is_empty() {
-            return Err(failure(
-                DomainErrorKind::CyclicPrerequisite,
-                "collection",
-                "collection prerequisite cycle",
-            ));
+    let members: Vec<_> = members
+        .iter()
+        .map(|(key, deps)| (key.as_str(), deps.iter().map(String::as_str).collect()))
+        .collect();
+    check_acyclic(&members, "collection", budget)
+}
+
+/// Members ordered by their prerequisites (Kahn's algorithm). The work is one
+/// visit per member and one per prerequisite edge, so exactly that is charged
+/// before it runs; a dense graph cannot do more work than it paid for.
+/// Prerequisites must already name existing members.
+fn check_acyclic(
+    members: &[(&str, Vec<&str>)],
+    entity: &str,
+    budget: &mut usize,
+) -> CoreResult<()> {
+    let edges = members
+        .iter()
+        .fold(0usize, |total, (_, deps)| total.saturating_add(deps.len()));
+    charge(budget, members.len().saturating_add(edges), entity)?;
+    let position: BTreeMap<&str, usize> = members
+        .iter()
+        .enumerate()
+        .map(|(index, (key, _))| (*key, index))
+        .collect();
+    let mut unmet: Vec<usize> = members.iter().map(|(_, deps)| deps.len()).collect();
+    let mut dependents: Vec<Vec<usize>> = vec![Vec::new(); members.len()];
+    for (index, (_, deps)) in members.iter().enumerate() {
+        for dep in deps {
+            if let Some(&prerequisite) = position.get(dep) {
+                dependents[prerequisite].push(index);
+            }
         }
-        complete.extend(ready);
+    }
+    let mut ready: Vec<usize> = (0..members.len())
+        .filter(|&index| unmet[index] == 0)
+        .collect();
+    let mut completed = 0;
+    while let Some(index) = ready.pop() {
+        completed += 1;
+        for &dependent in &dependents[index] {
+            unmet[dependent] -= 1;
+            if unmet[dependent] == 0 {
+                ready.push(dependent);
+            }
+        }
+    }
+    if completed < members.len() {
+        return Err(failure(
+            DomainErrorKind::CyclicPrerequisite,
+            entity,
+            "collection prerequisite cycle",
+        ));
     }
     Ok(())
 }

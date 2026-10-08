@@ -882,49 +882,54 @@ fn collection_constraints_are_generic_transforms_before_materialization() {
     }
 }
 
-fn chained_members(length: usize) -> Value {
-    Value::Array(
-        (0..length)
-            .map(|index| {
-                let dependencies = if index == 0 {
-                    json!([])
-                } else {
-                    json!([format!("member_{}", index - 1)])
-                };
-                json!({"key": format!("member_{index}"), "input": {}, "dependencies": dependencies})
-            })
-            .collect(),
-    )
+/// Every member depends on every earlier one: the shape that made a pass-based
+/// sweep cubic (each pass rechecked the whole completed prefix for every member).
+fn dense_members(length: usize) -> Vec<Value> {
+    (0..length)
+        .map(|index| {
+            let dependencies: Vec<String> = (0..index)
+                .map(|earlier| format!("member_{earlier}"))
+                .collect();
+            json!({"key": format!("member_{index}"), "input": {}, "dependencies": dependencies})
+        })
+        .collect()
 }
-/// The prerequisite sweep is quadratic on a chain (one new member completes per
-/// pass), so it is charged `n * n` up front like `check_collection`; a budget
-/// that covers the per-member work but not the sweep must be refused.
+fn dense_bundles() -> [DefinitionBundle; 2] {
+    let mut materialized = bundle("dynamic");
+    materialized.limits.max_list_items = 1_000;
+    materialized.limits.evaluation_budget = 1_000_000;
+    let mut checked = materialized.clone();
+    let collection = checked.scopes[0].children[0].collection.as_mut().unwrap();
+    collection.source = serde_json::from_value(json!({"kind":"check_collection","source":{"kind":"reference","root":{"kind":"input"},"path":[]},"key_field":"key","dependencies_field":"dependencies"})).unwrap();
+    [materialized, checked]
+}
+/// Both prerequisite checks (materialization and `check_collection`) accept a
+/// dense acyclic graph whole: each member and each edge is visited once.
 #[test]
-fn chained_collection_sweep_is_charged_against_the_budget() {
+fn dense_prerequisite_graph_is_accepted_in_both_paths() {
     let length = 100;
-    let mut b = bundle("dynamic");
-    b.limits.max_list_items = 1_000;
-    b.limits.evaluation_budget = 100_000;
-    let generous = compile(&b, &b.operations).unwrap();
-    let members = chained_members(length);
-    let batch = materialize(
-        &generous,
-        &snapshot(&b, members.clone(), "ready", "begin"),
-        &SymbolKey::from("items"),
-    )
-    .unwrap();
-    assert_eq!(batch.children.len(), length);
-    b.limits.evaluation_budget = 3_000;
-    let tight = compile(&b, &b.operations).unwrap();
-    let error = materialize(
-        &tight,
-        &snapshot(&b, members, "ready", "begin"),
-        &SymbolKey::from("items"),
-    )
-    .map(|batch| batch.children.len())
-    .unwrap_err();
-    assert_eq!(error.kind, DomainErrorKind::ResourceLimit);
-    assert_eq!(&*error.detail, "expression budget exhausted");
+    for b in dense_bundles() {
+        let p = compile(&b, &b.operations).unwrap();
+        let s = snapshot(&b, Value::Array(dense_members(length)), "ready", "begin");
+        let batch = materialize(&p, &s, &SymbolKey::from("items")).unwrap();
+        assert_eq!(batch.children.len(), length);
+    }
+}
+#[test]
+fn dense_prerequisite_graph_with_one_back_edge_is_a_cycle_in_both_paths() {
+    let length = 100;
+    for b in dense_bundles() {
+        let p = compile(&b, &b.operations).unwrap();
+        let mut members = dense_members(length);
+        members[0]["dependencies"] = json!([format!("member_{}", length - 1)]);
+        let s = snapshot(&b, Value::Array(members), "ready", "begin");
+        assert_eq!(
+            materialize(&p, &s, &SymbolKey::from("items"))
+                .unwrap_err()
+                .kind,
+            DomainErrorKind::CyclicPrerequisite
+        );
+    }
 }
 /// Walking a large snapshot to validate it is metered: a snapshot whose values
 /// cost more than the whole budget is refused before any tree node runs (the
