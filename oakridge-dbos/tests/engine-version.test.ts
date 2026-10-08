@@ -28,9 +28,12 @@ test("changes in every engine dependency change the recovery version", () => {
     mkdirSync(dirname(baseline), { recursive: true });
     writeFileSync(baseline, "original storage");
     const workflows = resolve(root, "workflows");
-    const original = computeEngineVersion(workflows);
+    const core_binary = resolve(root, "workflow-cli");
+    writeFileSync(core_binary, "original core");
+    const version = (): string => computeEngineVersion({ workflows_dir: workflows, core_binary });
+    const original = version();
     writeFileSync(baseline, "changed storage");
-    expect(computeEngineVersion(workflows)).not.toBe(original);
+    expect(version()).not.toBe(original);
     writeFileSync(baseline, "original storage");
     const source_digest = computeEngineSourceDigest(workflows);
     const storage_digest = computeStorageBaselineDigest(workflows);
@@ -38,19 +41,22 @@ test("changes in every engine dependency change the recovery version", () => {
     expect(computeStorageBaselineDigest(workflows)).not.toBe(storage_digest);
     expect(computeEngineSourceDigest(workflows)).toBe(source_digest);
     writeFileSync(baseline, "original storage");
+    writeFileSync(core_binary, "rebuilt core");
+    expect(version()).not.toBe(original);
+    writeFileSync(core_binary, "original core");
     for (const name of ENGINE_SOURCE_MANIFEST) {
       writeFileSync(resolve(root, name), "changed");
-      expect(computeEngineVersion(workflows)).not.toBe(original);
+      expect(version()).not.toBe(original);
       writeFileSync(resolve(root, name), "original");
     }
     for (const name of ["http/app.ts", "projections/run-view.ts", "workflows/topology.test.ts"]) {
       mkdirSync(dirname(resolve(root, name)), { recursive: true });
       writeFileSync(resolve(root, name), "unrelated change");
     }
-    expect(computeEngineVersion(workflows)).toBe(original);
+    expect(version()).toBe(original);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("operator version override is retained", () => {
-  expect(selectApplicationVersion({ DBOS_APPLICATION_VERSION: " rollback " })).toBe("rollback");
+  expect(selectApplicationVersion("/nonexistent/workflow-cli", { DBOS_APPLICATION_VERSION: " rollback " })).toBe("rollback");
 });

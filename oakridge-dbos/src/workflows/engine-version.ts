@@ -56,8 +56,9 @@ export const ENGINE_SOURCE_MANIFEST: readonly string[] = [
  * The DBOS application version scopes workflow recovery: a process only resumes
  * PENDING workflows recorded under its own version. The version therefore has
  * to move when workflow behavior changes, including imported engine logic and
- * injected services. Routes, projections, bundles and UI sources are outside
- * the engine manifest and do not change the recovery version.
+ * injected services, and when the Rust core binary changes. Routes,
+ * projections, bundles and UI sources are outside the engine manifest and do
+ * not change the recovery version.
  */
 export function computeEngineSourceDigest(workflows_dir: string = import.meta.dir): string {
   const hash = createHash("sha256");
@@ -75,16 +76,33 @@ export function computeStorageBaselineDigest(workflows_dir: string = import.meta
   return createHash("sha256").update(readFileSync(resolve(workflows_dir, "../storage/migrations/0001_core_authority.sql"))).digest("hex");
 }
 
-export function computeEngineVersion(workflows_dir: string = import.meta.dir): string {
+/**
+ * The Rust core decides every transition, so its build is part of the engine.
+ * The digest covers the binary this process actually spawns, not the source
+ * tree, so a stale build cannot share a version with the source it lags.
+ */
+export function computeCoreBinaryDigest(core_binary: string): string {
+  return createHash("sha256").update(readFileSync(core_binary)).digest("hex");
+}
+
+export interface EngineVersionSources {
+  readonly core_binary: string;
+  readonly workflows_dir?: string;
+}
+
+export function computeEngineVersion(sources: EngineVersionSources): string {
+  const workflows_dir = sources.workflows_dir ?? import.meta.dir;
   const hash = createHash("sha256");
   hash.update("engine-source\0");
   hash.update(computeEngineSourceDigest(workflows_dir));
   hash.update("\0storage-baseline\0");
   hash.update(computeStorageBaselineDigest(workflows_dir));
+  hash.update("\0core-binary\0");
+  hash.update(computeCoreBinaryDigest(sources.core_binary));
   return hash.digest("hex").slice(0, 16);
 }
 
 /** An operator override for forks and rollbacks; otherwise the engine digest. */
-export function selectApplicationVersion(env: NodeJS.ProcessEnv = process.env): string {
-  return env.DBOS_APPLICATION_VERSION?.trim() || computeEngineVersion();
+export function selectApplicationVersion(core_binary: string, env: NodeJS.ProcessEnv = process.env): string {
+  return env.DBOS_APPLICATION_VERSION?.trim() || computeEngineVersion({ core_binary });
 }

@@ -150,7 +150,7 @@ export async function createProductionComposition(options: ProductionOptions): P
   const mutations = createMutationService(db, core, provider_capabilities);
   const repositories = authorityRepositories(db);
   const provider = options.effect_provider ?? createEffectProvider({ db, core, kbbl_base_url: options.kbbl_base_url ?? process.env.KBBL_BASE_URL ?? "http://127.0.0.1:8788", pull_requests: options.pull_requests });
-  const application_version = options.application_version ?? selectApplicationVersion();
+  const application_version = options.application_version ?? selectApplicationVersion(options.core_binary);
   registerWorkflowServices({ db, core, mutations, provider, timing: { ...DEFAULT_WORKFLOW_TIMING, ...options.timing } });
   DBOS.setConfig({ name: "oakridge", systemDatabaseUrl: options.database_url, applicationVersion: application_version });
   launch_attempted = true;

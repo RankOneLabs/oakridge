@@ -59,7 +59,7 @@ declared failure evidence so the bundle's sibling policy decides the next
 branch. Operator cancellation follows the root `cancel` command and declared
 child cancellation mutations.
 
-The DBOS application version is derived from the sorted engine source manifest
-and the authority baseline SQL digest, independently of bundle and prompt
-changes. A changed bundle is pinned by its own compiler digest and does not
+The DBOS application version is derived from the sorted engine source manifest,
+the authority baseline SQL digest and the running core binary, independently of
+bundle and prompt changes. A changed bundle is pinned by its own compiler digest and does not
 change which existing DBOS workflows can resume.

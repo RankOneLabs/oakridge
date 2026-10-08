@@ -8,16 +8,23 @@ fi
 
 OAKRIDGE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DBOS_ROOT="$OAKRIDGE_ROOT/oakridge-dbos"
-CORE_BINARY="${OAKRIDGE_CORE_BINARY:-$OAKRIDGE_ROOT/workflow-core/target/debug/workflow-cli}"
-if [ ! -x "$CORE_BINARY" ]; then
-  if ! command -v cargo >/dev/null 2>&1; then
+DEFAULT_CORE_BINARY="$OAKRIDGE_ROOT/workflow-core/target/debug/workflow-cli"
+CORE_BINARY="${OAKRIDGE_CORE_BINARY:-$DEFAULT_CORE_BINARY}"
+# The default binary is rebuilt on every start: cargo is a no-op when it is
+# current, and a stale core would otherwise run under a newer source tree.
+# An explicit OAKRIDGE_CORE_BINARY is the operator's build and is used as given.
+if [ -z "${OAKRIDGE_CORE_BINARY:-}" ]; then
+  if command -v cargo >/dev/null 2>&1; then
+    echo "oakridge: building workflow-cli"
+    cargo build --locked --manifest-path "$OAKRIDGE_ROOT/workflow-core/Cargo.toml" -p workflow-cli
+  elif [ -x "$CORE_BINARY" ]; then
+    echo "oakridge: cargo is missing; $CORE_BINARY may be older than workflow-core/ and is used as built" >&2
+  else
     CORE_TOOLCHAIN="$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$OAKRIDGE_ROOT/workflow-core/rust-toolchain.toml")"
     echo "oakridge: Rust toolchain (cargo) is missing; install the pinned toolchain with: rustup toolchain install $CORE_TOOLCHAIN" >&2
     echo "oakridge: then build workflow-cli with: cargo build --locked --manifest-path workflow-core/Cargo.toml -p workflow-cli" >&2
     exit 1
   fi
-  echo "oakridge: building workflow-cli"
-  cargo build --locked --manifest-path "$OAKRIDGE_ROOT/workflow-core/Cargo.toml" -p workflow-cli
 fi
 if [ ! -x "$CORE_BINARY" ]; then
   echo "oakridge: workflow-cli is missing at $CORE_BINARY; build it with: cargo build --locked --manifest-path workflow-core/Cargo.toml -p workflow-cli" >&2

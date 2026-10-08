@@ -48,9 +48,10 @@ as run workflow errors and are recovered through a fork.
 DBOS resumes only workflows recorded under the running `applicationVersion`.
 `src/workflows/engine-version.ts` hashes the sorted `ENGINE_SOURCE_MANIFEST`
 paths and bytes, then combines that source digest with the SHA-256 digest of
-`src/storage/migrations/0001_core_authority.sql`. The final SHA-256 is truncated
-to 16 hex characters. This includes workflow dependencies and the authority
-schema baseline. Bundle, route, projection, prompt and UI changes leave it
+`src/storage/migrations/0001_core_authority.sql` and of the `OAKRIDGE_CORE_BINARY`
+the process spawns. The final SHA-256 is truncated to 16 hex characters. This
+includes workflow dependencies, the authority schema baseline and the Rust
+evaluator build. Bundle, route, projection, prompt and UI changes leave it
 unchanged. `DBOS_APPLICATION_VERSION` overrides it for controlled forks and
 rollbacks; a different version does not resume workflows pinned to the old one.
 
