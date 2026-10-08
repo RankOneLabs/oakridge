@@ -38,8 +38,10 @@ bun run --filter oakridge-dbos test:unit
 The DBOS integration suite requires `OAKRIDGE_TEST_DATABASE_URL` pointing to a
 PostgreSQL 15+ instance with permission to create and drop test databases. Run
 `bun run --filter oakridge-dbos test:integration` after building the Rust CLI.
-It boots the production composition against fresh databases and drives the
-shipped bundles through provider operations. The real-agent ACP smoke
+It boots the production composition against fresh databases and drives every
+shipped bundle to completion through the production provider, including a
+declared session failure, operator cancellation, pool contention, a mid-run
+revision and recovery from a killed process. The real-agent ACP smoke
 test requires `KBBL_ACP_REAL_AGENT` and is reported as skipped by the normal
 kbbl test command when no real agent is configured.
 

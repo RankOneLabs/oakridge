@@ -5,21 +5,31 @@ authority, provider composition and operator PWA. For each new issue, record
 the affected version or bundle, a reproduction, observed behavior, and the
 expected behavior. Remove an entry when its fix is verified.
 
-## Session intents can remain pending after a child begins
-
-**Severity:** blocking for the full provider-driven bundle acceptance suite.
-
-Run `OAKRIDGE_REPRO_PENDING_SESSION=1 bun test
-oakridge-dbos/tests/provider-driven-bundles.test.ts` with a PostgreSQL test URL
-and the Rust CLI built. The test boots the production composition with each
-shipped bundle and uses the production provider against a local Git repository
-and a controlled kbbl HTTP endpoint. Repository preparation commits a terminal
-execution. After the analysis child begins, it has a durable pending start
-intent, but DBOS does not run a step for its effect workflow, and the kbbl
-endpoint receives no request. The execution remains pending. Restarting the
-composition did not settle it in this reproduction. The default integration
-suite covers provider-driven preparation while this full-session check remains
-opt-in and fails visibly.
-
 The retired kbbl v1 history remains in `docs/known_issues.md` and is not a
 backlog for the current stack.
+
+## Open issues
+
+None.
+
+Every shipped bundle is driven to a committed terminal state, fully
+provider-driven through the production composition, by
+`oakridge-dbos/tests/provider-driven-bundles.test.ts`, with mid-run process
+recovery covered by `oakridge-dbos/tests/provider-driven-recovery.test.ts`.
+
+## Writing a kbbl stand-in
+
+Two details of kbbl's wire contract are easy to get wrong in a test double,
+and getting either wrong looks exactly like "the session never becomes
+terminal" rather than like a broken double:
+
+- `PUT /sessions/resumable/:sessionKey` takes a *session key* and answers with
+  kbbl's own generated `sid`. They are different identifiers, and
+  `GET /sessions/resumable/:sid/terminal` validates its segment against
+  `SID_PATTERN` (a v4 UUID), which no session key matches.
+- Hono decodes path params. A double that splits `URL.pathname` without
+  decoding stores a key containing `:` under `%3A` and then looks it up under
+  `%253A`.
+
+`oakridge-dbos/tests/kbbl-stub.ts` keeps both behaviours and is the stand-in to
+reuse rather than writing another.

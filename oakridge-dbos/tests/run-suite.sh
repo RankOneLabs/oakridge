@@ -14,7 +14,7 @@ fi
 # omit it; production-effects.test.ts still unsets it at runtime to assert that a
 # missing key fails startup.
 export OAKRIDGE_EFFECT_ENCRYPTION_KEY="${OAKRIDGE_EFFECT_ENCRYPTION_KEY:-ERERERERERERERERERERERERERERERERERERERERERE}"
-integration=' advance-children authority-schema cancellation-obligations capacity-reservations child-page commit-atomicity concurrent-decisions crash-matrix development-lifecycle development-publication effect-deadline fresh-boot launch-postgres operator-browser ops-live production-effects provider-driven-bundles receipt-replay retained-operations review-effects run-durability run-error-recovery run-review-acceptance run-rollover session-observe-recovery scope-command-postgres snapshot-reader stage-publications start-attempt-recovery '
+integration=' advance-children authority-schema cancellation-obligations capacity-reservations child-page commit-atomicity concurrent-decisions crash-matrix development-lifecycle development-publication effect-deadline fresh-boot launch-postgres operator-browser ops-live production-effects provider-driven-bundles provider-driven-recovery receipt-replay retained-operations review-effects run-durability run-error-recovery run-review-acceptance run-rollover session-observe-recovery scope-command-postgres snapshot-reader stage-publications start-attempt-recovery '
 mapfile -d '' files < <(find src tests -name '*.test.ts' -print0 | sort -z)
 selected=()
 for file in "${files[@]}"; do

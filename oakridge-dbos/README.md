@@ -66,10 +66,15 @@ bun run --filter oakridge-dbos test:integration
 ```
 
 The integration tests require `OAKRIDGE_TEST_DATABASE_URL` for PostgreSQL 15+
-with create/drop database permission. The provider-driven bundle test uses
-`createProductionComposition` and all shipped JSON definitions. Its session
-continuation can be reproduced with `OAKRIDGE_REPRO_PENDING_SESSION=1`; the
-current blocking result is recorded in `docs/active_known_issues.md`.
+with create/drop database permission. `tests/provider-driven-bundles.test.ts`
+uses `createProductionComposition` and all shipped JSON definitions: it drives
+every session worker in every shipped bundle to a committed terminal state and
+covers the declared failure policy, operator cancellation, pool contention and
+a mid-run revision. `tests/provider-driven-recovery.test.ts` kills a real
+process holding a live session and checks that the replacement neither
+re-dispatches nor drops it. Neither substitutes an effect provider; the only
+injected seams are the kbbl endpoint (`tests/kbbl-stub.ts`) and the
+pull-request reader.
 
 The core client caches compilation by an incremental content hash of the source
 bundle. The compiler's `bundle_digest` is an output of that request, so it is
