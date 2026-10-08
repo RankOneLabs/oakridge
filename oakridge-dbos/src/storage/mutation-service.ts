@@ -55,6 +55,25 @@ export async function compileBundle(core: CoreClient, request: CompileRequest): 
   if (response.value.kind !== "compiled") return error("compile", request.bundle.key, "core returned a non-compiled response");
   return { ok: true, value: { program: response.value.value } };
 }
+/** Whether every published output still matches its declared schema. */
+export type PublicationCheck = { readonly kind: "valid" } | { readonly kind: "mismatch"; readonly output_key: string };
+/**
+ * Published outputs arrive as checked values from outside the core, so the
+ * core rechecks each against the schema its scope declares. Undeclared
+ * outputs are left to the commit's declaration check.
+ */
+export async function checkPublications(core: CoreClient, bundle: DefinitionBundle, scope_key: string, outputs: readonly OutputPublication[]): Promise<Result<PublicationCheck>> {
+  const scope = bundle.scopes.find((item) => item.key === scope_key);
+  for (const output of outputs) {
+    const declared = scope?.outputs.find((item) => item.key === output.output_key);
+    if (!declared) continue;
+    const checked = await core.request("validate_value", { bundle, schema: declared.schema, value: output.body });
+    if (checked.ok) continue;
+    if (checked.error.kind === "transport") return error("validate_publication", output.output_key, checked.error.detail.detail);
+    return { ok: true, value: { kind: "mismatch", output_key: output.output_key } };
+  }
+  return { ok: true, value: { kind: "valid" } };
+}
 /** The sole evaluator call; callers retain the core transport/domain error distinction. */
 export function requestEvaluation(core: CoreClient, input: EvaluationInput): Promise<CoreResult<Output>> {
   return core.request("evaluate", { bundle: input.bundle, snapshot: input.source.snapshot });
@@ -187,6 +206,11 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
           const bundles = await db.query<{ source: DefinitionBundle }>("SELECT b.source FROM authority.definition_bundle b JOIN authority.run r ON r.definition_bundle_id=b.id WHERE r.id=$1", [input.run_id]);
           const bundle = bundles[0]?.source;
           if (!bundle) return error("decide", input.run_id, "definition bundle missing");
+          if (attempt === 0) {
+            const publications = await checkPublications(core, bundle, source.owner.scope_key, staged_input.outputs ?? []);
+            if (!publications.ok) return publications;
+            if (publications.value.kind === "mismatch") return { ok: true, value: { kind: "Rejected", reason: "invalid", detail: "output schema mismatch" } };
+          }
           const staged = stagePublications(bundle, source, staged_input.outputs ?? []);
           if (!staged.ok) return staged;
           const evaluated: Result<EvaluationResult> = attempt === 0 && input.prepared

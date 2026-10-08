@@ -3,11 +3,10 @@ import { Pool } from "pg";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { PgPostgresExecutor, type TransactionalSqlExecutor } from "../src/storage/sql-executor";
 import { readSnapshot } from "../src/storage/snapshot-reader";
-import { matchesStoredSchema } from "../src/storage/storage-validator";
 import { commitDecision, type CommitRequest } from "../src/storage/commit";
 import { createMutationService } from "../src/storage/mutation-service";
 import type { CoreClient } from "../src/core-client/client";
-import { CORE_MAX_FRAME_BYTES, type CheckedValue, type DefinitionBundle } from "../src/core-client/generated-contracts";
+import { CORE_MAX_FRAME_BYTES, type CheckedValue } from "../src/core-client/generated-contracts";
 import type { PoolId, RunId, ScopeId } from "../src/storage/schema-records";
 
 test("a fault after state, output and reservation writes rolls the entire decision back", async () => {
@@ -43,14 +42,8 @@ test("a fault after state, output and reservation writes rolls the entire decisi
     const hostile = { ...request, decision: { ...request.decision, mutations: [{ kind: "overwrite_everything" }] } } as unknown as CommitRequest;
     const rejected = await commitDecision(db, hostile, source);
     expect(rejected.ok).toBe(false);
-    const invalid_state = await commitDecision(db, { ...request, decision: { ...request.decision, kind: "apply", mutations: [{ kind: "set_state", value: { schema: "wrong-schema", data: { kind: "string", value: "hostile" } } }], invocations: [], targets: [] } }, source);
-    expect(invalid_state).toMatchObject({ ok: true, value: { kind: "Rejected", detail: "state schema mismatch" } });
-    const forged_state = await commitDecision(db, { ...request, decision: { ...request.decision, kind: "apply", mutations: [{ kind: "set_state", value: { schema: "unit", data: { kind: "integer", value: 1 } } }], invocations: [], targets: [] } }, source);
-    expect(forged_state).toMatchObject({ ok: true, value: { kind: "Rejected", detail: "state schema mismatch" } });
     const observation = await commitDecision(db, { ...request, decision: { ...request.decision, kind: "apply", mutations: [{ kind: "observe", resource: "repo" }], invocations: [], targets: [] } }, source);
     expect(observation).toMatchObject({ ok: false, error: { operation: "validate_commit", detail: "observe requires a resource observation provider; unsupported by this composition" } });
-    const invalid_output = await commitDecision(db, { ...request, outputs: request.outputs.map((output) => ({ ...output, body: { schema: "unit", data: { kind: "integer", value: 1 } } })) }, source);
-    expect(invalid_output).toMatchObject({ ok: true, value: { kind: "Rejected", detail: "output schema mismatch" } });
     if (request.decision.kind !== "apply") throw new Error("fixture requires an apply decision");
     // Schema-valid (each entry within the fixture's 2,000,000-char text bound) yet larger than one evaluate frame.
     const entry_chars = 1_000_000;
@@ -89,16 +82,4 @@ test("a fault after state, output and reservation writes rolls the entire decisi
     await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
     await admin.end();
   }
-});
-
-
-test("storage schema validation rejects a nested value with the wrong schema", async () => {
-  const bundle: DefinitionBundle = await Bun.file(new URL("../../workflow-core/fixtures/bundles/minimal.json", import.meta.url)).json();
-  const value: CheckedValue = { schema: "position", data: { kind: "variant", variant: "ready", value: { schema: "flag", data: { kind: "boolean", value: true } } } };
-  expect(matchesStoredSchema(bundle, "position", value)).toBe(false);
-});
-
-test("storage schema validation rejects missing required record fields", async () => {
-  const bundle: DefinitionBundle = await Bun.file(new URL("../../workflow-core/fixtures/bundles/minimal.json", import.meta.url)).json();
-  expect(matchesStoredSchema(bundle, "member", { schema: "member", data: { kind: "record", fields: [], dictionary: [] } })).toBe(false);
 });

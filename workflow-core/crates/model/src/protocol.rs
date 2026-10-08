@@ -81,6 +81,12 @@ pub enum Operation {
         #[schemars(with = "Value")]
         payload: Value,
     },
+    /// Recheck a value that arrived already checked, such as a published output.
+    ValidateValue {
+        bundle_digest: BundleDigest,
+        schema: SchemaId,
+        value: CheckedValue,
+    },
     Evaluate {
         bundle_digest: BundleDigest,
         snapshot: Snapshot,
