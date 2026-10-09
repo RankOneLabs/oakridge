@@ -118,10 +118,19 @@ export class CoreClient {
   }
   private fault({ kind, detail, generation, request_id }: ChildFault): void {
     if (generation !== this.generation || this.closed) return;
-    if (request_id !== undefined && !this.pending.has(request_id)) return;
-    // Request-local faults retain their correlation; child-wide faults have no attributed request.
-    const faulting_id = request_id ?? this.pending.keys().next().value;
-    if (faulting_id) this.settle(faulting_id, transportFailure(kind, this.failureDetail(detail)));
+    // A nonempty id names one request: settle it alone and leave the child running.
+    // An id the client no longer recognises (already settled, or never ours) is
+    // dropped with a diagnostic rather than taken out on an unrelated request.
+    if (request_id) {
+      if (!this.pending.has(request_id)) {
+        console.error(`core client: dropping ${kind} fault for unattributed request ${request_id}: ${detail}`);
+        return;
+      }
+      this.settle(request_id, transportFailure(kind, this.failureDetail(detail)));
+      return;
+    }
+    // An empty or absent id names the whole child: every in-flight request waits
+    // out the respawn and is replayed against the replacement process.
     for (const pending of this.pending.values()) {
       if (pending.timeout) clearTimeout(pending.timeout);
       pending.timeout = null;
@@ -162,10 +171,10 @@ export class CoreClient {
     try { raw = JSON.parse(line); }
     catch { this.fault({ kind: "malformed_frame", detail: "invalid JSON response", generation }); return; }
     const request_id = typeof raw === "object" && raw !== null && "request_id" in raw
-      && typeof raw.request_id === "string" && this.pending.has(raw.request_id) ? raw.request_id : undefined;
+      && typeof raw.request_id === "string" && raw.request_id ? raw.request_id : undefined;
     const response = decodeCoreResponse(raw);
     if (!response || response.version !== CORE_PROTOCOL_VERSION) { this.fault({ kind: "malformed_frame", detail: "response failed generated wire schema", generation, request_id }); return; }
-    if (!this.pending.has(response.request_id)) { this.fault({ kind: "mismatched_request_id", detail: response.request_id, generation }); return; }
+    if (!this.pending.has(response.request_id)) { this.fault({ kind: "mismatched_request_id", detail: response.request_id, generation, request_id: response.request_id }); return; }
     this.settle(response.request_id, resultFromResponse(response.result));
   }
   private async readResponses(child: ReturnType<typeof Bun.spawn>, generation: number): Promise<void> {

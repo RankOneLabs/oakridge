@@ -145,8 +145,10 @@ async function withChild(scriptBody: string, run: (client: CoreClient, script: s
   const client = startClient(script, deadlineMs, queue);
   try { await run(client, script); } finally { client.close(); rmSync(directory, { recursive: true, force: true }); }
 }
-test("mismatched request ID is rejected", () => withChild(`IFS= read -r line\nprintf '%s\\n' '{\"version\":${CORE_PROTOCOL_VERSION},\"request_id\":\"wrong\",\"truncated\":false,\"result\":{\"status\":\"ok\",\"value\":{\"kind\":\"validated\",\"value\":{\"schema\":\"flag\",\"data\":{\"kind\":\"boolean\",\"value\":true}}}}}'`, async (client) => {
-  expect(await client.request("compile", { bundle })).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "mismatched_request_id" } } });
+test("an unrecognized request ID is dropped without disturbing the pending request", () => withChild(
+  `IFS= read -r line\nprintf '%s\\n' '{\"version\":${CORE_PROTOCOL_VERSION},\"request_id\":\"wrong\",\"truncated\":false,\"result\":{\"status\":\"ok\",\"value\":{\"kind\":\"validated\",\"value\":{\"schema\":\"flag\",\"data\":{\"kind\":\"boolean\",\"value\":true}}}}}'\nprintf '%s\\n' '{\"version\":${CORE_PROTOCOL_VERSION},\"request_id\":\"1\",\"truncated\":false,\"result\":{\"status\":\"ok\",\"value\":{\"kind\":\"compiled\",\"value\":{\"digest\":\"deadbeef\",\"scopes\":[]}}}}'\nsleep 2`, async (client) => {
+  expect(await client.request("compile", { bundle })).toMatchObject({ ok: true, value: { kind: "compiled" } });
+  expect(client.health.restart_count).toBe(0);
 }));
 test("malformed success payload fails the generated decoder", () => withChild(`IFS= read -r line\nprintf '%s\\n' '{\"version\":${CORE_PROTOCOL_VERSION},\"request_id\":\"1\",\"truncated\":false,\"result\":{\"status\":\"ok\",\"value\":{}}}'`, async (client) => {
   expect(await client.request("compile", { bundle })).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "malformed_frame" } } });
@@ -214,10 +216,10 @@ test("unsafe integer success payload quarantines the child", () => withChild(
     expect(await client.request("compile", { bundle }))
       .toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "malformed_frame" } } });
   }));
-test("unresponsive child hits deadline and respawns", () => withChild("IFS= read -r line\nsleep 1", async (client) => {
+test("unresponsive child hits deadline without killing the child", () => withChild("IFS= read -r line\nsleep 1", async (client) => {
   expect(await client.request("compile", { bundle })).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "unresponsive_child" } } });
   expect(await client.request("compile", { bundle })).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "unresponsive_child" } } });
-  expect(client.health.restart_count).toBeGreaterThanOrEqual(1);
+  expect(client.health.restart_count).toBe(0);
 }, 20));
 test("in-flight bound refuses excess callers without discarding pending request", () => withChild("IFS= read -r line\nsleep 1", async (client) => {
   const first = client.request("compile", { bundle });
@@ -309,11 +311,19 @@ test("a slow pipe flush does not spend the request deadline", async () => {
   } finally { held.release(); client.close(); }
 });
 
-test("a newer request deadline fails that request and replays the older caller", () => withChild(
-  `if [ -f "$0.started" ]; then exec "${binary}"; fi
-touch "$0.started"
-IFS= read -r line
-sleep 2`, async (client) => {
+test("a newer request's deadline failure settles only that request and leaves the older pending request to complete", () => withChild(
+  `python3 -c "
+import json, sys, time
+first = True
+for line in sys.stdin:
+    req = json.loads(line)
+    if first:
+        first = False
+        time.sleep(0.06)
+    sys.stdout.write(json.dumps({'version': ${CORE_PROTOCOL_VERSION}, 'request_id': req['request_id'], 'truncated': False,
+        'result': {'status': 'ok', 'value': {'kind': 'compiled', 'value': {'digest': 'deadbeef', 'scopes': []}}}}) + chr(10))
+    sys.stdout.flush()
+"`, async (client) => {
     const writable = client as unknown as ClientWriteAccess;
     const write = writable.writeFrame.bind(client);
     let should_delay = true;
@@ -325,13 +335,11 @@ sleep 2`, async (client) => {
     const newer = client.request("compile", { bundle: { ...bundle, key: "newer" } });
     expect(await newer).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "unresponsive_child" } } });
     expect(await older).toMatchObject({ ok: true, value: { kind: "compiled" } });
-  }, 50));
+    expect(client.health.restart_count).toBe(0);
+  }, 30));
 
-test("a failed newer pipe write preserves the older caller", () => withChild(
-  `if [ -f "$0.started" ]; then exec "${binary}"; fi
-touch "$0.started"
-IFS= read -r line
-sleep 2`, async (client) => {
+test("a failed pipe write for one request settles only that request and leaves the child usable", () => withChild(
+  `exec "${binary}"`, async (client) => {
     const child = (client as unknown as ClientProcessAccess).process;
     const stdin = child?.stdin;
     if (!stdin || typeof stdin === "number") throw new Error("child pipe missing");
@@ -344,23 +352,23 @@ sleep 2`, async (client) => {
       },
     });
     const older = client.request("compile", { bundle });
-    await Bun.sleep(20);
     const newer = client.request("compile", { bundle: { ...bundle, key: "newer" } });
     expect(await newer).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "terminated_child", detail: expect.stringContaining("fixture pipe write failed") } } });
     expect(await older).toMatchObject({ ok: true, value: { kind: "compiled" } });
+    expect(client.health.restart_count).toBe(0);
   }));
 
-test("a malformed response with a newer request id preserves the older caller", () => withChild(
-  `if [ -f "$0.started" ]; then exec "${binary}"; fi
-touch "$0.started"
-IFS= read -r first
+test("a malformed response for one request settles only that request and leaves the older pending request to complete", () => withChild(
+  `IFS= read -r first
 IFS= read -r second
 printf '%s\\n' '{"version":${CORE_PROTOCOL_VERSION},"request_id":"2","truncated":false,"result":{"status":"ok","value":{}}}'
+printf '%s\\n' '{"version":${CORE_PROTOCOL_VERSION},"request_id":"1","truncated":false,"result":{"status":"ok","value":{"kind":"compiled","value":{"digest":"deadbeef","scopes":[]}}}}'
 sleep 2`, async (client) => {
     const older = client.request("compile", { bundle });
     const newer = client.request("compile", { bundle: { ...bundle, key: "newer" } });
     expect(await newer).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "malformed_frame" } } });
     expect(await older).toMatchObject({ ok: true, value: { kind: "compiled" } });
+    expect(client.health.restart_count).toBe(0);
   }));
 
 test("failed replacement spawn settles survivors and a later request reopens the client", () => withChild(
@@ -406,7 +414,7 @@ test("child deaths are rate-limited and stderr remains bounded in health and fau
     expect(new TextEncoder().encode(client.health.last_stderr_lines.join("\\n")).length).toBeLessThanOrEqual(16_384);
   }, 1000));
 
-test("a killed in-flight request fails once; respawn silently re-sends the source on unknown_bundle", async () => {
+test("both in-flight requests survive a killed child; respawn silently re-sends the source on unknown_bundle", async () => {
   const directory = mkdtempSync(resolve(tmpdir(), "core-respawn-"));
   const script = resolve(directory, "child.py");
   const log = resolve(directory, "operations.log");
@@ -432,11 +440,11 @@ for line in sys.stdin:
     const survivor = client.request("validate_payload", { bundle, schema: "unit", payload: {} });
     await Bun.sleep(20);
     process.kill(pid, "SIGKILL");
-    expect(await pending).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "terminated_child" } } });
+    expect(await pending).toMatchObject({ ok: true, value: { kind: "evaluated" } });
     expect(await survivor).toMatchObject({ ok: true, value: { kind: "validated" } });
     expect(await client.request("evaluate", { bundle, snapshot: snapshot() })).toMatchObject({ ok: true, value: { kind: "evaluated" } });
     const operations = (await Bun.file(log).text()).trim().split("\n");
-    expect(operations.filter((operation) => operation === "compile")).toHaveLength(2);
+    expect(operations.filter((operation) => operation === "compile").length).toBeGreaterThanOrEqual(2);
     expect(client.health.restart_count).toBe(1);
   } finally { client.close(); rmSync(directory, { recursive: true, force: true }); }
 });
