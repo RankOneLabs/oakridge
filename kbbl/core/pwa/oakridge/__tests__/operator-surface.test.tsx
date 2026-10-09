@@ -218,7 +218,7 @@ test.each(["development", "development-independent-siblings", "development-verif
         run_id: "pinned-run", scope_id: "pinned-scope", label: root.presentation.label,
         state: { schema: stringSchema.key, data: { kind: "string", value: "observed" } }, outcome: null,
         outputs: [], executions: [], commands: root.commands, cursor: { scope_version: 1, transition_id: null },
-        command_targets: Object.fromEntries(root.commands.map((command) => [command.key, []])), command_prefill: {},
+        command_targets: Object.fromEntries(root.commands.map((command) => [command.key, []])), command_prefill: {}, resources: [],
       });
       if (url.endsWith("/runs/pinned-run")) return Response.json({ run_id: "pinned-run", scopes: [{ scope_id: "pinned-scope", scope_key: root.key, label: root.presentation.label }] });
       throw new Error(url);
@@ -369,7 +369,7 @@ test("switching run routes resets the selected scope before fetching the new run
     const scope_id = suffix.slice("scopes/".length);
     return Response.json({ scope_id, run_id: runId, label: scope_id,
       state: { schema: "text", data: { kind: "string", value: "ready" } },
-      outcome: null, outputs: [], executions: [], commands: [], cursor: { scope_version: 1 } });
+      outcome: null, outputs: [], resources: [], executions: [], commands: [], cursor: { scope_version: 1 } });
   }));
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const view = (id: string) => <QueryClientProvider client={client}><OakridgeShell route={{ sub: "run", id, scope_id: null }} /></QueryClientProvider>;
@@ -462,7 +462,7 @@ test("an accepted command refreshes the run, the run list and the inbox", async 
     if (url.endsWith("/definition")) return Response.json({ source: { root: "root", schemas: [{ key: "empty", shape: { kind: "record", fields: [], dictionary: null } }] } });
     if (url.endsWith("/history")) return Response.json({ transitions: [], facts: [] });
     return Response.json({ scope_id: "s", run_id: "run-1", label: "Root", state: { schema: "empty", data: { kind: "string", value: "x" } },
-      outcome: null, outputs: [], executions: [], commands: [command], command_targets: { act: [] }, command_prefill: {}, cursor: { scope_version: 1 } });
+      outcome: null, outputs: [], executions: [], commands: [command], command_targets: { act: [] }, command_prefill: {}, resources: [], cursor: { scope_version: 1 } });
   }));
   const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const spy = invalidatedKeys(cache);

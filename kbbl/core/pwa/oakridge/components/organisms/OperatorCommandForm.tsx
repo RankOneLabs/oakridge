@@ -6,7 +6,7 @@ import { isDefinitiveRequestRejection } from "../../lib/client-errors";
 import { clearOperatorDraft, clearPendingCommand, findRetainedDrafts, operatorDraftIdentity, readOperatorDraft, readPendingCommand, saveOperatorDraft, savePendingCommand } from "../../lib/operator-drafts";
 import { buildRootInput, stringFloor, type FieldDrafts } from "../../lib/operator-input";
 import { parseOperatorFieldValue } from "../../lib/operator-payload";
-import { selectCommandPrefill, selectDraftKey } from "../../lib/operator-selectors";
+import { selectCommandPrefill, selectDraftKey, selectPendingEvidence } from "../../lib/operator-selectors";
 import type { OperatorCommandDefinition, OperatorSchema, OperatorScopeView } from "../../operator-contracts";
 
 interface Props { readonly scope: OperatorScopeView; readonly command: OperatorCommandDefinition;
@@ -66,6 +66,8 @@ export function OperatorCommandForm({ scope, command, schemas, onRefresh }: Prop
   }, [key ? operatorDraftIdentity(key) : null]);
 
   if (!key) return <p role="status">Target revisions are unavailable. Refresh this scope before acting.</p>;
+  const pending_evidence = selectPendingEvidence(scope, command);
+  if (pending_evidence.length > 0) return <p role="status" data-testid="operator-pending-evidence">Waiting for current evidence: {pending_evidence.join(", ")}.</p>;
 
   const update = (value: string) => { setIsAccepted(false); setDraft(value); saveOperatorDraft(key, value); };
   const submit = (event: React.FormEvent) => {

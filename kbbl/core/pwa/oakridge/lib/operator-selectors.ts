@@ -58,3 +58,9 @@ export function selectLaunchDigest({ pending_digest, chosen_digest, definitions 
 export function selectCommandPrefill(scope: OperatorScopeView, command: OperatorCommandDefinition): OperatorCommandPrefill {
   return scope.command_prefill[command.key] ?? {};
 }
+
+/** Prefilled fields the scope has not observed yet; the command waits for them rather than asking the operator. */
+export function selectPendingEvidence(scope: OperatorScopeView, command: OperatorCommandDefinition): readonly string[] {
+  const prefill = selectCommandPrefill(scope, command);
+  return (command.prefill ?? []).map((entry) => entry.key).filter((key) => !(key in prefill));
+}

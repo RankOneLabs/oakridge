@@ -14,7 +14,7 @@ const noteSchemas = (min_length: number) => [
 const noteCommand = { key: "act", label: "Act", consequence: "Go", payload_schema: "payload",
   field_presentation: [], targets: [] } as unknown as OperatorCommandDefinition;
 const noteScope = (scope_version: number) => ({ run_id: "run-one", scope_id: "scope-one", commands: [noteCommand], outputs: [],
-  cursor: { scope_version, transition_id: null }, command_targets: { act: [] }, command_prefill: {} }) as unknown as OperatorScopeView;
+  cursor: { scope_version, transition_id: null }, command_targets: { act: [] }, command_prefill: {}, resources: [] }) as unknown as OperatorScopeView;
 
 test("a required string that admits an empty value submits as the empty string", async () => {
   const fetch = vi.fn(async (_url: string, _init?: RequestInit) =>
@@ -45,7 +45,7 @@ function versionedRun(initial: number, onCommand: () => Response = () => Respons
     if (url.endsWith("/definition")) return Response.json({ source: { root: "root", schemas: noteSchemas(0) } });
     if (url.endsWith("/history")) return Response.json({ transitions: [], facts: [] });
     return Response.json({ scope_id: "scope-one", run_id: "run-one", label: "Root", state: { schema: "text", data: { kind: "string", value: "s" } },
-      outcome: null, outputs: [], executions: [], commands: [noteCommand], command_targets: { act: [] }, command_prefill: {}, cursor: { scope_version: state.version } });
+      outcome: null, outputs: [], executions: [], commands: [noteCommand], command_targets: { act: [] }, command_prefill: {}, resources: [], cursor: { scope_version: state.version } });
   });
   vi.stubGlobal("fetch", fetch);
   return { state, fetch };
