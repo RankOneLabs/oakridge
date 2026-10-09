@@ -5,7 +5,7 @@ import { observationRootKey } from "../src/core-client/observation-roots";
 import { readSnapshot, type AuthoritySnapshot } from "../src/storage/snapshot-reader";
 import { stagePublications } from "../src/storage/stage-publications";
 import { commitDecision, measureAuthoritySnapshot } from "../src/storage/commit";
-import type { OutputPublication } from "../src/storage/commit";
+import type { CommitRequest, OutputPublication } from "../src/storage/commit";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
 import type { RunId, ScopeId } from "../src/storage/schema-records";
 import { build_body, developmentBundle, brief, repository, runtimeFixture } from "./development-runtime-fixture";
@@ -95,6 +95,31 @@ test("write-boundary measurement uses the roots sent for a scope with workers, c
     decision: { kind: "wait", reason: "pause", continuations: [], explanation: { bundle_digest: "digest", node_id: "n",
       owner: "owner", read_set: [], trace: [], trigger_id: "trigger" } }, outputs: [], capacity: [], effects: [] }, sent);
   expect(result.ok && result.value.kind).toBe("Committed");
+}));
+
+test("a wait decision carrying a staged output still commits the revision and moves the pointer", async () => withDatabase(async ({ db }) => {
+  await db.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ('bundle','digest',$1,$2)",
+    [JSON.stringify({ limits: { max_depth: 64, max_list_items: 100 }, schemas: [{ key: "unit", shape: { kind: "record", fields: [], dictionary: null } }],
+      scopes: [{ key: "root", tree: { kind: "wait", reason: "storage fixture" }, commands: [], state_schema: "unit", outcome_schema: "unit",
+        children: [], exports: [], resources: [], workers: [], pools: [], outputs: [{ key: "report", schema: "unit", producers: [], publication_trigger: "start" }] }] }),
+    JSON.stringify({ digest: "digest", scopes: [{ key: "root", reads: [] }] })]);
+  await db.query("INSERT INTO authority.run (id,definition_bundle_id) VALUES ('run','bundle')", []);
+  await db.query("INSERT INTO authority.scope_instance (id,run_id,scope_key,input,local_state) VALUES ('scope','run','root',$1,$1)", [JSON.stringify(unit)]);
+  const trigger = { id: "t", key: "start", payload: unit };
+  const source = (await readSnapshot(db, "scope" as ScopeId, trigger))!;
+  const request: CommitRequest = {
+    identity: { run_id: "run" as RunId, scope_id: "scope" as ScopeId, ingress_id: "i", request_digest: "digest" },
+    read_set: source.read_set, operator_version: null,
+    decision: { kind: "wait", reason: "pause", continuations: [], explanation: { bundle_digest: "digest", node_id: "n",
+      owner: "scope", read_set: [], trace: [], trigger_id: "t" } },
+    outputs: [{ scope_id: "scope" as ScopeId, output_key: "report", collection_key: "", body: unit, predecessor_id: null, expected_slot_version: null, execution_id: null }],
+    capacity: [], effects: [],
+  };
+  const result = await commitDecision(db, request, source);
+  expect(result.ok && result.value.kind).toBe("Committed");
+  const slots = await db.query<{ current_revision_id: string | null }>(
+    "SELECT current_revision_id FROM authority.output_slot WHERE scope_id='scope' AND output_key='report'", []);
+  expect(slots[0]?.current_revision_id).toBeTruthy();
 }));
 
 test("revision-only collection publication preserves current members in key order", async () => withDatabase(async ({ db }) => {
