@@ -557,6 +557,7 @@ export interface Transition {
   /** @type {DecisionOutcome} */
   decision: DecisionOutcome;
   created_at: Date;
+  commit_txid: number;
   version: number;
 }
 export interface TransitionInput {
@@ -567,11 +568,12 @@ export interface TransitionInput {
   /** @type {DecisionOutcome} */
   decision: DecisionOutcome;
   created_at?: Date;
+  commit_txid?: number;
   version?: number;
 }
 const transition = {
   tableName: 'transition',
-  columns: ['id', 'run_id', 'scope_id', 'trigger_id', 'decision', 'created_at', 'version'],
+  columns: ['id', 'run_id', 'scope_id', 'trigger_id', 'decision', 'created_at', 'commit_txid', 'version'],
   requiredForInsert: ['id', 'run_id', 'scope_id', 'trigger_id', 'decision'],
   primaryKey: 'id',
   foreignKeys: {},

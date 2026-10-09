@@ -88,14 +88,20 @@ export async function listProjects(db: TransactionalSqlExecutor): Promise<readon
   return db.query<ProjectRecord>("SELECT * FROM authority.project ORDER BY name,id", []);
 }
 
-/** Transitions committed after the cursor, oldest first, with their scope's current terminal flag. */
+/**
+ * Transitions after the cursor in writing-transaction order, limited to
+ * transactions older than every one still open: those are all committed or
+ * gone, so no later commit can land behind the cursor.
+ */
 export async function readTransitionsAfter(db: TransactionalSqlExecutor, after: RunEventCursor, limit: number): Promise<readonly TransitionEventRow[]> {
-  return db.query<TransitionEventRow>(`SELECT t.id,t.run_id,t.scope_id,s.scope_key,t.decision,s.is_terminal,to_json(t.created_at)#>>'{}' AS created_at
+  return db.query<TransitionEventRow>(`SELECT t.id,t.run_id,t.scope_id,s.scope_key,t.decision,t.commit_txid::text AS commit_txid,to_json(t.created_at)#>>'{}' AS created_at
     FROM authority.transition t JOIN authority.scope_instance s ON s.id=t.scope_id
-    WHERE (t.created_at,t.id)>($1::timestamptz,$2::text) ORDER BY t.created_at,t.id LIMIT $3`, [after.created_at, after.id, limit]);
+    WHERE (t.commit_txid,t.id)>($1::bigint,$2::text) AND t.commit_txid<pg_snapshot_xmin(pg_current_snapshot())::text::bigint
+    ORDER BY t.commit_txid,t.id LIMIT $3`, [after.commit_txid, after.id, limit]);
 }
-/** The newest transition, so a fresh subscriber starts from now rather than replaying history. */
+/** The oldest open transaction, so a fresh subscriber starts from now rather than replaying history. */
 export async function readLatestEventCursor(db: TransactionalSqlExecutor): Promise<RunEventCursor> {
-  const row = (await db.query<{ id: string; created_at: Date }>("SELECT id,created_at FROM authority.transition ORDER BY created_at DESC,id DESC LIMIT 1", []))[0];
-  return row ? { created_at: new Date(row.created_at).toISOString(), id: row.id } : { created_at: new Date(0).toISOString(), id: "" };
+  const row = (await db.query<{ commit_txid: string }>("SELECT pg_snapshot_xmin(pg_current_snapshot())::text AS commit_txid", []))[0];
+  if (!row) throw new Error("current snapshot unavailable");
+  return { commit_txid: row.commit_txid, id: "" };
 }

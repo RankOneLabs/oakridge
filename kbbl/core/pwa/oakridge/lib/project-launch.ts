@@ -10,7 +10,8 @@ type Draftable = string | null | readonly Draftable[] | { readonly [key: string]
  * one of its facts: paths and workdirs get the repo directory, forge owner and
  * name come from the project's repository, base branches from its integration
  * branch, and a session is named after the project and its role. A string the
- * project cannot answer (the spec) is left for the operator.
+ * project cannot answer (the spec, or a branch it has not recorded) is left for
+ * the operator.
  */
 function valueFor(project: OperatorProjectView, schemas: readonly OperatorSchema[], schema_key: string, field_key: string, role: string): Draftable | undefined {
   const shape = schemas.find((schema) => schema.key === schema_key)?.shape;
@@ -32,7 +33,7 @@ function valueFor(project: OperatorProjectView, schemas: readonly OperatorSchema
       return record;
     }
     case "string": {
-      const branch = project.integration_branch ?? "main";
+      const branch = project.integration_branch ?? undefined;
       const answers: { readonly [key: string]: string | undefined } = {
         repository_path: project.repo_dir, workdir: project.repo_dir, repo_dir: project.repo_dir,
         key: project.name, owner: project.forge_repository?.owner, name: project.forge_repository?.name,

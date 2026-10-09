@@ -113,6 +113,8 @@ CREATE TABLE authority.transition (
   id text PRIMARY KEY, run_id text NOT NULL, scope_id text NOT NULL,
   trigger_id text NOT NULL, decision jsonb NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
+  -- The writing transaction; the event stream reads only transactions older than every one still open, so it never skips a late commit.
+  commit_txid bigint NOT NULL DEFAULT pg_current_xact_id()::text::bigint,
   version bigint NOT NULL DEFAULT 0 CHECK (version >= 0),
   -- One recorded transition per delivered ingress; ingress_receipt also enforces idempotency.
   UNIQUE (scope_id, trigger_id),
@@ -172,6 +174,7 @@ CREATE INDEX artifact_revision_scope_idx ON authority.artifact_revision(scope_id
 CREATE INDEX effect_intent_status_idx ON authority.effect_intent(status);
 CREATE INDEX fact_scope_idx ON authority.fact(scope_id);
 CREATE INDEX transition_scope_idx ON authority.transition(scope_id);
+CREATE INDEX transition_commit_idx ON authority.transition(commit_txid, id);
 CREATE INDEX execution_selection_execution_idx ON authority.execution_selection(execution_id);
 
 -- Saved repositories an operator launches runs against. A run carries its

@@ -9,9 +9,9 @@ const encodeEventCursor = (cursor: RunEventCursor): string => Buffer.from(JSON.s
 function decodeEventCursor(raw: string): RunEventCursor | null {
   try {
     const value: unknown = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
-    if (!value || typeof value !== "object" || !("created_at" in value) || typeof value.created_at !== "string"
-      || !Number.isFinite(Date.parse(value.created_at)) || !("id" in value) || typeof value.id !== "string" || !value.id) return null;
-    return { created_at: value.created_at, id: value.id };
+    if (!value || typeof value !== "object" || !("commit_txid" in value) || typeof value.commit_txid !== "string"
+      || !/^\d{1,20}$/.test(value.commit_txid) || !("id" in value) || typeof value.id !== "string" || !value.id) return null;
+    return { commit_txid: value.commit_txid, id: value.id };
   } catch { return null; }
 }
 
@@ -32,13 +32,14 @@ export function installEventStream(app: Hono, deps: { readonly db: Transactional
     let cursor: RunEventCursor | null = resume ? decodeEventCursor(resume) : null;
     if (resume && cursor === null) return c.json({ error: "malformed_request", detail: "invalid event cursor" }, 400);
     return streamSSE(c, async (stream) => {
-      await stream.write(": ready\n\n");
+      // Fix the starting point before signalling ready, so every commit after ready is delivered.
       cursor ??= await readLatestEventCursor(deps.db);
+      await stream.write(": ready\n\n");
       let last_write = Date.now();
       while (!stream.aborted && !stream.closed) {
         const rows = await readTransitionsAfter(deps.db, cursor, PAGE);
         for (const row of rows) {
-          cursor = { created_at: row.created_at, id: row.id };
+          cursor = { commit_txid: row.commit_txid, id: row.id };
           await stream.writeSSE({ event: "run_event", id: encodeEventCursor(cursor), data: JSON.stringify(selectRunEvent(row)) });
           last_write = Date.now();
         }

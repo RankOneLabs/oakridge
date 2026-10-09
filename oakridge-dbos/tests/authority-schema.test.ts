@@ -19,7 +19,7 @@ test("baseline creates constrained authority relations and accepts a matching se
     const tables = await db.query<{ table_name: string }>("SELECT table_name FROM information_schema.tables WHERE table_schema='authority' ORDER BY table_name", []);
     expect(tables.map((row) => row.table_name)).toEqual(["artifact_revision", "capacity_pool", "capacity_reservation", "child_collection", "definition_bundle", "effect_intent", "execution", "execution_selection", "fact", "ingress_receipt", "launch_receipt", "output_slot", "project", "prompt_content", "resource_binding", "run", "schema_baseline", "scope_export", "scope_instance", "transition"]);
     const indexes = await db.query<{ indexname: string }>("SELECT indexname FROM pg_indexes WHERE schemaname='authority'", []);
-    for (const name of ["artifact_revision_scope_idx", "effect_intent_status_idx", "fact_scope_idx", "transition_scope_idx", "execution_selection_execution_idx", "transition_scope_created_idx", "fact_scope_key_idx"])
+    for (const name of ["artifact_revision_scope_idx", "effect_intent_status_idx", "fact_scope_idx", "transition_scope_idx", "execution_selection_execution_idx", "transition_scope_created_idx", "transition_commit_idx", "fact_scope_key_idx"])
       expect(indexes.some((row) => row.indexname === name)).toBe(true);
     const constraints = await db.query<{ table_name: string; type: string; definition: string }>(`SELECT c.conrelid::regclass::text AS table_name,c.contype AS type,pg_get_constraintdef(c.oid) AS definition
       FROM pg_constraint c WHERE c.connamespace='authority'::regnamespace`, []);

@@ -29,6 +29,11 @@ test("a project without a forge repository leaves the repositories for the opera
   expect(drafts.planning).toBeDefined();
 });
 
+test("a project without an integration branch leaves the repositories for the operator", () => {
+  const drafts = selectProjectLaunchDrafts({ ...project, integration_branch: null }, fields, bundle.schemas);
+  expect(drafts.repositories).toBeUndefined();
+});
+
 test("blank optional project fields are stored as absent", () => {
   expect(selectProjectDraft({ name: " scout ", repo_dir: "/r", owner: "", repository: "scout", integration_branch: " " }))
     .toEqual({ name: "scout", repo_dir: "/r", forge_repository: null, integration_branch: null });

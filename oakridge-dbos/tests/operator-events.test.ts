@@ -39,9 +39,13 @@ test("the event stream delivers transitions committed after subscribing and resu
     await f.fact("begin");
     const [first] = await readFrames(live, 1);
     expect(first!.event).toMatchObject({ run_id: f.run_id, scope_id: f.root_scope_id, scope_key: "implementation", decision: "apply", is_terminal: false });
+    const fresh = await app.request("/events");
+    await Bun.sleep(50); // subscribed after `begin` committed, so it must not replay it
     await f.command("cancel");
+    const [cancelled] = await readFrames(fresh, 1);
+    expect(cancelled!.event).toMatchObject({ run_id: f.run_id, decision: "apply", is_terminal: true });
     const resumed = await readFrames(await app.request("/events", { headers: { "last-event-id": first!.id } }), 1);
-    expect(resumed[0]!.event).toMatchObject({ run_id: f.run_id, decision: "apply", is_terminal: true });
+    expect(resumed[0]!.event.transition_id).toBe(cancelled!.event.transition_id);
     expect((await app.request("/events", { headers: { "last-event-id": "not-a-cursor" } })).status).toBe(400);
   } finally { f.core.close(); }
 }));

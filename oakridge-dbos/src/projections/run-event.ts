@@ -14,14 +14,16 @@ export interface RunEvent {
   /** ISO-8601, as the transition log recorded it. */
   readonly occurred_at: string;
 }
-/** Resume position in the transition log: the last delivered transition. */
-export interface RunEventCursor { readonly created_at: string; readonly id: string }
+/** Resume position in the transition log: the last delivered transition, by writing transaction then id. */
+export interface RunEventCursor { readonly commit_txid: string; readonly id: string }
 
 export interface TransitionEventRow {
   readonly id: string; readonly run_id: RunId; readonly scope_id: ScopeId; readonly scope_key: string;
-  readonly decision: DecisionOutcome; readonly is_terminal: boolean; readonly created_at: string;
+  readonly decision: DecisionOutcome; readonly commit_txid: string; readonly created_at: string;
 }
 export function selectRunEvent(row: TransitionEventRow): RunEvent {
   return { transition_id: row.id, run_id: row.run_id, scope_id: row.scope_id, scope_key: row.scope_key, decision: row.decision.kind,
-    attention: row.decision.kind === "wait" ? row.decision.attention ?? null : null, is_terminal: row.is_terminal, occurred_at: row.created_at };
+    attention: row.decision.kind === "wait" ? row.decision.attention ?? null : null,
+    // A transition finishes its scope exactly when it applies an outcome.
+    is_terminal: row.decision.kind === "apply" && row.decision.outcome != null, occurred_at: row.created_at };
 }
