@@ -7,7 +7,7 @@ import { findReceipt, requestDigest } from "../storage/receipts";
 import type { RunId, ScopeId } from "../storage/schema-records";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
 import { hasExecutionSecret } from "./selected-publication";
-import { publicationReceipt } from "./publication";
+import { decisionRejectedBody, publicationReceipt } from "./publication";
 
 interface EvidenceDependencies { readonly db: TransactionalSqlExecutor; readonly core: CoreClient; readonly mutations: MutationService; readonly wake: (run_id: RunId) => Promise<void> }
 interface SelectedEvidence { readonly source: DefinitionBundle; readonly scope_key: string; readonly payload: EffectPayload }
@@ -27,7 +27,7 @@ export function installSelectedEvidenceApi(app: Hono, deps: EvidenceDependencies
     const digest = requestDigest({ execution_id, key, payload: raw.payload });
     const prior = await findReceipt(deps.db, { run_id, scope_id, ingress_id: raw.request_id, request_digest: digest });
     if (prior.kind === "replay") {
-      if (prior.receipt.kind !== "committed") return c.json({ error: "decision_rejected receipt replay not yet supported" }, 500);
+      if (prior.receipt.kind === "rejected") return c.json(decisionRejectedBody(prior.receipt), 422);
       return c.json(publicationReceipt(raw.request_id, prior.receipt, null), 202);
     }
     if (prior.kind === "conflict") return c.json({ error: "request ID reused with different evidence" }, 409);
@@ -48,7 +48,7 @@ export function installSelectedEvidenceApi(app: Hono, deps: EvidenceDependencies
     if (result.value.kind === "Conflict") return c.json(result.value, 409);
     if (result.value.kind === "Rejected") return c.json(result.value, 422);
     if (result.value.kind === "snapshot_too_large") return c.json(result.value, 413);
-    if (result.value.kind === "DecisionRejected") return c.json({ error: result.value.error }, 422);
+    if (result.value.kind === "DecisionRejected") return c.json(decisionRejectedBody(result.value), 422);
     void deps.wake(c.req.param("run_id") as RunId).catch(() => undefined);
     return c.json(publicationReceipt(raw.request_id, result.value.receipt, null), 202);
   });

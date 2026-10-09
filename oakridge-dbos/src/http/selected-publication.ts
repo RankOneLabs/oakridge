@@ -7,7 +7,7 @@ import type { MutationService } from "../storage/mutation-service";
 import { requestDigest, findReceipt } from "../storage/receipts";
 import type { OutputSlotRecord, RunId, ScopeId, ScopeInstanceRecord } from "../storage/schema-records";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
-import { MAX_PUBLICATION_VALUE_BYTES, publicationReceipt, publicationRevisionId, publicationValueBytes } from "./publication";
+import { decisionRejectedBody, MAX_PUBLICATION_VALUE_BYTES, publicationReceipt, publicationRevisionId, publicationValueBytes } from "./publication";
 import { CORE_MAX_FRAME_BYTES } from "../core-client/generated-contracts";
 import { readScopeView } from "../storage/projection-reader";
 import { measureAuthoritySnapshot } from "../effects/operations/selected-publication-contract";
@@ -86,7 +86,7 @@ export function installSelectedPublicationApi(app: Hono, deps: PublicationDepend
     const digest = requestDigest({ execution_id, output_key, body });
     const prior = await findReceipt(deps.db, { run_id, scope_id, ingress_id: body.request_id, request_digest: digest });
     if (prior.kind === "replay") {
-      if (prior.receipt.kind !== "committed") return c.json({ error: "decision_rejected receipt replay not yet supported" }, 500);
+      if (prior.receipt.kind === "rejected") return c.json(decisionRejectedBody(prior.receipt), 422);
       return c.json(publicationReceipt(body.request_id, prior.receipt, revision_id), 200);
     }
     if (prior.kind === "conflict") return c.json({ error: "request ID reused with different publication content" }, 409);
@@ -120,7 +120,7 @@ export function installSelectedPublicationApi(app: Hono, deps: PublicationDepend
     if (result.value.kind === "Conflict") return c.json(result.value, 409);
     if (result.value.kind === "Rejected") return c.json(result.value, 422);
     if (result.value.kind === "snapshot_too_large") return c.json(result.value, 413);
-    if (result.value.kind === "DecisionRejected") return c.json({ error: result.value.error }, 422);
+    if (result.value.kind === "DecisionRejected") return c.json(decisionRejectedBody(result.value), 422);
     void deps.wake(c.req.param("run_id") as RunId).catch(() => undefined);
     return c.json(publicationReceipt(body.request_id, result.value.receipt, revision_id), result.value.kind === "Committed" ? 201 : 200);
   });
