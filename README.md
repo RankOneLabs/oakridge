@@ -1,121 +1,92 @@
 # oakridge
 
-Oakridge is a workflow-first orchestration system for agent-driven software
-work. DBOS owns durable execution, recovery, fan-out/fan-in, and waits;
-Oakridge owns workflow definitions, stages, artifact contracts, review policy,
-executor adapters, and operator projections. kbbl provides the operator PWA and
-the current interactive Claude Code executor.
+Oakridge runs pinned scope definitions for agent-driven software work. The
+Rust `workflow-core/` library compiles and evaluates definitions without
+external IO. `oakridge-dbos/` owns durable command and publication ingress,
+mutation receipts, effect dispatch, recovery and read projections. DBOS
+persists the workflow runtime. `kbbl/` provides the operator PWA and ACP
+session adapter; its separate SQLite ledger owns only local sessions, turns
+and process observations.
 
 ## Layout
 
-```text
-oakridge/
-├── oakridge-dbos/         # TypeScript domain backend and DBOS workflows
-├── kbbl/                  # operator PWA and interactive agent sessions
-├── workflow-config/       # versioned workflow definitions and shared prompts
-├── legit-biz-club/        # future headless-agent integration surface
-├── lbc-dashboard/         # read-only legit-biz-club study dashboard
-├── docs/                  # operator documentation
-└── comms/                 # design records and archived specifications
-```
+- `workflow-core/` — Rust model, compiler, evaluator and CLI.
+- `oakridge-dbos/` — TypeScript durable scope authority and HTTP API.
+- `workflow-config/` — example bundles and prompts.
+- `kbbl/` — operator PWA and interactive ACP sessions.
+- `legit-biz-club/` — independent workspace collaboration library.
+- `lbc-dashboard/` — read-only dashboard for the workspace library.
 
-`StageInstance` is deliberately execution-agnostic: it starts and finishes.
-Executors are adapters beneath DBOS workflows. The current adapter uses kbbl;
-the boundary also permits a future headless legit-biz-club adapter without
-changing workflow or stage semantics.
-
-## Quick start
-
-Prerequisites: Bun, Git, and either Docker or an existing PostgreSQL database.
-
-```bash
-bun install
-bun run oakridge
-```
-
-Open <http://127.0.0.1:8788/#oakridge>. The command:
-
-1. creates or starts a persistent `oakridge-postgres` container when
-   `DBOS_SYSTEM_DATABASE_URL` is unset;
-2. applies Oakridge domain migrations;
-3. starts the DBOS backend on `127.0.0.1:8790`;
-4. rebuilds and starts kbbl on `127.0.0.1:8788`; and
-5. stops DBOS and kbbl together on Ctrl-C.
-
-The PostgreSQL container and `oakridge-postgres-data` volume remain running and
-persistent across application restarts. The bundled `dev-flow v14` definition
-is seeded automatically.
-
-To use an existing PostgreSQL database instead of managed Docker:
-
-```bash
-export DBOS_SYSTEM_DATABASE_URL=postgres://user:password@127.0.0.1:5432/oakridge
-bun run oakridge
-```
-
-`DBOS_APPLICATION_VERSION` defaults to the current Git commit. Override it only
-when deliberately operating DBOS application-version routing. Do not reuse a
-version after changing durable workflow operation order.
-
-### Remote operator access
-
-The browser only needs kbbl. Keep DBOS on loopback and expose kbbl on a trusted
-LAN or tailnet:
-
-```bash
-export OAKRIDGE_CONTROL_TOKEN="$(openssl rand -hex 32)"
-bun run oakridge -- --host=0.0.0.0
-```
-
-Open `http://<machine-ip-or-tailnet-name>:8788/#oakridge`. For a temporary
-unauthenticated development bind on a trusted network only:
-
-```bash
-ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1 bun run oakridge -- --host=0.0.0.0
-```
-
-### Separate services
-
-For debugging, first start PostgreSQL and apply migrations, then run:
-
-```bash
-# Terminal 1 — DBOS backend
-cd oakridge-dbos
-export DBOS_SYSTEM_DATABASE_URL=postgres://oakridge:oakridge@127.0.0.1:54329/oakridge
-export DBOS_APPLICATION_VERSION="$(git rev-parse HEAD)"
-export KBBL_BASE_URL=http://127.0.0.1:8788
-export OAKRIDGE_DBOS_HOST=127.0.0.1
-export PORT=8790
-bun run migrate
-bun run start
-
-# Terminal 2 — kbbl and the PWA
-OAKRIDGE_CORE_BASE_URL=http://127.0.0.1:8790 ./kbbl/scripts/kbbl-start
-```
-
-`OAKRIDGE_CORE_BASE_URL` is a retained kbbl configuration name; its upstream is
-now the DBOS backend, not the retired Rust service.
+Workflow names, stages, commands and review paths come from the pinned bundle.
+The interpreter has no workflow-specific branch. A successful command or
+publication response includes a durable receipt; an unsupported legacy
+workspace event returns an explicit failure.
 
 ## Development
 
 ```bash
-bun install
+bun install --frozen-lockfile
+cargo build --locked --manifest-path workflow-core/Cargo.toml -p workflow-cli
+bash scripts/generate-core-contracts.sh --check
+bash scripts/generate-bundles.sh --check
 bun run typecheck
-cd oakridge-dbos && bun test
-cd ../kbbl && bun run test:all
+bun run --filter kbbl test
+bun run --filter kbbl test:pwa
+bun run --filter oakridge-dbos test:unit
 ```
 
-See [the v2 operator runbook](docs/oakridge-v2-runbook.md) for lifecycle,
-upgrade, recovery, and troubleshooting details. The DBOS replacement decisions
-are recorded in [the backend replacement spec](comms/oakridge-dbos-backend-replacement-spec.md).
+The DBOS integration suite requires `OAKRIDGE_TEST_DATABASE_URL` pointing to a
+PostgreSQL 15+ instance with permission to create and drop test databases. Run
+`bun run --filter oakridge-dbos test:integration` after building the Rust CLI.
+It boots the production composition against fresh databases and drives the
+shipped bundles through provider operations. The real-agent ACP smoke
+test requires `KBBL_ACP_REAL_AGENT` and is reported as skipped by the normal
+kbbl test command when no real agent is configured.
 
-## Agent-context files
+For local startup, run `./scripts/oakridge-start` from the repository root. It
+rebuilds the Rust CLI (a no-op when it is current; it stops if cargo is
+missing, and an explicit `OAKRIDGE_CORE_BINARY` is used as given), starts PostgreSQL through Docker when
+`DBOS_SYSTEM_DATABASE_URL` is unset, applies the authority baseline, and starts
+the DBOS backend and kbbl PWA. The baseline can be applied again when its
+recorded digest matches; a changed baseline file stops startup and reports both
+digests. Startup verifies the encryption key and existing intents, registers
+the provider and workflow services, launches DBOS, resumes active runs and
+parked effects, and only then binds HTTP. Set `OAKRIDGE_PROMPT_ROOT` to the repository root when launching the
+backend separately so it can read prompt files under `workflow-config/prompts/`
+when a definition is first pinned; runs render from the stored copy.
+`OAKRIDGE_GITHUB_TOKEN` (or `GITHUB_TOKEN`) authenticates pull request
+observation. The DBOS application version defaults to a 16-character SHA-256
+digest combining the sorted `ENGINE_SOURCE_MANIFEST` source digest, the
+`0001_core_authority.sql` baseline digest and the digest of the core binary it
+spawns (see `oakridge-dbos/README.md`).
+Bundle, route, projection, prompt and UI edits do not change it; set
+`DBOS_APPLICATION_VERSION` only to pin it for a controlled fork or rollback.
 
-Per-package `CLAUDE.md` and `AGENTS.md` files are generated by
-[catagents](https://github.com/cirsteve/catagents) from `.catagents/` sources.
-Rebuild and check them with:
+Edit example bundles in `workflow-config/src/development.ts`. The three
+bundles under `workflow-config/definitions/` are generated, not committed:
+`bash scripts/generate-bundles.sh` writes them, and the test suites run it
+first. Each prompt references a file by path and SHA-256
+content digest; see `workflow-config/README.md` for the exact byte rule.
 
-```bash
-catagents
-catagents --check
-```
+Each selected action has a pinned `deadline_ms` that bounds an individual
+provider call. A DBOS execution timeout also bounds the entire start and
+observation workflow; an expired parked effect is settled as rejected on
+recovery. A clean stop parks workflows for the next boot. Infrastructure
+errors in the run loop fork a successor from the failed step; periodic
+rollover preserves its scan cursor and run generation. Provider failures
+become declared evidence and follow the pinned bundle's failure policy.
+
+## Database cutover
+
+1. Stop the Oakridge service.
+2. Run `pg_dump` to a file nothing in this repository reads.
+3. Drop and recreate the Oakridge database empty.
+4. Deploy the new stack: Rust CLI, DBOS backend and kbbl PWA.
+5. Admit traffic after the new stack is healthy.
+
+The kbbl SQLite ACP ledger is separate and remains in place.
+
+## Agent context
+
+Per-package `CLAUDE.md` and `AGENTS.md` files are generated from `.catagents/`
+sources. Rebuild them with `catagents` when that tool is available.

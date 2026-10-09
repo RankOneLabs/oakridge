@@ -19,7 +19,7 @@ import { mountSessionsRoutes } from "./handlers/sessions";
 import { mountDirectoriesRoutes } from "./handlers/directories";
 import { mountWorkspaceEventsRoutes } from "./handlers/workspace-events";
 import { mountSkillsRoutes } from "../skills/routes";
-import { mountOakridgeProxyRoutes } from "./handlers/oakridge-proxy";
+import { mountOakridgeProxyRoutes, parseFallbackRefreshMs } from "./handlers/oakridge-proxy";
 import { mountLiveStreamRoutes } from "./handlers/live-stream";
 import {
   isRuntimeId,
@@ -223,10 +223,8 @@ export function createApp(deps: CreateAppDeps): Hono {
 
   // ---- workspace-layer event ingest ----
   //
-  // POST /inbox/workspace-events accepts (validates + acknowledges)
-  // project lifecycle and coordination events from legit-biz-club. See
-  // handlers/workspace-events.ts for why the event itself is discarded
-  // rather than forwarded.
+  // Legacy project events have no durable ingress identity and are rejected
+  // explicitly by the handler.
   mountWorkspaceEventsRoutes(app);
 
   // ---- projects CRUD ----
@@ -234,7 +232,7 @@ export function createApp(deps: CreateAppDeps): Hono {
 
   // ---- Oakridge backend proxy ----
   //
-  // GET /oakridge/config → { available: boolean } (PWA availability check)
+  // GET /oakridge/config → { available, core_url, fallback_refresh_ms? } (PWA availability check)
   // ALL /oakridge/api/* → proxied to OAKRIDGE_CORE_BASE_URL (same-origin CORS avoidance)
   // Write requests are validated against kbbl auth (via the global middleware
   // above) before reaching this handler; the handler then injects the retained
@@ -242,6 +240,8 @@ export function createApp(deps: CreateAppDeps): Hono {
   mountOakridgeProxyRoutes(app, {
     baseUrl: process.env.OAKRIDGE_CORE_BASE_URL,
     coreControlToken,
+    browserControlToken: authPolicy.mode === "token" ? authPolicy.token : undefined,
+    fallbackRefreshMs: parseFallbackRefreshMs(process.env.OAKRIDGE_FALLBACK_REFRESH_MS),
   });
 
   // ---- /inbox (always-on snapshot stream over the ACP session list) ----

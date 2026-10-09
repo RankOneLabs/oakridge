@@ -1,4 +1,7 @@
 import type { MiddlewareHandler } from "hono";
+import { createHash, timingSafeEqual } from "node:crypto";
+import { matchRoute } from "./routes";
+import type { BrowserWritePolicy } from "./browser-write-policy";
 
 /**
  * The control plane's bind policy, decided once at startup.
@@ -39,16 +42,40 @@ export const selectControlPlaneAccess = (input: ControlPlaneAccessInput): Contro
   };
 };
 
-/**
- * Reads are left open: they carry no authority, the dashboard polls them
- * constantly, and the event stream cannot send an Authorization header from
- * `EventSource`. Everything that changes state requires the Bearer token.
- */
-export const requiresControlToken = (method: string): boolean => method !== "GET" && method !== "HEAD" && method !== "OPTIONS";
+export const requiresControlToken = (method: string, path = "/runs"): boolean =>
+  matchRoute(method, path)?.authority === "operator";
 
-export const controlTokenMiddleware = (token: string): MiddlewareHandler => async (context, next) => {
-  if (!requiresControlToken(context.req.method)) return next();
-  const header = context.req.header("authorization");
-  if (header !== `Bearer ${token}`) return context.json({ error: "unauthorized" }, 401);
+function equalToken(header: string | undefined, token: string): boolean {
+  const supplied = createHash("sha256").update(header ?? "").digest();
+  const expected = createHash("sha256").update(`Bearer ${token}`).digest();
+  return timingSafeEqual(supplied, expected);
+}
+export const isValidControlToken = equalToken;
+
+function controlCookie(header: string | null): string | null {
+  for (const part of (header ?? "").split(";")) {
+    const [name, ...value] = part.trim().split("=");
+    if (name === "kbbl_ctrl") return value.join("=");
+  }
+  return null;
+}
+
+/** The backend and proxy accept the same token, whether carried by Bearer or the PWA's control cookie. */
+export function isValidControlRequest(request: Pick<Request, "method" | "headers">, token: string,
+  policy: BrowserWritePolicy = { allowed_origins: new Set() }): boolean {
+  const authorization = request.headers.get("authorization");
+  if (authorization !== null) return equalToken(authorization, token);
+  const cookie = controlCookie(request.headers.get("cookie"));
+  if (cookie === null || !equalToken(`Bearer ${cookie}`, token)) return false;
+  if (request.method === "GET" || request.method === "HEAD") return true;
+  const origin = request.headers.get("origin") ?? request.headers.get("referer");
+  if (!origin) return false;
+  try { return policy.allowed_origins.has(new URL(origin).origin); }
+  catch { return false; }
+}
+
+export const controlTokenMiddleware = (token: string, policy?: BrowserWritePolicy): MiddlewareHandler => async (context, next) => {
+  if (!requiresControlToken(context.req.method, context.req.path)) return next();
+  if (!isValidControlRequest(context.req.raw, token, policy)) return context.json({ error: "unauthorized" }, 401);
   return next();
 };

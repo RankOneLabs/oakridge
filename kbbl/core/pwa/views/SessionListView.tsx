@@ -24,8 +24,8 @@ import { useUrlPrefill } from "../hooks/useUrlPrefill";
 import { useRun } from "../oakridge/hooks/useRun";
 import { useRuns } from "../oakridge/hooks/useRuns";
 import {
-  selectSessionRunTitle,
-  selectSessionStageName,
+  selectSessionRunLabel,
+  selectSessionScopeLabel,
 } from "../lib/session";
 
 interface StartSessionBody {
@@ -84,15 +84,15 @@ function SessionRunSection({
       data-testid={`session-run-${run.runId}`}
     >
       <h2 className="session-cohort-heading session-cohort-heading--plain">
-        {title ?? "Run"}
+        {title ?? run.runId}
       </h2>
       {run.groups.map((group) => (
         <section key={group.key} className="session-cohort-group">
           <SessionCohortHeading
             title={group.kind === "cohort"
               ? group.title
-              : selectSessionStageName(group.stageInstanceId, runQuery.data) ?? "Stage"}
-            secondaryId={group.kind === "cohort" ? group.unitId : undefined}
+              : selectSessionScopeLabel(group.stageInstanceId, runQuery.data) ?? "Stage"}
+            secondaryId={group.kind === "cohort" ? group.cohortId : undefined}
             repositoryKey={group.repositoryKey}
           />
           <SessionRowList
@@ -146,7 +146,7 @@ export function SessionListView({
     ),
     [orderingTick, sessions],
   );
-  const runsQuery = useRuns("all", grouping.runs.length > 0);
+  const runsQuery = useRuns(grouping.runs.length > 0);
   const totalCount = sessions.size;
 
   const startMutation = useMutation({
@@ -258,7 +258,7 @@ export function SessionListView({
             <SessionRunSection
               key={run.runId}
               run={run}
-              title={selectSessionRunTitle(run.runId, runsQuery.data ?? [])}
+              title={selectSessionRunLabel(run.runId, runsQuery.data ?? [])}
               onSelect={onSelect}
               onResume={(sid) => void startSession(undefined, sid)}
               resumeDisabled={startMutation.isPending}

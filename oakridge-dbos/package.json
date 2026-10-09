@@ -4,10 +4,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "migrate": "bun run src/migrate.ts",
     "start": "bun run src/main.ts",
-    "test": "bun test",
-    "typecheck": "bunx tsc --noEmit -p tsconfig.json"
+    "ops": "bun run src/ops.ts",
+    "test": "bun run test:unit",
+    "test:unit": "bash tests/run-suite.sh unit",
+    "test:integration": "bash tests/run-suite.sh integration",
+    "typecheck": "bunx tsc --noEmit -p tsconfig.json",
+    "generate:records": "bun scripts/generate-storage-records.ts"
   },
   "dependencies": {
     "@dbos-inc/dbos-sdk": "4.25.14",
@@ -16,8 +19,10 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@agentclientprotocol/sdk": "1.4.0",
     "@types/bun": "^1.3.13",
     "@types/pg": "^8.15.5",
+    "pg-to-ts": "^4.1.1",
     "typescript": "^5.7.2"
   }
 }

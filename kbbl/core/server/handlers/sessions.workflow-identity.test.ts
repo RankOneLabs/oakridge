@@ -55,6 +55,7 @@ const WORKFLOW = {
   workflow_run_id: "run-1",
   stage_instance_id: "stage-1",
   unit_id: "cohort-a",
+  cohort_id: null,
   operator_role: "build",
   cohort_title: "Targets spec contract",
   repository_key: "pipefitter",
@@ -91,6 +92,7 @@ describe("PUT /sessions/resumable/:key workflow member", () => {
       runId: "run-1",
       stageInstanceId: "stage-1",
       unitId: "cohort-a",
+      cohortId: null,
       operatorRole: "build",
       cohortTitle: "Targets spec contract",
       repositoryKey: "pipefitter",
@@ -160,7 +162,7 @@ describe("parseWorkflowIdentity", () => {
     });
     expect(result).toEqual({
       value: {
-        workflow_run_id: "run-1", stage_instance_id: "stage-1", unit_id: "unit-1",
+        workflow_run_id: "run-1", stage_instance_id: "stage-1", unit_id: "unit-1", cohort_id: null,
         operator_role: null, cohort_title: null, repository_key: null,
       },
     });

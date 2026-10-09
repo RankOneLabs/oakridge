@@ -5,21 +5,120 @@ import { stat } from "node:fs/promises";
 import { MAX_ARTIFACT_ID_LENGTH, type ArtifactId } from "../../session/types";
 import type { SessionManager } from "../../session/session-manager";
 import type { AcpSessionService } from "../../acp/session-service";
-import type { AcpError, AcpSessionStartSpec, AcpSessionWorkflowIdentity } from "../../acp/types";
-import {
-  toLegacySnapshot,
-  toLegacyStatus,
-  toTerminalBody,
-} from "../../acp/legacy-wire";
+import type { AcpError, AcpSessionSnapshot, AcpSessionStartSpec, AcpSessionStatus, AcpSessionWorkflowIdentity, TerminalObservation } from "../../acp/types";
 import {
   archivedLegacyToPwaSnapshot,
   toPwaSessionSnapshot,
 } from "../../acp/pwa-wire";
 import { compareSessionsByActivity } from "../../acp/pwa-session-order";
+import type { ResumableEndReason, ResumableEnsureRequest, ResumableEnsureResponse, ResumablePendingBody, ResumableSessionSnapshot, ResumableSessionStatus, ResumableTerminalBody, ResumableWorkflowIdentity } from "../../acp/resumable-wire";
 import { buildResumeContext } from "../../acp/resume-context";
 import { listPwaSessions } from "./acp-inbox";
 import { isValidSid } from "./acp-per-sid";
 import { findSessionHold, isTruthyFlag, selectCloseAuthority, selectCloseRefusal } from "../session-hold";
+
+// HTTP response projections for the resumable ACP session API (acp/resumable-wire.ts).
+function toLegacyStatus(status: AcpSessionStatus): ResumableSessionStatus {
+  switch (status) {
+    case "provisioning":
+      return "starting";
+    case "idle":
+    case "prompting":
+    // An unknown session's turn outcome is uncertain, but the session
+    // itself is still attached — reporting "ended" would make DBOS read
+    // a missing exit code as failure before observation says so.
+    case "unknown":
+      return "live";
+    case "ended":
+    case "fenced":
+    case "failed":
+      return "ended";
+  }
+}
+
+/**
+ * Legacy endReason vocabulary. DBOS branches on exactly one value —
+ * "user_closed" means cancelled — and the ensure parser additionally
+ * tolerates subprocess_exited/compacted. Fences and operator closes both
+ * project to user_closed; failures to subprocess_exited.
+ */
+function toLegacyEndReason(
+  status: AcpSessionStatus,
+  endReason: string | null,
+): ResumableEndReason | null {
+  if (status === "fenced") return "user_closed";
+  if (status === "ended") return "user_closed";
+  if (status === "failed") return "subprocess_exited";
+  return endReason === "user_closed" ? "user_closed" : null;
+}
+
+/**
+ * The legacy snapshot shape built from an ACP session; the PWA treats the
+ * pinned-empty fields as "feature not present".
+ */
+function toLegacySnapshot(snapshot: AcpSessionSnapshot): ResumableSessionSnapshot {
+  return {
+    sid: snapshot.sid,
+    name: snapshot.name,
+    workdir: snapshot.worktree_path,
+    status: toLegacyStatus(snapshot.status),
+    createdAt: snapshot.created_at,
+    lastActivityTs: snapshot.last_activity_at,
+    runtimeId: snapshot.agent_profile,
+    runtimeSid: snapshot.acp_session_id,
+    ccSid: null,
+    parentCcSid: null,
+    parentOakridgeSid: null,
+    artifactId: snapshot.artifact_id,
+    pendingCount: 0,
+    yoloMode: false,
+    allowedTools: [],
+    lastResultUsage: null,
+    worktreePath: snapshot.worktree_path,
+    worktreeBranch: snapshot.worktree_branch,
+    worktreeBaseRef: snapshot.worktree_base_ref,
+    projectWorkdir: snapshot.project_workdir,
+    model: snapshot.requested_model,
+    effort: snapshot.requested_effort,
+    initialObservedModel: null,
+    observedModel: null,
+    endReason: toLegacyEndReason(snapshot.status, snapshot.end_reason),
+    exitCode: null,
+    successorSid: null,
+  };
+}
+
+/**
+ * §11.2 terminal-route body for a non-pending observation. Success and
+ * failure keep the legacy `exit_code` compatibility field; failures add
+ * the structured `failure` extension so a follow-up DBOS change can
+ * surface the real ACP failure code.
+ */
+function toTerminalBody(
+  observation: Exclude<TerminalObservation, { kind: "pending" }>,
+): ResumableTerminalBody {
+  const session = toLegacySnapshot(observation.session);
+  if (observation.kind === "succeeded") {
+    return { session: { ...session, endReason: null }, exit_code: 0 };
+  }
+  // A session the operator or DBOS closed reads as cancellation, not
+  // failure — DBOS keys cancellation off endReason "user_closed".
+  const closed =
+    observation.session.status === "fenced" ||
+    observation.session.end_reason === "user_closed" ||
+    observation.session.end_reason === "fenced";
+  if (closed) {
+    return { session: { ...session, endReason: "user_closed" }, exit_code: 1 };
+  }
+  return {
+    session: { ...session, endReason: "subprocess_exited" },
+    exit_code: 1,
+    failure: {
+      code: observation.failure_code,
+      detail: observation.failure_detail,
+    },
+  };
+}
 
 /**
  * Validates a workdir string for POST /sessions and optional server startup
@@ -168,14 +267,7 @@ export function parseWorkflowIdentity(
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     return { error: "workflow must be an object" };
   }
-  const value = raw as {
-    workflow_run_id?: unknown;
-    stage_instance_id?: unknown;
-    unit_id?: unknown;
-    operator_role?: unknown;
-    cohort_title?: unknown;
-    repository_key?: unknown;
-  };
+  const value = raw as { readonly [Field in keyof ResumableWorkflowIdentity]?: unknown };
   const requiredField = (field: unknown, name: string): string | null => {
     if (typeof field !== "string" || field.trim() === "") {
       return `workflow.${name} must be a non-empty string`;
@@ -197,7 +289,7 @@ export function parseWorkflowIdentity(
     name: string,
     maxLength: number,
   ): { value: string | null } | { error: string } => {
-    if (field === undefined) return { value: null };
+    if (field === undefined || field === null) return { value: null };
     if (typeof field !== "string") return { error: `workflow.${name} must be a string` };
     const trimmed = field.trim();
     if (trimmed.length > maxLength) {
@@ -211,12 +303,15 @@ export function parseWorkflowIdentity(
   if ("error" in cohortTitle) return cohortTitle;
   const repositoryKey = optionalField(value.repository_key, "repository_key", 200);
   if ("error" in repositoryKey) return repositoryKey;
+  const cohortId = optionalField(value.cohort_id, "cohort_id", 200);
+  if ("error" in cohortId) return cohortId;
 
   return {
     value: {
       workflow_run_id: (value.workflow_run_id as string).trim(),
       stage_instance_id: (value.stage_instance_id as string).trim(),
       unit_id: (value.unit_id as string).trim(),
+      cohort_id: cohortId.value,
       operator_role: operatorRole.value,
       cohort_title: cohortTitle.value,
       repository_key: repositoryKey.value,
@@ -292,11 +387,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       return c.json({ error: "invalid json" }, 400);
     }
     if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return c.json({ error: "json body must be an object" }, 400);
-    const body = raw as {
-      initial_prompt?: unknown; workdir?: unknown; name?: unknown; artifact_id?: unknown;
-      runtime?: unknown; model?: unknown; effort?: unknown; worktree?: unknown; inherit_worktree_from?: unknown;
-      workflow?: unknown;
-    };
+    const body = raw as { readonly [Field in keyof ResumableEnsureRequest]?: unknown };
     if (typeof body.initial_prompt !== "string" || body.initial_prompt.trim() === "") return c.json({ error: "initial_prompt must be a non-empty string" }, 400);
     if (typeof body.workdir !== "string") return c.json({ error: "workdir must be a string" }, 400);
     const workdirError = await validateWorkdir(body.workdir);
@@ -309,7 +400,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
     let worktree: AcpSessionStartSpec["worktree"];
     if (body.worktree !== undefined) {
       if (typeof body.worktree !== "object" || body.worktree === null || Array.isArray(body.worktree)) return c.json({ error: "worktree must be an object" }, 400);
-      const value = body.worktree as { branch_name?: unknown; worktree_subdir?: unknown; base_ref?: unknown };
+      const value = body.worktree as { readonly [Field in keyof NonNullable<ResumableEnsureRequest["worktree"]>]?: unknown };
       if (typeof value.branch_name !== "string" || typeof value.worktree_subdir !== "string" || (value.base_ref !== undefined && typeof value.base_ref !== "string")) return c.json({ error: "worktree fields are invalid" }, 400);
       const branchErr = validateGitRefName(value.branch_name, "worktree.branch_name");
       if (branchErr) return c.json({ error: branchErr }, 400);
@@ -351,10 +442,8 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
         : toLegacyStatus(snapshot.status) === "ended"
           ? "terminal"
           : "attached";
-    return c.json(
-      { kind, session: toLegacySnapshot(snapshot) },
-      kind === "started" ? 201 : 200,
-    );
+    const response: ResumableEnsureResponse = { kind, session: toLegacySnapshot(snapshot) };
+    return c.json(response, kind === "started" ? 201 : 200);
   });
 
   // Escape hatch for a key whose session can no longer make progress
@@ -382,10 +471,8 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       return c.json(errBody, status);
     }
     if (observed.value.kind === "pending") {
-      return c.json(
-        { pending: true, session: toLegacySnapshot(observed.value.session) },
-        202,
-      );
+      const pending: ResumablePendingBody = { pending: true, session: toLegacySnapshot(observed.value.session) };
+      return c.json(pending, 202);
     }
     return c.json(toTerminalBody(observed.value));
   });

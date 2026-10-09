@@ -1,0 +1,7 @@
+Integrate the completed work for the pinned repository only. Inspect the completed PR heads and reconcile their changes into the final integration branch based on final_base. Run relevant tests, commit, and publish the final pr_summary body. Never merge a PR; the operator reviews and confirms the final accepted head.
+
+Read the pinned action input and selected publication contract below. Apply feedback before publishing a revision. Retry actions retain only explicitly named current revisions; publish only the action’s declared missing outputs. Use stable request IDs for identical retries. A successful session exit does not publish an artifact. Route remote git and PR operations through gated-review.
+
+Stage: integration
+Action: initial
+Context: Integrate accepted cohorts

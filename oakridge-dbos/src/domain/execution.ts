@@ -1,11 +1,13 @@
 import type { ArtifactId, ExecutionId, ExecutorOperationId, JsonValue, StageInstanceId, UnitId } from "./primitives";
 import type { ArtifactTypeId } from "./workflow";
+import type { CommittedSessionLaunch } from "./delegated-session";
 
-export interface ArtifactEnvelope {
+interface ArtifactEnvelope {
   readonly artifact_id: ArtifactId;
   readonly artifact_type: ArtifactTypeId;
   readonly output_name: string;
   readonly unit_id: UnitId;
+  readonly collection_key?: string | null;
   readonly body: JsonValue;
   readonly producer_execution_id?: ExecutionId;
   /**
@@ -17,7 +19,7 @@ export interface ArtifactEnvelope {
   readonly chain_id?: ArtifactId;
 }
 
-export interface OutputContract { readonly name: string; readonly artifact_type: ArtifactTypeId; readonly required: boolean }
+interface OutputContract { readonly name: string; readonly artifact_type: ArtifactTypeId; readonly required: boolean }
 export interface ExpectedArtifactContract { readonly unit_id: UnitId; readonly output_name: string; readonly artifact_type: ArtifactTypeId }
 
 export interface ExecutionRequest {
@@ -35,6 +37,8 @@ export interface ExecutionRequest {
    * declared outputs alone cannot say what is outstanding.
    */
   readonly expected_artifacts: readonly ExpectedArtifactContract[];
+  /** Present for delegated sessions; selected and pinned by its launch transition. */
+  readonly session_launch?: CommittedSessionLaunch;
   readonly workspace_source?: { readonly execution_id: ExecutionId; readonly external_reference: ExternalExecutionReference };
 }
 
@@ -71,6 +75,12 @@ export type ExecutorObservationAttempt =
   | { readonly kind: "pending" }
   | { readonly kind: "terminal"; readonly observation: ExecutorTerminalObservation };
 
+export interface ExecutorUnavailable {
+  readonly kind: "executor_unavailable";
+  readonly operation: "start_or_attach" | "observe_terminal" | "cancel_or_fence";
+  readonly detail: string;
+}
+
 /**
  * A start request that the executor definitively rejected before creating an
  * external execution. Transport failures stay ordinary errors because their
@@ -92,8 +102,8 @@ export class ExecutorStartRejectedError extends Error {
  */
 export interface ExecutorAdapter {
   readonly executor_type: string;
-  start_or_attach(request: ExecutionRequest, operation_id: ExecutorOperationId): Promise<ExternalExecutionReference>;
-  observe_terminal(execution_id: ExecutionId, external_reference: ExternalExecutionReference): Promise<ExecutorObservationAttempt>;
+  start_or_attach(request: ExecutionRequest, operation_id: ExecutorOperationId): Promise<ExternalExecutionReference | ExecutorUnavailable>;
+  observe_terminal(execution_id: ExecutionId, external_reference: ExternalExecutionReference): Promise<ExecutorObservationAttempt | ExecutorUnavailable>;
   deliver_input(execution_id: ExecutionId, delivery_key: string, input: string, external_reference: ExternalExecutionReference): Promise<void>;
-  cancel_or_fence(execution_id: ExecutionId, external_reference: ExternalExecutionReference): Promise<void>;
+  cancel_or_fence(execution_id: ExecutionId, external_reference: ExternalExecutionReference): Promise<void | ExecutorUnavailable>;
 }

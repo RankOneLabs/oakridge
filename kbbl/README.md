@@ -9,9 +9,8 @@ the React PWA and manages agents through ACP (Agent Client Protocol).
 Workflow orchestration runs in [oakridge-dbos](../oakridge-dbos/README.md);
 definitions and prompts live in [workflow-config](../workflow-config/README.md).
 The kbbl v1 Projects/spec/plan/brief UI, dispatcher, review API, and prompts are
-retired. V2 launch presets use the DBOS project registry through
-`/oakridge/api/projects`. The separate legacy kbbl `/projects` registry
-remains available, along with shared session and v2 review components.
+retired. The separate legacy kbbl `/projects` registry remains available,
+along with shared session and v2 review components.
 
 Existing SQLite history and migrations are retained. Retirement does not delete
 stored projects, artifacts, or sessions. Archived pre-ACP JSONL sessions remain
@@ -19,18 +18,9 @@ available for read-only viewing; they are not the current execution backend.
 
 ## Quick start
 
-From the repository root, start the complete workflow stack:
-
-```bash
-bun install
-bun run oakridge
-```
-
-Open <http://127.0.0.1:8788/#oakridge>. See the
-[v2 operator runbook](../docs/oakridge-v2-runbook.md) for PostgreSQL, upgrades,
-recovery, and workflow lifecycle.
-
-For standalone sessions without DBOS:
+For the workflow backend and operator PWA together, run
+`./scripts/oakridge-start` from the repository root. To start kbbl independently
+for direct agent sessions, run:
 
 ```bash
 ./kbbl/scripts/kbbl-start /absolute/path/to/repository
@@ -100,9 +90,6 @@ Cleanup closes or fences the executor only after its work order is completed
 (required outputs released) or abandoned. Artifact emission or the end of the
 initial turn alone is not approval and does not trigger cleanup.
 
-See the [runbook's recovery section](../docs/oakridge-v2-runbook.md#restart-and-recovery)
-before changing application versions or attempting recovery.
-
 ## API overview
 
 Current route contracts live in [sessions.ts](core/server/handlers/sessions.ts)
@@ -138,7 +125,6 @@ and [acp-per-sid.ts](core/server/handlers/acp-per-sid.ts).
 - `GET /directories?path=<absolute-path>` — directory picker.
 - `GET /:sid/handoff` — historical compaction handoff.
 - `/projects` — retained legacy kbbl project registry, not the v2 registry.
-- `/oakridge/api/projects` — DBOS project registry used by v2 launch presets.
 - `/oakridge/api/*` — same-origin DBOS proxy.
 
 Executor integration additionally uses resumable ensure, initial-turn observation,
@@ -163,6 +149,13 @@ This is not a public-internet deployment configuration.
 `OAKRIDGE_CORE_CONTROL_TOKEN` overrides the upstream token, otherwise
 `OAKRIDGE_CONTROL_TOKEN` is used. Browser authorization is stripped before
 proxying. Agent permission decisions are separate from HTTP control authentication.
+
+`OAKRIDGE_FALLBACK_REFRESH_MS` sets the operator surface's fallback refresh
+interval without a PWA rebuild; it is served from `/oakridge/config` and takes
+precedence over the bundle's `VITE_OAKRIDGE_FALLBACK_REFRESH_MS` default.
+That precedence holds only at or above the PWA's 1,000 ms minimum: the server
+accepts any positive value, but a served interval below the minimum is ignored
+by the PWA, which falls back to the bundle default and then to 30,000 ms.
 
 ## Development and layout
 

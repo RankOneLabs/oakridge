@@ -72,6 +72,7 @@ const WORKFLOW: AcpSessionWorkflowIdentity = {
   workflow_run_id: "run-1",
   stage_instance_id: "stage-1",
   unit_id: "cohort-a",
+  cohort_id: null,
   operator_role: "build",
   cohort_title: "Targets spec contract",
   repository_key: "pipefitter",
@@ -193,18 +194,21 @@ test("accepted turns with the same timestamp retain insertion order", () => {
   ]);
 });
 
-test("boot sweep fails prompting turns, retains accepted turns, and settles session statuses", () => {
+test("boot sweep recovers resumable initial turns while preserving unknown follow-ups", () => {
   const store = makeStore();
   const { row } = claim(store, "sid-1", startSpecHash(SPEC));
   // A turn that may have reached an agent before the crash…
   store.acceptTurn({
     sid: row.sid,
     turn_key: "was-prompting" as TurnKey,
-    source: "initial",
+    source: "collaboration",
     payload: "build it",
   });
   store.markTurnPrompting(row.sid, "was-prompting" as TurnKey);
   store.setStatus(row.sid, "prompting");
+  store.acceptTurn({ sid: row.sid, turn_key: "recover-initial" as TurnKey,
+    source: "initial", payload: "build it" });
+  store.markTurnPrompting(row.sid, "recover-initial" as TurnKey);
   // …and one that provably did not.
   store.acceptTurn({
     sid: row.sid,
@@ -231,13 +235,14 @@ test("boot sweep fails prompting turns, retains accepted turns, and settles sess
   const swept = store.bootSweep();
 
   expect(swept.turns_marked_unknown).toBe(1);
-  expect(swept.turns_retained_accepted).toBe(1);
+  expect(swept.turns_retained_accepted).toBe(2);
   const wasPrompting = store.getTurn(row.sid, "was-prompting" as TurnKey);
   expect(wasPrompting?.status).toBe("unknown");
   expect(wasPrompting?.failure_code).toBe("kbbl_restart");
   expect(store.getTurn(row.sid, "still-accepted" as TurnKey)?.status).toBe(
     "accepted",
   );
+  expect(store.getTurn(row.sid, "recover-initial" as TurnKey)?.status).toBe("accepted");
   expect(store.getSession(row.sid)?.status).toBe("idle");
   expect(store.getSession(provisioning.sid)?.status).toBe("failed");
   expect(store.getSession(provisioning.sid)?.end_reason).toBe("kbbl_restart");
@@ -249,6 +254,7 @@ test("listByArtifact reads back the stored workflow identity, not a raw undefine
     workflow_run_id: "run-1",
     stage_instance_id: "stage-1",
     unit_id: "cohort-a",
+    cohort_id: null,
     operator_role: "build",
     cohort_title: "Targets spec contract",
     repository_key: "pipefitter",
@@ -270,4 +276,18 @@ test("listByArtifact reads back the stored workflow identity, not a raw undefine
 
   const [row] = store.listByArtifact("artifact-1");
   expect(row?.workflow).toEqual(workflow);
+});
+
+
+test("boot recovery preserves dispatch evidence for an initial-only session", () => {
+  const store = makeStore();
+  const { row } = claim(store, "recovered-initial", startSpecHash(SPEC));
+  const turn_key = "initial" as TurnKey;
+  store.acceptTurn({ sid: row.sid, turn_key, source: "initial", payload: "build it" });
+  expect(store.hasDispatchedTurns(row.sid)).toBe(false);
+  store.markTurnPrompting(row.sid, turn_key);
+  const started_at = store.getTurn(row.sid, turn_key)?.started_at;
+  store.bootSweep();
+  expect(store.getTurn(row.sid, turn_key)).toEqual(expect.objectContaining({ status: "accepted", started_at }));
+  expect(store.hasDispatchedTurns(row.sid)).toBe(true);
 });

@@ -1,0 +1,418 @@
+{
+  "language_version": 1,
+  "key": "document_review",
+  "version": 1,
+  "root": "document",
+  "schemas": [
+    {
+      "key": "unit",
+      "shape": {
+        "kind": "record",
+        "fields": [],
+        "dictionary": null
+      }
+    },
+    {
+      "key": "flag",
+      "shape": {
+        "kind": "boolean"
+      }
+    },
+    {
+      "key": "text",
+      "shape": {
+        "kind": "string",
+        "min_length": 0,
+        "max_length": 400000
+      }
+    },
+    {
+      "key": "position",
+      "shape": {
+        "kind": "union",
+        "variants": [
+          {
+            "key": "ready",
+            "schema": "unit"
+          },
+          {
+            "key": "waiting",
+            "schema": "unit"
+          }
+        ]
+      }
+    },
+    {
+      "key": "result",
+      "shape": {
+        "kind": "union",
+        "variants": [
+          {
+            "key": "released",
+            "schema": "unit"
+          },
+          {
+            "key": "withdrawn",
+            "schema": "unit"
+          }
+        ]
+      }
+    },
+    {
+      "key": "optional_unit",
+      "shape": {
+        "kind": "optional",
+        "item": "unit"
+      }
+    },
+    {
+      "key": "revision",
+      "shape": {
+        "kind": "reference",
+        "brand": "artifact_revision"
+      }
+    },
+    {
+      "key": "resource",
+      "shape": {
+        "kind": "reference",
+        "brand": "resource"
+      }
+    },
+    {
+      "key": "ident",
+      "shape": {
+        "kind": "string",
+        "min_length": 1,
+        "max_length": 256
+      }
+    },
+    {
+      "key": "deps",
+      "shape": {
+        "kind": "list",
+        "item": "ident",
+        "max_items": 100
+      }
+    },
+    {
+      "key": "member",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "key",
+            "schema": "ident",
+            "required": true
+          },
+          {
+            "key": "input",
+            "schema": "unit",
+            "required": true
+          },
+          {
+            "key": "dependencies",
+            "schema": "deps",
+            "required": true
+          }
+        ],
+        "dictionary": null
+      }
+    },
+    {
+      "key": "members",
+      "shape": {
+        "kind": "list",
+        "item": "member",
+        "max_items": 100
+      }
+    },
+    {
+      "key": "unit",
+      "shape": {
+        "kind": "record",
+        "fields": [],
+        "dictionary": null
+      }
+    }
+  ],
+  "scopes": [
+    {
+      "key": "document",
+      "input_schema": "unit",
+      "state_schema": "position",
+      "initial": {
+        "kind": "ready",
+        "value": {}
+      },
+      "outcome_schema": "result",
+      "errors": [
+        {
+          "key": "invalid_command",
+          "payload_schema": "text"
+        }
+      ],
+      "commands": [
+        {
+          "key": "begin",
+          "payload_schema": "unit",
+          "available_in": [
+            "ready"
+          ],
+          "required": true,
+          "targets": [],
+          "label": "begin",
+          "consequence": "Interpret begin",
+          "field_presentation": []
+        },
+        {
+          "key": "publish",
+          "payload_schema": "unit",
+          "available_in": [
+            "waiting"
+          ],
+          "required": true,
+          "targets": [],
+          "label": "publish",
+          "consequence": "Interpret publish",
+          "field_presentation": []
+        },
+        {
+          "key": "cancel",
+          "payload_schema": "unit",
+          "available_in": [
+            "ready",
+            "waiting"
+          ],
+          "required": true,
+          "targets": [],
+          "label": "cancel",
+          "consequence": "Interpret cancel",
+          "field_presentation": []
+        }
+      ],
+      "facts": [
+        {
+          "key": "tick",
+          "payload_schema": "unit"
+        }
+      ],
+      "outputs": [
+        {
+          "key": "document",
+          "schema": "unit",
+          "policy": {
+            "kind": "append_revision"
+          },
+          "producers": [
+            "author"
+          ],
+          "collection_key": null,
+          "publication_trigger": "tick"
+        }
+      ],
+      "workers": [
+        {
+          "key": "author",
+          "result_schema": "unit",
+          "exclusive": true,
+          "actions": [
+            {
+              "key": "write",
+              "operation": "produce",
+              "contract_version": 1,
+              "input_schema": "unit",
+              "input": {
+                "kind": "reference",
+                "root": {
+                  "kind": "input"
+                },
+                "path": []
+              },
+              "prompt": "shared_content",
+              "settings": [
+                {
+                  "key": "model",
+                  "value": "example"
+                }
+              ],
+              "tools": [
+                "read"
+              ],
+              "outputs": [
+                "document"
+              ],
+              "deadline_ms": 1000,
+              "max_attempts": 2
+            }
+          ]
+        }
+      ],
+      "children": [],
+      "exports": [
+        {
+          "key": "released",
+          "schema": "flag"
+        }
+      ],
+      "resources": [
+        {
+          "key": "source",
+          "schema": "resource"
+        }
+      ],
+      "pools": [
+        {
+          "key": "work",
+          "limit": 1
+        }
+      ],
+      "cancellation": {
+        "trigger": "cancel"
+      },
+      "presentation": {
+        "label": "document",
+        "viewer": "generic"
+      },
+      "tree": {
+        "kind": "match",
+        "id": "dispatch",
+        "value": {
+          "kind": "reference",
+          "root": {
+            "kind": "trigger"
+          },
+          "path": []
+        },
+        "cases": [
+          {
+            "variant": "begin",
+            "node": {
+              "kind": "apply",
+              "id": "start",
+              "mutations": [
+                {
+                  "kind": "set_state",
+                  "value": {
+                    "kind": "literal",
+                    "schema": "position",
+                    "value": {
+                      "kind": "waiting",
+                      "value": {}
+                    }
+                  }
+                },
+                {
+                  "kind": "acquire",
+                  "pool": "work"
+                }
+              ],
+              "actions": [
+                {
+                  "worker": "author",
+                  "action": "write"
+                }
+              ],
+              "outcome": null
+            }
+          },
+          {
+            "variant": "publish",
+            "node": {
+              "kind": "apply",
+              "id": "release",
+              "mutations": [
+                {
+                  "kind": "export",
+                  "key": "released",
+                  "value": {
+                    "kind": "literal",
+                    "schema": "flag",
+                    "value": true
+                  }
+                },
+                {
+                  "kind": "release",
+                  "pool": "work"
+                }
+              ],
+              "actions": [],
+              "outcome": {
+                "kind": "literal",
+                "schema": "result",
+                "value": {
+                  "kind": "released",
+                  "value": {}
+                }
+              }
+            }
+          },
+          {
+            "variant": "cancel",
+            "node": {
+              "kind": "apply",
+              "id": "cancelled",
+              "mutations": [
+                {
+                  "kind": "revoke",
+                  "worker": "author"
+                },
+                {
+                  "kind": "stop",
+                  "worker": "author"
+                }
+              ],
+              "actions": [],
+              "outcome": {
+                "kind": "literal",
+                "schema": "result",
+                "value": {
+                  "kind": "withdrawn",
+                  "value": {}
+                }
+              }
+            }
+          }
+        ],
+        "otherwise": {
+          "kind": "wait",
+          "id": "await_event",
+          "continuations": [
+            "publish",
+            "cancel"
+          ],
+          "reason": "waiting for declared input",
+          "attention": {"label": "Awaiting input", "trigger": "publish"}
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "key": "shared_content",
+      "path": "workflow-config/prompts/dev-flow/spec_analysis_author_initial.md",
+      "input_schema": "unit",
+      "content_digest": "000d4ce14d29be748b3ee4de65fa22448535f7a23250e65e228acf61f8585aa3"
+    }
+  ],
+  "operations": [
+    {
+      "key": "produce",
+      "version": 1,
+      "input_schema": "unit",
+      "provider_kind": "stub",
+      "input_contract": "unsupported",
+      "settings": [
+        "model"
+      ],
+      "tools": [
+        "read"
+      ]
+    }
+  ],
+  "limits": {
+    "max_list_items": 100,
+    "max_depth": 28,
+    "evaluation_budget": 2000
+  }
+}

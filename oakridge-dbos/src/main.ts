@@ -1,138 +1,23 @@
-/**
- * The Oakridge backend process.
- *
- * Environment, listener, timers, signals. What the backend *is* — repositories,
- * workflow services, HTTP surface — is assembled by `createOakridgeRuntime`, so
- * the end-to-end tests can run the same composition this process runs.
- */
-import { resolve } from "node:path";
+import { createProductionComposition } from "./runtime/compose";
+import { migrateEmptyDatabase } from "./storage/migrate";
+import { PgPostgresExecutor } from "./storage/sql-executor";
 
-import { DBOS } from "@dbos-inc/dbos-sdk";
-
-import { KbblExecutorAdapter } from "./adapters/kbbl";
-import { selectControlPlaneAccess } from "./http/control-auth";
-import { createOakridgeRuntime } from "./runtime/compose";
-import { GithubPullRequestReader } from "./runtime/github-pull-requests";
-
-const required = (name: string): string => {
-  const value = process.env[name]?.trim();
-  if (!value) throw new Error(`${name} is required`);
-  return value;
-};
-
-const databaseUrl = required("DBOS_SYSTEM_DATABASE_URL");
-const applicationVersion = required("DBOS_APPLICATION_VERSION");
-const kbblBaseUrl = required("KBBL_BASE_URL");
-/**
- * Override for how long a delegated session may report no activity before it is
- * failed. Left unset, the adapter's own generous default applies; an operator
- * running unusually long silent tool calls can raise it without a deploy.
- */
-const rawMaxSilentMs = process.env.OAKRIDGE_MAX_SILENT_MS?.trim();
-const maxSilentMs = rawMaxSilentMs ? Number(rawMaxSilentMs) : null;
-if (maxSilentMs !== null && (!Number.isFinite(maxSilentMs) || maxSilentMs <= 0)) {
-  throw new Error("OAKRIDGE_MAX_SILENT_MS must be a positive number of milliseconds");
-}
-const host = process.env.OAKRIDGE_DBOS_HOST?.trim() || "127.0.0.1";
-const port = Number(process.env.PORT ?? "3001");
-if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error("PORT must be a valid TCP port");
-const controlAccess = selectControlPlaneAccess({
-  host,
-  token: process.env.OAKRIDGE_CONTROL_TOKEN,
-  allow_insecure_non_loopback: process.env.ALLOW_INSECURE_NON_LOOPBACK_CONTROL === "1",
-});
-if (controlAccess.kind === "refused") throw new Error(controlAccess.detail);
-// Optional on purpose. Without a token nothing polls GitHub, and a cohort's
-// merge is confirmed by an operator through the same route the poller uses —
-// which is also the fallback when the token cannot see a given repository.
-const githubToken = process.env.OAKRIDGE_GITHUB_TOKEN?.trim();
-const pullRequestPollIntervalMs = Number(process.env.OAKRIDGE_PULL_REQUEST_POLL_SECONDS ?? "60") * 1_000;
-if (!Number.isFinite(pullRequestPollIntervalMs) || pullRequestPollIntervalMs < 5_000) throw new Error("OAKRIDGE_PULL_REQUEST_POLL_SECONDS must be at least 5 seconds");
-
-DBOS.setConfig({ name: "oakridge", systemDatabaseUrl: databaseUrl, applicationVersion });
-
-const runtime = await createOakridgeRuntime({
-  database_url: databaseUrl,
-  application_version: applicationVersion,
-  executor_adapters: [new KbblExecutorAdapter({
-    base_url: kbblBaseUrl,
-    executor_function_identity: applicationVersion,
-    ...(maxSilentMs !== null ? { max_silent_ms: maxSilentMs } : {}),
-  })],
-  prompt_template_directory: resolve(import.meta.dir, "../../workflow-config/prompts"),
-  ...(githubToken ? { pull_request_reader: new GithubPullRequestReader({ token: githubToken }) } : {}),
-  ...(controlAccess.kind === "token_required" ? { control_token: controlAccess.token } : {}),
-});
-if (!githubToken) console.warn("OAKRIDGE_GITHUB_TOKEN is unset: cohort pull requests are not polled, so merges must be confirmed by an operator");
-
-await runtime.seed_builtins();
-await DBOS.launch();
-
-// DBOS recovers a workflow only when its application_version matches this
-// executor's, so a version bump between two restarts leaves every in-flight run
-// PENDING forever: never recovered, never terminalized, and indistinguishable
-// from a running one. Reported here because every symptom of it appears
-// somewhere else entirely — a session that will not close, a gate whose
-// approval lands on a workflow that returned — and none of them names the cause.
-for (const orphaned of await runtime.orphaned_version_runs()) {
-  console.warn(`oakridge: ${orphaned.pending_run_count} pending run(s) belong to application version ${orphaned.application_version}, which this executor (${applicationVersion}) cannot recover` +
-    `${orphaned.gated_run_count > 0 ? `, ${orphaned.gated_run_count} of them holding an open gate` : ""}` +
-    `${orphaned.oldest_pending_at ? `; oldest pending since ${orphaned.oldest_pending_at}` : ""}` +
-    `. They will not advance on their own — cancel them with POST /workflow_runs/:run_id/cancel.`);
-}
-
-await runtime.dispatch_launches();
-let launchDispatch: Promise<unknown> | null = null;
-const launchTimer = setInterval(() => {
-  if (launchDispatch) return;
-  launchDispatch = runtime.dispatch_launches()
-    .catch((error: unknown) => { console.error("run launch dispatch failed", error); })
-    .finally(() => { launchDispatch = null; });
-}, 1_000);
-
-// A cohort's pull request merges at human pace and GitHub is rate limited, so
-// this sweeps far more slowly than the outbox dispatchers. Skipped entirely
-// when no reader is configured.
-let pullRequestPoll: Promise<unknown> | null = null;
-const pullRequestTimer = setInterval(() => {
-  if (pullRequestPoll) return;
-  pullRequestPoll = runtime.poll_pull_requests()
-    .then((outcomes) => {
-      for (const outcome of outcomes ?? []) {
-        if (outcome.resolution.kind === "refused") console.warn(`cohort ${outcome.stage_instance_id}:${outcome.unit_id} pull request refused: ${outcome.resolution.detail}`);
-      }
-    })
-    .catch((error: unknown) => { console.error("cohort pull request poll failed", error); })
-    .finally(() => { pullRequestPoll = null; });
-}, pullRequestPollIntervalMs);
-
-const server = Bun.serve({
-  hostname: host,
-  port,
-  idleTimeout: 255,
-  fetch(request, bunServer) {
-    if (new URL(request.url).pathname === "/events") {
-      bunServer.timeout(request, 0);
-    }
-    return runtime.app.fetch(request);
-  },
-});
-console.log(`Oakridge DBOS backend listening on ${server.url}`);
-
-let shutdownPromise: Promise<void> | null = null;
-const shutdown = (): Promise<void> => {
-  if (shutdownPromise) return shutdownPromise;
-  shutdownPromise = (async () => {
-    clearInterval(launchTimer);
-    clearInterval(pullRequestTimer);
-    server.stop();
-    // clearInterval stops the next poll from starting; it does not settle one
-    // already running, which would still be holding a connection when SQL closes.
-    await Promise.allSettled(pullRequestPoll ? [pullRequestPoll] : []);
-    await DBOS.shutdown();
-    await runtime.close();
-  })();
-  return shutdownPromise;
-};
-process.once("SIGINT", shutdown);
-process.once("SIGTERM", shutdown);
+const database_url = process.env.DBOS_SYSTEM_DATABASE_URL;
+const core_binary = process.env.OAKRIDGE_CORE_BINARY;
+if (!database_url) throw new Error("DBOS_SYSTEM_DATABASE_URL is required");
+if (!core_binary) throw new Error("OAKRIDGE_CORE_BINARY is required; run scripts/oakridge-start to build workflow-cli");
+const host = process.env.OAKRIDGE_DBOS_HOST ?? "127.0.0.1";
+// The DBOS application version is the engine digest unless DBOS_APPLICATION_VERSION
+// pins it; see workflows/engine-version.ts for what moves it and what does not.
+// One startup sequence: validate the locked baseline, then launch DBOS, then bind HTTP.
+const migration_db = PgPostgresExecutor.connect(database_url);
+try { await migrateEmptyDatabase(migration_db); }
+finally { await migration_db.close(); }
+const composition = await createProductionComposition({ database_url, core_binary, host, control_token: process.env.OAKRIDGE_CONTROL_TOKEN });
+let server: ReturnType<typeof Bun.serve>;
+try { server = Bun.serve({ hostname: host, port: Number(process.env.PORT ?? 8790), fetch: composition.app.fetch }); }
+catch (cause) { await composition.close(); throw cause; }
+console.log(`oakridge-dbos ${composition.application_version} listening at ${server.url}`);
+async function stop(): Promise<void> { server.stop(); await composition.close(); }
+process.once("SIGINT", () => { void stop(); });
+process.once("SIGTERM", () => { void stop(); });

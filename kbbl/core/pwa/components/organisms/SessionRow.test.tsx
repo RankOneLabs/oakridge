@@ -44,7 +44,7 @@ function renderRow(snapshot: SessionSnapshot) {
 describe("SessionRow with a workflow identity", () => {
   test("renders the operator role in its own element and drops the raw templated name", () => {
     const workflow: PwaSessionWorkflowIdentity = {
-      runId: "run-1", stageInstanceId: "3f9e2b10-6c8b-4c1e-9a2b-1234567890ab", unitId: "cohort-one",
+      runId: "run-1", stageInstanceId: "3f9e2b10-6c8b-4c1e-9a2b-1234567890ab", unitId: "cohort-one", cohortId: "cohort-one",
       operatorRole: "build", cohortTitle: "Cohort One", repositoryKey: null,
     };
     renderRow(makeSnapshot({ workflow }));

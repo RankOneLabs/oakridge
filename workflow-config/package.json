@@ -1,0 +1,10 @@
+{
+  "name": "workflow-config",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@types/bun": "^1.3.13",
+    "typescript": "^5.7.2"
+  }
+}

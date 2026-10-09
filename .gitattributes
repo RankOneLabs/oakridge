@@ -1,0 +1,9 @@
+# Committed generated output. GitHub collapses these in pull request diffs;
+# regenerate with scripts/generate-core-contracts.sh, generate-bundles.sh or
+# oakridge-dbos/scripts/generate-storage-records.ts.
+oakridge-dbos/src/core-client/generated-contracts.ts linguist-generated=true
+oakridge-dbos/src/storage/generated-records.ts linguist-generated=true
+workflow-config/src/source-contracts.ts linguist-generated=true
+kbbl/core/pwa/oakridge/workflow-definition-types.ts linguist-generated=true
+kbbl/core/pwa/oakridge/operator-contracts.ts linguist-generated=true
+workflow-config/prompts/dev-flow/v3/*.md linguist-generated=true

@@ -1,14 +1,51 @@
 import type { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
+import { matchRoute } from "../../../../oakridge-dbos/src/http/routes";
+import { browserWritePolicy, browserWriteRejection, configuredBrowserWritePolicy } from "../../../../oakridge-dbos/src/http/browser-write-policy";
+import { isValidControlRequest } from "../../../../oakridge-dbos/src/http/control-auth";
 
 export interface OakridgeProxyDeps {
   baseUrl: string | undefined;
   /**
-   * Token injected as Authorization: Bearer <token> into proxied write
-   * requests to the Oakridge backend. Falls back to OAKRIDGE_CONTROL_TOKEN when
+   * Token injected as Authorization: Bearer <token> into operator routes
+   * on the Oakridge backend. Falls back to OAKRIDGE_CONTROL_TOKEN when
    * OAKRIDGE_CORE_CONTROL_TOKEN is not set. Undefined when no token is
    * configured (core runs without auth, typically on a loopback bind).
    */
   coreControlToken?: string;
+  /**
+   * kbbl's own control token — the value its `kbbl_ctrl` cookie carries and its
+   * global middleware validates. The browser is authenticated against THIS, not
+   * against `coreControlToken`: the two differ whenever the documented
+   * `OAKRIDGE_CORE_CONTROL_TOKEN` override is set, and checking the browser's
+   * credential against the upstream's would reject every proxied operator
+   * request. Undefined when kbbl runs without auth, which leaves the inbound
+   * check to kbbl's policy exactly as the direct path does.
+   */
+  browserControlToken?: string;
+  /** Explicit browser origins; an absent list trusts none, including loopback. */
+  allowedOrigins?: readonly string[];
+  /**
+   * Fallback refresh interval served to the PWA, in milliseconds. Undefined
+   * leaves the PWA on its build-time default. The PWA enforces its own minimum
+   * interval, so a value below it is ignored there rather than rejected here.
+   */
+  fallbackRefreshMs?: number;
+}
+
+/** setInterval stores its delay as a signed 32-bit integer; a larger one fires roughly every millisecond. */
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
+/**
+ * Parses OAKRIDGE_FALLBACK_REFRESH_MS at startup so a typo surfaces as a boot
+ * failure rather than as an operator interval that silently never took effect.
+ */
+export function parseFallbackRefreshMs(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw.trim() === "") return undefined;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0 || value > MAX_TIMER_DELAY_MS)
+    throw new Error(`OAKRIDGE_FALLBACK_REFRESH_MS must be a positive number of milliseconds no greater than ${MAX_TIMER_DELAY_MS}, got: ${raw}`);
+  return value;
 }
 
 const OAKRIDGE_PROXY_TIMEOUT_MS = 30_000;
@@ -23,12 +60,16 @@ const OAKRIDGE_PROXY_TIMEOUT_MS = 30_000;
 const STREAMING_UPSTREAM_PATHS: ReadonlySet<string> = new Set(["/events"]);
 
 export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): void {
+  const write_policy = deps.allowedOrigins === undefined ? configuredBrowserWritePolicy() : browserWritePolicy(deps.allowedOrigins);
   // Config: tells the PWA whether the Oakridge backend is configured without
   // attempting a proxy request that would block the page.
   app.get("/oakridge/config", (c) => {
     const available = typeof deps.baseUrl === "string" && deps.baseUrl.length > 0;
-    return c.json({ available, core_url: available ? deps.baseUrl : null });
+    return c.json({ available, core_url: available ? deps.baseUrl : null,
+      ...(deps.fallbackRefreshMs === undefined ? {} : { fallback_refresh_ms: deps.fallbackRefreshMs }) });
   });
+
+  app.use("/oakridge/api/*", bodyLimit({ maxSize: 1_048_576, onError: (c) => c.json({ kind: "oversized_payload", limit: 1_048_576 }, 413) }));
 
   // Proxy: forwards /oakridge/api/* to OAKRIDGE_CORE_BASE_URL/*
   // stripping the /oakridge/api prefix before forwarding.
@@ -38,6 +79,11 @@ export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): vo
     }
 
     const subPath = c.req.path.slice("/oakridge/api".length);
+    const rejection = browserWriteRejection(write_policy, c.req.raw, subPath);
+    if (rejection) return rejection;
+    const route = matchRoute(c.req.method, subPath);
+    if (route?.authority === "operator" && deps.browserControlToken && !isValidControlRequest(c.req.raw, deps.browserControlToken, write_policy))
+      return c.json({ error: "unauthorized" }, 401);
     const search = new URL(c.req.url, "http://localhost").search;
     const targetUrl = deps.baseUrl.replace(/\/$/, "") + subPath + search;
 
@@ -59,15 +105,14 @@ export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): vo
       }
     }
 
-    // Inject core control token for write requests. The browser Authorization
-    // header was stripped above; this is the server-side injection point.
-    if (
-      deps.coreControlToken &&
-      method !== "GET" &&
-      method !== "HEAD"
-    ) {
+    // Inject the core control token for operator routes. The browser's own
+    // Authorization header is stripped above rather than forwarded, so kbbl's
+    // credential never reaches the upstream and cannot suppress this injection
+    // by occupying the header. The PWA cookie likewise stays local to kbbl; a
+    // verified browser credential is replaced here by the control token the
+    // backend would have accepted directly.
+    if (route?.authority === "operator" && deps.coreControlToken)
       forwardHeaders.set("authorization", `Bearer ${deps.coreControlToken}`);
-    }
 
     let body: ArrayBuffer | undefined;
     if (method !== "GET" && method !== "HEAD") {

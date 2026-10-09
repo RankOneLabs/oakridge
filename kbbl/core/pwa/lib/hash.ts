@@ -1,9 +1,4 @@
-// `RoutePaneTarget` is defined once in the workspace model
-// (`oakridge/lib/run-workspace.ts`) so a parsed route and a workspace pane are
-// the same type rather than two kept in step by hand. This module already owns
-// the oakridge sub-route namespace, so the reference is not a new coupling.
-import type { RoutePaneTarget } from "../oakridge/lib/run-workspace";
-import type { ArtifactId, Sid } from "./ids";
+import type { Sid } from "./ids";
 
 export function readHashSid(): string | null {
   const hash = window.location.hash.slice(1);
@@ -62,13 +57,13 @@ export function readHashSessionTarget(): SessionHashTarget | null {
 export type OakridgeSubRoute =
   | { sub: "runs" }
   | { sub: "review-inbox" }
-  /** `#oakridge/run/:id`, optionally naming the pane to open in `#oakridge/run/:id/session/:sid` form. */
-  | { sub: "run"; id: string; pane: RoutePaneTarget | null }
+  /** `#oakridge/run/:id`, optionally naming the scope to open in `#oakridge/run/:id/scope/:scope_id` form. */
+  | { sub: "run"; id: string; scope_id: string | null }
   | { sub: "artifact"; id: string }
   /** `#oakridge/session/:sid` — resolved to its run and replaced with the run-scoped form. */
   | { sub: "session"; session_id: Sid }
   | { sub: "new-run" }
-  | { sub: "create-project" }
+  | { sub: "projects" }
   | { sub: "defs" }
   | { sub: "def"; id: string }
   | { sub: "def-new" }
@@ -87,8 +82,8 @@ function tryDecode(s: string): string {
 }
 
 /**
- * `#oakridge/run/:id`, with the optional `/session/:sid` or `/artifact/:id`
- * suffix that names the pane to open.
+ * `#oakridge/run/:id`, with the optional `/scope/:scope_id` suffix that names
+ * the scope to open; any other suffix opens the run at its root scope.
  *
  * Segments are split while still percent-encoded: every id reaches the hash
  * through `encodeURIComponent`, so a literal `/` inside one is `%2F` here and
@@ -96,30 +91,21 @@ function tryDecode(s: string): string {
  */
 function parseRunRoute(rest: string): OakridgeSubRoute | null {
   const segments = rest.slice("/run/".length).split("/");
-  const [rawId, paneKind, rawPaneId] = segments;
+  const [rawId, suffix, rawScopeId] = segments;
   if (!rawId) return null;
   const id = tryDecode(rawId);
-  if (segments.length === 3 && rawPaneId) {
-    if (paneKind === "session") {
-      return { sub: "run", id, pane: { kind: "session", session_id: tryDecode(rawPaneId) as Sid } };
-    }
-    if (paneKind === "artifact") {
-      return { sub: "run", id, pane: { kind: "artifact", artifact_id: tryDecode(rawPaneId) as ArtifactId } };
-    }
-  }
-  return { sub: "run", id, pane: null };
+  const scope_id = segments.length === 3 && suffix === "scope" && rawScopeId ? tryDecode(rawScopeId) : null;
+  return { sub: "run", id, scope_id };
 }
 
 /**
- * The canonical in-workspace URL for a run, with or without a pane. The one
- * place these hashes are built, so the parser above and every navigation that
+ * The canonical URL for a run, optionally opened at one scope. The one place
+ * these hashes are built, so the parser above and every navigation that
  * produces one cannot disagree about encoding.
  */
-export function formatRunWorkspaceHash(runId: string, pane: RoutePaneTarget | null): string {
+export function formatRunWorkspaceHash(runId: string, scopeId: string | null): string {
   const base = `oakridge/run/${encodeURIComponent(runId)}`;
-  if (pane === null) return base;
-  if (pane.kind === "session") return `${base}/session/${encodeURIComponent(pane.session_id)}`;
-  return `${base}/artifact/${encodeURIComponent(pane.artifact_id)}`;
+  return scopeId === null ? base : `${base}/scope/${encodeURIComponent(scopeId)}`;
 }
 
 /**
@@ -171,8 +157,9 @@ export function readHashRoute(
     if (rest === "/review-inbox") {
       return { view: "oakridge", route: { sub: "review-inbox" } };
     }
-    if (rest === "/create-project") {
-      return { view: "oakridge", route: { sub: "create-project" } };
+    // `/create-project` was the v15 project form; projects are managed on one page now.
+    if (rest === "/projects" || rest === "/create-project") {
+      return { view: "oakridge", route: { sub: "projects" } };
     }
     if (rest === "/defs") {
       return { view: "oakridge", route: { sub: "defs" } };

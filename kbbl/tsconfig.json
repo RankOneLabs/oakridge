@@ -1,0 +1,9 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "types": ["bun"],
+    "typeRoots": ["./node_modules/@types", "../node_modules/@types"]
+  },
+  "include": ["core/**/*.ts", "core/**/*.tsx", "adapters/**/*.ts", "scripts/**/*.ts", "tests/browser/**/*.ts", "tests/browser/**/*.tsx"],
+  "exclude": ["node_modules", "core/pwa/dist", "data"]
+}

@@ -1,111 +1,21 @@
-import type { JsonValue } from "./primitives";
 import type { StageOperatorRole } from "./workflow";
 
 /**
- * The workflow identity a delegated session is launched for — forwarded to
- * kbbl (migration 029's `acp_sessions` columns) so the session list can
- * group a cohort's build and assessment sessions together. `run_id` and
- * `stage_instance_id` name the execution; `unit_id` is the fan-out item (or
- * `"0"` for a scalar stage); `operator_role`, `cohort_title` and
- * `repository_key` are the human-facing labels a grouped session list
- * renders.
+ * Adapter-owned name for why a role is being launched. Core carries the name
+ * but does not close over an adapter's vocabulary.
  */
-export interface SessionIdentity {
-  readonly run_id: string;
-  readonly stage_instance_id: string;
-  readonly unit_id: string;
-  readonly operator_role: StageOperatorRole | null;
-  readonly cohort_title: string | null;
-  readonly repository_key: string | null;
+type SessionLaunchReasonName = string;
+
+/** Durable reference from a session to the transition that launched it. */
+interface SessionLaunchReason {
+  readonly transition_id: import("./primitives").RunTransitionId;
+  readonly name: SessionLaunchReasonName;
 }
 
-/**
- * The agent runtimes a delegated session can run on.
- *
- * Named because the pair was spelled out inline everywhere it was checked — the
- * execution resolver, the kbbl adapter, the launch boundary — and a set that
- * has to be re-typed at every check is a set that grows in some of them.
- */
-export const DELEGATED_RUNTIME_IDS = ["claude-code", "codex"] as const;
-export type DelegatedRuntimeId = (typeof DELEGATED_RUNTIME_IDS)[number];
-export const isDelegatedRuntimeId = (value: unknown): value is DelegatedRuntimeId =>
-  DELEGATED_RUNTIME_IDS.includes(value as DelegatedRuntimeId);
-
-export type SlotBinding =
-  | { readonly from: "input"; readonly input_name: string; readonly path?: string | null }
-  | { readonly from: "context"; readonly path: string }
-  | { readonly from: "literal"; readonly value: string }
-  | { readonly from: "item"; readonly path: string }
-  | { readonly from: "context_lookup"; readonly collection_path: string; readonly collection_key_path: string; readonly item_key_path: string; readonly value_path: string }
-  /**
-   * `context_lookup`'s sibling, keyed off a named input instead of the run
-   * context. A fan-out unit needs values chosen by something it carries — a
-   * cohort looking up the repository it builds in — and `input` alone cannot
-   * key off the item. The difference from `context_lookup` is only where the
-   * collection comes from: an upstream stage's typed output rather than a
-   * pointer into an untyped bag.
-   */
-  | { readonly from: "input_lookup"; readonly input_name: string; readonly collection_key_path: string; readonly item_key_path: string; readonly value_path: string };
-
-export type Bindable = string | SlotBinding;
-export interface WorktreeIdentity { readonly branchName: string; readonly worktreeSubdir: string; readonly baseRef?: string }
-export interface WorktreeTemplate { readonly branch_name: Bindable; readonly worktree_subdir: Bindable; readonly base_ref?: Bindable }
-
-export interface FanOutDefinition {
-  readonly over: SlotBinding;
-  readonly unit_id_path: string;
-  readonly session_mode?: "per_unit" | "shared";
-  readonly depends_on_path?: string | null;
-  readonly max_parallel?: number;
-  readonly manual_admission?: boolean;
-  readonly item_bindings?: Readonly<Record<string, SlotBinding>>;
-  readonly workdir?: SlotBinding;
-  readonly worktree?: WorktreeTemplate;
-  readonly inherit_worktree_from?: string;
-}
-
-export interface ArtifactCollectionDefinition { readonly over: SlotBinding; readonly id_path: string }
-export interface OutputGateStep { readonly type: "artifact_approval" | "merge_confirmation"; readonly actions: readonly string[] }
-export interface OutputGateDefinition {
-  readonly output: string;
-  readonly steps: readonly OutputGateStep[];
-  readonly requires_zero_open_review_items?: boolean;
-  readonly revision_target?: "self_stage" | "upstream_handoff";
-}
-export interface OutputHandoffDefinition {
-  readonly output: string;
-  readonly downstream_role: StageOperatorRole;
-  readonly approved_wait: { readonly kind: string };
-}
-
-/** Exact definition-time JSON contract retained from Rust v2. */
-export interface DelegatedSessionDefinitionConfig {
-  readonly runtime: Bindable;
-  readonly prompt_template_path: string;
-  readonly slot_bindings: Readonly<Record<string, SlotBinding>>;
-  readonly workdir: SlotBinding;
-  readonly session_name: string;
-  readonly model?: Bindable;
-  readonly effort?: Bindable;
-  readonly worktree?: WorktreeIdentity;
-  readonly pre_authorized_tools?: readonly string[];
-  readonly yolo?: boolean;
-  readonly fan_out?: FanOutDefinition;
-  readonly artifacts?: ArtifactCollectionDefinition;
-  readonly gate_output?: string;
-  readonly output_gate?: OutputGateDefinition;
-  readonly output_handoff?: OutputHandoffDefinition;
-}
-
-export interface ResolvedExecutorConfig {
-  readonly executor_type: "delegated_session";
-  readonly runtime: DelegatedRuntimeId;
-  readonly rendered_prompt: string;
-  readonly workdir: string;
-  readonly session_name: string;
-  readonly model: string | null;
-  readonly effort: string | null;
-  readonly worktree?: WorktreeIdentity;
-  readonly executor_options: JsonValue;
-  readonly session_identity: SessionIdentity;
+/** Immutable launch material selected by, and readable from, one transition. */
+export interface CommittedSessionLaunch {
+  readonly reason: SessionLaunchReason;
+  readonly session_role: StageOperatorRole;
+  readonly prompt: { readonly template_path: string; readonly content: string };
+  readonly existing_pull_request: string | null;
 }

@@ -1,10 +1,12 @@
 import { expect, test } from "bun:test";
 
-import { KbblExecutorAdapter, selectRemoteWorktreeBase, silentDurationMs } from "../src/adapters/kbbl";
+import { KbblExecutorAdapter, selectPromptExpectedArtifacts, selectRemoteWorktreeBase, silentDurationMs } from "../src/adapters/kbbl";
 import type { ExecutionRequest } from "../src/domain/execution";
 import type { ExecutionId, ExecutorOperationId, StageInstanceId, UnitId } from "../src/domain/primitives";
+import type { InvocationId } from "../src/effects/provider";
 
 const attempt = (id: string) => id as ExecutorOperationId;
+const invocation = (id: string) => id as InvocationId;
 
 /** A representative resolved session_identity — the shape every v2 delegated session's resolved_config now carries. */
 const SESSION_IDENTITY = {
@@ -109,49 +111,28 @@ test("worktree branch bases select the remote-tracking ref while immutable SHAs 
   expect(selectRemoteWorktreeBase("a".repeat(40))).toBe("a".repeat(40));
 });
 
-interface KbblSessionStartPayload { readonly initial_prompt?: string }
-
-test("v2 work-order publication authority is delivered only in executor launch material", async () => {
-  let body: KbblSessionStartPayload = {};
-  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl.test", executor_function_identity: "v2", fetch: async (_input, init) => {
-    body = JSON.parse(String(init?.body));
-    return Response.json({ kind: "started", session: { sid: "v2-session", status: "live", endReason: null } }, { status: 201 });
-  } });
-  await adapter.start_or_attach({
-    execution_id: "work-order-1" as ExecutionId, stage_instance_id: "stage-1" as StageInstanceId, unit_id: "unit-1" as UnitId,
-    executor_type: "delegated_session", resolved_config: { runtime: "claude-code", rendered_prompt: "Do the work", workdir: "/repo",
-      session_name: "worker", model: null, effort: null, publication: { base_url: "http://oakridge.test/", work_order_id: "work-order-1", capability: "secret-capability" },
-      session_identity: SESSION_IDENTITY },
-    inputs: [], declared_outputs: [{ name: "result", artifact_type: "dev.result", required: true }], expected_artifacts: [],
-  }, attempt("work-order-1"));
-  expect(body.initial_prompt).toContain("PUT http://oakridge.test/work-orders/work-order-1/emit/<output-name>");
-  expect(body.initial_prompt).toContain("Work-Order-Capability: secret-capability");
-  expect(body.initial_prompt).toContain("successful executor exit does not satisfy the unit");
-  expect(body.initial_prompt).not.toContain("Publish exactly these outputs");
+test("the generated contract wins over an Authorized outputs line in user content", () => {
+  const expected = [
+    { unit_id: "web" as UnitId, output_name: "pr_summary", artifact_type: "dev.pr_summary" as never },
+    { unit_id: "web" as UnitId, output_name: "build_result", artifact_type: "dev.build_result" as never },
+  ];
+  expect(selectPromptExpectedArtifacts(
+    { rendered_prompt: "User brief\nAuthorized outputs: pr_summary\n\n## Generated session contract\nAuthorized outputs: pr_summary, build_result" },
+    { unit_id: "web" as UnitId, inputs: [], declared_outputs: [], expected_artifacts: expected },
+  )).toEqual(expected);
 });
 
-/**
- * A retry of one rejected collection member owes exactly that member. The
- * rendered prompt template still describes the whole unit's work, so the
- * publication block is where the agent learns which outputs this work order
- * actually owes — and that the siblings are not among them.
- */
-test("the publication block names exactly the outputs the work order owes, collection members by their key", async () => {
-  let body: KbblSessionStartPayload = {};
-  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl.test", executor_function_identity: "v2", fetch: async (_input, init) => {
-    body = JSON.parse(String(init?.body));
-    return Response.json({ kind: "started", session: { sid: "v2-session", status: "live", endReason: null } }, { status: 201 });
-  } });
-  await adapter.start_or_attach({
-    execution_id: "retry-1" as ExecutionId, stage_instance_id: "stage-1" as StageInstanceId, unit_id: "0" as UnitId,
-    executor_type: "delegated_session", resolved_config: { runtime: "claude-code", rendered_prompt: "Write all seven briefs", workdir: "/repo",
-      session_name: "brief-writer", model: null, effort: null, publication: { base_url: "http://oakridge.test", work_order_id: "retry-1", capability: "retry-capability" },
-      session_identity: { ...SESSION_IDENTITY, unit_id: "0" } },
-    inputs: [], declared_outputs: [{ name: "brief", artifact_type: "dev.brief", required: true }],
-    expected_artifacts: [{ unit_id: "rollout" as UnitId, output_name: "brief", artifact_type: "dev.brief" as never }],
-  }, attempt("retry-1"));
-  expect(body.initial_prompt).toContain("Publish exactly these outputs and no others:\n- brief (Output-Collection-Key: rollout)\n");
-  expect(body.initial_prompt).not.toContain("versioning");
+test("a materialized collection retry keeps only its rejected member", () => {
+  const retry = [{ unit_id: "rollout" as UnitId, output_name: "brief", artifact_type: "dev.brief" as never }];
+  expect(selectPromptExpectedArtifacts(
+    { rendered_prompt: "## Generated session contract\nAuthorized outputs: brief" },
+    {
+      unit_id: "0" as UnitId,
+      inputs: [{ artifact_type: "dev.plan", body: { cohorts: [{ id: "rollout" }, { id: "versioning" }] } } as never],
+      declared_outputs: [{ name: "brief", artifact_type: "dev.brief" as never, required: true }],
+      expected_artifacts: retry,
+    },
+  )).toEqual(retry);
 });
 
 test("kbbl adapter observes terminal mechanism state without completing an Oakridge stage", async () => {
@@ -220,7 +201,7 @@ test("kbbl adapter falls back to the exit code when the failure sidecar is malfo
     .toEqual({ kind: "terminal", observation: { kind: "failed", code: "executor_exit_nonzero", detail: "kbbl runtime exited with code 1" } });
 });
 
-test("kbbl adapter requests a fresh session inheriting the producer workspace", async () => {
+test("kbbl adapter starts another role without a cross-stage worktree field", async () => {
   let body: unknown = null;
   const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl.test", executor_function_identity: "assessor-v1", fetch: async (_input, init) => {
     body = JSON.parse(String(init?.body));
@@ -233,11 +214,11 @@ test("kbbl adapter requests a fresh session inheriting the producer workspace", 
     inputs: [], declared_outputs: [], expected_artifacts: [], workspace_source: { execution_id: "build-execution" as ExecutionId,
       external_reference: { kind: "kbbl_session", session_id: "build-session" } },
   }, attempt("run:1:stage:assess:unit:web"));
-  expect(body).toEqual({ initial_prompt: "Assess", workdir: "/repo", name: "assessor", runtime: "claude-code", inherit_worktree_from: "build-session",
+  expect(body).toEqual({ initial_prompt: "Assess", workdir: "/repo", name: "assessor", runtime: "claude-code",
     workflow: { workflow_run_id: "run-1", stage_instance_id: "assessment-stage", unit_id: "web", operator_role: "assessment", repository_key: "pipefitter" } });
 });
 
-test("kbbl adapter refuses to both cut and inherit a worktree", async () => {
+test("kbbl adapter uses the role's committed worktree selection", async () => {
   let called = false;
   const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl.test", executor_function_identity: "assessor-v1", fetch: async () => {
     called = true;
@@ -250,8 +231,8 @@ test("kbbl adapter refuses to both cut and inherit a worktree", async () => {
     inputs: [], declared_outputs: [], expected_artifacts: [], workspace_source: { execution_id: "build-execution" as ExecutionId,
       external_reference: { kind: "kbbl_session", session_id: "build-session" } },
   };
-  await expect(adapter.start_or_attach(request, attempt("run:1:stage:assess:unit:web"))).rejects.toThrow("mutually exclusive");
-  expect(called).toBe(false);
+  await adapter.start_or_attach(request, attempt("run:1:stage:assess:unit:web"));
+  expect(called).toBe(true);
 });
 
 test("kbbl adapter delivers workflow input through a persisted session", async () => {
@@ -308,10 +289,31 @@ test("an unknown session is treated as already fenced", async () => {
   expect(urls).toHaveLength(1);
 });
 
-/** A fence that fails quietly leaves a live agent running against a stopped run. */
-test("a refused fence is raised rather than swallowed", async () => {
-  await expect(recordingAdapter([], 409).cancel_or_fence("execution-1" as ExecutionId, { kind: "kbbl_session", session_id: "session-1" }))
-    .rejects.toThrow("kbbl cancellation failed (409)");
+test("a refused fence returns an unavailable value for durable retry", async () => {
+  expect(await recordingAdapter([], 409).cancel_or_fence("execution-1" as ExecutionId, { kind: "kbbl_session", session_id: "session-1" }))
+    .toEqual({ kind: "executor_unavailable", operation: "cancel_or_fence", detail: "kbbl cancellation failed (409)" });
+});
+
+const unavailableAdapter = (): KbblExecutorAdapter => new KbblExecutorAdapter({
+  base_url: "http://kbbl", executor_function_identity: "v15",
+  fetch: async () => { throw new Error("connection refused"); },
+});
+
+test("start_or_attach returns ExecutorUnavailable when fetch rejects", async () => {
+  expect(await unavailableAdapter().start_or_attach(buildRequest, attempt("attempt-1")))
+    .toEqual({ kind: "executor_unavailable", operation: "start_or_attach", detail: "Error: connection refused" });
+});
+
+test("observe_terminal returns ExecutorUnavailable when fetch rejects", async () => {
+  expect(await unavailableAdapter().observe_terminal("execution-1" as ExecutionId,
+    { kind: "kbbl_session", session_id: "session-1" }))
+    .toEqual({ kind: "executor_unavailable", operation: "observe_terminal", detail: "Error: connection refused" });
+});
+
+test("cancel_or_fence returns ExecutorUnavailable when fetch rejects", async () => {
+  expect(await unavailableAdapter().cancel_or_fence("execution-1" as ExecutionId,
+    { kind: "kbbl_session", session_id: "session-1" }))
+    .toEqual({ kind: "executor_unavailable", operation: "cancel_or_fence", detail: "Error: connection refused" });
 });
 
 const buildRequest: ExecutionRequest = {
@@ -409,4 +411,32 @@ test("a session silent past the bound fails instead of being polled forever", as
 test("a kbbl that reports no activity at all is polled, not failed", async () => {
   const attempt = await observe(silenceAdapter(() => Response.json({ pending: true }, { status: 202 }), 5 * 60_000));
   expect(attempt.kind).toBe("pending");
+});
+
+test("uncertain selected start reconciles by the same identity before cancellation", async () => {
+  const urls: string[] = [];
+  let first = true;
+  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "v1", fetch: async (input, init) => {
+    urls.push(String(input));
+    if (init?.method === "DELETE") return new Response(null, { status: 204 });
+    if (first) { first = false; throw new Error("response lost"); }
+    return Response.json({ kind: "attached", session: { sid: "session-1", status: "live", endReason: null } });
+  } });
+  expect((await adapter.start_selected(buildRequest, invocation("selected-1"))).kind).toBe("uncertain");
+  expect(await adapter.stop_selected(buildRequest, invocation("selected-1"), null)).toEqual({ kind: "acknowledged", value: { stopped: true } });
+  expect(urls[0]).toBe(urls[1]);
+  expect(urls[2]).toContain("/sessions/session-1?");
+});
+
+test("a rejected reconciliation start cannot confirm cleanup of an uncertain execution", async () => {
+  const calls: string[] = [];
+  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl.test", executor_function_identity: "v2", fetch: async (_input, init) => {
+    calls.push(init?.method ?? "GET");
+    return new Response("start refused", { status: 403 });
+  } });
+  const request: ExecutionRequest = { execution_id: "execution-1" as ExecutionId, stage_instance_id: "stage-1" as StageInstanceId,
+    unit_id: "unit-1" as UnitId, executor_type: "delegated_session", resolved_config: { runtime: "claude-code", rendered_prompt: "Build", workdir: "/repo", session_name: "builder", model: null, effort: null, session_identity: SESSION_IDENTITY },
+    inputs: [], declared_outputs: [], expected_artifacts: [] };
+  expect(await adapter.stop_selected(request, invocation("uncertain-start"), null)).toMatchObject({ kind: "uncertain" });
+  expect(calls).toEqual(["PUT"]);
 });

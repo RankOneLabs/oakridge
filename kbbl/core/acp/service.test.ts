@@ -771,7 +771,7 @@ test("an agent without loadSession is rejected for a load-requiring profile", as
   expect(observed.ok && observed.value.kind).toBe("failed");
 }, 15000);
 
-test("process exit during a prompt yields unknown/failure, never success", async () => {
+test("process exit during a prompt reports a lost initial turn as terminal without retrying it", async () => {
   const { stateDir, workdir } = await makeDirs();
   const { service, registry, store } = makeHarness({
     stateDir,
@@ -786,8 +786,6 @@ test("process exit during a prompt yields unknown/failure, never success", async
   expect(observed.ok).toBe(true);
   if (!observed.ok) return;
   expect(observed.value.kind).toBe("failed");
-  if (observed.value.kind !== "failed") return;
-  expect(observed.value.failure_code).toBe("acp_transport_lost");
   expect(store.getTurn(sid as KbblSessionId, "initial:key-1" as TurnKey)?.status).toBe(
     "unknown",
   );

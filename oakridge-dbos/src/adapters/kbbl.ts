@@ -1,5 +1,7 @@
-import { ExecutorStartRejectedError, type ExecutionRequest, type ExecutorAdapter, type ExecutorObservationAttempt, type ExecutorTerminalObservation, type ExternalExecutionReference } from "../domain/execution";
-import type { ExecutionId, ExecutorOperationId, JsonValue } from "../domain/primitives";
+import { ExecutorStartRejectedError, type ExecutionRequest, type ExpectedArtifactContract, type ExecutorAdapter, type ExecutorObservationAttempt, type ExecutorTerminalObservation, type ExecutorUnavailable, type ExternalExecutionReference } from "../domain/execution";
+import type { ExecutionId, ExecutorOperationId, JsonValue, } from "../domain/primitives";
+import type { InvocationId, ProviderResult } from "../effects/provider";
+import type { ResumableEnsureRequest, ResumableEnsureResponse, ResumableInputRequest, ResumableSessionSnapshot, ResumableTerminalFailure } from "../../../kbbl/core/acp/resumable-wire";
 
 /**
  * How long kbbl may hold one observation request open. Well under kbbl's own
@@ -28,15 +30,13 @@ const terminal = (observation: ExecutorTerminalObservation): ExecutorObservation
 
 /**
  * The structured failure kbbl attaches to a terminal body when a session
- * ended badly (`toTerminalBody` in kbbl/core/acp/legacy-wire.ts). It is the
- * only place the actual reason survives: the exit code is always 1, so
- * without this a provisioning failure, a killed child, and a failed prompt
- * are indistinguishable to an operator reading the run record.
+ * ended badly (`ResumableTerminalFailure`). It is the only place the actual
+ * reason survives: the exit code is always 1, so without this a provisioning
+ * failure, a killed child, and a failed prompt are indistinguishable to an
+ * operator reading the run record. Any non-empty code is kept, so a code a
+ * newer kbbl adds still reaches the record.
  */
-interface KbblTerminalFailure {
-  readonly code: string;
-  readonly detail: string;
-}
+type KbblTerminalFailure = Omit<ResumableTerminalFailure, "code"> & { readonly code: string };
 
 /** Reads kbbl's `failure` sidecar off a terminal body; null when absent. */
 function parseTerminalFailure(raw: unknown): KbblTerminalFailure | null {
@@ -52,6 +52,7 @@ interface KbblResolvedSessionIdentity {
   readonly run_id: string;
   readonly stage_instance_id: string;
   readonly unit_id: string;
+  readonly cohort_id: string | null;
   readonly operator_role: string | null;
   readonly cohort_title: string | null;
   readonly repository_key: string | null;
@@ -67,20 +68,13 @@ interface KbblResolvedConfig {
   readonly artifact_id: string | null;
   readonly worktree: { readonly branchName: string; readonly worktreeSubdir: string; readonly baseRef?: string } | null;
   readonly publication: { readonly base_url: string; readonly work_order_id: string; readonly capability: string } | null;
+  readonly assessment_unchanged: { readonly assessment: JsonValue; readonly build: JsonValue } | null;
   readonly session_identity: KbblResolvedSessionIdentity;
 }
 
-interface KbblSessionSummary {
-  readonly sid: string;
-  readonly status: "starting" | "live" | "compacting" | "ended";
-  readonly endReason: "user_closed" | "subprocess_exited" | "compacted" | null;
-  readonly worktreeBaseRef: string | null;
-}
-
-interface EnsureSessionResponse {
-  readonly kind: "attached" | "started" | "terminal";
-  readonly session: KbblSessionSummary;
-}
+/** The part of a resumable session snapshot the adapter reads. */
+type KbblSessionSummary = Readonly<Pick<ResumableSessionSnapshot, "sid" | "status" | "endReason" | "worktreeBaseRef">>;
+interface EnsureSessionResponse { readonly kind: ResumableEnsureResponse["kind"]; readonly session: KbblSessionSummary }
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
@@ -109,8 +103,11 @@ const parseResolvedConfig = (value: JsonValue): KbblResolvedConfig => {
   const rawPublication = value.publication;
   const publication = isObject(rawPublication) && typeof rawPublication.base_url === "string" && typeof rawPublication.work_order_id === "string" && typeof rawPublication.capability === "string"
     ? { base_url: rawPublication.base_url, work_order_id: rawPublication.work_order_id, capability: rawPublication.capability } : null;
+  const unchanged = isObject(value.assessment_unchanged) && isObject(value.assessment_unchanged.assessment)
+    && isObject(value.assessment_unchanged.build)
+    ? { assessment: value.assessment_unchanged.assessment, build: value.assessment_unchanged.build } : null;
   const session_identity = parseSessionIdentity(value.session_identity);
-  return { runtime, rendered_prompt: renderedPrompt, workdir, session_name: sessionName, model, effort, artifact_id: artifactId, worktree, publication, session_identity };
+  return { runtime, rendered_prompt: renderedPrompt, workdir, session_name: sessionName, model, effort, artifact_id: artifactId, worktree, publication, assessment_unchanged: unchanged, session_identity };
 };
 
 /**
@@ -121,38 +118,23 @@ const parseResolvedConfig = (value: JsonValue): KbblResolvedConfig => {
  */
 const parseSessionIdentity = (value: JsonValue): KbblResolvedSessionIdentity => {
   if (!isObject(value)) throw new Error("kbbl resolved config is missing session_identity");
-  const { run_id, stage_instance_id, unit_id, operator_role, cohort_title, repository_key } = value;
+  const { run_id, stage_instance_id, unit_id, cohort_id, operator_role, cohort_title, repository_key } = value;
   if (typeof run_id !== "string" || run_id.length === 0
     || typeof stage_instance_id !== "string" || stage_instance_id.length === 0
     || typeof unit_id !== "string" || unit_id.length === 0) {
     throw new Error("kbbl resolved config session_identity is missing required fields");
   }
   return {
-    run_id, stage_instance_id, unit_id,
+    run_id, stage_instance_id, unit_id, cohort_id: typeof cohort_id === "string" ? cohort_id : null,
     operator_role: typeof operator_role === "string" ? operator_role : null,
     cohort_title: typeof cohort_title === "string" ? cohort_title : null,
     repository_key: typeof repository_key === "string" ? repository_key : null,
   };
 };
 
-/**
- * The outputs this work order owes, named the way the emit route addresses
- * them. `expected_artifacts.unit_id` carries a collection member's key (the
- * request's own `unit_id` marks a scalar), so a retry that owes one member of
- * a collection tells the agent to emit that member and nothing else.
- */
-const expectedOutputLines = (request: Pick<ExecutionRequest, "unit_id" | "expected_artifacts">): string =>
-  request.expected_artifacts.map((expected) => expected.unit_id === request.unit_id
-    ? `- ${expected.output_name}`
-    : `- ${expected.output_name} (Output-Collection-Key: ${expected.unit_id})`).join("\n");
-
-const publicationInstructions = (config: KbblResolvedConfig, request: Pick<ExecutionRequest, "unit_id" | "expected_artifacts">): string => {
-  if (!config.publication) return "";
-  const owed = request.expected_artifacts.length > 0
-    ? `\n\nPublish exactly these outputs and no others:\n${expectedOutputLines(request)}\n`
-    : "";
-  return `\n\n## Oakridge v2 artifact publication\n\nUse this run-owned endpoint instead of any stage/execution emit URL shown earlier:\n\nPUT ${config.publication.base_url.replace(/\/$/, "")}/work-orders/${config.publication.work_order_id}/emit/<output-name>\nWork-Order-Capability: ${config.publication.capability}\nIdempotency-Key: <stable key for this output payload>\nContent-Type: application/json\n\nFor a collection member, also send Output-Collection-Key. A successful executor exit does not satisfy the unit; publish every required output.\n${owed}`;
-};
+/** The selected worker owns this typed output list; prompt text cannot widen or narrow it. */
+export const selectPromptExpectedArtifacts = (_config: Pick<KbblResolvedConfig, "rendered_prompt">,
+  request: Pick<ExecutionRequest, "unit_id" | "inputs" | "declared_outputs" | "expected_artifacts">): readonly ExpectedArtifactContract[] => request.expected_artifacts;
 
 const parseEnsureResponse = (value: unknown): EnsureSessionResponse => {
   if (typeof value !== "object" || value === null || !("kind" in value) || !("session" in value)) throw new Error("invalid kbbl ensure-session response");
@@ -163,7 +145,7 @@ const parseEnsureResponse = (value: unknown): EnsureSessionResponse => {
   }
   const status = session.status;
   if (status !== "starting" && status !== "live" && status !== "compacting" && status !== "ended") throw new Error("invalid kbbl session status");
-  const endReason = "endReason" in session && (session.endReason === "user_closed" || session.endReason === "subprocess_exited" || session.endReason === "compacted") ? session.endReason : null;
+  const endReason = "endReason" in session && (session.endReason === "user_closed" || session.endReason === "subprocess_exited") ? session.endReason : null;
   const worktreeBaseRef = "worktreeBaseRef" in session && typeof session.worktreeBaseRef === "string" ? session.worktreeBaseRef : null;
   return { kind, session: { sid: session.sid, status, endReason, worktreeBaseRef } };
 };
@@ -218,34 +200,18 @@ const sessionIdOf = (external_reference: ExternalExecutionReference, execution_i
   return external_reference.session_id;
 };
 
-export class KbblExecutorAdapter implements ExecutorAdapter {
-  readonly executor_type = "delegated_session";
-  private readonly fetch: FetchLike;
+export interface PinnedSessionStop { readonly request: PinnedSessionStart; readonly execution_id: ExecutionId; readonly reference: ExternalExecutionReference | null }
+export interface PinnedSessionStart { readonly session_key: string; readonly body: string }
+export interface SessionStartSelection { readonly request: ExecutionRequest; readonly operation_id: ExecutorOperationId; readonly executor_function_identity: string }
 
-  constructor(private readonly options: KbblExecutorAdapterOptions) {
-    this.fetch = options.fetch ?? globalThis.fetch;
-  }
-
-  async start_or_attach(request: ExecutionRequest, operation_id: ExecutorOperationId): Promise<ExternalExecutionReference> {
-    let config: KbblResolvedConfig;
-    try {
-      config = parseResolvedConfig(request.resolved_config);
-    } catch (error) {
-      throw new ExecutorStartRejectedError(error instanceof Error ? error.message : String(error));
-    }
-    const inheritedSessionId = request.workspace_source?.external_reference.kind === "kbbl_session"
-      ? request.workspace_source.external_reference.session_id : null;
-    // Definition-time validation should have caught this; failing here keeps the
-    // message actionable instead of surfacing as an opaque kbbl 400.
-    if (config.worktree && inheritedSessionId) {
-      throw new ExecutorStartRejectedError(`execution ${request.execution_id} resolves its own worktree and inherits one from ${inheritedSessionId}; these are mutually exclusive`);
-    }
-    const sessionKey = sessionKeyFor(operation_id, this.options.executor_function_identity);
-    const response = await this.fetch(`${this.options.base_url}/sessions/resumable/${encodeURIComponent(sessionKey)}`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        initial_prompt: config.rendered_prompt + publicationInstructions(config, request),
+/** Render once at selection. Recovery dispatches the returned body without parsing launch material. */
+export function renderSessionStart(input: SessionStartSelection): ProviderResult<PinnedSessionStart> {
+  const { request, operation_id, executor_function_identity } = input;
+  let config: KbblResolvedConfig;
+  try { config = parseResolvedConfig(request.resolved_config); }
+  catch (error) { return { kind: "permanently_rejected", code: "start_rejected", detail: error instanceof Error ? error.message : String(error) }; }
+  const body: ResumableEnsureRequest = {
+        initial_prompt: config.rendered_prompt,
         workdir: config.workdir,
         name: config.session_name,
         runtime: config.runtime,
@@ -254,24 +220,97 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
         ...(config.artifact_id ? { artifact_id: config.artifact_id } : {}),
         ...(config.worktree ? { worktree: { branch_name: config.worktree.branchName, worktree_subdir: config.worktree.worktreeSubdir,
           ...(config.worktree.baseRef ? { base_ref: selectRemoteWorktreeBase(config.worktree.baseRef) } : {}) } } : {}),
-        ...(inheritedSessionId ? { inherit_worktree_from: inheritedSessionId } : {}),
         workflow: {
           workflow_run_id: config.session_identity.run_id,
           stage_instance_id: config.session_identity.stage_instance_id,
           unit_id: config.session_identity.unit_id,
+          ...(config.session_identity.cohort_id ? { cohort_id: config.session_identity.cohort_id } : {}),
           ...(config.session_identity.operator_role ? { operator_role: config.session_identity.operator_role } : {}),
           ...(config.session_identity.cohort_title ? { cohort_title: config.session_identity.cohort_title } : {}),
           ...(config.session_identity.repository_key ? { repository_key: config.session_identity.repository_key } : {}),
         },
-      }),
-    });
-    if (!response.ok) throw new ExecutorStartRejectedError(`kbbl ensure-session failed (${response.status}): ${await response.text()}`);
+      };
+  return { kind: "acknowledged", value: { session_key: sessionKeyFor(operation_id, executor_function_identity), body: JSON.stringify(body) } };
+}
+
+export class KbblExecutorAdapter implements ExecutorAdapter {
+  readonly executor_type = "delegated_session";
+  private readonly fetch: FetchLike;
+
+  constructor(private readonly options: KbblExecutorAdapterOptions) {
+    this.fetch = options.fetch ?? globalThis.fetch;
+  }
+
+  /** Typed leaf operation over a pinned request and invocation identity. */
+  async start_selected(request: ExecutionRequest, invocation_id: InvocationId): Promise<ProviderResult<ExternalExecutionReference>> {
+    try {
+      const result = await this.start_or_attach(request, invocation_id as unknown as ExecutorOperationId);
+      return result.kind === "executor_unavailable" ? { kind: "uncertain", detail: result.detail }
+        : { kind: "acknowledged", value: result };
+    } catch (error) {
+      if (error instanceof ExecutorStartRejectedError) return { kind: "permanently_rejected", code: "start_rejected", detail: error.message };
+      return { kind: "uncertain", detail: String(error) };
+    }
+  }
+
+  async start_pinned(request: PinnedSessionStart): Promise<ProviderResult<ExternalExecutionReference>> {
+    try {
+      const result = await this.start_request(request);
+      return result.kind === "executor_unavailable" ? { kind: "uncertain", detail: result.detail } : { kind: "acknowledged", value: result };
+    } catch (error) {
+      return error instanceof ExecutorStartRejectedError ? { kind: "permanently_rejected", code: "start_rejected", detail: error.message }
+        : { kind: "uncertain", detail: String(error) };
+    }
+  }
+
+  async stop_pinned(input: PinnedSessionStop): Promise<ProviderResult<{ readonly stopped: true }>> {
+    let reference = input.reference;
+    if (!reference) {
+      const reconciled = await this.start_pinned(input.request);
+      if (reconciled.kind !== "acknowledged") return { kind: "uncertain", detail: reconciled.detail };
+      reference = reconciled.value;
+    }
+    const stopped = await this.cancel_or_fence(input.execution_id, reference);
+    return stopped?.kind === "executor_unavailable" ? { kind: "transiently_unavailable", detail: stopped.detail } : { kind: "acknowledged", value: { stopped: true } };
+  }
+
+  /** An uncertain start is reconciled by its original identity before stop. */
+  async stop_selected(request: ExecutionRequest, invocation_id: InvocationId, reference: ExternalExecutionReference | null): Promise<ProviderResult<{ readonly stopped: true }>> {
+    let known = reference;
+    if (!known) {
+      const reconciled = await this.start_selected(request, invocation_id);
+      if (reconciled.kind === "permanently_rejected") return { kind: "uncertain", detail: `cannot prove cleanup: ${reconciled.code}: ${reconciled.detail}` };
+      if (reconciled.kind !== "acknowledged") return { kind: "uncertain", detail: reconciled.detail };
+      known = reconciled.value;
+    }
+    const stopped = await this.cancel_or_fence(request.execution_id, known);
+    return stopped?.kind === "executor_unavailable" ? { kind: "transiently_unavailable", detail: stopped.detail }
+      : { kind: "acknowledged", value: { stopped: true } };
+  }
+
+  async start_or_attach(request: ExecutionRequest, operation_id: ExecutorOperationId): Promise<ExternalExecutionReference | ExecutorUnavailable> {
+    const rendered = renderSessionStart({ request, operation_id, executor_function_identity: this.options.executor_function_identity });
+    if (rendered.kind !== "acknowledged") throw new ExecutorStartRejectedError(rendered.detail);
+    return this.start_request(rendered.value);
+  }
+
+  private async start_request(request: PinnedSessionStart): Promise<ExternalExecutionReference | ExecutorUnavailable> {
+    let response: Response;
+    try { response = await this.fetch(`${this.options.base_url}/sessions/resumable/${encodeURIComponent(request.session_key)}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: request.body,
+    }); } catch (error) { return { kind: "executor_unavailable", operation: "start_or_attach", detail: String(error) }; }
+    if (!response.ok) {
+      if (response.status >= 400 && response.status < 500) throw new ExecutorStartRejectedError(`kbbl ensure-session failed (${response.status}): ${await response.text()}`);
+      return { kind: "executor_unavailable", operation: "start_or_attach", detail: `kbbl ensure-session failed (${response.status})` };
+    }
     const ensured = parseEnsureResponse(await response.json());
     return { kind: "kbbl_session", session_id: ensured.session.sid,
       ...(ensured.session.worktreeBaseRef ? { worktree_base_sha: ensured.session.worktreeBaseRef } : {}) };
   }
 
-  async observe_terminal(execution_id: ExecutionId, external_reference: ExternalExecutionReference): Promise<ExecutorObservationAttempt> {
+  async observe_terminal(execution_id: ExecutionId, external_reference: ExternalExecutionReference): Promise<ExecutorObservationAttempt | ExecutorUnavailable> {
     // Reported as a failure rather than thrown, unlike `cancel_or_fence` below.
     // This is the only path by which a unit can ever be reported terminal, and
     // it runs inside a retrying step: throwing exhausts the retries, kills the
@@ -281,7 +320,9 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
     if (external_reference.kind !== "kbbl_session") return terminal({ kind: "failed", code: "session_not_ensured", detail: `no kbbl session is associated with execution ${execution_id}` });
     const sessionId = external_reference.session_id;
     const url = `${this.options.base_url}/sessions/resumable/${encodeURIComponent(sessionId)}/terminal?wait_ms=${this.options.observe_wait_ms ?? DEFAULT_OBSERVE_WAIT_MS}`;
-    const response = await this.fetch(url);
+    let response: Response;
+    try { response = await this.fetch(url); }
+    catch (error) { return { kind: "executor_unavailable", operation: "observe_terminal", detail: String(error) }; }
     if (response.status === 202) {
       // A session that never takes its first turn ends no other way: kbbl keeps
       // answering "not terminal", correctly, and the unit waits on a state that
@@ -300,12 +341,15 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
       }
       return { kind: "pending" };
     }
-    if (!response.ok) return terminal({ kind: "failed", code: "terminal_observation_failed", detail: `kbbl terminal observation failed (${response.status}): ${await response.text()}` });
+    if (!response.ok) return { kind: "executor_unavailable", operation: "observe_terminal", detail: `kbbl terminal observation failed (${response.status})` };
     const raw = await response.json();
     if (typeof raw !== "object" || raw === null || !("session" in raw) || typeof raw.session !== "object" || raw.session === null || !("endReason" in raw.session)) {
       return terminal({ kind: "failed", code: "invalid_terminal_response", detail: "kbbl returned an invalid terminal response" });
     }
-    if (raw.session.endReason === "user_closed") return terminal({ kind: "cancelled", detail: "kbbl session was closed" });
+    if (raw.session.endReason === "user_closed") {
+      const cancelled = { kind: "cancelled" as const, code: "executor_cancelled", detail: "kbbl session was closed" };
+      return terminal(cancelled);
+    }
     const exitCode = "exit_code" in raw && typeof raw.exit_code === "number" ? raw.exit_code : null;
     // Success must be positively established. A session whose exit code kbbl
     // cannot report — it crashed before writing one, or predates exit-code
@@ -326,7 +370,7 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
     return terminal({ kind: "succeeded", metadata: { session_id: sessionId, exit_code: exitCode } });
   }
 
-  async cancel_or_fence(execution_id: ExecutionId, external_reference: ExternalExecutionReference): Promise<void> {
+  async cancel_or_fence(execution_id: ExecutionId, external_reference: ExternalExecutionReference): Promise<void | ExecutorUnavailable> {
     // `none` is the honest answer for an execution that never reached an
     // executor; anything else means the reference was lost, which must fail
     // loudly rather than leave a live agent running unfenced.
@@ -338,14 +382,16 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
     // through exactly this call, so an unqualified DELETE deadlocks the run
     // against itself — uncancellable because it is still active.
     const url = `${this.options.base_url}/sessions/${encodeURIComponent(sessionId)}?fenced_by=${encodeURIComponent(execution_id)}`;
-    const response = await this.fetch(url, { method: "DELETE" });
-    if (!response.ok && response.status !== 404) throw new Error(`kbbl cancellation failed (${response.status}): ${await response.text()}`);
+    let response: Response;
+    try { response = await this.fetch(url, { method: "DELETE" }); }
+    catch (error) { return { kind: "executor_unavailable", operation: "cancel_or_fence", detail: String(error) }; }
+    if (!response.ok && response.status !== 404) return { kind: "executor_unavailable", operation: "cancel_or_fence", detail: `kbbl cancellation failed (${response.status})` };
   }
 
   async deliver_input(execution_id: ExecutionId, delivery_key: string, input: string, external_reference: ExternalExecutionReference): Promise<void> {
     const sessionId = sessionIdOf(external_reference, execution_id);
     const response = await this.fetch(`${this.options.base_url}/sessions/resumable/${encodeURIComponent(sessionId)}/input/${encodeURIComponent(delivery_key)}`, {
-      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: input }),
+      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: input } satisfies ResumableInputRequest),
     });
     if (!response.ok) throw new Error(`kbbl input delivery failed (${response.status}): ${await response.text()}`);
   }

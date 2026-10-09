@@ -1,65 +1,122 @@
 # Oakridge DBOS backend
 
-TypeScript replacement for the custom Oakridge v2 Rust orchestration
-substrate. DBOS owns workflow execution, durable waits, fan-out/fan-in,
-recovery, and workflow history. Oakridge owns workflow definitions, stage and
-artifact contracts, review policy, executor adapters, and operator read models.
+The TypeScript backend owns durable scope authority. `src/main.ts` applies the
+authority baseline under a PostgreSQL advisory lock, then starts the production
+composition. The composition starts the Rust CLI, connects to PostgreSQL,
+verifies the effect encryption key against stored intents, registers provider
+and workflow services, launches DBOS, and resumes active runs and parked effects.
+Only after this succeeds does `main.ts` bind HTTP; a failed stage closes the
+resources it started. The Rust CLI evaluates pinned definitions, the mutation
+service commits accepted decisions and receipts, DBOS drives effects and
+recovery, and projections read committed state. Commands and publications use
+run and scope identities; accepted writes return durable receipts.
 
-## Run locally
+## Runtime
 
-The normal entry point is the repository-level launcher:
+DBOS (`@dbos-inc/dbos-sdk`) is the execution runtime; nothing in this package
+polls or leases. `src/workflows/topology.ts` declares three generic workflows
+that interpret every pinned bundle without knowing its stages:
 
-```bash
-bun run oakridge
-```
+- `oakridgeRunWorkflow` (id `run:<run_id>`) — on each wake re-reads the
+  authority, delivers configured lifecycle triggers, retries deferred evidence
+  and starts workflows for intents that need one; exits when the root scope is
+  terminal and nothing is owed. Every accepted command sends it a wake.
+- `oakridgeEffectWorkflow` (id = `<start intent id>@<application version>`) — carries one committed start
+  to its provider with capped backoff, observes until terminal, persists the
+  result and delivers evidence.
+- `oakridgeCleanupWorkflow` (id = `<stop intent id>@<application version>`) — carries one committed stop
+  until the provider positively acknowledges it.
 
-It manages local PostgreSQL when needed, applies migrations, and supervises this
-backend with kbbl. Use the commands below only when running the backend
-separately for debugging.
+Steps are IO boundaries (one DB write, one core call, one provider call). A
+crash mid-step resumes at that step on the next process of the same application
+version. A clean shutdown parks running workflows (DBOS cancel), and the next
+boot of the same version resumes them. A boot of a different version carries
+them over instead (see Application version). An `ERROR` run is forked at its failed step into the next
+generation; a long run rolls over after 128 iterations with its scan cursor.
+Child dispatch reads durable intent and workflow status, so restart neither
+redelivers a settled child nor forgets one still pending.
 
-The backend and DBOS use the same PostgreSQL database. Oakridge tables live in
-the `oakridge` schema; DBOS manages its own system schema.
+Each provider start, observe and stop call uses its action's pinned
+`deadline_ms`. Start retries are bounded by the action's pinned `max_attempts`
+and a lost session by consecutive unavailable observations, so a working agent
+session has no wall-clock limit. `execution_deadline_ms` in the workflow timing
+optionally adds a DBOS execution timeout; if that deadline expires while parked,
+startup settles the intent as rejected and delivers failure evidence. Cleanup remains pending
+until the provider acknowledges it. Provider rejections and exhausted attempts
+follow the bundle's declared recovery policy; infrastructure failures surface
+as run workflow errors and are recovered through a fork.
 
-```bash
-export DBOS_SYSTEM_DATABASE_URL=postgres://oakridge:oakridge@localhost:5432/oakridge
-export DBOS_APPLICATION_VERSION="$(git rev-parse HEAD)"
-export KBBL_BASE_URL=http://127.0.0.1:8788
-export OAKRIDGE_DBOS_HOST=127.0.0.1
-export PORT=8790
+### Application version
 
-bun run migrate
-bun run start
-```
+DBOS resumes only workflows recorded under the running `applicationVersion`.
+`src/workflows/engine-version.ts` hashes the sorted `ENGINE_SOURCE_MANIFEST`
+paths and bytes, then combines that source digest with the SHA-256 digest of
+`src/storage/migrations/0001_core_authority.sql` and of the `OAKRIDGE_CORE_BINARY`
+the process spawns. The final SHA-256 is truncated to 16 hex characters. This
+includes workflow dependencies, the authority schema baseline and the Rust
+evaluator build. Bundle, route, projection, prompt and UI changes leave it
+unchanged. `DBOS_APPLICATION_VERSION` overrides it for controlled forks and
+rollbacks.
 
-## V2 clean cutover
+DBOS never runs a workflow recorded under another version, so boot carries
+them over instead of resuming them. Live workflows of another version are
+cancelled to fence any process still running it. A run whose current
+generation belongs to another version gets a fresh generation that rereads the
+authority from its scan cursor. Intent workflows are addressed per version, so
+the run's next recheck starts this version's carrier for any intent still owed.
+The older rows remain as history. A carried effect starts a fresh DBOS
+execution deadline.
 
-The run-record topology is the only supported topology. For the first v2
-deployment, stop every old Oakridge/DBOS worker, archive evidence needed
-outside the service, recreate the Oakridge application database, run every
-numbered migration from zero, and seed the built-in definitions by starting
-the backend. Use a new `DBOS_APPLICATION_VERSION` for this cutover.
+## Storage records
 
-There is deliberately no adoption or backfill path. Startup refuses a database
-containing legacy workflow-attempt identities or attempt-owned stages rather
-than silently treating them as v2 runs. A healthy v2 database can be restarted
-in place: v2 attempts use the `v2-run:` namespace and stages are owned directly
-by the run record. Migration `0016` creates the database-owned work-order
-capability seed; operators do not provision that secret externally.
-
-Changed artifact content creates a new immutable revision and supersedes the
-prior unreleased revision. Executors can withdraw the current unreleased
-revision with `POST /artifacts/:artifact_id/withdraw`; released revisions
-require a run-owned retry instead.
-
-`DBOS_APPLICATION_VERSION` is intentionally required. Do not reuse a version
-after changing durable workflow-operation order.
+`src/storage/migrations/0001_core_authority.sql` is the only hand-written
+description of the authority tables. `scripts/generate-storage-records.ts`
+applies it to a scratch database on `OAKRIDGE_TEST_DATABASE_URL`'s server and
+runs [pg-to-ts](https://github.com/danvk/pg-to-ts) over the result, writing
+`src/storage/generated-records.ts`. Each jsonb column names its TypeScript type
+with a `COMMENT ON COLUMN ... IS '@type {Name}'`, resolved in
+`src/storage/json-column-types.ts`; status columns are Postgres enums, so their
+unions are generated too. `src/storage/schema-records.ts` adds only the id
+brands. After editing the baseline, run `bun run generate:records`; CI fails
+when the committed file differs.
 
 ## Verify
 
+From the repository root:
+
 ```bash
-bun test
+cargo build --locked --manifest-path workflow-core/Cargo.toml -p workflow-cli
 bun run typecheck
+bun run --filter oakridge-dbos test:unit
+bun run --filter oakridge-dbos test:integration
 ```
 
-The production entry point is `src/main.ts`. Operational guidance is in
-`../docs/oakridge-v2-runbook.md`.
+The integration tests require `OAKRIDGE_TEST_DATABASE_URL` for PostgreSQL 15+
+with create/drop database permission. The provider-driven bundle test uses
+`createProductionComposition` and all shipped JSON definitions, and drives each
+through repository preparation and the first analysis session against a stub
+kbbl.
+
+The core client caches compilation by an incremental content hash of the source
+bundle. The compiler's `bundle_digest` is an output of that request, so it is
+not available at cache lookup time. Snapshot reconstruction logs duration,
+observation count, read roots, and witness rows for cost comparison.
+
+## Database cutover
+
+The authority baseline requires PostgreSQL 15 or newer. Repeating start against
+the same baseline succeeds; a changed baseline file is rejected with both
+digests. DBOS system tables may exist before the authority baseline is applied.
+
+Set `OAKRIDGE_EFFECT_ENCRYPTION_KEY` to a generated 32-byte base64url key before
+starting the service. Startup refuses a missing key or a key that cannot decrypt
+existing effect intents. Keep this key stable across restarts. Set
+`OAKRIDGE_ALLOWED_ORIGINS` to a comma-separated list of exact browser origins
+that may write; loopback origins need an explicit entry. Writes require
+`application/json`. The backend and kbbl proxy accept the same operator token
+as Bearer or through kbbl's HttpOnly control cookie; the proxy keeps the cookie
+local and forwards the verified token to the backend.
+
+Stop the service; run `pg_dump` to a file nothing in this repository reads;
+drop and recreate the Oakridge database empty; deploy the Rust CLI, DBOS
+backend and kbbl PWA; then admit traffic. kbbl's SQLite ACP ledger is separate.

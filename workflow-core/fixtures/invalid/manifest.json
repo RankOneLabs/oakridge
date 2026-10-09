@@ -1,0 +1,70 @@
+[
+  {
+    "file": "missing-symbol.json",
+    "expected": "missing_symbol"
+  },
+  {
+    "file": "duplicate-symbol.json",
+    "expected": "duplicate_symbol"
+  },
+  {
+    "file": "invalid-schema.json",
+    "expected": "invalid_schema"
+  },
+  {
+    "file": "private-read.json",
+    "expected": "private_read"
+  },
+  {
+    "file": "nonexhaustive-match.json",
+    "expected": "non_exhaustive_match"
+  },
+  {
+    "file": "conflicting-write.json",
+    "expected": "conflicting_write"
+  },
+  {
+    "file": "unreachable-action.json",
+    "expected": "unreachable_declaration"
+  },
+  {
+    "file": "unhandled-command.json",
+    "expected": "unhandled_command"
+  },
+  {
+    "file": "unsupported-provider.json",
+    "expected": "unsupported_provider"
+  },
+  {
+    "file": "unsupported-presentation.json",
+    "expected": "unsupported_presentation"
+  },
+  {
+    "file": "revision-loop-invalid-state.json",
+    "expected": "invalid_payload"
+  },
+  {
+    "file": "exact-review-wrong-target.json",
+    "expected": "invalid_assignment"
+  },
+  {
+    "file": "held-reservation-zero-capacity.json",
+    "expected": "invalid_schema"
+  },
+  {
+    "file": "terminal-replacement-no-observation.json",
+    "expected": "missing_symbol"
+  },
+  {
+    "file": "publication-pair-foreign-producer.json",
+    "expected": "unsupported_publication"
+  },
+  {
+    "file": "conflicting-child-activation.json",
+    "expected": "conflicting_write"
+  },
+  {
+    "file": "conflicting-resource-observation.json",
+    "expected": "conflicting_write"
+  }
+]

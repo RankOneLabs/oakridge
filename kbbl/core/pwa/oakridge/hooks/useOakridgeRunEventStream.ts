@@ -1,54 +1,26 @@
 import { useEffect, useRef } from "react";
 import { LiveSubscription } from "../../lib/live-stream";
+import type { OperatorRunEvent } from "../operator-contracts";
 
-import { parseOakridgeRunEventFrame } from "../client";
-import type { RunEventFrame } from "../types";
+function parseOperatorEvent(data: string): OperatorRunEvent | null {
+  try {
+    const value: unknown = JSON.parse(data);
+    return value && typeof value === "object" && "run_id" in value && typeof value.run_id === "string"
+      && "scope_id" in value && typeof value.scope_id === "string" ? value as OperatorRunEvent : null;
+  } catch { return null; }
+}
 
-type StreamEventName = "invalidate" | "run_event";
-type StreamListener = (event: MessageEvent<string>) => void;
-
-const listeners: Record<StreamEventName, Set<StreamListener>> = {
-  invalidate: new Set(),
-  run_event: new Set(),
-};
-let source: LiveSubscription | null = null;
-
-const dispatch = (name: StreamEventName) => (event: MessageEvent<string>): void => {
-  for (const listener of listeners[name]) listener(event as MessageEvent<string>);
-};
-
-const dispatchers = { invalidate: dispatch("invalidate"), run_event: dispatch("run_event") };
-
-/** Both Oakridge hooks subscribe through one topic on the shared page feed. */
-export const subscribeOakridgeStream = (name: StreamEventName, listener: StreamListener): (() => void) => {
-  listeners[name].add(listener);
-  if (!source) {
-    source = new LiveSubscription("/oakridge/api/events");
-    source.addEventListener("invalidate", dispatchers.invalidate);
-    source.addEventListener("run_event", dispatchers.run_event);
-  }
-  return () => {
-    listeners[name].delete(listener);
-    if (listeners.invalidate.size > 0 || listeners.run_event.size > 0 || !source) return;
-    source.removeEventListener("invalidate", dispatchers.invalidate);
-    source.removeEventListener("run_event", dispatchers.run_event);
-    source.close();
-    source = null;
-  };
-};
-
-/**
- * Best-effort, toast-only run-event frames. The subscriber owns replay policy
- * so the production notification selector is the one that suppresses them.
- */
-export function useOakridgeRunEventStream(isEnabled: boolean, subscriber: (frame: RunEventFrame) => void): void {
+/** Committed transitions from the authority (GET /events), relayed through kbbl's shared live connection. */
+export function useOakridgeRunEventStream(isEnabled: boolean, subscriber: (event: OperatorRunEvent) => void): void {
   const subscriberRef = useRef(subscriber);
   subscriberRef.current = subscriber;
   useEffect(() => {
     if (!isEnabled) return;
-    return subscribeOakridgeStream("run_event", (message) => {
-      const frame = parseOakridgeRunEventFrame(message.data);
-      if (frame) subscriberRef.current(frame);
+    const subscription = new LiveSubscription("/oakridge/api/events");
+    subscription.addEventListener("run_event", (message) => {
+      const event = parseOperatorEvent(message.data);
+      if (event) subscriberRef.current(event);
     });
+    return () => subscription.close();
   }, [isEnabled]);
 }

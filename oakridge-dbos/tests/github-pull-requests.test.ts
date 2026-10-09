@@ -1,26 +1,6 @@
 import { expect, test } from "bun:test";
 
-import type { OperatorCohortLifecycle, OperatorCohortSummary } from "../src/domain/operator-projections";
-import type { StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
-import { GithubPullRequestReader, selectCohortsAwaitingReview } from "../src/runtime/github-pull-requests";
-
-const cohort = (unitId: string, lifecycle: OperatorCohortLifecycle): OperatorCohortSummary => ({
-  id: `stage:${unitId}`, run_id: "00000000-0000-4000-8000-000000000001" as WorkflowRunId, workflow_name: "dev flow",
-  stage_instance_id: "00000000-0000-4000-8000-000000000002" as StageInstanceId, stage_name: "build", unit_id: unitId as UnitId,
-  repository_key: "oakridge", title: unitId, lifecycle,
-  completion: { build_complete: true, assessment_complete: false },
-  admission: { required: false, admitted: true, eligible: true, blocked_by: [] },
-  artifact_revision_id: null, artifact_url: null, gate_id: null, gate_url: null, pr_url: null,
-  pull_request_reconciliation: null, updated_at: "2026-08-18T12:00:00.000Z",
-});
-
-test("only cohorts parked on their pull request are polled", () => {
-  const selected = selectCohortsAwaitingReview([
-    cohort("foundation", "github_review"), cohort("web", "building"),
-    cohort("api", "assessing"), cohort("cli", "complete"),
-  ]);
-  expect(selected.map((candidate) => String(candidate.unit_id))).toEqual(["foundation"]);
-});
+import { GithubPullRequestReader } from "../src/runtime/github-pull-requests";
 
 const githubPayload = (overrides: Record<string, unknown> = {}) => ({
   number: 440, html_url: "https://github.com/RankOneLabs/oakridge/pull/440",
@@ -40,7 +20,8 @@ const readerReturning = (status: number, payload: unknown) => {
 
 test("an open pull request reads as open", async () => {
   const { reader, calls } = readerReturning(200, githubPayload());
-  const observation = await reader.read("RankOneLabs", "oakridge", 440);
+  const read = await reader.read("RankOneLabs", "oakridge", 440);
+  const observation = read.ok ? read.value : null;
   expect(observation?.state).toBe("open");
   expect(observation?.source).toBe("poll");
   expect(observation?.head_branch).toBe("cohort/foundation");
@@ -55,14 +36,16 @@ test("an open pull request reads as open", async () => {
  */
 test("a merged pull request reads as merged even though GitHub calls it closed", async () => {
   const { reader } = readerReturning(200, githubPayload({ state: "closed", merged: true, merged_at: "2026-08-18T11:00:00Z" }));
-  const observation = await reader.read("RankOneLabs", "oakridge", 440);
+  const read = await reader.read("RankOneLabs", "oakridge", 440);
+  const observation = read.ok ? read.value : null;
   expect(observation?.state).toBe("merged");
   expect(observation?.merged_at).toBe("2026-08-18T11:00:00Z");
 });
 
 test("a pull request closed without merging reads as closed_unmerged", async () => {
   const { reader } = readerReturning(200, githubPayload({ state: "closed", merged: false, merged_at: null }));
-  const observation = await reader.read("RankOneLabs", "oakridge", 440);
+  const read = await reader.read("RankOneLabs", "oakridge", 440);
+  const observation = read.ok ? read.value : null;
   expect(observation?.state).toBe("closed_unmerged");
 });
 
@@ -72,10 +55,35 @@ test("a pull request closed without merging reads as closed_unmerged", async () 
  */
 test("a pull request that cannot be read yields no observation", async () => {
   const { reader } = readerReturning(404, { message: "Not Found" });
-  expect(await reader.read("RankOneLabs", "oakridge", 440)).toBeNull();
+  expect(await reader.read("RankOneLabs", "oakridge", 440)).toEqual({ ok: true, value: null });
 });
 
 test("a payload missing the fields an observation needs yields no observation", async () => {
   const { reader } = readerReturning(200, githubPayload({ head: null }));
-  expect(await reader.read("RankOneLabs", "oakridge", 440)).toBeNull();
+  expect((await reader.read("RankOneLabs", "oakridge", 440)).ok).toBe(false);
 });
+
+test("a GitHub 503 is distinguishable from a missing pull request", async () => {
+  const { reader } = readerReturning(503, { message: "Unavailable" });
+  expect(await reader.read("RankOneLabs", "oakridge", 440)).toEqual({ ok: false, error: {
+    kind: "unavailable", status: 503, detail: "GitHub pull request read failed (503)",
+  } });
+});
+
+for (const [head_owner, head_repository] of [["RankOneLabs", "RankOneLabs/oakridge"], ["fork-owner", "fork-owner/oakridge"], ["fork-owner", "Fork-Owner/oakridge-renamed"]] as const) {
+  test(`discovery pages through the list and filters the ${head_repository} head repository`, async () => {
+    const calls: string[] = [];
+    const candidate = { number: 440, head: { ref: "cohort/foundation", repo: { full_name: head_repository } }, base: { ref: "epic/tiers" } };
+    const http = (async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      calls.push(url.toString());
+      if (url.pathname.endsWith("/pulls/440")) return Response.json(githubPayload({ head: candidate.head }));
+      if (url.searchParams.get("page") === "1") return Response.json(Array.from({ length: 100 }, (_, number) => ({ ...candidate, number: number + 1, head: { ...candidate.head, repo: { full_name: "other/oakridge" } } })));
+      return Response.json([candidate]);
+    }) as unknown as typeof fetch;
+    const reader = new GithubPullRequestReader({ token: "test-token" }, http);
+    const result = await reader.find_for_branches({ owner: "RankOneLabs", name: "oakridge", head_owner, head_branch: "cohort/foundation", base_branch: "epic/tiers" });
+    expect(result.ok && result.value.map((item) => item.number)).toEqual([440]);
+    expect(calls.some((url) => url.includes(`head=${encodeURIComponent(`${head_owner}:cohort/foundation`)}`) && url.includes("page=2"))).toBe(true);
+  });
+}
