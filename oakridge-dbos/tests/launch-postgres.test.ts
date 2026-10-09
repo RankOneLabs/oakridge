@@ -101,3 +101,28 @@ test("a deleted run leaves a launch tombstone and cannot be recreated by retry",
       .toEqual([{ runs: 0, receipts: 1 }]);
   });
 });
+
+test("deleting a run removes collaboration records and retains committed event frames", async () => withDatabase(async ({ db }) => {
+  await db.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ('bundle','digest','{}','{}')", []);
+  await db.query("INSERT INTO authority.run (id,definition_bundle_id) VALUES ('run','bundle')", []);
+  await db.query("INSERT INTO authority.scope_instance (id,run_id,scope_key,input,local_state) VALUES ('scope','run','root','{}','{}')", []);
+  await db.query("INSERT INTO authority.execution (id,scope_id,worker_key,generation,status) VALUES ('execution','scope','agent',1,'terminal')", []);
+  await db.query("INSERT INTO authority.artifact_revision (id,scope_id,execution_id,output_key,body) VALUES ('revision','scope','execution','plan','{}')", []);
+  await db.query("INSERT INTO authority.output_slot (id,scope_id,output_key,current_revision_id) VALUES ('slot','scope','plan','revision')", []);
+  await db.query("INSERT INTO authority.collaboration_thread (id,run_id,scope_id,output_key,revision_id,status) VALUES ('thread','run','scope','plan','revision','open')", []);
+  await db.query("INSERT INTO authority.collaboration_message (id,thread_id,body,author) VALUES ('message','thread','review','operator')", []);
+  await db.query("INSERT INTO authority.review_item (id,run_id,scope_id,output_key,revision_id,anchor,claim,reality,status) VALUES ('review','run','scope','plan','revision','section','claim','reality','open')", []);
+  await db.query("INSERT INTO authority.collaboration_delivery (id,thread_id,request_key,target_execution_id,transcript,status) VALUES ('delivery','thread','request','execution','{}','delivered')", []);
+  await db.query("INSERT INTO authority.operator_event (id,run_id,scope_id,payload) VALUES ('event','run','scope','{\"kind\":\"complete\"}')", []);
+
+  expect(await deleteRun(db, "run")).toEqual({ kind: "deleted" });
+  expect(await db.query(`SELECT
+    (SELECT count(*)::int FROM authority.run) AS runs,
+    (SELECT count(*)::int FROM authority.collaboration_thread) AS threads,
+    (SELECT count(*)::int FROM authority.collaboration_message) AS messages,
+    (SELECT count(*)::int FROM authority.review_item) AS reviews,
+    (SELECT count(*)::int FROM authority.collaboration_delivery) AS deliveries`, []))
+    .toEqual([{ runs: 0, threads: 0, messages: 0, reviews: 0, deliveries: 0 }]);
+  expect(await db.query("SELECT payload FROM authority.operator_event WHERE id='event'", []))
+    .toEqual([{ payload: { kind: "complete" } }]);
+}));

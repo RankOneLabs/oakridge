@@ -61,7 +61,7 @@ export async function persistEffectResult(db: TransactionalSqlExecutor, input: E
     }
     // A stop recorded while this start was in flight copied a null handle; give it the one just learned.
     if (payload.action === "start" && payload.handle !== null) {
-      await tx.query(`UPDATE authority.effect_intent SET payload=jsonb_set(payload,'{handle}',$3::jsonb),version=version+1
+      await tx.query(`UPDATE authority.effect_intent SET payload=jsonb_set(payload,'{handle}',$3::jsonb),updated_at=now(),version=version+1
         WHERE scope_id=$1 AND effect_key=$2 AND payload->>'action'='stop' AND jsonb_typeof(payload->'handle')='null'
           AND status<>'cleanup_confirmed'`, [written.scope_id, `${written.effect_key}:stop`, JSON.stringify(payload.handle)]);
     }
