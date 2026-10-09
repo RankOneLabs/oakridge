@@ -1,5 +1,5 @@
 import type * as Rows from "./generated-records";
-import type { ExecutionId, PoolId, ProjectId, RevisionId, RunId, ScopeId } from "../domain/primitives";
+import type { CollaborationDeliveryId, CollaborationMessageId, CollaborationThreadId, ExecutionId, OperatorEventId, PoolId, ProjectId, ReviewItemId, RevisionId, RunId, ScopeId } from "../domain/primitives";
 import type { Materialization } from "../core-client/generated-contracts";
 
 export type { ExecutionId, PoolId, ProjectId, RevisionId, RunId, ScopeId } from "../domain/primitives";
@@ -40,6 +40,11 @@ export type CapacityPoolRecord = Branded<Rows.CapacityPool, { id: PoolId; run_id
 export type CapacityReservationRecord = Branded<Rows.CapacityReservation, { run_id: RunId; pool_id: PoolId; scope_id: ScopeId }>;
 export type ResourceBindingRecord = Branded<Rows.ResourceBinding, { run_id: RunId; scope_id: ScopeId }>;
 export type ProjectRecord = Branded<Rows.Project, { id: ProjectId }>;
+export type OperatorEventRecord = Branded<Rows.OperatorEvent, { id: OperatorEventId; run_id: RunId }>;
+export type CollaborationThreadRecord = Branded<Rows.CollaborationThread, { id: CollaborationThreadId; run_id: RunId; scope_id: ScopeId; artifact_revision_id: RevisionId }>;
+export type CollaborationMessageRecord = Branded<Rows.CollaborationMessage, { id: CollaborationMessageId; run_id: RunId; scope_id: ScopeId; thread_id: CollaborationThreadId }>;
+export type ReviewItemRecord = Branded<Rows.ReviewItem, { id: ReviewItemId; run_id: RunId; scope_id: ScopeId; artifact_revision_id: RevisionId; thread_id: CollaborationThreadId }>;
+export type CollaborationDeliveryRecord = Branded<Rows.CollaborationDelivery, { id: CollaborationDeliveryId; run_id: RunId; scope_id: ScopeId; message_id: CollaborationMessageId }>;
 
 // Wire payloads remain the generated Rust contracts; persistence adds identity and version.
 export type CompiledBundle = import("../core-client/generated-contracts").CompiledBundle;

@@ -6,12 +6,30 @@
 import type { CheckedValue } from "../core-client/generated-contracts";
 import type { EffectPayload } from "../effects/intents";
 import type { ScopeId } from "./schema-records";
+import type { RuntimeModelSelection } from "../../../kbbl/core/runtime";
+import type { JsonValue } from "../domain/primitives";
 
 import type { DefinitionBundle } from "../core-client/generated-contracts";
 
 export type { CheckedValue, CompiledBundle, DecisionOutcome } from "../core-client/generated-contracts";
 /** Named apart from the generated definition_bundle row. */
 export type DefinitionBundleSource = DefinitionBundle;
+export type { SessionPolicy } from "../domain/session-settings";
+
+/** Source-side metadata alongside the compiled definition bundle. */
+export interface WorkflowAuthoring {
+  readonly worker_defaults: readonly {
+    readonly stage_key: string;
+    readonly worker_key: string;
+    readonly runtimes: readonly RuntimeModelSelection[];
+  }[];
+}
+
+export interface OperatorEventPayload { readonly kind: string; readonly data: JsonValue }
+export interface CollaborationThreadContext { readonly title: string; readonly anchor: string | null }
+export interface CollaborationMessageBody { readonly text: string; readonly author: string }
+export interface ReviewItemBody { readonly title: string; readonly detail: string; readonly status: string }
+export interface CollaborationDeliveryPayload { readonly session_id: string; readonly status: string }
 
 export interface ChildCollectionMember { readonly id: ScopeId; readonly key: string; readonly depends_on: readonly string[] }
 export type ChildCollectionMembers = readonly (string | ChildCollectionMember)[];
