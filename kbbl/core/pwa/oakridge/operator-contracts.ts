@@ -7,11 +7,12 @@ export interface OperatorStartedRun { readonly run_id: string; readonly root_sco
 
 export interface OperatorRunPage { readonly items: readonly OperatorRunView[]; readonly next_cursor: string | null }
 
-export interface OperatorRunView { readonly run_id: string; readonly definition_bundle_id: string; readonly definition_digest: string; readonly version: number; readonly cursor: readonly { readonly scope_id: string; readonly version: number }[]; readonly scopes: readonly OperatorRunScopeSummary[] }
+export interface OperatorRunView { readonly run_id: string; readonly definition_bundle_id: string; readonly definition_digest: string; readonly version: number;
+  readonly created_at: string; readonly archived_at: string | null; readonly cursor: readonly { readonly scope_id: string; readonly version: number }[]; readonly scopes: readonly OperatorRunScopeSummary[] }
 
 export interface OperatorDefinitionPage { readonly items: readonly OperatorDefinitionSummary[]; readonly next_cursor: string | null }
 
-export interface OperatorDefinitionSummary { readonly bundle_id: string; readonly digest: string; readonly source: OperatorDefinitionBundle }
+export interface OperatorDefinitionSummary { readonly bundle_id: string; readonly digest: string; readonly source: OperatorDefinitionBundle; readonly archived_at: string | null }
 
 export interface OperatorPinnedDefinition extends OperatorDefinitionSummary { readonly checked_program: OperatorCompiledBundle }
 
@@ -52,6 +53,30 @@ export interface OperatorScopeCommandRequest {
   readonly targets: readonly OperatorTargetRevision[];
 }
 
+export interface OperatorProjectDraft {
+  readonly name: string;
+  readonly repo_dir: string;
+  readonly forge_repository: OperatorForgeRepository | null;
+  readonly integration_branch: string | null;
+}
+
+export interface OperatorProjectList { readonly items: readonly OperatorProjectView[] }
+
+export type OperatorProjectView = OperatorProjectRecord;
+
+export interface OperatorRunEvent {
+  readonly transition_id: string;
+  readonly run_id: string;
+  readonly scope_id: string;
+  readonly scope_key: string;
+  readonly decision: OperatorDecisionOutcome["kind"];
+  /** Set when the scope now waits on the operator. */
+  readonly attention: OperatorAttentionMetadata | null;
+  readonly is_terminal: boolean;
+  /** ISO-8601, as the transition log recorded it. */
+  readonly occurred_at: string;
+}
+
 export interface OperatorRunScopeSummary { readonly scope_id: string; readonly scope_key: string; readonly label: string; readonly version: number; readonly is_terminal: boolean; readonly available_commands: readonly string[] }
 
 export type OperatorDefinitionBundle = { readonly "key": string; readonly "language_version": number; readonly "limits": OperatorResourceLimits; readonly "operations": (OperatorOperationManifest)[]; readonly "prompts": (OperatorPrompt)[]; readonly "root": string; readonly "schemas": (OperatorSchema)[]; readonly "scopes": (OperatorScopeDefinition)[]; readonly "version": number };
@@ -79,6 +104,12 @@ export interface OperatorProjectionCursor { readonly scope_version: number; read
 export interface OperatorTransitionHistory<Timestamp> extends Omit<OperatorStoredTransitionHistory<Timestamp>, "version"> { readonly version: number }
 
 export interface OperatorScopeFactHistory { readonly id: string; readonly fact_key: string; readonly payload: OperatorCheckedValue }
+
+export interface OperatorForgeRepository { readonly provider: "github"; readonly owner: string; readonly name: string }
+
+export type OperatorProjectRecord = OperatorBranded<OperatorProject, { id: string }>;
+
+export type OperatorAttentionMetadata = { readonly "label": string; readonly "trigger": string };
 
 export type OperatorResourceLimits = { readonly "evaluation_budget": number; readonly "max_depth": number; readonly "max_list_items": number };
 
@@ -127,11 +158,19 @@ export type OperatorInvocation = { readonly "definition": OperatorInvocationCont
 
 export type OperatorMutationValue = { readonly "kind": "set_state"; readonly "value": OperatorCheckedValue } | { readonly "key": string; readonly "kind": "export"; readonly "value": OperatorCheckedValue } | { readonly "input": OperatorCheckedValue; readonly "key": string; readonly "kind": "activate_child" } | { readonly "key": string; readonly "kind": "activate_collection"; readonly "materialization": OperatorMaterialization } | { readonly "key": string; readonly "kind": "cancel_children" } | { readonly "key": string; readonly "kind": "clear_output" } | { readonly "kind": "acquire"; readonly "pool": string } | { readonly "kind": "release"; readonly "pool": string } | { readonly "kind": "revoke"; readonly "worker": string } | { readonly "kind": "stop"; readonly "worker": string } | { readonly "key": string; readonly "kind": "bind_resource"; readonly "value": OperatorCheckedValue } | { readonly "key": string; readonly "kind": "clear_resource" } | { readonly "kind": "observe"; readonly "resource": string };
 
-export type OperatorAttentionMetadata = { readonly "label": string; readonly "trigger": string };
-
 export interface OperatorStoredTransitionHistory<Timestamp> {
   readonly id: string; readonly trigger_id: string; readonly decision: OperatorDecisionOutcome;
   readonly created_at: Timestamp; readonly version: OperatorSqlVersion;
+}
+
+export interface OperatorProject {
+  id: string;
+  name: string;
+  repo_dir: string;
+  /** @type {ForgeRepository} */
+  forge_repository: OperatorForgeRepository | null;
+  integration_branch: string | null;
+  created_at: string;
 }
 
 export type OperatorRecoveryMapping = { readonly "code": string; readonly "fact": string };

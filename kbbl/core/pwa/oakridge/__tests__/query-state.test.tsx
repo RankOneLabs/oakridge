@@ -8,7 +8,7 @@ import { ReviewInboxView } from "../views/ReviewInboxView";
 import { OperatorRunListView } from "../views/OperatorRunListView";
 import { OperatorCommandForm } from "../components/organisms/OperatorCommandForm";
 import { invalidateOperatorFrame } from "../hooks/useOakridgeInvalidationStream";
-import { operatorTransition, runEventFrame } from "../lib/__fixtures__/run-event-frame";
+import { operatorEvent } from "../lib/__fixtures__/operator-event";
 import { useReviewInbox } from "../hooks/useReviewInbox";
 import { savePendingCommand } from "../lib/operator-drafts";
 import type { OperatorCommandDefinition, OperatorScopeView } from "../operator-contracts";
@@ -104,7 +104,7 @@ test("an authority event refreshes its own run and both shared lists, and leaves
   vi.stubGlobal("fetch", fetch);
   const cache = client();
   render(<QueryClientProvider client={cache}>
-    <OperatorRunListView onSelectRun={() => undefined} onNewRun={() => undefined} onDefinitions={() => undefined} />
+    <OperatorRunListView onSelectRun={() => undefined} onNewRun={() => undefined} onDefinitions={() => undefined} onProjects={() => undefined} />
     <ReviewInboxView onSelectScope={() => undefined} />
     <GenericOperatorRunView runId="run-one" initialScopeId={null} onBack={() => undefined} />
     <GenericOperatorRunView runId="run-two" initialScopeId={null} onBack={() => undefined} />
@@ -116,7 +116,7 @@ test("an authority event refreshes its own run and both shared lists, and leaves
   const served = (suffix: string) => fetch.mock.calls.filter(([url]) => url.endsWith(suffix)).length;
   expect([served("/api/runs"), served("/api/inbox"), served(`/scopes/${scopeOf("run-two")}`)]).toEqual([1, 1, 1]);
 
-  invalidateOperatorFrame(cache, runEventFrame({ run_id: "run-one", effect: operatorTransition }));
+  invalidateOperatorFrame(cache, operatorEvent({ run_id: "run-one" }));
 
   await waitFor(() => expect([served("/api/runs"), served("/api/inbox"), served(`/scopes/${scopeOf("run-one")}`)]).toEqual([2, 2, 2]));
   expect(served(`/scopes/${scopeOf("run-two")}`)).toBe(1);

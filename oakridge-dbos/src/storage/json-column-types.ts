@@ -17,3 +17,5 @@ export interface ChildCollectionMember { readonly id: ScopeId; readonly key: str
 export type ChildCollectionMembers = readonly (string | ChildCollectionMember)[];
 export interface CommitReceipt { readonly transition_id: string; readonly scope_version: number }
 export type EffectIntentPayload = CheckedValue | EffectPayload;
+/** The GitHub repository a project's checkout pushes to. */
+export interface ForgeRepository { readonly provider: "github"; readonly owner: string; readonly name: string }

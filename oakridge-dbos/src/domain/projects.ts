@@ -1,28 +1,28 @@
+import type { ForgeRepository } from "../storage/json-column-types";
 import type { ProjectId } from "./primitives";
 
 /**
- * A configured repository checkout.
- *
- * `integration_branch` is the discovered default branch — where this
- * repository's finished work merges back. It was called `base_branch`, which in
- * v14 meant two different branches depending on who was asking
- * (`domain/repository-refs.ts` records the whole tangle); v15's `oakridge.project`
- * column is `integration_branch`, and this is the name that matches it.
+ * A project is a saved repository checkout an operator launches runs against;
+ * its row is `authority.project` (storage/schema-records.ts `ProjectRecord`).
+ * `integration_branch` is the default branch where finished work merges back.
  */
-interface Project {
-  readonly id: ProjectId;
-  readonly name: string;
-  readonly repo_dir: string;
-  readonly created_at: string;
-  readonly forge_repository: { readonly provider: "github"; readonly owner: string; readonly name: string } | null;
-  readonly integration_branch: string | null;
-}
-
 export interface ProjectRepositoryIdentity {
-  readonly forge_repository: NonNullable<Project["forge_repository"]>;
+  readonly forge_repository: ForgeRepository;
   readonly integration_branch: string | null;
 }
 
 export interface ProjectRepositoryIdentityResolver {
   resolve(repo_dir: string): Promise<ProjectRepositoryIdentity | null>;
 }
+
+/** What an operator supplies to create or replace a project. */
+export interface ProjectDraft {
+  readonly name: string;
+  readonly repo_dir: string;
+  readonly forge_repository: ForgeRepository | null;
+  readonly integration_branch: string | null;
+}
+export type ProjectWriteError =
+  | { readonly kind: "duplicate_name"; readonly name: string }
+  | { readonly kind: "missing"; readonly id: ProjectId };
+

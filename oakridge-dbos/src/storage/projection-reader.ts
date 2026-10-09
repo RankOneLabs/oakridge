@@ -1,6 +1,7 @@
 import type { CompiledBundle, DefinitionBundle } from "../core-client/generated-contracts";
 import type { TransactionalSqlExecutor } from "./sql-executor";
-import type { RunId, RunRecord, ScopeId, ScopeInstanceRecord, ResourceBindingRecord } from "./schema-records";
+import type { RunEventCursor, TransitionEventRow } from "../projections/run-event";
+import type { ProjectRecord, RunId, RunRecord, ScopeId, ScopeInstanceRecord, ResourceBindingRecord } from "./schema-records";
 import { readScopeObservations } from "./snapshot-reader";
 import { currentPrefill, currentTargetRevisions } from "./command-selection";
 import { normalizeExecutionRecord, normalizeRecordVersion, type StoredExecutionRecord, type StoredVersionedRecord } from "../projections/record-selectors";
@@ -73,10 +74,34 @@ export async function readRunView(db: TransactionalSqlExecutor, run_id: RunId): 
     if (!pinned) throw new Error(`pinned definition missing for ${run_id}`);
     const scopes = await tx.query<ScopeInstanceRecord>("SELECT * FROM authority.scope_instance WHERE run_id=$1 ORDER BY id", [run_id]);
     return { run_id, definition_bundle_id: run.definition_bundle_id, definition_digest: pinned.digest, version: Number(run.version),
+      created_at: run.created_at, archived_at: run.archived_at,
       cursor: scopes.map((scope) => ({ scope_id: scope.id, version: Number(scope.version) })),
       scopes: scopes.map((scope) => ({ scope_id: scope.id, scope_key: scope.scope_key,
         label: pinned.source.scopes.find((item) => item.key === scope.scope_key)?.presentation.label ?? scope.scope_key,
         version: Number(scope.version), is_terminal: scope.is_terminal,
         available_commands: selectAvailableCommands(pinned.source, scope).map((item) => item.key) })) };
   }, "repeatable read");
+}
+
+/** Saved projects for the operator, by name. */
+export async function listProjects(db: TransactionalSqlExecutor): Promise<readonly ProjectRecord[]> {
+  return db.query<ProjectRecord>("SELECT * FROM authority.project ORDER BY name,id", []);
+}
+
+/**
+ * Transitions after the cursor in writing-transaction order, limited to
+ * transactions older than every one still open: those are all committed or
+ * gone, so no later commit can land behind the cursor.
+ */
+export async function readTransitionsAfter(db: TransactionalSqlExecutor, after: RunEventCursor, limit: number): Promise<readonly TransitionEventRow[]> {
+  return db.query<TransitionEventRow>(`SELECT t.id,t.run_id,t.scope_id,s.scope_key,t.decision,t.commit_txid::text AS commit_txid,to_json(t.created_at)#>>'{}' AS created_at
+    FROM authority.transition t JOIN authority.scope_instance s ON s.id=t.scope_id
+    WHERE (t.commit_txid,t.id)>($1::bigint,$2::text) AND t.commit_txid<pg_snapshot_xmin(pg_current_snapshot())::text::bigint
+    ORDER BY t.commit_txid,t.id LIMIT $3`, [after.commit_txid, after.id, limit]);
+}
+/** The oldest open transaction, so a fresh subscriber starts from now rather than replaying history. */
+export async function readLatestEventCursor(db: TransactionalSqlExecutor): Promise<RunEventCursor> {
+  const row = (await db.query<{ commit_txid: string }>("SELECT pg_snapshot_xmin(pg_current_snapshot())::text AS commit_txid", []))[0];
+  if (!row) throw new Error("current snapshot unavailable");
+  return { commit_txid: row.commit_txid, id: "" };
 }

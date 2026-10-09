@@ -22,7 +22,9 @@ $$;
 
 CREATE TABLE authority.definition_bundle (
   id text PRIMARY KEY, digest text NOT NULL UNIQUE, source jsonb NOT NULL,
-  checked_program jsonb NOT NULL, version bigint NOT NULL DEFAULT 0 CHECK (version >= 0)
+  checked_program jsonb NOT NULL, version bigint NOT NULL DEFAULT 0 CHECK (version >= 0),
+  -- Operator visibility only: an archived definition is hidden from listings and still runs.
+  archived_at timestamptz
 );
 -- Prompt text a pinned definition references by digest; immutable and content-addressed.
 CREATE TABLE authority.prompt_content (
@@ -33,7 +35,9 @@ CREATE TABLE authority.run (
   id text PRIMARY KEY, definition_bundle_id text NOT NULL REFERENCES authority.definition_bundle(id),
   created_at timestamptz NOT NULL DEFAULT now(), version bigint NOT NULL DEFAULT 0 CHECK (version >= 0),
   current_generation bigint NOT NULL DEFAULT 0 CHECK (current_generation >= 0),
-  current_cursor text
+  current_cursor text,
+  -- Operator visibility only: an archived run is hidden from listings; its scopes are untouched.
+  archived_at timestamptz
 );
 CREATE TABLE authority.scope_instance (
   id text PRIMARY KEY, run_id text NOT NULL REFERENCES authority.run(id),
@@ -109,6 +113,8 @@ CREATE TABLE authority.transition (
   id text PRIMARY KEY, run_id text NOT NULL, scope_id text NOT NULL,
   trigger_id text NOT NULL, decision jsonb NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
+  -- The writing transaction; the event stream reads only transactions older than every one still open, so it never skips a late commit.
+  commit_txid bigint NOT NULL DEFAULT pg_current_xact_id()::text::bigint,
   version bigint NOT NULL DEFAULT 0 CHECK (version >= 0),
   -- One recorded transition per delivered ingress; ingress_receipt also enforces idempotency.
   UNIQUE (scope_id, trigger_id),
@@ -168,7 +174,16 @@ CREATE INDEX artifact_revision_scope_idx ON authority.artifact_revision(scope_id
 CREATE INDEX effect_intent_status_idx ON authority.effect_intent(status);
 CREATE INDEX fact_scope_idx ON authority.fact(scope_id);
 CREATE INDEX transition_scope_idx ON authority.transition(scope_id);
+CREATE INDEX transition_commit_idx ON authority.transition(commit_txid, id);
 CREATE INDEX execution_selection_execution_idx ON authority.execution_selection(execution_id);
+
+-- Saved repositories an operator launches runs against. A run carries its
+-- repositories in its pinned input; nothing here is read by evaluation.
+CREATE TABLE authority.project (
+  id text PRIMARY KEY, name text NOT NULL UNIQUE, repo_dir text NOT NULL,
+  forge_repository jsonb, integration_branch text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
 
 -- JSON column types for the generated storage records (scripts/generate-storage-records.ts).
 -- Each @type names an export of src/storage/json-column-types.ts.
@@ -186,3 +201,4 @@ COMMENT ON COLUMN authority.transition.decision IS '@type {DecisionOutcome}';
 COMMENT ON COLUMN authority.ingress_receipt.result IS '@type {CommitReceipt}';
 COMMENT ON COLUMN authority.effect_intent.payload IS '@type {EffectIntentPayload}';
 COMMENT ON COLUMN authority.resource_binding.observation IS '@type {CheckedValue}';
+COMMENT ON COLUMN authority.project.forge_repository IS '@type {ForgeRepository}';

@@ -1,6 +1,7 @@
 import { installSelectedEvidenceApi } from "./selected-evidence";
 import { installSelectedPublicationApi } from "./selected-publication";
-import type { Hono } from "hono";
+import { installProjectApi } from "./projects";
+import type { Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { CoreClient } from "../core-client/client";
 import { selectMutationIdentity, type MutationInput, type MutationService } from "../storage/mutation-service";
@@ -46,6 +47,11 @@ function definitionCursor(raw: string | null): string | null | MalformedRequestE
     return value;
   } catch { return new MalformedRequestError("invalid definitions cursor"); }
 }
+/** `?archived=true` lists archived items; without it, the active ones. */
+function archivedQuery(raw: string | undefined): boolean | MalformedRequestError {
+  if (raw === undefined || raw === "false") return false;
+  return raw === "true" ? true : new MalformedRequestError("archived must be true or false");
+}
 function errorResponse(error: CommandError): { readonly error: string; readonly detail: string; readonly trace_id?: string } {
   return error instanceof InternalFaultError ? { error: error.kind, detail: "internal fault", trace_id: error.trace_id } : { error: error.kind, detail: error.detail };
 }
@@ -59,14 +65,17 @@ async function body(request: Request): Promise<unknown | MalformedRequestError> 
 export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies): void {
   installSelectedPublicationApi(app, deps);
   installSelectedEvidenceApi(app, deps);
+  installProjectApi(app, deps);
   app.get("/api/runs", async (c) => { try {
     const page = pageQuery(c.req.query("limit"), c.req.query("cursor"));
     if (page instanceof MalformedRequestError) return response({ ok: false, error: page });
     const after = runCursor(page.cursor);
     if (after instanceof MalformedRequestError) return response({ ok: false, error: after });
+    const is_archived = archivedQuery(c.req.query("archived"));
+    if (is_archived instanceof MalformedRequestError) return response({ ok: false, error: is_archived });
     const rows = await deps.db.query<{ run_id: RunId; created_at: Date }>(`SELECT id AS run_id,created_at FROM authority.run
-      WHERE ($1::timestamptz IS NULL OR (created_at,id)<($1::timestamptz,$2::text))
-      ORDER BY created_at DESC,id DESC LIMIT $3`, [after?.created_at ?? null, after?.id ?? null, page.limit + 1]);
+      WHERE ($1::timestamptz IS NULL OR (created_at,id)<($1::timestamptz,$2::text)) AND (archived_at IS NOT NULL)=$4
+      ORDER BY created_at DESC,id DESC LIMIT $3`, [after?.created_at ?? null, after?.id ?? null, page.limit + 1, is_archived]);
     const selected = rows.slice(0, page.limit);
     const runs = await Promise.all(selected.map((row) => readRunView(deps.db, row.run_id)));
     const last = selected.at(-1);
@@ -79,7 +88,9 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
     if (page instanceof MalformedRequestError) return response({ ok: false, error: page });
     const after = definitionCursor(page.cursor);
     if (after instanceof MalformedRequestError) return response({ ok: false, error: after });
-    return Response.json(await listDefinitions(deps.db, after, page.limit));
+    const is_archived = archivedQuery(c.req.query("archived"));
+    if (is_archived instanceof MalformedRequestError) return response({ ok: false, error: is_archived });
+    return Response.json(await listDefinitions(deps.db, after, page.limit, is_archived));
   }
     catch (cause) { return fault(cause); } });
   app.post("/api/definitions", async (c) => {
@@ -91,6 +102,18 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
     return pinned.ok ? Response.json(pinned.value, { status: 201 })
       : response({ ok: false, error: new InvalidPayloadError(pinned.error.detail) });
   });
+  const archiveRun = (is_archived: boolean) => async (c: Context<{}, "/api/runs/:run_id/:action">) => { try {
+    return await deps.mutations.setRunArchived(c.req.param("run_id") as RunId, is_archived)
+      ? c.json({ run_id: c.req.param("run_id"), is_archived }) : response({ ok: false, error: new MissingEntityError("run not found") });
+  } catch (cause) { return fault(cause); } };
+  const archiveDefinition = (is_archived: boolean) => async (c: Context<{}, "/api/definitions/:bundle_id/:action">) => { try {
+    return await deps.mutations.setDefinitionArchived(c.req.param("bundle_id"), is_archived)
+      ? c.json({ bundle_id: c.req.param("bundle_id"), is_archived }) : response({ ok: false, error: new MissingEntityError("definition not found") });
+  } catch (cause) { return fault(cause); } };
+  app.post("/api/runs/:run_id/archive", archiveRun(true));
+  app.post("/api/runs/:run_id/unarchive", archiveRun(false));
+  app.post("/api/definitions/:bundle_id/archive", archiveDefinition(true));
+  app.post("/api/definitions/:bundle_id/unarchive", archiveDefinition(false));
   app.get("/api/inbox", async (c) => {
     const limit_raw = c.req.query("limit");
     const limit = limit_raw === undefined ? undefined : Number(limit_raw);

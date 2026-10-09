@@ -1,11 +1,11 @@
 import { useEffect } from "react";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { queryKeys } from "../queryKeys";
-import type { RunEventFrame } from "../types";
+import type { OperatorRunEvent } from "../operator-contracts";
 
 /** An authority event refreshes the affected run and both shared lists. */
-export function invalidateOperatorFrame(client: QueryClient, frame: RunEventFrame): void {
-  void client.invalidateQueries({ queryKey: queryKeys.run(frame.run_id) });
+export function invalidateOperatorFrame(client: QueryClient, event: OperatorRunEvent): void {
+  void client.invalidateQueries({ queryKey: queryKeys.run(event.run_id) });
   void client.invalidateQueries({ queryKey: queryKeys.runs });
   void client.invalidateQueries({ queryKey: queryKeys.inbox });
 }

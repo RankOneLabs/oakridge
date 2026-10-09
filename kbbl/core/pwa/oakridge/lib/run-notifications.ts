@@ -1,5 +1,5 @@
-import type { RunEvent } from "../run-event-types";
-import type { RunEventFrame } from "../types";
+import type { OperatorRunEvent } from "../operator-contracts";
+import { formatRunWorkspaceHash } from "../../lib/hash";
 
 export interface RunNotification {
   readonly kind: "success" | "error" | "info";
@@ -7,20 +7,10 @@ export interface RunNotification {
   readonly href: string;
 }
 
-export const selectRunNotification = (event: RunEvent): RunNotification | null => {
-  const effect = event.effect;
-  let kind: RunNotification["kind"];
-  let message: string;
-  if (effect.kind === "cohort_transition" && effect.next_actor === "operator") {
-    kind = "info";
-    message = `${effect.unit_label} needs operator action (${effect.to_state})`;
-  } else if (effect.kind === "pull_request_merge_confirmed") {
-    kind = "success"; message = "Pull request merge confirmed";
-  } else if (effect.kind === "worker_decision" && effect.actions.some((action) => action.action_point === "retry")) {
-    kind = "info"; message = "Retry launched";
-  } else return null;
-  return { kind, message, href: `#oakridge/run/${encodeURIComponent(event.run_id)}` };
+/** A scope that now waits on the operator, or one that just finished, is worth a toast; other transitions are not. */
+export const selectEventNotification = (event: OperatorRunEvent): RunNotification | null => {
+  const href = `#${formatRunWorkspaceHash(event.run_id, event.scope_id)}`;
+  if (event.attention !== null) return { kind: "info", message: `${event.scope_key}: ${event.attention.label}`, href };
+  if (event.is_terminal && event.decision === "apply") return { kind: "success", message: `${event.scope_key} finished`, href };
+  return null;
 };
-
-export const selectRunFrameNotification = (frame: RunEventFrame): RunNotification | null =>
-  frame.replayed ? null : selectRunNotification(frame);

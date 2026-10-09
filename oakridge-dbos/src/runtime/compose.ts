@@ -7,6 +7,7 @@ import { activeRoutes } from "../http/routes";
 import { controlTokenMiddleware, selectControlPlaneAccess } from "../http/control-auth";
 import { browserWriteMiddleware, configuredBrowserWritePolicy } from "../http/browser-write-policy";
 import { httpBodyLimit, installDefinitionApi } from "../http/app";
+import { installEventStream } from "../http/events";
 import { authorityRepositories } from "../storage/repositories";
 import { createMutationService, cancelRun, deleteRun, type ScopeCancellationPayload, type ProviderCapabilities, type ProviderCapabilityInput } from "../storage/mutation-service";
 import { PROVIDER_KINDS } from "../effects/provider-catalog";
@@ -164,6 +165,7 @@ export async function createProductionComposition(options: ProductionOptions): P
   app.use("*", browserWriteMiddleware(write_policy));
   if (access.kind === "token_required") app.use("*", controlTokenMiddleware(access.token, write_policy));
   installDefinitionApi(app, { db, core, mutations, wake });
+  installEventStream(app, { db });
   app.get("/health", (context) => context.json({ status: "ok", application_version, core: core.health }));
   app.post("/runs", async (context) => {
     let body: unknown;

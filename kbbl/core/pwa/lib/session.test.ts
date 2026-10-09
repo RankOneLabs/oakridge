@@ -8,6 +8,8 @@ const runSummary: OperatorRunView = {
   definition_bundle_id: "bundle-1",
   definition_digest: "sha-1",
   version: 1,
+  created_at: "2026-10-09T00:00:00.000Z",
+  archived_at: null,
   cursor: [{ scope_id: "stage-plan", version: 1 }],
   scopes: [{ scope_id: "stage-plan", scope_key: "planning", label: "Plan the work",
     version: 1, is_terminal: false, available_commands: [] }],
